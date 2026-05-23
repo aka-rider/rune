@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	p := tea.NewProgram(ui.DefaultApp(), tea.WithAltScreen())
+	p := tea.NewProgram(ui.DefaultApp())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

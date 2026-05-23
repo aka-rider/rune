@@ -8,8 +8,7 @@ import (
 	"rune/pkg/ui/styles"
 )
 
-// Model is the only type that satisfies tea.Model (returns tea.Model from Update).
-// All internal types use concrete return types to avoid interface boxing.
+// Model is the top-level tea.Model, delegating to the workspace page.
 type Model struct{ ws workspace.Model }
 
 func DefaultApp() Model {
@@ -18,10 +17,14 @@ func DefaultApp() Model {
 
 func (m Model) Init() tea.Cmd { return m.ws.Init() }
 
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.ws, cmd = m.ws.Update(msg)
 	return m, cmd
 }
 
-func (m Model) View() tea.View { return m.ws.View() }
+func (m Model) View() tea.View {
+	v := m.ws.View()
+	v.AltScreen = true
+	return v
+}

@@ -230,7 +230,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 func (m Model) View() tea.View {
 	if m.totalWidth == 0 {
-		return tea.View("")
+		return tea.NewView("")
 	}
 	leftW, centerW, contentH := m.dims()
 
@@ -258,9 +258,9 @@ func (m Model) View() tea.View {
 
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
-		return tea.View(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View()))
+		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View()))
 	}
-	return tea.View(lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View()))
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View()))
 }
 
 func borderStyle(active bool, st styles.Styles) lipgloss.Style {
