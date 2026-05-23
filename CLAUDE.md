@@ -289,16 +289,43 @@ func (m Model) recalcLayout() Model {
 }
 ```
 
-### 4.3 Border Arithmetic
+### 4.3 Border Arithmetic — lipgloss v2 is Border-Box
 
-When using lipgloss borders (2 cells total: 1 left + 1 right, 1 top + 1 bottom), subtract the border size ONCE at the point where you call `SetSize` on the child. The child MUST NOT know about its parent's borders.
+**Critical:** In lipgloss v2, `Width(n)` and `Height(n)` use **border-box** semantics. The value `n` is the **total rendered dimension** including borders and padding. The content area is `n - frame_size`.
+
+```go
+// Width(20) on a bordered style:
+//   Total rendered width = 20
+//   Content area = 20 - GetHorizontalFrameSize() = 20 - 2 = 18
+//   Text wraps at 18 cells
+
+// Height(30) on a bordered style:
+//   Minimum total rendered height = 30
+//   Content area = 30 - GetVerticalFrameSize() = 30 - 2 = 28
+//   Content shorter than 28 lines is padded
+//   Content TALLER than 28 lines is NOT truncated (Height is still minimum-only)
+```
+
+**Subtract border size ONCE — in `recalcLayout()` when computing child dimensions.** The border style in `View()` receives the OUTER dimension (the full box size). Children receive the INNER dimension (outer minus frame). Do NOT subtract the frame in both places.
+
+```go
+// recalcLayout — compute inner dimensions for children
+innerH := contentH - 2  // subtract border ONCE here
+m.editor = m.editor.SetSize(innerCenterW, innerH)
+
+// View — pass OUTER dimensions to border style
+borderStyle.Width(centerW).Height(contentH).Render(m.editor.View())
+// NOT: Width(centerW - 2).Height(contentH - 2) — that double-subtracts!
+```
+
+Use `GetHorizontalFrameSize()` / `GetVerticalFrameSize()` when you need the exact frame overhead programmatically rather than hardcoding `2`.
 
 ### 4.4 Hard Dimension Clamping (`MaxWidth` / `MaxHeight`)
 
 In lipgloss:
 - `Height(n)` is a **minimum** — it pads short content but NEVER truncates tall content.
-- `Width(n)` **wraps** long lines (which ADDS visual lines, making content taller).
-- `MaxHeight(n)` **truncates** — hard clamp to at most `n` lines.
+- `Width(n)` **wraps** content that exceeds `n - frame_size` cells (which ADDS visual lines).
+- `MaxHeight(n)` **truncates** — hard clamp total output to at most `n` lines.
 - `MaxWidth(n)` **truncates** — hard clamp each line to at most `n` cells (no wrapping).
 
 **Clamping responsibility is single-owner.** The component that receives allocated dimensions via `SetSize(w, h)` is solely responsible for ensuring its `View()` output fits within `w × h`. It does this with `MaxWidth(m.width).MaxHeight(m.height)` as the outermost render style in `View()`.
@@ -597,6 +624,7 @@ These are mistakes that language models commonly produce in this codebase. Each 
 | 16 | Wrapping synchronous state transitions in `func() tea.Msg{}` Cmds | Unnecessary frame delay, message ping-pong, leaks internals | §5.4 |
 | 17 | Using lipgloss `Height()`/`Width()` without `MaxHeight()`/`MaxWidth()` at render boundaries | Content overflows: Height is minimum-only, Width wraps (adding lines) | §4.4 |
 | 18 | Page re-clamping child output with `MaxWidth`/`MaxHeight` wrappers | Redundant, masks bugs, duplicates dimension arithmetic | §4.4 |
+| 19 | Treating lipgloss `Width(n)`/`Height(n)` as content-box (subtracting frame in BOTH recalcLayout and View) | Double-subtraction: Width/Height are border-box in lipgloss v2 | §4.3 |
 
 ---
 

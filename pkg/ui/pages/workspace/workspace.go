@@ -232,7 +232,7 @@ func (m Model) View() tea.View {
 	}
 
 	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
-		Width(centerW - 2).Height(contentH - 2).
+		Width(centerW).Height(contentH).
 		Render(m.editor.View())
 
 	var body string
@@ -242,7 +242,7 @@ func (m Model) View() tea.View {
 			m.opentabs.View(),
 		)
 		leftBlock := borderStyle(m.focus.isLeft(), m.styles).
-			Width(leftW - 2).Height(contentH - 2).
+			Width(leftW).Height(contentH).
 			Render(leftContent)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, centerBlock)
 	} else {
