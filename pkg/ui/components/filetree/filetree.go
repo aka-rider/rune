@@ -5,12 +5,14 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
 
 type FileSelectedMsg struct{ Path string }
+type DirSelectedMsg struct{ Path string }
 
 type DirLoadedMsg struct {
 	Root    string
@@ -34,6 +36,7 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 
 func (m Model) SetSize(w, h int) Model  { m.width = w; m.height = h; return m }
 func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
+func (m Model) Height() int             { return m.height }
 
 func (m Model) Init() tea.Cmd { return nil }
 
@@ -63,9 +66,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.cursor = len(m.entries) - 1
 			}
 		case key.Matches(msg, m.keys.Select):
-			if len(m.entries) > 0 && !m.entries[m.cursor].IsDir {
-				path := m.entries[m.cursor].Path
-				return m, func() tea.Msg { return FileSelectedMsg{Path: path} }
+			if len(m.entries) > 0 {
+				e := m.entries[m.cursor]
+				if e.IsDir {
+					return m, func() tea.Msg { return DirSelectedMsg{Path: e.Path} }
+				}
+				return m, func() tea.Msg { return FileSelectedMsg{Path: e.Path} }
 			}
 		}
 	}
@@ -73,7 +79,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	return renderFileList(m)
+	content := renderFileList(m)
+	return lipgloss.NewStyle().
+		MaxWidth(m.width).
+		MaxHeight(m.height).
+		Render(content)
 }
 
 func renderFileList(m Model) string {

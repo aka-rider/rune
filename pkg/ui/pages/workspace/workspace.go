@@ -6,11 +6,10 @@ import (
 	"path/filepath"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"rune/pkg/ui/components/breadcrumb"
+	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
@@ -21,68 +20,65 @@ import (
 type pane int
 
 const (
-	paneTree   pane = iota
+	paneTree pane = iota
 	paneTabs
 	paneCenter
 )
 
 func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
 
-type FileLoadedMsg struct{ Path, Content string }
+// ErrMsg signals an I/O error to the workspace page.
 type ErrMsg struct{ Err error }
 
-const leftPaneW = 22
-const footerH = 1
+// leftPaneWidth is the default width for the sidebar. It is a Model field
+// so it can be adjusted at runtime (e.g., user resize). This is not a
+// package-level constant — components expose Height()/Width() for intrinsic sizing.
+const defaultLeftPaneW = 22
 
 type Model struct {
 	totalWidth, totalHeight int
 	filetree                filetree.Model
 	opentabs                opentabs.Model
-	breadcrumb              breadcrumb.Model
-	viewport                viewport.Model
+	editor                  editor.Model
 	footer                  footer.Model
 	focus                   pane
 	leftVisible             bool
-	openPath                string
+	leftPaneW               int
 	err                     error
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 }
 
 func New(keys keymap.Bindings, st styles.Styles) Model {
-	vp := viewport.New()
-	vp.MouseWheelEnabled = true
 	return Model{
 		filetree:    filetree.New(keys, st),
 		opentabs:    opentabs.New(keys, st),
-		breadcrumb:  breadcrumb.New(st),
-		viewport:    vp,
-		footer:      footer.New(keys, st),
+		editor:      editor.New(keys, st),
+		footer:      footer.New(keys, st).SetHelp(keys.HelpText()),
 		focus:       paneTree,
 		leftVisible: true,
+		leftPaneW:   defaultLeftPaneW,
 		keys:        keys,
 		styles:      st,
 	}
 }
 
-func (m Model) dims() (leftW, centerW, contentH int) {
-	contentH = m.totalHeight - footerH
+func (m Model) recalcLayout() Model {
+	contentH := m.totalHeight - m.footer.Height()
 	if contentH < 0 {
 		contentH = 0
 	}
+
+	leftW := 0
 	if m.leftVisible {
-		leftW = leftPaneW
+		leftW = m.leftPaneW
 	}
-	centerW = m.totalWidth - leftW
+	centerW := m.totalWidth - leftW
 	if centerW < 0 {
 		centerW = 0
 	}
-	return
-}
 
-func (m Model) recalcLayout() Model {
-	leftW, centerW, contentH := m.dims()
-
+	// Subtract border cells (1 left + 1 right, 1 top + 1 bottom = 2 each axis)
 	innerH := contentH - 2
 	if innerH < 0 {
 		innerH = 0
@@ -104,15 +100,8 @@ func (m Model) recalcLayout() Model {
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
 
-	m.breadcrumb = m.breadcrumb.SetSize(innerCenterW, 1)
-	vpH := innerH - m.breadcrumb.Height()
-	if vpH < 1 {
-		vpH = 1
-	}
-	m.viewport.SetWidth(innerCenterW)
-	m.viewport.SetHeight(vpH)
-
-	m.footer = m.footer.SetSize(m.totalWidth, 1)
+	m.editor = m.editor.SetSize(innerCenterW, innerH)
+	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
 	return m
 }
 
@@ -120,9 +109,9 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.filetree.Init(),
 		m.opentabs.Init(),
-		m.breadcrumb.Init(),
+		m.editor.Init(),
 		m.footer.Init(),
-		loadDirCmd("."),
+		loadDirCmd(".", "."),
 	)
 }
 
@@ -136,26 +125,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch {
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
+		case key.Matches(msg, m.keys.TabSwitch):
+			if msg.Code >= '1' && msg.Code <= '9' {
+				idx := int(msg.Code - '1')
+				if path := m.opentabs.PathAt(idx); path != "" {
+					m.opentabs = m.opentabs.SelectIndex(idx)
+					cmds = append(cmds, editor.LoadFileCmd(path))
+				}
+			}
+
+		case key.Matches(msg, m.keys.PinTab):
+			m.opentabs = m.opentabs.PinIndex(m.opentabs.Cursor())
+
+		case key.Matches(msg, m.keys.FocusExplorer):
+			m.focus = paneTree
+			m.leftVisible = true
+
+		case key.Matches(msg, m.keys.FocusEditor):
+			m.focus = paneCenter
 
 		case key.Matches(msg, m.keys.CloseFile):
-			if m.openPath != "" {
-				path := m.openPath
-				cmds = append(cmds, func() tea.Msg { return opentabs.FileClosedMsg{Path: path} })
+			if path := m.editor.OpenPath(); path != "" {
+				m.opentabs = m.opentabs.CloseFile(path)
+				m.editor, cmd = m.editor.Update(editor.FileClosedMsg{Path: path})
+				cmds = append(cmds, cmd)
 			}
-
-		case key.Matches(msg, m.keys.FocusLeft):
-			if m.focus.isLeft() && m.leftVisible {
-				m.leftVisible = false
-				m.focus = paneCenter
-			} else {
-				m.leftVisible = true
-				m.focus = paneTree
-			}
-
-		case key.Matches(msg, m.keys.FocusCenter):
-			m.focus = paneCenter
 
 		case key.Matches(msg, m.keys.CycleLeftFocus):
 			if m.focus == paneTree {
@@ -172,30 +166,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case filetree.FileSelectedMsg:
-		cmds = append(cmds, loadFileCmd(msg.Path))
+		cmds = append(cmds, editor.LoadFileCmd(msg.Path))
+
+	case filetree.DirSelectedMsg:
+		cmds = append(cmds, loadDirCmd(msg.Path, "."))
+
+	case filetree.DirLoadedMsg:
+		m.editor = m.editor.SetDir(msg.Root)
 
 	case opentabs.TabSelectedMsg:
-		cmds = append(cmds, loadFileCmd(msg.Path))
+		cmds = append(cmds, editor.LoadFileCmd(msg.Path))
 
-	case FileLoadedMsg:
-		m.openPath = msg.Path
-		m.viewport.SetContent(msg.Content)
-		m.viewport.GotoTop()
-		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
-		m.opentabs, cmd = m.opentabs.Update(opentabs.FileOpenedMsg{Path: msg.Path})
-		cmds = append(cmds, cmd)
+	case editor.FileLoadedMsg:
+		m.opentabs = m.opentabs.OpenFile(msg.Path)
 
-	case opentabs.FileClosedMsg:
-		if msg.Path == m.openPath {
-			m.openPath = ""
-			m.viewport.SetContent("")
-			m.breadcrumb = m.breadcrumb.SetPath("")
-		}
+	case editor.ErrMsg:
+		m.err = msg.Err
 
 	case ErrMsg:
 		m.err = msg.Err
+
+	case footer.ConfirmQuitMsg:
+		return m, tea.Quit
 	}
 
+	// Update children — set focus before forwarding messages
 	m.filetree = m.filetree.SetFocused(m.focus == paneTree)
 	m.filetree, cmd = m.filetree.Update(msg)
 	cmds = append(cmds, cmd)
@@ -204,22 +199,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	m.opentabs, cmd = m.opentabs.Update(msg)
 	cmds = append(cmds, cmd)
 
-	m.breadcrumb, cmd = m.breadcrumb.Update(msg)
+	m.editor = m.editor.SetFocused(m.focus == paneCenter)
+	m.editor, cmd = m.editor.Update(msg)
 	cmds = append(cmds, cmd)
 
 	m.footer, cmd = m.footer.Update(msg)
 	cmds = append(cmds, cmd)
-
-	switch msg.(type) {
-	case tea.KeyPressMsg:
-		if m.focus == paneCenter {
-			m.viewport, cmd = m.viewport.Update(msg)
-			cmds = append(cmds, cmd)
-		}
-	default:
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-	}
 
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
@@ -232,15 +217,23 @@ func (m Model) View() tea.View {
 	if m.totalWidth == 0 {
 		return tea.NewView("")
 	}
-	leftW, centerW, contentH := m.dims()
 
-	centerContent := lipgloss.JoinVertical(lipgloss.Left,
-		m.breadcrumb.View(),
-		m.viewport.View(),
-	)
+	contentH := m.totalHeight - m.footer.Height()
+	if contentH < 0 {
+		contentH = 0
+	}
+	leftW := 0
+	if m.leftVisible {
+		leftW = m.leftPaneW
+	}
+	centerW := m.totalWidth - leftW
+	if centerW < 0 {
+		centerW = 0
+	}
+
 	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
 		Width(centerW - 2).Height(contentH - 2).
-		Render(centerContent)
+		Render(m.editor.View())
 
 	var body string
 	if m.leftVisible {
@@ -270,13 +263,20 @@ func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 	return st.InactiveBorder
 }
 
-func loadDirCmd(dir string) tea.Cmd {
+func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 	return func() tea.Msg {
 		des, err := os.ReadDir(dir)
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("load dir %q: %w", dir, err)}
 		}
-		entries := make([]filetree.Entry, 0, len(des))
+		entries := make([]filetree.Entry, 0, len(des)+1)
+		if dir != initialRoot && dir != "." {
+			entries = append(entries, filetree.Entry{
+				Name:  "..",
+				Path:  filepath.Dir(dir),
+				IsDir: true,
+			})
+		}
 		for _, de := range des {
 			entries = append(entries, filetree.Entry{
 				Name:  de.Name(),
@@ -285,15 +285,5 @@ func loadDirCmd(dir string) tea.Cmd {
 			})
 		}
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
-	}
-}
-
-func loadFileCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("open %q: %w", path, err)}
-		}
-		return FileLoadedMsg{Path: path, Content: string(b)}
 	}
 }

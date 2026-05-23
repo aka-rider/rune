@@ -1,17 +1,19 @@
 package opentabs
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
 
-type FileOpenedMsg struct{ Path string }
-type FileClosedMsg struct{ Path string }
+// TabSelectedMsg is emitted when the user explicitly selects a tab via
+// keyboard navigation within the focused opentabs component.
 type TabSelectedMsg struct{ Path string }
 
 type Tab struct {
@@ -38,6 +40,7 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 
 func (m Model) SetSize(w, h int) Model  { m.width = w; m.height = h; return m }
 func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
+func (m Model) Cursor() int             { return m.cursor }
 
 func (m Model) Height() int {
 	if len(m.tabs) == 0 {
@@ -46,40 +49,76 @@ func (m Model) Height() int {
 	return len(m.tabs) + 1
 }
 
+// PathAt returns the file path at the given tab index, or "" if out of bounds.
+func (m Model) PathAt(index int) string {
+	if index < 0 || index >= len(m.tabs) {
+		return ""
+	}
+	return m.tabs[index].Path
+}
+
+// SelectIndex switches the active tab to the given index. Returns the updated
+// model. The page calls this directly — no message round-trip needed.
+func (m Model) SelectIndex(index int) Model {
+	if index < 0 || index >= len(m.tabs) {
+		return m
+	}
+	m.cursor = index
+	for i := range m.tabs {
+		m.tabs[i].Active = i == index
+	}
+	return m
+}
+
+// PinIndex toggles the pinned state of the tab at index.
+func (m Model) PinIndex(index int) Model {
+	if index < 0 || index >= len(m.tabs) {
+		return m
+	}
+	m.tabs[index].Pinned = !m.tabs[index].Pinned
+	return m
+}
+
+// OpenFile adds or activates a tab for the given path.
+func (m Model) OpenFile(path string) Model {
+	for i := range m.tabs {
+		m.tabs[i].Active = m.tabs[i].Path == path
+		if m.tabs[i].Path == path {
+			m.cursor = i
+			return m
+		}
+	}
+	// Not found — add new tab
+	for i := range m.tabs {
+		m.tabs[i].Active = false
+	}
+	m.tabs = append(m.tabs, Tab{
+		Path:   path,
+		Name:   tabName(path),
+		Active: true,
+	})
+	m.cursor = len(m.tabs) - 1
+	return m
+}
+
+// CloseFile removes the tab for the given path.
+func (m Model) CloseFile(path string) Model {
+	for i, t := range m.tabs {
+		if t.Path == path {
+			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+			if m.cursor >= len(m.tabs) && m.cursor > 0 {
+				m.cursor = len(m.tabs) - 1
+			}
+			break
+		}
+	}
+	return m
+}
+
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case FileOpenedMsg:
-		found := false
-		for i := range m.tabs {
-			m.tabs[i].Active = m.tabs[i].Path == msg.Path
-			if m.tabs[i].Path == msg.Path {
-				found = true
-				m.cursor = i
-			}
-		}
-		if !found {
-			name := tabName(msg.Path)
-			newTab := Tab{Path: msg.Path, Name: name, Active: true}
-			for i := range m.tabs {
-				m.tabs[i].Active = false
-			}
-			m.tabs = append(m.tabs, newTab)
-			m.cursor = len(m.tabs) - 1
-		}
-
-	case FileClosedMsg:
-		for i, t := range m.tabs {
-			if t.Path == msg.Path {
-				m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
-				if m.cursor >= len(m.tabs) && m.cursor > 0 {
-					m.cursor = len(m.tabs) - 1
-				}
-				break
-			}
-		}
-
 	case tea.KeyPressMsg:
 		if !m.focused || len(m.tabs) == 0 {
 			break
@@ -115,6 +154,9 @@ func (m Model) View() string {
 		}
 		b.WriteString(prefix)
 
+		num := fmt.Sprintf("%d: ", i+1)
+		b.WriteString(num)
+
 		name := t.Name
 		if t.Pinned {
 			name = m.styles.TabPinned.Render("★") + " " + name
@@ -130,7 +172,10 @@ func (m Model) View() string {
 		}
 	}
 
-	return b.String()
+	return lipgloss.NewStyle().
+		MaxWidth(m.width).
+		MaxHeight(m.height).
+		Render(b.String())
 }
 
 func tabName(path string) string {
