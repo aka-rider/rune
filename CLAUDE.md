@@ -580,6 +580,8 @@ case editor.OpenSettingsMsg:
 
 ## 8. Testing
 
+> **Editor-specific QA:** See `qa-instructions.md` for the full testing architecture governing `pkg/editor/`, `pkg/command/`, and editor integration tests.
+
 ### 8.1 Mandatory Test Classes
 
 When changing TUI behavior, add tests for the affected invariant class:
