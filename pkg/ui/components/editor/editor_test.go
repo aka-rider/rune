@@ -11,6 +11,7 @@ import (
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 
@@ -23,7 +24,7 @@ func TestEditorIntegration(t *testing.T) {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetSize(40, 20)
 
 	// File load integration
@@ -62,7 +63,7 @@ func TestStaleSavesIgnored(t *testing.T) {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetContent("test.txt", []byte("initial"))
 
 	m, _, _ = m.StartSave()
@@ -90,7 +91,7 @@ func TestDuplicateOutOfOrderSaves(t *testing.T) {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetContent("test.txt", []byte("v1"))
 
 	m, _, _ = m.StartSave() // V1 save starts
@@ -132,7 +133,7 @@ func TestApplyOperation(t *testing.T) {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetContent("test.txt", []byte("initial"))
 
 	// Simulate an edit operation
@@ -173,7 +174,7 @@ func TestMarkdownReveal(t *testing.T) {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetSize(80, 24)
 	m = m.SetContent("test.md", []byte("hello **bold** world"))
 	m = m.SetFocused(true)
@@ -251,5 +252,83 @@ func TestMarkdownReveal(t *testing.T) {
 		boldRendered.BufferEnd != boldAfter.BufferEnd {
 		t.Errorf("BufferEnd changed across reveal: %d, %d, %d",
 			boldRendered.BufferEnd, boldRevealed.BufferEnd, boldAfter.BufferEnd)
+	}
+}
+
+// TestPrintableLettersInsertText verifies that printable characters that were
+// historically used as vim-style navigation (j, k, g, G, b, f, u, d) are
+// treated as text insertion when the editor is focused — no legacy navigation.
+func TestPrintableLettersInsertText(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	// Create resolver with the production bindings from keymap
+	bindings, _ := keys.CommandBindings()
+	res, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m = m.SetSize(40, 20)
+	m = m.SetFocused(true)
+
+	// Legacy vim-style keys that must insert text, not navigate
+	legacyKeys := []rune{'j', 'k', 'g', 'G', 'b', 'f', 'u', 'd'}
+
+	for _, ch := range legacyKeys {
+		t.Run(string(ch), func(t *testing.T) {
+			testM := m
+			testM.buf = buffer.New("hello")
+			testM.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{{Position: 5, Anchor: 5, ID: 0}})
+			testM.history = history.New(func() time.Time { return time.Now() })
+
+			testM, _ = testM.Update(tea.KeyPressMsg{Code: ch})
+
+			expected := "hello" + string(ch)
+			if testM.Content() != expected {
+				t.Errorf("key %q: expected content %q, got %q (character was not inserted)",
+					string(ch), expected, testM.Content())
+			}
+		})
+	}
+}
+
+// TestPrintableSpecialCharsInsertText verifies that ? and other printable chars
+// that are used as UI bindings at the page level still insert text in the editor.
+func TestPrintableSpecialCharsInsertText(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	res, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m = m.SetSize(40, 20)
+	m = m.SetFocused(true)
+
+	// ? is a page-level binding (HelpExpand) but must insert in the editor
+	chars := []rune{'?', '!', '@', '#', '$', '%'}
+
+	for _, ch := range chars {
+		t.Run(string(ch), func(t *testing.T) {
+			testM := m
+			testM.buf = buffer.New("hello")
+			testM.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{{Position: 5, Anchor: 5, ID: 0}})
+			testM.history = history.New(func() time.Time { return time.Now() })
+
+			testM, _ = testM.Update(tea.KeyPressMsg{Code: ch})
+
+			expected := "hello" + string(ch)
+			if testM.Content() != expected {
+				t.Errorf("key %q: expected content %q, got %q",
+					string(ch), expected, testM.Content())
+			}
+		})
 	}
 }

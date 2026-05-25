@@ -1,6 +1,11 @@
 package display_test
 
 import (
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"rune/pkg/editor/buffer"
@@ -90,5 +95,46 @@ func TestSnapshotSlice(t *testing.T) {
 	slicesPast := dSnapshot.Slice(15, 5)
 	if len(slicesPast) != 0 {
 		t.Errorf("Expected slice of height 0, got %d", len(slicesPast))
+	}
+}
+
+// TestDisplayPackageNoBannedImports verifies that the pkg/editor/display/ domain
+// package has no imports from lipgloss, chroma, or ultraviolet. The display
+// package must emit semantic spans only — rendering is the UI layer's job.
+func TestDisplayPackageNoBannedImports(t *testing.T) {
+	banned := []string{"lipgloss", "chroma", "ultraviolet"}
+
+	// Find the display package directory relative to this test file
+	displayDir := "."
+	entries, err := os.ReadDir(displayDir)
+	if err != nil {
+		t.Fatalf("cannot read display package dir: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		// Skip test files — they may import test helpers
+		if strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+
+		path := filepath.Join(displayDir, entry.Name())
+		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("failed to parse %s: %v", entry.Name(), err)
+		}
+
+		for _, imp := range f.Imports {
+			importPath := strings.Trim(imp.Path.Value, `"`)
+			for _, b := range banned {
+				if strings.Contains(importPath, b) {
+					t.Errorf("file %s imports banned package %q (contains %q)",
+						entry.Name(), importPath, b)
+				}
+			}
+		}
 	}
 }
