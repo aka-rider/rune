@@ -9,7 +9,13 @@ import (
 )
 
 func main() {
-	p := tea.NewProgram(ui.DefaultApp())
+	app, err := ui.NewApp()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start: %v\n", err)
+		os.Exit(1)
+	}
+
+	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

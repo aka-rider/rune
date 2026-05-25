@@ -1,0 +1,69 @@
+package command
+
+import (
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/cursor"
+)
+
+type ArgSpec struct {
+	Name     string
+	Type     string // "string", "int", "bool"
+	Required bool
+}
+
+type CommandContext struct {
+	Buffer       buffer.Buffer
+	Cursors      cursor.CursorSet
+	FilePath     string
+	Args         map[string]any
+	Now          time.Time
+	NewRequestID func() string
+	HashContent  func(string) string
+	Selection    func() string
+	LineCount    func() int
+}
+
+type OperationKind int
+
+const (
+	OperationNone OperationKind = iota
+	OperationMoveCursors
+	OperationEditBuffer
+	OperationScroll
+	OperationClipboard
+	OperationHistory
+	OperationSaveFile
+)
+
+type Operation struct {
+	Kind            OperationKind
+	Edits           []buffer.Edit
+	Cursors         cursor.CursorSet
+	ScrollDY        int
+	ScrollDX        int
+	SavePath        string
+	SaveContent     string
+	SaveRequestID   string
+	SaveContentHash string
+}
+
+type Result struct {
+	Operation Operation
+	Cmd       tea.Cmd
+	Err       error
+}
+
+type CommandFn func(ctx CommandContext) Result
+
+type Command struct {
+	Name     string
+	Category string
+	Title    string
+	Execute  CommandFn
+	Args     []ArgSpec
+	When     string
+}

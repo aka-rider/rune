@@ -65,7 +65,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if len(m.entries) > 0 {
 				m.cursor = len(m.entries) - 1
 			}
-		case key.Matches(msg, m.keys.Select):
+		case key.Matches(msg, m.keys.PrimaryAction):
 			if len(m.entries) > 0 {
 				e := m.entries[m.cursor]
 				if e.IsDir {

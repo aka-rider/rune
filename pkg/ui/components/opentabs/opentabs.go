@@ -132,7 +132,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor < len(m.tabs)-1 {
 				m.cursor++
 			}
-		case key.Matches(msg, m.keys.Select):
+		case key.Matches(msg, m.keys.PrimaryAction):
 			path := m.tabs[m.cursor].Path
 			return m, func() tea.Msg { return TabSelectedMsg{Path: path} }
 		}

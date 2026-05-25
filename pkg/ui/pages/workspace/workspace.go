@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"rune/pkg/command"
+	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
@@ -49,11 +51,11 @@ type Model struct {
 	styles                  styles.Styles
 }
 
-func New(keys keymap.Bindings, st styles.Styles) Model {
+func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver) Model {
 	return Model{
 		filetree:    filetree.New(keys, st),
 		opentabs:    opentabs.New(keys, st),
-		editor:      editor.New(keys, st),
+		editor:      editor.New(keys, st, reg, resolver),
 		footer:      footer.New(keys, st).SetHelp(keys.HelpText()),
 		focus:       paneTree,
 		leftVisible: true,
@@ -151,12 +153,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 
-		case key.Matches(msg, m.keys.CycleLeftFocus):
-			if m.focus == paneTree {
-				m.focus = paneTabs
-			} else if m.focus == paneTabs {
-				m.focus = paneTree
-			}
 
 		case key.Matches(msg, m.keys.ZenMode):
 			m.leftVisible = !m.leftVisible
@@ -180,7 +176,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case editor.FileLoadedMsg:
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 
-	case editor.ErrMsg:
+	case editor.FileLoadErrorMsg:
+		m.err = msg.Err
+	case editor.FileSaveErrorMsg:
 		m.err = msg.Err
 
 	case ErrMsg:

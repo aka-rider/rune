@@ -104,7 +104,7 @@ func TestResolverMatch(t *testing.T) {
 		if result.Kind != ResultMoreChordsNeeded {
 			t.Errorf("Expected ResultMoreChordsNeeded, got %v: %v", result.Kind, result.Command)
 		}
-		
+
 		_, result = res2.Resolve(Chord{Ctrl: true, Key: "v"}, ResolverContext{})
 		if result.Kind != ResultFound || result.Command != "markdown.preview" {
 			t.Errorf("Expected ResultFound with markdown.preview, got %v: %v", result.Kind, result.Command)
@@ -117,7 +117,7 @@ func TestResolverMatch(t *testing.T) {
 		if result.Kind != ResultMoreChordsNeeded {
 			t.Errorf("Expected ResultMoreChordsNeeded, got %v", result.Kind)
 		}
-		
+
 		_, result = res2.ResolveTimeout()
 		if result.Kind != ResultFound || result.Command != "kill-line" {
 			t.Errorf("Expected ResultFound with kill-line, got %v: %v", result.Kind, result.Command)
@@ -223,5 +223,3 @@ func TestReset(t *testing.T) {
 		t.Errorf("Expected InChordMode to be false after Reset()")
 	}
 }
-
-

@@ -2,10 +2,9 @@ package history_test
 
 import (
 	"reflect"
-	
+
 	"testing"
 	"time"
-	
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
@@ -53,9 +52,9 @@ func TestHistory_InverseEdits(t *testing.T) {
 	// change "let" to "var"
 	group := history.EditGroup{
 		Edits: []buffer.AppliedEdit{
-			{Start: 0, End: 3, Deleted: "let", Insert: "var"},     // first let
-			{Start: 10, End: 13, Deleted: "let", Insert: "var"},   // second let
-			{Start: 20, End: 23, Deleted: "let", Insert: "var"},   // third let
+			{Start: 0, End: 3, Deleted: "let", Insert: "var"},   // first let
+			{Start: 10, End: 13, Deleted: "let", Insert: "var"}, // second let
+			{Start: 20, End: 23, Deleted: "let", Insert: "var"}, // third let
 		},
 	}
 
@@ -69,12 +68,12 @@ func TestHistory_InverseEdits(t *testing.T) {
 		t.Errorf("wrong inverse[0]: %+v", inverse[0])
 	}
 	// cumulative delta after first edit: len(insert) - (end-start) = 3 - (3-0) = +0
-	
+
 	// second let
 	if inverse[1].Start != 10 || inverse[1].End != 13 || inverse[1].Insert != "let" {
 		t.Errorf("wrong inverse[1]: %+v", inverse[1])
 	}
-	
+
 	// third let
 	if inverse[2].Start != 20 || inverse[2].End != 23 || inverse[2].Insert != "let" {
 		t.Errorf("wrong inverse[2]: %+v", inverse[2])
@@ -111,7 +110,7 @@ func TestHistory_Coalescing(t *testing.T) {
 
 	// push first insert
 	s = s.Push(history.EditGroup{
-		Kind: history.EditInsertChar,
+		Kind:      history.EditInsertChar,
 		Timestamp: mockTime,
 	})
 
@@ -144,11 +143,11 @@ func TestHistory_MergeIntoLast(t *testing.T) {
 	s := history.New(func() time.Time { return mockTime })
 
 	s = s.Push(history.EditGroup{
-		Edits: []buffer.AppliedEdit{{Start: 0, End: 0, Insert: "a"}},
+		Edits:         []buffer.AppliedEdit{{Start: 0, End: 0, Insert: "a"}},
 		CursorsBefore: makeCursors(0),
-		CursorsAfter: makeCursors(1),
-		Timestamp: mockTime,
-		Kind: history.EditInsertChar,
+		CursorsAfter:  makeCursors(1),
+		Timestamp:     mockTime,
+		Kind:          history.EditInsertChar,
 	})
 
 	mockTime = mockTime.Add(250 * time.Millisecond)
@@ -161,7 +160,7 @@ func TestHistory_MergeIntoLast(t *testing.T) {
 	if !ok {
 		t.Fatalf("undo failed")
 	}
-	
+
 	if len(grp.Edits) != 2 {
 		t.Errorf("expected 2 merged edits")
 	}
@@ -188,17 +187,20 @@ func TestHistory_MergeIntoLast(t *testing.T) {
 func TestHistory_UndoRedo_Property(t *testing.T) {
 	s := history.New(time.Now)
 
-	var historyStates []struct{
+	var historyStates []struct {
 		text string
-		cur []cursor.Cursor
+		cur  []cursor.Cursor
 	}
-	
+
 	text := ""
 	cur := makeCursors(0)
-	historyStates = append(historyStates, struct{text string; cur []cursor.Cursor}{text, cur})
+	historyStates = append(historyStates, struct {
+		text string
+		cur  []cursor.Cursor
+	}{text, cur})
 
 	// operations
-	ops := []struct{
+	ops := []struct {
 		pos int
 		del string
 		ins string
@@ -219,23 +221,26 @@ func TestHistory_UndoRedo_Property(t *testing.T) {
 		}
 
 		group := history.EditGroup{
-			Edits: []buffer.AppliedEdit{e},
+			Edits:         []buffer.AppliedEdit{e},
 			CursorsBefore: beforeCur,
-			CursorsAfter: afterCur,
+			CursorsAfter:  afterCur,
 		}
 
 		s = s.Push(group)
-		
+
 		text = text[:op.pos] + op.ins + text[op.pos+len(op.del):]
 		cur = afterCur
-		
-		historyStates = append(historyStates, struct{text string; cur []cursor.Cursor}{text, cur})
+
+		historyStates = append(historyStates, struct {
+			text string
+			cur  []cursor.Cursor
+		}{text, cur})
 	}
 
 	// Check P3 (N pushes + N undos = original)
 	for i := len(historyStates) - 1; i > 0; i-- {
 		prevState := historyStates[i-1]
-		
+
 		var grp history.EditGroup
 		var ok bool
 		s, grp, ok = s.Undo()
@@ -246,7 +251,7 @@ func TestHistory_UndoRedo_Property(t *testing.T) {
 		// Apply InverseEdits
 		inv := grp.InverseEdits()
 		text = applyEdits(text, inv)
-		
+
 		if text != prevState.text {
 			t.Errorf("undo %d text mismatch: got %q, want %q", i, text, prevState.text)
 		}
@@ -263,14 +268,14 @@ func TestHistory_UndoRedo_Property(t *testing.T) {
 	// Check P4 (Undo + Redo = restores exact state)
 	for i := 1; i < len(historyStates); i++ {
 		nextState := historyStates[i]
-		
+
 		var grp history.EditGroup
 		var ok bool
 		s, grp, ok = s.Redo()
 		if !ok {
 			t.Fatalf("redo %d failed", i)
 		}
-		
+
 		// To apply redo, we convert AppliedEdit to intent Edit
 		var forward []buffer.Edit
 		for _, ae := range grp.Edits {
@@ -294,7 +299,7 @@ func TestHistory_UndoRedo_Property(t *testing.T) {
 	// Now we are at the end, undo a few times
 	s, _, _ = s.Undo()
 	s, _, _ = s.Undo()
-	
+
 	// Push a new edit
 	s = s.Push(history.EditGroup{})
 	if s.CanRedo() {
@@ -308,8 +313,8 @@ func TestHistory_WhitespaceCoalescing(t *testing.T) {
 
 	// Push a space
 	s = s.Push(history.EditGroup{
-		Edits: []buffer.AppliedEdit{{Start: 0, End: 0, Insert: " "}},
-		Kind: history.EditInsertChar,
+		Edits:     []buffer.AppliedEdit{{Start: 0, End: 0, Insert: " "}},
+		Kind:      history.EditInsertChar,
 		Timestamp: mockTime,
 	})
 

@@ -104,7 +104,7 @@ func (s UndoStack) ShouldCoalesce(kind EditKind, now time.Time) bool {
 	if now.Sub(lastGroup.Timestamp) > 300*time.Millisecond {
 		return false
 	}
-	
+
 	// If the last inserted character was whitespace, it should not coalesce with new letters
 	if len(lastGroup.Edits) > 0 {
 		lastEdit := lastGroup.Edits[len(lastGroup.Edits)-1]
@@ -112,7 +112,7 @@ func (s UndoStack) ShouldCoalesce(kind EditKind, now time.Time) bool {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -128,7 +128,7 @@ func (s UndoStack) MergeIntoLast(edits []buffer.AppliedEdit, cursorsAfter []curs
 	}
 
 	grp := newStack.groups[s.index]
-	
+
 	// Create new arrays so we don't mutate the old EditGroup
 	newEdits := append([]buffer.AppliedEdit(nil), grp.Edits...)
 	newEdits = append(newEdits, edits...)
