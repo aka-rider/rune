@@ -160,7 +160,15 @@ func updateHorizontal(ctx command.CommandContext, c cursor.Cursor, offset int, s
 		ID:       c.ID,
 	}
 
-	if ctx.BufferToSyntax != nil {
+	// DesiredCol is stored as a visual column width (cell count).
+	// This ensures sticky-column behavior works correctly across wrapped rows
+	// and lines with varying character widths (CJK, tabs).
+	if ctx.BufferToSyntax != nil && ctx.SyntaxToWrap != nil && ctx.WrapVisualCol != nil {
+		bp := ctx.Buffer.OffsetToLineCol(offset)
+		sp := ctx.BufferToSyntax(bp)
+		wp := ctx.SyntaxToWrap(sp)
+		newC.DesiredCol = ctx.WrapVisualCol(wp.Row, wp.Col)
+	} else if ctx.BufferToSyntax != nil {
 		bp := ctx.Buffer.OffsetToLineCol(offset)
 		sp := ctx.BufferToSyntax(bp)
 		newC.DesiredCol = sp.Col
@@ -179,24 +187,40 @@ func moveRow(ctx command.CommandContext, c cursor.Cursor, delta int, selectMode 
 	if ctx.BufferToSyntax == nil || ctx.SyntaxToWrap == nil || ctx.WrapToSyntax == nil || ctx.SyntaxToBuffer == nil {
 		return c
 	}
+
+	// 1. Find current wrap row from current position
 	bp := ctx.Buffer.OffsetToLineCol(c.Position)
 	sp := ctx.BufferToSyntax(bp)
-	sp.Col = c.DesiredCol
-
 	wp := ctx.SyntaxToWrap(sp)
+
+	// 2. Move to target row
 	wp.Row += delta
 
+	// 3. Clamp to document bounds
 	if wp.Row < 0 {
 		wp.Row = 0
 		wp.Col = 0
-	}
-	if ctx.TotalRows != nil {
+	} else if ctx.TotalRows != nil {
 		if total := ctx.TotalRows(); total > 0 && wp.Row >= total {
 			wp.Row = total - 1
 			wp.Col = 999999
+		} else {
+			// 4. Resolve DesiredCol (visual) to byte column in the target row
+			if ctx.WrapByteCol != nil {
+				wp.Col = ctx.WrapByteCol(wp.Row, c.DesiredCol)
+			} else {
+				wp.Col = c.DesiredCol
+			}
+		}
+	} else {
+		if ctx.WrapByteCol != nil {
+			wp.Col = ctx.WrapByteCol(wp.Row, c.DesiredCol)
+		} else {
+			wp.Col = c.DesiredCol
 		}
 	}
 
+	// 5. Convert back: wrap → syntax → buffer → offset
 	sp2 := ctx.WrapToSyntax(wp)
 	bp2 := ctx.SyntaxToBuffer(sp2)
 	offset2 := ctx.Buffer.LineColToOffset(bp2)

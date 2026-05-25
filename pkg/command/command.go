@@ -32,6 +32,8 @@ type CommandContext struct {
 	SyntaxToBuffer func(coords.SyntaxPoint) coords.BufferPoint
 	SyntaxToWrap   func(coords.SyntaxPoint) coords.WrapPoint
 	WrapToSyntax   func(coords.WrapPoint) coords.SyntaxPoint
+	WrapVisualCol  func(row, byteCol int) int
+	WrapByteCol    func(row, visualCol int) int
 	ViewportBounds func() (topRow, bottomRow int)
 	ScrollCol      func() int
 	ViewportHeight func() int

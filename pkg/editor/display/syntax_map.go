@@ -184,6 +184,18 @@ func (s SyntaxSnapshot) SyntaxColWidth(line int) int {
 	return width
 }
 
+// NewSyntaxSnapshotFromLines creates a SyntaxSnapshot with identity coordinate
+// mapping (no hidden ranges, no deltas). Used for testing wrap behavior in
+// isolation without markdown token folding.
+func NewSyntaxSnapshotFromLines(lines []SyntaxLine) SyntaxSnapshot {
+	convs := make([]lineConversion, len(lines))
+	// All lineConversion entries default to empty deltas/hidden = identity mapping
+	return SyntaxSnapshot{
+		Lines:     lines,
+		lineConvs: convs,
+	}
+}
+
 type SyntaxMap struct {
 	lastBufVer      uint64
 	lastCursorPos   coords.BufferPoint

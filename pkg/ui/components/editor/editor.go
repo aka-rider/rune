@@ -269,6 +269,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				SyntaxToBuffer: m.syntaxSnap.SyntaxToBuffer,
 				SyntaxToWrap:   m.wrapSnap.SyntaxToWrap,
 				WrapToSyntax:   m.wrapSnap.WrapToSyntax,
+				WrapVisualCol:  m.wrapSnap.VisualCol,
+				WrapByteCol:    m.wrapSnap.ByteColFromVisual,
 				ViewportBounds: func() (int, int) { return topRow, topRow + contentHeight },
 				ScrollCol:      func() int { return scrollCol },
 				ViewportHeight: func() int { return contentHeight },

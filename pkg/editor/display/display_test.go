@@ -78,8 +78,10 @@ func FuzzWrapMapRoundtrip(f *testing.F) {
 		wSnapshot := wMap.Sync(sSnapshot)
 
 		for line := 0; line < buf.LineCount(); line++ {
-			lineText := buf.Line(line)
-			for col := 0; col <= len(lineText); col++ {
+			// Use syntax-space column bounds (not buffer-space) since
+			// SyntaxToWrap only guarantees roundtrip for valid syntax positions.
+			syntaxLen := sSnapshot.SyntaxColWidth(line)
+			for col := 0; col <= syntaxLen; col++ {
 				sp := coords.SyntaxPoint{Line: line, Col: col}
 				wp := wSnapshot.SyntaxToWrap(sp)
 				sp2 := wSnapshot.WrapToSyntax(wp)

@@ -24,31 +24,49 @@ type WrapSnapshot struct {
 
 func (w WrapSnapshot) SyntaxToWrap(sp coords.SyntaxPoint) coords.WrapPoint {
 	if sp.Line < 0 || sp.Line >= len(w.lineToFirstRow) {
-		return coords.WrapPoint{Row: 0, Col: sp.Col}
+		return coords.WrapPoint{Row: 0, Col: 0}
 	}
 	firstRow := w.lineToFirstRow[sp.Line]
 
-	// Default to last segment of the line if not found
+	// Track the last segment of this line for fallback clamping
 	targetRow := firstRow
-	wrapCol := sp.Col
+	wrapCol := 0
+	lastSegRow := firstRow
+	lastSegLen := 0
 
 	for i := firstRow; i < len(w.Segments) && w.Segments[i].ModelLine == sp.Line; i++ {
 		seg := w.Segments[i]
 
-		// Total byte length of this segment
 		segLen := 0
 		for _, span := range seg.Spans {
 			segLen += len(span.Text)
 		}
 
-		if sp.Col >= seg.StartCol && sp.Col <= seg.StartCol+segLen {
-			targetRow = i
-			wrapCol = sp.Col - seg.StartCol
-			break
+		lastSegRow = i
+		lastSegLen = segLen
+
+		// Use strict < for upper bound: positions at segment boundary prefer next segment.
+		// Exception: the last segment of the line uses <= (no next segment to prefer).
+		nextIssameLine := i+1 < len(w.Segments) && w.Segments[i+1].ModelLine == sp.Line
+		upperInclusive := !nextIssameLine
+
+		if upperInclusive {
+			if sp.Col >= seg.StartCol && sp.Col <= seg.StartCol+segLen {
+				targetRow = i
+				wrapCol = sp.Col - seg.StartCol
+				return coords.WrapPoint{Row: targetRow, Col: wrapCol}
+			}
+		} else {
+			if sp.Col >= seg.StartCol && sp.Col < seg.StartCol+segLen {
+				targetRow = i
+				wrapCol = sp.Col - seg.StartCol
+				return coords.WrapPoint{Row: targetRow, Col: wrapCol}
+			}
 		}
 	}
 
-	return coords.WrapPoint{Row: targetRow, Col: wrapCol}
+	// Column exceeds all segments — clamp to end of last segment
+	return coords.WrapPoint{Row: lastSegRow, Col: lastSegLen}
 }
 
 func (w WrapSnapshot) WrapToSyntax(wp coords.WrapPoint) coords.SyntaxPoint {
@@ -56,7 +74,86 @@ func (w WrapSnapshot) WrapToSyntax(wp coords.WrapPoint) coords.SyntaxPoint {
 		return coords.SyntaxPoint{Line: 0, Col: 0}
 	}
 	seg := w.Segments[w.rowToSegment[wp.Row]]
-	return coords.SyntaxPoint{Line: seg.ModelLine, Col: seg.StartCol + wp.Col}
+
+	// Clamp column to segment content length
+	segLen := 0
+	for _, span := range seg.Spans {
+		segLen += len(span.Text)
+	}
+	col := wp.Col
+	if col > segLen {
+		col = segLen
+	}
+	if col < 0 {
+		col = 0
+	}
+
+	return coords.SyntaxPoint{Line: seg.ModelLine, Col: seg.StartCol + col}
+}
+
+// SegmentLen returns the byte length of the content in a given display row.
+func (w WrapSnapshot) SegmentLen(row int) int {
+	if row < 0 || row >= len(w.rowToSegment) {
+		return 0
+	}
+	seg := w.Segments[w.rowToSegment[row]]
+	n := 0
+	for _, span := range seg.Spans {
+		n += len(span.Text)
+	}
+	return n
+}
+
+// VisualCol returns the visual column width (cell count) for a byte column
+// within a given display row. Accounts for double-width CJK and tabs.
+func (w WrapSnapshot) VisualCol(row, byteCol int) int {
+	if row < 0 || row >= len(w.rowToSegment) {
+		return 0
+	}
+	seg := w.Segments[w.rowToSegment[row]]
+	text := w.segmentText(seg)
+	visual := 0
+	bytes := 0
+	for bytes < len(text) && bytes < byteCol {
+		r, size := utf8.DecodeRuneInString(text[bytes:])
+		visual += runeWidthWithTab(r, visual)
+		bytes += size
+	}
+	return visual
+}
+
+// ByteColFromVisual returns the byte column within a display row that
+// corresponds to a target visual column width. If the visual column exceeds
+// the row content, returns the segment's byte length (end of row).
+func (w WrapSnapshot) ByteColFromVisual(row, visualCol int) int {
+	if row < 0 || row >= len(w.rowToSegment) {
+		return 0
+	}
+	seg := w.Segments[w.rowToSegment[row]]
+	text := w.segmentText(seg)
+	visual := 0
+	bytes := 0
+	for bytes < len(text) {
+		r, size := utf8.DecodeRuneInString(text[bytes:])
+		rw := runeWidthWithTab(r, visual)
+		if visual+rw > visualCol {
+			break
+		}
+		visual += rw
+		bytes += size
+	}
+	return bytes
+}
+
+func (w WrapSnapshot) segmentText(seg WrapSegment) string {
+	if len(seg.Spans) == 1 {
+		return seg.Spans[0].Text
+	}
+	var b []byte
+	for _, span := range seg.Spans {
+		b = append(b, span.Text...)
+	}
+	return string(b)
 }
 
 func (w WrapSnapshot) ModelLineToFirstRow(line int) int {
