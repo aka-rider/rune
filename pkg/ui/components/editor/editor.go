@@ -150,6 +150,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			})
 			return m.dispatchOperation(res, "file.save", time.Now())
 		}
+
+		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
+		if msg.Code == tea.KeyEnter && msg.Mod == 0 {
+			ctx := command.CommandContext{
+				Buffer:  m.buf,
+				Cursors: m.cursors,
+			}
+			res := m.registry.Execute("edit.newline", ctx)
+			if res.Err == nil {
+				return m.dispatchOperation(res, "edit.newline", time.Now())
+			}
+		}
 	}
 	return m, cmd
 }

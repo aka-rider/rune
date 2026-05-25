@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/coords"
 	"rune/pkg/editor/cursor"
 )
 
@@ -25,6 +26,17 @@ type CommandContext struct {
 	HashContent  func(string) string
 	Selection    func() string
 	LineCount    func() int
+
+	// Navigation capabilities
+	BufferToSyntax func(coords.BufferPoint) coords.SyntaxPoint
+	SyntaxToBuffer func(coords.SyntaxPoint) coords.BufferPoint
+	SyntaxToWrap   func(coords.SyntaxPoint) coords.WrapPoint
+	WrapToSyntax   func(coords.WrapPoint) coords.SyntaxPoint
+	ViewportBounds func() (topRow, bottomRow int)
+	ScrollCol      func() int
+	ViewportHeight func() int
+	SoftWrap       func() bool
+	TotalRows      func() int
 }
 
 type OperationKind int

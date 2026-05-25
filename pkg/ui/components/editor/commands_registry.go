@@ -8,6 +8,8 @@ func RegisterCommands(builder command.Builder) (command.Builder, error) {
         if err != nil { return builder, err }
         builder, err = registerEditCommands(builder)
         if err != nil { return builder, err }
+        builder, err = registerLineEditCommands(builder)
+        if err != nil { return builder, err }
         builder, err = registerMultiCommands(builder)
         if err != nil { return builder, err }
         builder, err = registerHistoryCommands(builder)
