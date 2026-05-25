@@ -2,27 +2,29 @@
 
 ## Scope
 
-Find/replace overlay and commands (spec marks as "Phase 2 — stubbed" but includes full behavior)
+MVP find/replace stubs only. `editor-spec.md` marks find/replace as Phase 2. This workpackage registers commands, adds overlay state skeleton, verifies Escape priority, and returns a surfaced disabled/not-implemented result without mutating the buffer.
+
+Full find/replace implementation belongs in a future package (for example `wp20-find-replace-full.md`) unless Phase 2 is explicitly approved.
 
 ## Dependencies
 
-- WP9 (navigation — find.next/previous uses cursor movement)
-- WP10 (editing — replace uses edit infrastructure)
+- WP8 (editor component command dispatch and overlay ownership)
+- WP11 (Escape priority must preserve multi-cursor state when overlay is open)
 
 ## Deliverables
 
-### 6 Find/Replace Commands
+### 6 Find/Replace Commands (registered stubs)
 
 | Command | Key | Behavior |
 |---------|-----|----------|
 | `find.open` | `Cmd+F` | Open find overlay at top of editor. Focus search input. |
 | `find.replace-open` | `Cmd+H` | Open find+replace overlay. |
-| `find.next` | `Cmd+G` or `Enter` in find input | Jump to next match. |
-| `find.previous` | `Cmd+Shift+G` or `Shift+Enter` | Jump to previous match. |
-| `find.replace` | (in replace input) | Replace current match and advance to next. |
-| `find.replace-all` | (in replace input) | Replace all matches in document. |
+| `find.next` | `Cmd+G` | Stub: surface disabled/not-implemented feedback; no buffer/cursor/history mutation. Overlay-local Enter may invoke this stub directly but is not a central key binding. |
+| `find.previous` | `Cmd+Shift+G` | Stub: surface disabled/not-implemented feedback; no buffer/cursor/history mutation. Overlay-local Shift+Enter may invoke this stub directly but is not a central key binding. |
+| `find.replace` | overlay-local command only | Stub: surface disabled/not-implemented feedback; no buffer/cursor/history mutation. |
+| `find.replace-all` | overlay-local command only | Stub: surface disabled/not-implemented feedback; no buffer/cursor/history mutation. |
 
-### Find Overlay Component
+### Find Overlay State Skeleton
 
 A child component within the editor (not a separate top-level component):
 
@@ -44,6 +46,23 @@ type MatchRange struct {
 }
 ```
 
+### Keyboard Navigation in Overlay (MVP)
+
+When the find overlay is visible, it owns every keypress before the editor buffer resolver. Only explicit overlay actions run. Printable characters, Backspace/Delete, arrows, Tab, Enter, Shift+Enter, Escape, undo/redo, paste/cut/copy, select-all, word-delete, navigation, and editing shortcuts are consumed by overlay logic or disabled MVP commands. None of these keypresses may dispatch editor buffer/history/clipboard commands while the overlay is visible.
+
+Overlay-local keys (`Enter`, `Shift+Enter`, `Tab`, `Escape`) are not added as separate physical command bindings in `pkg/ui/keymap`. They are handled inside the overlay branch after the central `find.open` / `find.replace-open` command has made the overlay visible.
+
+When visible, find overlay makes `editor.Model.WantsModalInput()` return true so workspace globals do not preempt overlay input.
+
+- `Escape`: close overlay, return focus to editor. **Priority rule:** When find overlay is visible, Escape closes it (takes priority over `multicursor.escape`). When overlay is not visible, Escape falls through to multi-cursor collapse (WP11).
+- `Enter`: invokes disabled `find.next` stub in MVP.
+- `Shift+Enter`: invokes disabled `find.previous` stub in MVP.
+- `Tab`: overlay-visible Tab is always consumed by the overlay. In replace mode it switches between find and replace inputs; in find-only mode it no-ops (or opens replace mode only if explicitly designed later). It must not fall through to editor indentation.
+
+### Future Package Only
+
+The following sections describe the future full implementation. Do not implement them in this MVP package and do not add tests expecting this behavior here:
+
 ### Match Highlighting
 
 - All matches highlighted in display (distinct style from selection)
@@ -63,38 +82,35 @@ type MatchRange struct {
 - `find.replace-all`: batch replace all matches (one undo group)
 - Both use standard edit infrastructure (`applyOperation` with `EditBatch` kind)
 
-### Keyboard Navigation in Overlay
-
-- `Escape`: close overlay, return focus to editor. **Priority rule:** When find overlay is visible, Escape closes it (takes priority over `multicursor.escape`). When overlay is not visible, Escape falls through to multi-cursor collapse (WP11).
-- `Enter`: find next (in find input)
-- `Shift+Enter`: find previous
-- `Tab`: switch between find and replace inputs (when replace mode)
-
 ### Tests
 
 ```go
-// Basic find
-{"find/basic", "hello world hello", query: "hello", matchCount: 2},
-{"find/case-insensitive", "Hello hello", query: "hello", caseSensitive: false, matchCount: 2},
-{"find/regex", "foo123bar456", query: `\d+`, useRegex: true, matchCount: 2},
-
-// Navigation
-{"find-next/wraps", at last match, find.next → goes to first match},
-{"find-prev/wraps", at first match, find.previous → goes to last match},
-
-// Replace
-{"replace/single", "aaa bbb aaa", replace "aaa" with "X", result: "X bbb aaa", cursor at next match},
-{"replace-all", "aaa bbb aaa", replace "aaa" with "X", result: "X bbb X"},
-
-// Undo
-{"replace-all-undo", after replace-all, undo → original content restored},
+{"find/open-stub", "hello|", "find.open", overlay visible and focused, content unchanged},
+{"find/replace-open-stub", "hello|", "find.replace-open", replaceMode true, content unchanged},
+{"find/next-disabled", "hello|", "find.next", surfaced disabled result, content unchanged},
+{"find/printable-consumed", overlay open, type "abc", overlay query changes or consumes input, buffer unchanged},
+{"find/backspace-consumed", overlay open, Backspace changes overlay input or no-ops, buffer unchanged},
+{"find/delete-consumed", overlay open, Delete changes overlay input or no-ops, buffer unchanged},
+{"find/arrows-consumed", overlay open, arrow keys move overlay cursor or no-op, buffer cursor unchanged},
+{"find/enter-disabled", overlay open, Enter invokes disabled next stub, buffer unchanged},
+{"find/shift-enter-disabled", overlay open, Shift+Enter invokes disabled previous stub, buffer unchanged},
+{"find/cmd-g-disabled", overlay open, Cmd+G disabled, buffer unchanged},
+{"find/cmd-shift-g-disabled", overlay open, Cmd+Shift+G disabled, buffer unchanged},
+{"find/replace-disabled", replace overlay open, find.replace disabled, buffer/history unchanged},
+{"find/replace-all-disabled", replace overlay open, find.replace-all disabled, buffer/history unchanged},
+{"find/undo-redo-consumed", overlay open, Cmd+Z/Cmd+Shift+Z consumed, buffer/history unchanged},
+{"find/clipboard-consumed", overlay open, Cmd+V/Cmd+X/Cmd+C consumed or overlay-local, buffer unchanged},
+{"find/select-all-consumed", overlay open, Cmd+A selects overlay input or no-ops, editor selection unchanged},
+{"find/word-delete-consumed", overlay open, Alt+Backspace/Alt+Delete consumed, buffer unchanged},
+{"find/tab-consumed", overlay open in find-only mode, Tab consumed, content/cursors/history unchanged},
+{"find/escape-priority", overlay open with multi-cursor, Escape closes overlay and preserves cursors},
 ```
 
 ## Constraints
 
 - Find overlay is internal to editor component (not a separate component at page level)
-- Replace-all creates single undo group
-- Match computation does not block Update (for large files, consider async or chunked)
+- MVP stubs must not mutate buffer, cursor set, history, or clipboard
+- Full replace-all single undo group is deferred to the future full package
 - Under 500 LoC per file
 
 ## QA Gates
@@ -103,16 +119,17 @@ These gates ensure find/replace doesn't corrupt documents and integrates correct
 
 | # | Gate | Harm Prevented |
 |---|------|----------------|
-| 1 | Replace-all produces single undo group (one Cmd+Z reverts ALL replacements) | User replace-alls 50 occurrences, realizes mistake, must press undo 50 times |
-| 2 | Search wraps around: at last match, `find.next` returns to first match | User thinks there are no more matches, misses occurrences earlier in document |
+| 1 | `find.open` and `find.replace-open` only show overlay state and do not mutate content | Stub command accidentally changes document while feature is incomplete |
+| 2 | Disabled `find.next/previous/replace/replace-all` surface clear not-implemented feedback | User invokes command and nothing happens silently |
 | 3 | Escape priority: find overlay open → Escape closes overlay (does NOT collapse multi-cursor or propagate) | User presses Escape to close find, but multi-cursor collapses too → lost cursor positions |
-| 4 | Replace preserves cursor positioning: after replace, cursor advances to next match | Cursor stays on replaced text → user presses replace again and replaces the replacement |
-| 5 | Invalid regex pattern shows error in overlay, does not panic or corrupt state | Bad regex crashes editor or produces empty match set silently |
+| 4 | Full find/replace behavior is documented as deferred, not half-implemented | Worker ships incomplete replace logic under a passing stub package |
+| 5 | Overlay-visible Delete, arrows, Enter, Shift+Enter, Cmd+G, Cmd+Shift+G, replace, and replace-all do not mutate buffer/cursors/history | Modal overlay leaks keys into the editor underneath |
+| 6 | Overlay-visible undo/redo, clipboard, select-all, word-delete, navigation, and editing shortcuts are consumed before editor dispatch | Modal overlay allows document-changing shortcuts through |
 
-**Testing approach:** Table-driven with content + query + expected matches/replacements. Undo integration via trust test pattern.
+**Testing approach:** Table-driven stub tests with content before/after equality. No match-count, replacement, or undo-integration tests belong in this MVP package.
 
 ## Verification
 
 ```bash
-go test ./pkg/ui/components/editor/ -run TestFind -v
+go test ./pkg/ui/components/editor/ -run TestFindStub -v
 ```

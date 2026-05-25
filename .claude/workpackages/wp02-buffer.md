@@ -12,7 +12,9 @@
 
 ### `pkg/editor/buffer/buffer.go`
 
-Full public API from spec §A:
+Full public API from spec §A.
+
+All offsets, columns, ranges, and edit positions are UTF-8 byte offsets. Methods must never split a multi-byte rune when applying editor-generated edits; invalid ranges return errors from batch paths and must not silently corrupt content.
 
 ```go
 package buffer
@@ -42,6 +44,8 @@ func (b Buffer) Insert(offset int, text string) Buffer
 func (b Buffer) Delete(start, end int) Buffer
 func (b Buffer) Replace(start, end int, text string) Buffer
 func (b Buffer) ApplyEdits(edits []Edit) (Buffer, []AppliedEdit, error)
+func CloneAndSortEditsDescending(edits []Edit) []Edit
+func IsSortedDescendingNonOverlapping(edits []Edit) bool
 
 // Access
 func (b Buffer) Len() int
@@ -85,8 +89,10 @@ func (b Buffer) Content() string
 ## Constraints
 
 - First implementation uses immutable string internally (not piece table)
-- `ApplyEdits` MUST enforce: edits sorted descending by Start, no overlaps
+- `ApplyEdits` MUST enforce: edits sorted descending by Start, no overlaps. It must NOT silently sort caller input.
+- `CloneAndSortEditsDescending` is the canonical helper for WP10/WP11/WP15 callers that need sorted edits. Downstream packages must not each invent their own sorting semantics.
 - `FromBytes` rejects invalid UTF-8 with wrapped error
+- `New(content string)` may assume the caller provides valid UTF-8; `FromBytes` is mandatory for file loads and external bytes.
 - Zero value is meaningful (empty buffer)
 - No external dependencies beyond stdlib
 - All files under 500 LoC
@@ -103,6 +109,7 @@ These gates protect WP3 (cursor bounds depend on Len), WP4 (history inverse depe
 | 4 | `ApplyEdits` with N non-overlapping descending edits produces correct content (each edit's text appears at the right position in output) | Multi-cursor editing (WP11) depends entirely on batch-edit correctness |
 | 5 | `ApplyEdits` rejects overlapping edits and ascending-order edits with error | Silent acceptance of invalid input causes data corruption that surfaces much later |
 | 6 | `FromBytes` rejects `[]byte{0xff, 0xfe}` (invalid UTF-8) with non-nil error | Loading corrupt files without error = user edits garbage thinking it's valid |
+| 7 | Canonical sort helper returns a new sorted slice and leaves caller slice unchanged | Shared edit slices mutated by helpers cause hard-to-debug downstream cursor/history mismatches |
 
 **Testing approach:** P2 and P7 via fuzz (60s in CI). Gates 3-6 via table-driven scenarios.
 

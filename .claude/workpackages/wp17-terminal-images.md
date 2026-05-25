@@ -2,7 +2,12 @@
 
 ## Scope
 
-Terminal feature probing, image paste/copy, terminal graphics rendering
+Terminal feature probing and fallback-first image support. Implement in this order:
+
+1. Capability detection with injectable probing and safe timeouts.
+2. Image paste to assets directory and markdown reference insertion.
+3. Text placeholder rendering for unsupported graphics terminals.
+4. Terminal graphics rendering/copy only after mocked writer tests and manual gates are in place.
 
 ## Dependencies
 
@@ -25,6 +30,8 @@ Detection methods:
 - Escape sequence probing (send query, read response with timeout)
 - `terminfo` database lookup
 
+Escape probing must be injectable and timeout-bounded. Env/terminfo detection is the default safe path; unsupported or unknown terminals must degrade gracefully.
+
 Store capabilities in a `TermCaps` struct passed to editor at construction.
 
 ### Image Paste
@@ -32,9 +39,11 @@ Store capabilities in a `TermCaps` struct passed to editor at construction.
 When clipboard contains image data (detected by MIME type):
 1. `ClipboardContentMsg` carries image bytes + MIME type
 2. Editor saves image to configurable assets directory
-3. Generate collision-safe filename (timestamp + hash)
+3. Generate collision-safe filename from timestamp + content hash + sanitized extension
 4. Insert markdown reference: `![](relative/path/to/image.png)`
 5. On next `syncDisplay`, SyntaxMap parses image token
+
+Reject path traversal and absolute asset paths. Markdown references must be relative to the note or configured workspace root.
 
 ### Image Copy
 
@@ -93,6 +102,7 @@ func DetectCapabilities() TermCaps
 - Detection must be non-blocking (timeout on escape sequence probing)
 - Image files saved with safe filenames (no path traversal)
 - Relative paths in markdown references (portable)
+- Unsupported terminals render stable text placeholders and never crash
 - Under 500 LoC per file
 
 ## Verification

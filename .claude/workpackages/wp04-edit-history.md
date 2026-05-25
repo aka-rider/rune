@@ -33,7 +33,7 @@ type EditGroup struct {
     Edits         []buffer.AppliedEdit
     CursorsBefore []cursor.Cursor
     CursorsAfter  []cursor.Cursor
-    Timestamp     time.Time
+    Timestamp     time.Time  // time of the most recent edit merged into this group
     Kind          EditKind
 }
 
@@ -48,9 +48,11 @@ func (s UndoStack) CanRedo() bool
 func (s UndoStack) ShouldCoalesce(kind EditKind, now time.Time) bool
 func (s UndoStack) MergeIntoLast(edits []buffer.AppliedEdit, cursorsAfter []cursor.Cursor) UndoStack
 
-// InverseEdits on EditGroup — produces edits that undo the group
+// InverseEdits on EditGroup — produces intent edits that undo the applied-edit record
 func (g EditGroup) InverseEdits() []buffer.Edit
 ```
+
+`buffer.Edit` is an intent to change the current buffer. `buffer.AppliedEdit` is the record of what actually happened, including deleted text. Undo/redo correctness depends on never confusing these two types.
 
 ### `pkg/editor/history/history_test.go`
 
@@ -70,6 +72,7 @@ func (g EditGroup) InverseEdits() []buffer.Edit
 - Coalescing rule 6: 300ms idle forces new group
 - Redo truncation: push A, push B, undo, push C → redo stack empty
 - MergeIntoLast updates CursorsAfter
+- MergeIntoLast updates Timestamp to the newest edit time so typing every <300ms can continue coalescing beyond the first 300ms window
 
 ## Key Algorithm: InverseEdits
 
@@ -103,6 +106,7 @@ These gates protect WP12 (undo/redo integration) and are the foundation of the u
 | 4 | `InverseEdits()` applied to post-edit buffer produces pre-edit content | Wrong inverse = undo corrupts document instead of restoring it |
 | 5 | Coalescing boundary: ops at 299ms gap coalesce (1 group), ops at 301ms gap split (2 groups) | Wrong boundary = user can't undo individual words (too much coalesced) or must press undo 50 times for one paragraph (too little) |
 | 6 | Whitespace/delete/newline/paste each force new group regardless of timing | Undo granularity violates user expectation — can't undo just the space or just the paste |
+| 7 | Continuous typing at 0ms, 250ms, 500ms remains one group because `Timestamp` advances on merge | Comparing to the first edit time splits normal continuous typing too early |
 
 **Testing approach:** P3/P4 via property loop ("trust test" — 1000 random operation sequences with deterministic clock). Gates 4-6 via table-driven with exact byte comparisons.
 

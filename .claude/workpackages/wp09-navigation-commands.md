@@ -2,7 +2,7 @@
 
 ## Scope
 
-Navigation command implementations in `pkg/ui/components/editor/commands.go`
+Navigation command implementations in `pkg/ui/components/editor/commands_nav.go`
 
 ## Dependencies
 
@@ -10,7 +10,7 @@ Navigation command implementations in `pkg/ui/components/editor/commands.go`
 
 ## Deliverables
 
-### 14 Navigation Commands
+### 16 Navigation/Scroll Commands
 
 | Command | Key (macOS) | Behavior |
 |---------|-------------|----------|
@@ -55,6 +55,10 @@ Every navigation command has a `select.*` variant: moves Position but leaves Anc
 - Backward selection `]text[`: navigation collapses to SelectionStart
 - Exception: left/right collapse to start/end respectively regardless of direction
 
+### UTF-8 character movement
+
+`cursor.character-left` and `cursor.character-right` move by rune boundary while positions remain byte offsets. They must never land inside a multi-byte UTF-8 sequence. Use shared previous/next rune-boundary helpers, not `offset +/- 1`.
+
 ### DesiredCol semantics
 
 - Stored in Syntax Space columns (post-fold/expand, pre-wrap)
@@ -65,6 +69,14 @@ Every navigation command has a `select.*` variant: moves Position but leaves Anc
 ### Word boundary definition
 
 Transition between `[a-zA-Z0-9_]` and non-word characters, or between whitespace and non-whitespace.
+
+This is intentionally ASCII word classification. Add a test for `café world`: `word-left` from after `é` stops between `f` and `é` per spec.
+
+### Scroll policy
+
+- Keyboard `scroll.line-up/down` is an editor command and clamps cursor(s) to the visible range per `editor-spec.md`.
+- Mouse wheel scrolling in WP16 does not move cursor position; it only moves viewport.
+- `scroll.character-left/right` only runs when `softWrap == false`. When soft-wrap is on, horizontal scroll commands are no-ops.
 
 ### Tests (table-driven using `internal/editortest` notation)
 
@@ -107,8 +119,10 @@ These gates protect WP10 (editing depends on correct cursor positioning), WP11 (
 | 4 | Selection collapse: forward selection `[text]` + `character-left` → cursor at anchor (left edge); `character-right` → cursor at position (right edge) | Wrong collapse direction → user's cursor jumps to unexpected side of selection |
 | 5 | `word-left` on `café world` stops between `f` and `é` (ASCII-only word boundary per spec) | Word navigation inconsistent with spec definition → unpredictable jumps |
 | 6 | All navigation commands with multi-cursor: each cursor moves independently, then merge if overlapping | Multi-cursor navigation produces wrong positions → subsequent edits go to wrong places |
+| 7 | Character movement across `aé中|` lands on valid byte offsets only | Cursor inside UTF-8 sequence corrupts later edits |
+| 8 | Horizontal scroll with soft-wrap ON is a no-op; with soft-wrap OFF changes `ScrollCol` | Wrap-on horizontal scroll creates invisible state that later shifts rendering unexpectedly |
 
-**Testing approach:** Table-driven with editortest notation. Minimum 70 entries covering all 14 commands × boundary conditions.
+**Testing approach:** Table-driven with editortest notation. Minimum 80 entries covering all 16 commands × boundary conditions.
 
 ## Verification
 

@@ -18,9 +18,11 @@ Add test that scans all physical key strings in `pkg/ui/keymap/keymap.go` and fa
 func TestNoKeybindingCollisions(t *testing.T) {
     // Extract all key strings from all Bindings fields
     // Assert each key string appears in exactly one binding
-    // Exception: keys with explicit context predicates that prevent overlap
+    // No exceptions: context predicates do not permit duplicate physical keys
 }
 ```
+
+Also add an editor-focused printable-key regression test: `j`, `k`, `g`, `G`, `b`, `f`, `u`, and `d` insert text in the editor instead of triggering legacy navigation/page aliases.
 
 ### 500 LoC File Size Compliance
 
@@ -50,25 +52,27 @@ Verify every row in the spec action tables has at least one test:
 
 | Spec Section | Expected Test Count |
 |---|---|
-| Navigation (14 commands × 4+ cases) | ≥56 |
+| Navigation/scroll (16 commands × 4+ cases) | ≥64 |
 | Selection (11 commands × 3+ cases) | ≥33 |
-| Editing (10 commands × 4+ cases) | ≥40 |
+| Editing (14 commands × 4+ cases) | ≥56 |
 | Multi-Cursor (3 commands + algorithm) | ≥15 |
 | Clipboard (3 commands × 3+ cases) | ≥9 |
 | Undo/Redo (coalescing + inversion) | ≥12 |
 | Mouse (7 actions × 2+ cases) | ≥14 |
-| Find/Replace (6 commands × 2+ cases) | ≥12 |
+| Find/Replace MVP stubs (6 commands + Escape priority) | ≥8 |
 | Keybind resolver | ≥10 |
 | Buffer invariants + fuzz | ≥10 + fuzz |
 | Cursor invariants | ≥8 |
 | Display pipeline | ≥10 |
 | Coordinate round-trips | ≥6 |
+| Markdown live preview + WP14D code fences | ≥12 + code-fence highlight tests |
 
 ### Manual Smoke Test Checklist
 
 Run the app and verify:
 - [ ] Open a markdown file from file tree
 - [ ] Type text — appears at cursor
+- [ ] Printable letters that were legacy navigation aliases insert text when editor is focused
 - [ ] Delete with backspace — works at mid-line and line boundaries
 - [ ] Select with Shift+arrows — visual selection appears
 - [ ] Multi-cursor with Alt+Cmd+↓ — multiple cursors visible
@@ -77,13 +81,14 @@ Run the app and verify:
 - [ ] Clone line with Alt+Shift+↓
 - [ ] Undo (Cmd+Z) — restores previous state
 - [ ] Redo (Cmd+Shift+Z) — re-applies
-- [ ] Switch focus to file tree (Tab) — editor stops accepting input
-- [ ] Switch back — editor resumes
+- [ ] Switch focus to file tree (Ctrl+X) — editor stops accepting input
+- [ ] Switch back to editor (Ctrl+E) — editor resumes
 - [ ] Edit file, try switching to another file — dirty guard appears
 - [ ] Markdown headings render styled when cursor is away
 - [ ] Move cursor onto heading — raw `#` syntax visible
 - [ ] Bold text renders/reveals correctly
-- [ ] Code fence renders with syntax highlighting
+- [ ] Code fence rendered state has background, language label, and syntax highlighting/fallback from WP14D
+- [ ] Code fence revealed state shows raw delimiters with rendered highlighting disabled
 - [ ] Soft-wrap works for long lines
 - [ ] Page up/down scrolls correctly
 - [ ] Mouse click positions cursor
@@ -95,6 +100,8 @@ Run the app and verify:
 - Update CLAUDE.md if any new patterns were established
 - Document new dependencies introduced (goldmark, etc.)
 - Ensure `editor-spec.md` is referenced but not modified
+- Scan workpackages for stale implementation traps: non-error `ParseState`, version-counter-only dirty tracking, monolithic command file ownership, old navigation counts, UI/highlighter style types in display-domain snippets, and full find/replace hidden under stub scope.
+- Verify `pkg/editor/display` does not import lipgloss or syntax-highlighter packages; WP14D highlighting belongs in `pkg/ui/components/editor`.
 
 ## Constraints
 
@@ -113,6 +120,9 @@ Final gates — if these pass, the editor is shippable.
 | 3 | Zero keybinding collisions (automated scan of all binding key strings) | Ambiguous key dispatch → unpredictable behavior for user |
 | 4 | All spec-gap scenarios pass (every operation on empty buffer, single-char buffer, no-trailing-newline + clone) | Edge cases that exist in real usage cause panics or data loss |
 | 5 | `go test ./... && go build ./... && go vet ./...` with zero failures | Any compilation or test regression across the full project |
+| 6 | Workpackage consistency scan has zero stale traps | Future workers follow outdated docs into known bugs |
+| 7 | Editor-focused printable legacy aliases insert text (`jkgGb fud` scenarios) | Normal typing triggers navigation commands instead of editing text |
+| 8 | WP14D code-fence tests pass and display-domain import scan is clean | Syntax highlighting requirement is skipped or implemented in the wrong package |
 
 **Testing approach:** Gate 1 via dedicated Monte Carlo test. Gate 2 via integration test file. Gate 3 via static analysis test. Gates 4-5 via CI commands.
 
@@ -122,4 +132,6 @@ Final gates — if these pass, the editor is shippable.
 go test ./... && go build ./... && go vet ./...
 find . -name '*.go' -not -path './vendor/*' -exec wc -l {} + | awk '$1 > 500 {print "OVER 500:", $0; exit 1}'
 go test ./pkg/ui/keymap/ -run TestNoKeybindingCollisions -v
+go test ./pkg/ui/components/editor/ -run 'TestCodeFenceHighlight|TestGolden_CodeFence' -v
+grep -R '"charm.land/lipgloss\|"github.com/alecthomas/chroma\|"github.com/charmbracelet/ultraviolet' pkg/editor/display && exit 1 || true
 ```

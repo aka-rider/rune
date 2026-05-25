@@ -55,7 +55,7 @@ type ResolverContext struct {
 
 type Resolver struct { /* bindings, index map, pending chords */ }
 
-func NewResolver(bindings []Binding) Resolver
+func NewResolver(bindings []Binding) (Resolver, error)
 func (r Resolver) Resolve(chord Chord, ctx ResolverContext) (Resolver, ResolutionResult)
 func (r Resolver) ResolveTimeout() (Resolver, ResolutionResult)
 func (r Resolver) Reset() Resolver
@@ -81,7 +81,18 @@ The `When` field is a simple boolean expression string supporting:
 - Parentheses for grouping
 - Empty string = always active
 
-Implement a small expression evaluator (not a full parser — ~5 operators, ~5 identifiers). Evaluate against `ResolverContext` field values.
+Implement this exact expression grammar; do not use regex-only parsing:
+
+```text
+Expression := Or
+Or         := And { "||" And }
+And        := Unary { "&&" Unary }
+Unary      := "!" Unary | Primary
+Primary    := Identifier | "(" Expression ")"
+Identifier := "editorFocused" | "hasSelection" | "hasMultiCursor" | "inCodeFence" | "readOnly"
+```
+
+Whitespace is allowed between tokens. Empty string = always active. Unknown identifiers, malformed expressions, or trailing tokens must return an error during resolver construction. Do not silently treat typos as false.
 
 ### `pkg/editor/keybind/resolver_test.go`
 
@@ -89,6 +100,7 @@ Implement a small expression evaluator (not a full parser — ~5 operators, ~5 i
 - Different modifier sets don't collide (`Alt+→` vs `Alt+Ctrl+→`)
 - Multi-step chord: first press → pending, second press → found
 - Context predicate filtering (unfocused → no-match)
+- Malformed `When` predicate and unknown identifier fail construction with a clear error
 - No-match resets pending state
 - Timeout resolution: fires shortest full match
 - Collision pair validation from spec:
@@ -97,9 +109,10 @@ Implement a small expression evaluator (not a full parser — ~5 operators, ~5 i
 
 ## Constraints
 
-- Resolver does NOT define bindings — receives them from keymap
+- Resolver does NOT define physical bindings — receives command bindings derived from keymap
 - Exact modifier equality matching (no prefix for single chords)
 - Value semantics (Resolve returns new Resolver)
+- Resolver validates duplicate command chord sequences within its binding list and returns construction errors for invalid bindings/predicates. Physical key-string collisions across `pkg/ui/keymap/keymap.go` are verified by keymap tests in WP08 before editing keys land.
 - Under 500 LoC per file
 
 ## QA Gates
@@ -108,7 +121,7 @@ These gates protect WP8 (editor dispatches all input through resolver) and WP13 
 
 | # | Gate | Harm Prevented |
 |---|------|----------------|
-| 1 | No key string appears in two different binding sets at construction time (collision detection) | Ambiguous dispatch → user presses key expecting one action, gets unpredictable behavior |
+| 1 | No duplicate `Chord` sequence maps to two commands within the resolver input for the same context | Ambiguous dispatch → same normalized chord can execute different commands |
 | 2 | Modifier exactness: `Alt+Right` resolves to `cursor.word-right`, `Ctrl+Alt+Right` resolves to no-match | Extra modifier accidentally triggers wrong command → user loses text |
 | 3 | Multi-step chord: first keypress returns `ResultMoreChordsNeeded`, full sequence returns `ResultFound` with correct command | Chord sequence fires too early (on first key) → wrong command executes |
 | 4 | After timeout with pending chord that has a complete match: returns the shortest full match | User pauses during chord → timeout fires nothing (action lost) or fires wrong command |

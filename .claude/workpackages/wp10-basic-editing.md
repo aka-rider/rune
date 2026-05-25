@@ -16,7 +16,7 @@ Editing command implementations in editor component
 | Command | Key | Behavior |
 |---------|-----|----------|
 | `edit.insert-character` | printable key | Insert char at cursor. Selection → replace first. Multi-cursor → insert at each. |
-| `edit.newline` | `Enter` | Insert `\n`. Auto-indent: copy leading whitespace from current line. Selection → replace. |
+| `edit.newline` | routed `PrimaryAction` (`Enter`) | Insert `\n`. Auto-indent: copy leading whitespace from current line. Selection → replace. Do not emit a separate physical `enter` resolver binding. |
 | `edit.delete-left` | `Backspace` | Selection → delete selected. Else delete one char left. Line start → join with previous. |
 | `edit.delete-right` | `Delete` | Selection → delete selected. Else delete one char right. Line end → join with next. |
 | `edit.delete-word-left` | `Alt+Backspace` | Selection → delete. Else delete to start of current/previous word. |
@@ -31,6 +31,8 @@ Editing command implementations in editor component
 | `edit.toggle-comment` | `Cmd+/` | Toggle line comment. Multi-line → comment all. |
 
 ### Implementation details
+
+All editing commands must use shared editor helpers from WP08/WP11 for normalization, descending sort, post-edit cursor positions, and history handoff. Do not implement a private multi-cursor edit algorithm inside individual command functions.
 
 **insert-character:**
 - For each cursor: if HasSelection → Edit{Start: SelectionStart, End: SelectionEnd, Insert: char}
@@ -54,11 +56,11 @@ Editing command implementations in editor component
 **indent/outdent:**
 - Indent: prepend tab/spaces to each line in selection range
 - Outdent: remove leading tab or up to N spaces from each line
+- Default `IndentConfig`: `UseTabs=true`, `TabSize=4`. If later configuration changes this default, update tests and help text in the same change.
 
 **toggle-comment:**
-- Detect context (markdown vs code fence)
-- Markdown: `<!-- line -->` / remove
-- Code fence: language-appropriate prefix (`//`, `#`, etc.)
+- Phase-safe behavior before WP14: use markdown HTML comments only (`<!-- line -->` / remove) and do not try to infer code-fence language.
+- After WP14 adds syntax context, use a `SyntaxContextAt(offset)`-style query to detect code fences and language-appropriate prefixes (`//`, `#`, etc.). Do not make WP10 import or parse markdown directly.
 
 ### Tests (table-driven from qa-implementation-specs.md)
 
@@ -85,10 +87,12 @@ Editing command implementations in editor component
 ## Constraints
 
 - All editing commands return `OperationKind = OperationEditBuffer`
+- `edit.newline` is invoked from the routed `PrimaryAction` path when editor is focused and no modal overlay owns Enter; `CommandBindings()` must not include physical `enter`.
 - Edits sorted descending in Operation.Edits
 - Commands handle selection-active case first (replace selection)
 - Multi-cursor: fan out to all cursors, merge overlapping after
 - Each edit operation properly records history kind for coalescing
+- Invalid edit generation leaves pre-state intact and surfaces a hard error; never apply a partial batch.
 - Under 500 LoC per file
 
 ## QA Gates
@@ -104,6 +108,8 @@ These gates protect WP11 (multi-cursor editing builds on single-cursor), WP12 (u
 | 5 | `indent` with multi-line selection indents ALL selected lines (not just cursor line) | Only cursor line indented → user's multi-line reformatting is incomplete |
 | 6 | All editing commands with active selection: selection content is replaced (not preserved alongside insert) | Selection not cleared → insert duplicates text instead of replacing |
 | 7 | `clone-line-down` on buffer without trailing newline: `"hello\|"` → `"hello\|\nhello"` | Missing separator → lines concatenated into garbled single line |
+| 8 | `toggle-comment` before WP14 uses markdown comments and does not inspect code-fence language | Hidden dependency on future parser blocks WP10 or leads to ad hoc parsing |
+| 9 | Focused editor receives real Enter key through `Update` and inserts newline; `CommandBindings()` contains no physical `enter` binding | Routed key path is broken even though command-name tests pass |
 
 **Testing approach:** Table-driven with editortest notation. Minimum 60 entries. Each gate is a specific table entry that must pass.
 

@@ -74,6 +74,17 @@ func (m Model) computePasteEdits(text string) ([]buffer.Edit, cursor.CursorSet) 
 
 ### OS Clipboard Integration
 
+Use an injected clipboard port for tests and editor construction. Do not hard-code `pbcopy`/`pbpaste` calls inside command logic that tests must exercise.
+
+```go
+type ClipboardPort struct {
+    ReadText  func() (string, error)
+    WriteText func(string) error
+}
+```
+
+Production wiring may use platform tools through this port.
+
 Platform detection for clipboard access:
 - macOS: `pbcopy` / `pbpaste`
 - Linux: `xclip` or `xsel`
@@ -110,6 +121,7 @@ type ClipboardWrittenMsg struct{}
 - Cut creates single history group (copy + delete = one undo)
 - Cmd closures capture local values, not model fields (§5.5)
 - Tests use mock clipboard (inject clipboard read/write functions)
+- WP15 owns text clipboard behavior. It defines image-capable message fields, but WP17 owns image save/render/copy behavior.
 - Under 500 LoC per file
 
 ## QA Gates
@@ -123,6 +135,7 @@ These gates protect clipboard workflow correctness — copy/paste is one of the 
 | 3 | Copy with no selection = entire line including trailing `\n` | User copies a line via Cmd+C (no selection), pastes elsewhere → missing newline → lines concatenate |
 | 4 | Cut with selection: content deleted from buffer AND clipboard contains exactly the selected text | Cut leaves content in buffer (not actually cut) or clipboard has wrong text |
 | 5 | Paste is EditPaste kind: never coalesces with adjacent typing | Paste coalesces with typing → undo removes paste + recent typing as one unit |
+| 6 | Clipboard text with trailing newline preserves distribution semantics exactly | Paste strips or invents newlines, corrupting line-oriented clipboard workflows |
 
 **Testing approach:** Table-driven with mock clipboard. Explicit scenarios for distribution vs. full-paste edge cases.
 

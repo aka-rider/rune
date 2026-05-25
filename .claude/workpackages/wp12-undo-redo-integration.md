@@ -49,7 +49,7 @@ if m.history.ShouldCoalesce(kind, now) {
 3. Sort descending for ApplyEdits
 4. `buf.ApplyEdits(inverseEdits)` → restored buffer
 5. `cursors = group.CursorsBefore`
-6. `dirty = (buf.Version() != savedVersion)`
+6. `dirty = (hash(buf.Content()) != savedContentHash)` or equivalent saved-content identity comparison
 
 ### Redo Flow
 
@@ -79,7 +79,7 @@ if m.history.ShouldCoalesce(kind, now) {
 ## Constraints
 
 - Deterministic clock injection for coalescing tests
-- No `time.Sleep` — use injected clock
+- No `time.Sleep` — use injected clock. Command execution and `applyOperation` receive `now` from the model/test harness; do not call `time.Now()` deep inside command logic.
 - Multi-cursor edits = single undo group
 - Redo truncation on any new edit after undo
 - Under 500 LoC per file
@@ -96,6 +96,8 @@ These are the definitive gates for user trust. If undo/redo is broken, the edito
 | 4 | Whitespace insertion breaks coalescing: type "ab " → 2 undo groups ("ab" then " ") | User types word + space, undoes → loses entire sentence instead of just the space |
 | 5 | Redo invalidation: undo K groups, make ANY new edit → `CanRedo() == false` | User undoes, makes correction, accidentally presses redo → stale content spliced in |
 | 6 | Undo of `move-line-up`: both content order AND cursor position restored | Line moves back but cursor stays in wrong position → user’s context lost |
+| 7 | Load/save content, edit, undo back to saved bytes → `IsDirty() == false` | Version-only dirty tracking shows unsaved changes even when content exactly matches saved file |
+| 8 | Edit/save/edit/undo back to saved bytes → clean; redo → dirty | Dirty indicator lies around save boundaries and undermines data-loss guards |
 
 **Testing approach:** Gate 1 via property loop (1000 random sequences with deterministic clock). Gates 2-6 via explicit table-driven scenarios.
 

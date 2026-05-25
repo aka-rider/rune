@@ -14,6 +14,8 @@ None (can run in parallel with WP0, WP5, WP6)
 
 Pure type declarations — no logic beyond constructors. These are named types that prevent accidentally passing a buffer offset where a display column is expected.
 
+Non-goal: do not add conversion helpers, clamping helpers, or display math here. Coordinate conversion logic belongs to the owning pipeline stages in WP7+.
+
 ```go
 package coords
 
@@ -49,7 +51,7 @@ type DisplayPoint struct {
 ## Constraints
 
 - No imports from other `pkg/editor/` packages
-- No logic — pure data types
+- No conversion logic — pure data types and, only if tests need them, trivial constructors
 - Under 500 LoC
 
 ## Verification

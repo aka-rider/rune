@@ -16,7 +16,7 @@ Multi-cursor commands + full algorithm from spec §F
 |---------|-----|----------|
 | `multicursor.add-above` | `Alt+Cmd+↑` | Add cursor one line above at same DesiredCol. Clamp to line end if shorter. |
 | `multicursor.add-below` | `Alt+Cmd+↓` | Add cursor one line below at same DesiredCol. |
-| `multicursor.escape` | `Escape` | Collapse to single (keep primary, discard secondaries). If no multi-cursor, collapse selection. If neither, propagate Escape. |
+| `multicursor.escape` | routed `Cancel` (`Escape`) | Collapse to single (keep primary, discard secondaries). If no multi-cursor, collapse selection. If neither, propagate Cancel. Do not emit a separate physical `esc` resolver binding. |
 
 ### Full Multi-Cursor Edit Algorithm (spec §F)
 
@@ -26,7 +26,11 @@ All editing commands (WP10) must use this algorithm when multiple cursors exist:
 
 **Phase 2 — Generate Edits:** For each normalized cursor, produce `buffer.Edit`.
 
+Carry the source cursor ID alongside each generated edit until final cursors are built. Sorting edits must not lose which cursor produced which final position.
+
 **Phase 3 — Sort Descending:** Sort edits by Start descending (required by Buffer.ApplyEdits).
+
+Use `buffer.CloneAndSortEditsDescending` or the shared editor edit builder from WP08/WP10. Do not hand-roll sort rules in each command.
 
 **Phase 4 — Compute Post-Edit Positions:**
 ```go
@@ -60,7 +64,7 @@ for i := len(edits) - 1; i >= 0; i-- {
 {"multi-del-left/spaced", "a|bc|de|f", "edit.delete-left", nil, "|b|d|f"},
 
 // Overlapping cursors merge
-{"multi-del-left/merge", "a|b|c", "edit.delete-left", nil, "||c"},  // then merge
+{"multi-del-left/merge", "a|b|c", "edit.delete-left", nil, "|c"},  // both cursors land together, then merge
 
 // Add cursor below
 {"add-below/basic", "hello|\nworld", "multicursor.add-below", nil, "hello|\nworld|"},
@@ -88,7 +92,9 @@ for i := len(edits) - 1; i >= 0; i-- {
 ## Constraints
 
 - Multi-cursor edit semantics: all edits apply independently, overlapping cursors merge after
+- `multicursor.escape` is invoked from the routed `Cancel` path after modal overlay priority; `CommandBindings()` must not include physical `esc`.
 - Edits apply in reverse-offset order (higher offsets first)
+- Generated edits preserve cursor identity through sorting so final cursor positions map to the correct source cursor
 - One EditGroup per multi-cursor command invocation
 - Under 500 LoC per file
 
@@ -104,6 +110,9 @@ These gates protect WP12 (undo must restore multi-cursor state), WP15 (clipboard
 | 4 | `Escape` with multi-cursor = keep primary (lowest offset) only; single cursor + selection = collapse selection | Escape doesn’t clear multi-cursor → user thinks they have 1 cursor but has many → next edit affects multiple positions |
 | 5 | Line-range unification: cursors on lines 0 and 1 + move-line-up = no-op (block already at top) | Partial move → some lines move, others don’t → document order corrupted |
 | 6 | Multi-cursor edit produces single EditGroup (one undo reverts ALL cursors’ edits) | Multiple undo groups → user presses undo once, only some cursors revert → inconsistent state |
+| 7 | Replacement selections with negative deltas compute final cursor positions correctly | Replacing longer selections with shorter text leaves cursors shifted to stale offsets |
+| 8 | Cursor identity is preserved through descending edit sort | Primary/secondary cursors swap unpredictably after edits, breaking undo restoration |
+| 9 | Focused editor receives real Escape key through routed Cancel and collapses multi-cursor/selection; `CommandBindings()` contains no physical `esc` binding | Routed cancel path is broken or duplicate Escape bindings reappear |
 
 **Testing approach:** Concrete byte-offset scenarios with editortest notation. P6 via property test (1000 random multi-cursor configs + edits, verify each cursor's surrounding text).
 

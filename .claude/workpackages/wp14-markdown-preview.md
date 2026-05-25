@@ -2,7 +2,14 @@
 
 ## Scope
 
-`pkg/editor/display/syntax_map.go` — upgrade from pass-through to full markdown parsing with reveal/hide
+Parent scope for markdown live preview. Do not implement the entire markdown renderer in this single workpackage. Execute the suffix packages instead:
+
+- `wp14a-markdown-inline-line.md` — parser spike plus inline and line-level elements
+- `wp14b-markdown-blocks.md` — code fences and tables
+- `wp14c-markdown-advanced.md` — math, frontmatter, callouts, embeds, highlights, image placeholders
+- `wp14d-code-fence-highlighting.md` — UI-side code fence syntax highlighting
+
+This parent file records the full target behavior from `editor-spec.md` and the invariants shared by all WP14 suffix packages.
 
 ## Dependencies
 
@@ -13,9 +20,13 @@
 
 ### Markdown Parser Integration
 
-Choose parser with byte-accurate source ranges (goldmark with AST source positions, or similar).
+Choose parser with byte-accurate source ranges only after a spike proves the chosen parser exposes the required inline and block source ranges.
 
 Add dependency to `go.mod`.
+
+Parser acceptance gate:
+- Prove source ranges for bold, italic, inline code, links, headings, blockquotes, task lists, horizontal rules, code fences, and tables.
+- If the parser cannot expose byte-accurate ranges for an element, either choose another parser or document an explicit fallback before implementation.
 
 ### Reveal Granularity Rules (from spec)
 
@@ -37,7 +48,7 @@ Nested: cursor inside bold within blockquote → bold reveals but blockquote doe
 
 ### Element Rendering Table
 
-Full implementation for:
+Full target implementation across WP14A/WP14B/WP14C:
 - Headings (`#` hidden when rendered, large/bold style)
 - Bold (`**` hidden, bold style)
 - Italic (`*`/`_` hidden, italic style)
@@ -47,13 +58,13 @@ Full implementation for:
 - Blockquotes (`>` hidden, left border + indent)
 - Task lists (`- [ ]`/`- [x]` → checkbox glyph)
 - Horizontal rules (`---` → visual divider)
-- Code fences (fence markers hidden, syntax highlighting with background)
+- Code fences (fence markers hidden, semantic code block spans; WP14D owns UI-side syntax highlighting)
 - Tables (aligned grid with box-drawing)
 - Math blocks (styled raw as fallback)
 - Inline math (styled raw as fallback)
 - Frontmatter (collapsed indicator or key-value table)
 - Callouts (styled box with icon)
-- Images (placeholder — terminal rendering in WP17)
+- Images (semantic placeholder only — terminal rendering in WP17)
 - Highlights (`==text==` — `==` hidden, highlight background style)
 - Embed references (per-line reveal, same as headings)
 - Frontmatter (configurable: visible/hidden/source — expose config option)
@@ -67,12 +78,12 @@ For each rendered span where delimiters are hidden:
 
 ### Style Mapping
 
-Styles applied in UI layer, not domain package:
-- `StyleConfig` (function or struct) passed to `BuildSnapshot`
-- Maps `(TokenKind, RevealState)` → `lipgloss.Style`
-- Domain package only produces `SyntaxSpan` with kind+state
+Styles are applied in the UI layer, not the domain package:
+- `BuildSnapshot` receives semantic wrap output only.
+- The editor UI maps `(TokenKind, RevealState)` to concrete terminal styles during `View()`.
+- Domain package only produces `SyntaxSpan`/display spans with text, kind, reveal state, and source ranges.
 
-### Tests
+### Shared Tests
 
 ```go
 // Offset delta accuracy
@@ -124,6 +135,6 @@ These gates protect visual correctness when markdown tokens are hidden/shown. A 
 
 ```bash
 go test ./pkg/editor/display/ -run TestSyntaxMap -v
-go test ./pkg/ui/components/editor/ -run TestGolden_MarkdownRendering -v -update  # create goldens
-go test ./pkg/ui/components/editor/ -run TestGolden_MarkdownRendering -v  # compare
+go test ./pkg/ui/components/editor/ -run TestGolden_MarkdownRendering -v -update  # create goldens only after WP14A/B stabilize
+go test ./pkg/ui/components/editor/ -run TestGolden_MarkdownRendering -v
 ```

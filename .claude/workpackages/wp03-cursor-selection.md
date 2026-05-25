@@ -53,6 +53,8 @@ func (cs CursorSet) AdjustAfterEdit(start, end int, insertLen int) CursorSet
 func (cs CursorSet) AdjustAfterBatchEdits(edits []buffer.AppliedEdit) CursorSet
 ```
 
+All cursor positions and selection ranges are UTF-8 byte offsets. Cursor movement commands must compute rune boundaries before writing `Position`/`Anchor`; `CursorSet` only stores, sorts, merges, and adjusts offsets.
+
 ### `pkg/editor/cursor/cursor_test.go`
 
 **Layer 1 — Invariants:**

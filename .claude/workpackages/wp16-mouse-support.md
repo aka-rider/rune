@@ -64,6 +64,8 @@ Need to track:
 - Mouse button state (for drag detection)
 - Click count (1, 2, 3)
 
+Keep mouse state in a dedicated editor file such as `mouse.go` or `mouse_state.go`. Do not grow `editor.go` with all mouse details.
+
 ### Tests
 
 ```go
@@ -90,6 +92,7 @@ Need to track:
 
 - Mouse events only processed when editor is focused
 - Coordinate conversion uses full pipeline (Display → Wrap → Syntax → Buffer)
+- Tests that use pass-through display can run after WP7/WP8. Tests involving folded markdown tokens depend on WP14A+ and must be named separately.
 - Scroll lines configurable (default 3)
 - Under 500 LoC per file
 
@@ -104,6 +107,7 @@ These gates ensure mouse clicks land on the correct buffer position — critical
 | 3 | Triple-click selects entire line (including newline, matching "copy line" semantics) | Triple-click misses characters → line selection is incomplete |
 | 4 | Shift+click extends selection from current anchor to clicked position | Shift+click starts new selection instead of extending → user loses existing selection |
 | 5 | Scroll wheel does not move cursor position (only viewport moves) | Scroll accidentally repositions cursor → user’s next edit goes to wrong place |
+| 6 | Folded-token click tests are skipped or deferred until WP14A+ | Mouse package blocks on markdown preview or verifies a fake geometry |
 
 **Testing approach:** Table-driven with known viewport state + coordinates. Each test constructs specific display geometry and asserts buffer offset.
 

@@ -54,6 +54,10 @@ type SyntaxSpan struct {
     State       RevealState
     BufferStart int
     BufferEnd   int
+    Language    string // set for TokenCodeFence spans when a fence declares a language
+    BlockID     int    // stable non-zero group id for multi-line block elements
+    BlockStart  int    // full block source range; 0 when not a block span
+    BlockEnd    int
 }
 
 type SyntaxLine struct {
@@ -120,13 +124,20 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot
 ### `pkg/editor/display/snapshot.go`
 
 ```go
-type StyledSpan struct {
-    Text  string
-    Style lipgloss.Style
+type DisplaySpan struct {
+    Text        string
+    Kind        TokenKind
+    State       RevealState
+    BufferStart int
+    BufferEnd   int
+    Language    string // propagated semantic metadata, no UI/highlighter types
+    BlockID     int
+    BlockStart  int
+    BlockEnd    int
 }
 
 type DisplayLine struct {
-    Spans     []StyledSpan
+    Spans     []DisplaySpan
     ModelLine int
     WrapIndex int
 }
@@ -136,10 +147,16 @@ type DisplaySnapshot struct {
     TotalRows int
 }
 
-func BuildSnapshot(ws WrapSnapshot, styleCfg StyleConfig) DisplaySnapshot
+func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot
 func (ds DisplaySnapshot) Slice(topRow, height int) []DisplayLine
 func (ds DisplaySnapshot) SliceH(lines []DisplayLine, scrollCol, width int) []DisplayLine
+func (ds DisplaySnapshot) ModelLineToFirstRow(line int) int
+func (ds DisplaySnapshot) RowToModelLine(row int) int
 ```
+
+The display domain package produces semantic spans only. The UI editor component maps `TokenKind`/`RevealState` to concrete terminal styles in `View()` using `styles.Styles`.
+
+Semantic metadata such as code-fence language travels as plain data (`Language string`) on spans. Multi-line block elements remain line/segment-oriented: `BufferStart`/`BufferEnd` describe the visible span's own source range, while `BlockID`/`BlockStart`/`BlockEnd` group spans that belong to one full source block. Do not reparse markdown in the UI renderer to recover metadata.
 
 ### `pkg/editor/display/display_test.go`
 
@@ -153,7 +170,7 @@ func (ds DisplaySnapshot) SliceH(lines []DisplayLine, scrollCol, width int) []Di
 
 ## Constraints
 
-- Domain package: do NOT import `lipgloss` directly. Use a `StyleConfig` interface/func injected from UI layer for `BuildSnapshot`
+- Domain package: do NOT import `lipgloss` directly. Do not expose UI style types from `pkg/editor/display`.
 - Value semantics throughout
 - Under 500 LoC per file (split into 3 files)
 

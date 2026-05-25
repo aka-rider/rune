@@ -27,8 +27,11 @@ type ArgSpec struct {
 type CommandContext struct {
     Buffer    buffer.Buffer
     Cursors   cursor.CursorSet
+    FilePath  string
     Args      map[string]any
     Now       time.Time
+    NewRequestID func() string
+    HashContent  func(string) string
     Selection func() string
     LineCount func() int
 }
@@ -41,6 +44,7 @@ const (
     OperationScroll
     OperationClipboard
     OperationHistory
+    OperationSaveFile
 )
 
 type Operation struct {
@@ -49,6 +53,10 @@ type Operation struct {
     Cursors   cursor.CursorSet
     ScrollDY  int
     ScrollDX  int
+    SavePath        string
+    SaveContent     string
+    SaveRequestID   string
+    SaveContentHash string
 }
 
 type Result struct {
@@ -84,6 +92,10 @@ func (r Registry) Search(query string) []Command  // fuzzy match on Name/Title
 func (r Registry) All() []Command
 ```
 
+`pkg/command` may import Bubble Tea only for `tea.Cmd`. It must not import UI components, pages, or styles.
+
+`Search` must be deterministic and dependency-free for this workpackage: case-insensitive substring matches on `Name` and `Title` first, then stable alphabetical order by `Name` for ties. Do not introduce a fuzzy-search dependency unless a later package explicitly chooses one.
+
 ### `pkg/command/registry_test.go`
 
 - Register and Get by name
@@ -97,6 +109,7 @@ func (r Registry) All() []Command
 
 - `Register()` copies internal map before inserting (aliasing safety — Go maps are reference types)
 - Registry is immutable after `Build()` — no registration after initialization
+- Search order is stable for identical inputs
 - No interfaces for single implementations
 - Under 500 LoC per file
 
