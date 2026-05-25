@@ -14,6 +14,10 @@ type DisplaySpan struct {
 	BlockID     int
 	BlockStart  int
 	BlockEnd    int
+	AltText     string
+	ImagePath   string
+	EmbedRef    string
+	CalloutKind string
 }
 
 type DisplayLine struct {
@@ -48,6 +52,10 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 				BlockID:     s.BlockID,
 				BlockStart:  s.BlockStart,
 				BlockEnd:    s.BlockEnd,
+				AltText:     s.AltText,
+				ImagePath:   s.ImagePath,
+				EmbedRef:    s.EmbedRef,
+				CalloutKind: s.CalloutKind,
 			})
 		}
 		dlines = append(dlines, DisplayLine{
@@ -132,6 +140,13 @@ func (ds DisplaySnapshot) SliceH(lines []DisplayLine, scrollCol, width int) []Di
 		for _, s := range l.Spans {
 			if currW > scrollCol+width {
 				break
+			}
+
+			// Preserve spans with empty text — they carry semantic metadata
+			// (e.g., language labels for code fences).
+			if s.Text == "" {
+				dl.Spans = append(dl.Spans, s)
+				continue
 			}
 
 			spanText, nextW := sliceSpanStr(s.Text, scrollCol, width, currW)

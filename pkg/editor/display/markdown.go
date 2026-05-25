@@ -19,6 +19,7 @@ func init() {
 		goldmark.WithExtensions(
 			extension.Strikethrough,
 			extension.TaskList,
+			extension.Table,
 		),
 	)
 	mdParser = md.Parser()
@@ -41,8 +42,8 @@ type parsedLine struct {
 	spans []mdSpan
 }
 
-// parseMarkdown parses the full document and returns per-line span info.
-func parseMarkdown(content string) []parsedLine {
+// parseMarkdown parses the full document and returns per-line span info and blocks.
+func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
 	src := []byte(content)
 	reader := text.NewReader(src)
 	tree := mdParser.Parse(reader)
@@ -58,7 +59,10 @@ func parseMarkdown(content string) []parsedLine {
 		offset += len(line) + 1 // +1 for newline
 	}
 
-	// Walk the AST and extract inline elements
+	var blocks []mdBlock
+	blockID := 0
+
+	// Walk the AST and extract inline elements and blocks
 	ast.Walk(tree, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -81,12 +85,28 @@ func parseMarkdown(content string) []parsedLine {
 			walkThematicBreak(node, src, lines, lineOffsets, result)
 		case *ast.ListItem:
 			walkTaskList(node, src, lines, lineOffsets, result)
+		case *ast.FencedCodeBlock:
+			walkFencedCodeBlock(node, src, lines, lineOffsets, &blockID, &blocks)
+			return ast.WalkSkipChildren, nil
+		case *east.Table:
+			walkTable(node, src, lines, lineOffsets, &blockID, &blocks)
+			return ast.WalkSkipChildren, nil
+		case *ast.Image:
+			walkImage(node, src, lines, lineOffsets, result)
+			return ast.WalkSkipChildren, nil
 		}
 
 		return ast.WalkContinue, nil
 	})
 
-	return result
+	return result, blocks
+}
+
+// parseMarkdownAdvanced wraps parseMarkdown and adds advanced inline parsing.
+func parseMarkdownAdvanced(content string) ([]parsedLine, []mdBlock) {
+	parsed, blocks := parseMarkdown(content)
+	parsed = parseAdvancedInlines(content, parsed)
+	return parsed, blocks
 }
 
 // findLineForOffset returns the line index that contains the given byte offset.

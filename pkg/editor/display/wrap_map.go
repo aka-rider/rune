@@ -193,6 +193,14 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {
 					State:       s.State,
 					BufferStart: s.BufferStart + startCol,
 					BufferEnd:   s.BufferStart + endCol,
+					Language:    s.Language,
+					BlockID:     s.BlockID,
+					BlockStart:  s.BlockStart,
+					BlockEnd:    s.BlockEnd,
+					AltText:     s.AltText,
+					ImagePath:   s.ImagePath,
+					EmbedRef:    s.EmbedRef,
+					CalloutKind: s.CalloutKind,
 				})
 			}
 

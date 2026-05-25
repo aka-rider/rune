@@ -28,6 +28,9 @@ func execMoveLineUp(ctx command.CommandContext) command.Result {
 	if len(all) == 0 {
 		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 	}
+	if len(all) > 1 {
+		return execMoveLineUpMulti(ctx)
+	}
 
 	c := all[0]
 	startLine, endLine := lineRangeForCursor(ctx.Buffer, c)
@@ -80,6 +83,9 @@ func execMoveLineDown(ctx command.CommandContext) command.Result {
 	if len(all) == 0 {
 		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 	}
+	if len(all) > 1 {
+		return execMoveLineDownMulti(ctx)
+	}
 
 	c := all[0]
 	startLine, endLine := lineRangeForCursor(ctx.Buffer, c)
@@ -126,6 +132,9 @@ func execCloneLineUp(ctx command.CommandContext) command.Result {
 	if len(all) == 0 {
 		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 	}
+	if len(all) > 1 {
+		return execCloneLineUpMulti(ctx)
+	}
 
 	c := all[0]
 	startLine, endLine := lineRangeForCursor(ctx.Buffer, c)
@@ -159,6 +168,9 @@ func execCloneLineDown(ctx command.CommandContext) command.Result {
 	all := ctx.Cursors.All()
 	if len(all) == 0 {
 		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
+	}
+	if len(all) > 1 {
+		return execCloneLineDownMulti(ctx)
 	}
 
 	c := all[0]
@@ -224,8 +236,8 @@ func registerLineEditCommands(builder command.Builder) (command.Builder, error) 
 	var err error
 
 	builder, err = builder.Register(command.Command{
-		Name: "edit.move-line-up",
-		When: "editorFocused && !readOnly",
+		Name:    "edit.move-line-up",
+		When:    "editorFocused && !readOnly",
 		Execute: execMoveLineUp,
 	})
 	if err != nil {
@@ -233,8 +245,8 @@ func registerLineEditCommands(builder command.Builder) (command.Builder, error) 
 	}
 
 	builder, err = builder.Register(command.Command{
-		Name: "edit.move-line-down",
-		When: "editorFocused && !readOnly",
+		Name:    "edit.move-line-down",
+		When:    "editorFocused && !readOnly",
 		Execute: execMoveLineDown,
 	})
 	if err != nil {
@@ -242,8 +254,8 @@ func registerLineEditCommands(builder command.Builder) (command.Builder, error) 
 	}
 
 	builder, err = builder.Register(command.Command{
-		Name: "edit.clone-line-up",
-		When: "editorFocused && !readOnly",
+		Name:    "edit.clone-line-up",
+		When:    "editorFocused && !readOnly",
 		Execute: execCloneLineUp,
 	})
 	if err != nil {

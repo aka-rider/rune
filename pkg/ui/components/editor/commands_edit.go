@@ -265,6 +265,9 @@ func execDeleteLine(ctx command.CommandContext) command.Result {
 	if len(all) == 0 {
 		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 	}
+	if len(all) > 1 {
+		return execDeleteLineMulti(ctx)
+	}
 
 	lineCount := ctx.Buffer.LineCount()
 	var infos []editInfoItem

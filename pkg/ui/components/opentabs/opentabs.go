@@ -115,6 +115,50 @@ func (m Model) CloseFile(path string) Model {
 	return m
 }
 
+// MarkDirty sets the dirty indicator on the tab matching path.
+func (m Model) MarkDirty(path string) Model {
+	for i := range m.tabs {
+		if m.tabs[i].Path == path {
+			m.tabs[i].Dirty = true
+			break
+		}
+	}
+	return m
+}
+
+// MarkClean clears the dirty indicator on the tab matching path.
+func (m Model) MarkClean(path string) Model {
+	for i := range m.tabs {
+		if m.tabs[i].Path == path {
+			m.tabs[i].Dirty = false
+			break
+		}
+	}
+	return m
+}
+
+// NextPath returns the path of the tab that would become active after
+// closing the given path, or "" if no tabs would remain.
+func (m Model) NextPath(closePath string) string {
+	idx := -1
+	for i, t := range m.tabs {
+		if t.Path == closePath {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	if len(m.tabs) <= 1 {
+		return ""
+	}
+	if idx < len(m.tabs)-1 {
+		return m.tabs[idx+1].Path
+	}
+	return m.tabs[idx-1].Path
+}
+
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {

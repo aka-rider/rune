@@ -26,13 +26,24 @@ type Styles struct {
 	FooterMeta lipgloss.Style
 
 	Error lipgloss.Style
+
+	CodeBlockBg    lipgloss.Style
+	CodeBlockLabel lipgloss.Style
+	CodeKeyword    lipgloss.Style
+	CodeString     lipgloss.Style
+	CodeComment    lipgloss.Style
+	CodeFunction   lipgloss.Style
+	CodeType       lipgloss.Style
+	CodeNumber     lipgloss.Style
+	CodeOperator   lipgloss.Style
+	CodePlain      lipgloss.Style
 }
 
 func Default() Styles {
-	subtle    := lipgloss.Color("241")
+	subtle := lipgloss.Color("241")
 	highlight := lipgloss.Color("212")
-	special   := lipgloss.Color("153")
-	errColor  := lipgloss.Color("196")
+	special := lipgloss.Color("153")
+	errColor := lipgloss.Color("196")
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -62,5 +73,16 @@ func Default() Styles {
 		FooterMeta: lipgloss.NewStyle().Foreground(special).Background(lipgloss.Color("236")),
 
 		Error: lipgloss.NewStyle().Foreground(errColor).Bold(true),
+
+		CodeBlockBg:    lipgloss.NewStyle().Background(lipgloss.Color("235")),
+		CodeBlockLabel: lipgloss.NewStyle().Foreground(subtle).Italic(true),
+		CodeKeyword:    lipgloss.NewStyle().Foreground(lipgloss.Color("204")).Background(lipgloss.Color("235")),
+		CodeString:     lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Background(lipgloss.Color("235")),
+		CodeComment:    lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Background(lipgloss.Color("235")).Italic(true),
+		CodeFunction:   lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(lipgloss.Color("235")),
+		CodeType:       lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Background(lipgloss.Color("235")),
+		CodeNumber:     lipgloss.NewStyle().Foreground(lipgloss.Color("180")).Background(lipgloss.Color("235")),
+		CodeOperator:   lipgloss.NewStyle().Foreground(lipgloss.Color("249")).Background(lipgloss.Color("235")),
+		CodePlain:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235")),
 	}
 }

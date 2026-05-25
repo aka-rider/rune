@@ -67,6 +67,8 @@ type Model struct {
 	resolver keybind.Resolver
 	registry command.Registry
 
+	highlighter CodeHighlighter
+
 	viewport   ViewportState
 	breadcrumb breadcrumb.Model
 	keys       keymap.Bindings
@@ -78,14 +80,15 @@ type Model struct {
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver) Model {
 	return Model{
-		buf:        buffer.New(""),
-		cursors:    cursor.CursorSet{},
-		history:    history.New(time.Now),
-		resolver:   resolver,
-		registry:   reg,
-		breadcrumb: breadcrumb.New(st),
-		keys:       keys,
-		styles:     st,
+		buf:         buffer.New(""),
+		cursors:     cursor.CursorSet{},
+		history:     history.New(time.Now),
+		resolver:    resolver,
+		registry:    reg,
+		highlighter: ChromaHighlighter(),
+		breadcrumb:  breadcrumb.New(st),
+		keys:        keys,
+		styles:      st,
 	}
 }
 
@@ -215,7 +218,7 @@ func (m Model) View() string {
 	for _, l := range lines {
 		var lineStr strings.Builder
 		for _, sp := range l.Spans {
-			lineStr.WriteString(sp.Text)
+			lineStr.WriteString(m.renderSpan(sp))
 		}
 		renderedLines = append(renderedLines, lineStr.String())
 	}
@@ -283,6 +286,9 @@ func (m Model) SetDir(dir string) Model {
 	return m
 }
 func (m Model) OpenPath() string { return m.filePath }
+
+// SetHighlighter replaces the code highlighter adapter. Used for testing.
+func (m Model) SetHighlighter(h CodeHighlighter) Model { m.highlighter = h; return m }
 
 // SetDirtyForTest marks the editor dirty without modifying content. Test-only.
 func (m Model) SetDirtyForTest() Model { m.dirty = true; return m }

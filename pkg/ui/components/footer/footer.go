@@ -20,6 +20,20 @@ type Entry = keymap.HelpEntry
 // ConfirmQuitMsg is emitted when a chord exit sequence completes (e.g., ^C^C).
 type ConfirmQuitMsg struct{}
 
+// DirtyGuardResponse enumerates user responses to a dirty guard prompt.
+type DirtyGuardResponse int
+
+const (
+	DirtyGuardSave DirtyGuardResponse = iota
+	DirtyGuardDiscard
+	DirtyGuardCancel
+)
+
+// DirtyGuardResponseMsg is emitted when the user responds to a dirty guard prompt.
+type DirtyGuardResponseMsg struct {
+	Response DirtyGuardResponse
+}
+
 // confirmExpired is an internal message to reset chord state after timeout.
 type confirmExpired struct{}
 
@@ -39,6 +53,7 @@ type Model struct {
 	pendingKey   string
 	helpExpanded bool
 	helpEntries  []Entry
+	dirtyGuard   bool
 }
 
 func New(keys keymap.Bindings, st styles.Styles) Model {
@@ -50,12 +65,31 @@ func (m Model) SetHelp(e []Entry) Model             { m.helpEntries = e; return 
 func (m Model) SetHelpExpanded(expanded bool) Model { m.helpExpanded = expanded; return m }
 func (m Model) HelpExpanded() bool                  { return m.helpExpanded }
 func (m Model) Height() int                         { return 1 }
+func (m Model) SetDirtyGuard(active bool) Model     { m.dirtyGuard = active; return m }
+func (m Model) InDirtyGuard() bool                  { return m.dirtyGuard }
 
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// Dirty guard mode consumes all keypresses until resolved.
+		if m.dirtyGuard {
+			switch {
+			case msg.Code == 's' && msg.Mod == 0:
+				m.dirtyGuard = false
+				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardSave} }
+			case msg.Code == 'd' && msg.Mod == 0:
+				m.dirtyGuard = false
+				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardDiscard} }
+			case key.Matches(msg, m.keys.Cancel):
+				m.dirtyGuard = false
+				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardCancel} }
+			}
+			// Consume all other keys during guard mode.
+			return m, nil
+		}
+
 		switch {
 		case key.Matches(msg, m.keys.ConfirmExitC):
 			if m.pendingKey == "c" {
@@ -98,7 +132,16 @@ func startConfirmTimer() tea.Cmd {
 func (m Model) View() string {
 	var left string
 
-	if m.pendingKey == "c" {
+	if m.dirtyGuard {
+		left = m.styles.FooterKey.Render("Unsaved changes.") +
+			m.styles.FooterHint.Render(" [") +
+			m.styles.FooterKey.Render("S") +
+			m.styles.FooterHint.Render("]ave [") +
+			m.styles.FooterKey.Render("D") +
+			m.styles.FooterHint.Render("]iscard [") +
+			m.styles.FooterKey.Render("Esc") +
+			m.styles.FooterHint.Render("] Cancel")
+	} else if m.pendingKey == "c" {
 		left = m.styles.FooterKey.Render("Press ^C again to exit")
 	} else if m.pendingKey == "d" {
 		left = m.styles.FooterKey.Render("Press ^D again to exit")

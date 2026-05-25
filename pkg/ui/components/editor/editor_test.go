@@ -8,6 +8,7 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
+	"rune/pkg/editor/display"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/keymap"
@@ -163,5 +164,92 @@ func TestApplyOperation(t *testing.T) {
 	// Undo should make it clean since we are at saved state
 	if m.IsDirty() {
 		t.Errorf("expected clean after undoing all edits")
+	}
+}
+
+func TestMarkdownReveal(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	m := New(keys, st, reg, res)
+	m = m.SetSize(80, 24)
+	m = m.SetContent("test.md", []byte("hello **bold** world"))
+	m = m.SetFocused(true)
+
+	// Cursor at position 0 — outside bold, should see rendered state
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	line := m.syntaxSnap.Lines[0]
+	var boldRendered *display.SyntaxSpan
+	for i := range line.Spans {
+		if line.Spans[i].Kind == display.TokenBold {
+			boldRendered = &line.Spans[i]
+			break
+		}
+	}
+	if boldRendered == nil {
+		t.Fatal("no bold span found when cursor outside")
+	}
+	if boldRendered.State != display.Rendered {
+		t.Errorf("bold should be Rendered when cursor at 0, got %v", boldRendered.State)
+	}
+	if boldRendered.Text != "bold" {
+		t.Errorf("rendered text should be 'bold', got %q", boldRendered.Text)
+	}
+
+	// Move cursor to position 8 (inside "bold") — should reveal
+	m.cursors = cursor.NewCursorSet(8)
+	m = m.syncDisplay()
+
+	line2 := m.syntaxSnap.Lines[0]
+	var boldRevealed *display.SyntaxSpan
+	for i := range line2.Spans {
+		if line2.Spans[i].Kind == display.TokenBold {
+			boldRevealed = &line2.Spans[i]
+			break
+		}
+	}
+	if boldRevealed == nil {
+		t.Fatal("no bold span found when cursor inside")
+	}
+	if boldRevealed.State != display.Revealed {
+		t.Errorf("bold should be Revealed when cursor at 8, got %v", boldRevealed.State)
+	}
+	if boldRevealed.Text != "**bold**" {
+		t.Errorf("revealed text should be '**bold**', got %q", boldRevealed.Text)
+	}
+
+	// Move cursor back out (position 14) — should render again
+	m.cursors = cursor.NewCursorSet(14)
+	m = m.syncDisplay()
+
+	line3 := m.syntaxSnap.Lines[0]
+	var boldAfter *display.SyntaxSpan
+	for i := range line3.Spans {
+		if line3.Spans[i].Kind == display.TokenBold {
+			boldAfter = &line3.Spans[i]
+			break
+		}
+	}
+	if boldAfter == nil {
+		t.Fatal("no bold span found after cursor moves out")
+	}
+	if boldAfter.State != display.Rendered {
+		t.Errorf("bold should be Rendered when cursor exits, got %v", boldAfter.State)
+	}
+
+	// Buffer offsets must remain constant across reveal transitions
+	if boldRendered.BufferStart != boldRevealed.BufferStart ||
+		boldRendered.BufferStart != boldAfter.BufferStart {
+		t.Errorf("BufferStart changed across reveal: %d, %d, %d",
+			boldRendered.BufferStart, boldRevealed.BufferStart, boldAfter.BufferStart)
+	}
+	if boldRendered.BufferEnd != boldRevealed.BufferEnd ||
+		boldRendered.BufferEnd != boldAfter.BufferEnd {
+		t.Errorf("BufferEnd changed across reveal: %d, %d, %d",
+			boldRendered.BufferEnd, boldRevealed.BufferEnd, boldAfter.BufferEnd)
 	}
 }

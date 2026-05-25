@@ -51,7 +51,20 @@ type SyntaxSpan struct {
 	BlockID     int
 	BlockStart  int
 	BlockEnd    int
+	AltText     string // image alt text
+	ImagePath   string // image path/URL
+	EmbedRef    string // embed reference (e.g. [[filename]])
+	CalloutKind string // callout type (e.g. "note", "warning")
 }
+
+// FrontmatterMode controls how frontmatter is displayed in rendered mode.
+type FrontmatterMode int
+
+const (
+	FrontmatterCollapsed FrontmatterMode = iota
+	FrontmatterSource
+	FrontmatterHidden
+)
 
 type SyntaxLine struct {
 	Spans []SyntaxSpan
@@ -76,9 +89,9 @@ type lineConversion struct {
 }
 
 type SyntaxSnapshot struct {
-	Lines      []SyntaxLine
-	Deltas     []OffsetDelta // global monotonic (for external consumers)
-	lineConvs  []lineConversion
+	Lines     []SyntaxLine
+	Deltas    []OffsetDelta // global monotonic (for external consumers)
+	lineConvs []lineConversion
 }
 
 // BufferToSyntax converts a buffer-space point to syntax-space.
@@ -172,12 +185,13 @@ func (s SyntaxSnapshot) SyntaxColWidth(line int) int {
 }
 
 type SyntaxMap struct {
-	lastBufVer    uint64
-	lastCursorPos coords.BufferPoint
+	lastBufVer      uint64
+	lastCursorPos   coords.BufferPoint
+	FrontmatterMode FrontmatterMode
 }
 
 func NewSyntaxMap() SyntaxMap {
-	return SyntaxMap{}
+	return SyntaxMap{FrontmatterMode: FrontmatterCollapsed}
 }
 
 func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap, SyntaxSnapshot) {
@@ -189,7 +203,12 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 	}
 
 	content := buf.Content()
-	parsed := parseMarkdown(content)
+	parsed, blocks := parseMarkdownAdvanced(content)
+	advBlocks := parseAdvancedBlocks(content, m.FrontmatterMode)
+	blocks = append(blocks, advBlocks...)
+
+	// Build a line→block index for fast lookup
+	lineToBlock := buildLineToBlockIndex(blocks, buf.LineCount())
 
 	lines := make([]SyntaxLine, buf.LineCount())
 	lineConvs := make([]lineConversion, buf.LineCount())
@@ -198,6 +217,49 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 	for i := 0; i < buf.LineCount(); i++ {
 		lineText := buf.Line(i)
 		lineStart := buf.LineStart(i)
+
+		// Check if this line belongs to a block
+		if blkIdx := lineToBlock[i]; blkIdx >= 0 {
+			block := blocks[blkIdx]
+			revealed := shouldRevealBlock(block, cursorLine)
+			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode)
+			lines[i] = SyntaxLine{Spans: spans}
+			// Block lines in rendered mode with hidden delimiters need deltas
+			needsHiddenLineDelta := false
+			if !revealed {
+				switch block.kind {
+				case TokenCodeFence:
+					needsHiddenLineDelta = i == block.startLine || i == block.endLine
+				case TokenMathBlock:
+					needsHiddenLineDelta = i == block.startLine || i == block.endLine
+				case TokenFrontmatter:
+					if m.FrontmatterMode == FrontmatterCollapsed {
+						needsHiddenLineDelta = i > block.startLine
+					} else if m.FrontmatterMode == FrontmatterHidden {
+						needsHiddenLineDelta = true
+					}
+				}
+			}
+			if needsHiddenLineDelta && len(lineText) > 0 {
+				lc := lineConversion{
+					deltas: []OffsetDelta{{
+						BufferOffset: len(lineText),
+						Delta:        len(lineText),
+					}},
+					hidden: []hiddenRange{{
+						start:   0,
+						end:     len(lineText),
+						clampTo: len(lineText),
+					}},
+				}
+				lineConvs[i] = lc
+				allDeltas = append(allDeltas, OffsetDelta{
+					BufferOffset: lineStart + len(lineText),
+					Delta:        len(lineText),
+				})
+			}
+			continue
+		}
 
 		if i < len(parsed) && len(parsed[i].spans) > 0 {
 			sl, lc := buildSyntaxLine(
@@ -230,6 +292,21 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 		Deltas:    allDeltas,
 		lineConvs: lineConvs,
 	}
+}
+
+// buildLineToBlockIndex creates a mapping from line index to block index.
+// Returns a slice where lineToBlock[i] = index into blocks, or -1 if no block.
+func buildLineToBlockIndex(blocks []mdBlock, lineCount int) []int {
+	index := make([]int, lineCount)
+	for i := range index {
+		index[i] = -1
+	}
+	for bi, block := range blocks {
+		for line := block.startLine; line <= block.endLine && line < lineCount; line++ {
+			index[line] = bi
+		}
+	}
+	return index
 }
 
 // buildSyntaxLine produces spans and conversion data for a single line.
@@ -276,6 +353,10 @@ func buildSyntaxLine(
 				State:       Revealed,
 				BufferStart: lineStart + ms.start,
 				BufferEnd:   lineStart + ms.end,
+				AltText:     spanAltText(ms),
+				ImagePath:   spanImagePath(ms),
+				EmbedRef:    spanEmbedRef(ms),
+				CalloutKind: spanCalloutKind(ms),
 			})
 		} else {
 			// Hide delimiters
@@ -319,6 +400,10 @@ func buildSyntaxLine(
 				State:       Rendered,
 				BufferStart: lineStart + ms.start,
 				BufferEnd:   lineStart + ms.end,
+				AltText:     spanAltText(ms),
+				ImagePath:   spanImagePath(ms),
+				EmbedRef:    spanEmbedRef(ms),
+				CalloutKind: spanCalloutKind(ms),
 			})
 		}
 
@@ -352,12 +437,52 @@ func buildSyntaxLine(
 // shouldReveal determines if raw markdown should be shown based on cursor.
 func shouldReveal(ms mdSpan, lineIdx, cursorLine, cursorCol int) bool {
 	switch ms.kind {
-	case TokenHeading, TokenBlockquote, TokenHorizontalRule, TokenTaskList:
+	case TokenHeading, TokenBlockquote, TokenHorizontalRule, TokenTaskList, TokenCallout:
+		// Line-level reveal
 		return lineIdx == cursorLine
+	case TokenInlineMath, TokenHighlight, TokenImage:
+		// Per-token reveal: cursor must be within the span
+		if lineIdx != cursorLine {
+			return false
+		}
+		return cursorCol >= ms.start && cursorCol < ms.end
 	default:
 		if lineIdx != cursorLine {
 			return false
 		}
 		return cursorCol >= ms.start && cursorCol < ms.end
 	}
+}
+
+// spanAltText extracts alt text metadata for image spans.
+func spanAltText(ms mdSpan) string {
+	if ms.kind == TokenImage {
+		return ms.text
+	}
+	return ""
+}
+
+// spanImagePath extracts image path metadata.
+func spanImagePath(ms mdSpan) string {
+	if ms.kind == TokenImage {
+		return ms.linkURL
+	}
+	return ""
+}
+
+// spanEmbedRef extracts embed reference metadata.
+func spanEmbedRef(ms mdSpan) string {
+	if ms.kind == TokenImage && ms.delimLeft == 3 {
+		// Embed reference uses ![[...]] with delimLeft=3
+		return ms.linkURL
+	}
+	return ""
+}
+
+// spanCalloutKind extracts callout kind metadata.
+func spanCalloutKind(ms mdSpan) string {
+	if ms.kind == TokenCallout {
+		return ms.linkURL
+	}
+	return ""
 }

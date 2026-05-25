@@ -32,10 +32,22 @@ func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
 // ErrMsg signals an I/O error to the workspace page.
 type ErrMsg struct{ Err error }
 
-// leftPaneWidth is the default width for the sidebar. It is a Model field
-// so it can be adjusted at runtime (e.g., user resize). This is not a
-// package-level constant — components expose Height()/Width() for intrinsic sizing.
 const defaultLeftPaneW = 22
+
+type pendingDirtyKind int
+
+const (
+	pendingSwitchFile pendingDirtyKind = iota
+	pendingCloseFile
+)
+
+type pendingDirtyAction struct {
+	kind          pendingDirtyKind
+	path          string // target path for switch; current path for close
+	nextPath      string // closeFile only: file to load after close
+	saveInFlight  bool
+	saveRequestID string
+}
 
 type Model struct {
 	totalWidth, totalHeight int
@@ -49,6 +61,7 @@ type Model struct {
 	err                     error
 	keys                    keymap.Bindings
 	styles                  styles.Styles
+	pending                 *pendingDirtyAction
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver) Model {
@@ -80,7 +93,6 @@ func (m Model) recalcLayout() Model {
 		centerW = 0
 	}
 
-	// Subtract border cells (1 left + 1 right, 1 top + 1 bottom = 2 each axis)
 	innerH := contentH - 2
 	if innerH < 0 {
 		innerH = 0
@@ -101,7 +113,6 @@ func (m Model) recalcLayout() Model {
 	}
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
-
 	m.editor = m.editor.SetSize(innerCenterW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
 	return m
@@ -117,6 +128,99 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
+func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
+	if path == m.editor.OpenPath() {
+		return m, nil
+	}
+	if m.editor.IsDirty() {
+		m.pending = &pendingDirtyAction{kind: pendingSwitchFile, path: path}
+		m.footer = m.footer.SetDirtyGuard(true)
+		return m, nil
+	}
+	return m, editor.LoadFileCmd(path)
+}
+
+func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
+	currentPath := m.editor.OpenPath()
+	if currentPath == "" {
+		return m, nil
+	}
+	nextPath := m.opentabs.NextPath(currentPath)
+	if m.editor.IsDirty() {
+		m.pending = &pendingDirtyAction{
+			kind:     pendingCloseFile,
+			path:     currentPath,
+			nextPath: nextPath,
+		}
+		m.footer = m.footer.SetDirtyGuard(true)
+		return m, nil
+	}
+	return m.executeClose(currentPath, nextPath)
+}
+
+func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	var cmd tea.Cmd
+	m.opentabs = m.opentabs.CloseFile(closePath)
+	m.editor, cmd = m.editor.Update(editor.FileClosedMsg{Path: closePath})
+	cmds = append(cmds, cmd)
+	if nextPath != "" {
+		cmds = append(cmds, editor.LoadFileCmd(nextPath))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleDirtyGuardResponse(resp footer.DirtyGuardResponse) (Model, tea.Cmd) {
+	if m.pending == nil {
+		return m, nil
+	}
+	switch resp {
+	case footer.DirtyGuardCancel:
+		m.pending = nil
+		return m, nil
+
+	case footer.DirtyGuardDiscard:
+		m.opentabs = m.opentabs.MarkClean(m.editor.OpenPath())
+		switch m.pending.kind {
+		case pendingSwitchFile:
+			path := m.pending.path
+			m.pending = nil
+			return m, editor.LoadFileCmd(path)
+		case pendingCloseFile:
+			closePath := m.pending.path
+			nextPath := m.pending.nextPath
+			m.pending = nil
+			return m.executeClose(closePath, nextPath)
+		}
+
+	case footer.DirtyGuardSave:
+		var saveID editor.SaveIdentity
+		var cmd tea.Cmd
+		m.editor, saveID, cmd = m.editor.StartSave()
+		m.pending.saveInFlight = true
+		m.pending.saveRequestID = saveID.RequestID
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m Model) syncCursorToFooter() Model {
+	info := m.editor.CursorInfo()
+	m.footer, _ = m.footer.Update(footer.UpdateCursorMsg{
+		Line:      info.Line,
+		Col:       info.Col,
+		WordCount: info.WordCount,
+	})
+	return m
+}
+
+func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
+	if m.totalWidth > 0 {
+		m = m.recalcLayout()
+	}
+	return m, tea.Batch(cmds...)
+}
+
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
@@ -126,13 +230,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
 
 	case tea.KeyPressMsg:
+		// Priority 1: Dirty guard — footer consumes all keys.
+		if m.footer.InDirtyGuard() {
+			m.footer, cmd = m.footer.Update(msg)
+			cmds = append(cmds, cmd)
+			return m.finalize(cmds)
+		}
+
+		// Priority 2: Save in-flight — consume all keys.
+		if m.pending != nil && m.pending.saveInFlight {
+			return m.finalize(cmds)
+		}
+
+		// Priority 3: Global workspace keys.
+		consumed := true
 		switch {
 		case key.Matches(msg, m.keys.TabSwitch):
 			if msg.Code >= '1' && msg.Code <= '9' {
 				idx := int(msg.Code - '1')
 				if path := m.opentabs.PathAt(idx); path != "" {
 					m.opentabs = m.opentabs.SelectIndex(idx)
-					cmds = append(cmds, editor.LoadFileCmd(path))
+					m, cmd = m.requestOpenPath(path)
+					cmds = append(cmds, cmd)
 				}
 			}
 
@@ -147,22 +266,58 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.focus = paneCenter
 
 		case key.Matches(msg, m.keys.CloseFile):
-			if path := m.editor.OpenPath(); path != "" {
-				m.opentabs = m.opentabs.CloseFile(path)
-				m.editor, cmd = m.editor.Update(editor.FileClosedMsg{Path: path})
-				cmds = append(cmds, cmd)
-			}
-
+			m, cmd = m.requestCloseCurrent()
+			cmds = append(cmds, cmd)
 
 		case key.Matches(msg, m.keys.ZenMode):
 			m.leftVisible = !m.leftVisible
 			if !m.leftVisible && m.focus.isLeft() {
 				m.focus = paneCenter
 			}
+
+		default:
+			consumed = false
 		}
 
+		if consumed {
+			if key.Matches(msg, m.keys.ConfirmExitC) || key.Matches(msg, m.keys.ConfirmExitD) {
+				m.footer, cmd = m.footer.Update(msg)
+				cmds = append(cmds, cmd)
+			}
+			return m.finalize(cmds)
+		}
+
+		// Priority 4: Editor wants modal input — skip footer help toggle.
+		if m.focus == paneCenter && m.editor.WantsModalInput() {
+			m.editor = m.editor.SetFocused(true)
+			m.editor, cmd = m.editor.Update(msg)
+			cmds = append(cmds, cmd)
+			m = m.syncCursorToFooter()
+			return m.finalize(cmds)
+		}
+
+		// Forward to all children; they gate on focused state.
+		m.filetree = m.filetree.SetFocused(m.focus == paneTree)
+		m.filetree, cmd = m.filetree.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
+		m.opentabs, cmd = m.opentabs.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m.editor = m.editor.SetFocused(m.focus == paneCenter)
+		m.editor, cmd = m.editor.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m.footer, cmd = m.footer.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m = m.syncCursorToFooter()
+		return m.finalize(cmds)
+
 	case filetree.FileSelectedMsg:
-		cmds = append(cmds, editor.LoadFileCmd(msg.Path))
+		m, cmd = m.requestOpenPath(msg.Path)
+		cmds = append(cmds, cmd)
 
 	case filetree.DirSelectedMsg:
 		cmds = append(cmds, loadDirCmd(msg.Path, "."))
@@ -171,15 +326,49 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor = m.editor.SetDir(msg.Root)
 
 	case opentabs.TabSelectedMsg:
-		cmds = append(cmds, editor.LoadFileCmd(msg.Path))
+		m, cmd = m.requestOpenPath(msg.Path)
+		cmds = append(cmds, cmd)
 
 	case editor.FileLoadedMsg:
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 
+	case editor.ContentChangedMsg:
+		if msg.Dirty {
+			m.opentabs = m.opentabs.MarkDirty(msg.Path)
+		} else {
+			m.opentabs = m.opentabs.MarkClean(msg.Path)
+		}
+
+	case editor.FileSavedMsg:
+		m.opentabs = m.opentabs.MarkClean(msg.Path)
+		if m.pending != nil && m.pending.saveInFlight && m.pending.saveRequestID == msg.RequestID {
+			m.pending.saveInFlight = false
+			switch m.pending.kind {
+			case pendingSwitchFile:
+				path := m.pending.path
+				m.pending = nil
+				cmds = append(cmds, editor.LoadFileCmd(path))
+			case pendingCloseFile:
+				closePath := m.pending.path
+				nextPath := m.pending.nextPath
+				m.pending = nil
+				m, cmd = m.executeClose(closePath, nextPath)
+				cmds = append(cmds, cmd)
+			}
+		}
+
 	case editor.FileLoadErrorMsg:
 		m.err = msg.Err
+
 	case editor.FileSaveErrorMsg:
 		m.err = msg.Err
+		if m.pending != nil && m.pending.saveInFlight && m.pending.saveRequestID == msg.RequestID {
+			m.pending = nil
+		}
+
+	case footer.DirtyGuardResponseMsg:
+		m, cmd = m.handleDirtyGuardResponse(msg.Response)
+		cmds = append(cmds, cmd)
 
 	case ErrMsg:
 		m.err = msg.Err
@@ -188,27 +377,27 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
-	// Update children — set focus before forwarding messages
-	m.filetree = m.filetree.SetFocused(m.focus == paneTree)
-	m.filetree, cmd = m.filetree.Update(msg)
-	cmds = append(cmds, cmd)
+	// Forward non-key messages to children.
+	if _, isKey := msg.(tea.KeyPressMsg); !isKey {
+		m.filetree = m.filetree.SetFocused(m.focus == paneTree)
+		m.filetree, cmd = m.filetree.Update(msg)
+		cmds = append(cmds, cmd)
 
-	m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
-	m.opentabs, cmd = m.opentabs.Update(msg)
-	cmds = append(cmds, cmd)
+		m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
+		m.opentabs, cmd = m.opentabs.Update(msg)
+		cmds = append(cmds, cmd)
 
-	m.editor = m.editor.SetFocused(m.focus == paneCenter)
-	m.editor, cmd = m.editor.Update(msg)
-	cmds = append(cmds, cmd)
+		m.editor = m.editor.SetFocused(m.focus == paneCenter)
+		m.editor, cmd = m.editor.Update(msg)
+		cmds = append(cmds, cmd)
 
-	m.footer, cmd = m.footer.Update(msg)
-	cmds = append(cmds, cmd)
+		m.footer, cmd = m.footer.Update(msg)
+		cmds = append(cmds, cmd)
 
-	if m.totalWidth > 0 {
-		m = m.recalcLayout()
+		m = m.syncCursorToFooter()
 	}
 
-	return m, tea.Batch(cmds...)
+	return m.finalize(cmds)
 }
 
 func (m Model) View() tea.View {
