@@ -20,7 +20,7 @@ type mockClipboard struct {
 	content string
 }
 
-func (c *mockClipboard) ReadText() (string, error)  { return c.content, nil }
+func (c *mockClipboard) ReadText() (string, error)   { return c.content, nil }
 func (c *mockClipboard) WriteText(text string) error { c.content = text; return nil }
 
 func newTestEditorWithClipboard(content string, clipText string) (Model, *mockClipboard) {

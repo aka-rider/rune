@@ -75,5 +75,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	v := m.ws.View()
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
 	return v
 }

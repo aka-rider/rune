@@ -175,12 +175,12 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 		}
 	}
 
-	add(b.Up, "nav.up", "editorFocused")
-	add(b.Down, "nav.down", "editorFocused")
-	add(b.Left, "nav.left", "editorFocused")
-	add(b.Right, "nav.right", "editorFocused")
-	add(b.GotoTop, "nav.line-start", "editorFocused")
-	add(b.GotoBottom, "nav.line-end", "editorFocused")
+	add(b.Up, "cursor.line-up", "editorFocused")
+	add(b.Down, "cursor.line-down", "editorFocused")
+	add(b.Left, "cursor.character-left", "editorFocused")
+	add(b.Right, "cursor.character-right", "editorFocused")
+	add(b.GotoTop, "cursor.line-start", "editorFocused")
+	add(b.GotoBottom, "cursor.line-end", "editorFocused")
 	add(b.Backspace, "edit.delete-left", "editorFocused && !readOnly")
 	add(b.Indent, "edit.indent", "editorFocused && !readOnly")
 	add(b.Outdent, "edit.outdent", "editorFocused && !readOnly")

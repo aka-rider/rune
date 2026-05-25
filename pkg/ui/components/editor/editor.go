@@ -47,6 +47,11 @@ type CursorInfo struct {
 	ChordPending string
 }
 
+type ClipboardPort struct {
+	ReadText  func() (string, error)
+	WriteText func(string) error
+}
+
 type Model struct {
 	buf              buffer.Buffer
 	cursors          cursor.CursorSet
@@ -68,7 +73,9 @@ type Model struct {
 	registry command.Registry
 
 	highlighter CodeHighlighter
+	clipboard   ClipboardPort
 
+	mouse      mouseState
 	viewport   ViewportState
 	breadcrumb breadcrumb.Model
 	keys       keymap.Bindings
@@ -102,6 +109,9 @@ func hashContent(content string) string {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case ClipboardContentMsg:
+		return m.handlePasteContent(msg.Text, time.Now())
+
 	case FileLoadedMsg:
 		b, err := buffer.FromBytes(msg.Content)
 		if err == nil {
@@ -136,6 +146,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.activeSave.InFlight = false
 			// handle error if needed
 		}
+
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg, time.Now())
+
+	case tea.MouseMotionMsg:
+		return m.handleMouseMotion(msg)
+
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 
 	case tea.KeyPressMsg:
 		if !m.focused {
@@ -294,3 +313,8 @@ func (m Model) SetHighlighter(h CodeHighlighter) Model { m.highlighter = h; retu
 func (m Model) SetDirtyForTest() Model { m.dirty = true; return m }
 
 func PreferredWidth() int { return 40 }
+
+func (m Model) SetClipboard(port ClipboardPort) Model {
+	m.clipboard = port
+	return m
+}
