@@ -6,6 +6,7 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
+	"rune/pkg/editor/display"
 	"rune/pkg/editor/history"
 
 	tea "charm.land/bubbletea/v2"
@@ -83,7 +84,21 @@ func (m Model) applyRedo() (Model, tea.Cmd) {
 }
 
 func (m Model) syncDisplay() Model {
-	// Stub implementation
+	if m.syntaxMap == (display.SyntaxMap{}) {
+		m.syntaxMap = display.NewSyntaxMap()
+	}
+	if m.wrapMap == (display.WrapMap{}) {
+		m.wrapMap = display.NewWrapMap(0)
+	}
+
+	m.syntaxMap, m.syntaxSnap = m.syntaxMap.Sync(m.buf, m.cursors)
+	width := m.width
+	if width <= 0 {
+		width = 0
+	}
+	m.wrapMap = m.wrapMap.SetWidth(width)
+	m.wrapSnap = m.wrapMap.Sync(m.syntaxSnap)
+	m.snapshot = display.BuildSnapshot(m.wrapSnap)
 	return m
 }
 

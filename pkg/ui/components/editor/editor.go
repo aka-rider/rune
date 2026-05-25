@@ -17,6 +17,8 @@ import (
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/components/breadcrumb"
 	"rune/pkg/ui/keymap"
+	"strings"
+
 	"rune/pkg/ui/styles"
 )
 
@@ -105,6 +107,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cursors = cursor.CursorSet{} // simplified
 			m.savedContentHash = hashContent(m.buf.Content())
 			m.dirty = false
+			m = m.syncDisplay()
 		}
 
 	case FileClosedMsg:
@@ -113,6 +116,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.buf = buffer.New("")
 			m.savedContentHash = ""
 			m.dirty = false
+			m = m.syncDisplay()
 		}
 
 	case FileSavedMsg:
@@ -150,21 +154,59 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) View() string {
-	var bd string
-	if m.focused {
-		bd = fmt.Sprintf("Editor content: %s", m.filePath)
-	} else {
-		bd = "Editor unfocused"
+func (m Model) contentHeight() int {
+	h := m.height - m.breadcrumb.Height()
+	if h < 1 {
+		return 1
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Height(m.height).Width(m.width).Render(bd) // added explicit bounds
+	return h
+}
+
+func (m Model) View() string {
+    if m.width == 0 || m.height == 0 {
+		return ""
+	}
+
+	bcView := m.breadcrumb.View()
+	contentHeight := m.contentHeight()
+
+	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
+	lines = m.snapshot.SliceH(lines, m.viewport.ScrollCol, m.width)
+
+	var renderedLines []string
+	for _, l := range lines {
+		var lineStr strings.Builder
+		for _, sp := range l.Spans {
+			lineStr.WriteString(sp.Text)
+		}
+		renderedLines = append(renderedLines, lineStr.String())
+	}
+
+	for len(renderedLines) < contentHeight {
+		renderedLines = append(renderedLines, "~")
+	}
+
+	content := strings.Join(renderedLines, "\n")
+	
+	ret := lipgloss.JoinVertical(lipgloss.Left, bcView, content)
+	
+	if !m.focused {
+		ret = lipgloss.NewStyle().Faint(true).Render(ret)
+	}
+
+	return lipgloss.NewStyle().
+		MaxWidth(m.width).
+		MaxHeight(m.height).
+		Width(m.width).
+		Height(m.height).
+		Render(ret)
 }
 
 func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 	m.breadcrumb = m.breadcrumb.SetSize(w, 1)
-	return m
+	return m.syncDisplay()
 }
 
 func (m Model) Height() int             { return m.height }
@@ -193,6 +235,7 @@ func (m Model) SetContent(path string, content []byte) Model {
 		m.filePath = path
 		m.savedContentHash = hashContent(string(content))
 		m.dirty = false
+		m = m.syncDisplay()
 	}
 	return m
 }
