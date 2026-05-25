@@ -162,6 +162,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m.dispatchOperation(res, "edit.newline", time.Now())
 			}
 		}
+
+		// Cancel: Escape key routes to multicursor.escape (no resolver binding)
+		if msg.Code == tea.KeyEscape && msg.Mod == 0 {
+			ctx := command.CommandContext{
+				Buffer:  m.buf,
+				Cursors: m.cursors,
+			}
+			res := m.registry.Execute("multicursor.escape", ctx)
+			if res.Err == nil && res.Operation.Kind != command.OperationNone {
+				return m.dispatchOperation(res, "multicursor.escape", time.Now())
+			}
+		}
 	}
 	return m, cmd
 }
