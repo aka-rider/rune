@@ -7,6 +7,7 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
@@ -60,7 +61,10 @@ func NewApp() (Model, error) {
 		return Model{}, fmt.Errorf("building keybind resolver: %w", err)
 	}
 
-	ws := workspace.New(keys, st, registry, resolver)
+	// 8. Detect terminal capabilities
+	caps := terminal.DetectCapabilities()
+
+	ws := workspace.New(keys, st, registry, resolver, caps)
 	return Model{ws: ws}, nil
 }
 

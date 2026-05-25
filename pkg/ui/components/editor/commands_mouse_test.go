@@ -10,6 +10,7 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -21,7 +22,7 @@ func newMouseTestEditor(content string) Model {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetFocused(true)
 	m = m.SetSize(80, 24)
 	m = m.SetContent("test.md", []byte(content))

@@ -10,6 +10,7 @@ import (
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 
@@ -240,7 +241,7 @@ func TestSpec_Editing(t *testing.T) {
 		reg := builder.Build()
 		res, _ := keybind.NewResolver(nil)
 
-		m := New(keys, st, reg, res)
+		m := New(keys, st, reg, res, terminal.TermCaps{})
 		m = m.SetSize(40, 20)
 		m = m.SetFocused(true)
 		m.buf = buffer.New("hello")

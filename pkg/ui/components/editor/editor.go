@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,10 +16,9 @@ import (
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/components/breadcrumb"
 	"rune/pkg/ui/keymap"
-	"strings"
-
 	"rune/pkg/ui/styles"
 )
 
@@ -75,17 +75,20 @@ type Model struct {
 	highlighter CodeHighlighter
 	clipboard   ClipboardPort
 
-	mouse      mouseState
-	viewport   ViewportState
-	breadcrumb breadcrumb.Model
-	keys       keymap.Bindings
-	styles     styles.Styles
-	width      int
-	height     int
-	focused    bool
+	termCaps    terminal.TermCaps
+	imageConfig ImageConfig
+	mouse       mouseState
+	findOverlay FindOverlay
+	viewport    ViewportState
+	breadcrumb  breadcrumb.Model
+	keys        keymap.Bindings
+	styles      styles.Styles
+	width       int
+	height      int
+	focused     bool
 }
 
-func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver) Model {
+func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
 	return Model{
 		buf:         buffer.New(""),
 		cursors:     cursor.CursorSet{},
@@ -93,6 +96,8 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		resolver:    resolver,
 		registry:    reg,
 		highlighter: ChromaHighlighter(),
+		termCaps:    caps,
+		imageConfig: ImageConfig{AssetsDir: "assets"},
 		breadcrumb:  breadcrumb.New(st),
 		keys:        keys,
 		styles:      st,
@@ -110,7 +115,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case ClipboardContentMsg:
+		if len(msg.ImageData) > 0 {
+			return m.handleImagePaste(msg.ImageData, msg.MIMEType, time.Now())
+		}
 		return m.handlePasteContent(msg.Text, time.Now())
+
+	case ImageSavedMsg:
+		return m.handleImageSaved(msg.RelativePath, time.Now())
+
+	case ImageSaveErrorMsg:
+		// Error saved; no-op for now (could surface to footer)
+		return m, nil
 
 	case FileLoadedMsg:
 		b, err := buffer.FromBytes(msg.Content)
@@ -161,26 +176,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// TODO: Properly evaluate keybind entries
-		// For now, if string matches 'cmd.s', pass file.save
-		if msg.Code == 's' && msg.Mod == tea.ModMeta {
-			res := m.registry.Execute("file.save", command.CommandContext{
-				Buffer:       m.buf,
-				FilePath:     m.filePath,
-				NewRequestID: func() string { return "req-time-" + time.Now().String() },
-				HashContent:  hashContent,
-			})
-			return m.dispatchOperation(res, "file.save", time.Now())
+		// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
+		if msg.Code == 'f' && msg.Mod == tea.ModMeta {
+			m.findOverlay = m.findOverlay.open(false)
+			return m, nil
+		}
+		if msg.Code == 'h' && msg.Mod == tea.ModMeta {
+			m.findOverlay = m.findOverlay.open(true)
+			return m, nil
 		}
 
-		// Undo: Cmd+Z
+		// When find overlay is visible, it consumes ALL keys
+		if m.findOverlay.visible {
+			var consumed bool
+			m.findOverlay, consumed = m.findOverlay.consumeKey(msg)
+			if consumed {
+				return m, nil
+			}
+		}
+
+		// Undo: Cmd+Z (no resolver binding)
 		if msg.Code == 'z' && msg.Mod == tea.ModMeta {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
 			return m, cmd
 		}
 
-		// Redo: Cmd+Shift+Z
+		// Redo: Cmd+Shift+Z (no resolver binding)
 		if msg.Code == 'z' && msg.Mod == (tea.ModMeta|tea.ModShift) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
@@ -208,6 +230,49 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			res := m.registry.Execute("multicursor.escape", ctx)
 			if res.Err == nil && res.Operation.Kind != command.OperationNone {
 				return m.dispatchOperation(res, "multicursor.escape", time.Now())
+			}
+		}
+
+		// Resolve via keybind resolver for all other keys
+		chord := keybind.ChordFromKeyMsg(msg)
+		hasSel := false
+		for _, c := range m.cursors.All() {
+			if c.HasSelection() {
+				hasSel = true
+				break
+			}
+		}
+		resCtx := keybind.ResolverContext{
+			EditorFocused:  true,
+			HasSelection:   hasSel,
+			HasMultiCursor: m.cursors.IsMulti(),
+			ReadOnly:       false,
+		}
+		newResolver, resResult := m.resolver.Resolve(chord, resCtx)
+		m.resolver = newResolver
+		switch resResult.Kind {
+		case keybind.ResultFound:
+			res := m.registry.Execute(resResult.Command, command.CommandContext{
+				Buffer:       m.buf,
+				FilePath:     m.filePath,
+				NewRequestID: func() string { return "req-time-" + time.Now().String() },
+				HashContent:  hashContent,
+			})
+			m, cmd = m.dispatchOperation(res, resResult.Command, time.Now())
+		case keybind.ResultMoreChordsNeeded:
+			// Chord incomplete — wait for next key
+		case keybind.ResultNoMatch:
+			if msg.Mod == 0 && isPrintableChar(msg.Code) {
+				char := string(msg.Code)
+				res := m.registry.Execute("edit.insert-character", command.CommandContext{
+					Buffer:  m.buf,
+					Cursors: m.cursors,
+					Args:    map[string]any{"char": char},
+				})
+				if res.Err == nil && res.Operation.Kind != command.OperationNone {
+					m = m.applyOperation(res.Operation, history.EditInsertChar, time.Now())
+					m = m.syncDisplay()
+				}
 			}
 		}
 	}
@@ -274,7 +339,7 @@ func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
 func (m Model) Content() string         { return m.buf.Content() }
 func (m Model) IsDirty() bool           { return m.dirty }
 func (m Model) FilePath() string        { return m.filePath }
-func (m Model) WantsModalInput() bool   { return false }
+func (m Model) WantsModalInput() bool   { return m.findOverlay.visible }
 func (m Model) StartSave() (Model, SaveIdentity, tea.Cmd) {
 	req := SaveRequest{
 		Path:        m.filePath,
@@ -317,4 +382,9 @@ func PreferredWidth() int { return 40 }
 func (m Model) SetClipboard(port ClipboardPort) Model {
 	m.clipboard = port
 	return m
+}
+
+// isPrintableChar reports whether the rune is a printable ASCII character.
+func isPrintableChar(r rune) bool {
+	return r >= ' ' && r <= '~'
 }

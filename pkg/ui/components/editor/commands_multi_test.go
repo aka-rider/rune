@@ -10,6 +10,7 @@ import (
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 
@@ -135,7 +136,7 @@ func TestSpec_MultiCursorEditing(t *testing.T) {
 		reg := builder.Build()
 		res, _ := keybind.NewResolver(nil)
 
-		m := New(keys, st, reg, res)
+		m := New(keys, st, reg, res, terminal.TermCaps{})
 		m = m.SetSize(80, 24)
 		m = m.SetFocused(true)
 		m.buf = buffer.New("abc")
@@ -285,7 +286,7 @@ func TestSpec_MultiCursorEditing(t *testing.T) {
 		reg := builder.Build()
 		resolver, _ := keybind.NewResolver(nil)
 
-		m := New(keys, st, reg, resolver)
+		m := New(keys, st, reg, resolver, terminal.TermCaps{})
 		m = m.SetSize(80, 24)
 		m = m.SetFocused(true)
 		m.buf = buffer.New("abc")
@@ -316,7 +317,7 @@ func TestSpec_MultiCursorEditing(t *testing.T) {
 		reg := builder.Build()
 		resolver, _ := keybind.NewResolver(nil)
 
-		m := New(keys, st, reg, resolver)
+		m := New(keys, st, reg, resolver, terminal.TermCaps{})
 		m = m.SetSize(80, 24)
 		m = m.SetFocused(true)
 		m.buf = buffer.New("hello")

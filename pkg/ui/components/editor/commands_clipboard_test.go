@@ -9,6 +9,7 @@ import (
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 
@@ -33,7 +34,7 @@ func newTestEditorWithClipboard(content string, clipText string) (Model, *mockCl
 	reg := builder.Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m = m.SetSize(80, 24)
 	m = m.SetFocused(true)
 	m = m.SetContent("test.txt", []byte(content))

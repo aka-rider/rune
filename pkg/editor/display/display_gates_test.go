@@ -43,7 +43,7 @@ func TestWrapMap_WidthAndTabs(t *testing.T) {
 
 	wMap := display.NewWrapMap(8)
 	wSnapshot := wMap.Sync(sSnapshot)
-	
+
 	if len(wSnapshot.Segments) < 2 {
 		t.Fatalf("Expected line to wrap")
 	}
@@ -55,7 +55,7 @@ func TestWrapMap_WidthAndTabs(t *testing.T) {
 	text2 := "abcdef中ñ"
 	buf2 := buffer.New(text2)
 	_, sSnapshot2 := sMap.Sync(buf2, cursors)
-	
+
 	wMap2 := display.NewWrapMap(7)
 	wSnapshot2 := wMap2.Sync(sSnapshot2)
 	seg2_0 := wSnapshot2.Segments[0].Spans[0].Text

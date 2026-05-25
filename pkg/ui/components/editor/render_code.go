@@ -16,6 +16,8 @@ func (m Model) renderSpan(sp display.DisplaySpan) string {
 	switch {
 	case sp.Kind == display.TokenCodeFence && sp.State == display.Rendered:
 		return m.renderCodeFenceSpan(sp)
+	case sp.Kind == display.TokenImage && sp.State == display.Rendered:
+		return renderImageFallback(sp.AltText, m.termCaps)
 	default:
 		return sp.Text
 	}

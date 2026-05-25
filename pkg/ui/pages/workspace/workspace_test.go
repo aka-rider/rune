@@ -8,6 +8,7 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/opentabs"
@@ -23,7 +24,7 @@ func newTestWorkspace(t *testing.T) Model {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res)
+	m := New(keys, st, reg, res, terminal.TermCaps{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
 }

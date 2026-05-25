@@ -11,6 +11,7 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
@@ -64,11 +65,11 @@ type Model struct {
 	pending                 *pendingDirtyAction
 }
 
-func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver) Model {
+func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
 	return Model{
 		filetree:    filetree.New(keys, st),
 		opentabs:    opentabs.New(keys, st),
-		editor:      editor.New(keys, st, reg, resolver),
+		editor:      editor.New(keys, st, reg, resolver, caps),
 		footer:      footer.New(keys, st).SetHelp(keys.HelpText()),
 		focus:       paneTree,
 		leftVisible: true,

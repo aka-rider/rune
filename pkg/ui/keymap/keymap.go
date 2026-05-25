@@ -34,37 +34,45 @@ type Bindings struct {
 	SaveFile              key.Binding
 	AddCursorAbove        key.Binding
 	AddCursorBelow        key.Binding
+	FindOpen              key.Binding
+	FindReplaceOpen       key.Binding
+	FindNext              key.Binding
+	FindPrev              key.Binding
 }
 
 func Default() Bindings {
 	return Bindings{
-		Up:             key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
-		Down:           key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
-		Left:           key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
-		Right:          key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),
-		GotoTop:        key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "top")),
-		GotoBottom:     key.NewBinding(key.WithKeys("end"), key.WithHelp("end", "bottom")),
-		PrimaryAction:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open/newline")),
-		Cancel:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		ZenMode:        key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "zen")),
-		CloseFile:      key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "close")),
-		PageUp:         key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
-		PageDown:       key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
-		HalfPageUp:     key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "½ up")),
-		HalfPageDown:   key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
-		TabSwitch:      key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
-		ConfirmExitC:   key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
-		ConfirmExitD:   key.NewBinding(key.WithKeys("alt+ctrl+d"), key.WithHelp("⌥^d", "exit")),
-		PinTab:         key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
-		FocusExplorer:  key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
-		FocusEditor:    key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
-		HelpExpand:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Backspace:      key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
-		Indent:         key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
-		Outdent:        key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
-		SaveFile:       key.NewBinding(key.WithKeys("cmd+s"), key.WithHelp("⌘s", "save")),
-		AddCursorAbove: key.NewBinding(key.WithKeys("alt+cmd+up"), key.WithHelp("⌥⌘↑", "cursor above")),
-		AddCursorBelow: key.NewBinding(key.WithKeys("alt+cmd+down"), key.WithHelp("⌥⌘↓", "cursor below")),
+		Up:              key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
+		Down:            key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
+		Left:            key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
+		Right:           key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),
+		GotoTop:         key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "top")),
+		GotoBottom:      key.NewBinding(key.WithKeys("end"), key.WithHelp("end", "bottom")),
+		PrimaryAction:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open/newline")),
+		Cancel:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		ZenMode:         key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "zen")),
+		CloseFile:       key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "close")),
+		PageUp:          key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
+		PageDown:        key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
+		HalfPageUp:      key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "½ up")),
+		HalfPageDown:    key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
+		TabSwitch:       key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
+		ConfirmExitC:    key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
+		ConfirmExitD:    key.NewBinding(key.WithKeys("alt+ctrl+d"), key.WithHelp("⌥^d", "exit")),
+		PinTab:          key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
+		FocusExplorer:   key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
+		FocusEditor:     key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
+		HelpExpand:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Backspace:       key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
+		Indent:          key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
+		Outdent:         key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
+		SaveFile:        key.NewBinding(key.WithKeys("cmd+s"), key.WithHelp("⌘s", "save")),
+		AddCursorAbove:  key.NewBinding(key.WithKeys("alt+cmd+up"), key.WithHelp("⌥⌘↑", "cursor above")),
+		AddCursorBelow:  key.NewBinding(key.WithKeys("alt+cmd+down"), key.WithHelp("⌥⌘↓", "cursor below")),
+		FindOpen:        key.NewBinding(key.WithKeys("cmd+f"), key.WithHelp("⌘f", "find")),
+		FindReplaceOpen: key.NewBinding(key.WithKeys("cmd+h"), key.WithHelp("⌘h", "find & replace")),
+		FindNext:        key.NewBinding(key.WithKeys("cmd+g"), key.WithHelp("⌘g", "find next")),
+		FindPrev:        key.NewBinding(key.WithKeys("shift+cmd+g"), key.WithHelp("⇧⌘g", "find prev")),
 	}
 }
 
@@ -122,6 +130,10 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.SaveFile)
 	add(b.AddCursorAbove)
 	add(b.AddCursorBelow)
+	add(b.FindOpen)
+	add(b.FindReplaceOpen)
+	add(b.FindNext)
+	add(b.FindPrev)
 	return keys
 }
 
@@ -187,6 +199,10 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.SaveFile, "file.save", "editorFocused")
 	add(b.AddCursorAbove, "multicursor.add-above", "editorFocused")
 	add(b.AddCursorBelow, "multicursor.add-below", "editorFocused")
+	add(b.FindOpen, "find.open", "editorFocused")
+	add(b.FindReplaceOpen, "find.replace-open", "editorFocused")
+	add(b.FindNext, "find.next", "editorFocused")
+	add(b.FindPrev, "find.previous", "editorFocused")
 
 	return mappings, parseErr
 }

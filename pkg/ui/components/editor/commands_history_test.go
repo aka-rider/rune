@@ -10,6 +10,7 @@ import (
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -23,7 +24,7 @@ func newTestEditor(content string) Model {
 	reg := builder.Build()
 	resolver, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, resolver)
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
 	m = m.SetSize(80, 24)
 	m = m.SetFocused(true)
 	m.buf = buffer.New(content)
@@ -81,9 +82,9 @@ func applyCmd(m Model, cmdName string, args map[string]any, now time.Time) Model
 
 func TestSpec_UndoCoalescing(t *testing.T) {
 	tests := []struct {
-		name      string
-		ops       []struct {
-			char   string
+		name string
+		ops  []struct {
+			char    string
 			deltaMs int64
 		}
 		wantUndos int
@@ -91,7 +92,7 @@ func TestSpec_UndoCoalescing(t *testing.T) {
 		{
 			name: "coalesce-fast-typing",
 			ops: []struct {
-				char   string
+				char    string
 				deltaMs int64
 			}{
 				{"a", 0},
@@ -103,7 +104,7 @@ func TestSpec_UndoCoalescing(t *testing.T) {
 		{
 			name: "break-on-idle",
 			ops: []struct {
-				char   string
+				char    string
 				deltaMs int64
 			}{
 				{"a", 0},
@@ -114,7 +115,7 @@ func TestSpec_UndoCoalescing(t *testing.T) {
 		{
 			name: "break-on-whitespace",
 			ops: []struct {
-				char   string
+				char    string
 				deltaMs int64
 			}{
 				{"a", 0},
@@ -125,7 +126,7 @@ func TestSpec_UndoCoalescing(t *testing.T) {
 		{
 			name: "break-on-delete",
 			ops: []struct {
-				char   string
+				char    string
 				deltaMs int64
 			}{
 				{"a", 0},
