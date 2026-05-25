@@ -21,300 +21,157 @@ type CursorState struct {
 	Anchor int
 }
 
-// ParseState parses a notation string into a TestState.
-//
-// Notation format:
-//
-//	|cursor at this position
-//	[forward selection text]
-//	]backward selection text[
-//	\| \[ \] escape the special characters
-//
-// Examples:
-//
-//	"hello|world"       -> Content: "helloworld", Cursor{Position: 5}
-//	"hello[world"        -> Content: "helloworld", Cursor{Position: 10, Anchor: 5}
-//	"]hello[world"       -> Content: "helloworld", Cursor{Position: 5, Anchor: 10}
-//	"|a[b|c"             -> Content: "abc", Cursors at 0 and 3
 func ParseState(notation string) (TestState, error) {
 	if notation == "" {
-		return TestState{Content: "", Cursors: []CursorState{}}, nil
+		return TestState{}, fmt.Errorf("notation: empty notation")
 	}
 
-	// Phase 1: tokenize into segments
-	type token struct {
-		kind      string // "text", "cursor", "selFwd", "selBack"
-		text      string // the actual text (without brackets)
-		anchor    int    // for selections: position of the anchor
-		cursorPos int    // position of the cursor in the resulting string
-	}
+	var content strings.Builder
+	var cursors []CursorState
 
-	var tokens []token
-	var curPos int // position in the *parsed* string (not the notation)
+	var openForward []int
+	var openBackward []int
 
 	i := 0
+	curPos := 0
+
 	for i < len(notation) {
 		ch := notation[i]
 
-		switch {
-		case ch == '\\':
-			// Escape sequence
+		if ch == '\\' {
 			if i+1 >= len(notation) {
 				return TestState{}, fmt.Errorf("notation: trailing backslash at end of string")
 			}
 			escaped := notation[i+1]
-			switch escaped {
-			case '|', '[', ']':
-				tokens = append(tokens, token{kind: "text", text: string(escaped)})
-				i += 2
+			if escaped == '|' || escaped == '[' || escaped == ']' || escaped == '\\' {
+				content.WriteByte(escaped)
 				curPos++
-			default:
-				// Treat backslash as literal
-				tokens = append(tokens, token{kind: "text", text: "\\"})
+				i += 2
+			} else {
+				content.WriteByte('\\')
+				curPos++
 				i++
 			}
-
-		case ch == '|':
-			tokens = append(tokens, token{kind: "cursor"})
-			i++
-
-		case ch == '[':
-			// Forward selection: [text]
-			// Find matching ] by tracking depth
-			depth := 1
-			j := i + 1
-			for j < len(notation) && depth > 0 {
-				switch notation[j] {
-				case '\\':
-					j += 2 // skip escaped char
-				case '[':
-					depth++
-					j++
-				case ']':
-					depth--
-					if depth == 0 {
-						break
-					}
-					j++
-				default:
-					j++
-				}
-			}
-			if depth != 0 {
-				// No closing bracket found
-				return TestState{}, fmt.Errorf("notation: unclosed '[' at position %d", i)
-			}
-			// j is now at the closing ']'
-			// Extract inner text: notation[i+1:j] (j points to closing ])
-			inner := extractText(notation[i+1:j])
-			selLen := len([]rune(inner))
-			// In forward selection: anchor is at start, cursor is at end
-			anchorOffset := curPos
-			cursorOffset := curPos + selLen
-			tokens = append(tokens, token{
-				kind:      "selFwd",
-				text:      inner,
-				anchor:    anchorOffset,
-				cursorPos: cursorOffset,
-			})
-			i = j + 1
-			curPos += selLen
-
-		case ch == ']':
-			// Backward selection: ]text[
-			// Find matching [ by tracking depth
-			depth := 1
-			j := i + 1
-			for j < len(notation) && depth > 0 {
-				switch notation[j] {
-				case '\\':
-					j += 2
-				case ']':
-					depth++
-					j++
-				case '[':
-					depth--
-					if depth == 0 {
-						break
-					}
-					j++
-				default:
-					j++
-				}
-			}
-			if depth != 0 {
-				// No opening bracket found — orphan ]
-				return TestState{}, fmt.Errorf("notation: orphan ']' at position %d", i)
-			}
-			// j is now at the opening '['
-			inner := extractText(notation[i+1:j])
-			selLen := len([]rune(inner))
-			// In backward selection: cursor is at start, anchor is at end
-			cursorOffset := curPos
-			anchorOffset := curPos + selLen
-			tokens = append(tokens, token{
-				kind:      "selBack",
-				text:      inner,
-				anchor:    anchorOffset,
-				cursorPos: cursorOffset,
-			})
-			i = j + 1
-			curPos += selLen
-
-		default:
-			tokens = append(tokens, token{kind: "text", text: string(ch)})
-			i++
-			curPos++
+			continue
 		}
-	}
 
-	// Phase 2: build content and cursors
-	var content strings.Builder
-	var cursors []CursorState
-
-	for _, t := range tokens {
-		switch t.kind {
-		case "text":
-			content.WriteString(t.text)
-		case "cursor":
+		if ch == '|' {
 			cursors = append(cursors, CursorState{Position: curPos, Anchor: curPos})
-		case "selFwd":
-			content.WriteString(t.text)
-			cursors = append(cursors, CursorState{Position: t.cursorPos, Anchor: t.anchor})
-		case "selBack":
-			content.WriteString(t.text)
-			cursors = append(cursors, CursorState{Position: t.cursorPos, Anchor: t.anchor})
+			i++
+			continue
 		}
+
+		if ch == '[' {
+			if len(openBackward) > 0 {
+				pos := openBackward[len(openBackward)-1]
+				openBackward = openBackward[:len(openBackward)-1]
+				cursors = append(cursors, CursorState{Position: pos, Anchor: curPos})
+			} else {
+				openForward = append(openForward, curPos)
+			}
+			i++
+			continue
+		}
+
+		if ch == ']' {
+			if len(openForward) > 0 {
+				anchor := openForward[len(openForward)-1]
+				openForward = openForward[:len(openForward)-1]
+				cursors = append(cursors, CursorState{Position: curPos, Anchor: anchor})
+			} else {
+				openBackward = append(openBackward, curPos)
+			}
+			i++
+			continue
+		}
+
+		content.WriteByte(ch)
+		curPos++
+		i++
 	}
 
+	if len(openForward) > 0 {
+		return TestState{}, fmt.Errorf("notation: unclosed '['")
+	}
+	if len(openBackward) > 0 {
+		return TestState{}, fmt.Errorf("notation: orphan ']'")
+	}
 	if len(cursors) == 0 {
 		return TestState{}, fmt.Errorf("notation: no cursor marker '|' found")
 	}
 
-	// Sort cursors by position
 	slices.SortFunc(cursors, func(a, b CursorState) int {
-		return a.Position - b.Position
+		if a.Position != b.Position {
+			return a.Position - b.Position
+		}
+		return a.Anchor - b.Anchor
 	})
 
-	return TestState{Content: content.String(), Cursors: cursors}, nil
+	return TestState{
+		Content: content.String(),
+		Cursors: cursors,
+	}, nil
 }
 
-// FormatState formats a TestState back into a notation string.
 func FormatState(s TestState) string {
 	if len(s.Cursors) == 0 {
 		return s.Content
 	}
 
-	// Build a map: offset -> CursorState
-	cursorMap := make(map[int]CursorState, len(s.Cursors))
+	type event struct {
+		pos   int
+		ch    rune
+		order int
+	}
+	var evs []event
+
 	for _, c := range s.Cursors {
-		cursorMap[c.Position] = c
-	}
-
-	var buf strings.Builder
-	runes := []rune(s.Content)
-	contentLen := len(runes)
-	i := 0
-
-	for i < contentLen {
-		cs, hasCursor := cursorMap[i]
-
-		if !hasCursor {
-			// Check if this position is inside a selection range
-			insideSelection := false
-			for _, c := range s.Cursors {
-				if c.Position != c.Anchor {
-					start, end := minInt(c.Position, c.Anchor), maxInt(c.Position, c.Anchor)
-					if i > start && i < end {
-						insideSelection = true
-						break
-					}
-				}
-			}
-			if insideSelection {
-				buf.WriteRune(runes[i])
-				i++
-				continue
-			}
-			buf.WriteRune(runes[i])
-			i++
-			continue
-		}
-
-		// We have a cursor at position i
-		if cs.Position == cs.Anchor {
-			// Simple cursor, no selection
-			buf.WriteString("|")
-			i++
+		if c.Position == c.Anchor {
+			evs = append(evs, event{c.Position, '|', 5})
+		} else if c.Anchor < c.Position {
+			// forward
+			evs = append(evs, event{c.Anchor, '[', 3})
+			evs = append(evs, event{c.Position, ']', 1})
 		} else {
-			// Selection
-			start, end := minInt(cs.Position, cs.Anchor), maxInt(cs.Position, cs.Anchor)
-			var selText strings.Builder
-			for k := start; k < end; k++ {
-				selText.WriteRune(runes[k])
-			}
-			selStr := escapeText(selText.String())
-
-			if cs.Position < cs.Anchor {
-				// Backward selection: ]text[
-				buf.WriteString("]")
-				buf.WriteString(selStr)
-				buf.WriteString("[")
-				i = end
-			} else {
-				// Forward selection: [text]
-				buf.WriteString("[")
-				buf.WriteString(selStr)
-				buf.WriteString("]")
-				i = cs.Anchor
-			}
+			// backward
+			evs = append(evs, event{c.Position, ']', 4})
+			evs = append(evs, event{c.Anchor, '[', 2})
 		}
 	}
 
-	return buf.String()
-}
+	// Sort events:
+	// primary: pos ascending
+	// secondary: order ascending
+	// Wait, if order is same, preserve stability or something. 
+    // It's mostly unique except overlapping identical cursors.
+	slices.SortFunc(evs, func(a, b event) int {
+		if a.pos != b.pos {
+			return a.pos - b.pos
+		}
+		return a.order - b.order
+	})
 
-// escapeText escapes special characters in selection text.
-func escapeText(s string) string {
 	var buf strings.Builder
-	for _, r := range s {
-		switch r {
-		case '|', '[', ']':
-			buf.WriteRune('\\')
-			buf.WriteRune(r)
-		default:
-			buf.WriteRune(r)
+	evIdx := 0
+	
+	maxPos := len(s.Content)
+	if len(evs) > 0 && evs[len(evs)-1].pos > maxPos {
+		maxPos = evs[len(evs)-1].pos
+	}
+
+	for i := 0; i <= maxPos; i++ {
+		for evIdx < len(evs) && evs[evIdx].pos == i {
+			buf.WriteRune(evs[evIdx].ch)
+			evIdx++
+		}
+		if i < len(s.Content) {
+			ch := s.Content[i]
+			if ch == '|' || ch == '[' || ch == ']' || ch == '\\' {
+				buf.WriteByte('\\')
+			}
+			buf.WriteByte(ch)
 		}
 	}
+
 	return buf.String()
-}
-
-// extractText extracts text from a notation segment, handling escape sequences.
-func extractText(s string) string {
-	var buf strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == '\\' && i+1 < len(s) {
-			buf.WriteByte(s[i+1])
-			i += 2
-		} else {
-			buf.WriteByte(s[i])
-			i++
-		}
-	}
-	return buf.String()
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

@@ -13,7 +13,7 @@ var update = flag.Bool("update", false, "update golden files")
 // GoldenFile compares actual content against a golden file.
 // If -update is set, creates or overwrites the golden file.
 // Otherwise, compares and fails the test on mismatch.
-func GoldenFile(t *testing.T, goldenPath, actual string) {
+func GoldenFile(t testing.TB, goldenPath, actual string) {
 	t.Helper()
 
 	if *update {
@@ -46,7 +46,7 @@ func GoldenFile(t *testing.T, goldenPath, actual string) {
 }
 
 // ReadGoldenFile reads the content of a golden file.
-func ReadGoldenFile(t *testing.T, goldenPath string) string {
+func ReadGoldenFile(t testing.TB, goldenPath string) string {
 	t.Helper()
 
 	content, err := os.ReadFile(goldenPath)
@@ -60,7 +60,7 @@ func ReadGoldenFile(t *testing.T, goldenPath string) string {
 }
 
 // EnsureGoldenDir creates the directory for a golden file path if it doesn't exist.
-func EnsureGoldenDir(t *testing.T, goldenPath string) {
+func EnsureGoldenDir(t testing.TB, goldenPath string) {
 	t.Helper()
 	dir := filepath.Dir(goldenPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -75,14 +75,14 @@ func HasGoldenFile(goldenPath string) bool {
 }
 
 // TestDir returns the test golden directory path.
-func TestDir(t *testing.T) string {
+func TestDir(t testing.TB) string {
 	t.Helper()
 	// Use the package name and test name to create a unique golden directory
 	return filepath.Join("testdata", t.Name())
 }
 
 // GoldenPath returns a golden file path for the given test and suffix.
-func GoldenPath(t *testing.T, suffix string) string {
+func GoldenPath(t testing.TB, suffix string) string {
 	t.Helper()
 	// Replace slashes in test name with underscores for filesystem safety
 	name := strings.ReplaceAll(t.Name(), "/", "_")

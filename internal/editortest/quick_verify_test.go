@@ -77,7 +77,7 @@ func TestQuickVerify(t *testing.T) {
 	}
 
 	// Test escape sequences round-trip
-	s9 := "a\\|b"
+	s9 := "a\\|b|"
 	ts9, err9 := ParseState(s9)
 	if err9 != nil {
 		t.Fatalf("ParseState(%q): unexpected error: %v", s9, err9)
