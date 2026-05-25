@@ -1,0 +1,8 @@
+go test fuzz v1
+string("000둒")
+int(-91)
+int(5)
+string("0")
+int(-63)
+int(-66)
+string("0")
