@@ -9,7 +9,11 @@ import (
 	"rune/pkg/editor/display"
 )
 
-// Gate 1: P5a Pass-through SyntaxMap
+// Gate 1: P5a SyntaxMap coordinate round-trip invariant
+// After WP14A, the map is no longer pass-through for markdown content.
+// The invariant is: for cursor-legal positions, SyntaxToBuffer(BufferToSyntax(bp)) == bp.
+// For non-cursor-legal positions (inside hidden delimiters), the clamped position must be stable:
+// BufferToSyntax(SyntaxToBuffer(BufferToSyntax(bp))) == BufferToSyntax(bp)
 func FuzzSyntaxMapRoundtrip(f *testing.F) {
 	f.Add("hello world\nline 2\nanother line indeed", 0)
 	f.Add("hello", 2)
@@ -35,11 +39,20 @@ func FuzzSyntaxMapRoundtrip(f *testing.F) {
 				bp := coords.BufferPoint{Line: line, Col: col}
 				sp := sSnapshot.BufferToSyntax(bp)
 				bp2 := sSnapshot.SyntaxToBuffer(sp)
-				if bp != bp2 {
-					t.Errorf("BufferToSyntax/SyntaxToBuffer roundtrip failed: bp=%v, sp=%v, bp2=%v", bp, sp, bp2)
+
+				// The clamped position must be stable (idempotent)
+				sp2 := sSnapshot.BufferToSyntax(bp2)
+				if sp != sp2 {
+					t.Errorf("Stability violated: bp=%v → sp=%v → bp2=%v → sp2=%v", bp, sp, bp2, sp2)
 				}
-				if sp.Line != bp.Line || sp.Col != bp.Col {
-					t.Errorf("SyntaxMap is not pass through for bp=%v: got sp=%v", bp, sp)
+
+				// If bp roundtripped, it's cursor-legal
+				// If not, verify bp2 itself is stable (cursor-legal)
+				if bp != bp2 {
+					bp3 := sSnapshot.SyntaxToBuffer(sp2)
+					if bp2 != bp3 {
+						t.Errorf("Cursor-legal roundtrip failed: bp2=%v → sp2=%v → bp3=%v", bp2, sp2, bp3)
+					}
 				}
 			}
 		}

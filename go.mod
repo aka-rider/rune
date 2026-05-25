@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.6
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/mattn/go-runewidth v0.0.23
+	github.com/yuin/goldmark v1.8.2
 )
 
 require (
