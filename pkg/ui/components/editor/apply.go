@@ -27,7 +27,11 @@ func (m Model) applyOperation(op command.Operation, kind history.EditKind, now t
 				Timestamp:     now,
 				Kind:          kind,
 			}
-			if m.history.ShouldCoalesce(kind, now) {
+			coalesce := m.history.ShouldCoalesce(kind, now)
+			if coalesce && kind == history.EditInsertChar && isWhitespaceEdit(op.Edits) {
+				coalesce = false
+			}
+			if coalesce {
 				m.history = m.history.MergeIntoLast(applied, group.CursorsAfter)
 			} else {
 				m.history = m.history.Push(group)
@@ -46,21 +50,19 @@ func (m Model) applyUndo() (Model, tea.Cmd) {
 	}
 	m.history = newHist
 
-	// apply the inversions of the edits (in reverse order, but buffer.ApplyEdits takes descending sorted edits,
-	// actually `group.Edits` is from buffer.ApplyEdits which applies descending.)
-	// When we insert something, standard ApplyEdits needs them non-overlapping descending.
-	// Wait, for Undo, we apply the inverse edits. We can just rebuild the whole buffer from scratch? No, just reverse.
-	var inverse []buffer.Edit
-	// Applied edits were already descending. If we reverse them to inverse edits, they might still be descending?
-	// Wait, if it inserted text, the new buffer has larger length. To remove it, start=Start, End=Start+len(Insert).
-	for _, ae := range group.Edits {
-		inverse = append(inverse, buffer.Edit{
+	// Build inverse edits: each applied edit's Insert becomes the range to delete,
+	// and its Deleted becomes what we re-insert.
+	inverse := make([]buffer.Edit, len(group.Edits))
+	for i, ae := range group.Edits {
+		inverse[i] = buffer.Edit{
 			Start:  ae.Start,
 			End:    ae.Start + len(ae.Insert),
 			Insert: ae.Deleted,
-		})
+		}
 	}
-	// Since original were sorted descending by Start, the Inverse edits' Start are also descending!
+
+	// Coalesced groups may have edits in ascending order; ApplyEdits requires descending.
+	inverse = buffer.CloneAndSortEditsDescending(inverse)
 
 	newBuf, _, err := m.buf.ApplyEdits(inverse)
 	if err == nil {
@@ -68,18 +70,54 @@ func (m Model) applyUndo() (Model, tea.Cmd) {
 		m.dirty = (hashContent(m.buf.Content()) != m.savedContentHash)
 	}
 
-	// Restore cursors
 	if len(group.CursorsBefore) > 0 {
-		// Not ideal, but just assume CursorsBefore can reconstruct CursorSet for now?
-		// M.cursors = cursor.NewCursorSetFromList(group.CursorsBefore)
-		// Let's check how to construct CursorSet
+		m.cursors = cursor.NewCursorSetFrom(group.CursorsBefore)
 	}
 
 	return m, nil
 }
 
 func (m Model) applyRedo() (Model, tea.Cmd) {
-	// Stub implementation
+	newHist, group, ok := m.history.Redo()
+	if !ok {
+		return m, nil
+	}
+	m.history = newHist
+
+	// To redo: reconstruct the original edits from AppliedEdits.
+	// AppliedEdits record the post-edit state. To redo from the pre-edit buffer,
+	// we need to reverse the inverse: delete what was previously deleted, insert what was inserted.
+	// The original edits applied to the pre-undo buffer can be reconstructed:
+	// For each applied edit (in the post-edit buffer): to get back to post-edit from pre-edit,
+	// we need edits that delete the Deleted text and insert the Insert text.
+	// The pre-edit positions correspond to Start adjusted for cumulative shifts.
+	//
+	// Since applied edits are stored descending by Start in post-edit buffer,
+	// we reconstruct original edits that are also descending.
+	edits := make([]buffer.Edit, len(group.Edits))
+	cumulativeShift := 0
+	// Process from last (smallest Start) to first (largest Start) to compute shifts
+	for i := len(group.Edits) - 1; i >= 0; i-- {
+		ae := group.Edits[i]
+		originalStart := ae.Start - cumulativeShift
+		edits[i] = buffer.Edit{
+			Start:  originalStart,
+			End:    originalStart + len(ae.Deleted),
+			Insert: ae.Insert,
+		}
+		cumulativeShift += len(ae.Insert) - len(ae.Deleted)
+	}
+
+	newBuf, _, err := m.buf.ApplyEdits(edits)
+	if err == nil {
+		m.buf = newBuf
+		m.dirty = (hashContent(m.buf.Content()) != m.savedContentHash)
+	}
+
+	if len(group.CursorsAfter) > 0 {
+		m.cursors = cursor.NewCursorSetFrom(group.CursorsAfter)
+	}
+
 	return m, nil
 }
 
@@ -113,6 +151,17 @@ func (m Model) scrollPreservingAnchor(oldSnapshot, newSnapshot interface{}) Mode
 }
 
 func (m Model) dispatchOperation(result command.Result, cmdName string, now time.Time) (Model, tea.Cmd) {
+	if result.Operation.Kind == command.OperationHistory {
+		switch cmdName {
+		case "history.undo":
+			m, _ = m.applyUndo()
+			m = m.syncDisplay()
+		case "history.redo":
+			m, _ = m.applyRedo()
+			m = m.syncDisplay()
+		}
+		return m, result.Cmd
+	}
 	m = m.applyOperation(result.Operation, m.editKindFromCommand(cmdName), now)
 	if result.Operation.Kind == command.OperationSaveFile {
 		var saveID SaveIdentity
@@ -133,8 +182,22 @@ func (m Model) clampCursorsToViewport() cursor.CursorSet {
 }
 
 func (m Model) editKindFromCommand(cmdName string) history.EditKind {
-	// Stub implementation
-	return history.EditBatch
+	switch cmdName {
+	case "edit.insert-character":
+		return history.EditInsertChar
+	case "edit.delete-left", "edit.delete-right":
+		return history.EditDeleteChar
+	case "edit.newline":
+		return history.EditNewline
+	case "clipboard.paste":
+		return history.EditPaste
+	case "edit.move-line-up", "edit.move-line-down":
+		return history.EditMoveLine
+	case "edit.clone-line-up", "edit.clone-line-down":
+		return history.EditCloneLine
+	default:
+		return history.EditBatch
+	}
 }
 
 func (m Model) chordTimeoutCmd() tea.Cmd {
@@ -157,4 +220,13 @@ func (m Model) startSaveRequest(req SaveRequest) (Model, SaveIdentity, tea.Cmd) 
 		InFlight:    true,
 	}
 	return m, m.activeSave, SaveFileCmd(req)
+}
+
+func isWhitespaceEdit(edits []buffer.Edit) bool {
+	for _, e := range edits {
+		if e.Insert == " " || e.Insert == "\t" || e.Insert == "\n" {
+			return true
+		}
+	}
+	return false
 }
