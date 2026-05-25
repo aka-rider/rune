@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -91,7 +92,7 @@ type Model struct {
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
 	return Model{
 		buf:         buffer.New(""),
-		cursors:     cursor.CursorSet{},
+		cursors:     cursor.NewCursorSet(0),
 		history:     history.New(time.Now),
 		resolver:    resolver,
 		registry:    reg,
@@ -132,7 +133,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if err == nil {
 			m.buf = b
 			m.filePath = msg.Path
-			m.cursors = cursor.CursorSet{} // simplified
+			m.cursors = cursor.NewCursorSet(0)
 			m.savedContentHash = hashContent(m.buf.Content())
 			m.dirty = false
 			m = m.syncDisplay()
@@ -199,6 +200,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Code == 'z' && msg.Mod == tea.ModMeta {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
+			m = m.scrollToCursor()
 			return m, cmd
 		}
 
@@ -206,6 +208,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Code == 'z' && msg.Mod == (tea.ModMeta|tea.ModShift) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
+			m = m.scrollToCursor()
 			return m, cmd
 		}
 
@@ -252,11 +255,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.resolver = newResolver
 		switch resResult.Kind {
 		case keybind.ResultFound:
+			contentHeight := m.contentHeight()
+			topRow := m.viewport.TopRow
+			scrollCol := m.viewport.ScrollCol
+			totalRows := m.snapshot.TotalRows
 			res := m.registry.Execute(resResult.Command, command.CommandContext{
-				Buffer:       m.buf,
-				FilePath:     m.filePath,
-				NewRequestID: func() string { return "req-time-" + time.Now().String() },
-				HashContent:  hashContent,
+				Buffer:         m.buf,
+				Cursors:        m.cursors,
+				FilePath:       m.filePath,
+				NewRequestID:   func() string { return "req-time-" + time.Now().String() },
+				HashContent:    hashContent,
+				BufferToSyntax: m.syntaxSnap.BufferToSyntax,
+				SyntaxToBuffer: m.syntaxSnap.SyntaxToBuffer,
+				SyntaxToWrap:   m.wrapSnap.SyntaxToWrap,
+				WrapToSyntax:   m.wrapSnap.WrapToSyntax,
+				ViewportBounds: func() (int, int) { return topRow, topRow + contentHeight },
+				ScrollCol:      func() int { return scrollCol },
+				ViewportHeight: func() int { return contentHeight },
+				TotalRows:      func() int { return totalRows },
 			})
 			m, cmd = m.dispatchOperation(res, resResult.Command, time.Now())
 		case keybind.ResultMoreChordsNeeded:
@@ -272,6 +288,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if res.Err == nil && res.Operation.Kind != command.OperationNone {
 					m = m.applyOperation(res.Operation, history.EditInsertChar, time.Now())
 					m = m.syncDisplay()
+					m = m.scrollToCursor()
 				}
 			}
 		}
@@ -298,11 +315,77 @@ func (m Model) View() string {
 	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
 	lines = m.snapshot.SliceH(lines, m.viewport.ScrollCol, m.width)
 
+	// Collect cursor byte offsets for rendering.
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
+	cursorOffsets := make(map[int]bool)
+	if m.focused {
+		for _, c := range m.cursors.All() {
+			cursorOffsets[c.Position] = true
+		}
+	}
+
 	var renderedLines []string
 	for _, l := range lines {
 		var lineStr strings.Builder
 		for _, sp := range l.Spans {
-			lineStr.WriteString(m.renderSpan(sp))
+			rendered := m.renderSpan(sp)
+			if !m.focused || len(cursorOffsets) == 0 {
+				lineStr.WriteString(rendered)
+				continue
+			}
+			// Check if any cursor falls within this span's buffer range.
+			hasCursor := false
+			for off := range cursorOffsets {
+				if off >= sp.BufferStart && off < sp.BufferEnd {
+					hasCursor = true
+					break
+				}
+			}
+			if !hasCursor {
+				lineStr.WriteString(rendered)
+				continue
+			}
+			// Render span text with cursor highlighting.
+			// For non-highlighted spans, rendered == sp.Text, so byte offsets align.
+			// For highlighted spans (code fences in Rendered state), the cursor
+			// won't be here because the syntax map reveals spans at cursor.
+			text := sp.Text
+			for off := range cursorOffsets {
+				if off >= sp.BufferStart && off < sp.BufferEnd {
+					relOff := off - sp.BufferStart
+					if relOff > len(text) {
+						relOff = len(text)
+					}
+					// Write text before cursor
+					lineStr.WriteString(text[:relOff])
+					// Write cursor character with reverse video
+					if relOff < len(text) {
+						rest := text[relOff:]
+						_, size := firstRune(rest)
+						lineStr.WriteString(cursorStyle.Render(rest[:size]))
+						text = rest[size:]
+					} else {
+						lineStr.WriteString(cursorStyle.Render(" "))
+						text = ""
+					}
+					break // Only render one cursor per span
+				}
+			}
+			lineStr.WriteString(text)
+		}
+		// If cursor is at end-of-line (past all spans), render block cursor
+		if m.focused {
+			lineEnd := 0
+			if len(l.Spans) > 0 {
+				last := l.Spans[len(l.Spans)-1]
+				lineEnd = last.BufferEnd
+			}
+			for off := range cursorOffsets {
+				if off == lineEnd {
+					lineStr.WriteString(cursorStyle.Render(" "))
+					break
+				}
+			}
 		}
 		renderedLines = append(renderedLines, lineStr.String())
 	}
@@ -387,4 +470,9 @@ func (m Model) SetClipboard(port ClipboardPort) Model {
 // isPrintableChar reports whether the rune is a printable ASCII character.
 func isPrintableChar(r rune) bool {
 	return r >= ' ' && r <= '~'
+}
+
+// firstRune returns the first rune and its byte size from s.
+func firstRune(s string) (rune, int) {
+	return utf8.DecodeRuneInString(s)
 }

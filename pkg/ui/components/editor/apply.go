@@ -141,7 +141,32 @@ func (m Model) syncDisplay() Model {
 }
 
 func (m Model) scrollToCursor() Model {
-	// Stub implementation
+	if len(m.cursors.All()) == 0 {
+		return m
+	}
+	primary := m.cursors.Primary()
+	bp := m.buf.OffsetToLineCol(primary.Position)
+	sp := m.syntaxSnap.BufferToSyntax(bp)
+	wp := m.wrapSnap.SyntaxToWrap(sp)
+
+	contentH := m.contentHeight()
+
+	// Vertical scroll
+	if wp.Row < m.viewport.TopRow {
+		m.viewport.TopRow = wp.Row
+	} else if wp.Row >= m.viewport.TopRow+contentH {
+		m.viewport.TopRow = wp.Row - contentH + 1
+	}
+
+	// Horizontal scroll (only when not soft-wrapping)
+	if !m.softWrap {
+		if wp.Col < m.viewport.ScrollCol {
+			m.viewport.ScrollCol = wp.Col
+		} else if wp.Col >= m.viewport.ScrollCol+m.width {
+			m.viewport.ScrollCol = wp.Col - m.width + 1
+		}
+	}
+
 	return m
 }
 
@@ -156,9 +181,11 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		case "history.undo":
 			m, _ = m.applyUndo()
 			m = m.syncDisplay()
+			m = m.scrollToCursor()
 		case "history.redo":
 			m, _ = m.applyRedo()
 			m = m.syncDisplay()
+			m = m.scrollToCursor()
 		}
 		return m, result.Cmd
 	}
@@ -178,6 +205,26 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		return m, result.Cmd
 	}
 
+	// Scroll operations adjust viewport without editing.
+	if result.Operation.Kind == command.OperationScroll {
+		m.viewport.TopRow += result.Operation.ScrollDY
+		m.viewport.ScrollCol += result.Operation.ScrollDX
+		if m.viewport.TopRow < 0 {
+			m.viewport.TopRow = 0
+		}
+		maxTop := m.snapshot.TotalRows - m.contentHeight()
+		if maxTop < 0 {
+			maxTop = 0
+		}
+		if m.viewport.TopRow > maxTop {
+			m.viewport.TopRow = maxTop
+		}
+		if m.viewport.ScrollCol < 0 {
+			m.viewport.ScrollCol = 0
+		}
+		return m, result.Cmd
+	}
+
 	// For cut, the edits are applied and the write cmd is built from the port.
 	var clipCmd tea.Cmd
 	if cmdName == "clipboard.cut" {
@@ -187,6 +234,7 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 
 	m = m.applyOperation(result.Operation, m.editKindFromCommand(cmdName), now)
 	m = m.syncDisplay()
+	m = m.scrollToCursor()
 
 	if result.Operation.Kind == command.OperationSaveFile {
 		var saveID SaveIdentity

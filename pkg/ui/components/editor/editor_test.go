@@ -332,3 +332,371 @@ func TestPrintableSpecialCharsInsertText(t *testing.T) {
 		})
 	}
 }
+
+// === Regression tests for cascading editor bugs ===
+
+// TestCursorSetInitialized verifies that New() and FileLoadedMsg produce a model
+// with a valid non-empty CursorSet (regression: bug #2 — zero-value CursorSet).
+func TestCursorSetInitialized(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+
+	// New() must produce a cursor at offset 0
+	all := m.cursors.All()
+	if len(all) == 0 {
+		t.Fatal("New() produced empty CursorSet — cursor must exist at offset 0")
+	}
+	if all[0].Position != 0 {
+		t.Errorf("New() cursor position = %d, want 0", all[0].Position)
+	}
+
+	// FileLoadedMsg must also produce a cursor at offset 0
+	m = m.SetSize(80, 24)
+	m, _ = m.Update(FileLoadedMsg{Path: "test.md", Content: []byte("line one\nline two\nline three")})
+	all = m.cursors.All()
+	if len(all) == 0 {
+		t.Fatal("FileLoadedMsg produced empty CursorSet — cursor must exist at offset 0")
+	}
+	if all[0].Position != 0 {
+		t.Errorf("FileLoadedMsg cursor position = %d, want 0", all[0].Position)
+	}
+}
+
+// TestCommandContextHasCursors verifies that the keybind-resolved command path
+// passes Cursors to the CommandContext (regression: bug #1 — missing Cursors field).
+func TestCommandContextHasCursors(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("abcdef")
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	// Press Right arrow — should move cursor from 0 to 1
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+
+	pos := m.cursors.Primary().Position
+	if pos != 1 {
+		t.Errorf("after Right arrow, cursor position = %d, want 1 (CommandContext.Cursors not passed?)", pos)
+	}
+
+	// Press Right again — should move from 1 to 2
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+	pos = m.cursors.Primary().Position
+	if pos != 2 {
+		t.Errorf("after second Right arrow, cursor position = %d, want 2", pos)
+	}
+}
+
+// TestCommandContextHasCoordinateConverters verifies that vertical navigation
+// works — which requires BufferToSyntax/SyntaxToWrap/etc. to be non-nil
+// (regression: bug #1 — missing coordinate converter functions).
+func TestCommandContextHasCoordinateConverters(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("first line\nsecond line\nthird line")
+	m.cursors = cursor.NewCursorSet(3) // middle of "first line"
+	m = m.syncDisplay()
+
+	// Press Down arrow — should move cursor to second line
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+
+	pos := m.cursors.Primary().Position
+	// "first line\n" = 11 bytes, cursor at col 3 on second line = offset 14
+	if pos < 11 || pos > 14 {
+		t.Errorf("after Down arrow from offset 3 on line 0, cursor position = %d, want in [11, 14] (coordinate converters nil?)", pos)
+	}
+
+	// Press Up — should return to first line
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	pos = m.cursors.Primary().Position
+	if pos > 10 {
+		t.Errorf("after Up arrow, cursor position = %d, want <= 10 (still on first line)", pos)
+	}
+}
+
+// TestCursorVisibleInView verifies that View() renders a visible cursor when
+// focused (regression: bug #3 — no cursor rendering in View).
+func TestCursorVisibleInView(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m = m.SetSize(40, 10)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("hello world")
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	view := m.View()
+
+	// The cursor character should be rendered with ANSI escape sequences
+	// (reverse video or similar styling). The raw text "hello world" without
+	// any ANSI codes would mean no cursor is drawn.
+	if !strings.Contains(view, "\x1b[") {
+		t.Error("View() contains no ANSI sequences — cursor not rendered with styling")
+	}
+
+	// Without focus, cursor should NOT be rendered with reverse-video
+	m2 := m.SetFocused(false)
+	viewUnfocused := m2.View()
+	// Focused and unfocused views must differ (focused has cursor highlight)
+	if view == viewUnfocused {
+		t.Error("focused and unfocused View() are identical — cursor rendering missing")
+	}
+}
+
+// TestCursorAtEndOfLine verifies cursor renders at end-of-line position.
+func TestCursorAtEndOfLine(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m = m.SetSize(40, 10)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("hi")
+	m.cursors = cursor.NewCursorSet(2) // at end, past "hi"
+	m = m.syncDisplay()
+
+	view := m.View()
+	// Should still have ANSI escape — cursor rendered as block space at EOL
+	if !strings.Contains(view, "\x1b[") {
+		t.Error("cursor at end-of-line not rendered")
+	}
+}
+
+// TestScrollToCursorVertical verifies that scrollToCursor adjusts TopRow when
+// the cursor moves below the viewport (regression: bug #4 — scrollToCursor stub).
+func TestScrollToCursorVertical(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	// Build a file with more lines than the viewport
+	var fileLines []string
+	for i := 0; i < 30; i++ {
+		fileLines = append(fileLines, "line content here")
+	}
+	content := strings.Join(fileLines, "\n")
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(40, 5) // only 5 lines visible (minus breadcrumb = ~4 content lines)
+	m = m.SetFocused(true)
+	m.buf = buffer.New(content)
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	if m.viewport.TopRow != 0 {
+		t.Fatalf("initial TopRow = %d, want 0", m.viewport.TopRow)
+	}
+
+	// Move cursor down past the visible area
+	for i := 0; i < 10; i++ {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+
+	// Cursor should be on line ~10; viewport must have scrolled
+	if m.viewport.TopRow == 0 {
+		t.Error("TopRow still 0 after moving cursor 10 lines down — scrollToCursor not working")
+	}
+
+	// Verify cursor is within the visible window
+	contentH := m.contentHeight()
+	bp := m.buf.OffsetToLineCol(m.cursors.Primary().Position)
+	sp := m.syntaxSnap.BufferToSyntax(bp)
+	wp := m.wrapSnap.SyntaxToWrap(sp)
+	if wp.Row < m.viewport.TopRow || wp.Row >= m.viewport.TopRow+contentH {
+		t.Errorf("cursor at wrap row %d is outside viewport [%d, %d)",
+			wp.Row, m.viewport.TopRow, m.viewport.TopRow+contentH)
+	}
+}
+
+// TestScrollToCursorUpward verifies scrollToCursor adjusts TopRow upward
+// when cursor moves above the viewport.
+func TestScrollToCursorUpward(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	var fileLines []string
+	for i := 0; i < 30; i++ {
+		fileLines = append(fileLines, "line content here")
+	}
+	content := strings.Join(fileLines, "\n")
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(40, 5)
+	m = m.SetFocused(true)
+	m.buf = buffer.New(content)
+	// Start with cursor on line 20 and viewport scrolled there
+	m.cursors = cursor.NewCursorSet(20 * 18) // 18 bytes per "line content here\n"
+	m.viewport.TopRow = 20
+	m = m.syncDisplay()
+
+	// Move cursor up past the visible top
+	for i := 0; i < 10; i++ {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	}
+
+	// Viewport should have scrolled up to follow cursor
+	bp := m.buf.OffsetToLineCol(m.cursors.Primary().Position)
+	sp := m.syntaxSnap.BufferToSyntax(bp)
+	wp := m.wrapSnap.SyntaxToWrap(sp)
+	contentH := m.contentHeight()
+	if wp.Row < m.viewport.TopRow || wp.Row >= m.viewport.TopRow+contentH {
+		t.Errorf("cursor at wrap row %d is outside viewport [%d, %d) after scrolling up",
+			wp.Row, m.viewport.TopRow, m.viewport.TopRow+contentH)
+	}
+}
+
+// TestNavigationDoesNotCorruptCursors verifies that repeated navigation
+// does not lose cursors or produce an empty CursorSet.
+func TestNavigationDoesNotCorruptCursors(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("hello\nworld\nfoo bar")
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	// Exercise various navigation sequences
+	moves := []tea.KeyPressMsg{
+		{Code: tea.KeyRight},
+		{Code: tea.KeyRight},
+		{Code: tea.KeyDown},
+		{Code: tea.KeyLeft},
+		{Code: tea.KeyUp},
+		{Code: tea.KeyDown},
+		{Code: tea.KeyDown},
+		{Code: tea.KeyRight},
+		{Code: tea.KeyRight},
+		{Code: tea.KeyRight},
+	}
+
+	for i, msg := range moves {
+		m, _ = m.Update(msg)
+		all := m.cursors.All()
+		if len(all) == 0 {
+			t.Fatalf("after move %d, CursorSet became empty", i)
+		}
+		pos := all[0].Position
+		if pos < 0 || pos > len(m.buf.Content()) {
+			t.Fatalf("after move %d, cursor position %d out of bounds [0, %d]",
+				i, pos, len(m.buf.Content()))
+		}
+	}
+}
+
+// TestScrollOperationAdjustsViewport verifies that scroll commands
+// (page up/down) modify the viewport TopRow correctly.
+func TestScrollOperationAdjustsViewport(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	var fileLines []string
+	for i := 0; i < 50; i++ {
+		fileLines = append(fileLines, "scroll test line")
+	}
+	content := strings.Join(fileLines, "\n")
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m = m.SetSize(40, 10)
+	m = m.SetFocused(true)
+	m.buf = buffer.New(content)
+	m.cursors = cursor.NewCursorSet(0)
+	m = m.syncDisplay()
+
+	initialTop := m.viewport.TopRow
+
+	// Simulate a scroll operation directly through dispatchOperation
+	scrollOp := command.Result{
+		Operation: command.Operation{
+			Kind:     command.OperationScroll,
+			ScrollDY: 5,
+		},
+	}
+	m, _ = m.dispatchOperation(scrollOp, "scroll.page-down", time.Now())
+
+	if m.viewport.TopRow != initialTop+5 {
+		t.Errorf("TopRow = %d after scroll +5, want %d", m.viewport.TopRow, initialTop+5)
+	}
+
+	// Scroll up
+	scrollUp := command.Result{
+		Operation: command.Operation{
+			Kind:     command.OperationScroll,
+			ScrollDY: -3,
+		},
+	}
+	m, _ = m.dispatchOperation(scrollUp, "scroll.page-up", time.Now())
+
+	if m.viewport.TopRow != initialTop+2 {
+		t.Errorf("TopRow = %d after scroll -3, want %d", m.viewport.TopRow, initialTop+2)
+	}
+
+	// Scroll should not go negative
+	scrollWayUp := command.Result{
+		Operation: command.Operation{
+			Kind:     command.OperationScroll,
+			ScrollDY: -100,
+		},
+	}
+	m, _ = m.dispatchOperation(scrollWayUp, "scroll.page-up", time.Now())
+
+	if m.viewport.TopRow < 0 {
+		t.Errorf("TopRow = %d after over-scroll up, must not be negative", m.viewport.TopRow)
+	}
+}
