@@ -15,14 +15,18 @@
     "wp12-undo-redo-integration.md",
     "wp13-workspace-integration.md",
     "wp14-markdown-preview.md",
+    "wp14a-markdown-inline-line.md",
+    "wp14b-markdown-blocks.md",
+    "wp14c-markdown-advanced.md",
+    "wp14d-code-fence-highlighting.md",
     "wp15-clipboard.md",
     "wp16-mouse-support.md",
     "wp17-terminal-images.md",
     "wp18-find-replace.md",
     "wp19-final-integration.md"
   ],
-  "current_index": 3,
-  "phase": "test",
+  "current_index": 9,
+  "phase": "code",
   "attempts": {
     "code": 0,
     "test": 0
@@ -45,6 +49,42 @@
       "code": "DONE",
       "test": "DONE",
       "commit": "feat(WP2): implement and test — Buffer (Immutable String Implementation)"
+    },
+    {
+      "wp": "wp03-cursor-selection.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(wp3-cursor): implement and test — Cursor and Selection"
+    },
+    {
+      "wp": "wp04-edit-history.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(wp4-history): implement and test — edit history undo stack with coalescing and inverse edits"
+    },
+    {
+      "wp": "wp05-command-registry.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(wp5): implement and test — command registry"
+    },
+    {
+      "wp": "wp06-keybind-resolver.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(WP6): implement and test — Keybinding Resolver"
+    },
+    {
+      "wp": "wp07-display-pipeline.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(wp07-display-pipeline): implement and test — display pipeline with syntax and wrap maps"
+    },
+    {
+      "wp": "wp08-editor-component.md",
+      "code": "DONE",
+      "test": "DONE",
+      "commit": "feat(WP08): implement and test — editor component integration and keymap validation"
     }
   ]
 }

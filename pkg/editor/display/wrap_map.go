@@ -3,8 +3,9 @@ package display
 import (
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
 	"rune/pkg/editor/coords"
+
+	"github.com/mattn/go-runewidth"
 )
 
 type WrapSegment struct {
