@@ -151,6 +151,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.dispatchOperation(res, "file.save", time.Now())
 		}
 
+		// Undo: Cmd+Z
+		if msg.Code == 'z' && msg.Mod == tea.ModMeta {
+			m, cmd = m.applyUndo()
+			m = m.syncDisplay()
+			return m, cmd
+		}
+
+		// Redo: Cmd+Shift+Z
+		if msg.Code == 'z' && msg.Mod == (tea.ModMeta|tea.ModShift) {
+			m, cmd = m.applyRedo()
+			m = m.syncDisplay()
+			return m, cmd
+		}
+
 		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
 		if msg.Code == tea.KeyEnter && msg.Mod == 0 {
 			ctx := command.CommandContext{
@@ -187,7 +201,7 @@ func (m Model) contentHeight() int {
 }
 
 func (m Model) View() string {
-    if m.width == 0 || m.height == 0 {
+	if m.width == 0 || m.height == 0 {
 		return ""
 	}
 
@@ -211,9 +225,9 @@ func (m Model) View() string {
 	}
 
 	content := strings.Join(renderedLines, "\n")
-	
+
 	ret := lipgloss.JoinVertical(lipgloss.Left, bcView, content)
-	
+
 	if !m.focused {
 		ret = lipgloss.NewStyle().Faint(true).Render(ret)
 	}
@@ -269,5 +283,8 @@ func (m Model) SetDir(dir string) Model {
 	return m
 }
 func (m Model) OpenPath() string { return m.filePath }
+
+// SetDirtyForTest marks the editor dirty without modifying content. Test-only.
+func (m Model) SetDirtyForTest() Model { m.dirty = true; return m }
 
 func PreferredWidth() int { return 40 }
