@@ -25,6 +25,8 @@ type Model struct {
 	root    string
 	width   int
 	height  int
+	offsetX int
+	offsetY int
 	focused bool
 	keys    keymap.Bindings
 	styles  styles.Styles
@@ -34,9 +36,10 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 	return Model{keys: keys, styles: st}
 }
 
-func (m Model) SetSize(w, h int) Model  { m.width = w; m.height = h; return m }
-func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
-func (m Model) Height() int             { return m.height }
+func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m }
+func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
+func (m Model) SetFocused(f bool) Model  { m.focused = f; return m }
+func (m Model) Height() int              { return m.height }
 
 func (m Model) Init() tea.Cmd { return nil }
 
@@ -46,6 +49,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.entries = msg.Entries
 		m.root = msg.Root
 		m.cursor = 0
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
+	case tea.MouseWheelMsg:
+		return m.handleMouseWheel(msg)
 	case tea.KeyPressMsg:
 		if !m.focused {
 			break
