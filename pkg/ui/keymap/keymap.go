@@ -47,50 +47,56 @@ type Bindings struct {
 	ShiftPageUp           key.Binding
 	ShiftPageDown         key.Binding
 	SelectAll             key.Binding
+	CopyToClipboard       key.Binding
+	CutToClipboard        key.Binding
+	PasteFromClipboard    key.Binding
 }
 
 func Default() Bindings {
 	return Bindings{
-		Up:              key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
-		Down:            key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
-		Left:            key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
-		Right:           key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),
-		GotoTop:         key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "top")),
-		GotoBottom:      key.NewBinding(key.WithKeys("end"), key.WithHelp("end", "bottom")),
-		PrimaryAction:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open/newline")),
-		Cancel:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-		ZenMode:         key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "zen")),
-		CloseFile:       key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "close")),
-		PageUp:          key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
-		PageDown:        key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
-		HalfPageUp:      key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "½ up")),
-		HalfPageDown:    key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
-		TabSwitch:       key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
-		ConfirmExitC:    key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
-		ConfirmExitD:    key.NewBinding(key.WithKeys("alt+ctrl+d"), key.WithHelp("⌥^d", "exit")),
-		PinTab:          key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
-		FocusExplorer:   key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
-		FocusEditor:     key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
-		HelpExpand:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Backspace:       key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
-		Indent:          key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
-		Outdent:         key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
-		SaveFile:        key.NewBinding(key.WithKeys("cmd+s"), key.WithHelp("⌘s", "save")),
-		AddCursorAbove:  key.NewBinding(key.WithKeys("alt+cmd+up"), key.WithHelp("⌥⌘↑", "cursor above")),
-		AddCursorBelow:  key.NewBinding(key.WithKeys("alt+cmd+down"), key.WithHelp("⌥⌘↓", "cursor below")),
-		FindOpen:        key.NewBinding(key.WithKeys("cmd+f"), key.WithHelp("⌘f", "find")),
-		FindReplaceOpen: key.NewBinding(key.WithKeys("cmd+h"), key.WithHelp("⌘h", "find & replace")),
-		FindNext:        key.NewBinding(key.WithKeys("cmd+g"), key.WithHelp("⌘g", "find next")),
-		FindPrev:        key.NewBinding(key.WithKeys("shift+cmd+g"), key.WithHelp("⇧⌘g", "find prev")),
-		ShiftUp:         key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "shift+up")),
-		ShiftDown:       key.NewBinding(key.WithKeys("shift+down"), key.WithHelp("⇧↓", "shift+down")),
-		ShiftLeft:       key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←", "shift+left")),
-		ShiftRight:      key.NewBinding(key.WithKeys("shift+right"), key.WithHelp("⇧→", "shift+right")),
-		ShiftGotoTop:    key.NewBinding(key.WithKeys("shift+home"), key.WithHelp("⇧⌘", "shift+top")),
-		ShiftGotoBottom: key.NewBinding(key.WithKeys("shift+end"), key.WithHelp("⇧⇥", "shift+bottom")),
-		ShiftPageUp:     key.NewBinding(key.WithKeys("shift+pgup"), key.WithHelp("⇧⇞", "shift+page up")),
-		ShiftPageDown:   key.NewBinding(key.WithKeys("shift+pgdown"), key.WithHelp("⇧⇟", "shift+page down")),
-		SelectAll:       key.NewBinding(key.WithKeys("cmd+a"), key.WithHelp("⌘a", "select all")),
+		Up:                 key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "up")),
+		Down:               key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "down")),
+		Left:               key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
+		Right:              key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "right")),
+		GotoTop:            key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "top")),
+		GotoBottom:         key.NewBinding(key.WithKeys("end"), key.WithHelp("end", "bottom")),
+		PrimaryAction:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("↵", "open/newline")),
+		Cancel:             key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+		ZenMode:            key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("^o", "zen")),
+		CloseFile:          key.NewBinding(key.WithKeys("ctrl+w"), key.WithHelp("^w", "close")),
+		PageUp:             key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
+		PageDown:           key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
+		HalfPageUp:         key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "½ up")),
+		HalfPageDown:       key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
+		TabSwitch:          key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
+		ConfirmExitC:       key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
+		ConfirmExitD:       key.NewBinding(key.WithKeys("alt+ctrl+d"), key.WithHelp("⌥^d", "exit")),
+		PinTab:             key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
+		FocusExplorer:      key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
+		FocusEditor:        key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
+		HelpExpand:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
+		Indent:             key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
+		Outdent:            key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
+		SaveFile:           key.NewBinding(key.WithKeys("cmd+s"), key.WithHelp("⌘s", "save")),
+		AddCursorAbove:     key.NewBinding(key.WithKeys("alt+cmd+up"), key.WithHelp("⌥⌘↑", "cursor above")),
+		AddCursorBelow:     key.NewBinding(key.WithKeys("alt+cmd+down"), key.WithHelp("⌥⌘↓", "cursor below")),
+		FindOpen:           key.NewBinding(key.WithKeys("cmd+f"), key.WithHelp("⌘f", "find")),
+		FindReplaceOpen:    key.NewBinding(key.WithKeys("cmd+h"), key.WithHelp("⌘h", "find & replace")),
+		FindNext:           key.NewBinding(key.WithKeys("cmd+g"), key.WithHelp("⌘g", "find next")),
+		FindPrev:           key.NewBinding(key.WithKeys("shift+cmd+g"), key.WithHelp("⇧⌘g", "find prev")),
+		ShiftUp:            key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "shift+up")),
+		ShiftDown:          key.NewBinding(key.WithKeys("shift+down"), key.WithHelp("⇧↓", "shift+down")),
+		ShiftLeft:          key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←", "shift+left")),
+		ShiftRight:         key.NewBinding(key.WithKeys("shift+right"), key.WithHelp("⇧→", "shift+right")),
+		ShiftGotoTop:       key.NewBinding(key.WithKeys("shift+home"), key.WithHelp("⇧⌘", "shift+top")),
+		ShiftGotoBottom:    key.NewBinding(key.WithKeys("shift+end"), key.WithHelp("⇧⇥", "shift+bottom")),
+		ShiftPageUp:        key.NewBinding(key.WithKeys("shift+pgup"), key.WithHelp("⇧⇞", "shift+page up")),
+		ShiftPageDown:      key.NewBinding(key.WithKeys("shift+pgdown"), key.WithHelp("⇧⇟", "shift+page down")),
+		SelectAll:          key.NewBinding(key.WithKeys("cmd+a"), key.WithHelp("⌘a", "select all")),
+		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+cmd+c"), key.WithHelp("⌘⇧c", "copy")),
+		CutToClipboard:     key.NewBinding(key.WithKeys("shift+cmd+x"), key.WithHelp("⌘⇧x", "cut")),
+		PasteFromClipboard: key.NewBinding(key.WithKeys("cmd+v"), key.WithHelp("⌘v", "paste")),
 	}
 }
 
@@ -161,6 +167,9 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.ShiftPageUp)
 	add(b.ShiftPageDown)
 	add(b.SelectAll)
+	add(b.CopyToClipboard)
+	add(b.CutToClipboard)
+	add(b.PasteFromClipboard)
 	return keys
 }
 
@@ -243,6 +252,9 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.HalfPageUp, "cursor.page-up", "editorFocused")
 	add(b.HalfPageDown, "cursor.page-down", "editorFocused")
 	add(b.SelectAll, "select.all", "editorFocused")
+	add(b.CopyToClipboard, "clipboard.copy", "editorFocused")
+	add(b.CutToClipboard, "clipboard.cut", "editorFocused && !readOnly")
+	add(b.PasteFromClipboard, "clipboard.paste", "editorFocused && !readOnly")
 
 	return mappings, parseErr
 }

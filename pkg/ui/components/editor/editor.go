@@ -48,11 +48,6 @@ type CursorInfo struct {
 	ChordPending string
 }
 
-type ClipboardPort struct {
-	ReadText  func() (string, error)
-	WriteText func(string) error
-}
-
 type Model struct {
 	buf              buffer.Buffer
 	cursors          cursor.CursorSet
@@ -74,7 +69,6 @@ type Model struct {
 	registry command.Registry
 
 	highlighter CodeHighlighter
-	clipboard   ClipboardPort
 
 	termCaps    terminal.TermCaps
 	imageConfig ImageConfig
@@ -122,6 +116,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.handleImagePaste(msg.ImageData, msg.MIMEType, time.Now())
 		}
 		return m.handlePasteContent(msg.Text, time.Now())
+
+	case tea.ClipboardMsg:
+		return m.handlePasteContent(msg.Content, time.Now())
+
+	case tea.PasteMsg:
+		return m.handlePasteContent(msg.Content, time.Now())
 
 	case ImageSavedMsg:
 		return m.handleImageSaved(msg.RelativePath, time.Now())
@@ -316,8 +316,8 @@ func (m Model) View() string {
 	bcView := m.breadcrumb.View()
 	contentHeight := m.contentHeight()
 
+	// Vertical slice only — horizontal scrolling is done at cell level
 	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
-	lines = m.snapshot.SliceH(lines, m.viewport.ScrollCol, m.width)
 
 	// Collect cursor byte offsets and selection intervals for rendering.
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
@@ -335,23 +335,14 @@ func (m Model) View() string {
 
 	var renderedLines []string
 	for _, l := range lines {
-		var lineStr strings.Builder
+		// Convert all spans to cells
+		var lineCells []Cell
 		for _, sp := range l.Spans {
-			rendered := m.renderSpan(sp)
-			if !m.focused || (len(cursorOffsets) == 0 && len(selections) == 0) {
-				lineStr.WriteString(rendered)
-				continue
-			}
-			// For Rendered spans (non-revealed markdown), skip cursor/selection rendering.
-			if sp.State == display.Rendered {
-				lineStr.WriteString(rendered)
-				continue
-			}
-			// Render span text with cursor and selection highlighting.
-			// For Revealed spans, text bytes == buffer bytes, so offset indexing works.
-			m.renderSpanWithHighlights(&lineStr, sp, cursorOffsets, selections, cursorStyle, selStyle)
+			spCells := m.spanToCellsStyled(sp)
+			lineCells = append(lineCells, spCells...)
 		}
-		// If cursor is at end-of-line (past all spans), render block cursor
+
+		// EOL cursor: append synthetic cell if cursor is at end-of-line
 		if m.focused {
 			lineEnd := 0
 			if len(l.Spans) > 0 {
@@ -360,12 +351,27 @@ func (m Model) View() string {
 			}
 			for off := range cursorOffsets {
 				if off == lineEnd {
-					lineStr.WriteString(cursorStyle.Render(" "))
+					lineCells = append(lineCells, Cell{
+						Rune:      ' ',
+						Width:     1,
+						Style:     lipgloss.NewStyle(),
+						BufOffset: lineEnd,
+					})
 					break
 				}
 			}
 		}
-		renderedLines = append(renderedLines, lineStr.String())
+
+		// Horizontal scrolling at cell level
+		lineCells = sliceCells(lineCells, m.viewport.ScrollCol, m.width)
+
+		// Apply cursor and selection overlays
+		if m.focused && (len(cursorOffsets) > 0 || len(selections) > 0) {
+			applyOverlays(lineCells, cursorOffsets, selections)
+		}
+
+		// Stringify
+		renderedLines = append(renderedLines, cellsToString(lineCells, selStyle, cursorStyle))
 	}
 
 	for len(renderedLines) < contentHeight {
@@ -441,11 +447,6 @@ func (m Model) SetHighlighter(h CodeHighlighter) Model { m.highlighter = h; retu
 func (m Model) SetDirtyForTest() Model { m.dirty = true; return m }
 
 func PreferredWidth() int { return 40 }
-
-func (m Model) SetClipboard(port ClipboardPort) Model {
-	m.clipboard = port
-	return m
-}
 
 // isPrintableChar reports whether the rune is a printable ASCII character.
 func isPrintableChar(r rune) bool {

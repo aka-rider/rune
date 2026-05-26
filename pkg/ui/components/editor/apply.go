@@ -190,21 +190,6 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		return m, result.Cmd
 	}
 
-	// For clipboard operations, build real cmds from the port.
-	if result.Operation.Kind == command.OperationClipboard {
-		switch cmdName {
-		case "clipboard.paste":
-			cmd := buildReadClipboardCmd(m.clipboard)
-			m.cursors = result.Operation.Cursors
-			return m, cmd
-		case "clipboard.copy":
-			text := extractCopyText(m.buf, m.cursors)
-			cmd := buildWriteClipboardCmd(m.clipboard, text)
-			return m, cmd
-		}
-		return m, result.Cmd
-	}
-
 	// Scroll operations adjust viewport without editing.
 	if result.Operation.Kind == command.OperationScroll {
 		m.viewport.TopRow += result.Operation.ScrollDY
@@ -225,11 +210,10 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		return m, result.Cmd
 	}
 
-	// For cut, the edits are applied and the write cmd is built from the port.
-	var clipCmd tea.Cmd
-	if cmdName == "clipboard.cut" {
-		text := extractCopyText(m.buf, m.cursors)
-		clipCmd = buildWriteClipboardCmd(m.clipboard, text)
+	// OperationNone with a Cmd: clipboard copy/paste just propagate the Cmd.
+	if result.Operation.Kind == command.OperationNone {
+		m.cursors = result.Operation.Cursors
+		return m, result.Cmd
 	}
 
 	m = m.applyOperation(result.Operation, m.editKindFromCommand(cmdName), now)
@@ -245,13 +229,6 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 			ContentHash: result.Operation.SaveContentHash,
 		})
 		_ = saveID
-	}
-
-	if clipCmd != nil {
-		if result.Cmd != nil {
-			return m, tea.Batch(result.Cmd, clipCmd)
-		}
-		return m, clipCmd
 	}
 
 	return m, result.Cmd

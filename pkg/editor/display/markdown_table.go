@@ -25,12 +25,18 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 	// For separator lines, render a formatted separator using dashes
 	if role == TableRoleSeparator {
 		formatted := formatTableSeparator(block.colWidths)
+		// Separator has no meaningful buffer mapping — all decorative
+		cm := make([]CellMapping, len(formatted))
+		for i := range cm {
+			cm[i] = CellMapping{BufOffset: -1}
+		}
 		return []SyntaxSpan{{
 			Text:        formatted,
 			Kind:        TokenTable,
 			State:       Rendered,
 			BufferStart: lineStart,
 			BufferEnd:   lineStart + len(lineText),
+			CellMap:     cm,
 			BlockID:     block.id,
 			BlockStart:  block.startOff,
 			BlockEnd:    block.endOff,
@@ -39,13 +45,14 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 	}
 
 	// For header and body lines, parse and pad cells
-	formatted := formatTableRow(lineText, block.colWidths, block.alignments)
+	formatted, cm := formatTableRow(lineText, block.colWidths, block.alignments, lineStart)
 	return []SyntaxSpan{{
 		Text:        formatted,
 		Kind:        TokenTable,
 		State:       Rendered,
 		BufferStart: lineStart,
 		BufferEnd:   lineStart + len(lineText),
+		CellMap:     cm,
 		BlockID:     block.id,
 		BlockStart:  block.startOff,
 		BlockEnd:    block.endOff,
@@ -167,15 +174,22 @@ func formatTableSeparator(colWidths []int) string {
 }
 
 // formatTableRow formats a pipe-delimited row with padded cells.
-func formatTableRow(line string, colWidths []int, alignments []int) string {
+// Returns the formatted string and a CellMap mapping each output byte to a buffer offset.
+func formatTableRow(line string, colWidths []int, alignments []int, lineStart int) (string, []CellMapping) {
 	cells := parseTableCells(line)
 
+	// Build a mapping from each cell's content to its byte offset within the source line.
+	cellOffsets := parseTableCellOffsets(line)
+
 	var b strings.Builder
+	var cm []CellMapping
 	for i, w := range colWidths {
 		if i == 0 {
 			b.WriteByte('|')
+			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 		b.WriteByte(' ')
+		cm = append(cm, CellMapping{BufOffset: -1})
 
 		cell := ""
 		if i < len(cells) {
@@ -193,31 +207,93 @@ func formatTableRow(line string, colWidths []int, alignments []int) string {
 			align = alignments[i]
 		}
 
+		// Determine the buffer offset for this cell's content
+		cellBufStart := -1
+		if i < len(cellOffsets) {
+			cellBufStart = lineStart + cellOffsets[i]
+		}
+
 		switch align {
 		case 2: // right
 			for j := 0; j < pad; j++ {
 				b.WriteByte(' ')
+				cm = append(cm, CellMapping{BufOffset: -1})
 			}
-			b.WriteString(cell)
+			writeCellWithMap(&b, &cm, cell, cellBufStart)
 		case 1: // center
 			leftPad := pad / 2
 			rightPad := pad - leftPad
 			for j := 0; j < leftPad; j++ {
 				b.WriteByte(' ')
+				cm = append(cm, CellMapping{BufOffset: -1})
 			}
-			b.WriteString(cell)
+			writeCellWithMap(&b, &cm, cell, cellBufStart)
 			for j := 0; j < rightPad; j++ {
 				b.WriteByte(' ')
+				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 		default: // left
-			b.WriteString(cell)
+			writeCellWithMap(&b, &cm, cell, cellBufStart)
 			for j := 0; j < pad; j++ {
 				b.WriteByte(' ')
+				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 		}
 
 		b.WriteByte(' ')
+		cm = append(cm, CellMapping{BufOffset: -1})
 		b.WriteByte('|')
+		cm = append(cm, CellMapping{BufOffset: -1})
 	}
-	return b.String()
+	return b.String(), cm
+}
+
+// writeCellWithMap writes cell content to the builder and appends CellMapping entries.
+func writeCellWithMap(b *strings.Builder, cm *[]CellMapping, cell string, bufStart int) {
+	for i := 0; i < len(cell); i++ {
+		b.WriteByte(cell[i])
+		off := -1
+		if bufStart >= 0 {
+			off = bufStart + i
+		}
+		*cm = append(*cm, CellMapping{BufOffset: off})
+	}
+}
+
+// parseTableCellOffsets returns the byte offset within the line where each cell's
+// trimmed content begins. This allows mapping formatted cell chars back to source.
+func parseTableCellOffsets(line string) []int {
+	trimmed := strings.TrimSpace(line)
+	baseOffset := strings.Index(line, trimmed)
+	if baseOffset < 0 {
+		baseOffset = 0
+	}
+
+	// Strip leading pipe
+	inner := trimmed
+	innerOffset := baseOffset
+	if len(inner) > 0 && inner[0] == '|' {
+		inner = inner[1:]
+		innerOffset++
+	}
+	// Strip trailing pipe
+	if len(inner) > 0 && inner[len(inner)-1] == '|' {
+		inner = inner[:len(inner)-1]
+	}
+
+	var offsets []int
+	pos := 0
+	for _, part := range strings.Split(inner, "|") {
+		// Find the trimmed content start within this part
+		trimmedPart := strings.TrimSpace(part)
+		contentOff := 0
+		if trimmedPart != "" {
+			contentOff = strings.Index(part, trimmedPart)
+		} else {
+			contentOff = len(part)
+		}
+		offsets = append(offsets, innerOffset+pos+contentOff)
+		pos += len(part) + 1 // +1 for the '|' separator
+	}
+	return offsets
 }

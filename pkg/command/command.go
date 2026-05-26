@@ -48,7 +48,6 @@ const (
 	OperationMoveCursors
 	OperationEditBuffer
 	OperationScroll
-	OperationClipboard
 	OperationHistory
 	OperationSaveFile
 )

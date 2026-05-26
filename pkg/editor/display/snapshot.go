@@ -10,6 +10,7 @@ type DisplaySpan struct {
 	State        RevealState
 	BufferStart  int
 	BufferEnd    int
+	CellMap      []CellMapping // per-visual-byte buffer offsets for Rendered spans; nil for Revealed
 	Language     string
 	BlockID      int
 	BlockStart   int
@@ -50,6 +51,7 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 				State:        s.State,
 				BufferStart:  s.BufferStart,
 				BufferEnd:    s.BufferEnd,
+				CellMap:      s.CellMap,
 				Language:     s.Language,
 				BlockID:      s.BlockID,
 				BlockStart:   s.BlockStart,

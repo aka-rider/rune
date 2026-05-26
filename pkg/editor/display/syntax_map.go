@@ -56,6 +56,7 @@ type SyntaxSpan struct {
 	State        RevealState
 	BufferStart  int
 	BufferEnd    int
+	CellMap      []CellMapping // per-visual-byte buffer offsets for Rendered spans; nil for Revealed
 	Language     string
 	BlockID      int
 	BlockStart   int
@@ -417,13 +418,15 @@ func buildSyntaxLine(
 				})
 			}
 
-			// Emit visible text
+			// Emit visible text with per-byte source mapping
+			cm := buildInlineCellMap(lineStart+ms.start+hiddenLeft, len(ms.text))
 			spans = append(spans, SyntaxSpan{
 				Text:         ms.text,
 				Kind:         ms.kind,
 				State:        Rendered,
 				BufferStart:  lineStart + ms.start,
 				BufferEnd:    lineStart + ms.end,
+				CellMap:      cm,
 				AltText:      spanAltText(ms),
 				ImagePath:    spanImagePath(ms),
 				EmbedRef:     spanEmbedRef(ms),

@@ -138,44 +138,6 @@ func renderCodeLabel(language string, st styles.Styles) string {
 
 type selInterval struct{ start, end int }
 
-// renderSpanWithHighlights renders a Revealed span's text with cursor and
-// selection highlighting applied. It walks through the span text rune-by-rune,
-// applying selection background and cursor reverse-video.
-func (m Model) renderSpanWithHighlights(
-	b *strings.Builder,
-	sp display.DisplaySpan,
-	cursorOffsets map[int]bool,
-	selections []selInterval,
-	cursorStyle lipgloss.Style,
-	selStyle lipgloss.Style,
-) {
-	text := sp.Text
-	bufStart := sp.BufferStart
-
-	pos := 0
-	for pos < len(text) {
-		bufOff := bufStart + pos
-		_, runeSize := firstRune(text[pos:])
-		if runeSize == 0 {
-			runeSize = 1
-		}
-		ch := text[pos : pos+runeSize]
-
-		isCursor := cursorOffsets[bufOff]
-		isSel := isInSelection(bufOff, selections)
-
-		switch {
-		case isCursor:
-			b.WriteString(cursorStyle.Render(ch))
-		case isSel:
-			b.WriteString(selStyle.Render(ch))
-		default:
-			b.WriteString(ch)
-		}
-		pos += runeSize
-	}
-}
-
 // isInSelection reports whether the byte offset falls within any selection interval.
 func isInSelection(off int, selections []selInterval) bool {
 	for _, sel := range selections {

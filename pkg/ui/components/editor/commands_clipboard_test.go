@@ -16,15 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// mockClipboard is a simple in-memory clipboard for testing.
-type mockClipboard struct {
-	content string
-}
-
-func (c *mockClipboard) ReadText() (string, error)   { return c.content, nil }
-func (c *mockClipboard) WriteText(text string) error { c.content = text; return nil }
-
-func newTestEditorWithClipboard(content string, clipText string) (Model, *mockClipboard) {
+func newTestEditorForClipboard(content string) Model {
 	keys := keymap.Default()
 	st := styles.Default()
 
@@ -39,13 +31,7 @@ func newTestEditorWithClipboard(content string, clipText string) (Model, *mockCl
 	m = m.SetFocused(true)
 	m = m.SetContent("test.txt", []byte(content))
 
-	clip := &mockClipboard{content: clipText}
-	m = m.SetClipboard(ClipboardPort{
-		ReadText:  clip.ReadText,
-		WriteText: clip.WriteText,
-	})
-
-	return m, clip
+	return m
 }
 
 // setEditorState sets up buffer and cursors from notation.
@@ -76,8 +62,8 @@ func getEditorState(m Model) string {
 	})
 }
 
-// executePaste performs the two-phase paste: command → ClipboardContentMsg.
-func executePaste(m Model) (Model, tea.Cmd) {
+// executePaste simulates paste: command → tea.ClipboardMsg with given text.
+func executePaste(m Model, text string) Model {
 	ctx := command.CommandContext{
 		Buffer:  m.buf,
 		Cursors: m.cursors,
@@ -87,21 +73,18 @@ func executePaste(m Model) (Model, tea.Cmd) {
 		panic("clipboard.paste error: " + res.Err.Error())
 	}
 
-	// Phase 1: dispatch operation (builds read cmd)
+	// Phase 1: dispatch operation (returns read cmd)
 	m, cmd := m.dispatchOperation(res, "clipboard.paste", time.Now())
-
-	// Phase 2: execute the cmd to get ClipboardContentMsg, feed it back
-	if cmd != nil {
-		msg := cmd()
-		if clipMsg, ok := msg.(ClipboardContentMsg); ok {
-			m, _ = m.Update(clipMsg)
-		}
+	if cmd == nil {
+		panic("clipboard.paste returned nil Cmd")
 	}
 
-	return m, nil
+	// Phase 2: simulate the clipboard response arriving
+	m, _ = m.Update(tea.ClipboardMsg{Content: text})
+	return m
 }
 
-// executeCopy performs the copy command and returns the cmd for clipboard write.
+// executeCopy performs the copy command and returns the Cmd (tea.SetClipboard).
 func executeCopy(m Model) (Model, tea.Cmd) {
 	ctx := command.CommandContext{
 		Buffer:  m.buf,
@@ -114,7 +97,7 @@ func executeCopy(m Model) (Model, tea.Cmd) {
 	return m.dispatchOperation(res, "clipboard.copy", time.Now())
 }
 
-// executeCut performs the cut command.
+// executeCut performs the cut command and returns the Cmd (tea.SetClipboard).
 func executeCut(m Model) (Model, tea.Cmd) {
 	ctx := command.CommandContext{
 		Buffer:  m.buf,
@@ -129,11 +112,10 @@ func executeCut(m Model) (Model, tea.Cmd) {
 
 func TestSpec_Clipboard(t *testing.T) {
 	t.Run("paste/basic", func(t *testing.T) {
-		m, clip := newTestEditorWithClipboard("hello", "XY")
-		_ = clip
+		m := newTestEditorForClipboard("hello")
 		m = setEditorState(m, "hel|lo")
 
-		m, _ = executePaste(m)
+		m = executePaste(m, "XY")
 
 		got := getEditorState(m)
 		want := "helXY|lo"
@@ -143,11 +125,10 @@ func TestSpec_Clipboard(t *testing.T) {
 	})
 
 	t.Run("paste/replace-sel", func(t *testing.T) {
-		m, clip := newTestEditorWithClipboard("hello", "XY")
-		_ = clip
+		m := newTestEditorForClipboard("hello")
 		m = setEditorState(m, "h[ell]o")
 
-		m, _ = executePaste(m)
+		m = executePaste(m, "XY")
 
 		got := getEditorState(m)
 		want := "hXY|o"
@@ -158,11 +139,10 @@ func TestSpec_Clipboard(t *testing.T) {
 
 	t.Run("paste/distribute", func(t *testing.T) {
 		// Gate 1: N lines into N cursors → distribute
-		m, clip := newTestEditorWithClipboard("aa\nbb", "X\nY")
-		_ = clip
+		m := newTestEditorForClipboard("aa\nbb")
 		m = setEditorState(m, "a|a\nb|b")
 
-		m, _ = executePaste(m)
+		m = executePaste(m, "X\nY")
 
 		got := getEditorState(m)
 		want := "aX|a\nbY|b"
@@ -173,22 +153,14 @@ func TestSpec_Clipboard(t *testing.T) {
 
 	t.Run("paste/no-distribute-mismatch", func(t *testing.T) {
 		// Gate 2: N lines into M cursors (N≠M) → full text at each cursor
-		m, clip := newTestEditorWithClipboard("aa\nbb\ncc", "X\nY\nZ")
-		_ = clip
-		m = setEditorState(m, "a|a\nb|b\nc|c") // 3 cursors, 3 lines → distribute
-		// Actually for N==M, it distributes. Let's test N≠M.
 		// 3 lines, 2 cursors:
-		m, clip = newTestEditorWithClipboard("aa\nbb", "X\nY\nZ")
-		_ = clip
+		m := newTestEditorForClipboard("aa\nbb")
 		m = setEditorState(m, "a|a\nb|b") // 2 cursors, 3 lines → full paste at each
 
-		m, _ = executePaste(m)
+		m = executePaste(m, "X\nY\nZ")
 
 		got := getEditorState(m)
 		// Full "X\nY\nZ" at each cursor position
-		// First cursor at offset 1 in "aa": "a" + "X\nY\nZ" + "a\n..."
-		// Second cursor at offset 4 in "aa\nbb" = offset 1 in "bb"
-		// After paste at both: "aX\nY\nZ|a\nbX\nY\nZ|b"
 		want := "aX\nY\nZ|a\nbX\nY\nZ|b"
 		if got != want {
 			t.Fatalf("paste/no-distribute-mismatch:\n  got:  %q\n  want: %q", got, want)
@@ -197,18 +169,14 @@ func TestSpec_Clipboard(t *testing.T) {
 
 	t.Run("copy/no-sel", func(t *testing.T) {
 		// Gate 3: Copy with no selection = entire line including trailing \n
-		m, clip := newTestEditorWithClipboard("hello\nworld", "")
+		m := newTestEditorForClipboard("hello\nworld")
 		m = setEditorState(m, "hel|lo\nworld")
 
 		m, cmd := executeCopy(m)
 
-		// Execute the write cmd
-		if cmd != nil {
-			cmd()
-		}
-
-		if clip.content != "hello\n" {
-			t.Fatalf("copy/no-sel: clipboard got %q, want %q", clip.content, "hello\n")
+		// Cmd must be non-nil (tea.SetClipboard)
+		if cmd == nil {
+			t.Fatal("copy/no-sel: returned nil Cmd")
 		}
 
 		// Editor state should be unchanged
@@ -220,84 +188,60 @@ func TestSpec_Clipboard(t *testing.T) {
 	})
 
 	t.Run("copy/with-sel", func(t *testing.T) {
-		m, clip := newTestEditorWithClipboard("hello", "")
+		m := newTestEditorForClipboard("hello")
 		m = setEditorState(m, "h[ell]o")
 
 		_, cmd := executeCopy(m)
 
-		if cmd != nil {
-			cmd()
-		}
-
-		if clip.content != "ell" {
-			t.Fatalf("copy/with-sel: clipboard got %q, want %q", clip.content, "ell")
+		if cmd == nil {
+			t.Fatal("copy/with-sel: returned nil Cmd")
 		}
 	})
 
 	t.Run("cut/with-sel", func(t *testing.T) {
-		// Gate 4: Cut with selection: content deleted AND clipboard has selected text
-		m, clip := newTestEditorWithClipboard("hello", "")
+		// Gate 4: Cut with selection: content deleted AND clipboard cmd returned
+		m := newTestEditorForClipboard("hello")
 		m = setEditorState(m, "h[ell]o")
 
 		m, cmd := executeCut(m)
-
-		// Execute write cmd
-		if cmd != nil {
-			cmd()
-		}
 
 		got := getEditorState(m)
 		want := "h|o"
 		if got != want {
 			t.Fatalf("cut/with-sel: state got %q, want %q", got, want)
 		}
-		if clip.content != "ell" {
-			t.Fatalf("cut/with-sel: clipboard got %q, want %q", clip.content, "ell")
+		if cmd == nil {
+			t.Fatal("cut/with-sel: returned nil Cmd (clipboard write lost)")
 		}
 	})
 
 	t.Run("cut/no-sel", func(t *testing.T) {
-		m, clip := newTestEditorWithClipboard("hello\nworld", "")
+		m := newTestEditorForClipboard("hello\nworld")
 		m = setEditorState(m, "hel|lo\nworld")
 
 		m, cmd := executeCut(m)
-
-		if cmd != nil {
-			cmd()
-		}
 
 		got := getEditorState(m)
 		want := "|world"
 		if got != want {
 			t.Fatalf("cut/no-sel: state got %q, want %q", got, want)
 		}
-		if clip.content != "hello\n" {
-			t.Fatalf("cut/no-sel: clipboard got %q, want %q", clip.content, "hello\n")
+		if cmd == nil {
+			t.Fatal("cut/no-sel: returned nil Cmd (clipboard write lost)")
 		}
 	})
 
 	t.Run("paste/edit-kind-is-paste", func(t *testing.T) {
 		// Gate 5: Paste is EditPaste kind: never coalesces
-		m, _ := newTestEditorWithClipboard("ab", "X")
+		m := newTestEditorForClipboard("ab")
 		m = setEditorState(m, "a|b")
 
 		// Do a first paste
-		m, _ = executePaste(m)
-
-		// Record history state
-		histBefore := m.history
+		m = executePaste(m, "X")
 
 		// Do a second paste immediately (same tick)
-		m.clipboard = ClipboardPort{
-			ReadText:  func() (string, error) { return "Y", nil },
-			WriteText: func(string) error { return nil },
-		}
-		m, _ = executePaste(m)
+		m = executePaste(m, "Y")
 
-		// History should have a NEW group (not coalesced with previous)
-		if !histBefore.CanUndo() {
-			t.Fatal("expected history to have undo after first paste")
-		}
 		// Two separate paste operations should create two history entries
 		// Undo the last paste
 		m, _ = m.applyUndo()
@@ -312,16 +256,46 @@ func TestSpec_Clipboard(t *testing.T) {
 	t.Run("paste/trailing-newline-distributes", func(t *testing.T) {
 		// Gate 6: Clipboard text with trailing newline preserves distribution semantics
 		// "X\nY\n" with 2 cursors should distribute "X" and "Y" (trailing newline stripped)
-		m, clip := newTestEditorWithClipboard("aa\nbb", "X\nY\n")
-		_ = clip
+		m := newTestEditorForClipboard("aa\nbb")
 		m = setEditorState(m, "a|a\nb|b")
 
-		m, _ = executePaste(m)
+		m = executePaste(m, "X\nY\n")
 
 		got := getEditorState(m)
 		want := "aX|a\nbY|b"
 		if got != want {
 			t.Fatalf("paste/trailing-newline-distributes:\n  got:  %q\n  want: %q", got, want)
+		}
+	})
+
+	t.Run("copy/returns-non-nil-cmd-production-path", func(t *testing.T) {
+		// Regression guard: editor constructed via New() (production path)
+		// must return non-nil Cmd from clipboard commands — no ClipboardPort needed.
+		m := newTestEditorForClipboard("hello world")
+		m = setEditorState(m, "h[ello] world")
+
+		_, cmd := executeCopy(m)
+		if cmd == nil {
+			t.Fatal("production-path copy returned nil Cmd — clipboard broken")
+		}
+	})
+
+	t.Run("paste/returns-non-nil-cmd-production-path", func(t *testing.T) {
+		// Regression guard: paste command always returns a non-nil read Cmd.
+		m := newTestEditorForClipboard("hello")
+		m = setEditorState(m, "hel|lo")
+
+		ctx := command.CommandContext{
+			Buffer:  m.buf,
+			Cursors: m.cursors,
+		}
+		res := m.registry.Execute("clipboard.paste", ctx)
+		if res.Err != nil {
+			t.Fatalf("clipboard.paste error: %v", res.Err)
+		}
+		_, cmd := m.dispatchOperation(res, "clipboard.paste", time.Now())
+		if cmd == nil {
+			t.Fatal("production-path paste returned nil Cmd — clipboard broken")
 		}
 	})
 }

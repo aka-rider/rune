@@ -12,6 +12,21 @@ import (
 	"rune/pkg/editor/history"
 )
 
+// clipboardWriteCmd returns a tea.Cmd that writes text to the system clipboard
+// via OSC 52 (Bubble Tea native). Always non-nil for non-empty text.
+func clipboardWriteCmd(text string) tea.Cmd {
+	if text == "" {
+		return nil
+	}
+	return tea.SetClipboard(text)
+}
+
+// clipboardReadCmd returns a tea.Cmd that reads from the system clipboard
+// via OSC 52 (Bubble Tea native). The response arrives as tea.ClipboardMsg.
+func clipboardReadCmd() tea.Cmd {
+	return func() tea.Msg { return tea.ReadClipboard() }
+}
+
 func registerClipboardCommands(builder command.Builder) (command.Builder, error) {
 	var err error
 
@@ -19,6 +34,7 @@ func registerClipboardCommands(builder command.Builder) (command.Builder, error)
 		Name:     "clipboard.copy",
 		Category: "clipboard",
 		Title:    "Copy",
+		When:     "editorFocused",
 		Execute:  clipboardCopy,
 	})
 	if err != nil {
@@ -29,6 +45,7 @@ func registerClipboardCommands(builder command.Builder) (command.Builder, error)
 		Name:     "clipboard.cut",
 		Category: "clipboard",
 		Title:    "Cut",
+		When:     "editorFocused && !readOnly",
 		Execute:  clipboardCut,
 	})
 	if err != nil {
@@ -39,6 +56,7 @@ func registerClipboardCommands(builder command.Builder) (command.Builder, error)
 		Name:     "clipboard.paste",
 		Category: "clipboard",
 		Title:    "Paste",
+		When:     "editorFocused && !readOnly",
 		Execute:  clipboardPaste,
 	})
 	if err != nil {
@@ -52,10 +70,10 @@ func clipboardCopy(ctx command.CommandContext) command.Result {
 	text := extractCopyText(ctx.Buffer, ctx.Cursors)
 	return command.Result{
 		Operation: command.Operation{
-			Kind:    command.OperationClipboard,
+			Kind:    command.OperationNone,
 			Cursors: ctx.Cursors,
 		},
-		Cmd: writeClipboardCmd(text),
+		Cmd: clipboardWriteCmd(text),
 	}
 }
 
@@ -69,19 +87,19 @@ func clipboardCut(ctx command.CommandContext) command.Result {
 			Edits:   edits,
 			Cursors: cursor.NewCursorSetFrom(newCursors),
 		},
-		Cmd: writeClipboardCmd(text),
+		Cmd: clipboardWriteCmd(text),
 	}
 }
 
 func clipboardPaste(ctx command.CommandContext) command.Result {
-	// Phase 1: return a Cmd that reads from clipboard.
-	// The editor's Update will handle ClipboardContentMsg (phase 2).
+	// Phase 1: return a Cmd that reads from clipboard via OSC 52.
+	// The editor's Update will handle tea.ClipboardMsg (phase 2).
 	return command.Result{
 		Operation: command.Operation{
-			Kind:    command.OperationClipboard,
+			Kind:    command.OperationNone,
 			Cursors: ctx.Cursors,
 		},
-		Cmd: readClipboardCmd(),
+		Cmd: clipboardReadCmd(),
 	}
 }
 
@@ -275,48 +293,4 @@ func (m Model) handlePasteContent(text string, now time.Time) (Model, tea.Cmd) {
 	m = m.applyOperation(op, history.EditPaste, now)
 	m = m.syncDisplay()
 	return m, nil
-}
-
-// readClipboardCmd returns a tea.Cmd that reads from the clipboard.
-// The clipboard port is accessed via a package-level variable set during dispatch.
-// Instead, we use a closure pattern — the editor sets this up in dispatchOperation.
-func readClipboardCmd() tea.Cmd {
-	return nil // placeholder; actual cmd is built in dispatchClipboardRead
-}
-
-func writeClipboardCmd(text string) tea.Cmd {
-	// placeholder; actual cmd is built in dispatchClipboardWrite
-	_ = text
-	return nil
-}
-
-// buildReadClipboardCmd creates a tea.Cmd that reads from the clipboard port.
-func buildReadClipboardCmd(port ClipboardPort) tea.Cmd {
-	if port.ReadText == nil {
-		return nil
-	}
-	readFn := port.ReadText
-	return func() tea.Msg {
-		text, err := readFn()
-		if err != nil {
-			return ClipboardErrorMsg{Err: err}
-		}
-		return ClipboardContentMsg{Text: text}
-	}
-}
-
-// buildWriteClipboardCmd creates a tea.Cmd that writes text to the clipboard port.
-func buildWriteClipboardCmd(port ClipboardPort, text string) tea.Cmd {
-	if port.WriteText == nil {
-		return nil
-	}
-	writeFn := port.WriteText
-	capturedText := text
-	return func() tea.Msg {
-		err := writeFn(capturedText)
-		if err != nil {
-			return ClipboardErrorMsg{Err: err}
-		}
-		return ClipboardWrittenMsg{}
-	}
 }
