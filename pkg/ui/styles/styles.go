@@ -52,6 +52,8 @@ type Styles struct {
 
 	TableHeader    lipgloss.Style
 	TableSeparator lipgloss.Style
+
+	Selection lipgloss.Style
 }
 
 func Default() Styles {
@@ -114,5 +116,7 @@ func Default() Styles {
 
 		TableHeader:    lipgloss.NewStyle().Bold(true),
 		TableSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+
+		Selection: lipgloss.NewStyle().Background(lipgloss.Color("239")),
 	}
 }

@@ -38,6 +38,15 @@ type Bindings struct {
 	FindReplaceOpen       key.Binding
 	FindNext              key.Binding
 	FindPrev              key.Binding
+	ShiftUp               key.Binding
+	ShiftDown             key.Binding
+	ShiftLeft             key.Binding
+	ShiftRight            key.Binding
+	ShiftGotoTop          key.Binding
+	ShiftGotoBottom       key.Binding
+	ShiftPageUp           key.Binding
+	ShiftPageDown         key.Binding
+	SelectAll             key.Binding
 }
 
 func Default() Bindings {
@@ -73,6 +82,15 @@ func Default() Bindings {
 		FindReplaceOpen: key.NewBinding(key.WithKeys("cmd+h"), key.WithHelp("⌘h", "find & replace")),
 		FindNext:        key.NewBinding(key.WithKeys("cmd+g"), key.WithHelp("⌘g", "find next")),
 		FindPrev:        key.NewBinding(key.WithKeys("shift+cmd+g"), key.WithHelp("⇧⌘g", "find prev")),
+		ShiftUp:         key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "shift+up")),
+		ShiftDown:       key.NewBinding(key.WithKeys("shift+down"), key.WithHelp("⇧↓", "shift+down")),
+		ShiftLeft:       key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←", "shift+left")),
+		ShiftRight:      key.NewBinding(key.WithKeys("shift+right"), key.WithHelp("⇧→", "shift+right")),
+		ShiftGotoTop:    key.NewBinding(key.WithKeys("shift+home"), key.WithHelp("⇧⌘", "shift+top")),
+		ShiftGotoBottom: key.NewBinding(key.WithKeys("shift+end"), key.WithHelp("⇧⇥", "shift+bottom")),
+		ShiftPageUp:     key.NewBinding(key.WithKeys("shift+pgup"), key.WithHelp("⇧⇞", "shift+page up")),
+		ShiftPageDown:   key.NewBinding(key.WithKeys("shift+pgdown"), key.WithHelp("⇧⇟", "shift+page down")),
+		SelectAll:       key.NewBinding(key.WithKeys("cmd+a"), key.WithHelp("⌘a", "select all")),
 	}
 }
 
@@ -134,6 +152,15 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.FindReplaceOpen)
 	add(b.FindNext)
 	add(b.FindPrev)
+	add(b.ShiftUp)
+	add(b.ShiftDown)
+	add(b.ShiftLeft)
+	add(b.ShiftRight)
+	add(b.ShiftGotoTop)
+	add(b.ShiftGotoBottom)
+	add(b.ShiftPageUp)
+	add(b.ShiftPageDown)
+	add(b.SelectAll)
 	return keys
 }
 
@@ -188,11 +215,17 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	}
 
 	add(b.Up, "cursor.line-up", "editorFocused")
+	add(b.ShiftUp, "select.line-up", "editorFocused")
 	add(b.Down, "cursor.line-down", "editorFocused")
+	add(b.ShiftDown, "select.line-down", "editorFocused")
 	add(b.Left, "cursor.character-left", "editorFocused")
+	add(b.ShiftLeft, "select.character-left", "editorFocused")
 	add(b.Right, "cursor.character-right", "editorFocused")
+	add(b.ShiftRight, "select.character-right", "editorFocused")
 	add(b.GotoTop, "cursor.line-start", "editorFocused")
+	add(b.ShiftGotoTop, "select.line-start", "editorFocused")
 	add(b.GotoBottom, "cursor.line-end", "editorFocused")
+	add(b.ShiftGotoBottom, "select.line-end", "editorFocused")
 	add(b.Backspace, "edit.delete-left", "editorFocused && !readOnly")
 	add(b.Indent, "edit.indent", "editorFocused && !readOnly")
 	add(b.Outdent, "edit.outdent", "editorFocused && !readOnly")
@@ -204,9 +237,12 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.FindNext, "find.next", "editorFocused")
 	add(b.FindPrev, "find.previous", "editorFocused")
 	add(b.PageUp, "cursor.page-up", "editorFocused")
+	add(b.ShiftPageUp, "select.page-up", "editorFocused")
 	add(b.PageDown, "cursor.page-down", "editorFocused")
+	add(b.ShiftPageDown, "select.page-down", "editorFocused")
 	add(b.HalfPageUp, "cursor.page-up", "editorFocused")
 	add(b.HalfPageDown, "cursor.page-down", "editorFocused")
+	add(b.SelectAll, "select.all", "editorFocused")
 
 	return mappings, parseErr
 }

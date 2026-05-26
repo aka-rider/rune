@@ -319,12 +319,17 @@ func (m Model) View() string {
 	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
 	lines = m.snapshot.SliceH(lines, m.viewport.ScrollCol, m.width)
 
-	// Collect cursor byte offsets for rendering.
+	// Collect cursor byte offsets and selection intervals for rendering.
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
+	selStyle := m.styles.Selection
 	cursorOffsets := make(map[int]bool)
+	var selections []selInterval
 	if m.focused {
 		for _, c := range m.cursors.All() {
 			cursorOffsets[c.Position] = true
+			if c.HasSelection() {
+				selections = append(selections, selInterval{c.SelectionStart(), c.SelectionEnd()})
+			}
 		}
 	}
 
@@ -333,54 +338,18 @@ func (m Model) View() string {
 		var lineStr strings.Builder
 		for _, sp := range l.Spans {
 			rendered := m.renderSpan(sp)
-			if !m.focused || len(cursorOffsets) == 0 {
+			if !m.focused || (len(cursorOffsets) == 0 && len(selections) == 0) {
 				lineStr.WriteString(rendered)
 				continue
 			}
-			// Check if any cursor falls within this span's buffer range.
-			hasCursor := false
-			for off := range cursorOffsets {
-				if off >= sp.BufferStart && off < sp.BufferEnd {
-					hasCursor = true
-					break
-				}
-			}
-			if !hasCursor {
-				lineStr.WriteString(rendered)
-				continue
-			}
-			// Render span text with cursor highlighting.
-			// For Revealed spans, text bytes == buffer bytes, so offset indexing works.
-			// For Rendered spans, the text may be longer/shorter than the buffer range
-			// (hidden delimiters). Skip cursor rendering in that case — the syntax map
-			// guarantees the cursor line is Revealed, so this is only a defensive guard.
+			// For Rendered spans (non-revealed markdown), skip cursor/selection rendering.
 			if sp.State == display.Rendered {
 				lineStr.WriteString(rendered)
 				continue
 			}
-			text := sp.Text
-			for off := range cursorOffsets {
-				if off >= sp.BufferStart && off < sp.BufferEnd {
-					relOff := off - sp.BufferStart
-					if relOff > len(text) {
-						relOff = len(text)
-					}
-					// Write text before cursor
-					lineStr.WriteString(text[:relOff])
-					// Write cursor character with reverse video
-					if relOff < len(text) {
-						rest := text[relOff:]
-						_, size := firstRune(rest)
-						lineStr.WriteString(cursorStyle.Render(rest[:size]))
-						text = rest[size:]
-					} else {
-						lineStr.WriteString(cursorStyle.Render(" "))
-						text = ""
-					}
-					break // Only render one cursor per span
-				}
-			}
-			lineStr.WriteString(text)
+			// Render span text with cursor and selection highlighting.
+			// For Revealed spans, text bytes == buffer bytes, so offset indexing works.
+			m.renderSpanWithHighlights(&lineStr, sp, cursorOffsets, selections, cursorStyle, selStyle)
 		}
 		// If cursor is at end-of-line (past all spans), render block cursor
 		if m.focused {

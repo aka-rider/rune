@@ -275,3 +275,94 @@ func TestAllBindingsHaveKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestShiftNavigationResolvesToSelectCommands verifies that shift-prefixed
+// navigation keys resolve to select.* commands (not cursor.* commands).
+// This is the regression test for the shift-selection bug.
+func TestShiftNavigationResolvesToSelectCommands(t *testing.T) {
+	keys := Default()
+	mappings, err := keys.CommandBindings()
+	if err != nil {
+		t.Fatalf("CommandBindings error: %v", err)
+	}
+
+	resolver, err := keybind.NewResolver(mappings)
+	if err != nil {
+		t.Fatalf("NewResolver error: %v", err)
+	}
+
+	ctx := keybind.ResolverContext{EditorFocused: true}
+
+	tests := []struct {
+		chord    keybind.Chord
+		expected string
+	}{
+		// Non-shifted navigation -> cursor commands
+		{keybind.Chord{Key: "up"}, "cursor.line-up"},
+		{keybind.Chord{Key: "down"}, "cursor.line-down"},
+		{keybind.Chord{Key: "left"}, "cursor.character-left"},
+		{keybind.Chord{Key: "right"}, "cursor.character-right"},
+		{keybind.Chord{Key: "home"}, "cursor.line-start"},
+		{keybind.Chord{Key: "end"}, "cursor.line-end"},
+		{keybind.Chord{Key: "pgup"}, "cursor.page-up"},
+		{keybind.Chord{Key: "pgdown"}, "cursor.page-down"},
+
+		// Shifted navigation -> select commands
+		{keybind.Chord{Shift: true, Key: "up"}, "select.line-up"},
+		{keybind.Chord{Shift: true, Key: "down"}, "select.line-down"},
+		{keybind.Chord{Shift: true, Key: "left"}, "select.character-left"},
+		{keybind.Chord{Shift: true, Key: "right"}, "select.character-right"},
+		{keybind.Chord{Shift: true, Key: "home"}, "select.line-start"},
+		{keybind.Chord{Shift: true, Key: "end"}, "select.line-end"},
+		{keybind.Chord{Shift: true, Key: "pgup"}, "select.page-up"},
+		{keybind.Chord{Shift: true, Key: "pgdown"}, "select.page-down"},
+
+		// Cmd+A -> select all
+		{keybind.Chord{Cmd: true, Key: "a"}, "select.all"},
+	}
+
+	for _, tc := range tests {
+		name := "shift+" + tc.chord.Key
+		if !tc.chord.Shift {
+			name = tc.chord.Key
+		}
+		t.Run(name, func(t *testing.T) {
+			r, res := resolver.Resolve(tc.chord, ctx)
+			if res.Kind != keybind.ResultFound {
+				t.Fatalf("expected ResultFound, got %v (resolver=%+v)", res.Kind, r)
+			}
+			if res.Command != tc.expected {
+				t.Fatalf("expected command %q, got %q", tc.expected, res.Command)
+			}
+		})
+	}
+}
+
+// TestShiftVsCursorDisjoint ensures shift-prefixed bindings map to select.*
+// commands while non-shifted bindings map to cursor.* commands. No overlap
+// for navigation commands (select.all via Cmd+A is an exception).
+func TestShiftVsCursorDisjoint(t *testing.T) {
+	keys := Default()
+	mappings, err := keys.CommandBindings()
+	if err != nil {
+		t.Fatalf("CommandBindings error: %v", err)
+	}
+
+	for _, m := range mappings {
+		for _, chord := range m.Chords {
+			if chord.Shift {
+				if len(m.Command) >= 7 && m.Command[:7] == "cursor." {
+					t.Errorf("shifted chord maps to cursor command: %s", m.Command)
+				}
+			} else {
+				// select.all is intentionally non-shifted (Cmd+A)
+				if m.Command == "select.all" {
+					continue
+				}
+				if len(m.Command) >= 7 && m.Command[:7] == "select." {
+					t.Errorf("non-shifted chord maps to select command: %s", m.Command)
+				}
+			}
+		}
+	}
+}
