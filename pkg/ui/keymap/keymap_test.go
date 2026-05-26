@@ -1,9 +1,195 @@
 package keymap
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
+
+	"rune/pkg/editor/keybind"
 )
+
+// globalKeys lists the Binding field names whose keys are handled as
+// page-level globals (Priority 3 in workspace.Update) rather than
+// wired to commands via CommandBindings.
+var globalKeys = []string{
+	"TabSwitch",
+	"PinTab",
+	"FocusExplorer",
+	"FocusEditor",
+	"CloseFile",
+	"ZenMode",
+	"ConfirmExitC",
+	"ConfirmExitD",
+	"HelpExpand",
+}
+
+// editorShortcutKeys lists Binding field names handled as hardcoded
+// shortcuts inside the editor's Update() method (not via the resolver).
+var editorShortcutKeys = []string{
+	"PrimaryAction", // Enter → newline
+	"Cancel",        // Escape → cancel/close modal
+}
+
+// chordToKeyString reconstructs the key string that parseChord() would
+// have produced from a Chord, so we can match against AllPhysicalKeys().
+func chordToKeyString(c keybind.Chord) string {
+	parts := make([]string, 0, 4)
+	if c.Ctrl {
+		parts = append(parts, "ctrl")
+	}
+	if c.Alt {
+		parts = append(parts, "alt")
+	}
+	if c.Shift {
+		parts = append(parts, "shift")
+	}
+	if c.Cmd {
+		parts = append(parts, "cmd")
+	}
+	if c.Key != "" {
+		parts = append(parts, c.Key)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s", parts[0]) // Simplified: for multi-part chords we need join
+}
+
+// keyFromChord builds the key string that parseChord would produce.
+func keyFromChord(c keybind.Chord) string {
+	if !c.Ctrl && !c.Alt && !c.Shift && !c.Cmd {
+		return c.Key
+	}
+	var parts []string
+	if c.Ctrl {
+		parts = append(parts, "ctrl")
+	}
+	if c.Alt {
+		parts = append(parts, "alt")
+	}
+	if c.Shift {
+		parts = append(parts, "shift")
+	}
+	if c.Cmd {
+		parts = append(parts, "cmd")
+	}
+	parts = append(parts, c.Key)
+	result := parts[0]
+	for i := 1; i < len(parts); i++ {
+		result = result + "+" + parts[i]
+	}
+	return result
+}
+
+// TestBindingsFullyWired ensures every key.Binding field on Bindings is
+// either wired to a command in CommandBindings(), handled as a global
+// key in the workspace page, or handled as a hardcoded shortcut in the
+// editor. This prevents the same class of bug from recurring
+// (bindings defined but never mapped to any handler).
+func TestBindingsFullyWired(t *testing.T) {
+	keys := Default()
+
+	// Collect all physical keys from AllPhysicalKeys().
+	allKeys := make(map[string]bool)
+	for _, k := range keys.AllPhysicalKeys() {
+		allKeys[k] = true
+	}
+
+	// Collect all physical keys from CommandBindings.
+	cmdBindings, err := keys.CommandBindings()
+	if err != nil {
+		t.Fatalf("CommandBindings returned error: %v", err)
+	}
+	wiredKeys := make(map[string]bool)
+	for _, b := range cmdBindings {
+		for _, chord := range b.Chords {
+			k := keyFromChord(chord)
+			if k != "" {
+				wiredKeys[k] = true
+			}
+		}
+	}
+
+	// Collect all physical keys from global key bindings.
+	v := reflect.ValueOf(keys)
+	typ := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		fieldName := typ.Field(i).Name
+		for _, gk := range globalKeys {
+			if fieldName == gk {
+				keysMethod := v.Field(i).MethodByName("Keys")
+				if !keysMethod.IsValid() {
+					continue
+				}
+				result := keysMethod.Call(nil)
+				if len(result) == 0 {
+					continue
+				}
+				keySlice, ok := result[0].Interface().([]string)
+				if !ok {
+					continue
+				}
+				for _, k := range keySlice {
+					wiredKeys[k] = true
+				}
+			}
+		}
+	}
+
+	// Collect all physical keys from editor shortcut bindings.
+	for i := 0; i < v.NumField(); i++ {
+		fieldName := typ.Field(i).Name
+		for _, ek := range editorShortcutKeys {
+			if fieldName == ek {
+				keysMethod := v.Field(i).MethodByName("Keys")
+				if !keysMethod.IsValid() {
+					continue
+				}
+				result := keysMethod.Call(nil)
+				if len(result) == 0 {
+					continue
+				}
+				keySlice, ok := result[0].Interface().([]string)
+				if !ok {
+					continue
+				}
+				for _, k := range keySlice {
+					wiredKeys[k] = true
+				}
+			}
+		}
+	}
+
+	// Assert: every binding's keys must be wired (command, global, or shortcut).
+	for i := 0; i < v.NumField(); i++ {
+		fieldName := typ.Field(i).Name
+		keysMethod := v.Field(i).MethodByName("Keys")
+		if !keysMethod.IsValid() {
+			continue
+		}
+		result := keysMethod.Call(nil)
+		if len(result) == 0 {
+			continue
+		}
+		keySlice, ok := result[0].Interface().([]string)
+		if !ok {
+			continue
+		}
+		for _, k := range keySlice {
+			if !wiredKeys[k] {
+				t.Errorf("key %q on binding %q is not wired to any command, global handler, or editor shortcut", k, fieldName)
+			}
+		}
+	}
+
+	// Sanity: AllPhysicalKeys() must cover every key that appears in
+	// CommandBindings or the global/shortcut lists.
+	for k := range allKeys {
+		if !wiredKeys[k] {
+			t.Errorf("key %q is in AllPhysicalKeys() but not in any handler list", k)
+		}
+	}
+}
 
 func TestNoKeybindingCollisions(t *testing.T) {
 	keys := Default()

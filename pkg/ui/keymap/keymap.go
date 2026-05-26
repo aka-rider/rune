@@ -203,6 +203,10 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.FindReplaceOpen, "find.replace-open", "editorFocused")
 	add(b.FindNext, "find.next", "editorFocused")
 	add(b.FindPrev, "find.previous", "editorFocused")
+	add(b.PageUp, "cursor.page-up", "editorFocused")
+	add(b.PageDown, "cursor.page-down", "editorFocused")
+	add(b.HalfPageUp, "cursor.page-up", "editorFocused")
+	add(b.HalfPageDown, "cursor.page-down", "editorFocused")
 
 	return mappings, parseErr
 }
