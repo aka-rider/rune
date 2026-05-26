@@ -116,7 +116,30 @@ func (m Model) recalcLayout() Model {
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
 	m.editor = m.editor.SetSize(innerCenterW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
+	m.filetree = m.filetree.SetOffset(1, 1)
+	m.editor = m.editor.SetOffset(leftW+1, 1)
 	return m
+}
+
+func (m Model) paneAtPoint(x, y int) (pane, bool) {
+	contentH := m.totalHeight - m.footer.Height()
+	if y >= contentH {
+		return 0, false // footer
+	}
+
+	if m.leftVisible && x < m.leftPaneW {
+		innerH := contentH - 2
+		otH := m.opentabs.Height()
+		ftH := innerH - otH
+		if ftH < 4 {
+			ftH = 4
+		}
+		if y > ftH {
+			return paneTabs, true
+		}
+		return paneTree, true
+	}
+	return paneCenter, true
 }
 
 func (m Model) Init() tea.Cmd {
@@ -373,6 +396,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case ErrMsg:
 		m.err = msg.Err
+
+	case tea.MouseClickMsg:
+		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
+			m.focus = newFocus
+		}
 
 	case footer.ConfirmQuitMsg:
 		return m, tea.Quit

@@ -86,6 +86,8 @@ type Model struct {
 	styles      styles.Styles
 	width       int
 	height      int
+	offsetX     int
+	offsetY     int
 	focused     bool
 }
 
@@ -423,6 +425,8 @@ func (m Model) SetSize(w, h int) Model {
 	m.breadcrumb = m.breadcrumb.SetSize(w, 1)
 	return m.syncDisplay()
 }
+
+func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
 
 func (m Model) Height() int             { return m.height }
 func (m Model) SetFocused(f bool) Model { m.focused = f; return m }

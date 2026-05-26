@@ -61,11 +61,14 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	}
 
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.breadcrumb.Height(),
-		Col: msg.X,
+		Row: msg.Y - m.offsetY - m.breadcrumb.Height(),
+		Col: msg.X - m.offsetX,
 	}
 	if dp.Row < 0 {
 		return m, nil
+	}
+	if dp.Col < 0 {
+		dp.Col = 0
 	}
 
 	bp := displayToBuffer(dp, m.viewport, m.wrapSnap, m.syntaxSnap)
@@ -114,11 +117,14 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 	}
 
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.breadcrumb.Height(),
-		Col: msg.X,
+		Row: msg.Y - m.offsetY - m.breadcrumb.Height(),
+		Col: msg.X - m.offsetX,
 	}
 	if dp.Row < 0 {
 		dp.Row = 0
+	}
+	if dp.Col < 0 {
+		dp.Col = 0
 	}
 
 	bp := displayToBuffer(dp, m.viewport, m.wrapSnap, m.syntaxSnap)
