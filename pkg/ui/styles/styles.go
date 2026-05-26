@@ -37,6 +37,21 @@ type Styles struct {
 	CodeNumber     lipgloss.Style
 	CodeOperator   lipgloss.Style
 	CodePlain      lipgloss.Style
+
+	HeadingH1  lipgloss.Style
+	Heading    lipgloss.Style
+	HeadingH6  lipgloss.Style
+	InlineCode lipgloss.Style
+
+	TaskChecked   lipgloss.Style
+	TaskUnchecked lipgloss.Style
+
+	MdBold          lipgloss.Style
+	MdItalic        lipgloss.Style
+	MdStrikethrough lipgloss.Style
+
+	TableHeader    lipgloss.Style
+	TableSeparator lipgloss.Style
 }
 
 func Default() Styles {
@@ -84,5 +99,20 @@ func Default() Styles {
 		CodeNumber:     lipgloss.NewStyle().Foreground(lipgloss.Color("180")).Background(lipgloss.Color("235")),
 		CodeOperator:   lipgloss.NewStyle().Foreground(lipgloss.Color("249")).Background(lipgloss.Color("235")),
 		CodePlain:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235")),
+
+		HeadingH1:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("228")).Background(lipgloss.Color("63")),
+		Heading:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")),
+		HeadingH6:  lipgloss.NewStyle().Foreground(lipgloss.Color("35")),
+		InlineCode: lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("236")),
+
+		TaskChecked:   lipgloss.NewStyle().Foreground(lipgloss.Color("35")),
+		TaskUnchecked: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+
+		MdBold:          lipgloss.NewStyle().Bold(true),
+		MdItalic:        lipgloss.NewStyle().Italic(true),
+		MdStrikethrough: lipgloss.NewStyle().Strikethrough(true),
+
+		TableHeader:    lipgloss.NewStyle().Bold(true),
+		TableSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 	}
 }

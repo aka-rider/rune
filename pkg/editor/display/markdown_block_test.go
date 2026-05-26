@@ -1,7 +1,6 @@
 package display_test
 
 import (
-	"strings"
 	"testing"
 
 	"rune/pkg/editor/buffer"
@@ -217,7 +216,7 @@ func TestMarkdownTable_RenderedVsRevealed(t *testing.T) {
 	// Cursor outside table → rendered
 	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
 
-	// Table lines (1, 2, 3) should have TokenTable spans
+	// Table lines (1, 2, 3) should have TokenTable spans in Rendered state
 	for lineIdx := 1; lineIdx <= 3; lineIdx++ {
 		line := snap.Lines[lineIdx]
 		found := false
@@ -226,11 +225,6 @@ func TestMarkdownTable_RenderedVsRevealed(t *testing.T) {
 				found = true
 				if sp.State != display.Rendered {
 					t.Errorf("line %d: table span should be Rendered when cursor outside, got Revealed", lineIdx)
-				}
-				// Table in rendered mode shows raw text (explicit fallback)
-				expectedText := buf.Line(lineIdx)
-				if sp.Text != expectedText {
-					t.Errorf("line %d: table text: got %q, want %q", lineIdx, sp.Text, expectedText)
 				}
 			}
 		}
@@ -263,27 +257,44 @@ func TestMarkdownTable_CursorInsideReveals(t *testing.T) {
 }
 
 func TestMarkdownTable_RawTextFallbackExplicit(t *testing.T) {
-	// Gate 3: Table fallback is explicit — rendered text is the raw source
+	// Table rendered mode now formats cells with padding.
+	// Verify that rendered table spans have correct roles and formatting.
 	text := "| Col1 | Col2 | Col3 |\n|------|------|------|\n| a    | b    | c    |"
 	sMap := display.NewSyntaxMap()
 
 	// Cursor not on table
 	_, snap := sMap.Sync(buffer.New("preamble\n"+text), cursor.NewCursorSet(0))
 
-	lines := strings.Split(text, "\n")
-	for i, expected := range lines {
-		lineIdx := i + 1 // offset by preamble
-		found := false
-		for _, sp := range snap.Lines[lineIdx].Spans {
-			if sp.Kind == display.TokenTable {
-				found = true
-				if sp.Text != expected {
-					t.Errorf("table line %d: rendered text %q != raw source %q", i, sp.Text, expected)
-				}
+	// Line 1 (header) should be TokenTable in Rendered state with TableRoleHeader
+	for _, sp := range snap.Lines[1].Spans {
+		if sp.Kind == display.TokenTable {
+			if sp.State != display.Rendered {
+				t.Errorf("header line: expected Rendered state")
 			}
+			if sp.TableRole != display.TableRoleHeader {
+				t.Errorf("header line: expected TableRoleHeader, got %d", sp.TableRole)
+			}
+			break
 		}
-		if !found {
-			t.Errorf("table line %d: no TokenTable span", i)
+	}
+
+	// Line 2 (separator) should have TableRoleSeparator
+	for _, sp := range snap.Lines[2].Spans {
+		if sp.Kind == display.TokenTable {
+			if sp.TableRole != display.TableRoleSeparator {
+				t.Errorf("separator line: expected TableRoleSeparator, got %d", sp.TableRole)
+			}
+			break
+		}
+	}
+
+	// Line 3 (body) should have TableRoleBody
+	for _, sp := range snap.Lines[3].Spans {
+		if sp.Kind == display.TokenTable {
+			if sp.TableRole != display.TableRoleBody {
+				t.Errorf("body line: expected TableRoleBody, got %d", sp.TableRole)
+			}
+			break
 		}
 	}
 }

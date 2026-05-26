@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
@@ -699,4 +700,137 @@ func TestScrollOperationAdjustsViewport(t *testing.T) {
 	if m.viewport.TopRow < 0 {
 		t.Errorf("TopRow = %d after over-scroll up, must not be negative", m.viewport.TopRow)
 	}
+}
+
+// TestHorizontalRuleNavigation_NoCorruptedView verifies that navigating through
+// a horizontal rule ("---") produces valid UTF-8 output and correct cursor
+// positioning without garbled characters. This is the regression test for the
+// wrap-map BufferStart/BufferEnd corruption bug.
+func TestHorizontalRuleNavigation_NoCorruptedView(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	// Reproduce the exact bug scenario: long line with inline code + HR + heading.
+	content := "Selection and Multi-Cursor compose: each cursor in a multi-cursor set can independently have an active selection (`Anchor != Position`).\n\n---\n\n### Actions — Navigation"
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m = m.SetContent("test.md", []byte(content))
+
+	// Navigate down 4 times through: paragraph -> empty -> HR -> empty -> heading
+	for i := 0; i < 5; i++ {
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+
+		// After each navigation, verify:
+		// 1. View output is valid UTF-8
+		view := m.View()
+		for lineNo, line := range strings.Split(view, "\n") {
+			for byteIdx := 0; byteIdx < len(line); {
+				r, size := utf8.DecodeRuneInString(line[byteIdx:])
+				if r == utf8.RuneError && size == 1 {
+					t.Errorf("after down %d: invalid UTF-8 at view line %d, byte %d, context: %q",
+						i+1, lineNo, byteIdx, safeSlice(line, byteIdx-5, byteIdx+10))
+				}
+				byteIdx += size
+			}
+		}
+
+		// 2. Cursor position is within buffer bounds
+		pos := m.cursors.Primary().Position
+		if pos < 0 || pos > len(content) {
+			t.Errorf("after down %d: cursor position %d out of bounds [0, %d]",
+				i+1, pos, len(content))
+		}
+
+		// 3. No display spans have BufferStart > BufferEnd
+		for _, dline := range m.snapshot.Lines {
+			for _, sp := range dline.Spans {
+				if len(sp.Text) > 0 && sp.BufferEnd < sp.BufferStart {
+					t.Errorf("after down %d: span has BufferEnd (%d) < BufferStart (%d), text=%q",
+						i+1, sp.BufferEnd, sp.BufferStart, sp.Text)
+				}
+			}
+		}
+	}
+}
+
+// TestInlineCodeWrapping_BufferOffsetsCorrect verifies that soft-wrapping a line
+// with rendered inline code produces wrap segments with correct buffer offsets.
+// This catches the root cause: the old wrap map used Spans[0].BufferStart as
+// the base for all segments, ignoring hidden delimiter bytes.
+func TestInlineCodeWrapping_BufferOffsetsCorrect(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	// Line with inline code that will wrap: rendered text is shorter than buffer.
+	content := "before `inline code here` after this more text padding"
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	// Width 30 forces a wrap in the middle of the line.
+	m = m.SetSize(30, 10)
+	m = m.SetFocused(true)
+
+	// Put cursor on line 1 (if existed) or beyond inline code to make it Rendered.
+	// Adding a second line ensures cursor is not on line 0.
+	content += "\nsecond"
+	m = m.SetContent("test.md", []byte(content))
+
+	// Move cursor to line 2 (second line) so line 0's inline code is Rendered.
+	m.cursors = cursor.NewCursorSet(len(content) - 6) // "second" starts here
+	m = m.syncDisplay()
+
+	// Verify all wrap segments for line 0 have valid buffer offsets.
+	line0Start := 0
+	line0End := strings.Index(content, "\n")
+
+	for i, dline := range m.snapshot.Lines {
+		if dline.ModelLine != 0 {
+			continue
+		}
+		for j, sp := range dline.Spans {
+			if len(sp.Text) == 0 {
+				continue
+			}
+			if sp.BufferStart < line0Start {
+				t.Errorf("display line %d span %d: BufferStart %d < line start %d",
+					i, j, sp.BufferStart, line0Start)
+			}
+			if sp.BufferEnd > line0End {
+				t.Errorf("display line %d span %d: BufferEnd %d > line end %d, text=%q",
+					i, j, sp.BufferEnd, line0End, sp.Text)
+			}
+			if sp.State == display.Revealed && sp.BufferEnd-sp.BufferStart != len(sp.Text) {
+				t.Errorf("display line %d span %d: Revealed span buffer range %d != text len %d, text=%q",
+					i, j, sp.BufferEnd-sp.BufferStart, len(sp.Text), sp.Text)
+			}
+		}
+	}
+}
+
+func safeSlice(s string, start, end int) string {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(s) {
+		end = len(s)
+	}
+	if start >= end {
+		return ""
+	}
+	return s[start:end]
 }

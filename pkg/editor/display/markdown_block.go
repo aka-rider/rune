@@ -16,6 +16,12 @@ type mdBlock struct {
 	startOff  int    // byte offset of block start in document
 	endOff    int    // byte offset of block end in document
 	language  string // for code fences
+
+	// Table metadata (only set for TokenTable blocks)
+	colWidths  []int // max visual width per column
+	alignments []int // 0=left, 1=center, 2=right (per goldmark)
+	sepLine    int   // line index of separator row (-1 if none)
+	headerEnd  int   // last line index of the header (startLine typically)
 }
 
 // walkFencedCodeBlock extracts block info for a fenced code block.
@@ -209,14 +215,27 @@ func walkTable(
 	startOff := lineOffsets[startLine]
 	endOff := lineOffsets[endLine] + len(lines[endLine])
 
+	// Compute column widths and identify separator line
+	colWidths, sepLine := computeTableMetrics(lines, startLine, endLine)
+
+	// Extract alignments from goldmark AST
+	alignments := make([]int, len(node.Alignments))
+	for i, a := range node.Alignments {
+		alignments[i] = int(a)
+	}
+
 	*blockID++
 	*blocks = append(*blocks, mdBlock{
-		kind:      TokenTable,
-		id:        *blockID,
-		startLine: startLine,
-		endLine:   endLine,
-		startOff:  startOff,
-		endOff:    endOff,
+		kind:       TokenTable,
+		id:         *blockID,
+		startLine:  startLine,
+		endLine:    endLine,
+		startOff:   startOff,
+		endOff:     endOff,
+		colWidths:  colWidths,
+		alignments: alignments,
+		sepLine:    sepLine,
+		headerEnd:  startLine,
 	})
 }
 
@@ -418,21 +437,6 @@ func codeFenceRenderedSpans(block mdBlock, lineIdx int, lineText string, lineSta
 		BufferStart: lineStart,
 		BufferEnd:   lineStart + len(lineText),
 		Language:    block.language,
-		BlockID:     block.id,
-		BlockStart:  block.startOff,
-		BlockEnd:    block.endOff,
-	}}
-}
-
-// tableRenderedSpans produces spans for a table line in rendered mode.
-// Tables are rendered as raw text with table metadata (raw-only preview).
-func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart int) []SyntaxSpan {
-	return []SyntaxSpan{{
-		Text:        lineText,
-		Kind:        TokenTable,
-		State:       Rendered,
-		BufferStart: lineStart,
-		BufferEnd:   lineStart + len(lineText),
 		BlockID:     block.id,
 		BlockStart:  block.startOff,
 		BlockEnd:    block.endOff,

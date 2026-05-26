@@ -35,6 +35,7 @@ type mdSpan struct {
 	delimLeft  int // bytes of left delimiter to hide
 	delimRight int // bytes of right delimiter to hide
 	linkURL    string
+	level      int // heading level (1-6)
 }
 
 // parsedLine holds the spans extracted for a single line.

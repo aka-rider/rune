@@ -348,9 +348,14 @@ func (m Model) View() string {
 				continue
 			}
 			// Render span text with cursor highlighting.
-			// For non-highlighted spans, rendered == sp.Text, so byte offsets align.
-			// For highlighted spans (code fences in Rendered state), the cursor
-			// won't be here because the syntax map reveals spans at cursor.
+			// For Revealed spans, text bytes == buffer bytes, so offset indexing works.
+			// For Rendered spans, the text may be longer/shorter than the buffer range
+			// (hidden delimiters). Skip cursor rendering in that case — the syntax map
+			// guarantees the cursor line is Revealed, so this is only a defensive guard.
+			if sp.State == display.Rendered {
+				lineStr.WriteString(rendered)
+				continue
+			}
 			text := sp.Text
 			for off := range cursorOffsets {
 				if off >= sp.BufferStart && off < sp.BufferEnd {

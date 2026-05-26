@@ -40,6 +40,7 @@ func walkHeading(node *ast.Heading, src []byte, lines []string, lineOffsets []in
 		text:       line[delimLen:],
 		delimLeft:  delimLen,
 		delimRight: 0,
+		level:      hashes,
 	})
 }
 

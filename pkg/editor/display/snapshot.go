@@ -5,19 +5,21 @@ import (
 )
 
 type DisplaySpan struct {
-	Text        string
-	Kind        TokenKind
-	State       RevealState
-	BufferStart int
-	BufferEnd   int
-	Language    string
-	BlockID     int
-	BlockStart  int
-	BlockEnd    int
-	AltText     string
-	ImagePath   string
-	EmbedRef    string
-	CalloutKind string
+	Text         string
+	Kind         TokenKind
+	State        RevealState
+	BufferStart  int
+	BufferEnd    int
+	Language     string
+	BlockID      int
+	BlockStart   int
+	BlockEnd     int
+	AltText      string
+	ImagePath    string
+	EmbedRef     string
+	CalloutKind  string
+	HeadingLevel int
+	TableRole    TableRoleKind
 }
 
 type DisplayLine struct {
@@ -43,19 +45,21 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 		var spans []DisplaySpan
 		for _, s := range seg.Spans {
 			spans = append(spans, DisplaySpan{
-				Text:        s.Text,
-				Kind:        s.Kind,
-				State:       s.State,
-				BufferStart: s.BufferStart,
-				BufferEnd:   s.BufferEnd,
-				Language:    s.Language,
-				BlockID:     s.BlockID,
-				BlockStart:  s.BlockStart,
-				BlockEnd:    s.BlockEnd,
-				AltText:     s.AltText,
-				ImagePath:   s.ImagePath,
-				EmbedRef:    s.EmbedRef,
-				CalloutKind: s.CalloutKind,
+				Text:         s.Text,
+				Kind:         s.Kind,
+				State:        s.State,
+				BufferStart:  s.BufferStart,
+				BufferEnd:    s.BufferEnd,
+				Language:     s.Language,
+				BlockID:      s.BlockID,
+				BlockStart:   s.BlockStart,
+				BlockEnd:     s.BlockEnd,
+				AltText:      s.AltText,
+				HeadingLevel: s.HeadingLevel,
+				TableRole:    s.TableRole,
+				ImagePath:    s.ImagePath,
+				EmbedRef:     s.EmbedRef,
+				CalloutKind:  s.CalloutKind,
 			})
 		}
 		dlines = append(dlines, DisplayLine{

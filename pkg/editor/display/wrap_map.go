@@ -220,18 +220,15 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {
 			continue
 		}
 
-		// Soft wrap logic simplified (not strictly matching the hardest conditions,
-		// but providing token splitting). We need to split text properly.
-		// For simplicity, we just won't break spans into actual separate allocations
-		// if we can just point to substrings.
-
-		// Instead of a full correct wrap that takes 200 lines, I'll do a basic wrap.
-		// Since we need to pass QA gates (break at word boundaries, CJK 2-cell, no mid-rune break).
-
-		text := ""
-		for _, s := range line.Spans {
-			text += s.Text // Phase 1 assumption: one span per line mostly
+		// Build a concatenated text for wrap-break calculations and a mapping
+		// from byte offset in concatenated text back to the originating span.
+		var spanRefs []spanRef
+		var textBuf []byte
+		for i, s := range line.Spans {
+			spanRefs = append(spanRefs, spanRef{index: i, startOff: len(textBuf)})
+			textBuf = append(textBuf, s.Text...)
 		}
+		text := string(textBuf)
 
 		if len(text) == 0 {
 			segments = append(segments, WrapSegment{
@@ -270,36 +267,16 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {
 			}
 
 			if byteLen == 0 && len(remain) > 0 {
-				// forced break at 1 char if it alone is wider than limit
 				_, size := utf8.DecodeRuneInString(remain)
 				byteLen = size
 			} else if byteLen < len(remain) && lastSpaceBytes > 0 {
-				// break at word boundary
 				byteLen = lastSpaceBytes
 			}
 
-			// Extract spans for this segment
-			segSpans := []SyntaxSpan{}
-			// phase 1 simplicity: text is in one span
-			if len(line.Spans) > 0 {
-				s := line.Spans[0]
-				endCol := startCol + byteLen
-				segSpans = append(segSpans, SyntaxSpan{
-					Text:        text[startCol:endCol],
-					Kind:        s.Kind,
-					State:       s.State,
-					BufferStart: s.BufferStart + startCol,
-					BufferEnd:   s.BufferStart + endCol,
-					Language:    s.Language,
-					BlockID:     s.BlockID,
-					BlockStart:  s.BlockStart,
-					BlockEnd:    s.BlockEnd,
-					AltText:     s.AltText,
-					ImagePath:   s.ImagePath,
-					EmbedRef:    s.EmbedRef,
-					CalloutKind: s.CalloutKind,
-				})
-			}
+			// Slice original spans to produce correct BufferStart/BufferEnd
+			segStart := startCol
+			segEnd := startCol + byteLen
+			segSpans := sliceOriginalSpans(line.Spans, spanRefs, segStart, segEnd)
 
 			segments = append(segments, WrapSegment{
 				Spans:     segSpans,
@@ -320,4 +297,91 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {
 		rowToSegment:   rowToSegment,
 		lineToFirstRow: lineToFirstRow,
 	}
+}
+
+// spanRef maps a span's position within the concatenated text string.
+type spanRef struct {
+	index    int // index into the original line.Spans slice
+	startOff int // byte offset where this span starts in the concatenated text
+}
+
+// sliceOriginalSpans extracts the sub-spans from the original SyntaxSpan slice
+// that cover the byte range [segStart, segEnd) in the concatenated text.
+// Each output span retains correct BufferStart/BufferEnd from the originals.
+func sliceOriginalSpans(spans []SyntaxSpan, refs []spanRef, segStart, segEnd int) []SyntaxSpan {
+	var result []SyntaxSpan
+
+	for _, ref := range refs {
+		s := spans[ref.index]
+		spanStart := ref.startOff
+		spanEnd := spanStart + len(s.Text)
+
+		// Skip spans entirely before or after the segment range.
+		if spanEnd <= segStart || spanStart >= segEnd {
+			continue
+		}
+
+		// Compute the slice of this span's text that falls within [segStart, segEnd).
+		localStart := 0
+		if segStart > spanStart {
+			localStart = segStart - spanStart
+		}
+		localEnd := len(s.Text)
+		if segEnd < spanEnd {
+			localEnd = segEnd - spanStart
+		}
+
+		// Compute BufferStart/BufferEnd for the sliced portion.
+		// The original span's BufferStart corresponds to localStart=0 in s.Text.
+		// We need to map from text-space offset to buffer-space offset.
+		//
+		// For Revealed spans: text bytes == buffer bytes, so offset arithmetic is direct.
+		// For Rendered spans: the text is shorter than the buffer range (hidden delims).
+		//   In this case we CANNOT split — the entire rendered span maps to the full
+		//   buffer range. We include it whole if any part intersects the segment.
+		if s.State == Rendered {
+			// Rendered spans cannot be sub-sliced because their text doesn't
+			// correspond byte-for-byte to the buffer range.
+			// Include the full span text that overlaps the segment.
+			slicedText := s.Text[localStart:localEnd]
+			result = append(result, SyntaxSpan{
+				Text:         slicedText,
+				Kind:         s.Kind,
+				State:        s.State,
+				BufferStart:  s.BufferStart,
+				BufferEnd:    s.BufferEnd,
+				Language:     s.Language,
+				BlockID:      s.BlockID,
+				BlockStart:   s.BlockStart,
+				BlockEnd:     s.BlockEnd,
+				AltText:      s.AltText,
+				ImagePath:    s.ImagePath,
+				EmbedRef:     s.EmbedRef,
+				CalloutKind:  s.CalloutKind,
+				HeadingLevel: s.HeadingLevel,
+				TableRole:    s.TableRole,
+			})
+		} else {
+			// Revealed spans: text == buffer content, direct offset mapping.
+			result = append(result, SyntaxSpan{
+				Text:         s.Text[localStart:localEnd],
+				Kind:         s.Kind,
+				State:        s.State,
+				BufferStart:  s.BufferStart + localStart,
+				BufferEnd:    s.BufferStart + localEnd,
+				Language:     s.Language,
+				BlockID:      s.BlockID,
+				BlockStart:   s.BlockStart,
+				BlockEnd:     s.BlockEnd,
+				AltText:      s.AltText,
+				ImagePath:    s.ImagePath,
+				EmbedRef:     s.EmbedRef,
+				CalloutKind:  s.CalloutKind,
+				HeadingLevel: s.HeadingLevel,
+				TableRole:    s.TableRole,
+			})
+		}
+	}
+
+	return result
 }

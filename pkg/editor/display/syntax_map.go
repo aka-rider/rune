@@ -41,20 +41,31 @@ const (
 	Revealed
 )
 
+// TableRoleKind distinguishes header, separator, and body lines in a table block.
+type TableRoleKind int
+
+const (
+	TableRoleBody TableRoleKind = iota
+	TableRoleHeader
+	TableRoleSeparator
+)
+
 type SyntaxSpan struct {
-	Text        string
-	Kind        TokenKind
-	State       RevealState
-	BufferStart int
-	BufferEnd   int
-	Language    string
-	BlockID     int
-	BlockStart  int
-	BlockEnd    int
-	AltText     string // image alt text
-	ImagePath   string // image path/URL
-	EmbedRef    string // embed reference (e.g. [[filename]])
-	CalloutKind string // callout type (e.g. "note", "warning")
+	Text         string
+	Kind         TokenKind
+	State        RevealState
+	BufferStart  int
+	BufferEnd    int
+	Language     string
+	BlockID      int
+	BlockStart   int
+	BlockEnd     int
+	AltText      string // image alt text
+	ImagePath    string // image path/URL
+	EmbedRef     string // embed reference (e.g. [[filename]])
+	CalloutKind  string // callout type (e.g. "note", "warning")
+	HeadingLevel int    // heading level (1-6), 0 for non-headings
+	TableRole    TableRoleKind
 }
 
 // FrontmatterMode controls how frontmatter is displayed in rendered mode.
@@ -360,15 +371,16 @@ func buildSyntaxLine(
 			// Show raw text including delimiters
 			raw := lineText[ms.start:ms.end]
 			spans = append(spans, SyntaxSpan{
-				Text:        raw,
-				Kind:        ms.kind,
-				State:       Revealed,
-				BufferStart: lineStart + ms.start,
-				BufferEnd:   lineStart + ms.end,
-				AltText:     spanAltText(ms),
-				ImagePath:   spanImagePath(ms),
-				EmbedRef:    spanEmbedRef(ms),
-				CalloutKind: spanCalloutKind(ms),
+				Text:         raw,
+				Kind:         ms.kind,
+				State:        Revealed,
+				BufferStart:  lineStart + ms.start,
+				BufferEnd:    lineStart + ms.end,
+				AltText:      spanAltText(ms),
+				ImagePath:    spanImagePath(ms),
+				EmbedRef:     spanEmbedRef(ms),
+				CalloutKind:  spanCalloutKind(ms),
+				HeadingLevel: ms.level,
 			})
 		} else {
 			// Hide delimiters
@@ -407,15 +419,16 @@ func buildSyntaxLine(
 
 			// Emit visible text
 			spans = append(spans, SyntaxSpan{
-				Text:        ms.text,
-				Kind:        ms.kind,
-				State:       Rendered,
-				BufferStart: lineStart + ms.start,
-				BufferEnd:   lineStart + ms.end,
-				AltText:     spanAltText(ms),
-				ImagePath:   spanImagePath(ms),
-				EmbedRef:    spanEmbedRef(ms),
-				CalloutKind: spanCalloutKind(ms),
+				Text:         ms.text,
+				Kind:         ms.kind,
+				State:        Rendered,
+				BufferStart:  lineStart + ms.start,
+				BufferEnd:    lineStart + ms.end,
+				AltText:      spanAltText(ms),
+				ImagePath:    spanImagePath(ms),
+				EmbedRef:     spanEmbedRef(ms),
+				CalloutKind:  spanCalloutKind(ms),
+				HeadingLevel: ms.level,
 			})
 		}
 
