@@ -78,13 +78,13 @@ func Default() Bindings {
 		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
 		Indent:             key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
 		Outdent:            key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
-		SaveFile:           key.NewBinding(key.WithKeys("cmd+s"), key.WithHelp("⌘s", "save")),
-		AddCursorAbove:     key.NewBinding(key.WithKeys("alt+cmd+up"), key.WithHelp("⌥⌘↑", "cursor above")),
-		AddCursorBelow:     key.NewBinding(key.WithKeys("alt+cmd+down"), key.WithHelp("⌥⌘↓", "cursor below")),
-		FindOpen:           key.NewBinding(key.WithKeys("cmd+f"), key.WithHelp("⌘f", "find")),
-		FindReplaceOpen:    key.NewBinding(key.WithKeys("cmd+h"), key.WithHelp("⌘h", "find & replace")),
-		FindNext:           key.NewBinding(key.WithKeys("cmd+g"), key.WithHelp("⌘g", "find next")),
-		FindPrev:           key.NewBinding(key.WithKeys("shift+cmd+g"), key.WithHelp("⇧⌘g", "find prev")),
+		SaveFile:           key.NewBinding(key.WithKeys("super+s"), key.WithHelp("⌘s", "save")),
+		AddCursorAbove:     key.NewBinding(key.WithKeys("alt+super+up"), key.WithHelp("⌥⌘↑", "cursor above")),
+		AddCursorBelow:     key.NewBinding(key.WithKeys("alt+super+down"), key.WithHelp("⌥⌘↓", "cursor below")),
+		FindOpen:           key.NewBinding(key.WithKeys("super+f"), key.WithHelp("⌘f", "find")),
+		FindReplaceOpen:    key.NewBinding(key.WithKeys("super+h"), key.WithHelp("⌘h", "find & replace")),
+		FindNext:           key.NewBinding(key.WithKeys("super+g"), key.WithHelp("⌘g", "find next")),
+		FindPrev:           key.NewBinding(key.WithKeys("shift+super+g"), key.WithHelp("⇧⌘g", "find prev")),
 		ShiftUp:            key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "shift+up")),
 		ShiftDown:          key.NewBinding(key.WithKeys("shift+down"), key.WithHelp("⇧↓", "shift+down")),
 		ShiftLeft:          key.NewBinding(key.WithKeys("shift+left"), key.WithHelp("⇧←", "shift+left")),
@@ -93,10 +93,10 @@ func Default() Bindings {
 		ShiftGotoBottom:    key.NewBinding(key.WithKeys("shift+end"), key.WithHelp("⇧⇥", "shift+bottom")),
 		ShiftPageUp:        key.NewBinding(key.WithKeys("shift+pgup"), key.WithHelp("⇧⇞", "shift+page up")),
 		ShiftPageDown:      key.NewBinding(key.WithKeys("shift+pgdown"), key.WithHelp("⇧⇟", "shift+page down")),
-		SelectAll:          key.NewBinding(key.WithKeys("cmd+a"), key.WithHelp("⌘a", "select all")),
-		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+cmd+c"), key.WithHelp("⌘⇧c", "copy")),
-		CutToClipboard:     key.NewBinding(key.WithKeys("shift+cmd+x"), key.WithHelp("⌘⇧x", "cut")),
-		PasteFromClipboard: key.NewBinding(key.WithKeys("cmd+v"), key.WithHelp("⌘v", "paste")),
+		SelectAll:          key.NewBinding(key.WithKeys("super+a"), key.WithHelp("⌘a", "select all")),
+		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+super+c"), key.WithHelp("⌘⇧c", "copy")),
+		CutToClipboard:     key.NewBinding(key.WithKeys("super+x"), key.WithHelp("⌘x", "cut")),
+		PasteFromClipboard: key.NewBinding(key.WithKeys("super+v"), key.WithHelp("⌘v", "paste")),
 	}
 }
 
@@ -196,7 +196,7 @@ func parseChord(s string) []keybind.Chord {
 			chord.Shift = true
 		case "alt":
 			chord.Alt = true
-		case "cmd":
+		case "cmd", "super":
 			chord.Cmd = true
 		default:
 			chord.Key = p

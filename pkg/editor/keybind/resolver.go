@@ -21,7 +21,7 @@ func ChordFromKeyMsg(msg tea.KeyPressMsg) Chord {
 		Ctrl:  (k.Mod & tea.ModCtrl) != 0,
 		Alt:   (k.Mod & tea.ModAlt) != 0,
 		Shift: (k.Mod & tea.ModShift) != 0,
-		Cmd:   (k.Mod & tea.ModMeta) != 0,
+		Cmd:   (k.Mod & tea.ModSuper) != 0,
 	}
 
 	kRaw := k

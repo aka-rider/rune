@@ -180,11 +180,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
-		if msg.Code == 'f' && msg.Mod == tea.ModMeta {
+		if msg.Code == 'f' && msg.Mod == tea.ModSuper {
 			m.findOverlay = m.findOverlay.open(false)
 			return m, nil
 		}
-		if msg.Code == 'h' && msg.Mod == tea.ModMeta {
+		if msg.Code == 'h' && msg.Mod == tea.ModSuper {
 			m.findOverlay = m.findOverlay.open(true)
 			return m, nil
 		}
@@ -199,7 +199,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Undo: Cmd+Z (no resolver binding)
-		if msg.Code == 'z' && msg.Mod == tea.ModMeta {
+		if msg.Code == 'z' && msg.Mod == tea.ModSuper {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
@@ -207,7 +207,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Redo: Cmd+Shift+Z (no resolver binding)
-		if msg.Code == 'z' && msg.Mod == (tea.ModMeta|tea.ModShift) {
+		if msg.Code == 'z' && msg.Mod == (tea.ModSuper|tea.ModShift) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
@@ -282,12 +282,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case keybind.ResultMoreChordsNeeded:
 			// Chord incomplete — wait for next key
 		case keybind.ResultNoMatch:
-			if msg.Mod == 0 && isPrintableChar(msg.Code) {
-				char := string(msg.Code)
+			text := msg.Text
+			if text == "" && msg.Mod == 0 && isPrintableChar(msg.Code) {
+				text = string(msg.Code)
+			}
+			if text != "" {
 				res := m.registry.Execute("edit.insert-character", command.CommandContext{
 					Buffer:  m.buf,
 					Cursors: m.cursors,
-					Args:    map[string]any{"char": char},
+					Args:    map[string]any{"char": text},
 				})
 				if res.Err == nil && res.Operation.Kind != command.OperationNone {
 					m = m.applyOperation(res.Operation, history.EditInsertChar, time.Now())

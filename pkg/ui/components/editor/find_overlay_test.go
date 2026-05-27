@@ -32,13 +32,13 @@ func testFindEditor(t *testing.T) Model {
 
 // openFindOverlay sends Cmd+F to open find overlay.
 func openFindOverlay(m Model) Model {
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModSuper})
 	return m
 }
 
 // openReplaceFindOverlay sends Cmd+H to open find+replace overlay.
 func openReplaceFindOverlay(m Model) Model {
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModSuper})
 	return m
 }
 
@@ -83,7 +83,7 @@ func TestFindStubNextDisabled(t *testing.T) {
 	cursorsBefore := m.cursors.All()
 
 	// Cmd+G (find next) should be consumed with no effect
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModSuper})
 
 	if m.Content() != contentBefore {
 		t.Errorf("find.next mutated content")
@@ -190,9 +190,9 @@ func TestFindStubUndoRedoConsumed(t *testing.T) {
 	canRedoBefore := m.history.CanRedo()
 
 	// Cmd+Z (undo)
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper})
 	// Cmd+Shift+Z (redo)
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModMeta | tea.ModShift})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper | tea.ModShift})
 
 	if m.history.CanUndo() != canUndoBefore {
 		t.Errorf("undo state changed while overlay open")
@@ -208,9 +208,9 @@ func TestFindStubClipboardConsumed(t *testing.T) {
 	contentBefore := m.Content()
 
 	// Cmd+V (paste), Cmd+C (copy), Cmd+X (cut) — all consumed
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModMeta})
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModMeta})
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'v', Mod: tea.ModSuper})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModSuper})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModSuper})
 
 	if m.Content() != contentBefore {
 		t.Errorf("clipboard keys mutated buffer")
@@ -223,7 +223,7 @@ func TestFindStubSelectAllConsumed(t *testing.T) {
 	cursorsBefore := m.cursors.All()
 
 	// Cmd+A (select all)
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModMeta})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModSuper})
 
 	cursorsAfter := m.cursors.All()
 	if len(cursorsAfter) != len(cursorsBefore) {

@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	tea "charm.land/bubbletea/v2"
 	ui "rune/pkg/ui"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func main() {

@@ -71,7 +71,7 @@ func keyFromChord(c keybind.Chord) string {
 		parts = append(parts, "shift")
 	}
 	if c.Cmd {
-		parts = append(parts, "cmd")
+		parts = append(parts, "super")
 	}
 	parts = append(parts, c.Key)
 	result := parts[0]
@@ -321,7 +321,7 @@ func TestShiftNavigationResolvesToSelectCommands(t *testing.T) {
 		{keybind.Chord{Cmd: true, Key: "a"}, "select.all"},
 		// Clipboard
 		{keybind.Chord{Shift: true, Cmd: true, Key: "c"}, "clipboard.copy"},
-		{keybind.Chord{Shift: true, Cmd: true, Key: "x"}, "clipboard.cut"},
+		{keybind.Chord{Cmd: true, Key: "x"}, "clipboard.cut"},
 		{keybind.Chord{Cmd: true, Key: "v"}, "clipboard.paste"},
 	}
 
