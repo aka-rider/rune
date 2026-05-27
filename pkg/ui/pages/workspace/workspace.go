@@ -12,6 +12,7 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
+	"rune/pkg/ui/components/chat"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
@@ -26,6 +27,7 @@ const (
 	paneTree pane = iota
 	paneTabs
 	paneCenter
+	paneChat
 )
 
 func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
@@ -34,6 +36,7 @@ func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
 type ErrMsg struct{ Err error }
 
 const defaultLeftPaneW = 22
+const defaultRightPaneW = 38
 
 type pendingDirtyKind int
 
@@ -59,6 +62,9 @@ type Model struct {
 	focus                   pane
 	leftVisible             bool
 	leftPaneW               int
+	chat                    chat.Model
+	rightVisible            bool
+	rightPaneW              int
 	err                     error
 	keys                    keymap.Bindings
 	styles                  styles.Styles
@@ -67,15 +73,18 @@ type Model struct {
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
 	return Model{
-		filetree:    filetree.New(keys, st),
-		opentabs:    opentabs.New(keys, st),
-		editor:      editor.New(keys, st, reg, resolver, caps),
-		footer:      footer.New(keys, st).SetHelp(keys.HelpText()),
-		focus:       paneTree,
-		leftVisible: true,
-		leftPaneW:   defaultLeftPaneW,
-		keys:        keys,
-		styles:      st,
+		filetree:     filetree.New(keys, st),
+		opentabs:     opentabs.New(keys, st),
+		editor:       editor.New(keys, st, reg, resolver, caps),
+		footer:       footer.New(keys, st).SetHelp(keys.HelpText()),
+		chat:         chat.New(keys, st),
+		focus:        paneTree,
+		leftVisible:  true,
+		leftPaneW:    defaultLeftPaneW,
+		rightVisible: false,
+		rightPaneW:   defaultRightPaneW,
+		keys:         keys,
+		styles:       st,
 	}
 }
 
@@ -89,7 +98,11 @@ func (m Model) recalcLayout() Model {
 	if m.leftVisible {
 		leftW = m.leftPaneW
 	}
-	centerW := m.totalWidth - leftW
+	rightW := 0
+	if m.rightVisible {
+		rightW = m.rightPaneW
+	}
+	centerW := m.totalWidth - leftW - rightW
 	if centerW < 0 {
 		centerW = 0
 	}
@@ -106,6 +119,10 @@ func (m Model) recalcLayout() Model {
 	if innerCenterW < 0 {
 		innerCenterW = 0
 	}
+	innerRightW := rightW - 2
+	if innerRightW < 0 {
+		innerRightW = 0
+	}
 
 	otH := m.opentabs.Height()
 	ftH := innerH - otH
@@ -115,6 +132,7 @@ func (m Model) recalcLayout() Model {
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
 	m.editor = m.editor.SetSize(innerCenterW, innerH)
+	m.chat = m.chat.SetSize(innerRightW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
 	m.filetree = m.filetree.SetOffset(1, 1)
 	m.editor = m.editor.SetOffset(leftW+1, 1)
@@ -139,6 +157,10 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 		}
 		return paneTree, true
 	}
+	rightStart := m.totalWidth - m.rightPaneW
+	if m.rightVisible && x >= rightStart {
+		return paneChat, true
+	}
 	return paneCenter, true
 }
 
@@ -148,6 +170,7 @@ func (m Model) Init() tea.Cmd {
 		m.opentabs.Init(),
 		m.editor.Init(),
 		m.footer.Init(),
+		m.chat.Init(),
 		loadDirCmd(".", "."),
 	)
 }
@@ -289,6 +312,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.FocusEditor):
 			m.focus = paneCenter
 
+		case key.Matches(msg, m.keys.FocusChat):
+			if m.rightVisible && m.focus == paneChat {
+				m.rightVisible = false
+				m.focus = paneCenter
+			} else {
+				m.rightVisible = true
+				m.focus = paneChat
+			}
+
 		case key.Matches(msg, m.keys.CloseFile):
 			m, cmd = m.requestCloseCurrent()
 			cmds = append(cmds, cmd)
@@ -333,6 +365,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.chat = m.chat.SetFocused(m.focus == paneChat)
+		m.chat, cmd = m.chat.Update(msg)
+		cmds = append(cmds, cmd)
+
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 
@@ -355,6 +391,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case editor.FileLoadedMsg:
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
+		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 
 	case editor.ContentChangedMsg:
 		if msg.Dirty {
@@ -362,6 +399,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.opentabs = m.opentabs.MarkClean(msg.Path)
 		}
+		m.chat = m.chat.SetFileContext(msg.Path, m.editor.Content())
 
 	case editor.FileSavedMsg:
 		m.opentabs = m.opentabs.MarkClean(msg.Path)
@@ -420,6 +458,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.chat = m.chat.SetFocused(m.focus == paneChat)
+		m.chat, cmd = m.chat.Update(msg)
+		cmds = append(cmds, cmd)
+
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 
@@ -442,7 +484,11 @@ func (m Model) View() tea.View {
 	if m.leftVisible {
 		leftW = m.leftPaneW
 	}
-	centerW := m.totalWidth - leftW
+	rightW := 0
+	if m.rightVisible {
+		rightW = m.rightPaneW
+	}
+	centerW := m.totalWidth - leftW - rightW
 	if centerW < 0 {
 		centerW = 0
 	}
@@ -451,8 +497,26 @@ func (m Model) View() tea.View {
 		Width(centerW).Height(contentH).
 		Render(m.editor.View())
 
+	var chatBlock string
+	if m.rightVisible {
+		chatBlock = borderStyle(m.focus == paneChat, m.styles).
+			Width(rightW).Height(contentH).
+			Render(m.chat.View())
+	}
+
 	var body string
-	if m.leftVisible {
+	switch {
+	case m.leftVisible && m.rightVisible:
+		leftContent := lipgloss.JoinVertical(lipgloss.Left,
+			m.filetree.View(),
+			m.opentabs.View(),
+		)
+		leftBlock := borderStyle(m.focus.isLeft(), m.styles).
+			Width(leftW).Height(contentH).
+			Render(leftContent)
+		body = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, centerBlock, chatBlock)
+
+	case m.leftVisible && !m.rightVisible:
 		leftContent := lipgloss.JoinVertical(lipgloss.Left,
 			m.filetree.View(),
 			m.opentabs.View(),
@@ -461,7 +525,11 @@ func (m Model) View() tea.View {
 			Width(leftW).Height(contentH).
 			Render(leftContent)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, centerBlock)
-	} else {
+
+	case !m.leftVisible && m.rightVisible:
+		body = lipgloss.JoinHorizontal(lipgloss.Top, centerBlock, chatBlock)
+
+	default: // zen mode
 		body = centerBlock
 	}
 
