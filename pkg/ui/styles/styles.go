@@ -54,6 +54,13 @@ type Styles struct {
 	TableSeparator lipgloss.Style
 
 	Selection lipgloss.Style
+
+	ChatTitle        lipgloss.Style
+	ChatUserMsg      lipgloss.Style
+	ChatAssistantMsg lipgloss.Style
+	ChatDivider      lipgloss.Style
+	ChatLoading      lipgloss.Style
+	ChatInput        lipgloss.Style
 }
 
 func Default() Styles {
@@ -118,5 +125,12 @@ func Default() Styles {
 		TableSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 
 		Selection: lipgloss.NewStyle().Background(lipgloss.Color("239")),
+
+		ChatTitle:        lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
+		ChatUserMsg:      lipgloss.NewStyle().Foreground(subtle),
+		ChatAssistantMsg: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		ChatDivider:      lipgloss.NewStyle().Foreground(subtle),
+		ChatLoading:      lipgloss.NewStyle().Foreground(subtle).Italic(true),
+		ChatInput:        lipgloss.NewStyle().Foreground(highlight),
 	}
 }

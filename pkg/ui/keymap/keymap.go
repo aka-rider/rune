@@ -27,6 +27,7 @@ type Bindings struct {
 	PinTab                key.Binding
 	FocusExplorer         key.Binding
 	FocusEditor           key.Binding
+	FocusChat             key.Binding
 	HelpExpand            key.Binding
 	Backspace             key.Binding
 	Indent                key.Binding
@@ -74,6 +75,7 @@ func Default() Bindings {
 		PinTab:             key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
 		FocusExplorer:      key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
 		FocusEditor:        key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
+		FocusChat:          key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "chat")),
 		HelpExpand:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
 		Indent:             key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
@@ -117,6 +119,7 @@ func (b Bindings) HelpText() []HelpEntry {
 		{b.ConfirmExitC.Help().Key, b.ConfirmExitC.Help().Desc},
 		{b.FocusExplorer.Help().Key, b.FocusExplorer.Help().Desc},
 		{b.FocusEditor.Help().Key, b.FocusEditor.Help().Desc},
+		{b.FocusChat.Help().Key, b.FocusChat.Help().Desc},
 		{b.HelpExpand.Help().Key, b.HelpExpand.Help().Desc},
 		{b.SaveFile.Help().Key, b.SaveFile.Help().Desc},
 	}
@@ -147,6 +150,7 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.PinTab)
 	add(b.FocusExplorer)
 	add(b.FocusEditor)
+	add(b.FocusChat)
 	add(b.HelpExpand)
 	add(b.Backspace)
 	add(b.Indent)
