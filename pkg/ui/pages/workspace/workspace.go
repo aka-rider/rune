@@ -191,7 +191,7 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 }
 
 func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
-	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
+	contentH := m.totalHeight - m.footer.Height()
 	if y < 0 || y >= contentH {
 		return dragNone, false
 	}

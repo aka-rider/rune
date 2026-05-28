@@ -10,6 +10,7 @@ func registerFileCommands(builder command.Builder) (command.Builder, error) {
                         return command.Result{
                                 Operation: command.Operation{
                                         Kind:            command.OperationSaveFile,
+                                        Cursors:         ctx.Cursors,
                                         SavePath:        ctx.FilePath,
                                         SaveContent:     ctx.Buffer.Content(),
                                         SaveRequestID:   ctx.NewRequestID(),
