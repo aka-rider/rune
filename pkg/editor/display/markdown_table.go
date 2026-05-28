@@ -1,10 +1,13 @@
 package display
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // tableRenderedSpans produces spans for a table line in rendered mode.
 // It formats cells with padding and alignment, and identifies line roles.
-func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart int) []SyntaxSpan {
+func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart int, mdSpans []mdSpan) []SyntaxSpan {
 	role := tableLineRole(block, lineIdx)
 
 	// If no column widths computed, fall back to raw text
@@ -46,18 +49,97 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 
 	// For header and body lines, parse and pad cells
 	formatted, cm := formatTableRow(lineText, block.colWidths, block.alignments, lineStart)
-	return []SyntaxSpan{{
-		Text:        formatted,
-		Kind:        TokenTable,
-		State:       Rendered,
-		BufferStart: lineStart,
-		BufferEnd:   lineStart + len(lineText),
-		CellMap:     cm,
-		BlockID:     block.id,
-		BlockStart:  block.startOff,
-		BlockEnd:    block.endOff,
-		TableRole:   role,
-	}}
+
+	if len(mdSpans) == 0 {
+		return []SyntaxSpan{{
+			Text:        formatted,
+			Kind:        TokenTable,
+			State:       Rendered,
+			BufferStart: lineStart,
+			BufferEnd:   lineStart + len(lineText),
+			CellMap:     cm,
+			BlockID:     block.id,
+			BlockStart:  block.startOff,
+			BlockEnd:    block.endOff,
+			TableRole:   role,
+		}}
+	}
+
+	// Sort inline spans by their relative start offset
+	sorted := make([]mdSpan, len(mdSpans))
+	copy(sorted, mdSpans)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].start < sorted[j].start
+	})
+
+	var spans []SyntaxSpan
+	var currentText strings.Builder
+	var currentCM []CellMapping
+	currentKind := TokenTable
+	var currentActiveSpan *mdSpan
+
+	flushSpan := func() {
+		if currentText.Len() > 0 {
+			sp := SyntaxSpan{
+				Text:        currentText.String(),
+				Kind:        currentKind,
+				State:       Rendered,
+				BufferStart: lineStart,
+				BufferEnd:   lineStart + len(lineText),
+				CellMap:     currentCM,
+				BlockID:     block.id,
+				BlockStart:  block.startOff,
+				BlockEnd:    block.endOff,
+				TableRole:   role,
+			}
+			if currentActiveSpan != nil {
+				sp.AltText = spanAltText(*currentActiveSpan)
+				sp.ImagePath = spanImagePath(*currentActiveSpan)
+				sp.EmbedRef = spanEmbedRef(*currentActiveSpan)
+				sp.CalloutKind = spanCalloutKind(*currentActiveSpan)
+				sp.HeadingLevel = currentActiveSpan.level
+			}
+			spans = append(spans, sp)
+			currentText.Reset()
+			currentCM = nil
+		}
+	}
+
+	for i, cellMap := range cm {
+		byteVal := formatted[i]
+		bufOff := cellMap.BufOffset
+
+		kind := TokenTable
+		var activeSpan *mdSpan
+
+		if bufOff != -1 {
+			// bufOff is absolute buffer offset, convert to relative offset within the line
+			relOff := bufOff - lineStart
+
+			// Find which mdSpan covers this offset
+			for _, ms := range sorted {
+				// ms.start and ms.end are relative to lineStart
+				if relOff >= ms.start && relOff < ms.end {
+					kind = ms.kind
+					spanCopy := ms
+					activeSpan = &spanCopy
+					break
+				}
+			}
+		}
+
+		if kind != currentKind || (activeSpan == nil && currentActiveSpan != nil) || (activeSpan != nil && currentActiveSpan == nil) || (activeSpan != nil && currentActiveSpan != nil && activeSpan.kind != currentActiveSpan.kind) {
+			flushSpan()
+			currentKind = kind
+			currentActiveSpan = activeSpan
+		}
+
+		currentText.WriteByte(byteVal)
+		currentCM = append(currentCM, cellMap)
+	}
+	flushSpan()
+
+	return spans
 }
 
 // tableLineRole determines whether a table line is header, separator, or body.

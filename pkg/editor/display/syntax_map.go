@@ -246,7 +246,13 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 		if blkIdx := lineToBlock[i]; blkIdx >= 0 {
 			block := blocks[blkIdx]
 			revealed := shouldRevealBlock(block, cursorLine)
-			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode)
+
+			var mdSpans []mdSpan
+			if i < len(parsed) {
+				mdSpans = parsed[i].spans
+			}
+
+			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode, mdSpans)
 			lines[i] = SyntaxLine{Spans: spans}
 			// Block lines in rendered mode with hidden delimiters need deltas
 			needsHiddenLineDelta := false
