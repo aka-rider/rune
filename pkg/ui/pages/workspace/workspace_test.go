@@ -656,6 +656,313 @@ func TestSameFileOpenIsNoop(t *testing.T) {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Mouse-driven panel resizing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// resizeWorkspace returns a workspace sized to the given dimensions with both
+// panes visible and at default widths. Width 100 is wide enough to satisfy the
+// minCenterW=24 floor even with both panes at their defaults.
+func resizeWorkspace(t *testing.T, w, h int) Model {
+	t.Helper()
+	keys := keymap.Default()
+	st := styles.Default()
+	reg := command.NewBuilder().Build()
+	res, _ := keybind.NewResolver(nil)
+
+	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	return m
+}
+
+func TestDividerAtPoint(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+
+	contentMidY := 5
+
+	cases := []struct {
+		name string
+		x    int
+		want dragState
+	}{
+		{"left divider inside col", m.leftPaneW - 1, dragLeft},
+		{"left divider outside col", m.leftPaneW, dragLeft},
+		{"right divider inside col", W - m.rightPaneW - 1, dragRight},
+		{"right divider outside col", W - m.rightPaneW, dragRight},
+		{"center mid", W / 2, dragNone},
+		{"left pane interior", 5, dragNone},
+		{"right pane interior", W - 5, dragNone},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := m.dividerAtPoint(c.x, contentMidY)
+			if c.want == dragNone {
+				if ok {
+					t.Fatalf("x=%d: expected no divider, got %v", c.x, got)
+				}
+				return
+			}
+			if !ok || got != c.want {
+				t.Fatalf("x=%d: expected %v, got %v (ok=%v)", c.x, c.want, got, ok)
+			}
+		})
+	}
+
+	// Outside content height → no divider.
+	if _, ok := m.dividerAtPoint(m.leftPaneW-1, H); ok {
+		t.Fatal("y past content height should not resolve to a divider")
+	}
+}
+
+func TestDividerAtPointHiddenPanes(t *testing.T) {
+	const W, H = 100, 30
+	contentMidY := 5
+
+	t.Run("left hidden: only x=0 restores", func(t *testing.T) {
+		m := resizeWorkspace(t, W, H)
+		m.leftVisible = false
+		m = m.recalcLayout()
+
+		if d, ok := m.dividerAtPoint(0, contentMidY); !ok || d != dragLeft {
+			t.Fatalf("x=0 should be left restore, got d=%v ok=%v", d, ok)
+		}
+		// x=1 is editor content — must NOT trigger restore.
+		if d, ok := m.dividerAtPoint(1, contentMidY); ok {
+			t.Fatalf("x=1 must be editor content, got divider %v", d)
+		}
+	})
+
+	t.Run("right hidden: only x=W-1 restores", func(t *testing.T) {
+		m := resizeWorkspace(t, W, H)
+		m.rightVisible = false
+		m = m.recalcLayout()
+
+		if d, ok := m.dividerAtPoint(W-1, contentMidY); !ok || d != dragRight {
+			t.Fatalf("x=W-1 should be right restore, got d=%v ok=%v", d, ok)
+		}
+		// x=W-2 is editor content — must NOT trigger restore.
+		if d, ok := m.dividerAtPoint(W-2, contentMidY); ok {
+			t.Fatalf("x=W-2 must be editor content, got divider %v", d)
+		}
+	})
+
+	t.Run("both hidden", func(t *testing.T) {
+		m := resizeWorkspace(t, W, H)
+		m.leftVisible = false
+		m.rightVisible = false
+		m = m.recalcLayout()
+
+		if d, ok := m.dividerAtPoint(0, contentMidY); !ok || d != dragLeft {
+			t.Fatalf("x=0 should be left restore, got d=%v ok=%v", d, ok)
+		}
+		if d, ok := m.dividerAtPoint(W-1, contentMidY); !ok || d != dragRight {
+			t.Fatalf("x=W-1 should be right restore, got d=%v ok=%v", d, ok)
+		}
+		if d, ok := m.dividerAtPoint(W/2, contentMidY); ok {
+			t.Fatalf("center mid should not be divider, got %v", d)
+		}
+	})
+}
+
+func TestDragLeftResizeAndHide(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+
+	// Click on the left divider to start drag.
+	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
+	if m.drag != dragLeft {
+		t.Fatalf("expected drag=dragLeft after click on divider, got %v", m.drag)
+	}
+
+	// Shrink toward the floor: motion to X=20.
+	m, _ = m.Update(tea.MouseMotionMsg{X: 20, Y: 5, Button: tea.MouseLeft})
+	if !m.leftVisible || m.leftPaneW != 20 {
+		t.Fatalf("expected leftPaneW=20 leftVisible=true, got leftPaneW=%d leftVisible=%v",
+			m.leftPaneW, m.leftVisible)
+	}
+
+	// Cross below min → hide.
+	m, _ = m.Update(tea.MouseMotionMsg{X: minLeftPaneW - 1, Y: 5, Button: tea.MouseLeft})
+	if m.leftVisible {
+		t.Fatalf("expected leftVisible=false after motion below min, got true")
+	}
+	if m.drag != dragNone {
+		t.Fatalf("expected drag cleared after hiding, got %v", m.drag)
+	}
+	if m.leftPaneW != defaultLeftPaneW {
+		t.Fatalf("expected leftPaneW reset to default, got %d", m.leftPaneW)
+	}
+}
+
+func TestDragLeftFocusFollowsHide(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.focus = paneTree
+
+	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
+	m, _ = m.Update(tea.MouseMotionMsg{X: 1, Y: 5, Button: tea.MouseLeft})
+
+	if m.leftVisible {
+		t.Fatal("expected left hidden")
+	}
+	if m.focus != paneCenter {
+		t.Fatalf("expected focus moved to paneCenter, got %v", m.focus)
+	}
+}
+
+func TestDragLeftCenterFloor(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m.rightPaneW = defaultRightPaneW
+	m = m.recalcLayout()
+
+	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
+
+	// Try to expand far past the center floor.
+	m, _ = m.Update(tea.MouseMotionMsg{X: W - 10, Y: 5, Button: tea.MouseLeft})
+
+	maxLeft := W - defaultRightPaneW - minCenterW
+	if m.leftPaneW != maxLeft {
+		t.Fatalf("expected leftPaneW clamped to %d, got %d", maxLeft, m.leftPaneW)
+	}
+}
+
+func TestDragRightResizeAndHide(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+
+	rightStart := W - m.rightPaneW
+	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
+	if m.drag != dragRight {
+		t.Fatalf("expected drag=dragRight, got %v", m.drag)
+	}
+
+	// Shrink: motion further right.
+	m, _ = m.Update(tea.MouseMotionMsg{X: W - 25, Y: 5, Button: tea.MouseLeft})
+	if !m.rightVisible || m.rightPaneW != 25 {
+		t.Fatalf("expected rightPaneW=25 rightVisible=true, got rightPaneW=%d rightVisible=%v",
+			m.rightPaneW, m.rightVisible)
+	}
+
+	// Cross below min → hide.
+	m, _ = m.Update(tea.MouseMotionMsg{X: W - (minRightPaneW - 1), Y: 5, Button: tea.MouseLeft})
+	if m.rightVisible {
+		t.Fatal("expected rightVisible=false after motion below min")
+	}
+	if m.drag != dragNone {
+		t.Fatalf("expected drag cleared, got %v", m.drag)
+	}
+	if m.rightPaneW != defaultRightPaneW {
+		t.Fatalf("expected rightPaneW reset to default, got %d", m.rightPaneW)
+	}
+}
+
+func TestDragRightFocusFollowsHide(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+	m.focus = paneChat
+
+	rightStart := W - m.rightPaneW
+	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
+	m, _ = m.Update(tea.MouseMotionMsg{X: W - 1, Y: 5, Button: tea.MouseLeft})
+
+	if m.rightVisible {
+		t.Fatal("expected right hidden")
+	}
+	if m.focus != paneCenter {
+		t.Fatalf("expected focus moved to paneCenter, got %v", m.focus)
+	}
+}
+
+func TestDragRightCenterFloor(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+
+	rightStart := W - m.rightPaneW
+	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
+	// Drag the right divider far to the left, exceeding center floor.
+	m, _ = m.Update(tea.MouseMotionMsg{X: 10, Y: 5, Button: tea.MouseLeft})
+
+	maxRight := W - defaultLeftPaneW - minCenterW
+	if m.rightPaneW != maxRight {
+		t.Fatalf("expected rightPaneW clamped to %d, got %d", maxRight, m.rightPaneW)
+	}
+}
+
+func TestRestoreHiddenLeftOnEdgeClick(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.leftVisible = false
+	m = m.recalcLayout()
+
+	m, _ = m.Update(tea.MouseClickMsg{X: 0, Y: 5, Button: tea.MouseLeft})
+
+	if !m.leftVisible {
+		t.Fatal("expected leftVisible=true after edge click")
+	}
+	if m.leftPaneW != minLeftPaneW {
+		t.Fatalf("expected leftPaneW=minLeftPaneW=%d, got %d", minLeftPaneW, m.leftPaneW)
+	}
+}
+
+func TestRestoreHiddenRightOnEdgeClick(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = false
+	m = m.recalcLayout()
+
+	m, _ = m.Update(tea.MouseClickMsg{X: W - 1, Y: 5, Button: tea.MouseLeft})
+
+	if !m.rightVisible {
+		t.Fatal("expected rightVisible=true after edge click")
+	}
+	if m.rightPaneW != minRightPaneW {
+		t.Fatalf("expected rightPaneW=minRightPaneW=%d, got %d", minRightPaneW, m.rightPaneW)
+	}
+}
+
+func TestMotionWithoutDragDoesNotResize(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.rightVisible = true
+	m = m.recalcLayout()
+
+	beforeLeft := m.leftPaneW
+	beforeRight := m.rightPaneW
+
+	m, _ = m.Update(tea.MouseMotionMsg{X: 40, Y: 5, Button: tea.MouseLeft})
+
+	if m.leftPaneW != beforeLeft || m.rightPaneW != beforeRight {
+		t.Fatalf("motion without drag changed widths: leftPaneW %d→%d rightPaneW %d→%d",
+			beforeLeft, m.leftPaneW, beforeRight, m.rightPaneW)
+	}
+}
+
+func TestClickClearsStaleDrag(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m.drag = dragLeft
+
+	// Click in the editor interior (not on a divider).
+	m, _ = m.Update(tea.MouseClickMsg{X: W / 2, Y: 5, Button: tea.MouseLeft})
+
+	if m.drag != dragNone {
+		t.Fatalf("expected drag cleared by non-divider click, got %v", m.drag)
+	}
+}
+
 // execCmds executes a tea.Cmd and collects all resulting messages.
 // Handles nil cmds and tea.BatchMsg.
 func execCmds(cmd tea.Cmd) []tea.Msg {
