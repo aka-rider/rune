@@ -38,20 +38,28 @@ type Styles struct {
 	CodeOperator   lipgloss.Style
 	CodePlain      lipgloss.Style
 
-	HeadingH1  lipgloss.Style
-	Heading    lipgloss.Style
-	HeadingH6  lipgloss.Style
-	InlineCode lipgloss.Style
+	HeadingH1   lipgloss.Style
+	HeadingH2   lipgloss.Style
+	HeadingH3   lipgloss.Style
+	HeadingH4   lipgloss.Style
+	HeadingH5   lipgloss.Style
+	HeadingH6   lipgloss.Style
+	InlineCode  lipgloss.Style
+	MdBold      lipgloss.Style
+	MdItalic    lipgloss.Style
+	MdStrikethrough lipgloss.Style
+
+	MdBlockquote lipgloss.Style
+	Link         lipgloss.Style
+	TableHeader  lipgloss.Style
+	TableBody    lipgloss.Style
+	TableSeparator lipgloss.Style
+	HorizontalRule lipgloss.Style
+	Tag          lipgloss.Style
+	ListMarker   lipgloss.Style
 
 	TaskChecked   lipgloss.Style
 	TaskUnchecked lipgloss.Style
-
-	MdBold          lipgloss.Style
-	MdItalic        lipgloss.Style
-	MdStrikethrough lipgloss.Style
-
-	TableHeader    lipgloss.Style
-	TableSeparator lipgloss.Style
 
 	Selection lipgloss.Style
 
@@ -65,7 +73,7 @@ type Styles struct {
 
 func Default() Styles {
 	subtle := lipgloss.Color("241")
-	highlight := lipgloss.Color("212")
+	highlight := lipgloss.Color("111")
 	special := lipgloss.Color("153")
 	errColor := lipgloss.Color("196")
 
@@ -78,7 +86,7 @@ func Default() Styles {
 		InactiveBorder: border,
 
 		PaneTitle:    lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
-		FileNormal:   lipgloss.NewStyle().Padding(0, 1),
+		FileNormal:   lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1),
 		FileSelected: lipgloss.NewStyle().Padding(0, 1).Foreground(highlight).Bold(true),
 		DirSuffix:    lipgloss.NewStyle().Foreground(subtle),
 
@@ -100,37 +108,45 @@ func Default() Styles {
 
 		CodeBlockBg:    lipgloss.NewStyle().Background(lipgloss.Color("235")),
 		CodeBlockLabel: lipgloss.NewStyle().Foreground(subtle).Italic(true),
-		CodeKeyword:    lipgloss.NewStyle().Foreground(lipgloss.Color("204")).Background(lipgloss.Color("235")),
-		CodeString:     lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Background(lipgloss.Color("235")),
-		CodeComment:    lipgloss.NewStyle().Foreground(lipgloss.Color("242")).Background(lipgloss.Color("235")).Italic(true),
-		CodeFunction:   lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Background(lipgloss.Color("235")),
-		CodeType:       lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Background(lipgloss.Color("235")),
-		CodeNumber:     lipgloss.NewStyle().Foreground(lipgloss.Color("180")).Background(lipgloss.Color("235")),
-		CodeOperator:   lipgloss.NewStyle().Foreground(lipgloss.Color("249")).Background(lipgloss.Color("235")),
-		CodePlain:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235")),
+		CodeKeyword:    lipgloss.NewStyle().Foreground(highlight),
+		CodeString:     lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+		CodeComment:    lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true),
+		CodeFunction:   lipgloss.NewStyle().Foreground(highlight),
+		CodeType:       lipgloss.NewStyle().Foreground(lipgloss.Color("177")),
+		CodeNumber:     lipgloss.NewStyle().Foreground(lipgloss.Color("216")),
+		CodeOperator:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		CodePlain:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 
-		HeadingH1:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("228")).Background(lipgloss.Color("63")),
-		Heading:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39")),
-		HeadingH6:  lipgloss.NewStyle().Foreground(lipgloss.Color("35")),
-		InlineCode: lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("236")),
-
-		TaskChecked:   lipgloss.NewStyle().Foreground(lipgloss.Color("35")),
-		TaskUnchecked: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-
-		MdBold:          lipgloss.NewStyle().Bold(true),
-		MdItalic:        lipgloss.NewStyle().Italic(true),
+		HeadingH1:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("23")),
+		HeadingH2:   lipgloss.NewStyle().Bold(true).Foreground(highlight),
+		HeadingH3:   lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")),
+		HeadingH4:   lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
+		HeadingH5:   lipgloss.NewStyle().Foreground(special),
+		HeadingH6:   lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		InlineCode:  lipgloss.NewStyle().Foreground(highlight).Background(lipgloss.Color("236")),
+		MdBold:      lipgloss.NewStyle().Bold(true),
+		MdItalic:    lipgloss.NewStyle().Italic(true),
 		MdStrikethrough: lipgloss.NewStyle().Strikethrough(true),
 
-		TableHeader:    lipgloss.NewStyle().Bold(true),
-		TableSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		MdBlockquote:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true),
+		Link:             lipgloss.NewStyle().Foreground(highlight).Underline(true),
+		TableHeader:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true),
+		TableBody:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+		TableSeparator:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		HorizontalRule:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		Tag:              lipgloss.NewStyle().Foreground(lipgloss.Color("108")).Background(lipgloss.Color("236")),
+		ListMarker:       lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+
+		TaskChecked:   lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+		TaskUnchecked: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 
 		Selection: lipgloss.NewStyle().Background(lipgloss.Color("239")),
 
 		ChatTitle:        lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
-		ChatUserMsg:      lipgloss.NewStyle().Foreground(subtle),
+		ChatUserMsg:      lipgloss.NewStyle().Foreground(subtle).Background(lipgloss.Color("236")),
 		ChatAssistantMsg: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 		ChatDivider:      lipgloss.NewStyle().Foreground(subtle),
 		ChatLoading:      lipgloss.NewStyle().Foreground(subtle).Italic(true),
-		ChatInput:        lipgloss.NewStyle().Foreground(highlight),
+		ChatInput:        lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
 	}
 }

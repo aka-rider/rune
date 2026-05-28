@@ -31,6 +31,16 @@ func (m Model) renderSpan(sp display.DisplaySpan) string {
 		return m.styles.MdItalic.Render(sp.Text)
 	case display.TokenStrikethrough:
 		return m.styles.MdStrikethrough.Render(sp.Text)
+	case display.TokenBlockquote:
+		return m.styles.MdBlockquote.Render(sp.Text)
+	case display.TokenLink:
+		return m.styles.Link.Render(sp.Text)
+	case display.TokenHorizontalRule:
+		return m.styles.HorizontalRule.Render(sp.Text)
+	case display.TokenTag:
+		return m.styles.Tag.Render(sp.Text)
+	case display.TokenListMarker:
+		return m.styles.ListMarker.Render(sp.Text)
 	case display.TokenTaskList:
 		return m.renderTaskListSpan(sp)
 	case display.TokenTable:
@@ -45,10 +55,18 @@ func (m Model) renderHeadingSpan(sp display.DisplaySpan) string {
 	switch sp.HeadingLevel {
 	case 1:
 		return m.styles.HeadingH1.Render(sp.Text)
+	case 2:
+		return m.styles.HeadingH2.Render(sp.Text)
+	case 3:
+		return m.styles.HeadingH3.Render(sp.Text)
+	case 4:
+		return m.styles.HeadingH4.Render(sp.Text)
+	case 5:
+		return m.styles.HeadingH5.Render(sp.Text)
 	case 6:
 		return m.styles.HeadingH6.Render(sp.Text)
 	default:
-		return m.styles.Heading.Render(sp.Text)
+		return m.styles.HeadingH6.Render(sp.Text)
 	}
 }
 
@@ -68,7 +86,7 @@ func (m Model) renderTableSpan(sp display.DisplaySpan) string {
 	case display.TableRoleSeparator:
 		return m.styles.TableSeparator.Render(sp.Text)
 	default:
-		return sp.Text
+		return m.styles.TableBody.Render(sp.Text)
 	}
 }
 

@@ -113,6 +113,16 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return spanToCells(sp, m.styles.MdItalic)
 	case display.TokenStrikethrough:
 		return spanToCells(sp, m.styles.MdStrikethrough)
+	case display.TokenBlockquote:
+		return spanToCells(sp, m.styles.MdBlockquote)
+	case display.TokenLink:
+		return spanToCells(sp, m.styles.Link)
+	case display.TokenHorizontalRule:
+		return spanToCells(sp, m.styles.HorizontalRule)
+	case display.TokenTag:
+		return spanToCells(sp, m.styles.Tag)
+	case display.TokenListMarker:
+		return spanToCells(sp, m.styles.ListMarker)
 	case display.TokenTaskList:
 		return m.taskListSpanToCells(sp)
 	case display.TokenTable:
@@ -127,10 +137,18 @@ func (m Model) headingStyle(level int) lipgloss.Style {
 	switch level {
 	case 1:
 		return m.styles.HeadingH1
+	case 2:
+		return m.styles.HeadingH2
+	case 3:
+		return m.styles.HeadingH3
+	case 4:
+		return m.styles.HeadingH4
+	case 5:
+		return m.styles.HeadingH5
 	case 6:
 		return m.styles.HeadingH6
 	default:
-		return m.styles.Heading
+		return m.styles.HeadingH6
 	}
 }
 
@@ -151,7 +169,7 @@ func (m Model) tableSpanToCells(sp display.DisplaySpan) []Cell {
 	case display.TableRoleSeparator:
 		return spanToCells(sp, m.styles.TableSeparator)
 	default:
-		return spanToCells(sp, lipgloss.NewStyle())
+		return spanToCells(sp, m.styles.TableBody)
 	}
 }
 
