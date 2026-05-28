@@ -2,7 +2,7 @@ THIS_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 RUNE := "$(dir $(THIS_MAKEFILE_PATH))rune"
 
 build:
-	CGO_ENABLED=0 go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune/main.go
+	go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune/main.go
 
 run: build
 	$(RUNE) $(ARGS)

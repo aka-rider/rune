@@ -5,6 +5,7 @@ package dictation
 import (
 	"context"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -27,33 +28,45 @@ func StartCmd(ctx context.Context, cfg Config) tea.Cmd {
 		go func() {
 			defer close(out)
 
-			var accumulator string
+			var allAudio []byte
+			var lastText string
+			lang := cfg.Language
 
 			for {
 				select {
 				case <-ctx.Done():
-					out <- FinalTranscriptionMsg{Text: strings.TrimSpace(accumulator)}
+					if len(allAudio) > 0 {
+						// Use a fresh context for the final transcription since ctx is cancelled.
+						finalCtx, finalCancel := context.WithTimeout(context.Background(), 30*time.Second)
+						wav := whisperPkg.EncodePCM(allAudio, 16000, 1, 16)
+						text, err := cfg.Whisper.Transcribe(finalCtx, wav, lang)
+						finalCancel()
+						if err == nil && strings.TrimSpace(text) != "" {
+							lastText = strings.TrimSpace(text)
+						}
+					}
+					out <- FinalTranscriptionMsg{Text: lastText}
 					return
 
 				case chunk, ok := <-micCh:
 					if !ok {
-						out <- FinalTranscriptionMsg{Text: strings.TrimSpace(accumulator)}
+						out <- FinalTranscriptionMsg{Text: lastText}
 						return
 					}
+					allAudio = append(allAudio, chunk...)
 
-					wav := whisperPkg.EncodePCM(chunk, 16000, 1, 16)
-
-					// Capture Language() return value before the closure executes (§5.4).
-					lang := cfg.Language()
-
+					wav := whisperPkg.EncodePCM(allAudio, 16000, 1, 16)
 					text, err := cfg.Whisper.Transcribe(ctx, wav, lang)
 					if err != nil {
 						out <- ErrorMsg{Err: err, Fatal: false}
 						continue
 					}
 
-					accumulator += text + " "
-					out <- PartialTranscriptionMsg{Accumulated: strings.TrimSpace(accumulator)}
+					trimmed := strings.TrimSpace(text)
+					if trimmed != lastText {
+						lastText = trimmed
+						out <- PartialTranscriptionMsg{Accumulated: lastText}
+					}
 				}
 			}
 		}()

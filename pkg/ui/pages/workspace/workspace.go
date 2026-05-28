@@ -16,7 +16,6 @@ import (
 	"rune/pkg/inputlang"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/chat"
-	dictpanel "rune/pkg/ui/components/dictation"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
@@ -74,7 +73,6 @@ type Model struct {
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 	pending                 *pendingDirtyAction
-	dictPanel               dictpanel.Model
 	dictCancel              context.CancelFunc  // nil when not dictating (§6.3)
 	dictCh                  <-chan tea.Msg       // nil when idle
 }
@@ -86,7 +84,6 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		editor:       editor.New(keys, st, reg, resolver, caps),
 		footer:       footer.New(keys, st).SetHelp(keys.HelpText()),
 		chat:         chat.New(keys, st),
-		dictPanel:    dictpanel.New(st),
 		focus:        paneTree,
 		leftVisible:  true,
 		leftPaneW:    defaultLeftPaneW,
@@ -100,7 +97,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 }
 
 func (m Model) recalcLayout() Model {
-	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
+	contentH := m.totalHeight - m.footer.Height()
 	if contentH < 0 {
 		contentH = 0
 	}
@@ -145,14 +142,13 @@ func (m Model) recalcLayout() Model {
 	m.editor = m.editor.SetSize(innerCenterW, innerH)
 	m.chat = m.chat.SetSize(innerRightW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
-	m.dictPanel = m.dictPanel.SetSize(m.totalWidth, 3)
 	m.filetree = m.filetree.SetOffset(1, 1)
 	m.editor = m.editor.SetOffset(leftW+1, 1)
 	return m
 }
 
 func (m Model) paneAtPoint(x, y int) (pane, bool) {
-	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
+	contentH := m.totalHeight - m.footer.Height()
 	if y >= contentH {
 		return 0, false // footer
 	}
@@ -294,8 +290,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
-		m.dictPanel, cmd = m.dictPanel.Update(msg)
-		cmds = append(cmds, cmd)
 
 	case tea.KeyPressMsg:
 		// Priority 1: Dirty guard — footer consumes all keys.
@@ -482,13 +476,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case footer.DictationStartMsg:
 		ctx, cancel := context.WithCancel(context.Background())
 		m.dictCancel = cancel
-		m.dictPanel = m.dictPanel.ClearAll().SetVisible(true)
 		if m.focus == paneCenter {
 			m.editor = m.editor.StartDictation()
 		}
 		cfg := dictation.Config{
 			Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:2022", InferencePath: "/v1/audio/transcriptions"},
-			Language: inputlang.Current,
+			Language: inputlang.Current(),
 		}
 		cmds = append(cmds, dictation.StartCmd(ctx, cfg))
 
@@ -504,7 +497,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
 
 	case dictation.PartialTranscriptionMsg:
-		m.dictPanel = m.dictPanel.SetText(msg.Accumulated)
 		if m.focus == paneCenter {
 			m.editor = m.editor.ApplyDictationChunk(msg.Accumulated)
 			path := m.editor.FilePath()
@@ -517,7 +509,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
 
 	case dictation.FinalTranscriptionMsg:
-		m.dictPanel = m.dictPanel.ClearAll().SetVisible(false)
 		m.footer = m.footer.SetDictating(false)
 		m.dictCh = nil
 		if m.focus == paneCenter {
@@ -527,7 +518,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case dictation.ErrorMsg:
-		m.dictPanel = m.dictPanel.SetError(msg.Err)
 		if msg.Fatal {
 			if m.dictCancel != nil {
 				m.dictCancel()
@@ -563,9 +553,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 
-		m.dictPanel, cmd = m.dictPanel.Update(msg)
-		cmds = append(cmds, cmd)
-
 		m = m.syncCursorToFooter()
 	}
 
@@ -577,7 +564,7 @@ func (m Model) View() tea.View {
 		return tea.NewView("")
 	}
 
-	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
+	contentH := m.totalHeight - m.footer.Height()
 	if contentH < 0 {
 		contentH = 0
 	}
@@ -636,9 +623,9 @@ func (m Model) View() tea.View {
 
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
-		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.dictPanel.View(), m.footer.View()))
+		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View()))
 	}
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.dictPanel.View(), m.footer.View()))
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View()))
 }
 
 func borderStyle(active bool, st styles.Styles) lipgloss.Style {

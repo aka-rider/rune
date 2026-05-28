@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -677,3 +678,28 @@ func execCmds(cmd tea.Cmd) []tea.Msg {
 }
 
 var errTest = errors.New("test error")
+
+func TestLayoutFooterAlwaysVisible(t *testing.T) {
+	m := newTestWorkspace(t)
+	view := m.View()
+	lines := strings.Split(view.Content, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("expected 24 lines, got %d", len(lines))
+	}
+	lastLine := lines[len(lines)-1]
+	if !strings.Contains(lastLine, "Ln") {
+		t.Fatalf("footer not on last line: %q", lastLine)
+	}
+}
+
+func TestLayoutFooterVisibleAfterResize(t *testing.T) {
+	m := newTestWorkspace(t)
+	for _, size := range []struct{ w, h int }{{40, 10}, {120, 50}, {80, 24}} {
+		m, _ = m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		view := m.View()
+		lines := strings.Split(view.Content, "\n")
+		if len(lines) != size.h {
+			t.Fatalf("at %dx%d: expected %d lines, got %d", size.w, size.h, size.h, len(lines))
+		}
+	}
+}

@@ -29,7 +29,7 @@ type ErrorMsg struct {
 // Config holds the runtime dependencies for a dictation session.
 type Config struct {
 	Whisper  whisper.Client
-	Language func() string // returns BCP-47 code; "" means auto-detect
+	Language string // BCP-47 code captured at dictation start; "" means auto-detect
 }
 
 // ListenCmd reads one message from the dictation channel.

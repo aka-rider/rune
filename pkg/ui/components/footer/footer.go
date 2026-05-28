@@ -205,5 +205,5 @@ func (m Model) View() string {
 	}
 	content := left + strings.Repeat(" ", gap) + right
 
-	return m.styles.Footer.Width(m.width).Render(content)
+	return m.styles.Footer.Width(m.width).MaxHeight(1).Render(content)
 }
