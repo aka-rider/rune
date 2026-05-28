@@ -42,6 +42,23 @@ type ErrMsg struct{ Err error }
 const defaultLeftPaneW = 22
 const defaultRightPaneW = 38
 
+type dragState int
+
+const (
+	dragNone dragState = iota
+	dragLeft
+	dragRight
+)
+
+// Width-constraint constants for mouse resizing.
+// Below the per-pane minimum, the pane hides; the center pane has a hard
+// floor so left/right drags cannot squeeze it to nothing.
+const (
+	minLeftPaneW  = 16
+	minRightPaneW = 20
+	minCenterW    = 24
+)
+
 type pendingDirtyKind int
 
 const (
@@ -69,6 +86,7 @@ type Model struct {
 	chat                    chat.Model
 	rightVisible            bool
 	rightPaneW              int
+	drag                    dragState
 	err                     error
 	keys                    keymap.Bindings
 	styles                  styles.Styles
@@ -170,6 +188,42 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 		return paneChat, true
 	}
 	return paneCenter, true
+}
+
+func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
+	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
+	if y < 0 || y >= contentH {
+		return dragNone, false
+	}
+
+	// Left divider:
+	//   visible: 2-column grab zone straddling the left/center border.
+	//   hidden:  single column at the editor's left border only (x=0).
+	if m.leftVisible {
+		if x == m.leftPaneW-1 || x == m.leftPaneW {
+			return dragLeft, true
+		}
+	} else {
+		if x == 0 {
+			return dragLeft, true
+		}
+	}
+
+	// Right divider:
+	//   visible: 2-column grab zone straddling the center/right border.
+	//   hidden:  single column at the editor's right border only.
+	if m.rightVisible {
+		rightStart := m.totalWidth - m.rightPaneW
+		if x == rightStart-1 || x == rightStart {
+			return dragRight, true
+		}
+	} else {
+		if x == m.totalWidth-1 {
+			return dragRight, true
+		}
+	}
+
+	return dragNone, false
 }
 
 func (m Model) Init() tea.Cmd {
@@ -461,10 +515,80 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = msg.Err
 
 	case tea.MouseClickMsg:
+		// Clear stale drag state on every click. Terminals do not emit a
+		// mouse-release event, so a drag that ended on a stationary cursor
+		// would otherwise linger until the next motion message.
+		m.drag = dragNone
+
+		if d, ok := m.dividerAtPoint(msg.X, msg.Y); ok {
+			m.drag = d
+			if d == dragLeft && !m.leftVisible {
+				m.leftVisible = true
+				m.leftPaneW = minLeftPaneW
+			} else if d == dragRight && !m.rightVisible {
+				m.rightVisible = true
+				m.rightPaneW = minRightPaneW
+			}
+			return m.finalize(cmds)
+		}
 		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
 			m.focus = newFocus
 			m = m.syncDictationAllowed()
 		}
+
+	case tea.MouseMotionMsg:
+		if m.drag == dragNone {
+			break
+		}
+		if msg.Button != tea.MouseLeft {
+			m.drag = dragNone
+			return m.finalize(cmds)
+		}
+		switch m.drag {
+		case dragLeft:
+			newW := msg.X
+			if newW < minLeftPaneW {
+				m.leftVisible = false
+				m.leftPaneW = defaultLeftPaneW
+				m.drag = dragNone
+				if m.focus.isLeft() {
+					m.focus = paneCenter
+					m = m.syncDictationAllowed()
+				}
+			} else {
+				rightW := 0
+				if m.rightVisible {
+					rightW = m.rightPaneW
+				}
+				if max := m.totalWidth - rightW - minCenterW; newW > max {
+					newW = max
+				}
+				m.leftPaneW = newW
+				m.leftVisible = true
+			}
+		case dragRight:
+			newW := m.totalWidth - msg.X
+			if newW < minRightPaneW {
+				m.rightVisible = false
+				m.rightPaneW = defaultRightPaneW
+				m.drag = dragNone
+				if m.focus == paneChat {
+					m.focus = paneCenter
+					m = m.syncDictationAllowed()
+				}
+			} else {
+				leftW := 0
+				if m.leftVisible {
+					leftW = m.leftPaneW
+				}
+				if max := m.totalWidth - leftW - minCenterW; newW > max {
+					newW = max
+				}
+				m.rightPaneW = newW
+				m.rightVisible = true
+			}
+		}
+		return m.finalize(cmds)
 
 	case footer.ConfirmQuitMsg:
 		if m.dictCancel != nil {
