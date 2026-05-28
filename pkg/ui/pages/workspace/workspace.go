@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,15 +11,19 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"rune/pkg/command"
+	"rune/pkg/dictation"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/inputlang"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/chat"
+	dictpanel "rune/pkg/ui/components/dictation"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/whisper"
 )
 
 type pane int
@@ -69,15 +74,19 @@ type Model struct {
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 	pending                 *pendingDirtyAction
+	dictPanel               dictpanel.Model
+	dictCancel              context.CancelFunc  // nil when not dictating (§6.3)
+	dictCh                  <-chan tea.Msg       // nil when idle
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
-	return Model{
+	m := Model{
 		filetree:     filetree.New(keys, st),
 		opentabs:     opentabs.New(keys, st),
 		editor:       editor.New(keys, st, reg, resolver, caps),
 		footer:       footer.New(keys, st).SetHelp(keys.HelpText()),
 		chat:         chat.New(keys, st),
+		dictPanel:    dictpanel.New(st),
 		focus:        paneTree,
 		leftVisible:  true,
 		leftPaneW:    defaultLeftPaneW,
@@ -86,10 +95,12 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		keys:         keys,
 		styles:       st,
 	}
+	m = m.syncDictationAllowed()
+	return m
 }
 
 func (m Model) recalcLayout() Model {
-	contentH := m.totalHeight - m.footer.Height()
+	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
 	if contentH < 0 {
 		contentH = 0
 	}
@@ -134,13 +145,14 @@ func (m Model) recalcLayout() Model {
 	m.editor = m.editor.SetSize(innerCenterW, innerH)
 	m.chat = m.chat.SetSize(innerRightW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
+	m.dictPanel = m.dictPanel.SetSize(m.totalWidth, 3)
 	m.filetree = m.filetree.SetOffset(1, 1)
 	m.editor = m.editor.SetOffset(leftW+1, 1)
 	return m
 }
 
 func (m Model) paneAtPoint(x, y int) (pane, bool) {
-	contentH := m.totalHeight - m.footer.Height()
+	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
 	if y >= contentH {
 		return 0, false // footer
 	}
@@ -261,6 +273,13 @@ func (m Model) syncCursorToFooter() Model {
 	return m
 }
 
+// syncDictationAllowed updates the footer's dictation-allowed flag based on
+// which pane is focused. Dictation is only available in the editor or chat.
+func (m Model) syncDictationAllowed() Model {
+	m.footer = m.footer.SetDictationAllowed(m.focus == paneCenter || m.focus == paneChat)
+	return m
+}
+
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
@@ -275,6 +294,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
+		m.dictPanel, cmd = m.dictPanel.Update(msg)
+		cmds = append(cmds, cmd)
 
 	case tea.KeyPressMsg:
 		// Priority 1: Dirty guard — footer consumes all keys.
@@ -308,9 +329,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.FocusExplorer):
 			m.focus = paneTree
 			m.leftVisible = true
+			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.FocusEditor):
 			m.focus = paneCenter
+			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.FocusChat):
 			if m.rightVisible && m.focus == paneChat {
@@ -320,6 +343,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.rightVisible = true
 				m.focus = paneChat
 			}
+			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.CloseFile):
 			m, cmd = m.requestCloseCurrent()
@@ -330,6 +354,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if !m.leftVisible && m.focus.isLeft() {
 				m.focus = paneCenter
 			}
+			m = m.syncDictationAllowed()
 
 		default:
 			consumed = false
@@ -361,9 +386,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.opentabs, cmd = m.opentabs.Update(msg)
 		cmds = append(cmds, cmd)
 
-		m.editor = m.editor.SetFocused(m.focus == paneCenter)
-		m.editor, cmd = m.editor.Update(msg)
-		cmds = append(cmds, cmd)
+		// Do not forward keystrokes to the editor during dictation — typing
+		// would shift buffer offsets and corrupt the dictation range.
+		if m.focus == paneCenter && m.editor.IsDictating() {
+			// swallow; dictation text arrives via PartialTranscriptionMsg
+		} else {
+			m.editor = m.editor.SetFocused(m.focus == paneCenter)
+			m.editor, cmd = m.editor.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 
 		m.chat = m.chat.SetFocused(m.focus == paneChat)
 		m.chat, cmd = m.chat.Update(msg)
@@ -438,10 +469,77 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
 			m.focus = newFocus
+			m = m.syncDictationAllowed()
 		}
 
 	case footer.ConfirmQuitMsg:
+		if m.dictCancel != nil {
+			m.dictCancel()
+			m.dictCancel = nil
+		}
 		return m, tea.Quit
+
+	case footer.DictationStartMsg:
+		ctx, cancel := context.WithCancel(context.Background())
+		m.dictCancel = cancel
+		m.dictPanel = m.dictPanel.ClearAll().SetVisible(true)
+		if m.focus == paneCenter {
+			m.editor = m.editor.StartDictation()
+		}
+		cfg := dictation.Config{
+			Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:2022", InferencePath: "/v1/audio/transcriptions"},
+			Language: inputlang.Current,
+		}
+		cmds = append(cmds, dictation.StartCmd(ctx, cfg))
+
+	case footer.DictationStopMsg:
+		if m.dictCancel != nil {
+			m.dictCancel()
+			m.dictCancel = nil
+		}
+		// dictCh stays alive; FinalTranscriptionMsg arrives via pending ListenCmd.
+
+	case dictation.ReadyMsg:
+		m.dictCh = msg.Ch
+		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
+
+	case dictation.PartialTranscriptionMsg:
+		m.dictPanel = m.dictPanel.SetText(msg.Accumulated)
+		if m.focus == paneCenter {
+			m.editor = m.editor.ApplyDictationChunk(msg.Accumulated)
+			path := m.editor.FilePath()
+			cmds = append(cmds, func() tea.Msg {
+				return editor.ContentChangedMsg{Path: path, Dirty: true}
+			})
+		} else if m.focus == paneChat {
+			m.chat = m.chat.SetDictationPartial(msg.Accumulated)
+		}
+		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
+
+	case dictation.FinalTranscriptionMsg:
+		m.dictPanel = m.dictPanel.ClearAll().SetVisible(false)
+		m.footer = m.footer.SetDictating(false)
+		m.dictCh = nil
+		if m.focus == paneCenter {
+			m.editor = m.editor.FinalizeDictation()
+		} else if m.focus == paneChat {
+			m.chat = m.chat.FinalizeDictation(msg.Text)
+		}
+
+	case dictation.ErrorMsg:
+		m.dictPanel = m.dictPanel.SetError(msg.Err)
+		if msg.Fatal {
+			if m.dictCancel != nil {
+				m.dictCancel()
+				m.dictCancel = nil
+			}
+			m.dictCh = nil
+			m.footer = m.footer.SetDictating(false)
+			m.editor = m.editor.CancelDictation()
+			m.chat = m.chat.CancelDictation()
+		} else {
+			cmds = append(cmds, dictation.ListenCmd(m.dictCh))
+		}
 	}
 
 	// Forward non-key messages to children.
@@ -465,6 +563,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.dictPanel, cmd = m.dictPanel.Update(msg)
+		cmds = append(cmds, cmd)
+
 		m = m.syncCursorToFooter()
 	}
 
@@ -476,7 +577,7 @@ func (m Model) View() tea.View {
 		return tea.NewView("")
 	}
 
-	contentH := m.totalHeight - m.footer.Height()
+	contentH := m.totalHeight - m.footer.Height() - m.dictPanel.Height()
 	if contentH < 0 {
 		contentH = 0
 	}
@@ -535,9 +636,9 @@ func (m Model) View() tea.View {
 
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
-		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View()))
+		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.dictPanel.View(), m.footer.View()))
 	}
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View()))
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.dictPanel.View(), m.footer.View()))
 }
 
 func borderStyle(active bool, st styles.Styles) lipgloss.Style {

@@ -33,11 +33,12 @@ type Model struct {
 	height      int
 	focused     bool
 	scrollOff   int
-	client      ai.Client
-	cancelReq   context.CancelFunc
-	initErr     string
-	keys        keymap.Bindings
-	styles      styles.Styles
+	client           ai.Client
+	cancelReq        context.CancelFunc
+	initErr          string
+	dictationPartial string
+	keys             keymap.Bindings
+	styles           styles.Styles
 }
 
 // New constructs a Model. It attempts to initialise the AI client from
@@ -72,6 +73,19 @@ func (m Model) SetFocused(f bool) Model {
 	m.focused = f
 	return m
 }
+
+// SetDictationPartial shows provisional dictation text alongside the committed input.
+func (m Model) SetDictationPartial(text string) Model { m.dictationPartial = text; return m }
+
+// FinalizeDictation appends the final dictation text to input and clears the provisional display.
+func (m Model) FinalizeDictation(text string) Model {
+	m.input += text
+	m.dictationPartial = ""
+	return m
+}
+
+// CancelDictation clears provisional dictation text without committing anything.
+func (m Model) CancelDictation() Model { m.dictationPartial = ""; return m }
 
 // SetFileContext updates the file path and content used as the system prompt.
 func (m Model) SetFileContext(path, content string) Model {
@@ -203,7 +217,11 @@ func (m Model) View() string {
 	if m.focused {
 		cursor = "█"
 	}
-	inputLine := m.styles.ChatInput.Render("❯ " + m.input + cursor)
+	partialSuffix := ""
+	if m.dictationPartial != "" {
+		partialSuffix = m.styles.FooterMeta.Render(m.dictationPartial)
+	}
+	inputLine := m.styles.ChatInput.Render("❯ "+m.input+cursor) + partialSuffix
 
 	// Messages area: total height minus the 3 chrome lines (title, divider, input).
 	availH := m.height - 3

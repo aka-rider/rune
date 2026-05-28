@@ -44,17 +44,25 @@ type UpdateCursorMsg struct {
 }
 
 type Model struct {
-	line         int
-	col          int
-	wordCount    int
-	width        int
-	styles       styles.Styles
-	keys         keymap.Bindings
-	pendingKey   string
-	helpExpanded bool
-	helpEntries  []Entry
-	dirtyGuard   bool
+	line             int
+	col              int
+	wordCount        int
+	width            int
+	styles           styles.Styles
+	keys             keymap.Bindings
+	pendingKey       string
+	helpExpanded     bool
+	helpEntries      []Entry
+	dirtyGuard       bool
+	dictating        bool
+	dictationAllowed bool
 }
+
+// DictationStartMsg is emitted when the user activates voice dictation (^v).
+type DictationStartMsg struct{}
+
+// DictationStopMsg is emitted when the user stops voice dictation (^v again).
+type DictationStopMsg struct{}
 
 func New(keys keymap.Bindings, st styles.Styles) Model {
 	return Model{keys: keys, styles: st}
@@ -67,6 +75,10 @@ func (m Model) HelpExpanded() bool                  { return m.helpExpanded }
 func (m Model) Height() int                         { return 1 }
 func (m Model) SetDirtyGuard(active bool) Model     { m.dirtyGuard = active; return m }
 func (m Model) InDirtyGuard() bool                  { return m.dirtyGuard }
+
+func (m Model) SetDictationAllowed(allowed bool) Model { m.dictationAllowed = allowed; return m }
+func (m Model) SetDictating(active bool) Model         { m.dictating = active; return m }
+func (m Model) IsDictating() bool                      { return m.dictating }
 
 func (m Model) Init() tea.Cmd { return nil }
 
@@ -109,6 +121,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case key.Matches(msg, m.keys.HelpExpand):
 			m.helpExpanded = !m.helpExpanded
+
+		case key.Matches(msg, m.keys.VoiceDictation):
+			if !m.dictationAllowed {
+				return m, nil
+			}
+			if m.dictating {
+				m.dictating = false
+				return m, func() tea.Msg { return DictationStopMsg{} }
+			}
+			m.dictating = true
+			return m, func() tea.Msg { return DictationStartMsg{} }
 		}
 
 	case confirmExpired:
@@ -132,7 +155,9 @@ func startConfirmTimer() tea.Cmd {
 func (m Model) View() string {
 	var left string
 
-	if m.dirtyGuard {
+	if m.dictating {
+		left = m.styles.FooterKey.Render("^v") + m.styles.FooterHint.Render(" stop dictation")
+	} else if m.dirtyGuard {
 		left = m.styles.FooterKey.Render("Unsaved changes.") +
 			m.styles.FooterHint.Render(" [") +
 			m.styles.FooterKey.Render("S") +
@@ -164,9 +189,13 @@ func (m Model) View() string {
 		left = strings.Join(parts, "  ")
 	}
 
+	micIcon := m.styles.FooterMeta.Render("🎤")
+	if m.dictationAllowed && m.dictating {
+		micIcon = m.styles.FooterKey.Render("🎤 ●")
+	}
 	right := m.styles.FooterMeta.Render(
-		fmt.Sprintf("Ln %d, Col %d  W:%d  🎤 Off", m.line+1, m.col+1, m.wordCount),
-	)
+		fmt.Sprintf("Ln %d, Col %d  W:%d  ", m.line+1, m.col+1, m.wordCount),
+	) + micIcon
 
 	// -2 accounts for the Padding(0,1) on the Footer style (1 cell each side)
 	innerWidth := m.width - 2

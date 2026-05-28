@@ -16,11 +16,13 @@ var globalKeys = []string{
 	"PinTab",
 	"FocusExplorer",
 	"FocusEditor",
+	"FocusChat",
 	"CloseFile",
 	"ZenMode",
 	"ConfirmExitC",
 	"ConfirmExitD",
 	"HelpExpand",
+	"VoiceDictation",
 }
 
 // editorShortcutKeys lists Binding field names handled as hardcoded

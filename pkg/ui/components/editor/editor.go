@@ -48,6 +48,12 @@ type CursorInfo struct {
 	ChordPending string
 }
 
+type dictationState struct {
+	active   bool
+	startOff int // byte offset where dictation text begins
+	totalLen int // byte length of all dictation text currently in buf
+}
+
 type Model struct {
 	buf              buffer.Buffer
 	cursors          cursor.CursorSet
@@ -74,6 +80,7 @@ type Model struct {
 	imageConfig ImageConfig
 	mouse       mouseState
 	findOverlay FindOverlay
+	dictation   dictationState
 	viewport    ViewportState
 	breadcrumb  breadcrumb.Model
 	keys        keymap.Bindings
