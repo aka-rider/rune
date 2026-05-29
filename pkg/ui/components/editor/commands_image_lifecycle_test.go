@@ -1,0 +1,244 @@
+package editor
+
+import (
+	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"rune/pkg/editor/cursor"
+	"rune/pkg/terminal"
+)
+
+// setCursor places a single cursor at the given byte offset.
+func setCursor(m Model, offset int) Model {
+	m.cursors = cursor.NewCursorSet(offset)
+	return m
+}
+
+// runCmd executes a tea.Cmd, flattening tea.BatchMsg into a list of messages.
+func runCmd(t *testing.T, cmd tea.Cmd) []tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, runCmd(t, c)...)
+		}
+		return out
+	}
+	if msg == nil {
+		return nil
+	}
+	return []tea.Msg{msg}
+}
+
+func firstMsg[T tea.Msg](msgs []tea.Msg) (T, bool) {
+	for _, m := range msgs {
+		if t, ok := m.(T); ok {
+			return t, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+// writePNG writes a w x h solid PNG to path (creating parent dirs).
+func writePNG(t *testing.T, path string, w, h int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{R: 30, G: 90, B: 200, A: 255})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// docEditor builds a kitty-capable editor whose open file lives in dir, with the
+// given content, cursor on line 0.
+func docEditor(t *testing.T, dir, content string) Model {
+	t.Helper()
+	m := newTestEditor("")
+	m.termCaps = kittyCaps()
+	m = m.SetContent(filepath.Join(dir, "note.md"), []byte(content))
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	return m
+}
+
+func TestImageLifecycle_DecodeTransmitLive(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "assets", "x.png"), 100, 100)
+
+	m := docEditor(t, dir, "intro\n![alt](assets/x.png)\noutro")
+
+	// Discovery should produce a DecodeImageCmd for the local image.
+	m, cmd := m.discoverNewImages()
+	if cmd == nil {
+		t.Fatal("expected a decode Cmd from discoverNewImages")
+	}
+	if e, ok := m.images.get("assets/x.png"); !ok || e.state != pendingDecode {
+		t.Fatalf("expected pendingDecode registry entry, got %+v ok=%v", e, ok)
+	}
+
+	msgs := runCmd(t, cmd)
+	decoded, ok := firstMsg[ImageDecodedMsg](msgs)
+	if !ok {
+		t.Fatalf("expected ImageDecodedMsg, got %+v", msgs)
+	}
+	if decoded.Cols <= 0 || decoded.Rows <= 1 {
+		t.Fatalf("expected multi-row image footprint, got %dx%d", decoded.Cols, decoded.Rows)
+	}
+
+	rowsBefore := m.snapshot.TotalRows
+
+	// Feed the decoded msg back: rows reserve, transmit dispatched.
+	m, cmd = m.Update(decoded)
+	if m.snapshot.TotalRows <= rowsBefore {
+		t.Errorf("expected snapshot to reserve more rows after decode: %d -> %d", rowsBefore, m.snapshot.TotalRows)
+	}
+	if e, _ := m.images.get("assets/x.png"); e.state != pendingTransmit {
+		t.Errorf("expected pendingTransmit, got %v", e.state)
+	}
+	tmsgs := runCmd(t, cmd)
+	// We can't write to a real tty in tests, so the transmit may error; either
+	// outcome exercises the Cmd. We only require the Cmd existed.
+	if cmd == nil {
+		t.Error("expected a TransmitImageCmd after decode")
+	}
+	_ = tmsgs
+
+	// Mark transmitted -> live.
+	m, _ = m.Update(ImageTransmittedMsg{Path: "assets/x.png"})
+	if e, _ := m.images.get("assets/x.png"); e.state != live {
+		t.Errorf("expected live after ImageTransmittedMsg, got %v", e.state)
+	}
+}
+
+func TestImageLifecycle_DecodeErrorFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	// Note: no file written — decode will fail.
+	m := docEditor(t, dir, "intro\n![alt](assets/missing.png)\noutro")
+
+	m, cmd := m.discoverNewImages()
+	msgs := runCmd(t, cmd)
+	errMsg, ok := firstMsg[ImageDecodeErrorMsg](msgs)
+	if !ok {
+		t.Fatalf("expected ImageDecodeErrorMsg, got %+v", msgs)
+	}
+	m, _ = m.Update(errMsg)
+	if e, _ := m.images.get("assets/missing.png"); e.state != failed {
+		t.Errorf("expected failed state, got %v", e.state)
+	}
+	// Failed image must not reserve rows.
+	if m.snapshot.TotalRows != 3 {
+		t.Errorf("failed image should not reserve rows, TotalRows=%d", m.snapshot.TotalRows)
+	}
+}
+
+func TestImageLifecycle_RemoteURLSkipped(t *testing.T) {
+	dir := t.TempDir()
+	m := docEditor(t, dir, "intro\n![alt](https://example.com/x.png)\noutro")
+	m, cmd := m.discoverNewImages()
+	if cmd != nil {
+		t.Error("remote image URLs must be skipped (no decode Cmd)")
+	}
+	if _, ok := m.images.get("https://example.com/x.png"); ok {
+		t.Error("remote image should not be registered")
+	}
+}
+
+func TestImageLifecycle_NonKittyNoDiscovery(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "assets", "x.png"), 100, 100)
+	m := newTestEditor("")
+	m.termCaps = terminal.TermCaps{} // not capable
+	m = m.SetContent(filepath.Join(dir, "note.md"), []byte("intro\n![alt](assets/x.png)\noutro"))
+	m = m.SetSize(80, 24)
+	m, cmd := m.discoverNewImages()
+	if cmd != nil {
+		t.Error("non-capable terminal must not discover/decode images")
+	}
+}
+
+// TestScrollToCursor_ImageRowsAboveCursor verifies the cursor's display row
+// accounts for image-reserved rows above it (Finding 1 / WP4 step 4).
+func TestScrollToCursor_ImageRowsAboveCursor(t *testing.T) {
+	dir := t.TempDir()
+	m := docEditor(t, dir, "![alt](assets/x.png)\nline1\nline2\nline3")
+	// Small viewport to force scrolling. Register the live image AFTER SetSize
+	// so resizeImages (which clamps rows to the viewport) does not shrink it.
+	m = m.SetSize(80, 4)
+	m.images = m.images.upsert(imageEntry{
+		path: "assets/x.png", absPath: filepath.Join(dir, "assets/x.png"),
+		id: 0x112233, cols: 6, rows: 5, pxW: 48, pxH: 80, state: live,
+	})
+
+	// Cursor on line 2 (third model line). Re-sync so the off-cursor image on
+	// line 0 renders (and expands) rather than reveals.
+	lineStart := len("![alt](assets/x.png)\nline1\n")
+	m = setCursor(m, lineStart)
+	m = m.syncDisplay()
+	m = m.scrollToCursor()
+
+	// In expanded space line 2 starts at row 5 (image) + 1 (line1) = 6.
+	wantRow := m.snapshot.ModelLineToFirstRow(2)
+	if wantRow != 6 {
+		t.Fatalf("expected line 2 first expanded row 6, got %d", wantRow)
+	}
+	contentH := m.contentHeight()
+	if wantRow < m.viewport.TopRow || wantRow >= m.viewport.TopRow+contentH {
+		t.Errorf("cursor display row %d not visible in [%d,%d)", wantRow, m.viewport.TopRow, m.viewport.TopRow+contentH)
+	}
+}
+
+// TestScrollToCursor_NoJumpOnImageLine verifies moving the cursor onto an image
+// line then off does not jump the viewport when everything already fits.
+func TestScrollToCursor_NoJumpOnImageLine(t *testing.T) {
+	dir := t.TempDir()
+	m := docEditor(t, dir, "line0\n![alt](assets/x.png)\nline2")
+	m.images = m.images.upsert(imageEntry{
+		path: "assets/x.png", absPath: filepath.Join(dir, "assets/x.png"),
+		id: 0x445566, cols: 6, rows: 3, pxW: 48, pxH: 48, state: live,
+	})
+	m = m.SetSize(80, 40) // viewport larger than content
+	m = m.syncDisplay()
+
+	m = setCursor(m, 0) // line 0
+	m = m.scrollToCursor()
+	top0 := m.viewport.TopRow
+
+	// Move onto the image line (reveals -> collapses to 1 row).
+	m = setCursor(m, len("line0\n")+1)
+	m = m.syncDisplay()
+	m = m.scrollToCursor()
+	topImg := m.viewport.TopRow
+
+	// Move off, back to line 0.
+	m = setCursor(m, 0)
+	m = m.syncDisplay()
+	m = m.scrollToCursor()
+	topBack := m.viewport.TopRow
+
+	if top0 != 0 || topImg != 0 || topBack != 0 {
+		t.Errorf("viewport jumped: top0=%d topImg=%d topBack=%d (want all 0)", top0, topImg, topBack)
+	}
+}

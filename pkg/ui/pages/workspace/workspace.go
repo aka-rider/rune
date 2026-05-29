@@ -344,6 +344,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
+		// Size children now (before the generic forward below) so that when the
+		// editor receives this WindowSizeMsg its cell footprints are already
+		// recomputed and it can re-transmit images at the new size.
+		m = m.recalcLayout()
 
 	case tea.KeyPressMsg:
 		// Priority 1: Dirty guard — footer consumes all keys.
@@ -595,7 +599,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.dictCancel()
 			m.dictCancel = nil
 		}
-		return m, tea.Quit
+		// Clear any inline images from the terminal before exiting. Use
+		// tea.Sequence so the delete flushes before tea.Quit (a tea.Batch would
+		// race the quit).
+		return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
 
 	case footer.DictationStartMsg:
 		ctx, cancel := context.WithCancel(context.Background())

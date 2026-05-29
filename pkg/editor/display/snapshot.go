@@ -27,6 +27,16 @@ type DisplayLine struct {
 	Spans     []DisplaySpan
 	ModelLine int
 	WrapIndex int
+
+	// Image row reservation, populated only by ExpandImageRows for standalone
+	// image lines. Zero-valued for all other lines (BuildSnapshot never sets
+	// these). When ImagePath != "", this line is part of a reserved image
+	// block: ImageRowIndex is its 0-based row within the block, ImageRowCount
+	// is the block height, and ImageCols is the block width in cells.
+	ImagePath     string
+	ImageRowIndex int
+	ImageRowCount int
+	ImageCols     int
 }
 
 type DisplaySnapshot struct {
