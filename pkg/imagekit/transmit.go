@@ -125,3 +125,52 @@ func EncodeITerm2(img image.Image, cols, rows int) (string, error) {
 	sb.WriteByte('\a')
 	return sb.String(), nil
 }
+
+// EncodeITerm2Rows slices img into independent 1-row-tall strips and encodes
+// each as a separate OSC 1337 payload. Each slice is cols cells wide × 1 cell
+// tall, containing the pixels for that row of the image. This enables
+// viewport-clipped placement: only the visible row-slices are written to the
+// TTY, preventing vertical overflow.
+func EncodeITerm2Rows(img image.Image, cols, rows int, cs CellSize) ([]string, error) {
+	bounds := img.Bounds()
+	imgH := bounds.Dy()
+	if rows <= 0 || imgH <= 0 {
+		return nil, nil
+	}
+
+	slices := make([]string, rows)
+	rowPixH := imgH / rows // pixel height per row-slice
+	if rowPixH < 1 {
+		rowPixH = 1
+	}
+
+	for r := 0; r < rows; r++ {
+		y0 := bounds.Min.Y + r*rowPixH
+		y1 := y0 + rowPixH
+		if r == rows-1 {
+			// Last row gets any remaining pixels (avoids rounding gaps).
+			y1 = bounds.Max.Y
+		}
+		if y1 > bounds.Max.Y {
+			y1 = bounds.Max.Y
+		}
+
+		strip := img.(interface {
+			SubImage(r image.Rectangle) image.Image
+		}).SubImage(image.Rect(bounds.Min.X, y0, bounds.Max.X, y1))
+
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, strip); err != nil {
+			return nil, fmt.Errorf("encode iterm2 row %d: %w", r, err)
+		}
+		payload := base64.StdEncoding.EncodeToString(buf.Bytes())
+		var sb strings.Builder
+		sb.WriteString("\033]1337;File=inline=1;")
+		sb.WriteString(fmt.Sprintf("size=%d;", buf.Len()))
+		sb.WriteString(fmt.Sprintf("width=%d;height=1:", cols))
+		sb.WriteString(payload)
+		sb.WriteByte('\a')
+		slices[r] = sb.String()
+	}
+	return slices, nil
+}
