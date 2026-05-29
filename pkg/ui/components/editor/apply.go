@@ -240,6 +240,16 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 	m = m.syncDisplay()
 	m = m.scrollToCursor()
 
+	// Detect image collapse (cursor entered an image tag) and request a full
+	// screen repaint to clear ghost iTerm2/WezTerm pixels that were placed
+	// out-of-band and are invisible to Bubble Tea's renderer.
+	var collapsedCmd tea.Cmd
+	var collapsed bool
+	m, collapsed = m.detectImageCollapse()
+	if collapsed {
+		collapsedCmd = tea.ClearScreen
+	}
+
 	if result.Operation.Kind == command.OperationSaveFile {
 		var saveID SaveIdentity
 		m, saveID, result.Cmd = m.startSaveRequest(SaveRequest{
@@ -253,7 +263,7 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 
 	var dcmd tea.Cmd
 	m, dcmd = m.discoverNewImages()
-	return m, tea.Batch(result.Cmd, dcmd)
+	return m, tea.Batch(result.Cmd, dcmd, collapsedCmd)
 }
 
 func (m Model) clampCursorsToViewport() cursor.CursorSet {

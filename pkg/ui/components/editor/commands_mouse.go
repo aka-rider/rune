@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -74,6 +76,17 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	bp := displayToBuffer(dp, m.viewport, m.wrapSnap, m.syntaxSnap)
 	offset := m.buf.LineColToOffset(bp)
 
+	// Check if click is on a link span (wiki link or markdown link)
+	if linkPath := m.resolveLinkClick(bp); linkPath != "" {
+		// Position cursor at click for visual feedback
+		m = m.mousePositionCursor(offset)
+		m.mouse.dragAnchor = offset
+		// Emit link click command
+		return m, func() tea.Msg {
+			return LinkClickedMsg{Path: linkPath}
+		}
+	}
+
 	// Detect multi-click
 	clickCount := 1
 	if now.Sub(m.mouse.lastClickTime) < multiClickThreshold &&
@@ -106,6 +119,58 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	}
 
 	return m, nil
+}
+
+// resolveLinkClick checks if the given buffer point falls on a wiki link or
+// markdown link span. Returns the resolved target path, or empty string if
+// not on a link.
+func (m Model) resolveLinkClick(bp coords.BufferPoint) string {
+	if bp.Line < 0 || bp.Line >= len(m.syntaxSnap.Lines) {
+		return ""
+	}
+
+	line := m.syntaxSnap.Lines[bp.Line]
+	col := bp.Col
+
+	for _, sp := range line.Spans {
+		if sp.BufferStart > col {
+			break
+		}
+		if col < sp.BufferStart {
+			continue
+		}
+		if col >= sp.BufferEnd {
+			continue
+		}
+
+		// Check if this span is a link
+		switch sp.Kind {
+		case display.TokenWikiLink:
+			// Resolve wiki link target
+			if sp.WikiLinkTarget == "" {
+				return ""
+			}
+			return m.resolveWikiLinkTarget(sp.WikiLinkTarget)
+
+		case display.TokenLink:
+			// Markdown link — check if it's a file or URL
+			if sp.ImagePath != "" {
+				// Image path could be a file path
+				lower := strings.ToLower(sp.ImagePath)
+				if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
+					return "" // external URL — terminal handles it
+				}
+				// File path — resolve relative to file directory
+				if filepath.IsAbs(sp.ImagePath) {
+					return filepath.Clean(sp.ImagePath)
+				}
+				if m.filePath != "" {
+					return filepath.Join(filepath.Dir(m.filePath), sp.ImagePath)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {

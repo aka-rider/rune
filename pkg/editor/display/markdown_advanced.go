@@ -6,6 +6,22 @@ import (
 	"github.com/yuin/goldmark/ast"
 )
 
+// imageExtensions are file extensions that indicate an image file.
+var imageExtensions = map[string]bool{
+	".png":   true,
+	".jpg":   true,
+	".jpeg":  true,
+	".gif":   true,
+	".webp":  true,
+	".svg":   true,
+	".bmp":   true,
+	".apng":  true,
+	".avif":  true,
+	".jfif":  true,
+	".pjpeg": true,
+	".pjp":   true,
+}
+
 // parseAdvancedInlines scans lines for advanced inline markdown elements
 // not handled by goldmark's default parser: inline math, highlights, embed refs, callouts, images.
 func parseAdvancedInlines(content string, parsed []parsedLine) []parsedLine {
@@ -16,7 +32,6 @@ func parseAdvancedInlines(content string, parsed []parsedLine) []parsedLine {
 		}
 		parseInlineMath(line, i, &parsed[i])
 		parseHighlights(line, i, &parsed[i])
-		parseEmbedRefs(line, i, &parsed[i])
 		parseCallout(line, i, &parsed[i])
 	}
 	return parsed
@@ -127,41 +142,6 @@ func parseHighlights(line string, lineIdx int, pl *parsedLine) {
 	}
 }
 
-// parseEmbedRefs finds ![[...]] embed references in a line.
-func parseEmbedRefs(line string, lineIdx int, pl *parsedLine) {
-	i := 0
-	for i < len(line)-4 { // minimum ![[x]]
-		if line[i] != '!' || i+1 >= len(line) || line[i+1] != '[' || i+2 >= len(line) || line[i+2] != '[' {
-			i++
-			continue
-		}
-		start := i
-		i += 3
-		// Find closing ]]
-		closeIdx := strings.Index(line[i:], "]]")
-		if closeIdx < 0 {
-			continue
-		}
-		closeIdx += i
-		end := closeIdx + 2
-		if overlapsExisting(pl.spans, start, end) {
-			i = end
-			continue
-		}
-		ref := line[start+3 : closeIdx]
-		pl.spans = append(pl.spans, mdSpan{
-			kind:       TokenImage, // TokenImage used for embeds with embedRef metadata
-			start:      start,
-			end:        end,
-			text:       ref,
-			delimLeft:  3, // ![[
-			delimRight: 2, // ]]
-			linkURL:    ref,
-		})
-		i = end
-	}
-}
-
 // parseCallout detects > [!type] callout syntax in blockquote lines.
 // This enriches existing blockquote spans with callout metadata.
 func parseCallout(line string, lineIdx int, pl *parsedLine) {
@@ -262,7 +242,7 @@ func walkImage(node *ast.Image, src []byte, lines []string, lineOffsets []int, r
 		start:      localStart,
 		end:        localEnd,
 		text:       displayText,
-		delimLeft:  2, // ![
+		delimLeft:  2,                                        // ![
 		delimRight: localEnd - localStart - 2 - len(altText), // ](path)
 		linkURL:    imgPath,
 	})

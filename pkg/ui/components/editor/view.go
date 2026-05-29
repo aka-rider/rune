@@ -43,6 +43,8 @@ func (m Model) View() string {
 		if l.ImagePath != "" && imageCapable {
 			id := m.imageIDFor(l.ImagePath)
 			lineCells := imagePlaceholderCells(id, l.ImageRowIndex, l.ImageCols)
+			// Prepend 1-cell left margin so image is not flush against the border.
+			lineCells = append([]Cell{{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}}, lineCells...)
 			lineCells = sliceCells(lineCells, m.viewport.ScrollCol, m.width)
 			renderedLines = append(renderedLines, cellsToString(lineCells, selStyle, cursorStyle))
 			imageLineFlags = append(imageLineFlags, true)
@@ -52,7 +54,7 @@ func (m Model) View() string {
 		// iTerm2 inline image row: emit spaces to reserve screen real estate.
 		// The actual image is placed via direct TTY write (PlaceITerm2Cmd).
 		if l.ImagePath != "" && inlineCapable {
-			spaceCells := make([]Cell, l.ImageCols)
+			spaceCells := make([]Cell, l.ImageCols+1) // +1 for left margin
 			for i := range spaceCells {
 				spaceCells[i] = Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
 			}

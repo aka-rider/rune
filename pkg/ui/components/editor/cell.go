@@ -118,6 +118,12 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return spanToCells(sp, m.styles.MdBlockquote)
 	case display.TokenLink:
 		return spanToCells(sp, m.styles.Link)
+	case display.TokenWikiLink:
+		if sp.WikiLinkIsImage {
+			// Embedded image: use plain style (image discovery will handle rendering)
+			return spanToCells(sp, lipgloss.NewStyle())
+		}
+		return spanToCells(sp, m.styles.Link)
 	case display.TokenHorizontalRule:
 		return spanToCells(sp, m.styles.HorizontalRule)
 	case display.TokenTag:

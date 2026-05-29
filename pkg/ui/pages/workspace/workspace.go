@@ -91,8 +91,8 @@ type Model struct {
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 	pending                 *pendingDirtyAction
-	dictCancel              context.CancelFunc  // nil when not dictating (§6.3)
-	dictCh                  <-chan tea.Msg       // nil when idle
+	dictCancel              context.CancelFunc // nil when not dictating (§6.3)
+	dictCh                  <-chan tea.Msg     // nil when idle
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -227,6 +227,9 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
+	// Capture the working directory for wiki link resolution.
+	cwd, _ := os.Getwd()
+	m.editor = m.editor.SetCWD(cwd)
 	return tea.Batch(
 		m.filetree.Init(),
 		m.opentabs.Init(),
@@ -238,7 +241,7 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
-	if path == m.editor.OpenPath() {
+	if path == m.editor.FilePath() {
 		return m, nil
 	}
 	if m.editor.IsDirty() {
@@ -250,7 +253,7 @@ func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
 }
 
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
-	currentPath := m.editor.OpenPath()
+	currentPath := m.editor.FilePath()
 	if currentPath == "" {
 		return m, nil
 	}
@@ -289,7 +292,7 @@ func (m Model) handleDirtyGuardResponse(resp footer.DirtyGuardResponse) (Model, 
 		return m, nil
 
 	case footer.DirtyGuardDiscard:
-		m.opentabs = m.opentabs.MarkClean(m.editor.OpenPath())
+		m.opentabs = m.opentabs.MarkClean(m.editor.FilePath())
 		switch m.pending.kind {
 		case pendingSwitchFile:
 			path := m.pending.path
@@ -472,6 +475,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.requestOpenPath(msg.Path)
 		cmds = append(cmds, cmd)
 
+	case editor.LinkClickedMsg:
+		if msg.Path != "" {
+			m, cmd = m.requestOpenPath(msg.Path)
+			cmds = append(cmds, cmd)
+		}
+
 	case editor.FileLoadedMsg:
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
@@ -503,7 +512,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case editor.FileLoadErrorMsg:
-		m.err = msg.Err
+		// Temporary: ignore file load errors (e.g. following a broken click link)
+		// m.err = msg.Err
 
 	case editor.FileSaveErrorMsg:
 		m.err = msg.Err

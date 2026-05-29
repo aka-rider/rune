@@ -522,13 +522,13 @@ func TestMarkdownAdvanced_EmbedRendered(t *testing.T) {
 	line := snap.Lines[0]
 	var embedSpan *display.SyntaxSpan
 	for i := range line.Spans {
-		if line.Spans[i].Kind == display.TokenImage && line.Spans[i].EmbedRef != "" {
+		if line.Spans[i].Kind == display.TokenWikiLink && line.Spans[i].WikiLinkIsImage {
 			embedSpan = &line.Spans[i]
 			break
 		}
 	}
 	if embedSpan == nil {
-		t.Fatal("expected embed span (TokenImage with EmbedRef)")
+		t.Fatal("expected embed span (TokenWikiLink with WikiLinkIsImage)")
 	}
 	if embedSpan.EmbedRef != "my-note" {
 		t.Errorf("embed ref: got %q, want %q", embedSpan.EmbedRef, "my-note")
@@ -552,7 +552,7 @@ func TestMarkdownAdvanced_EmbedRevealed(t *testing.T) {
 	line := snap.Lines[0]
 	var embedSpan *display.SyntaxSpan
 	for i := range line.Spans {
-		if line.Spans[i].Kind == display.TokenImage {
+		if line.Spans[i].Kind == display.TokenWikiLink && line.Spans[i].WikiLinkIsImage {
 			embedSpan = &line.Spans[i]
 			break
 		}

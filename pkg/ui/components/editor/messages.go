@@ -39,3 +39,8 @@ type ClipboardContentMsg struct {
 	ImageData []byte
 	MIMEType  string
 }
+
+// LinkClickedMsg is emitted when the user clicks on a wiki link or markdown link.
+type LinkClickedMsg struct {
+	Path string // resolved file path (empty for external URLs)
+}

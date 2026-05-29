@@ -32,6 +32,11 @@ type imageEntry struct {
 	state   imageState
 	altText string
 
+	// wasExpanded tracks whether this image was expanded (multi-row) in the
+	// previous syncDisplay cycle. Used to detect collapse transitions and
+	// trigger a full screen repaint to clear ghost pixels.
+	wasExpanded bool
+
 	// iTerm2 inline rendering: pre-encoded OSC 1337 payload stored after
 	// encode so View-time placement is a cheap TTY write (no re-encode).
 	iterm2Payload string

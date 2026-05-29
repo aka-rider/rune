@@ -21,6 +21,9 @@ type DisplaySpan struct {
 	CalloutKind  string
 	HeadingLevel int
 	TableRole    TableRoleKind
+	// Wiki link metadata (set for TokenWikiLink spans)
+	WikiLinkTarget string // resolved file path for wiki links
+	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
 }
 
 type DisplayLine struct {
@@ -56,22 +59,24 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 		var spans []DisplaySpan
 		for _, s := range seg.Spans {
 			spans = append(spans, DisplaySpan{
-				Text:         s.Text,
-				Kind:         s.Kind,
-				State:        s.State,
-				BufferStart:  s.BufferStart,
-				BufferEnd:    s.BufferEnd,
-				CellMap:      s.CellMap,
-				Language:     s.Language,
-				BlockID:      s.BlockID,
-				BlockStart:   s.BlockStart,
-				BlockEnd:     s.BlockEnd,
-				AltText:      s.AltText,
-				HeadingLevel: s.HeadingLevel,
-				TableRole:    s.TableRole,
-				ImagePath:    s.ImagePath,
-				EmbedRef:     s.EmbedRef,
-				CalloutKind:  s.CalloutKind,
+				Text:           s.Text,
+				Kind:           s.Kind,
+				State:          s.State,
+				BufferStart:    s.BufferStart,
+				BufferEnd:      s.BufferEnd,
+				CellMap:        s.CellMap,
+				Language:       s.Language,
+				BlockID:        s.BlockID,
+				BlockStart:     s.BlockStart,
+				BlockEnd:       s.BlockEnd,
+				AltText:        s.AltText,
+				HeadingLevel:   s.HeadingLevel,
+				TableRole:      s.TableRole,
+				ImagePath:      s.ImagePath,
+				EmbedRef:       s.EmbedRef,
+				CalloutKind:    s.CalloutKind,
+				WikiLinkTarget: s.WikiLinkTarget,
+				WikiLinkIsImage: s.WikiLinkIsImage,
 			})
 		}
 		dlines = append(dlines, DisplayLine{

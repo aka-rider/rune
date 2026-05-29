@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -61,6 +63,7 @@ type Model struct {
 	savedContentHash string
 	activeSave       SaveIdentity
 	filePath         string
+	cwd              string // working directory at launch (for wiki link resolution)
 	softWrap         bool
 	indent           IndentConfig
 
@@ -159,6 +162,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case ImageTransmitErrorMsg:
 		return m.handleImageError(msg.Path)
 
+	case LinkClickedMsg:
+		// Link click is handled by the workspace page which opens the file.
+		// The editor just emits the message via a Cmd.
+		return m, nil
+
 	case imageFrameTickMsg:
 		return m.handleImageFrameTick(msg)
 
@@ -253,9 +261,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
+			var ccmd tea.Cmd
+			var collapsed bool
+			m, collapsed = m.detectImageCollapse()
+			if collapsed {
+				ccmd = tea.ClearScreen
+			}
 			var dcmd tea.Cmd
 			m, dcmd = m.discoverNewImages()
-			return m, tea.Batch(cmd, dcmd)
+			return m, tea.Batch(cmd, dcmd, ccmd)
 		}
 
 		// Redo: Cmd+Shift+Z (no resolver binding)
@@ -263,9 +277,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
+			var ccmd tea.Cmd
+			var collapsed bool
+			m, collapsed = m.detectImageCollapse()
+			if collapsed {
+				ccmd = tea.ClearScreen
+			}
 			var dcmd tea.Cmd
 			m, dcmd = m.discoverNewImages()
-			return m, tea.Batch(cmd, dcmd)
+			return m, tea.Batch(cmd, dcmd, ccmd)
 		}
 
 		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
@@ -350,9 +370,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m = m.applyOperation(res.Operation, history.EditInsertChar, time.Now())
 					m = m.syncDisplay()
 					m = m.scrollToCursor()
+					var ccmd tea.Cmd
+					var collapsed bool
+					m, collapsed = m.detectImageCollapse()
+					if collapsed {
+						ccmd = tea.ClearScreen
+					}
 					var dcmd tea.Cmd
 					m, dcmd = m.discoverNewImages()
-					cmd = tea.Batch(cmd, dcmd)
+					cmd = tea.Batch(cmd, dcmd, ccmd)
 				}
 			}
 		}
@@ -368,6 +394,17 @@ func (m Model) contentHeight() int {
 	return h
 }
 
+// imageMaxCols returns the maximum column width for rendered images: the editor
+// width minus 2 (1 char left margin + 1 char right margin) so images don't
+// butt against borders. Clamped to at least 1.
+func (m Model) imageMaxCols() int {
+	w := m.width - 2
+	if w < 1 {
+		return 1
+	}
+	return w
+}
+
 func (m Model) SetSize(w, h int) Model {
 	changed := w != m.width || h != m.height
 	m.width = w
@@ -377,7 +414,7 @@ func (m Model) SetSize(w, h int) Model {
 		// Recompute image cell footprints for the new size (no I/O). The
 		// re-transmit Cmd is emitted from the WindowSizeMsg arm, which the
 		// workspace forwards after this SetSize runs.
-		m = m.resizeImages(m.width, m.contentHeight())
+		m = m.resizeImages(m.imageMaxCols(), m.contentHeight())
 	}
 	return m.syncDisplay()
 }
@@ -419,7 +456,48 @@ func (m Model) SetDir(dir string) Model {
 	m.breadcrumb = m.breadcrumb.SetDir(dir)
 	return m
 }
-func (m Model) OpenPath() string { return m.filePath }
+
+// SetCWD sets the working directory for wiki link resolution.
+func (m Model) SetCWD(cwd string) Model {
+	m.cwd = cwd
+	return m
+}
+
+// CWD returns the working directory set on this model.
+func (m Model) CWD() string { return m.cwd }
+
+// resolveWikiLinkTarget resolves a raw wiki link target to an absolute file path.
+// Rules (Obsidian-like):
+//   - No extension → append .md, resolve from CWD
+//   - Has extension → resolve relative to the file's directory
+//   - Absolute path → use as-is
+//   - Remote URLs → return empty
+func (m Model) resolveWikiLinkTarget(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
+		return ""
+	}
+	if filepath.IsAbs(raw) {
+		return filepath.Clean(raw)
+	}
+
+	// File name resolution should happen from the rune launch dir CWD
+	baseDir := "."
+	if m.cwd != "" {
+		baseDir = m.cwd
+	}
+
+	// If the target has no extension, append .md (Obsidian-like)
+	trimmed := strings.TrimSpace(raw)
+	if filepath.Ext(trimmed) == "" {
+		trimmed = trimmed + ".md"
+	}
+
+	return filepath.Join(baseDir, trimmed)
+}
 
 // SetHighlighter replaces the code highlighter adapter. Used for testing.
 func (m Model) SetHighlighter(h CodeHighlighter) Model { m.highlighter = h; return m }

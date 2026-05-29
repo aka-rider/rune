@@ -1,10 +1,10 @@
 - shift selection ✔️
 - shift PgUp / PgDown
-- Cmd+Shift+C / Cmd+Shift+X
+- Cmd+Shift+C / Cmd+Shift+X ✔️
 - mouse click in file explorer
-- panels resize
+- panels resize ✔️
 - create new file
-- save a file
-- bold text inside of tables
+- save a file ✔️
+- bold text inside of tables ✔️
 - Alt Up down arrow doesn't work
 

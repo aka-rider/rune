@@ -18,6 +18,7 @@ const (
 	TokenStrikethrough
 	TokenInlineCode
 	TokenLink
+	TokenWikiLink
 	TokenImage
 	TokenBlockquote
 	TokenTaskList
@@ -67,6 +68,9 @@ type SyntaxSpan struct {
 	CalloutKind  string // callout type (e.g. "note", "warning")
 	HeadingLevel int    // heading level (1-6), 0 for non-headings
 	TableRole    TableRoleKind
+	// Wiki link metadata (set for TokenWikiLink spans)
+	WikiLinkTarget  string // resolved file path for wiki links
+	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
 }
 
 // FrontmatterMode controls how frontmatter is displayed in rendered mode.
@@ -378,16 +382,18 @@ func buildSyntaxLine(
 			// Show raw text including delimiters
 			raw := lineText[ms.start:ms.end]
 			spans = append(spans, SyntaxSpan{
-				Text:         raw,
-				Kind:         ms.kind,
-				State:        Revealed,
-				BufferStart:  lineStart + ms.start,
-				BufferEnd:    lineStart + ms.end,
-				AltText:      spanAltText(ms),
-				ImagePath:    spanImagePath(ms),
-				EmbedRef:     spanEmbedRef(ms),
-				CalloutKind:  spanCalloutKind(ms),
-				HeadingLevel: ms.level,
+				Text:            raw,
+				Kind:            ms.kind,
+				State:           Revealed,
+				BufferStart:     lineStart + ms.start,
+				BufferEnd:       lineStart + ms.end,
+				AltText:         spanAltText(ms),
+				ImagePath:       spanImagePath(ms),
+				EmbedRef:        spanEmbedRef(ms),
+				CalloutKind:     spanCalloutKind(ms),
+				HeadingLevel:    ms.level,
+				WikiLinkTarget:  spanWikiLinkTarget(ms),
+				WikiLinkIsImage: spanWikiLinkIsImage(ms),
 			})
 		} else {
 			// Hide delimiters
@@ -427,17 +433,19 @@ func buildSyntaxLine(
 			// Emit visible text with per-byte source mapping
 			cm := buildInlineCellMap(lineStart+ms.start+hiddenLeft, len(ms.text))
 			spans = append(spans, SyntaxSpan{
-				Text:         ms.text,
-				Kind:         ms.kind,
-				State:        Rendered,
-				BufferStart:  lineStart + ms.start,
-				BufferEnd:    lineStart + ms.end,
-				CellMap:      cm,
-				AltText:      spanAltText(ms),
-				ImagePath:    spanImagePath(ms),
-				EmbedRef:     spanEmbedRef(ms),
-				CalloutKind:  spanCalloutKind(ms),
-				HeadingLevel: ms.level,
+				Text:            ms.text,
+				Kind:            ms.kind,
+				State:           Rendered,
+				BufferStart:     lineStart + ms.start,
+				BufferEnd:       lineStart + ms.end,
+				CellMap:         cm,
+				AltText:         spanAltText(ms),
+				ImagePath:       spanImagePath(ms),
+				EmbedRef:        spanEmbedRef(ms),
+				CalloutKind:     spanCalloutKind(ms),
+				HeadingLevel:    ms.level,
+				WikiLinkTarget:  spanWikiLinkTarget(ms),
+				WikiLinkIsImage: spanWikiLinkIsImage(ms),
 			})
 		}
 
@@ -493,6 +501,9 @@ func spanAltText(ms mdSpan) string {
 	if ms.kind == TokenImage {
 		return ms.text
 	}
+	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
+		return ms.wikiLinkLabel
+	}
 	return ""
 }
 
@@ -501,14 +512,19 @@ func spanImagePath(ms mdSpan) string {
 	if ms.kind == TokenImage {
 		return ms.linkURL
 	}
+	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
+		return ms.wikiLinkTarget
+	}
 	return ""
 }
 
 // spanEmbedRef extracts embed reference metadata.
 func spanEmbedRef(ms mdSpan) string {
 	if ms.kind == TokenImage && ms.delimLeft == 3 {
-		// Embed reference uses ![[...]] with delimLeft=3
 		return ms.linkURL
+	}
+	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
+		return ms.wikiLinkTarget
 	}
 	return ""
 }
@@ -519,4 +535,20 @@ func spanCalloutKind(ms mdSpan) string {
 		return ms.linkURL
 	}
 	return ""
+}
+
+// spanWikiLinkTarget extracts wiki link target metadata.
+func spanWikiLinkTarget(ms mdSpan) string {
+	if ms.kind == TokenWikiLink {
+		return ms.wikiLinkTarget
+	}
+	return ""
+}
+
+// spanWikiLinkIsImage extracts wiki link image flag.
+func spanWikiLinkIsImage(ms mdSpan) bool {
+	if ms.kind == TokenWikiLink {
+		return ms.wikiLinkIsImage
+	}
+	return false
 }

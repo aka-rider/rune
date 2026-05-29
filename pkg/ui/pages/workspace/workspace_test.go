@@ -50,7 +50,7 @@ func makeDirty(m Model) Model {
 	// Set editor content as dirty by manipulating via the editor's exported
 	// SetContent + simulating a change. We'll use a different approach:
 	// Load a file, then modify the editor buffer by sending a ContentChangedMsg.
-	m, _ = m.Update(editor.ContentChangedMsg{Path: m.editor.OpenPath(), Dirty: true})
+	m, _ = m.Update(editor.ContentChangedMsg{Path: m.editor.FilePath(), Dirty: true})
 	// Force editor dirty for the test by re-setting its content.
 	// We need to actually make the editor dirty so IsDirty() returns true.
 	// The simplest approach: use the editor's SetContent (which marks clean)
@@ -92,8 +92,8 @@ func TestGate1_FileSwitchDirtyGuardFires(t *testing.T) {
 		t.Fatalf("expected pending path b.txt, got %q", m.pending.path)
 	}
 	// File should NOT have changed yet.
-	if m.editor.OpenPath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt, got %q", m.editor.OpenPath())
+	if m.editor.FilePath() != "a.txt" {
+		t.Fatalf("expected editor still on a.txt, got %q", m.editor.FilePath())
 	}
 }
 
@@ -133,8 +133,8 @@ func TestGate2_DirtyGuardSaveThenLoad(t *testing.T) {
 	saveReqID := m.pending.saveRequestID
 
 	// File should NOT have changed yet (save hasn't completed).
-	if m.editor.OpenPath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt before save completes, got %q", m.editor.OpenPath())
+	if m.editor.FilePath() != "a.txt" {
+		t.Fatalf("expected editor still on a.txt before save completes, got %q", m.editor.FilePath())
 	}
 
 	// Simulate save completion with matching RequestID.
@@ -184,8 +184,8 @@ func TestGate3_DirtyGuardCancelPreservesFile(t *testing.T) {
 		t.Fatal("expected dirty guard to be dismissed after cancel")
 	}
 	// File remains.
-	if m.editor.OpenPath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt, got %q", m.editor.OpenPath())
+	if m.editor.FilePath() != "a.txt" {
+		t.Fatalf("expected editor still on a.txt, got %q", m.editor.FilePath())
 	}
 	// Content intact.
 	if m.editor.Content() != "content A" {
@@ -285,8 +285,8 @@ func TestGate6_DirtyGuardSaveFailureKeepsFile(t *testing.T) {
 	})
 
 	// File should still be a.txt.
-	if m.editor.OpenPath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt after save failure, got %q", m.editor.OpenPath())
+	if m.editor.FilePath() != "a.txt" {
+		t.Fatalf("expected editor still on a.txt after save failure, got %q", m.editor.FilePath())
 	}
 	// Content intact.
 	if m.editor.Content() != "dirty content" {

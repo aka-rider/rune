@@ -105,7 +105,7 @@ func isStandaloneImageLine(l DisplayLine) (string, bool) {
 		case sp.Kind == TokenListMarker && !listMarkerSeen && !found:
 			listMarkerSeen = true
 			continue
-		case sp.Kind == TokenImage:
+		case sp.Kind == TokenImage || (sp.Kind == TokenWikiLink && sp.WikiLinkIsImage):
 			if found || sp.State != Rendered || sp.ImagePath == "" {
 				return "", false
 			}

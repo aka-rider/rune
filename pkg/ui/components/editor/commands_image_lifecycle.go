@@ -20,7 +20,7 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		return m, nil
 	}
 	baseDir := m.imageBaseDir()
-	maxCols := m.width
+	maxCols := m.imageMaxCols()
 	maxRows := m.contentHeight()
 	cs := m.cellSize
 
@@ -67,6 +67,90 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// discoverWikiLinkImages scans the current snapshot for wiki link image spans
+// ([[image.png]]) whose images are not yet tracked and dispatches DecodeImageCmd
+// for each. It is a no-op on non-capable terminals.
+func (m Model) discoverWikiLinkImages() (Model, tea.Cmd) {
+	if !m.imageCapable() {
+		return m, nil
+	}
+	maxCols := m.imageMaxCols()
+	maxRows := m.contentHeight()
+	cs := m.cellSize
+
+	var cmds []tea.Cmd
+
+	for _, l := range m.snapshot.Lines {
+		for _, sp := range l.Spans {
+			if sp.Kind != display.TokenWikiLink || !sp.WikiLinkIsImage {
+				continue
+			}
+			if sp.WikiLinkTarget == "" {
+				continue
+			}
+
+			// Resolve the wiki link target to an absolute path
+			absPath := m.resolveWikiLinkImagePath(sp.WikiLinkTarget)
+			if absPath == "" {
+				continue
+			}
+
+			// Check if already tracked
+			if existing, ok := m.images.get(sp.WikiLinkTarget); ok {
+				mtime := fileMtime(absPath)
+				if existing.mtime == mtime || existing.state == pendingDecode {
+					continue
+				}
+				existing.state = pendingDecode
+				existing.mtime = mtime
+				m.images = m.images.upsert(existing)
+				cmds = append(cmds, DecodeImageCmd(sp.WikiLinkTarget, absPath, mtime, maxCols, maxRows, cs))
+				continue
+			}
+
+			id := m.images.allocFreeID(absPath)
+			m.images = m.images.upsert(imageEntry{
+				path:    sp.WikiLinkTarget,
+				absPath: absPath,
+				id:      id,
+				mtime:   fileMtime(absPath),
+				state:   pendingDecode,
+				altText: sp.Text,
+			})
+			cmds = append(cmds, DecodeImageCmd(sp.WikiLinkTarget, absPath, fileMtime(absPath), maxCols, maxRows, cs))
+		}
+	}
+
+	if len(cmds) == 0 {
+		return m, nil
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// resolveWikiLinkImagePath resolves a wiki link target to an absolute path.
+func (m Model) resolveWikiLinkImagePath(target string) string {
+	if target == "" {
+		return ""
+	}
+	if filepath.IsAbs(target) {
+		return filepath.Clean(target)
+	}
+	// Resolve relative to file directory, then CWD
+	if m.filePath != "" {
+		joined := filepath.Join(filepath.Dir(m.filePath), target)
+		if info, err := os.Stat(joined); err == nil && info.Mode().IsRegular() {
+			return filepath.Clean(joined)
+		}
+	}
+	if m.cwd != "" {
+		joined := filepath.Join(m.cwd, target)
+		if info, err := os.Stat(joined); err == nil && info.Mode().IsRegular() {
+			return filepath.Clean(joined)
+		}
+	}
+	return ""
 }
 
 // handleImageDecoded records measured dimensions, reserves rows, re-anchors the
@@ -174,7 +258,7 @@ func (m Model) replotInlineImages() tea.Cmd {
 		e.lastScreenRow = screenRow
 		m.images = m.images.upsert(e)
 
-		col := m.offsetX + 1 // 1-based terminal column
+		col := m.offsetX + 2 // 1-based terminal column + 1 left margin
 		cmds = append(cmds, PlaceITerm2Cmd(e.path, e.iterm2Payload, screenRow, col))
 	}
 	if len(cmds) == 0 {
@@ -194,6 +278,37 @@ func (m Model) handleImageError(path string) (Model, tea.Cmd) {
 	m.images = m.images.upsert(e)
 	m = m.syncDisplay() // collapse the reserved rows back to one
 	return m, nil
+}
+
+// detectImageCollapse checks whether any previously-expanded image is no longer
+// expanded in the current snapshot (i.e., it collapsed because the cursor
+// entered the tag). Returns true if at least one collapse occurred, and updates
+// the wasExpanded flag on all registry entries.
+func (m Model) detectImageCollapse() (Model, bool) {
+	if !m.imageCapable() || len(m.images.byPath) == 0 {
+		return m, false
+	}
+
+	// Build set of currently expanded image paths from the snapshot.
+	expanded := make(map[string]bool)
+	for _, l := range m.snapshot.Lines {
+		if l.ImagePath != "" && l.ImageRowIndex == 0 && l.ImageRowCount > 1 {
+			expanded[l.ImagePath] = true
+		}
+	}
+
+	collapsed := false
+	for _, e := range m.images.byPath {
+		nowExpanded := expanded[e.path]
+		if e.wasExpanded && !nowExpanded {
+			collapsed = true
+		}
+		if e.wasExpanded != nowExpanded {
+			e.wasExpanded = nowExpanded
+			m.images = m.images.upsert(e)
+		}
+	}
+	return m, collapsed
 }
 
 // clearImages deletes all tracked images from the terminal and resets the
@@ -296,7 +411,7 @@ func fileMtime(absPath string) int64 {
 // failure fallback.
 func imageAltFromLine(l display.DisplayLine) string {
 	for _, sp := range l.Spans {
-		if sp.Kind == display.TokenImage {
+		if sp.Kind == display.TokenImage || (sp.Kind == display.TokenWikiLink && sp.WikiLinkIsImage) {
 			if sp.AltText != "" {
 				return sp.AltText
 			}

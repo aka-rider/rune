@@ -189,6 +189,48 @@ func walkLink(node *ast.Link, src []byte, lines []string, lineOffsets []int, res
 	})
 }
 
+func walkWikiLink(node *WikiLinkNode, src []byte, lines []string, lineOffsets []int, result []parsedLine) {
+	seg := spanSegment(node, src)
+	if seg.start < 0 {
+		return
+	}
+
+	lineIdx := findLineForOffset(lineOffsets, seg.start)
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return
+	}
+
+	localStart := seg.start - lineOffsets[lineIdx]
+	localEnd := seg.end - lineOffsets[lineIdx]
+	if localEnd > len(lines[lineIdx]) {
+		localEnd = len(lines[lineIdx])
+	}
+	if localStart < 0 {
+		localStart = 0
+	}
+
+	linkText := extractChildText(node, src)
+
+	delimLeft := 2
+	if node.Embed {
+		delimLeft = 3
+	}
+
+	result[lineIdx].spans = append(result[lineIdx].spans, mdSpan{
+		kind:            TokenWikiLink,
+		lineStart:       lineOffsets[lineIdx],
+		start:           localStart,
+		end:             localEnd,
+		text:            linkText,
+		delimLeft:       delimLeft,
+		delimRight:      2,
+		linkURL:         string(node.Target),
+		wikiLinkTarget:  string(node.Target),
+		wikiLinkLabel:   string(node.Label),
+		wikiLinkIsImage: node.Embed,
+	})
+}
+
 func walkBlockquote(node *ast.Blockquote, src []byte, lines []string, lineOffsets []int, result []parsedLine) {
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
 		if child.Lines().Len() == 0 {
@@ -463,6 +505,19 @@ func expandForDelimiters(node ast.Node, src []byte, contentStart, contentEnd int
 			if end < len(src) {
 				end++
 			}
+		}
+		return struct{ start, end int }{start, end}
+	case *WikiLinkNode:
+		start := contentStart - 2
+		if n.Embed {
+			start = contentStart - 3
+		}
+		if start < 0 {
+			start = 0
+		}
+		end := contentEnd + 2
+		if end > len(src) {
+			end = len(src)
 		}
 		return struct{ start, end int }{start, end}
 	}

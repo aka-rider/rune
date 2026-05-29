@@ -20,6 +20,7 @@ func init() {
 			extension.Strikethrough,
 			extension.TaskList,
 			extension.Table,
+			WikiLinkExtension,
 		),
 	)
 	mdParser = md.Parser()
@@ -36,6 +37,10 @@ type mdSpan struct {
 	delimRight int // bytes of right delimiter to hide
 	linkURL    string
 	level      int // heading level (1-6)
+	// Wiki link metadata (set for TokenWikiLink spans)
+	wikiLinkTarget  string // resolved file path for wiki links
+	wikiLinkLabel   string // display text for wiki links
+	wikiLinkIsImage bool   // true for embedded images ![[image.png]]
 }
 
 // parsedLine holds the spans extracted for a single line.
@@ -92,6 +97,8 @@ func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
 		case *east.Table:
 			walkTable(node, src, lines, lineOffsets, &blockID, &blocks)
 			return ast.WalkSkipChildren, nil
+		case *WikiLinkNode:
+			walkWikiLink(node, src, lines, lineOffsets, result)
 		case *ast.Image:
 			walkImage(node, src, lines, lineOffsets, result)
 			return ast.WalkSkipChildren, nil
