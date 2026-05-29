@@ -280,21 +280,7 @@ func handleRightCmd(ctx command.CommandContext, c cursor.Cursor, selectMode bool
 	return updateHorizontal(ctx, c, offset, selectMode)
 }
 
-func handleMoveToConst(ctx command.CommandContext, c cursor.Cursor, selectMode bool, offset int) cursor.Cursor {
-	return updateHorizontal(ctx, c, offset, selectMode)
-}
-
 func handleMoveTo(ctx command.CommandContext, c cursor.Cursor, selectMode bool, stepFunc func(buffer.Buffer, int) int) cursor.Cursor {
-
 	offset := stepFunc(ctx.Buffer, c.Position)
-	if !selectMode && c.HasSelection() {
-		if c.Reversed() {
-			// Wait, does Home collapse to pos? Spec said: "navigation collapses to SelectionEnd/SelectionStart respectively... Exception left/right"
-			// Let's just use c.Position as starting point for move if it collapses to position! No, spec says:
-			// "navigation collapses to SelectionEnd ... Backward selection collapses to SelectionStart"
-			// This is exactly `collapse to c.Position()` before applying move!
-		}
-		// It's already handled because we pass c.Position into stepFunc! (and updateHorizontal will turn off selection anchor since !selectMode)
-	}
 	return updateHorizontal(ctx, c, offset, selectMode)
 }

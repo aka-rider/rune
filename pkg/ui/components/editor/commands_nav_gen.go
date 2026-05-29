@@ -2,6 +2,7 @@ package editor
 
 import (
 	"rune/pkg/command"
+	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 )
 
@@ -221,7 +222,7 @@ func registerNavCommands(builder command.Builder) (command.Builder, error) {
 		When: "editorFocused",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-				return handleMoveToConst(ctx, c, selectMode, 0)
+				return handleMoveTo(ctx, c, selectMode, func(b buffer.Buffer, i int) int { return 0 })
 			})
 		},
 	})
@@ -234,7 +235,7 @@ func registerNavCommands(builder command.Builder) (command.Builder, error) {
 		When: "editorFocused",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return handleCursorCmd(ctx, true, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-				return handleMoveToConst(ctx, c, selectMode, 0)
+				return handleMoveTo(ctx, c, selectMode, func(b buffer.Buffer, i int) int { return 0 })
 			})
 		},
 	})
@@ -247,7 +248,7 @@ func registerNavCommands(builder command.Builder) (command.Builder, error) {
 		When: "editorFocused",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-				return handleMoveToConst(ctx, c, selectMode, ctx.Buffer.Len())
+				return handleMoveTo(ctx, c, selectMode, func(b buffer.Buffer, i int) int { return ctx.Buffer.Len() })
 			})
 		},
 	})
@@ -260,7 +261,7 @@ func registerNavCommands(builder command.Builder) (command.Builder, error) {
 		When: "editorFocused",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return handleCursorCmd(ctx, true, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-				return handleMoveToConst(ctx, c, selectMode, ctx.Buffer.Len())
+				return handleMoveTo(ctx, c, selectMode, func(b buffer.Buffer, i int) int { return ctx.Buffer.Len() })
 			})
 		},
 	})

@@ -318,6 +318,10 @@ func TestShiftNavigationResolvesToSelectCommands(t *testing.T) {
 		{keybind.Chord{Shift: true, Key: "end"}, "select.line-end"},
 		{keybind.Chord{Shift: true, Key: "pgup"}, "select.page-up"},
 		{keybind.Chord{Shift: true, Key: "pgdown"}, "select.page-down"},
+		{keybind.Chord{Alt: true, Key: "left"}, "cursor.word-left"},
+		{keybind.Chord{Alt: true, Key: "right"}, "cursor.word-right"},
+		{keybind.Chord{Alt: true, Shift: true, Key: "left"}, "select.word-left"},
+		{keybind.Chord{Alt: true, Shift: true, Key: "right"}, "select.word-right"},
 
 		// Cmd+A -> select all
 		{keybind.Chord{Cmd: true, Key: "a"}, "select.all"},

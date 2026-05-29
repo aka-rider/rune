@@ -48,6 +48,10 @@ type Bindings struct {
 	ShiftGotoBottom       key.Binding
 	ShiftPageUp           key.Binding
 	ShiftPageDown         key.Binding
+	WordLeft              key.Binding
+	WordRight             key.Binding
+	ShiftWordLeft         key.Binding
+	ShiftWordRight        key.Binding
 	SelectAll             key.Binding
 	CopyToClipboard       key.Binding
 	CutToClipboard        key.Binding
@@ -98,6 +102,10 @@ func Default() Bindings {
 		ShiftGotoBottom:    key.NewBinding(key.WithKeys("shift+end"), key.WithHelp("⇧⇥", "shift+bottom")),
 		ShiftPageUp:        key.NewBinding(key.WithKeys("shift+pgup"), key.WithHelp("⇧⇞", "shift+page up")),
 		ShiftPageDown:      key.NewBinding(key.WithKeys("shift+pgdown"), key.WithHelp("⇧⇟", "shift+page down")),
+		WordLeft:           key.NewBinding(key.WithKeys("alt+left"), key.WithHelp("⌥←", "word left")),
+		WordRight:          key.NewBinding(key.WithKeys("alt+right"), key.WithHelp("⌥→", "word right")),
+		ShiftWordLeft:      key.NewBinding(key.WithKeys("alt+shift+left"), key.WithHelp("⇧⌥←", "select word left")),
+		ShiftWordRight:     key.NewBinding(key.WithKeys("alt+shift+right"), key.WithHelp("⇧⌥→", "select word right")),
 		SelectAll:          key.NewBinding(key.WithKeys("super+a"), key.WithHelp("⌘a", "select all")),
 		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+super+c"), key.WithHelp("⌘⇧c", "copy")),
 		CutToClipboard:     key.NewBinding(key.WithKeys("super+x"), key.WithHelp("⌘x", "cut")),
@@ -175,6 +183,10 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.ShiftGotoBottom)
 	add(b.ShiftPageUp)
 	add(b.ShiftPageDown)
+	add(b.WordLeft)
+	add(b.WordRight)
+	add(b.ShiftWordLeft)
+	add(b.ShiftWordRight)
 	add(b.SelectAll)
 	add(b.CopyToClipboard)
 	add(b.CutToClipboard)
@@ -260,6 +272,10 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.ShiftPageUp, "select.page-up", "editorFocused")
 	add(b.PageDown, "cursor.page-down", "editorFocused")
 	add(b.ShiftPageDown, "select.page-down", "editorFocused")
+	add(b.WordLeft, "cursor.word-left", "editorFocused")
+	add(b.WordRight, "cursor.word-right", "editorFocused")
+	add(b.ShiftWordLeft, "select.word-left", "editorFocused")
+	add(b.ShiftWordRight, "select.word-right", "editorFocused")
 	add(b.HalfPageUp, "cursor.page-up", "editorFocused")
 	add(b.HalfPageDown, "cursor.page-down", "editorFocused")
 	add(b.SelectAll, "select.all", "editorFocused")
