@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -797,6 +799,19 @@ func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 				IsDir: de.IsDir(),
 			})
 		}
+		sort.Slice(entries, func(i, j int) bool {
+			a, b := entries[i], entries[j]
+			if a.Name == ".." {
+				return true
+			}
+			if b.Name == ".." {
+				return false
+			}
+			if a.IsDir != b.IsDir {
+				return a.IsDir
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
 }

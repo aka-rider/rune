@@ -2,6 +2,7 @@ package filetree
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -20,16 +21,18 @@ type DirLoadedMsg struct {
 }
 
 type Model struct {
-	entries []Entry
-	cursor  int
-	root    string
-	width   int
-	height  int
-	offsetX int
-	offsetY int
-	focused bool
-	keys    keymap.Bindings
-	styles  styles.Styles
+	entries      []Entry
+	cursor       int
+	root         string
+	width        int
+	height       int
+	offsetX      int
+	offsetY      int
+	focused      bool
+	keys         keymap.Bindings
+	styles       styles.Styles
+	searchQuery  string
+	lastLetterAt time.Time
 }
 
 func New(keys keymap.Bindings, st styles.Styles) Model {
@@ -57,21 +60,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if !m.focused {
 			break
 		}
+
 		switch {
 		case key.Matches(msg, m.keys.Up):
 			if m.cursor > 0 {
 				m.cursor--
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.Down):
 			if m.cursor < len(m.entries)-1 {
 				m.cursor++
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.GotoTop):
 			m.cursor = 0
+			return m, nil
 		case key.Matches(msg, m.keys.GotoBottom):
 			if len(m.entries) > 0 {
 				m.cursor = len(m.entries) - 1
 			}
+			return m, nil
 		case key.Matches(msg, m.keys.PrimaryAction):
 			if len(m.entries) > 0 {
 				e := m.entries[m.cursor]
@@ -80,6 +88,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				return m, func() tea.Msg { return FileSelectedMsg{Path: e.Path} }
 			}
+			return m, nil
+		}
+
+		if msg.Text != "" {
+			if time.Since(m.lastLetterAt) > 750*time.Millisecond {
+				m.searchQuery = ""
+			}
+			m.searchQuery += msg.Text
+			m.lastLetterAt = time.Now()
+
+			lowerQuery := strings.ToLower(m.searchQuery)
+			for i, e := range m.entries {
+				if strings.HasPrefix(strings.ToLower(e.Name), lowerQuery) {
+					m.cursor = i
+					break
+				}
+			}
+			return m, nil
 		}
 	}
 	return m, nil
