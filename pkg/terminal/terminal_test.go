@@ -151,6 +151,50 @@ func TestDetect_OSC52_Alacritty(t *testing.T) {
 	}
 }
 
+func TestDetect_GhosttyFromTermProgram(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "ghostty"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty for ghostty, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for ghostty")
+	}
+}
+
+func TestDetect_GhosttyFromTerm(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM": "xterm-ghostty"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty from TERM=xterm-ghostty, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestSupportsKittyGraphics(t *testing.T) {
+	tests := []struct {
+		name      string
+		proto     GraphicsProto
+		trueColor bool
+		expect    bool
+	}{
+		{"Kitty+TrueColor", GraphicsKitty, true, true},
+		{"Kitty no TrueColor", GraphicsKitty, false, false},
+		{"WezTerm excluded", GraphicsWezTerm, true, false},
+		{"ITerm2 excluded", GraphicsITerm2, true, false},
+		{"None", GraphicsNone, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := TermCaps{GraphicsProtocol: tt.proto, TrueColor: tt.trueColor}
+			if caps.SupportsKittyGraphics() != tt.expect {
+				t.Errorf("SupportsKittyGraphics()=%v, want %v", caps.SupportsKittyGraphics(), tt.expect)
+			}
+		})
+	}
+}
+
 func TestSupportsGraphics(t *testing.T) {
 	tests := []struct {
 		name   string

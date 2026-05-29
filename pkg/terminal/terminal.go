@@ -56,6 +56,11 @@ func DetectWithProber(p Prober) TermCaps {
 	case strings.Contains(termProgram, "kitty"):
 		caps.GraphicsProtocol = GraphicsKitty
 		caps.KittyKeyboard = true
+	case strings.Contains(termProgram, "ghostty"), strings.Contains(term, "ghostty"):
+		// Ghostty implements the Kitty graphics protocol including the
+		// Unicode-placeholder virtual-placement extension.
+		caps.GraphicsProtocol = GraphicsKitty
+		caps.KittyKeyboard = true
 	case strings.Contains(termProgram, "wezterm"):
 		caps.GraphicsProtocol = GraphicsWezTerm
 	case strings.Contains(termProgram, "iterm"):
@@ -81,6 +86,7 @@ func DetectWithProber(p Prober) TermCaps {
 	// OSC52 clipboard — most modern terminals support this
 	switch {
 	case strings.Contains(termProgram, "kitty"),
+		strings.Contains(termProgram, "ghostty"),
 		strings.Contains(termProgram, "wezterm"),
 		strings.Contains(termProgram, "iterm"),
 		strings.Contains(termProgram, "tmux"),
@@ -97,4 +103,14 @@ func DetectWithProber(p Prober) TermCaps {
 // SupportsGraphics returns true if any graphics protocol is available.
 func (tc TermCaps) SupportsGraphics() bool {
 	return tc.GraphicsProtocol != GraphicsNone
+}
+
+// SupportsKittyGraphics reports whether the terminal can render inline images
+// via the Kitty graphics protocol's Unicode-placeholder virtual placement.
+// Only Kitty and Ghostty qualify (both detected as GraphicsKitty), and only
+// when truecolor is available — the image ID is carried in a 24-bit cell
+// foreground color. WezTerm is intentionally excluded: its Kitty-graphics
+// support historically lacks the Unicode-placeholder extension this relies on.
+func (tc TermCaps) SupportsKittyGraphics() bool {
+	return tc.GraphicsProtocol == GraphicsKitty && tc.TrueColor
 }

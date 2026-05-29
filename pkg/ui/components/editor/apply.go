@@ -137,6 +137,7 @@ func (m Model) syncDisplay() Model {
 	m.wrapMap = m.wrapMap.SetWidth(width)
 	m.wrapSnap = m.wrapMap.Sync(m.syntaxSnap)
 	m.snapshot = display.BuildSnapshot(m.wrapSnap)
+	m.snapshot = display.ExpandImageRows(m.snapshot, m.imageDimsFor)
 	return m
 }
 
@@ -151,11 +152,23 @@ func (m Model) scrollToCursor() Model {
 
 	contentH := m.contentHeight()
 
+	// Reconcile wrap-row space (wp.Row) with expanded display-row space.
+	// View() slices m.snapshot, whose rows include image-reserved rows that do
+	// not exist in m.wrapSnap. Map the cursor's wrap row to its expanded display
+	// row by anchoring on its model line's first row in each space and keeping
+	// the wrap-row offset within the line (0 for single-row/image lines).
+	modelLine := sp.Line
+	wrapOffsetWithinLine := wp.Row - m.wrapSnap.ModelLineToFirstRow(modelLine)
+	if wrapOffsetWithinLine < 0 {
+		wrapOffsetWithinLine = 0
+	}
+	cursorDisplayRow := m.snapshot.ModelLineToFirstRow(modelLine) + wrapOffsetWithinLine
+
 	// Vertical scroll
-	if wp.Row < m.viewport.TopRow {
-		m.viewport.TopRow = wp.Row
-	} else if wp.Row >= m.viewport.TopRow+contentH {
-		m.viewport.TopRow = wp.Row - contentH + 1
+	if cursorDisplayRow < m.viewport.TopRow {
+		m.viewport.TopRow = cursorDisplayRow
+	} else if cursorDisplayRow >= m.viewport.TopRow+contentH {
+		m.viewport.TopRow = cursorDisplayRow - contentH + 1
 	}
 
 	// Horizontal scroll (only when not soft-wrapping)
@@ -187,7 +200,9 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
 		}
-		return m, result.Cmd
+		var dcmd tea.Cmd
+		m, dcmd = m.discoverNewImages()
+		return m, tea.Batch(result.Cmd, dcmd)
 	}
 
 	// Scroll operations adjust viewport without editing.
@@ -207,7 +222,10 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		if m.viewport.ScrollCol < 0 {
 			m.viewport.ScrollCol = 0
 		}
-		return m, result.Cmd
+		// Resume frame animation for any images scrolled back into view.
+		var acmd tea.Cmd
+		m, acmd = m.armImageTicks()
+		return m, tea.Batch(result.Cmd, acmd)
 	}
 
 	// OperationNone with a Cmd: clipboard copy/paste just propagate the Cmd.
@@ -231,7 +249,9 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		_ = saveID
 	}
 
-	return m, result.Cmd
+	var dcmd tea.Cmd
+	m, dcmd = m.discoverNewImages()
+	return m, tea.Batch(result.Cmd, dcmd)
 }
 
 func (m Model) clampCursorsToViewport() cursor.CursorSet {

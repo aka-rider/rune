@@ -15,6 +15,7 @@ import (
 // final ANSI string output, enabling unified cursor/selection overlay on all spans.
 type Cell struct {
 	Rune      rune
+	Grapheme  string         // multi-codepoint cluster (e.g. Kitty placeholder + diacritics); when non-empty, emitted verbatim instead of Rune
 	Width     int            // visual width: 1 for normal, 2 for CJK/fullwidth
 	Style     lipgloss.Style // base style (syntax color, bold, etc.)
 	BufOffset int            // buffer byte offset (-1 for decorative/padding)
@@ -337,6 +338,12 @@ func cellsToString(cells []Cell, selStyle, cursorStyle lipgloss.Style) string {
 		// Build the text for this run
 		var run strings.Builder
 		for k := i; k < j; k++ {
+			if cells[k].Grapheme != "" {
+				// Multi-codepoint cluster (e.g. Kitty image placeholder with
+				// row/column diacritics) — emit verbatim so it is not split.
+				run.WriteString(cells[k].Grapheme)
+				continue
+			}
 			run.WriteRune(cells[k].Rune)
 		}
 

@@ -155,7 +155,9 @@ func (m Model) insertTextAtCursors(text string, now time.Time) (Model, tea.Cmd) 
 
 	m = m.applyOperation(op, history.EditPaste, now)
 	m = m.syncDisplay()
-	return m, nil
+	var dcmd tea.Cmd
+	m, dcmd = m.discoverNewImages()
+	return m, dcmd
 }
 
 // imageBaseDir returns the directory of the currently open file, or empty string.

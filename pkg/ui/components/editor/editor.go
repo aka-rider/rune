@@ -4,12 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
@@ -17,6 +15,7 @@ import (
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
+	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/breadcrumb"
 	"rune/pkg/ui/keymap"
@@ -78,6 +77,8 @@ type Model struct {
 
 	termCaps    terminal.TermCaps
 	imageConfig ImageConfig
+	images      imageRegistry
+	cellSize    imagekit.CellSize
 	mouse       mouseState
 	findOverlay FindOverlay
 	dictation   dictationState
@@ -102,6 +103,8 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		highlighter: ChromaHighlighter(),
 		termCaps:    caps,
 		imageConfig: ImageConfig{AssetsDir: "assets"},
+		images:      newImageRegistry(),
+		cellSize:    imagekit.DefaultCellSize(),
 		breadcrumb:  breadcrumb.New(st),
 		keys:        keys,
 		styles:      st,
@@ -137,24 +140,56 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Error saved; no-op for now (could surface to footer)
 		return m, nil
 
+	case ImageDecodedMsg:
+		return m.handleImageDecoded(msg)
+
+	case ImageTransmittedMsg:
+		return m.handleImageTransmitted(msg)
+
+	case ImageDecodeErrorMsg:
+		return m.handleImageError(msg.Path)
+
+	case ImageTransmitErrorMsg:
+		return m.handleImageError(msg.Path)
+
+	case imageFrameTickMsg:
+		return m.handleImageFrameTick(msg)
+
+	case tea.WindowSizeMsg:
+		// The workspace sizes children (SetSize) before forwarding this, so the
+		// registry's cell footprints are already updated; re-transmit images at
+		// their new size and (re)arm animation ticks. Pure scrolls never reach
+		// here, so this won't thrash.
+		var acmd tea.Cmd
+		m, acmd = m.armImageTicks()
+		return m, tea.Batch(m.retransmitImagesCmd(), acmd)
+
 	case FileLoadedMsg:
 		b, err := buffer.FromBytes(msg.Content)
 		if err == nil {
+			m, cmd = m.clearImages() // delete any prior file's images
+			cmds := []tea.Cmd{cmd}
 			m.buf = b
 			m.filePath = msg.Path
 			m.cursors = cursor.NewCursorSet(0)
 			m.savedContentHash = hashContent(m.buf.Content())
 			m.dirty = false
 			m = m.syncDisplay()
+			var dcmd tea.Cmd
+			m, dcmd = m.discoverNewImages()
+			cmds = append(cmds, dcmd)
+			return m, tea.Batch(cmds...)
 		}
 
 	case FileClosedMsg:
 		if msg.Path == m.filePath {
+			m, cmd = m.clearImages()
 			m.filePath = ""
 			m.buf = buffer.New("")
 			m.savedContentHash = ""
 			m.dirty = false
 			m = m.syncDisplay()
+			return m, cmd
 		}
 
 	case FileSavedMsg:
@@ -210,7 +245,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
-			return m, cmd
+			var dcmd tea.Cmd
+			m, dcmd = m.discoverNewImages()
+			return m, tea.Batch(cmd, dcmd)
 		}
 
 		// Redo: Cmd+Shift+Z (no resolver binding)
@@ -218,7 +255,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
-			return m, cmd
+			var dcmd tea.Cmd
+			m, dcmd = m.discoverNewImages()
+			return m, tea.Batch(cmd, dcmd)
 		}
 
 		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
@@ -303,6 +342,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m = m.applyOperation(res.Operation, history.EditInsertChar, time.Now())
 					m = m.syncDisplay()
 					m = m.scrollToCursor()
+					var dcmd tea.Cmd
+					m, dcmd = m.discoverNewImages()
+					cmd = tea.Batch(cmd, dcmd)
 				}
 			}
 		}
@@ -318,96 +360,17 @@ func (m Model) contentHeight() int {
 	return h
 }
 
-func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-
-	bcView := m.breadcrumb.View()
-	contentHeight := m.contentHeight()
-
-	// Vertical slice only — horizontal scrolling is done at cell level
-	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
-
-	// Collect cursor byte offsets and selection intervals for rendering.
-	cursorStyle := lipgloss.NewStyle().Reverse(true)
-	selStyle := m.styles.Selection
-	cursorOffsets := make(map[int]bool)
-	var selections []selInterval
-	if m.focused {
-		for _, c := range m.cursors.All() {
-			cursorOffsets[c.Position] = true
-			if c.HasSelection() {
-				selections = append(selections, selInterval{c.SelectionStart(), c.SelectionEnd()})
-			}
-		}
-	}
-
-	var renderedLines []string
-	for _, l := range lines {
-		// Convert all spans to cells
-		var lineCells []Cell
-		for _, sp := range l.Spans {
-			spCells := m.spanToCellsStyled(sp)
-			lineCells = append(lineCells, spCells...)
-		}
-
-		// EOL cursor: append synthetic cell if cursor is at end-of-line
-		if m.focused {
-			lineEnd := 0
-			if len(l.Spans) > 0 {
-				last := l.Spans[len(l.Spans)-1]
-				lineEnd = last.BufferEnd
-			}
-			for off := range cursorOffsets {
-				if off == lineEnd {
-					lineCells = append(lineCells, Cell{
-						Rune:      ' ',
-						Width:     1,
-						Style:     lipgloss.NewStyle(),
-						BufOffset: lineEnd,
-					})
-					break
-				}
-			}
-		}
-
-		// Horizontal scrolling at cell level
-		lineCells = sliceCells(lineCells, m.viewport.ScrollCol, m.width)
-
-		// Apply cursor and selection overlays
-		if m.focused && (len(cursorOffsets) > 0 || len(selections) > 0) {
-			applyOverlays(lineCells, cursorOffsets, selections)
-		}
-
-		// Stringify
-		renderedLines = append(renderedLines, cellsToString(lineCells, selStyle, cursorStyle))
-	}
-
-	for len(renderedLines) < contentHeight {
-		renderedLines = append(renderedLines, "~")
-	}
-
-	content := strings.Join(renderedLines, "\n")
-
-	ret := lipgloss.JoinVertical(lipgloss.Left, bcView, content)
-
-	if !m.focused {
-		ret = lipgloss.NewStyle().Faint(true).Render(ret)
-	}
-
-	return lipgloss.NewStyle().
-		MaxWidth(m.width).
-		MaxHeight(m.height).
-		Width(m.width).
-		Height(m.height).
-		Render(ret)
-}
-
 func (m Model) SetSize(w, h int) Model {
+	changed := w != m.width || h != m.height
 	m.width = w
 	m.height = h
 	m.breadcrumb = m.breadcrumb.SetSize(w, 1)
+	if changed {
+		// Recompute image cell footprints for the new size (no I/O). The
+		// re-transmit Cmd is emitted from the WindowSizeMsg arm, which the
+		// workspace forwards after this SetSize runs.
+		m = m.resizeImages(m.width, m.contentHeight())
+	}
 	return m.syncDisplay()
 }
 
