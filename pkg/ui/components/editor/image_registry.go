@@ -32,6 +32,11 @@ type imageEntry struct {
 	state   imageState
 	altText string
 
+	// iTerm2 inline rendering: pre-encoded OSC 1337 payload stored after
+	// encode so View-time placement is a cheap TTY write (no re-encode).
+	iterm2Payload string
+	lastScreenRow int // last row where the image was placed on screen (-1 = not placed)
+
 	// Animation fields for animated GIFs. Each frame is transmitted as its own
 	// Kitty image; frameIDs[frameIdx] is the image the placeholder cells
 	// currently reference (via fg color), so advancing a frame only changes the

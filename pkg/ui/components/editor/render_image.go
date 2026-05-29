@@ -16,13 +16,24 @@ func (m Model) imageKittyCapable() bool {
 	return m.termCaps.SupportsKittyGraphics()
 }
 
+// imageInlineCapable reports whether the terminal supports iTerm2 inline images
+// (OSC 1337). WezTerm and iTerm2 qualify.
+func (m Model) imageInlineCapable() bool {
+	return m.termCaps.SupportsInlineImages()
+}
+
+// imageCapable reports whether any image rendering path is available.
+func (m Model) imageCapable() bool {
+	return m.imageKittyCapable() || m.imageInlineCapable()
+}
+
 // imageDimsFor is the callback handed to display.ExpandImageRows. It reserves
 // rows once an image's dimensions are known (pendingTransmit or live) on a
 // capable terminal; pendingDecode and failed entries stay a single row and fall
 // back to alt text. This is a pure read of registry metadata — no decode, no
 // I/O.
 func (m Model) imageDimsFor(path string) display.ImageDims {
-	if !m.imageKittyCapable() {
+	if !m.imageCapable() {
 		return display.ImageDims{Cols: 0, Rows: 1}
 	}
 	e, ok := m.images.get(path)

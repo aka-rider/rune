@@ -34,6 +34,19 @@ type ImageTransmittedMsg struct {
 	Path string
 }
 
+// ImageEncodedMsg reports that an image was encoded as an iTerm2 OSC 1337
+// payload and is ready for placement.
+type ImageEncodedMsg struct {
+	Path    string
+	Payload string
+}
+
+// ImagePlacedMsg reports that an iTerm2 image was written to the TTY at a
+// specific screen position.
+type ImagePlacedMsg struct {
+	Path string
+}
+
 // ImageDecodeErrorMsg reports a decode/read failure for a document image.
 type ImageDecodeErrorMsg struct {
 	Path string
@@ -160,6 +173,43 @@ func DeleteImagesCmd(ids []uint32) tea.Cmd {
 		// fire-and-forget: a tty write failure on cleanup is not actionable.
 		_ = writeTTY(seq)
 		return nil
+	}
+}
+
+// EncodeITerm2Cmd re-reads, decodes, resizes, and encodes an image as an iTerm2
+// OSC 1337 payload. Unlike TransmitImageCmd, it does NOT write to the TTY;
+// the payload is stored on the Model for later placement via PlaceITerm2Cmd.
+func EncodeITerm2Cmd(path, absPath string, cols, rows int, cs imagekit.CellSize) tea.Cmd {
+	p, ap, c, r, sz := path, absPath, cols, rows, cs
+	return func() tea.Msg {
+		data, err := os.ReadFile(ap)
+		if err != nil {
+			return ImageDecodeErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
+		}
+		dec, err := imagekit.DecodeStill(data)
+		if err != nil {
+			return ImageDecodeErrorMsg{Path: p, Err: err}
+		}
+		tw, th := imagekit.FitBox(dec.Width, dec.Height, c*sz.W, r*sz.H)
+		resized := imagekit.Resize(dec.Image, tw, th)
+		payload, err := imagekit.EncodeITerm2(resized, c, r)
+		if err != nil {
+			return ImageDecodeErrorMsg{Path: p, Err: fmt.Errorf("encode iterm2 %q: %w", ap, err)}
+		}
+		return ImageEncodedMsg{Path: p, Payload: payload}
+	}
+}
+
+// PlaceITerm2Cmd writes a pre-encoded iTerm2 image payload to the TTY at a
+// specific screen position using cursor save/restore and absolute positioning.
+func PlaceITerm2Cmd(path, payload string, screenRow, screenCol int) tea.Cmd {
+	p, pl, row, col := path, payload, screenRow, screenCol
+	return func() tea.Msg {
+		seq := fmt.Sprintf("\033[s\033[%d;%dH%s\033[u", row, col, pl)
+		if err := writeTTY(seq); err != nil {
+			return ImageTransmitErrorMsg{Path: p, Err: fmt.Errorf("place iterm2 image %q: %w", p, err)}
+		}
+		return ImagePlacedMsg{Path: p}
 	}
 }
 

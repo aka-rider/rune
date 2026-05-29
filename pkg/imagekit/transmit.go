@@ -1,8 +1,12 @@
 package imagekit
 
 import (
+	"bytes"
+	"encoding/base64"
+	"fmt"
 	"hash/fnv"
 	"image"
+	"image/png"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi/kitty"
@@ -99,4 +103,25 @@ func EncodeDeleteAll() string {
 		Quite:           2,
 	})
 	return b.String()
+}
+
+// EncodeITerm2 encodes img as a PNG and wraps it in an iTerm2 inline image OSC
+// 1337 escape sequence. The escape is self-contained: no prior transmit or ID
+// assignment is needed. The terminal renders the image at the cursor position,
+// scaling to fit the provided cell dimensions.
+//
+// Format: \033]1337;File=inline=1;size=N;width={cols};height={rows}:{base64png}\a
+func EncodeITerm2(img image.Image, cols, rows int) (string, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return "", fmt.Errorf("encode png for iterm2: %w", err)
+	}
+	payload := base64.StdEncoding.EncodeToString(buf.Bytes())
+	var sb strings.Builder
+	sb.WriteString("\033]1337;File=inline=1;")
+	sb.WriteString(fmt.Sprintf("size=%d;", buf.Len()))
+	sb.WriteString(fmt.Sprintf("width=%d;height=%d:", cols, rows))
+	sb.WriteString(payload)
+	sb.WriteByte('\a')
+	return sb.String(), nil
 }

@@ -75,6 +75,25 @@ func DetectWithProber(p Prober) TermCaps {
 		}
 	}
 
+	// WezTerm fallback: WEZTERM_PANE persists through multiplexers and
+	// sub-terminals. We only promote to GraphicsWezTerm when the current
+	// TERM_PROGRAM is empty or a known passthrough multiplexer (tmux, screen).
+	// If TERM_PROGRAM identifies a non-passthrough sub-terminal (e.g., VS Code)
+	// its own PTY cannot render OSC 1337 images even though WezTerm is the
+	// outer window.
+	if p.Env("WEZTERM_PANE") != "" && caps.GraphicsProtocol == GraphicsNone {
+		if termProgram == "" || strings.Contains(termProgram, "tmux") || strings.Contains(termProgram, "screen") {
+			caps.GraphicsProtocol = GraphicsWezTerm
+		}
+	}
+
+	// iTerm2 fallback: ITERM_SESSION_ID persists through sub-shells.
+	if p.Env("ITERM_SESSION_ID") != "" && caps.GraphicsProtocol == GraphicsNone {
+		if termProgram == "" || strings.Contains(termProgram, "tmux") || strings.Contains(termProgram, "screen") {
+			caps.GraphicsProtocol = GraphicsITerm2
+		}
+	}
+
 	// True color detection
 	if colorterm == "truecolor" || colorterm == "24bit" {
 		caps.TrueColor = true
@@ -113,4 +132,12 @@ func (tc TermCaps) SupportsGraphics() bool {
 // support historically lacks the Unicode-placeholder extension this relies on.
 func (tc TermCaps) SupportsKittyGraphics() bool {
 	return tc.GraphicsProtocol == GraphicsKitty && tc.TrueColor
+}
+
+// SupportsInlineImages reports whether the terminal can render inline images
+// via the iTerm2 inline images protocol (OSC 1337). WezTerm and iTerm2 both
+// support this natively. Unlike Kitty virtual placement, the iTerm2 protocol
+// does not encode data in cell colors, so truecolor is not required.
+func (tc TermCaps) SupportsInlineImages() bool {
+	return tc.GraphicsProtocol == GraphicsWezTerm || tc.GraphicsProtocol == GraphicsITerm2
 }

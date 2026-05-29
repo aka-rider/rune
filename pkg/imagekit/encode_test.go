@@ -114,3 +114,32 @@ func TestEncodeDelete(t *testing.T) {
 		t.Errorf("EncodeDeleteAll malformed: %q", s)
 	}
 }
+
+func TestEncodeITerm2(t *testing.T) {
+	img := solidImage(8, 16, color.RGBA{R: 1, G: 2, B: 3, A: 255})
+	seq, err := EncodeITerm2(img, 4, 2)
+	if err != nil {
+		t.Fatalf("EncodeITerm2: %v", err)
+	}
+	// OSC 1337 introducer.
+	if !strings.HasPrefix(seq, "\033]1337;") {
+		t.Errorf("output missing OSC 1337 prefix: %q", snippet(seq))
+	}
+	// BEL terminator.
+	if !strings.HasSuffix(seq, "\a") {
+		t.Errorf("output missing BEL terminator")
+	}
+	// Required params.
+	if !strings.Contains(seq, "inline=1") {
+		t.Error("missing inline=1")
+	}
+	if !strings.Contains(seq, "size=") {
+		t.Error("missing size parameter")
+	}
+	if !strings.Contains(seq, "width=4;") {
+		t.Error("missing width=4")
+	}
+	if !strings.Contains(seq, "height=2:") {
+		t.Error("missing height=2")
+	}
+}

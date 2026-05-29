@@ -215,3 +215,80 @@ func TestSupportsGraphics(t *testing.T) {
 		})
 	}
 }
+
+func TestSupportsInlineImages(t *testing.T) {
+	tests := []struct {
+		name      string
+		proto     GraphicsProto
+		trueColor bool
+		expect    bool
+	}{
+		{"WezTerm+TrueColor", GraphicsWezTerm, true, true},
+		{"WezTerm no TrueColor", GraphicsWezTerm, false, true}, // iTerm2 protocol doesn't need truecolor
+		{"ITerm2+TrueColor", GraphicsITerm2, true, true},
+		{"ITerm2 no TrueColor", GraphicsITerm2, false, true},
+		{"Kitty excluded", GraphicsKitty, true, false},
+		{"None", GraphicsNone, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := TermCaps{GraphicsProtocol: tt.proto, TrueColor: tt.trueColor}
+			if caps.SupportsInlineImages() != tt.expect {
+				t.Errorf("SupportsInlineImages()=%v, want %v", caps.SupportsInlineImages(), tt.expect)
+			}
+		})
+	}
+}
+
+func TestDetect_WezTermFallback_FromPane(t *testing.T) {
+	// TERM_PROGRAM is a passthrough multiplexer but WEZTERM_PANE identifies WezTerm
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM": "tmux",
+		"WEZTERM_PANE": "2",
+		"TERM":         "screen-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsWezTerm {
+		t.Errorf("expected GraphicsWezTerm from WEZTERM_PANE+tmux fallback, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_WezTermFallback_BlockedByVSCode(t *testing.T) {
+	// VS Code terminal can't render images even inside WezTerm
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM": "vscode",
+		"WEZTERM_PANE": "2",
+		"TERM":         "xterm-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsNone {
+		t.Errorf("expected GraphicsNone for vscode+WEZTERM_PANE, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_WezTermFallback_EmptyTermProgram(t *testing.T) {
+	// TERM_PROGRAM unset but WEZTERM_PANE present
+	p := mockProber{vars: map[string]string{
+		"WEZTERM_PANE": "0",
+		"TERM":         "xterm-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsWezTerm {
+		t.Errorf("expected GraphicsWezTerm from WEZTERM_PANE with empty TERM_PROGRAM, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_ITermFallback_FromSessionID(t *testing.T) {
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM":     "tmux",
+		"ITERM_SESSION_ID": "w0t0p0:12345",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsITerm2 {
+		t.Errorf("expected GraphicsITerm2 from ITERM_SESSION_ID fallback, got %v", caps.GraphicsProtocol)
+	}
+}

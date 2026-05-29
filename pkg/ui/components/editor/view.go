@@ -32,6 +32,7 @@ func (m Model) View() string {
 	}
 
 	imageCapable := m.imageKittyCapable()
+	inlineCapable := m.imageInlineCapable()
 
 	var renderedLines []string
 	var imageLineFlags []bool
@@ -44,6 +45,19 @@ func (m Model) View() string {
 			lineCells := imagePlaceholderCells(id, l.ImageRowIndex, l.ImageCols)
 			lineCells = sliceCells(lineCells, m.viewport.ScrollCol, m.width)
 			renderedLines = append(renderedLines, cellsToString(lineCells, selStyle, cursorStyle))
+			imageLineFlags = append(imageLineFlags, true)
+			continue
+		}
+
+		// iTerm2 inline image row: emit spaces to reserve screen real estate.
+		// The actual image is placed via direct TTY write (PlaceITerm2Cmd).
+		if l.ImagePath != "" && inlineCapable {
+			spaceCells := make([]Cell, l.ImageCols)
+			for i := range spaceCells {
+				spaceCells[i] = Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
+			}
+			spaceCells = sliceCells(spaceCells, m.viewport.ScrollCol, m.width)
+			renderedLines = append(renderedLines, cellsToString(spaceCells, selStyle, cursorStyle))
 			imageLineFlags = append(imageLineFlags, true)
 			continue
 		}

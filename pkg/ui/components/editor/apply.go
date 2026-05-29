@@ -225,7 +225,9 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		// Resume frame animation for any images scrolled back into view.
 		var acmd tea.Cmd
 		m, acmd = m.armImageTicks()
-		return m, tea.Batch(result.Cmd, acmd)
+		// Re-place iTerm2 images at new screen positions.
+		icmd := m.replotInlineImages()
+		return m, tea.Batch(result.Cmd, acmd, icmd)
 	}
 
 	// OperationNone with a Cmd: clipboard copy/paste just propagate the Cmd.

@@ -146,6 +146,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case ImageTransmittedMsg:
 		return m.handleImageTransmitted(msg)
 
+	case ImageEncodedMsg:
+		return m.handleImageEncoded(msg)
+
+	case ImagePlacedMsg:
+		// Placement acknowledged — no action needed.
+		return m, nil
+
 	case ImageDecodeErrorMsg:
 		return m.handleImageError(msg.Path)
 
@@ -162,7 +169,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// here, so this won't thrash.
 		var acmd tea.Cmd
 		m, acmd = m.armImageTicks()
-		return m, tea.Batch(m.retransmitImagesCmd(), acmd)
+		icmd := m.replotInlineImages()
+		return m, tea.Batch(m.retransmitImagesCmd(), acmd, icmd)
 
 	case FileLoadedMsg:
 		b, err := buffer.FromBytes(msg.Content)

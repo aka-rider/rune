@@ -16,7 +16,7 @@ import (
 // DecodeImageCmd for each. It is a no-op on non-capable terminals. The returned
 // Cmd batches all decodes; the Model gains pendingDecode registry entries.
 func (m Model) discoverNewImages() (Model, tea.Cmd) {
-	if !m.imageKittyCapable() {
+	if !m.imageCapable() {
 		return m, nil
 	}
 	baseDir := m.imageBaseDir()
@@ -70,7 +70,7 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 }
 
 // handleImageDecoded records measured dimensions, reserves rows, re-anchors the
-// viewport, and dispatches the transmit.
+// viewport, and dispatches the transmit (Kitty) or encode (iTerm2).
 func (m Model) handleImageDecoded(msg ImageDecodedMsg) (Model, tea.Cmd) {
 	e, ok := m.images.get(msg.Path)
 	if !ok {
@@ -84,7 +84,7 @@ func (m Model) handleImageDecoded(msg ImageDecodedMsg) (Model, tea.Cmd) {
 	e.mtime = msg.Mtime
 	e.state = pendingTransmit
 
-	if msg.Animated && msg.FrameCount > 1 {
+	if msg.Animated && msg.FrameCount > 1 && m.imageKittyCapable() {
 		e.animated = true
 		e.frameCount = msg.FrameCount
 		e.delays = msg.Delays
@@ -102,7 +102,11 @@ func (m Model) handleImageDecoded(msg ImageDecodedMsg) (Model, tea.Cmd) {
 	m = m.syncDisplay()    // rows now reserve
 	m = m.scrollToCursor() // re-anchor against expanded rows
 
-	return m, TransmitImageCmd(e.path, e.absPath, e.id, e.cols, e.rows, m.cellSize)
+	if m.imageKittyCapable() {
+		return m, TransmitImageCmd(e.path, e.absPath, e.id, e.cols, e.rows, m.cellSize)
+	}
+	// iTerm2/WezTerm path: encode to OSC 1337 payload.
+	return m, EncodeITerm2Cmd(e.path, e.absPath, e.cols, e.rows, m.cellSize)
 }
 
 // handleImageTransmitted marks an image live.
@@ -118,6 +122,65 @@ func (m Model) handleImageTransmitted(msg ImageTransmittedMsg) (Model, tea.Cmd) 
 		return m.armImageTicks()
 	}
 	return m, nil
+}
+
+// handleImageEncoded stores the iTerm2 payload and dispatches initial placement.
+func (m Model) handleImageEncoded(msg ImageEncodedMsg) (Model, tea.Cmd) {
+	e, ok := m.images.get(msg.Path)
+	if !ok {
+		return m, nil
+	}
+	e.iterm2Payload = msg.Payload
+	e.state = live
+	e.lastScreenRow = -1 // not yet placed
+	m.images = m.images.upsert(e)
+	return m, m.replotInlineImages()
+}
+
+// replotInlineImages emits PlaceITerm2Cmd for each live iTerm2 image whose
+// screen position changed or that hasn't been placed yet.
+func (m Model) replotInlineImages() tea.Cmd {
+	if !m.imageInlineCapable() {
+		return nil
+	}
+	topRow := m.viewport.TopRow
+	contentH := m.contentHeight()
+	// offsetY is the vertical offset from the top of the editor widget to the
+	// first content row on screen (accounts for breadcrumb etc.).
+	// In the terminal, row 1 is the top. We need the absolute screen row,
+	// but since we write to TTY with cursor positioning we use the viewport-
+	// relative row offset from editor's screen origin.
+	screenBase := m.offsetY + m.breadcrumb.Height()
+
+	var cmds []tea.Cmd
+	for lineIdx, l := range m.snapshot.Lines {
+		if l.ImagePath == "" || l.ImageRowIndex != 0 {
+			continue // only process anchor rows
+		}
+		e, ok := m.images.get(l.ImagePath)
+		if !ok || e.state != live || e.iterm2Payload == "" {
+			continue
+		}
+		// Compute screen row (1-based terminal row).
+		displayRow := lineIdx - topRow
+		if displayRow < 0 || displayRow >= contentH {
+			// Image is outside visible viewport — skip.
+			continue
+		}
+		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
+		if screenRow == e.lastScreenRow {
+			continue // already placed at this position
+		}
+		e.lastScreenRow = screenRow
+		m.images = m.images.upsert(e)
+
+		col := m.offsetX + 1 // 1-based terminal column
+		cmds = append(cmds, PlaceITerm2Cmd(e.path, e.iterm2Payload, screenRow, col))
+	}
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
 }
 
 // handleImageError marks an image failed so it collapses back to the alt-text
@@ -147,7 +210,7 @@ func (m Model) clearImages() (Model, tea.Cmd) {
 // retransmitImagesCmd re-sends every image with known dimensions at its current
 // cell footprint. Used after a resize, when the cell box (cols/rows) changed.
 func (m Model) retransmitImagesCmd() tea.Cmd {
-	if !m.imageKittyCapable() {
+	if !m.imageCapable() {
 		return nil
 	}
 	cs := m.cellSize
@@ -159,7 +222,11 @@ func (m Model) retransmitImagesCmd() tea.Cmd {
 		if e.cols <= 0 || e.rows <= 0 {
 			continue
 		}
-		cmds = append(cmds, TransmitImageCmd(e.path, e.absPath, e.id, e.cols, e.rows, cs))
+		if m.imageKittyCapable() {
+			cmds = append(cmds, TransmitImageCmd(e.path, e.absPath, e.id, e.cols, e.rows, cs))
+		} else {
+			cmds = append(cmds, EncodeITerm2Cmd(e.path, e.absPath, e.cols, e.rows, cs))
+		}
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -171,7 +238,7 @@ func (m Model) retransmitImagesCmd() tea.Cmd {
 // dimensions and marks changed entries pendingTransmit. Called from SetSize on
 // an actual dimension change. Pure metadata work — no decode, no I/O.
 func (m Model) resizeImages(maxCols, maxRows int) Model {
-	if !m.imageKittyCapable() || len(m.images.byPath) == 0 {
+	if !m.imageCapable() || len(m.images.byPath) == 0 {
 		return m
 	}
 	for _, e := range m.images.byPath {
@@ -184,6 +251,8 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 		}
 		e.cols = cols
 		e.rows = rows
+		e.iterm2Payload = "" // invalidate cached payload — dimensions changed
+		e.lastScreenRow = -1
 		if e.state == live {
 			e.state = pendingTransmit
 		}
