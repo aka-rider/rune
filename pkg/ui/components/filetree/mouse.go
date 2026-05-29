@@ -30,6 +30,15 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if idx < 0 || idx >= len(m.entries) {
 		return m, nil
 	}
+
+	if m.cursor == idx {
+		e := m.entries[m.cursor]
+		if e.IsDir {
+			return m, func() tea.Msg { return DirSelectedMsg{Path: e.Path} }
+		}
+		return m, func() tea.Msg { return FileSelectedMsg{Path: e.Path} }
+	}
+
 	m.cursor = idx
 	return m, nil
 }
