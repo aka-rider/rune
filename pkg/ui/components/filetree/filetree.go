@@ -43,15 +43,41 @@ func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m }
 func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
 func (m Model) SetFocused(f bool) Model  { m.focused = f; return m }
 func (m Model) Height() int              { return m.height }
+func (m Model) Root() string             { return m.root }
 
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DirLoadedMsg:
+		// Preserve cursor by matching previous entry name.
+		var prevName string
+		if len(m.entries) > 0 && m.cursor < len(m.entries) {
+			prevName = m.entries[m.cursor].Name
+		}
+		oldCursor := m.cursor
+
 		m.entries = msg.Entries
 		m.root = msg.Root
 		m.cursor = 0
+
+		if prevName != "" {
+			found := false
+			for i, e := range m.entries {
+				if e.Name == prevName {
+					m.cursor = i
+					found = true
+					break
+				}
+			}
+			if !found && len(m.entries) > 0 {
+				if oldCursor < len(m.entries) {
+					m.cursor = oldCursor
+				} else {
+					m.cursor = len(m.entries) - 1
+				}
+			}
+		}
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
 	case tea.MouseWheelMsg:

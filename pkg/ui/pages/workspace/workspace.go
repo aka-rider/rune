@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/fsnotify/fsnotify"
 
 	"rune/pkg/command"
 	"rune/pkg/dictation"
@@ -40,6 +42,9 @@ func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
 
 // ErrMsg signals an I/O error to the workspace page.
 type ErrMsg struct{ Err error }
+
+// dirChangedMsg signals the watched directory contents changed on disk.
+type dirChangedMsg struct{}
 
 const defaultLeftPaneW = 22
 const defaultRightPaneW = 38
@@ -96,6 +101,8 @@ type Model struct {
 	dictCancel              context.CancelFunc // nil when not dictating (§6.3)
 	dictCh                  <-chan tea.Msg     // nil when idle
 	untitledCounters        map[string]int     // dir -> next untitled number
+	watchedDir              string             // current directory being watched
+	cancelWatch             context.CancelFunc // cancels active watchDirCmd (§6.3)
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -485,6 +492,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case filetree.DirLoadedMsg:
 		m.editor = m.editor.SetDir(msg.Root)
+		m, cmd = m.startWatch(msg.Root)
+		cmds = append(cmds, cmd)
+
+	case dirChangedMsg:
+		dir := m.watchedDir
+		cmds = append(cmds, loadDirCmd(dir, "."))
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -865,6 +878,71 @@ func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
+}
+
+// watchDirCmd watches a directory for Create/Remove/Rename events and returns
+// dirChangedMsg when the listing should be refreshed. One-shot: returns after
+// the first event batch (with 50ms debounce). Caller restarts via DirLoadedMsg.
+func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
+	return func() tea.Msg {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			return nil // fire-and-forget: watcher creation failed
+		}
+		defer watcher.Close()
+
+		if err := watcher.Add(dir); err != nil {
+			return nil // fire-and-forget: dir may have been removed
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return nil
+				}
+				if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
+					// Debounce: coalesce burst events for 50ms.
+					timer := time.NewTimer(50 * time.Millisecond)
+				drain:
+					for {
+						select {
+						case <-ctx.Done():
+							timer.Stop()
+							return nil
+						case <-timer.C:
+							break drain
+						case _, ok := <-watcher.Events:
+							if !ok {
+								break drain
+							}
+							timer.Reset(50 * time.Millisecond)
+						}
+					}
+					return dirChangedMsg{}
+				}
+				// Ignore Write/Chmod — they don't affect directory listing.
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return nil
+				}
+				return nil // fire-and-forget: watcher error
+			}
+		}
+	}
+}
+
+// startWatch cancels any active directory watcher and starts a new one for dir.
+func (m Model) startWatch(dir string) (Model, tea.Cmd) {
+	if m.cancelWatch != nil {
+		m.cancelWatch()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelWatch = cancel
+	m.watchedDir = dir
+	return m, watchDirCmd(ctx, dir)
 }
 
 // fileCreatedMsg reports the result of creating a new file on disk.
