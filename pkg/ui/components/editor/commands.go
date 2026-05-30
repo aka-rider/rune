@@ -3,6 +3,7 @@ package editor
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -35,5 +36,19 @@ func SaveFileCmd(req SaveRequest) tea.Cmd {
 			RequestID:        req.RequestID,
 			SavedContentHash: req.ContentHash,
 		}
+	}
+}
+
+// FileRenameCmd renames the file at oldPath to a new name derived from newStem,
+// preserving the original directory and extension.
+func FileRenameCmd(oldPath, newStem string) tea.Cmd {
+	return func() tea.Msg {
+		dir := filepath.Dir(oldPath)
+		ext := filepath.Ext(oldPath)
+		newPath := filepath.Join(dir, newStem+ext)
+		if err := os.Rename(oldPath, newPath); err != nil {
+			return FileRenameErrorMsg{OldPath: oldPath, Err: fmt.Errorf("rename %q: %w", oldPath, err)}
+		}
+		return FileRenamedMsg{OldPath: oldPath, NewPath: newPath}
 	}
 }

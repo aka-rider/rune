@@ -115,6 +115,19 @@ func (m Model) CloseFile(path string) Model {
 	return m
 }
 
+// RenameFile updates the path and display name for the tab matching oldPath.
+// If no tab matches, the model is returned unchanged.
+func (m Model) RenameFile(oldPath, newPath string) Model {
+	for i := range m.tabs {
+		if m.tabs[i].Path == oldPath {
+			m.tabs[i].Path = newPath
+			m.tabs[i].Name = tabName(newPath)
+			return m
+		}
+	}
+	return m
+}
+
 // MarkDirty sets the dirty indicator on the tab matching path.
 func (m Model) MarkDirty(path string) Model {
 	for i := range m.tabs {

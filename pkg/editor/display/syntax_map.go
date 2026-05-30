@@ -2,6 +2,7 @@ package display
 
 import (
 	"sort"
+	"strings"
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/coords"
@@ -235,6 +236,17 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 	advBlocks := parseAdvancedBlocks(content, m.FrontmatterMode)
 	blocks = append(blocks, advBlocks...)
 
+	// Parse YAML frontmatter to detect malformed content for error display.
+	var fmError string
+	if m.FrontmatterMode != FrontmatterHidden {
+		docLines := strings.Split(content, "\n")
+		if fmEnd := detectFrontmatter(docLines); fmEnd >= 0 {
+			if _, err := parseFrontmatterYAML(docLines, fmEnd); err != nil {
+				fmError = err.Error()
+			}
+		}
+	}
+
 	// Build a line→block index for fast lookup
 	lineToBlock := buildLineToBlockIndex(blocks, buf.LineCount())
 
@@ -256,7 +268,7 @@ func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap,
 				mdSpans = parsed[i].spans
 			}
 
-			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode, mdSpans)
+			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode, fmError, mdSpans)
 			lines[i] = SyntaxLine{Spans: spans}
 			// Block lines in rendered mode with hidden delimiters need deltas
 			needsHiddenLineDelta := false

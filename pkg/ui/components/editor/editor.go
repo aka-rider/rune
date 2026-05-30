@@ -88,14 +88,15 @@ type Model struct {
 	findOverlay FindOverlay
 	dictation   dictationState
 	viewport    ViewportState
-	breadcrumb  breadcrumb.Model
-	keys        keymap.Bindings
-	styles      styles.Styles
-	width       int
-	height      int
-	offsetX     int
-	offsetY     int
-	focused     bool
+	breadcrumb   breadcrumb.Model
+	keys         keymap.Bindings
+	styles       styles.Styles
+	width        int
+	height       int
+	offsetX      int
+	offsetY      int
+	focused      bool
+	titleFocused bool
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -110,7 +111,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		imageConfig: ImageConfig{AssetsDir: "assets"},
 		images:      newImageRegistry(),
 		cellSize:    imagekit.DefaultCellSize(),
-		breadcrumb:  breadcrumb.New(st),
+		breadcrumb:  breadcrumb.New(st, validateFilename),
 		keys:        keys,
 		styles:      st,
 	}
@@ -243,9 +244,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m.handleMouseWheel(msg)
 
+	case breadcrumb.TitleEditCommitMsg:
+		m.titleFocused = false
+		m.breadcrumb = m.breadcrumb.SetEditing(false)
+		return m, FileRenameCmd(m.filePath, msg.Name)
+
+	case FileRenamedMsg:
+		if msg.OldPath == m.filePath {
+			m.filePath = msg.NewPath
+			m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
+		}
+
+	case FileRenameErrorMsg:
+		// no-op for now
+
 	case tea.KeyPressMsg:
 		if !m.focused {
 			return m, nil
+		}
+
+		// Title edit mode — breadcrumb consumes all keys.
+		if m.titleFocused {
+			if (msg.Code == 't' && msg.Mod == tea.ModCtrl) ||
+				(msg.Code == tea.KeyEscape && msg.Mod == 0) {
+				m.titleFocused = false
+				m.breadcrumb = m.breadcrumb.SetEditing(false)
+				return m, nil
+			}
+			var bcmd tea.Cmd
+			m.breadcrumb, bcmd = m.breadcrumb.Update(msg)
+			return m, bcmd
 		}
 
 		// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
@@ -297,6 +325,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			var dcmd tea.Cmd
 			m, dcmd = m.discoverNewImages()
 			return m, tea.Batch(cmd, dcmd, ccmd)
+		}
+
+		// Edit title: Ctrl+T enters breadcrumb title edit mode.
+		if msg.Code == 't' && msg.Mod == tea.ModCtrl {
+			if m.filePath != "" {
+				m.titleFocused = true
+				m.breadcrumb = m.breadcrumb.SetEditing(true)
+			}
+			return m, nil
 		}
 
 		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
@@ -442,6 +479,10 @@ func (m Model) SetFocused(f bool) Model {
 			m.images = m.images.upsert(e)
 		}
 		m.needsReplot = true
+	}
+	if !f {
+		m.titleFocused = false
+		m.breadcrumb = m.breadcrumb.SetEditing(false)
 	}
 	m.focused = f
 	return m

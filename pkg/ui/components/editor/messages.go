@@ -44,3 +44,13 @@ type ClipboardContentMsg struct {
 type LinkClickedMsg struct {
 	Path string // resolved file path (empty for external URLs)
 }
+
+type FileRenamedMsg struct {
+	OldPath string
+	NewPath string
+}
+
+type FileRenameErrorMsg struct {
+	OldPath string
+	Err     error
+}

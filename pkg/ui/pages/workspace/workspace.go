@@ -487,6 +487,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 
+	case editor.FileRenamedMsg:
+		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
+
 	case editor.ContentChangedMsg:
 		if msg.Dirty {
 			m.opentabs = m.opentabs.MarkDirty(msg.Path)
