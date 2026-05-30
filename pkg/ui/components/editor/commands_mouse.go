@@ -227,6 +227,8 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	beforeTopRow := m.viewport.TopRow
+
 	switch msg.Button {
 	case tea.MouseWheelUp:
 		m.viewport.TopRow -= mouseScrollLines
@@ -243,7 +245,14 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 			m.viewport.TopRow = maxTop
 		}
 	}
-	return m, nil
+
+	if beforeTopRow == m.viewport.TopRow {
+		return m, nil
+	}
+
+	// Re-arm animation ticks for images scrolled into view.
+	m, cmd := m.armImageTicks()
+	return m, cmd
 }
 
 func (m Model) mousePositionCursor(offset int) Model {

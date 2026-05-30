@@ -54,3 +54,9 @@ type FileRenameErrorMsg struct {
 	OldPath string
 	Err     error
 }
+
+// UntitledRenameMsg is emitted when the user renames a title on an untitled file
+// (no path on disk yet). The workspace page handles creating/naming the file.
+type UntitledRenameMsg struct {
+	Name string
+}

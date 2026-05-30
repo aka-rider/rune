@@ -37,6 +37,12 @@ type DirtyGuardResponseMsg struct {
 // confirmExpired is an internal message to reset chord state after timeout.
 type confirmExpired struct{}
 
+// ShowErrorMsg tells the footer to display a transient error message.
+type ShowErrorMsg struct{ Text string }
+
+// errorDismissedMsg is an internal timer message to clear the error after timeout.
+type errorDismissedMsg struct{ id int }
+
 type UpdateCursorMsg struct {
 	Line      int
 	Col       int
@@ -56,6 +62,8 @@ type Model struct {
 	dirtyGuard       bool
 	dictating        bool
 	dictationAllowed bool
+	errorMsg         string
+	errorExpireID    int
 }
 
 // DictationStartMsg is emitted when the user activates voice dictation (^v).
@@ -141,6 +149,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.line = msg.Line
 		m.col = msg.Col
 		m.wordCount = msg.WordCount
+
+	case ShowErrorMsg:
+		m.errorMsg = msg.Text
+		m.errorExpireID++
+		id := m.errorExpireID
+		return m, func() tea.Msg {
+			time.Sleep(5 * time.Second)
+			return errorDismissedMsg{id: id}
+		}
+
+	case errorDismissedMsg:
+		if msg.id == m.errorExpireID {
+			m.errorMsg = ""
+		}
 	}
 	return m, nil
 }
@@ -153,6 +175,12 @@ func startConfirmTimer() tea.Cmd {
 }
 
 func (m Model) View() string {
+	// Error messages take precedence over normal status display.
+	if m.errorMsg != "" {
+		errContent := m.styles.Error.Render("⚠ " + m.errorMsg)
+		return m.styles.Footer.Width(m.width).MaxHeight(1).Render(errContent)
+	}
+
 	var left string
 
 	if m.dictating {

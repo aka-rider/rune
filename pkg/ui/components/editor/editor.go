@@ -20,6 +20,7 @@ import (
 	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/breadcrumb"
+	"rune/pkg/ui/components/editor/title"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -78,16 +79,15 @@ type Model struct {
 
 	highlighter CodeHighlighter
 
-	termCaps    terminal.TermCaps
-	imageConfig ImageConfig
-	images      imageRegistry
-	cellSize    imagekit.CellSize
-	plotGen     int  // generation counter for iTerm2 image placement
-	needsReplot bool // set by SetFocused; cleared in Update to emit replotInlineImages
-	mouse       mouseState
-	findOverlay FindOverlay
-	dictation   dictationState
-	viewport    ViewportState
+	termCaps     terminal.TermCaps
+	imageConfig  ImageConfig
+	images       imageRegistry
+	cellSize     imagekit.CellSize
+	mouse        mouseState
+	findOverlay  FindOverlay
+	dictation    dictationState
+	viewport     ViewportState
+	title        title.Model
 	breadcrumb   breadcrumb.Model
 	keys         keymap.Bindings
 	styles       styles.Styles
@@ -96,7 +96,6 @@ type Model struct {
 	offsetX      int
 	offsetY      int
 	focused      bool
-	titleFocused bool
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -111,6 +110,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		imageConfig: ImageConfig{AssetsDir: "assets"},
 		images:      newImageRegistry(),
 		cellSize:    imagekit.DefaultCellSize(),
+		title:       title.New("Untitled", st),
 		breadcrumb:  breadcrumb.New(st, validateFilename),
 		keys:        keys,
 		styles:      st,
@@ -125,14 +125,6 @@ func hashContent(content string) string {
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	// When focus changed, iTerm2 images need re-placement because Bubble Tea
-	// redraws all cells (overwriting the out-of-band image pixels).
-	var replotCmd tea.Cmd
-	if m.needsReplot {
-		m.needsReplot = false
-		m, replotCmd = m.replotInlineImages()
-	}
-
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case ClipboardContentMsg:
@@ -184,13 +176,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		// The workspace sizes children (SetSize) before forwarding this, so the
 		// registry's cell footprints are already updated; re-transmit images at
-		// their new size and (re)arm animation ticks. Pure scrolls never reach
-		// here, so this won't thrash.
+		// their new size and (re)arm animation ticks.
 		var acmd tea.Cmd
 		m, acmd = m.armImageTicks()
-		var icmd tea.Cmd
-		m, icmd = m.replotInlineImages()
-		return m, tea.Batch(m.retransmitImagesCmd(), acmd, icmd)
+		return m, tea.Batch(m.retransmitImagesCmd(), acmd)
 
 	case FileLoadedMsg:
 		b, err := buffer.FromBytes(msg.Content)
@@ -202,6 +191,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cursors = cursor.NewCursorSet(0)
 			m.savedContentHash = hashContent(m.buf.Content())
 			m.dirty = false
+			// Set title from filename stem
+			stem := strings.TrimSuffix(filepath.Base(msg.Path), filepath.Ext(msg.Path))
+			m.title = m.title.SetText(stem)
 			m = m.syncDisplay()
 			var dcmd tea.Cmd
 			m, dcmd = m.discoverNewImages()
@@ -244,15 +236,31 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m.handleMouseWheel(msg)
 
-	case breadcrumb.TitleEditCommitMsg:
-		m.titleFocused = false
-		m.breadcrumb = m.breadcrumb.SetEditing(false)
-		return m, FileRenameCmd(m.filePath, msg.Name)
+	case breadcrumb.SetPathMsg:
+		m.breadcrumb, cmd = m.breadcrumb.Update(msg)
+		return m, cmd
+
+	case title.RenameRequestMsg:
+		if m.filePath != "" {
+			return m, FileRenameCmd(m.filePath, msg.Name)
+		}
+		// Untitled: bubble up to workspace for file creation
+		name := msg.Name
+		return m, func() tea.Msg { return UntitledRenameMsg{Name: name} }
+
+	case title.FocusReturnMsg:
+		m.title = m.title.SetFocused(false)
+		// Place cursor at beginning of content
+		m.cursors = cursor.NewCursorSet(0)
+		m = m.scrollToCursor()
+		return m, nil
 
 	case FileRenamedMsg:
 		if msg.OldPath == m.filePath {
 			m.filePath = msg.NewPath
 			m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
+			stem := strings.TrimSuffix(filepath.Base(msg.NewPath), filepath.Ext(msg.NewPath))
+			m.title = m.title.SetText(stem)
 		}
 
 	case FileRenameErrorMsg:
@@ -263,17 +271,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Title edit mode — breadcrumb consumes all keys.
-		if m.titleFocused {
-			if (msg.Code == 't' && msg.Mod == tea.ModCtrl) ||
-				(msg.Code == tea.KeyEscape && msg.Mod == 0) {
-				m.titleFocused = false
-				m.breadcrumb = m.breadcrumb.SetEditing(false)
-				return m, nil
-			}
-			var bcmd tea.Cmd
-			m.breadcrumb, bcmd = m.breadcrumb.Update(msg)
-			return m, bcmd
+		// Title is focused — forward all keys to it.
+		if m.title.Focused() {
+			var tcmd tea.Cmd
+			m.title, tcmd = m.title.Update(msg)
+			return m, tcmd
 		}
 
 		// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
@@ -327,13 +329,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.Batch(cmd, dcmd, ccmd)
 		}
 
-		// Edit title: Ctrl+T enters breadcrumb title edit mode.
-		if msg.Code == 't' && msg.Mod == tea.ModCtrl {
-			if m.filePath != "" {
-				m.titleFocused = true
-				m.breadcrumb = m.breadcrumb.SetEditing(true)
+		// Cursor at top of buffer and pressing Up → focus title
+		if msg.Code == tea.KeyUp && msg.Mod == 0 {
+			// Check if all cursors are on the first visual row
+			atTop := true
+			for _, c := range m.cursors.All() {
+				bp := m.buf.OffsetToLineCol(c.Position)
+				sp := m.syntaxSnap.BufferToSyntax(bp)
+				wp := m.wrapSnap.SyntaxToWrap(sp)
+				if wp.Row > 0 {
+					atTop = false
+					break
+				}
 			}
-			return m, nil
+			if atTop && m.viewport.TopRow == 0 {
+				m.title = m.title.SetFocused(true)
+				return m, nil
+			}
 		}
 
 		// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
@@ -431,11 +443,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, tea.Batch(cmd, replotCmd)
+	// Forward all messages to title sub-component (handles debounce timers).
+	var tcmd tea.Cmd
+	m.title, tcmd = m.title.Update(msg)
+	if tcmd != nil {
+		cmd = tea.Batch(cmd, tcmd)
+	}
+	return m, cmd
 }
 
 func (m Model) contentHeight() int {
-	h := m.height - m.breadcrumb.Height()
+	h := m.height - m.breadcrumb.Height() - m.title.Height()
 	if h < 1 {
 		return 1
 	}
@@ -458,6 +476,7 @@ func (m Model) SetSize(w, h int) Model {
 	m.width = w
 	m.height = h
 	m.breadcrumb = m.breadcrumb.SetSize(w, 1)
+	m.title = m.title.SetSize(w, 1)
 	if changed {
 		// Recompute image cell footprints for the new size (no I/O). The
 		// re-transmit Cmd is emitted from the WindowSizeMsg arm, which the
@@ -471,18 +490,8 @@ func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return 
 
 func (m Model) Height() int { return m.height }
 func (m Model) SetFocused(f bool) Model {
-	if f && !m.focused {
-		// Focus gained — invalidate image placements so they are re-placed
-		// after Bubble Tea redraws the cell layer.
-		for _, e := range m.images.byPath {
-			e.lastPlotGen = -1
-			m.images = m.images.upsert(e)
-		}
-		m.needsReplot = true
-	}
 	if !f {
-		m.titleFocused = false
-		m.breadcrumb = m.breadcrumb.SetEditing(false)
+		m.title = m.title.SetFocused(false)
 	}
 	m.focused = f
 	return m
@@ -491,6 +500,21 @@ func (m Model) Content() string       { return m.buf.Content() }
 func (m Model) IsDirty() bool         { return m.dirty }
 func (m Model) FilePath() string      { return m.filePath }
 func (m Model) WantsModalInput() bool { return m.findOverlay.visible }
+func (m Model) TitleText() string     { return m.title.Text() }
+func (m Model) TitleIsPlaceholder() bool { return m.title.IsPlaceholder() }
+
+func (m Model) SetTitle(name string) Model {
+	m.title = m.title.SetText(name)
+	return m
+}
+
+func (m Model) SetFilePath(path string) Model {
+	m.filePath = path
+	m.breadcrumb = m.breadcrumb.SetPath(path)
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	m.title = m.title.SetText(stem)
+	return m
+}
 func (m Model) StartSave() (Model, SaveIdentity, tea.Cmd) {
 	req := SaveRequest{
 		Path:        m.filePath,

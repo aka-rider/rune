@@ -12,6 +12,7 @@ func (m Model) View() string {
 	}
 
 	bcView := m.breadcrumb.View()
+	titleView := m.title.View()
 	contentHeight := m.contentHeight()
 
 	// Vertical slice only — horizontal scrolling is done at cell level
@@ -52,7 +53,7 @@ func (m Model) View() string {
 		}
 
 		// iTerm2 inline image row: emit spaces to reserve screen real estate.
-		// The actual image is placed via direct TTY write (PlaceITerm2Cmd).
+		// The actual image is placed via escape sequences appended to View() output.
 		if l.ImagePath != "" && inlineCapable {
 			spaceCells := make([]Cell, l.ImageCols+1) // +1 for left margin
 			for i := range spaceCells {
@@ -117,7 +118,7 @@ func (m Model) View() string {
 		}
 	}
 
-	var ret string
+	var composed string
 	if !m.focused && hasImageLine {
 		// Faint per line, leaving image lines untouched: the placeholder
 		// foreground color carries the image ID and must never be dimmed.
@@ -131,12 +132,12 @@ func (m Model) View() string {
 			}
 		}
 		content := strings.Join(faintedLines, "\n")
-		ret = lipgloss.JoinVertical(lipgloss.Left, faint.Render(bcView), content)
+		composed = lipgloss.JoinVertical(lipgloss.Left, faint.Render(bcView), faint.Render(titleView), content)
 	} else {
 		content := strings.Join(renderedLines, "\n")
-		ret = lipgloss.JoinVertical(lipgloss.Left, bcView, content)
+		composed = lipgloss.JoinVertical(lipgloss.Left, bcView, titleView, content)
 		if !m.focused {
-			ret = lipgloss.NewStyle().Faint(true).Render(ret)
+			composed = lipgloss.NewStyle().Faint(true).Render(composed)
 		}
 	}
 
@@ -145,5 +146,12 @@ func (m Model) View() string {
 		MaxHeight(m.height).
 		Width(m.width).
 		Height(m.height).
-		Render(ret)
+		Render(composed)
+}
+
+// InlineImagePlacements returns escape sequences for iTerm2/WezTerm inline image
+// placement. The caller appends this AFTER all lipgloss rendering is complete,
+// directly to the final terminal output string so borders cannot corrupt it.
+func (m Model) InlineImagePlacements() string {
+	return m.buildInlineImagePlacements()
 }

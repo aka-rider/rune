@@ -95,6 +95,7 @@ type Model struct {
 	pending                 *pendingDirtyAction
 	dictCancel              context.CancelFunc // nil when not dictating (§6.3)
 	dictCh                  <-chan tea.Msg     // nil when idle
+	untitledCounters        map[string]int     // dir -> next untitled number
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -335,6 +336,18 @@ func (m Model) syncDictationAllowed() Model {
 	return m
 }
 
+func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
+	if m.totalWidth > 0 {
+		m = m.recalcLayout()
+		var refreshCmd tea.Cmd
+		m.editor, refreshCmd = m.editor.RefreshImagesAfterLayoutChange()
+		if refreshCmd != nil {
+			cmds = append(cmds, refreshCmd)
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
@@ -490,9 +503,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case editor.FileRenamedMsg:
 		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
 
+	case editor.FileRenameErrorMsg:
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
+		cmds = append(cmds, cmd)
+
+	case editor.UntitledRenameMsg:
+		// Untitled file gets a name — create on disk
+		dir := m.editor.CWD()
+		newPath := filepath.Join(dir, msg.Name+".md")
+		m.editor = m.editor.SetFilePath(newPath)
+		m.opentabs = m.opentabs.OpenFile(newPath)
+		cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
+
+	case fileCreatedMsg:
+		if msg.err != nil {
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.err.Error()})
+			cmds = append(cmds, cmd)
+		}
+
 	case editor.ContentChangedMsg:
 		if msg.Dirty {
 			m.opentabs = m.opentabs.MarkDirty(msg.Path)
+			// First content edit on untitled file → create file on disk
+			if msg.Path == "" && m.editor.Content() != "" {
+				dir := m.editor.CWD()
+				name := m.editor.TitleText()
+				newPath := filepath.Join(dir, name+".md")
+				m.editor = m.editor.SetFilePath(newPath)
+				m.opentabs = m.opentabs.OpenFile(newPath)
+				cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
+			}
 		} else {
 			m.opentabs = m.opentabs.MarkClean(msg.Path)
 		}
@@ -548,7 +588,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.rightVisible = true
 				m.rightPaneW = minRightPaneW
 			}
-			return m.finalize(cmds)
+			return m.finalizeLayoutChange(cmds)
 		}
 		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
 			m.focus = newFocus
@@ -607,7 +647,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.rightVisible = true
 			}
 		}
-		return m.finalize(cmds)
+		return m.finalizeLayoutChange(cmds)
 
 	case footer.ConfirmQuitMsg:
 		if m.dictCancel != nil {
@@ -767,11 +807,19 @@ func (m Model) View() tea.View {
 		body = centerBlock
 	}
 
+	// Inline image escape sequences are appended AFTER all lipgloss rendering.
+	// They use absolute cursor positioning (save/move/restore) and must not pass
+	// through any lipgloss Width/Height/Border call that would insert characters
+	// into the escape payload.
+	imgSeq := m.editor.InlineImagePlacements()
+
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
-		return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View()))
+		frame := lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View())
+		return tea.NewView(frame + imgSeq)
 	}
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View()))
+	frame := lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View())
+	return tea.NewView(frame + imgSeq)
 }
 
 func borderStyle(active bool, st styles.Styles) lipgloss.Style {
@@ -817,4 +865,43 @@ func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
+}
+
+// fileCreatedMsg reports the result of creating a new file on disk.
+type fileCreatedMsg struct {
+	path string
+	err  error
+}
+
+func createFileCmd(path, content string) tea.Cmd {
+	return func() tea.Msg {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fileCreatedMsg{path: path, err: fmt.Errorf("mkdir %q: %w", dir, err)}
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fileCreatedMsg{path: path, err: fmt.Errorf("create %q: %w", path, err)}
+		}
+		return fileCreatedMsg{path: path}
+	}
+}
+
+// nextUntitled returns a placeholder name for a new untitled file in dir.
+func (m *Model) nextUntitled(dir string) string {
+	if m.untitledCounters == nil {
+		m.untitledCounters = make(map[string]int)
+	}
+	m.untitledCounters[dir]++
+	return fmt.Sprintf("Untitled %d", m.untitledCounters[dir])
+}
+
+// CreateUntitled opens a new untitled buffer in the current filetree directory.
+func (m Model) CreateUntitled() (Model, tea.Cmd) {
+	dir := m.editor.CWD()
+	name := m.nextUntitled(dir)
+	m.editor = m.editor.SetContent("", nil)
+	m.editor = m.editor.SetTitle(name)
+	m.opentabs = m.opentabs.OpenFile("")
+	m.focus = paneCenter
+	return m, nil
 }

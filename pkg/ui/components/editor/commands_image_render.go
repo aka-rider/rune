@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -200,19 +201,6 @@ func EncodeITerm2Cmd(path, absPath string, cols, rows int, cs imagekit.CellSize)
 	}
 }
 
-// PlaceITerm2Cmd writes a pre-encoded iTerm2 image payload to the TTY at a
-// specific screen position using cursor save/restore and absolute positioning.
-func PlaceITerm2Cmd(path, payload string, screenRow, screenCol int) tea.Cmd {
-	p, pl, row, col := path, payload, screenRow, screenCol
-	return func() tea.Msg {
-		seq := fmt.Sprintf("\033[s\033[%d;%dH%s\033[u", row, col, pl)
-		if err := writeTTY(seq); err != nil {
-			return ImageTransmitErrorMsg{Path: p, Err: fmt.Errorf("place iterm2 image %q: %w", p, err)}
-		}
-		return ImagePlacedMsg{Path: p}
-	}
-}
-
 // DeleteAllImagesCmd is the Model-method form used by the page to clear images
 // before quitting.
 func (m Model) DeleteAllImagesCmd() tea.Cmd { return DeleteAllImagesCmd() }
@@ -227,12 +215,17 @@ func DeleteAllImagesCmd() tea.Cmd {
 	}
 }
 
+var writeTTYMu sync.Mutex
+
 // writeTTY writes a raw escape sequence to the terminal's output file. Bubble
 // Tea owns stdout, so out-of-band graphics bytes go straight to the tty.
 func writeTTY(seq string) error {
 	if seq == "" {
 		return nil
 	}
+	writeTTYMu.Lock()
+	defer writeTTYMu.Unlock()
+
 	inTty, outTty, err := uv.OpenTTY()
 	if err != nil {
 		return fmt.Errorf("open tty: %w", err)

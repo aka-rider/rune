@@ -57,7 +57,6 @@ type Bindings struct {
 	CutToClipboard        key.Binding
 	PasteFromClipboard    key.Binding
 	VoiceDictation        key.Binding
-	EditTitle             key.Binding
 }
 
 func Default() Bindings {
@@ -112,7 +111,6 @@ func Default() Bindings {
 		CutToClipboard:     key.NewBinding(key.WithKeys("super+x"), key.WithHelp("⌘x", "cut")),
 		PasteFromClipboard: key.NewBinding(key.WithKeys("super+v"), key.WithHelp("⌘v", "paste")),
 		VoiceDictation:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("^v", "dictate")),
-		EditTitle:          key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("^t", "edit title")),
 	}
 }
 
@@ -194,7 +192,6 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.CutToClipboard)
 	add(b.PasteFromClipboard)
 	add(b.VoiceDictation)
-	add(b.EditTitle)
 	return keys
 }
 

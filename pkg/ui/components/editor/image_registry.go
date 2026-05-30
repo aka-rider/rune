@@ -38,11 +38,10 @@ type imageEntry struct {
 	wasExpanded bool
 
 	// iTerm2 inline rendering: pre-encoded OSC 1337 row-slices stored after
-	// encode so View-time placement is a cheap TTY write (no re-encode).
+	// encode so View-time placement is a cheap string build (no re-encode).
 	// Each element is one terminal row's worth of image pixels, independently
 	// placeable for viewport clipping.
 	iterm2Slices []string
-	lastPlotGen  int // generation counter; -1 = needs re-placement
 
 	// Animation fields for animated GIFs. Each frame is transmitted as its own
 	// Kitty image; frameIDs[frameIdx] is the image the placeholder cells

@@ -39,8 +39,6 @@ func (m Model) ApplyDictationChunk(text string) Model {
 			End:    m.dictation.startOff + m.dictation.totalLen,
 			Insert: text,
 		}},
-		// DesiredCol is left at 0, matching the handlePasteContent pattern.
-		// A follow-up can derive DesiredCol from the buffer after the edit.
 		Cursors: cursor.NewCursorSetFrom([]cursor.Cursor{{
 			Position: newPos,
 			Anchor:   newPos,

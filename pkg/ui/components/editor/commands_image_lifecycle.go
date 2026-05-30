@@ -209,7 +209,8 @@ func (m Model) handleImageTransmitted(msg ImageTransmittedMsg) (Model, tea.Cmd) 
 	return m, nil
 }
 
-// handleImageEncoded stores the iTerm2 row-slices and dispatches initial placement.
+// handleImageEncoded stores the iTerm2 row-slices. The next View() call will
+// automatically place the image at the correct screen position.
 func (m Model) handleImageEncoded(msg ImageEncodedMsg) (Model, tea.Cmd) {
 	e, ok := m.images.get(msg.Path)
 	if !ok {
@@ -217,26 +218,21 @@ func (m Model) handleImageEncoded(msg ImageEncodedMsg) (Model, tea.Cmd) {
 	}
 	e.iterm2Slices = msg.Slices
 	e.state = live
-	e.lastPlotGen = -1 // not yet placed
 	m.images = m.images.upsert(e)
-	return m.replotInlineImages()
+	return m, nil
 }
 
-// replotInlineImages builds a single escape sequence containing all visible
-// iTerm2 row-slice placements and returns a Cmd that writes them atomically in
-// one writeTTY call. Returns (Model, tea.Cmd) so plotGen/lastPlotGen mutations
-// persist on the caller's model. Images that haven't moved since the last
-// placement (same plotGen) are skipped.
-func (m Model) replotInlineImages() (Model, tea.Cmd) {
+// buildInlineImagePlacements builds a single escape sequence containing all visible
+// iTerm2 row-slice placements. Called from View() to embed placements atomically
+// in the same frame as the text render. Returns the raw escape string (no I/O).
+func (m Model) buildInlineImagePlacements() string {
 	if !m.imageInlineCapable() {
-		return m, nil
+		return ""
 	}
 	topRow := m.viewport.TopRow
 	contentH := m.contentHeight()
 	screenBase := m.offsetY + m.breadcrumb.Height()
 	col := m.offsetX + 2 // 1-based terminal column + 1 left margin
-
-	m.plotGen++
 
 	var sb strings.Builder
 	for lineIdx, l := range m.snapshot.Lines {
@@ -245,10 +241,6 @@ func (m Model) replotInlineImages() (Model, tea.Cmd) {
 		}
 		e, ok := m.images.get(l.ImagePath)
 		if !ok || e.state != live || len(e.iterm2Slices) == 0 {
-			continue
-		}
-		// Skip if already placed at current generation (no viewport change).
-		if e.lastPlotGen == m.plotGen {
 			continue
 		}
 
@@ -267,24 +259,7 @@ func (m Model) replotInlineImages() (Model, tea.Cmd) {
 		fmt.Fprintf(&sb, "\033[s\033[%d;%dH%s\033[u", screenRow, col, e.iterm2Slices[l.ImageRowIndex])
 	}
 
-	// Mark all live images as placed at current generation.
-	for _, e := range m.images.byPath {
-		if e.state == live && len(e.iterm2Slices) > 0 && e.lastPlotGen != m.plotGen {
-			e.lastPlotGen = m.plotGen
-			m.images = m.images.upsert(e)
-		}
-	}
-
-	seq := sb.String()
-	if seq == "" {
-		return m, nil
-	}
-	return m, func() tea.Msg {
-		if err := writeTTY(seq); err != nil {
-			return ImageTransmitErrorMsg{Path: "replot", Err: err}
-		}
-		return ImagePlacedMsg{Path: "replot"}
-	}
+	return sb.String()
 }
 
 // handleImageError marks an image failed so it collapses back to the alt-text
@@ -387,7 +362,6 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 		e.cols = cols
 		e.rows = rows
 		e.iterm2Slices = nil // invalidate cached slices — dimensions changed
-		e.lastPlotGen = -1
 		if e.state == live {
 			e.state = pendingTransmit
 		}
@@ -439,4 +413,23 @@ func imageAltFromLine(l display.DisplayLine) string {
 		}
 	}
 	return ""
+}
+
+// RefreshImagesAfterLayoutChange batches retransmitImagesCmd() and armImageTicks()
+// after non-terminal layout changes such as pane divider drags. Inline image
+// placement is handled automatically by View().
+func (m Model) RefreshImagesAfterLayoutChange() (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	if cmd := m.retransmitImagesCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	var cmd tea.Cmd
+	m, cmd = m.armImageTicks()
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
+	}
+	return m, nil
 }

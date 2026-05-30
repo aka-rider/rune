@@ -1,11 +1,13 @@
 package editor
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -240,5 +242,143 @@ func TestScrollToCursor_NoJumpOnImageLine(t *testing.T) {
 
 	if top0 != 0 || topImg != 0 || topBack != 0 {
 		t.Errorf("viewport jumped: top0=%d topImg=%d topBack=%d (want all 0)", top0, topImg, topBack)
+	}
+}
+
+// TestInlinePlacement_ViewContainsEscapes verifies that View() embeds iTerm2
+// image escape sequences directly in its output when live images are visible.
+// This ensures atomic rendering: no separate Cmd or TTY write is needed.
+func TestInlinePlacement_ViewContainsEscapes(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "assets", "x.png"), 80, 80)
+
+	m := newTestEditor("")
+	m.termCaps = terminal.TermCaps{GraphicsProtocol: terminal.GraphicsWezTerm, TrueColor: true}
+	m = m.SetContent(filepath.Join(dir, "note.md"), []byte("line0\n![alt](assets/x.png)\nline2"))
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m = m.SetOffset(0, 0)
+
+	// Discover and decode.
+	m, cmd := m.discoverNewImages()
+	msgs := runCmd(t, cmd)
+	decoded, ok := firstMsg[ImageDecodedMsg](msgs)
+	if !ok {
+		t.Fatal("expected ImageDecodedMsg")
+	}
+	m, cmd = m.Update(decoded)
+	// Encode Cmd will produce ImageEncodedMsg (iTerm2 path).
+	msgs = runCmd(t, cmd)
+	encoded, ok := firstMsg[ImageEncodedMsg](msgs)
+	if !ok {
+		t.Fatalf("expected ImageEncodedMsg, got %+v", msgs)
+	}
+	m, _ = m.Update(encoded)
+
+	// Now the image is live with iterm2Slices. InlineImagePlacements() should
+	// contain the escape positioning sequences (appended at workspace level).
+	seq := m.InlineImagePlacements()
+	if !strings.Contains(seq, "\033[s\033[") {
+		t.Error("InlineImagePlacements() should contain cursor-save + move escape")
+	}
+	if !strings.Contains(seq, "\033[u") {
+		t.Error("InlineImagePlacements() should contain cursor-restore escape")
+	}
+}
+
+// TestInlinePlacement_ScrollChangesViewAtomically verifies that after mouse wheel
+// scroll, the new View() contains correctly repositioned image escapes without
+// needing any returned Cmd to do TTY writes.
+func TestInlinePlacement_ScrollChangesViewAtomically(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "assets", "x.png"), 80, 80)
+
+	// Create a document with enough lines that scrolling is needed.
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("line%d", i))
+	}
+	// Place image at line 15 so it scrolls in/out of viewport.
+	lines[15] = "![alt](assets/x.png)"
+	content := strings.Join(lines, "\n")
+
+	m := newTestEditor("")
+	m.termCaps = terminal.TermCaps{GraphicsProtocol: terminal.GraphicsWezTerm, TrueColor: true}
+	m = m.SetContent(filepath.Join(dir, "note.md"), []byte(content))
+	m = m.SetSize(80, 10) // Small viewport
+	m = m.SetFocused(true)
+	m = m.SetOffset(0, 0)
+
+	// Discover, decode, encode.
+	m, cmd := m.discoverNewImages()
+	msgs := runCmd(t, cmd)
+	decoded, ok := firstMsg[ImageDecodedMsg](msgs)
+	if !ok {
+		t.Fatal("expected ImageDecodedMsg")
+	}
+	m, cmd = m.Update(decoded)
+	msgs = runCmd(t, cmd)
+	encoded, ok := firstMsg[ImageEncodedMsg](msgs)
+	if !ok {
+		t.Fatalf("expected ImageEncodedMsg, got %+v", msgs)
+	}
+	m, _ = m.Update(encoded)
+
+	// Image is around line 15; scroll down to bring it into view.
+	m.viewport.TopRow = 14
+	seq1 := m.InlineImagePlacements()
+	if !strings.Contains(seq1, "\033[s\033[") {
+		t.Error("InlineImagePlacements() at TopRow=14 should contain inline image escapes")
+	}
+
+	// Scroll down by 1 more — image still visible but at different screen row.
+	m.viewport.TopRow = 15
+	seq2 := m.InlineImagePlacements()
+	// The image starts at line 15 (row 0 in expanded space relative to image start).
+	// At TopRow=14, it renders at screen row 1+; at TopRow=15, it renders at row 0+.
+	// Both should have escape sequences, but with different row numbers.
+	if seq1 == seq2 {
+		t.Error("scrolling should change the image escape positions")
+	}
+
+	// Scroll image out of view entirely.
+	m.viewport.TopRow = 0
+	seq3 := m.InlineImagePlacements()
+	if strings.Contains(seq3, "\033[s\033[") {
+		t.Error("InlineImagePlacements() should be empty when image is out of viewport")
+	}
+}
+
+// TestMouseWheel_NoReplotCmd verifies that handleMouseWheel does not return
+// any image placement Cmd (placement is now done in View).
+func TestMouseWheel_NoReplotCmd(t *testing.T) {
+	dir := t.TempDir()
+	writePNG(t, filepath.Join(dir, "assets", "x.png"), 80, 80)
+
+	m := newTestEditor("")
+	m.termCaps = terminal.TermCaps{GraphicsProtocol: terminal.GraphicsWezTerm, TrueColor: true}
+	m = m.SetContent(filepath.Join(dir, "note.md"), []byte("line0\n![alt](assets/x.png)\nline2\nline3\nline4"))
+	m = m.SetSize(80, 4)
+	m = m.SetFocused(true)
+
+	// Put a live image with iterm2 slices.
+	m.images = m.images.upsert(imageEntry{
+		path: "assets/x.png", absPath: filepath.Join(dir, "assets/x.png"),
+		id: 0x112233, cols: 6, rows: 3, pxW: 48, pxH: 48, state: live,
+		iterm2Slices: []string{"slice0", "slice1", "slice2"},
+	})
+	m = m.syncDisplay()
+
+	// Scroll down.
+	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
+	m, cmd := m.handleMouseWheel(msg)
+	// The only Cmd should be armImageTicks (a timer), not a writeTTY replot.
+	if cmd != nil {
+		msgs := runCmd(t, cmd)
+		for _, msg := range msgs {
+			if _, isPlaced := msg.(ImagePlacedMsg); isPlaced {
+				t.Error("handleMouseWheel should not produce ImagePlacedMsg; View() handles placement")
+			}
+		}
 	}
 }
