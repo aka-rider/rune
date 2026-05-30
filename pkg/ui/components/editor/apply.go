@@ -226,7 +226,8 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 		var acmd tea.Cmd
 		m, acmd = m.armImageTicks()
 		// Re-place iTerm2 images at new screen positions.
-		icmd := m.replotInlineImages()
+		var icmd tea.Cmd
+		m, icmd = m.replotInlineImages()
 		return m, tea.Batch(result.Cmd, acmd, icmd)
 	}
 

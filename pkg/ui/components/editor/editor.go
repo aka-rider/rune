@@ -82,6 +82,8 @@ type Model struct {
 	imageConfig ImageConfig
 	images      imageRegistry
 	cellSize    imagekit.CellSize
+	plotGen     int  // generation counter for iTerm2 image placement
+	needsReplot bool // set by SetFocused; cleared in Update to emit replotInlineImages
 	mouse       mouseState
 	findOverlay FindOverlay
 	dictation   dictationState
@@ -122,6 +124,14 @@ func hashContent(content string) string {
 }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	// When focus changed, iTerm2 images need re-placement because Bubble Tea
+	// redraws all cells (overwriting the out-of-band image pixels).
+	var replotCmd tea.Cmd
+	if m.needsReplot {
+		m.needsReplot = false
+		m, replotCmd = m.replotInlineImages()
+	}
+
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case ClipboardContentMsg:
@@ -177,7 +187,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// here, so this won't thrash.
 		var acmd tea.Cmd
 		m, acmd = m.armImageTicks()
-		icmd := m.replotInlineImages()
+		var icmd tea.Cmd
+		m, icmd = m.replotInlineImages()
 		return m, tea.Batch(m.retransmitImagesCmd(), acmd, icmd)
 
 	case FileLoadedMsg:
@@ -383,7 +394,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, replotCmd)
 }
 
 func (m Model) contentHeight() int {
@@ -421,12 +432,24 @@ func (m Model) SetSize(w, h int) Model {
 
 func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
 
-func (m Model) Height() int             { return m.height }
-func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
-func (m Model) Content() string         { return m.buf.Content() }
-func (m Model) IsDirty() bool           { return m.dirty }
-func (m Model) FilePath() string        { return m.filePath }
-func (m Model) WantsModalInput() bool   { return m.findOverlay.visible }
+func (m Model) Height() int { return m.height }
+func (m Model) SetFocused(f bool) Model {
+	if f && !m.focused {
+		// Focus gained — invalidate image placements so they are re-placed
+		// after Bubble Tea redraws the cell layer.
+		for _, e := range m.images.byPath {
+			e.lastPlotGen = -1
+			m.images = m.images.upsert(e)
+		}
+		m.needsReplot = true
+	}
+	m.focused = f
+	return m
+}
+func (m Model) Content() string       { return m.buf.Content() }
+func (m Model) IsDirty() bool         { return m.dirty }
+func (m Model) FilePath() string      { return m.filePath }
+func (m Model) WantsModalInput() bool { return m.findOverlay.visible }
 func (m Model) StartSave() (Model, SaveIdentity, tea.Cmd) {
 	req := SaveRequest{
 		Path:        m.filePath,

@@ -34,11 +34,11 @@ type ImageTransmittedMsg struct {
 	Path string
 }
 
-// ImageEncodedMsg reports that an image was encoded as an iTerm2 OSC 1337
-// payload and is ready for placement.
+// ImageEncodedMsg reports that an image was encoded as iTerm2 OSC 1337
+// row-slices and is ready for viewport-clipped placement.
 type ImageEncodedMsg struct {
-	Path    string
-	Payload string
+	Path   string
+	Slices []string // one OSC 1337 payload per terminal row
 }
 
 // ImagePlacedMsg reports that an iTerm2 image was written to the TTY at a
@@ -176,9 +176,9 @@ func DeleteImagesCmd(ids []uint32) tea.Cmd {
 	}
 }
 
-// EncodeITerm2Cmd re-reads, decodes, resizes, and encodes an image as an iTerm2
-// OSC 1337 payload. Unlike TransmitImageCmd, it does NOT write to the TTY;
-// the payload is stored on the Model for later placement via PlaceITerm2Cmd.
+// EncodeITerm2Cmd re-reads, decodes, resizes, and encodes an image as iTerm2
+// OSC 1337 row-slices. Unlike TransmitImageCmd, it does NOT write to the TTY;
+// the slices are stored on the Model for later per-row placement.
 func EncodeITerm2Cmd(path, absPath string, cols, rows int, cs imagekit.CellSize) tea.Cmd {
 	p, ap, c, r, sz := path, absPath, cols, rows, cs
 	return func() tea.Msg {
@@ -192,11 +192,11 @@ func EncodeITerm2Cmd(path, absPath string, cols, rows int, cs imagekit.CellSize)
 		}
 		tw, th := imagekit.FitBox(dec.Width, dec.Height, c*sz.W, r*sz.H)
 		resized := imagekit.Resize(dec.Image, tw, th)
-		payload, err := imagekit.EncodeITerm2(resized, c, r)
+		slices, err := imagekit.EncodeITerm2Rows(resized, c, r, sz)
 		if err != nil {
 			return ImageDecodeErrorMsg{Path: p, Err: fmt.Errorf("encode iterm2 %q: %w", ap, err)}
 		}
-		return ImageEncodedMsg{Path: p, Payload: payload}
+		return ImageEncodedMsg{Path: p, Slices: slices}
 	}
 }
 

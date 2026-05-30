@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,63 +209,82 @@ func (m Model) handleImageTransmitted(msg ImageTransmittedMsg) (Model, tea.Cmd) 
 	return m, nil
 }
 
-// handleImageEncoded stores the iTerm2 payload and dispatches initial placement.
+// handleImageEncoded stores the iTerm2 row-slices and dispatches initial placement.
 func (m Model) handleImageEncoded(msg ImageEncodedMsg) (Model, tea.Cmd) {
 	e, ok := m.images.get(msg.Path)
 	if !ok {
 		return m, nil
 	}
-	e.iterm2Payload = msg.Payload
+	e.iterm2Slices = msg.Slices
 	e.state = live
-	e.lastScreenRow = -1 // not yet placed
+	e.lastPlotGen = -1 // not yet placed
 	m.images = m.images.upsert(e)
-	return m, m.replotInlineImages()
+	return m.replotInlineImages()
 }
 
-// replotInlineImages emits PlaceITerm2Cmd for each live iTerm2 image whose
-// screen position changed or that hasn't been placed yet.
-func (m Model) replotInlineImages() tea.Cmd {
+// replotInlineImages builds a single escape sequence containing all visible
+// iTerm2 row-slice placements and returns a Cmd that writes them atomically in
+// one writeTTY call. Returns (Model, tea.Cmd) so plotGen/lastPlotGen mutations
+// persist on the caller's model. Images that haven't moved since the last
+// placement (same plotGen) are skipped.
+func (m Model) replotInlineImages() (Model, tea.Cmd) {
 	if !m.imageInlineCapable() {
-		return nil
+		return m, nil
 	}
 	topRow := m.viewport.TopRow
 	contentH := m.contentHeight()
-	// offsetY is the vertical offset from the top of the editor widget to the
-	// first content row on screen (accounts for breadcrumb etc.).
-	// In the terminal, row 1 is the top. We need the absolute screen row,
-	// but since we write to TTY with cursor positioning we use the viewport-
-	// relative row offset from editor's screen origin.
 	screenBase := m.offsetY + m.breadcrumb.Height()
+	col := m.offsetX + 2 // 1-based terminal column + 1 left margin
 
-	var cmds []tea.Cmd
+	m.plotGen++
+
+	var sb strings.Builder
 	for lineIdx, l := range m.snapshot.Lines {
-		if l.ImagePath == "" || l.ImageRowIndex != 0 {
-			continue // only process anchor rows
+		if l.ImagePath == "" {
+			continue
 		}
 		e, ok := m.images.get(l.ImagePath)
-		if !ok || e.state != live || e.iterm2Payload == "" {
+		if !ok || e.state != live || len(e.iterm2Slices) == 0 {
 			continue
 		}
-		// Compute screen row (1-based terminal row).
+		// Skip if already placed at current generation (no viewport change).
+		if e.lastPlotGen == m.plotGen {
+			continue
+		}
+
+		// Only process rows that fall within the visible viewport.
 		displayRow := lineIdx - topRow
 		if displayRow < 0 || displayRow >= contentH {
-			// Image is outside visible viewport — skip.
 			continue
 		}
-		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
-		if screenRow == e.lastScreenRow {
-			continue // already placed at this position
-		}
-		e.lastScreenRow = screenRow
-		m.images = m.images.upsert(e)
 
-		col := m.offsetX + 2 // 1-based terminal column + 1 left margin
-		cmds = append(cmds, PlaceITerm2Cmd(e.path, e.iterm2Payload, screenRow, col))
+		// Bounds-check the slice index.
+		if l.ImageRowIndex < 0 || l.ImageRowIndex >= len(e.iterm2Slices) {
+			continue
+		}
+
+		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
+		fmt.Fprintf(&sb, "\033[s\033[%d;%dH%s\033[u", screenRow, col, e.iterm2Slices[l.ImageRowIndex])
 	}
-	if len(cmds) == 0 {
-		return nil
+
+	// Mark all live images as placed at current generation.
+	for _, e := range m.images.byPath {
+		if e.state == live && len(e.iterm2Slices) > 0 && e.lastPlotGen != m.plotGen {
+			e.lastPlotGen = m.plotGen
+			m.images = m.images.upsert(e)
+		}
 	}
-	return tea.Batch(cmds...)
+
+	seq := sb.String()
+	if seq == "" {
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		if err := writeTTY(seq); err != nil {
+			return ImageTransmitErrorMsg{Path: "replot", Err: err}
+		}
+		return ImagePlacedMsg{Path: "replot"}
+	}
 }
 
 // handleImageError marks an image failed so it collapses back to the alt-text
@@ -366,8 +386,8 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 		}
 		e.cols = cols
 		e.rows = rows
-		e.iterm2Payload = "" // invalidate cached payload — dimensions changed
-		e.lastScreenRow = -1
+		e.iterm2Slices = nil // invalidate cached slices — dimensions changed
+		e.lastPlotGen = -1
 		if e.state == live {
 			e.state = pendingTransmit
 		}

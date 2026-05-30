@@ -167,7 +167,7 @@ func EncodeITerm2Rows(img image.Image, cols, rows int, cs CellSize) ([]string, e
 		var sb strings.Builder
 		sb.WriteString("\033]1337;File=inline=1;")
 		sb.WriteString(fmt.Sprintf("size=%d;", buf.Len()))
-		sb.WriteString(fmt.Sprintf("width=%d;height=1:", cols))
+		sb.WriteString(fmt.Sprintf("width=%d;height=1;preserveAspectRatio=0:", cols))
 		sb.WriteString(payload)
 		sb.WriteByte('\a')
 		slices[r] = sb.String()

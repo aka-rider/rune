@@ -73,6 +73,15 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 		dp.Col = 0
 	}
 
+	// Skip clicks that land on image-reserved display rows. The wrapSnap
+	// doesn't account for image row expansion, so displayToBuffer would map
+	// these rows to wrong buffer positions and potentially trigger reveal.
+	if dp.Row+m.viewport.TopRow >= 0 && dp.Row+m.viewport.TopRow < len(m.snapshot.Lines) {
+		if m.snapshot.Lines[dp.Row+m.viewport.TopRow].ImagePath != "" {
+			return m, nil
+		}
+	}
+
 	bp := displayToBuffer(dp, m.viewport, m.wrapSnap, m.syntaxSnap)
 	offset := m.buf.LineColToOffset(bp)
 
@@ -146,6 +155,10 @@ func (m Model) resolveLinkClick(bp coords.BufferPoint) string {
 		// Check if this span is a link
 		switch sp.Kind {
 		case display.TokenWikiLink:
+			// Wiki link images are embedded content, not navigable links.
+			if sp.WikiLinkIsImage {
+				return ""
+			}
 			// Resolve wiki link target
 			if sp.WikiLinkTarget == "" {
 				return ""
