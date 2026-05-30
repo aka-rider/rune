@@ -2,6 +2,8 @@ package display
 
 import (
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // parseAdvancedBlocks detects frontmatter and math blocks via regex-style scanning.
@@ -116,9 +118,27 @@ func computeLineOffsets(lines []string) []int {
 	return offsets
 }
 
+// parseFrontmatterYAML parses the YAML body between the --- delimiters.
+// lines is the full document line slice; fmEnd is the index returned by detectFrontmatter.
+// Returns (nil, nil) for an empty frontmatter body.
+func parseFrontmatterYAML(lines []string, fmEnd int) (map[string]any, error) {
+	if fmEnd <= 1 {
+		return nil, nil
+	}
+	body := strings.Join(lines[1:fmEnd], "\n")
+	if strings.TrimSpace(body) == "" {
+		return nil, nil
+	}
+	var out map[string]any
+	if err := yaml.Unmarshal([]byte(body), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // frontmatterRenderedSpans produces spans for frontmatter lines in rendered mode.
 func frontmatterRenderedSpans(
-	block mdBlock, lineIdx int, lineText string, lineStart int, fmMode FrontmatterMode,
+	block mdBlock, lineIdx int, lineText string, lineStart int, fmMode FrontmatterMode, fmError string,
 ) []SyntaxSpan {
 	switch fmMode {
 	case FrontmatterHidden:
@@ -148,8 +168,12 @@ func frontmatterRenderedSpans(
 	default: // FrontmatterCollapsed
 		// Fence lines (first and last) show a collapsed indicator on first line only
 		if lineIdx == block.startLine {
+			label := "··· frontmatter ···"
+			if fmError != "" {
+				label = "··· frontmatter (invalid YAML) ···"
+			}
 			return []SyntaxSpan{{
-				Text:        "··· frontmatter ···",
+				Text:        label,
 				Kind:        TokenFrontmatter,
 				State:       Rendered,
 				BufferStart: lineStart,

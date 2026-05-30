@@ -30,6 +30,7 @@ var globalKeys = []string{
 var editorShortcutKeys = []string{
 	"PrimaryAction", // Enter → newline
 	"Cancel",        // Escape → cancel/close modal
+	"EditTitle",     // Ctrl+T → enter breadcrumb title edit mode
 }
 
 // chordToKeyString reconstructs the key string that parseChord() would
