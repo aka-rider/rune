@@ -124,6 +124,17 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 	return m
 }
 
+func (m Model) currentDir() string {
+	if m.watchedDir != "" {
+		return m.watchedDir
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return cwd
+}
+
 func (m Model) recalcLayout() Model {
 	contentH := m.totalHeight - m.footer.Height()
 	if contentH < 0 {
@@ -492,18 +503,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.startWatch(msg.Root)
 		cmds = append(cmds, cmd)
 
-	case filetree.DirReloadedMsg:
-		// Fsnotify-triggered directory refresh — filetree handles cursor preservation.
-
 	case dirChangedMsg:
 		dir := m.watchedDir
-		cmds = append(cmds, func() tea.Msg {
-			entries, err := readDirEntries(dir, ".")
-			if err != nil {
-				return ErrMsg{Err: fmt.Errorf("reload dir %q: %w", dir, err)}
-			}
-			return filetree.DirReloadedMsg{Root: dir, Entries: entries}
-		})
+		cmds = append(cmds, loadDirCmd(dir, "."))
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -528,7 +530,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case editor.UntitledRenameMsg:
 		// Untitled file gets a name — create on disk
-		dir, _ := os.Getwd(); if dir == "" { dir = "." }
+		dir := m.currentDir()
 		newPath := filepath.Join(dir, msg.Name+".md")
 		m.editor = m.editor.SetFilePath(newPath)
 		m.opentabs = m.opentabs.OpenFile(newPath)
@@ -545,7 +547,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.opentabs = m.opentabs.MarkDirty(msg.Path)
 			// First content edit on untitled file → create file on disk
 			if msg.Path == "" && m.editor.Content() != "" {
-				dir, _ := os.Getwd(); if dir == "" { dir = "." }
+				dir := m.currentDir()
 				name := m.editor.TitleText()
 				newPath := filepath.Join(dir, name+".md")
 				m.editor = m.editor.SetFilePath(newPath)
@@ -786,61 +788,9 @@ func (m Model) View() tea.View {
 		centerW = 0
 	}
 
-	// The center pane uses a custom bottom border. We turn off the built-in
-	// bottom border and subtract 1 from the allocated height so that when we
-	// manually append the custom bottom line, the total height remains exactly
-	// contentH, preserving lipgloss's border-box arithmetic.
-	centerStyle := borderStyle(m.focus == paneCenter, m.styles).
-		BorderBottom(false).
-		Width(centerW).Height(contentH - 1)
-
-	centerContent := centerStyle.Render(m.editor.View())
-
-	// Draw custom bottom border for center block
-	bcStr := m.editor.BreadcrumbView()
-
-	borderColor := m.styles.InactiveBorder.GetBorderTopForeground()
-	if m.focus == paneCenter {
-		borderColor = m.styles.ActiveBorder.GetBorderTopForeground()
-	}
-	bStyle := lipgloss.NewStyle().Foreground(borderColor)
-
-	var customBottomLine string
-	if bcStr == "" {
-		// Just a solid line
-		fill := strings.Repeat("─", centerW-2)
-		if centerW > 2 {
-			customBottomLine = bStyle.Render("╰" + fill + "╯")
-		} else {
-			customBottomLine = "" // Too narrow to even draw corners properly
-		}
-	} else {
-		// with breadcrumb
-		leftCorner := bStyle.Render("╰")
-		rightCorner := bStyle.Render("──╯")
-
-		// Create the dash fill string using PlaceHorizontal and fill
-		// Total width available between corners is centerW - 2
-		innerW := centerW - 2
-		if innerW > 0 {
-			// Pad the breadcrumb with spaces on the left and right
-			content := " " + bcStr + " "
-
-			// We need a string of dashes of length innerW - width of our content
-			contentWidth := lipgloss.Width(content) + lipgloss.Width("──") // rightCorner has 2 dashes
-			dashW := innerW - contentWidth
-
-			var dashFill string
-			if dashW > 0 {
-				dashFill = strings.Repeat("─", dashW)
-			}
-
-			// We still assemble the strings but relying on accurate counts
-			customBottomLine = leftCorner + bStyle.Render(dashFill) + content + rightCorner
-		}
-	}
-
-	centerBlock := lipgloss.JoinVertical(lipgloss.Left, centerContent, customBottomLine)
+	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
+		Width(centerW).Height(contentH).
+		Render(m.editor.View())
 
 	var chatBlock string
 	if m.rightVisible {
@@ -902,48 +852,40 @@ func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 
 func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := readDirEntries(dir, initialRoot)
+		des, err := os.ReadDir(dir)
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("load dir %q: %w", dir, err)}
 		}
+		entries := make([]filetree.Entry, 0, len(des)+1)
+		if dir != initialRoot && dir != "." {
+			entries = append(entries, filetree.Entry{
+				Name:  "..",
+				Path:  filepath.Dir(dir),
+				IsDir: true,
+			})
+		}
+		for _, de := range des {
+			entries = append(entries, filetree.Entry{
+				Name:  de.Name(),
+				Path:  filepath.Join(dir, de.Name()),
+				IsDir: de.IsDir(),
+			})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			a, b := entries[i], entries[j]
+			if a.Name == ".." {
+				return true
+			}
+			if b.Name == ".." {
+				return false
+			}
+			if a.IsDir != b.IsDir {
+				return a.IsDir
+			}
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
-}
-
-func readDirEntries(dir, initialRoot string) ([]filetree.Entry, error) {
-	des, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]filetree.Entry, 0, len(des)+1)
-	if dir != initialRoot && dir != "." {
-		entries = append(entries, filetree.Entry{
-			Name:  "..",
-			Path:  filepath.Dir(dir),
-			IsDir: true,
-		})
-	}
-	for _, de := range des {
-		entries = append(entries, filetree.Entry{
-			Name:  de.Name(),
-			Path:  filepath.Join(dir, de.Name()),
-			IsDir: de.IsDir(),
-		})
-	}
-	sort.Slice(entries, func(i, j int) bool {
-		a, b := entries[i], entries[j]
-		if a.Name == ".." {
-			return true
-		}
-		if b.Name == ".." {
-			return false
-		}
-		if a.IsDir != b.IsDir {
-			return a.IsDir
-		}
-		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-	})
-	return entries, nil
 }
 
 // watchDirCmd watches a directory for Create/Remove/Rename events and returns
@@ -1041,10 +983,7 @@ func (m *Model) nextUntitled(dir string) string {
 
 // CreateUntitled opens a new untitled buffer in the current filetree directory.
 func (m Model) CreateUntitled() (Model, tea.Cmd) {
-	dir, err := os.Getwd()
-	if err != nil {
-		dir = "."
-	}
+	dir := m.currentDir()
 	name := m.nextUntitled(dir)
 	m.editor = m.editor.SetContent("", nil)
 	m.editor = m.editor.SetTitle(name)

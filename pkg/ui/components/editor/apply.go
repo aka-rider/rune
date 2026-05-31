@@ -185,6 +185,7 @@ func (m Model) scrollToCursor() Model {
 
 func (m Model) scrollPreservingAnchor(oldSnapshot, newSnapshot interface{}) Model { // Replace interface{} with proper types
 	// Stub implementation
+	_, _ = oldSnapshot, newSnapshot
 	return m
 }
 
@@ -295,7 +296,7 @@ func (m Model) chordTimeoutCmd() tea.Cmd {
 	}
 }
 
-func (m Model) isPrintable(msg tea.KeyPressMsg) bool {
+func (m Model) isPrintable(tea.KeyPressMsg) bool {
 	// Stub implementation
 	return false
 }

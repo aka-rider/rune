@@ -255,6 +255,7 @@ func handleCursorCmd(ctx command.CommandContext, selectMode bool, step func(c cu
 }
 
 func handleScrollCmd(ctx command.CommandContext, dx, dy int) command.Result {
+	_ = ctx
 	return command.Result{
 		Operation: command.Operation{
 			Kind:     command.OperationScroll,

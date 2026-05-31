@@ -1,10 +1,17 @@
 - shift selection ✔️
-- shift PgUp / PgDown
-- Cmd+Shift+C / Cmd+Shift+X ✔️
-- mouse click in file explorer
-- panels resize ✔️
-- create new file
 - save a file ✔️
+- Cmd+Shift+C / Cmd+Shift+X ✔️
+- panels resize ✔️
 - bold text inside of tables ✔️
+- mouse click in file explorer ✔️
+- create new file ✔️
+- shift PgUp / PgDown
 - Alt Up down arrow doesn't work
+- Obsidian navigation:
+    tags panel
+    outgoing links panel
+    backlinks panel
+
+- VFS: cache layer: fstat to check freshness of cache. Cache contains outgoing links, tags, frontmatter
+- command line parameters: [<file1>, <file2> ...]
 

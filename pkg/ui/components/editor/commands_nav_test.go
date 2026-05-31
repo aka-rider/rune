@@ -103,11 +103,12 @@ func runNavTest(t *testing.T, tc navTestCase) {
 	}
 
 	var cSet cursor.CursorSet
-	if res.Operation.Kind == command.OperationMoveCursors {
+	switch res.Operation.Kind {
+	case command.OperationMoveCursors:
 		cSet = res.Operation.Cursors
-	} else if res.Operation.Kind == command.OperationScroll {
+	case command.OperationScroll:
 		return
-	} else {
+	default:
 		cSet = ctx.Cursors
 	}
 
