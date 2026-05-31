@@ -11,7 +11,6 @@ func (m Model) View() string {
 		return ""
 	}
 
-	bcView := m.breadcrumb.View()
 	titleView := m.title.View()
 	contentHeight := m.contentHeight()
 
@@ -132,10 +131,10 @@ func (m Model) View() string {
 			}
 		}
 		content := strings.Join(faintedLines, "\n")
-		composed = lipgloss.JoinVertical(lipgloss.Left, faint.Render(bcView), faint.Render(titleView), content)
+		composed = lipgloss.JoinVertical(lipgloss.Left, faint.Render(titleView), content)
 	} else {
 		content := strings.Join(renderedLines, "\n")
-		composed = lipgloss.JoinVertical(lipgloss.Left, bcView, titleView, content)
+		composed = lipgloss.JoinVertical(lipgloss.Left, titleView, content)
 		if !m.focused {
 			composed = lipgloss.NewStyle().Faint(true).Render(composed)
 		}

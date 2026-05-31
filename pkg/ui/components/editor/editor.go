@@ -64,7 +64,6 @@ type Model struct {
 	savedContentHash string
 	activeSave       SaveIdentity
 	filePath         string
-	cwd              string // working directory at launch (for wiki link resolution)
 	softWrap         bool
 	indent           IndentConfig
 
@@ -194,6 +193,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Set title from filename stem
 			stem := strings.TrimSuffix(filepath.Base(msg.Path), filepath.Ext(msg.Path))
 			m.title = m.title.SetText(stem)
+			m.breadcrumb = m.breadcrumb.SetUntitledName(filepath.Base(msg.Path))
 			m = m.syncDisplay()
 			var dcmd tea.Cmd
 			m, dcmd = m.discoverNewImages()
@@ -205,6 +205,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Path == m.filePath {
 			m, cmd = m.clearImages()
 			m.filePath = ""
+			m.breadcrumb = m.breadcrumb.SetPath("") // Clear the path so it uses untitled fallback
 			m.buf = buffer.New("")
 			m.savedContentHash = ""
 			m.dirty = false
@@ -261,6 +262,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
 			stem := strings.TrimSuffix(filepath.Base(msg.NewPath), filepath.Ext(msg.NewPath))
 			m.title = m.title.SetText(stem)
+			m.breadcrumb = m.breadcrumb.SetUntitledName(filepath.Base(msg.NewPath))
 		}
 
 	case FileRenameErrorMsg:
@@ -453,7 +455,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) contentHeight() int {
-	h := m.height - m.breadcrumb.Height() - m.title.Height()
+	h := m.height - m.title.Height()
 	if h < 1 {
 		return 1
 	}
@@ -505,6 +507,7 @@ func (m Model) TitleIsPlaceholder() bool { return m.title.IsPlaceholder() }
 
 func (m Model) SetTitle(name string) Model {
 	m.title = m.title.SetText(name)
+	m.breadcrumb = m.breadcrumb.SetUntitledName(name + ".md")
 	return m
 }
 
@@ -513,7 +516,12 @@ func (m Model) SetFilePath(path string) Model {
 	m.breadcrumb = m.breadcrumb.SetPath(path)
 	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	m.title = m.title.SetText(stem)
+	m.breadcrumb = m.breadcrumb.SetUntitledName(filepath.Base(path))
 	return m
+}
+
+func (m Model) BreadcrumbView() string {
+	return m.breadcrumb.View()
 }
 func (m Model) StartSave() (Model, SaveIdentity, tea.Cmd) {
 	req := SaveRequest{
@@ -545,15 +553,6 @@ func (m Model) SetDir(dir string) Model {
 	return m
 }
 
-// SetCWD sets the working directory for wiki link resolution.
-func (m Model) SetCWD(cwd string) Model {
-	m.cwd = cwd
-	return m
-}
-
-// CWD returns the working directory set on this model.
-func (m Model) CWD() string { return m.cwd }
-
 // resolveWikiLinkTarget resolves a raw wiki link target to an absolute file path.
 // Rules (Obsidian-like):
 //   - No extension → append .md, resolve from CWD
@@ -574,8 +573,8 @@ func (m Model) resolveWikiLinkTarget(raw string) string {
 
 	// File name resolution should happen from the rune launch dir CWD
 	baseDir := "."
-	if m.cwd != "" {
-		baseDir = m.cwd
+	if cwd, err := filepath.Abs("."); err == nil {
+		baseDir = cwd
 	}
 
 	// If the target has no extension, append .md (Obsidian-like)

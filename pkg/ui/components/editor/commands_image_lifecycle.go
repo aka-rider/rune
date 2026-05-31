@@ -145,8 +145,8 @@ func (m Model) resolveWikiLinkImagePath(target string) string {
 			return filepath.Clean(joined)
 		}
 	}
-	if m.cwd != "" {
-		joined := filepath.Join(m.cwd, target)
+	if cwd, err := os.Getwd(); err == nil {
+		joined := filepath.Join(cwd, target)
 		if info, err := os.Stat(joined); err == nil && info.Mode().IsRegular() {
 			return filepath.Clean(joined)
 		}

@@ -9,6 +9,7 @@ import (
 
 func newTestModel(path string) Model {
 	m := New(styles.Default(), nil)
+	m = m.SetSize(100, 1) // Give it enough width so it doesn't truncate to ellipsis
 	m = m.SetPath(path)
 	return m
 }
@@ -23,15 +24,19 @@ func TestBreadcrumb_DisplayPath(t *testing.T) {
 
 func TestBreadcrumb_NoFile(t *testing.T) {
 	m := New(styles.Default(), nil)
+	m = m.SetSize(100, 1)
+	m = m.SetUntitledName("Untitled.md")
 	view := m.View()
-	if !strings.Contains(view, "(no file)") {
-		t.Errorf("expected '(no file)' in view, got: %s", view)
+	if !strings.Contains(view, "Untitled.md") {
+		t.Errorf("expected 'Untitled.md' in view, got: %s", view)
 	}
 }
 
 func TestBreadcrumb_DirOnly(t *testing.T) {
 	m := New(styles.Default(), nil)
+	m = m.SetSize(100, 1)
 	m = m.SetDir("/workspace/notes")
+	m = m.SetUntitledName("Untitled.md")
 	view := m.View()
 	if !strings.Contains(view, "notes") {
 		t.Errorf("expected directory in view, got: %s", view)

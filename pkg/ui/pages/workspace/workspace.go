@@ -237,9 +237,6 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	// Capture the working directory for wiki link resolution.
-	cwd, _ := os.Getwd()
-	m.editor = m.editor.SetCWD(cwd)
 	return tea.Batch(
 		m.filetree.Init(),
 		m.opentabs.Init(),
@@ -522,7 +519,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case editor.UntitledRenameMsg:
 		// Untitled file gets a name — create on disk
-		dir := m.editor.CWD()
+		dir, _ := os.Getwd(); if dir == "" { dir = "." }
 		newPath := filepath.Join(dir, msg.Name+".md")
 		m.editor = m.editor.SetFilePath(newPath)
 		m.opentabs = m.opentabs.OpenFile(newPath)
@@ -539,7 +536,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.opentabs = m.opentabs.MarkDirty(msg.Path)
 			// First content edit on untitled file → create file on disk
 			if msg.Path == "" && m.editor.Content() != "" {
-				dir := m.editor.CWD()
+				dir, _ := os.Getwd(); if dir == "" { dir = "." }
 				name := m.editor.TitleText()
 				newPath := filepath.Join(dir, name+".md")
 				m.editor = m.editor.SetFilePath(newPath)
@@ -780,9 +777,61 @@ func (m Model) View() tea.View {
 		centerW = 0
 	}
 
-	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
-		Width(centerW).Height(contentH).
-		Render(m.editor.View())
+	// The center pane uses a custom bottom border. We turn off the built-in
+	// bottom border and subtract 1 from the allocated height so that when we
+	// manually append the custom bottom line, the total height remains exactly
+	// contentH, preserving lipgloss's border-box arithmetic.
+	centerStyle := borderStyle(m.focus == paneCenter, m.styles).
+		BorderBottom(false).
+		Width(centerW).Height(contentH - 1)
+
+	centerContent := centerStyle.Render(m.editor.View())
+
+	// Draw custom bottom border for center block
+	bcStr := m.editor.BreadcrumbView()
+
+	borderColor := m.styles.InactiveBorder.GetBorderTopForeground()
+	if m.focus == paneCenter {
+		borderColor = m.styles.ActiveBorder.GetBorderTopForeground()
+	}
+	bStyle := lipgloss.NewStyle().Foreground(borderColor)
+
+	var customBottomLine string
+	if bcStr == "" {
+		// Just a solid line
+		fill := strings.Repeat("─", centerW-2)
+		if centerW > 2 {
+			customBottomLine = bStyle.Render("╰" + fill + "╯")
+		} else {
+			customBottomLine = "" // Too narrow to even draw corners properly
+		}
+	} else {
+		// with breadcrumb
+		leftCorner := bStyle.Render("╰")
+		rightCorner := bStyle.Render("──╯")
+
+		// Create the dash fill string using PlaceHorizontal and fill
+		// Total width available between corners is centerW - 2
+		innerW := centerW - 2
+		if innerW > 0 {
+			// Pad the breadcrumb with spaces on the left and right
+			content := " " + bcStr + " "
+
+			// We need a string of dashes of length innerW - width of our content
+			contentWidth := lipgloss.Width(content) + lipgloss.Width("──") // rightCorner has 2 dashes
+			dashW := innerW - contentWidth
+
+			var dashFill string
+			if dashW > 0 {
+				dashFill = strings.Repeat("─", dashW)
+			}
+
+			// We still assemble the strings but relying on accurate counts
+			customBottomLine = leftCorner + bStyle.Render(dashFill) + content + rightCorner
+		}
+	}
+
+	centerBlock := lipgloss.JoinVertical(lipgloss.Left, centerContent, customBottomLine)
 
 	var chatBlock string
 	if m.rightVisible {
@@ -975,7 +1024,10 @@ func (m *Model) nextUntitled(dir string) string {
 
 // CreateUntitled opens a new untitled buffer in the current filetree directory.
 func (m Model) CreateUntitled() (Model, tea.Cmd) {
-	dir := m.editor.CWD()
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = "."
+	}
 	name := m.nextUntitled(dir)
 	m.editor = m.editor.SetContent("", nil)
 	m.editor = m.editor.SetTitle(name)

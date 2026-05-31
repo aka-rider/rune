@@ -189,27 +189,35 @@ func (m Model) View() string {
 		return lipgloss.NewStyle().MaxWidth(m.width).Render(content)
 	}
 
-	// Render with cursor indicator
+	// Render as a single styled run; cursor char highlighted via inline reverse.
+	// The cursor's ANSI Reset would wipe the orange foreground, so we re-apply
+	// the title style to the text after the cursor.
 	runes := []rune(m.text)
-	var before, cursor, after string
+	var before, after string
+	var cursorChar string
+
 	if m.cursor < len(runes) {
 		before = string(runes[:m.cursor])
-		cursor = string(runes[m.cursor : m.cursor+1])
+		cursorChar = string(runes[m.cursor])
 		after = string(runes[m.cursor+1:])
 	} else {
 		before = m.text
-		cursor = " "
+		cursorChar = " "
 		after = ""
 	}
 
-	cursorStyle := lipgloss.NewStyle().
+	cursorPart := lipgloss.NewStyle().Reverse(true).Render(cursorChar)
+	afterPart := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("216")).
 		Bold(true).
-		Reverse(true)
+		Render(after)
 
-	content := titleStyle.Render(before) +
-		cursorStyle.Render(cursor) +
-		titleStyle.Render(after)
+	content := before + cursorPart + afterPart
 
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(content)
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("216")).
+		Bold(true).
+		Padding(0, 1).
+		MaxWidth(m.width).
+		Render(content)
 }
