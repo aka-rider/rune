@@ -441,6 +441,90 @@ func TestCommandContextHasCoordinateConverters(t *testing.T) {
 	}
 }
 
+// TestAltArrowWordNavigation verifies that Alt+Left/Right moves by word
+// through the full editor pipeline (KeyPressMsg → ChordFromKeyMsg → Resolver → Command).
+func TestAltArrowWordNavigation(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("hello world foo")
+	// cursor at end: offset 15
+	m.cursors = cursor.NewCursorSet(15)
+	m = m.syncDisplay()
+
+	// Alt+Left — should move from end to beginning of "foo" (offset 12)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt})
+	pos := m.cursors.Primary().Position
+	if pos != 12 {
+		t.Errorf("Alt+Left from offset 15: got position %d, want 12 (word-left to 'foo')", pos)
+	}
+
+	// Alt+Left again — should move to beginning of "world" (offset 6)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt})
+	pos = m.cursors.Primary().Position
+	if pos != 6 {
+		t.Errorf("Alt+Left from offset 12: got position %d, want 6 (word-left to 'world')", pos)
+	}
+
+	// Alt+Right — should move to end of "world" (offset 11)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
+	pos = m.cursors.Primary().Position
+	if pos != 11 {
+		t.Errorf("Alt+Right from offset 6: got position %d, want 11 (word-right past 'world')", pos)
+	}
+
+	// Alt+Right — should move to end of "foo" (offset 15)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt})
+	pos = m.cursors.Primary().Position
+	if pos != 15 {
+		t.Errorf("Alt+Right from offset 11: got position %d, want 15 (word-right past 'foo')", pos)
+	}
+}
+
+// TestAltShiftArrowWordSelection verifies Alt+Shift+Left/Right selects by word.
+func TestAltShiftArrowWordSelection(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 24)
+	m = m.SetFocused(true)
+	m.buf = buffer.New("hello world")
+	// cursor at offset 11 (end of "world")
+	m.cursors = cursor.NewCursorSet(11)
+	m = m.syncDisplay()
+
+	// Alt+Shift+Left — should select "world" (anchor stays at 11, position moves to 6)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt | tea.ModShift})
+	c := m.cursors.Primary()
+	if !c.HasSelection() {
+		t.Fatal("Alt+Shift+Left did not create a selection")
+	}
+	if c.Position != 6 {
+		t.Errorf("Alt+Shift+Left: position = %d, want 6", c.Position)
+	}
+	if c.Anchor != 11 {
+		t.Errorf("Alt+Shift+Left: anchor = %d, want 11", c.Anchor)
+	}
+}
+
 // TestCursorVisibleInView verifies that View() renders a visible cursor when
 // focused (regression: bug #3 — no cursor rendering in View).
 func TestCursorVisibleInView(t *testing.T) {

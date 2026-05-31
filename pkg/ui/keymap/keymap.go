@@ -52,6 +52,8 @@ type Bindings struct {
 	WordRight             key.Binding
 	ShiftWordLeft         key.Binding
 	ShiftWordRight        key.Binding
+	MoveLineUp            key.Binding
+	MoveLineDown          key.Binding
 	SelectAll             key.Binding
 	CopyToClipboard       key.Binding
 	CutToClipboard        key.Binding
@@ -77,11 +79,11 @@ func Default() Bindings {
 		HalfPageDown:       key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
 		TabSwitch:          key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
 		ConfirmExitC:       key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
-		ConfirmExitD:       key.NewBinding(key.WithKeys("alt+ctrl+d"), key.WithHelp("⌥^d", "exit")),
+		ConfirmExitD:       key.NewBinding(key.WithKeys("ctrl+alt+d"), key.WithHelp("⌥^d", "exit")),
 		PinTab:             key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
 		FocusExplorer:      key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
 		FocusEditor:        key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
-		FocusChat:          key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "chat")),
+		FocusChat:          key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "Rune chat")),
 		HelpExpand:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
 		Delete:             key.NewBinding(key.WithKeys("delete"), key.WithHelp("⌦", "delete right")),
@@ -106,6 +108,8 @@ func Default() Bindings {
 		WordRight:          key.NewBinding(key.WithKeys("alt+right"), key.WithHelp("⌥→", "word right")),
 		ShiftWordLeft:      key.NewBinding(key.WithKeys("alt+shift+left"), key.WithHelp("⇧⌥←", "select word left")),
 		ShiftWordRight:     key.NewBinding(key.WithKeys("alt+shift+right"), key.WithHelp("⇧⌥→", "select word right")),
+		MoveLineUp:         key.NewBinding(key.WithKeys("alt+up"), key.WithHelp("⌥↑", "move line up")),
+		MoveLineDown:       key.NewBinding(key.WithKeys("alt+down"), key.WithHelp("⌥↓", "move line down")),
 		SelectAll:          key.NewBinding(key.WithKeys("super+a"), key.WithHelp("⌘a", "select all")),
 		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+super+c"), key.WithHelp("⌘⇧c", "copy")),
 		CutToClipboard:     key.NewBinding(key.WithKeys("super+x"), key.WithHelp("⌘x", "cut")),
@@ -121,6 +125,9 @@ type HelpEntry struct {
 
 func (b Bindings) HelpText() []HelpEntry {
 	return []HelpEntry{
+		{b.FocusExplorer.Help().Key, b.FocusExplorer.Help().Desc},
+		{b.FocusEditor.Help().Key, b.FocusEditor.Help().Desc},
+		{b.FocusChat.Help().Key, b.FocusChat.Help().Desc},
 		{b.Up.Help().Key, b.Up.Help().Desc},
 		{b.Down.Help().Key, b.Down.Help().Desc},
 		{b.PrimaryAction.Help().Key, b.PrimaryAction.Help().Desc},
@@ -129,9 +136,6 @@ func (b Bindings) HelpText() []HelpEntry {
 		{b.CloseFile.Help().Key, b.CloseFile.Help().Desc},
 		{b.TabSwitch.Help().Key, b.TabSwitch.Help().Desc},
 		{b.ConfirmExitC.Help().Key, b.ConfirmExitC.Help().Desc},
-		{b.FocusExplorer.Help().Key, b.FocusExplorer.Help().Desc},
-		{b.FocusEditor.Help().Key, b.FocusEditor.Help().Desc},
-		{b.FocusChat.Help().Key, b.FocusChat.Help().Desc},
 		{b.HelpExpand.Help().Key, b.HelpExpand.Help().Desc},
 		{b.SaveFile.Help().Key, b.SaveFile.Help().Desc},
 	}
@@ -187,6 +191,8 @@ func (b Bindings) AllPhysicalKeys() []string {
 	add(b.WordRight)
 	add(b.ShiftWordLeft)
 	add(b.ShiftWordRight)
+	add(b.MoveLineUp)
+	add(b.MoveLineDown)
 	add(b.SelectAll)
 	add(b.CopyToClipboard)
 	add(b.CutToClipboard)
@@ -276,6 +282,8 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.WordRight, "cursor.word-right", "editorFocused")
 	add(b.ShiftWordLeft, "select.word-left", "editorFocused")
 	add(b.ShiftWordRight, "select.word-right", "editorFocused")
+	add(b.MoveLineUp, "edit.move-line-up", "editorFocused && !readOnly")
+	add(b.MoveLineDown, "edit.move-line-down", "editorFocused && !readOnly")
 	add(b.HalfPageUp, "cursor.page-up", "editorFocused")
 	add(b.HalfPageDown, "cursor.page-down", "editorFocused")
 	add(b.SelectAll, "select.all", "editorFocused")

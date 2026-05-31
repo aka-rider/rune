@@ -2,6 +2,8 @@ package keybind
 
 import (
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestResolverConstruction(t *testing.T) {
@@ -207,6 +209,69 @@ func TestPendingDisplay(t *testing.T) {
 	expected := "Ctrl+K ..."
 	if res.PendingDisplay() != expected {
 		t.Errorf("Expected PendingDisplay %q, got %q", expected, res.PendingDisplay())
+	}
+}
+
+func TestChordFromKeyMsg(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want Chord
+	}{
+		{
+			name: "Alt+Left",
+			msg:  tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt},
+			want: Chord{Alt: true, Key: "left"},
+		},
+		{
+			name: "Alt+Right",
+			msg:  tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt},
+			want: Chord{Alt: true, Key: "right"},
+		},
+		{
+			name: "Alt+Shift+Left",
+			msg:  tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt | tea.ModShift},
+			want: Chord{Alt: true, Shift: true, Key: "left"},
+		},
+		{
+			name: "Alt+Shift+Right",
+			msg:  tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt | tea.ModShift},
+			want: Chord{Alt: true, Shift: true, Key: "right"},
+		},
+		{
+			name: "Alt+Super+Down",
+			msg:  tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModAlt | tea.ModSuper},
+			want: Chord{Alt: true, Cmd: true, Key: "down"},
+		},
+		{
+			name: "Alt+Super+Up",
+			msg:  tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt | tea.ModSuper},
+			want: Chord{Alt: true, Cmd: true, Key: "up"},
+		},
+		{
+			name: "Alt+Ctrl+D",
+			msg:  tea.KeyPressMsg{Code: 'd', Mod: tea.ModAlt | tea.ModCtrl},
+			want: Chord{Ctrl: true, Alt: true, Key: "d"},
+		},
+		{
+			name: "plain Left (no modifiers)",
+			msg:  tea.KeyPressMsg{Code: tea.KeyLeft},
+			want: Chord{Key: "left"},
+		},
+		{
+			name: "Ctrl+C",
+			msg:  tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl},
+			want: Chord{Ctrl: true, Key: "c"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ChordFromKeyMsg(tt.msg)
+			if got != tt.want {
+				t.Errorf("ChordFromKeyMsg() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
