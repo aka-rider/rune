@@ -492,9 +492,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.startWatch(msg.Root)
 		cmds = append(cmds, cmd)
 
+	case filetree.DirReloadedMsg:
+		// Fsnotify-triggered directory refresh — filetree handles cursor preservation.
+
 	case dirChangedMsg:
 		dir := m.watchedDir
-		cmds = append(cmds, loadDirCmd(dir, "."))
+		cmds = append(cmds, func() tea.Msg {
+			entries, err := readDirEntries(dir, ".")
+			if err != nil {
+				return ErrMsg{Err: fmt.Errorf("reload dir %q: %w", dir, err)}
+			}
+			return filetree.DirReloadedMsg{Root: dir, Entries: entries}
+		})
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -893,40 +902,48 @@ func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 
 func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 	return func() tea.Msg {
-		des, err := os.ReadDir(dir)
+		entries, err := readDirEntries(dir, initialRoot)
 		if err != nil {
 			return ErrMsg{Err: fmt.Errorf("load dir %q: %w", dir, err)}
 		}
-		entries := make([]filetree.Entry, 0, len(des)+1)
-		if dir != initialRoot && dir != "." {
-			entries = append(entries, filetree.Entry{
-				Name:  "..",
-				Path:  filepath.Dir(dir),
-				IsDir: true,
-			})
-		}
-		for _, de := range des {
-			entries = append(entries, filetree.Entry{
-				Name:  de.Name(),
-				Path:  filepath.Join(dir, de.Name()),
-				IsDir: de.IsDir(),
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			a, b := entries[i], entries[j]
-			if a.Name == ".." {
-				return true
-			}
-			if b.Name == ".." {
-				return false
-			}
-			if a.IsDir != b.IsDir {
-				return a.IsDir
-			}
-			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
+}
+
+func readDirEntries(dir, initialRoot string) ([]filetree.Entry, error) {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]filetree.Entry, 0, len(des)+1)
+	if dir != initialRoot && dir != "." {
+		entries = append(entries, filetree.Entry{
+			Name:  "..",
+			Path:  filepath.Dir(dir),
+			IsDir: true,
+		})
+	}
+	for _, de := range des {
+		entries = append(entries, filetree.Entry{
+			Name:  de.Name(),
+			Path:  filepath.Join(dir, de.Name()),
+			IsDir: de.IsDir(),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.Name == ".." {
+			return true
+		}
+		if b.Name == ".." {
+			return false
+		}
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+	return entries, nil
 }
 
 // watchDirCmd watches a directory for Create/Remove/Rename events and returns

@@ -20,6 +20,12 @@ type DirLoadedMsg struct {
 	Entries []Entry
 }
 
+// DirReloadedMsg is emitted by fsnotify events — preserves cursor position.
+type DirReloadedMsg struct {
+	Root    string
+	Entries []Entry
+}
+
 type Model struct {
 	entries      []Entry
 	cursor       int
@@ -50,34 +56,15 @@ func (m Model) Init() tea.Cmd { return nil }
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DirLoadedMsg:
-		// Preserve cursor by matching previous entry name.
-		var prevName string
-		if len(m.entries) > 0 && m.cursor < len(m.entries) {
-			prevName = m.entries[m.cursor].Name
-		}
-		oldCursor := m.cursor
-
+		// Navigation into a directory — reset cursor to top.
 		m.entries = msg.Entries
 		m.root = msg.Root
 		m.cursor = 0
 
-		if prevName != "" {
-			found := false
-			for i, e := range m.entries {
-				if e.Name == prevName {
-					m.cursor = i
-					found = true
-					break
-				}
-			}
-			if !found && len(m.entries) > 0 {
-				if oldCursor < len(m.entries) {
-					m.cursor = oldCursor
-				} else {
-					m.cursor = len(m.entries) - 1
-				}
-			}
-		}
+	case DirReloadedMsg:
+		// Fsnotify reload — preserve cursor position.
+		m.entries = msg.Entries
+		m.root = msg.Root
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
 	case tea.MouseWheelMsg:
