@@ -43,7 +43,7 @@ func TestMouseClickPositionsCursor(t *testing.T) {
 		x, y       int
 		wantOffset int
 	}{
-		{"start of line 0", 0, 1, 0},        // breadcrumb is row 0, so content starts at y=1
+		{"start of line 0", 0, 1, 0},        // title is row 0, so content starts at y=1
 		{"middle of line 0", 5, 1, 5},       // col 5 -> offset 5 (space char)
 		{"start of line 1", 0, 2, 12},       // line 1 starts at offset 12
 		{"col 4 of line 1", 4, 2, 16},       // col 4 of line 1 -> offset 16 (space)
@@ -77,7 +77,7 @@ func TestMouseClickWithScrollOffset(t *testing.T) {
 	// Scroll down 3 lines
 	m.viewport.TopRow = 3
 
-	// Click at display row 0 (first visible row after breadcrumb) should map to buffer line 3
+	// Click at display row 0 (first visible row after header) should map to buffer line 3
 	msg := tea.MouseClickMsg{X: 0, Y: 1, Button: tea.MouseLeft}
 	result, _ := m.handleMouseClick(msg, time.Now())
 	primary := result.cursors.Primary()
@@ -96,7 +96,7 @@ func TestMouseDoubleClickSelectsWord(t *testing.T) {
 
 	now := time.Now()
 
-	// First click at col 1 (inside "hello") - breadcrumb is row 0
+	// First click at col 1 (inside "hello") - title is row 0, content starts at row 1
 	msg := tea.MouseClickMsg{X: 1, Y: 1, Button: tea.MouseLeft}
 	m, _ = m.handleMouseClick(msg, now)
 
@@ -185,7 +185,7 @@ func TestMouseAltClickAddsCursor(t *testing.T) {
 
 // TestMouseScrollDoesNotMoveCursor verifies scroll wheel doesn't change cursor position.
 func TestMouseScrollDoesNotMoveCursor(t *testing.T) {
-	// Need enough lines to exceed viewport height (24 - 1 breadcrumb = 23 content lines)
+	// Need enough lines to exceed viewport height (24 - 1 header = 23 content lines)
 	var lines []string
 	for i := 0; i < 40; i++ {
 		lines = append(lines, fmt.Sprintf("line%d", i))
@@ -307,17 +307,17 @@ func TestMouseRightClickIgnored(t *testing.T) {
 	}
 }
 
-// TestMouseClickAboveBreadcrumbIgnored verifies clicks in breadcrumb area are not handled.
-func TestMouseClickAboveBreadcrumbIgnored(t *testing.T) {
+// TestMouseClickOnTitleIgnored verifies clicks in the title row are not handled as content clicks.
+func TestMouseClickOnTitleIgnored(t *testing.T) {
 	m := newMouseTestEditor("hello world")
 
-	// Click at Y=0 (breadcrumb row) should be ignored
+	// Click at Y=0 (title row) should be ignored — content starts at Y=1
 	msg := tea.MouseClickMsg{X: 3, Y: 0, Button: tea.MouseLeft}
 	result, _ := m.handleMouseClick(msg, time.Now())
 
 	// Should not have positioned cursor
 	if result.cursors.Len() > 0 && result.cursors.Primary().Position != 0 {
-		t.Errorf("click on breadcrumb moved cursor")
+		t.Errorf("click on title moved cursor")
 	}
 }
 

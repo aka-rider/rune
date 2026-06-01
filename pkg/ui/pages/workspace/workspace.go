@@ -100,7 +100,6 @@ type Model struct {
 	pending                 *pendingDirtyAction
 	dictCancel              context.CancelFunc // nil when not dictating (§6.3)
 	dictCh                  <-chan tea.Msg     // nil when idle
-	untitledCounters        map[string]int     // dir -> next untitled number
 	watchedDir              string             // current directory being watched
 	cancelWatch             context.CancelFunc // cancels active watchDirCmd (§6.3)
 }
@@ -296,6 +295,11 @@ func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 	if nextPath != "" {
 		cmds = append(cmds, editor.LoadFileCmd(nextPath))
+	} else {
+		// Last tab closed — reset to a fresh untitled buffer.
+		var createCmd tea.Cmd
+		m, createCmd = m.CreateUntitled()
+		cmds = append(cmds, createCmd)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -505,7 +509,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case dirChangedMsg:
 		dir := m.watchedDir
-		cmds = append(cmds, loadDirCmd(dir, "."))
+		cmds = append(cmds, reloadDirCmd(dir, "."))
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -791,6 +795,7 @@ func (m Model) View() tea.View {
 	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
 		Width(centerW).Height(contentH).
 		Render(m.editor.View())
+	centerBlock = overlayBreadcrumb(centerBlock, m.editor.BreadcrumbView(), m.focus == paneCenter, m.styles)
 
 	var chatBlock string
 	if m.rightVisible {
@@ -843,6 +848,55 @@ func (m Model) View() tea.View {
 	return tea.NewView(frame + imgSeq)
 }
 
+// overlayBreadcrumb post-processes a rendered bordered block by replacing part of
+// the bottom border line with the breadcrumb text, right-aligned before "──╯".
+// This avoids disabling BorderBottom or manual corner construction which caused
+// alignment bugs. If the breadcrumb is empty or too wide, the border is unchanged.
+func overlayBreadcrumb(block, breadcrumb string, active bool, st styles.Styles) string {
+	if breadcrumb == "" {
+		return block
+	}
+
+	lines := strings.Split(block, "\n")
+	if len(lines) < 2 {
+		return block
+	}
+
+	lastIdx := len(lines) - 1
+	bottomLine := lines[lastIdx]
+	borderW := lipgloss.Width(bottomLine)
+
+	bcWidth := lipgloss.Width(breadcrumb)
+	// Need space for: ╰ + at least 1 dash + space + breadcrumb + space + ── + ╯
+	// Minimum overhead: corner(1) + dash(1) + space(1) + space(1) + dashes(2) + corner(1) = 7
+	minOverhead := 7
+	if bcWidth+minOverhead > borderW {
+		return block // breadcrumb too wide, skip overlay
+	}
+
+	// Determine border color
+	borderColor := st.InactiveBorder.GetBorderTopForeground()
+	if active {
+		borderColor = st.ActiveBorder.GetBorderTopForeground()
+	}
+	bStyle := lipgloss.NewStyle().Foreground(borderColor)
+
+	// Build the custom bottom line: ╰───── breadcrumb ──╯
+	// Right-aligned: breadcrumb sits before "──╯"
+	rightPad := bStyle.Render("──╯")
+	leftCorner := bStyle.Render("╰")
+	content := " " + breadcrumb + " "
+	contentWidth := lipgloss.Width(content) + lipgloss.Width(rightPad) + lipgloss.Width(leftCorner)
+	dashCount := borderW - contentWidth
+	if dashCount < 0 {
+		dashCount = 0
+	}
+	dashFill := bStyle.Render(strings.Repeat("─", dashCount))
+
+	lines[lastIdx] = leftCorner + dashFill + content + rightPad
+	return strings.Join(lines, "\n")
+}
+
 func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 	if active {
 		return st.ActiveBorder
@@ -852,40 +906,59 @@ func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 
 func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 	return func() tea.Msg {
-		des, err := os.ReadDir(dir)
+		entries, err := readDirEntries(dir, initialRoot)
 		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("load dir %q: %w", dir, err)}
+			return ErrMsg{Err: err}
 		}
-		entries := make([]filetree.Entry, 0, len(des)+1)
-		if dir != initialRoot && dir != "." {
-			entries = append(entries, filetree.Entry{
-				Name:  "..",
-				Path:  filepath.Dir(dir),
-				IsDir: true,
-			})
-		}
-		for _, de := range des {
-			entries = append(entries, filetree.Entry{
-				Name:  de.Name(),
-				Path:  filepath.Join(dir, de.Name()),
-				IsDir: de.IsDir(),
-			})
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			a, b := entries[i], entries[j]
-			if a.Name == ".." {
-				return true
-			}
-			if b.Name == ".." {
-				return false
-			}
-			if a.IsDir != b.IsDir {
-				return a.IsDir
-			}
-			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
-		})
 		return filetree.DirLoadedMsg{Root: dir, Entries: entries}
 	}
+}
+
+func reloadDirCmd(dir string, initialRoot string) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := readDirEntries(dir, initialRoot)
+		if err != nil {
+			return ErrMsg{Err: err}
+		}
+		return filetree.DirReloadedMsg{Root: dir, Entries: entries}
+	}
+}
+
+// readDirEntries reads and sorts the directory listing for dir.
+func readDirEntries(dir string, initialRoot string) ([]filetree.Entry, error) {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load dir %q: %w", dir, err)
+	}
+	entries := make([]filetree.Entry, 0, len(des)+1)
+	if dir != initialRoot && dir != "." {
+		entries = append(entries, filetree.Entry{
+			Name:  "..",
+			Path:  filepath.Dir(dir),
+			IsDir: true,
+		})
+	}
+	for _, de := range des {
+		entries = append(entries, filetree.Entry{
+			Name:  de.Name(),
+			Path:  filepath.Join(dir, de.Name()),
+			IsDir: de.IsDir(),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		a, b := entries[i], entries[j]
+		if a.Name == ".." {
+			return true
+		}
+		if b.Name == ".." {
+			return false
+		}
+		if a.IsDir != b.IsDir {
+			return a.IsDir
+		}
+		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+	})
+	return entries, nil
 }
 
 // watchDirCmd watches a directory for Create/Remove/Rename events and returns
@@ -973,18 +1046,24 @@ func createFileCmd(path, content string) tea.Cmd {
 }
 
 // nextUntitled returns a placeholder name for a new untitled file in dir.
-func (m *Model) nextUntitled(dir string) string {
-	if m.untitledCounters == nil {
-		m.untitledCounters = make(map[string]int)
+// It finds the lowest N >= 1 such that "Untitled N.md" does not exist in dir,
+// or exists but is empty (zero bytes). This matches the expected UX: Untitled 1
+// by default; if Untitled 1 is non-empty, the next new file is Untitled 2, etc.
+func nextUntitled(dir string) string {
+	for n := 1; ; n++ {
+		name := fmt.Sprintf("Untitled %d", n)
+		info, err := os.Stat(filepath.Join(dir, name+".md"))
+		if err != nil || info.Size() == 0 {
+			// File doesn't exist or is empty — this slot is available.
+			return name
+		}
 	}
-	m.untitledCounters[dir]++
-	return fmt.Sprintf("Untitled %d", m.untitledCounters[dir])
 }
 
 // CreateUntitled opens a new untitled buffer in the current filetree directory.
 func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	dir := m.currentDir()
-	name := m.nextUntitled(dir)
+	name := nextUntitled(dir)
 	m.editor = m.editor.SetContent("", nil)
 	m.editor = m.editor.SetTitle(name)
 	m.opentabs = m.opentabs.OpenFile("")

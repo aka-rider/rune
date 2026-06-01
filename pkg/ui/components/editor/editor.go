@@ -78,23 +78,23 @@ type Model struct {
 
 	highlighter CodeHighlighter
 
-	termCaps     terminal.TermCaps
-	imageConfig  ImageConfig
-	images       imageRegistry
-	cellSize     imagekit.CellSize
-	mouse        mouseState
-	findOverlay  FindOverlay
-	dictation    dictationState
-	viewport     ViewportState
-	title        title.Model
-	breadcrumb   breadcrumb.Model
-	keys         keymap.Bindings
-	styles       styles.Styles
-	width        int
-	height       int
-	offsetX      int
-	offsetY      int
-	focused      bool
+	termCaps    terminal.TermCaps
+	imageConfig ImageConfig
+	images      imageRegistry
+	cellSize    imagekit.CellSize
+	mouse       mouseState
+	findOverlay FindOverlay
+	dictation   dictationState
+	viewport    ViewportState
+	title       title.Model
+	breadcrumb  breadcrumb.Model
+	keys        keymap.Bindings
+	styles      styles.Styles
+	width       int
+	height      int
+	offsetX     int
+	offsetY     int
+	focused     bool
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -187,6 +187,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			cmds := []tea.Cmd{cmd}
 			m.buf = b
 			m.filePath = msg.Path
+			m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 			m.cursors = cursor.NewCursorSet(0)
 			m.savedContentHash = hashContent(m.buf.Content())
 			m.dirty = false
@@ -454,8 +455,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) headerHeight() int {
+	return m.title.Height()
+}
+
 func (m Model) contentHeight() int {
-	h := m.height - m.title.Height()
+	h := m.height - m.headerHeight()
 	if h < 1 {
 		return 1
 	}
@@ -498,11 +503,11 @@ func (m Model) SetFocused(f bool) Model {
 	m.focused = f
 	return m
 }
-func (m Model) Content() string       { return m.buf.Content() }
-func (m Model) IsDirty() bool         { return m.dirty }
-func (m Model) FilePath() string      { return m.filePath }
-func (m Model) WantsModalInput() bool { return m.findOverlay.visible }
-func (m Model) TitleText() string     { return m.title.Text() }
+func (m Model) Content() string          { return m.buf.Content() }
+func (m Model) IsDirty() bool            { return m.dirty }
+func (m Model) FilePath() string         { return m.filePath }
+func (m Model) WantsModalInput() bool    { return m.findOverlay.visible }
+func (m Model) TitleText() string        { return m.title.Text() }
 func (m Model) TitleIsPlaceholder() bool { return m.title.IsPlaceholder() }
 
 func (m Model) SetTitle(name string) Model {
@@ -553,37 +558,13 @@ func (m Model) SetDir(dir string) Model {
 	return m
 }
 
-// resolveWikiLinkTarget resolves a raw wiki link target to an absolute file path.
-// Rules (Obsidian-like):
-//   - No extension → append .md, resolve from CWD
-//   - Has extension → resolve relative to the file's directory
-//   - Absolute path → use as-is
-//   - Remote URLs → return empty
+// resolveWikiLinkTarget resolves a raw wiki link target to an absolute file path
+// for navigation (opening a note). Follows Obsidian-like resolution:
+//   - basename or ./ links → file's directory → CWD (unless ./, no fallback)
+//   - path links → CWD
+//   - No extension → append .md
 func (m Model) resolveWikiLinkTarget(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	lower := strings.ToLower(raw)
-	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
-		return ""
-	}
-	if filepath.IsAbs(raw) {
-		return filepath.Clean(raw)
-	}
-
-	// File name resolution should happen from the rune launch dir CWD
-	baseDir := "."
-	if cwd, err := filepath.Abs("."); err == nil {
-		baseDir = cwd
-	}
-
-	// If the target has no extension, append .md (Obsidian-like)
-	trimmed := strings.TrimSpace(raw)
-	if filepath.Ext(trimmed) == "" {
-		trimmed = trimmed + ".md"
-	}
-
-	return filepath.Join(baseDir, trimmed)
+	return resolveLink(raw, m.filePath, /*appendMD=*/true, /*existCheck=*/false)
 }
 
 // SetHighlighter replaces the code highlighter adapter. Used for testing.

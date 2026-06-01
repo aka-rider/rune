@@ -20,6 +20,14 @@ type DirLoadedMsg struct {
 	Entries []Entry
 }
 
+// DirReloadedMsg is identical to DirLoadedMsg but signals a disk-triggered
+// reload (fsnotify) rather than user navigation. The filetree uses this to
+// decide whether to preserve or reset the cursor.
+type DirReloadedMsg struct {
+	Root    string
+	Entries []Entry
+}
+
 type Model struct {
 	entries      []Entry
 	cursor       int
@@ -50,34 +58,12 @@ func (m Model) Init() tea.Cmd { return nil }
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case DirLoadedMsg:
-		// Preserve cursor by matching previous entry name.
-		var prevName string
-		if len(m.entries) > 0 && m.cursor < len(m.entries) {
-			prevName = m.entries[m.cursor].Name
-		}
-		oldCursor := m.cursor
+		// User navigation — reset cursor to top.
+		m = m.handleDirLoad(msg.Entries, msg.Root, true)
 
-		m.entries = msg.Entries
-		m.root = msg.Root
-		m.cursor = 0
-
-		if prevName != "" {
-			found := false
-			for i, e := range m.entries {
-				if e.Name == prevName {
-					m.cursor = i
-					found = true
-					break
-				}
-			}
-			if !found && len(m.entries) > 0 {
-				if oldCursor < len(m.entries) {
-					m.cursor = oldCursor
-				} else {
-					m.cursor = len(m.entries) - 1
-				}
-			}
-		}
+	case DirReloadedMsg:
+		// Disk-triggered reload — preserve cursor position.
+		m = m.handleDirLoad(msg.Entries, msg.Root, false)
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
 	case tea.MouseWheelMsg:
@@ -135,6 +121,48 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// handleDirLoad applies a directory load or reload, assigning entries and root,
+// and either resetting the cursor to 0 (navigation) or preserving it (reload).
+func (m Model) handleDirLoad(entries []Entry, root string, resetCursor bool) Model {
+	// Capture the previous entry name from the old entries before replacing.
+	var prevName string
+	if len(m.entries) > 0 && m.cursor < len(m.entries) {
+		prevName = m.entries[m.cursor].Name
+	}
+	oldCursor := m.cursor
+
+	m.entries = entries
+	m.root = root
+
+	if resetCursor {
+		m.cursor = 0
+		return m
+	}
+
+	// Preserve cursor: try name match, then fall back to old index.
+	if len(entries) == 0 {
+		m.cursor = 0
+		return m
+	}
+
+	if prevName != "" {
+		for i, e := range entries {
+			if e.Name == prevName {
+				m.cursor = i
+				return m
+			}
+		}
+	}
+
+	// Name not found — clamp old index.
+	if oldCursor < len(entries) {
+		m.cursor = oldCursor
+	} else {
+		m.cursor = len(entries) - 1
+	}
+	return m
 }
 
 func (m Model) View() string {

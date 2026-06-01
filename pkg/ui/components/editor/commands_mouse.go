@@ -1,8 +1,6 @@
 package editor
 
 import (
-	"path/filepath"
-	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -63,7 +61,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	}
 
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.offsetY - m.breadcrumb.Height(),
+		Row: msg.Y - m.offsetY - m.headerHeight(),
 		Col: msg.X - m.offsetX,
 	}
 	if dp.Row < 0 {
@@ -166,19 +164,12 @@ func (m Model) resolveLinkClick(bp coords.BufferPoint) string {
 			return m.resolveWikiLinkTarget(sp.WikiLinkTarget)
 
 		case display.TokenLink:
-			// Markdown link — check if it's a file or URL
-			if sp.ImagePath != "" {
-				// Image path could be a file path
-				lower := strings.ToLower(sp.ImagePath)
-				if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
-					return "" // external URL — terminal handles it
-				}
-				// File path — resolve relative to file directory
-				if filepath.IsAbs(sp.ImagePath) {
-					return filepath.Clean(sp.ImagePath)
-				}
-				if m.filePath != "" {
-					return filepath.Join(filepath.Dir(m.filePath), sp.ImagePath)
+			// Markdown link — use the LinkURL field (populated for TokenLink spans)
+			if sp.LinkURL != "" {
+				// Remote URLs are handled by classifyLink → resolveSkip (returns "")
+				resolved := resolveLink(sp.LinkURL, m.filePath, /*appendMD=*/false, /*existCheck=*/false)
+				if resolved != "" {
+					return resolved
 				}
 			}
 		}
@@ -195,7 +186,7 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 	}
 
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.offsetY - m.breadcrumb.Height(),
+		Row: msg.Y - m.offsetY - m.headerHeight(),
 		Col: msg.X - m.offsetX,
 	}
 	if dp.Row < 0 {

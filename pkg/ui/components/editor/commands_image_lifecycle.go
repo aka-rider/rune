@@ -20,7 +20,6 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 	if !m.imageCapable() {
 		return m, nil
 	}
-	baseDir := m.imageBaseDir()
 	maxCols := m.imageMaxCols()
 	maxRows := m.contentHeight()
 	cs := m.cellSize
@@ -34,7 +33,7 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		}
 		seen[path] = true
 
-		absPath := m.resolveImagePath(path, baseDir)
+		absPath := m.resolveImagePath(path)
 		if absPath == "" {
 			continue
 		}
@@ -130,25 +129,19 @@ func (m Model) discoverWikiLinkImages() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// resolveWikiLinkImagePath resolves a wiki link target to an absolute path.
+// resolveWikiLinkImagePath resolves a wiki link image target to an absolute path.
+// Images must exist on disk. Tries the target as-is, then with .md appended
+// if the target has no extension (Obsidian-like).
 func (m Model) resolveWikiLinkImagePath(target string) string {
-	if target == "" {
-		return ""
+	// Try as-is first (most common case — image has an extension)
+	if resolved := resolveLink(target, m.filePath, /*appendMD=*/false, /*existCheck=*/true); resolved != "" {
+		return resolved
 	}
-	if filepath.IsAbs(target) {
-		return filepath.Clean(target)
-	}
-	// Resolve relative to file directory, then CWD
-	if m.filePath != "" {
-		joined := filepath.Join(filepath.Dir(m.filePath), target)
-		if info, err := os.Stat(joined); err == nil && info.Mode().IsRegular() {
-			return filepath.Clean(joined)
-		}
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		joined := filepath.Join(cwd, target)
-		if info, err := os.Stat(joined); err == nil && info.Mode().IsRegular() {
-			return filepath.Clean(joined)
+	// If target has no extension and as-is failed, try with .md
+	// (handles rare case of extension-less images or embedded markdown)
+	if filepath.Ext(strings.TrimSpace(target)) == "" {
+		if resolved := resolveLink(target, m.filePath, /*appendMD=*/true, /*existCheck=*/true); resolved != "" {
+			return resolved
 		}
 	}
 	return ""
@@ -231,7 +224,7 @@ func (m Model) buildInlineImagePlacements() string {
 	}
 	topRow := m.viewport.TopRow
 	contentH := m.contentHeight()
-	screenBase := m.offsetY + m.breadcrumb.Height()
+	screenBase := m.offsetY + m.headerHeight()
 	col := m.offsetX + 2 // 1-based terminal column + 1 left margin
 
 	var sb strings.Builder
@@ -370,19 +363,11 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 	return m
 }
 
-// resolveImagePath resolves a raw markdown destination to an absolute on-disk
-// path, or "" for remote/data URLs or unresolvable relative paths.
-func (m Model) resolveImagePath(path, baseDir string) string {
-	if path == "" || isRemoteURL(path) {
-		return ""
-	}
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	if baseDir == "" {
-		return ""
-	}
-	return filepath.Join(baseDir, path)
+// resolveImagePath resolves a raw markdown image destination to an absolute on-disk
+// path. Remote/data URLs and unresolvable relative paths return "".
+// Basename and ./ links resolve from the file's directory. Path links use CWD.
+func (m Model) resolveImagePath(path string) string {
+	return resolveLink(path, m.filePath, /*appendMD=*/false, /*existCheck=*/false)
 }
 
 func isRemoteURL(path string) bool {

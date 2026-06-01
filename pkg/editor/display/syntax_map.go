@@ -72,6 +72,7 @@ type SyntaxSpan struct {
 	// Wiki link metadata (set for TokenWikiLink spans)
 	WikiLinkTarget  string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
+	LinkURL         string // link destination for TokenLink spans ([text](url))
 }
 
 // FrontmatterMode controls how frontmatter is displayed in rendered mode.
@@ -406,6 +407,7 @@ func buildSyntaxLine(
 				HeadingLevel:    ms.level,
 				WikiLinkTarget:  spanWikiLinkTarget(ms),
 				WikiLinkIsImage: spanWikiLinkIsImage(ms),
+				LinkURL:         spanLinkURL(ms),
 			})
 		} else {
 			// Hide delimiters
@@ -458,6 +460,7 @@ func buildSyntaxLine(
 				HeadingLevel:    ms.level,
 				WikiLinkTarget:  spanWikiLinkTarget(ms),
 				WikiLinkIsImage: spanWikiLinkIsImage(ms),
+				LinkURL:         spanLinkURL(ms),
 			})
 		}
 
@@ -563,4 +566,12 @@ func spanWikiLinkIsImage(ms mdSpan) bool {
 		return ms.wikiLinkIsImage
 	}
 	return false
+}
+
+// spanLinkURL extracts link URL metadata for TokenLink spans.
+func spanLinkURL(ms mdSpan) string {
+	if ms.kind == TokenLink {
+		return ms.linkURL
+	}
+	return ""
 }

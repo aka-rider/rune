@@ -654,6 +654,37 @@ func TestSameFileOpenIsNoop(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Bug fix: ^W on last tab resets editor to Untitled
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestCloseLastTabResetsToUntitled(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "content A")
+
+	// Only one tab — closing it must reset the editor to a fresh untitled buffer.
+	m, cmd := m.requestCloseCurrent()
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Editor title should start with "Untitled".
+	title := m.editor.TitleText()
+	if !strings.HasPrefix(title, "Untitled") {
+		t.Fatalf("expected title starting with 'Untitled', got %q", title)
+	}
+	// Editor must have no file path.
+	if fp := m.editor.FilePath(); fp != "" {
+		t.Fatalf("expected empty file path after last-tab close, got %q", fp)
+	}
+	// Opentabs should show exactly one tab (the new untitled slot) with empty path.
+	if path := m.opentabs.PathAt(0); path != "" {
+		t.Fatalf("expected untitled tab with empty path, got %q", path)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
