@@ -52,7 +52,7 @@ func (m Model) View() string {
 		}
 
 		// iTerm2 inline image row: emit spaces to reserve screen real estate.
-		// The actual image is placed via escape sequences appended to View() output.
+		// The actual image is painted separately via tea.Raw (emitInlinePlacements).
 		if l.ImagePath != "" && inlineCapable {
 			spaceCells := make([]Cell, l.ImageCols+1) // +1 for left margin
 			for i := range spaceCells {
@@ -148,9 +148,10 @@ func (m Model) View() string {
 		Render(composed)
 }
 
-// InlineImagePlacements returns escape sequences for iTerm2/WezTerm inline image
-// placement. The caller appends this AFTER all lipgloss rendering is complete,
-// directly to the final terminal output string so borders cannot corrupt it.
+// InlineImagePlacements returns the escape sequences for iTerm2/WezTerm inline
+// image placement. The editor emits these via tea.Raw from emitInlinePlacements
+// (Update), bypassing the cell renderer; this accessor is retained for tests
+// that inspect the computed sequence.
 func (m Model) InlineImagePlacements() string {
 	return m.buildInlineImagePlacements()
 }

@@ -181,7 +181,11 @@ func (m Model) recalcLayout() Model {
 	m.chat = m.chat.SetSize(innerRightW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
 	m.filetree = m.filetree.SetOffset(1, 1)
-	m.editor = m.editor.SetOffset(leftW+1, 1)
+	topOffset := 1
+	if m.err != nil {
+		topOffset = 2 // error line above body shifts editor content down one row
+	}
+	m.editor = m.editor.SetOffset(leftW+1, topOffset)
 	return m
 }
 
@@ -833,19 +837,17 @@ func (m Model) View() tea.View {
 		body = centerBlock
 	}
 
-	// Inline image escape sequences are appended AFTER all lipgloss rendering.
-	// They use absolute cursor positioning (save/move/restore) and must not pass
-	// through any lipgloss Width/Height/Border call that would insert characters
-	// into the escape payload.
-	imgSeq := m.editor.InlineImagePlacements()
-
+	// Inline image escape sequences are NOT appended to the frame: the editor
+	// emits them via tea.Raw from its Update (written straight to the tty,
+	// bypassing the cell renderer). The workspace already batches the editor's
+	// returned Cmds, so no extra wiring is needed here.
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
 		frame := lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View())
-		return tea.NewView(frame + imgSeq)
+		return tea.NewView(frame)
 	}
 	frame := lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View())
-	return tea.NewView(frame + imgSeq)
+	return tea.NewView(frame)
 }
 
 // overlayBreadcrumb post-processes a rendered bordered block by replacing part of

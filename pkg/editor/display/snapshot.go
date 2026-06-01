@@ -4,6 +4,36 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+// LinkRole classifies a link-like span by how it should be treated for
+// rendering and click handling, unifying standard markdown and Obsidian wiki
+// syntaxes onto one set of behaviors.
+type LinkRole int
+
+const (
+	LinkRoleNone LinkRole = iota
+	LinkRoleNavigable
+	LinkRoleImage
+)
+
+// linkRoleFor is the single source of truth mapping a token kind (plus the
+// wiki-link image flag) to its LinkRole. Both DisplaySpan and SyntaxSpan expose
+// it via their LinkRole() methods.
+func linkRoleFor(kind TokenKind, wikiIsImage bool) LinkRole {
+	switch kind {
+	case TokenImage:
+		return LinkRoleImage
+	case TokenWikiLink:
+		if wikiIsImage {
+			return LinkRoleImage
+		}
+		return LinkRoleNavigable
+	case TokenLink:
+		return LinkRoleNavigable
+	default:
+		return LinkRoleNone
+	}
+}
+
 type DisplaySpan struct {
 	Text         string
 	Kind         TokenKind
@@ -25,6 +55,9 @@ type DisplaySpan struct {
 	WikiLinkTarget string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
 }
+
+// LinkRole reports how this span should be treated as a link/embed.
+func (s DisplaySpan) LinkRole() LinkRole { return linkRoleFor(s.Kind, s.WikiLinkIsImage) }
 
 type DisplayLine struct {
 	Spans     []DisplaySpan

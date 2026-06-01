@@ -75,6 +75,9 @@ type SyntaxSpan struct {
 	LinkURL         string // link destination for TokenLink spans ([text](url))
 }
 
+// LinkRole reports how this span should be treated as a link/embed.
+func (s SyntaxSpan) LinkRole() LinkRole { return linkRoleFor(s.Kind, s.WikiLinkIsImage) }
+
 // FrontmatterMode controls how frontmatter is displayed in rendered mode.
 type FrontmatterMode int
 

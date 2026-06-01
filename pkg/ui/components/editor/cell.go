@@ -98,12 +98,18 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return spanToCells(sp, lipgloss.NewStyle())
 	}
 
+	// Link kinds dispatch by unified role before the kind switch.
+	switch sp.LinkRole() {
+	case display.LinkRoleImage:
+		// Alt-text fallback; the image paints separately via inline placement.
+		return spanToCells(sp, lipgloss.NewStyle())
+	case display.LinkRoleNavigable:
+		return spanToCells(sp, m.styles.Link)
+	}
+
 	switch sp.Kind {
 	case display.TokenCodeFence:
 		return m.codeFenceSpanToCells(sp)
-	case display.TokenImage:
-		// Image fallback: use plain style on alt text
-		return spanToCells(sp, lipgloss.NewStyle())
 	case display.TokenHeading:
 		return spanToCells(sp, m.headingStyle(sp.HeadingLevel))
 	case display.TokenInlineCode:
@@ -116,14 +122,6 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return spanToCells(sp, m.styles.MdStrikethrough)
 	case display.TokenBlockquote:
 		return spanToCells(sp, m.styles.MdBlockquote)
-	case display.TokenLink:
-		return spanToCells(sp, m.styles.Link)
-	case display.TokenWikiLink:
-		if sp.WikiLinkIsImage {
-			// Embedded image: use plain style (image discovery will handle rendering)
-			return spanToCells(sp, lipgloss.NewStyle())
-		}
-		return spanToCells(sp, m.styles.Link)
 	case display.TokenHorizontalRule:
 		return spanToCells(sp, m.styles.HorizontalRule)
 	case display.TokenTag:

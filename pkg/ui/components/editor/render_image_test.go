@@ -136,6 +136,33 @@ func TestView_WezTerm_NoPlaceholder(t *testing.T) {
 	}
 }
 
+// TestView_WezTerm_ReservesRowsNoAltText verifies that a standalone markdown
+// image with a live registry entry reserves multiple image rows on an
+// inline-capable (WezTerm) terminal and that View() does NOT paint the alt text
+// on those reserved rows (the image is delivered separately via tea.Raw).
+func TestView_WezTerm_ReservesRowsNoAltText(t *testing.T) {
+	wez := terminal.TermCaps{GraphicsProtocol: terminal.GraphicsWezTerm, TrueColor: true}
+	m := imageEditor(t, wez, "assets/x.png", 6, 4)
+	m = m.SetFocused(true)
+
+	// The image line must reserve more than one row.
+	reserved := false
+	for _, l := range m.snapshot.Lines {
+		if l.ImagePath == "assets/x.png" && l.ImageRowCount > 1 {
+			reserved = true
+			break
+		}
+	}
+	if !reserved {
+		t.Fatalf("expected the live image line to reserve >1 row, snapshot=%d rows", m.snapshot.TotalRows)
+	}
+
+	out := m.View()
+	if strings.Contains(out, "alt") {
+		t.Error("reserved image rows must not paint the alt-text fallback on an inline-capable terminal")
+	}
+}
+
 func TestView_RowCountParity_NonKittyVsKitty(t *testing.T) {
 	path := "assets/x.png"
 	doc := "line1\n![alt](" + path + ")\nline3"
