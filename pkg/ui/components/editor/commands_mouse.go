@@ -84,7 +84,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	offset := m.buf.LineColToOffset(bp)
 
 	// Check if click is on a link span (wiki link or markdown link)
-	if linkPath := m.resolveLinkClick(bp); linkPath != "" {
+	if linkPath := m.resolveLinkClick(bp, offset); linkPath != "" {
 		// Position cursor at click for visual feedback
 		m = m.mousePositionCursor(offset)
 		m.mouse.dragAnchor = offset
@@ -128,16 +128,17 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	return m, nil
 }
 
-// resolveLinkClick checks if the given buffer point falls on a wiki link or
-// markdown link span. Returns the resolved target path, or empty string if
-// not on a link.
-func (m Model) resolveLinkClick(bp coords.BufferPoint) string {
+// resolveLinkClick checks if the document-wide buffer offset falls on a wiki
+// link or markdown link span. Returns the resolved target path, or empty string
+// if not on a link. The offset is document-wide (m.buf.LineColToOffset(bp)) to
+// match SyntaxSpan.BufferStart/BufferEnd, which are also document-wide.
+func (m Model) resolveLinkClick(bp coords.BufferPoint, offset int) string {
 	if bp.Line < 0 || bp.Line >= len(m.syntaxSnap.Lines) {
 		return ""
 	}
 
 	line := m.syntaxSnap.Lines[bp.Line]
-	col := bp.Col
+	col := offset
 
 	for _, sp := range line.Spans {
 		if sp.BufferStart > col {
@@ -150,28 +151,23 @@ func (m Model) resolveLinkClick(bp coords.BufferPoint) string {
 			continue
 		}
 
-		// Check if this span is a link
-		switch sp.Kind {
-		case display.TokenWikiLink:
-			// Wiki link images are embedded content, not navigable links.
-			if sp.WikiLinkIsImage {
-				return ""
-			}
-			// Resolve wiki link target
-			if sp.WikiLinkTarget == "" {
-				return ""
-			}
-			return m.resolveWikiLinkTarget(sp.WikiLinkTarget)
-
-		case display.TokenLink:
-			// Markdown link — use the LinkURL field (populated for TokenLink spans)
-			if sp.LinkURL != "" {
-				// Remote URLs are handled by classifyLink → resolveSkip (returns "")
-				resolved := resolveLink(sp.LinkURL, m.filePath, /*appendMD=*/false, /*existCheck=*/false)
-				if resolved != "" {
-					return resolved
+		// Dispatch by unified link role.
+		switch sp.LinkRole() {
+		case display.LinkRoleImage:
+			// Embedded images are content, not navigable links.
+			return ""
+		case display.LinkRoleNavigable:
+			if sp.Kind == display.TokenWikiLink {
+				if sp.WikiLinkTarget == "" {
+					return ""
 				}
+				return m.resolveNavigation(sp.WikiLinkTarget, /*appendMD=*/ true)
 			}
+			// TokenLink — remote URLs resolve to "" via classifyLink → resolveSkip.
+			if sp.LinkURL == "" {
+				return ""
+			}
+			return m.resolveNavigation(sp.LinkURL, /*appendMD=*/ false)
 		}
 	}
 	return ""

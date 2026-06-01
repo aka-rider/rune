@@ -3,7 +3,6 @@ package editor
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,15 +32,16 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		}
 		seen[path] = true
 
-		absPath := m.resolveImagePath(path)
+		absPath := m.resolveEmbed(path)
 		if absPath == "" {
 			continue
 		}
 		mtime := fileMtime(absPath)
 
 		if existing, ok := m.images.get(path); ok {
-			// Already tracked — only re-decode if the source changed on disk.
-			if existing.mtime == mtime || existing.state == pendingDecode {
+			// Already tracked — only re-decode if the source changed on disk. A
+			// failed entry is not retried every sync unless its mtime changed.
+			if existing.mtime == mtime || existing.state == pendingDecode || existing.state == failed {
 				continue
 			}
 			existing.state = pendingDecode
@@ -67,84 +67,6 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, tea.Batch(cmds...)
-}
-
-// discoverWikiLinkImages scans the current snapshot for wiki link image spans
-// ([[image.png]]) whose images are not yet tracked and dispatches DecodeImageCmd
-// for each. It is a no-op on non-capable terminals.
-func (m Model) discoverWikiLinkImages() (Model, tea.Cmd) {
-	if !m.imageCapable() {
-		return m, nil
-	}
-	maxCols := m.imageMaxCols()
-	maxRows := m.contentHeight()
-	cs := m.cellSize
-
-	var cmds []tea.Cmd
-
-	for _, l := range m.snapshot.Lines {
-		for _, sp := range l.Spans {
-			if sp.Kind != display.TokenWikiLink || !sp.WikiLinkIsImage {
-				continue
-			}
-			if sp.WikiLinkTarget == "" {
-				continue
-			}
-
-			// Resolve the wiki link target to an absolute path
-			absPath := m.resolveWikiLinkImagePath(sp.WikiLinkTarget)
-			if absPath == "" {
-				continue
-			}
-
-			// Check if already tracked
-			if existing, ok := m.images.get(sp.WikiLinkTarget); ok {
-				mtime := fileMtime(absPath)
-				if existing.mtime == mtime || existing.state == pendingDecode {
-					continue
-				}
-				existing.state = pendingDecode
-				existing.mtime = mtime
-				m.images = m.images.upsert(existing)
-				cmds = append(cmds, DecodeImageCmd(sp.WikiLinkTarget, absPath, mtime, maxCols, maxRows, cs))
-				continue
-			}
-
-			id := m.images.allocFreeID(absPath)
-			m.images = m.images.upsert(imageEntry{
-				path:    sp.WikiLinkTarget,
-				absPath: absPath,
-				id:      id,
-				mtime:   fileMtime(absPath),
-				state:   pendingDecode,
-				altText: sp.Text,
-			})
-			cmds = append(cmds, DecodeImageCmd(sp.WikiLinkTarget, absPath, fileMtime(absPath), maxCols, maxRows, cs))
-		}
-	}
-
-	if len(cmds) == 0 {
-		return m, nil
-	}
-	return m, tea.Batch(cmds...)
-}
-
-// resolveWikiLinkImagePath resolves a wiki link image target to an absolute path.
-// Images must exist on disk. Tries the target as-is, then with .md appended
-// if the target has no extension (Obsidian-like).
-func (m Model) resolveWikiLinkImagePath(target string) string {
-	// Try as-is first (most common case — image has an extension)
-	if resolved := resolveLink(target, m.filePath, /*appendMD=*/false, /*existCheck=*/true); resolved != "" {
-		return resolved
-	}
-	// If target has no extension and as-is failed, try with .md
-	// (handles rare case of extension-less images or embedded markdown)
-	if filepath.Ext(strings.TrimSpace(target)) == "" {
-		if resolved := resolveLink(target, m.filePath, /*appendMD=*/true, /*existCheck=*/true); resolved != "" {
-			return resolved
-		}
-	}
-	return ""
 }
 
 // handleImageDecoded records measured dimensions, reserves rows, re-anchors the
@@ -249,10 +171,32 @@ func (m Model) buildInlineImagePlacements() string {
 		}
 
 		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
-		fmt.Fprintf(&sb, "\033[s\033[%d;%dH%s\033[u", screenRow, col, e.iterm2Slices[l.ImageRowIndex])
+		// DECSC (\0337) / DECRC (\0338) save and restore the cursor; WezTerm
+		// honors these consistently where the SCO save/restore (\033[s/\033[u)
+		// is unreliable.
+		fmt.Fprintf(&sb, "\0337\033[%d;%dH%s\0338", screenRow, col, e.iterm2Slices[l.ImageRowIndex])
 	}
 
 	return sb.String()
+}
+
+// emitInlinePlacements emits the current iTerm2/WezTerm inline-image placement
+// escapes via tea.Raw (written straight to the tty, bypassing the cell
+// renderer) — but only when the visible placement set changed since the last
+// emit, to avoid per-frame flicker.
+func (m Model) emitInlinePlacements() (Model, tea.Cmd) {
+	if !m.imageInlineCapable() {
+		return m, nil
+	}
+	seq := m.buildInlineImagePlacements()
+	if seq == m.lastPlacementSeq {
+		return m, nil
+	}
+	m.lastPlacementSeq = seq
+	if seq == "" {
+		return m, nil // nothing to paint; frame redraw clears any prior image rows
+	}
+	return m, tea.Raw(seq)
 }
 
 // handleImageError marks an image failed so it collapses back to the alt-text
@@ -361,13 +305,6 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 		m.images = m.images.upsert(e)
 	}
 	return m
-}
-
-// resolveImagePath resolves a raw markdown image destination to an absolute on-disk
-// path. Remote/data URLs and unresolvable relative paths return "".
-// Basename and ./ links resolve from the file's directory. Path links use CWD.
-func (m Model) resolveImagePath(path string) string {
-	return resolveLink(path, m.filePath, /*appendMD=*/false, /*existCheck=*/false)
 }
 
 func isRemoteURL(path string) bool {

@@ -95,6 +95,8 @@ type Model struct {
 	offsetX     int
 	offsetY     int
 	focused     bool
+
+	lastPlacementSeq string // last inline-image escape sequence emitted via tea.Raw (change-gate)
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -123,7 +125,20 @@ func hashContent(content string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// Update handles a message and then emits any inline-image placement escapes
+// via tea.Raw (the placement is gated so it only re-emits when the visible
+// placement set changes). The message handling proper lives in update.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	m, cmd := m.update(msg)
+	var pcmd tea.Cmd
+	m, pcmd = m.emitInlinePlacements()
+	if pcmd != nil {
+		cmd = tea.Batch(cmd, pcmd)
+	}
+	return m, cmd
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case ClipboardContentMsg:
@@ -556,15 +571,6 @@ func (m Model) SetContent(path string, content []byte) Model {
 func (m Model) SetDir(dir string) Model {
 	m.breadcrumb = m.breadcrumb.SetDir(dir)
 	return m
-}
-
-// resolveWikiLinkTarget resolves a raw wiki link target to an absolute file path
-// for navigation (opening a note). Follows Obsidian-like resolution:
-//   - basename or ./ links → file's directory → CWD (unless ./, no fallback)
-//   - path links → CWD
-//   - No extension → append .md
-func (m Model) resolveWikiLinkTarget(raw string) string {
-	return resolveLink(raw, m.filePath, /*appendMD=*/true, /*existCheck=*/false)
 }
 
 // SetHighlighter replaces the code highlighter adapter. Used for testing.

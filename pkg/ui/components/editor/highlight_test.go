@@ -55,19 +55,6 @@ func TestCodeFenceHighlight_LanguageLabelRendered(t *testing.T) {
 	m := newTestEditor(md)
 	m = m.syncDisplay()
 
-	// Debug: directly test renderSpan on the opening fence marker span
-	for i, line := range m.snapshot.Lines {
-		for _, sp := range line.Spans {
-			if sp.Kind == display.TokenCodeFence && sp.Text == "" && sp.Language == "go" {
-				rendered := m.renderSpan(sp)
-				t.Logf("line %d: renderSpan for fence marker returned %q", i, rendered)
-				if !strings.Contains(rendered, "go") {
-					t.Errorf("renderSpan for fence marker with lang='go' should contain 'go', got %q", rendered)
-				}
-			}
-		}
-	}
-
 	// The View should contain the language label.
 	view := m.View()
 	if !strings.Contains(view, "go") {

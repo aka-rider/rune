@@ -124,3 +124,25 @@ func fileExistsForLink(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
+
+// resolveEmbed resolves an image/embed target to an existing on-disk path.
+// Embeds are content: the file MUST exist. Tries the target as-is; if it is
+// extensionless and that fails, retries with .md appended (Obsidian embeds).
+func (m Model) resolveEmbed(target string) string {
+	if resolved := resolveLink(target, m.filePath, /*appendMD=*/ false, /*existCheck=*/ true); resolved != "" {
+		return resolved
+	}
+	if filepath.Ext(strings.TrimSpace(target)) == "" {
+		if resolved := resolveLink(target, m.filePath, /*appendMD=*/ true, /*existCheck=*/ true); resolved != "" {
+			return resolved
+		}
+	}
+	return ""
+}
+
+// resolveNavigation resolves a navigable link target. appendMD encodes the
+// Obsidian affordance (wikilinks append .md; markdown links keep their explicit
+// extension). No exist-check — opening the path reports its own errors.
+func (m Model) resolveNavigation(target string, appendMD bool) string {
+	return resolveLink(target, m.filePath, appendMD, /*existCheck=*/ false)
+}

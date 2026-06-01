@@ -135,10 +135,38 @@ func TestImageLifecycle_DecodeTransmitLive(t *testing.T) {
 	}
 }
 
+// TestImageLifecycle_MissingFileNotDiscovered verifies that with resolveEmbed's
+// exist-check, a markdown image whose file does not exist on disk resolves to ""
+// and is never registered or decoded (removes decode-fail flutter).
+func TestImageLifecycle_MissingFileNotDiscovered(t *testing.T) {
+	dir := t.TempDir()
+	// Note: no file written — resolveEmbed's exist-check fails, so it is skipped.
+	m := docEditor(t, dir, "intro\n![alt](assets/missing.png)\noutro")
+
+	m, cmd := m.discoverNewImages()
+	if cmd != nil {
+		t.Error("missing image file must not produce a decode Cmd")
+	}
+	if _, ok := m.images.get("assets/missing.png"); ok {
+		t.Error("missing image file must not be registered")
+	}
+}
+
+// TestImageLifecycle_DecodeErrorFallsBack verifies that a file which exists but
+// fails to decode (corrupt / non-image bytes) transitions to the failed state
+// and does not reserve rows.
 func TestImageLifecycle_DecodeErrorFallsBack(t *testing.T) {
 	dir := t.TempDir()
-	// Note: no file written — decode will fail.
-	m := docEditor(t, dir, "intro\n![alt](assets/missing.png)\noutro")
+	// Write a present-but-corrupt "image" so resolveEmbed resolves it but decode fails.
+	corrupt := filepath.Join(dir, "assets", "corrupt.png")
+	if err := os.MkdirAll(filepath.Dir(corrupt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(corrupt, []byte("not a real png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := docEditor(t, dir, "intro\n![alt](assets/corrupt.png)\noutro")
 
 	m, cmd := m.discoverNewImages()
 	msgs := runCmd(t, cmd)
@@ -147,7 +175,7 @@ func TestImageLifecycle_DecodeErrorFallsBack(t *testing.T) {
 		t.Fatalf("expected ImageDecodeErrorMsg, got %+v", msgs)
 	}
 	m, _ = m.Update(errMsg)
-	if e, _ := m.images.get("assets/missing.png"); e.state != failed {
+	if e, _ := m.images.get("assets/corrupt.png"); e.state != failed {
 		t.Errorf("expected failed state, got %v", e.state)
 	}
 	// Failed image must not reserve rows.
@@ -278,11 +306,11 @@ func TestInlinePlacement_ViewContainsEscapes(t *testing.T) {
 	// Now the image is live with iterm2Slices. InlineImagePlacements() should
 	// contain the escape positioning sequences (appended at workspace level).
 	seq := m.InlineImagePlacements()
-	if !strings.Contains(seq, "\033[s\033[") {
-		t.Error("InlineImagePlacements() should contain cursor-save + move escape")
+	if !strings.Contains(seq, "\0337") {
+		t.Error("InlineImagePlacements() should contain DECSC (cursor-save) escape")
 	}
-	if !strings.Contains(seq, "\033[u") {
-		t.Error("InlineImagePlacements() should contain cursor-restore escape")
+	if !strings.Contains(seq, "\0338") {
+		t.Error("InlineImagePlacements() should contain DECRC (cursor-restore) escape")
 	}
 }
 
@@ -327,7 +355,7 @@ func TestInlinePlacement_ScrollChangesViewAtomically(t *testing.T) {
 	// Image is around line 15; scroll down to bring it into view.
 	m.viewport.TopRow = 14
 	seq1 := m.InlineImagePlacements()
-	if !strings.Contains(seq1, "\033[s\033[") {
+	if !strings.Contains(seq1, "\0337") {
 		t.Error("InlineImagePlacements() at TopRow=14 should contain inline image escapes")
 	}
 
@@ -344,7 +372,7 @@ func TestInlinePlacement_ScrollChangesViewAtomically(t *testing.T) {
 	// Scroll image out of view entirely.
 	m.viewport.TopRow = 0
 	seq3 := m.InlineImagePlacements()
-	if strings.Contains(seq3, "\033[s\033[") {
+	if strings.Contains(seq3, "\0337") {
 		t.Error("InlineImagePlacements() should be empty when image is out of viewport")
 	}
 }
