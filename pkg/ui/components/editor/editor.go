@@ -21,6 +21,7 @@ import (
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/breadcrumb"
 	"rune/pkg/ui/components/editor/title"
+	"rune/pkg/ui/components/image"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -80,7 +81,8 @@ type Model struct {
 
 	termCaps    terminal.TermCaps
 	imageConfig ImageConfig
-	images      imageRegistry
+	images      map[string]image.Model
+	idAlloc     imageIDAllocator
 	cellSize    imagekit.CellSize
 	mouse       mouseState
 	findOverlay FindOverlay
@@ -109,7 +111,8 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		highlighter: ChromaHighlighter(),
 		termCaps:    caps,
 		imageConfig: ImageConfig{AssetsDir: "assets"},
-		images:      newImageRegistry(),
+		images:      map[string]image.Model{},
+		idAlloc:     newImageIDAllocator(),
 		cellSize:    imagekit.DefaultCellSize(),
 		title:       title.New("Untitled", st),
 		breadcrumb:  breadcrumb.New(st, validateFilename),
@@ -131,7 +134,7 @@ func hashContent(content string) string {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	m, cmd := m.update(msg)
 	var pcmd tea.Cmd
-	m, pcmd = m.emitInlinePlacements()
+	m, pcmd = m.emitImagePlacements()
 	if pcmd != nil {
 		cmd = tea.Batch(cmd, pcmd)
 	}
@@ -160,32 +163,13 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		// Error saved; no-op for now (could surface to footer)
 		return m, nil
 
-	case ImageDecodedMsg:
-		return m.handleImageDecoded(msg)
-
-	case ImageTransmittedMsg:
-		return m.handleImageTransmitted(msg)
-
-	case ImageEncodedMsg:
-		return m.handleImageEncoded(msg)
-
-	case ImagePlacedMsg:
-		// Placement acknowledged — no action needed.
-		return m, nil
-
-	case ImageDecodeErrorMsg:
-		return m.handleImageError(msg.Path)
-
-	case ImageTransmitErrorMsg:
-		return m.handleImageError(msg.Path)
+	case image.UpdateMsg, image.ReadyMsg, image.ErrorMsg:
+		return m.updateImages(msg)
 
 	case LinkClickedMsg:
 		// Link click is handled by the workspace page which opens the file.
 		// The editor just emits the message via a Cmd.
 		return m, nil
-
-	case imageFrameTickMsg:
-		return m.handleImageFrameTick(msg)
 
 	case tea.WindowSizeMsg:
 		// The workspace sizes children (SetSize) before forwarding this, so the

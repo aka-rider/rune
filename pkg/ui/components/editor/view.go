@@ -153,5 +153,5 @@ func (m Model) View() string {
 // (Update), bypassing the cell renderer; this accessor is retained for tests
 // that inspect the computed sequence.
 func (m Model) InlineImagePlacements() string {
-	return m.buildInlineImagePlacements()
+	return m.lastPlacementSeq
 }
