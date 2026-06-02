@@ -92,19 +92,38 @@ func renderedSpanToCells(text string, cm []display.CellMapping, style lipgloss.S
 
 // spanToCellsStyled converts a span to styled cells, applying kind-specific
 // styling (bold, inline code, headings, etc.) and syntax highlighting for code fences.
+// For table spans with inline formatting (bold, link, etc.), the table role style
+// is merged with the kind-specific style.
 func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 	if sp.State == display.Revealed {
 		// Revealed spans have no special styling from the renderer
 		return spanToCells(sp, lipgloss.NewStyle())
 	}
 
-	// Link kinds dispatch by unified role before the kind switch.
+	// Link kinds in table context: merge table role style with link style.
+	if sp.TableRole != 0 {
+		switch sp.LinkRole() {
+		case display.LinkRoleImage:
+			// Alt-text fallback; the image paints separately via inline placement.
+			return spanToCells(sp, lipgloss.NewStyle())
+		case display.LinkRoleNavigable:
+			style := m.tableRoleStyle(sp.TableRole)
+			return spanToCells(sp, m.styles.Link.Background(style.GetBackground()))
+		}
+	}
+
+	// Non-table link kinds dispatch by unified role before the kind switch.
 	switch sp.LinkRole() {
 	case display.LinkRoleImage:
 		// Alt-text fallback; the image paints separately via inline placement.
 		return spanToCells(sp, lipgloss.NewStyle())
 	case display.LinkRoleNavigable:
 		return spanToCells(sp, m.styles.Link)
+	}
+
+	// Table spans: merge table role style with kind-specific inline formatting.
+	if sp.TableRole != 0 {
+		return spanToCells(sp, m.mergeTableStyle(sp.TableRole, sp.Kind))
 	}
 
 	switch sp.Kind {
@@ -134,6 +153,44 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return m.tableSpanToCells(sp)
 	default:
 		return spanToCells(sp, lipgloss.NewStyle())
+	}
+}
+
+// tableRoleStyle returns the base style for a table role (header, separator, body).
+func (m Model) tableRoleStyle(role display.TableRoleKind) lipgloss.Style {
+	switch role {
+	case display.TableRoleHeader:
+		return m.styles.TableHeader
+	case display.TableRoleSeparator:
+		return m.styles.TableSeparator
+	default:
+		return m.styles.TableBody
+	}
+}
+
+// mergeTableStyle merges a table role style with kind-specific inline formatting.
+// This enables bold, italic, inline code, etc. inside table cells while preserving
+// the table's background color and other role-specific styling.
+func (m Model) mergeTableStyle(role display.TableRoleKind, kind display.TokenKind) lipgloss.Style {
+	base := m.tableRoleStyle(role)
+
+	switch kind {
+	case display.TokenBold:
+		return base.Bold(true)
+	case display.TokenItalic:
+		return base.Italic(true)
+	case display.TokenStrikethrough:
+		return base.CrossOverStrikeThrough(true)
+	case display.TokenInlineCode:
+		// Inline code in tables: use inline code foreground with table background
+		return m.styles.InlineCode.Background(base.GetBackground())
+	case display.TokenLink:
+		// Link in tables: use link style with table background
+		return m.styles.Link.Background(base.GetBackground())
+	case display.TokenWikiLink:
+		return m.styles.Link.Background(base.GetBackground())
+	default:
+		return base
 	}
 }
 

@@ -373,6 +373,8 @@ func blockSpansForLine(
 	fmMode FrontmatterMode,
 	fmError string,
 	mdSpans []mdSpan,
+	parsed []parsedLine,
+	availableWidth int,
 ) []SyntaxSpan {
 	if revealed {
 		return []SyntaxSpan{{
@@ -393,7 +395,7 @@ func blockSpansForLine(
 	case TokenCodeFence:
 		return codeFenceRenderedSpans(block, lineIdx, lineText, lineStart)
 	case TokenTable:
-		return tableRenderedSpans(block, lineIdx, lineText, lineStart, mdSpans)
+		return tableRenderedSpans(block, lineIdx, lineText, lineStart, mdSpans, parsed, availableWidth)
 	case TokenFrontmatter:
 		return frontmatterRenderedSpans(block, lineIdx, lineText, lineStart, fmMode, fmError)
 	case TokenMathBlock:

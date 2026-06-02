@@ -96,7 +96,7 @@ func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
 			return ast.WalkSkipChildren, nil
 		case *east.Table:
 			walkTable(node, src, lines, lineOffsets, &blockID, &blocks)
-			return ast.WalkSkipChildren, nil
+			// Do NOT skip children — let inline walkers visit cell content
 		case *WikiLinkNode:
 			walkWikiLink(node, src, lines, lineOffsets, result)
 		case *ast.Image:

@@ -52,6 +52,15 @@ const (
 	TableRoleSeparator
 )
 
+// TableLayoutKind distinguishes the three adaptive layout states for tables.
+type TableLayoutKind int
+
+const (
+	TableLayoutGrid TableLayoutKind = iota // Standard grid layout (single line per row)
+	TableLayoutWrapped                      // Word-wrapped grid (cells wrap within columns)
+	TableLayoutPivoted                      // Pivoted key-value format (Header: Value)
+)
+
 type SyntaxSpan struct {
 	Text         string
 	Kind         TokenKind
@@ -67,8 +76,9 @@ type SyntaxSpan struct {
 	ImagePath    string // image path/URL
 	EmbedRef     string // embed reference (e.g. [[filename]])
 	CalloutKind  string // callout type (e.g. "note", "warning")
-	HeadingLevel int    // heading level (1-6), 0 for non-headings
-	TableRole    TableRoleKind
+	HeadingLevel  int    // heading level (1-6), 0 for non-headings
+	TableRole     TableRoleKind
+	TableLayout   TableLayoutKind // layout state (grid/wrapped/pivoted) for table spans
 	// Wiki link metadata (set for TokenWikiLink spans)
 	WikiLinkTarget  string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
@@ -221,10 +231,18 @@ type SyntaxMap struct {
 	lastBufVer      uint64
 	lastCursorPos   coords.BufferPoint
 	FrontmatterMode FrontmatterMode
+	width           int // available width for adaptive table layout
 }
 
 func NewSyntaxMap() SyntaxMap {
 	return SyntaxMap{FrontmatterMode: FrontmatterCollapsed}
+}
+
+// SetWidth sets the available width for adaptive table layout.
+// Call this before Sync() to enable grid/wrapped/pivoted table rendering.
+func (m SyntaxMap) SetWidth(w int) SyntaxMap {
+	m.width = w
+	return m
 }
 
 func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap, SyntaxSnapshot) {
@@ -285,7 +303,7 @@ func (m SyntaxMap) syncInternal(buf buffer.Buffer, cursors cursor.CursorSet, rev
 				mdSpans = parsed[i].spans
 			}
 
-			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode, fmError, mdSpans)
+			spans := blockSpansForLine(block, i, lineText, lineStart, revealed, m.FrontmatterMode, fmError, mdSpans, parsed, m.width)
 			lines[i] = SyntaxLine{Spans: spans}
 			// Block lines in rendered mode with hidden delimiters need deltas
 			needsHiddenLineDelta := false
