@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,70 +11,48 @@ import (
 	"rune/pkg/ui/components/image"
 )
 
-const debugImageFile = "/tmp/rune_image_debug.log"
-
-func debugLog(format string, args ...any) {
-	f, err := os.OpenFile(debugImageFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "[%s] ", time.Now().Format("15:04:05.000"))
-	fmt.Fprintf(f, format, args...)
-	fmt.Fprintln(f)
-}
-
 func (m Model) emitImagePlacements() (Model, tea.Cmd) {
 	if !m.imageInlineCapable() {
 		return m, nil
 	}
 	seq := m.buildInlineImagePlacements()
-	gated := seq == m.lastPlacementSeq
-
-	debugLog("emitImagePlacements: seqLen=%d lastSeqLen=%d gated=%v topRow=%d offsetY=%d headerH=%d focused=%v pendingSeq=%d",
-		len(seq), len(m.lastPlacementSeq), gated, m.viewport.TopRow, m.offsetY, m.headerHeight(), m.focused, len(m.pendingPlacementSeq))
-
-	// If we have a pending sequence from last frame, emit it NOW.
-	// This ensures the Raw arrives on a frame where BubbleTea's diff
-	// has already written the spaces (no overwrite race).
-	if m.pendingPlacementSeq != "" {
-		pending := m.pendingPlacementSeq
-		m.pendingPlacementSeq = ""
-		m.lastPlacementSeq = pending
-		debugLog("  → emitting PENDING Raw, seqLen=%d", len(pending))
-		return m, tea.Raw(pending)
-	}
-
-	if gated {
+	if seq == m.lastPlacementSeq {
 		return m, nil
 	}
+	m.lastPlacementSeq = seq
+	m.pendingPlacementSeq = ""
 
 	if seq == "" {
-		m.lastPlacementSeq = ""
-		debugLog("  → seq empty, clearing lastPlacementSeq")
+		// Image collapsed or scrolled out. No placement needed.
+		// BubbleTea's renderer will overwrite the area with text/spaces.
 		return m, nil
 	}
 
-	// Don't emit now — defer to next frame so BubbleTea's diff renderer
-	// writes the spaces first, then our Raw paints over them.
+	// Defer the actual placement to the NEXT frame. On THIS frame, BubbleTea's
+	// renderer writes the space cells (reserving the area). On the next frame,
+	// tea.Raw fires — BubbleTea processes RawMsg by calling p.execute() BEFORE
+	// p.render(), and since View() hasn't changed (still spaces), p.render()
+	// skips → image survives.
 	m.pendingPlacementSeq = seq
-	debugLog("  → deferring seq to next frame, seqLen=%d", len(seq))
-	// Return a no-op cmd that triggers another Update cycle
 	return m, func() tea.Msg { return placementTickMsg{} }
 }
 
-// placementTickMsg is an internal message that triggers the next Update cycle
-// so the deferred placement sequence can be emitted.
 type placementTickMsg struct{}
+
+func (m Model) handlePlacementTick() (Model, tea.Cmd) {
+	if m.pendingPlacementSeq == "" {
+		return m, nil
+	}
+	seq := m.pendingPlacementSeq
+	m.pendingPlacementSeq = ""
+	return m, tea.Raw(seq)
+}
 
 func (m Model) buildInlineImagePlacements() string {
 	topRow := m.viewport.TopRow
 	contentH := m.contentHeight()
 	screenBase := m.offsetY + m.headerHeight()
 	col := m.offsetX + 2 // 1-based terminal column + 1 left margin
-
-	debugLog("buildInlineImagePlacements: topRow=%d contentH=%d screenBase=%d col=%d snapshotLines=%d",
-		topRow, contentH, screenBase, col, len(m.snapshot.Lines))
 
 	var sb strings.Builder
 	for lineIdx, l := range m.snapshot.Lines {
@@ -84,8 +61,6 @@ func (m Model) buildInlineImagePlacements() string {
 		}
 		img, ok := m.images[l.ImagePath]
 		if !ok || !img.IsLive() || len(img.ITerm2Slices()) == 0 {
-			debugLog("  line[%d] path=%q skip: ok=%v live=%v slices=%d",
-				lineIdx, l.ImagePath, ok, ok && img.IsLive(), func() int { if ok { return len(img.ITerm2Slices()) }; return 0 }())
 			continue
 		}
 
@@ -97,15 +72,10 @@ func (m Model) buildInlineImagePlacements() string {
 
 		slices := img.ITerm2Slices()
 		if l.ImageRowIndex < 0 || l.ImageRowIndex >= len(slices) {
-			debugLog("  line[%d] path=%q rowIdx=%d OUT OF RANGE (slices=%d)", lineIdx, l.ImagePath, l.ImageRowIndex, len(slices))
 			continue
 		}
 
 		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
-		if l.ImageRowIndex == 0 {
-			debugLog("  FIRST ROW: line[%d] path=%q displayRow=%d screenRow=%d rowIdx=%d totalSlices=%d imgRows=%d",
-				lineIdx, l.ImagePath, displayRow, screenRow, l.ImageRowIndex, len(slices), img.Height())
-		}
 		fmt.Fprintf(&sb, "\0337\033[%d;%dH%s\0338", screenRow, col, slices[l.ImageRowIndex])
 	}
 
@@ -311,20 +281,16 @@ func (m Model) detectImageCollapse() (Model, bool) {
 		img = img.SetExpanded(expanded[path])
 		if img.WasCollapsed() && !wasCollapsed {
 			collapsed = true
-			debugLog("detectImageCollapse: path=%q COLLAPSED (wasExpanded→!expanded)", path)
 		}
 		m.images[path] = img
 	}
 	if collapsed {
-		debugLog("detectImageCollapse: resetting lastPlacementSeq (NO ClearScreen)")
 		m.lastPlacementSeq = ""
 	}
-	// NOTE: We intentionally do NOT emit tea.ClearScreen here.
-	// ClearScreen races with tea.Raw placement on re-expansion.
-	// Instead, the normal View() repaint handles erasure — when image rows
-	// collapse, BubbleTea's diff renderer writes text/spaces over the area,
-	// naturally clearing the image pixels.
-	return m, false // always false — caller should not emit ClearScreen
+	// Return false — never emit tea.ClearScreen. BubbleTea's renderer
+	// naturally overwrites image pixels when View() changes (collapsed text
+	// replaces space cells). ClearScreen races with tea.Raw placement.
+	return m, false
 }
 
 func (m Model) DeleteAllImagesCmd() tea.Cmd {

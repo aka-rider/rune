@@ -40,6 +40,15 @@ func ExpandTableRows(ds DisplaySnapshot) DisplaySnapshot {
 
 		newLines = append(newLines, l)
 
+		// Add inter-row separator between body rows
+		if isBodyRowBoundary(splitLines, i) {
+			addedBorders = true
+			border := buildTableBorder(l, separatorBody)
+			if border != nil {
+				newLines = append(newLines, *border)
+			}
+		}
+
 		if isGridTableLine(l) && isLastTableLine(splitLines, i) {
 			addedBorders = true
 			border := buildTableBorder(l, separatorBottom)
@@ -112,11 +121,54 @@ func isLastTableLine(lines []DisplayLine, i int) bool {
 // getTableBlockID returns the table block ID from a display line's spans.
 func getTableBlockID(l DisplayLine) int {
 	for _, sp := range l.Spans {
-		if sp.TableLayout == TableLayoutGrid && sp.BlockID > 0 {
+		if (sp.TableLayout == TableLayoutGrid || sp.TableLayout == TableLayoutWrapped) && sp.BlockID > 0 {
 			return sp.BlockID
 		}
 	}
 	return 0
+}
+
+// getTableRole returns the table role from a display line's spans.
+func getTableRole(l DisplayLine) TableRoleKind {
+	for _, sp := range l.Spans {
+		if sp.TableRole != 0 {
+			return sp.TableRole
+		}
+	}
+	return TableRoleBody
+}
+
+// isBodyRowBoundary checks if line at index i is the last display line of a body row
+// and the next display line starts a different body row in the same table.
+func isBodyRowBoundary(lines []DisplayLine, i int) bool {
+	if i >= len(lines)-1 {
+		return false
+	}
+	cur := lines[i]
+	next := lines[i+1]
+
+	// Both must be grid/wrapped table lines
+	if !isGridTableLine(cur) || !isGridTableLine(next) {
+		return false
+	}
+
+	// Must be same table block
+	if getTableBlockID(cur) != getTableBlockID(next) {
+		return false
+	}
+
+	// Current must be a body row (not header or separator)
+	if getTableRole(cur) != TableRoleBody {
+		return false
+	}
+
+	// Next must be a body row (not separator or header)
+	if getTableRole(next) != TableRoleBody {
+		return false
+	}
+
+	// They must be different source rows (different ModelLine)
+	return cur.ModelLine != next.ModelLine
 }
 
 // getTableColWidths extracts column widths by parsing the rendered row text.
@@ -178,9 +230,10 @@ func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
 		cm[i] = CellMapping{BufOffset: -1}
 	}
 
-	// Get block metadata from source line
+	// Get block metadata and layout from source line
 	var blockID, blockStart, blockEnd int
 	var bufStart, bufEnd int
+	layout := TableLayoutGrid
 	for _, sp := range l.Spans {
 		if sp.BlockID > 0 {
 			blockID = sp.BlockID
@@ -188,6 +241,9 @@ func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
 			blockEnd = sp.BlockEnd
 			bufStart = sp.BufferStart
 			bufEnd = sp.BufferEnd
+			if sp.TableLayout == TableLayoutWrapped {
+				layout = TableLayoutWrapped
+			}
 			break
 		}
 	}
@@ -204,7 +260,7 @@ func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
 			BlockStart:  blockStart,
 			BlockEnd:    blockEnd,
 			TableRole:   TableRoleSeparator,
-			TableLayout: TableLayoutGrid,
+			TableLayout: layout,
 		}},
 		ModelLine: l.ModelLine,
 		WrapIndex: 0,

@@ -150,6 +150,13 @@ func EncodeITerm2Cmd(m Model) tea.Cmd {
 	}
 }
 
+// WritePlacement writes a placement escape sequence directly to the TTY,
+// bypassing BubbleTea's renderer. This avoids the race where BubbleTea's
+// diff-renderer overwrites image pixels on the same frame.
+func WritePlacement(seq string) error {
+	return writeTTY(seq)
+}
+
 // DeleteCmd deletes the given image IDs from the terminal. Fire-and-forget.
 func DeleteAllCmd() tea.Cmd {
 	return func() tea.Msg {

@@ -104,7 +104,8 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 	// Table spans: merge inline formatting (bold, link, code) with table role styling.
 	// This must come before the LinkRole and Kind switches so that inline-formatted
 	// content inside table cells receives both styles.
-	if sp.TableRole != 0 {
+	// Note: TableRoleBody is zero-value, so we detect table spans via Kind.
+	if sp.Kind == display.TokenTable {
 		return m.tableSpanToCells(sp)
 	}
 
@@ -188,10 +189,18 @@ func (m Model) taskListSpanToCells(sp display.DisplaySpan) []Cell {
 
 // tableSpanToCells creates styled cells for a table span based on its role.
 // It merges inline formatting (bold, italic, link, code) with the table role style.
+// Border characters (│) use the dimmer TableBorder style.
 func (m Model) tableSpanToCells(sp display.DisplaySpan) []Cell {
 	baseStyle := m.tableRoleStyle(sp.TableRole)
 	style := mergeInlineStyle(baseStyle, sp.Kind, sp, m.styles)
-	return spanToCells(sp, style)
+	cells := spanToCells(sp, style)
+	// Apply dim border style to │ characters
+	for i := range cells {
+		if cells[i].Rune == '│' {
+			cells[i].Style = m.styles.TableBorder
+		}
+	}
+	return cells
 }
 
 // mergeInlineStyle applies inline formatting (bold, italic, link, code) on top

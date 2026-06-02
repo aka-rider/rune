@@ -258,11 +258,11 @@ func formatTableSeparatorWithType(colWidths []int, sepType separatorType) string
 		} else {
 			b.WriteRune(junction)
 		}
-		b.WriteRune(' ')
+		b.WriteRune(horiz)
 		for j := 0; j < w; j++ {
 			b.WriteRune(horiz)
 		}
-		b.WriteRune(' ')
+		b.WriteRune(horiz)
 	}
 	b.WriteRune(rightCorner)
 	return b.String()
