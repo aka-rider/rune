@@ -8,6 +8,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"rune/pkg/editor/display"
+	"rune/pkg/ui/styles"
 )
 
 // Cell represents a single visual character in the cell grid.
@@ -98,6 +99,13 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []Cell {
 		return spanToCells(sp, lipgloss.NewStyle())
 	}
 
+	// Table spans: merge inline formatting (bold, link, code) with table role styling.
+	// This must come before the LinkRole and Kind switches so that inline-formatted
+	// content inside table cells receives both styles.
+	if sp.TableRole != 0 {
+		return m.tableSpanToCells(sp)
+	}
+
 	// Link kinds dispatch by unified role before the kind switch.
 	switch sp.LinkRole() {
 	case display.LinkRoleImage:
@@ -167,14 +175,41 @@ func (m Model) taskListSpanToCells(sp display.DisplaySpan) []Cell {
 }
 
 // tableSpanToCells creates styled cells for a table span based on its role.
+// It merges inline formatting (bold, italic, link, code) with the table role style.
 func (m Model) tableSpanToCells(sp display.DisplaySpan) []Cell {
-	switch sp.TableRole {
+	baseStyle := m.tableRoleStyle(sp.TableRole)
+	style := mergeInlineStyle(baseStyle, sp.Kind, sp, m.styles)
+	return spanToCells(sp, style)
+}
+
+// tableRoleStyle returns the base style for a table role (header, body, separator).
+func (m Model) tableRoleStyle(role display.TableRoleKind) lipgloss.Style {
+	switch role {
 	case display.TableRoleHeader:
-		return spanToCells(sp, m.styles.TableHeader)
+		return m.styles.TableHeader
 	case display.TableRoleSeparator:
-		return spanToCells(sp, m.styles.TableSeparator)
+		return m.styles.TableSeparator
 	default:
-		return spanToCells(sp, m.styles.TableBody)
+		return m.styles.TableBody
+	}
+}
+
+// mergeInlineStyle applies inline formatting (bold, italic, link, code) on top
+// of a base style that provides the table role's background and borders.
+func mergeInlineStyle(base lipgloss.Style, kind display.TokenKind, sp display.DisplaySpan, st styles.Styles) lipgloss.Style {
+	switch kind {
+	case display.TokenBold:
+		return base.Bold(true)
+	case display.TokenItalic:
+		return base.Italic(true)
+	case display.TokenStrikethrough:
+		return base.Strikethrough(true)
+	case display.TokenInlineCode:
+		return st.InlineCode.Background(base.GetBackground())
+	case display.TokenLink:
+		return st.Link.Background(base.GetBackground())
+	default:
+		return base
 	}
 }
 

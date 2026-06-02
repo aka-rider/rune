@@ -133,6 +133,7 @@ func walkTable(
 	src []byte,
 	lines []string,
 	lineOffsets []int,
+	parsed []parsedLine,
 	blockID *int,
 	blocks *[]mdBlock,
 ) {
@@ -216,7 +217,7 @@ func walkTable(
 	endOff := lineOffsets[endLine] + len(lines[endLine])
 
 	// Compute column widths and identify separator line
-	colWidths, sepLine := computeTableMetrics(lines, startLine, endLine)
+	colWidths, sepLine := computeTableMetrics(lines, startLine, endLine, parsed)
 
 	// Extract alignments from goldmark AST
 	alignments := make([]int, len(node.Alignments))
