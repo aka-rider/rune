@@ -343,43 +343,27 @@ func sliceOriginalSpans(spans []SyntaxSpan, refs []spanRef, segStart, segEnd int
 			// Rendered spans cannot be sub-sliced because their text doesn't
 			// correspond byte-for-byte to the buffer range.
 			// Include the full span text that overlaps the segment.
-			slicedText := s.Text[localStart:localEnd]
-			result = append(result, SyntaxSpan{
-				Text:         slicedText,
-				Kind:         s.Kind,
-				State:        s.State,
-				BufferStart:  s.BufferStart,
-				BufferEnd:    s.BufferEnd,
-				Language:     s.Language,
-				BlockID:      s.BlockID,
-				BlockStart:   s.BlockStart,
-				BlockEnd:     s.BlockEnd,
-				AltText:      s.AltText,
-				ImagePath:    s.ImagePath,
-				EmbedRef:     s.EmbedRef,
-				CalloutKind:  s.CalloutKind,
-				HeadingLevel: s.HeadingLevel,
-				TableRole:    s.TableRole,
-			})
+			out := s
+			out.Text = s.Text[localStart:localEnd]
+			// CellMap is only valid when the full text is preserved; nil it
+			// for partial slices since byte offsets no longer correspond.
+			if localStart > 0 || localEnd < len(s.Text) {
+				out.CellMap = nil
+			}
+			result = append(result, out)
 		} else {
 			// Revealed spans: text == buffer content, direct offset mapping.
-			result = append(result, SyntaxSpan{
-				Text:         s.Text[localStart:localEnd],
-				Kind:         s.Kind,
-				State:        s.State,
-				BufferStart:  s.BufferStart + localStart,
-				BufferEnd:    s.BufferStart + localEnd,
-				Language:     s.Language,
-				BlockID:      s.BlockID,
-				BlockStart:   s.BlockStart,
-				BlockEnd:     s.BlockEnd,
-				AltText:      s.AltText,
-				ImagePath:    s.ImagePath,
-				EmbedRef:     s.EmbedRef,
-				CalloutKind:  s.CalloutKind,
-				HeadingLevel: s.HeadingLevel,
-				TableRole:    s.TableRole,
-			})
+			out := s
+			out.Text = s.Text[localStart:localEnd]
+			out.BufferStart = s.BufferStart + localStart
+			out.BufferEnd = s.BufferStart + localEnd
+			// Slice CellMap to match the sliced text portion.
+			if s.CellMap != nil && localStart == 0 && localEnd == len(s.Text) {
+				// Full span — keep CellMap as-is.
+			} else {
+				out.CellMap = nil
+			}
+			result = append(result, out)
 		}
 	}
 

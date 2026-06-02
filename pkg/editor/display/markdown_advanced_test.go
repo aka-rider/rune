@@ -741,3 +741,57 @@ func TestMarkdownAdvanced_CalloutKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestImageToken_SpacedDestination verifies that ![alt](path with spaces.webp)
+// is parsed as a TokenImage even though Goldmark rejects unescaped spaces.
+func TestImageToken_SpacedDestination(t *testing.T) {
+	text := "![alt text](Do not try to DRY.webp)\nsecond line"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+
+	// Cursor on line 1 so image on line 0 is rendered (not revealed).
+	_, snap := sMap.Sync(buf, cursor.NewCursorSet(buf.LineStart(1)))
+
+	line := snap.Lines[0]
+	var imgSpan *display.SyntaxSpan
+	for i := range line.Spans {
+		if line.Spans[i].Kind == display.TokenImage {
+			imgSpan = &line.Spans[i]
+			break
+		}
+	}
+	if imgSpan == nil {
+		t.Fatalf("expected TokenImage span for spaced destination, got spans: %+v", line.Spans)
+	}
+	if imgSpan.State != display.Rendered {
+		t.Errorf("image state: got %v, want Rendered", imgSpan.State)
+	}
+	if imgSpan.ImagePath != "Do not try to DRY.webp" {
+		t.Errorf("image path: got %q, want %q", imgSpan.ImagePath, "Do not try to DRY.webp")
+	}
+	if imgSpan.AltText != "alt text" {
+		t.Errorf("alt text: got %q, want %q", imgSpan.AltText, "alt text")
+	}
+}
+
+// TestImageToken_SpacedDestinationDoesNotOverlapGoldmark verifies that
+// the fallback parser does not duplicate images that Goldmark already handles.
+func TestImageToken_SpacedDestinationDoesNotOverlapGoldmark(t *testing.T) {
+	// No spaces — Goldmark should handle this natively.
+	text := "![alt](image.webp)"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+
+	_, snap := sMap.Sync(buf, cursor.NewCursorSet(buf.LineStart(0)+len(text)))
+
+	line := snap.Lines[0]
+	imageCount := 0
+	for _, sp := range line.Spans {
+		if sp.Kind == display.TokenImage {
+			imageCount++
+		}
+	}
+	if imageCount != 1 {
+		t.Errorf("expected exactly 1 TokenImage span, got %d", imageCount)
+	}
+}

@@ -4,3 +4,4 @@ rune
 # local go cache (orqestra sandbox)
 .gocache/
 .goenv
+coverage.out

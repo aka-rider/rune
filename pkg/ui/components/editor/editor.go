@@ -512,10 +512,15 @@ func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return 
 
 func (m Model) Height() int { return m.height }
 func (m Model) SetFocused(f bool) Model {
+	changed := m.focused != f
 	if !f {
 		m.title = m.title.SetFocused(false)
 	}
 	m.focused = f
+	// Resync display when focus changes because reveal decisions depend on it.
+	if changed && m.buf.Content() != "" {
+		m = m.syncDisplay()
+	}
 	return m
 }
 func (m Model) Content() string          { return m.buf.Content() }

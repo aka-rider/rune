@@ -129,7 +129,11 @@ func (m Model) syncDisplay() Model {
 		m.wrapMap = display.NewWrapMap(0)
 	}
 
-	m.syntaxMap, m.syntaxSnap = m.syntaxMap.Sync(m.buf, m.cursors)
+	if m.focused {
+		m.syntaxMap, m.syntaxSnap = m.syntaxMap.Sync(m.buf, m.cursors)
+	} else {
+		m.syntaxMap, m.syntaxSnap = m.syntaxMap.SyncNoReveal(m.buf, m.cursors)
+	}
 	width := m.width
 	if width <= 0 {
 		width = 0

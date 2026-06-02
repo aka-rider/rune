@@ -33,6 +33,7 @@ func parseAdvancedInlines(content string, parsed []parsedLine) []parsedLine {
 		parseInlineMath(line, i, &parsed[i])
 		parseHighlights(line, i, &parsed[i])
 		parseCallout(line, i, &parsed[i])
+		parseMarkdownImagesWithSpaces(line, i, &parsed[i])
 	}
 	return parsed
 }
@@ -336,6 +337,86 @@ func findImageStart(node *ast.Image, src []byte) int {
 func overlapsExisting(spans []mdSpan, start, end int) bool {
 	for _, s := range spans {
 		if start < s.end && end > s.start {
+			return true
+		}
+	}
+	return false
+}
+
+// parseMarkdownImagesWithSpaces is a fallback parser for markdown image syntax
+// with unescaped spaces in the destination: ![alt](path with spaces.ext).
+// Goldmark does not parse these as images. We conservatively require an image
+// file extension to avoid false positives.
+func parseMarkdownImagesWithSpaces(line string, lineIdx int, pl *parsedLine) {
+	i := 0
+	for i < len(line) {
+		// Find ![
+		idx := strings.Index(line[i:], "![")
+		if idx < 0 {
+			break
+		}
+		bangPos := i + idx
+		// Find closing ]
+		altStart := bangPos + 2
+		altEnd := strings.Index(line[altStart:], "]")
+		if altEnd < 0 {
+			i = altStart
+			continue
+		}
+		altEnd += altStart
+		// Expect ( immediately after ]
+		if altEnd+1 >= len(line) || line[altEnd+1] != '(' {
+			i = altEnd + 1
+			continue
+		}
+		destStart := altEnd + 2
+		// Find closing ) — does not allow nested parens
+		destEnd := strings.Index(line[destStart:], ")")
+		if destEnd < 0 {
+			i = destStart
+			continue
+		}
+		destEnd += destStart
+		dest := line[destStart:destEnd]
+		// Require non-empty destination with an image extension.
+		if dest == "" {
+			i = destEnd + 1
+			continue
+		}
+		if !hasImageExtension(dest) {
+			i = destEnd + 1
+			continue
+		}
+		spanStart := bangPos
+		spanEnd := destEnd + 1
+		// Skip if goldmark or another parser already produced a span here.
+		if overlapsExisting(pl.spans, spanStart, spanEnd) {
+			i = spanEnd
+			continue
+		}
+		altText := line[altStart:altEnd]
+		displayText := altText
+		if displayText == "" {
+			displayText = dest
+		}
+		pl.spans = append(pl.spans, mdSpan{
+			kind:       TokenImage,
+			start:      spanStart,
+			end:        spanEnd,
+			text:       displayText,
+			delimLeft:  2,                                          // ![
+			delimRight: spanEnd - spanStart - 2 - (altEnd - altStart), // ](dest)
+			linkURL:    dest,
+		})
+		i = spanEnd
+	}
+}
+
+// hasImageExtension checks if a path ends with a known image file extension.
+func hasImageExtension(path string) bool {
+	lower := strings.ToLower(path)
+	for ext := range imageExtensions {
+		if strings.HasSuffix(lower, ext) {
 			return true
 		}
 	}

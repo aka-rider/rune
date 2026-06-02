@@ -171,3 +171,56 @@ func TestWrapMap_MultiSpanNoMidRuneSplit(t *testing.T) {
 		}
 	}
 }
+
+// TestWrapMap_WikiLinkImageMetadataPreserved verifies that WikiLinkIsImage,
+// WikiLinkTarget, and ImagePath survive wrapping through sliceOriginalSpans.
+// This is the regression test for the metadata loss that turned wiki image
+// embeds into plain blue links after SetSize.
+func TestWrapMap_WikiLinkImageMetadataPreserved(t *testing.T) {
+	// A wiki image embed that's long enough to wrap at width 30.
+	content := "![[Do not try to DRY.webp]]\nsecond line"
+	buf := buffer.New(content)
+
+	// Cursor on line 1 so the wiki embed on line 0 stays Rendered.
+	cursors := cursor.NewCursorSet(buf.LineStart(1))
+	sMap := display.NewSyntaxMap()
+	_, sSnap := sMap.Sync(buf, cursors)
+
+	// Verify the syntax snap has the wiki image span before wrapping.
+	line0 := sSnap.Lines[0]
+	foundWiki := false
+	for _, sp := range line0.Spans {
+		if sp.Kind == display.TokenWikiLink && sp.WikiLinkIsImage {
+			foundWiki = true
+			break
+		}
+	}
+	if !foundWiki {
+		t.Fatalf("expected TokenWikiLink with WikiLinkIsImage=true in syntax snap, got: %+v", line0.Spans)
+	}
+
+	// Wrap at 30 — shorter than "Do not try to DRY.webp" rendered text would
+	// be if fully revealed, but for Rendered span the display text is shorter.
+	// Use width 15 to ensure wrapping if the span is wide enough.
+	wMap := display.NewWrapMap(15)
+	wSnap := wMap.Sync(sSnap)
+
+	// Check that at least one segment span for line 0 retains wiki metadata.
+	foundAfterWrap := false
+	for _, seg := range wSnap.Segments {
+		if seg.ModelLine != 0 {
+			continue
+		}
+		for _, sp := range seg.Spans {
+			if sp.Kind == display.TokenWikiLink && sp.WikiLinkIsImage {
+				foundAfterWrap = true
+				if sp.ImagePath == "" {
+					t.Error("WikiLinkIsImage span has empty ImagePath after wrapping")
+				}
+			}
+		}
+	}
+	if !foundAfterWrap {
+		t.Error("WikiLinkIsImage metadata lost after WrapMap.Sync — sliceOriginalSpans drops wiki fields")
+	}
+}

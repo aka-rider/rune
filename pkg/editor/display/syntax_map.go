@@ -228,11 +228,24 @@ func NewSyntaxMap() SyntaxMap {
 }
 
 func (m SyntaxMap) Sync(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap, SyntaxSnapshot) {
+	return m.syncInternal(buf, cursors, true)
+}
+
+// SyncNoReveal behaves like Sync but suppresses all cursor-based reveal
+// decisions (cursorLine forced to -1). Coordinate conversion still works.
+// Use this when the editor is unfocused so raw markup is never shown.
+func (m SyntaxMap) SyncNoReveal(buf buffer.Buffer, cursors cursor.CursorSet) (SyntaxMap, SyntaxSnapshot) {
+	return m.syncInternal(buf, cursors, false)
+}
+
+func (m SyntaxMap) syncInternal(buf buffer.Buffer, cursors cursor.CursorSet, reveal bool) (SyntaxMap, SyntaxSnapshot) {
 	m.lastBufVer = buf.Version()
 	cursorLine := -1
 	if !buf.Empty() && cursors.Len() > 0 {
 		m.lastCursorPos = buf.OffsetToLineCol(cursors.Primary().Position)
-		cursorLine = m.lastCursorPos.Line
+		if reveal {
+			cursorLine = m.lastCursorPos.Line
+		}
 	}
 
 	content := buf.Content()
