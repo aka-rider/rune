@@ -8,9 +8,9 @@ import (
 // renderedCellData holds the rendered (delimiter-stripped) text and cell mapping
 // for a single table cell, extracted from inline spans or raw source.
 type renderedCellData struct {
-	text string           // rendered text (without markdown delimiters)
-	cm   []CellMapping    // per-byte buffer offsets for rendered text
-	width int             // visual width of rendered text
+	text  string        // rendered text (without markdown delimiters)
+	cm    []CellMapping // per-byte buffer offsets for rendered text
+	width int           // visual width of rendered text
 }
 
 // tableRenderedSpans produces spans for a table line in rendered mode.

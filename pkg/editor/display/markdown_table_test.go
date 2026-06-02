@@ -19,7 +19,7 @@ func TestTable_InlineSpansExtracted(t *testing.T) {
 	sMap := display.NewSyntaxMap()
 
 	// Cursor outside table → rendered mode
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 (body line with **bold**) should have spans with TokenBold kind
 	foundBold := false
@@ -41,7 +41,7 @@ func TestTable_HeaderHasSpans(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 0 (header with **Name**) should have TokenBold span
 	foundBold := false
@@ -69,7 +69,7 @@ func TestTable_ColumnWidthsFromRenderedText(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 0 (header) should render with correct column widths
 	// The header text "bold" (4 chars) should fit in the column
@@ -90,7 +90,7 @@ func TestTable_LinkInCellProducesLinkSpan(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 (body with link) should have TokenLink span
 	foundLink := false
@@ -116,7 +116,7 @@ func TestTable_MixedFormatting(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 should have both TokenBold and TokenLink spans
 	hasBold := false
@@ -147,7 +147,7 @@ func TestTable_LayoutDecision_WideTerminal(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// All table lines should be rendered (not revealed)
 	for lineIdx := 0; lineIdx <= 2; lineIdx++ {
@@ -163,12 +163,12 @@ func TestTable_LayoutDecision_WideTerminal(t *testing.T) {
 // WP7: Box-drawing characters
 // ==========================================================================
 
-func TestTable_BoxDrawingSeparator(t *testing.T) {
+func TestTable_BoxDrawingSeparatorBasic(t *testing.T) {
 	text := "| A | B | C |\n|---|---|---|\n| 1 | 2 | 3 |"
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 1 (separator) should use box-drawing characters
 	sepLine := snap.Lines[1]
@@ -195,7 +195,7 @@ func TestTable_BoxDrawingVerticalBorder(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 0 (header) should use │ for vertical borders
 	headerLine := snap.Lines[0]
@@ -226,7 +226,7 @@ func TestTable_RolesCorrect(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 0 should be TableRoleHeader
 	roleFound := false
@@ -290,7 +290,7 @@ func TestTable_CellMappingPreserved(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 (body) should have CellMap with valid buffer offsets
 	bodyLine := snap.Lines[2]
@@ -325,7 +325,7 @@ func TestTable_EmptyCells(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 (empty cells) should still render
 	bodyLine := snap.Lines[2]
@@ -343,7 +343,7 @@ func TestTable_InlineCodeInCell(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 should have TokenInlineCode span
 	foundCode := false
@@ -369,7 +369,7 @@ func TestTable_StrikethroughInCell(t *testing.T) {
 	buf := buffer.New(text)
 	sMap := display.NewSyntaxMap()
 
-	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
 
 	// Line 2 should have TokenStrikethrough span
 	foundStrike := false

@@ -137,10 +137,10 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 	var cm []CellMapping
 
 	for i, w := range colWidths {
-		// Opening vertical border
+		// Opening vertical border (│ is 3 bytes in UTF-8 — one CellMapping per byte)
 		if i == 0 {
 			b.WriteRune('│')
-			cm = append(cm, CellMapping{BufOffset: -1})
+			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
 		}
 		// Left padding space
 		b.WriteByte(' ')
@@ -190,11 +190,11 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 			}
 		}
 
-		// Right padding space and closing vertical border
+		// Right padding space and closing vertical border (│ is 3 bytes — one CellMapping per byte)
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
 		b.WriteRune('│')
-		cm = append(cm, CellMapping{BufOffset: -1})
+		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
 	}
 
 	return b.String(), cm

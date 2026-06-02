@@ -2,6 +2,8 @@ package display
 
 import (
 	"strings"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // formatTableSeparatorSpans creates styled spans for a table separator line
@@ -38,7 +40,9 @@ func tableLineRole(block mdBlock, lineIdx int) TableRoleKind {
 }
 
 // computeTableMetrics scans table lines to compute max column widths and find the separator.
-func computeTableMetrics(lines []string, startLine, endLine int) (colWidths []int, sepLine int) {
+// Column widths are computed from rendered text (without markdown delimiters) when
+// inline spans are available, falling back to raw source width otherwise.
+func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsedLine) (colWidths []int, sepLine int) {
 	sepLine = -1
 	for i := startLine; i <= endLine && i < len(lines); i++ {
 		cells := parseTableCells(lines[i])
@@ -46,8 +50,12 @@ func computeTableMetrics(lines []string, startLine, endLine int) (colWidths []in
 			sepLine = i
 			continue
 		}
+		var mdSpans []mdSpan
+		if parsed != nil && i < len(parsed) {
+			mdSpans = parsed[i].spans
+		}
 		for col, cell := range cells {
-			w := cellWidth(cell)
+			w := renderedCellWidth(cell, lines[i], mdSpans)
 			if col >= len(colWidths) {
 				colWidths = append(colWidths, w)
 			} else if w > colWidths[col] {
@@ -56,6 +64,46 @@ func computeTableMetrics(lines []string, startLine, endLine int) (colWidths []in
 		}
 	}
 	return colWidths, sepLine
+}
+
+// renderedCellWidth computes the visual width of a cell's rendered content.
+// When inline spans are available, it sums the rendered text widths (without delimiters).
+// Falls back to raw source width (with delimiter stripping) when no spans exist.
+func renderedCellWidth(cellText string, lineText string, mdSpans []mdSpan) int {
+	if len(mdSpans) > 0 {
+		cellStart := strings.Index(lineText, cellText)
+		if cellStart >= 0 {
+			cellEnd := cellStart + len(cellText)
+			total := 0
+			for _, ms := range mdSpans {
+				if ms.start >= cellStart && ms.end <= cellEnd {
+					total += runewidth.StringWidth(ms.text)
+				}
+			}
+			if total > 0 {
+				return total
+			}
+		}
+	}
+	// Fallback: strip common markdown delimiters and measure
+	return cellWidth(stripDelimiters(cellText))
+}
+
+// stripDelimiters removes common markdown formatting delimiters for width estimation.
+func stripDelimiters(s string) string {
+	for _, delim := range []string{"**", "*", "_", "~~"} {
+		s = strings.ReplaceAll(s, delim, "")
+	}
+	s = strings.Trim(s, "`")
+	if idx := strings.Index(s, "]("); idx >= 0 {
+		text := s[:idx]
+		s = text + s[idx+2:]
+	}
+	s = strings.ReplaceAll(s, "[", "")
+	s = strings.ReplaceAll(s, "]", "")
+	s = strings.ReplaceAll(s, "(", "")
+	s = strings.ReplaceAll(s, ")", "")
+	return s
 }
 
 // parseTableCells splits a pipe-delimited table line into cell contents.
