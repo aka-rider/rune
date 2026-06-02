@@ -2,14 +2,17 @@ package display
 
 import (
 	"strings"
-
-	"github.com/mattn/go-runewidth"
 )
 
 // formatTableSeparatorSpans creates styled spans for a table separator line
 // using box-drawing characters.
 func formatTableSeparatorSpans(block mdBlock, lineStart int, lineText string) []SyntaxSpan {
-	formatted := formatTableSeparator(block.colWidths)
+	return formatTableSeparatorSpansWithWidths(block.colWidths, lineStart, lineText, block)
+}
+
+// formatTableSeparatorSpansWithWidths creates separator spans using given column widths.
+func formatTableSeparatorSpansWithWidths(colWidths []int, lineStart int, lineText string, block mdBlock) []SyntaxSpan {
+	formatted := formatTableSeparator(colWidths)
 	cm := make([]CellMapping, len(formatted))
 	for i := range cm {
 		cm[i] = CellMapping{BufOffset: -1}
@@ -54,8 +57,9 @@ func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsed
 		if parsed != nil && i < len(parsed) {
 			mdSpans = parsed[i].spans
 		}
+		cellOffsets := parseTableCellOffsets(lines[i])
 		for col, cell := range cells {
-			w := renderedCellWidth(cell, lines[i], mdSpans)
+			w := renderedCellWidth(cell, col, cellOffsets, mdSpans)
 			if col >= len(colWidths) {
 				colWidths = append(colWidths, w)
 			} else if w > colWidths[col] {
@@ -67,22 +71,40 @@ func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsed
 }
 
 // renderedCellWidth computes the visual width of a cell's rendered content.
-// When inline spans are available, it sums the rendered text widths (without delimiters).
-// Falls back to raw source width (with delimiter stripping) when no spans exist.
-func renderedCellWidth(cellText string, lineText string, mdSpans []mdSpan) int {
-	if len(mdSpans) > 0 {
-		cellStart := strings.Index(lineText, cellText)
-		if cellStart >= 0 {
-			cellEnd := cellStart + len(cellText)
-			total := 0
-			for _, ms := range mdSpans {
-				if ms.start >= cellStart && ms.end <= cellEnd {
-					total += runewidth.StringWidth(ms.text)
+// When inline spans are available, it reconstructs the rendered text (plain text
+// gaps + span inner text) and measures that. Falls back to raw width with
+// delimiter stripping when no spans cover the cell.
+func renderedCellWidth(cellText string, colIdx int, cellOffsets []int, mdSpans []mdSpan) int {
+	if len(mdSpans) > 0 && colIdx < len(cellOffsets) {
+		cellStart := cellOffsets[colIdx]
+		cellEnd := cellStart + len(cellText)
+
+		// Collect spans belonging to this cell
+		var cellSpans []mdSpan
+		for _, ms := range mdSpans {
+			if ms.start >= cellStart && ms.start < cellEnd {
+				cellSpans = append(cellSpans, ms)
+			}
+		}
+
+		if len(cellSpans) > 0 {
+			// Reconstruct rendered text: plain text gaps + span inner text
+			totalWidth := 0
+			cursor := cellStart
+			for _, s := range cellSpans {
+				spanStart := s.start
+				if spanStart > cursor {
+					// Gap of plain text
+					totalWidth += runewidthSafe(cellText[cursor-cellStart : spanStart-cellStart])
 				}
+				totalWidth += runewidthSafe(s.text)
+				cursor = s.end
 			}
-			if total > 0 {
-				return total
+			// Trailing plain text
+			if cursor < cellEnd {
+				totalWidth += runewidthSafe(cellText[cursor-cellStart:])
 			}
+			return totalWidth
 		}
 	}
 	// Fallback: strip common markdown delimiters and measure
@@ -216,11 +238,8 @@ func formatTableSeparatorWithType(colWidths []int, sepType separatorType) string
 			b.WriteRune(horiz)
 		}
 		b.WriteRune(' ')
-		b.WriteRune(rightCorner)
 	}
-	_ = separatorTop
-	_ = separatorBottom
-	_ = separatorBody
+	b.WriteRune(rightCorner)
 	return b.String()
 }
 

@@ -98,7 +98,8 @@ type Model struct {
 	offsetY     int
 	focused     bool
 
-	lastPlacementSeq string // last inline-image escape sequence emitted via tea.Raw (change-gate)
+	lastPlacementSeq    string // last inline-image escape sequence emitted via tea.Raw (change-gate)
+	pendingPlacementSeq string // deferred placement sequence to emit next frame
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -165,6 +166,11 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case image.UpdateMsg, image.ReadyMsg, image.ErrorMsg:
 		return m.updateImages(msg)
+
+	case placementTickMsg:
+		// No-op: the next emitImagePlacements() call (in the Update wrapper)
+		// will pick up pendingPlacementSeq and emit it.
+		return m, nil
 
 	case LinkClickedMsg:
 		// Link click is handled by the workspace page which opens the file.
@@ -503,7 +509,20 @@ func (m Model) SetFocused(f bool) Model {
 	m.focused = f
 	// Resync display when focus changes because reveal decisions depend on it.
 	if changed && m.buf.Content() != "" {
+		debugLog("SetFocused(%v): syncDisplay, lastPlacementSeqLen=%d, imageCount=%d", f, len(m.lastPlacementSeq), len(m.images))
+		// Reset placement gate so the next emitImagePlacements re-emits even if
+		// the final snapshot positions match the previous frame (the terminal lost
+		// the image overlay when BubbleTea re-rendered the collapsed cell layer).
+		m.lastPlacementSeq = ""
 		m = m.syncDisplay()
+		// Count image rows in new snapshot
+		imgRows := 0
+		for _, l := range m.snapshot.Lines {
+			if l.ImagePath != "" {
+				imgRows++
+			}
+		}
+		debugLog("  after syncDisplay: snapshotLines=%d imageRows=%d", len(m.snapshot.Lines), imgRows)
 	}
 	return m
 }

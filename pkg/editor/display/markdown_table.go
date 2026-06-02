@@ -38,7 +38,11 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 
 	// For separator lines, render a formatted separator using box-drawing characters
 	if role == TableRoleSeparator {
-		return formatTableSeparatorSpans(block, lineStart, lineText)
+		colWidths := block.colWidths
+		if availableWidth > 0 {
+			colWidths = constrainColWidths(colWidths, availableWidth)
+		}
+		return formatTableSeparatorSpansWithWidths(colWidths, lineStart, lineText, block)
 	}
 
 	// For header and body lines, parse and pad cells
@@ -51,31 +55,19 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 	// Extract rendered cell data from spans
 	renderedCells := extractRenderedCellData(lineText, lineStart, lineSpans, len(block.colWidths))
 
-	// Compute rendered column widths if spans are available
+	// Use block-level column widths (computed once across all rows in walkTable).
+	// Do NOT recompute per-row — that destroys alignment.
 	colWidths := block.colWidths
-	if len(lineSpans) > 0 {
-		colWidths = computeRenderedColWidths(renderedCells, block.colWidths)
-		// Update the block's colWidths for consistency across rows
-		block.colWidths = colWidths
-	}
 
-	// Choose layout based on available width (default to grid if width unknown)
-	layout := TableLayoutGrid
+	// If available width is known and the grid doesn't fit, shrink column widths
+	// proportionally to fit within the available width.
 	if availableWidth > 0 {
-		layout = chooseTableLayout(colWidths, availableWidth)
+		colWidths = constrainColWidths(colWidths, availableWidth)
 	}
 
-	// Dispatch by layout kind
-	switch layout {
-	case TableLayoutGrid:
-		return formatGridRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role)
-	case TableLayoutWrapped:
-		return formatWrappedRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role, availableWidth)
-	case TableLayoutPivoted:
-		return formatPivotedRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role, availableWidth)
-	default:
-		return formatGridRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role)
-	}
+	// Render as grid (the only fully-implemented layout).
+	// Wrapped/pivoted modes are deferred until multi-line expansion is supported.
+	return formatGridRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role)
 }
 
 // formatGridRow formats a table row as a standard single-line grid with styled spans.
@@ -168,7 +160,7 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 	for col := 0; col < numCols; col++ {
 		if col == 0 {
 			b.WriteRune('│')
-			cm = append(cm, CellMapping{BufOffset: -1})
+			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
 		}
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
@@ -204,7 +196,7 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
 		b.WriteRune('│')
-		cm = append(cm, CellMapping{BufOffset: -1})
+		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
 	}
 
 	return []SyntaxSpan{{

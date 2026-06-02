@@ -3,11 +3,13 @@ package display
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // extractRenderedCellData extracts rendered text and cell mappings for each cell.
-// When spans are available, it uses span text (inner text without delimiters).
-// Falls back to raw cell text when no spans cover a cell.
+// It iterates left-to-right through each cell's byte range, emitting plain text
+// for gaps between inline spans and rendered (delimiter-stripped) text for spans.
+// This produces the full rendered cell content with correct per-byte buffer mappings.
 func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, numCols int) []renderedCellData {
 	cells := parseTableCells(lineText)
 	cellOffsets := parseTableCellOffsets(lineText)
@@ -33,20 +35,14 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 		// Collect spans that belong to this cell
 		var cellSpans []mdSpan
 		for _, s := range spans {
-			// A span belongs to this cell if its content start (after left delimiter)
-			// falls within the cell's byte range
-			contentStart := s.start + s.delimLeft
-			if contentStart >= cellRelStart && contentStart < cellRelEnd {
+			// A span belongs to this cell if it overlaps the cell's byte range.
+			// Use the full span range (start..end) to check overlap.
+			if s.start >= cellRelStart && s.start < cellRelEnd {
 				cellSpans = append(cellSpans, s)
 			}
 		}
 
 		if len(cellSpans) > 0 {
-			// Use rendered text from spans
-			var totalWidth int
-			var renderedText strings.Builder
-			var cm []CellMapping
-
 			// Sort spans by start position
 			sorted := make([]mdSpan, len(cellSpans))
 			copy(sorted, cellSpans)
@@ -54,23 +50,62 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 				return sorted[i].start < sorted[j].start
 			})
 
+			// Walk left-to-right through the cell, emitting plain text for gaps
+			// and rendered span text for formatted ranges.
+			var renderedText strings.Builder
+			var cm []CellMapping
+			cursor := cellRelStart
+
 			for _, s := range sorted {
+				spanStart := s.start
+				spanEnd := s.end
+
+				// Clamp to cell boundaries
+				if spanStart < cellRelStart {
+					spanStart = cellRelStart
+				}
+				if spanEnd > cellRelEnd {
+					spanEnd = cellRelEnd
+				}
+
+				// Emit plain text gap before this span
+				if cursor < spanStart {
+					gap := lineText[cursor:spanStart]
+					renderedText.WriteString(gap)
+					for i := 0; i < len(gap); i++ {
+						cm = append(cm, CellMapping{BufOffset: lineStart + cursor + i})
+					}
+					cursor = spanStart
+				}
+
+				// Emit the span's rendered text (inner text, without delimiters)
 				renderedText.WriteString(s.text)
-				totalWidth += runewidthSafe(s.text)
-				// Build cell mapping: each byte of rendered text maps to its buffer offset
-				bufStart := lineStart + s.start + s.delimLeft
+				contentStart := lineStart + s.start + s.delimLeft
 				for i := 0; i < len(s.text); i++ {
-					cm = append(cm, CellMapping{BufOffset: bufStart + i})
+					cm = append(cm, CellMapping{BufOffset: contentStart + i})
+				}
+
+				// Advance cursor past the entire span (including delimiters)
+				cursor = s.end
+			}
+
+			// Emit trailing plain text after the last span
+			if cursor < cellRelEnd {
+				gap := lineText[cursor:cellRelEnd]
+				renderedText.WriteString(gap)
+				for i := 0; i < len(gap); i++ {
+					cm = append(cm, CellMapping{BufOffset: lineStart + cursor + i})
 				}
 			}
 
+			text := renderedText.String()
 			result[col] = renderedCellData{
-				text:  renderedText.String(),
+				text:  text,
 				cm:    cm,
-				width: totalWidth,
+				width: runewidthSafe(text),
 			}
 		} else {
-			// Fall back to raw cell text (no spans, no delimiter stripping needed)
+			// No spans — use raw cell text as-is (plain text, no formatting)
 			w := cellWidth(cellText)
 			cm := make([]CellMapping, len(cellText))
 			bufStart := -1
@@ -95,43 +130,10 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 	return result
 }
 
-// computeRenderedColWidths computes column widths from rendered cell data.
-// Returns the maximum rendered width across all cells for each column.
-func computeRenderedColWidths(renderedCells []renderedCellData, fallbackWidths []int) []int {
-	if len(renderedCells) == 0 {
-		return fallbackWidths
-	}
-
-	widths := make([]int, len(fallbackWidths))
-	copy(widths, fallbackWidths)
-
-	for col, rc := range renderedCells {
-		if col < len(widths) {
-			// Use the larger of rendered width and fallback (to handle cases where
-			// other rows have wider raw content)
-			if rc.width > widths[col] {
-				widths[col] = rc.width
-			}
-		}
-	}
-
-	// Adjust widths down: subtract the total delimiter width per column
-	// since rendered text doesn't include delimiters
-	for col := range widths {
-		if col < len(renderedCells) {
-			rc := renderedCells[col]
-			if rc.width < widths[col] {
-				widths[col] = rc.width
-			}
-		}
-	}
-
-	return widths
-}
-
 // formatTableRowRendered formats a table row using pre-extracted rendered cell data.
 // This avoids the mismatch between raw source text (with delimiters) and rendered text.
 // Uses box-drawing vertical characters (│) for borders.
+// Cell content is truncated with "…" if it exceeds the allocated column width.
 func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string) (string, []CellMapping) {
 	var b strings.Builder
 	var cm []CellMapping
@@ -146,10 +148,15 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
 
-		// Get rendered cell data
+		// Get rendered cell data, truncating if necessary
 		rc := renderedCellData{text: "", width: 0}
 		if i < len(renderedCells) {
 			rc = renderedCells[i]
+		}
+
+		// Truncate cell content if it exceeds the allocated column width
+		if rc.width > w && w > 0 {
+			rc = truncateCellData(rc, w)
 		}
 
 		cw := rc.width
@@ -200,6 +207,60 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 	return b.String(), cm
 }
 
+// truncateCellData truncates cell content to fit within maxWidth visual columns,
+// appending "…" (ellipsis) if truncation occurs.
+func truncateCellData(rc renderedCellData, maxWidth int) renderedCellData {
+	if maxWidth <= 0 {
+		return renderedCellData{text: "", width: 0}
+	}
+	if rc.width <= maxWidth {
+		return rc
+	}
+
+	// Reserve 1 cell for the ellipsis "…" (3 bytes UTF-8, 1 visual width)
+	targetWidth := maxWidth - 1
+	if targetWidth < 0 {
+		targetWidth = 0
+	}
+
+	// Walk through text rune by rune, accumulating visual width
+	var truncText strings.Builder
+	var truncCM []CellMapping
+	accWidth := 0
+	pos := 0
+	cmIdx := 0
+
+	for pos < len(rc.text) {
+		r, size := utf8.DecodeRuneInString(rc.text[pos:])
+		rw := 1
+		if r >= 0x1100 && isWide(r) {
+			rw = 2
+		}
+		if accWidth+rw > targetWidth {
+			break
+		}
+		truncText.WriteRune(r)
+		// Advance CellMap by byte count
+		for j := 0; j < size && cmIdx < len(rc.cm); j++ {
+			truncCM = append(truncCM, rc.cm[cmIdx])
+			cmIdx++
+		}
+		accWidth += rw
+		pos += size
+	}
+
+	// Append ellipsis
+	truncText.WriteRune('…')
+	// "…" is 3 bytes — add 3 CellMapping entries with -1
+	truncCM = append(truncCM, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+
+	return renderedCellData{
+		text:  truncText.String(),
+		cm:    truncCM,
+		width: accWidth + 1, // +1 for the ellipsis
+	}
+}
+
 // writeRenderedCell writes rendered cell content to the builder using pre-computed cell mapping.
 func writeRenderedCell(b *strings.Builder, cm *[]CellMapping, rc renderedCellData) {
 	if len(rc.cm) > 0 {
@@ -239,9 +300,9 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 
 	// Build per-byte kind classification
 	type byteInfo struct {
-		kind  TokenKind
-		sp    *mdSpan
-		cm    CellMapping
+		kind TokenKind
+		sp   *mdSpan
+		cm   CellMapping
 	}
 
 	byteInfos := make([]byteInfo, len(formatted))
@@ -328,4 +389,3 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 
 	return result
 }
-

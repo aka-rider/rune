@@ -52,6 +52,62 @@ func computeMinGridWidth(colWidths []int) int {
 	return total
 }
 
+// constrainColWidths shrinks column widths proportionally so the grid fits
+// within availableWidth. If it already fits, returns a copy unchanged.
+// Each column is guaranteed a minimum of 3 characters.
+func constrainColWidths(colWidths []int, availableWidth int) []int {
+	if len(colWidths) == 0 {
+		return colWidths
+	}
+
+	minGridWidth := computeMinGridWidth(colWidths)
+	if minGridWidth <= availableWidth {
+		// Fits — return as-is
+		return colWidths
+	}
+
+	// Compute the frame overhead (non-content space)
+	numCols := len(colWidths)
+	frameOverhead := 4*numCols - 1 // per column: │ + space + space + │, shared border
+	contentBudget := availableWidth - frameOverhead
+	if contentBudget < numCols*3 {
+		// Not enough space even for minimum columns — give each column minimum 3
+		contentBudget = numCols * 3
+	}
+
+	// Distribute content budget proportionally to original widths
+	totalOriginalWidth := 0
+	for _, w := range colWidths {
+		totalOriginalWidth += w
+	}
+	if totalOriginalWidth == 0 {
+		totalOriginalWidth = 1
+	}
+
+	result := make([]int, numCols)
+	remaining := contentBudget
+	for i, w := range colWidths {
+		if i == numCols-1 {
+			// Last column gets whatever is left
+			result[i] = remaining
+		} else {
+			// Proportional allocation
+			alloc := (w * contentBudget) / totalOriginalWidth
+			if alloc < 3 {
+				alloc = 3
+			}
+			result[i] = alloc
+			remaining -= alloc
+		}
+	}
+	// Ensure last column has minimum
+	if result[numCols-1] < 3 {
+		result[numCols-1] = 3
+	}
+
+	return result
+}
+
 // computePivotWidth computes the minimum width for pivoted (key-value) layout.
 // This is max(headerTextWidth + ": " + maxValueWidth) across all columns.
 func computePivotWidth(colWidths []int) int {
@@ -185,8 +241,8 @@ func splitLineAtSpace(line []SyntaxSpan, spanIdx int) (left, right []SyntaxSpan)
 func padEmptySpan(width int) SyntaxSpan {
 	text := strings.Repeat(" ", width)
 	return SyntaxSpan{
-		Text: text,
-		Kind: TokenTable,
+		Text:  text,
+		Kind:  TokenTable,
 		State: Rendered,
 		CellMap: func() []CellMapping {
 			cm := make([]CellMapping, width)
