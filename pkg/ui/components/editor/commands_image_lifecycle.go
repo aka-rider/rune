@@ -214,8 +214,9 @@ func (m Model) handleImageError(path string) (Model, tea.Cmd) {
 
 // detectImageCollapse checks whether any previously-expanded image is no longer
 // expanded in the current snapshot (i.e., it collapsed because the cursor
-// entered the tag). Returns true if at least one collapse occurred, and updates
-// the wasExpanded flag on all registry entries.
+// entered the tag). Returns true if at least one image transitioned from
+// expanded to collapsed (ghost overlay pixels need clearing). Updates the
+// wasExpanded flag on all registry entries for both directions.
 func (m Model) detectImageCollapse() (Model, bool) {
 	if !m.imageCapable() || len(m.images.byPath) == 0 {
 		return m, false
@@ -232,10 +233,10 @@ func (m Model) detectImageCollapse() (Model, bool) {
 	collapsed := false
 	for _, e := range m.images.byPath {
 		nowExpanded := expanded[e.path]
-		if e.wasExpanded && !nowExpanded {
-			collapsed = true
-		}
 		if e.wasExpanded != nowExpanded {
+			if e.wasExpanded && !nowExpanded {
+				collapsed = true // expanded → collapsed: ghost pixels need clearing
+			}
 			e.wasExpanded = nowExpanded
 			m.images = m.images.upsert(e)
 		}

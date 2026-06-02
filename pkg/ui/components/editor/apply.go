@@ -243,9 +243,10 @@ func (m Model) dispatchOperation(result command.Result, cmdName string, now time
 	m = m.syncDisplay()
 	m = m.scrollToCursor()
 
-	// Detect image collapse (cursor entered an image tag) and request a full
-	// screen repaint to clear ghost iTerm2/WezTerm pixels that were placed
-	// out-of-band and are invisible to Bubble Tea's renderer.
+	// Detect image collapse (expanded→collapsed): request a full screen repaint
+	// to clear ghost iTerm2/WezTerm overlay pixels that sit above the cell layer.
+	// Re-expansion (collapsed→expanded) needs no clear — emitInlinePlacements
+	// handles re-painting naturally since lastPlacementSeq was reset on collapse.
 	var collapsedCmd tea.Cmd
 	var collapsed bool
 	m, collapsed = m.detectImageCollapse()
