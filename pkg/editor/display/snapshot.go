@@ -49,8 +49,9 @@ type DisplaySpan struct {
 	ImagePath    string
 	EmbedRef     string
 	CalloutKind  string
-	HeadingLevel int
-	TableRole    TableRoleKind
+	HeadingLevel  int
+	TableRole     TableRoleKind
+	TableLayout   TableLayoutKind // layout state (grid/wrapped/pivoted)
 	// Wiki link metadata (set for TokenWikiLink spans)
 	WikiLinkTarget  string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
@@ -106,6 +107,7 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 				AltText:         s.AltText,
 				HeadingLevel:    s.HeadingLevel,
 				TableRole:       s.TableRole,
+				TableLayout:     s.TableLayout,
 				ImagePath:       s.ImagePath,
 				EmbedRef:        s.EmbedRef,
 				CalloutKind:     s.CalloutKind,
