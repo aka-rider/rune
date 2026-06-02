@@ -338,3 +338,89 @@ func TestTable_ThreeColumnSeparator(t *testing.T) {
 		t.Errorf("Expected 1 right corner ┤, got %d. Text: %q", strings.Count(sepLine, "┤"), sepLine)
 	}
 }
+
+func TestTable_PivotLayout(t *testing.T) {
+	// When available width is too narrow for the grid, pivot mode renders
+	// each row as "Header: Value" key-value pairs.
+	md := `| Name | URL |
+|---|---|
+| Swagger | http://localhost:8080/swagger-ui.html |
+| Grid | http://localhost:4444/ui |`
+
+	buf := buffer.New(md)
+	sMap := display.NewSyntaxMap().SetWidth(20) // too narrow for grid
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
+
+	// Build the full rendered text
+	var full strings.Builder
+	for _, line := range snap.Lines {
+		for _, sp := range line.Spans {
+			full.WriteString(sp.Text)
+		}
+		full.WriteByte('\n')
+	}
+	text := full.String()
+
+	// Should contain "Name: Swagger" and "URL: http://..."
+	if !strings.Contains(text, "Name: Swagger") {
+		t.Errorf("Pivot mode should contain 'Name: Swagger', got:\n%s", text)
+	}
+	if !strings.Contains(text, "URL: http://localhost:8080/swagger-ui.html") {
+		t.Errorf("Pivot mode should contain full URL, got:\n%s", text)
+	}
+	// Should NOT contain │ border characters (pivot has no grid borders)
+	if strings.Contains(text, "│") {
+		t.Errorf("Pivot mode should not have grid borders │, got:\n%s", text)
+	}
+	// Should contain horizontal rule separator between rows
+	if !strings.Contains(text, "────") {
+		t.Errorf("Pivot mode should have ──── separator between rows, got:\n%s", text)
+	}
+}
+
+func TestTable_GridTopBottomBorders(t *testing.T) {
+	// Grid tables should have ┌──┬──┐ top and └──┴──┘ bottom borders.
+	md := `| A | B |
+|---|---|
+| 1 | 2 |`
+
+	buf := buffer.New(md)
+	sMap := display.NewSyntaxMap().SetWidth(200) // wide enough for grid
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
+
+	// Build display snapshot with table expansion
+	wm := display.NewWrapMap(200)
+	ws := wm.Sync(snap)
+	ds := display.BuildSnapshot(ws)
+	ds = display.ExpandTableRows(ds)
+
+	var lines []string
+	for _, dl := range ds.Lines {
+		var lineText strings.Builder
+		for _, sp := range dl.Spans {
+			lineText.WriteString(sp.Text)
+		}
+		lines = append(lines, lineText.String())
+	}
+
+	if len(lines) == 0 {
+		t.Fatal("No display lines")
+	}
+
+	// First line should be top border with ┌
+	if !strings.Contains(lines[0], "┌") {
+		t.Errorf("First line should be top border ┌──┬──┐, got: %q", lines[0])
+	}
+	if !strings.Contains(lines[0], "┐") {
+		t.Errorf("First line should end with ┐, got: %q", lines[0])
+	}
+
+	// Last line should be bottom border with └
+	lastLine := lines[len(lines)-1]
+	if !strings.Contains(lastLine, "└") {
+		t.Errorf("Last line should be bottom border └──┴──┘, got: %q", lastLine)
+	}
+	if !strings.Contains(lastLine, "┘") {
+		t.Errorf("Last line should end with ┘, got: %q", lastLine)
+	}
+}

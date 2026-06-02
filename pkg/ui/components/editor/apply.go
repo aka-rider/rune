@@ -142,6 +142,7 @@ func (m Model) syncDisplay() Model {
 	m.wrapMap = m.wrapMap.SetWidth(width)
 	m.wrapSnap = m.wrapMap.Sync(m.syntaxSnap)
 	m.snapshot = display.BuildSnapshot(m.wrapSnap)
+	m.snapshot = display.ExpandTableRows(m.snapshot)
 	m.snapshot = display.ExpandImageRows(m.snapshot, m.imageDimsFor)
 	return m
 }

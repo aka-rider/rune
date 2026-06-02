@@ -45,7 +45,8 @@ func tableLineRole(block mdBlock, lineIdx int) TableRoleKind {
 // computeTableMetrics scans table lines to compute max column widths and find the separator.
 // Column widths are computed from rendered text (without markdown delimiters) when
 // inline spans are available, falling back to raw source width otherwise.
-func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsedLine) (colWidths []int, sepLine int) {
+// Also computes minimum column widths (longest unbreakable token per column).
+func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsedLine) (colWidths []int, minColWidths []int, sepLine int) {
 	sepLine = -1
 	for i := startLine; i <= endLine && i < len(lines); i++ {
 		cells := parseTableCells(lines[i])
@@ -62,12 +63,19 @@ func computeTableMetrics(lines []string, startLine, endLine int, parsed []parsed
 			w := renderedCellWidth(cell, col, cellOffsets, mdSpans)
 			if col >= len(colWidths) {
 				colWidths = append(colWidths, w)
-			} else if w > colWidths[col] {
+				minColWidths = append(minColWidths, 0)
+			}
+			if w > colWidths[col] {
 				colWidths[col] = w
+			}
+			// Compute minimum width: longest unbreakable word/URL in this cell
+			minW := longestAtomicWidth(cell)
+			if col < len(minColWidths) && minW > minColWidths[col] {
+				minColWidths[col] = minW
 			}
 		}
 	}
-	return colWidths, sepLine
+	return colWidths, minColWidths, sepLine
 }
 
 // renderedCellWidth computes the visual width of a cell's rendered content.
@@ -164,6 +172,23 @@ func isSeparatorLine(line string) bool {
 // cellWidth returns the visual width of cell content.
 func cellWidth(cell string) int {
 	return runewidthSafe(cell)
+}
+
+// longestAtomicWidth returns the visual width of the longest unbreakable token
+// in a cell. URLs (http://, https://) are atomic; other text splits at spaces.
+func longestAtomicWidth(cell string) int {
+	cell = strings.TrimSpace(cell)
+	// Strip common markdown delimiters for measurement
+	cell = stripDelimiters(cell)
+	words := strings.Fields(cell)
+	maxW := 0
+	for _, word := range words {
+		w := runewidthSafe(word)
+		if w > maxW {
+			maxW = w
+		}
+	}
+	return maxW
 }
 
 // runewidthSafe returns the visual width of a string.

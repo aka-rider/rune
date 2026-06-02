@@ -220,6 +220,20 @@ func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {
 			continue
 		}
 
+		// Table spans (Rendered) already account for available width and use
+		// embedded \n for multi-line rows. ExpandTableRows handles the splitting.
+		// Do NOT re-wrap them — that would break mid-word or mid-border.
+		if isRenderedTableLine(line) {
+			segments = append(segments, WrapSegment{
+				Spans:     line.Spans,
+				ModelLine: lineIdx,
+				WrapIndex: 0,
+				StartCol:  0,
+			})
+			rowToSegment = append(rowToSegment, len(segments)-1)
+			continue
+		}
+
 		// Build a concatenated text for wrap-break calculations and a mapping
 		// from byte offset in concatenated text back to the originating span.
 		var spanRefs []spanRef
@@ -368,4 +382,16 @@ func sliceOriginalSpans(spans []SyntaxSpan, refs []spanRef, segStart, segEnd int
 	}
 
 	return result
+}
+
+// isRenderedTableLine returns true if a SyntaxLine consists entirely of
+// Rendered table spans. These spans manage their own width/wrapping
+// and must not be re-wrapped by the WrapMap.
+func isRenderedTableLine(line SyntaxLine) bool {
+	for _, s := range line.Spans {
+		if s.State != Rendered || s.Kind != TokenTable {
+			return false
+		}
+	}
+	return true
 }

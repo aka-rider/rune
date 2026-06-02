@@ -18,10 +18,12 @@ type mdBlock struct {
 	language  string // for code fences
 
 	// Table metadata (only set for TokenTable blocks)
-	colWidths  []int // max visual width per column
-	alignments []int // 0=left, 1=center, 2=right (per goldmark)
-	sepLine    int   // line index of separator row (-1 if none)
-	headerEnd  int   // last line index of the header (startLine typically)
+	colWidths    []int    // max visual width per column
+	minColWidths []int    // min width per column (longest unbreakable word/URL)
+	alignments   []int    // 0=left, 1=center, 2=right (per goldmark)
+	sepLine      int      // line index of separator row (-1 if none)
+	headerEnd    int      // last line index of the header (startLine typically)
+	headerCells  []string // header cell text (for pivot layout labels)
 }
 
 // walkFencedCodeBlock extracts block info for a fenced code block.
@@ -217,7 +219,13 @@ func walkTable(
 	endOff := lineOffsets[endLine] + len(lines[endLine])
 
 	// Compute column widths and identify separator line
-	colWidths, sepLine := computeTableMetrics(lines, startLine, endLine, parsed)
+	colWidths, minColWidths, sepLine := computeTableMetrics(lines, startLine, endLine, parsed)
+
+	// Extract header cells for pivot layout labels
+	var headerCells []string
+	if startLine < len(lines) {
+		headerCells = parseTableCells(lines[startLine])
+	}
 
 	// Extract alignments from goldmark AST
 	alignments := make([]int, len(node.Alignments))
@@ -227,16 +235,18 @@ func walkTable(
 
 	*blockID++
 	*blocks = append(*blocks, mdBlock{
-		kind:       TokenTable,
-		id:         *blockID,
-		startLine:  startLine,
-		endLine:    endLine,
-		startOff:   startOff,
-		endOff:     endOff,
-		colWidths:  colWidths,
-		alignments: alignments,
-		sepLine:    sepLine,
-		headerEnd:  startLine,
+		kind:         TokenTable,
+		id:           *blockID,
+		startLine:    startLine,
+		endLine:      endLine,
+		startOff:     startOff,
+		endOff:       endOff,
+		colWidths:    colWidths,
+		minColWidths: minColWidths,
+		alignments:   alignments,
+		sepLine:      sepLine,
+		headerEnd:    startLine,
+		headerCells:  headerCells,
 	})
 }
 

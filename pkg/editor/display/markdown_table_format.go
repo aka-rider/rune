@@ -3,7 +3,6 @@ package display
 import (
 	"sort"
 	"strings"
-	"unicode/utf8"
 )
 
 // extractRenderedCellData extracts rendered text and cell mappings for each cell.
@@ -133,7 +132,6 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 // formatTableRowRendered formats a table row using pre-extracted rendered cell data.
 // This avoids the mismatch between raw source text (with delimiters) and rendered text.
 // Uses box-drawing vertical characters (│) for borders.
-// Cell content is truncated with "…" if it exceeds the allocated column width.
 func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string) (string, []CellMapping) {
 	var b strings.Builder
 	var cm []CellMapping
@@ -148,15 +146,10 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
 
-		// Get rendered cell data, truncating if necessary
+		// Get rendered cell data
 		rc := renderedCellData{text: "", width: 0}
 		if i < len(renderedCells) {
 			rc = renderedCells[i]
-		}
-
-		// Truncate cell content if it exceeds the allocated column width
-		if rc.width > w && w > 0 {
-			rc = truncateCellData(rc, w)
 		}
 
 		cw := rc.width
@@ -205,60 +198,6 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 	}
 
 	return b.String(), cm
-}
-
-// truncateCellData truncates cell content to fit within maxWidth visual columns,
-// appending "…" (ellipsis) if truncation occurs.
-func truncateCellData(rc renderedCellData, maxWidth int) renderedCellData {
-	if maxWidth <= 0 {
-		return renderedCellData{text: "", width: 0}
-	}
-	if rc.width <= maxWidth {
-		return rc
-	}
-
-	// Reserve 1 cell for the ellipsis "…" (3 bytes UTF-8, 1 visual width)
-	targetWidth := maxWidth - 1
-	if targetWidth < 0 {
-		targetWidth = 0
-	}
-
-	// Walk through text rune by rune, accumulating visual width
-	var truncText strings.Builder
-	var truncCM []CellMapping
-	accWidth := 0
-	pos := 0
-	cmIdx := 0
-
-	for pos < len(rc.text) {
-		r, size := utf8.DecodeRuneInString(rc.text[pos:])
-		rw := 1
-		if r >= 0x1100 && isWide(r) {
-			rw = 2
-		}
-		if accWidth+rw > targetWidth {
-			break
-		}
-		truncText.WriteRune(r)
-		// Advance CellMap by byte count
-		for j := 0; j < size && cmIdx < len(rc.cm); j++ {
-			truncCM = append(truncCM, rc.cm[cmIdx])
-			cmIdx++
-		}
-		accWidth += rw
-		pos += size
-	}
-
-	// Append ellipsis
-	truncText.WriteRune('…')
-	// "…" is 3 bytes — add 3 CellMapping entries with -1
-	truncCM = append(truncCM, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
-
-	return renderedCellData{
-		text:  truncText.String(),
-		cm:    truncCM,
-		width: accWidth + 1, // +1 for the ellipsis
-	}
 }
 
 // writeRenderedCell writes rendered cell content to the builder using pre-computed cell mapping.

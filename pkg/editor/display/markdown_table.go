@@ -36,17 +36,33 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 		}}
 	}
 
+	// Choose layout based on available width
+	layout := TableLayoutGrid
+	if availableWidth > 0 {
+		layout = chooseTableLayout(block.colWidths, block.minColWidths, availableWidth)
+	}
+
+	if layout == TableLayoutPivoted {
+		return formatPivotedRow(block, lineIdx, lineText, lineStart, parsed, role, availableWidth)
+	}
+
+	// Grid or Wrapped layout — both render as a grid, but Wrapped uses
+	// proportionally constrained column widths with word-wrap inside cells.
+	colWidths := block.colWidths
+	if layout == TableLayoutWrapped {
+		colWidths = constrainColWidths(colWidths, block.minColWidths, availableWidth)
+	}
+
 	// For separator lines, render a formatted separator using box-drawing characters
 	if role == TableRoleSeparator {
-		colWidths := block.colWidths
-		if availableWidth > 0 {
-			colWidths = constrainColWidths(colWidths, availableWidth)
+		spans := formatTableSeparatorSpansWithWidths(colWidths, lineStart, lineText, block)
+		for i := range spans {
+			spans[i].TableLayout = layout
 		}
-		return formatTableSeparatorSpansWithWidths(colWidths, lineStart, lineText, block)
+		return spans
 	}
 
 	// For header and body lines, parse and pad cells
-	// Use per-line parsed spans if available
 	var lineSpans []mdSpan
 	if parsed != nil && lineIdx < len(parsed) {
 		lineSpans = parsed[lineIdx].spans
@@ -55,23 +71,16 @@ func tableRenderedSpans(block mdBlock, lineIdx int, lineText string, lineStart i
 	// Extract rendered cell data from spans
 	renderedCells := extractRenderedCellData(lineText, lineStart, lineSpans, len(block.colWidths))
 
-	// Use block-level column widths (computed once across all rows in walkTable).
-	// Do NOT recompute per-row — that destroys alignment.
-	colWidths := block.colWidths
-
-	// If available width is known and the grid doesn't fit, shrink column widths
-	// proportionally to fit within the available width.
-	if availableWidth > 0 {
-		colWidths = constrainColWidths(colWidths, availableWidth)
+	if layout == TableLayoutWrapped {
+		return formatWrappedRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role)
 	}
 
-	// Render as grid (the only fully-implemented layout).
-	// Wrapped/pivoted modes are deferred until multi-line expansion is supported.
-	return formatGridRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role)
+	// Build grid row spans
+	return formatGridRow(block, lineIdx, renderedCells, colWidths, block.alignments, lineStart, lineText, lineSpans, role, layout)
 }
 
 // formatGridRow formats a table row as a standard single-line grid with styled spans.
-func formatGridRow(block mdBlock, lineIdx int, renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string, lineSpans []mdSpan, role TableRoleKind) []SyntaxSpan {
+func formatGridRow(block mdBlock, lineIdx int, renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string, lineSpans []mdSpan, role TableRoleKind, layout TableLayoutKind) []SyntaxSpan {
 	formatted, cm := formatTableRowRendered(renderedCells, colWidths, alignments, lineStart, lineText)
 
 	if len(lineSpans) == 0 {
@@ -86,117 +95,88 @@ func formatGridRow(block mdBlock, lineIdx int, renderedCells []renderedCellData,
 			BlockStart:  block.startOff,
 			BlockEnd:    block.endOff,
 			TableRole:   role,
-			TableLayout: TableLayoutGrid,
+			TableLayout: layout,
 		}}
 	}
 
 	spans := buildTableStyledSpans(block, lineIdx, formatted, cm, lineStart, lineText, lineSpans, role)
 	// Set layout on all spans
 	for i := range spans {
-		spans[i].TableLayout = TableLayoutGrid
+		spans[i].TableLayout = layout
 	}
 	return spans
 }
 
-// formatWrappedRow formats a table row with word-wrapped cells.
-// Links are kept as atomic (non-breakable) units.
-// Returns spans for the current display line (first wrapped line).
-func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string, lineSpans []mdSpan, role TableRoleKind, availableWidth int) []SyntaxSpan {
-	// Compute per-column allocated width
+// formatWrappedRow formats a table row as a multi-line grid with word-wrapped cells.
+// Each cell's content is wrapped at word boundaries to fit within its constrained
+// column width. The row may span multiple visual lines. Lines are joined with \n
+// for ExpandTableRows to split into separate display rows.
+func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string, lineSpans []mdSpan, role TableRoleKind) []SyntaxSpan {
 	numCols := len(colWidths)
-	frameWidth := numCols*2 + 1 // │ + padding per column + final │
-	usableWidth := availableWidth - frameWidth
-	if usableWidth < numCols {
-		// Not enough space — fall back to grid
-		return formatGridRow(block, lineIdx, renderedCells, colWidths, alignments, lineStart, lineText, lineSpans, role)
-	}
-	allocatedPerCol := usableWidth / numCols
 
-	// Build per-cell styled spans, then wrap each cell
-	var cellSpansPerCol [][]SyntaxSpan
-	totalWidth := 0
-
+	// Word-wrap each cell's content to its column width
+	wrappedCells := make([][]string, numCols)
+	maxLines := 1
 	for col := 0; col < numCols; col++ {
 		rc := renderedCellData{text: "", width: 0}
 		if col < len(renderedCells) {
 			rc = renderedCells[col]
 		}
-		totalWidth += rc.width
-
-		// Create a single span for the cell content, then wrap
-		sp := SyntaxSpan{
-			Text:        rc.text,
-			Kind:        TokenTable,
-			State:       Rendered,
-			BufferStart: lineStart,
-			BufferEnd:   lineStart + len(lineText),
-			CellMap:     rc.cm,
-			BlockID:     block.id,
-			BlockStart:  block.startOff,
-			BlockEnd:    block.endOff,
-			TableRole:   role,
-			TableLayout: TableLayoutWrapped,
+		w := colWidths[col]
+		wrappedCells[col] = wrapCellText(rc.text, w)
+		if len(wrappedCells[col]) > maxLines {
+			maxLines = len(wrappedCells[col])
 		}
-		// Apply inline span styling if available
-		if len(lineSpans) > 0 {
-			for _, ms := range lineSpans {
-				contentStart := ms.start + ms.delimLeft
-				// Check if this span overlaps with the cell's content
-				if rc.cm != nil && len(rc.cm) > 0 && len(rc.text) > 0 {
-					sp.Kind = ms.kind
-					break
-				}
-				_ = contentStart
-			}
-		}
-		wrapped := wrapCellSpans([]SyntaxSpan{sp}, allocatedPerCol)
-		cellSpansPerCol = append(cellSpansPerCol, wrapped...)
 	}
 
-	// Build the first wrapped line (subsequent lines would be synthetic SyntaxLines)
+	// Build multi-line output: each visual line has │ cell │ cell │ format
 	var b strings.Builder
 	var cm []CellMapping
 
-	for col := 0; col < numCols; col++ {
-		if col == 0 {
-			b.WriteRune('│')
-			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
-		}
-		b.WriteByte(' ')
-		cm = append(cm, CellMapping{BufOffset: -1})
-
-		// Get the first wrapped line for this cell
-		var colSpans []SyntaxSpan
-		if col < len(cellSpansPerCol) {
-			colSpans = cellSpansPerCol[col]
-		}
-
-		// Write cell content
-		cellText := ""
-		var cellCM []CellMapping
-		for _, s := range colSpans {
-			cellText += s.Text
-			cellCM = append(cellCM, s.CellMap...)
-		}
-
-		// Pad to allocated width
-		cellW := runewidthSafe(cellText)
-		pad := allocatedPerCol - cellW
-		if pad < 0 {
-			pad = 0
-		}
-
-		b.WriteString(cellText)
-		cm = append(cm, cellCM...)
-		for j := 0; j < pad; j++ {
-			b.WriteByte(' ')
+	for row := 0; row < maxLines; row++ {
+		if row > 0 {
+			b.WriteByte('\n')
 			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 
-		b.WriteByte(' ')
-		cm = append(cm, CellMapping{BufOffset: -1})
-		b.WriteRune('│')
-		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+		for col, w := range colWidths {
+			// Opening border
+			if col == 0 {
+				b.WriteRune('│')
+				cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+			}
+			// Left padding
+			b.WriteByte(' ')
+			cm = append(cm, CellMapping{BufOffset: -1})
+
+			// Cell content for this visual row
+			cellText := ""
+			if row < len(wrappedCells[col]) {
+				cellText = wrappedCells[col][row]
+			}
+			cellWidth := runewidthSafe(cellText)
+			pad := w - cellWidth
+			if pad < 0 {
+				pad = 0
+			}
+
+			// Write cell text (left-aligned for wrapped mode)
+			b.WriteString(cellText)
+			for i := 0; i < len(cellText); i++ {
+				cm = append(cm, CellMapping{BufOffset: -1})
+			}
+			// Right padding
+			for i := 0; i < pad; i++ {
+				b.WriteByte(' ')
+				cm = append(cm, CellMapping{BufOffset: -1})
+			}
+
+			// Right padding space + closing border
+			b.WriteByte(' ')
+			cm = append(cm, CellMapping{BufOffset: -1})
+			b.WriteRune('│')
+			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+		}
 	}
 
 	return []SyntaxSpan{{
@@ -214,13 +194,15 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 	}}
 }
 
-// formatPivotedRow renders a table row as key-value pairs (Header: Value).
-// In pivoted mode, the header row is suppressed (returns empty span).
-func formatPivotedRow(block mdBlock, lineIdx int, renderedCells []renderedCellData, colWidths []int, alignments []int, lineStart int, lineText string, lineSpans []mdSpan, role TableRoleKind, availableWidth int) []SyntaxSpan {
-	numCols := len(colWidths)
+// formatPivotedRow renders a table row in pivoted (key-value) mode.
+// Header and separator rows are suppressed (return empty span).
+// Body rows are rendered as "Header: Value" per column, joined by newlines.
+// A horizontal rule separator is placed between rows.
+func formatPivotedRow(block mdBlock, lineIdx int, lineText string, lineStart int, parsed []parsedLine, role TableRoleKind, availableWidth int) []SyntaxSpan {
+	numCols := len(block.colWidths)
 
-	// Suppress header row in pivoted mode
-	if role == TableRoleHeader {
+	// Suppress header and separator rows in pivoted mode
+	if role == TableRoleHeader || role == TableRoleSeparator {
 		return []SyntaxSpan{{
 			Text:        "",
 			Kind:        TokenTable,
@@ -235,20 +217,36 @@ func formatPivotedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 		}}
 	}
 
-	// For data rows, render as "Header: Value" pairs
-	// Get header values from the header line
-	headerCells := parseTableCells(lineText)
-	if lineIdx > block.headerEnd {
-		// Read header line to get column labels
-		// This is a simplification — in practice, the header text would be stored in the block
-		headerCells = make([]string, numCols)
-		for i := range headerCells {
-			headerCells[i] = fmt.Sprintf("Col%d", i+1) // placeholder
-		}
+	// Extract rendered cell data for this row
+	var lineSpans []mdSpan
+	if parsed != nil && lineIdx < len(parsed) {
+		lineSpans = parsed[lineIdx].spans
 	}
+	renderedCells := extractRenderedCellData(lineText, lineStart, lineSpans, numCols)
 
+	// Build "Header: Value" pairs separated by newlines
 	var b strings.Builder
 	var cm []CellMapping
+
+	// Add a horizontal separator before the first body row
+	// and between subsequent body rows
+	isFirstBody := (lineIdx == block.sepLine+1) || (block.sepLine < 0 && lineIdx == block.headerEnd+1)
+	if !isFirstBody {
+		// Separator between rows: ────────
+		sepWidth := availableWidth
+		if sepWidth <= 0 {
+			sepWidth = 40
+		}
+		for i := 0; i < sepWidth; i++ {
+			b.WriteRune('─')
+		}
+		// ─ is 3 bytes UTF-8
+		for i := 0; i < sepWidth*3; i++ {
+			cm = append(cm, CellMapping{BufOffset: -1})
+		}
+		b.WriteByte('\n')
+		cm = append(cm, CellMapping{BufOffset: -1})
+	}
 
 	for col := 0; col < numCols; col++ {
 		rc := renderedCellData{text: "", width: 0}
@@ -256,29 +254,40 @@ func formatPivotedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 			rc = renderedCells[col]
 		}
 
+		// Get header label
 		label := ""
-		if col < len(headerCells) {
-			label = headerCells[col]
+		if col < len(block.headerCells) {
+			label = block.headerCells[col]
+		}
+		if label == "" {
+			label = fmt.Sprintf("Col%d", col+1)
 		}
 
-		// Format: "Label: Value"
+		// Format: "  Label: Value"
+		b.WriteString("  ")
+		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+
 		b.WriteString(label)
-		b.WriteString(": ")
-		b.WriteString(rc.text)
+		for i := 0; i < len(label); i++ {
+			cm = append(cm, CellMapping{BufOffset: -1})
+		}
 
-		// Build cell mapping
-		for range label {
-			cm = append(cm, CellMapping{BufOffset: -1})
-		}
-		for i := 0; i < 2; i++ {
-			cm = append(cm, CellMapping{BufOffset: -1})
-		}
+		b.WriteString(": ")
+		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+
+		// Write cell value with proper CellMapping
+		b.WriteString(rc.text)
 		if len(rc.cm) > 0 {
 			cm = append(cm, rc.cm...)
+		} else {
+			for i := 0; i < len(rc.text); i++ {
+				cm = append(cm, CellMapping{BufOffset: -1})
+			}
 		}
 
+		// Newline between columns (except last)
 		if col < numCols-1 {
-			b.WriteString("\n")
+			b.WriteByte('\n')
 			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 	}
