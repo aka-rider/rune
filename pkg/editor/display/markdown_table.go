@@ -158,7 +158,7 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 			}
 		}
 		wrapped := wrapCellSpans([]SyntaxSpan{sp}, allocatedPerCol)
-		cellSpansPerCol = append(cellSpansPerCol, wrapped)
+		cellSpansPerCol = append(cellSpansPerCol, wrapped...)
 	}
 
 	// Build the first wrapped line (subsequent lines would be synthetic SyntaxLines)
@@ -175,8 +175,8 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 
 		// Get the first wrapped line for this cell
 		var colSpans []SyntaxSpan
-		if col < len(cellSpansPerCol) && len(cellSpansPerCol[col]) > 0 {
-			colSpans = cellSpansPerCol[col][0]
+		if col < len(cellSpansPerCol) {
+			colSpans = cellSpansPerCol[col]
 		}
 
 		// Write cell content
@@ -275,7 +275,7 @@ func formatPivotedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 		b.WriteString(rc.text)
 
 		// Build cell mapping
-		for i := range label {
+		for range label {
 			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 		for i := 0; i < 2; i++ {

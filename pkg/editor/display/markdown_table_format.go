@@ -1,7 +1,6 @@
 package display
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -330,4 +329,3 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 	return result
 }
 
-// _ = fmt.Sprintf // silence unused import warning

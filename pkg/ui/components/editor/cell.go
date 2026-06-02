@@ -180,7 +180,7 @@ func (m Model) mergeTableStyle(role display.TableRoleKind, kind display.TokenKin
 	case display.TokenItalic:
 		return base.Italic(true)
 	case display.TokenStrikethrough:
-		return base.CrossOverStrikeThrough(true)
+		return base.Strikethrough(true)
 	case display.TokenInlineCode:
 		// Inline code in tables: use inline code foreground with table background
 		return m.styles.InlineCode.Background(base.GetBackground())
