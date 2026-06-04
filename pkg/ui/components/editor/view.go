@@ -36,7 +36,7 @@ func (m Model) View() string {
 
 	var renderedLines []string
 	var imageLineFlags []bool
-	for _, l := range lines {
+	for i, l := range lines {
 		// Reserved image row: emit Kitty placeholder cells instead of span
 		// cells. The cells flow through sliceCells like any other content, so
 		// horizontal scroll/clip is handled uniformly.
@@ -71,7 +71,10 @@ func (m Model) View() string {
 			lineCells = append(lineCells, spCells...)
 		}
 
-		// EOL cursor: append synthetic cell if cursor is at end-of-line
+		// EOL cursor: append synthetic cell if cursor is at end-of-line,
+		// but only on the last visible segment of a model line. If the
+		// next visible row continues the same model line (wrapped), the
+		// cursor renders on that row's real cell via applyOverlays.
 		if m.focused {
 			lineEnd := 0
 			if len(l.Spans) > 0 {
@@ -80,12 +83,15 @@ func (m Model) View() string {
 			}
 			for off := range cursorOffsets {
 				if off == lineEnd {
-					lineCells = append(lineCells, Cell{
-						Rune:      ' ',
-						Width:     1,
-						Style:     lipgloss.NewStyle(),
-						BufOffset: lineEnd,
-					})
+					isLastVisible := i+1 >= len(lines) || lines[i+1].ModelLine != l.ModelLine
+					if isLastVisible {
+						lineCells = append(lineCells, Cell{
+							Rune:      ' ',
+							Width:     1,
+							Style:     lipgloss.NewStyle(),
+							BufOffset: lineEnd,
+						})
+					}
 					break
 				}
 			}

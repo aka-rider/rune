@@ -579,6 +579,46 @@ func TestCursorAtEndOfLine(t *testing.T) {
 	}
 }
 
+// TestCursorAtWrapBoundary_NoDoubleCursor verifies the cursor renders on
+// exactly one display row when positioned at a soft-wrap boundary. Without the
+// fix in View(), the EOL cursor on the first segment and the applyOverlays
+// cursor on the second segment both fire, producing two visible cursor blocks.
+func TestCursorAtWrapBoundary_NoDoubleCursor(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(6, 10) // narrow width so "abcdefghij" wraps
+	m = m.SetFocused(true)
+	m.buf = buffer.New("abcdefghij")
+	m.cursors = cursor.NewCursorSet(5) // wrap point: after "abcde", before "fghij"
+	m = m.syncDisplay()
+
+	if len(m.snapshot.Lines) < 2 {
+		t.Fatal("expected wrapped display lines; width may be too wide")
+	}
+
+	view := m.View()
+	lines := strings.Split(view, "\n")
+
+	cursorLines := 0
+	for _, line := range lines {
+		if strings.Contains(line, "\x1b[7m") {
+			cursorLines++
+		}
+	}
+
+	if cursorLines != 1 {
+		t.Errorf("cursor appears on %d lines, want 1 (double cursor at wrap boundary)", cursorLines)
+	}
+}
+
 // TestScrollToCursorVertical verifies that scrollToCursor adjusts TopRow when
 // the cursor moves below the viewport (regression: bug #4 — scrollToCursor stub).
 func TestScrollToCursorVertical(t *testing.T) {
