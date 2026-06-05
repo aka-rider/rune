@@ -6,6 +6,7 @@ build:
 
 run: build
 	$(RUNE) $(ARGS)
+rune: run
 
 
 test:
