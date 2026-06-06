@@ -25,7 +25,23 @@ If code violates any rule below, it is defective and must be fixed before merge.
 - **Contextual wrapping.** Always wrap errors with operation + resource context: `fmt.Errorf("load dir %q: %w", dir, err)`.
 - **No silent fallbacks.** Do not default or silently recover from invalid user-supplied data.
 
-### 1.4 Project Organization
+### 1.5 Text & Strings
+
+**`len()` is byte length, not character length.** When a string is used for display — terminal output, table cells, cursor positions, wrap calculations — use `utf8.RuneCountInString` instead of `len`.
+
+```go
+// WRONG — byte length, breaks on multi-byte unicode
+width := len("café")        // 5, not 4
+col := len(line[:cursor])   // wrong column if line has non-ASCII
+
+// RIGHT — rune count = display width for CJK, emoji, accents, etc.
+width := utf8.RuneCountInString("café")  // 4
+col := utf8.RuneCountInString(line[:cursor])
+```
+
+This applies to every calculation that touches rendering: span distance, cell position, column index, wrap boundaries, table cell widths. **Assume all input strings may contain multi-byte characters.** If a `len()` call is on display-related code, it is almost certainly wrong.
+
+### 1.6 Project Organization
 - NEVER create `types`, `utils`, `helpers`, `common`, or `misc` packages.
 - One primary type per file. A file named `editor.go` owns `type Model struct` for the editor and its immediate helpers.
 - 500 LoC per file is a hard smell. If a component exceeds this, decompose it.
@@ -357,6 +373,22 @@ borderStyle.Render(m.editor.View())
 
 **Pages use `Height`/`Width` on their own layout wrappers** (e.g., border styles) to fill available space — this is the page's own box-sizing concern, not a child-clamping concern. The child's output fits because the child guarantees it; the border's `Height(innerH)` pads the box if content is shorter.
 
+### 4.5 Rendering & Unicode
+
+Every rendering calculation — span position, cell column, wrap boundary, table cell width — must count **display characters**, not bytes.
+
+```go
+// WRONG — byte offsets break on CJK, emoji, accented chars
+for i := 0; i < len(sp.Text); i++ { /* ... */ }
+cellEnd := cellStart + len(cellText)
+
+// RIGHT — rune-based offsets
+for i := 0; i < utf8.RuneCountInString(sp.Text); i++ { /* ... */ }
+cellEnd := cellStart + utf8.RuneCountInString(cellText)
+```
+
+**Rule:** If the calculation affects what the user sees on screen, use `utf8.RuneCountInString`. If the calculation is purely internal (buffer offsets, syntax tree positions), `len()` is fine — but double-check that assumption.
+
 ---
 
 ## 5. The Elm Cycle
@@ -627,6 +659,7 @@ These are mistakes that language models commonly produce in this codebase. Each 
 | 17 | Using lipgloss `Height()`/`Width()` without `MaxHeight()`/`MaxWidth()` at render boundaries | Content overflows: Height is minimum-only, Width wraps (adding lines) | §4.4 |
 | 18 | Page re-clamping child output with `MaxWidth`/`MaxHeight` wrappers | Redundant, masks bugs, duplicates dimension arithmetic | §4.4 |
 | 19 | Treating lipgloss `Width(n)`/`Height(n)` as content-box (subtracting frame in BOTH recalcLayout and View) | Double-subtraction: Width/Height are border-box in lipgloss v2 | §4.3 |
+| 20 | Using `len(str)` instead of `utf8.RuneCountInString(str)` for display-related calculations | Byte length ≠ character length; breaks CJK, emoji, accented chars | §1.5, §4.5 |
 
 ---
 
@@ -672,4 +705,5 @@ Before completing any change, mechanically verify:
 - [ ] Data integrity failures stop execution and surface explicit errors to the user.
 - [ ] No silent error swallowing — every error is wrapped with context or explicitly annotated.
 - [ ] No file exceeds 500 LoC.
+- [ ] No `len()` used for display-related string length; `utf8.RuneCountInString` used instead.
 - [ ] No page holds rendering state that belongs to a child component.

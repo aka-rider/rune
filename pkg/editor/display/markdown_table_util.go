@@ -2,18 +2,13 @@ package display
 
 import (
 	"strings"
+	"unicode/utf8"
 )
-
-// formatTableSeparatorSpans creates styled spans for a table separator line
-// using box-drawing characters.
-func formatTableSeparatorSpans(block mdBlock, lineStart int, lineText string) []SyntaxSpan {
-	return formatTableSeparatorSpansWithWidths(block.colWidths, lineStart, lineText, block)
-}
 
 // formatTableSeparatorSpansWithWidths creates separator spans using given column widths.
 func formatTableSeparatorSpansWithWidths(colWidths []int, lineStart int, lineText string, block mdBlock) []SyntaxSpan {
 	formatted := formatTableSeparator(colWidths)
-	cm := make([]CellMapping, len(formatted))
+	cm := make([]CellMapping, utf8.RuneCountInString(formatted))
 	for i := range cm {
 		cm[i] = CellMapping{BufOffset: -1}
 	}
@@ -29,6 +24,12 @@ func formatTableSeparatorSpansWithWidths(colWidths []int, lineStart int, lineTex
 		BlockEnd:    block.endOff,
 		TableRole:   TableRoleSeparator,
 	}}
+}
+
+// formatTableSeparatorSpans creates styled spans for a table separator line
+// using box-drawing characters.
+func formatTableSeparatorSpans(block mdBlock, lineStart int, lineText string) []SyntaxSpan {
+	return formatTableSeparatorSpansWithWidths(block.colWidths, lineStart, lineText, block)
 }
 
 // tableLineRole determines whether a table line is header, separator, or body.
@@ -269,7 +270,7 @@ func formatTableSeparatorWithType(colWidths []int, sepType separatorType) string
 }
 
 // formatTableRow formats a pipe-delimited row with padded cells.
-// Returns the formatted string and a CellMap mapping each output byte to a buffer offset.
+// Returns the formatted string and a CellMap mapping each output visual cell to a buffer offset.
 // NOTE: This function is kept for backward compatibility. New code should use
 // formatTableRowRendered for span-aware rendering.
 func formatTableRow(line string, colWidths []int, alignments []int, lineStart int) (string, []CellMapping) {
@@ -343,14 +344,20 @@ func formatTableRow(line string, colWidths []int, alignments []int, lineStart in
 }
 
 // writeCellWithMap writes cell content to the builder and appends CellMapping entries.
+// CellMap is built per-visual-cell (per-rune), not per-byte.
 func writeCellWithMap(b *strings.Builder, cm *[]CellMapping, cell string, bufStart int) {
-	for i := 0; i < len(cell); i++ {
-		b.WriteByte(cell[i])
+	for pos := 0; pos < len(cell); {
+		b.WriteRune(rune(cell[pos]))
 		off := -1
 		if bufStart >= 0 {
-			off = bufStart + i
+			off = bufStart + pos
 		}
 		*cm = append(*cm, CellMapping{BufOffset: off})
+		_, size := utf8.DecodeRuneInString(cell[pos:])
+		if size == 0 {
+			size = 1
+		}
+		pos += size
 	}
 }
 

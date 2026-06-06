@@ -1,6 +1,9 @@
 package display
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // ExpandTableRows returns a new snapshot in which:
 //  1. Any DisplayLine containing newline characters in its span text is split
@@ -225,7 +228,7 @@ func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
 	}
 
 	borderText := formatTableSeparatorWithType(colWidths, sepType)
-	cm := make([]CellMapping, len(borderText))
+	cm := make([]CellMapping, utf8.RuneCountInString(borderText))
 	for i := range cm {
 		cm[i] = CellMapping{BufOffset: -1}
 	}
@@ -295,17 +298,18 @@ func splitDisplayLine(l DisplayLine) []DisplayLine {
 		for pi, part := range parts {
 			if pi > 0 {
 				chunks = append(chunks, textChunk{spanIdx: i, isNewline: true})
-				cmOffset++ // skip the \n byte in CellMap
+				cmOffset++ // skip the \n rune in CellMap
 			}
 			if len(part) == 0 {
 				continue
 			}
 			var partCM []CellMapping
-			if sp.CellMap != nil && cmOffset+len(part) <= len(sp.CellMap) {
-				partCM = sp.CellMap[cmOffset : cmOffset+len(part)]
+			partRuneCount := utf8.RuneCountInString(part)
+			if sp.CellMap != nil && cmOffset+partRuneCount <= len(sp.CellMap) {
+				partCM = sp.CellMap[cmOffset : cmOffset+partRuneCount]
 			}
 			chunks = append(chunks, textChunk{spanIdx: i, text: part, cm: partCM})
-			cmOffset += len(part)
+			cmOffset += partRuneCount
 		}
 	}
 

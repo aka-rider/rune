@@ -3,6 +3,7 @@ package display
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // extractRenderedCellData extracts rendered text and cell mappings for each cell.
@@ -78,17 +79,27 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 				if cursor < spanStart {
 					gap := lineText[cursor:spanStart]
 					renderedText.WriteString(gap)
-					for i := 0; i < len(gap); i++ {
-						cm = append(cm, CellMapping{BufOffset: lineStart + cursor + i})
+					for pos := 0; pos < len(gap); {
+						cm = append(cm, CellMapping{BufOffset: lineStart + cursor})
+						_, size := utf8.DecodeRuneInString(gap[pos:])
+						if size == 0 {
+							size = 1
+						}
+						pos += size
+						cursor++
 					}
-					cursor = spanStart
 				}
 
 				// Emit the span's rendered text (inner text, without delimiters)
 				renderedText.WriteString(s.text)
 				contentStart := lineStart + s.start + s.delimLeft
-				for i := 0; i < len(s.text); i++ {
-					cm = append(cm, CellMapping{BufOffset: contentStart + i})
+				for pos := 0; pos < len(s.text); {
+					cm = append(cm, CellMapping{BufOffset: contentStart + pos})
+					_, size := utf8.DecodeRuneInString(s.text[pos:])
+					if size == 0 {
+						size = 1
+					}
+					pos += size
 				}
 
 				// Advance cursor past the entire span (including delimiters)
@@ -99,8 +110,14 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 			if cursor < cellRelEnd {
 				gap := lineText[cursor:cellRelEnd]
 				renderedText.WriteString(gap)
-				for i := 0; i < len(gap); i++ {
-					cm = append(cm, CellMapping{BufOffset: lineStart + cursor + i})
+				for pos := 0; pos < len(gap); {
+					cm = append(cm, CellMapping{BufOffset: lineStart + cursor})
+					_, size := utf8.DecodeRuneInString(gap[pos:])
+					if size == 0 {
+						size = 1
+					}
+					pos += size
+					cursor++
 				}
 			}
 
@@ -113,17 +130,22 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 		} else {
 			// No spans — use raw cell text as-is (plain text, no formatting)
 			w := cellWidth(cellText)
-			cm := make([]CellMapping, len(cellText))
 			bufStart := -1
 			if col < len(cellOffsets) {
 				bufStart = lineStart + cellOffsets[col]
 			}
-			for i := range cm {
+			var cm []CellMapping
+			for pos := 0; pos < len(cellText); {
 				off := -1
 				if bufStart >= 0 {
-					off = bufStart + i
+					off = bufStart + pos
 				}
-				cm[i] = CellMapping{BufOffset: off}
+				cm = append(cm, CellMapping{BufOffset: off})
+				_, size := utf8.DecodeRuneInString(cellText[pos:])
+				if size == 0 {
+					size = 1
+				}
+				pos += size
 			}
 			result[col] = renderedCellData{
 				text:  cellText,
@@ -144,10 +166,10 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 	var cm []CellMapping
 
 	for i, w := range colWidths {
-		// Opening vertical border (│ is 3 bytes in UTF-8 — one CellMapping per byte)
+		// Opening vertical border (│ is 3 bytes in UTF-8 — one CellMapping per visual cell)
 		if i == 0 {
 			b.WriteRune('│')
-			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 		// Left padding space
 		b.WriteByte(' ')
@@ -197,11 +219,11 @@ func formatTableRowRendered(renderedCells []renderedCellData, colWidths []int, a
 			}
 		}
 
-		// Right padding space and closing vertical border (│ is 3 bytes — one CellMapping per byte)
+		// Right padding space and closing vertical border (│ is 3 bytes — one CellMapping per visual cell)
 		b.WriteByte(' ')
 		cm = append(cm, CellMapping{BufOffset: -1})
 		b.WriteRune('│')
-		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+		cm = append(cm, CellMapping{BufOffset: -1})
 	}
 
 	return b.String(), cm
@@ -212,8 +234,13 @@ func writeRenderedCell(b *strings.Builder, cm *[]CellMapping, rc renderedCellDat
 	if len(rc.cm) > 0 {
 		*cm = append(*cm, rc.cm...)
 	} else {
-		for i := 0; i < len(rc.text); i++ {
+		for pos := 0; pos < len(rc.text); {
 			*cm = append(*cm, CellMapping{BufOffset: -1})
+			_, size := utf8.DecodeRuneInString(rc.text[pos:])
+			if size == 0 {
+				size = 1
+			}
+			pos += size
 		}
 	}
 	b.WriteString(rc.text)
@@ -244,14 +271,14 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 		return sorted[i].start < sorted[j].start
 	})
 
-	// Build per-byte kind classification
-	type byteInfo struct {
+	// Build per-visual-cell kind classification
+	type cellInfo struct {
 		kind TokenKind
 		sp   *mdSpan
 		cm   CellMapping
 	}
 
-	byteInfos := make([]byteInfo, len(formatted))
+	cellInfos := make([]cellInfo, len(cm))
 
 	for i, cellMap := range cm {
 		bufOff := cellMap.BufOffset
@@ -275,10 +302,10 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 			}
 		}
 
-		byteInfos[i] = byteInfo{kind: kind, sp: activeSpan, cm: cellMap}
+		cellInfos[i] = cellInfo{kind: kind, sp: activeSpan, cm: cellMap}
 	}
 
-	// Group consecutive bytes with the same kind into spans
+	// Group consecutive cells with the same kind into spans
 	var result []SyntaxSpan
 	var currentText strings.Builder
 	var currentCM []CellMapping
@@ -315,21 +342,30 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 		}
 	}
 
-	for i := 0; i < len(byteInfos); i++ {
-		bi := byteInfos[i]
-		kindChanged := bi.kind != currentKind
-		spanChanged := (bi.sp == nil && currentActiveSpan != nil) ||
-			(bi.sp != nil && currentActiveSpan == nil) ||
-			(bi.sp != nil && currentActiveSpan != nil && bi.sp.kind != currentActiveSpan.kind)
+	// Iterate by runes, tracking CellMap index separately
+	runeIdx := 0
+	for pos := 0; pos < len(formatted); {
+		ci := cellInfos[runeIdx]
+		kindChanged := ci.kind != currentKind
+		spanChanged := (ci.sp == nil && currentActiveSpan != nil) ||
+			(ci.sp != nil && currentActiveSpan == nil) ||
+			(ci.sp != nil && currentActiveSpan != nil && ci.sp.kind != currentActiveSpan.kind)
 
 		if kindChanged || spanChanged {
 			flushSpan()
-			currentKind = bi.kind
-			currentActiveSpan = bi.sp
+			currentKind = ci.kind
+			currentActiveSpan = ci.sp
 		}
 
-		currentText.WriteByte(formatted[i])
-		currentCM = append(currentCM, bi.cm)
+		r, size := utf8.DecodeRuneInString(formatted[pos:])
+		if size == 0 {
+			size = 1
+			r = utf8.RuneError
+		}
+		currentText.WriteRune(r)
+		currentCM = append(currentCM, ci.cm)
+		runeIdx++
+		pos += size
 	}
 	flushSpan()
 

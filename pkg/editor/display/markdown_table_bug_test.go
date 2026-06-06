@@ -3,11 +3,14 @@ package display_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
 )
+
+// TestTableBoldTextNoTruncation reproduces the "iide" vs "inside" bug.
 
 // TestTableBoldTextNoTruncation reproduces the "iide" vs "inside" bug.
 // When a table cell contains bold text like **bold text inside of tables**,
@@ -99,14 +102,14 @@ func TestTableBoldSpanCellMapConsistency(t *testing.T) {
 	bodyLine := snap.Lines[2]
 	for _, sp := range bodyLine.Spans {
 		if sp.Kind == display.TokenBold {
-			// CellMap should have same length as Text
+			// CellMap should have same length as Text in runes (visual cells)
 			if sp.CellMap == nil {
 				t.Error("TokenBold span has nil CellMap")
 				continue
 			}
-			if len(sp.CellMap) != len(sp.Text) {
-				t.Errorf("TokenBold span CellMap length %d != Text length %d: text=%q",
-					len(sp.CellMap), len(sp.Text), sp.Text)
+			if len(sp.CellMap) != utf8.RuneCountInString(sp.Text) {
+				t.Errorf("TokenBold span CellMap length %d != Text rune count %d: text=%q",
+					len(sp.CellMap), utf8.RuneCountInString(sp.Text), sp.Text)
 			}
 			// Each CellMap entry should have a valid buffer offset
 			for i, cm := range sp.CellMap {

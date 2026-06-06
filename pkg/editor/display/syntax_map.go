@@ -478,8 +478,8 @@ func buildSyntaxLine(
 				})
 			}
 
-			// Emit visible text with per-byte source mapping
-			cm := buildInlineCellMap(lineStart+ms.start+hiddenLeft, len(ms.text))
+			// Emit visible text with per-rune source mapping
+			cm := buildInlineCellMap(lineStart+ms.start+hiddenLeft, []byte(ms.text))
 			spans = append(spans, SyntaxSpan{
 				Text:            ms.text,
 				Kind:            ms.kind,

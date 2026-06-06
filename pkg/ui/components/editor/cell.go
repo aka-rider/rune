@@ -60,8 +60,9 @@ func revealedSpanToCells(text string, bufStart int, style lipgloss.Style) []Cell
 }
 
 // renderedSpanToCells creates cells for rendered text using the provided CellMap.
+// CellMap is per-visual-cell (per-rune), so mapIdx advances by 1 per rune.
 func renderedSpanToCells(text string, cm []display.CellMapping, style lipgloss.Style) []Cell {
-	cells := make([]Cell, 0, len(text))
+	cells := make([]Cell, 0, utf8.RuneCountInString(text))
 	pos := 0
 	mapIdx := 0
 	for pos < len(text) {
@@ -84,8 +85,7 @@ func renderedSpanToCells(text string, cm []display.CellMapping, style lipgloss.S
 			Style:     style,
 			BufOffset: bufOff,
 		})
-		// Advance mapIdx by byte count (CellMap is per-byte for the rendered text)
-		mapIdx += size
+		mapIdx++
 		pos += size
 	}
 	return cells
