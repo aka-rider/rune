@@ -424,3 +424,99 @@ func TestTable_GridTopBottomBorders(t *testing.T) {
 		t.Errorf("Last line should end with ┘, got: %q", lastLine)
 	}
 }
+
+func TestTable_BodyRowSeparatorWidthsWithMultiByteChars(t *testing.T) {
+	// Body→body separator widths must match header→body separator widths.
+	// Regression test: getTableColWidths used byte-based iteration which
+	// inflated widths for cells containing multi-byte UTF-8 chars (→, CJK, etc.).
+	// This caused mismatched separator widths between header-body and body-body rows.
+	md := `| Conversion | Invariant | Condition |
+|------------|-----------|-----------|
+| Buffer→Syntax→Buffer | Identity | All valid offsets |
+| Syntax→Buffer→Syntax | Identity | Offsets NOT inside hidden delimiters |`
+
+	buf := buffer.New(md)
+	sMap := display.NewSyntaxMap()
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
+
+	wm := display.NewWrapMap(200)
+	ws := wm.Sync(snap)
+	ds := display.BuildSnapshot(ws)
+	ds = display.ExpandTableRows(ds)
+
+	var lines []string
+	for _, dl := range ds.Lines {
+		var lineText strings.Builder
+		for _, sp := range dl.Spans {
+			lineText.WriteString(sp.Text)
+		}
+		lines = append(lines, lineText.String())
+	}
+
+	// Find separator lines (start with ├) and data lines (start with │)
+	var sepLines, dataLines []struct {
+		idx  int
+		text string
+	}
+	for i, l := range lines {
+		if strings.HasPrefix(l, "├") || strings.HasPrefix(l, "└") || strings.HasPrefix(l, "┌") {
+			sepLines = append(sepLines, struct {
+				idx  int
+				text string
+			}{i, l})
+		} else if strings.HasPrefix(l, "│") {
+			dataLines = append(dataLines, struct {
+				idx  int
+				text string
+			}{i, l})
+		}
+	}
+
+	// First separator is header→body, subsequent separators are body→body.
+	// All separators must have identical column widths (same number of ─ per column).
+	if len(sepLines) < 2 {
+		t.Fatalf("Expected at least 2 separator lines, got %d", len(sepLines))
+	}
+
+	// Extract column dash counts from each separator
+	var colDashCounts [][]int
+	for _, sl := range sepLines {
+		var counts []int
+		current := 0
+		for _, r := range sl.text {
+			if r == '─' {
+				current++
+			} else {
+				if current > 0 {
+					counts = append(counts, current)
+					current = 0
+				}
+			}
+		}
+		if current > 0 {
+			counts = append(counts, current)
+		}
+		colDashCounts = append(colDashCounts, counts)
+	}
+
+	// All separators should have the same column widths
+	for i := 1; i < len(colDashCounts); i++ {
+		if len(colDashCounts[i]) != len(colDashCounts[0]) {
+			t.Errorf("Separator %d has %d columns, expected %d", i, len(colDashCounts[i]), len(colDashCounts[0]))
+			continue
+		}
+		for j := range colDashCounts[0] {
+			if colDashCounts[i][j] != colDashCounts[0][j] {
+				t.Errorf("Separator %d col %d width %d != header col width %d\n  header sep: %q\n  body sep:   %q",
+					i, j, colDashCounts[i][j], colDashCounts[0][j], sepLines[0].text, sepLines[i].text)
+			}
+		}
+	}
+
+	// Verify body rows actually render as data (│), not separators (├)
+	for _, dl := range dataLines {
+		if !strings.HasPrefix(dl.text, "│") {
+			t.Errorf("Body row at index %d should start with │, got: %q", dl.idx, dl.text)
+		}
+	}
+}

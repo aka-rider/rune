@@ -187,14 +187,13 @@ func getTableColWidths(l DisplayLine) []int {
 
 	// Parse column widths from the rendered row format: │ content │ content │
 	// Each column contributes: │ + space + content + space (the last has trailing │)
+	// Use rune-based iteration — byte-based len() inflates widths for multi-byte UTF-8.
 	var widths []int
 	inCell := false
 	cellWidth := 0
 
-	i := 0
-	for i < len(text) {
-		// Check for │ (3 bytes: E2 94 82)
-		if i+2 < len(text) && text[i] == 0xE2 && text[i+1] == 0x94 && text[i+2] == 0x82 {
+	for _, r := range []rune(text) {
+		if r == '│' {
 			if inCell {
 				// End of cell — subtract the padding spaces (1 before content + 1 after)
 				// The cellWidth includes the leading space, content, and trailing space
@@ -206,15 +205,12 @@ func getTableColWidths(l DisplayLine) []int {
 				cellWidth = 0
 			}
 			inCell = true
-			i += 3
-			cellWidth = 0
 			continue
 		}
 
 		if inCell {
 			cellWidth++
 		}
-		i++
 	}
 
 	return widths
