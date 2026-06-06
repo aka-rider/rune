@@ -67,6 +67,13 @@ func extractRenderedCellData(lineText string, lineStart int, spans []mdSpan, num
 					spanEnd = cellRelEnd
 				}
 
+				// Skip spans entirely before the cursor (already covered by a previous span).
+				// This handles nested inline elements (e.g., italic inside bold) where the
+				// outer span's text already includes the inner span's rendered text.
+				if spanEnd <= cursor {
+					continue
+				}
+
 				// Emit plain text gap before this span
 				if cursor < spanStart {
 					gap := lineText[cursor:spanStart]
