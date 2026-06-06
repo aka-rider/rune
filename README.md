@@ -1,75 +1,79 @@
-<p align="center">
-  <img src="assets/rune.png" alt="Rune" />
-</p>
+<h1 align="center">📎 rune</h1>
+<p align="center"><strong>Digital assistant wannabe</strong></p>
+<p align="center"><img src="assets/rune-intro.gif" alt="Rune into screencast" width="80%" /></p>
 
-<h1 align="center">rune</h1>
-
-<p align="center"><strong>AI assistant wannabe</strong></p>
-
-<p align="center">
-  <img src="assets/screenshot.png" alt="Rune screenshot" width="720" />
-</p>
 
 ---
 
 ## Good News, Everyone
 
-It's like **Obsidian** and **Visual Studio Code** have a baby in your terminal.
+It's like **Obsidian** and **Visual Studio Code** had a baby in your terminal.
 
 
+- **MacOS-ish** look and feel with **⌘** - combinations
 - **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code blocks with syntax highlighting, tables, task lists, horizontal rules, YAML frontmatter, and `[[wikilinks]]`.
 - **Voice Dictation** — Speak into your notes. Rune captures your mic, streams audio to a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server, and inserts the transcription at your cursor. Auto-detects your keyboard language for better accuracy.
 - **Inline Images** — Render PNG, JPEG, GIF (animated), WebP, BMP, TIFF, and even SVG directly in your terminal via the Kitty or iTerm2 graphics protocol.
 - **AI Chat** — Talk to an OpenAI-compatible LLM about your notes. The chat pane has context of your open file.
 - **Obsidian Vault Compatible** — Open any Obsidian vault as-is. Launch Rune from the vault root so `[[wikilinks]]` resolve correctly across your notes.
 - **Tabs, Pin, Zen Mode** — Manage open files with tabs, pin the ones you keep coming back to, and toggle the sidebar for distraction-free writing.
-- **Find & Replace** — Incremental search with next/previous navigation.
 - **Multi-Cursor Editing** — Add cursors above or below the current line.
 - **Mouse Support** — Click to focus, drag pane dividers, scroll through files.
 - **File Watching** — Auto-reloads files when they change on disk (e.g., from `git checkout` or an external edit).
+
+### File Explorer
+
+quick keyboard navigation
+
+<p align="center"><img src="assets/rune-explorer.gif" alt="Rune into screencast" width="80%" /></p>
+
 
 ## Yes, But
 
 **It works on my machine (tm)**
 
 It's a combination of
- - Terminal Emulator with Kitty keyboard extensions
+
+ - Terminal Emulator with Kitty keyboard extensions (WezTerm)
+ - Whisper.cpp custom-built for your local hardware
+ - MacOS permissions to use Mic
+ - Persistence is like 99-ish%, data loss here and there is possible; persistence layer + collaborative editing (with LLM) tbd.
 
 ---
 
 ## Installation
 
-Requires **Go 1.25+**.
+Ask your agent how to install and set it up
 
-```bash
-go install github.com/your-org/rune/cmd/rune@latest
-```
 
-Or clone and build from source:
 
-```bash
-git clone https://github.com/your-org/rune.git
-cd rune
-go build ./cmd/rune
-```
-
----
-
-## Usage
-
-```bash
-# Open a directory (e.g., an Obsidian vault)
-rune ~/notes
-
-# Or open specific files
-rune ~/notes/daily.md ~/notes/project.md
-```
-
-> **Obsidian vaults:** Launch Rune from the vault's root directory so that `[[wikilink]]` resolution and `![[image-embeds]]` work correctly. Your `.obsidian` config folder is ignored — Rune reads the markdown files directly.
 
 ---
 
 ## Keybindings
+
+### Application
+
+<details>
+<summary>Pane management, focus, and app controls</summary>
+
+| Keys | Action |
+|------|--------|
+| `Ctrl+x` | Focus file explorer |
+| `Ctrl+e` | Focus editor |
+| `Ctrl+r` | Focus AI chat |
+| `Ctrl+1` … `Ctrl+9` | Switch to tab by index |
+| `Ctrl+p` | Pin / unpin current tab |
+| `Ctrl+o` | Toggle zen mode (hide sidebar) |
+| `Ctrl+v` | Start / stop voice dictation |
+| `?` | Toggle help overlay |
+| `Enter` | Open file (in explorer) / newline (in editor) |
+| `Esc` | Cancel / close overlay |
+| `Ctrl+c` | Quit (press twice to confirm) |
+| `Ctrl+D` | Quit (alternate) |
+
+</details>
+
 
 ### Navigation
 
@@ -147,27 +151,6 @@ rune ~/notes/daily.md ~/notes/project.md
 
 </details>
 
-### Application
-
-<details>
-<summary>Pane management, focus, and app controls</summary>
-
-| Keys | Action |
-|------|--------|
-| `Ctrl+X` | Focus file explorer |
-| `Ctrl+E` | Focus editor |
-| `Ctrl+R` | Focus AI chat |
-| `Ctrl+1` … `Ctrl+9` | Switch to tab by index |
-| `Ctrl+P` | Pin / unpin current tab |
-| `Ctrl+O` | Toggle zen mode (hide sidebar) |
-| `Ctrl+V` | Start / stop voice dictation |
-| `?` | Toggle help overlay |
-| `Enter` | Open file (in explorer) / newline (in editor) |
-| `Esc` | Cancel / close overlay |
-| `Ctrl+C` | Quit (press twice to confirm) |
-| `⌥⌘D` | Quit (alternate) |
-
-</details>
 
 ---
 
@@ -268,3 +251,7 @@ pkg/imagekit/              Pure-Go image decode, resize, and terminal transmissi
 ## License
 
 MIT
+
+<p align="center">
+  <img src="assets/rune.png" alt="Rune" />
+</p>
