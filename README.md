@@ -1,5 +1,5 @@
-<h1 align="center">📎 rune</h1>
-<p align="center"><strong>Digital assistant wannabe</strong></p>
+<h1 align="center">rune — digital assistant 📎</h1>
+
 <p align="center"><img src="assets/rune-intro.gif" alt="Rune into screencast" width="80%" /></p>
 
 
@@ -27,30 +27,22 @@ quick keyboard navigation, just start typing
 
 <p align="center"><img src="assets/rune-explorer.gif" alt="Rune file explorer screencast" width="80%" /></p>
 
+### Table rendering
+
+<p align="center"><img src="assets/rune-table-rendering.gif" alt="Rune Obsidian-style task list screencast" width="80%" /></p>
+
 ### Task list
 
 <p align="center"><img src="assets/rune-task-list.gif" alt="Rune Obsidian-style task list screencast" width="80%" /></p>
 
 
-
-## Yes, But
-
-**It works on my machine (tm)**
-
-It's a combination of
-
- - Terminal emulator must support Kitty extensions for 
- - Whisper.cpp custom-built for your local hardware
- - MacOS permissions to use Mic
- - Multi-file editing
+ 
  
 ---
 
 ## Installation
 
 Ask your agent how to install and set it up
-
-
 
 
 ---
@@ -222,8 +214,8 @@ The chat has context of your currently open file — ask questions about your no
 
 | Terminal | Notes |
 |----------|-------|
-| **[Kitty](https://sw.kovidgoyal.net/kitty/)** | Full image support, Cmd-key passthrough, best all-around |
 | **[Ghostty](https://ghostty.org/)** | Full image support, native macOS feel |
+| **[Kitty](https://sw.kovidgoyal.net/kitty/)** | Full image support, Cmd-key passthrough, best all-around |
 | **[iTerm2](https://iterm2.com/)** | iTerm2 image protocol, battle-tested |
 | **[WezTerm](https://wezfurlong.org/wezterm/)** | iTerm2 image protocol, cross-platform |
 
@@ -237,32 +229,15 @@ The chat has context of your currently open file — ask questions about your no
 
 ---
 
-## Architecture
-
-Rune is built in **Go** on the [Bubble Tea v2](https://github.com/charmbracelet/bubbletea) TUI framework with the [Elm Architecture](https://guide.elm-lang.org/architecture/):
-
-```
-pkg/ui/                    Top-level router + pages
-pkg/ui/components/         Reusable UI widgets (editor, filetree, chat, …)
-pkg/editor/                Low-level editor: buffer, cursor, history, markdown display
-pkg/ai/                    OpenAI-compatible chat client
-pkg/whisper/               whisper.cpp HTTP transcription client
-pkg/microphone/            macOS microphone capture (AudioToolbox)
-pkg/imagekit/              Pure-Go image decode, resize, and terminal transmission
-```
-
----
-
 ## Creadits
 
 - [Bubble Tea by charmbracelet](https://github.com/charmbracelet/bubbletea)
 
 
+
 ---
 
-## License
-
-MIT
+## [MIT License](LICENSE.txt)
 
 <p align="center">
   <img src="assets/rune.png" alt="Rune Logo" />
