@@ -5,7 +5,7 @@
 
 ---
 
-## Good News, Everyone
+## Good News Everyone
 
 It's like **Obsidian** and **Visual Studio Code** had a baby in your terminal.
 
@@ -23,9 +23,14 @@ It's like **Obsidian** and **Visual Studio Code** had a baby in your terminal.
 
 ### File Explorer
 
-quick keyboard navigation
+quick keyboard navigation, just start typing
 
-<p align="center"><img src="assets/rune-explorer.gif" alt="Rune into screencast" width="80%" /></p>
+<p align="center"><img src="assets/rune-explorer.gif" alt="Rune file explorer screencast" width="80%" /></p>
+
+### Task list
+
+<p align="center"><img src="assets/rune-task-list.gif" alt="Rune Obsidian-style task list screencast" width="80%" /></p>
+
 
 
 ## Yes, But
@@ -34,11 +39,11 @@ quick keyboard navigation
 
 It's a combination of
 
- - Terminal Emulator with Kitty keyboard extensions (WezTerm)
+ - Terminal emulator must support Kitty extensions for 
  - Whisper.cpp custom-built for your local hardware
  - MacOS permissions to use Mic
- - Persistence is like 99-ish%, data loss here and there is possible; persistence layer + collaborative editing (with LLM) tbd.
-
+ - Multi-file editing
+ 
 ---
 
 ## Installation
@@ -61,16 +66,17 @@ Ask your agent how to install and set it up
 |------|--------|
 | `Ctrl+x` | Focus file explorer |
 | `Ctrl+e` | Focus editor |
-| `Ctrl+r` | Focus AI chat |
+| `Ctrl+r` | Focus rune chat |
 | `Ctrl+1` … `Ctrl+9` | Switch to tab by index |
+| `Ctrl+W` | Close current tab |
 | `Ctrl+p` | Pin / unpin current tab |
 | `Ctrl+o` | Toggle zen mode (hide sidebar) |
 | `Ctrl+v` | Start / stop voice dictation |
+| `⌘S`| Save file |
 | `?` | Toggle help overlay |
-| `Enter` | Open file (in explorer) / newline (in editor) |
-| `Esc` | Cancel / close overlay |
-| `Ctrl+c` | Quit (press twice to confirm) |
-| `Ctrl+D` | Quit (alternate) |
+| `Ctrl+c/Ctrl+d` | Quit (press twice to confirm) |
+| `Ctrl+c/Ctrl+d` | Quit (press twice to confirm) |
+
 
 </details>
 
@@ -96,6 +102,19 @@ Ask your agent how to install and set it up
 
 </details>
 
+### Clipboard
+
+<details>
+<summary>Copy, cut, paste</summary>
+
+| Keys | Action |
+|------|--------|
+| `⇧⌘C` | Copy to clipboard |
+| `⌘X` | Cut to clipboard |
+| `⌘V` | Paste from clipboard |
+
+</details>
+
 ### Editing
 
 <details>
@@ -107,8 +126,7 @@ Ask your agent how to install and set it up
 | `Delete` | Delete right |
 | `Tab` / `Shift+Tab` | Indent / outdent |
 | `Alt+↑` / `Alt+↓` | Move current line up / down |
-| `⌘S` | Save file |
-| `Ctrl+W` | Close current tab |
+
 
 </details>
 
@@ -121,19 +139,6 @@ Ask your agent how to install and set it up
 |------|--------|
 | `⌥⌘↑` | Add cursor above |
 | `⌥⌘↓` | Add cursor below |
-
-</details>
-
-### Clipboard
-
-<details>
-<summary>Copy, cut, paste</summary>
-
-| Keys | Action |
-|------|--------|
-| `⇧⌘C` | Copy to clipboard |
-| `⌘X` | Cut to clipboard |
-| `⌘V` | Paste from clipboard |
 
 </details>
 
@@ -248,10 +253,17 @@ pkg/imagekit/              Pure-Go image decode, resize, and terminal transmissi
 
 ---
 
+## Creadits
+
+- [Bubble Tea by charmbracelet](https://github.com/charmbracelet/bubbletea)
+
+
+---
+
 ## License
 
 MIT
 
 <p align="center">
-  <img src="assets/rune.png" alt="Rune" />
+  <img src="assets/rune.png" alt="Rune Logo" />
 </p>
