@@ -602,6 +602,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.editor.FilePath() == "" || m.editor.FilePath() != msg.Path {
 			return m, nil // not current file or untitled, ignore
 		}
+		// Pre-check: if disk content matches the buffer, no merge needed.
+		// This handles the race where a save completes and the watcher reads
+		// the same content, or external tools touch the file without changes.
+		if string(msg.NewContent) == m.editor.Content() {
+			m.origContent = msg.NewContent
+			return m, nil
+		}
 		m.pendingMergeContent = msg.NewContent
 		m.footer = m.footer.SetGuard(footer.GuardMerge, mergeGuardOptions)
 

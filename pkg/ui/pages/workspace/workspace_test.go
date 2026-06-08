@@ -1555,3 +1555,49 @@ func TestLayoutFooterVisibleAfterResize(t *testing.T) {
 		}
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard pre-check: skip guard when disk matches buffer
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_IdenticalDiskContentNoGuard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "hello world")
+
+	// Simulate external change with IDENTICAL content.
+	// This represents the race where a save completes and the watcher
+	// reads the same content, or a backup tool touches the file.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello world")
+
+	// Guard should NOT be active — content is identical.
+	if m.footer.InGuard() {
+		t.Fatal("expected no merge guard when disk content matches buffer")
+	}
+	// origContent should be updated to the disk content.
+	if string(m.origContent) != "hello world" {
+		t.Fatalf("expected origContent='hello world', got %q", string(m.origContent))
+	}
+	// pendingMergeContent should be nil.
+	if m.pendingMergeContent != nil {
+		t.Fatal("expected pendingMergeContent to be nil")
+	}
+}
+
+func TestMergeGuard_DifferentContentStillTriggersGuard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "hello world")
+
+	// External change with DIFFERENT content.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello earth")
+
+	// Guard SHOULD be active — content differs.
+	if !m.footer.InGuard() {
+		t.Fatal("expected merge guard when disk content differs from buffer")
+	}
+	if m.footer.GuardKind() != footer.GuardMerge {
+		t.Fatalf("expected GuardMerge, got %v", m.footer.GuardKind())
+	}
+	if m.pendingMergeContent == nil {
+		t.Fatal("expected pendingMergeContent to be set")
+	}
+}
