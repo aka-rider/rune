@@ -80,5 +80,7 @@ func (m Model) View() tea.View {
 	v := m.ws.View()
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
+	v.KeyboardEnhancements.ReportAllKeysAsEscapeCodes = true
+	v.KeyboardEnhancements.ReportAlternateKeys = true
 	return v
 }
