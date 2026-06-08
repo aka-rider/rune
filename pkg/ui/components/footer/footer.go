@@ -20,18 +20,34 @@ type Entry = keymap.HelpEntry
 // ConfirmQuitMsg is emitted when a chord exit sequence completes (e.g., ^C^C).
 type ConfirmQuitMsg struct{}
 
-// DirtyGuardResponse enumerates user responses to a dirty guard prompt.
-type DirtyGuardResponse int
+// GuardKind identifies which type of guard is active.
+type GuardKind int
 
 const (
-	DirtyGuardSave DirtyGuardResponse = iota
-	DirtyGuardDiscard
-	DirtyGuardCancel
+	GuardDirty GuardKind = iota
+	GuardMerge
 )
 
-// DirtyGuardResponseMsg is emitted when the user responds to a dirty guard prompt.
-type DirtyGuardResponseMsg struct {
-	Response DirtyGuardResponse
+// GuardOption maps a keyboard input to a guard response.
+type GuardOption struct {
+	Key      rune
+	Response DataLossGuardResponse
+}
+
+// DataLossGuardResponse enumerates user responses to data-loss guard prompts.
+type DataLossGuardResponse int
+
+const (
+	DataLossSave DataLossGuardResponse = iota
+	DataLossDiscard
+	DataLossCancel
+	DataLossMergeAccept
+	DataLossMergeReject
+)
+
+// DataLossGuardResponseMsg is emitted when the user responds to a guard prompt.
+type DataLossGuardResponseMsg struct {
+	Response DataLossGuardResponse
 }
 
 // confirmExpired is an internal message to reset chord state after timeout.
@@ -59,7 +75,8 @@ type Model struct {
 	pendingKey       string
 	helpExpanded     bool
 	helpEntries      []Entry
-	dirtyGuard       bool
+	guardKind        GuardKind
+	guardOptions     []GuardOption
 	dictating        bool
 	dictationAllowed bool
 	errorMsg         string
@@ -81,8 +98,13 @@ func (m Model) SetHelp(e []Entry) Model             { m.helpEntries = e; return 
 func (m Model) SetHelpExpanded(expanded bool) Model { m.helpExpanded = expanded; return m }
 func (m Model) HelpExpanded() bool                  { return m.helpExpanded }
 func (m Model) Height() int                         { return 1 }
-func (m Model) SetDirtyGuard(active bool) Model     { m.dirtyGuard = active; return m }
-func (m Model) InDirtyGuard() bool                  { return m.dirtyGuard }
+func (m Model) SetGuard(kind GuardKind, options []GuardOption) Model {
+	m.guardKind = kind
+	m.guardOptions = options
+	return m
+}
+func (m Model) InGuard() bool        { return len(m.guardOptions) > 0 }
+func (m Model) GuardKind() GuardKind { return m.guardKind }
 
 func (m Model) SetDictationAllowed(allowed bool) Model { m.dictationAllowed = allowed; return m }
 func (m Model) SetDictating(active bool) Model         { m.dictating = active; return m }
@@ -93,20 +115,31 @@ func (m Model) Init() tea.Cmd { return nil }
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		// Dirty guard mode consumes all keypresses until resolved.
-		if m.dirtyGuard {
-			switch {
-			case msg.Code == 's' && msg.Mod == 0:
-				m.dirtyGuard = false
-				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardSave} }
-			case msg.Code == 'd' && msg.Mod == 0:
-				m.dirtyGuard = false
-				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardDiscard} }
-			case key.Matches(msg, m.keys.Cancel):
-				m.dirtyGuard = false
-				return m, func() tea.Msg { return DirtyGuardResponseMsg{Response: DirtyGuardCancel} }
+		// Guard mode consumes all keypresses until resolved.
+		if len(m.guardOptions) > 0 {
+			for _, opt := range m.guardOptions {
+				if msg.Code == opt.Key && msg.Mod == 0 {
+					m.guardKind = 0
+					m.guardOptions = nil
+					return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
+				}
 			}
-			// Consume all other keys during guard mode.
+			// Enter key maps to the first option (merge guard [Y]es only).
+			// Dirty guard must NOT auto-resolve on Enter — users expect
+			// Enter to be inert while the dirty prompt is active.
+			if msg.Code == tea.KeyEnter && m.guardKind == GuardMerge && len(m.guardOptions) > 0 {
+				opt := m.guardOptions[0]
+				m.guardKind = 0
+				m.guardOptions = nil
+				return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
+			}
+			// Cancel key (Escape) maps to the last option if it's Cancel
+			if key.Matches(msg, m.keys.Cancel) && len(m.guardOptions) > 0 {
+				opt := m.guardOptions[len(m.guardOptions)-1]
+				m.guardKind = 0
+				m.guardOptions = nil
+				return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
+			}
 			return m, nil
 		}
 
@@ -185,7 +218,7 @@ func (m Model) View() string {
 
 	if m.dictating {
 		left = m.styles.FooterKey.Render("^v") + m.styles.FooterHint.Render(" stop dictation")
-	} else if m.dirtyGuard {
+	} else if m.guardKind == GuardDirty && len(m.guardOptions) > 0 {
 		left = m.styles.FooterKey.Render("Unsaved changes.") +
 			m.styles.FooterHint.Render(" [") +
 			m.styles.FooterKey.Render("S") +
@@ -194,6 +227,13 @@ func (m Model) View() string {
 			m.styles.FooterHint.Render("]iscard [") +
 			m.styles.FooterKey.Render("Esc") +
 			m.styles.FooterHint.Render("] Cancel")
+	} else if m.guardKind == GuardMerge && len(m.guardOptions) > 0 {
+		left = m.styles.FooterKey.Render("File changed on disk. Merge?") +
+			m.styles.FooterHint.Render(" [") +
+			m.styles.FooterKey.Render("Y") +
+			m.styles.FooterHint.Render("]es [") +
+			m.styles.FooterKey.Render("N") +
+			m.styles.FooterHint.Render("]o")
 	} else if m.pendingKey == "c" {
 		left = m.styles.FooterKey.Render("Press ^C again to exit")
 	} else if m.pendingKey == "d" {

@@ -60,3 +60,16 @@ type FileRenameErrorMsg struct {
 type UntitledRenameMsg struct {
 	Name string
 }
+
+// FileChangedOnDiskMsg is emitted when fsnotify detects the file was modified externally.
+type FileChangedOnDiskMsg struct {
+	Path       string
+	NewContent []byte
+}
+
+// FileMergedMsg is emitted after a 3-way merge completes.
+type FileMergedMsg struct {
+	Path       string
+	Content    []byte
+	Conflicted bool
+}

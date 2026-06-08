@@ -12,6 +12,7 @@ import (
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
+	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
@@ -65,6 +66,20 @@ func setEditorDirty(m Model) Model {
 	return m
 }
 
+// sendFileChangedOnDisk simulates an external file change by sending
+// FileChangedOnDiskMsg. This triggers the merge guard in the workspace.
+func sendFileChangedOnDisk(m Model, path string, newContent string) Model {
+	m, _ = m.Update(editor.FileChangedOnDiskMsg{Path: path, NewContent: []byte(newContent)})
+	return m
+}
+
+// setOrigContent directly sets the workspace's origContent field.
+// Test-only helper for setting up 3-way merge ancestor state.
+func setOrigContent(m Model, content string) Model {
+	m.origContent = []byte(content)
+	return m
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Gate 1: File switch with unsaved changes → dirty guard fires
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,7 +93,7 @@ func TestGate1_FileSwitchDirtyGuardFires(t *testing.T) {
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
 
 	// Guard should be active.
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("expected dirty guard to be active after switching with unsaved changes")
 	}
 	// pending action should be set.
@@ -108,7 +123,7 @@ func TestGate2_DirtyGuardSaveThenLoad(t *testing.T) {
 
 	// Trigger switch.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("expected dirty guard active")
 	}
 
@@ -180,7 +195,7 @@ func TestGate3_DirtyGuardCancelPreservesFile(t *testing.T) {
 	}
 
 	// Guard should be cleared.
-	if m.footer.InDirtyGuard() {
+	if m.footer.InGuard() {
 		t.Fatal("expected dirty guard to be dismissed after cancel")
 	}
 	// File remains.
@@ -240,7 +255,7 @@ func TestGate5_BackspaceInDirtyGuardDoesNotAffectEditor(t *testing.T) {
 
 	// Activate dirty guard.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("expected dirty guard active")
 	}
 
@@ -308,7 +323,7 @@ func TestGate7_DirtyGuardConsumesUnrelatedKeys(t *testing.T) {
 	m = setEditorDirty(m)
 
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("expected dirty guard active")
 	}
 
@@ -337,7 +352,7 @@ func TestGate7_DirtyGuardConsumesUnrelatedKeys(t *testing.T) {
 		t.Fatal("dirty guard allowed focus change")
 	}
 	// Guard still active.
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("dirty guard was dismissed by unrelated key")
 	}
 }
@@ -353,7 +368,7 @@ func TestGate8_FileSelectedUsesRequestOpenPath(t *testing.T) {
 
 	// FileSelectedMsg should trigger dirty guard (proves requestOpenPath was used).
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("FileSelectedMsg did not trigger dirty guard via requestOpenPath")
 	}
 }
@@ -369,7 +384,7 @@ func TestGate8_TabSelectedUsesRequestOpenPath(t *testing.T) {
 
 	// TabSelectedMsg should trigger dirty guard.
 	m, _ = m.Update(opentabs.TabSelectedMsg{Path: "b.txt"})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("TabSelectedMsg did not trigger dirty guard via requestOpenPath")
 	}
 }
@@ -384,7 +399,7 @@ func TestGate8_TabSwitchKeyUsesRequestOpenPath(t *testing.T) {
 
 	// Ctrl+2 should trigger dirty guard.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '2', Mod: tea.ModCtrl})
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("TabSwitch key did not trigger dirty guard via requestOpenPath")
 	}
 }
@@ -402,7 +417,7 @@ func TestGate9_CloseFileDirtyGuard(t *testing.T) {
 	// Close key (ctrl+w).
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 
-	if !m.footer.InDirtyGuard() {
+	if !m.footer.InGuard() {
 		t.Fatal("CloseFile did not trigger dirty guard")
 	}
 	if m.pending == nil || m.pending.kind != pendingCloseFile {
@@ -428,7 +443,7 @@ func TestGate9_CloseFileDiscard(t *testing.T) {
 	}
 
 	// Guard dismissed, file closed.
-	if m.footer.InDirtyGuard() {
+	if m.footer.InGuard() {
 		t.Fatal("expected dirty guard dismissed")
 	}
 	if m.pending != nil {
@@ -626,7 +641,7 @@ func TestDirtyGuardDiscardLoadsNewFile(t *testing.T) {
 	}
 
 	// Guard should be cleared.
-	if m.footer.InDirtyGuard() {
+	if m.footer.InGuard() {
 		t.Fatal("expected dirty guard dismissed after discard")
 	}
 	// A LoadFileCmd should have been issued (cmd non-nil from discard handling).
@@ -648,7 +663,7 @@ func TestSameFileOpenIsNoop(t *testing.T) {
 	// Open same file — should NOT trigger guard.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "a.txt"})
 
-	if m.footer.InDirtyGuard() {
+	if m.footer.InGuard() {
 		t.Fatal("opening same file should not trigger dirty guard")
 	}
 }
@@ -685,8 +700,507 @@ func TestCloseLastTabResetsToUntitled(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Merge guard: accept — merge result is applied as undoable EditBatch
 // ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_AcceptMerge_Undoable(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "hello world")
+
+	// Simulate external change.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello earth")
+
+	// Guard should be active.
+	if !m.footer.InGuard() {
+		t.Fatal("expected merge guard active")
+	}
+	if m.footer.GuardKind() != footer.GuardMerge {
+		t.Fatalf("expected GuardMerge, got %v", m.footer.GuardKind())
+	}
+
+	// Accept merge: press 'y'.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Guard should be dismissed.
+	if m.footer.InGuard() {
+		t.Fatal("expected merge guard dismissed after accept")
+	}
+
+	// Buffer should contain the merged result (libgit2 non-conflicting merge
+	// of "hello world" vs "hello earth" keeps ours since theirs is a simple
+	// edit on a non-overlapping region).
+	content := m.editor.Content()
+	if content == "hello world" {
+		t.Fatal("expected merged content, got original")
+	}
+
+	// Undo should restore the original ours content.
+	m.editor = m.editor.UndoForTest()
+	if m.editor.Content() != "hello world" {
+		t.Fatalf("expected undo to restore 'hello world', got %q", m.editor.Content())
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: reject — buffer unchanged, origContent = disk content
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_RejectMerge_PreservesBuffer(t *testing.T) {
+	m := newTestWorkspace(t)
+	orig := "hello world"
+	m = loadFile(m, "a.txt", orig)
+
+	// Simulate external change.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello earth")
+
+	// Reject merge: press 'n'.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Guard should be dismissed.
+	if m.footer.InGuard() {
+		t.Fatal("expected merge guard dismissed after reject")
+	}
+
+	// Buffer should be unchanged.
+	if m.editor.Content() != orig {
+		t.Fatalf("expected buffer unchanged, got %q", m.editor.Content())
+	}
+
+	// origContent should be the disk content (not nil).
+	if m.origContent == nil {
+		t.Fatal("expected origContent set to disk content after reject")
+	}
+	if string(m.origContent) != "hello earth" {
+		t.Fatalf("expected origContent='hello earth', got %q", string(m.origContent))
+	}
+
+	// pendingMergeContent should be nil.
+	if m.pendingMergeContent != nil {
+		t.Fatal("expected pendingMergeContent to be nil after reject")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: non-conflicting edits merge cleanly
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_NonConflictingMerge(t *testing.T) {
+	// Non-overlapping edits: ours changes line 1, theirs changes line 3.
+	ancestor := "A\nB\nC"
+	ours := "A1\nB\nC"
+	theirs := "A\nB\nC1"
+
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", ours)
+	// Set origContent to ancestor so the merge is a true 3-way merge
+	// (ancestor != ours, enabling non-trivial merge logic).
+	m = setOrigContent(m, ancestor)
+
+	// Simulate external change with non-overlapping edits.
+	m = sendFileChangedOnDisk(m, "a.txt", theirs)
+
+	// Accept merge.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Should not have conflict markers.
+	content := m.editor.Content()
+	if strings.Contains(content, "<<<<<<<") {
+		t.Fatalf("expected clean merge, got conflict markers: %q", content)
+	}
+
+	// Single undo should restore ours.
+	m.editor = m.editor.UndoForTest()
+	if m.editor.Content() != ours {
+		t.Fatalf("expected undo to restore ours (%q), got %q", ours, m.editor.Content())
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: conflicting edits produce conflict markers
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_ConflictingMerge(t *testing.T) {
+	ancestor := "shared"
+	ours := "ours"
+	theirs := "theirs"
+
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", ours)
+	// Set origContent to ancestor so libgit2 detects both sides changed
+	// the same content, producing conflict markers.
+	m = setOrigContent(m, ancestor)
+
+	// Simulate external change on the same content.
+	m = sendFileChangedOnDisk(m, "a.txt", theirs)
+
+	// Accept merge.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Should contain conflict markers.
+	content := m.editor.Content()
+	if !strings.Contains(content, "<<<<<<<") || !strings.Contains(content, "=======") || !strings.Contains(content, ">>>>>>>") {
+		t.Fatalf("expected conflict markers in merge result, got: %q", content)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: accept then save — origContent = saved content
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_SaveAfterAccept(t *testing.T) {
+	ancestor := "original"
+	ours := "local edits"
+	theirs := "external change"
+
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", ours)
+	m = setOrigContent(m, ancestor)
+	m = sendFileChangedOnDisk(m, "a.txt", theirs)
+
+	// Accept merge.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// After accept, origContent should be the merged result.
+	mergedBeforeSave := m.editor.Content()
+	if mergedBeforeSave == ours {
+		t.Fatal("expected merged content after accept")
+	}
+	origAfterAccept := m.origContent
+	if string(origAfterAccept) != mergedBeforeSave {
+		t.Fatalf("expected origContent=%q after accept, got %q", mergedBeforeSave, string(origAfterAccept))
+	}
+
+	// Simulate save completion.
+	m, _ = m.Update(editor.FileSavedMsg{
+		Path:             "a.txt",
+		RequestID:        "", // not in save-flight, so ignored
+		SavedContentHash: "hash",
+	})
+
+	// After save, origContent should equal buffer content.
+	origAfterSave := m.origContent
+	if string(origAfterSave) != mergedBeforeSave {
+		t.Fatalf("expected origContent=%q after save, got %q", mergedBeforeSave, string(origAfterSave))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: undo after accept, then save — disk gets ours
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_UndoAfterAcceptThenSave(t *testing.T) {
+	ours := "local edits"
+	theirs := "external change"
+
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", ours)
+	m = sendFileChangedOnDisk(m, "a.txt", theirs)
+
+	// Accept merge.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Undo the merge — restores ours.
+	m.editor = m.editor.UndoForTest()
+	if m.editor.Content() != ours {
+		t.Fatalf("expected undo to restore ours (%q), got %q", ours, m.editor.Content())
+	}
+
+	// Simulate save.
+	m, _ = m.Update(editor.FileSavedMsg{
+		Path:             "a.txt",
+		RequestID:        "",
+		SavedContentHash: "hash",
+	})
+
+	// After save, origContent should equal buffer (ours).
+	if string(m.origContent) != ours {
+		t.Fatalf("expected origContent=%q after save+undo, got %q", ours, string(m.origContent))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard: reject then second external change — correct ancestor
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_RejectThenExternalChangeAgain(t *testing.T) {
+	orig := "original content"
+	firstChange := "first external change"
+	secondChange := "second external change"
+
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", orig)
+
+	// First external change: reject.
+	m = sendFileChangedOnDisk(m, "a.txt", firstChange)
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// After reject, origContent should be firstChange.
+	if string(m.origContent) != firstChange {
+		t.Fatalf("expected origContent=%q after reject, got %q", firstChange, string(m.origContent))
+	}
+
+	// Second external change: accept.
+	m = sendFileChangedOnDisk(m, "a.txt", secondChange)
+	m, cmd = m.Update(tea.KeyPressMsg{Code: 'y'})
+	msgs = execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// After second accept, origContent should be the merged result
+	// (using firstChange as ancestor, not original).
+	mergedContent := m.editor.Content()
+	if mergedContent == orig {
+		t.Fatal("expected merged result, got original content")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File watcher: no watcher for untitled files
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestFileWatch_NoWatcherForUntitled(t *testing.T) {
+	m := newTestWorkspace(t)
+	// No file loaded — editor.FilePath() is empty.
+
+	// Send FileChangedOnDiskMsg with empty path (simulates untitled file change).
+	m, _ = m.Update(editor.FileChangedOnDiskMsg{Path: "", NewContent: []byte("data")})
+
+	// Guard should NOT fire for untitled files.
+	if m.footer.InGuard() {
+		t.Fatal("expected no guard for untitled file change")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File watcher: closing file stops watcher
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestFileWatch_CloseFileStopsWatcher(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "content")
+
+	// Watcher should be active.
+	if m.cancelFileWatch == nil {
+		t.Fatal("expected file watcher to be active after loading file")
+	}
+
+	// Close the file (need a second tab so close doesn't reset to untitled).
+	m.opentabs = m.opentabs.OpenFile("b.txt")
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
+
+	// Simulate discard to close immediately.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Watcher should now be active for the next file (b.txt).
+	if m.cancelFileWatch == nil {
+		t.Fatal("expected file watcher to be active for next file after close")
+	}
+	if m.watchedFilePath != "b.txt" {
+		t.Fatalf("expected watchedFilePath=b.txt, got %q", m.watchedFilePath)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File watcher: switch file via dirty-guard discard → new watcher starts
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestFileWatch_SwitchFileViaDiscard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "content A")
+
+	// Make editor dirty.
+	m = setEditorDirty(m)
+
+	// Attempt to switch to b.txt — dirty guard fires.
+	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
+	if !m.footer.InGuard() {
+		t.Fatal("expected dirty guard active")
+	}
+
+	// User presses 'd' to discard.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// New file watcher should be active for b.txt.
+	if m.cancelFileWatch == nil {
+		t.Fatal("expected file watcher to be active after discard-switch")
+	}
+	if m.watchedFilePath != "b.txt" {
+		t.Fatalf("expected watchedFilePath=b.txt, got %q", m.watchedFilePath)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File watcher: switch file via dirty-guard save → new watcher starts
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestFileWatch_SwitchFileViaSave(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "content A")
+
+	// Make editor dirty.
+	m = setEditorDirty(m)
+
+	// Attempt to switch to b.txt — dirty guard fires.
+	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
+	if !m.footer.InGuard() {
+		t.Fatal("expected dirty guard active")
+	}
+
+	// User presses 's' to save.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	msgs := execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// Save should be in flight.
+	if m.pending == nil || !m.pending.saveInFlight {
+		t.Fatal("expected save to be in flight")
+	}
+	saveReqID := m.pending.saveRequestID
+
+	// Simulate save completion.
+	m, cmd = m.Update(editor.FileSavedMsg{
+		Path:             "a.txt",
+		RequestID:        saveReqID,
+		SavedContentHash: "hash-a",
+	})
+
+	// Execute the resulting LoadFileCmd (it will fail since b.txt doesn't exist,
+	// but that's fine — we only care that startFileWatch was called).
+	msgs = execCmds(cmd)
+	for _, msg := range msgs {
+		m, cmd = m.Update(msg)
+		msgs = append(msgs, execCmds(cmd)...)
+	}
+
+	// New file watcher should be active for b.txt.
+	if m.cancelFileWatch == nil {
+		t.Fatal("expected file watcher to be active after save-switch")
+	}
+	if m.watchedFilePath != "b.txt" {
+		t.Fatalf("expected watchedFilePath=b.txt, got %q", m.watchedFilePath)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// origContent: set after untitled file is created on disk
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestOrigContent_AfterUntitledCreate(t *testing.T) {
+	m := newTestWorkspace(t)
+
+	// Set editor content and mark dirty.
+	m.editor = m.editor.SetContent("", []byte("hello world"))
+	m.editor = m.editor.SetDirtyForTest()
+	m, _ = m.Update(editor.ContentChangedMsg{Path: "", Dirty: true})
+
+	// Simulate the file being successfully created on disk.
+	m, _ = m.Update(fileCreatedMsg{path: "Untitled 1.md", err: nil})
+
+	// origContent should be set to the editor content.
+	if m.origContent == nil {
+		t.Fatal("expected origContent to be set after file creation")
+	}
+	if string(m.origContent) != "hello world" {
+		t.Fatalf("expected origContent='hello world', got %q", string(m.origContent))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// origContent: set after untitled rename
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestOrigContent_AfterUntitledRename(t *testing.T) {
+	m := newTestWorkspace(t)
+
+	// Simulate an untitled file that was renamed and created on disk.
+	m.editor = m.editor.SetContent("", []byte("renamed content"))
+	m.editor = m.editor.SetDirtyForTest()
+	m, _ = m.Update(editor.ContentChangedMsg{Path: "", Dirty: true})
+
+	// Simulate the file being successfully created on disk after rename.
+	m, _ = m.Update(fileCreatedMsg{path: "renamed.md", err: nil})
+
+	// origContent should be set to the editor content.
+	if m.origContent == nil {
+		t.Fatal("expected origContent to be set after untitled rename")
+	}
+	if string(m.origContent) != "renamed content" {
+		t.Fatalf("expected origContent='renamed content', got %q", string(m.origContent))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Watch file: ReadFile failure surfaces error to user
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestWatchFile_ReadFileFailure(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "content")
+
+	// Simulate a fileWatchReadError (e.g., file deleted between fsnotify and read).
+	m, _ = m.Update(fileWatchReadError{path: "a.txt", err: errors.New("file not found")})
+
+	// Error should be surfaced.
+	if m.err == nil {
+		t.Fatal("expected error to be set after fileWatchReadError")
+	}
+	if !strings.Contains(m.err.Error(), "external change") {
+		t.Fatalf("expected error to mention 'external change', got: %v", m.err)
+	}
+	if !strings.Contains(m.err.Error(), "file not found") {
+		t.Fatalf("expected error to contain original error, got: %v", m.err)
+	}
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mouse-driven panel resizing
@@ -1039,5 +1553,51 @@ func TestLayoutFooterVisibleAfterResize(t *testing.T) {
 		if len(lines) != size.h {
 			t.Fatalf("at %dx%d: expected %d lines, got %d", size.w, size.h, size.h, len(lines))
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge guard pre-check: skip guard when disk matches buffer
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestMergeGuard_IdenticalDiskContentNoGuard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "hello world")
+
+	// Simulate external change with IDENTICAL content.
+	// This represents the race where a save completes and the watcher
+	// reads the same content, or a backup tool touches the file.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello world")
+
+	// Guard should NOT be active — content is identical.
+	if m.footer.InGuard() {
+		t.Fatal("expected no merge guard when disk content matches buffer")
+	}
+	// origContent should be updated to the disk content.
+	if string(m.origContent) != "hello world" {
+		t.Fatalf("expected origContent='hello world', got %q", string(m.origContent))
+	}
+	// pendingMergeContent should be nil.
+	if m.pendingMergeContent != nil {
+		t.Fatal("expected pendingMergeContent to be nil")
+	}
+}
+
+func TestMergeGuard_DifferentContentStillTriggersGuard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "hello world")
+
+	// External change with DIFFERENT content.
+	m = sendFileChangedOnDisk(m, "a.txt", "hello earth")
+
+	// Guard SHOULD be active — content differs.
+	if !m.footer.InGuard() {
+		t.Fatal("expected merge guard when disk content differs from buffer")
+	}
+	if m.footer.GuardKind() != footer.GuardMerge {
+		t.Fatalf("expected GuardMerge, got %v", m.footer.GuardKind())
+	}
+	if m.pendingMergeContent == nil {
+		t.Fatal("expected pendingMergeContent to be set")
 	}
 }
