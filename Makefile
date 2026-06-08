@@ -2,7 +2,9 @@ THIS_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
 RUNE := "$(dir $(THIS_MAKEFILE_PATH))rune"
 
 build:
-	go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune/main.go
+	CGO_CFLAGS="-I/opt/homebrew/include" \
+	CGO_LDFLAGS="-L/opt/homebrew/lib" \
+	CGO_ENABLED=1 go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune/main.go
 
 run: build
 	$(RUNE) $(ARGS)
@@ -14,7 +16,7 @@ test:
 	go vet ./...
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(RUNE)
 
 .PHONY: build run test clean
 

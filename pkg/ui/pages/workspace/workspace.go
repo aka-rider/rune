@@ -18,6 +18,7 @@ import (
 	"rune/pkg/dictation"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/inputlang"
+	"rune/pkg/merge"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/chat"
 	"rune/pkg/ui/components/editor"
@@ -46,6 +47,13 @@ type ErrMsg struct{ Err error }
 // dirChangedMsg signals the watched directory contents changed on disk.
 type dirChangedMsg struct{}
 
+// fileWatchReadError signals that fsnotify reported a write but the file
+// could not be read (deleted, moved, or permission denied).
+type fileWatchReadError struct {
+	path string
+	err  error
+}
+
 const defaultLeftPaneW = 22
 const defaultRightPaneW = 38
 
@@ -72,6 +80,16 @@ const (
 	pendingSwitchFile pendingDirtyKind = iota
 	pendingCloseFile
 )
+
+var dirtyGuardOptions = []footer.GuardOption{
+	{Key: 's', Response: footer.DataLossSave},
+	{Key: 'd', Response: footer.DataLossDiscard},
+}
+
+var mergeGuardOptions = []footer.GuardOption{
+	{Key: 'y', Response: footer.DataLossMergeAccept},
+	{Key: 'n', Response: footer.DataLossMergeReject},
+}
 
 type pendingDirtyAction struct {
 	kind          pendingDirtyKind
@@ -102,6 +120,10 @@ type Model struct {
 	dictCh                  <-chan tea.Msg     // nil when idle
 	watchedDir              string             // current directory being watched
 	cancelWatch             context.CancelFunc // cancels active watchDirCmd (§6.3)
+	origContent             []byte             // ancestor for 3-way merge (last known disk content)
+	pendingMergeContent     []byte             // "theirs" — external changes awaiting user decision
+	watchedFilePath         string             // current file being watched (for lifecycle tracking)
+	cancelFileWatch         context.CancelFunc // cancels active file watcher
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
@@ -267,10 +289,17 @@ func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
 	}
 	if m.editor.IsDirty() {
 		m.pending = &pendingDirtyAction{kind: pendingSwitchFile, path: path}
-		m.footer = m.footer.SetDirtyGuard(true)
+		m.footer = m.footer.SetGuard(footer.GuardDirty, dirtyGuardOptions)
 		return m, nil
 	}
-	return m, editor.LoadFileCmd(path)
+	var cmds []tea.Cmd
+	var watchCmd tea.Cmd
+	if path != "" {
+		m, watchCmd = m.startFileWatch(path)
+		cmds = append(cmds, watchCmd)
+	}
+	cmds = append(cmds, editor.LoadFileCmd(path))
+	return m, tea.Batch(cmds...)
 }
 
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
@@ -285,19 +314,23 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 			path:     currentPath,
 			nextPath: nextPath,
 		}
-		m.footer = m.footer.SetDirtyGuard(true)
+		m.footer = m.footer.SetGuard(footer.GuardDirty, dirtyGuardOptions)
+		m = m.stopFileWatch()
 		return m, nil
 	}
+	m = m.stopFileWatch()
 	return m.executeClose(currentPath, nextPath)
 }
 
 func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	var cmd tea.Cmd
+	var cmd, watchCmd tea.Cmd
 	m.opentabs = m.opentabs.CloseFile(closePath)
 	m.editor, cmd = m.editor.Update(editor.FileClosedMsg{Path: closePath})
 	cmds = append(cmds, cmd)
 	if nextPath != "" {
+		m, watchCmd = m.startFileWatch(nextPath)
+		cmds = append(cmds, watchCmd)
 		cmds = append(cmds, editor.LoadFileCmd(nextPath))
 	} else {
 		// Last tab closed — reset to a fresh untitled buffer.
@@ -308,22 +341,57 @@ func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m Model) handleDirtyGuardResponse(resp footer.DirtyGuardResponse) (Model, tea.Cmd) {
+func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (Model, tea.Cmd) {
+	var cmd, watchCmd tea.Cmd
+	// Handle merge responses (no pending action needed).
+	switch resp {
+	case footer.DataLossMergeAccept:
+		ours := []byte(m.editor.Content())
+		theirs := m.pendingMergeContent
+		m.pendingMergeContent = nil
+		m.footer = m.footer.SetGuard(0, nil)
+
+		opts := merge.DefaultOptions()
+		opts.OursLabel = "ours"
+		opts.TheirsLabel = "theirs"
+		result, err := merge.Merge(m.origContent, ours, theirs, opts)
+		if err != nil {
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: err.Error()})
+			return m, cmd
+		}
+		m.editor = m.editor.ApplyMergeResult(ours, result.Output)
+		m.origContent = result.Output // merged result becomes new ancestor
+		return m, func() tea.Msg { return editor.FileMergedMsg{
+			Path:       m.editor.FilePath(),
+			Content:    result.Output,
+			Conflicted: result.Conflicted,
+		}}
+
+	case footer.DataLossMergeReject:
+		diskContent := m.pendingMergeContent
+		m.pendingMergeContent = nil
+		m.footer = m.footer.SetGuard(0, nil)
+		m.origContent = diskContent // disk state becomes new ancestor for next merge
+		return m, nil
+	}
+
+	// Handle dirty guard responses (require pending action).
 	if m.pending == nil {
 		return m, nil
 	}
 	switch resp {
-	case footer.DirtyGuardCancel:
+	case footer.DataLossCancel:
 		m.pending = nil
 		return m, nil
 
-	case footer.DirtyGuardDiscard:
+	case footer.DataLossDiscard:
 		m.opentabs = m.opentabs.MarkClean(m.editor.FilePath())
 		switch m.pending.kind {
 		case pendingSwitchFile:
 			path := m.pending.path
 			m.pending = nil
-			return m, editor.LoadFileCmd(path)
+			m, watchCmd = m.startFileWatch(path)
+			return m, tea.Batch(watchCmd, editor.LoadFileCmd(path))
 		case pendingCloseFile:
 			closePath := m.pending.path
 			nextPath := m.pending.nextPath
@@ -331,7 +399,7 @@ func (m Model) handleDirtyGuardResponse(resp footer.DirtyGuardResponse) (Model, 
 			return m.executeClose(closePath, nextPath)
 		}
 
-	case footer.DirtyGuardSave:
+	case footer.DataLossSave:
 		var saveID editor.SaveIdentity
 		var cmd tea.Cmd
 		m.editor, saveID, cmd = m.editor.StartSave()
@@ -392,7 +460,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		// Priority 1: Dirty guard — footer consumes all keys.
-		if m.footer.InDirtyGuard() {
+		if m.footer.InGuard() {
 			m.footer, cmd = m.footer.Update(msg)
 			cmds = append(cmds, cmd)
 			return m.finalize(cmds)
@@ -528,6 +596,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case editor.FileLoadedMsg:
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
+		m.origContent = msg.Content
+
+	case editor.FileChangedOnDiskMsg:
+		if m.editor.FilePath() == "" || m.editor.FilePath() != msg.Path {
+			return m, nil // not current file or untitled, ignore
+		}
+		m.pendingMergeContent = msg.NewContent
+		m.footer = m.footer.SetGuard(footer.GuardMerge, mergeGuardOptions)
+
+	case editor.FileMergedMsg:
+		m.opentabs = m.opentabs.MarkDirty(msg.Path)
 
 	case editor.FileRenamedMsg:
 		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
@@ -548,6 +627,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.err != nil {
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.err.Error()})
 			cmds = append(cmds, cmd)
+		} else {
+			// File committed to disk — use buffer content as the merge ancestor.
+			m.origContent = []byte(m.editor.Content())
 		}
 
 	case editor.ContentChangedMsg:
@@ -571,11 +653,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.opentabs = m.opentabs.MarkClean(msg.Path)
 		if m.pending != nil && m.pending.saveInFlight && m.pending.saveRequestID == msg.RequestID {
 			m.pending.saveInFlight = false
+			var watchCmd tea.Cmd
 			switch m.pending.kind {
 			case pendingSwitchFile:
 				path := m.pending.path
 				m.pending = nil
-				cmds = append(cmds, editor.LoadFileCmd(path))
+				m, watchCmd = m.startFileWatch(path)
+				cmds = append(cmds, watchCmd, editor.LoadFileCmd(path))
 			case pendingCloseFile:
 				closePath := m.pending.path
 				nextPath := m.pending.nextPath
@@ -584,6 +668,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// After save, buffer equals disk — update origContent as the new ancestor.
+		m.origContent = []byte(m.editor.Content())
 
 	case editor.FileLoadErrorMsg:
 		// Temporary: ignore file load errors (e.g. following a broken click link)
@@ -595,8 +681,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.pending = nil
 		}
 
-	case footer.DirtyGuardResponseMsg:
-		m, cmd = m.handleDirtyGuardResponse(msg.Response)
+	case fileWatchReadError:
+		m.err = fmt.Errorf("external change to %s: %w", msg.path, msg.err)
+
+	case footer.DataLossGuardResponseMsg:
+		m, cmd = m.handleDataLossGuardResponse(msg.Response)
 		cmds = append(cmds, cmd)
 
 	case ErrMsg:
@@ -1026,6 +1115,69 @@ func (m Model) startWatch(dir string) (Model, tea.Cmd) {
 	m.cancelWatch = cancel
 	m.watchedDir = dir
 	return m, watchDirCmd(ctx, dir)
+}
+
+// watchFileCmd watches a single file for Write events and returns FileChangedOnDiskMsg
+// when the file content changes. Ignores Create/Remove/Rename (those are handled by
+// the directory watcher). Context-cancellable.
+func watchFileCmd(ctx context.Context, path string) tea.Cmd {
+	return func() tea.Msg {
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			return nil // fire-and-forget: watcher creation failed
+		}
+		defer watcher.Close()
+
+		if err := watcher.Add(path); err != nil {
+			return nil // fire-and-forget: file may have been removed
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return nil
+				}
+				if event.Has(fsnotify.Write) {
+					// Read the new content and emit.
+					b, err := os.ReadFile(path)
+					if err != nil {
+						return fileWatchReadError{path: path, err: fmt.Errorf("read %q: %w", path, err)}
+					}
+					return editor.FileChangedOnDiskMsg{Path: path, NewContent: b}
+				}
+				// Ignore Create/Remove/Rename — directory watcher handles those.
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return nil
+				}
+				return nil // fire-and-forget: watcher error
+			}
+		}
+	}
+}
+
+// startFileWatch cancels any active file watcher and starts a new one for path.
+func (m Model) startFileWatch(path string) (Model, tea.Cmd) {
+	if m.cancelFileWatch != nil {
+		m.cancelFileWatch()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelFileWatch = cancel
+	m.watchedFilePath = path
+	return m, watchFileCmd(ctx, path)
+}
+
+// stopFileWatch cancels and clears the active file watcher.
+func (m Model) stopFileWatch() Model {
+	if m.cancelFileWatch != nil {
+		m.cancelFileWatch()
+		m.cancelFileWatch = nil
+		m.watchedFilePath = ""
+	}
+	return m
 }
 
 // fileCreatedMsg reports the result of creating a new file on disk.

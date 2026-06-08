@@ -579,6 +579,49 @@ func (m Model) SetHighlighter(h CodeHighlighter) Model { m.highlighter = h; retu
 // SetDirtyForTest marks the editor dirty without modifying content. Test-only.
 func (m Model) SetDirtyForTest() Model { m.dirty = true; return m }
 
+// UndoForTest performs a single undo step on the editor buffer. Test-only.
+func (m Model) UndoForTest() Model {
+	m, _ = m.applyUndo()
+	return m.syncDisplay()
+}
+
+// RedoForTest performs a single redo step on the editor buffer. Test-only.
+func (m Model) RedoForTest() Model {
+	m, _ = m.applyRedo()
+	return m.syncDisplay()
+}
+
+// ApplyMergeResult applies a merge result to the buffer as a single undoable edit.
+// This preserves the user's undo history so they can revert to their local changes.
+func (m Model) ApplyMergeResult(ours, mergedResult []byte) Model {
+	if string(ours) == string(mergedResult) {
+		return m
+	}
+	edit := buffer.Edit{Start: 0, End: len(ours), Insert: string(mergedResult)}
+	sorted := buffer.CloneAndSortEditsDescending([]buffer.Edit{edit})
+	newBuf, _, err := m.buf.ApplyEdits(sorted)
+	if err != nil {
+		return m
+	}
+	applied := []buffer.AppliedEdit{{
+		Start:   0,
+		End:     len(ours),
+		Insert:  string(mergedResult),
+		Deleted: string(ours),
+	}}
+	group := history.EditGroup{
+		Edits:         applied,
+		CursorsBefore: m.cursors.All(),
+		CursorsAfter:  m.cursors.All(),
+		Timestamp:     time.Now(),
+		Kind:          history.EditBatch,
+	}
+	m.buf = newBuf
+	m.history = m.history.Push(group)
+	m.dirty = (hashContent(m.buf.Content()) != m.savedContentHash)
+	return m.syncDisplay()
+}
+
 func PreferredWidth() int { return 40 }
 
 // isPrintableChar reports whether the rune is a printable ASCII character.
