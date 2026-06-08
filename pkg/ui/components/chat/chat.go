@@ -143,8 +143,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// msg.Text covers the Kitty keyboard protocol (including Shift for
 			// uppercase). The fallback handles legacy terminals.
 			text := msg.Text
-			if text == "" && msg.Mod == 0 && msg.Code >= ' ' && msg.Code <= '~' {
-				text = string(msg.Code)
+			if text == "" && msg.Mod == 0 {
+				code := msg.BaseCode
+				if code == 0 {
+					code = msg.Code
+				}
+				if code >= ' ' && code <= '~' {
+					text = string(code)
+				}
 			}
 			if text != "" {
 				m.input += text

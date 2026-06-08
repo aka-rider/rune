@@ -475,8 +475,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		consumed := true
 		switch {
 		case key.Matches(msg, m.keys.TabSwitch):
-			if msg.Code >= '1' && msg.Code <= '9' {
-				idx := int(msg.Code - '1')
+			digit := msg.BaseCode
+			if digit == 0 {
+				digit = msg.Code
+			}
+			if digit >= '1' && digit <= '9' {
+				idx := int(digit - '1')
 				if path := m.opentabs.PathAt(idx); path != "" {
 					m.opentabs = m.opentabs.SelectIndex(idx)
 					m, cmd = m.requestOpenPath(path)

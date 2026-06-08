@@ -30,6 +30,8 @@ var globalKeys = []string{
 var editorShortcutKeys = []string{
 	"PrimaryAction", // Enter → newline
 	"Cancel",        // Escape → cancel/close modal
+	"Undo",          // Cmd+Z → undo
+	"Redo",          // Cmd+Shift+Z → redo
 }
 
 // chordToKeyString reconstructs the key string that parseChord() would

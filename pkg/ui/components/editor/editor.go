@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/key"
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
@@ -288,11 +289,11 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
-		if msg.Code == 'f' && msg.Mod == tea.ModSuper {
+		if key.Matches(msg, m.keys.FindOpen) {
 			m.findOverlay = m.findOverlay.open(false)
 			return m, nil
 		}
-		if msg.Code == 'h' && msg.Mod == tea.ModSuper {
+		if key.Matches(msg, m.keys.FindReplaceOpen) {
 			m.findOverlay = m.findOverlay.open(true)
 			return m, nil
 		}
@@ -307,7 +308,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Undo: Cmd+Z (no resolver binding)
-		if msg.Code == 'z' && msg.Mod == tea.ModSuper {
+		if key.Matches(msg, m.keys.Undo) {
 			m, cmd = m.applyUndo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
@@ -323,7 +324,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Redo: Cmd+Shift+Z (no resolver binding)
-		if msg.Code == 'z' && msg.Mod == (tea.ModSuper|tea.ModShift) {
+		if key.Matches(msg, m.keys.Redo) {
 			m, cmd = m.applyRedo()
 			m = m.syncDisplay()
 			m = m.scrollToCursor()
@@ -426,8 +427,14 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			// Chord incomplete — wait for next key
 		case keybind.ResultNoMatch:
 			text := msg.Text
-			if text == "" && msg.Mod == 0 && isPrintableChar(msg.Code) {
-				text = string(msg.Code)
+			if text == "" && msg.Mod == 0 {
+				code := msg.BaseCode
+				if code == 0 {
+					code = msg.Code
+				}
+				if isPrintableChar(code) {
+					text = string(code)
+				}
 			}
 			if text != "" {
 				res := m.registry.Execute("edit.insert-character", command.CommandContext{

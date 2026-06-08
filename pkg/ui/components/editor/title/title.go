@@ -155,8 +155,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	default:
 		// Printable text input
 		text := msg.Text
-		if text == "" && msg.Mod == 0 && msg.Code >= 32 && msg.Code < 127 {
-			text = string(rune(msg.Code))
+		if text == "" && msg.Mod == 0 {
+			code := msg.BaseCode
+			if code == 0 {
+				code = msg.Code
+			}
+			if code >= 32 && code < 127 {
+				text = string(rune(code))
+			}
 		}
 		if text != "" {
 			runes := []rune(m.text)

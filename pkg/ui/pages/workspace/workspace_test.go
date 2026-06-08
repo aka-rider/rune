@@ -128,7 +128,7 @@ func TestGate2_DirtyGuardSaveThenLoad(t *testing.T) {
 	}
 
 	// User presses 's' to save.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 
 	// Dirty guard should have been dismissed by footer, emitting DirtyGuardResponseMsg.
 	// We need to process the cmd (it's a func that returns DirtyGuardResponseMsg).
@@ -283,7 +283,7 @@ func TestGate6_DirtyGuardSaveFailureKeepsFile(t *testing.T) {
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
 
 	// User saves.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -435,7 +435,7 @@ func TestGate9_CloseFileDiscard(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 
 	// Discard.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -462,7 +462,7 @@ func TestGate10_UnrelatedSaveDoesNotTriggerPending(t *testing.T) {
 
 	// Trigger switch, user saves.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -529,7 +529,7 @@ func TestGate12_KeysConsumedDuringSaveInFlight(t *testing.T) {
 
 	// Trigger switch and save.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -547,7 +547,7 @@ func TestGate12_KeysConsumedDuringSaveInFlight(t *testing.T) {
 	// User presses random keys during save.
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'd'}) // would be discard if guard was active
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"}) // would be discard if guard was active
 
 	// Nothing should have changed.
 	if m.editor.Content() != contentBefore {
@@ -569,7 +569,7 @@ func TestGate13_DirtyGuardUsesEditorStartSave(t *testing.T) {
 
 	// Trigger switch and save.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -596,7 +596,7 @@ func TestGate14_SaveResultForwardedToEditor(t *testing.T) {
 
 	// Trigger switch and save.
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -633,7 +633,7 @@ func TestDirtyGuardDiscardLoadsNewFile(t *testing.T) {
 	m, _ = m.Update(filetree.FileSelectedMsg{Path: "b.txt"})
 
 	// User discards.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -719,7 +719,7 @@ func TestMergeGuard_AcceptMerge_Undoable(t *testing.T) {
 	}
 
 	// Accept merge: press 'y'.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -759,7 +759,7 @@ func TestMergeGuard_RejectMerge_PreservesBuffer(t *testing.T) {
 	m = sendFileChangedOnDisk(m, "a.txt", "hello earth")
 
 	// Reject merge: press 'n'.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -810,7 +810,7 @@ func TestMergeGuard_NonConflictingMerge(t *testing.T) {
 	m = sendFileChangedOnDisk(m, "a.txt", theirs)
 
 	// Accept merge.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -849,7 +849,7 @@ func TestMergeGuard_ConflictingMerge(t *testing.T) {
 	m = sendFileChangedOnDisk(m, "a.txt", theirs)
 
 	// Accept merge.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -878,7 +878,7 @@ func TestMergeGuard_SaveAfterAccept(t *testing.T) {
 	m = sendFileChangedOnDisk(m, "a.txt", theirs)
 
 	// Accept merge.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -922,7 +922,7 @@ func TestMergeGuard_UndoAfterAcceptThenSave(t *testing.T) {
 	m = sendFileChangedOnDisk(m, "a.txt", theirs)
 
 	// Accept merge.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -962,7 +962,7 @@ func TestMergeGuard_RejectThenExternalChangeAgain(t *testing.T) {
 
 	// First external change: reject.
 	m = sendFileChangedOnDisk(m, "a.txt", firstChange)
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -976,7 +976,7 @@ func TestMergeGuard_RejectThenExternalChangeAgain(t *testing.T) {
 
 	// Second external change: accept.
 	m = sendFileChangedOnDisk(m, "a.txt", secondChange)
-	m, cmd = m.Update(tea.KeyPressMsg{Code: 'y'})
+	m, cmd = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 	msgs = execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -1026,7 +1026,7 @@ func TestFileWatch_CloseFileStopsWatcher(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 
 	// Simulate discard to close immediately.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -1060,7 +1060,7 @@ func TestFileWatch_SwitchFileViaDiscard(t *testing.T) {
 	}
 
 	// User presses 'd' to discard.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
@@ -1094,7 +1094,7 @@ func TestFileWatch_SwitchFileViaSave(t *testing.T) {
 	}
 
 	// User presses 's' to save.
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's'})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	msgs := execCmds(cmd)
 	for _, msg := range msgs {
 		m, cmd = m.Update(msg)
