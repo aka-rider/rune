@@ -101,7 +101,7 @@ Ask your agent how to install and set it up
 
 | Keys | Action |
 |------|--------|
-| `⇧⌘C` | Copy to clipboard |
+| `⌘c` | Copy to clipboard |
 | `⌘X` | Cut to clipboard |
 | `⌘V` | Paste from clipboard |
 
@@ -114,6 +114,7 @@ Ask your agent how to install and set it up
 
 | Keys | Action |
 |------|--------|
+| `⌘z` | Undo |
 | `Backspace` | Delete left |
 | `Delete` | Delete right |
 | `Tab` / `Shift+Tab` | Indent / outdent |
@@ -142,7 +143,7 @@ Ask your agent how to install and set it up
 | Keys | Action |
 |------|--------|
 | `⌘F` | Open find bar |
-| `⌘H` | Open find & replace |
+| `⌥⌘F` | Open find & replace |
 | `⌘G` | Find next |
 | `⇧⌘G` | Find previous |
 

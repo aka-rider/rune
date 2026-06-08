@@ -1,4 +1,5 @@
 .orqestra/
+/dbg_keyboard
 /rune
 coverage.out
 .docs/

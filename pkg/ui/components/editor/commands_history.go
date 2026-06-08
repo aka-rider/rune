@@ -8,7 +8,7 @@ func registerHistoryCommands(builder command.Builder) (command.Builder, error) {
 		Name:     "history.undo",
 		Category: "history",
 		Title:    "Undo",
-		When:     "editorFocused",
+		When:     "editorFocused && !readOnly",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return command.Result{
 				Operation: command.Operation{
@@ -25,7 +25,7 @@ func registerHistoryCommands(builder command.Builder) (command.Builder, error) {
 		Name:     "history.redo",
 		Category: "history",
 		Title:    "Redo",
-		When:     "editorFocused",
+		When:     "editorFocused && !readOnly",
 		Execute: func(ctx command.CommandContext) command.Result {
 			return command.Result{
 				Operation: command.Operation{

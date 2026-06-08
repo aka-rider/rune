@@ -328,7 +328,7 @@ func TestShiftNavigationResolvesToSelectCommands(t *testing.T) {
 		// Cmd+A -> select all
 		{keybind.Chord{Cmd: true, Key: "a"}, "select.all"},
 		// Clipboard
-		{keybind.Chord{Shift: true, Cmd: true, Key: "c"}, "clipboard.copy"},
+		{keybind.Chord{Cmd: true, Key: "c"}, "clipboard.copy"},
 		{keybind.Chord{Cmd: true, Key: "x"}, "clipboard.cut"},
 		{keybind.Chord{Cmd: true, Key: "v"}, "clipboard.paste"},
 	}

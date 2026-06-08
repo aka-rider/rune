@@ -94,8 +94,8 @@ func Default() Bindings {
 		SaveFile:           key.NewBinding(key.WithKeys("super+s"), key.WithHelp("⌘s", "save")),
 		AddCursorAbove:     key.NewBinding(key.WithKeys("alt+super+up"), key.WithHelp("⌥⌘↑", "cursor above")),
 		AddCursorBelow:     key.NewBinding(key.WithKeys("alt+super+down"), key.WithHelp("⌥⌘↓", "cursor below")),
-		FindOpen:           key.NewBinding(key.WithKeys("super+f"), key.WithHelp("⌘f", "find")),
-		FindReplaceOpen:    key.NewBinding(key.WithKeys("super+h"), key.WithHelp("⌘h", "find & replace")),
+		FindOpen:           key.NewBinding(key.WithKeys("super+f", "shift+super+f", "ctrl+f"), key.WithHelp("⇧⌘f", "find")),
+		FindReplaceOpen:    key.NewBinding(key.WithKeys("alt+super+f", "ctrl+alt+f"), key.WithHelp("⌥⌘f", "find & replace")),
 		FindNext:           key.NewBinding(key.WithKeys("super+g"), key.WithHelp("⌘g", "find next")),
 		FindPrev:           key.NewBinding(key.WithKeys("shift+super+g"), key.WithHelp("⇧⌘g", "find prev")),
 		ShiftUp:            key.NewBinding(key.WithKeys("shift+up"), key.WithHelp("⇧↑", "shift+up")),
@@ -112,13 +112,13 @@ func Default() Bindings {
 		ShiftWordRight:     key.NewBinding(key.WithKeys("alt+shift+right"), key.WithHelp("⇧⌥→", "select word right")),
 		MoveLineUp:         key.NewBinding(key.WithKeys("alt+up"), key.WithHelp("⌥↑", "move line up")),
 		MoveLineDown:       key.NewBinding(key.WithKeys("alt+down"), key.WithHelp("⌥↓", "move line down")),
-		SelectAll:          key.NewBinding(key.WithKeys("super+a"), key.WithHelp("⌘a", "select all")),
-		CopyToClipboard:    key.NewBinding(key.WithKeys("shift+super+c"), key.WithHelp("⌘⇧c", "copy")),
+		SelectAll:          key.NewBinding(key.WithKeys("super+a", "shift+super+a", "ctrl+a"), key.WithHelp("⌘a", "select all")),
+		CopyToClipboard:    key.NewBinding(key.WithKeys("super+c", "ctrl+shift+c"), key.WithHelp("⌘c", "copy")),
 		CutToClipboard:     key.NewBinding(key.WithKeys("super+x"), key.WithHelp("⌘x", "cut")),
 		PasteFromClipboard: key.NewBinding(key.WithKeys("super+v"), key.WithHelp("⌘v", "paste")),
 		VoiceDictation:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("^v", "dictate")),
-		Undo:               key.NewBinding(key.WithKeys("super+z"), key.WithHelp("⌘z", "undo")),
-		Redo:               key.NewBinding(key.WithKeys("shift+super+z"), key.WithHelp("⇧⌘z", "redo")),
+		Undo:               key.NewBinding(key.WithKeys("super+z", "ctrl+z"), key.WithHelp("⌘z", "undo")),
+		Redo:               key.NewBinding(key.WithKeys("shift+super+z", "ctrl+y"), key.WithHelp("⇧⌘z", "redo")),
 	}
 }
 
@@ -296,6 +296,8 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.CopyToClipboard, "clipboard.copy", "editorFocused")
 	add(b.CutToClipboard, "clipboard.cut", "editorFocused && !readOnly")
 	add(b.PasteFromClipboard, "clipboard.paste", "editorFocused && !readOnly")
+	add(b.Undo, "history.undo", "editorFocused && !readOnly")
+	add(b.Redo, "history.redo", "editorFocused && !readOnly")
 
 	return mappings, parseErr
 }

@@ -38,7 +38,7 @@ func openFindOverlay(m Model) Model {
 
 // openReplaceFindOverlay sends Cmd+H to open find+replace overlay.
 func openReplaceFindOverlay(m Model) Model {
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Mod: tea.ModSuper})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModSuper | tea.ModAlt})
 	return m
 }
 
