@@ -263,6 +263,24 @@ func TestChordFromKeyMsg(t *testing.T) {
 			msg:  tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl},
 			want: Chord{Ctrl: true, Key: "c"},
 		},
+		// Ukrainian layout: Cmd+Z produces 'я', should map to 'z'
+		{
+			name: "Cmd+Z on Ukrainian (я→z)",
+			msg:  tea.KeyPressMsg{Code: 'я', Mod: tea.ModSuper},
+			want: Chord{Cmd: true, Key: "z"},
+		},
+		// Ukrainian layout: Cmd+X produces 'ч', should map to 'x'
+		{
+			name: "Cmd+X on Ukrainian (ч→x)",
+			msg:  tea.KeyPressMsg{Code: 'ч', Mod: tea.ModSuper},
+			want: Chord{Cmd: true, Key: "x"},
+		},
+		// Ukrainian layout: Cmd+C produces 'ц', should map to 'c'
+		{
+			name: "Cmd+C on Ukrainian (ц→c)",
+			msg:  tea.KeyPressMsg{Code: 'ц', Mod: tea.ModSuper},
+			want: Chord{Cmd: true, Key: "c"},
+		},
 	}
 
 	for _, tt := range tests {

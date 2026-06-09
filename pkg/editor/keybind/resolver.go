@@ -27,8 +27,57 @@ func ChordFromKeyMsg(msg tea.KeyPressMsg) Chord {
 	kRaw := k
 	kRaw.Mod = 0
 	kRaw.Text = ""
-	c.Key = kRaw.String()
+	key := kRaw.String()
+
+	// Map Cyrillic characters to their US layout equivalents.
+	// This allows Cmd+Z, Cmd+X, etc. to work on non-English layouts.
+	if runes := []rune(key); len(runes) == 1 {
+		key = string(cyrillicToUS(runes[0]))
+	}
+	c.Key = key
 	return c
+}
+
+// cyrillicToUS maps a Cyrillic character to its US QWERTY layout equivalent.
+// Returns the original character if no mapping exists.
+func cyrillicToUS(r rune) rune {
+	switch r {
+	// Ukrainian layout → US QWERTY position mapping
+	case 'я', 'Я':
+		return 'z'
+	case 'ч', 'Ч':
+		return 'x'
+	case 'ц', 'Ц':
+		return 'c'
+	case 'к', 'К':
+		return 'v'
+	case 'е', 'Е':
+		return 'b'
+	case 'н', 'Н':
+		return 'n'
+	case 'г', 'Г':
+		return 'h'
+	case 'ш', 'Ш':
+		return 'm'
+	case 'щ', 'Щ':
+		return ','
+	case 'з', 'З':
+		return '.'
+	case 'х', 'Х':
+		return '/'
+	case 'й', 'Й':
+		return ';'
+	case 'ў', 'Ў':
+		return '\''
+	case 'ё', 'Ё':
+		return '"'
+	case 'є', 'Є':
+		return '\''
+	case 'ї', 'Ї':
+		return '\''
+	default:
+		return r
+	}
 }
 
 type Binding struct {

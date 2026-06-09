@@ -18,6 +18,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+replace github.com/charmbracelet/ultraviolet => /Users/xiii/wrk/ultraviolet
+
 require (
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
