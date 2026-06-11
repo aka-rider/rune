@@ -24,6 +24,7 @@ If code violates any rule below, it is defective and must be fixed before merge.
 - **NEVER swallow errors.** Bare `_, _ = operation()` is prohibited unless annotated with `// fire-and-forget: <reason>`.
 - **Contextual wrapping.** Always wrap errors with operation + resource context: `fmt.Errorf("load dir %q: %w", dir, err)`.
 - **No silent fallbacks.** Do not default or silently recover from invalid user-supplied data.
+- **NEVER panic.** A `panic` crashes the process and loses unsaved content. Malformed input is inevitable. If you need to enforce an invariant, use a safe fallback (graceful degradation) or a test-only assertion (`//go:build testing`). Rendering errors are tolerable, data loss is not.
 
 ### 1.5 Text & Strings
 
