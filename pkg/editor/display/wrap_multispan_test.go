@@ -224,3 +224,120 @@ func TestWrapMap_WikiLinkImageMetadataPreserved(t *testing.T) {
 		t.Error("WikiLinkIsImage metadata lost after WrapMap.Sync — sliceOriginalSpans drops wiki fields")
 	}
 }
+
+// TestWrapMap_WrappedLinkCellMap verifies that when a Rendered link span wraps
+// across multiple display lines, each segment retains a correctly-sliced CellMap.
+func TestWrapMap_WrappedLinkCellMap(t *testing.T) {
+	content := "text with [very-long-link-text-that-must-wrap](url) suffix\ncursor line"
+	buf := buffer.New(content)
+
+	// Cursor on line 1 (not line 0) → line 0 link is Rendered.
+	cursors := cursor.NewCursorSet(buf.LineStart(1))
+	sMap := display.NewSyntaxMap()
+	_, sSnap := sMap.Sync(buf, cursors)
+
+	// Wrap at a width that forces a break inside the link text.
+	// Concatenated visible text: "text with very-long-link-text-that-must-wrap suffix" = 51 bytes.
+	// Width 20 forces at least one break within the link text.
+	wMap := display.NewWrapMap(20)
+	wSnap := wMap.Sync(sSnap)
+
+	for i, seg := range wSnap.Segments {
+		if seg.ModelLine != 0 {
+			continue
+		}
+		for j, sp := range seg.Spans {
+			if sp.State != display.Rendered {
+				continue
+			}
+			if len(sp.Text) == 0 {
+				continue
+			}
+			if sp.CellMap == nil {
+				t.Errorf("segment %d span %d (line 0): Rendered span text=%q has nil CellMap",
+					i, j, sp.Text)
+				continue
+			}
+			wantLen := utf8.RuneCountInString(sp.Text)
+			if len(sp.CellMap) != wantLen {
+				t.Errorf("segment %d span %d (line 0): CellMap length %d != Text rune count %d, text=%q",
+					i, j, len(sp.CellMap), wantLen, sp.Text)
+			}
+			for k, cm := range sp.CellMap {
+				if cm.BufOffset < 0 {
+					t.Errorf("segment %d span %d CellMap[%d]: negative BufOffset=%d",
+						i, j, k, cm.BufOffset)
+				}
+			}
+		}
+	}
+}
+
+func TestWrapMap_WrappedLinkMetadataPreserved(t *testing.T) {
+	content := "text with [very-long-link-text-that-must-wrap](https://example.com) suffix\ncursor line"
+	buf := buffer.New(content)
+
+	cursors := cursor.NewCursorSet(buf.LineStart(1))
+	sMap := display.NewSyntaxMap()
+	_, sSnap := sMap.Sync(buf, cursors)
+
+	wMap := display.NewWrapMap(20)
+	wSnap := wMap.Sync(sSnap)
+
+	found := false
+	for _, seg := range wSnap.Segments {
+		if seg.ModelLine != 0 {
+			continue
+		}
+		for _, sp := range seg.Spans {
+			if sp.Kind == display.TokenLink {
+				found = true
+				if sp.LinkURL != "https://example.com" {
+					t.Errorf("wrapped link segment lost LinkURL: got %q, want %q",
+						sp.LinkURL, "https://example.com")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("no TokenLink span found in wrapped output")
+	}
+}
+
+func TestWrapMap_ShortLinkPassesThrough(t *testing.T) {
+	content := "text [link](url) more\ncursor line"
+	buf := buffer.New(content)
+
+	cursors := cursor.NewCursorSet(buf.LineStart(1))
+	sMap := display.NewSyntaxMap()
+	_, sSnap := sMap.Sync(buf, cursors)
+
+	// Width 80 is wide enough — the short link should not be split.
+	wMap := display.NewWrapMap(80)
+	wSnap := wMap.Sync(sSnap)
+
+	for _, seg := range wSnap.Segments {
+		if seg.ModelLine != 0 {
+			continue
+		}
+		for _, sp := range seg.Spans {
+			if sp.Kind == display.TokenLink && sp.State == display.Rendered {
+				if sp.CellMap == nil {
+					t.Error("non-wrapped rendered link has nil CellMap")
+				}
+				if sp.Text != "link" {
+					t.Errorf("non-wrapped rendered link text: got %q, want %q", sp.Text, "link")
+				}
+				if len(sp.CellMap) != 4 {
+					t.Errorf("non-wrapped rendered link CellMap length: got %d, want 4",
+						len(sp.CellMap))
+				}
+				// Verify first cell maps past the left delimiter '['
+				if sp.CellMap[0].BufOffset < sp.BufferStart {
+					t.Errorf("CellMap[0].BufOffset %d < BufferStart %d — must point past left delim",
+						sp.CellMap[0].BufOffset, sp.BufferStart)
+				}
+			}
+		}
+	}
+}

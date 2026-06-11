@@ -34,13 +34,20 @@ func linkRoleFor(kind TokenKind, wikiIsImage bool) LinkRole {
 	}
 }
 
+// DisplaySpan is the display-layer representation of a syntax span.
+// It carries both the rendered text and metadata needed for cell conversion.
+//
+// Separation of concerns: CellMap carries per-rune BufOffset (position data).
+// Kind, State, and LinkRole() determine style — these are span metadata, not
+// per-cell data. Future refactors MUST NOT conflate these: CellMap only
+// carries BufOffset, not styling information.
 type DisplaySpan struct {
 	Text         string
 	Kind         TokenKind
 	State        RevealState
 	BufferStart  int
 	BufferEnd    int
-	CellMap      []CellMapping // per-visual-byte buffer offsets for Rendered spans; nil for Revealed
+	CellMap      []CellMapping // per-visual-cell buffer offsets for Rendered spans; nil for Revealed
 	Language     string
 	BlockID      int
 	BlockStart   int

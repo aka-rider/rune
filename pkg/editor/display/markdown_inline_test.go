@@ -874,3 +874,151 @@ func TestSyntaxMap_EmptyLine(t *testing.T) {
 		t.Errorf("empty line span kind: got %v, want TokenText", snap.Lines[1].Spans[0].Kind)
 	}
 }
+
+// ==========================================================================
+// Multi-byte UTF-8 coordinate roundtrips inside RENDERED spans
+// ==========================================================================
+
+func TestSyntaxMap_CoordinateRoundTrip_MultiByteLink(t *testing.T) {
+	text := "hello [café](url) world"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+
+	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+
+	var linkSpan *display.SyntaxSpan
+	for i := range snap.Lines[0].Spans {
+		if snap.Lines[0].Spans[i].Kind == display.TokenLink {
+			linkSpan = &snap.Lines[0].Spans[i]
+			break
+		}
+	}
+	if linkSpan == nil {
+		t.Fatal("no link span found")
+	}
+	if linkSpan.State != display.Rendered {
+		t.Fatalf("link should be Rendered, got %v", linkSpan.State)
+	}
+	if linkSpan.CellMap == nil {
+		t.Fatal("link CellMap should not be nil")
+	}
+	if len(linkSpan.CellMap) != 4 {
+		t.Errorf("CellMap length: got %d, want 4 (one per rune of 'café')", len(linkSpan.CellMap))
+	}
+
+	lineText := buf.Line(0)
+	for col := 0; col <= len(lineText); col++ {
+		bp := coords.BufferPoint{Line: 0, Col: col}
+		sp := snap.BufferToSyntax(bp)
+		bp2 := snap.SyntaxToBuffer(sp)
+
+		sp2 := snap.BufferToSyntax(bp2)
+		if sp != sp2 {
+			t.Errorf("stability violation at col %d: bp=%v → sp=%v → bp2=%v → sp2=%v",
+				col, bp, sp, bp2, sp2)
+		}
+		if bp != bp2 {
+			bp3 := snap.SyntaxToBuffer(sp2)
+			if bp2 != bp3 {
+				t.Errorf("clamped position not stable at col %d: bp2=%v → sp2=%v → bp3=%v",
+					col, bp2, sp2, bp3)
+			}
+		}
+	}
+}
+
+func TestSyntaxMap_CoordinateRoundTrip_MultiByteBold(t *testing.T) {
+	text := "hello **café** world"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+
+	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+
+	var boldSpan *display.SyntaxSpan
+	for i := range snap.Lines[0].Spans {
+		if snap.Lines[0].Spans[i].Kind == display.TokenBold {
+			boldSpan = &snap.Lines[0].Spans[i]
+			break
+		}
+	}
+	if boldSpan == nil {
+		t.Fatal("no bold span found")
+	}
+	if boldSpan.State != display.Rendered {
+		t.Fatalf("bold should be Rendered, got %v", boldSpan.State)
+	}
+	if boldSpan.CellMap == nil {
+		t.Fatal("bold CellMap should not be nil")
+	}
+	if len(boldSpan.CellMap) != 4 {
+		t.Errorf("CellMap length: got %d, want 4 (one per rune of 'café')", len(boldSpan.CellMap))
+	}
+
+	lineText := buf.Line(0)
+	for col := 0; col <= len(lineText); col++ {
+		bp := coords.BufferPoint{Line: 0, Col: col}
+		sp := snap.BufferToSyntax(bp)
+		bp2 := snap.SyntaxToBuffer(sp)
+
+		sp2 := snap.BufferToSyntax(bp2)
+		if sp != sp2 {
+			t.Errorf("stability violation at col %d: bp=%v → sp=%v → bp2=%v → sp2=%v",
+				col, bp, sp, bp2, sp2)
+		}
+		if bp != bp2 {
+			bp3 := snap.SyntaxToBuffer(sp2)
+			if bp2 != bp3 {
+				t.Errorf("clamped position not stable at col %d: bp2=%v → sp2=%v → bp3=%v",
+					col, bp2, sp2, bp3)
+			}
+		}
+	}
+}
+
+func TestSyntaxMap_CoordinateRoundTrip_MultiByteCJK(t *testing.T) {
+	text := "hello **你好世界** world"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+
+	_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+
+	var boldSpan *display.SyntaxSpan
+	for i := range snap.Lines[0].Spans {
+		if snap.Lines[0].Spans[i].Kind == display.TokenBold {
+			boldSpan = &snap.Lines[0].Spans[i]
+			break
+		}
+	}
+	if boldSpan == nil {
+		t.Fatal("no bold span found")
+	}
+	if boldSpan.State != display.Rendered {
+		t.Fatalf("bold should be Rendered, got %v", boldSpan.State)
+	}
+	if boldSpan.CellMap == nil {
+		t.Fatal("bold CellMap should not be nil")
+	}
+	if len(boldSpan.CellMap) != 4 {
+		t.Errorf("CellMap length: got %d, want 4 (one per CJK char)", len(boldSpan.CellMap))
+	}
+
+	lineText := buf.Line(0)
+	for col := 0; col <= len(lineText); col++ {
+		bp := coords.BufferPoint{Line: 0, Col: col}
+		sp := snap.BufferToSyntax(bp)
+		bp2 := snap.SyntaxToBuffer(sp)
+
+		sp2 := snap.BufferToSyntax(bp2)
+		if sp != sp2 {
+			t.Errorf("stability violation at col %d: bp=%v → sp=%v → bp2=%v → sp2=%v",
+				col, bp, sp, bp2, sp2)
+		}
+		if bp != bp2 {
+			bp3 := snap.SyntaxToBuffer(sp2)
+			if bp2 != bp3 {
+				t.Errorf("clamped position not stable at col %d: bp2=%v → sp2=%v → bp3=%v",
+					col, bp2, sp2, bp3)
+			}
+		}
+	}
+}

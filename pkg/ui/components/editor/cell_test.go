@@ -203,3 +203,151 @@ func TestCellsToString_WithCursor(t *testing.T) {
 		t.Errorf("expected %q, got %q", expected, result)
 	}
 }
+
+// ============================================================================
+// Specification: stylesEqual must distinguish styles that render differently
+// ============================================================================
+
+func TestStylesEqual_LinkVsPlain(t *testing.T) {
+	link := lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Underline(true)
+	plain := lipgloss.NewStyle()
+	if stylesEqual(link, plain) {
+		t.Error("stylesEqual(Link, Plain) = true, want false — link style differs from plain")
+	}
+}
+
+func TestStylesEqual_DifferentBackgrounds(t *testing.T) {
+	a := lipgloss.NewStyle().Background(lipgloss.Color("1"))
+	b := lipgloss.NewStyle()
+	if stylesEqual(a, b) {
+		t.Error("stylesEqual(background(1), plain) = true, want false")
+	}
+}
+
+func TestStylesEqual_Reflexive(t *testing.T) {
+	a := lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Underline(true)
+	if !stylesEqual(a, a) {
+		t.Error("stylesEqual(a, a) = false, want true — same style must be equal")
+	}
+}
+
+func TestCellsToString_StyleDoesNotBleed(t *testing.T) {
+	selStyle := lipgloss.NewStyle()
+	cursorStyle := lipgloss.NewStyle()
+	link := lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Underline(true)
+	plain := lipgloss.NewStyle()
+
+	cells := []Cell{
+		{Rune: 'a', Width: 1, Style: plain},
+		{Rune: ' ', Width: 1, Style: plain},
+		{Rune: 'b', Width: 1, Style: link},
+		{Rune: 'c', Width: 1, Style: plain},
+	}
+	result := cellsToString(cells, selStyle, cursorStyle)
+
+	want := "a " + link.Render("b") + "c"
+	if result != want {
+		t.Errorf("cellsToString produced unexpected output\ngot:  %q\nwant: %q", result, want)
+	}
+}
+
+func TestCellsToString_LinkFormattingPreserved(t *testing.T) {
+	selStyle := lipgloss.NewStyle()
+	cursorStyle := lipgloss.NewStyle()
+	link := lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Underline(true)
+	plain := lipgloss.NewStyle()
+
+	cells := []Cell{
+		{Rune: 't', Width: 1, Style: plain},
+		{Rune: 'e', Width: 1, Style: plain},
+		{Rune: 'x', Width: 1, Style: plain},
+		{Rune: 't', Width: 1, Style: plain},
+		{Rune: ' ', Width: 1, Style: plain},
+		{Rune: 'l', Width: 1, Style: link},
+		{Rune: 'i', Width: 1, Style: link},
+		{Rune: 'n', Width: 1, Style: link},
+		{Rune: 'k', Width: 1, Style: link},
+		{Rune: ' ', Width: 1, Style: plain},
+		{Rune: 'e', Width: 1, Style: plain},
+		{Rune: 'n', Width: 1, Style: plain},
+		{Rune: 'd', Width: 1, Style: plain},
+	}
+	result := cellsToString(cells, selStyle, cursorStyle)
+
+	want := "text " + link.Render("link") + " end"
+	if result != want {
+		t.Errorf("cellsToString dropped link formatting\ngot:  %q\nwant: %q", result, want)
+	}
+}
+
+// ============================================================================
+// Specification: spanToCells dispatch correctness
+// ============================================================================
+
+func TestSpanToCells_RevealedSpanUsesBufferStart(t *testing.T) {
+	sp := display.DisplaySpan{
+		Text:        "hi",
+		State:       display.Revealed,
+		BufferStart: 10,
+		BufferEnd:   12,
+	}
+	cells := spanToCells(sp, lipgloss.NewStyle())
+	if len(cells) != 2 {
+		t.Fatalf("expected 2 cells, got %d", len(cells))
+	}
+	if cells[0].BufOffset != 10 {
+		t.Errorf("cell 0: expected BufOffset 10, got %d", cells[0].BufOffset)
+	}
+	if cells[1].BufOffset != 11 {
+		t.Errorf("cell 1: expected BufOffset 11, got %d", cells[1].BufOffset)
+	}
+}
+
+func TestSpanToCells_RenderedWithCellMap(t *testing.T) {
+	cm := []display.CellMapping{
+		{BufOffset: 8},
+		{BufOffset: 9},
+	}
+	sp := display.DisplaySpan{
+		Text:        "ab",
+		Kind:        display.TokenLink,
+		State:       display.Rendered,
+		BufferStart: 5,
+		BufferEnd:   15,
+		CellMap:     cm,
+	}
+	cells := spanToCells(sp, lipgloss.NewStyle())
+	if len(cells) != 2 {
+		t.Fatalf("expected 2 cells, got %d", len(cells))
+	}
+	// BufOffset must come from CellMap, NOT from BufferStart + pos
+	if cells[0].BufOffset != 8 {
+		t.Errorf("cell 0: expected BufOffset 8 (from CellMap), got %d — must not use BufferStart+pos",
+			cells[0].BufOffset)
+	}
+	if cells[1].BufOffset != 9 {
+		t.Errorf("cell 1: expected BufOffset 9 (from CellMap), got %d — must not use BufferStart+pos",
+			cells[1].BufOffset)
+	}
+}
+
+func TestSpanToCells_RenderedNilCellMap(t *testing.T) {
+	sp := display.DisplaySpan{
+		Text:        "hi",
+		State:       display.Rendered,
+		BufferStart: 10,
+		BufferEnd:   12,
+		CellMap:     nil,
+	}
+	cells := spanToCells(sp, lipgloss.NewStyle())
+	if len(cells) != 2 {
+		t.Fatalf("expected 2 cells, got %d", len(cells))
+	}
+	// Rendered span with nil CellMap (code fence, frontmatter) falls back to BufferStart + pos
+	if cells[0].BufOffset != 10 {
+		t.Errorf("cell 0: expected BufOffset 10 (fallback), got %d", cells[0].BufOffset)
+	}
+	if cells[1].BufOffset != 11 {
+		t.Errorf("cell 1: expected BufOffset 11 (fallback), got %d", cells[1].BufOffset)
+	}
+}

@@ -1,7 +1,9 @@
 package editor
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 
@@ -108,5 +110,59 @@ func TestLinkRender_ViewIsPure(t *testing.T) {
 	v2 := m.View()
 	if v1 != v2 {
 		t.Error("View() is not pure: two consecutive calls produced different output")
+	}
+}
+
+func TestLinkRender_RenderedLinkCellsAllHaveLinkStyle(t *testing.T) {
+	m := newTestEditor("intro\n[text](https://example.com)\n")
+	m = m.syncDisplay()
+
+	link := firstRenderedSpan(t, m, display.TokenLink)
+	cells := m.spanToCellsStyled(link)
+
+	if len(cells) == 0 {
+		t.Fatal("link span produced no cells")
+	}
+
+	want := styleKey(m.styles.Link)
+	for i, c := range cells {
+		if styleKey(c.Style) != want {
+			t.Errorf("cell %d: style %q != link style %q", i, styleKey(c.Style), want)
+		}
+	}
+}
+
+func TestLinkRender_RenderedLinkCellCountMatchesCellMap(t *testing.T) {
+	m := newTestEditor("intro\n[text](https://example.com)\n")
+	m = m.syncDisplay()
+
+	link := firstRenderedSpan(t, m, display.TokenLink)
+	if link.CellMap == nil {
+		t.Fatal("Rendered link span has nil CellMap")
+	}
+	if len(link.CellMap) == 0 {
+		t.Fatal("Rendered link span has empty CellMap")
+	}
+	if len(link.CellMap) != utf8.RuneCountInString(link.Text) {
+		t.Fatalf("CellMap length %d != Text rune count %d (text=%q)",
+			len(link.CellMap), utf8.RuneCountInString(link.Text), link.Text)
+	}
+
+	cells := m.spanToCellsStyled(link)
+	if len(cells) != len(link.CellMap) {
+		t.Errorf("cell count %d != CellMap length %d", len(cells), len(link.CellMap))
+	}
+}
+
+func TestLinkRender_RevealedShowsRawMarkdown(t *testing.T) {
+	m := newTestEditor("[text](https://example.com)")
+	m = m.syncDisplay()
+
+	// Cursor is at offset 0, inside the link → Revealed
+	view := m.View()
+	// The raw markdown should be visible. The first `[` may have ANSI cursor
+	// styling, so check for the non-leading parts of the raw markdown.
+	if !strings.Contains(view, "text](https://example.com)") {
+		t.Errorf("Revealed link should show raw markdown, got: %q", view)
 	}
 }

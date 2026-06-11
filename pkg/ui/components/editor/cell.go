@@ -14,6 +14,14 @@ import (
 // Cell represents a single visual character in the cell grid.
 // The cell grid is an intermediate representation between span rendering and
 // final ANSI string output, enabling unified cursor/selection overlay on all spans.
+//
+// Separation of concerns: CellMap carries per-rune BufOffset (position data),
+// while DisplaySpan.Kind determines styling. spanToCellsStyled dispatches by
+// sp.Kind/sp.LinkRole() — the span metadata, not per-cell data. Cell.Style is
+// set per-cell from the span's base style. Link click handling checks
+// sp.LinkRole() on the DisplaySpan, not individual cell data.
+// Future refactors MUST NOT conflate these: CellMap only carries BufOffset,
+// not styling information.
 type Cell struct {
 	Rune      rune
 	Grapheme  string         // multi-codepoint cluster (e.g. Kitty placeholder + diacritics); when non-empty, emitted verbatim instead of Rune
@@ -25,10 +33,18 @@ type Cell struct {
 }
 
 // spanToCells converts a DisplaySpan into a slice of Cells with correct BufOffset
-// per cell. For Revealed spans (CellMap nil), offset is trivially BufferStart + bytePos.
-// For Rendered spans with a CellMap, offsets come from the map.
+// per cell.
+//
+// For Revealed spans, CellMap is always nil and offset is BufferStart + bytePos.
+// For Rendered spans, a non-nil CellMap carries per-rune BufOffset values.
+// Some Rendered spans (code fence content, frontmatter, math blocks) have nil
+// CellMap because their text IS the buffer content (1:1 byte mapping) — these
+// are also safe to treat as revealed-style.
 func spanToCells(sp display.DisplaySpan, baseStyle lipgloss.Style) []Cell {
-	if sp.State == display.Revealed || sp.CellMap == nil {
+	if sp.State == display.Revealed {
+		return revealedSpanToCells(sp.Text, sp.BufferStart, baseStyle)
+	}
+	if sp.CellMap == nil {
 		return revealedSpanToCells(sp.Text, sp.BufferStart, baseStyle)
 	}
 	return renderedSpanToCells(sp.Text, sp.CellMap, baseStyle)
@@ -417,8 +433,8 @@ func cellEffectiveStyle(c Cell, selStyle, cursorStyle lipgloss.Style) lipgloss.S
 }
 
 // stylesEqual compares two lipgloss styles for equality by their rendered output
-// on an empty string. This is a pragmatic approach since lipgloss doesn't expose
-// a direct equality check.
+// on a space character. A non-empty string forces ANSI code emission for all
+// style properties (foreground, background, underline, bold, etc.).
 func stylesEqual(a, b lipgloss.Style) bool {
-	return a.Render("") == b.Render("")
+	return a.Render(" ") == b.Render(" ")
 }

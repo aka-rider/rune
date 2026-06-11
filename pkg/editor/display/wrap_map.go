@@ -359,10 +359,12 @@ func sliceOriginalSpans(spans []SyntaxSpan, refs []spanRef, segStart, segEnd int
 			// Include the full span text that overlaps the segment.
 			out := s
 			out.Text = s.Text[localStart:localEnd]
-			// CellMap is only valid when the full text is preserved; nil it
-			// for partial slices since byte offsets no longer correspond.
-			if localStart > 0 || localEnd < len(s.Text) {
-				out.CellMap = nil
+			// Slice CellMap to match the sliced text portion.
+			// CellMap has one entry per rune (from buildInlineCellMap).
+			if s.CellMap != nil {
+				startRunes := utf8.RuneCountInString(s.Text[:localStart])
+				endRunes := utf8.RuneCountInString(s.Text[:localEnd])
+				out.CellMap = s.CellMap[startRunes:endRunes]
 			}
 			result = append(result, out)
 		} else {

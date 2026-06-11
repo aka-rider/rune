@@ -958,3 +958,104 @@ func safeSlice(s string, start, end int) string {
 	}
 	return s[start:end]
 }
+
+// TestRenderedLink_BufferEndInDisplaySpan verifies that a non-wrapped rendered
+// link span's BufferEnd does not exceed the actual buffer line boundary.
+func TestRenderedLink_BufferEndInDisplaySpan(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	content := "start [link](url) end\nsecond line"
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(80, 10)
+	m = m.SetFocused(true)
+	m = m.SetContent("test.md", []byte(content))
+
+	// Cursor on line 1 → line 0 link is Rendered
+	newlinePos := strings.Index(content, "\n")
+	m.cursors = cursor.NewCursorSet(newlinePos + 1)
+	m = m.syncDisplay()
+
+	line0End := newlinePos
+	for _, dline := range m.snapshot.Lines {
+		if dline.ModelLine != 0 {
+			continue
+		}
+		for _, sp := range dline.Spans {
+			if sp.BufferEnd > line0End {
+				t.Errorf("span %q BufferEnd=%d exceeds line 0 buffer end %d",
+					sp.Text, sp.BufferEnd, line0End)
+			}
+		}
+	}
+}
+
+// TestRenderedWrappedLink_LastSegmentBoundary verifies that when a rendered
+// link wraps, the last visual segment's span BufferEnd does not exceed the
+// model line buffer boundary.
+func TestRenderedWrappedLink_LastSegmentBoundary(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	// Long link text to force wrapping at narrow width
+	content := "text [very-long-link-text-that-must-wrap-across-lines](url) trailing\nsecond line"
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(25, 10)
+	m = m.SetFocused(true)
+	m = m.SetContent("test.md", []byte(content))
+
+	newlinePos := strings.Index(content, "\n")
+	m.cursors = cursor.NewCursorSet(newlinePos + 1)
+	m = m.syncDisplay()
+
+	line0End := newlinePos
+	for _, dline := range m.snapshot.Lines {
+		if dline.ModelLine != 0 {
+			continue
+		}
+		for _, sp := range dline.Spans {
+			if sp.BufferEnd > line0End {
+				t.Errorf("wrapped segment span %q BufferEnd=%d exceeds line 0 buffer end %d",
+					sp.Text, sp.BufferEnd, line0End)
+			}
+		}
+	}
+}
+
+// TestRenderedWrappedLink_ViewIsPure verifies View() produces identical output
+// on consecutive calls for a line with a wrapped rendered link.
+func TestRenderedWrappedLink_ViewIsPure(t *testing.T) {
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, _ = RegisterCommands(builder)
+	reg := builder.Build()
+	bindings, _ := keys.CommandBindings()
+	resolver, _ := keybind.NewResolver(bindings)
+
+	content := "text [very-long-link-text-that-must-wrap](url) trailing\nsecond line"
+	m := New(keys, st, reg, resolver, terminal.TermCaps{})
+	m = m.SetSize(25, 10)
+	m = m.SetFocused(true)
+	m = m.SetContent("test.md", []byte(content))
+
+	newlinePos := strings.Index(content, "\n")
+	m.cursors = cursor.NewCursorSet(newlinePos + 1)
+	m = m.syncDisplay()
+
+	v1 := m.View()
+	v2 := m.View()
+	if v1 != v2 {
+		t.Error("View() is not pure: two consecutive calls produced different output")
+	}
+}
