@@ -14,32 +14,36 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"rune/pkg/command"
-	"rune/pkg/dictation"
+	dictengine "rune/pkg/dictation"
 	"rune/pkg/editor/keybind"
-	"rune/pkg/inputlang"
 	"rune/pkg/merge"
 	"rune/pkg/terminal"
+	dictcomp "rune/pkg/ui/components/dictation"
+	"rune/pkg/ui/components/breadcrumb"
 	"rune/pkg/ui/components/chat"
-	"rune/pkg/ui/components/editor"
+	"rune/pkg/ui/components/title"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/components/opentabs"
+	"rune/pkg/ui/components/textedit"
+	"rune/pkg/command"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
-	"rune/pkg/whisper"
 )
 
 type pane int
 
 const (
-	paneTree pane = iota
+	paneTree   pane = iota
 	paneTabs
-	paneCenter
+	paneCenter // editor text area focused
+	paneTitle  // title input focused (D11)
 	paneChat
 )
 
-func (p pane) isLeft() bool { return p == paneTree || p == paneTabs }
+func (p pane) isLeft() bool   { return p == paneTree || p == paneTabs }
+func (p pane) isCenter() bool { return p == paneCenter || p == paneTitle }
 
 // ErrMsg signals an I/O error to the workspace page.
 type ErrMsg struct{ Err error }
@@ -65,9 +69,6 @@ const (
 	dragRight
 )
 
-// Width-constraint constants for mouse resizing.
-// Below the per-pane minimum, the pane hides; the center pane has a hard
-// floor so left/right drags cannot squeeze it to nothing.
 const (
 	minLeftPaneW  = 16
 	minRightPaneW = 20
@@ -92,18 +93,18 @@ var mergeGuardOptions = []footer.GuardOption{
 }
 
 type pendingDirtyAction struct {
-	kind          pendingDirtyKind
-	path          string // target path for switch; current path for close
-	nextPath      string // closeFile only: file to load after close
-	saveInFlight  bool
-	saveRequestID string
+	kind     pendingDirtyKind
+	path     string // target path for switch; current path for close
+	nextPath string // closeFile only: file to load after close
 }
 
 type Model struct {
 	totalWidth, totalHeight int
+	title                   title.Model
+	breadcrumb              breadcrumb.Model
 	filetree                filetree.Model
 	opentabs                opentabs.Model
-	editor                  editor.Model
+	editor                  markdownedit.Model
 	footer                  footer.Model
 	focus                   pane
 	leftVisible             bool
@@ -116,23 +117,46 @@ type Model struct {
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 	pending                 *pendingDirtyAction
-	dictCancel              context.CancelFunc // nil when not dictating (§6.3)
-	dictCh                  <-chan tea.Msg     // nil when idle
-	watchedDir              string             // current directory being watched
-	cancelWatch             context.CancelFunc // cancels active watchDirCmd (§6.3)
-	origContent             []byte             // ancestor for 3-way merge (last known disk content)
-	pendingMergeContent     []byte             // "theirs" — external changes awaiting user decision
-	watchedFilePath         string             // current file being watched (for lifecycle tracking)
-	cancelFileWatch         context.CancelFunc // cancels active file watcher
+
+	// Dictation (D16)
+	dict dictcomp.Model
+
+	// Directory watching
+	watchedDir  string
+	cancelWatch context.CancelFunc
+
+	// File ownership (D12)
+	filePath   string
+	activeSave SaveIdentity
+
+	// Dirty tracking (D13)
+	lastRev     uint64
+	origContent []byte
+
+	// 3-way merge state
+	pendingMergeContent []byte
+
+	// File watching
+	watchedFilePath string
+	cancelFileWatch context.CancelFunc
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
 	m := Model{
-		filetree:     filetree.New(keys, st),
-		opentabs:     opentabs.New(keys, st),
-		editor:       editor.New(keys, st, reg, resolver, caps),
+		title: title.New("Untitled", keys, st,
+			textedit.WithRegistry(reg),
+			textedit.WithResolver(resolver),
+		),
+		breadcrumb: breadcrumb.New(st, nil),
+		filetree:   filetree.New(keys, st),
+		opentabs:   opentabs.New(keys, st),
+		editor: markdownedit.New(keys, st, caps,
+			markdownedit.WithRegistry(reg),
+			markdownedit.WithResolver(resolver),
+		),
 		footer:       footer.New(keys, st).SetHelp(keys.HelpText()),
-		chat:         chat.New(keys, st),
+		chat:         chat.New(keys, st, reg, resolver, caps),
+		dict:         dictcomp.New(),
 		focus:        paneTree,
 		leftVisible:  true,
 		leftPaneW:    defaultLeftPaneW,
@@ -154,6 +178,10 @@ func (m Model) currentDir() string {
 		return "."
 	}
 	return cwd
+}
+
+func (m Model) isDirty() bool {
+	return m.editor.Content() != string(m.origContent)
 }
 
 func (m Model) recalcLayout() Model {
@@ -192,6 +220,13 @@ func (m Model) recalcLayout() Model {
 		innerRightW = 0
 	}
 
+	// Title occupies the first row inside the center pane border (D6)
+	titleH := m.title.Height()
+	editorH := innerH - titleH
+	if editorH < 0 {
+		editorH = 0
+	}
+
 	otH := m.opentabs.Height()
 	ftH := innerH - otH
 	if ftH < 4 {
@@ -199,15 +234,31 @@ func (m Model) recalcLayout() Model {
 	}
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
-	m.editor = m.editor.SetSize(innerCenterW, innerH)
-	m.chat = m.chat.SetSize(innerRightW, innerH)
-	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
-	m.filetree = m.filetree.SetOffset(1, 1)
+
+	// Title is cell-grid only (D8)
+	m.title = m.title.SetSize(innerCenterW, titleH)
+	m.breadcrumb = m.breadcrumb.SetSize(centerW, 1)
+
+	// topOffset = absolute row of the center pane's top border
 	topOffset := 1
 	if m.err != nil {
-		topOffset = 2 // error line above body shifts editor content down one row
+		topOffset = 2 // error line shifts pane down one row
 	}
-	m.editor = m.editor.SetOffset(leftW+1, topOffset)
+
+	// Editor gets SetRect: Y absorbs top border + title row (D7, D8)
+	m.editor = m.editor.SetRect(textedit.Rect{
+		X: leftW + 1,
+		Y: topOffset + titleH, // border top(1) + title rows; topOffset already includes errline offset
+		W: innerCenterW,
+		H: editorH,
+	})
+
+	m.chat = m.chat.SetSize(innerRightW, innerH)
+	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
+
+	// Filetree offset: 1 col inside the left border, 1 row inside top border
+	m.filetree = m.filetree.SetOffset(1, 1)
+
 	return m
 }
 
@@ -233,6 +284,16 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 	if m.rightVisible && x >= rightStart {
 		return paneChat, true
 	}
+
+	// Distinguish title area from editor area within the center pane
+	// Title is inside the border (y == topOffset), editor content is below
+	topOffset := 1
+	if m.err != nil {
+		topOffset = 2
+	}
+	if y == topOffset {
+		return paneTitle, true
+	}
 	return paneCenter, true
 }
 
@@ -242,9 +303,6 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 		return dragNone, false
 	}
 
-	// Left divider:
-	//   visible: 2-column grab zone straddling the left/center border.
-	//   hidden:  single column at the editor's left border only (x=0).
 	if m.leftVisible {
 		if x == m.leftPaneW-1 || x == m.leftPaneW {
 			return dragLeft, true
@@ -255,9 +313,6 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 		}
 	}
 
-	// Right divider:
-	//   visible: 2-column grab zone straddling the center/right border.
-	//   hidden:  single column at the editor's right border only.
 	if m.rightVisible {
 		rightStart := m.totalWidth - m.rightPaneW
 		if x == rightStart-1 || x == rightStart {
@@ -279,15 +334,31 @@ func (m Model) Init() tea.Cmd {
 		m.editor.Init(),
 		m.footer.Init(),
 		m.chat.Init(),
+		m.dict.Init(),
 		loadDirCmd(".", "."),
 	)
 }
 
-func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
-	if path == m.editor.FilePath() {
+// startSave begins a save operation for the current file (D12, D13).
+func (m Model) startSave() (Model, tea.Cmd) {
+	if m.filePath == "" || m.activeSave.InFlight {
 		return m, nil
 	}
-	if m.editor.IsDirty() {
+	content := m.editor.Content()
+	requestID := fmt.Sprintf("save-%v", time.Now().UnixNano())
+	m.activeSave = SaveIdentity{
+		RequestID:    requestID,
+		SavedContent: []byte(content),
+		InFlight:     true,
+	}
+	return m, saveFileCmd(m.filePath, content, requestID)
+}
+
+func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
+	if path == m.filePath {
+		return m, nil
+	}
+	if m.isDirty() {
 		m.pending = &pendingDirtyAction{kind: pendingSwitchFile, path: path}
 		m.footer = m.footer.SetGuard(footer.GuardDirty, dirtyGuardOptions)
 		return m, nil
@@ -298,20 +369,19 @@ func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
 		m, watchCmd = m.startFileWatch(path)
 		cmds = append(cmds, watchCmd)
 	}
-	cmds = append(cmds, editor.LoadFileCmd(path))
+	cmds = append(cmds, loadFileCmd(context.Background(), path))
 	return m, tea.Batch(cmds...)
 }
 
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
-	currentPath := m.editor.FilePath()
-	if currentPath == "" {
+	if m.filePath == "" {
 		return m, nil
 	}
-	nextPath := m.opentabs.NextPath(currentPath)
-	if m.editor.IsDirty() {
+	nextPath := m.opentabs.NextPath(m.filePath)
+	if m.isDirty() {
 		m.pending = &pendingDirtyAction{
 			kind:     pendingCloseFile,
-			path:     currentPath,
+			path:     m.filePath,
 			nextPath: nextPath,
 		}
 		m.footer = m.footer.SetGuard(footer.GuardDirty, dirtyGuardOptions)
@@ -319,21 +389,19 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m = m.stopFileWatch()
-	return m.executeClose(currentPath, nextPath)
+	return m.executeClose(m.filePath, nextPath)
 }
 
 func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	var cmd, watchCmd tea.Cmd
 	m.opentabs = m.opentabs.CloseFile(closePath)
-	m.editor, cmd = m.editor.Update(editor.FileClosedMsg{Path: closePath})
-	cmds = append(cmds, cmd)
 	if nextPath != "" {
+		var watchCmd tea.Cmd
 		m, watchCmd = m.startFileWatch(nextPath)
 		cmds = append(cmds, watchCmd)
-		cmds = append(cmds, editor.LoadFileCmd(nextPath))
+		cmds = append(cmds, loadFileCmd(context.Background(), nextPath))
 	} else {
-		// Last tab closed — reset to a fresh untitled buffer.
+		// Last tab closed — reset to a fresh untitled buffer
 		var createCmd tea.Cmd
 		m, createCmd = m.CreateUntitled()
 		cmds = append(cmds, createCmd)
@@ -342,7 +410,7 @@ func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 }
 
 func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (Model, tea.Cmd) {
-	var cmd, watchCmd tea.Cmd
+	var cmd tea.Cmd
 	// Handle merge responses (no pending action needed).
 	switch resp {
 	case footer.DataLossMergeAccept:
@@ -359,19 +427,27 @@ func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (M
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: err.Error()})
 			return m, cmd
 		}
-		m.editor = m.editor.ApplyMergeResult(ours, result.Output)
+		m.editor, cmd = m.editor.ApplyMergeResult(string(result.Output))
 		m.origContent = result.Output // merged result becomes new ancestor
-		return m, func() tea.Msg { return editor.FileMergedMsg{
-			Path:       m.editor.FilePath(),
-			Content:    result.Output,
-			Conflicted: result.Conflicted,
-		}}
+		// Emit merged notification for opentabs dirty state
+		path := m.filePath
+		conflicted := result.Conflicted
+		if m.isDirty() {
+			m.opentabs = m.opentabs.MarkDirty(path)
+		}
+		cmds := []tea.Cmd{cmd}
+		if conflicted {
+			// Just mark dirty; no special message needed
+			m.opentabs = m.opentabs.MarkDirty(path)
+		}
+		return m, tea.Batch(cmds...)
 
 	case footer.DataLossMergeReject:
-		diskContent := m.pendingMergeContent
+		diskContent := m.pendingMergeContent // what the disk now holds
 		m.pendingMergeContent = nil
 		m.footer = m.footer.SetGuard(0, nil)
-		m.origContent = diskContent // disk state becomes new ancestor for next merge
+		// Disk content is the new merge ancestor (D13 disk-sync point: merge-reject).
+		m.origContent = diskContent
 		return m, nil
 	}
 
@@ -385,13 +461,14 @@ func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (M
 		return m, nil
 
 	case footer.DataLossDiscard:
-		m.opentabs = m.opentabs.MarkClean(m.editor.FilePath())
+		m.opentabs = m.opentabs.MarkClean(m.filePath)
 		switch m.pending.kind {
 		case pendingSwitchFile:
 			path := m.pending.path
 			m.pending = nil
+			var watchCmd tea.Cmd
 			m, watchCmd = m.startFileWatch(path)
-			return m, tea.Batch(watchCmd, editor.LoadFileCmd(path))
+			return m, tea.Batch(watchCmd, loadFileCmd(context.Background(), path))
 		case pendingCloseFile:
 			closePath := m.pending.path
 			nextPath := m.pending.nextPath
@@ -400,30 +477,48 @@ func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (M
 		}
 
 	case footer.DataLossSave:
-		var saveID editor.SaveIdentity
-		var cmd tea.Cmd
-		m.editor, saveID, cmd = m.editor.StartSave()
-		m.pending.saveInFlight = true
-		m.pending.saveRequestID = saveID.RequestID
-		return m, cmd
+		var saveCmd tea.Cmd
+		m, saveCmd = m.startSave()
+		return m, saveCmd
 	}
 	return m, nil
 }
 
 func (m Model) syncCursorToFooter() Model {
-	info := m.editor.CursorInfo()
+	// Cursor line/col not yet tracked; footer shows no position.
 	m.footer, _ = m.footer.Update(footer.UpdateCursorMsg{
-		Line:      info.Line,
-		Col:       info.Col,
-		WordCount: info.WordCount,
+		Line:      0,
+		Col:       0,
+		WordCount: 0,
 	})
 	return m
 }
 
-// syncDictationAllowed updates the footer's dictation-allowed flag based on
-// which pane is focused. Dictation is only available in the editor or chat.
 func (m Model) syncDictationAllowed() Model {
 	m.footer = m.footer.SetDictationAllowed(m.focus == paneCenter || m.focus == paneChat)
+	return m
+}
+
+// recomputeDirty updates opentabs dirty marker if the buffer revision changed (D13).
+func (m Model) recomputeDirty(prevRev uint64) Model {
+	if m.editor.Revision() == prevRev {
+		return m
+	}
+	m.lastRev = m.editor.Revision()
+	if m.isDirty() {
+		m.opentabs = m.opentabs.MarkDirty(m.filePath)
+		// First edit on untitled file → create on disk
+		if m.filePath == "" && m.editor.Content() != "" {
+			dir := m.currentDir()
+			name := m.title.Text()
+			newPath := filepath.Join(dir, name+".md")
+			m.filePath = newPath
+			m.breadcrumb = m.breadcrumb.SetPath(newPath)
+			m.opentabs = m.opentabs.OpenFile(newPath)
+		}
+	} else {
+		m.opentabs = m.opentabs.MarkClean(m.filePath)
+	}
 	return m
 }
 
@@ -450,12 +545,29 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var cmd tea.Cmd
 
+	// Always forward all messages to the dictation component (engine management).
+	prevRev := m.editor.Revision()
+	m.dict, cmd = m.dict.Update(msg)
+	cmds = append(cmds, cmd)
+	// Drain any pending edit from dictation and route to the focused target (D16).
+	var s, e int
+	var t string
+	var hasPending bool
+	m.dict, s, e, t, hasPending = m.dict.TakePendingEdit()
+	if hasPending {
+		switch m.focus {
+		case paneCenter:
+			m.editor, cmd = m.editor.ReplaceRange(s, e, t)
+			cmds = append(cmds, cmd)
+			prevRev = m.editor.Revision() // update so recomputeDirty sees the new rev
+		case paneChat:
+			m.chat = m.chat.ApplyToPrompt(s, e, t)
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
-		// Size children now (before the generic forward below) so that when the
-		// editor receives this WindowSizeMsg its cell footprints are already
-		// recomputed and it can re-transmit images at the new size.
 		m = m.recalcLayout()
 
 	case tea.KeyPressMsg:
@@ -467,14 +579,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Priority 2: Save in-flight — consume all keys.
-		if m.pending != nil && m.pending.saveInFlight {
+		if m.activeSave.InFlight {
 			return m.finalize(cmds)
 		}
 
 		// Priority 3: Global workspace keys.
 		consumed := true
 		switch {
+		case key.Matches(msg, m.keys.SaveFile):
+			if m.filePath != "" && !m.activeSave.InFlight {
+				m, cmd = m.startSave()
+				cmds = append(cmds, cmd)
+			}
+
 		case key.Matches(msg, m.keys.TabSwitch):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			digit := msg.BaseCode
 			if digit == 0 {
 				digit = msg.Code
@@ -489,18 +613,42 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, m.keys.PinTab):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			m.opentabs = m.opentabs.PinIndex(m.opentabs.Cursor())
 
 		case key.Matches(msg, m.keys.FocusExplorer):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			m.focus = paneTree
 			m.leftVisible = true
 			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.FocusEditor):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			m.focus = paneCenter
 			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.FocusChat):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			if m.rightVisible && m.focus == paneChat {
 				m.rightVisible = false
 				m.focus = paneCenter
@@ -511,10 +659,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.CloseFile):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			m, cmd = m.requestCloseCurrent()
 			cmds = append(cmds, cmd)
 
 		case key.Matches(msg, m.keys.ZenMode):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
 			m.leftVisible = !m.leftVisible
 			if !m.leftVisible && m.focus.isLeft() {
 				m.focus = paneCenter
@@ -533,43 +693,74 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.finalize(cmds)
 		}
 
+		// Priority 3b: D11 — Up at editor top transfers focus to title.
+		if m.focus == paneCenter && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
+			m.focus = paneTitle
+			m.editor = m.editor.SetFocused(false)
+			m.title = m.title.SetFocused(true)
+			return m.finalize(cmds) // consume Up; don't also move cursor
+		}
+
 		// Priority 4: Editor wants modal input — skip footer help toggle.
 		if m.focus == paneCenter && m.editor.WantsModalInput() {
 			m.editor = m.editor.SetFocused(true)
 			m.editor, cmd = m.editor.Update(msg)
 			cmds = append(cmds, cmd)
+			m = m.recomputeDirty(prevRev)
 			m = m.syncCursorToFooter()
 			return m.finalize(cmds)
 		}
 
-		// Forward to all children; they gate on focused state.
-		m.filetree = m.filetree.SetFocused(m.focus == paneTree)
-		m.filetree, cmd = m.filetree.Update(msg)
-		cmds = append(cmds, cmd)
-
-		m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
-		m.opentabs, cmd = m.opentabs.Update(msg)
-		cmds = append(cmds, cmd)
-
-		// Do not forward keystrokes to the editor during dictation — typing
-		// would shift buffer offsets and corrupt the dictation range.
-		if m.focus == paneCenter && m.editor.IsDictating() {
-			// swallow; dictation text arrives via PartialTranscriptionMsg
-		} else {
-			m.editor = m.editor.SetFocused(m.focus == paneCenter)
-			m.editor, cmd = m.editor.Update(msg)
+		// Singular key routing — exactly one child receives each KeyPressMsg.
+		switch m.focus {
+		case paneTitle:
+			m.title, cmd = m.title.Update(msg)
+			cmds = append(cmds, cmd)
+		case paneCenter:
+			if !m.dict.Enabled() {
+				m.editor, cmd = m.editor.Update(msg)
+				cmds = append(cmds, cmd)
+				m = m.recomputeDirty(prevRev)
+			}
+		case paneChat:
+			m.chat, cmd = m.chat.Update(msg)
+			cmds = append(cmds, cmd)
+		case paneTree:
+			m.filetree, cmd = m.filetree.Update(msg)
+			cmds = append(cmds, cmd)
+		case paneTabs:
+			m.opentabs, cmd = m.opentabs.Update(msg)
 			cmds = append(cmds, cmd)
 		}
-
-		m.chat = m.chat.SetFocused(m.focus == paneChat)
-		m.chat, cmd = m.chat.Update(msg)
-		cmds = append(cmds, cmd)
-
+		// Footer always gets keys for chord/help handling.
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 
 		m = m.syncCursorToFooter()
 		return m.finalize(cmds)
+
+	case title.FocusReturnMsg:
+		// Title emits this on Down/Enter — return focus to editor (D11).
+		m.focus = paneCenter
+		m.title = m.title.SetFocused(false)
+		m.editor = m.editor.SetFocused(true)
+		m = m.syncDictationAllowed()
+
+	case title.RenameRequestMsg:
+		if m.filePath == "" {
+			// Untitled file gets a name — create on disk.
+			dir := m.currentDir()
+			newPath := filepath.Join(dir, msg.Name+".md")
+			m.filePath = newPath
+			m.breadcrumb = m.breadcrumb.SetPath(newPath)
+			m.opentabs = m.opentabs.OpenFile(newPath)
+			cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
+		} else {
+			// Existing file rename.
+			dir := filepath.Dir(m.filePath)
+			newPath := filepath.Join(dir, msg.Name+".md")
+			cmds = append(cmds, fileRenameCmd(m.filePath, newPath))
+		}
 
 	case filetree.FileSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -580,6 +771,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case filetree.DirLoadedMsg:
 		m.editor = m.editor.SetDir(msg.Root)
+		m.breadcrumb = m.breadcrumb.SetDir(msg.Root)
 		m, cmd = m.startWatch(msg.Root)
 		cmds = append(cmds, cmd)
 
@@ -591,106 +783,113 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.requestOpenPath(msg.Path)
 		cmds = append(cmds, cmd)
 
-	case editor.LinkClickedMsg:
+	case markdownedit.LinkClickedMsg:
 		if msg.Path != "" {
 			m, cmd = m.requestOpenPath(msg.Path)
 			cmds = append(cmds, cmd)
 		}
 
-	case editor.FileLoadedMsg:
+	case FileLoadedMsg:
+		m.editor = m.editor.SetContent(string(msg.Content))
+		m.filePath = msg.Path
+		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
+		m.origContent = msg.Content
+		m.lastRev = m.editor.Revision()
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
-		m.origContent = msg.Content
-
-	case editor.FileChangedOnDiskMsg:
-		if m.editor.FilePath() == "" || m.editor.FilePath() != msg.Path {
-			return m, nil // not current file or untitled, ignore
+		// Start (or restart) the per-file watcher now that we have confirmed content.
+		if msg.Path != "" {
+			var watchCmd tea.Cmd
+			m, watchCmd = m.startFileWatch(msg.Path)
+			cmds = append(cmds, watchCmd)
 		}
-		// Pre-check: if disk content matches the buffer, no merge needed.
-		// This handles the race where a save completes and the watcher reads
-		// the same content, or external tools touch the file without changes.
+		// Update title from filename
+		if msg.Path != "" {
+			base := filepath.Base(msg.Path)
+			if strings.HasSuffix(base, ".md") {
+				base = base[:len(base)-3]
+			}
+			m.title = m.title.SetText(base)
+		}
+
+	case FileChangedOnDiskMsg:
+		if m.filePath == "" || m.filePath != msg.Path {
+			return m.finalize(cmds)
+		}
 		if string(msg.NewContent) == m.editor.Content() {
 			m.origContent = msg.NewContent
-			return m, nil
+			return m.finalize(cmds)
 		}
 		m.pendingMergeContent = msg.NewContent
 		m.footer = m.footer.SetGuard(footer.GuardMerge, mergeGuardOptions)
 
-	case editor.FileMergedMsg:
-		m.opentabs = m.opentabs.MarkDirty(msg.Path)
+	case FileMergedMsg:
+		if m.isDirty() {
+			m.opentabs = m.opentabs.MarkDirty(msg.Path)
+		}
 
-	case editor.FileRenamedMsg:
+	case FileRenamedMsg:
 		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
+		m.filePath = msg.NewPath
+		m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
+		// Update title from new filename
+		base := filepath.Base(msg.NewPath)
+		if strings.HasSuffix(base, ".md") {
+			base = base[:len(base)-3]
+		}
+		m.title = m.title.SetText(base)
 
-	case editor.FileRenameErrorMsg:
+	case FileRenameErrorMsg:
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
 		cmds = append(cmds, cmd)
-
-	case editor.UntitledRenameMsg:
-		// Untitled file gets a name — create on disk
-		dir := m.currentDir()
-		newPath := filepath.Join(dir, msg.Name+".md")
-		m.editor = m.editor.SetFilePath(newPath)
-		m.opentabs = m.opentabs.OpenFile(newPath)
-		cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
 
 	case fileCreatedMsg:
 		if msg.err != nil {
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.err.Error()})
 			cmds = append(cmds, cmd)
 		} else {
-			// File committed to disk — use buffer content as the merge ancestor.
-			m.origContent = []byte(m.editor.Content())
+			m.origContent = []byte(msg.content)
 		}
 
-	case editor.ContentChangedMsg:
-		if msg.Dirty {
-			m.opentabs = m.opentabs.MarkDirty(msg.Path)
-			// First content edit on untitled file → create file on disk
-			if msg.Path == "" && m.editor.Content() != "" {
-				dir := m.currentDir()
-				name := m.editor.TitleText()
-				newPath := filepath.Join(dir, name+".md")
-				m.editor = m.editor.SetFilePath(newPath)
-				m.opentabs = m.opentabs.OpenFile(newPath)
-				cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
+	case FileSavedMsg:
+		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
+			m.activeSave.InFlight = false
+			m.origContent = m.activeSave.SavedContent // bytes written, not Content() — D13
+			if m.isDirty() {
+				m.opentabs = m.opentabs.MarkDirty(m.filePath)
+			} else {
+				m.opentabs = m.opentabs.MarkClean(m.filePath)
 			}
-		} else {
-			m.opentabs = m.opentabs.MarkClean(msg.Path)
-		}
-		m.chat = m.chat.SetFileContext(msg.Path, m.editor.Content())
-
-	case editor.FileSavedMsg:
-		m.opentabs = m.opentabs.MarkClean(msg.Path)
-		if m.pending != nil && m.pending.saveInFlight && m.pending.saveRequestID == msg.RequestID {
-			m.pending.saveInFlight = false
-			var watchCmd tea.Cmd
-			switch m.pending.kind {
-			case pendingSwitchFile:
-				path := m.pending.path
-				m.pending = nil
-				m, watchCmd = m.startFileWatch(path)
-				cmds = append(cmds, watchCmd, editor.LoadFileCmd(path))
-			case pendingCloseFile:
-				closePath := m.pending.path
-				nextPath := m.pending.nextPath
-				m.pending = nil
-				m, cmd = m.executeClose(closePath, nextPath)
-				cmds = append(cmds, cmd)
+			// Continue any pending close/switch action
+			if m.pending != nil {
+				switch m.pending.kind {
+				case pendingSwitchFile:
+					path := m.pending.path
+					m.pending = nil
+					var watchCmd tea.Cmd
+					m, watchCmd = m.startFileWatch(path)
+					cmds = append(cmds, watchCmd, loadFileCmd(context.Background(), path))
+				case pendingCloseFile:
+					closePath := m.pending.path
+					nextPath := m.pending.nextPath
+					m.pending = nil
+					m, cmd = m.executeClose(closePath, nextPath)
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
-		// After save, buffer equals disk — update origContent as the new ancestor.
-		m.origContent = []byte(m.editor.Content())
 
-	case editor.FileLoadErrorMsg:
-		// Temporary: ignore file load errors (e.g. following a broken click link)
-		// m.err = msg.Err
-
-	case editor.FileSaveErrorMsg:
-		m.err = msg.Err
-		if m.pending != nil && m.pending.saveInFlight && m.pending.saveRequestID == msg.RequestID {
-			m.pending = nil
+	case FileSaveErrorMsg:
+		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
+			m.activeSave.InFlight = false
+			m.err = msg.Err
+			if m.pending != nil {
+				m.pending = nil
+			}
 		}
+
+	case FileLoadErrorMsg:
+		// Ignore (e.g., broken link click to missing file)
 
 	case fileWatchReadError:
 		m.err = fmt.Errorf("external change to %s: %w", msg.path, msg.err)
@@ -703,9 +902,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = msg.Err
 
 	case tea.MouseClickMsg:
-		// Clear stale drag state on every click. Terminals do not emit a
-		// mouse-release event, so a drag that ended on a stationary cursor
-		// would otherwise linger until the next motion message.
 		m.drag = dragNone
 
 		if d, ok := m.dividerAtPoint(msg.X, msg.Y); ok {
@@ -720,7 +916,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.finalizeLayoutChange(cmds)
 		}
 		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
-			m.focus = newFocus
+			if newFocus == paneTitle {
+				// Clicking title area focuses the title.
+				m.focus = paneTitle
+				m.title = m.title.SetFocused(true)
+				m.editor = m.editor.SetFocused(false)
+			} else {
+				if m.focus == paneTitle {
+					var finalizeCmd tea.Cmd
+					var finalizeOk bool
+					m, finalizeCmd, finalizeOk = m.maybeFinalizeTitle()
+					cmds = append(cmds, finalizeCmd)
+					if !finalizeOk {
+						return m.finalize(cmds)
+					}
+					m.title = m.title.SetFocused(false)
+				}
+				m.focus = newFocus
+			}
 			m = m.syncDictationAllowed()
 		}
 
@@ -779,76 +992,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.finalizeLayoutChange(cmds)
 
 	case footer.ConfirmQuitMsg:
-		if m.dictCancel != nil {
-			m.dictCancel()
-			m.dictCancel = nil
-		}
-		// Clear any inline images from the terminal before exiting. Use
-		// tea.Sequence so the delete flushes before tea.Quit (a tea.Batch would
-		// race the quit).
+		m.dict = m.dict.Disable()
 		return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
 
 	case footer.DictationStartMsg:
-		ctx, cancel := context.WithCancel(context.Background())
-		m.dictCancel = cancel
+		m.dict = m.dict.Enable(m.editor.CursorOffset())
 		if m.focus == paneCenter {
-			m.editor = m.editor.StartDictation()
+			m.dict, cmd = m.dict.StartCmd()
+			cmds = append(cmds, cmd)
 		}
-		cfg := dictation.Config{
-			Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:2022", InferencePath: "/v1/audio/transcriptions"},
-			Language: inputlang.Current(),
-		}
-		cmds = append(cmds, dictation.StartCmd(ctx, cfg))
 
 	case footer.DictationStopMsg:
-		if m.dictCancel != nil {
-			m.dictCancel()
-			m.dictCancel = nil
-		}
-		// dictCh stays alive; FinalTranscriptionMsg arrives via pending ListenCmd.
+		m.dict = m.dict.Disable()
 
-	case dictation.ReadyMsg:
-		m.dictCh = msg.Ch
-		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
-
-	case dictation.PartialTranscriptionMsg:
-		if m.focus == paneCenter {
-			m.editor = m.editor.ApplyDictationChunk(msg.Accumulated)
-			path := m.editor.FilePath()
-			cmds = append(cmds, func() tea.Msg {
-				return editor.ContentChangedMsg{Path: path, Dirty: true}
-			})
-		} else if m.focus == paneChat {
-			m.chat = m.chat.SetDictationPartial(msg.Accumulated)
-		}
-		cmds = append(cmds, dictation.ListenCmd(m.dictCh))
-
-	case dictation.FinalTranscriptionMsg:
+	case dictcomp.DoneMsg:
 		m.footer = m.footer.SetDictating(false)
-		m.dictCh = nil
-		if m.focus == paneCenter {
-			m.editor = m.editor.FinalizeDictation()
-		} else if m.focus == paneChat {
-			m.chat = m.chat.FinalizeDictation(msg.Text)
-		}
 
-	case dictation.ErrorMsg:
+	case dictengine.ErrorMsg:
 		if msg.Fatal {
-			if m.dictCancel != nil {
-				m.dictCancel()
-				m.dictCancel = nil
-			}
-			m.dictCh = nil
 			m.footer = m.footer.SetDictating(false)
-			m.editor = m.editor.CancelDictation()
-			m.chat = m.chat.CancelDictation()
-		} else {
-			cmds = append(cmds, dictation.ListenCmd(m.dictCh))
 		}
 	}
 
-	// Forward non-key messages to children.
+	// Forward non-key messages to all children (broadcast path).
 	if _, isKey := msg.(tea.KeyPressMsg); !isKey {
+		m.title, cmd = m.title.Update(msg)
+		cmds = append(cmds, cmd)
+
 		m.filetree = m.filetree.SetFocused(m.focus == paneTree)
 		m.filetree, cmd = m.filetree.Update(msg)
 		cmds = append(cmds, cmd)
@@ -860,6 +1030,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor = m.editor.SetFocused(m.focus == paneCenter)
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
+		m = m.recomputeDirty(prevRev)
 
 		m.chat = m.chat.SetFocused(m.focus == paneChat)
 		m.chat, cmd = m.chat.Update(msg)
@@ -896,10 +1067,12 @@ func (m Model) View() tea.View {
 		centerW = 0
 	}
 
-	centerBlock := borderStyle(m.focus == paneCenter, m.styles).
+	// Center pane: title + editor vertically composed
+	centerContent := lipgloss.JoinVertical(lipgloss.Left, m.title.View(), m.editor.View())
+	centerBlock := borderStyle(m.focus.isCenter(), m.styles).
 		Width(centerW).Height(contentH).
-		Render(m.editor.View())
-	centerBlock = overlayBreadcrumb(centerBlock, m.editor.BreadcrumbView(), m.focus == paneCenter, m.styles)
+		Render(centerContent)
+	centerBlock = overlayBreadcrumb(centerBlock, m.breadcrumb.View(), m.focus.isCenter(), m.styles)
 
 	var chatBlock string
 	if m.rightVisible {
@@ -937,10 +1110,6 @@ func (m Model) View() tea.View {
 		body = centerBlock
 	}
 
-	// Inline image escape sequences are NOT appended to the frame: the editor
-	// emits them via tea.Raw from its Update (written straight to the tty,
-	// bypassing the cell renderer). The workspace already batches the editor's
-	// returned Cmds, so no extra wiring is needed here.
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
 		frame := lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View())
@@ -950,12 +1119,8 @@ func (m Model) View() tea.View {
 	return tea.NewView(frame)
 }
 
-// overlayBreadcrumb post-processes a rendered bordered block by replacing part of
-// the bottom border line with the breadcrumb text, right-aligned before "──╯".
-// This avoids disabling BorderBottom or manual corner construction which caused
-// alignment bugs. If the breadcrumb is empty or too wide, the border is unchanged.
-func overlayBreadcrumb(block, breadcrumb string, active bool, st styles.Styles) string {
-	if breadcrumb == "" {
+func overlayBreadcrumb(block, crumb string, active bool, st styles.Styles) string {
+	if crumb == "" {
 		return block
 	}
 
@@ -968,26 +1133,21 @@ func overlayBreadcrumb(block, breadcrumb string, active bool, st styles.Styles) 
 	bottomLine := lines[lastIdx]
 	borderW := lipgloss.Width(bottomLine)
 
-	bcWidth := lipgloss.Width(breadcrumb)
-	// Need space for: ╰ + at least 1 dash + space + breadcrumb + space + ── + ╯
-	// Minimum overhead: corner(1) + dash(1) + space(1) + space(1) + dashes(2) + corner(1) = 7
+	bcWidth := lipgloss.Width(crumb)
 	minOverhead := 7
 	if bcWidth+minOverhead > borderW {
-		return block // breadcrumb too wide, skip overlay
+		return block
 	}
 
-	// Determine border color
 	borderColor := st.InactiveBorder.GetBorderTopForeground()
 	if active {
 		borderColor = st.ActiveBorder.GetBorderTopForeground()
 	}
 	bStyle := lipgloss.NewStyle().Foreground(borderColor)
 
-	// Build the custom bottom line: ╰───── breadcrumb ──╯
-	// Right-aligned: breadcrumb sits before "──╯"
 	rightPad := bStyle.Render("──╯")
 	leftCorner := bStyle.Render("╰")
-	content := " " + breadcrumb + " "
+	content := " " + crumb + " "
 	contentWidth := lipgloss.Width(content) + lipgloss.Width(rightPad) + lipgloss.Width(leftCorner)
 	dashCount := borderW - contentWidth
 	if dashCount < 0 {
@@ -1026,7 +1186,6 @@ func reloadDirCmd(dir string, initialRoot string) tea.Cmd {
 	}
 }
 
-// readDirEntries reads and sorts the directory listing for dir.
 func readDirEntries(dir string, initialRoot string) ([]filetree.Entry, error) {
 	des, err := os.ReadDir(dir)
 	if err != nil {
@@ -1063,9 +1222,6 @@ func readDirEntries(dir string, initialRoot string) ([]filetree.Entry, error) {
 	return entries, nil
 }
 
-// watchDirCmd watches a directory for Create/Remove/Rename events and returns
-// dirChangedMsg when the listing should be refreshed. One-shot: returns after
-// the first event batch (with 50ms debounce). Caller restarts via DirLoadedMsg.
 func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
 	return func() tea.Msg {
 		watcher, err := fsnotify.NewWatcher()
@@ -1087,7 +1243,6 @@ func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
 					return nil
 				}
 				if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					// Debounce: coalesce burst events for 50ms.
 					timer := time.NewTimer(50 * time.Millisecond)
 				drain:
 					for {
@@ -1106,7 +1261,6 @@ func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
 					}
 					return dirChangedMsg{}
 				}
-				// Ignore Write/Chmod — they don't affect directory listing.
 			case _, ok := <-watcher.Errors:
 				if !ok {
 					return nil
@@ -1117,7 +1271,6 @@ func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
 	}
 }
 
-// startWatch cancels any active directory watcher and starts a new one for dir.
 func (m Model) startWatch(dir string) (Model, tea.Cmd) {
 	if m.cancelWatch != nil {
 		m.cancelWatch()
@@ -1128,9 +1281,6 @@ func (m Model) startWatch(dir string) (Model, tea.Cmd) {
 	return m, watchDirCmd(ctx, dir)
 }
 
-// watchFileCmd watches a single file for Write events and returns FileChangedOnDiskMsg
-// when the file content changes. Ignores Create/Remove/Rename (those are handled by
-// the directory watcher). Context-cancellable.
 func watchFileCmd(ctx context.Context, path string) tea.Cmd {
 	return func() tea.Msg {
 		watcher, err := fsnotify.NewWatcher()
@@ -1152,14 +1302,12 @@ func watchFileCmd(ctx context.Context, path string) tea.Cmd {
 					return nil
 				}
 				if event.Has(fsnotify.Write) {
-					// Read the new content and emit.
 					b, err := os.ReadFile(path)
 					if err != nil {
 						return fileWatchReadError{path: path, err: fmt.Errorf("read %q: %w", path, err)}
 					}
-					return editor.FileChangedOnDiskMsg{Path: path, NewContent: b}
+					return FileChangedOnDiskMsg{Path: path, NewContent: b}
 				}
-				// Ignore Create/Remove/Rename — directory watcher handles those.
 			case _, ok := <-watcher.Errors:
 				if !ok {
 					return nil
@@ -1170,7 +1318,6 @@ func watchFileCmd(ctx context.Context, path string) tea.Cmd {
 	}
 }
 
-// startFileWatch cancels any active file watcher and starts a new one for path.
 func (m Model) startFileWatch(path string) (Model, tea.Cmd) {
 	if m.cancelFileWatch != nil {
 		m.cancelFileWatch()
@@ -1181,7 +1328,6 @@ func (m Model) startFileWatch(path string) (Model, tea.Cmd) {
 	return m, watchFileCmd(ctx, path)
 }
 
-// stopFileWatch cancels and clears the active file watcher.
 func (m Model) stopFileWatch() Model {
 	if m.cancelFileWatch != nil {
 		m.cancelFileWatch()
@@ -1191,10 +1337,10 @@ func (m Model) stopFileWatch() Model {
 	return m
 }
 
-// fileCreatedMsg reports the result of creating a new file on disk.
 type fileCreatedMsg struct {
-	path string
-	err  error
+	path    string
+	content string
+	err     error
 }
 
 func createFileCmd(path, content string) tea.Cmd {
@@ -1206,20 +1352,51 @@ func createFileCmd(path, content string) tea.Cmd {
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			return fileCreatedMsg{path: path, err: fmt.Errorf("create %q: %w", path, err)}
 		}
-		return fileCreatedMsg{path: path}
+		return fileCreatedMsg{path: path, content: content}
 	}
 }
 
-// nextUntitled returns a placeholder name for a new untitled file in dir.
-// It finds the lowest N >= 1 such that "Untitled N.md" does not exist in dir,
-// or exists but is empty (zero bytes). This matches the expected UX: Untitled 1
-// by default; if Untitled 1 is non-empty, the next new file is Untitled 2, etc.
+const invalidFileNameChars = "/\\:*?\"<>|\x00"
+
+func validateFileName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name must not be empty")
+	}
+	for _, r := range name {
+		for _, bad := range invalidFileNameChars {
+			if r == bad {
+				return fmt.Errorf("name contains invalid character %q", r)
+			}
+		}
+		if r < 32 {
+			return fmt.Errorf("name contains control character")
+		}
+	}
+	return nil
+}
+
+// maybeFinalizeTitle validates and commits the title when focus is leaving paneTitle.
+// Returns (model, cmd, ok) — if ok is false, focus change is blocked (validation failed).
+func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
+	if m.focus != paneTitle {
+		return m, nil, true
+	}
+	if err := validateFileName(m.title.Text()); err != nil {
+		var errCmd tea.Cmd
+		m.footer, errCmd = m.footer.Update(footer.ShowErrorMsg{Text: "invalid name: " + err.Error()})
+		m.title = m.title.SetFocused(true)
+		return m, errCmd, false
+	}
+	var renameCmd tea.Cmd
+	m.title, renameCmd = m.title.Commit()
+	return m, renameCmd, true
+}
+
 func nextUntitled(dir string) string {
 	for n := 1; ; n++ {
 		name := fmt.Sprintf("Untitled %d", n)
 		info, err := os.Stat(filepath.Join(dir, name+".md"))
 		if err != nil || info.Size() == 0 {
-			// File doesn't exist or is empty — this slot is available.
 			return name
 		}
 	}
@@ -1229,8 +1406,12 @@ func nextUntitled(dir string) string {
 func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	dir := m.currentDir()
 	name := nextUntitled(dir)
-	m.editor = m.editor.SetContent("", nil)
-	m.editor = m.editor.SetTitle(name)
+	m.editor = m.editor.SetContent("")
+	m.filePath = ""
+	m.origContent = nil
+	m.lastRev = m.editor.Revision()
+	m.title = m.title.SetText(name)
+	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile("")
 	m.focus = paneCenter
 	return m, nil

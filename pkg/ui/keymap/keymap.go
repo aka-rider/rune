@@ -273,7 +273,6 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.Delete, "edit.delete-right", "editorFocused && !readOnly")
 	add(b.Indent, "edit.indent", "editorFocused && !readOnly")
 	add(b.Outdent, "edit.outdent", "editorFocused && !readOnly")
-	add(b.SaveFile, "file.save", "editorFocused")
 	add(b.AddCursorAbove, "multicursor.add-above", "editorFocused")
 	add(b.AddCursorBelow, "multicursor.add-below", "editorFocused")
 	add(b.FindOpen, "find.open", "editorFocused")

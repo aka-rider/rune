@@ -8,7 +8,7 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
-	"rune/pkg/ui/components/editor"
+	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
 	"rune/pkg/ui/styles"
@@ -24,9 +24,9 @@ func NewApp() (Model, error) {
 
 	// 1. Build immutable command registry
 	builder := command.NewBuilder()
-	builder, err := editor.RegisterCommands(builder)
+	builder, err := textedit.RegisterCommands(builder)
 	if err != nil {
-		return Model{}, fmt.Errorf("registering editor commands: %w", err)
+		return Model{}, fmt.Errorf("registering textedit commands: %w", err)
 	}
 	registry := builder.Build()
 

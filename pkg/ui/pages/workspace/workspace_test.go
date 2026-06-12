@@ -10,7 +10,6 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
-	"rune/pkg/ui/components/editor"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
@@ -33,43 +32,23 @@ func newTestWorkspace(t *testing.T) Model {
 
 // loadFile simulates loading a file into the workspace (via FileSelectedMsg + FileLoadedMsg).
 func loadFile(m Model, path string, content string) Model {
-	var cmd tea.Cmd
-	m, cmd = m.Update(filetree.FileSelectedMsg{Path: path})
-	// Execute the LoadFileCmd to produce FileLoadedMsg.
-	if cmd != nil {
-		// In tests we simulate the result directly.
-	}
-	// Directly send FileLoadedMsg.
-	m, _ = m.Update(editor.FileLoadedMsg{Path: path, Content: []byte(content)})
+	// Directly send FileLoadedMsg — workspace owns file/disk domain (D12).
+	m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(content)})
 	return m
 }
 
-// makeDirty modifies editor content to mark it dirty by injecting a key
-// when focused on center pane. Since normal typing doesn't work in the editor
-// unless commands are registered, we directly set dirty state for testing.
-func makeDirty(m Model) Model {
-	// Set editor content as dirty by manipulating via the editor's exported
-	// SetContent + simulating a change. We'll use a different approach:
-	// Load a file, then modify the editor buffer by sending a ContentChangedMsg.
-	m, _ = m.Update(editor.ContentChangedMsg{Path: m.editor.FilePath(), Dirty: true})
-	// Force editor dirty for the test by re-setting its content.
-	// We need to actually make the editor dirty so IsDirty() returns true.
-	// The simplest approach: use the editor's SetContent (which marks clean)
-	// then call Update with a modification.
-	return m
-}
-
-// setEditorDirty directly manipulates the workspace's internal editor to be dirty.
-// This is a test-only helper that works because we're in the same package.
+// setEditorDirty makes the workspace report isDirty() == true.
+// In the new design, dirty = editor.Content() != string(origContent), so we
+// just make origContent differ from the current buffer.
 func setEditorDirty(m Model) Model {
-	m.editor = m.editor.SetDirtyForTest()
+	m.origContent = []byte("__dirty_sentinel_differs_from_buffer__")
 	return m
 }
 
 // sendFileChangedOnDisk simulates an external file change by sending
 // FileChangedOnDiskMsg. This triggers the merge guard in the workspace.
 func sendFileChangedOnDisk(m Model, path string, newContent string) Model {
-	m, _ = m.Update(editor.FileChangedOnDiskMsg{Path: path, NewContent: []byte(newContent)})
+	m, _ = m.Update(FileChangedOnDiskMsg{Path: path, NewContent: []byte(newContent)})
 	return m
 }
 
@@ -107,8 +86,8 @@ func TestGate1_FileSwitchDirtyGuardFires(t *testing.T) {
 		t.Fatalf("expected pending path b.txt, got %q", m.pending.path)
 	}
 	// File should NOT have changed yet.
-	if m.editor.FilePath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt, got %q", m.editor.FilePath())
+	if m.filePath != "a.txt" {
+		t.Fatalf("expected editor still on a.txt, got %q", m.filePath)
 	}
 }
 
@@ -139,24 +118,21 @@ func TestGate2_DirtyGuardSaveThenLoad(t *testing.T) {
 	}
 
 	// Save should be in flight.
-	if m.pending == nil {
-		t.Fatal("expected pending to still exist during save")
+	if !m.activeSave.InFlight {
+		t.Fatal("expected activeSave.InFlight=true")
 	}
-	if !m.pending.saveInFlight {
-		t.Fatal("expected saveInFlight=true")
-	}
-	saveReqID := m.pending.saveRequestID
+	saveReqID := m.activeSave.RequestID
 
 	// File should NOT have changed yet (save hasn't completed).
-	if m.editor.FilePath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt before save completes, got %q", m.editor.FilePath())
+	if m.filePath != "a.txt" {
+		t.Fatalf("expected editor still on a.txt before save completes, got %q", m.filePath)
 	}
 
 	// Simulate save completion with matching RequestID.
-	m, cmd = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        saveReqID,
-		SavedContentHash: "hash-a",
+	m, cmd = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    saveReqID,
+		SavedContent: []byte("content A"),
 	})
 
 	// Now pending should be cleared and a LoadFileCmd for b.txt should be issued.
@@ -165,10 +141,7 @@ func TestGate2_DirtyGuardSaveThenLoad(t *testing.T) {
 	}
 
 	// The cmd should be a LoadFileCmd for b.txt. Execute it to get FileLoadedMsg.
-	msgs = execCmds(cmd)
-	// One of the msgs should be a FileLoadedMsg for b.txt (from actual file) or
-	// FileLoadErrorMsg. Since we don't have the file, we'll just verify the cmd was issued.
-	// Instead, let's check that the command was non-nil (load was initiated).
+	// Since we don't have the file, we'll just verify the cmd was issued.
 	if cmd == nil {
 		t.Fatal("expected a LoadFileCmd after save completes")
 	}
@@ -199,8 +172,8 @@ func TestGate3_DirtyGuardCancelPreservesFile(t *testing.T) {
 		t.Fatal("expected dirty guard to be dismissed after cancel")
 	}
 	// File remains.
-	if m.editor.FilePath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt, got %q", m.editor.FilePath())
+	if m.filePath != "a.txt" {
+		t.Fatalf("expected editor still on a.txt, got %q", m.filePath)
 	}
 	// Content intact.
 	if m.editor.Content() != "content A" {
@@ -290,18 +263,18 @@ func TestGate6_DirtyGuardSaveFailureKeepsFile(t *testing.T) {
 		msgs = append(msgs, execCmds(cmd)...)
 	}
 
-	saveReqID := m.pending.saveRequestID
+	saveReqID := m.activeSave.RequestID
 
 	// Simulate save failure.
-	m, _ = m.Update(editor.FileSaveErrorMsg{
+	m, _ = m.Update(FileSaveErrorMsg{
 		Path:      "a.txt",
 		RequestID: saveReqID,
 		Err:       errTest,
 	})
 
 	// File should still be a.txt.
-	if m.editor.FilePath() != "a.txt" {
-		t.Fatalf("expected editor still on a.txt after save failure, got %q", m.editor.FilePath())
+	if m.filePath != "a.txt" {
+		t.Fatalf("expected editor still on a.txt after save failure, got %q", m.filePath)
 	}
 	// Content intact.
 	if m.editor.Content() != "dirty content" {
@@ -377,9 +350,9 @@ func TestGate8_TabSelectedUsesRequestOpenPath(t *testing.T) {
 	m := newTestWorkspace(t)
 	m = loadFile(m, "a.txt", "content A")
 	// Add a second tab.
-	m, _ = m.Update(editor.FileLoadedMsg{Path: "b.txt", Content: []byte("content B")})
+	m, _ = m.Update(FileLoadedMsg{Path: "b.txt", Content: []byte("content B")})
 	// Switch back to a.txt and make dirty.
-	m, _ = m.Update(editor.FileLoadedMsg{Path: "a.txt", Content: []byte("content A")})
+	m, _ = m.Update(FileLoadedMsg{Path: "a.txt", Content: []byte("content A")})
 	m = setEditorDirty(m)
 
 	// TabSelectedMsg should trigger dirty guard.
@@ -469,28 +442,28 @@ func TestGate10_UnrelatedSaveDoesNotTriggerPending(t *testing.T) {
 		msgs = append(msgs, execCmds(cmd)...)
 	}
 
-	saveReqID := m.pending.saveRequestID
+	saveReqID := m.activeSave.RequestID
 
 	// Send a FileSavedMsg with WRONG request ID.
-	m, _ = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        "wrong-id",
-		SavedContentHash: "hash",
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    "wrong-id",
+		SavedContent: []byte("content A"),
 	})
 
 	// Pending should still be active.
 	if m.pending == nil {
 		t.Fatal("unrelated save cleared pending action")
 	}
-	if !m.pending.saveInFlight {
-		t.Fatal("expected saveInFlight still true")
+	if !m.activeSave.InFlight {
+		t.Fatal("expected activeSave.InFlight still true")
 	}
 
 	// Now send correct one.
-	m, _ = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        saveReqID,
-		SavedContentHash: "hash",
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    saveReqID,
+		SavedContent: []byte("content A"),
 	})
 	if m.pending != nil {
 		t.Fatal("matching save should have cleared pending")
@@ -506,10 +479,7 @@ func TestGate11_WantsModalInputRoutesToEditor(t *testing.T) {
 	m = loadFile(m, "a.txt", "hello")
 	m.focus = paneCenter
 
-	// WantsModalInput currently returns false in our stub editor.
-	// This test validates the routing priority exists in the code path.
-	// When WantsModalInput returns true, workspace keys should NOT fire.
-	// We verify the code path: if editor doesn't want modal, global keys work.
+	// Verify the code path: if editor doesn't want modal, global keys work.
 	leftBefore := m.leftVisible
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
 	if m.leftVisible == leftBefore {
@@ -537,7 +507,7 @@ func TestGate12_KeysConsumedDuringSaveInFlight(t *testing.T) {
 	}
 
 	// Verify save is in flight.
-	if m.pending == nil || !m.pending.saveInFlight {
+	if !m.activeSave.InFlight {
 		t.Fatal("expected save in flight")
 	}
 
@@ -559,10 +529,10 @@ func TestGate12_KeysConsumedDuringSaveInFlight(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Gate 13: Dirty guard save uses editor.StartSave()
+// Gate 13: Dirty guard save uses startSave()
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestGate13_DirtyGuardUsesEditorStartSave(t *testing.T) {
+func TestGate13_DirtyGuardUsesStartSave(t *testing.T) {
 	m := newTestWorkspace(t)
 	m = loadFile(m, "a.txt", "content A")
 	m = setEditorDirty(m)
@@ -576,12 +546,9 @@ func TestGate13_DirtyGuardUsesEditorStartSave(t *testing.T) {
 		msgs = append(msgs, execCmds(cmd)...)
 	}
 
-	// The save request ID in pending should match the editor's active save.
-	if m.pending == nil {
-		t.Fatal("expected pending")
-	}
-	if m.pending.saveRequestID == "" {
-		t.Fatal("expected non-empty saveRequestID (proves StartSave was called)")
+	// The save request ID in activeSave should be non-empty (proves startSave was called).
+	if m.activeSave.RequestID == "" {
+		t.Fatal("expected non-empty activeSave.RequestID (proves startSave was called)")
 	}
 }
 
@@ -603,18 +570,16 @@ func TestGate14_SaveResultForwardedToEditor(t *testing.T) {
 		msgs = append(msgs, execCmds(cmd)...)
 	}
 
-	saveReqID := m.pending.saveRequestID
+	saveReqID := m.activeSave.RequestID
 
-	// Send FileSavedMsg. The workspace forwards it to editor via non-key forwarding.
-	m, _ = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        saveReqID,
-		SavedContentHash: "hash-content-a",
+	// Send FileSavedMsg. Workspace handles it: clears pending, updates origContent.
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    saveReqID,
+		SavedContent: []byte("content A"),
 	})
 
-	// Verify: The editor should have received the msg (dirty cleared if hash matches).
-	// Since our test hash may not match (test helper), just verify the message was
-	// forwarded by checking the workspace processed it correctly (pending cleared).
+	// Pending should be cleared.
 	if m.pending != nil {
 		t.Fatal("expected pending cleared after save")
 	}
@@ -684,14 +649,14 @@ func TestCloseLastTabResetsToUntitled(t *testing.T) {
 		msgs = append(msgs, execCmds(cmd)...)
 	}
 
-	// Editor title should start with "Untitled".
-	title := m.editor.TitleText()
-	if !strings.HasPrefix(title, "Untitled") {
-		t.Fatalf("expected title starting with 'Untitled', got %q", title)
+	// Title should start with "Untitled" (owned by workspace title component — D6).
+	titleText := m.title.Text()
+	if !strings.HasPrefix(titleText, "Untitled") {
+		t.Fatalf("expected title starting with 'Untitled', got %q", titleText)
 	}
-	// Editor must have no file path.
-	if fp := m.editor.FilePath(); fp != "" {
-		t.Fatalf("expected empty file path after last-tab close, got %q", fp)
+	// Workspace must have no file path.
+	if m.filePath != "" {
+		t.Fatalf("expected empty file path after last-tab close, got %q", m.filePath)
 	}
 	// Opentabs should show exactly one tab (the new untitled slot) with empty path.
 	if path := m.opentabs.PathAt(0); path != "" {
@@ -731,9 +696,7 @@ func TestMergeGuard_AcceptMerge_Undoable(t *testing.T) {
 		t.Fatal("expected merge guard dismissed after accept")
 	}
 
-	// Buffer should contain the merged result (libgit2 non-conflicting merge
-	// of "hello world" vs "hello earth" keeps ours since theirs is a simple
-	// edit on a non-overlapping region).
+	// Buffer should contain the merged result.
 	content := m.editor.Content()
 	if content == "hello world" {
 		t.Fatal("expected merged content, got original")
@@ -802,8 +765,7 @@ func TestMergeGuard_NonConflictingMerge(t *testing.T) {
 
 	m := newTestWorkspace(t)
 	m = loadFile(m, "a.txt", ours)
-	// Set origContent to ancestor so the merge is a true 3-way merge
-	// (ancestor != ours, enabling non-trivial merge logic).
+	// Set origContent to ancestor so the merge is a true 3-way merge.
 	m = setOrigContent(m, ancestor)
 
 	// Simulate external change with non-overlapping edits.
@@ -886,26 +848,29 @@ func TestMergeGuard_SaveAfterAccept(t *testing.T) {
 	}
 
 	// After accept, origContent should be the merged result.
-	mergedBeforeSave := m.editor.Content()
-	if mergedBeforeSave == ours {
+	mergedContent := m.editor.Content()
+	if mergedContent == ours {
 		t.Fatal("expected merged content after accept")
 	}
-	origAfterAccept := m.origContent
-	if string(origAfterAccept) != mergedBeforeSave {
-		t.Fatalf("expected origContent=%q after accept, got %q", mergedBeforeSave, string(origAfterAccept))
+	if string(m.origContent) != mergedContent {
+		t.Fatalf("expected origContent=%q after accept, got %q", mergedContent, string(m.origContent))
 	}
 
+	// Start a save and send the ack — origContent should reflect saved bytes.
+	m, cmd = m.startSave()
+	reqID := m.activeSave.RequestID
+	_ = execCmds(cmd) // discard the actual file write cmd
+
 	// Simulate save completion.
-	m, _ = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        "", // not in save-flight, so ignored
-		SavedContentHash: "hash",
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    reqID,
+		SavedContent: []byte(mergedContent),
 	})
 
 	// After save, origContent should equal buffer content.
-	origAfterSave := m.origContent
-	if string(origAfterSave) != mergedBeforeSave {
-		t.Fatalf("expected origContent=%q after save, got %q", mergedBeforeSave, string(origAfterSave))
+	if string(m.origContent) != mergedContent {
+		t.Fatalf("expected origContent=%q after save, got %q", mergedContent, string(m.origContent))
 	}
 }
 
@@ -935,11 +900,15 @@ func TestMergeGuard_UndoAfterAcceptThenSave(t *testing.T) {
 		t.Fatalf("expected undo to restore ours (%q), got %q", ours, m.editor.Content())
 	}
 
-	// Simulate save.
-	m, _ = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        "",
-		SavedContentHash: "hash",
+	// Start a save and simulate save completion with ours as the written content.
+	m, cmd = m.startSave()
+	reqID := m.activeSave.RequestID
+	_ = execCmds(cmd)
+
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    reqID,
+		SavedContent: []byte(ours),
 	})
 
 	// After save, origContent should equal buffer (ours).
@@ -997,10 +966,10 @@ func TestMergeGuard_RejectThenExternalChangeAgain(t *testing.T) {
 
 func TestFileWatch_NoWatcherForUntitled(t *testing.T) {
 	m := newTestWorkspace(t)
-	// No file loaded — editor.FilePath() is empty.
+	// No file loaded — m.filePath is empty.
 
 	// Send FileChangedOnDiskMsg with empty path (simulates untitled file change).
-	m, _ = m.Update(editor.FileChangedOnDiskMsg{Path: "", NewContent: []byte("data")})
+	m, _ = m.Update(FileChangedOnDiskMsg{Path: "", NewContent: []byte("data")})
 
 	// Guard should NOT fire for untitled files.
 	if m.footer.InGuard() {
@@ -1102,16 +1071,16 @@ func TestFileWatch_SwitchFileViaSave(t *testing.T) {
 	}
 
 	// Save should be in flight.
-	if m.pending == nil || !m.pending.saveInFlight {
+	if !m.activeSave.InFlight {
 		t.Fatal("expected save to be in flight")
 	}
-	saveReqID := m.pending.saveRequestID
+	saveReqID := m.activeSave.RequestID
 
 	// Simulate save completion.
-	m, cmd = m.Update(editor.FileSavedMsg{
-		Path:             "a.txt",
-		RequestID:        saveReqID,
-		SavedContentHash: "hash-a",
+	m, cmd = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    saveReqID,
+		SavedContent: []byte("content A"),
 	})
 
 	// Execute the resulting LoadFileCmd (it will fail since b.txt doesn't exist,
@@ -1138,15 +1107,15 @@ func TestFileWatch_SwitchFileViaSave(t *testing.T) {
 func TestOrigContent_AfterUntitledCreate(t *testing.T) {
 	m := newTestWorkspace(t)
 
-	// Set editor content and mark dirty.
-	m.editor = m.editor.SetContent("", []byte("hello world"))
-	m.editor = m.editor.SetDirtyForTest()
-	m, _ = m.Update(editor.ContentChangedMsg{Path: "", Dirty: true})
+	// Set editor content (untitled — no file path).
+	m.editor = m.editor.SetContent("hello world")
+	// Make it dirty relative to origContent (which is nil/empty).
+	// origContent starts as nil for untitled; content is "hello world" → dirty.
 
 	// Simulate the file being successfully created on disk.
-	m, _ = m.Update(fileCreatedMsg{path: "Untitled 1.md", err: nil})
+	m, _ = m.Update(fileCreatedMsg{path: "Untitled 1.md", content: "hello world", err: nil})
 
-	// origContent should be set to the editor content.
+	// origContent should be set to the saved content.
 	if m.origContent == nil {
 		t.Fatal("expected origContent to be set after file creation")
 	}
@@ -1162,20 +1131,69 @@ func TestOrigContent_AfterUntitledCreate(t *testing.T) {
 func TestOrigContent_AfterUntitledRename(t *testing.T) {
 	m := newTestWorkspace(t)
 
-	// Simulate an untitled file that was renamed and created on disk.
-	m.editor = m.editor.SetContent("", []byte("renamed content"))
-	m.editor = m.editor.SetDirtyForTest()
-	m, _ = m.Update(editor.ContentChangedMsg{Path: "", Dirty: true})
+	// Simulate an untitled file with content that was renamed and created on disk.
+	m.editor = m.editor.SetContent("renamed content")
 
 	// Simulate the file being successfully created on disk after rename.
-	m, _ = m.Update(fileCreatedMsg{path: "renamed.md", err: nil})
+	m, _ = m.Update(fileCreatedMsg{path: "renamed.md", content: "renamed content", err: nil})
 
-	// origContent should be set to the editor content.
+	// origContent should be set to the saved content.
 	if m.origContent == nil {
 		t.Fatal("expected origContent to be set after untitled rename")
 	}
 	if string(m.origContent) != "renamed content" {
 		t.Fatalf("expected origContent='renamed content', got %q", string(m.origContent))
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// origContent: a save ack sets the merge ancestor to the BYTES WRITTEN, not the
+// live buffer. Regression for the data-loss bug where editing between StartSave
+// and the ack would corrupt the 3-way-merge ancestor to a never-persisted state.
+// ─────────────────────────────────────────────────────────────────────────────
+
+func TestOrigContent_SaveUsesWrittenBytesNotLiveBuffer(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.txt", "v1") // ancestor + buffer = "v1"
+
+	// Start a save — snapshots "v1" as SavedContent.
+	var saveCmd tea.Cmd
+	m, saveCmd = m.startSave()
+	reqID := m.activeSave.RequestID
+	_ = execCmds(saveCmd) // discard the actual write
+
+	// User edits to "v2" AFTER the save snapshotted "v1" but BEFORE the ack.
+	m.editor = m.editor.SetContent("v2")
+
+	// Save ack reports that "v1" was the content written to disk.
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    reqID,
+		SavedContent: []byte("v1"),
+	})
+
+	// The merge ancestor must be the persisted bytes ("v1"), NOT the live
+	// buffer ("v2", which was never written).
+	if string(m.origContent) != "v1" {
+		t.Fatalf("merge ancestor must be the written bytes \"v1\", got %q", string(m.origContent))
+	}
+}
+
+func TestOrigContent_StaleSaveForOtherFileIgnored(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "b.txt", "current B") // current file = b.txt
+
+	// A stale save ack for a previously-open file arrives late.
+	// Since m.activeSave.InFlight is false and RequestID is empty, this is ignored.
+	m, _ = m.Update(FileSavedMsg{
+		Path:         "a.txt",
+		RequestID:    "stale-id",
+		SavedContent: []byte("old A"),
+	})
+
+	// It must NOT clobber the current file's merge ancestor.
+	if string(m.origContent) != "current B" {
+		t.Fatalf("stale save for other file must not change ancestor, got %q", string(m.origContent))
 	}
 }
 
@@ -1565,8 +1583,6 @@ func TestMergeGuard_IdenticalDiskContentNoGuard(t *testing.T) {
 	m = loadFile(m, "a.txt", "hello world")
 
 	// Simulate external change with IDENTICAL content.
-	// This represents the race where a save completes and the watcher
-	// reads the same content, or a backup tool touches the file.
 	m = sendFileChangedOnDisk(m, "a.txt", "hello world")
 
 	// Guard should NOT be active — content is identical.

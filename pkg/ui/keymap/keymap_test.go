@@ -23,6 +23,7 @@ var globalKeys = []string{
 	"ConfirmExitD",
 	"HelpExpand",
 	"VoiceDictation",
+	"SaveFile", // workspace-global Cmd+S (D4/D12: not a registered command; handled directly)
 }
 
 // editorShortcutKeys lists Binding field names handled as hardcoded
