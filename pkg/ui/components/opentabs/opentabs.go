@@ -211,15 +211,17 @@ func (m Model) View() string {
 		}
 		b.WriteString(prefix)
 
-		num := fmt.Sprintf("%d: ", i+1)
-		b.WriteString(num)
+		b.WriteString(fmt.Sprintf("%d:", i+1))
+		if t.Dirty {
+			b.WriteString(m.styles.TabDirty.Render("x"))
+		} else {
+			b.WriteByte(' ')
+		}
+		b.WriteByte(' ')
 
 		name := t.Name
 		if t.Pinned {
 			name = m.styles.TabPinned.Render("★") + " " + name
-		}
-		if t.Dirty {
-			name = name + " " + m.styles.TabDirty.Render("●")
 		}
 
 		if t.Active {

@@ -507,6 +507,7 @@ func (m Model) recomputeDirty(prevRev uint64) Model {
 	m.lastRev = m.editor.Revision()
 	if m.isDirty() {
 		m.opentabs = m.opentabs.MarkDirty(m.filePath)
+		m.footer = m.footer.SetDirty(true)
 		// First edit on untitled file → create on disk
 		if m.filePath == "" && m.editor.Content() != "" {
 			dir := m.currentDir()
@@ -518,6 +519,7 @@ func (m Model) recomputeDirty(prevRev uint64) Model {
 		}
 	} else {
 		m.opentabs = m.opentabs.MarkClean(m.filePath)
+		m.footer = m.footer.SetDirty(false)
 	}
 	return m
 }
@@ -796,6 +798,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.origContent = msg.Content
 		m.lastRev = m.editor.Revision()
+		m.footer = m.footer.SetDirty(false)
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		// Start (or restart) the per-file watcher now that we have confirmed content.
@@ -856,11 +859,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 			m.activeSave.InFlight = false
 			m.origContent = m.activeSave.SavedContent // bytes written, not Content() — D13
-			if m.isDirty() {
+			dirty := m.isDirty()
+			if dirty {
 				m.opentabs = m.opentabs.MarkDirty(m.filePath)
 			} else {
 				m.opentabs = m.opentabs.MarkClean(m.filePath)
 			}
+			m.footer = m.footer.SetDirty(dirty)
 			// Continue any pending close/switch action
 			if m.pending != nil {
 				switch m.pending.kind {
