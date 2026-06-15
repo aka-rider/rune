@@ -80,11 +80,20 @@ type pendingDirtyKind int
 const (
 	pendingSwitchFile pendingDirtyKind = iota
 	pendingCloseFile
+	pendingQuit
 )
 
 var dirtyGuardOptions = []footer.GuardOption{
 	{Key: 's', Response: footer.DataLossSave},
 	{Key: 'd', Response: footer.DataLossDiscard},
+}
+
+// quitGuardOptions is identical to dirtyGuardOptions but with Cancel last
+// so Esc (which maps to the last option) cancels rather than discards.
+var quitGuardOptions = []footer.GuardOption{
+	{Key: 's', Response: footer.DataLossSave},
+	{Key: 'd', Response: footer.DataLossDiscard},
+	{Key: '\x1b', Response: footer.DataLossCancel},
 }
 
 var mergeGuardOptions = []footer.GuardOption{
@@ -474,6 +483,10 @@ func (m Model) handleDataLossGuardResponse(resp footer.DataLossGuardResponse) (M
 			nextPath := m.pending.nextPath
 			m.pending = nil
 			return m.executeClose(closePath, nextPath)
+		case pendingQuit:
+			m.pending = nil
+			m.dict = m.dict.Disable()
+			return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
 		}
 
 	case footer.DataLossSave:
@@ -507,7 +520,6 @@ func (m Model) recomputeDirty(prevRev uint64) Model {
 	m.lastRev = m.editor.Revision()
 	if m.isDirty() {
 		m.opentabs = m.opentabs.MarkDirty(m.filePath)
-		m.footer = m.footer.SetDirty(true)
 		// First edit on untitled file → create on disk
 		if m.filePath == "" && m.editor.Content() != "" {
 			dir := m.currentDir()
@@ -519,7 +531,6 @@ func (m Model) recomputeDirty(prevRev uint64) Model {
 		}
 	} else {
 		m.opentabs = m.opentabs.MarkClean(m.filePath)
-		m.footer = m.footer.SetDirty(false)
 	}
 	return m
 }
@@ -660,6 +671,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m = m.syncDictationAllowed()
 
+		case key.Matches(msg, m.keys.CreateNewFile):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
+			if m.filePath != "" || m.editor.Content() != "" {
+				m, cmd = m.CreateUntitled()
+				cmds = append(cmds, cmd)
+			}
+			m.title = m.title.FocusAndSelectAll()
+			m.focus = paneTitle
+			m = m.syncDictationAllowed()
+
 		case key.Matches(msg, m.keys.CloseFile):
 			var ok bool
 			m, cmd, ok = m.maybeFinalizeTitle()
@@ -798,7 +824,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.origContent = msg.Content
 		m.lastRev = m.editor.Revision()
-		m.footer = m.footer.SetDirty(false)
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		// Start (or restart) the per-file watcher now that we have confirmed content.
@@ -859,14 +884,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 			m.activeSave.InFlight = false
 			m.origContent = m.activeSave.SavedContent // bytes written, not Content() — D13
-			dirty := m.isDirty()
-			if dirty {
+			if m.isDirty() {
 				m.opentabs = m.opentabs.MarkDirty(m.filePath)
 			} else {
 				m.opentabs = m.opentabs.MarkClean(m.filePath)
 			}
-			m.footer = m.footer.SetDirty(dirty)
-			// Continue any pending close/switch action
+			// Continue any pending close/switch/quit action
 			if m.pending != nil {
 				switch m.pending.kind {
 				case pendingSwitchFile:
@@ -881,6 +904,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.pending = nil
 					m, cmd = m.executeClose(closePath, nextPath)
 					cmds = append(cmds, cmd)
+				case pendingQuit:
+					m.pending = nil
+					m.dict = m.dict.Disable()
+					cmds = append(cmds, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit))
 				}
 			}
 		}
@@ -998,6 +1025,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.finalizeLayoutChange(cmds)
 
 	case footer.ConfirmQuitMsg:
+		if m.isDirty() {
+			m.pending = &pendingDirtyAction{kind: pendingQuit}
+			m.footer = m.footer.SetGuard(footer.GuardDirty, quitGuardOptions)
+			return m, nil
+		}
 		m.dict = m.dict.Disable()
 		return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
 

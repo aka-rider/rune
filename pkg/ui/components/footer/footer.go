@@ -73,7 +73,6 @@ type Model struct {
 	styles           styles.Styles
 	keys             keymap.Bindings
 	pendingKey       string
-	dirty            bool
 	helpExpanded     bool
 	helpEntries      []Entry
 	guardKind        GuardKind
@@ -107,7 +106,6 @@ func (m Model) SetGuard(kind GuardKind, options []GuardOption) Model {
 func (m Model) InGuard() bool        { return len(m.guardOptions) > 0 }
 func (m Model) GuardKind() GuardKind { return m.guardKind }
 
-func (m Model) SetDirty(dirty bool) Model              { m.dirty = dirty; return m }
 func (m Model) SetDictationAllowed(allowed bool) Model { m.dictationAllowed = allowed; return m }
 func (m Model) SetDictating(active bool) Model         { m.dictating = active; return m }
 func (m Model) IsDictating() bool                      { return m.dictating }
@@ -149,15 +147,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.ConfirmExitC):
 			if m.pendingKey == "c" {
 				m.pendingKey = ""
-				if m.dirty {
-					m.errorMsg = "Unsaved changes — save (^s) or discard before quitting."
-					m.errorExpireID++
-					id := m.errorExpireID
-					return m, func() tea.Msg {
-						time.Sleep(5 * time.Second)
-						return errorDismissedMsg{id: id}
-					}
-				}
 				return m, func() tea.Msg { return ConfirmQuitMsg{} }
 			}
 			m.pendingKey = "c"
@@ -166,15 +155,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.ConfirmExitD):
 			if m.pendingKey == "d" {
 				m.pendingKey = ""
-				if m.dirty {
-					m.errorMsg = "Unsaved changes — save (^s) or discard before quitting."
-					m.errorExpireID++
-					id := m.errorExpireID
-					return m, func() tea.Msg {
-						time.Sleep(5 * time.Second)
-						return errorDismissedMsg{id: id}
-					}
-				}
 				return m, func() tea.Msg { return ConfirmQuitMsg{} }
 			}
 			m.pendingKey = "d"
