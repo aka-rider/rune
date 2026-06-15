@@ -85,6 +85,15 @@ func (m Model) SetFocused(v bool) Model {
 	return m
 }
 
+// FocusAndSelectAll focuses the title and pre-selects all text so the user
+// can type a replacement name without a separate select-all step.
+func (m Model) FocusAndSelectAll() Model {
+	m.focused = true
+	m.field = m.field.SetFocused(true)
+	m.field = m.field.MouseSelectLine(0)
+	return m
+}
+
 // Commit emits RenameRequestMsg if the text has changed since last commit.
 func (m Model) Commit() (Model, tea.Cmd) {
 	text := m.Text()
