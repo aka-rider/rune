@@ -717,6 +717,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.title, cmd = m.title.Update(msg)
 			cmds = append(cmds, cmd)
 		case paneCenter:
+			m.editor = m.editor.SetFocused(true)
 			if !m.dict.Enabled() {
 				m.editor, cmd = m.editor.Update(msg)
 				cmds = append(cmds, cmd)
