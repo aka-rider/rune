@@ -18,7 +18,7 @@ import (
 type Model struct{ ws workspace.Model }
 
 // NewApp initializes the application state, commands, and keybindings.
-func NewApp() (Model, error) {
+func NewApp(workDir string, initialFiles []string) (Model, error) {
 	keys := keymap.Default()
 	st := styles.Default()
 
@@ -64,7 +64,7 @@ func NewApp() (Model, error) {
 	// 8. Detect terminal capabilities
 	caps := terminal.DetectCapabilities()
 
-	ws := workspace.New(keys, st, registry, resolver, caps)
+	ws := workspace.New(keys, st, registry, resolver, caps, workDir, initialFiles)
 	return Model{ws: ws}, nil
 }
 

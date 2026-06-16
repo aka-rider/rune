@@ -25,7 +25,7 @@ func newTestWorkspace(t *testing.T) Model {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
 }
@@ -1234,7 +1234,7 @@ func resizeWorkspace(t *testing.T, w, h int) Model {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res, terminal.TermCaps{})
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return m
 }

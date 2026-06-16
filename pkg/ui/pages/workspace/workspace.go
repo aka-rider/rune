@@ -148,9 +148,20 @@ type Model struct {
 	// File watching
 	watchedFilePath string
 	cancelFileWatch context.CancelFunc
+
+	// Startup configuration (set once, read by Init).
+	workDir      string   // absolute path or "." passed via -w
+	initialFiles []string // files to open on first Init
 }
 
-func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
+func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps, workDir string, initialFiles []string) Model {
+	if workDir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			workDir = wd
+		} else {
+			workDir = "."
+		}
+	}
 	m := Model{
 		title: title.New("Untitled", keys, st,
 			textedit.WithRegistry(reg),
@@ -173,6 +184,8 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		rightPaneW:   defaultRightPaneW,
 		keys:         keys,
 		styles:       st,
+		workDir:      workDir,
+		initialFiles: initialFiles,
 	}
 	m = m.syncDictationAllowed()
 	m = m.applyFocus() // project initial focus so paneTree reaches the filetree at launch
@@ -338,16 +351,19 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
-	wd, _ := os.Getwd()
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.filetree.Init(),
 		m.opentabs.Init(),
 		m.editor.Init(),
 		m.footer.Init(),
 		m.chat.Init(),
 		m.dict.Init(),
-		loadDirCmd(wd),
-	)
+		loadDirCmd(m.workDir),
+	}
+	for _, path := range m.initialFiles {
+		cmds = append(cmds, loadFileCmd(context.Background(), path))
+	}
+	return tea.Batch(cmds...)
 }
 
 // startSave begins a save operation for the current file (D12, D13).
