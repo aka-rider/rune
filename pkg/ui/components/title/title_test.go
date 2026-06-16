@@ -69,6 +69,34 @@ func TestTitle_TypeChar(t *testing.T) {
 	}
 }
 
+// TestTitle_SetFocusedIsIdempotent verifies SetFocused(true) has no cursor side
+// effect, so the workspace projecting focus on every frame cannot disrupt mid-title
+// editing (regression: focus desync fix relies on this idempotence).
+func TestTitle_SetFocusedIsIdempotent(t *testing.T) {
+	m := newTestTitle()
+	m = m.FocusAtEnd()
+	m = m.SetText("ab") // focused → cursor at end (after 'b')
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+	m = m.SetFocused(true) // simulates per-frame projection; must NOT jump cursor to end
+	m = typeText(m, "X")
+	if got := m.Text(); got != "aXb" {
+		t.Fatalf("SetFocused moved the cursor: got %q, want %q", got, "aXb")
+	}
+}
+
+// TestTitle_SelectAllSurvivesProjection verifies the ^n select-all is not cleared by
+// the per-frame SetFocused projection, so typing replaces the whole name.
+func TestTitle_SelectAllSurvivesProjection(t *testing.T) {
+	m := newTestTitle()
+	m = m.SetText("hello")
+	m = m.FocusAndSelectAll()
+	m = m.SetFocused(true) // per-frame projection — selection must survive
+	m = typeText(m, "X")
+	if got := m.Text(); got != "X" {
+		t.Fatalf("select-all lost after projection: typing gave %q, want %q", got, "X")
+	}
+}
+
 func TestTitle_Backspace(t *testing.T) {
 	m := newTestTitle()
 	m = m.SetFocused(true)

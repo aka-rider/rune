@@ -40,6 +40,7 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 
 func (m Model) SetSize(w, h int) Model  { m.width = w; m.height = h; return m }
 func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
+func (m Model) Focused() bool           { return m.focused }
 func (m Model) Cursor() int             { return m.cursor }
 
 func (m Model) Height() int {

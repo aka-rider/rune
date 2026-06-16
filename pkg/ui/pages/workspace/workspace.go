@@ -175,6 +175,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		styles:       st,
 	}
 	m = m.syncDictationAllowed()
+	m = m.applyFocus() // project initial focus so paneTree reaches the filetree at launch
 	return m
 }
 
@@ -535,7 +536,24 @@ func (m Model) recomputeDirty(prevRev uint64) Model {
 	return m
 }
 
+// applyFocus projects the single focus authority (m.focus) onto every child's
+// focus state. This is the ONLY place component focus is derived from the enum;
+// it runs before every dispatch to children and on every Update exit, so the two
+// representations can never disagree at a boundary the renderer or a child's
+// Update can observe. Every child SetFocused is idempotent, so calling this each
+// frame is free. (chat owns a nested prompt/display sub-focus internally — the
+// same pattern one level down, self-consistent and out of scope here.)
+func (m Model) applyFocus() Model {
+	m.title = m.title.SetFocused(m.focus == paneTitle)
+	m.filetree = m.filetree.SetFocused(m.focus == paneTree)
+	m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
+	m.editor = m.editor.SetFocused(m.focus == paneCenter)
+	m.chat = m.chat.SetFocused(m.focus == paneChat)
+	return m
+}
+
 func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
+	m = m.applyFocus()
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
 		var refreshCmd tea.Cmd
@@ -548,6 +566,7 @@ func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 }
 
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
+	m = m.applyFocus()
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
 	}
@@ -721,17 +740,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.finalize(cmds)
 		}
 
+		// Project focus before any key reaches a child, so the target pane is
+		// focused when it receives the key regardless of how m.focus was set.
+		m = m.applyFocus()
+
 		// Priority 3b: D11 — Up at editor top transfers focus to title.
 		if m.focus == paneCenter && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
 			m.focus = paneTitle
-			m.editor = m.editor.SetFocused(false)
-			m.title = m.title.SetFocused(true)
-			return m.finalize(cmds) // consume Up; don't also move cursor
+			m.title = m.title.FocusAtEnd() // cursor gesture; focus bools projected by finalize
+			return m.finalize(cmds)        // consume Up; don't also move cursor
 		}
 
 		// Priority 4: Editor wants modal input — skip footer help toggle.
 		if m.focus == paneCenter && m.editor.WantsModalInput() {
-			m.editor = m.editor.SetFocused(true)
 			m.editor, cmd = m.editor.Update(msg)
 			cmds = append(cmds, cmd)
 			m = m.recomputeDirty(prevRev)
@@ -745,7 +766,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.title, cmd = m.title.Update(msg)
 			cmds = append(cmds, cmd)
 		case paneCenter:
-			m.editor = m.editor.SetFocused(true)
 			if !m.dict.Enabled() {
 				m.editor, cmd = m.editor.Update(msg)
 				cmds = append(cmds, cmd)
@@ -770,9 +790,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case title.FocusReturnMsg:
 		// Title emits this on Down/Enter — return focus to editor (D11).
+		// Focus bools are projected from m.focus by applyFocus.
 		m.focus = paneCenter
-		m.title = m.title.SetFocused(false)
-		m.editor = m.editor.SetFocused(true)
 		m = m.syncDictationAllowed()
 
 	case title.RenameRequestMsg:
@@ -950,10 +969,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
 			if newFocus == paneTitle {
-				// Clicking title area focuses the title.
+				// Clicking title area focuses the title (cursor to end);
+				// focus bools are projected from m.focus by applyFocus.
 				m.focus = paneTitle
-				m.title = m.title.SetFocused(true)
-				m.editor = m.editor.SetFocused(false)
+				m.title = m.title.FocusAtEnd()
 			} else {
 				if m.focus == paneTitle {
 					var finalizeCmd tea.Cmd
@@ -963,7 +982,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					if !finalizeOk {
 						return m.finalize(cmds)
 					}
-					m.title = m.title.SetFocused(false)
 				}
 				m.focus = newFocus
 			}
@@ -1054,23 +1072,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	// Forward non-key messages to all children (broadcast path).
 	if _, isKey := msg.(tea.KeyPressMsg); !isKey {
+		// Project focus before forwarding so children handle a focus-changing
+		// message (e.g. a click that refocuses and positions the cursor) consistently.
+		m = m.applyFocus()
+
 		m.title, cmd = m.title.Update(msg)
 		cmds = append(cmds, cmd)
 
-		m.filetree = m.filetree.SetFocused(m.focus == paneTree)
 		m.filetree, cmd = m.filetree.Update(msg)
 		cmds = append(cmds, cmd)
 
-		m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
 		m.opentabs, cmd = m.opentabs.Update(msg)
 		cmds = append(cmds, cmd)
 
-		m.editor = m.editor.SetFocused(m.focus == paneCenter)
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 		m = m.recomputeDirty(prevRev)
 
-		m.chat = m.chat.SetFocused(m.focus == paneChat)
 		m.chat, cmd = m.chat.Update(msg)
 		cmds = append(cmds, cmd)
 
@@ -1422,7 +1440,8 @@ func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
 	if err := validateFileName(m.title.Text()); err != nil {
 		var errCmd tea.Cmd
 		m.footer, errCmd = m.footer.Update(footer.ShowErrorMsg{Text: "invalid name: " + err.Error()})
-		m.title = m.title.SetFocused(true)
+		// Focus stays on the title: m.focus is unchanged here and callers return
+		// without advancing it, so applyFocus keeps the title focused.
 		return m, errCmd, false
 	}
 	var renameCmd tea.Cmd

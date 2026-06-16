@@ -100,6 +100,8 @@ func (m Model) SetFocused(f bool) Model {
 	return m
 }
 
+func (m Model) Focused() bool { return m.focused }
+
 // ApplyToPrompt replaces the range [start, end) in the prompt with text.
 // Called by the workspace to route dictation chunks (D16).
 func (m Model) ApplyToPrompt(start, end int, text string) Model {

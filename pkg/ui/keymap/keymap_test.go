@@ -17,6 +17,7 @@ var globalKeys = []string{
 	"FocusExplorer",
 	"FocusEditor",
 	"FocusChat",
+	"CreateNewFile",
 	"CloseFile",
 	"ZenMode",
 	"ConfirmExitC",

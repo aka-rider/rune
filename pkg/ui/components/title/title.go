@@ -74,14 +74,22 @@ func (m Model) SetText(name string) Model {
 	return m
 }
 
+// SetFocused is the idempotent focus-state setter. It is projected from the
+// workspace's focus authority on every Update pass, so it MUST have no cursor
+// side effects — focus-gain gestures live in FocusAtEnd / FocusAndSelectAll.
 func (m Model) SetFocused(v bool) Model {
 	m.focused = v
 	m.field = m.field.SetFocused(v)
-	if v {
-		// Move cursor to end of content on focus, matching the UX expectation
-		// that focus lands the cursor ready to edit from the end of the title.
-		m.field, _ = m.field.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	}
+	return m
+}
+
+// FocusAtEnd focuses the title and lands the cursor at the end of the text — the
+// natural entry point when arriving from the editor (D11) or a click. This is a
+// focus-gain gesture invoked once at the transition, distinct from the idempotent
+// SetFocused projected each frame.
+func (m Model) FocusAtEnd() Model {
+	m = m.SetFocused(true)
+	m.field, _ = m.field.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
 	return m
 }
 
