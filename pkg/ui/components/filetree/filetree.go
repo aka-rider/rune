@@ -174,12 +174,23 @@ func (m Model) View() string {
 		Render(content)
 }
 
+func truncatePath(path string, maxWidth int) string {
+	runes := []rune(path)
+	if len(runes) <= maxWidth {
+		return path
+	}
+	return "..." + string(runes[len(runes)-(maxWidth-3):])
+}
+
 func renderFileList(m Model) string {
 	var b strings.Builder
 
 	root := m.root
 	if root == "" {
 		root = "."
+	}
+	if m.width > 3 {
+		root = truncatePath(root, m.width)
 	}
 	b.WriteString(m.styles.PaneTitle.Render(root))
 

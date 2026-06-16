@@ -338,6 +338,7 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 }
 
 func (m Model) Init() tea.Cmd {
+	wd, _ := os.Getwd()
 	return tea.Batch(
 		m.filetree.Init(),
 		m.opentabs.Init(),
@@ -345,7 +346,7 @@ func (m Model) Init() tea.Cmd {
 		m.footer.Init(),
 		m.chat.Init(),
 		m.dict.Init(),
-		loadDirCmd(".", "."),
+		loadDirCmd(wd),
 	)
 }
 
@@ -815,7 +816,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case filetree.DirSelectedMsg:
-		cmds = append(cmds, loadDirCmd(msg.Path, "."))
+		cmds = append(cmds, loadDirCmd(msg.Path))
 
 	case filetree.DirLoadedMsg:
 		m.editor = m.editor.SetDir(msg.Root)
@@ -825,7 +826,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case dirChangedMsg:
 		dir := m.watchedDir
-		cmds = append(cmds, reloadDirCmd(dir, "."))
+		cmds = append(cmds, reloadDirCmd(dir))
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.Path)
@@ -1222,9 +1223,9 @@ func borderStyle(active bool, st styles.Styles) lipgloss.Style {
 	return st.InactiveBorder
 }
 
-func loadDirCmd(dir string, initialRoot string) tea.Cmd {
+func loadDirCmd(dir string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := readDirEntries(dir, initialRoot)
+		entries, err := readDirEntries(dir)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -1232,9 +1233,9 @@ func loadDirCmd(dir string, initialRoot string) tea.Cmd {
 	}
 }
 
-func reloadDirCmd(dir string, initialRoot string) tea.Cmd {
+func reloadDirCmd(dir string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := readDirEntries(dir, initialRoot)
+		entries, err := readDirEntries(dir)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -1242,13 +1243,19 @@ func reloadDirCmd(dir string, initialRoot string) tea.Cmd {
 	}
 }
 
-func readDirEntries(dir string, initialRoot string) ([]filetree.Entry, error) {
+func readDirEntries(dir string) ([]filetree.Entry, error) {
 	des, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("load dir %q: %w", dir, err)
 	}
 	entries := make([]filetree.Entry, 0, len(des)+1)
-	if dir != initialRoot && dir != "." {
+	if dir == "/" {
+		entries = append(entries, filetree.Entry{
+			Name:  "/",
+			Path:  "/",
+			IsDir: true,
+		})
+	} else {
 		entries = append(entries, filetree.Entry{
 			Name:  "..",
 			Path:  filepath.Dir(dir),
