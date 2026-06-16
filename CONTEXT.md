@@ -5,7 +5,7 @@ A Bubble Tea (v2) TUI markdown editor and note-taking app built in Go.
 ## Language
 
 **textedit**:
-The base TUI text-editing component. A reusable bubbles-level primitive that owns buffer, cursors, history, viewport, and generic cell rendering. Has no opinion about what is being edited.
+The base TUI text-editing component. A reusable bubbles-level primitive that owns buffer, cursors, viewport, and generic cell rendering. Has no opinion about what is being edited, and no undo of its own — the workspace journal records edits and drives undo/redo through textedit's apply/set primitives.
 _Avoid_: editor (ambiguous), base editor, text input, textarea
 
 **markdownedit**:
@@ -33,7 +33,7 @@ The markdown SyncFunc. Parses the buffer via goldmark + advanced inlines, comput
 _Avoid_: rich sync, md sync, editor sync
 
 **Extension**:
-A SyncFunc that adds rendering intelligence to textedit. Not a Go interface — a concrete function value. Extensions mutate the buffer via textedit's stable public API (Insert, Delete, Replace), and those mutations flow through history/undo naturally.
+A SyncFunc that adds rendering intelligence to textedit. Not a Go interface — a concrete function value. Extensions mutate the buffer via textedit's stable public API (Insert, Delete, Replace), and those mutations are recorded by the workspace journal.
 _Avoid_: plugin, addon, module
 
 ### Component Instances
@@ -60,11 +60,29 @@ _Avoid_: render pipeline, sync pipeline, view pipeline
 The generic span→cell→overlay→string rendering in textedit.View(). Converts StyleHint-bearing DisplaySpans into cells, applies cursor/selection overlays, handles horizontal scroll via sliceCells, and stringifies.
 _Avoid_: view rendering, span rendering, output rendering
 
+## History & Persistence
+
+**journal**:
+The in-memory, whole-workspace timeline of every interaction — edits, cursor moves, selection changes, focus changes — recorded as one global ordered sequence. The source for undo/redo and the scrubber. Lives only for the session; never the source of truth for document content.
+_Avoid_: undo stack, history, oplog, event log
+
+**snapshot**:
+A durable, content-addressed version of a document's full content. Written on the freeze-at-flush cadence and on autosave; the permanent history layer, and the anchor the scrubber reconstructs from. Survives restart; the journal does not.
+_Avoid_: revision, version, backup, checkpoint
+
+**scrubber**:
+The time-travel UI that walks the journal and snapshots to reconstruct and preview any past workspace state — the "time machine" half of undo. ⌘Z is the "comfortable" half.
+_Avoid_: timeline, history view, time slider
+
+**draft**:
+An ephemeral untitled document — recorded and snapshotted for recovery under a synthetic identity, with no file on disk until it is named or saved. Empty drafts are clean; non-empty drafts are recoverable.
+_Avoid_: scratch buffer, temp file, new-file buffer
+
 ## Boundaries
 
 ### textedit owns
-- `buffer.Buffer`, `cursor.CursorSet`, `history.UndoStack`
-- Command system (insert, delete, newline, clipboard, undo/redo, navigation, multi-cursor, mouse)
+- `buffer.Buffer`, `cursor.CursorSet` — no undo stack; undo/redo is the workspace journal
+- Command system (insert, delete, newline, clipboard, navigation, multi-cursor, mouse)
 - Viewport state and scrolling (`scrollToCursor`, `scrollToBottom`)
 - `SetSize(w,h)`, `Height()`, `SetFocused(bool)`, `SetReadOnly(bool)`
 - Generic cell rendering (span→cell→overlay→string)
@@ -81,7 +99,8 @@ _Avoid_: view rendering, span rendering, output rendering
 - FrontmatterMode setting and YAML validation
 
 ### workspace owns
-- File I/O (load, save, rename)
+- File I/O (load, autosave, rename) and the docstate persistence layer (snapshots)
+- The undo/redo journal — the in-memory, whole-workspace event timeline that drives undo through every textedit instance
 - Title textedit instance (sibling of markdownedit, not nested)
 - Breadcrumb component
 - Layout orchestration: title → markdownedit → breadcrumb overlay
@@ -104,4 +123,4 @@ _Avoid_: view rendering, span rendering, output rendering
 
 **Dynamic height** — textedit exposes `ContentHeight(width int) int` for natural height queries. Parent (chat) clamps: `clamp(raw, min, max)` and allocates via `SetSize`.
 
-**Command/API split** — textedit owns editing, navigation, multi-cursor, clipboard, history/undo, mouse. markdownedit adds images, link resolution, code highlighting (via SyncFunc). File commands and dictation are workspace/separate-omponent concerns.
+**Command/API split** — textedit owns editing, navigation, multi-cursor, clipboard, mouse (undo/redo is the workspace journal). markdownedit adds images, link resolution, code highlighting (via SyncFunc). File commands and dictation are workspace/separate-omponent concerns.
