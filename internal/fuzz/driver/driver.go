@@ -1,0 +1,128 @@
+//go:build fuzzing
+
+package driver
+
+import (
+	"reflect"
+
+	tea "charm.land/bubbletea/v2"
+
+	"rune/internal/fuzz/event"
+	"rune/internal/fuzz/invariant"
+	"rune/pkg/docstate"
+	"rune/pkg/ui/components/textedit"
+	"rune/pkg/ui/pages/workspace"
+)
+
+// cmdSliceType is used for reflection-based detection of sequenceMsg.
+var cmdSliceType = reflect.TypeOf([]tea.Cmd(nil))
+
+// asCmdSlice detects messages that are a []tea.Cmd under the hood.
+// This catches both the exported tea.BatchMsg and the unexported sequenceMsg.
+func asCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
+	if msg == nil {
+		return nil, false
+	}
+	// Fast path: exported BatchMsg
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		return []tea.Cmd(batch), true
+	}
+	// Reflection: catch unexported sequenceMsg (underlying type []tea.Cmd)
+	rv := reflect.ValueOf(msg)
+	if rv.IsValid() && rv.Type().ConvertibleTo(cmdSliceType) {
+		return rv.Convert(cmdSliceType).Interface().([]tea.Cmd), true
+	}
+	return nil, false
+}
+
+// Run bootstraps a workspace.Model with the given store, drives it through events,
+// and returns the first invariant Violation found (or nil), the frozen frame string,
+// and the cell grid snapshot at the moment of violation.
+//
+// Bootstrap sequence:
+//  1. WindowSizeMsg{w, h} → drain
+//  2. model.Init() → drain
+//  3. StoreReadyMsg{Store: store} → drain
+//  4. Feed events one by one → drain after each
+//
+// CheckInvariants is called after every settled message (after full cmd drain).
+func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
+	frozenFrame := ""
+	var frozenCells [][]textedit.Cell
+
+	var drainMsg func(m workspace.Model, msg tea.Msg) (workspace.Model, *invariant.Violation)
+	var drainCmd func(m workspace.Model, cmd tea.Cmd) (workspace.Model, *invariant.Violation)
+
+	drainMsg = func(m workspace.Model, msg tea.Msg) (workspace.Model, *invariant.Violation) {
+		m, cmd := m.Update(msg)
+		// Check invariants after each settled update
+		snap := m.FuzzInspect()
+		if v := invariant.CheckInvariants(snap); v != nil {
+			frozenFrame = m.View().Content
+			frozenCells = snap.Cells
+			return m, v
+		}
+		if cmd == nil {
+			return m, nil
+		}
+		return drainCmd(m, cmd)
+	}
+
+	drainCmd = func(m workspace.Model, cmd tea.Cmd) (workspace.Model, *invariant.Violation) {
+		msg := cmd()
+		if msg == nil {
+			return m, nil
+		}
+		// Detect BatchMsg and sequenceMsg (both []tea.Cmd underneath)
+		if cmds, ok := asCmdSlice(msg); ok {
+			for _, c := range cmds {
+				if c == nil {
+					continue
+				}
+				var v *invariant.Violation
+				m, v = drainCmd(m, c)
+				if v != nil {
+					return m, v
+				}
+			}
+			return m, nil
+		}
+		return drainMsg(m, msg)
+	}
+
+	// Step 1: WindowSizeMsg
+	var v *invariant.Violation
+	model, v = drainMsg(model, tea.WindowSizeMsg{Width: w, Height: h})
+	if v != nil {
+		return v, frozenFrame, frozenCells
+	}
+
+	// Step 2: Init()
+	initCmd := model.Init()
+	if initCmd != nil {
+		model, v = drainCmd(model, initCmd)
+		if v != nil {
+			return v, frozenFrame, frozenCells
+		}
+	}
+
+	// Step 3: Inject store
+	model, v = drainMsg(model, workspace.StoreReadyMsg{Store: store})
+	if v != nil {
+		return v, frozenFrame, frozenCells
+	}
+
+	// Step 4: Drive events
+	for _, ev := range events {
+		msg := eventToMsg(ev)
+		if msg == nil {
+			continue
+		}
+		model, v = drainMsg(model, msg)
+		if v != nil {
+			return v, frozenFrame, frozenCells
+		}
+	}
+
+	return nil, "", nil
+}

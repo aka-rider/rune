@@ -12,8 +12,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/fsnotify/fsnotify"
-
 	dictengine "rune/pkg/dictation"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
@@ -351,16 +349,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func openStoreCmd() tea.Cmd {
-	return func() tea.Msg {
-		store, warn, err := docstate.Open()
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("open storage: %w", err)}
-		}
-		return StoreReadyMsg{Store: store, Warning: warn}
-	}
-}
-
 // startSave begins a save operation for the current file (D12, D13).
 func (m Model) startSave() (Model, tea.Cmd) {
 	if m.filePath == "" || m.activeSave.InFlight {
@@ -481,7 +469,7 @@ func (m Model) scheduleFlush(cmds *[]tea.Cmd) Model {
 	content := m.editor.Content()
 	if store != nil && docID > 0 {
 		*cmds = append(*cmds, func() tea.Msg {
-			time.Sleep(2 * time.Second)
+			time.Sleep(flushDelay)
 			// snapshot in background
 			if _, err := store.CreateSnapshot(docID, content, "local"); err != nil {
 				// non-fatal: snapshot failed
@@ -1272,55 +1260,6 @@ func readDirEntries(dir string) ([]filetree.Entry, error) {
 		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
 	})
 	return entries, nil
-}
-
-func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
-	return func() tea.Msg {
-		watcher, err := fsnotify.NewWatcher()
-		if err != nil {
-			return nil // fire-and-forget: watcher creation failed
-		}
-		defer watcher.Close()
-
-		if err := watcher.Add(dir); err != nil {
-			return nil // fire-and-forget: dir may have been removed
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return nil
-				}
-				if event.Has(fsnotify.Create) || event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-					timer := time.NewTimer(50 * time.Millisecond)
-				drain:
-					for {
-						select {
-						case <-ctx.Done():
-							timer.Stop()
-							return nil
-						case <-timer.C:
-							break drain
-						case _, ok := <-watcher.Events:
-							if !ok {
-								break drain
-							}
-							timer.Reset(50 * time.Millisecond)
-						}
-					}
-					return dirChangedMsg{}
-				}
-			case _, ok := <-watcher.Errors:
-				if !ok {
-					return nil
-				}
-				return nil // fire-and-forget: watcher error
-			}
-		}
-	}
 }
 
 func (m Model) startWatch(dir string) (Model, tea.Cmd) {

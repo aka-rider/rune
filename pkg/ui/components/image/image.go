@@ -224,13 +224,6 @@ func (m Model) Path() string {
 }
 
 // Animation helpers
-func (m Model) scheduleFrame(gen, next int, d time.Duration) tea.Cmd {
-	p, g, n, dur := m.path, gen, next, d
-	return tea.Tick(dur, func(time.Time) tea.Msg {
-		return UpdateMsg{Path: p, inner: frameTickMsg{path: p, gen: g, next: n}}
-	})
-}
-
 func (m Model) ArmTick() (Model, tea.Cmd) {
 	if !m.animated || m.state != Live || m.frameCount <= 1 {
 		return m, nil

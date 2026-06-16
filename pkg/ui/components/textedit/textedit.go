@@ -832,19 +832,12 @@ func (m Model) syncDisplay() Model {
 
 // ---- View ----
 
-func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-
-	contentHeight := m.contentHeight()
-
-	// Vertical slice only — horizontal scrolling is done at cell level
+// renderCells builds the 2D cell grid for the given content height.
+// It is called by both View() and the gated FuzzCells() accessor so the
+// fuzzer checks exactly what the terminal renders — no drift.
+func (m Model) renderCells(contentHeight int) [][]Cell {
 	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
 
-	// Collect cursor byte offsets and selection intervals for rendering.
-	cursorStyle := lipgloss.NewStyle().Reverse(true)
-	selStyle := m.styles.Selection
 	cursorOffsets := make(map[int]bool)
 	var selections []SelInterval
 	if m.focused && !m.readOnly {
@@ -864,7 +857,7 @@ func (m Model) View() string {
 		}
 	}
 
-	var renderedLines []string
+	result := make([][]Cell, len(lines))
 	for i, l := range lines {
 		// Convert all spans to cells
 		var lineCells []Cell
@@ -904,7 +897,24 @@ func (m Model) View() string {
 			ApplyOverlays(lineCells, cursorOffsets, selections)
 		}
 
-		// Stringify
+		result[i] = lineCells
+	}
+	return result
+}
+
+func (m Model) View() string {
+	if m.width == 0 || m.height == 0 {
+		return ""
+	}
+
+	contentHeight := m.contentHeight()
+	cells := m.renderCells(contentHeight)
+
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
+	selStyle := m.styles.Selection
+
+	var renderedLines []string
+	for _, lineCells := range cells {
 		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle))
 	}
 

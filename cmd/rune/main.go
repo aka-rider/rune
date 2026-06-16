@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 
 	ui "rune/pkg/ui"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
@@ -51,8 +49,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(app)
-	if _, err := p.Run(); err != nil {
+	if err := run(app); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

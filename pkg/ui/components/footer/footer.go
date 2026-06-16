@@ -188,7 +188,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.errorExpireID++
 		id := m.errorExpireID
 		return m, func() tea.Msg {
-			time.Sleep(5 * time.Second)
+			time.Sleep(errorDismissDelay)
 			return errorDismissedMsg{id: id}
 		}
 
@@ -202,7 +202,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 func startConfirmTimer() tea.Cmd {
 	return func() tea.Msg {
-		time.Sleep(2 * time.Second)
+		time.Sleep(confirmDelay)
 		return confirmExpired{}
 	}
 }

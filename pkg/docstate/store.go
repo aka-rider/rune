@@ -173,6 +173,81 @@ func Open() (*Store, string, error) {
 	}, warning, nil
 }
 
+// OpenInMemory creates a Store with both perm and mem databases in :memory:.
+// Useful for testing and fuzzing — no disk I/O, no path threading required.
+func OpenInMemory(clock func() time.Time) (*Store, error) {
+	perm, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		return nil, fmt.Errorf("open in-memory perm db: %w", err)
+	}
+	if err := initPermSchema(perm); err != nil {
+		perm.Close()
+		return nil, fmt.Errorf("init in-memory perm schema: %w", err)
+	}
+
+	mem, err := openMem()
+	if err != nil {
+		perm.Close()
+		return nil, err
+	}
+
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Store{
+		perm:       perm,
+		mem:        mem,
+		clock:      clock,
+		currentSeq: math.MaxInt64,
+	}, nil
+}
+
+// OpenAt creates a Store backed by baseDir/rune.db plus an in-memory journal.
+// Intended for Phase-2 DATA-LOSS invariants that need real files.
+func OpenAt(baseDir string) (*Store, string, error) {
+	permPath := filepath.Join(baseDir, "rune.db")
+
+	perm, permErr := openPerm(permPath)
+	if permErr != nil {
+		if mkErr := os.MkdirAll(baseDir, 0o700); mkErr == nil {
+			perm, permErr = openPerm(permPath)
+		}
+	}
+
+	var warning string
+	if permErr != nil {
+		var err error
+		perm, err = sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			return nil, "", fmt.Errorf("open fallback perm db: %w", err)
+		}
+		if err := initPermSchema(perm); err != nil {
+			perm.Close()
+			return nil, "", fmt.Errorf("init fallback perm schema: %w", err)
+		}
+		warning = "history disabled — storage unavailable"
+	}
+
+	mem, err := openMem()
+	if err != nil {
+		perm.Close()
+		return nil, "", err
+	}
+
+	return &Store{
+		perm:       perm,
+		mem:        mem,
+		clock:      time.Now,
+		currentSeq: math.MaxInt64,
+	}, warning, nil
+}
+
+// SetClock replaces the Store's clock function. Used to inject a logical clock
+// for deterministic fuzzing (300 ms coalesce window is clock-driven).
+func (s *Store) SetClock(clock func() time.Time) {
+	s.clock = clock
+}
+
 // NewTestStore opens a Store suitable for tests: perm backed by a temp file,
 // journal in :memory:. The store is closed automatically via t.Cleanup.
 func NewTestStore(t *testing.T) *Store {
