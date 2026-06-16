@@ -299,8 +299,5 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.CopyToClipboard, "clipboard.copy", "editorFocused")
 	add(b.CutToClipboard, "clipboard.cut", "editorFocused && !readOnly")
 	add(b.PasteFromClipboard, "clipboard.paste", "editorFocused && !readOnly")
-	add(b.Undo, "history.undo", "editorFocused && !readOnly")
-	add(b.Redo, "history.redo", "editorFocused && !readOnly")
-
 	return mappings, parseErr
 }

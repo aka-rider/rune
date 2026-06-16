@@ -2,7 +2,6 @@ package textedit
 
 import (
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -208,7 +207,7 @@ func buildDeleteEdits(buf buffer.Buffer, cursors cursor.CursorSet) ([]buffer.Edi
 }
 
 // handlePasteContent is phase 2: apply the clipboard text as edits.
-func (m Model) handlePasteContent(text string, now time.Time) (Model, tea.Cmd) {
+func (m Model) handlePasteContent(text string) (Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
@@ -288,7 +287,7 @@ func (m Model) handlePasteContent(text string, now time.Time) (Model, tea.Cmd) {
 		Cursors: cursor.NewCursorSetFrom(newCursors),
 	}
 
-	m = m.applyOperation(command.Result{Operation: op}, "clipboard.paste", now)
+	m = m.applyOperation(command.Result{Operation: op}, "clipboard.paste")
 	m = m.syncDisplay()
 	m = m.ScrollToCursor()
 	return m, nil

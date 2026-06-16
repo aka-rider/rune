@@ -6,6 +6,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/command"
+	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/imagekit"
@@ -87,11 +89,29 @@ func (m Model) GotoBottom() Model {
 	return m
 }
 
-// UndoForTest shadows textedit.Model.UndoForTest to return markdownedit.Model.
-// Intended for use in workspace tests only.
-func (m Model) UndoForTest() Model {
-	m.Model = m.Model.UndoForTest()
+// DrainEdits shadows textedit.Model.DrainEdits to return markdownedit.Model.
+func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
+	var edits []buffer.AppliedEdit
+	m.Model, edits = m.Model.DrainEdits()
+	return m, edits
+}
+
+// SetCursors shadows textedit.Model.SetCursors to return markdownedit.Model.
+func (m Model) SetCursors(cs []cursor.Cursor) Model {
+	m.Model = m.Model.SetCursors(cs)
 	return m
+}
+
+// ApplyInverse shadows textedit.Model.ApplyInverse, also running afterContentChange.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, tea.Cmd) {
+	m.Model = m.Model.ApplyInverse(edits)
+	return m.afterContentChange()
+}
+
+// Reapply shadows textedit.Model.Reapply, also running afterContentChange.
+func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, tea.Cmd) {
+	m.Model = m.Model.Reapply(edits)
+	return m.afterContentChange()
 }
 
 // Update is the outermost wrapper: routes the message, then emits inline

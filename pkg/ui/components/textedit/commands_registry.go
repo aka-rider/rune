@@ -24,10 +24,6 @@ func RegisterCommands(builder command.Builder) (command.Builder, error) {
 	if err != nil {
 		return builder, err
 	}
-	builder, err = registerHistoryCommands(builder)
-	if err != nil {
-		return builder, err
-	}
 	builder, err = registerClipboardCommands(builder)
 	if err != nil {
 		return builder, err

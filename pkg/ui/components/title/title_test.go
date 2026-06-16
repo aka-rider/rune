@@ -328,7 +328,7 @@ func TestTitle_CmdZDoesNotPrintZ(t *testing.T) {
 	m = m.SetText("hello")
 
 	// Simulate Cmd+Z (undo): ModSuper + 'z' — must not insert 'z'.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper, Text: "z"})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper})
 	if m.Text() != "hello" {
 		t.Errorf("Cmd+Z must not insert 'z', got %q", m.Text())
 	}
@@ -339,7 +339,7 @@ func TestTitle_CtrlZDoesNotPrintZ(t *testing.T) {
 	m = m.SetFocused(true)
 	m = m.SetText("hello")
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl, Text: "z"})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	if m.Text() != "hello" {
 		t.Errorf("Ctrl+Z must not insert 'z', got %q", m.Text())
 	}

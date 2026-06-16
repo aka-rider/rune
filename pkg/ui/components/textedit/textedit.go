@@ -2,7 +2,6 @@ package textedit
 
 import (
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,7 +13,6 @@ import (
 	"rune/pkg/editor/coords"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
-	"rune/pkg/editor/history"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
@@ -50,7 +48,7 @@ type SanitizeFunc func(s string) string
 type Model struct {
 	buf              buffer.Buffer
 	cursors          cursor.CursorSet
-	history          history.UndoStack
+	pendingEdits     []buffer.AppliedEdit
 	softWrap         bool
 	indent           IndentConfig
 	syntaxMap        display.SyntaxMap
@@ -141,7 +139,6 @@ func New(keys keymap.Bindings, st styles.Styles, opts ...Option) Model {
 	m := Model{
 		buf:          buffer.New(""),
 		cursors:      cursor.NewCursorSet(0),
-		history:      history.New(time.Now),
 		softWrap:     true,
 		indent:       IndentConfig{UseTabs: false, TabSize: 4},
 		resolver:     resolver,
@@ -170,7 +167,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Text, time.Now())
+		m, cmd = m.handlePasteContent(msg.Text)
 		return m, cmd
 
 	case tea.ClipboardMsg:
@@ -178,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Content, time.Now())
+		m, cmd = m.handlePasteContent(msg.Content)
 		return m, cmd
 
 	case tea.PasteMsg:
@@ -186,7 +183,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Content, time.Now())
+		m, cmd = m.handlePasteContent(msg.Content)
 		return m, cmd
 
 	case tea.WindowSizeMsg:
@@ -224,24 +221,6 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		}
 	}
 
-	// Undo: Cmd+Z (no resolver binding)
-	if key.Matches(msg, m.keys.Undo) {
-		m, cmd := m.applyUndo()
-		m = m.syncDisplay()
-		m = m.ScrollToCursor()
-		*cmds = append(*cmds, cmd)
-		return m, tea.Batch(*cmds...)
-	}
-
-	// Redo: Cmd+Shift+Z (no resolver binding)
-	if key.Matches(msg, m.keys.Redo) {
-		m, cmd := m.applyRedo()
-		m = m.syncDisplay()
-		m = m.ScrollToCursor()
-		*cmds = append(*cmds, cmd)
-		return m, tea.Batch(*cmds...)
-	}
-
 	// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
 	if msg.Code == tea.KeyEnter && msg.Mod == 0 {
 		if m.singleLine {
@@ -254,7 +233,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		}
 		res := m.registry.Execute("edit.newline", ctx)
 		if res.Err == nil {
-			m = m.applyOperation(res, "edit.newline", time.Now())
+			m = m.applyOperation(res, "edit.newline")
 			m = m.syncDisplay()
 			m = m.ScrollToCursor()
 			return m, tea.Batch(*cmds...)
@@ -269,7 +248,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		}
 		res := m.registry.Execute("multicursor.escape", ctx)
 		if res.Err == nil && res.Operation.Kind != command.OperationNone {
-			m = m.applyOperation(res, "multicursor.escape", time.Now())
+			m = m.applyOperation(res, "multicursor.escape")
 			m = m.syncDisplay()
 			m = m.ScrollToCursor()
 			return m, tea.Batch(*cmds...)
@@ -319,7 +298,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		if res.Cmd != nil {
 			*cmds = append(*cmds, res.Cmd)
 		}
-		m = m.applyOperation(res, resResult.Command, time.Now())
+		m = m.applyOperation(res, resResult.Command)
 		m = m.syncDisplay()
 		m = m.ScrollToCursor()
 	case keybind.ResultMoreChordsNeeded:
@@ -346,7 +325,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 				Args:    map[string]any{"char": text},
 			})
 			if res.Err == nil && res.Operation.Kind != command.OperationNone {
-				m = m.applyOperation(res, "edit.insert-character", time.Now())
+				m = m.applyOperation(res, "edit.insert-character")
 				m = m.syncDisplay()
 				m = m.ScrollToCursor()
 			}
@@ -447,10 +426,77 @@ func (m Model) SetContent(content string) Model {
 	}
 	m.buf = b
 	m.cursors = cursor.NewCursorSet(0)
+	m.pendingEdits = nil
 	m.viewport.TopRow = 0
 	m.viewport.ScrollCol = 0
 	m = m.syncDisplay()
 	m = m.clampScroll()
+	return m
+}
+
+// DrainEdits returns and clears pending edits accumulated since last drain.
+func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
+	edits := m.pendingEdits
+	m.pendingEdits = nil
+	return m, edits
+}
+
+// Cursors returns the current cursor/selection state.
+func (m Model) Cursors() []cursor.Cursor {
+	return m.cursors.All()
+}
+
+// SetCursors restores cursor state and scrolls to the primary cursor.
+func (m Model) SetCursors(cs []cursor.Cursor) Model {
+	if len(cs) > 0 {
+		m.cursors = cursor.NewCursorSetFrom(cs)
+		m = m.ScrollToCursor()
+	}
+	return m
+}
+
+// ApplyInverse applies the inverse of the given edits (undo).
+// Does NOT accumulate into pendingEdits.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
+	inverse := make([]buffer.Edit, len(edits))
+	for i, ae := range edits {
+		inverse[i] = buffer.Edit{
+			Start:  ae.Start,
+			End:    ae.Start + len(ae.Insert),
+			Insert: ae.Deleted,
+		}
+	}
+	inverse = buffer.CloneAndSortEditsDescending(inverse)
+	newBuf, _, err := m.buf.ApplyEdits(inverse)
+	if err == nil {
+		m.buf = newBuf
+	}
+	m.rev++
+	m = m.syncDisplay()
+	return m
+}
+
+// Reapply applies the given edits forward (redo).
+// Does NOT accumulate into pendingEdits.
+func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
+	fwdEdits := make([]buffer.Edit, len(edits))
+	cumulativeShift := 0
+	for i := len(edits) - 1; i >= 0; i-- {
+		ae := edits[i]
+		originalStart := ae.Start - cumulativeShift
+		fwdEdits[i] = buffer.Edit{
+			Start:  originalStart,
+			End:    originalStart + len(ae.Deleted),
+			Insert: ae.Insert,
+		}
+		cumulativeShift += len(ae.Insert) - len(ae.Deleted)
+	}
+	newBuf, _, err := m.buf.ApplyEdits(fwdEdits)
+	if err == nil {
+		m.buf = newBuf
+	}
+	m.rev++
+	m = m.syncDisplay()
 	return m
 }
 
@@ -683,14 +729,7 @@ func (m Model) ReplaceRange(start, end int, text string) Model {
 		return m
 	}
 	m.buf = newBuf
-	group := history.EditGroup{
-		Edits:         applied,
-		CursorsBefore: m.cursors.All(),
-		CursorsAfter:  m.cursors.All(),
-		Timestamp:     time.Now(),
-		Kind:          history.EditBatch,
-	}
-	m.history = m.history.Push(group)
+	m.pendingEdits = append(m.pendingEdits, applied...)
 	m.cursors = cursor.NewCursorSet(start + utf8.RuneCountInString(text))
 	m.rev++
 	m = m.syncDisplay()
@@ -741,16 +780,8 @@ func (m Model) ImageMaxCols() int {
 
 // ---- applyOperation (generic, no image/save handling) ----
 
-func (m Model) applyOperation(result command.Result, cmdName string, now time.Time) Model {
-	if result.Operation.Kind == command.OperationHistory {
-		switch cmdName {
-		case "history.undo":
-			m, _ = m.applyUndo()
-		case "history.redo":
-			m, _ = m.applyRedo()
-		}
-		return m
-	}
+func (m Model) applyOperation(result command.Result, cmdName string) Model {
+	_ = cmdName // retained for future use (e.g., logging, metrics)
 
 	if result.Operation.Kind == command.OperationScroll {
 		m.viewport.TopRow += result.Operation.ScrollDY
@@ -768,104 +799,16 @@ func (m Model) applyOperation(result command.Result, cmdName string, now time.Ti
 	}
 
 	if len(result.Operation.Edits) > 0 {
-		cursorsBefore := m.cursors.All()
 		newBuf, applied, err := m.buf.ApplyEdits(result.Operation.Edits)
 		if err == nil {
 			m.buf = newBuf
-			group := history.EditGroup{
-				Edits:         applied,
-				CursorsBefore: cursorsBefore,
-				CursorsAfter:  result.Operation.Cursors.All(),
-				Timestamp:     now,
-				Kind:          m.editKindFromCommand(cmdName),
-			}
-			coalesce := m.history.ShouldCoalesce(group.Kind, now)
-			if coalesce && group.Kind == history.EditInsertChar {
-				// Check if whitespace-only
-				for _, ae := range applied {
-					for _, r := range ae.Insert {
-						if r != ' ' && r != '\t' && r != '\n' && r != '\r' {
-							coalesce = false
-							break
-						}
-					}
-					if !coalesce {
-						break
-					}
-				}
-			}
-			if coalesce {
-				m.history = m.history.MergeIntoLast(applied, result.Operation.Cursors.All())
-			} else {
-				m.history = m.history.Push(group)
-			}
+			m.pendingEdits = append(m.pendingEdits, applied...)
 		}
 	}
 
 	m.cursors = result.Operation.Cursors
 	m.rev++
 	return m
-}
-
-func (m Model) applyUndo() (Model, tea.Cmd) {
-	newHist, group, ok := m.history.Undo()
-	if !ok {
-		return m, nil
-	}
-	m.history = newHist
-
-	inverse := make([]buffer.Edit, len(group.Edits))
-	for i, ae := range group.Edits {
-		inverse[i] = buffer.Edit{
-			Start: ae.Start,
-			End:   ae.Start + len(ae.Insert),
-			Insert: ae.Deleted,
-		}
-	}
-	inverse = buffer.CloneAndSortEditsDescending(inverse)
-
-	newBuf, _, err := m.buf.ApplyEdits(inverse)
-	if err == nil {
-		m.buf = newBuf
-	}
-
-	if len(group.CursorsBefore) > 0 {
-		m.cursors = cursor.NewCursorSetFrom(group.CursorsBefore)
-	}
-	m.rev++
-	return m, nil
-}
-
-func (m Model) applyRedo() (Model, tea.Cmd) {
-	newHist, group, ok := m.history.Redo()
-	if !ok {
-		return m, nil
-	}
-	m.history = newHist
-
-	edits := make([]buffer.Edit, len(group.Edits))
-	cumulativeShift := 0
-	for i := len(group.Edits) - 1; i >= 0; i-- {
-		ae := group.Edits[i]
-		originalStart := ae.Start - cumulativeShift
-		edits[i] = buffer.Edit{
-			Start:  originalStart,
-			End:    originalStart + len(ae.Deleted),
-			Insert: ae.Insert,
-		}
-		cumulativeShift += len(ae.Insert) - len(ae.Deleted)
-	}
-
-	newBuf, _, err := m.buf.ApplyEdits(edits)
-	if err == nil {
-		m.buf = newBuf
-	}
-
-	if len(group.CursorsAfter) > 0 {
-		m.cursors = cursor.NewCursorSetFrom(group.CursorsAfter)
-	}
-	m.rev++
-	return m, nil
 }
 
 func (m Model) syncDisplay() Model {
@@ -885,25 +828,6 @@ func (m Model) syncDisplay() Model {
 	m.snapshot = display.BuildSnapshot(m.wrapSnap)
 	m.snapshot = display.ExpandTableRows(m.snapshot)
 	return m
-}
-
-func (m Model) editKindFromCommand(cmdName string) history.EditKind {
-	switch cmdName {
-	case "edit.insert-character":
-		return history.EditInsertChar
-	case "edit.delete-left", "edit.delete-right":
-		return history.EditDeleteChar
-	case "edit.newline":
-		return history.EditNewline
-	case "clipboard.paste":
-		return history.EditPaste
-	case "edit.move-line-up", "edit.move-line-down":
-		return history.EditMoveLine
-	case "edit.clone-line-up", "edit.clone-line-down":
-		return history.EditCloneLine
-	default:
-		return history.EditBatch
-	}
 }
 
 // ---- View ----
@@ -1006,15 +930,6 @@ func (m Model) View() string {
 // Rect holds position and size for offset-bearing components.
 type Rect struct {
 	X, Y, W, H int
-}
-
-// ---- Test helpers ----
-
-// UndoForTest performs a single undo step and returns the updated model.
-// Intended for use in package-internal tests only.
-func (m Model) UndoForTest() Model {
-	m, _ = m.applyUndo()
-	return m
 }
 
 // ---- Helpers ----

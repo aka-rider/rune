@@ -10,6 +10,8 @@ import (
 
 	"rune/pkg/ai"
 	"rune/pkg/command"
+	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/markdownedit"
@@ -101,6 +103,47 @@ func (m Model) SetFocused(f bool) Model {
 }
 
 func (m Model) Focused() bool { return m.focused }
+
+// DrainEdits forwards to the prompt, returning chat.Model (only prompt is journaled).
+func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
+	var edits []buffer.AppliedEdit
+	m.prompt, edits = m.prompt.DrainEdits()
+	return m, edits
+}
+
+// Cursors returns the cursor state of the prompt.
+func (m Model) Cursors() []cursor.Cursor {
+	return m.prompt.Cursors()
+}
+
+// ApplyInverse applies inverse edits to the prompt (workspace-driven undo).
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
+	m.prompt = m.prompt.ApplyInverse(edits)
+	return m
+}
+
+// Reapply applies edits forward to the prompt (workspace-driven redo).
+func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
+	m.prompt = m.prompt.Reapply(edits)
+	return m
+}
+
+// SetCursors restores cursor state on the prompt.
+func (m Model) SetCursors(cs []cursor.Cursor) Model {
+	m.prompt = m.prompt.SetCursors(cs)
+	return m
+}
+
+// PromptContent returns the current prompt text.
+func (m Model) PromptContent() string {
+	return m.prompt.Content()
+}
+
+// SetPromptContent replaces the prompt text (for draft restoration).
+func (m Model) SetPromptContent(s string) Model {
+	m.prompt = m.prompt.SetContent(s)
+	return m
+}
 
 // ApplyToPrompt replaces the range [start, end) in the prompt with text.
 // Called by the workspace to route dictation chunks (D16).

@@ -4,8 +4,11 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 
+	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/cursor"
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
@@ -29,6 +32,7 @@ type Model struct {
 	focused     bool
 	width       int
 	styles      styles.Styles
+	keys        keymap.Bindings
 }
 
 func New(placeholder string, keys keymap.Bindings, st styles.Styles, opts ...textedit.Option) Model {
@@ -41,6 +45,7 @@ func New(placeholder string, keys keymap.Bindings, st styles.Styles, opts ...tex
 		committed:   placeholder,
 		placeholder: placeholder,
 		styles:      st,
+		keys:        keys,
 	}
 }
 
@@ -99,6 +104,36 @@ func (m Model) FocusAndSelectAll() Model {
 	m.focused = true
 	m.field = m.field.SetFocused(true)
 	m.field = m.field.MouseSelectLine(0)
+	return m
+}
+
+// DrainEdits forwards to the underlying field, returning title.Model.
+func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
+	var edits []buffer.AppliedEdit
+	m.field, edits = m.field.DrainEdits()
+	return m, edits
+}
+
+// Cursors returns the cursor state of the underlying field.
+func (m Model) Cursors() []cursor.Cursor {
+	return m.field.Cursors()
+}
+
+// ApplyInverse applies inverse edits to the underlying field (workspace-driven undo).
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
+	m.field = m.field.ApplyInverse(edits)
+	return m
+}
+
+// Reapply applies edits forward to the underlying field (workspace-driven redo).
+func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
+	m.field = m.field.Reapply(edits)
+	return m
+}
+
+// SetCursors restores cursor state on the underlying field.
+func (m Model) SetCursors(cs []cursor.Cursor) Model {
+	m.field = m.field.SetCursors(cs)
 	return m
 }
 
@@ -192,6 +227,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.field = m.field.SetFocused(false)
 		m.focused = false
 		return m, func() tea.Msg { return FocusReturnMsg{} }
+	}
+
+	// Undo/Redo are handled at the workspace level. Consume them here so
+	// they never reach the textedit field (which would insert 'z' or 'y').
+	if key.Matches(msg, m.keys.Undo) || key.Matches(msg, m.keys.Redo) {
+		return m, nil
 	}
 
 	// Filter invalid filename chars from text input.

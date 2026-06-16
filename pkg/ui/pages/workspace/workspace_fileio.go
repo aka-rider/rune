@@ -36,19 +36,6 @@ type FileSaveErrorMsg struct {
 	Err       error
 }
 
-// FileChangedOnDiskMsg is emitted by the file watcher when external changes are detected.
-type FileChangedOnDiskMsg struct {
-	Path       string
-	NewContent []byte
-}
-
-// FileMergedMsg is emitted after a 3-way merge completes.
-type FileMergedMsg struct {
-	Path       string
-	Content    []byte
-	Conflicted bool
-}
-
 // FileRenamedMsg is returned after a successful file rename.
 type FileRenamedMsg struct {
 	OldPath string
