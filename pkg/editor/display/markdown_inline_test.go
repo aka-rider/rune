@@ -1,6 +1,7 @@
 package display_test
 
 import (
+	"strings"
 	"testing"
 
 	"rune/pkg/editor/buffer"
@@ -972,6 +973,40 @@ func TestSyntaxMap_CoordinateRoundTrip_MultiByteBold(t *testing.T) {
 					col, bp2, sp2, bp3)
 			}
 		}
+	}
+}
+
+// TestSyntaxMap_InlineSpanAtLineEnd_NoNewline verifies that inline spans at
+// the end of a task line do not carry a trailing \n in their Text field.
+// This exercises extractChildText's SoftLineBreak handling.
+func TestSyntaxMap_InlineSpanAtLineEnd_NoNewline(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		kind    display.TokenKind
+		want    string
+	}{
+		{"bold at end", "- [x] **done**\nnext", display.TokenBold, "done"},
+		{"italic at end", "- [x] *done*\nnext", display.TokenItalic, "done"},
+		{"code at end", "- [x] `done`\nnext", display.TokenInlineCode, "done"},
+		{"link at end", "- [x] [done](url)\nnext", display.TokenLink, "done"},
+	}
+	sMap := display.NewSyntaxMap()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := buffer.New(tc.content)
+			_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
+			for _, sp := range snap.Lines[0].Spans {
+				if sp.Kind == tc.kind {
+					if strings.Contains(sp.Text, "\n") {
+						t.Errorf("span Text contains \\n: %q", sp.Text)
+					}
+					if sp.Text != tc.want {
+						t.Errorf("Text = %q, want %q", sp.Text, tc.want)
+					}
+				}
+			}
+		})
 	}
 }
 

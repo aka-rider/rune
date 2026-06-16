@@ -45,6 +45,10 @@ func revealedSpanToCells(text string, bufStart int, style lipgloss.Style) []Cell
 			size = 1
 			r = utf8.RuneError
 		}
+		if r == '\n' || r == '\r' {
+			pos += size
+			continue
+		}
 		w := runewidth.RuneWidth(r)
 		if w == 0 {
 			w = 1
@@ -70,6 +74,11 @@ func renderedSpanToCells(text string, cm []display.CellMapping, style lipgloss.S
 		if size == 0 {
 			size = 1
 			r = utf8.RuneError
+		}
+		if r == '\n' || r == '\r' {
+			pos += size
+			mapIdx++
+			continue
 		}
 		w := runewidth.RuneWidth(r)
 		if w == 0 {
