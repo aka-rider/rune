@@ -164,6 +164,12 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		initialFiles: initialFiles,
 		initErr:      initErr,
 	}
+	if len(initialFiles) == 0 {
+		// No files to open — register the initial untitled tab so the tab bar
+		// is never empty and CreateUntitled(true) has a "" tab to rename.
+		m, _ = m.CreateUntitled(false)
+		m.focus = paneTree // CreateUntitled sets paneCenter; restore startup default
+	}
 	m = m.syncDictationAllowed()
 	m = m.applyFocus() // project initial focus so paneTree reaches the filetree at launch
 	return m
@@ -378,10 +384,11 @@ func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
 }
 
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
-	if m.filePath == "" {
+	nextPath := m.opentabs.NextPath(m.filePath)
+	if m.filePath == "" && nextPath == "" {
+		// Sole untitled tab — nothing to switch to; keep it.
 		return m, nil
 	}
-	nextPath := m.opentabs.NextPath(m.filePath)
 	return m.executeClose(m.filePath, nextPath)
 }
 
@@ -391,9 +398,10 @@ func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 	if nextPath != "" {
 		cmds = append(cmds, loadFileCmd(context.Background(), nextPath))
 	} else {
-		// Last tab closed — reset to a fresh untitled buffer
+		// Last tab closed — reset to a fresh untitled buffer (no auto-save;
+		// the user explicitly chose to close the buffer).
 		var createCmd tea.Cmd
-		m, createCmd = m.CreateUntitled()
+		m, createCmd = m.CreateUntitled(false)
 		cmds = append(cmds, createCmd)
 	}
 	return m, tea.Batch(cmds...)
@@ -681,14 +689,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m = m.syncDictationAllowed()
 
 		case key.Matches(msg, m.keys.CreateNewFile):
+			prevFocus := m.focus
 			var ok bool
-			m, cmd, ok = m.maybeFinalizeTitle()
-			cmds = append(cmds, cmd)
+			var titleCmd tea.Cmd
+			m, titleCmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, titleCmd)
 			if !ok {
 				return m.finalize(cmds)
 			}
 			if m.filePath != "" || m.editor.Content() != "" {
-				m, cmd = m.CreateUntitled()
+				// titleCmd is non-nil only when the title pane was focused and
+				// the user had edited the name: a RenameRequestMsg is in flight
+				// and will create the file. Skip auto-save in that case.
+				renameInFlight := prevFocus == paneTitle && titleCmd != nil
+				m, cmd = m.CreateUntitled(!renameInFlight)
 				cmds = append(cmds, cmd)
 			}
 			m.title = m.title.FocusAndSelectAll()
@@ -842,6 +856,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case FileLoadedMsg:
+		// Discard the empty untitled placeholder when transitioning to a real file.
+		// If the buffer already has content the user hasn't saved, keep its tab.
+		if m.filePath == "" && m.editor.Content() == "" {
+			m.opentabs = m.opentabs.CloseFile("")
+		}
 		m.editor = m.editor.SetContent(string(msg.Content))
 		m.filePath = msg.Path
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
@@ -1371,9 +1390,15 @@ func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
 	return m, renameCmd, true
 }
 
-func nextUntitled(dir string) string {
+// nextUntitled returns the first available "Untitled N" name in dir.
+// skip, if non-empty, is excluded from the search — used when the caller has
+// already reserved that name for an in-memory buffer not yet written to disk.
+func nextUntitled(dir, skip string) string {
 	for n := 1; ; n++ {
 		name := fmt.Sprintf("Untitled %d", n)
+		if skip != "" && name == skip {
+			continue
+		}
 		info, err := os.Stat(filepath.Join(dir, name+".md"))
 		if err != nil || info.Size() == 0 {
 			return name
@@ -1382,15 +1407,29 @@ func nextUntitled(dir string) string {
 }
 
 // CreateUntitled opens a new untitled buffer in the current filetree directory.
-func (m Model) CreateUntitled() (Model, tea.Cmd) {
+// When preserveCurrentUntitled is true and the current buffer is an unsaved
+// untitled file with content, the content is written to disk under its current
+// title so it is not lost.
+func (m Model) CreateUntitled(preserveCurrentUntitled bool) (Model, tea.Cmd) {
 	dir := m.currentDir()
-	name := nextUntitled(dir)
+	var cmds []tea.Cmd
+
+	skipName := ""
+	if preserveCurrentUntitled && m.filePath == "" && m.editor.Content() != "" {
+		skipName = m.title.Text()
+		currentPath := filepath.Join(dir, skipName+".md")
+		cmds = append(cmds, createFileCmd(currentPath, m.editor.Content()))
+		m.opentabs = m.opentabs.RenameFile("", currentPath)
+	}
+
+	name := nextUntitled(dir, skipName)
 	m.editor = m.editor.SetContent("")
 	m.filePath = ""
 	m.docID = 0
 	m.title = m.title.SetText(name)
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile("")
+	m.opentabs = m.opentabs.SetTabName("", name)
 	m.focus = paneCenter
-	return m, nil
+	return m, tea.Batch(cmds...)
 }

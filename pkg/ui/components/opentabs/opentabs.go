@@ -129,6 +129,17 @@ func (m Model) RenameFile(oldPath, newPath string) Model {
 	return m
 }
 
+// SetTabName overrides the display name of the tab matching path.
+func (m Model) SetTabName(path, name string) Model {
+	for i := range m.tabs {
+		if m.tabs[i].Path == path {
+			m.tabs[i].Name = name
+			return m
+		}
+	}
+	return m
+}
+
 // MarkDirty sets the dirty indicator on the tab matching path.
 func (m Model) MarkDirty(path string) Model {
 	for i := range m.tabs {
