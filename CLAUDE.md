@@ -22,7 +22,19 @@ If code violates any rule below, it is defective and must be fixed before merge.
 ### 1.3 Error Handling
 - **Fail fast on data risk.** If there is ANY suspicion that user data may be corrupted or lost, STOP operations immediately and surface a hard error to the user.
 - **NEVER swallow errors.** Bare `_, _ = operation()` is prohibited unless annotated with `// fire-and-forget: <reason>`.
-- **Contextual wrapping.** Always wrap errors with operation + resource context: `fmt.Errorf("load dir %q: %w", dir, err)`.
+- **Contextual wrapping.** Always wrap errors with operation + resource context: `fmt.Errorf("load dir %q: %w", dir, err)`. Always use `%w`, never `%s` or `%v` — `%w` preserves the error chain for `errors.Is`/`errors.As`.
+- **Never downgrade `error` to `string`.** When returning or storing an error, always use the `error` type and always chain the original error with `%w`. Converting to a string with `%s`/`%v` or `fmt.Sprintf` severs the chain and prevents `errors.Is`/`errors.As` from working.
+
+```go
+// WRONG — severs the error chain
+type Model struct { initErr string }
+initErr = fmt.Sprintf("failed to get working directory: %s", err)  // ✗
+
+// RIGHT — preserve the chain; .Error() only at the display boundary
+type Model struct { initErr error }
+initErr = fmt.Errorf("failed to get working directory: %w", err)   // ✓
+```
+
 - **No silent fallbacks.** Do not default or silently recover from invalid user-supplied data.
 - **NEVER panic.** A `panic` crashes the process and loses unsaved content. Malformed input is inevitable. If you need to enforce an invariant, use a safe fallback (graceful degradation) or a test-only assertion (`//go:build testing`). Rendering errors are tolerable, data loss is not.
 
@@ -661,6 +673,7 @@ These are mistakes that language models commonly produce in this codebase. Each 
 | 18 | Page re-clamping child output with `MaxWidth`/`MaxHeight` wrappers | Redundant, masks bugs, duplicates dimension arithmetic | §4.4 |
 | 19 | Treating lipgloss `Width(n)`/`Height(n)` as content-box (subtracting frame in BOTH recalcLayout and View) | Double-subtraction: Width/Height are border-box in lipgloss v2 | §4.3 |
 | 20 | Using `len(str)` instead of `utf8.RuneCountInString(str)` for display-related calculations | Byte length ≠ character length; breaks CJK, emoji, accented chars | §1.5, §4.5 |
+| 21 | Returning or storing an error as `string` instead of `error` | Severs the error chain; use `%w` and keep the `error` type | §1.3 |
 
 ---
 
@@ -705,6 +718,7 @@ Before completing any change, mechanically verify:
 - [ ] All `tea.Cmd` closures capture local variables, not model fields or method calls.
 - [ ] Data integrity failures stop execution and surface explicit errors to the user.
 - [ ] No silent error swallowing — every error is wrapped with context or explicitly annotated.
+- [ ] No `error` downgraded to `string` — `.Error()` called only at the display/log boundary.
 - [ ] No file exceeds 500 LoC.
 - [ ] No `len()` used for display-related string length; `utf8.RuneCountInString` used instead.
 - [ ] No page holds rendering state that belongs to a child component.

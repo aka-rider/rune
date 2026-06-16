@@ -152,13 +152,16 @@ type Model struct {
 	// Startup configuration (set once, read by Init).
 	workDir      string   // absolute path or "." passed via -w
 	initialFiles []string // files to open on first Init
+	initErr      error    // non-nil when workDir fallback was triggered
 }
 
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps, workDir string, initialFiles []string) Model {
+	var initErr error
 	if workDir == "" {
 		if wd, err := os.Getwd(); err == nil {
 			workDir = wd
 		} else {
+			initErr = fmt.Errorf("failed to get working directory: %w", err)
 			workDir = "."
 		}
 	}
@@ -186,6 +189,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		styles:       st,
 		workDir:      workDir,
 		initialFiles: initialFiles,
+		initErr:      initErr,
 	}
 	m = m.syncDictationAllowed()
 	m = m.applyFocus() // project initial focus so paneTree reaches the filetree at launch
@@ -359,6 +363,10 @@ func (m Model) Init() tea.Cmd {
 		m.chat.Init(),
 		m.dict.Init(),
 		loadDirCmd(m.workDir),
+	}
+	if m.initErr != nil {
+		err := m.initErr
+		cmds = append(cmds, func() tea.Msg { return footer.ShowErrorMsg{Text: err.Error()} })
 	}
 	for _, path := range m.initialFiles {
 		cmds = append(cmds, loadFileCmd(context.Background(), path))
