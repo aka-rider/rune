@@ -9,10 +9,18 @@ import (
 	ui "rune/pkg/ui"
 )
 
+var version = "dev" // overridden by release CI: -ldflags "-X main.version=0.1.0"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print version and exit")
 	var workDir string
 	flag.StringVar(&workDir, "w", "", "working directory (file tree root)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	// Resolve file args to absolute paths relative to the shell's CWD.
 	rawFiles := flag.Args()
