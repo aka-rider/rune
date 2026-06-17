@@ -58,6 +58,11 @@ var bindingTable = []tea.KeyPressMsg{
 	{Code: 'p'}, {Code: 'q'}, {Code: 'r'}, {Code: 's'}, {Code: 't'},
 	{Code: 'u'}, {Code: 'v'}, {Code: 'w'}, {Code: 'x'}, {Code: 'y'},
 	{Code: 'z'}, {Code: ' '}, {Code: '.'}, {Code: ','}, {Code: '\n'},
+	// Markdown metacharacters — needed to exercise Rendered/Revealed span paths
+	{Code: '*'}, {Code: '#'}, {Code: '|'}, {Code: '['},
+	{Code: ']'}, {Code: '!'}, {Code: '_'}, {Code: '-'},
+	{Code: '>'}, {Code: '`'}, {Code: '('}, {Code: ')'},
+	{Code: '~'},
 	// File ops
 	{Code: 's', Mod: tea.ModSuper},    // super+s = SaveFile
 	{Code: 'z', Mod: tea.ModSuper},    // super+z = Undo
@@ -75,9 +80,9 @@ func eventToMsg(ev event.Event) tea.Msg {
 		if len(ev.Text) == 0 {
 			return nil
 		}
-		// Insert the first rune as a printable key
-		runes := []rune(ev.Text)
-		return tea.KeyPressMsg{Code: runes[0]}
+		// Paste the full text so multi-char / multi-line states are reachable.
+		// KindKey handles single-key bindings; KindText is for bulk text input.
+		return tea.PasteMsg{Content: ev.Text}
 	case event.KindResize:
 		return tea.WindowSizeMsg{Width: int(ev.Width), Height: int(ev.Height)}
 	case event.KindPaste:

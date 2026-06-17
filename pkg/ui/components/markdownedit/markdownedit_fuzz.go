@@ -22,3 +22,15 @@ func (m Model) FuzzSnapshot() display.DisplaySnapshot {
 func (m Model) FuzzCursors() []cursor.Cursor {
 	return m.Model.FuzzCursors()
 }
+
+// FuzzBufferVersion forwards to the embedded textedit.Model.
+func (m Model) FuzzBufferVersion() uint64 { return m.Model.FuzzBufferVersion() }
+
+// FuzzLineCount forwards to the embedded textedit.Model.
+func (m Model) FuzzLineCount() int { return m.Model.FuzzLineCount() }
+
+// FuzzWrapSnapshot forwards to the embedded textedit.Model.
+func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.Model.FuzzWrapSnapshot() }
+
+// FuzzSyntaxSnapshot forwards to the embedded textedit.Model.
+func (m Model) FuzzSyntaxSnapshot() display.SyntaxSnapshot { return m.Model.FuzzSyntaxSnapshot() }

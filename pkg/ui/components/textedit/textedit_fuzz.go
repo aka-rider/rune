@@ -26,3 +26,18 @@ func (m Model) FuzzSnapshot() display.DisplaySnapshot {
 func (m Model) FuzzCursors() []cursor.Cursor {
 	return m.cursors.All()
 }
+
+// FuzzBufferVersion returns the buffer's monotone version counter.
+func (m Model) FuzzBufferVersion() uint64 { return m.buf.Version() }
+
+// FuzzLineCount returns the buffer's line count (number of '\n' + 1).
+func (m Model) FuzzLineCount() int { return m.buf.LineCount() }
+
+// FuzzWrapSnapshot returns the current wrap-layer snapshot.
+// Used for WRAP-RT, COORD-RT, and SPAN-COVER invariants.
+func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.wrapSnap }
+
+// FuzzSyntaxSnapshot returns the current syntax-layer snapshot.
+// Used for COORD-RT, SPAN-COVER, and D5 invariants.
+func (m Model) FuzzSyntaxSnapshot() display.SyntaxSnapshot { return m.syntaxSnap }
+

@@ -15,8 +15,8 @@ test:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go vet ./...
 
-test-fuzz-corpus:
-	go test -tags fuzzing -run=FuzzSession ./pkg/ui/pages/workspace/
+test-fuzz:
+	go test -tags fuzzing -count=1 -run='Fuzz' ./...
 
 clean:
 	rm -f $(RUNE)

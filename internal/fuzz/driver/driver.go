@@ -4,12 +4,14 @@ package driver
 
 import (
 	"reflect"
+	"sort"
 
 	tea "charm.land/bubbletea/v2"
 
 	"rune/internal/fuzz/event"
 	"rune/internal/fuzz/invariant"
 	"rune/pkg/docstate"
+	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/pages/workspace"
 )
@@ -35,6 +37,31 @@ func asCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
 	return nil, false
 }
 
+// replayBatch applies one edit batch to the mirror string.
+// Each AppliedEdit.Start is a post-shift new-buffer offset.
+// Applying batches in ascending-Start order makes each edit's baked-in
+// shift align with the running mirror displacement — correct for multi-cursor.
+func replayBatch(mirror string, batch []buffer.AppliedEdit) string {
+	// Sort ascending by Start (new-buffer offset).
+	sorted := make([]buffer.AppliedEdit, len(batch))
+	copy(sorted, batch)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Start < sorted[j].Start
+	})
+	for _, e := range sorted {
+		if e.Start < 0 || e.Start > len(mirror) {
+			continue // guard against corrupt data
+		}
+		skip := len(e.Deleted)
+		tail := e.Start + skip
+		if tail > len(mirror) {
+			tail = len(mirror)
+		}
+		mirror = mirror[:e.Start] + e.Insert + mirror[tail:]
+	}
+	return mirror
+}
+
 // Run bootstraps a workspace.Model with the given store, drives it through events,
 // and returns the first invariant Violation found (or nil), the frozen frame string,
 // and the cell grid snapshot at the moment of violation.
@@ -46,22 +73,85 @@ func asCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
 //  4. Feed events one by one → drain after each
 //
 // CheckInvariants is called after every settled message (after full cmd drain).
+// CheckTransition is called with (prev, msg, next) for every drainMsg invocation.
 func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
 	frozenFrame := ""
 	var frozenCells [][]textedit.Cell
+
+	// SHADOW mirror: maintained incrementally by replaying journal batches.
+	mirror := ""
+	appliedBatches := 0 // number of journal batches already replayed into mirror
+
+	// monitors is the set of stateful L2 monitors reset per Run call.
+	monitors := invariant.NewMonitors()
+
+	updateMirror := func(s *docstate.Store) {
+		if s == nil {
+			return
+		}
+		batches, err := s.AllEdits("main")
+		if err != nil {
+			return
+		}
+		for i := appliedBatches; i < len(batches); i++ {
+			mirror = replayBatch(mirror, batches[i])
+		}
+		appliedBatches = len(batches)
+	}
 
 	var drainMsg func(m workspace.Model, msg tea.Msg) (workspace.Model, *invariant.Violation)
 	var drainCmd func(m workspace.Model, cmd tea.Cmd) (workspace.Model, *invariant.Violation)
 
 	drainMsg = func(m workspace.Model, msg tea.Msg) (workspace.Model, *invariant.Violation) {
+		prev := m.FuzzInspect()
 		m, cmd := m.Update(msg)
-		// Check invariants after each settled update
+
+		// Update SHADOW mirror from new journal entries.
+		updateMirror(store)
+
 		snap := m.FuzzInspect()
+		snap.Frame = m.View().Content
+
+		// Wire SHADOW: set mirror content for comparison.
+		if mirror != "" || snap.Content != "" {
+			snap.MirrorContent = mirror
+		}
+
+		// Propagate AppQuitting marker set by driver on tea.QuitMsg.
+		if _, ok := msg.(tea.QuitMsg); ok {
+			snap.AppQuitting = true
+		}
+
+		// L0 invariants.
 		if v := invariant.CheckInvariants(snap); v != nil {
-			frozenFrame = m.View().Content
+			frozenFrame = snap.Frame
 			frozenCells = snap.Cells
 			return m, v
 		}
+
+		// L1 transition invariants.
+		if vs := invariant.CheckTransition(prev, msg, snap); len(vs) > 0 {
+			frozenFrame = snap.Frame
+			frozenCells = snap.Cells
+			return m, &vs[0]
+		}
+
+		// L2 monitor invariants.
+		if vs := invariant.ObserveMonitors(monitors, prev, msg, snap); len(vs) > 0 {
+			frozenFrame = snap.Frame
+			frozenCells = snap.Cells
+			return m, &vs[0]
+		}
+
+		// DL1: file-on-disk must equal buffer content immediately after a save settles.
+		if _, ok := msg.(workspace.FileSavedMsg); ok {
+			if v := invariant.CheckDataLossInvariants(snap); v != nil {
+				frozenFrame = snap.Frame
+				frozenCells = snap.Cells
+				return m, v
+			}
+		}
+
 		if cmd == nil {
 			return m, nil
 		}
@@ -125,4 +215,12 @@ func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, 
 	}
 
 	return nil, "", nil
+}
+
+// trunc truncates s to at most n bytes.
+func trunc(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

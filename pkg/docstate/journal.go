@@ -173,6 +173,38 @@ func (s *Store) RedoTarget() (surface string, edits []buffer.AppliedEdit, cursor
 	return surface, edits, cursorsAfter, true
 }
 
+// AllEdits returns all edit events for the given surface in journal order,
+// batch-grouped: each row in the events table becomes one inner slice.
+// The slices contain the AppliedEdits exactly as stored by AppendEdit (including
+// coalesced multi-char runs). Used by the fuzz driver to rebuild the SHADOW mirror.
+func (s *Store) AllEdits(surface string) ([][]buffer.AppliedEdit, error) {
+	rows, err := s.mem.Query(
+		`SELECT edits FROM events WHERE surface=? AND kind='edit' ORDER BY seq ASC`,
+		surface,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("all edits surface %q: %w", surface, err)
+	}
+	defer rows.Close()
+
+	var result [][]buffer.AppliedEdit
+	for rows.Next() {
+		var editsJSON string
+		if err := rows.Scan(&editsJSON); err != nil {
+			return nil, fmt.Errorf("all edits scan surface %q: %w", surface, err)
+		}
+		var batch []buffer.AppliedEdit
+		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
+			return nil, fmt.Errorf("all edits unmarshal surface %q: %w", surface, err)
+		}
+		result = append(result, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("all edits rows surface %q: %w", surface, err)
+	}
+	return result, nil
+}
+
 // isInsertChar reports whether edits represents a single character insertion
 // (no deleted text, exactly one rune inserted).
 func isInsertChar(edits []buffer.AppliedEdit) bool {
