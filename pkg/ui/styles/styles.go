@@ -86,7 +86,7 @@ func Default() Styles {
 		ActiveBorder:   border.BorderForeground(highlight),
 		InactiveBorder: border,
 
-		PaneTitle:    lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
+		PaneTitle:    lipgloss.NewStyle().Bold(true).Foreground(special),
 		FileNormal:   lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1),
 		FileSelected: lipgloss.NewStyle().Padding(0, 1).Foreground(highlight).Bold(true),
 		DirSuffix:    lipgloss.NewStyle().Foreground(subtle),

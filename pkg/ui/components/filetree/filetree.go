@@ -3,6 +3,7 @@ package filetree
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -175,11 +176,12 @@ func (m Model) View() string {
 }
 
 func truncatePath(path string, maxWidth int) string {
-	runes := []rune(path)
-	if len(runes) <= maxWidth {
+	n := utf8.RuneCountInString(path)
+	if n <= maxWidth {
 		return path
 	}
-	return "..." + string(runes[len(runes)-(maxWidth-3):])
+	runes := []rune(path)
+	return "…" + string(runes[n-(maxWidth-1):])
 }
 
 func renderFileList(m Model) string {
