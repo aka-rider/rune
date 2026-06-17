@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+
+      - name: Install build dependencies
+        run: brew install libgit2 pkg-config
+
+      - name: Test
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./...
+
+      - name: Vet
+        env:
+          CGO_ENABLED: "1"
+        run: go vet ./...
