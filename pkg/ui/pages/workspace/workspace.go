@@ -61,6 +61,11 @@ type fileWatchReadError struct {
 const defaultLeftPaneW = 22
 const defaultRightPaneW = 38
 
+var quitGuardOptions = []footer.GuardOption{
+	{Key: 's', Response: footer.DataLossSave},
+	{Key: 'd', Response: footer.DataLossDiscard},
+}
+
 type dragState int
 
 const (
@@ -112,8 +117,10 @@ type Model struct {
 	cancelWatch context.CancelFunc
 
 	// File ownership (D12)
-	filePath   string
-	activeSave SaveIdentity
+	filePath            string
+	cleanRev            uint64 // editor revision at last load or save
+	pendingQuitAfterSave bool  // true when user chose Save in the dirty-quit guard
+	activeSave          SaveIdentity
 
 	// Persistence (docstate)
 	store    *docstate.Store
@@ -542,7 +549,20 @@ func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m Model) syncDirty() Model {
+	if m.filePath == "" {
+		return m
+	}
+	if m.editor.Revision() != m.cleanRev {
+		m.opentabs = m.opentabs.MarkDirty(m.filePath)
+	} else {
+		m.opentabs = m.opentabs.MarkClean(m.filePath)
+	}
+	return m
+}
+
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
+	m = m.syncDirty()
 	m = m.applyFocus()
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
@@ -853,6 +873,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.filePath = msg.Path
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
+		m.opentabs = m.opentabs.MarkClean(msg.Path)
+		m.cleanRev = m.editor.Revision()
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		// Ensure document row for this file.
 		if msg.Path != "" && m.store != nil {
@@ -894,6 +916,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case FileSavedMsg:
 		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 			m.activeSave.InFlight = false
+			m.cleanRev = m.editor.Revision()
+			m.opentabs = m.opentabs.MarkClean(m.filePath)
+			if m.pendingQuitAfterSave {
+				m.pendingQuitAfterSave = false
+				m.dict = m.dict.Disable()
+				if m.store != nil {
+					_ = m.store.Close()
+				}
+				return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+			}
 		}
 
 	case FileSaveErrorMsg:
@@ -1024,11 +1056,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.finalizeLayoutChange(cmds)
 
 	case footer.ConfirmQuitMsg:
+		if m.opentabs.HasDirty() {
+			m.footer = m.footer.SetGuard(footer.GuardDirty, quitGuardOptions)
+			return m, nil
+		}
 		m.dict = m.dict.Disable()
 		if m.store != nil {
 			_ = m.store.Close()
 		}
 		return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+
+	case footer.DataLossGuardResponseMsg:
+		switch msg.Response {
+		case footer.DataLossSave:
+			m.pendingQuitAfterSave = true
+			m, cmd = m.startSave()
+			cmds = append(cmds, cmd)
+		case footer.DataLossDiscard:
+			m.opentabs = m.opentabs.MarkClean(m.filePath)
+			m.cleanRev = m.editor.Revision()
+			m.dict = m.dict.Disable()
+			if m.store != nil {
+				_ = m.store.Close()
+			}
+			return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+		case footer.DataLossCancel:
+			// guard already cleared by footer; do nothing
+		}
 
 	case footer.DictationStartMsg:
 		m.dict = m.dict.Enable(m.editor.CursorOffset())

@@ -779,12 +779,17 @@ func CheckTransition(prev Snapshot, msg any, next Snapshot) []Violation {
 		add("G2", "GuardVisible still true after DataLossGuardResponseMsg")
 	}
 
-	// G1 (spec / RED today): dirty file + ConfirmQuitMsg → guard must appear.
-	// This is deliberately a failing spec until SetGuard is wired on dirty-quit.
-	// Uncomment to enable once the feature is wired.
-	// if typeName == "footer.ConfirmQuitMsg" && prev.HasDirtyFile && !next.GuardVisible {
-	//     add("G1", "dirty file + ConfirmQuitMsg did not raise guard (feature not yet wired)")
-	// }
+	// G1: dirty file + ConfirmQuitMsg → guard must appear.
+	if typeName == "footer.ConfirmQuitMsg" && prev.HasDirtyFile && !next.GuardVisible {
+		add("G1", "dirty file + ConfirmQuitMsg did not raise guard")
+	}
+
+	// TR-cursor-not-dirty: a key press that does not change buffer content must not
+	// set the dirty flag. Cursor movement, selection extension, and similar
+	// navigation-only operations must never mark the file dirty.
+	if typeName == "tea.KeyPressMsg" && !prev.HasDirtyFile && next.HasDirtyFile && next.Content == prev.Content {
+		add("TR-cursor-not-dirty", "key press set dirty flag without any content change")
+	}
 
 	return vs
 }

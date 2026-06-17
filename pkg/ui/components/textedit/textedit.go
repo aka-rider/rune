@@ -807,7 +807,9 @@ func (m Model) applyOperation(result command.Result, cmdName string) Model {
 	}
 
 	m.cursors = result.Operation.Cursors
-	m.rev++
+	if result.Operation.Kind != command.OperationMoveCursors {
+		m.rev++
+	}
 	return m
 }
 

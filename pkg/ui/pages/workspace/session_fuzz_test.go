@@ -185,12 +185,22 @@ func FuzzSession(f *testing.F) {
 	))
 
 	// Seed: dirty-quit guard path. Insert text (dirty) then double ctrl+c.
-	// G1 spec: dirty file + ConfirmQuitMsg should raise a guard.
-	// Today this tests the quit path without a guard (G1 is a RED spec).
+	// G1: dirty file + ConfirmQuitMsg must raise the guard.
 	f.Add(concat(
 		paste("dirty\n"),
 		key(keyCtrlC),
 		key(keyCtrlC),
+	))
+
+	// Seed: navigate after save. Paste → save → arrow keys.
+	// TR-cursor-not-dirty: navigation on a clean file must not set the dirty flag.
+	f.Add(concat(
+		paste("navigate me\n"),
+		key(keySave),
+		key(keyDown),
+		key(keyUp),
+		key(keyLeft),
+		key(keyRight),
 	))
 
 	// Seed: multi-cursor via SelectAll + add-cursor-below (ctrl+d = index 21 is HalfPageDown;

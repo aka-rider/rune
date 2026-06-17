@@ -10,6 +10,8 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
+	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -19,7 +21,12 @@ func newTestWorkspace(t *testing.T) Model {
 	t.Helper()
 	keys := keymap.Default()
 	st := styles.Default()
-	reg := command.NewBuilder().Build()
+	builder := command.NewBuilder()
+	builder, err := markdownedit.RegisterCommands(builder)
+	if err != nil {
+		t.Fatalf("register commands: %v", err)
+	}
+	reg := builder.Build()
 	res, _ := keybind.NewResolver(nil)
 
 	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
@@ -560,5 +567,124 @@ func TestLayoutFooterVisibleAfterResize(t *testing.T) {
 		if len(lines) != size.h {
 			t.Fatalf("at %dx%d: expected %d lines, got %d", size.w, size.h, size.h, len(lines))
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dirty flag: edit sets it, save clears it, quit guard fires when dirty
+// ─────────────────────────────────────────────────────────────────────────────
+
+// focusEditor sets workspace focus to the editor pane and flushes the focus
+// state to all children via a WindowSizeMsg. Required because applyFocus runs
+// at the END of Update — a direct field assignment isn't visible to children
+// until the next Update completes.
+func focusEditor(m Model) Model {
+	m.focus = paneCenter
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return m
+}
+
+func TestDirtyFlagSetOnEdit(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "note.md", "hello")
+	m = focusEditor(m)
+
+	if m.opentabs.HasDirty() {
+		t.Fatal("tab should not be dirty after file load")
+	}
+
+	// Type a character — buffer revision advances, dirty flag must be set.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
+
+	if !m.opentabs.HasDirty() {
+		t.Fatal("tab must be dirty after edit")
+	}
+}
+
+func TestDirtyFlagClearedOnSave(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "note.md", "hello")
+	m = focusEditor(m)
+
+	// Edit to make dirty.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
+	if !m.opentabs.HasDirty() {
+		t.Fatal("tab must be dirty after edit")
+	}
+
+	// Start a save to get a request ID, then deliver the completion message.
+	m, _ = m.startSave()
+	reqID := m.activeSave.RequestID
+	m, _ = m.Update(FileSavedMsg{Path: "note.md", RequestID: reqID})
+
+	if m.opentabs.HasDirty() {
+		t.Fatal("tab must be clean after save")
+	}
+}
+
+func TestQuitGuardAppearsWhenDirty(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "note.md", "hello")
+	m = focusEditor(m)
+
+	// Edit to make dirty.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
+	if !m.opentabs.HasDirty() {
+		t.Fatal("tab must be dirty after edit (prerequisite)")
+	}
+
+	// ConfirmQuitMsg must raise the guard, not quit.
+	m, cmd := m.Update(footer.ConfirmQuitMsg{})
+	if cmd != nil {
+		// The returned cmd must not be tea.Quit — execute it and check.
+		result := execCmds(cmd)
+		for _, msg := range result {
+			if _, isQuit := msg.(tea.QuitMsg); isQuit {
+				t.Fatal("workspace quit immediately with unsaved changes — guard not raised")
+			}
+		}
+	}
+	if !m.footer.InGuard() {
+		t.Fatal("footer guard must be visible after ConfirmQuitMsg with dirty file")
+	}
+}
+
+func TestCursorMovementDoesNotSetDirty(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "note.md", "hello world")
+	m = focusEditor(m)
+
+	if m.opentabs.HasDirty() {
+		t.Fatal("tab should not be dirty after file load")
+	}
+
+	navKeys := []tea.KeyPressMsg{
+		{Code: tea.KeyRight},
+		{Code: tea.KeyLeft},
+		{Code: tea.KeyDown},
+		{Code: tea.KeyUp},
+		{Code: tea.KeyEnd},
+		{Code: tea.KeyHome},
+	}
+	for _, k := range navKeys {
+		m, _ = m.Update(k)
+		if m.opentabs.HasDirty() {
+			t.Fatalf("cursor movement (%v) must not set dirty flag", k)
+		}
+	}
+}
+
+func TestQuitProceedsWhenClean(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "note.md", "hello")
+
+	// No edits — ConfirmQuitMsg must not raise a guard (proceed directly to quit).
+	m, cmd := m.Update(footer.ConfirmQuitMsg{})
+	if m.footer.InGuard() {
+		t.Fatal("guard must not appear when file is clean")
+	}
+	// A non-nil cmd means the quit sequence was initiated.
+	if cmd == nil {
+		t.Fatal("expected a quit cmd for clean file")
 	}
 }

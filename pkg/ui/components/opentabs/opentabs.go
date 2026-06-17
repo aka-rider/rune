@@ -162,6 +162,16 @@ func (m Model) MarkClean(path string) Model {
 	return m
 }
 
+// HasDirty reports whether any open tab has unsaved changes.
+func (m Model) HasDirty() bool {
+	for _, t := range m.tabs {
+		if t.Dirty {
+			return true
+		}
+	}
+	return false
+}
+
 // NextPath returns the path of the tab that would become active after
 // closing the given path, or "" if no tabs would remain.
 func (m Model) NextPath(closePath string) string {
