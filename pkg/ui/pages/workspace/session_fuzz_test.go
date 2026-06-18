@@ -33,6 +33,7 @@ import (
 //   76=SaveFile(super+s)  77=Undo(super+z)  78=Redo(ctrl+y)
 
 const (
+	keyUp       = byte(0)
 	keyDown     = byte(1)
 	keyLeft     = byte(2)
 	keyRight    = byte(3)

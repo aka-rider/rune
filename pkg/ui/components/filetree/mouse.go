@@ -21,12 +21,8 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if maxVisible <= 0 {
 		return m, nil
 	}
-	start := 0
-	if m.cursor >= maxVisible {
-		start = m.cursor - maxVisible + 1
-	}
 
-	idx := start + (relY - 1) // relY=1 → first visible entry
+	idx := m.top + (relY - 1) // relY=1 → first visible entry
 	if idx < 0 || idx >= len(m.entries) {
 		return m, nil
 	}
@@ -40,7 +36,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	}
 
 	m.cursor = idx
-	return m, nil
+	return m.ensureVisible(), nil
 }
 
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
@@ -61,5 +57,5 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
+	return m.ensureVisible(), nil
 }

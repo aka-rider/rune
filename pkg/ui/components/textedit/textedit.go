@@ -15,6 +15,7 @@ import (
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/keymap"
+	"rune/pkg/ui/scroll"
 	"rune/pkg/ui/styles"
 )
 
@@ -367,6 +368,7 @@ func (m Model) SetRect(r Rect) Model {
 	m.offsetY = r.Y
 	if changed {
 		m = m.syncDisplay()
+		m = m.ScrollToCursor()
 	}
 	return m
 }
@@ -594,19 +596,20 @@ func (m Model) ScrollToCursor() Model {
 	}
 	cursorDisplayRow := m.snapshot.ModelLineToFirstRow(modelLine) + wrapOffsetWithinLine
 
-	if cursorDisplayRow < m.viewport.TopRow {
-		m.viewport.TopRow = cursorDisplayRow
-	} else if cursorDisplayRow >= m.viewport.TopRow+contentH {
-		m.viewport.TopRow = cursorDisplayRow - contentH + 1
-	}
+	vMargin := min(4, contentH/4)
+	m.viewport.TopRow = scroll.Follow(
+		cursorDisplayRow, m.viewport.TopRow, contentH, m.snapshot.TotalRows, vMargin, 0)
 
 	// Horizontal scroll
 	if !m.softWrap {
-		if wp.Col < m.viewport.ScrollCol {
-			m.viewport.ScrollCol = wp.Col
-		} else if wp.Col >= m.viewport.ScrollCol+m.width {
-			m.viewport.ScrollCol = wp.Col - m.width + 1
-		}
+		hMargin := min(4, m.width/4)
+		hJump := m.width / 4
+		// Use cursor col + viewport width as a sentinel total so the viewport
+		// never scrolls past the cursor's column (true line width unknown without
+		// iterating spans; this preserves existing end-of-line behavior).
+		lineWidth := wp.Col + m.width
+		m.viewport.ScrollCol = scroll.Follow(
+			wp.Col, m.viewport.ScrollCol, m.width, lineWidth, hMargin, hJump)
 	}
 
 	return m
