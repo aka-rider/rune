@@ -26,6 +26,7 @@ type CommandContext struct {
 	HashContent  func(string) string
 	Selection    func() string
 	LineCount    func() int
+	ReadOnly     bool
 
 	// Navigation capabilities
 	BufferToSyntax func(coords.BufferPoint) coords.SyntaxPoint

@@ -294,13 +294,19 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 			ScrollCol:      func() int { return scrollCol },
 			ViewportHeight: func() int { return contentHeight },
 			TotalRows:      func() int { return totalRows },
+			ReadOnly:       m.readOnly,
 		})
 		if res.Cmd != nil {
 			*cmds = append(*cmds, res.Cmd)
 		}
 		m = m.applyOperation(res, resResult.Command)
 		m = m.syncDisplay()
-		m = m.ScrollToCursor()
+		// A scroll operation moves the viewport intentionally; following the
+		// cursor would cancel it (critical for read-only docs whose hidden
+		// cursor sits at the top).
+		if res.Operation.Kind != command.OperationScroll {
+			m = m.ScrollToCursor()
+		}
 	case keybind.ResultMoreChordsNeeded:
 		// Chord incomplete — wait for next key
 	case keybind.ResultNoMatch:

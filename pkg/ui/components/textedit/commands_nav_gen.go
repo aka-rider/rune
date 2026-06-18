@@ -18,12 +18,19 @@ func execCursorRight(ctx command.CommandContext) command.Result {
 }
 
 func execCursorUp(ctx command.CommandContext) command.Result {
+	if ctx.ReadOnly {
+		// No editable cursor to move — scroll the viewport instead.
+		return handleScrollCmd(ctx, 0, -1)
+	}
 	return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
 		return moveRow(ctx, c, -1, selectMode)
 	})
 }
 
 func execCursorDown(ctx command.CommandContext) command.Result {
+	if ctx.ReadOnly {
+		return handleScrollCmd(ctx, 0, 1)
+	}
 	return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
 		return moveRow(ctx, c, 1, selectMode)
 	})
@@ -125,12 +132,25 @@ func execSelectEndDocument(ctx command.CommandContext) command.Result {
 	})
 }
 
+// pageStep is the number of rows a page command scrolls: a full viewport
+// minus one row of overlap for context. Used for both editable and read-only
+// modes so paging behaves identically everywhere.
+func pageStep(ctx command.CommandContext) int {
+	if ctx.ViewportHeight == nil {
+		return 1
+	}
+	if h := ctx.ViewportHeight(); h > 1 {
+		return h - 1
+	}
+	return 1
+}
+
 func execScrollPageUp(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, -1)
+	return handleScrollCmd(ctx, 0, -pageStep(ctx))
 }
 
 func execScrollPageDown(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, 1)
+	return handleScrollCmd(ctx, 0, pageStep(ctx))
 }
 
 func execScrollToTop(ctx command.CommandContext) command.Result {

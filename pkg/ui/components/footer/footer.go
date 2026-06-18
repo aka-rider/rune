@@ -13,10 +13,6 @@ import (
 	"rune/pkg/ui/styles"
 )
 
-// Entry is a key+description pair for footer help display.
-// Re-exported alias so the footer doesn't need to import keymap.
-type Entry = keymap.HelpEntry
-
 // ConfirmQuitMsg is emitted when a chord exit sequence completes (e.g., ^C^C).
 type ConfirmQuitMsg struct{}
 
@@ -73,8 +69,6 @@ type Model struct {
 	styles           styles.Styles
 	keys             keymap.Bindings
 	pendingKey       string
-	helpExpanded     bool
-	helpEntries      []Entry
 	guardKind        GuardKind
 	guardOptions     []GuardOption
 	dictating        bool
@@ -93,11 +87,8 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 	return Model{keys: keys, styles: st}
 }
 
-func (m Model) SetSize(w, h int) Model              { m.width = w; return m }
-func (m Model) SetHelp(e []Entry) Model             { m.helpEntries = e; return m }
-func (m Model) SetHelpExpanded(expanded bool) Model { m.helpExpanded = expanded; return m }
-func (m Model) HelpExpanded() bool                  { return m.helpExpanded }
-func (m Model) Height() int                         { return 1 }
+func (m Model) SetSize(w, h int) Model { m.width = w; return m }
+func (m Model) Height() int            { return 1 }
 func (m Model) SetGuard(kind GuardKind, options []GuardOption) Model {
 	m.guardKind = kind
 	m.guardOptions = options
@@ -160,9 +151,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.pendingKey = "d"
 			return m, startConfirmTimer()
 
-		case key.Matches(msg, m.keys.HelpExpand):
-			m.helpExpanded = !m.helpExpanded
-
 		case key.Matches(msg, m.keys.VoiceDictation):
 			if !m.dictationAllowed {
 				return m, nil
@@ -214,7 +202,14 @@ func (m Model) View() string {
 		return m.styles.Footer.Width(m.width).MaxHeight(1).Render(errContent)
 	}
 
-	var left string
+	// Default hint: the always-visible global shortcuts, rendered from the
+	// bindings themselves so the footer can never drift from the keymap.
+	k := func(b key.Binding) string { return m.styles.FooterKey.Render(b.Help().Key) }
+	d := func(b key.Binding) string { return m.styles.FooterHint.Render(" " + b.Help().Desc) }
+	left := k(m.keys.FocusExplorer) + d(m.keys.FocusExplorer) + "  " +
+		k(m.keys.FocusEditor) + d(m.keys.FocusEditor) + "  " +
+		k(m.keys.FocusChat) + d(m.keys.FocusChat) + "  " +
+		k(m.keys.Help) + d(m.keys.Help)
 
 	if m.dictating {
 		left = m.styles.FooterKey.Render("^v") + m.styles.FooterHint.Render(" stop dictation")
@@ -238,23 +233,6 @@ func (m Model) View() string {
 		left = m.styles.FooterKey.Render("Press ^C again to exit")
 	} else if m.pendingKey == "d" {
 		left = m.styles.FooterKey.Render("Press ^D again to exit")
-	} else if m.helpExpanded && len(m.helpEntries) > 0 {
-		var parts []string
-		for _, e := range m.helpEntries {
-			parts = append(parts, m.styles.FooterKey.Render(e.Key)+m.styles.FooterHint.Render(" "+e.Desc))
-		}
-		left = strings.Join(parts, "  ")
-	} else if len(m.helpEntries) > 0 {
-		// Compact: show first 3 entries
-		n := 3
-		if len(m.helpEntries) < n {
-			n = len(m.helpEntries)
-		}
-		var parts []string
-		for _, e := range m.helpEntries[:n] {
-			parts = append(parts, m.styles.FooterKey.Render(e.Key)+m.styles.FooterHint.Render(" "+e.Desc))
-		}
-		left = strings.Join(parts, "  ")
 	}
 
 	micIcon := m.styles.FooterMeta.Render("🎤")

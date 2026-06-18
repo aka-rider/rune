@@ -34,6 +34,32 @@ func newTestWorkspace(t *testing.T) Model {
 	return m
 }
 
+// newScrollWorkspace is like newTestWorkspace but wires the real keymap
+// resolver, so editor navigation keys (arrows, page up/down) actually resolve
+// to commands. Required for tests that exercise scrolling.
+func newScrollWorkspace(t *testing.T) Model {
+	t.Helper()
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, err := markdownedit.RegisterCommands(builder)
+	if err != nil {
+		t.Fatalf("register commands: %v", err)
+	}
+	reg := builder.Build()
+	cmdBindings, err := keys.CommandBindings()
+	if err != nil {
+		t.Fatalf("command bindings: %v", err)
+	}
+	res, err := keybind.NewResolver(cmdBindings)
+	if err != nil {
+		t.Fatalf("new resolver: %v", err)
+	}
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return m
+}
+
 // loadFile simulates loading a file into the workspace (via FileLoadedMsg).
 func loadFile(m Model, path string, content string) Model {
 	// Directly send FileLoadedMsg — workspace owns file/disk domain (D12).

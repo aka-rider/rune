@@ -29,6 +29,8 @@ type Model struct {
 	cursor  int
 	width   int
 	height  int
+	offsetX int
+	offsetY int
 	focused bool
 	keys    keymap.Bindings
 	styles  styles.Styles
@@ -38,10 +40,12 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 	return Model{keys: keys, styles: st}
 }
 
-func (m Model) SetSize(w, h int) Model  { m.width = w; m.height = h; return m }
-func (m Model) SetFocused(f bool) Model { m.focused = f; return m }
-func (m Model) Focused() bool           { return m.focused }
-func (m Model) Cursor() int             { return m.cursor }
+func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m }
+func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
+func (m Model) SetFocused(f bool) Model  { m.focused = f; return m }
+func (m Model) Focused() bool            { return m.focused }
+func (m Model) Cursor() int              { return m.cursor }
+func (m Model) Len() int                 { return len(m.tabs) }
 
 func (m Model) Height() int {
 	if len(m.tabs) == 0 {
@@ -215,8 +219,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			path := m.tabs[m.cursor].Path
 			return m, func() tea.Msg { return TabSelectedMsg{Path: path} }
 		}
+	case tea.MouseClickMsg:
+		return m.handleMouseClick(msg)
 	}
 	return m, nil
+}
+
+// handleMouseClick selects the tab under the click and asks the page to open
+// it. Row 0 of the component is the "── Open ──" header; tabs start at row 1.
+func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
+	if !m.focused || msg.Button != tea.MouseLeft {
+		return m, nil
+	}
+	idx := msg.Y - m.offsetY - 1
+	if idx < 0 || idx >= len(m.tabs) {
+		return m, nil
+	}
+	m = m.SelectIndex(idx)
+	path := m.tabs[idx].Path
+	return m, func() tea.Msg { return TabSelectedMsg{Path: path} }
 }
 
 func (m Model) View() string {

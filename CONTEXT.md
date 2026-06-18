@@ -50,6 +50,10 @@ _Avoid_: chat editor, chat field, message input, chat box
 An markdownedit instance (textedit + MarkdownSync + image lifecycle). The full-featured editing surface in the center pane.
 _Avoid_: content editor, rich editor, workspace editor
 
+**help document**:
+A virtual, read-only document shown as a tab in the main editor — a keybindings reference generated from the keymap (the single source of truth), plus short prose on voice input and Obsidian vaults. Opened and toggled with `^?` (fallback `F1`), closed like any file with `^w`. Has no file on disk and is ephemeral: not part of the journal/snapshot/autosave model and never goes dirty.
+_Avoid_: help overlay, help page, help screen, help modal, help panel
+
 ### Rendering Pipeline
 
 **display pipeline**:

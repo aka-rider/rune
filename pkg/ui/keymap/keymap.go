@@ -2,6 +2,7 @@ package keymap
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"rune/pkg/editor/keybind"
@@ -29,7 +30,7 @@ type Bindings struct {
 	FocusEditor           key.Binding
 	FocusChat             key.Binding
 	CreateNewFile         key.Binding
-	HelpExpand            key.Binding
+	Help                  key.Binding
 	Backspace             key.Binding
 	Delete                key.Binding
 	Indent                key.Binding
@@ -86,9 +87,9 @@ func Default() Bindings {
 		PinTab:             key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),
 		FocusExplorer:      key.NewBinding(key.WithKeys("ctrl+x"), key.WithHelp("^x", "explorer")),
 		FocusEditor:        key.NewBinding(key.WithKeys("ctrl+e"), key.WithHelp("^e", "editor")),
-		FocusChat:          key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "Rune chat")),
+		FocusChat:          key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("^r", "chat")),
 		CreateNewFile:      key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("^n", "new file")),
-		HelpExpand:         key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Help:               key.NewBinding(key.WithKeys("f1"), key.WithHelp("F1", "help")),
 		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
 		Delete:             key.NewBinding(key.WithKeys("delete"), key.WithHelp("⌦", "delete right")),
 		Indent:             key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
@@ -129,85 +130,40 @@ type HelpEntry struct {
 	Desc string
 }
 
-func (b Bindings) HelpText() []HelpEntry {
-	return []HelpEntry{
-		{b.FocusExplorer.Help().Key, b.FocusExplorer.Help().Desc},
-		{b.FocusEditor.Help().Key, b.FocusEditor.Help().Desc},
-		{b.FocusChat.Help().Key, b.FocusChat.Help().Desc},
-		{b.Up.Help().Key, b.Up.Help().Desc},
-		{b.Down.Help().Key, b.Down.Help().Desc},
-		{b.PrimaryAction.Help().Key, b.PrimaryAction.Help().Desc},
-		{b.Cancel.Help().Key, b.Cancel.Help().Desc},
-		{b.ZenMode.Help().Key, b.ZenMode.Help().Desc},
-		{b.CloseFile.Help().Key, b.CloseFile.Help().Desc},
-		{b.CreateNewFile.Help().Key, b.CreateNewFile.Help().Desc},
-		{b.TabSwitch.Help().Key, b.TabSwitch.Help().Desc},
-		{b.ConfirmExitC.Help().Key, b.ConfirmExitC.Help().Desc},
-		{b.HelpExpand.Help().Key, b.HelpExpand.Help().Desc},
-		{b.SaveFile.Help().Key, b.SaveFile.Help().Desc},
+// eachBinding visits every key.Binding field on Bindings in declaration
+// order. It is the single enumeration point for the keymap: AllPhysicalKeys,
+// AllHelp, and the collision validator all build on it, so a newly added
+// binding is covered automatically with no parallel list to keep in sync.
+func (b Bindings) eachBinding(fn func(key.Binding)) {
+	v := reflect.ValueOf(b)
+	for i := 0; i < v.NumField(); i++ {
+		if kb, ok := v.Field(i).Interface().(key.Binding); ok {
+			fn(kb)
+		}
 	}
+}
+
+// AllHelp returns a key+description entry for every binding, in
+// struct-declaration order. This is the source for the in-app help
+// document — reflecting over the keymap guarantees the list can never
+// drift from the actual bindings.
+func (b Bindings) AllHelp() []HelpEntry {
+	var entries []HelpEntry
+	b.eachBinding(func(kb key.Binding) {
+		h := kb.Help()
+		if h.Key == "" {
+			return
+		}
+		entries = append(entries, HelpEntry{Key: h.Key, Desc: h.Desc})
+	})
+	return entries
 }
 
 func (b Bindings) AllPhysicalKeys() []string {
 	var keys []string
-	add := func(binding key.Binding) {
-		keys = append(keys, binding.Keys()...)
-	}
-	add(b.Up)
-	add(b.Down)
-	add(b.Left)
-	add(b.Right)
-	add(b.GotoTop)
-	add(b.GotoBottom)
-	add(b.PrimaryAction)
-	add(b.Cancel)
-	add(b.ZenMode)
-	add(b.CloseFile)
-	add(b.PageUp)
-	add(b.PageDown)
-	add(b.HalfPageUp)
-	add(b.HalfPageDown)
-	add(b.TabSwitch)
-	add(b.ConfirmExitC)
-	add(b.ConfirmExitD)
-	add(b.PinTab)
-	add(b.FocusExplorer)
-	add(b.FocusEditor)
-	add(b.FocusChat)
-	add(b.CreateNewFile)
-	add(b.HelpExpand)
-	add(b.Backspace)
-	add(b.Delete)
-	add(b.Indent)
-	add(b.Outdent)
-	add(b.SaveFile)
-	add(b.AddCursorAbove)
-	add(b.AddCursorBelow)
-	add(b.FindOpen)
-	add(b.FindReplaceOpen)
-	add(b.FindNext)
-	add(b.FindPrev)
-	add(b.ShiftUp)
-	add(b.ShiftDown)
-	add(b.ShiftLeft)
-	add(b.ShiftRight)
-	add(b.ShiftGotoTop)
-	add(b.ShiftGotoBottom)
-	add(b.ShiftPageUp)
-	add(b.ShiftPageDown)
-	add(b.WordLeft)
-	add(b.WordRight)
-	add(b.ShiftWordLeft)
-	add(b.ShiftWordRight)
-	add(b.MoveLineUp)
-	add(b.MoveLineDown)
-	add(b.SelectAll)
-	add(b.CopyToClipboard)
-	add(b.CutToClipboard)
-	add(b.PasteFromClipboard)
-	add(b.VoiceDictation)
-	add(b.Undo)
-	add(b.Redo)
+	b.eachBinding(func(kb key.Binding) {
+		keys = append(keys, kb.Keys()...)
+	})
 	return keys
 }
 

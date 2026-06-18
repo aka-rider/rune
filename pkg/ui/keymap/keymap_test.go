@@ -22,7 +22,7 @@ var globalKeys = []string{
 	"ZenMode",
 	"ConfirmExitC",
 	"ConfirmExitD",
-	"HelpExpand",
+	"Help",
 	"VoiceDictation",
 	"SaveFile", // workspace-global Cmd+S (D4/D12: not a registered command; handled directly)
 }
@@ -194,6 +194,31 @@ func TestBindingsFullyWired(t *testing.T) {
 		if !wiredKeys[k] {
 			t.Errorf("key %q is in AllPhysicalKeys() but not in any handler list", k)
 		}
+	}
+}
+
+// TestAllHelpCoversBindings ensures the reflection-based help enumeration
+// yields an entry for every documented binding (non-empty key) and includes
+// the renamed Help binding. This is the single source for the in-app help doc.
+func TestAllHelpCoversBindings(t *testing.T) {
+	entries := Default().AllHelp()
+	if len(entries) == 0 {
+		t.Fatal("AllHelp returned no entries")
+	}
+	for _, e := range entries {
+		if e.Key == "" {
+			t.Errorf("help entry has empty key: %+v", e)
+		}
+	}
+	found := false
+	for _, e := range entries {
+		if e.Key == "F1" && e.Desc == "help" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("AllHelp missing the Help (F1) entry")
 	}
 }
 

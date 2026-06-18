@@ -4,9 +4,39 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
+
+func TestMouseClickSelectsTab(t *testing.T) {
+	m := New(keymap.Default(), styles.Default())
+	m = m.OpenFile("a.md").OpenFile("b.md") // tabs: a(0), b(1)
+	m = m.SetFocused(true).SetOffset(1, 5)  // header at y=5, tab0 y=6, tab1 y=7
+
+	// Click tab 1 (b.md).
+	_, cmd := m.Update(tea.MouseClickMsg{X: 3, Y: 7, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("expected a TabSelectedMsg cmd from clicking a tab")
+	}
+	sel, ok := cmd().(TabSelectedMsg)
+	if !ok {
+		t.Fatalf("expected TabSelectedMsg, got %T", cmd())
+	}
+	if sel.Path != "b.md" {
+		t.Fatalf("expected b.md, got %q", sel.Path)
+	}
+
+	// Click the header row → no selection.
+	if _, c := m.Update(tea.MouseClickMsg{X: 3, Y: 5, Button: tea.MouseLeft}); c != nil {
+		t.Fatal("clicking the header row must not select a tab")
+	}
+	// Click past the last tab → no selection.
+	if _, c := m.Update(tea.MouseClickMsg{X: 3, Y: 20, Button: tea.MouseLeft}); c != nil {
+		t.Fatal("clicking past the last tab must not select a tab")
+	}
+}
 
 func TestDirtyFlagPosition(t *testing.T) {
 	m := New(keymap.Default(), styles.Default())

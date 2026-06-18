@@ -28,6 +28,7 @@ import (
 	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/command"
+	"rune/pkg/ui/help"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -109,6 +110,15 @@ type Model struct {
 	keys                    keymap.Bindings
 	styles                  styles.Styles
 
+	// Help document — rendered once from the keymap; shown read-only in the
+	// main editor under the help.DocPath sentinel tab.
+	helpContent string
+
+	// Untitled buffer preserved across switches to other tabs (the "" tab is
+	// virtual: it has no disk backing to reload from).
+	untitledContent string
+	untitledTitle   string
+
 	// Dictation (D16)
 	dict dictcomp.Model
 
@@ -155,7 +165,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 			markdownedit.WithRegistry(reg),
 			markdownedit.WithResolver(resolver),
 		),
-		footer:       footer.New(keys, st).SetHelp(keys.HelpText()),
+		footer:       footer.New(keys, st),
 		chat:         chat.New(keys, st, reg, resolver, caps),
 		dict:         dictcomp.New(),
 		focus:        paneTree,
@@ -168,6 +178,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		workDir:      workDir,
 		initialFiles: initialFiles,
 		initErr:      initErr,
+		helpContent:  help.Document(keys),
 	}
 	if len(initialFiles) == 0 {
 		// No files to open — register the initial untitled tab so the tab bar
@@ -242,6 +253,9 @@ func (m Model) recalcLayout() Model {
 	}
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
+	// Tabs render one row below the filetree (consistent with paneAtPoint's
+	// y > ftH → paneTabs); offset lets mouse clicks map to a tab row.
+	m.opentabs = m.opentabs.SetOffset(1, ftH+1)
 
 	// Title is cell-grid only (D8)
 	m.title = m.title.SetSize(innerCenterW, titleH)
@@ -375,7 +389,71 @@ func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
 	if path == m.filePath {
 		return m, nil
 	}
+	// Preserve the untitled buffer before leaving it so switching back (e.g.
+	// from help) restores its content rather than losing it.
+	if m.filePath == "" {
+		m.untitledContent = m.editor.Content()
+		m.untitledTitle = m.title.Text()
+	}
+	if path == help.DocPath {
+		// The help document is virtual — render it from memory, never disk.
+		return m.showHelp(), nil
+	}
+	if path == "" {
+		// The untitled buffer is virtual too — restore it from memory.
+		return m.showUntitled(), nil
+	}
 	return m, loadFileCmd(context.Background(), path)
+}
+
+// viewingHelp reports whether the read-only help document is the active doc.
+func (m Model) viewingHelp() bool { return m.filePath == help.DocPath }
+
+// toggleHelp opens, focuses, or closes the help document, per ^?.
+func (m Model) toggleHelp() (Model, tea.Cmd) {
+	if m.viewingHelp() {
+		if m.focus == paneCenter {
+			return m.requestCloseCurrent() // help focused → close it
+		}
+		m.focus = paneCenter // open but focus elsewhere → return to it
+		return m, nil
+	}
+	m.opentabs = m.opentabs.OpenFile(help.DocPath) // add or activate the tab
+	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
+	return m.requestOpenPath(help.DocPath) // → showHelp()
+}
+
+// showHelp loads the read-only help document into the shared editor. It is a
+// synchronous state transition (no Cmd): the content is generated in memory,
+// so there is no I/O to defer.
+func (m Model) showHelp() Model {
+	m.editor = m.editor.SetContent(m.helpContent).SetReadOnly(true)
+	m.filePath = help.DocPath
+	m.docID = 0
+	m.cleanRev = m.editor.Revision()
+	m.title = m.title.SetText("(Help)")
+	m.breadcrumb = m.breadcrumb.SetPath("")
+	m.opentabs = m.opentabs.OpenFile(help.DocPath)
+	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
+	m.opentabs = m.opentabs.MarkClean(help.DocPath)
+	m.focus = paneCenter
+	return m
+}
+
+// showUntitled restores the in-memory untitled buffer (no disk read). Used
+// when switching back to the "" tab, e.g. after viewing help.
+func (m Model) showUntitled() Model {
+	m.editor = m.editor.SetContent(m.untitledContent).SetReadOnly(false)
+	m.filePath = ""
+	m.docID = 0
+	m.cleanRev = m.editor.Revision()
+	if m.untitledTitle != "" {
+		m.title = m.title.SetText(m.untitledTitle)
+	}
+	m.breadcrumb = m.breadcrumb.SetPath("")
+	m.opentabs = m.opentabs.OpenFile("")
+	m.focus = paneCenter
+	return m
 }
 
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
@@ -404,7 +482,9 @@ func (m Model) executeClose(closePath, nextPath string) (Model, tea.Cmd) {
 
 
 func (m Model) handleUndo() (Model, tea.Cmd) {
-	if m.store == nil {
+	if m.store == nil || m.viewingHelp() {
+		// The help document borrows the main editor but isn't the "main"
+		// journal surface — undo must not apply file edits to it.
 		return m, nil
 	}
 	surface, edits, cursorsBefore, ok := m.store.UndoTarget()
@@ -437,7 +517,7 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 }
 
 func (m Model) handleRedo() (Model, tea.Cmd) {
-	if m.store == nil {
+	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
 	surface, edits, cursorsAfter, ok := m.store.RedoTarget()
@@ -550,7 +630,7 @@ func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 }
 
 func (m Model) syncDirty() Model {
-	if m.filePath == "" {
+	if m.filePath == "" || m.viewingHelp() {
 		return m
 	}
 	if m.editor.Revision() != m.cleanRev {
@@ -643,7 +723,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			if digit >= '1' && digit <= '9' {
 				idx := int(digit - '1')
-				if path := m.opentabs.PathAt(idx); path != "" {
+				if idx < m.opentabs.Len() {
+					path := m.opentabs.PathAt(idx)
 					m.opentabs = m.opentabs.SelectIndex(idx)
 					m, cmd = m.requestOpenPath(path)
 					cmds = append(cmds, cmd)
@@ -727,6 +808,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.requestCloseCurrent()
 			cmds = append(cmds, cmd)
 
+		case key.Matches(msg, m.keys.Help):
+			var ok bool
+			m, cmd, ok = m.maybeFinalizeTitle()
+			cmds = append(cmds, cmd)
+			if !ok {
+				return m.finalize(cmds)
+			}
+			m, cmd = m.toggleHelp()
+			cmds = append(cmds, cmd)
+
 		case key.Matches(msg, m.keys.ZenMode):
 			var ok bool
 			m, cmd, ok = m.maybeFinalizeTitle()
@@ -757,7 +848,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m = m.applyFocus()
 
 		// Priority 3b: D11 — Up at editor top transfers focus to title.
-		if m.focus == paneCenter && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
+		if m.focus == paneCenter && !m.viewingHelp() && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
 			m.focus = paneTitle
 			m.title = m.title.FocusAtEnd() // cursor gesture; focus bools projected by finalize
 			return m.finalize(cmds)        // consume Up; don't also move cursor
@@ -821,6 +912,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m = m.syncDictationAllowed()
 
 	case title.RenameRequestMsg:
+		if m.viewingHelp() {
+			break // the help document is virtual; it cannot be renamed to a file
+		}
 		if m.filePath == "" {
 			// Untitled file gets a name — create on disk.
 			dir := m.currentDir()
@@ -870,6 +964,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.opentabs = m.opentabs.CloseFile("")
 		}
 		m.editor = m.editor.SetContent(string(msg.Content))
+		m.editor = m.editor.SetReadOnly(false) // leaving help (if any) → editable
 		m.filePath = msg.Path
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(msg.Path)
@@ -1417,6 +1512,7 @@ func (m Model) CreateUntitled(preserveCurrentUntitled bool) (Model, tea.Cmd) {
 
 	name := nextUntitled(dir, skipName)
 	m.editor = m.editor.SetContent("")
+	m.editor = m.editor.SetReadOnly(false) // recover from a closed help tab
 	m.filePath = ""
 	m.docID = 0
 	m.title = m.title.SetText(name)
