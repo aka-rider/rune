@@ -42,7 +42,22 @@ quick keyboard navigation, just start typing
 
 ## Installation
 
-Ask your agent how to install and set it up
+Requires macOS on Apple Silicon (arm64).
+
+```sh
+brew tap aka-rider/tap
+brew install rune
+```
+
+**Voice input** (optional) — requires a local whisper.cpp server (~1.6 GB RAM while running):
+
+```sh
+brew install aka-rider/tap/whisper-cpp-server
+brew services start aka-rider/tap/whisper-cpp-server
+```
+
+First launch downloads ~3 GB of model weights and builds the ANE encoder (~5–10 min).
+Subsequent launches are instant.
 
 
 ---
@@ -61,7 +76,7 @@ Rune transcribes speech directly into your notes using a local [whisper.cpp](htt
 
 **How it works:**
 
-1. Run a whisper.cpp server locally (default: `http://127.0.0.1:2022`)
+1. Run a whisper.cpp server locally (default: `http://127.0.0.1:8080`)
 2. Press `Ctrl+V` to start dictation
 3. Speak — Rune captures your mic via macOS AudioToolbox
 4. Audio streams in 2-second chunks; text appears incrementally at your cursor
@@ -69,9 +84,9 @@ Rune transcribes speech directly into your notes using a local [whisper.cpp](htt
 
 Rune auto-detects your current macOS keyboard input language and passes the BCP-47 code to whisper for better accuracy.
 
-> **Start the whisper server** (example):
+> **Start via Homebrew** (recommended):
 > ```bash
-> ./whisper-server -m models/ggml-large-v3.bin --port 2022
+> brew services start aka-rider/tap/whisper-cpp-server
 > ```
 
 ---
@@ -133,7 +148,7 @@ The chat has context of your currently open file — ask questions about your no
 
 ---
 
-## Creadits
+## Credits
 
 - [Bubble Tea by charmbracelet](https://github.com/charmbracelet/bubbletea)
 

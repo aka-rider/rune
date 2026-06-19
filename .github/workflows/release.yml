@@ -6,7 +6,7 @@ on:
 
 jobs:
   release:
-    runs-on: macos-latest   # GitHub's macos-latest is arm64
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
@@ -35,6 +35,7 @@ jobs:
           # dylib install ID to its stable opt path, so this is already correct on
           # arm64; the formula re-points it to the user's prefix at install time.
           otool -L rune | grep libgit2 || true
+          file rune | grep -q 'arm64' || { echo "ERROR: binary is not arm64"; exit 1; }
           codesign --sign - --force rune
 
       - name: Archive and checksum

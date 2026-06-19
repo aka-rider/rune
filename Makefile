@@ -10,6 +10,8 @@ run: build
 	$(RUNE) $(ARGS)
 rune: run
 
+clean:
+	rm -f $(RUNE)
 
 test:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
@@ -18,8 +20,8 @@ test:
 test-fuzz:
 	go test -tags fuzzing -count=1 -run='Fuzz' ./...
 
-clean:
-	rm -f $(RUNE)
+whisper.cpp-restart:
+	brew services restart whisper-cpp-server
 
-.PHONY: build build-fuzz run test clean test-fuzz-corpus
+.PHONY: build build-fuzz run test clean test-fuzz whisper.cpp-restart
 
