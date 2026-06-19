@@ -76,7 +76,7 @@ func (m Model) StartCmd() (Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	cfg := dictengine.Config{
-		Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:2022", InferencePath: "/v1/audio/transcriptions"},
+		Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:8080", InferencePath: "/inference"},
 		Language: inputlang.Current(),
 	}
 	return m, dictengine.StartCmd(ctx, cfg)

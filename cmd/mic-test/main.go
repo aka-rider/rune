@@ -23,8 +23,8 @@ func main() {
 	}
 
 	c := whisper.Client{
-		BaseURL:       "http://127.0.0.1:2022",
-		InferencePath: "/v1/audio/transcriptions",
+		BaseURL:       "http://127.0.0.1:8080",
+		InferencePath: "/inference",
 	}
 
 	count := 0

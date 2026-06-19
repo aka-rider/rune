@@ -1,6 +1,6 @@
 // whisper-test verifies the whisper.cpp HTTP transcription endpoint.
 // Usage: go run ./cmd/whisper-test
-// Requires sample.wav in the repo root and a running whisper server on :2022.
+// Requires sample.wav in the repo root and a running whisper server on :8080.
 package main
 
 import (
@@ -19,8 +19,8 @@ func main() {
 	}
 
 	c := whisper.Client{
-		BaseURL:       "http://127.0.0.1:2022",
-		InferencePath: "/v1/audio/transcriptions",
+		BaseURL:       "http://127.0.0.1:8080",
+		InferencePath: "/inference",
 	}
 
 	text, err := c.Transcribe(context.Background(), data, "")
