@@ -2,6 +2,7 @@ package dictation
 
 import (
 	"context"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -91,6 +92,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case dictengine.PartialTranscriptionMsg:
 		if m.enabled {
+			// §1.3 / CLAUDE.md #24: An upstream reset (empty or whitespace-only
+			// Accumulated) must never be applied as a destructive ReplaceRange —
+			// it would erase committed text. Drop the update and keep the current
+			// pending range so the next non-empty result lands correctly.
+			if strings.TrimSpace(msg.Accumulated) == "" {
+				if m.dictCh != nil {
+					return m, dictengine.ListenCmd(m.dictCh)
+				}
+				return m, nil
+			}
 			start := m.startOff
 			end := m.startOff + m.appliedLen
 			text := msg.Accumulated

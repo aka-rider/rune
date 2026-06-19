@@ -2,7 +2,6 @@ package docstate
 
 import (
 	"database/sql"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,12 +22,7 @@ func newStoreAtPath(t *testing.T, permPath string) *Store {
 	if err != nil {
 		t.Fatalf("newStoreAtPath: openPerm %q: %v", permPath, err)
 	}
-	mem, err := openMem()
-	if err != nil {
-		perm.Close()
-		t.Fatalf("newStoreAtPath: openMem: %v", err)
-	}
-	return &Store{perm: perm, mem: mem, clock: time.Now, currentSeq: math.MaxInt64}
+	return &Store{perm: perm, clock: time.Now}
 }
 
 // countRows returns the row count for the given query.
@@ -45,6 +39,16 @@ func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
 // single character insertion with no deleted text.
 func singleInsert(ch string) []buffer.AppliedEdit {
 	return []buffer.AppliedEdit{{Start: 0, End: 0, Deleted: "", Insert: ch}}
+}
+
+// testDoc creates a scratch document and returns its docID. Fatal on error.
+func testDoc(t *testing.T, s *Store) int64 {
+	t.Helper()
+	ref, err := s.CreateScratch("")
+	if err != nil {
+		t.Fatalf("testDoc: CreateScratch: %v", err)
+	}
+	return ref.ID
 }
 
 var noCursors []cursor.Cursor
@@ -107,12 +111,13 @@ func TestFlushWritesSnapshot(t *testing.T) {
 	s := NewTestStore(t)
 	content := "the quick brown fox"
 
-	docID, err := s.EnsureDocument("/test.md")
+	ref, err := s.OpenPath("/test.md")
 	if err != nil {
-		t.Fatalf("EnsureDocument: %v", err)
+		t.Fatalf("OpenPath: %v", err)
 	}
+	docID := ref.ID
 
-	snapID, err := s.CreateSnapshot(docID, content, "local")
+	snapID, err := s.CreateSnapshot(docID, content, "local", 0)
 	if err != nil {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
@@ -155,17 +160,17 @@ func TestCrashRecovery(t *testing.T) {
 	// Session 1: write data and close.
 	{
 		s := newStoreAtPath(t, permPath)
-		docID, err := s.EnsureDocument("/notes.md")
+		ref, err := s.OpenPath("/notes.md")
 		if err != nil {
-			t.Fatalf("EnsureDocument: %v", err)
+			t.Fatalf("OpenPath: %v", err)
 		}
-		savedDocID = docID
+		savedDocID = ref.ID
 
 		edits := singleInsert("a")
-		if err := s.AppendEdit("main", edits, noCursors, noCursors, "main"); err != nil {
+		if _, err := s.AppendEdit(savedDocID, "main", edits, noCursors, noCursors, "main"); err != nil {
 			t.Fatalf("AppendEdit: %v", err)
 		}
-		if _, err := s.CreateSnapshot(docID, content, "local"); err != nil {
+		if _, err := s.CreateSnapshot(savedDocID, content, "local", 0); err != nil {
 			t.Fatalf("CreateSnapshot: %v", err)
 		}
 		if err := s.UpsertDraft("chat", draftText); err != nil {
@@ -223,11 +228,11 @@ func TestOpenLadderDegradation(t *testing.T) {
 	}
 
 	// Store must be functional despite degradation.
-	docID, err := store.EnsureDocument("/degraded.md")
+	ref, err := store.OpenPath("/degraded.md")
 	if err != nil {
-		t.Fatalf("store not functional after degradation: EnsureDocument: %v", err)
+		t.Fatalf("store not functional after degradation: OpenPath: %v", err)
 	}
-	if _, err := store.CreateSnapshot(docID, "content", "local"); err != nil {
+	if _, err := store.CreateSnapshot(ref.ID, "content", "local", 0); err != nil {
 		t.Fatalf("store not functional after degradation: CreateSnapshot: %v", err)
 	}
 }
@@ -236,16 +241,17 @@ func TestOpenLadderDegradation(t *testing.T) {
 
 func TestBasicUndo(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	edits := singleInsert("a")
 	before := []cursor.Cursor{{Position: 0, Anchor: 0}}
 	after := []cursor.Cursor{{Position: 1, Anchor: 1}}
 
-	if err := s.AppendEdit("main", edits, before, after, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", edits, before, after, "main"); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 
-	surface, gotEdits, gotBefore, ok := s.UndoTarget()
+	surface, gotEdits, gotBefore, ok := s.UndoTarget(docID)
 	if !ok {
 		t.Fatal("UndoTarget: expected ok=true, got false")
 	}
@@ -260,7 +266,7 @@ func TestBasicUndo(t *testing.T) {
 	}
 
 	// Second undo: nothing left.
-	_, _, _, ok2 := s.UndoTarget()
+	_, _, _, ok2 := s.UndoTarget(docID)
 	if ok2 {
 		t.Error("second UndoTarget: expected ok=false (nothing left to undo)")
 	}
@@ -268,21 +274,22 @@ func TestBasicUndo(t *testing.T) {
 
 func TestBasicRedo(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	edits := singleInsert("b")
 	after := []cursor.Cursor{{Position: 1, Anchor: 1}}
 
-	if err := s.AppendEdit("main", edits, noCursors, after, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", edits, noCursors, after, "main"); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 
 	// Undo.
-	if _, _, _, ok := s.UndoTarget(); !ok {
+	if _, _, _, ok := s.UndoTarget(docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 
 	// Redo.
-	surface, gotEdits, gotAfter, ok := s.RedoTarget()
+	surface, gotEdits, gotAfter, ok := s.RedoTarget(docID)
 	if !ok {
 		t.Fatal("RedoTarget: expected ok=true, got false")
 	}
@@ -297,7 +304,7 @@ func TestBasicRedo(t *testing.T) {
 	}
 
 	// Second redo: nothing left.
-	_, _, _, ok2 := s.RedoTarget()
+	_, _, _, ok2 := s.RedoTarget(docID)
 	if ok2 {
 		t.Error("second RedoTarget: expected ok=false (nothing left to redo)")
 	}
@@ -305,21 +312,22 @@ func TestBasicRedo(t *testing.T) {
 
 func TestCoalescingWithinWindow(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	// Fix the clock at t=0.
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
-	if err := s.AppendEdit("main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
 	// Advance clock by 100ms (within 300ms window).
 	now = now.Add(100 * time.Millisecond)
-	if err := s.AppendEdit("main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 2: %v", err)
 	}
 
-	n := countRows(t, s.mem, `SELECT COUNT(*) FROM events WHERE is_undo_stop=1`)
+	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=? AND is_undo_stop=1`, docID)
 	if n != 1 {
 		t.Errorf("expected 1 coalesced event row, got %d", n)
 	}
@@ -327,20 +335,21 @@ func TestCoalescingWithinWindow(t *testing.T) {
 
 func TestCoalescingOutsideWindow(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
-	if err := s.AppendEdit("main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
 	// Advance clock by 400ms (outside 300ms window).
 	now = now.Add(400 * time.Millisecond)
-	if err := s.AppendEdit("main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 2: %v", err)
 	}
 
-	n := countRows(t, s.mem, `SELECT COUNT(*) FROM events WHERE is_undo_stop=1`)
+	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=? AND is_undo_stop=1`, docID)
 	if n != 2 {
 		t.Errorf("expected 2 event rows (no coalesce), got %d", n)
 	}
@@ -348,28 +357,27 @@ func TestCoalescingOutsideWindow(t *testing.T) {
 
 func TestCoalescingWhitespaceBreaks(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
 	// First insert: non-whitespace.
-	if err := s.AppendEdit("main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
 	// Second insert: space — must break coalesce.
 	now = now.Add(50 * time.Millisecond)
-	if err := s.AppendEdit("main", singleInsert(" "), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert(" "), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit space: %v", err)
 	}
 	// Third insert after whitespace — new stop.
 	now = now.Add(50 * time.Millisecond)
-	if err := s.AppendEdit("main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit 3: %v", err)
 	}
 
-	n := countRows(t, s.mem, `SELECT COUNT(*) FROM events WHERE is_undo_stop=1`)
-	// Expect: 'a' (stop 1), ' ' coalesces with 'a' but wait — whitespace is
-	// the LAST insert of an event, so the NEXT insert ('b') cannot coalesce with it.
+	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=? AND is_undo_stop=1`, docID)
 	// Sequence: [a] + [space] (space coalesces into 'a' event? No — space is inserted
 	// AFTER 'a', so 'a' event's last insert is 'a' (non-whitespace), space coalesces into it.
 	// Then 'b' tries to coalesce: last event's last insert is ' ' (whitespace) → no coalesce.
@@ -381,85 +389,70 @@ func TestCoalescingWhitespaceBreaks(t *testing.T) {
 
 func TestCoalescingSurfaceBreak(t *testing.T) {
 	s := NewTestStore(t)
+	docID := testDoc(t, s)
 
 	now := time.Now()
 	s.clock = func() time.Time { return now }
 
-	if err := s.AppendEdit("main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit main: %v", err)
 	}
 	// Different surface — must not coalesce.
 	now = now.Add(50 * time.Millisecond)
-	if err := s.AppendEdit("title", singleInsert("b"), noCursors, noCursors, "title"); err != nil {
+	if _, err := s.AppendEdit(docID, "title", singleInsert("b"), noCursors, noCursors, "title"); err != nil {
 		t.Fatalf("AppendEdit title: %v", err)
 	}
 
-	n := countRows(t, s.mem, `SELECT COUNT(*) FROM events WHERE is_undo_stop=1`)
+	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=? AND is_undo_stop=1`, docID)
 	if n != 2 {
 		t.Errorf("expected 2 events (surface break prevents coalesce), got %d", n)
 	}
 }
 
 func TestTruncateOnNewEdit(t *testing.T) {
-	s := NewTestStore(t)
-
-	// Append 3 edits.
-	for _, ch := range []string{"a", "b", "c"} {
-		if err := s.AppendEdit("main", singleInsert(ch), noCursors, noCursors, "main"); err != nil {
-			t.Fatalf("AppendEdit %q: %v", ch, err)
-		}
-	}
-
-	// Since all are within the same instant (no clock advance) they may coalesce.
-	// Advance clock to ensure separate stops.
-	now := time.Now()
-	s.clock = func() time.Time { return now }
-	s2 := NewTestStore(t)
-	s2.clock = s.clock
-
-	// Use a fresh store for a controlled test.
 	s3 := NewTestStore(t)
+	docID := testDoc(t, s3)
+
 	nowT := time.Now()
-	clk := func() time.Time { return nowT }
-	s3.clock = clk
+	s3.clock = func() time.Time { return nowT }
 
 	for _, ch := range []string{"x", "y", "z"} {
-		if err := s3.AppendEdit("main", singleInsert(ch), noCursors, noCursors, "main"); err != nil {
+		if _, err := s3.AppendEdit(docID, "main", singleInsert(ch), noCursors, noCursors, "main"); err != nil {
 			t.Fatalf("AppendEdit %q: %v", ch, err)
 		}
 		nowT = nowT.Add(400 * time.Millisecond) // ensure separate stops
 	}
 
-	before := countRows(t, s3.mem, `SELECT COUNT(*) FROM events`)
+	before := countRows(t, s3.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
 	if before != 3 {
 		t.Fatalf("expected 3 events before undo, got %d", before)
 	}
 
 	// Undo once to step back.
-	if _, _, _, ok := s3.UndoTarget(); !ok {
+	if _, _, _, ok := s3.UndoTarget(docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 	// Undo again.
-	if _, _, _, ok := s3.UndoTarget(); !ok {
+	if _, _, _, ok := s3.UndoTarget(docID); !ok {
 		t.Fatal("second UndoTarget returned ok=false")
 	}
 
 	// New edit after undo — must truncate the two future events.
 	nowT = nowT.Add(400 * time.Millisecond)
-	if err := s3.AppendEdit("main", singleInsert("w"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s3.AppendEdit(docID, "main", singleInsert("w"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit after undo: %v", err)
 	}
 
-	after := countRows(t, s3.mem, `SELECT COUNT(*) FROM events`)
-	// Before undo we were at seq 3. After two undos currentSeq = 1 (at or before seq 1).
-	// New edit truncates seq > currentSeq (seq 2 and 3), then inserts new event.
+	after := countRows(t, s3.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
+	// Before undo we were at seq 3. After two undos current_seq = 1 (at or before seq 1).
+	// New edit truncates seq > current_seq (seq 2 and 3), then inserts new event.
 	// Remaining: seq 1 + new event = 2 events.
 	if after != 2 {
 		t.Errorf("expected 2 events after truncate-on-new-edit, got %d", after)
 	}
 
 	// Redo should now return false (future was truncated).
-	_, _, _, ok := s3.RedoTarget()
+	_, _, _, ok := s3.RedoTarget(docID)
 	if ok {
 		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
 	}

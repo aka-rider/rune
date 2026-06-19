@@ -8,6 +8,28 @@ If code violates any rule below, it is defective and must be fixed before merge.
 
 ---
 
+## 0. Prime Directive — Protect the User's Words
+
+`rune` holds the user's notes: their thinking, made durable. Every other rule in this document is subordinate to one: **never corrupt and never lose what the user has written.** When any concern — performance, elegance, architecture, even feature correctness — conflicts with data safety, data safety wins. A feature that puts the user's text at risk is not shipped; it is redesigned until it is safe.
+
+### 0.1 The Harm Ladder
+
+Rank every change, bug, and trade-off against this ladder. A defect's severity is the highest rung it can reach:
+
+1. **Catastrophic — silent corruption or degradation.** Writing wrong or garbled bytes, mangling UTF-8, dropping or reordering content, silently rewriting the user's text (line endings, trailing newline, encoding, BOM), or overwriting a good file with a bad buffer. Worst of all because the user may not notice until the original is gone. This NEVER ships. Code that *might* do this does not merge.
+2. **Severe — losing more than a few seconds of work.** A crash, failed save, or botched recovery that discards unsaved edits. The bar is explicit: **at most a few seconds of work may ever be at risk.** Anything that can lose minutes of typing is a Severe defect.
+3. **Tolerable — everything else.** A render glitch, a wrong layout, a dropped keypress, even a clean crash that loses nothing. Fix them, but they do not threaten the user's data. It is always correct to accept a Tolerable failure — including halting an operation with a visible error — to avoid a Severe or Catastrophic one.
+
+### 0.2 Fail Loud, Fail Safe, Never Silent
+
+When you suspect data is at risk, **STOP and surface a hard error** (§1.3). A controlled halt that leaves the in-memory buffer intact is a Tolerable failure and is always preferable to the rungs above. But "stop" means a surfaced error — NOT a `panic`. A panic kills the process and takes the unsaved buffer with it (Severe). Stop without crashing, keep the buffer, tell the user.
+
+### 0.3 Robustness Is Data Safety Under Stress
+
+Malformed input, enormous files, exotic Unicode, a file changed underneath you, a full disk — all are inevitable, not edge cases. The editor MUST absorb them by degrading gracefully (show an error, refuse the operation, preserve the buffer), never by corrupting data or crashing with unsaved work. The rules that enforce this are concentrated in §1.3 (fail fast on data risk), **§1.4 (persistence & durability)**, §1.5 / §4.5 (Unicode), and §5 (the Elm cycle). Read §1.4 before touching any code that writes to disk, mutates the buffer, or closes a document.
+
+---
+
 ## 1. Go Fundamentals
 
 ### 1.1 Value Semantics
@@ -21,6 +43,8 @@ If code violates any rule below, it is defective and must be fixed before merge.
 
 ### 1.3 Error Handling
 - **Fail fast on data risk.** If there is ANY suspicion that user data may be corrupted or lost, STOP operations immediately and surface a hard error to the user.
+- **Validate before you persist a destructive change.** An edit that collapses a non-empty region to empty, deletes a large fraction of the buffer, or shrinks a document far below what was loaded is *suspect until proven intentional*. Edits arriving from asynchronous or external sources (dictation, paste, IME composition, network, file watchers) are especially suspect: an upstream *reset* (e.g. an empty interim result) MUST NOT be applied as a user *deletion*. Drop or clamp such an edit; never let it reach the buffer — and therefore never let it reach disk.
+- **Clamp ranges to the live buffer.** Before any `ReplaceRange(start, end, …)` / delete / replace, clamp `[start, end]` to the current buffer length. If the range is stale (`end` past the end of the buffer), cancel the operation rather than mutate a region that no longer exists. Offsets computed against an old revision are a corruption vector.
 - **NEVER swallow errors.** Bare `_, _ = operation()` is prohibited unless annotated with `// fire-and-forget: <reason>`.
 - **Contextual wrapping.** Always wrap errors with operation + resource context: `fmt.Errorf("load dir %q: %w", dir, err)`. Always use `%w`, never `%s` or `%v` — `%w` preserves the error chain for `errors.Is`/`errors.As`.
 - **Never downgrade `error` to `string`.** When returning or storing an error, always use the `error` type and always chain the original error with `%w`. Converting to a string with `%s`/`%v` or `fmt.Sprintf` severs the chain and prevents `errors.Is`/`errors.As` from working.
@@ -37,6 +61,37 @@ initErr = fmt.Errorf("failed to get working directory: %w", err)   // ✓
 
 - **No silent fallbacks.** Do not default or silently recover from invalid user-supplied data.
 - **NEVER panic.** A `panic` crashes the process and loses unsaved content. Malformed input is inevitable. If you need to enforce an invariant, use a safe fallback (graceful degradation) or a test-only assertion (`//go:build testing`). Rendering errors are tolerable, data loss is not.
+
+### 1.4 Data Persistence & Durability
+
+These rules keep the user's words on the lowest rungs of the harm ladder (§0.1). They are implementation-agnostic law: however persistence is built, it MUST satisfy every rule below.
+
+**1.4.1 Disk writes are atomic and durable — behind one shared helper.**
+Never `os.WriteFile` / truncate-in-place over a user's file: a crash or power loss mid-write leaves a half-written or empty file (Catastrophic). Every write of user content to disk MUST:
+1. Write to a temp file in the **same directory** as the target (same filesystem, so the rename is atomic).
+2. `Sync()` the temp file — flush the bytes to durable storage.
+3. `os.Rename` the temp over the target — an atomic replace; a reader sees either the old file or the new one, never a partial.
+4. Where the platform supports it, `fsync` the parent directory so the rename itself survives a crash.
+
+A save is not "done" — and the buffer is not "clean" — until the rename returns without error. This logic lives in **one** function that every writer calls. Today two sites write raw and non-atomically: `saveFileCmd` (`pkg/ui/pages/workspace/workspace_fileio.go`) and the image-paste write (`pkg/ui/components/markdownedit/commands_image.go`). Per "prefer unified solutions," route both through the shared durable-write helper rather than patching temp+rename into each caller.
+
+**1.4.2 Never auto-persist a possibly-bad buffer onto the user's file.**
+An automatic, debounced write that copies the live buffer straight onto the destination `.md` turns one bad in-memory edit into permanent on-disk loss. Durability for *unsaved* work MUST go to a separate recovery store (a journal / snapshot), never to the user's file. The destination file changes only on an explicit, intentional act — save (⌘S) and save-on-close. Background persistence protects work without ever overwriting the original with unreviewed content.
+
+**1.4.3 Recovery state must itself survive the crash.**
+At most a few seconds of work may ever be at risk (rung 2). Whatever backs crash recovery — journal, log, snapshot — MUST be durable. State that lives only in memory cannot survive the crash it exists to protect against. On open, reconstruct any unsaved changes from the recovery store and present them to the user as *editable* history they can keep or step back through; never silently write recovered content back over the file on disk.
+
+**1.4.4 Guard every destructive transition.**
+Closing a tab, quitting, switching away from, or overwriting a *dirty* buffer MUST NOT silently discard edits. Prompt (save / discard / cancel) or preserve — no code path drops unsaved changes without an explicit user choice. The confirmation state lives in the component that renders it (§3.2), never scattered across a page.
+
+**1.4.5 Round-trip byte fidelity — no silent normalization.**
+What the user opened is what they get back, byte for byte, unless they edited it. Do NOT silently normalize line endings (CRLF/LF/CR), add or strip a trailing newline, transcode, or insert/remove a BOM. These "helpful" rewrites are silent degradation (rung 1): they corrupt diffs, pollute version-control history, and desync files shared with other tools. Preserve the original line-ending style and trailing-newline state across load → edit → save. Any normalization is an explicit, opt-in user action.
+
+**1.4.6 Key history to the file, not its path.**
+A document's recovery history belongs to the *file*, not the string naming it. Identify files by a stable identity (e.g. inode + device) rather than path, so renaming a closed file does not orphan its history and reusing a path for a different file does not graft on the wrong history. When a rename is detected, tell the user. Treat path as a fallback identifier only.
+
+**1.4.7 Treat an externally-changed file as a hazard.**
+A file may change on disk after you load it — another editor, a `git` operation, a sync client. Before overwriting, detect divergence from what you loaded (mtime / size / content hash) and refuse-or-prompt rather than clobber the newer version. Surface the conflict; never silently win.
 
 ### 1.5 Text & Strings
 
@@ -656,7 +711,7 @@ These are mistakes that language models commonly produce in this codebase. Each 
 | 1 | Defining a Go `interface` for a single concrete component | Unnecessary boxing. Components are concrete value types. | §2.2 |
 | 2 | Adding pointer receivers to `Init`/`Update`/`View` | Breaks value semantics, enables aliasing | §5.1 |
 | 3 | Storing `context.Context` or `*log.Logger` on Model | Violates Elm purity, leaks non-serializable state | §6.1 |
-| 4 | Creating `types`, `utils`, `helpers`, `common` packages | Catch-all packages with no cohesion | §1.4 |
+| 4 | Creating `types`, `utils`, `helpers`, `common` packages | Catch-all packages with no cohesion | §1.6 |
 | 5 | Defining a message in the CONSUMER's package | Message belongs to the producer/owner of the data | §2.4 |
 | 6 | Page holds state that only one child component renders | Violates State Residency Rule | §2.1 |
 | 7 | Package-level `const` for a child component's dimension | Magic number; component must expose `Height()`/`Width()` | §4.1 |
@@ -674,6 +729,13 @@ These are mistakes that language models commonly produce in this codebase. Each 
 | 19 | Treating lipgloss `Width(n)`/`Height(n)` as content-box (subtracting frame in BOTH recalcLayout and View) | Double-subtraction: Width/Height are border-box in lipgloss v2 | §4.3 |
 | 20 | Using `len(str)` instead of `utf8.RuneCountInString(str)` for display-related calculations | Byte length ≠ character length; breaks CJK, emoji, accented chars | §1.5, §4.5 |
 | 21 | Returning or storing an error as `string` instead of `error` | Severs the error chain; use `%w` and keep the `error` type | §1.3 |
+| 22 | Writing a user file with `os.WriteFile`/truncate-in-place instead of atomic temp→fsync→rename | A crash mid-write corrupts or empties the file | §0.1, §1.4.1 |
+| 23 | Auto-saving the live buffer straight onto the user's `.md` on a debounce timer | One bad in-memory edit becomes permanent disk loss; unsaved work belongs in the recovery store | §1.4.2 |
+| 24 | Applying an empty/whitespace async edit (dictation/paste/IME reset) as a destructive `ReplaceRange` | An upstream reset masquerades as a user deletion and wipes committed text | §1.3, §1.4 |
+| 25 | Closing/quitting/overwriting a dirty buffer with no save/discard/cancel prompt | Silently loses unsaved work (rung 2) | §1.4.4 |
+| 26 | Silently normalizing line endings / trailing newline / encoding / BOM on save | Silent degradation (rung 1): corrupts diffs and round-trip fidelity | §1.4.5 |
+| 27 | Backing crash recovery with in-memory-only state | Evaporates on the very crash it exists to survive | §1.4.3 |
+| 28 | Keying recovery/undo history to a path string instead of the file's stable identity | Rename orphans history; path reuse grafts on the wrong history | §1.4.6 |
 
 ---
 
@@ -719,6 +781,13 @@ Before completing any change, mechanically verify:
 - [ ] Data integrity failures stop execution and surface explicit errors to the user.
 - [ ] No silent error swallowing — every error is wrapped with context or explicitly annotated.
 - [ ] No `error` downgraded to `string` — `.Error()` called only at the display/log boundary.
+- [ ] Every write of user content to disk goes through the shared atomic, durable helper (temp → `fsync` → `rename`) — no raw `os.WriteFile`/truncate-in-place.
+- [ ] No automatic/debounced write copies the live buffer onto the user's destination file; unsaved work is persisted only to the recovery store.
+- [ ] Crash-recovery state is durable, not in-memory-only.
+- [ ] Every destructive transition (close / quit / overwrite / switch on a dirty buffer) prompts or preserves — never a silent discard.
+- [ ] No silent normalization of line endings, trailing newline, encoding, or BOM — load → save is byte-faithful unless the user edited.
+- [ ] Async/external edits (dictation, paste, IME, watchers) are validated and clamped to the live buffer; an empty/whitespace upstream reset never applies as a destructive replace.
+- [ ] Document recovery identity is keyed to the file's stable identity (inode+device), with path as fallback.
 - [ ] No file exceeds 500 LoC.
 - [ ] No `len()` used for display-related string length; `utf8.RuneCountInString` used instead.
 - [ ] No page holds rendering state that belongs to a child component.

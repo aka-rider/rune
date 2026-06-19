@@ -2,7 +2,6 @@ package invariant
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -698,22 +697,31 @@ func CheckInvariants(s Snapshot) *Violation {
 	return nil
 }
 
-// CheckDataLossInvariants checks DATA-LOSS invariants that require disk access.
-// Call only after the drain has settled following a save event.
-func CheckDataLossInvariants(s Snapshot) *Violation {
-	if s.ActiveFilePath == "" {
-		return nil
+// CheckDataLossInvariants checks DL1: VFS content must equal buffer content
+// immediately after an autosave snapshot settles.
+// vfsContent is the result of store.Content(snap.DocID), passed by the driver
+// so this package remains docstate-free (N2).
+// A missing (empty) VFS content when snap.DocID != 0 is a hard DL1 violation —
+// the autosave must have committed something.
+func CheckDataLossInvariants(s Snapshot, vfsContent string) *Violation {
+	if s.DocID == 0 {
+		return nil // no VFS doc yet — untitled without a scratch allocation
 	}
-	diskData, err := os.ReadFile(s.ActiveFilePath)
-	if err != nil {
-		return nil // file not written yet; skip
-	}
-	if string(diskData) != s.Content {
+	if vfsContent == "" {
 		return &Violation{
 			InvariantID: "DL1",
 			Message: fmt.Sprintf(
-				"file-on-disk[:%d]=%q != buffer[:%d]=%q",
-				min(len(diskData), 40), trunc(string(diskData), 40),
+				"autosave settled but VFS has no content for docID=%d (buffer[:%d]=%q)",
+				s.DocID, min(len(s.Content), 40), trunc(s.Content, 40),
+			),
+		}
+	}
+	if vfsContent != s.Content {
+		return &Violation{
+			InvariantID: "DL1",
+			Message: fmt.Sprintf(
+				"VFS[:%d]=%q != buffer[:%d]=%q",
+				min(len(vfsContent), 40), trunc(vfsContent, 40),
 				min(len(s.Content), 40), trunc(s.Content, 40),
 			),
 		}

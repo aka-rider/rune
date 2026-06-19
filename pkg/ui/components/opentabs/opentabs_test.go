@@ -12,7 +12,7 @@ import (
 
 func TestMouseClickSelectsTab(t *testing.T) {
 	m := New(keymap.Default(), styles.Default())
-	m = m.OpenFile("a.md").OpenFile("b.md") // tabs: a(0), b(1)
+	m = m.OpenFile(1, "a.md").OpenFile(2, "b.md") // tabs: a(0), b(1)
 	m = m.SetFocused(true).SetOffset(1, 5)  // header at y=5, tab0 y=6, tab1 y=7
 
 	// Click tab 1 (b.md).
@@ -41,7 +41,7 @@ func TestMouseClickSelectsTab(t *testing.T) {
 func TestDirtyFlagPosition(t *testing.T) {
 	m := New(keymap.Default(), styles.Default())
 	m = m.SetSize(60, 10)
-	m = m.OpenFile("/notes/tickets.txt")
+	m = m.OpenFile(1, "/notes/tickets.txt")
 
 	// Clean: no 'x' appears before the filename in the rendered view.
 	view := m.View()

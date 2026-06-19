@@ -213,7 +213,7 @@ func FuzzSession(f *testing.F) {
 		key(keyShiftRight),
 	))
 
-	// Seed: autosave snapshot (DL2). Paste then let autosave fire (flushDelay=0 under fuzzing).
+	// Seed: autosave snapshot (DL1). Paste then let autosave fire (flushDelay=0 under fuzzing).
 	f.Add(concat(
 		paste("autosave me\n"),
 		key(keyDown), // triggers drain which includes flush Cmd
@@ -259,7 +259,7 @@ func FuzzSession(f *testing.F) {
 }
 
 func FuzzSessionWithFile(f *testing.F) {
-	// Seed: paste text (autosave should write it to disk)
+	// Seed: paste text (autosave snapshots to VFS; DL1 check fires on AutosaveSettledMsg)
 	f.Add([]byte{byte(event.KindText), 5, 'h', 'e', 'l', 'l', 'o'})
 	// Seed: paste text then navigate
 	f.Add(concat(

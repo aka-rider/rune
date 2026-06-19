@@ -13,10 +13,20 @@ import (
 )
 
 // TabSelectedMsg is emitted when the user explicitly selects a tab via
-// keyboard navigation within the focused opentabs component.
-type TabSelectedMsg struct{ Path string }
+// keyboard navigation or mouse click within the focused opentabs component.
+type TabSelectedMsg struct {
+	DocID int64
+	Path  string
+}
+
+// TabHandle identifies a tab by its stable VFS document identity.
+type TabHandle struct {
+	DocID int64
+	Path  string
+}
 
 type Tab struct {
+	DocID  int64
 	Path   string
 	Name   string
 	Pinned bool
@@ -62,8 +72,15 @@ func (m Model) PathAt(index int) string {
 	return m.tabs[index].Path
 }
 
-// SelectIndex switches the active tab to the given index. Returns the updated
-// model. The page calls this directly — no message round-trip needed.
+// DocIDAt returns the VFS document ID at the given tab index, or 0 if OOB.
+func (m Model) DocIDAt(index int) int64 {
+	if index < 0 || index >= len(m.tabs) {
+		return 0
+	}
+	return m.tabs[index].DocID
+}
+
+// SelectIndex switches the active tab to the given index.
 func (m Model) SelectIndex(index int) Model {
 	if index < 0 || index >= len(m.tabs) {
 		return m
@@ -71,6 +88,16 @@ func (m Model) SelectIndex(index int) Model {
 	m.cursor = index
 	for i := range m.tabs {
 		m.tabs[i].Active = i == index
+	}
+	return m
+}
+
+// SelectByID activates the tab with the given docID. Returns unchanged if not found.
+func (m Model) SelectByID(docID int64) Model {
+	for i, t := range m.tabs {
+		if t.DocID == docID {
+			return m.SelectIndex(i)
+		}
 	}
 	return m
 }
@@ -84,20 +111,32 @@ func (m Model) PinIndex(index int) Model {
 	return m
 }
 
-// OpenFile adds or activates a tab for the given path.
-func (m Model) OpenFile(path string) Model {
-	for i := range m.tabs {
-		m.tabs[i].Active = m.tabs[i].Path == path
-		if m.tabs[i].Path == path {
-			m.cursor = i
-			return m
+// OpenFile adds or activates a tab for the given docID+path pair.
+// When docID != 0, the tab is keyed by docID (rename-safe).
+// When docID == 0, falls back to path-keying for virtual docs (help, initial
+// untitled) where no VFS identity has been assigned yet.
+func (m Model) OpenFile(docID int64, path string) Model {
+	if docID != 0 {
+		for i, t := range m.tabs {
+			if t.DocID == docID {
+				m.tabs[i].Path = path
+				m.tabs[i].Name = tabName(path)
+				return m.SelectIndex(i)
+			}
+		}
+	} else {
+		for i, t := range m.tabs {
+			if t.DocID == 0 && t.Path == path {
+				return m.SelectIndex(i)
+			}
 		}
 	}
-	// Not found — add new tab
+	// Not found — add new tab.
 	for i := range m.tabs {
 		m.tabs[i].Active = false
 	}
 	m.tabs = append(m.tabs, Tab{
+		DocID:  docID,
 		Path:   path,
 		Name:   tabName(path),
 		Active: true,
@@ -106,7 +145,22 @@ func (m Model) OpenFile(path string) Model {
 	return m
 }
 
-// CloseFile removes the tab for the given path.
+// CloseByID removes the tab with the given docID.
+func (m Model) CloseByID(docID int64) Model {
+	for i, t := range m.tabs {
+		if t.DocID == docID {
+			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+			if m.cursor >= len(m.tabs) && m.cursor > 0 {
+				m.cursor = len(m.tabs) - 1
+			}
+			break
+		}
+	}
+	return m
+}
+
+// CloseFile removes the tab for the given path. Prefer CloseByID when the
+// docID is known.
 func (m Model) CloseFile(path string) Model {
 	for i, t := range m.tabs {
 		if t.Path == path {
@@ -120,8 +174,7 @@ func (m Model) CloseFile(path string) Model {
 	return m
 }
 
-// RenameFile updates the path and display name for the tab matching oldPath.
-// If no tab matches, the model is returned unchanged.
+// RenameFile updates path and display name for the tab matching oldPath.
 func (m Model) RenameFile(oldPath, newPath string) Model {
 	for i := range m.tabs {
 		if m.tabs[i].Path == oldPath {
@@ -133,7 +186,19 @@ func (m Model) RenameFile(oldPath, newPath string) Model {
 	return m
 }
 
+// SetTabNameByID overrides the display name of the tab with the given docID.
+func (m Model) SetTabNameByID(docID int64, name string) Model {
+	for i := range m.tabs {
+		if m.tabs[i].DocID == docID {
+			m.tabs[i].Name = name
+			return m
+		}
+	}
+	return m
+}
+
 // SetTabName overrides the display name of the tab matching path.
+// Prefer SetTabNameByID when the docID is known.
 func (m Model) SetTabName(path, name string) Model {
 	for i := range m.tabs {
 		if m.tabs[i].Path == path {
@@ -144,7 +209,30 @@ func (m Model) SetTabName(path, name string) Model {
 	return m
 }
 
+// MarkDirtyByID sets the dirty indicator on the tab with the given docID.
+func (m Model) MarkDirtyByID(docID int64) Model {
+	for i := range m.tabs {
+		if m.tabs[i].DocID == docID {
+			m.tabs[i].Dirty = true
+			break
+		}
+	}
+	return m
+}
+
+// MarkCleanByID clears the dirty indicator on the tab with the given docID.
+func (m Model) MarkCleanByID(docID int64) Model {
+	for i := range m.tabs {
+		if m.tabs[i].DocID == docID {
+			m.tabs[i].Dirty = false
+			break
+		}
+	}
+	return m
+}
+
 // MarkDirty sets the dirty indicator on the tab matching path.
+// Prefer MarkDirtyByID when the docID is known.
 func (m Model) MarkDirty(path string) Model {
 	for i := range m.tabs {
 		if m.tabs[i].Path == path {
@@ -156,6 +244,7 @@ func (m Model) MarkDirty(path string) Model {
 }
 
 // MarkClean clears the dirty indicator on the tab matching path.
+// Prefer MarkCleanByID when the docID is known.
 func (m Model) MarkClean(path string) Model {
 	for i := range m.tabs {
 		if m.tabs[i].Path == path {
@@ -176,8 +265,39 @@ func (m Model) HasDirty() bool {
 	return false
 }
 
+// DirtyTabs returns handles for all tabs that have unsaved changes.
+func (m Model) DirtyTabs() []TabHandle {
+	var out []TabHandle
+	for _, t := range m.tabs {
+		if t.Dirty {
+			out = append(out, TabHandle{DocID: t.DocID, Path: t.Path})
+		}
+	}
+	return out
+}
+
+// NextDocID returns the docID of the tab that would become active after
+// closing the given docID, or 0 if no tabs would remain.
+func (m Model) NextDocID(closeDocID int64) int64 {
+	idx := -1
+	for i, t := range m.tabs {
+		if t.DocID == closeDocID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || len(m.tabs) <= 1 {
+		return 0
+	}
+	if idx < len(m.tabs)-1 {
+		return m.tabs[idx+1].DocID
+	}
+	return m.tabs[idx-1].DocID
+}
+
 // NextPath returns the path of the tab that would become active after
 // closing the given path, or "" if no tabs would remain.
+// Prefer NextDocID when the docID is known.
 func (m Model) NextPath(closePath string) string {
 	idx := -1
 	for i, t := range m.tabs {
@@ -216,8 +336,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.cursor++
 			}
 		case key.Matches(msg, m.keys.PrimaryAction):
-			path := m.tabs[m.cursor].Path
-			return m, func() tea.Msg { return TabSelectedMsg{Path: path} }
+			t := m.tabs[m.cursor]
+			return m, func() tea.Msg { return TabSelectedMsg{DocID: t.DocID, Path: t.Path} }
 		}
 	case tea.MouseClickMsg:
 		return m.handleMouseClick(msg)
@@ -236,8 +356,8 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	m = m.SelectIndex(idx)
-	path := m.tabs[idx].Path
-	return m, func() tea.Msg { return TabSelectedMsg{Path: path} }
+	t := m.tabs[idx]
+	return m, func() tea.Msg { return TabSelectedMsg{DocID: t.DocID, Path: t.Path} }
 }
 
 func (m Model) View() string {

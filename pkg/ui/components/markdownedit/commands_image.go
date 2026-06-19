@@ -10,6 +10,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
+	"rune/pkg/atomicfile"
 )
 
 // ImageConfig holds configuration for image paste handling.
@@ -55,7 +57,7 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 		}
 
 		fullPath := filepath.Join(targetDir, filename)
-		if err := os.WriteFile(fullPath, capturedData, 0o644); err != nil {
+		if err := atomicfile.Write(fullPath, capturedData); err != nil {
 			return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
 		}
 
@@ -87,7 +89,6 @@ func (m Model) insertTextAtCursors(text string, now time.Time) (Model, tea.Cmd) 
 
 	return m.afterContentChange()
 }
-
 
 func generateImageFilename(data []byte, now time.Time, ext string) string {
 	hash := sha256.Sum256(data)

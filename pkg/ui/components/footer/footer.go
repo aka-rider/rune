@@ -109,7 +109,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Guard mode consumes all keypresses until resolved.
 		if len(m.guardOptions) > 0 {
 			for _, opt := range m.guardOptions {
-				if msg.Text == string(opt.Key) && msg.Mod == 0 {
+				if opt.Key != 0 && msg.Text == string(opt.Key) && msg.Mod == 0 {
 					m.guardKind = 0
 					m.guardOptions = nil
 					return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }

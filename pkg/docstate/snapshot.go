@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"rune/pkg/editor/buffer"
 )
 
 func (s *Store) PutBlob(content string) (string, error) {
@@ -59,7 +62,10 @@ func (s *Store) GetBlob(hash string) (string, error) {
 	return string(data), nil
 }
 
-func (s *Store) CreateSnapshot(docID int64, content, source string) (int64, error) {
+// CreateSnapshot stores a snapshot for docID at the current journal position
+// (seq). seq should be the most recently returned seq from AppendEdit so that
+// RecoverDocument can find this snapshot as the closest anchor for any replay.
+func (s *Store) CreateSnapshot(docID int64, content, source string, seq int64) (int64, error) {
 	hash, err := s.PutBlob(content)
 	if err != nil {
 		return 0, fmt.Errorf("create snapshot doc %d: %w", docID, err)
@@ -67,8 +73,8 @@ func (s *Store) CreateSnapshot(docID int64, content, source string) (int64, erro
 
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 	res, err := s.perm.Exec(
-		`INSERT INTO snapshots(doc_id, blob_hash, parent_ids, source, created_at) VALUES(?,?,NULL,?,?)`,
-		docID, hash, source, at,
+		`INSERT INTO snapshots(doc_id, blob_hash, parent_ids, source, seq, created_at) VALUES(?,?,NULL,?,?,?)`,
+		docID, hash, source, seq, at,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create snapshot doc %d: %w", docID, err)
@@ -81,6 +87,105 @@ func (s *Store) CreateSnapshot(docID int64, content, source string) (int64, erro
 	return id, nil
 }
 
+// RecoverDocument reconstructs the current content for docID by finding the
+// most recent snapshot whose seq is ≤ the document's current undo position,
+// then forward-replaying all edit events between the snapshot seq and the
+// current position using buffer.ReplayForward.
+//
+// Algorithm:
+//  1. Read current_seq from documents (NULL = at head → use MaxInt64).
+//  2. Find newest snapshot with seq ≤ targetSeq; anchorContent = "" if none.
+//  3. Gather edits from events with seq > anchorSnapshotSeq AND seq ≤ targetSeq.
+//  4. Apply buffer.ReplayForward(anchorContent, batches) and return.
+func (s *Store) RecoverDocument(docID int64) (string, error) {
+	// Step 1: read current undo position.
+	var nullableCS sql.NullInt64
+	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
+		return "", fmt.Errorf("recover doc %d: read current_seq: %w", docID, err)
+	}
+	targetSeq := int64(math.MaxInt64)
+	if nullableCS.Valid {
+		targetSeq = nullableCS.Int64
+	}
+
+	// Step 2: find the nearest snapshot at or before targetSeq.
+	var anchorSnapshotSeq int64
+	var anchorContent string
+	var blobHash string
+	err := s.perm.QueryRow(
+		`SELECT seq, blob_hash FROM snapshots WHERE doc_id=? AND seq <= ? ORDER BY seq DESC LIMIT 1`,
+		docID, targetSeq,
+	).Scan(&anchorSnapshotSeq, &blobHash)
+	if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("recover doc %d: find anchor snapshot: %w", docID, err)
+	}
+	if err == nil {
+		anchorContent, err = s.GetBlob(blobHash)
+		if err != nil {
+			return "", fmt.Errorf("recover doc %d: get anchor blob: %w", docID, err)
+		}
+	}
+
+	// Step 3: gather edit batches between the anchor and the target position.
+	rows, err := s.perm.Query(
+		`SELECT edits FROM events WHERE doc_id=? AND kind='edit' AND seq > ? AND seq <= ? ORDER BY seq ASC`,
+		docID, anchorSnapshotSeq, targetSeq,
+	)
+	if err != nil {
+		return "", fmt.Errorf("recover doc %d: query events: %w", docID, err)
+	}
+	defer rows.Close()
+
+	var batches [][]buffer.AppliedEdit
+	for rows.Next() {
+		var editsJSON string
+		if err := rows.Scan(&editsJSON); err != nil {
+			return "", fmt.Errorf("recover doc %d: scan event edits: %w", docID, err)
+		}
+		var batch []buffer.AppliedEdit
+		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
+			return "", fmt.Errorf("recover doc %d: unmarshal edits: %w", docID, err)
+		}
+		batches = append(batches, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("recover doc %d: events rows: %w", docID, err)
+	}
+
+	// Step 4: replay edits from the anchor snapshot forward.
+	return buffer.ReplayForward(anchorContent, batches), nil
+}
+
+// Content returns the current content of docID by reconstructing it from the
+// VFS (snapshot + replayed edits). This is what autosave reads; disk is only
+// written on an explicit materialise (⌘S).
+func (s *Store) Content(docID int64) (string, error) {
+	return s.RecoverDocument(docID)
+}
+
+// HasHistory reports whether docID has any events or snapshots in the VFS.
+// Use this to distinguish "no VFS record yet" (false → fall back to disk)
+// from "VFS record exists" (true → use RecoverDocument even if content is
+// empty, e.g. the user deleted all text and the deletion was journaled).
+func (s *Store) HasHistory(docID int64) (bool, error) {
+	var n int
+	err := s.perm.QueryRow(
+		`SELECT EXISTS(
+			SELECT 1 FROM events WHERE doc_id=?
+			UNION ALL
+			SELECT 1 FROM snapshots WHERE doc_id=?
+		)`,
+		docID, docID,
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("has history doc %d: %w", docID, err)
+	}
+	return n > 0, nil
+}
+
+// LatestSnapshot returns the raw content of the most recent snapshot for
+// docID. Prefer RecoverDocument/Content in new code — this does not apply
+// pending edits and is only useful for diagnostic / migration purposes.
 func (s *Store) LatestSnapshot(docID int64) (string, error) {
 	var hash string
 	err := s.perm.QueryRow(

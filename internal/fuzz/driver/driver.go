@@ -79,17 +79,18 @@ func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, 
 	var frozenCells [][]textedit.Cell
 
 	// SHADOW mirror: maintained incrementally by replaying journal batches.
+	// Pinned to a single docID so the one-continuous-"main"-journal assumption holds (N8).
 	mirror := ""
 	appliedBatches := 0 // number of journal batches already replayed into mirror
 
 	// monitors is the set of stateful L2 monitors reset per Run call.
 	monitors := invariant.NewMonitors()
 
-	updateMirror := func(s *docstate.Store) {
-		if s == nil {
+	updateMirror := func(docID int64) {
+		if store == nil || docID == 0 {
 			return
 		}
-		batches, err := s.AllEdits("main")
+		batches, err := store.AllEdits(docID, "main")
 		if err != nil {
 			return
 		}
@@ -106,10 +107,10 @@ func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, 
 		prev := m.FuzzInspect()
 		m, cmd := m.Update(msg)
 
-		// Update SHADOW mirror from new journal entries.
-		updateMirror(store)
-
 		snap := m.FuzzInspect()
+
+		// Update SHADOW mirror from new journal entries for the active doc (N8: pinned to snap.DocID).
+		updateMirror(snap.DocID)
 		snap.Frame = m.View().Content
 
 		// Wire SHADOW: set mirror content for comparison.
@@ -143,9 +144,14 @@ func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, 
 			return m, &vs[0]
 		}
 
-		// DL1: file-on-disk must equal buffer content immediately after a save settles.
-		if _, ok := msg.(workspace.FileSavedMsg); ok {
-			if v := invariant.CheckDataLossInvariants(snap); v != nil {
+		// DL1: VFS content must equal buffer immediately after an autosave snapshot settles.
+		// The driver reads VFS content and passes it to keep invariant docstate-free (N2).
+		if _, ok := msg.(workspace.AutosaveSettledMsg); ok {
+			var vfsContent string
+			if store != nil && snap.DocID != 0 {
+				vfsContent, _ = store.Content(snap.DocID) // reconstructs at current_seq
+			}
+			if v := invariant.CheckDataLossInvariants(snap, vfsContent); v != nil {
 				frozenFrame = snap.Frame
 				frozenCells = snap.Cells
 				return m, v

@@ -3,42 +3,56 @@ package docstate
 import (
 	"database/sql"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// Store holds the two SQLite connections used for persistence.
+// Store holds the SQLite connection used for all persistence.
 //
-// perm is the on-disk database (rune.db) that survives process restarts.
-// mem  is an in-process :memory: database used as the undo/redo journal.
+// perm is the on-disk database (rune.db) that survives process restarts; it
+// also holds the event journal. There is no separate in-memory DB — events
+// and snapshots live in the same durable store. For ephemeral runs (fuzz,
+// OpenInMemory) perm itself is an :memory: database.
 //
-// currentSeq tracks the undo pointer inside the journal:
-//   - math.MaxInt64 means "at the end of history" (no undo has been applied).
-//   - any other value N means we have undone to just before event N.
+// SetMaxOpenConns(1) is called on every handle so that:
+//   - multi-statement transactions issued via db.Begin() all land on the same
+//     connection (otherwise BEGIN and COMMIT could reach different pool slots
+//     and run in autocommit, silently defeating atomicity);
+//   - :memory: stores always refer to the same anonymous database (each
+//     connection to ":memory:" opens a distinct empty database).
 type Store struct {
-	perm       *sql.DB
-	mem        *sql.DB
-	clock      func() time.Time
-	currentSeq int64
+	perm  *sql.DB
+	clock func() time.Time
+}
+
+// DocRef is returned by OpenPath and CreateScratch.
+// ID is the stable VFS document primary key.
+// RenamedFrom is set when OpenPath detects that the file was renamed since the
+// VFS last saw it.
+type DocRef struct {
+	ID          int64
+	RenamedFrom string // non-empty when a rename was detected
 }
 
 // ---- schema -----------------------------------------------------------------
 
+// permSchema defines all tables for a fresh database. ALTER TABLE in migrate()
+// adds any missing columns to existing databases.
 const permSchema = `
 CREATE TABLE IF NOT EXISTS documents (
-	id          INTEGER PRIMARY KEY,
-	path        TEXT    NOT NULL DEFAULT '',
-	inode       INTEGER,
-	device      INTEGER,
-	created_at  TEXT    NOT NULL,
-	last_seen_at TEXT   NOT NULL
+	id           INTEGER PRIMARY KEY,
+	path         TEXT    NOT NULL DEFAULT '',
+	inode        INTEGER,
+	device       INTEGER,
+	current_seq  INTEGER,
+	created_at   TEXT    NOT NULL,
+	last_seen_at TEXT    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path) WHERE path != '';
 
 CREATE TABLE IF NOT EXISTS blobs (
 	hash    TEXT PRIMARY KEY,
@@ -51,9 +65,27 @@ CREATE TABLE IF NOT EXISTS snapshots (
 	blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
 	parent_ids TEXT,
 	source     TEXT    NOT NULL,
+	seq        INTEGER NOT NULL DEFAULT 0,
 	created_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_doc ON snapshots(doc_id, id);
+
+CREATE TABLE IF NOT EXISTS events (
+	seq               INTEGER PRIMARY KEY AUTOINCREMENT,
+	doc_id            INTEGER NOT NULL REFERENCES documents(id),
+	surface           TEXT    NOT NULL,
+	kind              TEXT    NOT NULL,
+	edits             BLOB,
+	cursors_before    BLOB,
+	cursors_after     BLOB,
+	focus_before      TEXT,
+	focus_after       TEXT,
+	is_undo_stop      INTEGER NOT NULL DEFAULT 0,
+	anchor_snapshot_id INTEGER,
+	at                TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_doc ON events(doc_id, seq);
+CREATE INDEX IF NOT EXISTS idx_events_undo ON events(doc_id, seq) WHERE is_undo_stop = 1;
 
 CREATE TABLE IF NOT EXISTS drafts (
 	surface    TEXT PRIMARY KEY,
@@ -62,48 +94,15 @@ CREATE TABLE IF NOT EXISTS drafts (
 );
 `
 
-const memSchema = `
-CREATE TABLE IF NOT EXISTS events (
-	seq              INTEGER PRIMARY KEY AUTOINCREMENT,
-	surface          TEXT    NOT NULL,
-	kind             TEXT    NOT NULL,
-	edits            BLOB,
-	cursors_before   BLOB,
-	cursors_after    BLOB,
-	focus_before     TEXT,
-	focus_after      TEXT,
-	is_undo_stop     INTEGER NOT NULL DEFAULT 0,
-	anchor_snapshot_id INTEGER,
-	at               TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_events_undo ON events(seq) WHERE is_undo_stop = 1;
-`
-
 // ---- construction -----------------------------------------------------------
 
-func initPermSchema(db *sql.DB) error {
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("enable foreign keys: %w", err)
-	}
-	if _, err := db.Exec(permSchema); err != nil {
-		return fmt.Errorf("init perm schema: %w", err)
-	}
-	return nil
-}
-
-func initMemSchema(db *sql.DB) error {
-	if _, err := db.Exec(memSchema); err != nil {
-		return fmt.Errorf("init mem schema: %w", err)
-	}
-	return nil
-}
-
 func openPerm(path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on", path)
+	dsn := fmt.Sprintf("file:%s?_foreign_keys=on&_txlock=immediate&_busy_timeout=5000", path)
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 	if err := initPermSchema(db); err != nil {
 		db.Close()
 		return nil, err
@@ -111,19 +110,38 @@ func openPerm(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-func openMem() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", ":memory:")
+func openInMemPerm() (*sql.DB, error) {
+	dsn := "file::memory:?mode=memory&_foreign_keys=on&_txlock=immediate&_busy_timeout=5000"
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open mem journal: %w", err)
+		return nil, fmt.Errorf("open in-memory perm db: %w", err)
 	}
-	if err := initMemSchema(db); err != nil {
+	db.SetMaxOpenConns(1)
+	if err := initPermSchema(db); err != nil {
 		db.Close()
-		return nil, err
+		return nil, fmt.Errorf("init in-memory perm schema: %w", err)
 	}
 	return db, nil
 }
 
-// Open opens (or creates) the on-disk rune.db and an in-memory journal.
+func initPermSchema(db *sql.DB) error {
+	// WAL mode for file-backed databases; silent no-op for :memory:.
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		return fmt.Errorf("set WAL mode: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("enable foreign keys: %w", err)
+	}
+	if _, err := db.Exec(permSchema); err != nil {
+		return fmt.Errorf("init perm schema: %w", err)
+	}
+	if err := migrate(db); err != nil {
+		return fmt.Errorf("migrate schema: %w", err)
+	}
+	return nil
+}
+
+// Open opens (or creates) the on-disk rune.db and starts the VFS store.
 //
 // The returned string is a non-fatal degradation warning; callers may surface
 // it to the user but MUST NOT fail on a non-empty warning. The error return is
@@ -146,64 +164,32 @@ func Open() (*Store, string, error) {
 
 	var warning string
 	if permErr != nil {
-		// Fall back to a second :memory: DB for perm.
 		var err error
-		perm, err = sql.Open("sqlite3", ":memory:")
+		perm, err = openInMemPerm()
 		if err != nil {
 			return nil, "", fmt.Errorf("open fallback perm db: %w", err)
-		}
-		if err := initPermSchema(perm); err != nil {
-			perm.Close()
-			return nil, "", fmt.Errorf("init fallback perm schema: %w", err)
 		}
 		warning = "history disabled — storage unavailable"
 	}
 
-	mem, err := openMem()
-	if err != nil {
-		perm.Close()
-		return nil, "", err
-	}
-
-	return &Store{
-		perm:       perm,
-		mem:        mem,
-		clock:      time.Now,
-		currentSeq: math.MaxInt64,
-	}, warning, nil
+	return &Store{perm: perm, clock: time.Now}, warning, nil
 }
 
-// OpenInMemory creates a Store with both perm and mem databases in :memory:.
+// OpenInMemory creates a Store with the perm database in :memory:.
 // Useful for testing and fuzzing — no disk I/O, no path threading required.
 func OpenInMemory(clock func() time.Time) (*Store, error) {
-	perm, err := sql.Open("sqlite3", ":memory:")
+	perm, err := openInMemPerm()
 	if err != nil {
-		return nil, fmt.Errorf("open in-memory perm db: %w", err)
-	}
-	if err := initPermSchema(perm); err != nil {
-		perm.Close()
-		return nil, fmt.Errorf("init in-memory perm schema: %w", err)
-	}
-
-	mem, err := openMem()
-	if err != nil {
-		perm.Close()
 		return nil, err
 	}
-
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Store{
-		perm:       perm,
-		mem:        mem,
-		clock:      clock,
-		currentSeq: math.MaxInt64,
-	}, nil
+	return &Store{perm: perm, clock: clock}, nil
 }
 
-// OpenAt creates a Store backed by baseDir/rune.db plus an in-memory journal.
-// Intended for Phase-2 DATA-LOSS invariants that need real files.
+// OpenAt creates a Store backed by baseDir/rune.db.
+// Intended for tests that need real files (durability, crash-recovery).
 func OpenAt(baseDir string) (*Store, string, error) {
 	permPath := filepath.Join(baseDir, "rune.db")
 
@@ -217,39 +203,23 @@ func OpenAt(baseDir string) (*Store, string, error) {
 	var warning string
 	if permErr != nil {
 		var err error
-		perm, err = sql.Open("sqlite3", ":memory:")
+		perm, err = openInMemPerm()
 		if err != nil {
 			return nil, "", fmt.Errorf("open fallback perm db: %w", err)
-		}
-		if err := initPermSchema(perm); err != nil {
-			perm.Close()
-			return nil, "", fmt.Errorf("init fallback perm schema: %w", err)
 		}
 		warning = "history disabled — storage unavailable"
 	}
 
-	mem, err := openMem()
-	if err != nil {
-		perm.Close()
-		return nil, "", err
-	}
-
-	return &Store{
-		perm:       perm,
-		mem:        mem,
-		clock:      time.Now,
-		currentSeq: math.MaxInt64,
-	}, warning, nil
+	return &Store{perm: perm, clock: time.Now}, warning, nil
 }
 
-// SetClock replaces the Store's clock function. Used to inject a logical clock
-// for deterministic fuzzing (300 ms coalesce window is clock-driven).
+// SetClock replaces the Store's clock function. Used in deterministic tests.
 func (s *Store) SetClock(clock func() time.Time) {
 	s.clock = clock
 }
 
-// NewTestStore opens a Store suitable for tests: perm backed by a temp file,
-// journal in :memory:. The store is closed automatically via t.Cleanup.
+// NewTestStore opens a Store suitable for tests: perm backed by a temp file.
+// The store is closed automatically via t.Cleanup.
 func NewTestStore(t *testing.T) *Store {
 	t.Helper()
 	permPath := filepath.Join(t.TempDir(), "rune_test.db")
@@ -259,18 +229,7 @@ func NewTestStore(t *testing.T) *Store {
 		t.Fatalf("NewTestStore: open perm: %v", err)
 	}
 
-	mem, err := openMem()
-	if err != nil {
-		perm.Close()
-		t.Fatalf("NewTestStore: open mem: %v", err)
-	}
-
-	s := &Store{
-		perm:       perm,
-		mem:        mem,
-		clock:      time.Now,
-		currentSeq: math.MaxInt64,
-	}
+	s := &Store{perm: perm, clock: time.Now}
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Logf("NewTestStore cleanup: %v", err)
@@ -279,51 +238,412 @@ func NewTestStore(t *testing.T) *Store {
 	return s
 }
 
-// Close closes both underlying database connections.
+// Close closes the underlying database connection.
 func (s *Store) Close() error {
-	var permErr, memErr error
 	if s.perm != nil {
-		permErr = s.perm.Close()
+		if err := s.perm.Close(); err != nil {
+			return fmt.Errorf("close perm db: %w", err)
+		}
 	}
-	if s.mem != nil {
-		memErr = s.mem.Close()
+	return nil
+}
+
+// ---- migration --------------------------------------------------------------
+
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("get user_version: %w", err)
 	}
-	if permErr != nil {
-		return fmt.Errorf("close perm db: %w", permErr)
+	if version >= 1 {
+		return nil
 	}
-	if memErr != nil {
-		return fmt.Errorf("close mem db: %w", memErr)
+
+	// Add new columns to existing tables (ignore "duplicate column name" — fresh
+	// installs have these columns already in the CREATE TABLE statement above).
+	for _, stmt := range []string{
+		`ALTER TABLE documents ADD COLUMN current_seq INTEGER`,
+		`ALTER TABLE snapshots ADD COLUMN seq INTEGER DEFAULT 0`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("migrate: %s: %w", stmt, err)
+			}
+		}
+	}
+
+	// Backfill inode/device via stat (best-effort; collect outside transaction).
+	rows, err := db.Query(`SELECT id, path FROM documents WHERE path != ''`)
+	if err != nil {
+		return fmt.Errorf("migrate: query docs for inode backfill: %w", err)
+	}
+	type inodeRow struct {
+		id     int64
+		inode  uint64
+		device uint64
+	}
+	var inodeFills []inodeRow
+	for rows.Next() {
+		var id int64
+		var path string
+		if err := rows.Scan(&id, &path); err != nil {
+			rows.Close()
+			return fmt.Errorf("migrate: scan doc: %w", err)
+		}
+		if ino, dev, ok := fileID(path); ok && ino != 0 {
+			inodeFills = append(inodeFills, inodeRow{id, ino, dev})
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate: inode backfill rows: %w", err)
+	}
+
+	// Transaction: apply backfill, dedup, create unique indexes.
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("migrate: begin tx: %w", err)
+	}
+
+	for _, r := range inodeFills {
+		if _, err := tx.Exec(
+			`UPDATE documents SET inode=?, device=? WHERE id=?`,
+			r.inode, r.device, r.id,
+		); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("migrate: update inode for doc %d: %w", r.id, err)
+		}
+	}
+
+	if err := dedupByInode(tx); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+	if err := dedupByPath(tx); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return err
+	}
+
+	// Drop the old non-unique path index (it may or may not exist).
+	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_documents_path`); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return fmt.Errorf("migrate: drop old path index: %w", err)
+	}
+	for _, stmt := range []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path ON documents(path) WHERE path != ''`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("migrate: create index: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migrate: commit: %w", err)
+	}
+
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		return fmt.Errorf("migrate: set user_version: %w", err)
+	}
+	return nil
+}
+
+func dedupByInode(tx *sql.Tx) error {
+	type group struct {
+		inode    uint64
+		device   uint64
+		survivor int64
+	}
+	rows, err := tx.Query(`
+		SELECT inode, device, MIN(id) AS survivor
+		FROM documents
+		WHERE inode IS NOT NULL AND inode != 0
+		GROUP BY inode, device
+		HAVING COUNT(*) > 1
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate: query inode dups: %w", err)
+	}
+	var groups []group
+	for rows.Next() {
+		var g group
+		if err := rows.Scan(&g.inode, &g.device, &g.survivor); err != nil {
+			rows.Close()
+			return fmt.Errorf("migrate: scan inode dup group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate: inode dup rows: %w", err)
+	}
+
+	for _, g := range groups {
+		dupRows, err := tx.Query(
+			`SELECT id FROM documents WHERE inode=? AND device=? AND id!=?`,
+			g.inode, g.device, g.survivor,
+		)
+		if err != nil {
+			return fmt.Errorf("migrate: get inode dups (%d,%d): %w", g.inode, g.device, err)
+		}
+		var dups []int64
+		for dupRows.Next() {
+			var id int64
+			if err := dupRows.Scan(&id); err != nil {
+				dupRows.Close()
+				return fmt.Errorf("migrate: scan inode dup id: %w", err)
+			}
+			dups = append(dups, id)
+		}
+		dupRows.Close()
+		if err := dupRows.Err(); err != nil {
+			return fmt.Errorf("migrate: inode dup scan: %w", err)
+		}
+		for _, dupID := range dups {
+			if _, err := tx.Exec(`UPDATE snapshots SET doc_id=? WHERE doc_id=?`, g.survivor, dupID); err != nil {
+				return fmt.Errorf("migrate: repoint snapshots for dup %d: %w", dupID, err)
+			}
+			if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, dupID); err != nil {
+				return fmt.Errorf("migrate: delete inode dup %d: %w", dupID, err)
+			}
+		}
+	}
+	return nil
+}
+
+func dedupByPath(tx *sql.Tx) error {
+	type group struct {
+		path     string
+		survivor int64
+	}
+	rows, err := tx.Query(`
+		SELECT path, MIN(id) AS survivor
+		FROM documents
+		WHERE path != ''
+		GROUP BY path
+		HAVING COUNT(*) > 1
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate: query path dups: %w", err)
+	}
+	var groups []group
+	for rows.Next() {
+		var g group
+		if err := rows.Scan(&g.path, &g.survivor); err != nil {
+			rows.Close()
+			return fmt.Errorf("migrate: scan path dup group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate: path dup rows: %w", err)
+	}
+
+	for _, g := range groups {
+		dupRows, err := tx.Query(
+			`SELECT id FROM documents WHERE path=? AND id!=?`,
+			g.path, g.survivor,
+		)
+		if err != nil {
+			return fmt.Errorf("migrate: get path dups for %q: %w", g.path, err)
+		}
+		var dups []int64
+		for dupRows.Next() {
+			var id int64
+			if err := dupRows.Scan(&id); err != nil {
+				dupRows.Close()
+				return fmt.Errorf("migrate: scan path dup id: %w", err)
+			}
+			dups = append(dups, id)
+		}
+		dupRows.Close()
+		if err := dupRows.Err(); err != nil {
+			return fmt.Errorf("migrate: path dup scan: %w", err)
+		}
+		for _, dupID := range dups {
+			if _, err := tx.Exec(`UPDATE snapshots SET doc_id=? WHERE doc_id=?`, g.survivor, dupID); err != nil {
+				return fmt.Errorf("migrate: repoint snapshots for path dup %d: %w", dupID, err)
+			}
+			if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, dupID); err != nil {
+				return fmt.Errorf("migrate: delete path dup %d: %w", dupID, err)
+			}
+		}
 	}
 	return nil
 }
 
 // ---- documents --------------------------------------------------------------
 
-// EnsureDocument returns the row id for path, inserting a new row if absent.
-func (s *Store) EnsureDocument(path string) (int64, error) {
+// OpenPath resolves the VFS document for a file that exists on disk.
+// It must only be called after the file has been successfully read (so stat
+// can obtain a real inode). Returns a DocRef with the stable document ID;
+// RenamedFrom is set when the file was renamed since the VFS last saw it.
+func (s *Store) OpenPath(path string) (DocRef, error) {
+	at := s.clock().UTC().Format(time.RFC3339Nano)
+	inode, device, ok := fileID(path)
+
+	if !ok || inode == 0 {
+		return s.openPathByName(path, at)
+	}
+	return s.openPathByInode(path, inode, device, at)
+}
+
+// openPathByName is the path-keying fallback used when inode is unavailable.
+func (s *Store) openPathByName(path, at string) (DocRef, error) {
+	var id int64
+	err := s.perm.QueryRow(
+		`SELECT id FROM documents WHERE path=? AND (inode IS NULL OR inode=0)`,
+		path,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		res, err := s.perm.Exec(
+			`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,0,0,?,?)`,
+			path, at, at,
+		)
+		if err != nil {
+			return DocRef{}, fmt.Errorf("open path %q: insert: %w", path, err)
+		}
+		id, err = res.LastInsertId()
+		if err != nil {
+			return DocRef{}, fmt.Errorf("open path %q: last insert id: %w", path, err)
+		}
+		return DocRef{ID: id}, nil
+	}
+	if err != nil {
+		return DocRef{}, fmt.Errorf("open path %q: query: %w", path, err)
+	}
+	if _, err := s.perm.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, id); err != nil {
+		return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, err)
+	}
+	return DocRef{ID: id}, nil
+}
+
+func (s *Store) openPathByInode(path string, inode, device uint64, at string) (DocRef, error) {
+	var rowID int64
+	var rowPath string
+	err := s.perm.QueryRow(
+		`SELECT id, path FROM documents WHERE inode=? AND device=?`,
+		inode, device,
+	).Scan(&rowID, &rowPath)
+
+	if err == sql.ErrNoRows {
+		// New inode: evict any stale path holder and insert fresh row.
+		tx, txErr := s.perm.Begin()
+		if txErr != nil {
+			return DocRef{}, fmt.Errorf("open path %q: begin tx: %w", path, txErr)
+		}
+		if _, execErr := tx.Exec(
+			`UPDATE documents SET path='' WHERE path=? AND (inode IS NULL OR inode!=?)`,
+			path, inode,
+		); execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: evict stale holder: %w", path, execErr)
+		}
+		res, execErr := tx.Exec(
+			`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,?,?,?,?)`,
+			path, inode, device, at, at,
+		)
+		if execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: insert: %w", path, execErr)
+		}
+		newID, execErr := res.LastInsertId()
+		if execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: last insert id: %w", path, execErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return DocRef{}, fmt.Errorf("open path %q: commit: %w", path, commitErr)
+		}
+		return DocRef{ID: newID}, nil
+	}
+	if err != nil {
+		return DocRef{}, fmt.Errorf("open path %q: query by inode: %w", path, err)
+	}
+
+	// Found by inode.
+	var renamedFrom string
+	if rowPath != path {
+		renamedFrom = rowPath
+		tx, txErr := s.perm.Begin()
+		if txErr != nil {
+			return DocRef{}, fmt.Errorf("open path %q: begin rename tx: %w", path, txErr)
+		}
+		// Free any other row that claims the new path.
+		if _, execErr := tx.Exec(
+			`UPDATE documents SET path='' WHERE path=? AND id!=?`,
+			path, rowID,
+		); execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: free old holder: %w", path, execErr)
+		}
+		if _, execErr := tx.Exec(
+			`UPDATE documents SET path=?, inode=?, device=?, last_seen_at=? WHERE id=?`,
+			path, inode, device, at, rowID,
+		); execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: rebind rename: %w", path, execErr)
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return DocRef{}, fmt.Errorf("open path %q: commit rename: %w", path, commitErr)
+		}
+	} else {
+		if _, err := s.perm.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, rowID); err != nil {
+			return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, err)
+		}
+	}
+	return DocRef{ID: rowID, RenamedFrom: renamedFrom}, nil
+}
+
+// CreateScratch inserts a new unbound (untitled) VFS document and returns its
+// DocRef. The display name is managed by the caller (workspace title component).
+func (s *Store) CreateScratch(_ string) (DocRef, error) {
+	at := s.clock().UTC().Format(time.RFC3339Nano)
+	res, err := s.perm.Exec(
+		`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES('',0,0,?,?)`,
+		at, at,
+	)
+	if err != nil {
+		return DocRef{}, fmt.Errorf("create scratch: insert: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return DocRef{}, fmt.Errorf("create scratch: last insert id: %w", err)
+	}
+	return DocRef{ID: id}, nil
+}
+
+// ReserveChatDoc returns the stable ID of the per-session chat document.
+// It uses a sentinel path ("\x00chat") that can never name a real file.
+// Events from the previous session are truncated so each launch starts clean.
+func (s *Store) ReserveChatDoc() (int64, error) {
+	const sentinel = "\x00chat"
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 
-	_, err := s.perm.Exec(
-		`INSERT OR IGNORE INTO documents(path, created_at, last_seen_at) VALUES(?,?,?)`,
-		path, at, at,
-	)
+	tx, err := s.perm.Begin()
 	if err != nil {
-		return 0, fmt.Errorf("ensure document %q: insert: %w", path, err)
+		return 0, fmt.Errorf("reserve chat doc: begin: %w", err)
 	}
-
-	_, err = s.perm.Exec(
-		`UPDATE documents SET last_seen_at=? WHERE path=?`,
-		at, path,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("ensure document %q: update last_seen_at: %w", path, err)
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,0,0,?,?)`,
+		sentinel, at, at,
+	); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return 0, fmt.Errorf("reserve chat doc: insert sentinel: %w", err)
 	}
-
 	var id int64
-	err = s.perm.QueryRow(`SELECT id FROM documents WHERE path=?`, path).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("ensure document %q: select id: %w", path, err)
+	if err := tx.QueryRow(`SELECT id FROM documents WHERE path=?`, sentinel).Scan(&id); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return 0, fmt.Errorf("reserve chat doc: select id: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM events WHERE doc_id=?`, id); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return 0, fmt.Errorf("reserve chat doc: truncate events: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("reserve chat doc: commit: %w", err)
 	}
 	return id, nil
 }
-
