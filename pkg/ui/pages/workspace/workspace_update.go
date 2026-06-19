@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -60,12 +61,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break
 		}
 		if m.filePath == "" {
-			dir := m.currentDir()
-			newPath := filepath.Join(dir, msg.Name+".md")
-			m.filePath = newPath
-			m.breadcrumb = m.breadcrumb.SetPath(newPath)
-			m.opentabs = m.opentabs.OpenFile(m.docID, newPath)
-			cmds = append(cmds, createFileCmd(newPath, m.editor.Content()))
+			// First materialize of an untitled doc (bind-new). Do NOT set
+			// m.filePath yet: materializeCmd refuses to clobber an existing file,
+			// and binding optimistically would let a later ⌘S overwrite it
+			// (Catastrophic, rung 1). The buffer stays untitled until the write
+			// succeeds; FileSavedMsg{BindNew} performs the bind then.
+			newPath := filepath.Join(m.currentDir(), msg.Name+".md")
+			requestID := fmt.Sprintf("bind-%v", time.Now().UnixNano())
+			m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(m.editor.Content()), InFlight: true}
+			cmds = append(cmds, materializeCmd(m.docID, newPath, m.editor.Content(), requestID, true, diskBaseline{}))
 		} else {
 			dir := filepath.Dir(m.filePath)
 			newPath := filepath.Join(dir, msg.Name+".md")
@@ -73,7 +77,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case filetree.FileSelectedMsg:
-		m, cmd = m.requestOpenPath(msg.Path)
+		m, cmd = m.requestOpenPath(0, msg.Path)
 		cmds = append(cmds, cmd)
 
 	case filetree.DirSelectedMsg:
@@ -90,12 +94,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, reloadDirCmd(dir))
 
 	case opentabs.TabSelectedMsg:
-		m, cmd = m.requestOpenPath(msg.Path)
+		m, cmd = m.requestOpenPath(msg.DocID, msg.Path)
 		cmds = append(cmds, cmd)
 
 	case markdownedit.LinkClickedMsg:
 		if msg.Path != "" {
-			m, cmd = m.requestOpenPath(msg.Path)
+			m, cmd = m.requestOpenPath(0, msg.Path)
 			cmds = append(cmds, cmd)
 		}
 
@@ -137,70 +141,98 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.filePath = msg.Path
 		m.docID = docID
 		m.headSeq = 0
+		m.baseline = msg.Baseline // §1.4.7: fingerprint for the external-change guard on ⌘S
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(docID, msg.Path)
 		m.opentabs = m.opentabs.MarkCleanByID(docID)
 		m.cleanRev = m.editor.Revision()
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		if msg.Path != "" {
-			base := filepath.Base(msg.Path)
-			if strings.HasSuffix(base, ".md") {
-				base = base[:len(base)-3]
-			}
+			base := strings.TrimSuffix(filepath.Base(msg.Path), ".md")
 			m.title = m.title.SetText(base)
 		}
 
 	case FileRenamedMsg:
 		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
 		m.filePath = msg.NewPath
-		m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
-		base := filepath.Base(msg.NewPath)
-		if strings.HasSuffix(base, ".md") {
-			base = base[:len(base)-3]
+		m.baseline = baselineOf(msg.NewPath)
+		// Rebind the VFS doc to the new path. os.Rename preserved the inode, so
+		// OpenPath finds the same doc and just updates its path — preserving the
+		// undo history. We initiated this rename, so the RenamedFrom warning is
+		// expected and ignored.
+		if m.store != nil {
+			if ref, err := m.store.OpenPath(msg.NewPath); err == nil {
+				m.docID = ref.ID
+			}
 		}
-		m.title = m.title.SetText(base)
+		m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
+		m.title = m.title.SetText(strings.TrimSuffix(filepath.Base(msg.NewPath), ".md"))
 
 	case FileRenameErrorMsg:
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
 		cmds = append(cmds, cmd)
 
-	case fileCreatedMsg:
-		if msg.err != nil {
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.err.Error()})
-			cmds = append(cmds, cmd)
-		}
-
 	case FileSavedMsg:
+		// Interactive ⌘S, close-save, or bind-new (tracked by activeSave).
 		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 			m.activeSave.InFlight = false
+			m.baseline = msg.Baseline
+			if msg.BindNew {
+				m = m.bindMaterialized(msg.Path)
+			} else if m.store != nil && m.docID != 0 {
+				// Overwrite save: the atomic write gave the file a new inode.
+				// Re-bind so the recorded identity stays in sync and the next
+				// OpenPath resolves to THIS doc instead of orphaning its history.
+				if err := m.store.Bind(m.docID, msg.Path); err != nil {
+					m.err = fmt.Errorf("refresh binding for %q: %w", msg.Path, err)
+				}
+			}
 			m.cleanRev = m.editor.Revision()
 			if m.docID != 0 {
 				m.opentabs = m.opentabs.MarkCleanByID(m.docID)
 			} else {
 				m.opentabs = m.opentabs.MarkClean(m.filePath)
 			}
-			// Act on the pending data-loss action (§1.4.4).
-			action := m.pendingDataLoss
-			m.pendingDataLoss = dataLossActionNone
-			switch action {
-			case dataLossActionQuit:
-				m.dict = m.dict.Disable()
-				if m.store != nil {
-					_ = m.store.Close() // fire-and-forget: best-effort flush before quit
-				}
-				return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
-			case dataLossActionClose:
-				nextPath := m.opentabs.NextPath(m.filePath)
+			if m.pendingDataLoss.kind == actionClose {
+				m.pendingDataLoss = pendingDataLoss{}
 				var closeCmd tea.Cmd
-				m, closeCmd = m.executeClose(m.docID, m.filePath, nextPath)
+				m, closeCmd = m.executeClose(m.docID, m.filePath)
 				cmds = append(cmds, closeCmd)
+			}
+			break
+		}
+		// A materialize from the multi-tab quit "Save all" batch.
+		if m.pendingDataLoss.kind == actionQuit && m.pendingDataLoss.saveLeft > 0 {
+			m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
+			// Keep the saved doc's recorded inode in sync (atomic write changed it),
+			// so a later session reopens it without orphaning its history.
+			if m.store != nil && msg.DocID != 0 {
+				_ = m.store.Bind(msg.DocID, msg.Path) // fire-and-forget: best-effort on quit
+			}
+			m.pendingDataLoss.saveLeft--
+			if m.pendingDataLoss.saveLeft == 0 {
+				return m.teardownAndQuit()
 			}
 		}
 
 	case FileSaveErrorMsg:
+		// Interactive / bind-new save failure: keep the buffer, surface the
+		// conflict, and abort any pending close/quit so nothing is discarded.
 		if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 			m.activeSave.InFlight = false
-			m.err = msg.Err
+			m.pendingDataLoss = pendingDataLoss{}
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
+			cmds = append(cmds, cmd)
+			break
+		}
+		// A save in the multi-tab quit batch failed → abort the whole quit on the
+		// first failure; every buffer is kept (durable in the VFS) and the
+		// conflict is surfaced. Other in-flight saves still complete (their writes
+		// succeeded); their acks are ignored now that the action is cleared.
+		if m.pendingDataLoss.kind == actionQuit {
+			m.pendingDataLoss = pendingDataLoss{}
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
+			cmds = append(cmds, cmd)
 		}
 
 	case FileLoadErrorMsg:
@@ -215,17 +247,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Warning})
 			cmds = append(cmds, cmd)
 		}
-		// Reserve the stable chat sentinel doc (N7).
 		if m.store != nil {
+			// Reserve the stable chat sentinel doc (N7).
 			if chatID, err := m.store.ReserveChatDoc(); err == nil {
 				m.chatDocID = chatID
 			}
-		}
-		// Open the current file in VFS (if any) now that the store is ready.
-		if m.filePath != "" && m.store != nil {
-			if ref, err := m.store.OpenPath(m.filePath); err == nil {
-				m.docID = ref.ID
+			if m.filePath != "" {
+				// Bound file opened before the store was ready: resolve identity.
+				if ref, err := m.store.OpenPath(m.filePath); err == nil {
+					m.docID = ref.ID
+				}
+			} else {
+				// Make the store-less startup untitled durable (§1.4.3).
+				m = m.ensureScratchDoc()
 			}
+			// Surface prior-session unsaved untitled docs; GC empty scratch rows.
+			m = m.restoreScratch()
 		}
 
 	case pendingFlushMsg:
@@ -239,9 +276,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case AutosaveSettledMsg:
-		// The VFS snapshot was already written inside snapshotCmd.
-		// Disk writes happen only on explicit ⌘S (§1.4.2); do nothing here.
-		_ = msg.gen
+		// The VFS snapshot was written inside snapshotCmd; disk is untouched
+		// (§1.4.2). Surface a snapshot failure — the journal remains durable, so
+		// no data is lost, but the user should know history capture is degraded.
+		if msg.err != nil {
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "snapshot failed: " + msg.err.Error()})
+			cmds = append(cmds, cmd)
+		}
 
 	case ErrMsg:
 		m.err = msg.Err
@@ -335,49 +376,56 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case footer.ConfirmQuitMsg:
 		if m.opentabs.HasDirty() {
-			m.pendingDataLoss = dataLossActionQuit
-			m.footer = m.footer.SetGuard(footer.GuardDirty, quitGuardOptions)
+			m.pendingDataLoss = pendingDataLoss{kind: actionQuit}
+			m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
 			return m, nil
 		}
-		m.dict = m.dict.Disable()
-		if m.store != nil {
-			_ = m.store.Close() // fire-and-forget: best-effort flush before quit
-		}
-		return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+		return m.teardownAndQuit()
 
 	case footer.DataLossGuardResponseMsg:
 		switch msg.Response {
 		case footer.DataLossSave:
+			if m.pendingDataLoss.kind == actionQuit {
+				// Quit: materialize every dirty bound tab, then tear down.
+				m, cmd = m.saveAllDirtyForQuit()
+				cmds = append(cmds, cmd)
+				break
+			}
+			// Close (or stray): save the current tab; FileSavedMsg closes it.
+			if m.filePath == "" {
+				// Untitled has no path to save to. Its work is durable in the VFS,
+				// so keep the buffer and abort the close rather than lose anything.
+				m.pendingDataLoss = pendingDataLoss{}
+				m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Untitled — name it to save (its text is safe in history)"})
+				cmds = append(cmds, cmd)
+				break
+			}
 			m, cmd = m.startSave()
 			cmds = append(cmds, cmd)
-			// pendingDataLoss preserved — FileSavedMsg checks it to decide close vs. quit.
+			// pendingDataLoss preserved — FileSavedMsg checks it to decide close.
 
 		case footer.DataLossDiscard:
-			if m.docID != 0 {
-				m.opentabs = m.opentabs.MarkCleanByID(m.docID)
-			} else {
-				m.opentabs = m.opentabs.MarkClean(m.filePath)
-			}
-			m.cleanRev = m.editor.Revision()
 			action := m.pendingDataLoss
-			m.pendingDataLoss = dataLossActionNone
-			switch action {
-			case dataLossActionClose:
-				// Just close this tab; do not quit.
-				nextPath := m.opentabs.NextPath(m.filePath)
-				var closeCmd tea.Cmd
-				m, closeCmd = m.executeClose(m.docID, m.filePath, nextPath)
-				cmds = append(cmds, closeCmd)
-			default: // dataLossActionQuit or dataLossActionNone
-				m.dict = m.dict.Disable()
-				if m.store != nil {
-					_ = m.store.Close() // fire-and-forget: best-effort flush before quit
+			m.pendingDataLoss = pendingDataLoss{}
+			switch action.kind {
+			case actionClose:
+				// Discarding an untitled removes its VFS doc so it is not offered
+				// for recovery later (Fix 7 §6); a bound doc keeps its history.
+				if m.filePath == "" && m.docID != 0 && m.store != nil {
+					if err := m.store.DeleteDoc(m.docID); err != nil {
+						_ = err // fire-and-forget: discard cleanup; non-fatal
+					}
 				}
-				return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+				m.cleanRev = m.editor.Revision()
+				var closeCmd tea.Cmd
+				m, closeCmd = m.executeClose(m.docID, m.filePath)
+				cmds = append(cmds, closeCmd)
+			default: // actionQuit: discard all — journaled work survives in the VFS
+				return m.teardownAndQuit()
 			}
 
 		case footer.DataLossCancel:
-			m.pendingDataLoss = dataLossActionNone
+			m.pendingDataLoss = pendingDataLoss{}
 			// Guard already cleared by footer; nothing else to do.
 		}
 

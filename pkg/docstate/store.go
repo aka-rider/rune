@@ -647,3 +647,148 @@ func (s *Store) ReserveChatDoc() (int64, error) {
 	}
 	return id, nil
 }
+
+// Bind (re)binds document docID to path, adopting the file's CURRENT inode/
+// device and preserving the document id (and thus its full undo history). It is
+// called in two places:
+//
+//   - first materialize of an untitled doc (naming / first save) — adopts the
+//     freshly created file's inode;
+//   - after EVERY overwrite save — the atomic write (temp→rename) gives the file
+//     a NEW inode, so the recorded inode goes stale. Without re-binding, the next
+//     OpenPath sees a "new inode at this path", evicts this row to path='' and
+//     creates a fresh history-less doc — orphaning the undo DAG (§1.4.6) and
+//     leaving a zombie row. Re-binding on save keeps identity stable across the
+//     inode churn.
+//
+// Conflicting holders of the path or the new inode are evicted first so the
+// unique indexes hold.
+func (s *Store) Bind(docID int64, path string) error {
+	at := s.clock().UTC().Format(time.RFC3339Nano)
+	inode, device, ok := fileID(path)
+
+	tx, err := s.perm.Begin()
+	if err != nil {
+		return fmt.Errorf("bind %d → %q: begin: %w", docID, path, err)
+	}
+	// Free any other row holding this path (stale binding).
+	if _, err := tx.Exec(`UPDATE documents SET path='' WHERE path=? AND id!=?`, path, docID); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return fmt.Errorf("bind %d: free path holder: %w", docID, err)
+	}
+	if ok && inode != 0 {
+		// Evict any stale row claiming this inode (deleted+recreated, or our own
+		// prior inode reused by the filesystem).
+		if _, err := tx.Exec(
+			`UPDATE documents SET inode=0, device=0 WHERE inode=? AND device=? AND id!=?`,
+			inode, device, docID,
+		); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("bind %d: evict inode holder: %w", docID, err)
+		}
+		if _, err := tx.Exec(
+			`UPDATE documents SET path=?, inode=?, device=?, last_seen_at=? WHERE id=?`,
+			path, inode, device, at, docID,
+		); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("bind %d: rebind: %w", docID, err)
+		}
+	} else {
+		if _, err := tx.Exec(
+			`UPDATE documents SET path=?, last_seen_at=? WHERE id=?`,
+			path, at, docID,
+		); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("bind %d: rebind by path: %w", docID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("bind %d: commit: %w", docID, err)
+	}
+	return nil
+}
+
+// DeleteDoc removes a document and its journal/snapshots from the VFS. Used when
+// the user explicitly discards an untitled buffer (Fix 7 §6) so it is not
+// offered for recovery on the next launch. Orphaned blobs are left for a future
+// blob GC (harmless — they are content-addressed and deduplicated).
+func (s *Store) DeleteDoc(docID int64) error {
+	tx, err := s.perm.Begin()
+	if err != nil {
+		return fmt.Errorf("delete doc %d: begin: %w", docID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM events WHERE doc_id=?`, docID); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return fmt.Errorf("delete doc %d: events: %w", docID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM snapshots WHERE doc_id=?`, docID); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return fmt.Errorf("delete doc %d: snapshots: %w", docID, err)
+	}
+	if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, docID); err != nil {
+		tx.Rollback() //nolint:errcheck
+		return fmt.Errorf("delete doc %d: document: %w", docID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete doc %d: commit: %w", docID, err)
+	}
+	return nil
+}
+
+// GCEmptyScratch deletes unbound (untitled) documents that carry neither events
+// nor snapshots — empty scratch rows left over from prior sessions. keepID is
+// never deleted (the live untitled buffer). Returns the number of rows removed.
+// The chat sentinel has a non-empty path, so it is never affected.
+func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
+	res, err := s.perm.Exec(`
+		DELETE FROM documents
+		WHERE path='' AND id!=?
+		  AND id NOT IN (SELECT DISTINCT doc_id FROM events)
+		  AND id NOT IN (SELECT DISTINCT doc_id FROM snapshots)`,
+		keepID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("gc empty scratch: %w", err)
+	}
+	n, _ := res.RowsAffected() // best-effort count; deletion already committed
+	return n, nil
+}
+
+// RecoverableScratch returns the IDs of GENUINE untitled scratch documents that
+// carry history (events or snapshots) from a prior session, excluding excludeID
+// and the chat sentinel (non-empty path). Newest first. These rows hold unsaved
+// work the user can recover on the next launch.
+//
+// The `inode = 0` filter is load-bearing: a genuine scratch always has inode 0
+// (CreateScratch inserts inode=0), whereas an orphaned BOUND document whose path
+// was cleared by inode-change eviction RETAINS its real inode. Without this
+// filter those zombie rows surface as fake "Untitled" tabs showing real-file
+// content (a data-corruption-looking bug). Emptiness is filtered by the caller,
+// which reconstructs each candidate and drops empty/whitespace-only content.
+func (s *Store) RecoverableScratch(excludeID int64) ([]int64, error) {
+	rows, err := s.perm.Query(`
+		SELECT id FROM documents
+		WHERE path='' AND id!=? AND (inode IS NULL OR inode = 0)
+		  AND (id IN (SELECT DISTINCT doc_id FROM events)
+		    OR id IN (SELECT DISTINCT doc_id FROM snapshots))
+		ORDER BY id DESC`,
+		excludeID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recoverable scratch: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("recoverable scratch: scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("recoverable scratch: rows: %w", err)
+	}
+	return ids, nil
+}

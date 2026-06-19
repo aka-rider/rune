@@ -56,8 +56,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			idx := int(digit - '1')
 			if idx < m.opentabs.Len() {
 				path := m.opentabs.PathAt(idx)
+				docID := m.opentabs.DocIDAt(idx)
 				m.opentabs = m.opentabs.SelectIndex(idx)
-				m, cmd = m.requestOpenPath(path)
+				m, cmd = m.requestOpenPath(docID, path)
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -109,7 +110,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.CreateNewFile):
-		prevFocus := m.focus
 		var ok bool
 		var titleCmd tea.Cmd
 		m, titleCmd, ok = m.maybeFinalizeTitle()
@@ -117,9 +117,10 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		if !ok {
 			return m.finalize(cmds)
 		}
+		// The outgoing untitled (if any) stays as its own durable VFS doc/tab —
+		// nothing is written to disk and nothing is lost (Fix 2 §5).
 		if m.filePath != "" || m.editor.Content() != "" {
-			renameInFlight := prevFocus == paneTitle && titleCmd != nil
-			m, cmd = m.CreateUntitled(!renameInFlight)
+			m, cmd = m.CreateUntitled()
 			cmds = append(cmds, cmd)
 		}
 		m.title = m.title.FocusAndSelectAll()

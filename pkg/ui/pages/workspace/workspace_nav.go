@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -23,22 +25,36 @@ func (m Model) currentDir() string {
 	return cwd
 }
 
-func (m Model) requestOpenPath(path string) (Model, tea.Cmd) {
-	if path == m.filePath {
-		return m, nil
+// requestOpenPath switches the editor to a document. Untitled documents all
+// share path "", so they are identified by docID; bound documents and help are
+// identified by path. Switching away first forces a VFS snapshot of the
+// outgoing document so its latest bytes are durable (Fix 5 §4).
+func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
+	switch path {
+	case help.DocPath:
+		if m.viewingHelp() {
+			return m, nil
+		}
+	case "":
+		if m.filePath == "" && docID != 0 && docID == m.docID {
+			return m, nil
+		}
+	default:
+		if path == m.filePath {
+			return m, nil
+		}
 	}
-	// Preserve the untitled buffer before leaving so switching back restores it.
-	if m.filePath == "" {
-		m.untitledContent = m.editor.Content()
-		m.untitledTitle = m.title.Text()
-	}
-	if path == help.DocPath {
+
+	m = m.forceSnapshot()
+
+	switch path {
+	case help.DocPath:
 		return m.showHelp(), nil
+	case "":
+		return m.showUntitled(docID), nil
+	default:
+		return m, loadFileCmd(context.Background(), path)
 	}
-	if path == "" {
-		return m.showUntitled(), nil
-	}
-	return m, loadFileCmd(context.Background(), path)
 }
 
 // viewingHelp reports whether the read-only help document is the active doc.
@@ -55,7 +71,7 @@ func (m Model) toggleHelp() (Model, tea.Cmd) {
 	}
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
 	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
-	return m.requestOpenPath(help.DocPath)
+	return m.requestOpenPath(0, help.DocPath)
 }
 
 // showHelp loads the read-only help document into the shared editor.
@@ -65,6 +81,7 @@ func (m Model) showHelp() Model {
 	m.filePath = help.DocPath
 	m.docID = 0
 	m.headSeq = 0
+	m.baseline = diskBaseline{}
 	m.cleanRev = m.editor.Revision()
 	m.title = m.title.SetText("(Help)")
 	m.breadcrumb = m.breadcrumb.SetPath("")
@@ -75,63 +92,219 @@ func (m Model) showHelp() Model {
 	return m
 }
 
-// showUntitled restores the untitled buffer when switching back to the "" tab.
-// Prefers VFS reconstruction (crash-safe) over the in-memory RAM stash.
-func (m Model) showUntitled() Model {
-	// Locate the untitled tab's docID from opentabs cursor (cursor is already
-	// on the untitled tab when this is called from the TabSelectedMsg handler).
-	docID := m.opentabs.DocIDAt(m.opentabs.Cursor())
-
-	content := m.untitledContent // RAM stash fallback
+// showUntitled switches to the untitled document with the given docID,
+// reconstructing its content from the VFS (crash-safe). All untitled tabs share
+// path ""; the docID is the only stable key (N4). HasHistory distinguishes a
+// brand-new scratch (no record → empty) from one whose content was deleted.
+func (m Model) showUntitled(docID int64) Model {
+	content := ""
 	if docID > 0 && m.store != nil {
-		if vfsContent, err := m.store.RecoverDocument(docID); err == nil && vfsContent != "" {
-			content = vfsContent
+		if has, err := m.store.HasHistory(docID); err == nil && has {
+			if vfs, err := m.store.RecoverDocument(docID); err == nil {
+				content = vfs
+			}
 		}
 	}
-
 	m.editor = m.editor.SetContent(content).SetReadOnly(false)
 	m.filePath = ""
 	m.docID = docID
 	m.headSeq = 0
-	if m.untitledTitle != "" {
-		m.title = m.title.SetText(m.untitledTitle)
+	m.baseline = diskBaseline{}
+	if name := m.opentabs.NameByID(docID); name != "" {
+		m.title = m.title.SetText(name)
 	}
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(docID, "")
+	m.cleanRev = m.editor.Revision()
 	m.focus = paneCenter
 	return m
+}
+
+// forceSnapshot writes a synchronous VFS snapshot of the current document at its
+// head seq before the workspace switches away from it (Fix 5 §4), and bumps
+// flushGen so any in-flight debounce flush for the outgoing doc is dropped.
+// Edits are already journaled per keystroke, so this only advances the snapshot
+// anchor; failure is non-fatal (the journal remains the durable record).
+func (m Model) forceSnapshot() Model {
+	m.flushGen++
+	if m.store == nil || m.docID == 0 {
+		return m
+	}
+	if _, err := m.store.CreateSnapshot(m.docID, m.editor.Content(), "switch", m.headSeq); err != nil {
+		_ = err // fire-and-forget: snapshot is an optimization; the journal is durable
+	}
+	return m
+}
+
+// ensureScratchDoc gives the current store-less untitled buffer a durable VFS
+// document once the store is available. The startup untitled is created before
+// the store opens (docID==0); without this its edits would never be journaled
+// and a crash would lose the whole session (§1.4.3). Any content typed before
+// the store was ready is snapshotted so it is recoverable.
+func (m Model) ensureScratchDoc() Model {
+	if m.store == nil || m.docID != 0 || m.filePath != "" || m.viewingHelp() {
+		return m
+	}
+	if !m.opentabs.HasUntitledPlaceholder() {
+		return m // launched onto a file (no startup untitled to upgrade)
+	}
+	ref, err := m.store.CreateScratch(m.title.Text())
+	if err != nil {
+		m.err = fmt.Errorf("create scratch document: %w", err)
+		return m
+	}
+	m.docID = ref.ID
+	m.opentabs = m.opentabs.AssignDocID("", ref.ID)
+	if content := m.editor.Content(); content != "" {
+		if _, err := m.store.CreateSnapshot(ref.ID, content, "scratch", 0); err != nil {
+			_ = err // fire-and-forget: best-effort; subsequent edits journal normally
+		}
+	}
+	return m
+}
+
+// bindMaterialized binds the current untitled doc to a file that a bind-new
+// materialize just created. The VFS doc id is preserved (Store.Bind), so the
+// undo history built while untitled survives the bind (§1.4.6).
+func (m Model) bindMaterialized(path string) Model {
+	oldDocID := m.docID
+	m.filePath = path
+	if m.store != nil {
+		if m.docID != 0 {
+			if err := m.store.Bind(m.docID, path); err != nil {
+				m.err = fmt.Errorf("bind document to %q: %w", path, err)
+			}
+		} else if ref, err := m.store.OpenPath(path); err == nil {
+			m.docID = ref.ID
+		}
+	}
+	if oldDocID != 0 {
+		m.opentabs = m.opentabs.OpenFile(m.docID, path)
+	} else {
+		m.opentabs = m.opentabs.RenameFile("", path)
+		if m.docID != 0 {
+			m.opentabs = m.opentabs.AssignDocID(path, m.docID)
+		}
+	}
+	m.breadcrumb = m.breadcrumb.SetPath(path)
+	m.title = m.title.SetText(strings.TrimSuffix(filepath.Base(path), ".md"))
+	return m
+}
+
+// restoreScratch surfaces genuine, NON-EMPTY unsaved untitled documents left in
+// the VFS by a prior session as recoverable tabs, then garbage-collects empty
+// scratch rows so the store does not grow unbounded (Decision 2).
+//
+// Two filters keep this from resurrecting junk: RecoverableScratch already
+// excludes orphaned bound-doc rows (inode != 0); here we reconstruct each
+// candidate and skip any whose content is empty/whitespace-only, so a blank
+// scratch never reopens as a tab. Best-effort — failures never block startup;
+// content loads lazily when the user selects the tab.
+func (m Model) restoreScratch() Model {
+	if m.store == nil {
+		return m
+	}
+	if ids, err := m.store.RecoverableScratch(m.docID); err == nil {
+		for _, id := range ids {
+			content, err := m.store.RecoverDocument(id)
+			if err != nil || strings.TrimSpace(content) == "" {
+				continue // skip empty scratches — recover non-empty work only
+			}
+			name := m.nextUntitledName()
+			m.opentabs = m.opentabs.OpenFile(id, "")
+			m.opentabs = m.opentabs.SetTabNameByID(id, name)
+		}
+		if m.docID != 0 {
+			m.opentabs = m.opentabs.SelectByID(m.docID) // re-activate the live doc
+		}
+	}
+	if _, err := m.store.GCEmptyScratch(m.docID); err != nil {
+		_ = err // fire-and-forget: housekeeping; non-fatal
+	}
+	return m
+}
+
+// teardownAndQuit runs the shared quit sequence: clear pending state, disable
+// dictation, close the store, delete pasted images, and quit.
+func (m Model) teardownAndQuit() (Model, tea.Cmd) {
+	m.pendingDataLoss = pendingDataLoss{}
+	m.dict = m.dict.Disable()
+	if m.store != nil {
+		_ = m.store.Close() // fire-and-forget: best-effort flush before quit
+	}
+	return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
+}
+
+// saveAllDirtyForQuit materializes every dirty BOUND tab to disk before quit:
+// the current tab from the editor buffer, others from their VFS reconstruction.
+// Untitled dirty tabs are left untouched — durable in the VFS and recoverable
+// next launch (Fix 7 §6) — so quit never blocks on a never-named doc
+// (Decision 2). Teardown happens once every materialize has acked.
+func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
+	var batch []tea.Cmd
+	for i, h := range m.opentabs.DirtyTabs() {
+		if h.Path == "" {
+			continue // untitled — nothing to write
+		}
+		isCurrent := (m.docID != 0 && h.DocID == m.docID) || (m.docID == 0 && h.Path == m.filePath)
+		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
+		if isCurrent {
+			batch = append(batch, materializeCmd(h.DocID, h.Path, m.editor.Content(), requestID, false, m.baseline))
+			continue
+		}
+		// Non-current tab: reconstruct its bytes from the VFS. Skip (never write
+		// empty/stale over a real file) if there is no store or reconstruction
+		// fails — the work stays safe in the VFS.
+		if m.store == nil {
+			continue
+		}
+		content, err := m.store.Content(h.DocID)
+		if err != nil {
+			continue
+		}
+		batch = append(batch, materializeCmd(h.DocID, h.Path, content, requestID, false, diskBaseline{}))
+	}
+	if len(batch) == 0 {
+		return m.teardownAndQuit() // only untitled docs are dirty — quit now
+	}
+	m.pendingDataLoss = pendingDataLoss{kind: actionQuit, saveLeft: len(batch)}
+	return m, tea.Batch(batch...)
 }
 
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 	if m.editor.Revision() != m.cleanRev && !m.viewingHelp() {
-		m.pendingDataLoss = dataLossActionClose
-		m.footer = m.footer.SetGuard(footer.GuardDirty, quitGuardOptions)
+		m.pendingDataLoss = pendingDataLoss{kind: actionClose}
+		m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
 		return m, nil
 	}
 
-	nextPath := m.opentabs.NextPath(m.filePath)
-	if m.filePath == "" && nextPath == "" {
+	_, hasNext := m.opentabs.NeighborOf(m.docID, m.filePath)
+	if m.filePath == "" && !hasNext {
 		return m, nil // sole untitled tab — keep it
 	}
-	return m.executeClose(m.docID, m.filePath, nextPath)
+	return m.executeClose(m.docID, m.filePath)
 }
 
-func (m Model) executeClose(closeDocID int64, closePath, nextPath string) (Model, tea.Cmd) {
-	var cmds []tea.Cmd
+// executeClose removes the identified tab and switches to its neighbour (or a
+// fresh untitled if none remains). The closed doc is detached first so the
+// switch does not re-snapshot it.
+func (m Model) executeClose(closeDocID int64, closePath string) (Model, tea.Cmd) {
+	next, hasNext := m.opentabs.NeighborOf(closeDocID, closePath)
+
 	if closeDocID != 0 {
 		m.opentabs = m.opentabs.CloseByID(closeDocID)
 	} else {
 		m.opentabs = m.opentabs.CloseFile(closePath)
 	}
-	if nextPath != "" {
-		cmds = append(cmds, loadFileCmd(context.Background(), nextPath))
-	} else {
-		var createCmd tea.Cmd
-		m, createCmd = m.CreateUntitled(false)
-		cmds = append(cmds, createCmd)
+
+	m.docID = 0
+	m.filePath = ""
+
+	if !hasNext {
+		return m.CreateUntitled()
 	}
-	return m, tea.Batch(cmds...)
+	return m.requestOpenPath(next.DocID, next.Path)
 }
 
 // maybeFinalizeTitle validates and commits the title when focus is leaving paneTitle.
@@ -150,39 +323,30 @@ func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
 	return m, renameCmd, true
 }
 
-// nextUntitled returns the first available "Untitled N" name in dir.
-func nextUntitled(dir, skip string) string {
+// nextUntitledName returns the first "Untitled N" label not already shown by an
+// open tab. VFS-side only — it never touches the disk (untitled docs are VFS
+// files, not disk files).
+func (m Model) nextUntitledName() string {
 	for n := 1; ; n++ {
 		name := fmt.Sprintf("Untitled %d", n)
-		if skip != "" && name == skip {
-			continue
-		}
-		info, err := os.Stat(filepath.Join(dir, name+".md"))
-		if err != nil || info.Size() == 0 {
+		if !m.opentabs.HasTabNamed(name) {
 			return name
 		}
 	}
 }
 
-// CreateUntitled opens a new untitled buffer in the current filetree directory.
-func (m Model) CreateUntitled(preserveCurrentUntitled bool) (Model, tea.Cmd) {
-	dir := m.currentDir()
-	var cmds []tea.Cmd
+// CreateUntitled opens a fresh untitled buffer as a durable VFS document. Any
+// previously-open untitled stays as its own tab and VFS doc — there is no disk
+// file and nothing to preserve to disk (Fix 2 §5).
+func (m Model) CreateUntitled() (Model, tea.Cmd) {
+	m = m.forceSnapshot()
 
-	skipName := ""
-	if preserveCurrentUntitled && m.filePath == "" && m.editor.Content() != "" {
-		skipName = m.title.Text()
-		currentPath := filepath.Join(dir, skipName+".md")
-		cmds = append(cmds, createFileCmd(currentPath, m.editor.Content()))
-		m.opentabs = m.opentabs.RenameFile("", currentPath)
-	}
-
-	name := nextUntitled(dir, skipName)
-	m.editor = m.editor.SetContent("")
-	m.editor = m.editor.SetReadOnly(false)
+	m.editor = m.editor.SetContent("").SetReadOnly(false)
 	m.filePath = ""
 	m.headSeq = 0
+	m.baseline = diskBaseline{}
 
+	name := m.nextUntitledName()
 	var newDocID int64
 	if m.store != nil {
 		if ref, err := m.store.CreateScratch(name); err == nil {
@@ -199,7 +363,8 @@ func (m Model) CreateUntitled(preserveCurrentUntitled bool) (Model, tea.Cmd) {
 	} else {
 		m.opentabs = m.opentabs.SetTabName("", name)
 	}
+	m.cleanRev = m.editor.Revision()
 	m.focus = paneCenter
 
-	return m, tea.Batch(cmds...)
+	return m, nil
 }

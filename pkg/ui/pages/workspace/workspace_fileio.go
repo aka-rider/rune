@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -18,8 +19,42 @@ import (
 
 // FileLoadedMsg is returned when a file has been read from disk.
 type FileLoadedMsg struct {
-	Path    string
-	Content []byte
+	Path     string
+	Content  []byte
+	Baseline diskBaseline // fingerprint at read time (§1.4.7 external-change guard)
+}
+
+// diskBaseline fingerprints a file as it was last read or written, so a later
+// overwrite can detect that another process changed it underneath us (§1.4.7).
+type diskBaseline struct {
+	size    int64
+	modTime time.Time
+	valid   bool
+}
+
+// baselineOf stats path and returns its current fingerprint. An unreadable file
+// yields an invalid (zero) baseline.
+func baselineOf(path string) diskBaseline {
+	info, err := os.Stat(path)
+	if err != nil {
+		return diskBaseline{}
+	}
+	return diskBaseline{size: info.Size(), modTime: info.ModTime(), valid: true}
+}
+
+// divergedFrom reports whether the file at path differs from this baseline. A
+// missing file is NOT divergence (recreating it cannot clobber anything); an
+// unreadable file or a size/mtime mismatch is. An invalid baseline never
+// diverges (we have nothing to compare against).
+func (b diskBaseline) divergedFrom(path string) bool {
+	if !b.valid {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	return info.Size() != b.size || !info.ModTime().Equal(b.modTime)
 }
 
 // FileLoadErrorMsg is returned when a file load fails.
@@ -28,18 +63,23 @@ type FileLoadErrorMsg struct {
 	Err  error
 }
 
-// FileSavedMsg is returned when a file has been written to disk.
+// FileSavedMsg is returned when a file has been materialized to disk.
 type FileSavedMsg struct {
 	Path         string
+	DocID        int64        // the VFS doc materialized (0 if storeless)
 	RequestID    string
-	SavedContent []byte // exact bytes written — used as new origContent (D13 Finding A)
+	SavedContent []byte       // exact bytes written — used as new origContent (D13 Finding A)
+	BindNew      bool         // true when this was a first-bind of an untitled doc
+	Baseline     diskBaseline // fingerprint of the file just written (§1.4.7)
 }
 
-// FileSaveErrorMsg is returned when a file save fails.
+// FileSaveErrorMsg is returned when a file materialize fails.
 type FileSaveErrorMsg struct {
 	Path      string
+	DocID     int64
 	RequestID string
 	Err       error
+	Conflict  bool // refused to clobber: file exists (bind-new) or changed (overwrite)
 }
 
 // FileRenamedMsg is returned after a successful file rename.
@@ -60,13 +100,6 @@ type SaveIdentity struct {
 	InFlight     bool
 }
 
-// fileCreatedMsg is the result of createFileCmd.
-type fileCreatedMsg struct {
-	path    string
-	content string
-	err     error
-}
-
 // ---- Cmd factories (D12) ----
 
 // loadFileCmd reads a file from disk. Context-cancellable for rapid tab switching.
@@ -81,61 +114,84 @@ func loadFileCmd(ctx context.Context, path string) tea.Cmd {
 		if err != nil {
 			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err)}
 		}
-		return FileLoadedMsg{Path: path, Content: b}
+		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(path)}
 	}
 }
 
-// saveFileCmd atomically writes content to path and returns FileSavedMsg or
-// FileSaveErrorMsg. Writes go via temp→Sync→Rename so a crash mid-write never
-// produces a partial or empty file at the target path (CLAUDE.md §1.4.1).
-func saveFileCmd(path, content, requestID string) tea.Cmd {
-	capturedBytes := []byte(content)
+// materializeCmd is the single VFS→disk write primitive (Fix 4). It writes the
+// document's bytes to disk atomically (temp→Sync→Rename→dir-fsync, CLAUDE.md
+// §1.4.1) with two clobber guards:
+//
+//   - bindNew (first save / naming an untitled / rename to a new name): refuses
+//     if the target already exists — naming over a real file would truncate it
+//     (Catastrophic, rung 1). The buffer is kept; nothing is bound.
+//   - overwrite (⌘S on a bound doc): refuses if the file diverged from baseline
+//     since it was opened — another editor/tool changed it (§1.4.7). Never
+//     silently wins.
+//
+// Bytes are written verbatim — no line-ending / trailing-newline / BOM
+// normalization (§1.4.5). The returned FileSavedMsg carries the fresh baseline.
+func materializeCmd(docID int64, path, content, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
+	data := []byte(content)
 	return func() tea.Msg {
-		if err := atomicfile.Write(path, capturedBytes); err != nil {
+		if bindNew {
+			if _, err := os.Stat(path); err == nil {
+				return FileSaveErrorMsg{
+					Path: path, DocID: docID, RequestID: requestID, Conflict: true,
+					Err: fmt.Errorf("materialize %q: file already exists", path),
+				}
+			} else if !os.IsNotExist(err) {
+				return FileSaveErrorMsg{
+					Path: path, DocID: docID, RequestID: requestID,
+					Err: fmt.Errorf("materialize %q: stat target: %w", path, err),
+				}
+			}
+			if dir := filepath.Dir(path); dir != "" {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return FileSaveErrorMsg{
+						Path: path, DocID: docID, RequestID: requestID,
+						Err: fmt.Errorf("materialize %q: mkdir: %w", path, err),
+					}
+				}
+			}
+		} else if baseline.divergedFrom(path) {
 			return FileSaveErrorMsg{
-				Path:      path,
-				RequestID: requestID,
-				Err:       err,
+				Path: path, DocID: docID, RequestID: requestID, Conflict: true,
+				Err: fmt.Errorf("materialize %q: file changed on disk since it was opened — not overwritten", path),
+			}
+		}
+		if err := atomicfile.Write(path, data); err != nil {
+			return FileSaveErrorMsg{
+				Path: path, DocID: docID, RequestID: requestID,
+				Err: fmt.Errorf("materialize %q: %w", path, err),
 			}
 		}
 		return FileSavedMsg{
-			Path:         path,
-			RequestID:    requestID,
-			SavedContent: capturedBytes,
+			Path: path, DocID: docID, RequestID: requestID,
+			SavedContent: data, BindNew: bindNew, Baseline: baselineOf(path),
 		}
 	}
 }
 
-// fileRenameCmd renames a file on disk.
+// fileRenameCmd moves a file on disk. It refuses to clobber an existing target
+// (os.Rename would silently destroy it — Catastrophic, rung 1).
 func fileRenameCmd(oldPath, newPath string) tea.Cmd {
 	return func() tea.Msg {
+		if _, err := os.Stat(newPath); err == nil {
+			return FileRenameErrorMsg{
+				Err: fmt.Errorf("rename %q → %q: target already exists", oldPath, newPath),
+			}
+		} else if !os.IsNotExist(err) {
+			return FileRenameErrorMsg{
+				Err: fmt.Errorf("rename %q → %q: stat target: %w", oldPath, newPath, err),
+			}
+		}
 		if err := os.Rename(oldPath, newPath); err != nil {
 			return FileRenameErrorMsg{
 				Err: fmt.Errorf("rename %q → %q: %w", oldPath, newPath, err),
 			}
 		}
 		return FileRenamedMsg{OldPath: oldPath, NewPath: newPath}
-	}
-}
-
-// createFileCmd creates a new file at path with the given content. It refuses
-// to clobber an existing file (CLAUDE.md §1.4.1) and writes atomically.
-func createFileCmd(path, content string) tea.Cmd {
-	capturedBytes := []byte(content)
-	return func() tea.Msg {
-		dir := filepath.Dir(path)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fileCreatedMsg{path: path, err: fmt.Errorf("mkdir %q: %w", dir, err)}
-		}
-		// Refuse to clobber: naming an untitled buffer over an existing file would
-		// silently truncate it (Catastrophic, rung 1 — CLAUDE.md §1.4.1).
-		if _, err := os.Stat(path); err == nil {
-			return fileCreatedMsg{path: path, err: fmt.Errorf("create %q: file already exists", path)}
-		}
-		if err := atomicfile.Write(path, capturedBytes); err != nil {
-			return fileCreatedMsg{path: path, err: fmt.Errorf("create %q: %w", path, err)}
-		}
-		return fileCreatedMsg{path: path, content: content}
 	}
 }
 

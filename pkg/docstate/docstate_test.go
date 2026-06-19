@@ -457,3 +457,161 @@ func TestTruncateOnNewEdit(t *testing.T) {
 		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
 	}
 }
+
+// TestBind_PreservesHistory verifies that materializing an untitled doc to a
+// real file keeps its id and undo history (§1.4.6): naming an Untitled must not
+// orphan the edits made while it was untitled.
+func TestBind_PreservesHistory(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+	for _, ch := range []string{"h", "i"} {
+		if _, err := s.AppendEdit(docID, "main", singleInsert(ch), noCursors, noCursors, "main"); err != nil {
+			t.Fatalf("AppendEdit: %v", err)
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(path, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := s.Bind(docID, path); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	// Opening the now-bound file must resolve to the SAME doc id (history intact).
+	ref, err := s.OpenPath(path)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if ref.ID != docID {
+		t.Fatalf("bind orphaned history: OpenPath id %d != scratch id %d", ref.ID, docID)
+	}
+	edits, err := s.AllEdits(docID, "main")
+	if err != nil {
+		t.Fatalf("AllEdits: %v", err)
+	}
+	if len(edits) == 0 {
+		t.Fatal("undo history lost after Bind")
+	}
+}
+
+// TestBind_StableAcrossInodeChange pins the save→reopen identity bug: an atomic
+// write (temp→rename) gives the file a NEW inode, so without re-binding the next
+// OpenPath would treat it as a new file and orphan the doc's undo history. After
+// Store.Bind (which the workspace calls on every save) the same path must still
+// resolve to the same docID.
+func TestBind_StableAcrossInodeChange(t *testing.T) {
+	s := NewTestStore(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.md")
+	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ref1, err := s.OpenPath(path)
+	if err != nil {
+		t.Fatalf("OpenPath: %v", err)
+	}
+	if _, err := s.AppendEdit(ref1.ID, "main", singleInsert("x"), noCursors, noCursors, "main"); err != nil {
+		t.Fatalf("AppendEdit: %v", err)
+	}
+
+	ino1, _, _ := fileID(path)
+	// Simulate an atomic save: os.CreateTemp + os.Rename gives the path a new inode.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ino2, _, _ := fileID(path); ino2 == ino1 {
+		t.Skip("filesystem reused the inode; cannot exercise the churn on this platform")
+	}
+
+	// The workspace re-binds after every save.
+	if err := s.Bind(ref1.ID, path); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+
+	ref2, err := s.OpenPath(path)
+	if err != nil {
+		t.Fatalf("OpenPath after save: %v", err)
+	}
+	if ref2.ID != ref1.ID {
+		t.Fatalf("save+reopen orphaned history: docID %d != %d", ref2.ID, ref1.ID)
+	}
+	if ref2.RenamedFrom != "" {
+		t.Fatalf("unexpected rename warning after in-place save: %q", ref2.RenamedFrom)
+	}
+}
+
+// TestRecoverableScratch_ExcludesZombies verifies that launch recovery returns
+// only GENUINE untitled scratches (inode=0), never an orphaned bound document
+// whose path was cleared (inode!=0) — otherwise real-file content surfaces as a
+// fake "Untitled" tab (the corruption regression).
+func TestRecoverableScratch_ExcludesZombies(t *testing.T) {
+	s := NewTestStore(t)
+
+	// Genuine untitled scratch (inode=0) with content — recoverable.
+	genuine := testDoc(t, s)
+	if _, err := s.CreateSnapshot(genuine, "real note", "local", 0); err != nil {
+		t.Fatalf("CreateSnapshot genuine: %v", err)
+	}
+
+	// Zombie: an orphaned BOUND doc — path='' but a real inode. Must be excluded.
+	res, err := s.perm.Exec(
+		`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES('', 999999, 1, '', '')`,
+	)
+	if err != nil {
+		t.Fatalf("insert zombie: %v", err)
+	}
+	zombie, _ := res.LastInsertId()
+	if _, err := s.CreateSnapshot(zombie, "secret real-file content", "local", 0); err != nil {
+		t.Fatalf("CreateSnapshot zombie: %v", err)
+	}
+
+	ids, err := s.RecoverableScratch(0)
+	if err != nil {
+		t.Fatalf("RecoverableScratch: %v", err)
+	}
+	has := func(id int64) bool {
+		for _, x := range ids {
+			if x == id {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(genuine) {
+		t.Errorf("genuine scratch missing from RecoverableScratch: %v", ids)
+	}
+	if has(zombie) {
+		t.Errorf("zombie bound-doc (inode!=0) wrongly returned as recoverable: %v", ids)
+	}
+}
+
+// TestGCEmptyScratch_KeepsHistoryAndLive verifies the launch GC removes only
+// empty unbound docs — never one with history, never the live doc.
+func TestGCEmptyScratch_KeepsHistoryAndLive(t *testing.T) {
+	s := NewTestStore(t)
+	live := testDoc(t, s)    // empty, but the live buffer — must survive
+	empty := testDoc(t, s)   // empty, no history — should be collected
+	withHist := testDoc(t, s) // has an event — must survive
+	if _, err := s.AppendEdit(withHist, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+		t.Fatalf("AppendEdit: %v", err)
+	}
+
+	if _, err := s.GCEmptyScratch(live); err != nil {
+		t.Fatalf("GCEmptyScratch: %v", err)
+	}
+
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM documents WHERE id=?`, live); n != 1 {
+		t.Error("GC removed the live doc")
+	}
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM documents WHERE id=?`, withHist); n != 1 {
+		t.Error("GC removed a doc with history")
+	}
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM documents WHERE id=?`, empty); n != 0 {
+		t.Error("GC did not remove the empty scratch doc")
+	}
+}

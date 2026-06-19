@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/command"
+	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/components/footer"
@@ -57,6 +58,20 @@ func newScrollWorkspace(t *testing.T) Model {
 	}
 	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return m
+}
+
+// withStore wires a real file-backed VFS store into the workspace, exactly as
+// the app does once StoreReadyMsg arrives. This upgrades the startup untitled to
+// a durable VFS document (ensureScratchDoc), so untitled content survives tab
+// switches via reconstruction rather than the old in-memory stash.
+func withStore(t *testing.T, m Model) Model {
+	t.Helper()
+	store := docstate.NewTestStore(t)
+	m, cmd := m.Update(StoreReadyMsg{Store: store})
+	for _, msg := range execCmds(cmd) {
+		m, _ = m.Update(msg)
+	}
 	return m
 }
 
@@ -126,7 +141,7 @@ func TestSameFileOpenIsNoop(t *testing.T) {
 	m = loadFile(m, "a.txt", "content A")
 
 	// Open same file — should be a no-op (no cmd issued).
-	_, cmd := m.requestOpenPath("a.txt")
+	_, cmd := m.requestOpenPath(0, "a.txt")
 	if cmd != nil {
 		t.Fatal("opening same file should not issue a load cmd")
 	}
@@ -164,15 +179,29 @@ func TestCloseLastTabResetsToUntitled(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// fileCreatedMsg error surfaces to user
+// A bind-new conflict (file already exists) keeps the buffer untitled and is
+// NOT silently bound — guards against the optimistic-bind clobber (rung 1).
 // ─────────────────────────────────────────────────────────────────────────────
 
-func TestFileCreatedMsg_ErrorSurfaces(t *testing.T) {
+func TestBindNewConflict_KeepsBufferUntitled(t *testing.T) {
 	m := newTestWorkspace(t)
-	m, _ = m.Update(fileCreatedMsg{path: "foo.md", err: errors.New("disk full")})
-	// Error should be shown in footer (we can't test the exact footer text easily,
-	// but we can confirm no panic and the model is still consistent).
-	_ = m
+	// Simulate an in-flight bind-new (naming an untitled).
+	m.activeSave = SaveIdentity{RequestID: "bind-1", InFlight: true}
+	m, _ = m.Update(FileSaveErrorMsg{
+		Path:      "foo.md",
+		RequestID: "bind-1",
+		Conflict:  true,
+		Err:       errors.New(`materialize "foo.md": file already exists`),
+	})
+	if m.filePath != "" {
+		t.Fatalf("expected buffer to stay untitled after bind conflict, got filePath %q", m.filePath)
+	}
+	if m.activeSave.InFlight {
+		t.Fatal("expected activeSave cleared after bind conflict")
+	}
+	if m.pendingDataLoss.kind != actionNone {
+		t.Fatal("expected pending data-loss action cleared after a failed guard save")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

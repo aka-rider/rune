@@ -84,7 +84,12 @@ type StoreReadyMsg struct {
 
 // AutosaveSettledMsg is emitted after a VFS snapshot goroutine completes.
 // Exported so the fuzz driver can detect autosave completion for DL1 checks.
-type AutosaveSettledMsg struct{ gen uint64 }
+// err is non-nil when the snapshot write failed (surfaced to the user; the
+// journal remains the durable record).
+type AutosaveSettledMsg struct {
+	gen uint64
+	err error
+}
 
 // pendingFlushMsg is returned by the debounce goroutine. The handler checks
 // gen == m.flushGen before firing snapshotCmd so only the latest flush wins.
@@ -92,22 +97,35 @@ type pendingFlushMsg struct{ gen uint64 }
 
 // ---- Data-loss action disambiguation ----
 
-// pendingDataLossAction records WHY the dirty-buffer guard was raised so that
-// DataLossDiscard / FileSavedMsg know whether to close just this tab or quit.
-type pendingDataLossAction int
+// actionKind records WHY the dirty-buffer guard was raised, so the guard
+// response (and the async Save round-trip) knows whether to close this tab,
+// quit, or do nothing.
+type actionKind int
 
 const (
-	dataLossActionNone  pendingDataLossAction = iota
-	dataLossActionClose                       // raised by requestCloseCurrent (^w)
-	dataLossActionQuit                        // raised by ConfirmQuitMsg (^C^C)
+	actionNone  actionKind = iota
+	actionClose            // raised by requestCloseCurrent (^w)
+	actionQuit             // raised by ConfirmQuitMsg (^C^C)
 )
+
+// pendingDataLoss carries the state a raised dirty guard must survive across the
+// async Save→FileSavedMsg round-trip (§5.5). For actionQuit "Save", saveLeft
+// counts the outstanding per-tab materialize acks before teardown; the first
+// failure clears the whole action so every buffer is kept.
+type pendingDataLoss struct {
+	kind     actionKind
+	saveLeft int
+}
 
 // ---- Guard options ----
 
-var quitGuardOptions = []footer.GuardOption{
+// dataLossGuardOptions drives the dirty-buffer prompt. Cancel is LAST so that
+// Escape (which the footer resolves to the final option) means Cancel, never
+// Discard — Escape must never lose data (Fix 7 §1).
+var dataLossGuardOptions = []footer.GuardOption{
 	{Key: 's', Response: footer.DataLossSave},
 	{Key: 'd', Response: footer.DataLossDiscard},
-	{Key: 0, Response: footer.DataLossCancel}, // Esc → Cancel
+	{Key: 0, Response: footer.DataLossCancel}, // Esc → guardOptions[len-1] = Cancel
 }
 
 // ---- Model ----
@@ -134,10 +152,6 @@ type Model struct {
 	// Help document — rendered once from the keymap; shown read-only under help.DocPath.
 	helpContent string
 
-	// Untitled buffer preserved across tab switches (the "" tab has no disk backing).
-	untitledContent string
-	untitledTitle   string
-
 	// Dictation (D16)
 	dict dictcomp.Model
 
@@ -147,13 +161,14 @@ type Model struct {
 
 	// File ownership (D12)
 	filePath   string
-	cleanRev   uint64 // editor revision at last load or save
+	cleanRev   uint64       // editor revision at last load or save
+	baseline   diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
 	activeSave SaveIdentity
 
 	// Pending data-loss action — set when a dirty guard is raised so that the
 	// guard response handler knows to close a tab (^w) or quit (^C^C) after
 	// saving/discarding. Never persisted across guard sessions.
-	pendingDataLoss pendingDataLossAction
+	pendingDataLoss pendingDataLoss
 
 	// Persistence (docstate)
 	store     *docstate.Store
@@ -209,8 +224,9 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 	}
 	if len(initialFiles) == 0 {
 		// No files to open — register the initial untitled tab so the tab bar is
-		// never empty and CreateUntitled(true) has a "" tab to rename.
-		m, _ = m.CreateUntitled(false)
+		// never empty. The store is not open yet, so this scratch starts with
+		// docID==0; StoreReadyMsg upgrades it to a durable VFS doc.
+		m, _ = m.CreateUntitled()
 		m.focus = paneTree // CreateUntitled sets paneCenter; restore startup default
 	}
 	m = m.syncDictationAllowed()

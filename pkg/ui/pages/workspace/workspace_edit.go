@@ -23,7 +23,9 @@ func (m Model) startSave() (Model, tea.Cmd) {
 		SavedContent: []byte(content),
 		InFlight:     true,
 	}
-	return m, saveFileCmd(m.filePath, content, requestID)
+	// Overwrite an already-bound file: materializeCmd refuses if it diverged from
+	// our baseline since load (§1.4.7).
+	return m, materializeCmd(m.docID, m.filePath, content, requestID, false, m.baseline)
 }
 
 func (m Model) syncDirty() Model {
@@ -172,14 +174,13 @@ func (m Model) scheduleFlush(cmds *[]tea.Cmd) Model {
 	return m
 }
 
-// snapshotCmd writes a VFS snapshot for docID at headSeq.
-// Disk is NOT written here; that only happens on explicit ⌘S (§1.4.2).
+// snapshotCmd writes a VFS snapshot for docID at headSeq and reports the result
+// via AutosaveSettledMsg. Disk is NOT written here; that only happens on
+// explicit ⌘S (§1.4.2).
 func snapshotCmd(store *docstate.Store, docID int64, content string, headSeq, gen uint64) tea.Cmd {
 	return func() tea.Msg {
-		if _, err := store.CreateSnapshot(docID, content, "local", int64(headSeq)); err != nil {
-			_ = err // fire-and-forget: VFS snapshot failed; content survives in the journal and retries on next edit
-		}
-		return AutosaveSettledMsg{gen: gen}
+		_, err := store.CreateSnapshot(docID, content, "local", int64(headSeq))
+		return AutosaveSettledMsg{gen: gen, err: err}
 	}
 }
 
@@ -191,8 +192,17 @@ func (m Model) journalEdit(surface string, edits []buffer.AppliedEdit, cursorsBe
 	}
 	seq, err := m.store.AppendEdit(m.docID, surface, edits, cursorsBefore, cursorsAfter, surface)
 	if err != nil {
-		_ = err // fire-and-forget: journal append failed; undo/redo history may be incomplete for this edit
-	} else if seq > 0 {
+		// §1.3: a failed journal write leaves undo history incomplete, and a
+		// snapshot taken afterward would tag the new buffer against a stale head
+		// seq — re-opening the B2/N5 corruption window. Surface the error and do
+		// NOT schedule a snapshot for this edit.
+		capturedErr := err
+		*cmds = append(*cmds, func() tea.Msg {
+			return footer.ShowErrorMsg{Text: "journal write failed: " + capturedErr.Error()}
+		})
+		return m
+	}
+	if seq > 0 {
 		m.headSeq = seq // N5: track latest seq for snapshot co-tagging
 	}
 	if surface == "main" {

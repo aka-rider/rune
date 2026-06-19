@@ -172,7 +172,8 @@ func TestEditorPagingScrollsAPage(t *testing.T) {
 // TestSwitchBackToUntitledRestoresContent verifies no data loss: typing in an
 // untitled buffer, opening help, then Ctrl+1 back restores the typed content.
 func TestSwitchBackToUntitledRestoresContent(t *testing.T) {
-	m := newTestWorkspace(t) // starts with one "" untitled tab
+	m := newTestWorkspace(t)  // starts with one "" untitled tab
+	m = withStore(t, m)       // untitled durability now comes from the VFS, not a RAM stash
 	m = focusEditor(m)
 
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'h', Text: "h"})

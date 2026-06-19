@@ -145,6 +145,52 @@ func (m Model) OpenFile(docID int64, path string) Model {
 	return m
 }
 
+// AssignDocID upgrades the docID==0 tab matching path to a real VFS docID.
+// Used when the store becomes ready after the startup untitled tab was created
+// store-less. No-op if no matching placeholder tab exists.
+func (m Model) AssignDocID(path string, docID int64) Model {
+	for i := range m.tabs {
+		if m.tabs[i].DocID == 0 && m.tabs[i].Path == path {
+			m.tabs[i].DocID = docID
+			return m
+		}
+	}
+	return m
+}
+
+// NameByID returns the display name of the tab with the given docID, or "".
+func (m Model) NameByID(docID int64) string {
+	for _, t := range m.tabs {
+		if t.DocID == docID {
+			return t.Name
+		}
+	}
+	return ""
+}
+
+// HasUntitledPlaceholder reports whether a store-less untitled tab (DocID==0,
+// path "") is present — the startup scratch awaiting a VFS doc once the store
+// opens. False when the app was launched directly onto a file.
+func (m Model) HasUntitledPlaceholder() bool {
+	for _, t := range m.tabs {
+		if t.DocID == 0 && t.Path == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasTabNamed reports whether any open tab currently displays the given name.
+// Used to pick the next free "Untitled N" label without touching the disk.
+func (m Model) HasTabNamed(name string) bool {
+	for _, t := range m.tabs {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // CloseByID removes the tab with the given docID.
 func (m Model) CloseByID(docID int64) Model {
 	for i, t := range m.tabs {
@@ -276,46 +322,28 @@ func (m Model) DirtyTabs() []TabHandle {
 	return out
 }
 
-// NextDocID returns the docID of the tab that would become active after
-// closing the given docID, or 0 if no tabs would remain.
-func (m Model) NextDocID(closeDocID int64) int64 {
+// NeighborOf returns the tab that should become active after the identified tab
+// is closed, with ok=false if it would be the last tab. The tab is located by
+// docID when non-zero (rename/untitled-safe, so multiple path="" untitled tabs
+// resolve distinctly), else by path.
+func (m Model) NeighborOf(docID int64, path string) (TabHandle, bool) {
 	idx := -1
 	for i, t := range m.tabs {
-		if t.DocID == closeDocID {
+		if (docID != 0 && t.DocID == docID) || (docID == 0 && t.DocID == 0 && t.Path == path) {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 || len(m.tabs) <= 1 {
-		return 0
+		return TabHandle{}, false
 	}
+	var n Tab
 	if idx < len(m.tabs)-1 {
-		return m.tabs[idx+1].DocID
+		n = m.tabs[idx+1]
+	} else {
+		n = m.tabs[idx-1]
 	}
-	return m.tabs[idx-1].DocID
-}
-
-// NextPath returns the path of the tab that would become active after
-// closing the given path, or "" if no tabs would remain.
-// Prefer NextDocID when the docID is known.
-func (m Model) NextPath(closePath string) string {
-	idx := -1
-	for i, t := range m.tabs {
-		if t.Path == closePath {
-			idx = i
-			break
-		}
-	}
-	if idx < 0 {
-		return ""
-	}
-	if len(m.tabs) <= 1 {
-		return ""
-	}
-	if idx < len(m.tabs)-1 {
-		return m.tabs[idx+1].Path
-	}
-	return m.tabs[idx-1].Path
+	return TabHandle{DocID: n.DocID, Path: n.Path}, true
 }
 
 func (m Model) Init() tea.Cmd { return nil }
