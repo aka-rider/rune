@@ -241,22 +241,23 @@ func overlayBreadcrumb(block, crumb string, active bool, st styles.Styles) strin
 		return block
 	}
 
-	bStyle := st.InactiveBorder
+	borderColor := st.InactiveBorder.GetBorderTopForeground()
 	if active {
-		bStyle = st.ActiveBorder
+		borderColor = st.ActiveBorder.GetBorderTopForeground()
 	}
+	bStyle := lipgloss.NewStyle().Foreground(borderColor)
 
+	rightPad := bStyle.Render("──╯")
 	leftCorner := bStyle.Render("╰")
-	rightPad := bStyle.Render("╯")
-	contentWidth := lipgloss.Width(leftCorner) + bcWidth + lipgloss.Width(rightPad)
-
+	content := " " + crumb + " "
+	contentWidth := lipgloss.Width(content) + lipgloss.Width(rightPad) + lipgloss.Width(leftCorner)
 	dashCount := borderW - contentWidth
 	if dashCount < 0 {
 		dashCount = 0
 	}
 	dashFill := bStyle.Render(strings.Repeat("─", dashCount))
 
-	lines[lastIdx] = leftCorner + dashFill + crumb + rightPad
+	lines[lastIdx] = leftCorner + dashFill + content + rightPad
 	return strings.Join(lines, "\n")
 }
 
