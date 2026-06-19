@@ -765,6 +765,24 @@ func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
 // filter those zombie rows surface as fake "Untitled" tabs showing real-file
 // content (a data-corruption-looking bug). Emptiness is filtered by the caller,
 // which reconstructs each candidate and drops empty/whitespace-only content.
+// DocJournalPos returns the document's undo pointer and max journalled seq.
+// undoSeq is -1 when the document is at head (SQL current_seq IS NULL).
+// maxSeq is 0 when there are no events for the document.
+// Called once at document load to initialise the workspace dirty-tracking fields.
+func (s *Store) DocJournalPos(docID int64) (undoSeq int64, maxSeq int64, err error) {
+	var cs sql.NullInt64
+	var ms int64
+	if err := s.perm.QueryRow(
+		`SELECT d.current_seq, COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.doc_id=d.id), 0)
+		 FROM documents d WHERE d.id=?`, docID).Scan(&cs, &ms); err != nil {
+		return -1, 0, fmt.Errorf("doc journal pos %d: %w", docID, err)
+	}
+	if cs.Valid {
+		return cs.Int64, ms, nil
+	}
+	return -1, ms, nil
+}
+
 func (s *Store) RecoverableScratch(excludeID int64) ([]int64, error) {
 	rows, err := s.perm.Query(`
 		SELECT id FROM documents

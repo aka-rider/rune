@@ -251,7 +251,7 @@ func TestBasicUndo(t *testing.T) {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 
-	surface, gotEdits, gotBefore, ok := s.UndoTarget(docID)
+	surface, gotEdits, gotBefore, _, ok := s.UndoTarget(docID)
 	if !ok {
 		t.Fatal("UndoTarget: expected ok=true, got false")
 	}
@@ -266,7 +266,7 @@ func TestBasicUndo(t *testing.T) {
 	}
 
 	// Second undo: nothing left.
-	_, _, _, ok2 := s.UndoTarget(docID)
+	_, _, _, _, ok2 := s.UndoTarget(docID)
 	if ok2 {
 		t.Error("second UndoTarget: expected ok=false (nothing left to undo)")
 	}
@@ -284,12 +284,12 @@ func TestBasicRedo(t *testing.T) {
 	}
 
 	// Undo.
-	if _, _, _, ok := s.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := s.UndoTarget(docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 
 	// Redo.
-	surface, gotEdits, gotAfter, ok := s.RedoTarget(docID)
+	surface, gotEdits, gotAfter, _, ok := s.RedoTarget(docID)
 	if !ok {
 		t.Fatal("RedoTarget: expected ok=true, got false")
 	}
@@ -304,7 +304,7 @@ func TestBasicRedo(t *testing.T) {
 	}
 
 	// Second redo: nothing left.
-	_, _, _, ok2 := s.RedoTarget(docID)
+	_, _, _, _, ok2 := s.RedoTarget(docID)
 	if ok2 {
 		t.Error("second RedoTarget: expected ok=false (nothing left to redo)")
 	}
@@ -429,11 +429,11 @@ func TestTruncateOnNewEdit(t *testing.T) {
 	}
 
 	// Undo once to step back.
-	if _, _, _, ok := s3.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := s3.UndoTarget(docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 	// Undo again.
-	if _, _, _, ok := s3.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := s3.UndoTarget(docID); !ok {
 		t.Fatal("second UndoTarget returned ok=false")
 	}
 
@@ -452,7 +452,7 @@ func TestTruncateOnNewEdit(t *testing.T) {
 	}
 
 	// Redo should now return false (future was truncated).
-	_, _, _, ok := s3.RedoTarget(docID)
+	_, _, _, _, ok := s3.RedoTarget(docID)
 	if ok {
 		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
 	}

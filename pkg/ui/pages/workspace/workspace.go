@@ -160,9 +160,11 @@ type Model struct {
 	cancelWatch context.CancelFunc
 
 	// File ownership (D12)
-	filePath   string
-	cleanRev   uint64       // editor revision at last load or save
-	baseline   diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
+	filePath        string
+	cleanJournalPos int64        // effective journal position at last save/load; -1 forces dirty
+	undoSeq         int64        // mirrors documents.current_seq; -1 = NULL (at head)
+	storeMaxSeq     int64        // mirrors MAX(events.seq) for m.docID
+	baseline        diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
 	activeSave SaveIdentity
 
 	// Pending data-loss action — set when a dirty guard is raised so that the

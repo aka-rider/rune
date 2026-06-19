@@ -138,17 +138,17 @@ func (s *Store) AppendEdit(docID int64, surface string, edits []buffer.AppliedEd
 // journal position for docID. On success it steps the position one behind the
 // returned event so that a subsequent UndoTarget targets the event before it,
 // and a RedoTarget can return to this one.
-func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, ok bool) {
+func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, newPos int64, ok bool) {
 	tx, err := s.perm.Begin()
 	if err != nil {
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	// Determine position: NULL = head (use MAX seq).
 	var nullableCS sql.NullInt64
 	if err := tx.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	var position int64
@@ -158,7 +158,7 @@ func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedE
 		var maxSeq sql.NullInt64
 		if err := tx.QueryRow(`SELECT MAX(seq) FROM events WHERE doc_id=?`, docID).Scan(&maxSeq); err != nil || !maxSeq.Valid {
 			tx.Rollback() //nolint:errcheck
-			return "", nil, nil, false
+			return "", nil, nil, 0, false
 		}
 		position = maxSeq.Int64
 	}
@@ -173,47 +173,48 @@ func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedE
 	).Scan(&seq, &surface, &editsJSON, &cursorsJSON)
 	if err == sql.ErrNoRows || err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	if unmarshalErr := json.Unmarshal([]byte(editsJSON), &edits); unmarshalErr != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 	if unmarshalErr := json.Unmarshal([]byte(cursorsJSON), &cursorsBefore); unmarshalErr != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
-	if _, err := tx.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, seq-1, docID); err != nil {
+	writtenPos := seq - 1
+	if _, err := tx.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, writtenPos, docID); err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
-	return surface, edits, cursorsBefore, true
+	return surface, edits, cursorsBefore, writtenPos, true
 }
 
 // RedoTarget returns the next undo-stop event after the current journal
 // position for docID. On success it advances the position to the returned event.
-func (s *Store) RedoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsAfter []cursor.Cursor, ok bool) {
+func (s *Store) RedoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsAfter []cursor.Cursor, newPos int64, ok bool) {
 	tx, err := s.perm.Begin()
 	if err != nil {
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	var nullableCS sql.NullInt64
 	if err := tx.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	// NULL = at head → nothing to redo.
 	if !nullableCS.Valid {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 	position := nullableCS.Int64
 
@@ -227,27 +228,27 @@ func (s *Store) RedoTarget(docID int64) (surface string, edits []buffer.AppliedE
 	).Scan(&seq, &surface, &editsJSON, &cursorsJSON)
 	if err == sql.ErrNoRows || err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	if unmarshalErr := json.Unmarshal([]byte(editsJSON), &edits); unmarshalErr != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 	if unmarshalErr := json.Unmarshal([]byte(cursorsJSON), &cursorsAfter); unmarshalErr != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	if _, err := tx.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, seq, docID); err != nil {
 		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
 
 	if err := tx.Commit(); err != nil {
-		return "", nil, nil, false
+		return "", nil, nil, 0, false
 	}
-	return surface, edits, cursorsAfter, true
+	return surface, edits, cursorsAfter, seq, true
 }
 
 // AllEdits returns all edit events for the given docID and surface in journal

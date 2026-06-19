@@ -82,7 +82,9 @@ func (m Model) showHelp() Model {
 	m.docID = 0
 	m.headSeq = 0
 	m.baseline = diskBaseline{}
-	m.cleanRev = m.editor.Revision()
+	m.undoSeq = -1
+	m.storeMaxSeq = 0
+	m.cleanJournalPos = 0
 	m.title = m.title.SetText("(Help)")
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
@@ -110,12 +112,20 @@ func (m Model) showUntitled(docID int64) Model {
 	m.docID = docID
 	m.headSeq = 0
 	m.baseline = diskBaseline{}
+	m.undoSeq = -1
+	m.storeMaxSeq = 0
+	if docID > 0 && m.store != nil {
+		if us, ms, err := m.store.DocJournalPos(docID); err == nil {
+			m.undoSeq = us
+			m.storeMaxSeq = ms
+		}
+	}
+	m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 	if name := m.opentabs.NameByID(docID); name != "" {
 		m.title = m.title.SetText(name)
 	}
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(docID, "")
-	m.cleanRev = m.editor.Revision()
 	m.focus = paneCenter
 	return m
 }
@@ -273,7 +283,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
-	if m.editor.Revision() != m.cleanRev && !m.viewingHelp() {
+	if effectiveJournalPos(m.undoSeq, m.storeMaxSeq) != m.cleanJournalPos && !m.viewingHelp() {
 		m.pendingDataLoss = pendingDataLoss{kind: actionClose}
 		m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
 		return m, nil
@@ -363,7 +373,9 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	} else {
 		m.opentabs = m.opentabs.SetTabName("", name)
 	}
-	m.cleanRev = m.editor.Revision()
+	m.undoSeq = -1
+	m.storeMaxSeq = 0
+	m.cleanJournalPos = 0
 	m.focus = paneCenter
 
 	return m, nil

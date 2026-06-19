@@ -641,6 +641,7 @@ func focusEditor(m Model) Model {
 
 func TestDirtyFlagSetOnEdit(t *testing.T) {
 	m := newTestWorkspace(t)
+	m = withStore(t, m)
 	m = loadFile(m, "note.md", "hello")
 	m = focusEditor(m)
 
@@ -658,6 +659,7 @@ func TestDirtyFlagSetOnEdit(t *testing.T) {
 
 func TestDirtyFlagClearedOnSave(t *testing.T) {
 	m := newTestWorkspace(t)
+	m = withStore(t, m)
 	m = loadFile(m, "note.md", "hello")
 	m = focusEditor(m)
 
@@ -679,6 +681,7 @@ func TestDirtyFlagClearedOnSave(t *testing.T) {
 
 func TestQuitGuardAppearsWhenDirty(t *testing.T) {
 	m := newTestWorkspace(t)
+	m = withStore(t, m)
 	m = loadFile(m, "note.md", "hello")
 	m = focusEditor(m)
 

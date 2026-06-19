@@ -142,10 +142,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.docID = docID
 		m.headSeq = 0
 		m.baseline = msg.Baseline // §1.4.7: fingerprint for the external-change guard on ⌘S
+		m.undoSeq = -1
+		m.storeMaxSeq = 0
+		if docID > 0 && m.store != nil {
+			if us, ms, err := m.store.DocJournalPos(docID); err == nil {
+				m.undoSeq = us
+				m.storeMaxSeq = ms
+			}
+		}
+		m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(docID, msg.Path)
 		m.opentabs = m.opentabs.MarkCleanByID(docID)
-		m.cleanRev = m.editor.Revision()
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		if msg.Path != "" {
 			base := strings.TrimSuffix(filepath.Base(msg.Path), ".md")
@@ -187,7 +195,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.err = fmt.Errorf("refresh binding for %q: %w", msg.Path, err)
 				}
 			}
-			m.cleanRev = m.editor.Revision()
+			m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 			if m.docID != 0 {
 				m.opentabs = m.opentabs.MarkCleanByID(m.docID)
 			} else {
@@ -416,7 +424,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 						_ = err // fire-and-forget: discard cleanup; non-fatal
 					}
 				}
-				m.cleanRev = m.editor.Revision()
+				m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 				var closeCmd tea.Cmd
 				m, closeCmd = m.executeClose(m.docID, m.filePath)
 				cmds = append(cmds, closeCmd)
