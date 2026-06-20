@@ -55,6 +55,7 @@ type Model struct {
 	syntaxMap        display.SyntaxMap
 	wrapMap          display.WrapMap
 	snapshot         display.DisplaySnapshot
+	imageDims        map[string]display.ImageDims // per-image cell footprints; drives image-row expansion in syncDisplay
 	syntaxSnap       display.SyntaxSnapshot
 	wrapSnap         display.WrapSnapshot
 	resolver         keybind.Resolver
@@ -576,6 +577,18 @@ func (m Model) SetSnapshot(snap display.DisplaySnapshot) Model {
 	return m
 }
 
+// SetImageDims sets the per-image cell footprints that drive standalone-image
+// row expansion, then rebuilds the display so the snapshot reflects them
+// immediately. markdownedit pushes this whenever image state changes (decode,
+// transmit, resize). A nil/empty map leaves every image line collapsed to one
+// row. Rebuilding from syncDisplay (rather than re-expanding the live snapshot)
+// keeps expansion idempotent — ExpandImageRows is only ever applied to a freshly
+// built, unexpanded snapshot.
+func (m Model) SetImageDims(dims map[string]display.ImageDims) Model {
+	m.imageDims = dims
+	return m.syncDisplay()
+}
+
 // ScrollToCursor scrolls the viewport to make the primary cursor visible.
 func (m Model) ScrollToCursor() Model {
 	if len(m.cursors.All()) == 0 {
@@ -838,7 +851,20 @@ func (m Model) syncDisplay() Model {
 	m.wrapSnap = m.wrapMap.Sync(m.syntaxSnap)
 	m.snapshot = display.BuildSnapshot(m.wrapSnap)
 	m.snapshot = display.ExpandTableRows(m.snapshot)
+	if len(m.imageDims) > 0 {
+		m.snapshot = display.ExpandImageRows(m.snapshot, m.imageDimsForPath)
+	}
 	return m
+}
+
+// imageDimsForPath returns the reserved cell footprint for a standalone image
+// line. Unknown paths collapse to a single row, which ExpandImageRows treats as
+// a no-op — so images that are not yet decoded/transmitted occupy one row.
+func (m Model) imageDimsForPath(path string) display.ImageDims {
+	if d, ok := m.imageDims[path]; ok {
+		return d
+	}
+	return display.ImageDims{Cols: 0, Rows: 1}
 }
 
 // ---- View ----

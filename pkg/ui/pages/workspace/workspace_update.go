@@ -137,6 +137,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 		m.editor = m.editor.SetContent(content)
+		var dimg tea.Cmd
+		m.editor, dimg = m.editor.DiscoverImages()
+		cmds = append(cmds, dimg)
 		m.editor = m.editor.SetReadOnly(false)
 		m.filePath = msg.Path
 		m.docID = docID

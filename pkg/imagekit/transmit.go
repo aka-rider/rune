@@ -64,6 +64,7 @@ func EncodeTransmit(img image.Image, id uint32, cols, rows int) (string, error) 
 	var b strings.Builder
 	opts := &kitty.Options{
 		Action:           kitty.TransmitAndPut,
+		Transmission:     kitty.Direct,
 		VirtualPlacement: true,
 		ID:               int(id),
 		Format:           kitty.PNG,

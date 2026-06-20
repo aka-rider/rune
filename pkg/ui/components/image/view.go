@@ -1,9 +1,9 @@
 package image
 
 import (
-	"fmt"
-	"rune/pkg/imagekit"
 	"strings"
+
+	"rune/pkg/imagekit"
 )
 
 // View returns the rendered placeholder cells (for Kitty via cell buffer) or
@@ -31,7 +31,7 @@ func (m Model) View() []string {
 		}
 
 		if m.termCaps.SupportsKittyGraphics() {
-			lines = append(lines, buildKittyPlaceholderLine(activeID, rowIdx, m.cols, m.scrollCol, m.maxWidth))
+			lines = append(lines, imagekit.BuildKittyPlaceholderLine(activeID, rowIdx, m.cols, m.scrollCol, m.maxWidth))
 		} else if m.termCaps.SupportsInlineImages() {
 			spaces := m.cols - m.scrollCol
 			if spaces < 0 {
@@ -47,32 +47,3 @@ func (m Model) View() []string {
 	return lines
 }
 
-func buildKittyPlaceholderLine(id uint32, rowIdx int, cols int, scrollCol int, maxWidth int) string {
-	r := (id >> 16) & 0xFF
-	g := (id >> 8) & 0xFF
-	b := id & 0xFF
-
-	start := scrollCol
-	if start < 0 {
-		start = 0
-	}
-	end := start + maxWidth
-	if end > cols {
-		end = cols
-	}
-	if start >= end {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b))
-
-	for col := start; col < end; col++ {
-		sb.WriteRune(imagekit.Placeholder)
-		sb.WriteRune(imagekit.Diacritic(rowIdx))
-		sb.WriteRune(imagekit.Diacritic(col))
-	}
-	sb.WriteString("\x1b[0m")
-
-	return sb.String()
-}

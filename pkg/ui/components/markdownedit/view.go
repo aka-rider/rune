@@ -43,8 +43,24 @@ func (m Model) View() string {
 	var imageLineFlags []bool
 
 	for i, l := range lines {
-		// Reserved image row: emit Kitty placeholder cells.
+		// Reserved image row: emit Kitty placeholder cells when the image is
+		// live (pixels transmitted); otherwise emit blank reserved cells so the
+		// layout holds without pointing Kitty at un-transmitted pixel data.
 		if l.ImagePath != "" && imageKitty {
+			img, live := m.images[l.ImagePath]
+			if live {
+				live = img.IsLive()
+			}
+			if !live {
+				spaceCells := make([]textedit.Cell, l.ImageCols+1)
+				for j := range spaceCells {
+					spaceCells[j] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
+				}
+				spaceCells = textedit.SliceCells(spaceCells, vp.ScrollCol, m.Model.Width())
+				renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle))
+				imageLineFlags = append(imageLineFlags, true)
+				continue
+			}
 			id := m.imageIDFor(l.ImagePath)
 			lineCells := imagePlaceholderCells(id, l.ImageRowIndex, l.ImageCols)
 			lineCells = append([]textedit.Cell{{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}}, lineCells...)

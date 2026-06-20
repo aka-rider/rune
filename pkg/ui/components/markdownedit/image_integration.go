@@ -173,10 +173,12 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 
 	m.images[path] = img
 
-	if img.Height() != oldHeight {
-		snap := m.Model.Snapshot()
-		snap = display.ExpandImageRows(snap, m.imageDimsFor)
-		m.Model = m.Model.SetSnapshot(snap)
+	// The image's layout footprint changes when its row count changes or when
+	// it transitions to/from Live (only Live images reserve expanded rows).
+	// Push the new footprints into the display pipeline so the snapshot — and
+	// the scroll math that depends on it — stay consistent.
+	if img.Height() != oldHeight || img.IsLive() != oldLive {
+		m.Model = m.Model.SetImageDims(m.currentImageDims())
 		m.Model = m.Model.ScrollToCursor()
 	}
 	if !oldLive && img.IsLive() {
@@ -309,15 +311,44 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 	return m
 }
 
-func (m Model) imageDimsFor(path string) display.ImageDims {
-	if !m.imageCapable() {
-		return display.ImageDims{Cols: 0, Rows: 1}
+// currentImageDims builds the per-image cell footprints handed to the display
+// pipeline. Images with a known cell size (decoded, transmitting, or live)
+// reserve their full row count so the layout stays stable while pixels are in
+// flight. Only PendingDecode (rows == 0) and Failed images stay at one row.
+// The render layer (view.go) gates the actual Kitty placeholder on IsLive(),
+// so no placeholder ever points at un-transmitted pixels (no black area). A
+// nil result leaves every image line collapsed.
+func (m Model) currentImageDims() map[string]display.ImageDims {
+	if !m.imageCapable() || len(m.images) == 0 {
+		return nil
 	}
-	img, ok := m.images[path]
-	if !ok || img.Height() <= 1 {
-		return display.ImageDims{Cols: 0, Rows: 1}
+	dims := make(map[string]display.ImageDims, len(m.images))
+	for path, img := range m.images {
+		if img.Height() > 1 {
+			dims[path] = display.ImageDims{Cols: img.Cols(), Rows: img.Height()}
+		}
 	}
-	return display.ImageDims{Cols: img.Cols(), Rows: img.Height()}
+	if len(dims) == 0 {
+		return nil
+	}
+	return dims
+}
+
+// hasUndiscoveredImages reports whether the current snapshot contains any
+// standalone-image path not yet tracked in m.images. Used to guard the
+// per-cursor-move discovery call so steady-state navigation costs nothing.
+func (m Model) hasUndiscoveredImages() bool {
+	snap := m.Model.Snapshot()
+	for _, l := range snap.Lines {
+		path, ok := display.StandaloneImagePath(l)
+		if !ok {
+			continue
+		}
+		if _, tracked := m.images[path]; !tracked {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) imageIDFor(path string) uint32 {

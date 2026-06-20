@@ -8,7 +8,6 @@ import (
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
-	"rune/pkg/editor/display"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
@@ -162,23 +161,23 @@ func (m Model) routeUpdate(msg tea.Msg) (Model, tea.Cmd) {
 		prevRev := m.Model.Revision()
 		m.Model, cmd = m.Model.Update(msg)
 
-		// Only run afterContentChange if the buffer was mutated.
+		// textedit's syncDisplay has already re-applied image-row expansion from
+		// the pushed dims, so the snapshot footprint is correct either way. We
+		// still reconcile image state: discovery + collapse on a content change,
+		// collapse only on a cursor-only move.
 		if m.Model.Revision() != prevRev {
 			m, aCmd := m.afterContentChange()
 			return m, tea.Batch(cmd, aCmd)
 		}
-		return m, cmd
+		m, cCmd := m.afterCursorMove()
+		return m, tea.Batch(cmd, cCmd)
 	}
 }
 
-// afterContentChange expands image rows after textedit's syncDisplay and
-// re-discovers embedded images. Called whenever buffer content changes.
+// afterContentChange re-discovers embedded images and reconciles collapse state
+// after the buffer was mutated. Image-row expansion itself is handled by the
+// display pipeline (textedit.syncDisplay), not here.
 func (m Model) afterContentChange() (Model, tea.Cmd) {
-	snap := m.Model.Snapshot()
-	snap = display.ExpandImageRows(snap, m.imageDimsFor)
-	m.Model = m.Model.SetSnapshot(snap)
-	m.Model = m.Model.ScrollToCursor()
-
 	var cmds []tea.Cmd
 
 	m, collapsed := m.detectImageCollapse()
@@ -195,21 +194,57 @@ func (m Model) afterContentChange() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// SetRect sets position and size. Overrides textedit.SetRect to also resize images.
+// afterCursorMove reconciles image collapse state after a cursor-only change
+// (no buffer mutation). Moving the caret on/off a standalone image line toggles
+// the embed between revealed source (one row) and rendered image (N rows) via
+// the markdown sync — a change that never bumps the buffer revision — so the
+// collapse must be detected here, not only on content changes.
+//
+// Discovery is also guarded here: when the cursor moves off an embed line it
+// becomes standalone/Rendered for the first time, so we kick off decode if the
+// path has not been tracked yet. The guard (hasUndiscoveredImages) makes this
+// a no-op on steady-state navigation.
+func (m Model) afterCursorMove() (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	m, collapsed := m.detectImageCollapse()
+	if collapsed {
+		cmds = append(cmds, tea.ClearScreen)
+	}
+	if m.hasUndiscoveredImages() {
+		var dcmd tea.Cmd
+		m, dcmd = m.discoverNewImages()
+		if dcmd != nil {
+			cmds = append(cmds, dcmd)
+		}
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// DiscoverImages scans the current snapshot for standalone image embeds and
+// queues decode commands for any not yet tracked. Call this after SetContent
+// (e.g. on file load) to start rendering images without requiring a buffer edit.
+func (m Model) DiscoverImages() (Model, tea.Cmd) {
+	return m.discoverNewImages()
+}
+
+// SetRect sets position and size. Overrides textedit.SetRect to also resize
+// images and re-publish their (possibly changed) footprints to the display
+// pipeline.
 func (m Model) SetRect(r textedit.Rect) Model {
 	m.Model = m.Model.SetRect(r)
 	maxCols := m.Model.ImageMaxCols()
 	maxRows := m.Model.ContentHeight()
 	m = m.resizeImages(maxCols, maxRows)
+	m.Model = m.Model.SetImageDims(m.currentImageDims())
+	m.Model = m.Model.ScrollToCursor()
 	return m
 }
 
-// SetContent replaces buffer content and expands image rows immediately.
+// SetContent replaces buffer content and publishes current image footprints so
+// the display pipeline expands any already-live embeds.
 func (m Model) SetContent(content string) Model {
 	m.Model = m.Model.SetContent(content)
-	snap := m.Model.Snapshot()
-	snap = display.ExpandImageRows(snap, m.imageDimsFor)
-	m.Model = m.Model.SetSnapshot(snap)
+	m.Model = m.Model.SetImageDims(m.currentImageDims())
 	m.Model = m.Model.ScrollToCursor()
 	return m
 }
