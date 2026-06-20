@@ -46,7 +46,7 @@ Requires macOS on Apple Silicon (arm64).
 
 ```sh
 brew tap aka-rider/tap
-brew install rune
+brew install rune-edit
 ```
 
 **Voice input** (optional) — requires a local whisper.cpp server (~1.6 GB RAM while running):
