@@ -55,7 +55,11 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 
 	const imgRows = 5
 	const textLines = 4 // B, C, D, E
-	m = m.SetContent("![](a.png)\nB\nC\nD\nE")
+	// Use a non-empty alt: an empty-alt "![](a.png)" parses to a malformed
+	// 1-char image span plus a leftover "[](a.png)" text span, so the line is
+	// not a standalone image line and never expands. Production embeds carry a
+	// label (alt text or the "![[name]]" wikilink form), so this matches reality.
+	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
 	// Publish the (live) image footprint straight into the display pipeline.
 	// Decode/transmit I/O is irrelevant to row expansion, so we bypass it.
 	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
@@ -124,6 +128,34 @@ func TestPendingImageReservesNoRows(t *testing.T) {
 	}
 }
 
+// TestVisibleRowsForCountsOnscreenRows guards the animation-gating fix: an
+// animated image only ticks while on-screen, and visibleRowsFor is what feeds
+// image.SetVisibleRows in updateImages. With the image expanded and fully in
+// view it must report all its rows; with the cursor on the embed (revealed to
+// source) it collapses to a single non-image line and must report 0, pausing
+// the animation while the user edits the source.
+func TestVisibleRowsForCountsOnscreenRows(t *testing.T) {
+	const imgRows = 5
+	m := newImagePipelineModel(t, terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true})
+	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
+	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
+
+	// Cursor on the image line → revealed source, no expanded image rows.
+	if got := m.visibleRowsFor("a.png"); got != 0 {
+		t.Fatalf("cursor on embed: visibleRowsFor=%d, want 0 (revealed source)", got)
+	}
+
+	// Move off the embed → it expands to imgRows, all within the 10-row viewport.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if got := m.visibleRowsFor("a.png"); got != imgRows {
+		t.Fatalf("image expanded in view: visibleRowsFor=%d, want %d", got, imgRows)
+	}
+	// An untracked path reports nothing.
+	if got := m.visibleRowsFor("missing.png"); got != 0 {
+		t.Fatalf("unknown image: visibleRowsFor=%d, want 0", got)
+	}
+}
+
 // TestDiscoverImagesOnLoad guards the file-load discovery path: calling
 // DiscoverImages on a freshly-SetContent editor (no buffer edit ever made)
 // must track standalone image embeds and return a decode Cmd. This is the
@@ -142,8 +174,10 @@ func TestDiscoverImagesOnLoad(t *testing.T) {
 	st := styles.Default()
 	// Build an unfocused model — the state at file-load time (focus is on the
 	// file tree, not the editor). All image spans are Rendered in this state,
-	// so StandaloneImagePath returns them.
-	m := New(keys, st, terminal.TermCaps{})
+	// so StandaloneImagePath returns them. Real graphics caps are required:
+	// discoverNewImages is gated on imageCapable(), and a file is only ever
+	// loaded into an editor running in a real (graphics-capable) terminal.
+	m := New(keys, st, terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true})
 	m = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
 	m = m.SetDir(tmpDir)
 	m = m.SetContent("![[photo.webp]]")

@@ -95,7 +95,7 @@ func TestAnimatedFrames(t *testing.T) {
 		t.Errorf("expected frame 0 to be active ID, got %d", m.CurrentID())
 	}
 	
-	m = m.SetVisibleRange(0, 10, 0, 80) // will arm ticks
+	m = m.SetVisibleRows(10) // will arm ticks
 	
 	m, cmd := m.ArmTick() 
 	if cmd == nil {

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -150,13 +149,6 @@ func EncodeITerm2Cmd(m Model) tea.Cmd {
 	}
 }
 
-// WritePlacement writes a placement escape sequence directly to the TTY,
-// bypassing BubbleTea's renderer. This avoids the race where BubbleTea's
-// diff-renderer overwrites image pixels on the same frame.
-func WritePlacement(seq string) error {
-	return writeTTY(seq)
-}
-
 // DeleteCmd deletes the given image IDs from the terminal. Fire-and-forget.
 func DeleteAllCmd() tea.Cmd {
 	return func() tea.Msg {
@@ -179,67 +171,6 @@ func DeleteCmd(ids []uint32) tea.Cmd {
 		_ = writeTTY(seq)
 		return nil
 	}
-}
-
-func (m Model) PlacementCmd() (Model, tea.Cmd) {
-	if !m.termCaps.SupportsInlineImages() {
-		return m, nil
-	}
-	if !m.expanded || m.visibleRows == 0 || m.state != Live || len(m.iterm2Slices) == 0 {
-		// Needs erase if it was placed
-		if m.placed {
-			m.placed = false
-			return m, eraseStale(m.prevScreenRow, m.prevVisibleRows, m.prevCol, m.cols)
-		}
-		return m, nil
-	}
-
-	if m.placed && m.screenRow == m.prevScreenRow && m.visibleRows == m.prevVisibleRows && m.screenCol == m.prevCol {
-		// Change-gated: no change
-		return m, nil
-	}
-
-	var sb strings.Builder
-	// 1. Erase stale
-	if m.placed {
-		// write bounded erase
-		for i := 0; i < m.prevVisibleRows; i++ {
-			sb.WriteString(fmt.Sprintf("\033[%d;%dH%s", m.prevScreenRow+i, m.prevCol, strings.Repeat(" ", m.cols)))
-		}
-	}
-
-	// 2. Place new
-	for i := 0; i < m.visibleRows; i++ {
-		rowIdx := m.visibleTop + i
-		if rowIdx >= 0 && rowIdx < len(m.iterm2Slices) {
-			sRow := m.screenRow + i
-			// position cursor at (sRow, m.screenCol), write slice
-			sb.WriteString(fmt.Sprintf("\033[%d;%dH%s", sRow, m.screenCol, m.iterm2Slices[rowIdx]))
-		}
-	}
-
-	seq := sb.String()
-	m.placed = true
-	m.prevScreenRow = m.screenRow
-	m.prevVisibleRows = m.visibleRows
-	m.prevCol = m.screenCol
-
-	if seq == "" {
-		return m, nil
-	}
-	return m, tea.Raw("\0337" + seq + "\0338") // DECSC save, sequence, DECRC restore
-}
-
-func eraseStale(row, count, col, width int) tea.Cmd {
-	var sb strings.Builder
-	for i := 0; i < count; i++ {
-		sb.WriteString(fmt.Sprintf("\033[%d;%dH%s", row+i, col, strings.Repeat(" ", width)))
-	}
-	seq := sb.String()
-	if seq == "" {
-		return nil
-	}
-	return tea.Raw("\0337" + seq + "\0338")
 }
 
 // RetransmitCmd initiates transmission based on current sizes (e.g. after layout changes)

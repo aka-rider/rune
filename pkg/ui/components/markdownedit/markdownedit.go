@@ -33,6 +33,7 @@ type Model struct {
 
 	lastPlacementSeq    string
 	pendingPlacementSeq string
+	placedRegions       map[string]placedRegion // iTerm2: last on-screen region per image, for erase-on-change
 
 	dir    string        // base directory for image/link resolution
 	styles styles.Styles // cached for cell rendering
@@ -57,14 +58,15 @@ func New(keys keymap.Bindings, st styles.Styles, caps terminal.TermCaps, opts ..
 	allOpts := append([]textedit.Option{textedit.WithSyncFunc(textedit.PlainSync)}, opts...)
 	base := textedit.New(keys, st, allOpts...)
 	return Model{
-		Model:       base,
-		highlighter: ChromaHighlighter(),
-		termCaps:    caps,
-		imageConfig: ImageConfig{AssetsDir: "assets"},
-		images:      map[string]image.Model{},
-		idAlloc:     newImageIDAllocator(),
-		cellSize:    imagekit.DefaultCellSize(),
-		styles:      st,
+		Model:         base,
+		highlighter:   ChromaHighlighter(),
+		termCaps:      caps,
+		imageConfig:   ImageConfig{AssetsDir: "assets"},
+		images:        map[string]image.Model{},
+		placedRegions: map[string]placedRegion{},
+		idAlloc:       newImageIDAllocator(),
+		cellSize:      imagekit.DefaultCellSize(),
+		styles:        st,
 	}
 }
 
@@ -231,7 +233,17 @@ func (m Model) DiscoverImages() (Model, tea.Cmd) {
 // images and re-publish their (possibly changed) footprints to the display
 // pipeline.
 func (m Model) SetRect(r textedit.Rect) Model {
+	// The workspace re-runs recalcLayout (→ SetRect) on every keypress, almost
+	// always with unchanged dimensions. Re-publishing image dims and following
+	// the cursor on those no-op passes would re-pin the viewport to the cursor
+	// and clobber an intentional scroll (e.g. PageDown, or arrow-scroll in a
+	// read-only doc whose hidden cursor sits at the top). Only do that work when
+	// the rect actually changed — mirroring textedit.SetRect's own guard.
+	changed := r.W != m.Model.Width() || r.H != m.Model.Height()
 	m.Model = m.Model.SetRect(r)
+	if !changed {
+		return m
+	}
 	maxCols := m.Model.ImageMaxCols()
 	maxRows := m.Model.ContentHeight()
 	m = m.resizeImages(maxCols, maxRows)

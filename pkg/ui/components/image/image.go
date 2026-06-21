@@ -31,18 +31,9 @@ type Model struct {
 	mtime    int64
 	cellSize imagekit.CellSize
 
-	visibleTop  int
 	visibleRows int
-	scrollCol   int
-	maxWidth    int
 
-	iterm2Slices    []string
-	screenRow       int
-	screenCol       int
-	prevScreenRow   int
-	prevVisibleRows int
-	prevCol         int
-	placed          bool
+	iterm2Slices []string
 
 	expanded    bool
 	wasExpanded bool
@@ -101,7 +92,9 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 		m.mtime = msg.mtime
 		m.state = PendingTransmit
 
-		if msg.animated && msg.frameCount > 1 && m.termCaps.SupportsKittyGraphics() {
+		kitty := m.termCaps.SupportsKittyGraphics()
+
+		if msg.animated && msg.frameCount > 1 && kitty {
 			m.animated = true
 			m.frameCount = msg.frameCount
 			m.delays = msg.delays
@@ -121,7 +114,7 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 
-		if m.termCaps.SupportsKittyGraphics() {
+		if kitty {
 			return m, TransmitCmd(m)
 		}
 		return m, EncodeITerm2Cmd(m)
@@ -164,17 +157,15 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) SetVisibleRange(top, count, scrollCol, maxWidth int) Model {
-	m.visibleTop = top
+// SetVisibleRows records how many of the image's rows are currently within the
+// viewport. It gates animation ticking (ArmTick / frameTickMsg) so offscreen
+// animated images don't schedule frames. NOTE: no production caller sets this
+// today — markdownedit owns viewport math in the current render design — so
+// visibleRows stays 0 and animation does not arm. Preserved (not deleted) to
+// keep the animation-tick path and its test coverage intact; wiring a real
+// caller is a separate follow-up.
+func (m Model) SetVisibleRows(count int) Model {
 	m.visibleRows = count
-	m.scrollCol = scrollCol
-	m.maxWidth = maxWidth
-	return m
-}
-
-func (m Model) SetScreenPosition(row, col int) Model {
-	m.screenRow = row
-	m.screenCol = col
 	return m
 }
 

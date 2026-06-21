@@ -11,15 +11,28 @@ import (
 	"rune/pkg/ui/components/image"
 )
 
+// placedRegion is the on-screen footprint of one iTerm2 image at its last
+// placement: a contiguous vertical run of cells. Stored per image so that when
+// the image moves (scroll), shrinks (resize), or disappears, the OLD footprint
+// can be blanked before the new one is drawn — the iTerm2 overlay does not erase
+// itself the way Kitty's cell-grid placeholders do.
+type placedRegion struct {
+	screenRow int // 1-based first visible row
+	rows      int // number of visible rows
+	col       int // 1-based start column
+	width     int // cell width to blank on erase
+}
+
 func (m Model) emitImagePlacements() (Model, tea.Cmd) {
 	if !m.imageInlineCapable() {
 		return m, nil
 	}
-	seq := m.buildInlineImagePlacements()
+	seq, regions := m.buildInlineImagePlacements()
 	if seq == m.lastPlacementSeq {
 		return m, nil
 	}
 	m.lastPlacementSeq = seq
+	m.placedRegions = regions
 	m.pendingPlacementSeq = ""
 
 	if seq == "" {
@@ -41,14 +54,22 @@ func (m Model) handlePlacementTick() (Model, tea.Cmd) {
 	return m, tea.Raw(seq)
 }
 
-func (m Model) buildInlineImagePlacements() string {
+// buildInlineImagePlacements returns the cursor-positioned OSC placement sequence
+// for every live iTerm2 image row currently in view, plus the new per-image
+// regions. Any previously-placed region that moved or vanished is blanked first:
+// all erases precede all placements in the returned string (so an erase never
+// clobbers another image's freshly-drawn pixels), and the whole batch is wrapped
+// once in DECSC/DECRC (save/restore cursor).
+func (m Model) buildInlineImagePlacements() (string, map[string]placedRegion) {
 	snap := m.Model.Snapshot()
 	vp := m.Model.Viewport()
 	contentH := m.Model.ContentHeight()
 	screenBase := m.Model.OffsetY()
 	col := m.Model.OffsetX() + 2 // 1-based terminal column + 1 left margin
 
-	var sb strings.Builder
+	var place strings.Builder
+	regions := map[string]placedRegion{}
+
 	for lineIdx, l := range snap.Lines {
 		if l.ImagePath == "" {
 			continue
@@ -69,10 +90,36 @@ func (m Model) buildInlineImagePlacements() string {
 		}
 
 		screenRow := screenBase + displayRow + 1 // +1 for 1-based terminal rows
-		fmt.Fprintf(&sb, "\0337\033[%d;%dH%s\0338", screenRow, col, slices[l.ImageRowIndex])
+		fmt.Fprintf(&place, "\033[%d;%dH%s", screenRow, col, slices[l.ImageRowIndex])
+
+		// Accumulate this image's visible footprint (rows are contiguous).
+		if r, seen := regions[l.ImagePath]; seen {
+			if screenRow < r.screenRow {
+				r.screenRow = screenRow
+			}
+			r.rows++
+			regions[l.ImagePath] = r
+		} else {
+			regions[l.ImagePath] = placedRegion{screenRow: screenRow, rows: 1, col: col, width: l.ImageCols}
+		}
 	}
 
-	return sb.String()
+	// Erase every prior region that is now gone or has a different footprint.
+	var erase strings.Builder
+	for path, old := range m.placedRegions {
+		if newR, still := regions[path]; still && newR == old {
+			continue
+		}
+		for i := 0; i < old.rows; i++ {
+			fmt.Fprintf(&erase, "\033[%d;%dH%s", old.screenRow+i, old.col, strings.Repeat(" ", old.width))
+		}
+	}
+
+	body := erase.String() + place.String()
+	if body == "" {
+		return "", regions
+	}
+	return "\0337" + body + "\0338", regions // DECSC … DECRC
 }
 
 func (m Model) discoverNewImages() (Model, tea.Cmd) {
@@ -181,6 +228,14 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 		m.Model = m.Model.SetImageDims(m.currentImageDims())
 		m.Model = m.Model.ScrollToCursor()
 	}
+
+	// Tell the image how many of its rows are on-screen (computed against the
+	// now-expanded snapshot). Animation ticking is gated on visibleRows > 0, so
+	// without this an animated image never advances past frame 0. Must run
+	// before ArmTick below.
+	img = img.SetVisibleRows(m.visibleRowsFor(path))
+	m.images[path] = img
+
 	if !oldLive && img.IsLive() {
 		var armCmd tea.Cmd
 		img, armCmd = img.ArmTick()
@@ -191,6 +246,27 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmds...)
+}
+
+// visibleRowsFor reports how many display rows of the given image are currently
+// within the viewport, using the same geometry as buildInlineImagePlacements.
+// Drives animation gating: an off-screen (or cursor-revealed-to-source) image
+// reports 0 and pauses its ticks.
+func (m Model) visibleRowsFor(path string) int {
+	snap := m.Model.Snapshot()
+	vp := m.Model.Viewport()
+	contentH := m.Model.ContentHeight()
+	count := 0
+	for lineIdx, l := range snap.Lines {
+		if l.ImagePath != path {
+			continue
+		}
+		displayRow := lineIdx - vp.TopRow
+		if displayRow >= 0 && displayRow < contentH {
+			count++
+		}
+	}
+	return count
 }
 
 // RefreshImagesAfterLayoutChange retransmits and re-arms image ticks.
