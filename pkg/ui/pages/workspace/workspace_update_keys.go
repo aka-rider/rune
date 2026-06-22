@@ -19,14 +19,21 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		return m.finalize(cmds)
 	}
 
-	// Priority 2.5: Global undo/redo.
+	// Priority 2.5: Global undo/redo (skipped when search is focused — the
+	// search component handles Undo internally for its own text field).
 	switch {
 	case key.Matches(msg, m.keys.Undo):
+		if m.focus == paneSearch {
+			break
+		}
 		var undoCmd tea.Cmd
 		m, undoCmd = m.handleUndo()
 		cmds = append(cmds, undoCmd)
 		return m.finalize(cmds)
 	case key.Matches(msg, m.keys.Redo):
+		if m.focus == paneSearch {
+			break
+		}
 		var redoCmd tea.Cmd
 		m, redoCmd = m.handleRedo()
 		cmds = append(cmds, redoCmd)

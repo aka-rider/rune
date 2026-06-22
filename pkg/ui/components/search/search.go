@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -29,6 +30,14 @@ type CloseMsg struct{}
 
 const promptGlyph = "/ " // leading prompt rendered before the input field
 
+// historyReadyMsg is the internal async response from a DB history load.
+// dir: +1 = Up (enter at most-recent); -1 = Down (enter at least-recent).
+type historyReadyMsg struct {
+	entries []string
+	draft   string
+	dir     int
+}
+
 // Model is the search bar component.
 type Model struct {
 	field   textedit.Model
@@ -38,11 +47,17 @@ type Model struct {
 	styles  styles.Styles
 	keys    keymap.Bindings
 
-	// History navigation (in-memory; workspace supplies entries via SetHistory).
-	history    []string // recent-first
-	workingSet []string // filtered by fuzzy match on draft; set when entering history
+	// historyLoader is injected by the workspace after the store is ready.
+	// Nil until wired; navigation is a no-op while nil.
+	historyLoader func() ([]string, error)
+
+	// History navigation state (ephemeral; reset on Open/Close).
+	workingSet []string // filtered by fuzzy match on draft; nil = not yet loaded
 	histIdx    int      // -1 = editing live draft; 0..n-1 = into workingSet
 	draft      string   // user's typed text preserved across history navigation
+
+	// undoStack stores previous query snapshots for Cmd+Z within the search field.
+	undoStack []string
 }
 
 // New creates a search bar in the closed state. Pass textedit.WithRegistry and
@@ -58,6 +73,13 @@ func New(keys keymap.Bindings, st styles.Styles, opts ...textedit.Option) Model 
 		styles:  st,
 		keys:    keys,
 	}
+}
+
+// WithHistoryLoader injects the function used to load search history from the
+// store. Called by the workspace after StoreReadyMsg is received.
+func (m Model) WithHistoryLoader(f func() ([]string, error)) Model {
+	m.historyLoader = f
+	return m
 }
 
 func (m Model) Init() tea.Cmd { return nil }
@@ -89,7 +111,8 @@ func (m Model) Open() Model {
 	m.histIdx = -1
 	m.draft = ""
 	m.status = ""
-	m.workingSet = nil
+	m.workingSet = nil            // force fresh DB load on next navigation
+	m.undoStack = m.undoStack[:0] // reset undo stack; keep backing array
 	m.field = m.field.SetContent("")
 	m.field = m.field.SetFocused(true)
 	return m
@@ -98,6 +121,8 @@ func (m Model) Open() Model {
 // Close hides the bar.
 func (m Model) Close() Model {
 	m.visible = false
+	m.workingSet = nil // stale after close; next Open forces fresh load
+	m.histIdx = -1
 	m.field = m.field.SetFocused(false)
 	return m
 }
@@ -113,12 +138,6 @@ func (m Model) SetFocused(v bool) Model {
 func (m Model) SetSize(w, _ int) Model {
 	m.width = w
 	return m.syncFieldWidth()
-}
-
-// SetHistory replaces the history list (workspace calls this after a DB load).
-func (m Model) SetHistory(h []string) Model {
-	m.history = h
-	return m
 }
 
 // SetStatus replaces the right-aligned status text ("3/12", "no matches", "").
@@ -151,24 +170,37 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case historyReadyMsg:
+		return m.applyHistoryReady(msg), nil
+
 	case tea.ClipboardMsg:
 		if !m.field.Focused() {
 			return m, nil
 		}
+		prevQuery := m.Query()
 		var cmd tea.Cmd
 		m.field, cmd = m.field.Update(msg)
-		m.histIdx = -1
-		m.draft = m.Query()
+		if q := m.Query(); q != prevQuery {
+			m.undoStack = append(m.undoStack, prevQuery)
+			m.histIdx = -1
+			m.draft = q
+			m.workingSet = nil
+		}
 		return m, cmd
 
 	case tea.PasteMsg:
 		if !m.field.Focused() {
 			return m, nil
 		}
+		prevQuery := m.Query()
 		var cmd tea.Cmd
 		m.field, cmd = m.field.Update(msg)
-		m.histIdx = -1
-		m.draft = m.Query()
+		if q := m.Query(); q != prevQuery {
+			m.undoStack = append(m.undoStack, prevQuery)
+			m.histIdx = -1
+			m.draft = q
+			m.workingSet = nil
+		}
 		return m, cmd
 
 	case tea.KeyPressMsg:
@@ -192,6 +224,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		q := m.Query()
 		m.histIdx = -1
 		m.draft = q
+		m.workingSet = nil // force fresh DB load for next navigation session
 		return m, func() tea.Msg { return SubmitMsg{Query: q, Backward: true} }
 	}
 
@@ -200,43 +233,59 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		q := m.Query()
 		m.histIdx = -1
 		m.draft = q
+		m.workingSet = nil // force fresh DB load for next navigation session
 		return m, func() tea.Msg { return SubmitMsg{Query: q, Backward: false} }
 	}
 
 	// Up → history: walk toward most-recent (then toward oldest)
 	if msg.Code == tea.KeyUp && msg.Mod == 0 {
-		return m.historyUp(), nil
+		return m.historyUp()
 	}
 
 	// Down → history: walk toward oldest (then back toward draft)
 	if msg.Code == tea.KeyDown && msg.Mod == 0 {
-		return m.historyDown(), nil
+		return m.historyDown()
+	}
+
+	// Undo → restore previous query
+	if key.Matches(msg, m.keys.Undo) {
+		return m.undo(), nil
 	}
 
 	// Any other key → forward to field and exit history navigation
 	prevQuery := m.Query()
 	var cmd tea.Cmd
 	m.field, cmd = m.field.Update(msg)
-	if m.Query() != prevQuery {
+	if q := m.Query(); q != prevQuery {
+		m.undoStack = append(m.undoStack, prevQuery)
 		m.histIdx = -1
-		m.draft = m.Query()
+		m.draft = q
 		m.workingSet = nil
 	}
 	return m, cmd
 }
 
-// ---- History navigation state machine (§7) ----
+// ---- History navigation state machine ----
 
-// historyUp moves toward the most-recent end on the first press, then toward
-// the least-recent end on subsequent presses.
-//
-//	histIdx == -1 : compute workingSet; if empty → no-op; else histIdx=0
-//	else          : histIdx = min(histIdx+1, len-1)
-func (m Model) historyUp() Model {
+// historyUp moves toward the most-recent end on the first press.
+// When workingSet is nil, emits an async Cmd to load from DB.
+func (m Model) historyUp() (Model, tea.Cmd) {
 	if m.histIdx == -1 {
-		m.workingSet = m.computeWorkingSet()
+		if m.workingSet == nil {
+			if m.historyLoader == nil {
+				return m, nil
+			}
+			loader, draft := m.historyLoader, m.draft
+			return m, func() tea.Msg {
+				entries, err := loader()
+				if err != nil || len(entries) == 0 {
+					return nil
+				}
+				return historyReadyMsg{entries: entries, draft: draft, dir: 1}
+			}
+		}
 		if len(m.workingSet) == 0 {
-			return m
+			return m, nil
 		}
 		m.histIdx = 0
 	} else {
@@ -245,19 +294,29 @@ func (m Model) historyUp() Model {
 		}
 	}
 	m.field = m.field.SetContent(m.workingSet[m.histIdx])
-	return m
+	return m, nil
 }
 
-// historyDown enters at the least-recent end on the first press, then walks
-// toward the most-recent end; past the most-recent end returns to the draft.
-//
-//	histIdx == -1 : compute workingSet; if empty → no-op; else histIdx=len-1
-//	else          : histIdx--; if < 0 → exit to draft (histIdx=-1, input=draft)
-func (m Model) historyDown() Model {
+// historyDown enters at the least-recent end on the first press.
+// When workingSet is nil, emits an async Cmd to load from DB.
+// Down past the most-recent end returns to the draft.
+func (m Model) historyDown() (Model, tea.Cmd) {
 	if m.histIdx == -1 {
-		m.workingSet = m.computeWorkingSet()
+		if m.workingSet == nil {
+			if m.historyLoader == nil {
+				return m, nil
+			}
+			loader, draft := m.historyLoader, m.draft
+			return m, func() tea.Msg {
+				entries, err := loader()
+				if err != nil || len(entries) == 0 {
+					return nil
+				}
+				return historyReadyMsg{entries: entries, draft: draft, dir: -1}
+			}
+		}
 		if len(m.workingSet) == 0 {
-			return m
+			return m, nil
 		}
 		m.histIdx = len(m.workingSet) - 1
 	} else {
@@ -265,26 +324,61 @@ func (m Model) historyDown() Model {
 		if m.histIdx < 0 {
 			m.histIdx = -1
 			m.field = m.field.SetContent(m.draft)
-			return m
+			return m, nil
 		}
+	}
+	m.field = m.field.SetContent(m.workingSet[m.histIdx])
+	return m, nil
+}
+
+// applyHistoryReady processes the async DB load result and navigates into it.
+func (m Model) applyHistoryReady(msg historyReadyMsg) Model {
+	if m.workingSet != nil {
+		return m // stale duplicate; already have results
+	}
+	ws := filterHistory(msg.entries, msg.draft)
+	m.workingSet = ws
+	if len(ws) == 0 {
+		return m
+	}
+	if msg.dir > 0 {
+		m.histIdx = 0
+	} else {
+		m.histIdx = len(ws) - 1
 	}
 	m.field = m.field.SetContent(m.workingSet[m.histIdx])
 	return m
 }
 
-// computeWorkingSet returns the full history when draft is empty; otherwise the
-// subsequence-filtered subset (recent-first order preserved).
-func (m Model) computeWorkingSet() []string {
-	if m.draft == "" {
-		return m.history
+// filterHistory returns entries filtered by subsequence match on draft.
+// When draft is empty, all entries are returned.
+func filterHistory(entries []string, draft string) []string {
+	if draft == "" {
+		return entries
 	}
 	var ws []string
-	for _, h := range m.history {
-		if edSearch.FuzzyMatch(m.draft, h) {
+	for _, h := range entries {
+		if edSearch.FuzzyMatch(draft, h) {
 			ws = append(ws, h)
 		}
 	}
 	return ws
+}
+
+// ---- Undo ----
+
+// undo restores the previous query from the undo stack.
+func (m Model) undo() Model {
+	if len(m.undoStack) == 0 {
+		return m
+	}
+	prev := m.undoStack[len(m.undoStack)-1]
+	m.undoStack = m.undoStack[:len(m.undoStack)-1]
+	m.field = m.field.SetContent(prev)
+	m.histIdx = -1
+	m.draft = prev
+	m.workingSet = nil
+	return m
 }
 
 // View renders the bar: prompt + field + right-aligned status.
@@ -305,7 +399,7 @@ func (m Model) View() string {
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(content)
 }
 
-// statusFor builds a status string from match count values.
+// StatusFor builds a status string from match count values.
 // Returns empty string when there are no matches.
 func StatusFor(idx, total int) string {
 	if total == 0 {

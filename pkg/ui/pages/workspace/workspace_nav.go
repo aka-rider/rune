@@ -80,11 +80,7 @@ func (m Model) showHelp() Model {
 	m.editor = m.editor.SetContent(m.helpContent).SetReadOnly(true)
 	m.filePath = help.DocPath
 	m.docID = 0
-	m.headSeq = 0
 	m.baseline = diskBaseline{}
-	m.undoSeq = -1
-	m.storeMaxSeq = 0
-	m.cleanJournalPos = 0
 	m.title = m.title.SetText("(Help)")
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
@@ -110,20 +106,7 @@ func (m Model) showUntitled(docID int64) Model {
 	m.editor = m.editor.SetContent(content).SetReadOnly(false)
 	m.filePath = ""
 	m.docID = docID
-	m.headSeq = 0
 	m.baseline = diskBaseline{}
-	m.undoSeq = -1
-	m.storeMaxSeq = 0
-	m.cleanJournalPos = 0
-	if docID > 0 && m.store != nil {
-		if us, ms, ss, err := m.store.DocJournalPos(docID); err == nil {
-			m.undoSeq = us
-			m.storeMaxSeq = ms
-			if ss >= 0 {
-				m.cleanJournalPos = ss
-			}
-		}
-	}
 	if name := m.opentabs.NameByID(docID); name != "" {
 		m.title = m.title.SetText(name)
 	}
@@ -143,7 +126,8 @@ func (m Model) forceSnapshot() Model {
 	if m.store == nil || m.docID == 0 {
 		return m
 	}
-	if _, err := m.store.CreateSnapshot(m.docID, m.editor.Content(), "switch", m.headSeq); err != nil {
+	seq, _ := m.store.CurrentSeq(m.docID)
+	if _, err := m.store.CreateSnapshot(m.docID, m.editor.Content(), "switch", seq); err != nil {
 		_ = err // fire-and-forget: snapshot is an optimization; the journal is durable
 	}
 	return m
@@ -284,10 +268,20 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
-	if effectiveJournalPos(m.undoSeq, m.storeMaxSeq) != m.cleanJournalPos && !m.viewingHelp() {
-		m.pendingDataLoss = pendingDataLoss{kind: actionClose}
-		m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
-		return m, nil
+	if !m.viewingHelp() {
+		isDirty := false
+		if m.store != nil && m.docID != 0 {
+			if d, err := m.store.IsDirty(m.docID); err == nil {
+				isDirty = d
+			} else {
+				isDirty = m.opentabs.HasDirty() // on error, keep buffer safe
+			}
+		}
+		if isDirty {
+			m.pendingDataLoss = pendingDataLoss{kind: actionClose}
+			m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+			return m, nil
+		}
 	}
 
 	_, hasNext := m.opentabs.NeighborOf(m.docID, m.filePath)
@@ -354,7 +348,6 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 
 	m.editor = m.editor.SetContent("").SetReadOnly(false)
 	m.filePath = ""
-	m.headSeq = 0
 	m.baseline = diskBaseline{}
 
 	name := m.nextUntitledName()
@@ -374,9 +367,6 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	} else {
 		m.opentabs = m.opentabs.SetTabName("", name)
 	}
-	m.undoSeq = -1
-	m.storeMaxSeq = 0
-	m.cleanJournalPos = 0
 	m.focus = paneCenter
 
 	return m, nil

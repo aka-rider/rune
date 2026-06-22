@@ -130,20 +130,40 @@ func TestSearchBar_UnfocusedOpenBarIgnoresInput(t *testing.T) {
 	}
 }
 
-// TestSearchBar_HistoryNavigation verifies Up/Down history cycling. History is
-// stored recent-first; Up enters at index 0 (most recent), subsequent Up moves
-// toward older entries; Down reverses; Down past the top restores the draft.
-func TestSearchBar_HistoryNavigation(t *testing.T) {
-	m := newTestBar(t).Open()
-	m = m.SetHistory([]string{"second", "first"}) // recent-first
+// newTestBarWithHistory creates a search bar with a history loader stub.
+func newTestBarWithHistory(t *testing.T, entries []string) Model {
+	t.Helper()
+	m := newTestBar(t)
+	m = m.WithHistoryLoader(func() ([]string, error) { return entries, nil })
+	return m
+}
 
-	// First Up: enter history at most-recent entry.
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+// navigateAndSettle sends a key and executes the returned Cmd so that async
+// historyReadyMsg is applied synchronously in tests.
+func navigateAndSettle(t *testing.T, m Model, msg tea.KeyPressMsg) Model {
+	t.Helper()
+	var cmd tea.Cmd
+	m, cmd = m.Update(msg)
+	if result := execCmd(t, cmd); result != nil {
+		m, _ = m.Update(result)
+	}
+	return m
+}
+
+// TestSearchBar_HistoryNavigation verifies Up/Down history cycling. History is
+// loaded on first Up/Down press; Up enters at index 0 (most recent), subsequent
+// Up moves toward older entries; Down reverses; Down past the top restores the
+// draft.
+func TestSearchBar_HistoryNavigation(t *testing.T) {
+	m := newTestBarWithHistory(t, []string{"second", "first"}).Open()
+
+	// First Up: load from DB and navigate to most-recent entry.
+	m = navigateAndSettle(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.Query(); got != "second" {
 		t.Errorf("after 1st Up: Query() = %q, want %q", got, "second")
 	}
 
-	// Second Up: move to older entry.
+	// Second Up: move to older entry (workingSet already loaded, sync).
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	if got := m.Query(); got != "first" {
 		t.Errorf("after 2nd Up: Query() = %q, want %q", got, "first")
@@ -159,5 +179,31 @@ func TestSearchBar_HistoryNavigation(t *testing.T) {
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if got := m.Query(); got != "" {
 		t.Errorf("after Down past top: Query() = %q, want empty draft", got)
+	}
+}
+
+// TestSearchBar_UndoRestoresPreviousQuery verifies that Cmd+Z (Undo) in the
+// search field restores the previous query one character at a time (each
+// keypress is its own undo step).
+func TestSearchBar_UndoRestoresPreviousQuery(t *testing.T) {
+	m := newTestBar(t).Open()
+	m = typeText(m, "fo") // undoStack after: ["", "f"]; query: "fo"
+
+	// Undo: pop "f" → query becomes "f".
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper})
+	if got := m.Query(); got != "f" {
+		t.Errorf("after 1st Undo: Query() = %q, want %q", got, "f")
+	}
+
+	// Undo: pop "" → query becomes "".
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper})
+	if got := m.Query(); got != "" {
+		t.Errorf("after 2nd Undo: Query() = %q, want empty", got)
+	}
+
+	// Undo with empty stack is a no-op.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModSuper})
+	if got := m.Query(); got != "" {
+		t.Errorf("after 3rd Undo (no-op): Query() = %q, want empty", got)
 	}
 }

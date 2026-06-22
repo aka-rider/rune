@@ -89,9 +89,7 @@ func (m Model) evictSaveAck() (Model, tea.Cmd) {
 	m.opentabs = m.opentabs.MarkCleanByID(victim.DocID)
 	if m.store != nil && victim.DocID != 0 {
 		_ = m.store.Bind(victim.DocID, victim.Path) // fire-and-forget: re-sync inode
-		if _, ms, _, err := m.store.DocJournalPos(victim.DocID); err == nil {
-			_ = m.store.RecordSaved(victim.DocID, ms) // fire-and-forget: §1.3
-		}
+		_ = m.store.MarkSaved(victim.DocID)         // fire-and-forget: §1.3
 	}
 	m.pendingDataLoss = pendingDataLoss{}
 	m.opentabs = m.opentabs.CloseByID(victim.DocID)

@@ -99,9 +99,6 @@ type AutosaveSettledMsg struct {
 // gen == m.flushGen before firing snapshotCmd so only the latest flush wins.
 type pendingFlushMsg struct{ gen uint64 }
 
-// historyLoadedMsg is returned when the search history is loaded from the store.
-type historyLoadedMsg struct{ entries []string }
-
 // ---- Data-loss action disambiguation ----
 
 // actionKind records WHY the dirty-buffer guard was raised, so the guard
@@ -176,11 +173,8 @@ type Model struct {
 	cancelWatch context.CancelFunc
 
 	// File ownership (D12)
-	filePath        string
-	cleanJournalPos int64        // effective journal position at last save/load; -1 forces dirty
-	undoSeq         int64        // mirrors documents.current_seq; -1 = NULL (at head)
-	storeMaxSeq     int64        // mirrors MAX(events.seq) for m.docID
-	baseline        diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
+	filePath   string
+	baseline   diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
 	activeSave SaveIdentity
 
 	// Pending data-loss action — set when a dirty guard is raised so that the
@@ -191,7 +185,6 @@ type Model struct {
 	// Persistence (docstate)
 	store     *docstate.Store
 	docID     int64
-	headSeq   int64  // most recent AppendEdit seq — co-captured for snapshot tagging (N5)
 	chatDocID int64  // reserved chat sentinel doc
 	flushGen  uint64 // generation counter for debounced VFS autosave
 

@@ -154,20 +154,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor = m.editor.SetReadOnly(false)
 		m.filePath = msg.Path
 		m.docID = docID
-		m.headSeq = 0
 		m.baseline = msg.Baseline // §1.4.7: fingerprint for the external-change guard on ⌘S
-		m.undoSeq = -1
-		m.storeMaxSeq = 0
-		m.cleanJournalPos = 0
-		if docID > 0 && m.store != nil {
-			if us, ms, ss, err := m.store.DocJournalPos(docID); err == nil {
-				m.undoSeq = us
-				m.storeMaxSeq = ms
-				if ss >= 0 {
-					m.cleanJournalPos = ss
-				}
-			}
-		}
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(docID, msg.Path)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
@@ -211,9 +198,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.err = fmt.Errorf("refresh binding for %q: %w", msg.Path, err)
 				}
 			}
-			m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 			if m.store != nil && m.docID != 0 {
-				_ = m.store.RecordSaved(m.docID, m.cleanJournalPos) // fire-and-forget: §1.3
+				_ = m.store.MarkSaved(m.docID) // fire-and-forget: §1.3
 			}
 			if m.docID != 0 {
 				m.opentabs = m.opentabs.MarkCleanByID(m.docID)
@@ -242,9 +228,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// so a later session reopens it without orphaning its history.
 			if m.store != nil && msg.DocID != 0 {
 				_ = m.store.Bind(msg.DocID, msg.Path) // fire-and-forget: best-effort on quit
-				if _, ms, _, err := m.store.DocJournalPos(msg.DocID); err == nil {
-					_ = m.store.RecordSaved(msg.DocID, ms) // fire-and-forget: §1.3
-				}
+				_ = m.store.MarkSaved(msg.DocID)      // fire-and-forget: §1.3
 			}
 			m.pendingDataLoss.saveLeft--
 			if m.pendingDataLoss.saveLeft == 0 {
@@ -311,15 +295,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Surface prior-session unsaved untitled docs; GC empty scratch rows.
 			m = m.restoreScratch()
 
-			// Kick off an async load of the search history so the search bar can
-			// populate its ↑/↓ history navigation immediately.
+			// Wire the history loader now that the store is ready.
 			store := m.store
-			cmds = append(cmds, func() tea.Msg {
-				entries, err := store.SearchHistory()
-				if err != nil || len(entries) == 0 {
-					return nil
-				}
-				return historyLoadedMsg{entries: entries}
+			m.search = m.search.WithHistoryLoader(func() ([]string, error) {
+				return store.SearchHistory()
 			})
 		}
 
@@ -328,9 +307,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// goroutines return stale gen values and are dropped here.
 		if msg.gen == m.flushGen && m.store != nil && m.docID > 0 {
 			content := m.editor.Content()
-			headSeq := uint64(m.headSeq)
+			// Capture seq synchronously, co-atomic with content, so the snapshot
+			// is tagged at the exact journal position the content reflects.
+			// Never read CurrentSeq inside the goroutine — later AppendEdits on
+			// the main loop would advance the head, tagging old content with a
+			// newer seq and corrupting RecoverDocument (plan §C, CRITIC #3).
+			seq, _ := m.store.CurrentSeq(m.docID)
 			gen := msg.gen
-			cmds = append(cmds, snapshotCmd(m.store, m.docID, content, headSeq, gen))
+			cmds = append(cmds, snapshotCmd(m.store, m.docID, content, uint64(seq), gen))
 		}
 
 	case AutosaveSettledMsg:
@@ -457,8 +441,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.focus = paneCenter
 		m = m.syncDictationAllowed()
 
-	case historyLoadedMsg:
-		m.search = m.search.SetHistory(msg.entries)
 	}
 
 	// Forward non-key messages to all children (broadcast path).
@@ -477,8 +459,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 
+		prevSearchQuery := m.search.Query()
 		m.search, cmd = m.search.Update(msg)
 		cmds = append(cmds, cmd)
+		if q := m.search.Query(); q != prevSearchQuery && m.search.Visible() {
+			m.editor = m.editor.SetSearchQuery(q, true)
+			idx, total := m.editor.MatchCount()
+			m.search = m.search.SetStatus(searchcomp.StatusFor(idx, total))
+		}
 
 		m.chat, cmd = m.chat.Update(msg)
 		cmds = append(cmds, cmd)
