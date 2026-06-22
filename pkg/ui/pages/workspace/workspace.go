@@ -63,6 +63,8 @@ const (
 	minCenterW    = 24
 )
 
+const tabLimit = 10
+
 // ---- Message types ----
 
 // ErrMsg signals a non-fatal I/O error to the workspace.
@@ -111,15 +113,21 @@ const (
 	actionNone  actionKind = iota
 	actionClose            // raised by requestCloseCurrent (^w)
 	actionQuit             // raised by ConfirmQuitMsg (^C^C)
+	actionEvict            // raised when a dirty tab must be evicted to open a new file
 )
 
 // pendingDataLoss carries the state a raised dirty guard must survive across the
 // async Save→FileSavedMsg round-trip (§5.5). For actionQuit "Save", saveLeft
 // counts the outstanding per-tab materialize acks before teardown; the first
-// failure clears the whole action so every buffer is kept.
+// failure clears the whole action so every buffer is kept. For actionEvict,
+// victim identifies the tab to close and pendingOpenPath is the file to open
+// once the victim is dealt with; requestID correlates the background save ack.
 type pendingDataLoss struct {
-	kind     actionKind
-	saveLeft int
+	kind            actionKind
+	saveLeft        int
+	victim          opentabs.TabHandle // eviction target (actionEvict)
+	pendingOpenPath string             // file to open after eviction (actionEvict)
+	requestID       string             // correlates evict-save ack (actionEvict + Save)
 }
 
 // ---- Guard options ----
@@ -219,7 +227,10 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		),
 		footer:       footer.New(keys, st),
 		chat:         chat.New(keys, st, reg, resolver, caps),
-		search:       searchcomp.New(keys, st),
+		search: searchcomp.New(keys, st,
+			textedit.WithRegistry(reg),
+			textedit.WithResolver(resolver),
+		),
 		dict:         dictcomp.New(),
 		focus:        paneTree,
 		leftVisible:  true,

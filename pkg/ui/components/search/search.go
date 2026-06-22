@@ -45,9 +45,11 @@ type Model struct {
 	draft      string   // user's typed text preserved across history navigation
 }
 
-// New creates a search bar in the closed state.
-func New(keys keymap.Bindings, st styles.Styles) Model {
-	field := textedit.New(keys, st, textedit.WithSingleLine())
+// New creates a search bar in the closed state. Pass textedit.WithRegistry and
+// textedit.WithResolver so the field can process character input and backspace.
+func New(keys keymap.Bindings, st styles.Styles, opts ...textedit.Option) Model {
+	allOpts := append([]textedit.Option{textedit.WithSingleLine()}, opts...)
+	field := textedit.New(keys, st, allOpts...)
 	field = field.SetRect(textedit.Rect{W: 80, H: 1})
 	return Model{
 		field:   field,
