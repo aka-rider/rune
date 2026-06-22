@@ -117,6 +117,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 
+		// Enforce the hard tab cap before doing anything else with this file.
+		var limitCmd tea.Cmd
+		var proceed bool
+		m, limitCmd, proceed = m.enforceTabLimit(docID, msg.Path)
+		cmds = append(cmds, limitCmd)
+		if !proceed {
+			break
+		}
+
 		// Prefer VFS reconstruction when the document has VFS history (§1.4.3).
 		// HasHistory distinguishes "no VFS record" from "VFS record with empty content"
 		// (e.g. user deleted all text, autosaved, then crashed — RecoverDocument
@@ -149,16 +158,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.baseline = msg.Baseline // §1.4.7: fingerprint for the external-change guard on ⌘S
 		m.undoSeq = -1
 		m.storeMaxSeq = 0
+		m.cleanJournalPos = 0
 		if docID > 0 && m.store != nil {
-			if us, ms, err := m.store.DocJournalPos(docID); err == nil {
+			if us, ms, ss, err := m.store.DocJournalPos(docID); err == nil {
 				m.undoSeq = us
 				m.storeMaxSeq = ms
+				if ss >= 0 {
+					m.cleanJournalPos = ss
+				}
 			}
 		}
-		m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 		m.breadcrumb = m.breadcrumb.SetPath(msg.Path)
 		m.opentabs = m.opentabs.OpenFile(docID, msg.Path)
-		m.opentabs = m.opentabs.MarkCleanByID(docID)
 		m.chat = m.chat.SetFileContext(msg.Path, string(msg.Content))
 		if msg.Path != "" {
 			base := strings.TrimSuffix(filepath.Base(msg.Path), ".md")
@@ -201,6 +212,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 			m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
+			if m.store != nil && m.docID != 0 {
+				_ = m.store.RecordSaved(m.docID, m.cleanJournalPos) // fire-and-forget: §1.3
+			}
 			if m.docID != 0 {
 				m.opentabs = m.opentabs.MarkCleanByID(m.docID)
 			} else {
@@ -214,6 +228,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			break
 		}
+		// Eviction background save ack: victim is clean, close it, open pending file.
+		if m.isEvictSaveAck(msg.RequestID) {
+			var openCmd tea.Cmd
+			m, openCmd = m.evictSaveAck()
+			cmds = append(cmds, openCmd)
+			break
+		}
 		// A materialize from the multi-tab quit "Save all" batch.
 		if m.pendingDataLoss.kind == actionQuit && m.pendingDataLoss.saveLeft > 0 {
 			m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
@@ -221,6 +242,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// so a later session reopens it without orphaning its history.
 			if m.store != nil && msg.DocID != 0 {
 				_ = m.store.Bind(msg.DocID, msg.Path) // fire-and-forget: best-effort on quit
+				if _, ms, _, err := m.store.DocJournalPos(msg.DocID); err == nil {
+					_ = m.store.RecordSaved(msg.DocID, ms) // fire-and-forget: §1.3
+				}
 			}
 			m.pendingDataLoss.saveLeft--
 			if m.pendingDataLoss.saveLeft == 0 {
@@ -247,6 +271,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
 			cmds = append(cmds, cmd)
 		}
+		// Eviction background save failed — the pending file does not open;
+		// the victim tab stays open, the user can act on it manually.
+		if m.isEvictSaveAck(msg.RequestID) {
+			m.pendingDataLoss = pendingDataLoss{}
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
+			cmds = append(cmds, cmd)
+		}
 
 	case FileLoadErrorMsg:
 		// Ignore (e.g., broken link click to missing file)
@@ -269,6 +300,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				// Bound file opened before the store was ready: resolve identity.
 				if ref, err := m.store.OpenPath(m.filePath); err == nil {
 					m.docID = ref.ID
+					// Upgrade the tab that was created with DocID==0 before the
+					// store was ready. Mirrors ensureScratchDoc for the untitled case.
+					m.opentabs = m.opentabs.AssignDocID(m.filePath, ref.ID)
 				}
 			} else {
 				// Make the store-less startup untitled durable (§1.4.3).
@@ -312,91 +346,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = msg.Err
 
 	case tea.MouseClickMsg:
-		m.drag = dragNone
-
-		if d, ok := m.dividerAtPoint(msg.X, msg.Y); ok {
-			m.drag = d
-			if d == dragLeft && !m.leftVisible {
-				m.leftVisible = true
-				m.leftPaneW = minLeftPaneW
-			} else if d == dragRight && !m.rightVisible {
-				m.rightVisible = true
-				m.rightPaneW = minRightPaneW
-			}
-			return m.finalizeLayoutChange(cmds)
-		}
-		if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
-			if newFocus == paneTitle {
-				m.focus = paneTitle
-				m.title = m.title.FocusAtEnd()
-			} else {
-				if m.focus == paneTitle {
-					var finalizeCmd tea.Cmd
-					var finalizeOk bool
-					m, finalizeCmd, finalizeOk = m.maybeFinalizeTitle()
-					cmds = append(cmds, finalizeCmd)
-					if !finalizeOk {
-						return m.finalize(cmds)
-					}
-				}
-				m.focus = newFocus
-			}
-			m = m.syncDictationAllowed()
-		}
+		return m.handleMouseClick(msg, cmds)
 
 	case tea.MouseMotionMsg:
-		if m.drag == dragNone {
-			break
-		}
-		if msg.Button != tea.MouseLeft {
-			m.drag = dragNone
-			return m.finalize(cmds)
-		}
-		switch m.drag {
-		case dragLeft:
-			newW := msg.X
-			if newW < minLeftPaneW {
-				m.leftVisible = false
-				m.leftPaneW = defaultLeftPaneW
-				m.drag = dragNone
-				if m.focus.isLeft() {
-					m.focus = paneCenter
-					m = m.syncDictationAllowed()
-				}
-			} else {
-				rightW := 0
-				if m.rightVisible {
-					rightW = m.rightPaneW
-				}
-				if max := m.totalWidth - rightW - minCenterW; newW > max {
-					newW = max
-				}
-				m.leftPaneW = newW
-				m.leftVisible = true
-			}
-		case dragRight:
-			newW := m.totalWidth - msg.X
-			if newW < minRightPaneW {
-				m.rightVisible = false
-				m.rightPaneW = defaultRightPaneW
-				m.drag = dragNone
-				if m.focus == paneChat {
-					m.focus = paneCenter
-					m = m.syncDictationAllowed()
-				}
-			} else {
-				leftW := 0
-				if m.leftVisible {
-					leftW = m.leftPaneW
-				}
-				if max := m.totalWidth - leftW - minCenterW; newW > max {
-					newW = max
-				}
-				m.rightPaneW = newW
-				m.rightVisible = true
-			}
-		}
-		return m.finalizeLayoutChange(cmds)
+		return m.handleMouseMotion(msg, cmds)
 
 	case footer.ConfirmQuitMsg:
 		if m.opentabs.HasDirty() {
@@ -409,6 +362,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case footer.DataLossGuardResponseMsg:
 		switch msg.Response {
 		case footer.DataLossSave:
+			if m.pendingDataLoss.kind == actionEvict {
+				// Evict: save the dirty background victim; FileSavedMsg closes it + opens pending.
+				m, cmd = m.evictSave()
+				cmds = append(cmds, cmd)
+				break
+			}
 			if m.pendingDataLoss.kind == actionQuit {
 				// Quit: materialize every dirty bound tab, then tear down.
 				m, cmd = m.saveAllDirtyForQuit()
@@ -440,17 +399,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 						_ = err // fire-and-forget: discard cleanup; non-fatal
 					}
 				}
-				m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 				var closeCmd tea.Cmd
 				m, closeCmd = m.executeClose(m.docID, m.filePath)
 				cmds = append(cmds, closeCmd)
+			case actionEvict:
+				// Discard: close the victim (history stays in VFS; recoverable on reopen).
+				var discardCmd tea.Cmd
+				m, discardCmd = m.evictDiscard(action)
+				cmds = append(cmds, discardCmd)
 			default: // actionQuit: discard all — journaled work survives in the VFS
 				return m.teardownAndQuit()
 			}
 
 		case footer.DataLossCancel:
 			m.pendingDataLoss = pendingDataLoss{}
-			// Guard already cleared by footer; nothing else to do.
+			// Explicitly clear the guard: in production the footer already cleared
+			// it before emitting this message; in tests that inject the response
+			// directly the footer may not have, so clear it here unconditionally.
+			m.footer = m.footer.SetGuard(footer.GuardDirty, nil)
 		}
 
 	case footer.DictationStartMsg:

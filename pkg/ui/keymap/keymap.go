@@ -81,7 +81,7 @@ func Default() Bindings {
 		PageDown:           key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
 		HalfPageUp:         key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("^u", "½ up")),
 		HalfPageDown:       key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("^d", "½ down")),
-		TabSwitch:          key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"), key.WithHelp("^1-9", "switch tab")),
+		TabSwitch:          key.NewBinding(key.WithKeys("ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9", "ctrl+0"), key.WithHelp("^1-9,0", "switch tab")),
 		ConfirmExitC:       key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("^c", "exit")),
 		ConfirmExitD:       key.NewBinding(key.WithKeys("ctrl+alt+d"), key.WithHelp("⌥^d", "exit")),
 		PinTab:             key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("^p", "pin tab")),

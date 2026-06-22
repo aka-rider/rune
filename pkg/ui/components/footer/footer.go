@@ -71,6 +71,7 @@ type Model struct {
 	pendingKey       string
 	guardKind        GuardKind
 	guardOptions     []GuardOption
+	guardLabel       string // custom label for the dirty guard (e.g. victim filename)
 	dictating        bool
 	dictationAllowed bool
 	errorMsg         string
@@ -92,8 +93,15 @@ func (m Model) Height() int            { return 1 }
 func (m Model) SetGuard(kind GuardKind, options []GuardOption) Model {
 	m.guardKind = kind
 	m.guardOptions = options
+	m.guardLabel = "" // reset so prior eviction labels never leak into close/quit guards
 	return m
 }
+
+// SetGuardLabel overrides the label shown in the dirty guard prompt. An empty
+// string (the default after SetGuard) renders the standard "Unsaved changes."
+// message. Used to name the eviction victim ("Close %q — unsaved.").
+func (m Model) SetGuardLabel(label string) Model { m.guardLabel = label; return m }
+
 func (m Model) InGuard() bool        { return len(m.guardOptions) > 0 }
 func (m Model) GuardKind() GuardKind { return m.guardKind }
 
@@ -112,6 +120,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if opt.Key != 0 && msg.Text == string(opt.Key) && msg.Mod == 0 {
 					m.guardKind = 0
 					m.guardOptions = nil
+					m.guardLabel = ""
 					return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
 				}
 			}
@@ -122,6 +131,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				opt := m.guardOptions[0]
 				m.guardKind = 0
 				m.guardOptions = nil
+				m.guardLabel = ""
 				return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
 			}
 			// Cancel key (Escape) maps to the last option if it's Cancel
@@ -129,6 +139,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				opt := m.guardOptions[len(m.guardOptions)-1]
 				m.guardKind = 0
 				m.guardOptions = nil
+				m.guardLabel = ""
 				return m, func() tea.Msg { return DataLossGuardResponseMsg{Response: opt.Response} }
 			}
 			return m, nil
@@ -214,7 +225,11 @@ func (m Model) View() string {
 	if m.dictating {
 		left = m.styles.FooterKey.Render("^v") + m.styles.FooterHint.Render(" stop dictation")
 	} else if m.guardKind == GuardDirty && len(m.guardOptions) > 0 {
-		left = m.styles.FooterKey.Render("Unsaved changes.") +
+		label := "Unsaved changes."
+		if m.guardLabel != "" {
+			label = m.guardLabel
+		}
+		left = m.styles.FooterKey.Render(label) +
 			m.styles.FooterHint.Render(" [") +
 			m.styles.FooterKey.Render("S") +
 			m.styles.FooterHint.Render("]ave [") +

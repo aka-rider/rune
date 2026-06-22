@@ -42,9 +42,14 @@ type Snapshot struct {
 	Tabs         []TabInfo
 	ActiveTabIdx int
 	TabActive    []bool // Tab.Active flags (for TAB-SET)
+	TabCount     int    // current number of open tabs
+	TabLimit     int    // enforced hard cap (0 = uncapped)
 
 	// SHADOW: set by driver (not by FuzzInspect); empty string = not yet checked
 	MirrorContent string
+
+	// CloseFileKeyPressed: set by driver (not by FuzzInspect) when the message was a CloseFile key press.
+	CloseFileKeyPressed bool
 
 	// File / persistence
 	ActiveFilePath string // m.filePath; empty = Untitled/unsaved file
@@ -61,6 +66,7 @@ type Snapshot struct {
 
 	// Guard / chord / focus
 	HasDirtyFile    bool
+	ActiveTabDirty  bool // true iff the currently active tab has unsaved changes
 	GuardVisible    bool
 	GuardKind       footer.GuardKind
 	GuardOptionCount int
@@ -790,6 +796,11 @@ func CheckTransition(prev Snapshot, msg any, next Snapshot) []Violation {
 	// G1: dirty file + ConfirmQuitMsg → guard must appear.
 	if typeName == "footer.ConfirmQuitMsg" && prev.HasDirtyFile && !next.GuardVisible {
 		add("G1", "dirty file + ConfirmQuitMsg did not raise guard")
+	}
+
+	// G3: dirty active tab + CloseFile key → guard must appear (unless guard already active).
+	if next.CloseFileKeyPressed && prev.ActiveTabDirty && !prev.GuardVisible && !next.GuardVisible {
+		add("G3", "dirty active tab + CloseFile key (^w) did not raise guard")
 	}
 
 	// TR-cursor-not-dirty: a key press that does not change buffer content must not

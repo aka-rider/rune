@@ -25,25 +25,37 @@ type TabHandle struct {
 	Path  string
 }
 
+// Equal reports whether two handles name the same document.
+// DocID != 0: DocID is authoritative; path is irrelevant (rename-safe).
+// DocID == 0: path is the only discriminator (virtual docs: help, pre-store untitled).
+func (h TabHandle) Equal(other TabHandle) bool {
+	if h.DocID != 0 || other.DocID != 0 {
+		return h.DocID == other.DocID
+	}
+	return h.Path == other.Path
+}
+
 type Tab struct {
-	DocID  int64
-	Path   string
-	Name   string
-	Pinned bool
-	Dirty  bool
-	Active bool
+	DocID         int64
+	Path          string
+	Name          string
+	Pinned        bool
+	Dirty         bool
+	lastActiveSeq int64 // monotonic counter stamped on switch-away; 0 = never focused
 }
 
 type Model struct {
-	tabs    []Tab
-	cursor  int
-	width   int
-	height  int
-	offsetX int
-	offsetY int
-	focused bool
-	keys    keymap.Bindings
-	styles  styles.Styles
+	tabs         []Tab
+	cursor       int
+	activeHandle TabHandle
+	activitySeq  int64 // bumped each time a tab is switched away from
+	width        int
+	height       int
+	offsetX      int
+	offsetY      int
+	focused      bool
+	keys         keymap.Bindings
+	styles       styles.Styles
 }
 
 func New(keys keymap.Bindings, st styles.Styles) Model {
@@ -80,19 +92,17 @@ func (m Model) DocIDAt(index int) int64 {
 	return m.tabs[index].DocID
 }
 
-// SelectIndex switches the active tab to the given index.
+// SelectIndex moves the navigation cursor to the given index.
 func (m Model) SelectIndex(index int) Model {
 	if index < 0 || index >= len(m.tabs) {
 		return m
 	}
 	m.cursor = index
-	for i := range m.tabs {
-		m.tabs[i].Active = i == index
-	}
 	return m
 }
 
-// SelectByID activates the tab with the given docID. Returns unchanged if not found.
+// SelectByID moves the navigation cursor to the tab with the given docID.
+// Returns unchanged if not found.
 func (m Model) SelectByID(docID int64) Model {
 	for i, t := range m.tabs {
 		if t.DocID == docID {
@@ -101,6 +111,38 @@ func (m Model) SelectByID(docID int64) Model {
 	}
 	return m
 }
+
+// SetActive marks the tab identified by h as the active document and syncs the
+// navigation cursor to it. Idempotent when h already identifies the active tab.
+// Called unconditionally by workspace.finalize() so active state always mirrors
+// the workspace's (docID, filePath) pair — the single golden source.
+func (m Model) SetActive(h TabHandle) Model {
+	if m.activeHandle.Equal(h) {
+		return m
+	}
+	// Stamp the outgoing tab with a monotonic sequence number so EvictionCandidate
+	// can order tabs by recency without needing wall-clock time.
+	for i, t := range m.tabs {
+		th := TabHandle{DocID: t.DocID, Path: t.Path}
+		if th.Equal(m.activeHandle) {
+			m.activitySeq++
+			m.tabs[i].lastActiveSeq = m.activitySeq
+			break
+		}
+	}
+	m.activeHandle = h
+	for i, t := range m.tabs {
+		th := TabHandle{DocID: t.DocID, Path: t.Path}
+		if th.Equal(h) {
+			m.cursor = i
+			return m
+		}
+	}
+	return m
+}
+
+// ActiveHandle returns the (DocID, Path) handle of the currently active tab.
+func (m Model) ActiveHandle() TabHandle { return m.activeHandle }
 
 // PinIndex toggles the pinned state of the tab at index.
 func (m Model) PinIndex(index int) Model {
@@ -111,7 +153,9 @@ func (m Model) PinIndex(index int) Model {
 	return m
 }
 
-// OpenFile adds or activates a tab for the given docID+path pair.
+// OpenFile ensures a tab exists for the given docID+path pair, adding one if
+// absent. Active state and cursor are managed exclusively by SetActive (called
+// from workspace.finalize) — OpenFile only manages the tab list.
 // When docID != 0, the tab is keyed by docID (rename-safe).
 // When docID == 0, falls back to path-keying for virtual docs (help, initial
 // untitled) where no VFS identity has been assigned yet.
@@ -121,27 +165,22 @@ func (m Model) OpenFile(docID int64, path string) Model {
 			if t.DocID == docID {
 				m.tabs[i].Path = path
 				m.tabs[i].Name = tabName(path)
-				return m.SelectIndex(i)
+				return m
 			}
 		}
 	} else {
-		for i, t := range m.tabs {
+		for _, t := range m.tabs {
 			if t.DocID == 0 && t.Path == path {
-				return m.SelectIndex(i)
+				return m
 			}
 		}
 	}
 	// Not found — add new tab.
-	for i := range m.tabs {
-		m.tabs[i].Active = false
-	}
 	m.tabs = append(m.tabs, Tab{
-		DocID:  docID,
-		Path:   path,
-		Name:   tabName(path),
-		Active: true,
+		DocID: docID,
+		Path:  path,
+		Name:  tabName(path),
 	})
-	m.cursor = len(m.tabs) - 1
 	return m
 }
 
@@ -402,7 +441,7 @@ func (m Model) View() string {
 		}
 		b.WriteString(prefix)
 
-		b.WriteString(fmt.Sprintf("%d:", i+1))
+		b.WriteString(fmt.Sprintf("%d:", (i+1)%10))
 		if t.Dirty {
 			b.WriteString(m.styles.TabDirty.Render("x"))
 		} else {
@@ -415,7 +454,8 @@ func (m Model) View() string {
 			name = m.styles.TabPinned.Render("★") + " " + name
 		}
 
-		if t.Active {
+		th := TabHandle{DocID: t.DocID, Path: t.Path}
+		if th.Equal(m.activeHandle) {
 			b.WriteString(m.styles.TabActive.Render(name))
 		} else {
 			b.WriteString(m.styles.TabNormal.Render(name))

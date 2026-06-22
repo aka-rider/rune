@@ -1,6 +1,7 @@
 package textedit
 
 import (
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -472,22 +473,26 @@ func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
 
 // Reapply applies the given edits forward (redo).
 // Does NOT accumulate into pendingEdits.
+//
+// AppliedEdit.Start values are in POST-ALL-EDITS coordinates. For coalesced
+// sequential inserts they are ascending; for multi-cursor batches they are
+// descending. Sort ascending and apply one-at-a-time so both orderings work —
+// matching the replayOneBatch strategy in pkg/editor/buffer/replay.go.
 func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
-	fwdEdits := make([]buffer.Edit, len(edits))
-	cumulativeShift := 0
-	for i := len(edits) - 1; i >= 0; i-- {
-		ae := edits[i]
-		originalStart := ae.Start - cumulativeShift
-		fwdEdits[i] = buffer.Edit{
-			Start:  originalStart,
-			End:    originalStart + len(ae.Deleted),
-			Insert: ae.Insert,
+	sorted := append([]buffer.AppliedEdit(nil), edits...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Start < sorted[j].Start
+	})
+	for _, e := range sorted {
+		start := e.Start
+		end := e.Start + len(e.Deleted)
+		if start < 0 || end > m.buf.Len() || start > end {
+			continue
 		}
-		cumulativeShift += len(ae.Insert) - len(ae.Deleted)
-	}
-	newBuf, _, err := m.buf.ApplyEdits(fwdEdits)
-	if err == nil {
-		m.buf = newBuf
+		newBuf, _, err := m.buf.ApplyEdits([]buffer.Edit{{Start: start, End: end, Insert: e.Insert}})
+		if err == nil {
+			m.buf = newBuf
+		}
 	}
 	m.rev++
 	m = m.syncDisplay()

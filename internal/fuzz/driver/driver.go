@@ -118,6 +118,9 @@ func Run(model workspace.Model, events []event.Event, store *docstate.Store, w, 
 			snap.MirrorContent = mirror
 		}
 
+		// G3 annotation: flag CloseFile key presses so CheckTransition can assert the guard.
+		snap.CloseFileKeyPressed = m.IsCloseFileMsg(msg)
+
 		// Propagate AppQuitting marker set by driver on tea.QuitMsg.
 		if _, ok := msg.(tea.QuitMsg); ok {
 			snap.AppQuitting = true

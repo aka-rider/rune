@@ -3,15 +3,19 @@
 package workspace
 
 import (
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+
 	"rune/internal/fuzz/invariant"
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 )
 
 // FuzzInspect returns a read-only snapshot of model state for invariant checking.
 // Called by the driver after every settled message.
 // Value receiver — pure read, no side effects on m.
 func (m Model) FuzzInspect() invariant.Snapshot {
-	tabs, tabActive, hasDirty := tabsInfo(m)
+	tabs, tabActive, hasDirty, activeTabDirty := tabsInfo(m)
 
 	return invariant.Snapshot{
 		// Editor content / cells
@@ -34,6 +38,8 @@ func (m Model) FuzzInspect() invariant.Snapshot {
 		Tabs:         tabs,
 		ActiveTabIdx: m.opentabs.Cursor(),
 		TabActive:    tabActive,
+		TabCount:     m.opentabs.Len(),
+		TabLimit:     tabLimit,
 
 		// File / persistence
 		ActiveFilePath: m.filePath,
@@ -49,6 +55,7 @@ func (m Model) FuzzInspect() invariant.Snapshot {
 
 		// Guard / chord / focus
 		HasDirtyFile:     hasDirty,
+		ActiveTabDirty:   activeTabDirty,
 		GuardVisible:     m.footer.InGuard(),
 		GuardKind:        footer.GuardKind(m.footer.GuardKind()),
 		GuardOptionCount: m.footer.GuardOptionCount(),
@@ -61,18 +68,35 @@ func (m Model) FuzzInspect() invariant.Snapshot {
 	}
 }
 
-// tabsInfo builds the Tabs/TabActive/HasDirtyFile triple from opentabs.
-func tabsInfo(m Model) ([]invariant.TabInfo, []bool, bool) {
+// tabsInfo builds the Tabs/TabActive/HasDirtyFile/ActiveTabDirty tuple from opentabs.
+func tabsInfo(m Model) ([]invariant.TabInfo, []bool, bool, bool) {
 	raw := m.opentabs.FuzzTabs()
+	activeHandle := m.opentabs.ActiveHandle()
 	tabs := make([]invariant.TabInfo, len(raw))
 	active := make([]bool, len(raw))
 	hasDirty := false
+	activeTabDirty := false
 	for i, t := range raw {
 		tabs[i] = invariant.TabInfo{Path: t.Path, Name: t.Name}
-		active[i] = t.Active
+		th := opentabs.TabHandle{DocID: t.DocID, Path: t.Path}
+		isActive := th.Equal(activeHandle)
+		active[i] = isActive
 		if t.Dirty {
 			hasDirty = true
+			if isActive {
+				activeTabDirty = true
+			}
 		}
 	}
-	return tabs, active, hasDirty
+	return tabs, active, hasDirty, activeTabDirty
+}
+
+// IsCloseFileMsg reports whether msg is a CloseFile (^w) key press.
+// Used by the fuzz driver to annotate snapshots for the G3 invariant.
+func (m Model) IsCloseFileMsg(msg tea.Msg) bool {
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return false
+	}
+	return key.Matches(kp, m.keys.CloseFile)
 }

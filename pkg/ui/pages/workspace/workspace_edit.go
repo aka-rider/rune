@@ -10,7 +10,98 @@ import (
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 )
+
+func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, tea.Cmd) {
+	m.drag = dragNone
+
+	if d, ok := m.dividerAtPoint(msg.X, msg.Y); ok {
+		m.drag = d
+		if d == dragLeft && !m.leftVisible {
+			m.leftVisible = true
+			m.leftPaneW = minLeftPaneW
+		} else if d == dragRight && !m.rightVisible {
+			m.rightVisible = true
+			m.rightPaneW = minRightPaneW
+		}
+		return m.finalizeLayoutChange(cmds)
+	}
+	if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
+		if newFocus == paneTitle {
+			m.focus = paneTitle
+			m.title = m.title.FocusAtEnd()
+		} else {
+			if m.focus == paneTitle {
+				var finalizeCmd tea.Cmd
+				var finalizeOk bool
+				m, finalizeCmd, finalizeOk = m.maybeFinalizeTitle()
+				cmds = append(cmds, finalizeCmd)
+				if !finalizeOk {
+					return m.finalize(cmds)
+				}
+			}
+			m.focus = newFocus
+		}
+		m = m.syncDictationAllowed()
+	}
+	return m.finalize(cmds)
+}
+
+func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model, tea.Cmd) {
+	if m.drag == dragNone {
+		return m.finalize(cmds)
+	}
+	if msg.Button != tea.MouseLeft {
+		m.drag = dragNone
+		return m.finalize(cmds)
+	}
+	switch m.drag {
+	case dragLeft:
+		newW := msg.X
+		if newW < minLeftPaneW {
+			m.leftVisible = false
+			m.leftPaneW = defaultLeftPaneW
+			m.drag = dragNone
+			if m.focus.isLeft() {
+				m.focus = paneCenter
+				m = m.syncDictationAllowed()
+			}
+		} else {
+			rightW := 0
+			if m.rightVisible {
+				rightW = m.rightPaneW
+			}
+			if max := m.totalWidth - rightW - minCenterW; newW > max {
+				newW = max
+			}
+			m.leftPaneW = newW
+			m.leftVisible = true
+		}
+	case dragRight:
+		newW := m.totalWidth - msg.X
+		if newW < minRightPaneW {
+			m.rightVisible = false
+			m.rightPaneW = defaultRightPaneW
+			m.drag = dragNone
+			if m.focus == paneChat {
+				m.focus = paneCenter
+				m = m.syncDictationAllowed()
+			}
+		} else {
+			leftW := 0
+			if m.leftVisible {
+				leftW = m.leftPaneW
+			}
+			if max := m.totalWidth - leftW - minCenterW; newW > max {
+				newW = max
+			}
+			m.rightPaneW = newW
+			m.rightVisible = true
+		}
+	}
+	return m.finalizeLayoutChange(cmds)
+}
 
 func (m Model) startSave() (Model, tea.Cmd) {
 	if m.filePath == "" || m.activeSave.InFlight {
@@ -62,6 +153,7 @@ func (m Model) syncDirty() Model {
 
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 	m = m.syncDirty()
+	m.opentabs = m.opentabs.SetActive(opentabs.TabHandle{DocID: m.docID, Path: m.filePath})
 	m = m.applyFocus()
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()

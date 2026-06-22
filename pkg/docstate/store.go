@@ -262,93 +262,93 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("get user_version: %w", err)
 	}
 	if version < 1 {
-	// Add new columns to existing tables (ignore "duplicate column name" — fresh
-	// installs have these columns already in the CREATE TABLE statement above).
-	for _, stmt := range []string{
-		`ALTER TABLE documents ADD COLUMN current_seq INTEGER`,
-		`ALTER TABLE snapshots ADD COLUMN seq INTEGER DEFAULT 0`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				return fmt.Errorf("migrate: %s: %w", stmt, err)
+		// Add new columns to existing tables (ignore "duplicate column name" — fresh
+		// installs have these columns already in the CREATE TABLE statement above).
+		for _, stmt := range []string{
+			`ALTER TABLE documents ADD COLUMN current_seq INTEGER`,
+			`ALTER TABLE snapshots ADD COLUMN seq INTEGER DEFAULT 0`,
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				if !strings.Contains(err.Error(), "duplicate column name") {
+					return fmt.Errorf("migrate: %s: %w", stmt, err)
+				}
 			}
 		}
-	}
 
-	// Backfill inode/device via stat (best-effort; collect outside transaction).
-	rows, err := db.Query(`SELECT id, path FROM documents WHERE path != ''`)
-	if err != nil {
-		return fmt.Errorf("migrate: query docs for inode backfill: %w", err)
-	}
-	type inodeRow struct {
-		id     int64
-		inode  uint64
-		device uint64
-	}
-	var inodeFills []inodeRow
-	for rows.Next() {
-		var id int64
-		var path string
-		if err := rows.Scan(&id, &path); err != nil {
-			rows.Close()
-			return fmt.Errorf("migrate: scan doc: %w", err)
+		// Backfill inode/device via stat (best-effort; collect outside transaction).
+		rows, err := db.Query(`SELECT id, path FROM documents WHERE path != ''`)
+		if err != nil {
+			return fmt.Errorf("migrate: query docs for inode backfill: %w", err)
 		}
-		if ino, dev, ok := fileID(path); ok && ino != 0 {
-			inodeFills = append(inodeFills, inodeRow{id, ino, dev})
+		type inodeRow struct {
+			id     int64
+			inode  uint64
+			device uint64
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate: inode backfill rows: %w", err)
-	}
+		var inodeFills []inodeRow
+		for rows.Next() {
+			var id int64
+			var path string
+			if err := rows.Scan(&id, &path); err != nil {
+				rows.Close()
+				return fmt.Errorf("migrate: scan doc: %w", err)
+			}
+			if ino, dev, ok := fileID(path); ok && ino != 0 {
+				inodeFills = append(inodeFills, inodeRow{id, ino, dev})
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("migrate: inode backfill rows: %w", err)
+		}
 
-	// Transaction: apply backfill, dedup, create unique indexes.
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("migrate: begin tx: %w", err)
-	}
+		// Transaction: apply backfill, dedup, create unique indexes.
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("migrate: begin tx: %w", err)
+		}
 
-	for _, r := range inodeFills {
-		if _, err := tx.Exec(
-			`UPDATE documents SET inode=?, device=? WHERE id=?`,
-			r.inode, r.device, r.id,
-		); err != nil {
+		for _, r := range inodeFills {
+			if _, err := tx.Exec(
+				`UPDATE documents SET inode=?, device=? WHERE id=?`,
+				r.inode, r.device, r.id,
+			); err != nil {
+				tx.Rollback() //nolint:errcheck
+				return fmt.Errorf("migrate: update inode for doc %d: %w", r.id, err)
+			}
+		}
+
+		if err := dedupByInode(tx); err != nil {
 			tx.Rollback() //nolint:errcheck
-			return fmt.Errorf("migrate: update inode for doc %d: %w", r.id, err)
+			return err
 		}
-	}
-
-	if err := dedupByInode(tx); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return err
-	}
-	if err := dedupByPath(tx); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return err
-	}
-
-	// Drop the old non-unique path index (it may or may not exist).
-	if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_documents_path`); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return fmt.Errorf("migrate: drop old path index: %w", err)
-	}
-	for _, stmt := range []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path ON documents(path) WHERE path != ''`,
-	} {
-		if _, err := tx.Exec(stmt); err != nil {
+		if err := dedupByPath(tx); err != nil {
 			tx.Rollback() //nolint:errcheck
-			return fmt.Errorf("migrate: create index: %w", err)
+			return err
 		}
-	}
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("migrate: commit: %w", err)
-	}
+		// Drop the old non-unique path index (it may or may not exist).
+		if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_documents_path`); err != nil {
+			tx.Rollback() //nolint:errcheck
+			return fmt.Errorf("migrate: drop old path index: %w", err)
+		}
+		for _, stmt := range []string{
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path ON documents(path) WHERE path != ''`,
+		} {
+			if _, err := tx.Exec(stmt); err != nil {
+				tx.Rollback() //nolint:errcheck
+				return fmt.Errorf("migrate: create index: %w", err)
+			}
+		}
 
-	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
-		return fmt.Errorf("migrate: set user_version: %w", err)
-	}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migrate: commit: %w", err)
+		}
+
+		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+			return fmt.Errorf("migrate: set user_version: %w", err)
+		}
 	} // end version < 1
 
 	if version < 2 {
@@ -672,7 +672,7 @@ func (s *Store) ReserveChatDoc() (int64, error) {
 //     freshly created file's inode;
 //   - after EVERY overwrite save — the atomic write (temp→rename) gives the file
 //     a NEW inode, so the recorded inode goes stale. Without re-binding, the next
-//     OpenPath sees a "new inode at this path", evicts this row to path='' and
+//     OpenPath sees a "new inode at this path", evicts this row to path=” and
 //     creates a fresh history-less doc — orphaning the undo DAG (§1.4.6) and
 //     leaving a zombie row. Re-binding on save keeps identity stable across the
 //     inode churn.

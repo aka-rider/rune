@@ -53,15 +53,18 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		if digit == 0 {
 			digit = msg.Code
 		}
+		idx := -1
 		if digit >= '1' && digit <= '9' {
-			idx := int(digit - '1')
-			if idx < m.opentabs.Len() {
-				path := m.opentabs.PathAt(idx)
-				docID := m.opentabs.DocIDAt(idx)
-				m.opentabs = m.opentabs.SelectIndex(idx)
-				m, cmd = m.requestOpenPath(docID, path)
-				cmds = append(cmds, cmd)
-			}
+			idx = int(digit - '1')
+		} else if digit == '0' {
+			idx = 9
+		}
+		if idx >= 0 && idx < m.opentabs.Len() {
+			path := m.opentabs.PathAt(idx)
+			docID := m.opentabs.DocIDAt(idx)
+			m.opentabs = m.opentabs.SelectIndex(idx)
+			m, cmd = m.requestOpenPath(docID, path)
+			cmds = append(cmds, cmd)
 		}
 
 	case key.Matches(msg, m.keys.PinTab):

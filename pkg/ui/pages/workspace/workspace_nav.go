@@ -114,13 +114,16 @@ func (m Model) showUntitled(docID int64) Model {
 	m.baseline = diskBaseline{}
 	m.undoSeq = -1
 	m.storeMaxSeq = 0
+	m.cleanJournalPos = 0
 	if docID > 0 && m.store != nil {
-		if us, ms, err := m.store.DocJournalPos(docID); err == nil {
+		if us, ms, ss, err := m.store.DocJournalPos(docID); err == nil {
 			m.undoSeq = us
 			m.storeMaxSeq = ms
+			if ss >= 0 {
+				m.cleanJournalPos = ss
+			}
 		}
 	}
-	m.cleanJournalPos = effectiveJournalPos(m.undoSeq, m.storeMaxSeq)
 	if name := m.opentabs.NameByID(docID); name != "" {
 		m.title = m.title.SetText(name)
 	}
@@ -224,9 +227,7 @@ func (m Model) restoreScratch() Model {
 			m.opentabs = m.opentabs.OpenFile(id, "")
 			m.opentabs = m.opentabs.SetTabNameByID(id, name)
 		}
-		if m.docID != 0 {
-			m.opentabs = m.opentabs.SelectByID(m.docID) // re-activate the live doc
-		}
+		// Active state is restored by finalize() → SetActive(m.docID) after this returns.
 	}
 	if _, err := m.store.GCEmptyScratch(m.docID); err != nil {
 		_ = err // fire-and-forget: housekeeping; non-fatal
