@@ -798,8 +798,10 @@ func CheckTransition(prev Snapshot, msg any, next Snapshot) []Violation {
 		add("G1", "dirty file + ConfirmQuitMsg did not raise guard")
 	}
 
-	// G3: dirty active tab + CloseFile key → guard must appear (unless guard already active).
-	if next.CloseFileKeyPressed && prev.ActiveTabDirty && !prev.GuardVisible && !next.GuardVisible {
+	// G3: dirty active tab + CloseFile key → guard must appear (unless guard already
+	// active or a save is in-flight — in that case the key is consumed silently).
+	if next.CloseFileKeyPressed && prev.ActiveTabDirty &&
+		!prev.GuardVisible && !next.GuardVisible && !prev.SaveInFlight {
 		add("G3", "dirty active tab + CloseFile key (^w) did not raise guard")
 	}
 
