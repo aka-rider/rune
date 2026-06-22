@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"rune/pkg/editor/buffer"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -252,6 +254,50 @@ func TestDirtySpec_P6_SaveAtMidUndoPosition(t *testing.T) {
 	m = redoOnce(m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P6 step 3: should be clean after redoing to save position")
+	}
+}
+
+// ── P8: the reported bug end-to-end — undo-to-start clears dirty when the doc's
+// first event seq > 1 ─────────────────────────────────────────────────────────
+//
+// Drives the full Update path (not just the store): seeds the global events
+// AUTOINCREMENT via a throwaway doc so the loaded file's first event seq > 1
+// (real multi-doc/chat usage), then edit, edit, undo, undo must return to clean.
+// On the pre-fix revision (effectiveJournalPos compared the undo pointer against
+// the pristine 0) this stayed dirty forever; it passed the seq=1 specs only.
+func TestDirtySpec_P8_UndoToStartClearsDirty_GlobalSeq(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = withStore(t, m)
+
+	// Seed three events on a throwaway doc to push the global seq counter past 1.
+	throwaway, err := m.store.CreateScratch("seed")
+	if err != nil {
+		t.Fatalf("CreateScratch: %v", err)
+	}
+	for range 3 {
+		if _, err := m.store.AppendEdit(throwaway.ID, "main",
+			[]buffer.AppliedEdit{{Insert: "seed "}}, nil, nil, "main"); err != nil {
+			t.Fatalf("seed AppendEdit: %v", err)
+		}
+	}
+
+	m = loadFile(m, "offset.md", "")
+	m = focusEditor(m)
+	if m.opentabs.HasDirty() {
+		t.Fatal("P8: clean after load")
+	}
+
+	// Two coalesce-resistant events on the loaded doc (its first seq is now > 1).
+	m = typeSeq(m, 'a')
+	m = typeSeq(m, 'b')
+	if !m.opentabs.HasDirty() {
+		t.Fatal("P8: dirty after two edits")
+	}
+
+	m = undoOnce(m)
+	m = undoOnce(m)
+	if m.opentabs.HasDirty() {
+		t.Fatal("P8: edit,edit,undo,undo must clear dirty even when the doc's first event seq > 1 (the reported bug)")
 	}
 }
 

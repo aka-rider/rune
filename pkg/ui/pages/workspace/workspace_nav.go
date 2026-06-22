@@ -126,7 +126,12 @@ func (m Model) forceSnapshot() Model {
 	if m.store == nil || m.docID == 0 {
 		return m
 	}
-	seq, _ := m.store.CurrentSeq(m.docID)
+	seq, err := m.store.CurrentSeq(m.docID)
+	if err != nil {
+		// fire-and-forget: can't position the snapshot; skip it rather than
+		// mistag at seq 0. The journal is the durable record (§1.4.3).
+		return m
+	}
 	if _, err := m.store.CreateSnapshot(m.docID, m.editor.Content(), "switch", seq); err != nil {
 		_ = err // fire-and-forget: snapshot is an optimization; the journal is durable
 	}

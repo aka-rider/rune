@@ -3,8 +3,6 @@
 package workspace_test
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // Binding table indices (must match keytable.go bindingTable order):
@@ -238,11 +237,9 @@ func FuzzSession(f *testing.F) {
 		}
 		defer store.Close()
 
-		tmpDir, err := os.MkdirTemp("", "rune-fuzz-*")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer os.RemoveAll(tmpDir)
+		// Use an in-memory VFS: no real temp dirs, fully deterministic.
+		mem := vfs.NewMem()
+		store.UseFS(mem)
 
 		keys := keymap.Default()
 		st := styles.Default()
@@ -250,7 +247,7 @@ func FuzzSession(f *testing.F) {
 		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, tmpDir, nil)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
 
 		if violation, _, _ := driver.Run(m, events, store, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
@@ -288,18 +285,17 @@ func FuzzSessionWithFile(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		events := event.Decode(data)
 
-		tmpDir := t.TempDir()
-		// pre-create a markdown file so filePath is set in the workspace
-		testFile := filepath.Join(tmpDir, "test.md")
-		if err := os.WriteFile(testFile, []byte("# Test\n\nInitial content.\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
+		// Seed the in-memory VFS instead of creating a real temp dir.
+		mem := vfs.NewMem()
+		const testFile = "/fuzz/test.md"
+		_ = mem.WriteFile(testFile, []byte("# Test\n\nInitial content.\n"), 0o644)
 
-		store, _, err := docstate.OpenAt(tmpDir)
+		store, err := docstate.OpenInMemory(time.Now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer store.Close()
+		store.UseFS(mem)
 
 		keys := keymap.Default()
 		st := styles.Default()
@@ -307,7 +303,7 @@ func FuzzSessionWithFile(f *testing.F) {
 		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, tmpDir, []string{testFile})
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
 
 		if violation, _, _ := driver.Run(m, events, store, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)

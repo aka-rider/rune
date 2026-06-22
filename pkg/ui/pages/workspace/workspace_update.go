@@ -312,9 +312,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Never read CurrentSeq inside the goroutine — later AppendEdits on
 			// the main loop would advance the head, tagging old content with a
 			// newer seq and corrupting RecoverDocument (plan §C, CRITIC #3).
-			seq, _ := m.store.CurrentSeq(m.docID)
-			gen := msg.gen
-			cmds = append(cmds, snapshotCmd(m.store, m.docID, content, uint64(seq), gen))
+			if seq, err := m.store.CurrentSeq(m.docID); err == nil {
+				cmds = append(cmds, snapshotCmd(m.store, m.docID, content, uint64(seq), msg.gen))
+			}
+			// On error: skip the snapshot rather than mistag at seq 0.
+			// fire-and-forget: the journal stays durable (§1.4.3).
 		}
 
 	case AutosaveSettledMsg:

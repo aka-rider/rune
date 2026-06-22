@@ -658,3 +658,78 @@ func TestGCEmptyScratch_KeepsHistoryAndLive(t *testing.T) {
 		t.Error("GC did not remove the empty scratch doc")
 	}
 }
+
+// TestDeleteDocCascades pins the FK ON DELETE CASCADE that DeleteDoc relies on:
+// deleting a document must remove its events and snapshots in one statement. If
+// FK enforcement were silently off, those rows would orphan and resurface as
+// phantom "recovered" scratch tabs (§1.4.6 identity corruption).
+func TestDeleteDocCascades(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+		t.Fatalf("AppendEdit: %v", err)
+	}
+	if _, err := s.CreateSnapshot(docID, "a", "local", 0); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID); n == 0 {
+		t.Fatal("precondition: expected events before delete")
+	}
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM snapshots WHERE doc_id=?`, docID); n == 0 {
+		t.Fatal("precondition: expected a snapshot before delete")
+	}
+
+	if err := s.DeleteDoc(docID); err != nil {
+		t.Fatalf("DeleteDoc: %v", err)
+	}
+
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID); n != 0 {
+		t.Errorf("CASCADE failed: %d orphaned events remain (FK enforcement off?)", n)
+	}
+	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM snapshots WHERE doc_id=?`, docID); n != 0 {
+		t.Errorf("CASCADE failed: %d orphaned snapshots remain (FK enforcement off?)", n)
+	}
+}
+
+// TestSchemaConstraints verifies the integrity constraints the rebuilt schema
+// adds actually reject bad rows — FK enforcement, the is_undo_stop CHECK, and the
+// seq >= 0 CHECK. Each raw INSERT/UPDATE MUST error.
+func TestSchemaConstraints(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+	const at = "2026-01-01T00:00:00Z"
+
+	// FK: an event for a non-existent document is rejected (proves foreign_keys=ON).
+	if _, err := s.perm.Exec(
+		`INSERT INTO events(doc_id, surface, kind, is_undo_stop, at) VALUES(?,?,?,?,?)`,
+		999999, "main", "edit", 1, at,
+	); err == nil {
+		t.Error("FK not enforced: event with bad doc_id was accepted")
+	}
+
+	// CHECK is_undo_stop IN (0,1): value 2 is rejected.
+	if _, err := s.perm.Exec(
+		`INSERT INTO events(doc_id, surface, kind, is_undo_stop, at) VALUES(?,?,?,?,?)`,
+		docID, "main", "edit", 2, at,
+	); err == nil {
+		t.Error("CHECK not enforced: is_undo_stop=2 was accepted")
+	}
+
+	// CHECK seq >= 0 on snapshots: a negative seq is rejected (needs a real blob
+	// so the blob_hash FK is satisfied and only the seq CHECK can fail).
+	hash, err := s.PutBlob("x")
+	if err != nil {
+		t.Fatalf("PutBlob: %v", err)
+	}
+	if _, err := s.perm.Exec(
+		`INSERT INTO snapshots(doc_id, blob_hash, source, seq, created_at) VALUES(?,?,?,?,?)`,
+		docID, hash, "local", -1, at,
+	); err == nil {
+		t.Error("CHECK not enforced: snapshot with seq=-1 was accepted")
+	}
+
+	// CHECK current_seq >= 0 on documents.
+	if _, err := s.perm.Exec(`UPDATE documents SET current_seq=-1 WHERE id=?`, docID); err == nil {
+		t.Error("CHECK not enforced: documents.current_seq=-1 was accepted")
+	}
+}

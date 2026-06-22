@@ -6,7 +6,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"rune/internal/fuzz/invariant"
+	"rune/internal/fuzz/snapshot"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
 )
@@ -14,10 +14,10 @@ import (
 // FuzzInspect returns a read-only snapshot of model state for invariant checking.
 // Called by the driver after every settled message.
 // Value receiver — pure read, no side effects on m.
-func (m Model) FuzzInspect() invariant.Snapshot {
+func (m Model) FuzzInspect() snapshot.Snapshot {
 	tabs, tabActive, hasDirty, activeTabDirty := tabsInfo(m)
 
-	return invariant.Snapshot{
+	return snapshot.Snapshot{
 		// Editor content / cells
 		Content:       m.editor.Content(),
 		Cells:         m.editor.FuzzCells(),
@@ -49,7 +49,7 @@ func (m Model) FuzzInspect() invariant.Snapshot {
 		SaveSnapshot:   m.activeSave.SavedContent,
 		SaveInFlight:   m.activeSave.InFlight,
 
-		// Layout — Frame is expensive; driver sets Width/Height from its own params
+		// Layout — Frame is set by driver; driver also sets Width/Height
 		Width:  m.totalWidth,
 		Height: m.totalHeight,
 
@@ -69,15 +69,15 @@ func (m Model) FuzzInspect() invariant.Snapshot {
 }
 
 // tabsInfo builds the Tabs/TabActive/HasDirtyFile/ActiveTabDirty tuple from opentabs.
-func tabsInfo(m Model) ([]invariant.TabInfo, []bool, bool, bool) {
+func tabsInfo(m Model) ([]snapshot.TabInfo, []bool, bool, bool) {
 	raw := m.opentabs.FuzzTabs()
 	activeHandle := m.opentabs.ActiveHandle()
-	tabs := make([]invariant.TabInfo, len(raw))
+	tabs := make([]snapshot.TabInfo, len(raw))
 	active := make([]bool, len(raw))
 	hasDirty := false
 	activeTabDirty := false
 	for i, t := range raw {
-		tabs[i] = invariant.TabInfo{Path: t.Path, Name: t.Name}
+		tabs[i] = snapshot.TabInfo{Path: t.Path, Name: t.Name}
 		th := opentabs.TabHandle{DocID: t.DocID, Path: t.Path}
 		isActive := th.Equal(activeHandle)
 		active[i] = isActive

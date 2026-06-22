@@ -14,6 +14,8 @@ type eventJSON struct {
 	Width     *uint8  `json:"width,omitempty"`
 	Height    *uint8  `json:"height,omitempty"`
 	PaneIndex *uint8  `json:"paneIndex,omitempty"`
+	PathIndex *uint8  `json:"pathIndex,omitempty"`
+	WatchSub  *uint8  `json:"watchSub,omitempty"`
 }
 
 func kindToString(k Kind) string {
@@ -28,6 +30,10 @@ func kindToString(k Kind) string {
 		return "resize"
 	case KindFocus:
 		return "focus"
+	case KindWatch:
+		return "watch"
+	case KindExternalWrite:
+		return "externalWrite"
 	default:
 		return fmt.Sprintf("unknown%d", k)
 	}
@@ -45,6 +51,10 @@ func stringToKind(s string) Kind {
 		return KindResize
 	case "focus":
 		return KindFocus
+	case "watch":
+		return KindWatch
+	case "externalWrite":
+		return KindExternalWrite
 	default:
 		return 255
 	}
@@ -85,6 +95,12 @@ func LoadJSONL(path string) ([]Event, error) {
 		if ej.PaneIndex != nil {
 			ev.PaneIndex = *ej.PaneIndex
 		}
+		if ej.PathIndex != nil {
+			ev.PathIndex = *ej.PathIndex
+		}
+		if ej.WatchSub != nil {
+			ev.WatchSub = *ej.WatchSub
+		}
 		events = append(events, ev)
 	}
 	return events, scanner.Err()
@@ -111,6 +127,12 @@ func SaveJSONL(path string, events []Event) error {
 			ej.Height = &ev.Height
 		case KindFocus:
 			ej.PaneIndex = &ev.PaneIndex
+		case KindWatch:
+			ej.PathIndex = &ev.PathIndex
+			ej.WatchSub = &ev.WatchSub
+		case KindExternalWrite:
+			ej.PathIndex = &ev.PathIndex
+			ej.Text = &ev.Text
 		}
 		if err := enc.Encode(ej); err != nil {
 			return fmt.Errorf("encode event: %w", err)

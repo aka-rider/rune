@@ -264,12 +264,14 @@ func (m Model) scheduleFlush(cmds *[]tea.Cmd) Model {
 	return m
 }
 
-// snapshotCmd writes a VFS snapshot for docID at headSeq and reports the result
-// via AutosaveSettledMsg. Disk is NOT written here; that only happens on
-// explicit ⌘S (§1.4.2).
-func snapshotCmd(store *docstate.Store, docID int64, content string, headSeq, gen uint64) tea.Cmd {
+// snapshotCmd writes a VFS snapshot for docID at the given journal seq (the
+// document's current position, captured synchronously by the caller — it is NOT
+// always the head, e.g. after an undo) and reports the result via
+// AutosaveSettledMsg. Disk is NOT written here; that only happens on explicit ⌘S
+// (§1.4.2).
+func snapshotCmd(store *docstate.Store, docID int64, content string, seq, gen uint64) tea.Cmd {
 	return func() tea.Msg {
-		_, err := store.CreateSnapshot(docID, content, "local", int64(headSeq))
+		_, err := store.CreateSnapshot(docID, content, "local", int64(seq))
 		return AutosaveSettledMsg{gen: gen, err: err}
 	}
 }

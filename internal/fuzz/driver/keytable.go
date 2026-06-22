@@ -67,10 +67,18 @@ var bindingTable = []tea.KeyPressMsg{
 	{Code: 's', Mod: tea.ModSuper},    // super+s = SaveFile
 	{Code: 'z', Mod: tea.ModSuper},    // super+z = Undo
 	{Code: 'y', Mod: tea.ModCtrl},     // ctrl+y = Redo
+	// Search / find — previously missing; these open and drive the search bar
+	{Code: 'f', Mod: tea.ModCtrl},                            // ^F = InFileSearch open
+	{Code: 'f', Mod: tea.ModShift | tea.ModSuper},            // ⇧⌘F = InFileSearch open (alt)
+	{Code: 'g', Mod: tea.ModSuper},                           // ⌘G = FindNext
+	{Code: 'g', Mod: tea.ModShift | tea.ModSuper},            // ⇧⌘G = FindPrev
+	{Code: 'f', Mod: tea.ModAlt | tea.ModSuper},              // ⌥⌘F = FindReplaceOpen
 }
 
 // eventToMsg converts a fuzz Event to a tea.Msg.
 // Returns nil if the event has no corresponding message (should be skipped).
+// KindWatch and KindExternalWrite are handled separately in RunHuman; here
+// they fall through to nil so Run (the low-level fuzzer) ignores them.
 func eventToMsg(ev event.Event) tea.Msg {
 	switch ev.Kind {
 	case event.KindKey:
@@ -81,7 +89,6 @@ func eventToMsg(ev event.Event) tea.Msg {
 			return nil
 		}
 		// Paste the full text so multi-char / multi-line states are reachable.
-		// KindKey handles single-key bindings; KindText is for bulk text input.
 		return tea.PasteMsg{Content: ev.Text}
 	case event.KindResize:
 		return tea.WindowSizeMsg{Width: int(ev.Width), Height: int(ev.Height)}
@@ -99,6 +106,7 @@ func eventToMsg(ev event.Event) tea.Msg {
 		}
 		return focusKeys[int(ev.PaneIndex)%3]
 	default:
+		// KindWatch and KindExternalWrite are handled by RunHuman, not here.
 		return nil
 	}
 }

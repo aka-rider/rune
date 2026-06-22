@@ -44,6 +44,30 @@ func Decode(data []byte) []Event {
 			}
 			events = append(events, Event{Kind: KindFocus, PaneIndex: data[i] % 5})
 			i++
+		case KindWatch:
+			// 2 bytes: pathIndex, watchSub (0=dir-changed, 1=read-error)
+			if i+2 > len(data) {
+				return events
+			}
+			pathIndex := data[i]
+			watchSub := data[i+1] % 2
+			i += 2
+			events = append(events, Event{Kind: KindWatch, PathIndex: pathIndex, WatchSub: watchSub})
+		case KindExternalWrite:
+			// 1 byte pathIndex + 1 byte length + N bytes text
+			if i+2 > len(data) {
+				return events
+			}
+			pathIndex := data[i]
+			i++
+			n := int(data[i])
+			i++
+			if i+n > len(data) {
+				n = len(data) - i
+			}
+			text := sanitizeUTF8(data[i : i+n])
+			i += n
+			events = append(events, Event{Kind: KindExternalWrite, PathIndex: pathIndex, Text: text})
 		default:
 			// Unknown kind: skip (0-byte payload)
 		}
