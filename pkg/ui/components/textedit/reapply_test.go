@@ -31,6 +31,23 @@ func TestReapplyCoalescedInserts(t *testing.T) {
 	}
 }
 
+// TestReapplyMultiCursorInserts verifies Reapply with descending stored
+// positions (multi-cursor batch — one ApplyEdits call with multiple cursors).
+// Inserting 'a' at positions 0 and 5 of "hello world" via ApplyEdits produces
+// applied = [{Start:6, Insert:"a"}, {Start:0, Insert:"a"}] (descending).
+// Reapply must reproduce "ahelloa world" from "hello world".
+func TestReapplyMultiCursorInserts(t *testing.T) {
+	m := newModel("hello world")
+	edits := []buffer.AppliedEdit{
+		{Start: 6, Insert: "a"}, // descending order as stored in journal
+		{Start: 0, Insert: "a"},
+	}
+	m = m.Reapply(edits)
+	if got := m.Content(); got != "ahelloa world" {
+		t.Errorf("Reapply multi-cursor inserts: got %q, want %q", got, "ahelloa world")
+	}
+}
+
 // TestReapplySingleEdit guards the trivial single-edit case.
 func TestReapplySingleEdit(t *testing.T) {
 	m := newModel("hello")

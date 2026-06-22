@@ -781,29 +781,21 @@ func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
 // filter those zombie rows surface as fake "Untitled" tabs showing real-file
 // content (a data-corruption-looking bug). Emptiness is filtered by the caller,
 // which reconstructs each candidate and drops empty/whitespace-only content.
-// DocJournalPos returns the document's undo pointer and max journalled seq.
-// undoSeq is -1 when the document is at head (SQL current_seq IS NULL).
-// maxSeq is 0 when there are no events for the document.
-// Called once at document load to initialise the workspace dirty-tracking fields.
-func (s *Store) DocJournalPos(docID int64) (undoSeq int64, maxSeq int64, savedSeq int64, err error) {
-	var cs, ss sql.NullInt64
+// DocJournalPos returns the document's undo pointer, max journalled seq, and
+// last-saved seq. undoSeq.Valid is false when the document is at head (SQL
+// current_seq IS NULL). maxSeq is 0 when there are no events. savedSeq.Valid
+// is false when the file has never been explicitly saved through rune.
+// Called once at document load to initialise workspace dirty-tracking fields.
+func (s *Store) DocJournalPos(docID int64) (undoSeq sql.NullInt64, maxSeq int64, savedSeq sql.NullInt64, err error) {
 	var ms int64
 	if err := s.perm.QueryRow(
 		`SELECT d.current_seq,
 		        COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.doc_id=d.id), 0),
 		        d.saved_seq
-		 FROM documents d WHERE d.id=?`, docID).Scan(&cs, &ms, &ss); err != nil {
-		return -1, 0, -1, fmt.Errorf("doc journal pos %d: %w", docID, err)
+		 FROM documents d WHERE d.id=?`, docID).Scan(&undoSeq, &ms, &savedSeq); err != nil {
+		return sql.NullInt64{}, 0, sql.NullInt64{}, fmt.Errorf("doc journal pos %d: %w", docID, err)
 	}
-	var us int64 = -1
-	if cs.Valid {
-		us = cs.Int64
-	}
-	var saved int64 = -1
-	if ss.Valid {
-		saved = ss.Int64
-	}
-	return us, ms, saved, nil
+	return undoSeq, ms, savedSeq, nil
 }
 
 // RecordSaved persists the effective journal position that was just written to

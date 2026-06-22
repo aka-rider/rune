@@ -55,9 +55,16 @@ func (m Model) recalcLayout() Model {
 	}
 
 	otH := m.opentabs.Height()
-	ftH := innerH - otH
+	available := innerH - otH
+	if available < 0 {
+		available = 0
+	}
+	ftH := available
 	if ftH < 4 {
 		ftH = 4
+	}
+	if ftH > available {
+		ftH = available
 	}
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
@@ -96,9 +103,16 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 	if m.leftVisible && x < m.leftPaneW {
 		innerH := contentH - 2
 		otH := m.opentabs.Height()
-		ftH := innerH - otH
+		avail := innerH - otH
+		if avail < 0 {
+			avail = 0
+		}
+		ftH := avail
 		if ftH < 4 {
 			ftH = 4
+		}
+		if ftH > avail {
+			ftH = avail
 		}
 		if y > ftH {
 			return paneTabs, true
@@ -223,13 +237,14 @@ func (m Model) View() tea.View {
 		body = centerBlock
 	}
 
+	clamp := lipgloss.NewStyle().MaxWidth(m.totalWidth).MaxHeight(m.totalHeight)
 	if m.err != nil {
 		errLine := m.styles.Error.Render("error: " + m.err.Error())
 		frame := lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View())
-		return tea.NewView(frame)
+		return tea.NewView(clamp.Render(frame))
 	}
 	frame := lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View())
-	return tea.NewView(frame)
+	return tea.NewView(clamp.Render(frame))
 }
 
 func overlayBreadcrumb(block, crumb string, active bool, st styles.Styles) string {

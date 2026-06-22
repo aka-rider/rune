@@ -474,26 +474,38 @@ func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
 // Reapply applies the given edits forward (redo).
 // Does NOT accumulate into pendingEdits.
 //
-// AppliedEdit.Start values are in POST-ALL-EDITS coordinates. For coalesced
-// sequential inserts they are ascending; for multi-cursor batches they are
-// descending. Sort ascending and apply one-at-a-time so both orderings work —
-// matching the replayOneBatch strategy in pkg/editor/buffer/replay.go.
+// AppliedEdit.Start values carry a baked-in cumulative shift: for coalesced
+// sequential inserts (ascending) each Start is the correct cursor position in
+// the running buffer after all prior inserts; for multi-cursor batches
+// (descending) each Start accounts for the net displacement from lower-position
+// edits in the same batch. In both cases, sorting ascending and applying
+// one-at-a-time keeps each Start valid against the running buffer — the same
+// invariant replayOneBatch in pkg/editor/buffer/replay.go relies on.
+//
+// Applies all edits to a working copy and commits only if every edit succeeds,
+// leaving the buffer unchanged on any error (all-or-nothing).
 func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
+	if len(edits) == 0 {
+		return m
+	}
 	sorted := append([]buffer.AppliedEdit(nil), edits...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Start < sorted[j].Start
 	})
+	work := m.buf
 	for _, e := range sorted {
 		start := e.Start
 		end := e.Start + len(e.Deleted)
-		if start < 0 || end > m.buf.Len() || start > end {
-			continue
+		if start < 0 || end > work.Len() || start > end {
+			return m
 		}
-		newBuf, _, err := m.buf.ApplyEdits([]buffer.Edit{{Start: start, End: end, Insert: e.Insert}})
-		if err == nil {
-			m.buf = newBuf
+		newBuf, _, err := work.ApplyEdits([]buffer.Edit{{Start: start, End: end, Insert: e.Insert}})
+		if err != nil {
+			return m
 		}
+		work = newBuf
 	}
+	m.buf = work
 	m.rev++
 	m = m.syncDisplay()
 	return m
