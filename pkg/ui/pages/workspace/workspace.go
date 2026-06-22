@@ -24,6 +24,7 @@ import (
 	"rune/pkg/ui/help"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // ---- Pane focus enum ----
@@ -188,6 +189,12 @@ type Model struct {
 	chatDocID int64  // reserved chat sentinel doc
 	flushGen  uint64 // generation counter for debounced VFS autosave
 
+	// fs is the filesystem shim for all .md disk I/O (read/write/rename/stat/
+	// readdir). A nil fs means the production default (vfs.Disk); the session
+	// fuzzer injects a shared vfs.Mem via WithFS so the whole session runs in
+	// memory. Access it through m.fsys(), never the raw field.
+	fs vfs.FS
+
 	// Startup configuration (set once, read by Init).
 	workDir      string   // absolute path or "." passed via -w
 	initialFiles []string // files to open on first Init
@@ -249,6 +256,24 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 	return m
 }
 
+// WithFS injects the filesystem shim used for all .md disk I/O. Production never
+// calls it (the nil default resolves to vfs.Disk); the session fuzzer injects a
+// shared vfs.Mem so load/save/rename/readdir run fully in memory.
+func (m Model) WithFS(fs vfs.FS) Model {
+	m.fs = fs
+	return m
+}
+
+// fsys returns the active filesystem shim, defaulting to real disk. Every file
+// Cmd factory takes its result so the operation runs against the same backend
+// the store resolves identity against.
+func (m Model) fsys() vfs.FS {
+	if m.fs == nil {
+		return vfs.Disk{}
+	}
+	return m.fs
+}
+
 // Init is called once when the workspace page becomes active.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
@@ -259,7 +284,7 @@ func (m Model) Init() tea.Cmd {
 		m.chat.Init(),
 		m.search.Init(),
 		m.dict.Init(),
-		loadDirCmd(m.workDir),
+		loadDirCmd(m.fsys(), m.workDir),
 		openStoreCmd(),
 	}
 	if m.initErr != nil {
@@ -267,7 +292,7 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, func() tea.Msg { return footer.ShowErrorMsg{Text: err.Error()} })
 	}
 	for _, path := range m.initialFiles {
-		cmds = append(cmds, loadFileCmd(context.Background(), path))
+		cmds = append(cmds, loadFileCmd(m.fsys(), context.Background(), path))
 	}
 	return tea.Batch(cmds...)
 }

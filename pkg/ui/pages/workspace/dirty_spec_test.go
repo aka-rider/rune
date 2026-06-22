@@ -181,7 +181,9 @@ func TestDirtySpec_P4_RedoPastSaveStateDirty(t *testing.T) {
 //
 // When new text is typed immediately after undoing to the clean state (which
 // truncates the abandoned future), undoing that new text must return to clean.
-// This exercises the clean-truncation-point tracking in journalEdit.
+// Robust under the events-between dirty predicate: AppendEdit deletes the
+// truncated event, so no live event sits between the saved and current
+// positions even though their seq numbers differ.
 
 func TestDirtySpec_P5_NewEditAfterUndoThenUndoBack(t *testing.T) {
 	m := dirtyWorkspace(t)
@@ -198,21 +200,23 @@ func TestDirtySpec_P5_NewEditAfterUndoThenUndoBack(t *testing.T) {
 		t.Fatal("P5 step 1: should be dirty after typing A")
 	}
 
-	// Undo A: clean (back to saved empty state, undoSeq=0=cleanJournalPos=0).
+	// Undo A: clean (back to the saved empty baseline — no live event remains
+	// between the saved and current positions).
 	m = undoOnce(m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P5 step 2: should be clean after undoing A")
 	}
 
-	// Type B (new edit from clean state, truncates seq=1, inserts seq=2).
-	// journalEdit detects we were at the clean truncation point and sets
-	// cleanJournalPos = seq-1 = 1, so undoing B lands exactly at clean.
+	// Type B (new edit from clean state): AppendEdit truncates the abandoned
+	// seq=1 event and inserts a fresh event. Dirty — a live event now sits
+	// above the saved baseline.
 	m = typeSeq(m, 'b') // seq=2 = "b\n"
 	if !m.opentabs.HasDirty() {
 		t.Fatal("P5 step 3: should be dirty after typing B")
 	}
 
-	// Undo B: clean (effectiveJournalPos(undoSeq=1, storeMaxSeq=2)=1=cleanJournalPos=1).
+	// Undo B: clean — the truncated seq=1 no longer exists, so no live event
+	// sits between the saved baseline and the post-undo position.
 	m = undoOnce(m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P5 step 4: should be clean after undoing B")
@@ -228,23 +232,24 @@ func TestDirtySpec_P6_SaveAtMidUndoPosition(t *testing.T) {
 	m = typeSeq(m, 'a') // seq=1 = "a\n"
 	m = typeChar(m, 'b') // seq=2 = "b"
 
-	// Undo×1: now at seq=1.
-	m = undoOnce(m) // undoSeq=1
+	// Undo×1: now positioned at seq=1.
+	m = undoOnce(m)
 
-	// Save at mid-undo: cleanJournalPos = effectiveJournalPos(1, 2) = 1.
+	// Save at mid-undo: MarkSaved records the current position (seq=1) as saved.
 	m = save(m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P6 step 1: should be clean after save at mid-undo position")
 	}
 
-	// Undo past save point: dirty.
-	m = undoOnce(m) // undoSeq=0, effectivePos=0 ≠ cleanJournalPos=1
+	// Undo past save point: dirty — the seq=1 event now sits between the
+	// current position and the saved position.
+	m = undoOnce(m)
 	if !m.opentabs.HasDirty() {
 		t.Fatal("P6 step 2: should be dirty after undoing past save point")
 	}
 
-	// Redo back to save position: clean.
-	m = redoOnce(m) // undoSeq=1, effectivePos=1=cleanJournalPos=1
+	// Redo back to the saved position: clean again.
+	m = redoOnce(m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P6 step 3: should be clean after redoing to save position")
 	}

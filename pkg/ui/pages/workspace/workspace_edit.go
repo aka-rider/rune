@@ -116,37 +116,22 @@ func (m Model) startSave() (Model, tea.Cmd) {
 	}
 	// Overwrite an already-bound file: materializeCmd refuses if it diverged from
 	// our baseline since load (§1.4.7).
-	return m, materializeCmd(m.docID, m.filePath, content, requestID, false, m.baseline)
-}
-
-// effectiveJournalPos maps the undo pointer and max journal seq to a single
-// integer that uniquely identifies a content state. undoSeq is -1 when the
-// pointer is at head (mirrors SQL NULL); storeMaxSeq is the highest seq ever
-// written for this document (AUTOINCREMENT — never reused after deletion).
-func effectiveJournalPos(undoSeq, storeMaxSeq int64) int64 {
-	if undoSeq < 0 || undoSeq >= storeMaxSeq {
-		return storeMaxSeq
-	}
-	return undoSeq
+	return m, materializeCmd(m.fsys(), m.docID, m.filePath, content, requestID, false, m.baseline)
 }
 
 func (m Model) syncDirty() Model {
-	if m.viewingHelp() {
+	if m.viewingHelp() || m.store == nil || m.docID == 0 {
+		return m // no DB record — last-known mark stands
+	}
+	dirty, err := m.store.IsDirty(m.docID)
+	if err != nil {
+		// fire-and-forget: dirty is a rung-3 display indicator; the journal is the durable truth
 		return m
 	}
-	dirty := effectiveJournalPos(m.undoSeq, m.storeMaxSeq) != m.cleanJournalPos
-	if m.docID != 0 {
-		if dirty {
-			m.opentabs = m.opentabs.MarkDirtyByID(m.docID)
-		} else {
-			m.opentabs = m.opentabs.MarkCleanByID(m.docID)
-		}
-	} else if m.filePath != "" {
-		if dirty {
-			m.opentabs = m.opentabs.MarkDirty(m.filePath)
-		} else {
-			m.opentabs = m.opentabs.MarkClean(m.filePath)
-		}
+	if dirty {
+		m.opentabs = m.opentabs.MarkDirtyByID(m.docID)
+	} else {
+		m.opentabs = m.opentabs.MarkCleanByID(m.docID)
 	}
 	return m
 }
@@ -205,11 +190,10 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsBefore, newPos, ok := m.store.UndoTarget(m.docID)
+	surface, edits, cursorsBefore, _, ok := m.store.UndoTarget(m.docID)
 	if !ok {
 		return m, nil
 	}
-	m.undoSeq = newPos
 	var cmd tea.Cmd
 	switch surface {
 	case "main":
@@ -238,11 +222,10 @@ func (m Model) handleRedo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsAfter, newPos, ok := m.store.RedoTarget(m.docID)
+	surface, edits, cursorsAfter, _, ok := m.store.RedoTarget(m.docID)
 	if !ok {
 		return m, nil
 	}
-	m.undoSeq = newPos
 	var cmd tea.Cmd
 	switch surface {
 	case "main":
@@ -297,7 +280,7 @@ func (m Model) journalEdit(surface string, edits []buffer.AppliedEdit, cursorsBe
 	if m.store == nil || m.docID == 0 || len(edits) == 0 {
 		return m
 	}
-	seq, err := m.store.AppendEdit(m.docID, surface, edits, cursorsBefore, cursorsAfter, surface)
+	_, err := m.store.AppendEdit(m.docID, surface, edits, cursorsBefore, cursorsAfter, surface)
 	if err != nil {
 		// §1.3: a failed journal write leaves undo history incomplete, and a
 		// snapshot taken afterward would tag the new buffer against a stale head
@@ -308,29 +291,6 @@ func (m Model) journalEdit(surface string, edits []buffer.AppliedEdit, cursorsBe
 			return footer.ShowErrorMsg{Text: "journal write failed: " + capturedErr.Error()}
 		})
 		return m
-	}
-	if seq > 0 {
-		m.headSeq = seq // N5: track latest seq for snapshot co-tagging
-		if seq > m.storeMaxSeq {
-			// New event (AUTOINCREMENT guarantees seq > any prior max).
-			// If we were mid-undo (truncation occurred) and the truncation
-			// point was the clean state, the parent of this new event IS the
-			// clean state, so update cleanJournalPos to seq-1 (the position
-			// you'd land on after undoing this new event).
-			if m.undoSeq >= 0 && effectiveJournalPos(m.undoSeq, m.storeMaxSeq) == m.cleanJournalPos {
-				m.cleanJournalPos = seq - 1
-			}
-			m.storeMaxSeq = seq
-		} else {
-			// Coalescing updated an existing event in-place (seq ≤ old max).
-			// If that event is at or before the save point, the save-point
-			// event's content has changed — force dirty until the next save.
-			m.storeMaxSeq = seq
-			if seq <= m.cleanJournalPos {
-				m.cleanJournalPos = -1
-			}
-		}
-		m.undoSeq = -1 // AppendEdit always resets current_seq to NULL
 	}
 	if surface == "main" {
 		m = m.scheduleFlush(cmds)

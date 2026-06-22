@@ -73,7 +73,7 @@ func (s *Store) CreateSnapshot(docID int64, content, source string, seq int64) (
 
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 	res, err := s.perm.Exec(
-		`INSERT INTO snapshots(doc_id, blob_hash, parent_ids, source, seq, created_at) VALUES(?,?,NULL,?,?,?)`,
+		`INSERT INTO snapshots(doc_id, blob_hash, source, seq, created_at) VALUES(?,?,?,?,?)`,
 		docID, hash, source, seq, at,
 	)
 	if err != nil {

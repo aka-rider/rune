@@ -15,16 +15,18 @@ test:
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	go vet ./...
 
+T ?= 1m
+
 test-fuzz:
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferSnapshotImmutability$$' -fuzztime=1m ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferBatchEquivalence$$'      -fuzztime=1m ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferPointRoundtrip$$'        -fuzztime=1m ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSyntaxMapRoundtrip$$'          -fuzztime=1m ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWrapMapRoundtrip$$'            -fuzztime=1m ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzEvictionModel$$'               -fuzztime=1m ./pkg/ui/components/opentabs
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSession$$'                     -fuzztime=1m ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=1m ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=1m ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferSnapshotImmutability$$' -fuzztime=$(T) ./pkg/editor/buffer
+	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferBatchEquivalence$$'      -fuzztime=$(T) ./pkg/editor/buffer
+	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferPointRoundtrip$$'        -fuzztime=$(T) ./pkg/editor/buffer
+	go test -tags fuzzing -count=1 -fuzz='^FuzzSyntaxMapRoundtrip$$'          -fuzztime=$(T) ./pkg/editor/display
+	go test -tags fuzzing -count=1 -fuzz='^FuzzWrapMapRoundtrip$$'            -fuzztime=$(T) ./pkg/editor/display
+	go test -tags fuzzing -count=1 -fuzz='^FuzzEvictionModel$$'               -fuzztime=$(T) ./pkg/ui/components/opentabs
+	go test -tags fuzzing -count=1 -fuzz='^FuzzSession$$'                     -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
 
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server

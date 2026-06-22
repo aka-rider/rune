@@ -324,9 +324,10 @@ func findImageStart(node *ast.Image, src []byte) int {
 			return textNode.Segment.Stop
 		}
 	}
-	// Fall back: scan parent's lines
+	// Fall back: scan parent's lines — only block nodes implement Lines().
+	// Inline parents (e.g. a Link wrapping an Image) panic on Lines().
 	parent := node.Parent()
-	if parent != nil && parent.Lines().Len() > 0 {
+	if parent != nil && parent.Type() == ast.TypeBlock && parent.Lines().Len() > 0 {
 		seg := parent.Lines().At(0)
 		return seg.Start
 	}

@@ -53,7 +53,7 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	case "":
 		return m.showUntitled(docID), nil
 	default:
-		return m, loadFileCmd(context.Background(), path)
+		return m, loadFileCmd(m.fsys(), context.Background(), path)
 	}
 }
 
@@ -244,7 +244,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		isCurrent := (m.docID != 0 && h.DocID == m.docID) || (m.docID == 0 && h.Path == m.filePath)
 		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
 		if isCurrent {
-			batch = append(batch, materializeCmd(h.DocID, h.Path, m.editor.Content(), requestID, false, m.baseline))
+			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), requestID, false, m.baseline))
 			continue
 		}
 		// Non-current tab: reconstruct its bytes from the VFS. Skip (never write
@@ -257,7 +257,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		if err != nil {
 			continue
 		}
-		batch = append(batch, materializeCmd(h.DocID, h.Path, content, requestID, false, diskBaseline{}))
+		batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, content, requestID, false, diskBaseline{}))
 	}
 	if len(batch) == 0 {
 		return m.teardownAndQuit() // only untitled docs are dirty — quit now

@@ -559,7 +559,7 @@ func TestBind_StableAcrossInodeChange(t *testing.T) {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 
-	ino1, _, _ := fileID(path)
+	ino1, _, _ := s.statID(path)
 	// Simulate an atomic save: os.CreateTemp + os.Rename gives the path a new inode.
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -567,7 +567,7 @@ func TestBind_StableAcrossInodeChange(t *testing.T) {
 	if err := os.WriteFile(path, []byte("v2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if ino2, _, _ := fileID(path); ino2 == ino1 {
+	if ino2, _, _ := s.statID(path); ino2 == ino1 {
 		t.Skip("filesystem reused the inode; cannot exercise the churn on this platform")
 	}
 

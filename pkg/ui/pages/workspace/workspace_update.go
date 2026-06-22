@@ -71,11 +71,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			newPath := filepath.Join(m.currentDir(), msg.Name+".md")
 			requestID := fmt.Sprintf("bind-%v", time.Now().UnixNano())
 			m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(m.editor.Content()), InFlight: true}
-			cmds = append(cmds, materializeCmd(m.docID, newPath, m.editor.Content(), requestID, true, diskBaseline{}))
+			cmds = append(cmds, materializeCmd(m.fsys(), m.docID, newPath, m.editor.Content(), requestID, true, diskBaseline{}))
 		} else {
 			dir := filepath.Dir(m.filePath)
 			newPath := filepath.Join(dir, msg.Name+".md")
-			cmds = append(cmds, fileRenameCmd(m.filePath, newPath))
+			cmds = append(cmds, fileRenameCmd(m.fsys(), m.filePath, newPath))
 		}
 
 	case filetree.FileSelectedMsg:
@@ -83,7 +83,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case filetree.DirSelectedMsg:
-		cmds = append(cmds, loadDirCmd(msg.Path))
+		cmds = append(cmds, loadDirCmd(m.fsys(), msg.Path))
 
 	case filetree.DirLoadedMsg:
 		m.editor = m.editor.SetDir(msg.Root)
@@ -93,7 +93,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case dirChangedMsg:
 		dir := m.watchedDir
-		cmds = append(cmds, reloadDirCmd(dir))
+		cmds = append(cmds, reloadDirCmd(m.fsys(), dir))
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.DocID, msg.Path)
@@ -166,7 +166,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case FileRenamedMsg:
 		m.opentabs = m.opentabs.RenameFile(msg.OldPath, msg.NewPath)
 		m.filePath = msg.NewPath
-		m.baseline = baselineOf(msg.NewPath)
+		m.baseline = baselineOf(m.fsys(), msg.NewPath)
 		// Rebind the VFS doc to the new path. os.Rename preserved the inode, so
 		// OpenPath finds the same doc and just updates its path — preserving the
 		// undo history. We initiated this rename, so the RenamedFrom warning is

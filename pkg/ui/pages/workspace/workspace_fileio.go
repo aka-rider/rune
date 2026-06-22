@@ -2,8 +2,9 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,8 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"rune/pkg/atomicfile"
 	"rune/pkg/ui/components/filetree"
+	"rune/pkg/vfs"
 )
 
 // ---- Message types (D12: workspace owns the file/disk domain) ----
@@ -32,10 +33,10 @@ type diskBaseline struct {
 	valid   bool
 }
 
-// baselineOf stats path and returns its current fingerprint. An unreadable file
-// yields an invalid (zero) baseline.
-func baselineOf(path string) diskBaseline {
-	info, err := os.Stat(path)
+// baselineOf stats path through the shim and returns its current fingerprint.
+// An unreadable file yields an invalid (zero) baseline.
+func baselineOf(fsys vfs.FS, path string) diskBaseline {
+	info, err := fsys.Stat(path)
 	if err != nil {
 		return diskBaseline{}
 	}
@@ -46,13 +47,13 @@ func baselineOf(path string) diskBaseline {
 // missing file is NOT divergence (recreating it cannot clobber anything); an
 // unreadable file or a size/mtime mismatch is. An invalid baseline never
 // diverges (we have nothing to compare against).
-func (b diskBaseline) divergedFrom(path string) bool {
+func (b diskBaseline) divergedFrom(fsys vfs.FS, path string) bool {
 	if !b.valid {
 		return false
 	}
-	info, err := os.Stat(path)
+	info, err := fsys.Stat(path)
 	if err != nil {
-		return !os.IsNotExist(err)
+		return !errors.Is(err, fs.ErrNotExist)
 	}
 	return info.Size() != b.size || !info.ModTime().Equal(b.modTime)
 }
@@ -102,19 +103,20 @@ type SaveIdentity struct {
 
 // ---- Cmd factories (D12) ----
 
-// loadFileCmd reads a file from disk. Context-cancellable for rapid tab switching.
-func loadFileCmd(ctx context.Context, path string) tea.Cmd {
+// loadFileCmd reads a file through the shim. Context-cancellable for rapid tab
+// switching. fsys is captured into the closure (§6.2), never read from the Model.
+func loadFileCmd(fsys vfs.FS, ctx context.Context, path string) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
-		b, err := os.ReadFile(path)
+		b, err := fsys.ReadFile(path)
 		if err != nil {
 			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err)}
 		}
-		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(path)}
+		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(fsys, path)}
 	}
 }
 
@@ -131,36 +133,36 @@ func loadFileCmd(ctx context.Context, path string) tea.Cmd {
 //
 // Bytes are written verbatim — no line-ending / trailing-newline / BOM
 // normalization (§1.4.5). The returned FileSavedMsg carries the fresh baseline.
-func materializeCmd(docID int64, path, content, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
+func materializeCmd(fsys vfs.FS, docID int64, path, content, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
 	data := []byte(content)
 	return func() tea.Msg {
 		if bindNew {
-			if _, err := os.Stat(path); err == nil {
+			if _, err := fsys.Stat(path); err == nil {
 				return FileSaveErrorMsg{
 					Path: path, DocID: docID, RequestID: requestID, Conflict: true,
 					Err: fmt.Errorf("materialize %q: file already exists", path),
 				}
-			} else if !os.IsNotExist(err) {
+			} else if !errors.Is(err, fs.ErrNotExist) {
 				return FileSaveErrorMsg{
 					Path: path, DocID: docID, RequestID: requestID,
 					Err: fmt.Errorf("materialize %q: stat target: %w", path, err),
 				}
 			}
 			if dir := filepath.Dir(path); dir != "" {
-				if err := os.MkdirAll(dir, 0o755); err != nil {
+				if err := fsys.MkdirAll(dir, 0o755); err != nil {
 					return FileSaveErrorMsg{
 						Path: path, DocID: docID, RequestID: requestID,
 						Err: fmt.Errorf("materialize %q: mkdir: %w", path, err),
 					}
 				}
 			}
-		} else if baseline.divergedFrom(path) {
+		} else if baseline.divergedFrom(fsys, path) {
 			return FileSaveErrorMsg{
 				Path: path, DocID: docID, RequestID: requestID, Conflict: true,
 				Err: fmt.Errorf("materialize %q: file changed on disk since it was opened — not overwritten", path),
 			}
 		}
-		if err := atomicfile.Write(path, data); err != nil {
+		if err := fsys.WriteFile(path, data, 0o644); err != nil {
 			return FileSaveErrorMsg{
 				Path: path, DocID: docID, RequestID: requestID,
 				Err: fmt.Errorf("materialize %q: %w", path, err),
@@ -168,25 +170,25 @@ func materializeCmd(docID int64, path, content, requestID string, bindNew bool, 
 		}
 		return FileSavedMsg{
 			Path: path, DocID: docID, RequestID: requestID,
-			SavedContent: data, BindNew: bindNew, Baseline: baselineOf(path),
+			SavedContent: data, BindNew: bindNew, Baseline: baselineOf(fsys, path),
 		}
 	}
 }
 
 // fileRenameCmd moves a file on disk. It refuses to clobber an existing target
 // (os.Rename would silently destroy it — Catastrophic, rung 1).
-func fileRenameCmd(oldPath, newPath string) tea.Cmd {
+func fileRenameCmd(fsys vfs.FS, oldPath, newPath string) tea.Cmd {
 	return func() tea.Msg {
-		if _, err := os.Stat(newPath); err == nil {
+		if _, err := fsys.Stat(newPath); err == nil {
 			return FileRenameErrorMsg{
 				Err: fmt.Errorf("rename %q → %q: target already exists", oldPath, newPath),
 			}
-		} else if !os.IsNotExist(err) {
+		} else if !errors.Is(err, fs.ErrNotExist) {
 			return FileRenameErrorMsg{
 				Err: fmt.Errorf("rename %q → %q: stat target: %w", oldPath, newPath, err),
 			}
 		}
-		if err := os.Rename(oldPath, newPath); err != nil {
+		if err := fsys.Rename(oldPath, newPath); err != nil {
 			return FileRenameErrorMsg{
 				Err: fmt.Errorf("rename %q → %q: %w", oldPath, newPath, err),
 			}
@@ -195,10 +197,10 @@ func fileRenameCmd(oldPath, newPath string) tea.Cmd {
 	}
 }
 
-// loadDirCmd loads directory entries for the given dir.
-func loadDirCmd(dir string) tea.Cmd {
+// loadDirCmd loads directory entries for the given dir through the shim.
+func loadDirCmd(fsys vfs.FS, dir string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := readDirEntries(dir)
+		entries, err := readDirEntries(fsys, dir)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -207,9 +209,9 @@ func loadDirCmd(dir string) tea.Cmd {
 }
 
 // reloadDirCmd reloads directory entries after a watched change.
-func reloadDirCmd(dir string) tea.Cmd {
+func reloadDirCmd(fsys vfs.FS, dir string) tea.Cmd {
 	return func() tea.Msg {
-		entries, err := readDirEntries(dir)
+		entries, err := readDirEntries(fsys, dir)
 		if err != nil {
 			return ErrMsg{Err: err}
 		}
@@ -217,8 +219,8 @@ func reloadDirCmd(dir string) tea.Cmd {
 	}
 }
 
-func readDirEntries(dir string) ([]filetree.Entry, error) {
-	des, err := os.ReadDir(dir)
+func readDirEntries(fsys vfs.FS, dir string) ([]filetree.Entry, error) {
+	des, err := fsys.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("load dir %q: %w", dir, err)
 	}

@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/docstate"
+	"rune/pkg/vfs"
 )
 
 // tabHasDocID reports whether any open tab carries the given VFS doc id.
@@ -27,7 +28,7 @@ func TestMaterialize_BindNewRefusesClobber(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := materializeCmd(1, path, "new content", "r1", true, diskBaseline{})()
+	msg := materializeCmd(vfs.Disk{}, 1, path, "new content", "r1", true, diskBaseline{})()
 	e, ok := msg.(FileSaveErrorMsg)
 	if !ok || !e.Conflict {
 		t.Fatalf("expected conflict FileSaveErrorMsg, got %#v", msg)
@@ -44,12 +45,12 @@ func TestMaterialize_OverwriteRefusesExternalChange(t *testing.T) {
 	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	base := baselineOf(path)
+	base := baselineOf(vfs.Disk{}, path)
 	// Simulate an external editor changing the file (different size → divergence).
 	if err := os.WriteFile(path, []byte("v2 external longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := materializeCmd(1, path, "mine", "r1", false, base)()
+	msg := materializeCmd(vfs.Disk{}, 1, path, "mine", "r1", false, base)()
 	e, ok := msg.(FileSaveErrorMsg)
 	if !ok || !e.Conflict {
 		t.Fatalf("expected conflict FileSaveErrorMsg, got %#v", msg)
@@ -68,7 +69,7 @@ func TestMaterialize_OverwriteWritesVerbatim(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "line1\r\nline2 no trailing nl"
-	msg := materializeCmd(1, path, want, "r1", false, baselineOf(path))()
+	msg := materializeCmd(vfs.Disk{}, 1, path, want, "r1", false, baselineOf(vfs.Disk{}, path))()
 	saved, ok := msg.(FileSavedMsg)
 	if !ok {
 		t.Fatalf("expected FileSavedMsg, got %#v", msg)
@@ -91,7 +92,7 @@ func TestRename_RefusesClobber(t *testing.T) {
 	if err := os.WriteFile(b, []byte("B"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := fileRenameCmd(a, b)().(FileRenameErrorMsg); !ok {
+	if _, ok := fileRenameCmd(vfs.Disk{}, a, b)().(FileRenameErrorMsg); !ok {
 		t.Fatalf("expected FileRenameErrorMsg when target exists")
 	}
 	if bb, _ := os.ReadFile(b); string(bb) != "B" {

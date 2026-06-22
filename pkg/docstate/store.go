@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+
+	"rune/pkg/vfs"
 )
 
 // Store holds the SQLite connection used for all persistence.
@@ -28,6 +29,30 @@ import (
 type Store struct {
 	perm  *sql.DB
 	clock func() time.Time
+	// fs supplies the file identity stat for OpenPath/Bind. A nil fs defaults to
+	// vfs.Disk (real disk); the fuzz harness injects vfs.Mem via UseFS so the
+	// store and workspace resolve identity against the same in-memory files.
+	fs vfs.FS
+}
+
+// UseFS injects the filesystem used for file-identity stats (OpenPath/Bind).
+// Production leaves it as the default Disk; the session fuzzer sets a shared
+// vfs.Mem so document identity matches the in-memory files the workspace writes.
+func (s *Store) UseFS(fs vfs.FS) { s.fs = fs }
+
+// statID returns the (inode, device) identity of path via the injected FS,
+// defaulting to real disk. ok is false when stat fails or identity is
+// unavailable, in which case the caller degrades to path-keying.
+func (s *Store) statID(path string) (inode, device uint64, ok bool) {
+	fsys := s.fs
+	if fsys == nil {
+		fsys = vfs.Disk{}
+	}
+	fi, err := fsys.Stat(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	return vfs.FileID(fi)
 }
 
 // DocRef is returned by OpenPath and CreateScratch.
@@ -41,19 +66,26 @@ type DocRef struct {
 
 // ---- schema -----------------------------------------------------------------
 
-// permSchema defines all tables for a fresh database. ALTER TABLE in migrate()
-// adds any missing columns to existing databases.
+// permSchema is the canonical, complete schema for a fresh database.
+// It includes all tables, CHECK/FK constraints, and UNIQUE indexes.
+// migrate() v3 drops legacy data tables and re-runs this schema so that
+// existing installations converge to the same final shape.
+//
+// current_seq is a position (seq-1 after an undo), not a foreign key —
+// it need not match an existing event row. This is a conscious denormalization.
 const permSchema = `
 CREATE TABLE IF NOT EXISTS documents (
 	id           INTEGER PRIMARY KEY,
 	path         TEXT    NOT NULL DEFAULT '',
 	inode        INTEGER,
 	device       INTEGER,
-	current_seq  INTEGER,
-	saved_seq    INTEGER,
+	current_seq  INTEGER CHECK(current_seq IS NULL OR current_seq >= 0),
+	saved_seq    INTEGER CHECK(saved_seq IS NULL OR saved_seq >= 0),
 	created_at   TEXT    NOT NULL,
 	last_seen_at TEXT    NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path  ON documents(path)           WHERE path != '';
 
 CREATE TABLE IF NOT EXISTS blobs (
 	hash    TEXT PRIMARY KEY,
@@ -62,30 +94,29 @@ CREATE TABLE IF NOT EXISTS blobs (
 
 CREATE TABLE IF NOT EXISTS snapshots (
 	id         INTEGER PRIMARY KEY,
-	doc_id     INTEGER NOT NULL REFERENCES documents(id),
+	doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
 	blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
-	parent_ids TEXT,
 	source     TEXT    NOT NULL,
-	seq        INTEGER NOT NULL DEFAULT 0,
+	seq        INTEGER NOT NULL DEFAULT 0 CHECK(seq >= 0),
 	created_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_doc ON snapshots(doc_id, id);
 
 CREATE TABLE IF NOT EXISTS events (
-	seq               INTEGER PRIMARY KEY AUTOINCREMENT,
-	doc_id            INTEGER NOT NULL REFERENCES documents(id),
-	surface           TEXT    NOT NULL,
-	kind              TEXT    NOT NULL,
-	edits             BLOB,
-	cursors_before    BLOB,
-	cursors_after     BLOB,
-	focus_before      TEXT,
-	focus_after       TEXT,
-	is_undo_stop      INTEGER NOT NULL DEFAULT 0,
+	seq                INTEGER PRIMARY KEY AUTOINCREMENT,
+	doc_id             INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+	surface            TEXT    NOT NULL,
+	kind               TEXT    NOT NULL CHECK(kind <> ''),
+	edits              BLOB,
+	cursors_before     BLOB,
+	cursors_after      BLOB,
+	focus_before       TEXT,
+	focus_after        TEXT,
+	is_undo_stop       INTEGER NOT NULL DEFAULT 0 CHECK(is_undo_stop IN (0,1)),
 	anchor_snapshot_id INTEGER,
-	at                TEXT    NOT NULL
+	at                 TEXT    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_events_doc ON events(doc_id, seq);
+CREATE INDEX IF NOT EXISTS idx_events_doc  ON events(doc_id, seq);
 CREATE INDEX IF NOT EXISTS idx_events_undo ON events(doc_id, seq) WHERE is_undo_stop = 1;
 
 CREATE TABLE IF NOT EXISTS drafts (
@@ -256,235 +287,34 @@ func (s *Store) Close() error {
 
 // ---- migration --------------------------------------------------------------
 
+// migrate converges any existing database to the current schema.
+//
+// v3: drop all data tables (owner authorised the drop), then re-run permSchema
+// so the constrained, fully-indexed schema is in place. A fresh DB (version 0)
+// runs permSchema directly from initPermSchema and the v3 drop-if-exists is a
+// harmless no-op. drafts/search_history have no FK children and are preserved.
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("get user_version: %w", err)
 	}
-	if version < 1 {
-		// Add new columns to existing tables (ignore "duplicate column name" — fresh
-		// installs have these columns already in the CREATE TABLE statement above).
+	if version < 3 {
+		// Drop in FK-safe child→parent order so FK enforcement cannot block the drops.
 		for _, stmt := range []string{
-			`ALTER TABLE documents ADD COLUMN current_seq INTEGER`,
-			`ALTER TABLE snapshots ADD COLUMN seq INTEGER DEFAULT 0`,
+			`DROP TABLE IF EXISTS events`,
+			`DROP TABLE IF EXISTS snapshots`,
+			`DROP TABLE IF EXISTS blobs`,
+			`DROP TABLE IF EXISTS documents`,
 		} {
 			if _, err := db.Exec(stmt); err != nil {
-				if !strings.Contains(err.Error(), "duplicate column name") {
-					return fmt.Errorf("migrate: %s: %w", stmt, err)
-				}
+				return fmt.Errorf("migrate v3: %s: %w", stmt, err)
 			}
 		}
-
-		// Backfill inode/device via stat (best-effort; collect outside transaction).
-		rows, err := db.Query(`SELECT id, path FROM documents WHERE path != ''`)
-		if err != nil {
-			return fmt.Errorf("migrate: query docs for inode backfill: %w", err)
+		if _, err := db.Exec(permSchema); err != nil {
+			return fmt.Errorf("migrate v3: recreate schema: %w", err)
 		}
-		type inodeRow struct {
-			id     int64
-			inode  uint64
-			device uint64
-		}
-		var inodeFills []inodeRow
-		for rows.Next() {
-			var id int64
-			var path string
-			if err := rows.Scan(&id, &path); err != nil {
-				rows.Close()
-				return fmt.Errorf("migrate: scan doc: %w", err)
-			}
-			if ino, dev, ok := fileID(path); ok && ino != 0 {
-				inodeFills = append(inodeFills, inodeRow{id, ino, dev})
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("migrate: inode backfill rows: %w", err)
-		}
-
-		// Transaction: apply backfill, dedup, create unique indexes.
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("migrate: begin tx: %w", err)
-		}
-
-		for _, r := range inodeFills {
-			if _, err := tx.Exec(
-				`UPDATE documents SET inode=?, device=? WHERE id=?`,
-				r.inode, r.device, r.id,
-			); err != nil {
-				tx.Rollback() //nolint:errcheck
-				return fmt.Errorf("migrate: update inode for doc %d: %w", r.id, err)
-			}
-		}
-
-		if err := dedupByInode(tx); err != nil {
-			tx.Rollback() //nolint:errcheck
-			return err
-		}
-		if err := dedupByPath(tx); err != nil {
-			tx.Rollback() //nolint:errcheck
-			return err
-		}
-
-		// Drop the old non-unique path index (it may or may not exist).
-		if _, err := tx.Exec(`DROP INDEX IF EXISTS idx_documents_path`); err != nil {
-			tx.Rollback() //nolint:errcheck
-			return fmt.Errorf("migrate: drop old path index: %w", err)
-		}
-		for _, stmt := range []string{
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path ON documents(path) WHERE path != ''`,
-		} {
-			if _, err := tx.Exec(stmt); err != nil {
-				tx.Rollback() //nolint:errcheck
-				return fmt.Errorf("migrate: create index: %w", err)
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("migrate: commit: %w", err)
-		}
-
-		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
-			return fmt.Errorf("migrate: set user_version: %w", err)
-		}
-	} // end version < 1
-
-	if version < 2 {
-		if _, err := db.Exec(`ALTER TABLE documents ADD COLUMN saved_seq INTEGER`); err != nil {
-			if !strings.Contains(err.Error(), "duplicate column name") {
-				return fmt.Errorf("migration v2: add saved_seq: %w", err)
-			}
-		}
-		if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
-			return fmt.Errorf("migration v2: set user_version: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func dedupByInode(tx *sql.Tx) error {
-	type group struct {
-		inode    uint64
-		device   uint64
-		survivor int64
-	}
-	rows, err := tx.Query(`
-		SELECT inode, device, MIN(id) AS survivor
-		FROM documents
-		WHERE inode IS NOT NULL AND inode != 0
-		GROUP BY inode, device
-		HAVING COUNT(*) > 1
-	`)
-	if err != nil {
-		return fmt.Errorf("migrate: query inode dups: %w", err)
-	}
-	var groups []group
-	for rows.Next() {
-		var g group
-		if err := rows.Scan(&g.inode, &g.device, &g.survivor); err != nil {
-			rows.Close()
-			return fmt.Errorf("migrate: scan inode dup group: %w", err)
-		}
-		groups = append(groups, g)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate: inode dup rows: %w", err)
-	}
-
-	for _, g := range groups {
-		dupRows, err := tx.Query(
-			`SELECT id FROM documents WHERE inode=? AND device=? AND id!=?`,
-			g.inode, g.device, g.survivor,
-		)
-		if err != nil {
-			return fmt.Errorf("migrate: get inode dups (%d,%d): %w", g.inode, g.device, err)
-		}
-		var dups []int64
-		for dupRows.Next() {
-			var id int64
-			if err := dupRows.Scan(&id); err != nil {
-				dupRows.Close()
-				return fmt.Errorf("migrate: scan inode dup id: %w", err)
-			}
-			dups = append(dups, id)
-		}
-		dupRows.Close()
-		if err := dupRows.Err(); err != nil {
-			return fmt.Errorf("migrate: inode dup scan: %w", err)
-		}
-		for _, dupID := range dups {
-			if _, err := tx.Exec(`UPDATE snapshots SET doc_id=? WHERE doc_id=?`, g.survivor, dupID); err != nil {
-				return fmt.Errorf("migrate: repoint snapshots for dup %d: %w", dupID, err)
-			}
-			if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, dupID); err != nil {
-				return fmt.Errorf("migrate: delete inode dup %d: %w", dupID, err)
-			}
-		}
-	}
-	return nil
-}
-
-func dedupByPath(tx *sql.Tx) error {
-	type group struct {
-		path     string
-		survivor int64
-	}
-	rows, err := tx.Query(`
-		SELECT path, MIN(id) AS survivor
-		FROM documents
-		WHERE path != ''
-		GROUP BY path
-		HAVING COUNT(*) > 1
-	`)
-	if err != nil {
-		return fmt.Errorf("migrate: query path dups: %w", err)
-	}
-	var groups []group
-	for rows.Next() {
-		var g group
-		if err := rows.Scan(&g.path, &g.survivor); err != nil {
-			rows.Close()
-			return fmt.Errorf("migrate: scan path dup group: %w", err)
-		}
-		groups = append(groups, g)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migrate: path dup rows: %w", err)
-	}
-
-	for _, g := range groups {
-		dupRows, err := tx.Query(
-			`SELECT id FROM documents WHERE path=? AND id!=?`,
-			g.path, g.survivor,
-		)
-		if err != nil {
-			return fmt.Errorf("migrate: get path dups for %q: %w", g.path, err)
-		}
-		var dups []int64
-		for dupRows.Next() {
-			var id int64
-			if err := dupRows.Scan(&id); err != nil {
-				dupRows.Close()
-				return fmt.Errorf("migrate: scan path dup id: %w", err)
-			}
-			dups = append(dups, id)
-		}
-		dupRows.Close()
-		if err := dupRows.Err(); err != nil {
-			return fmt.Errorf("migrate: path dup scan: %w", err)
-		}
-		for _, dupID := range dups {
-			if _, err := tx.Exec(`UPDATE snapshots SET doc_id=? WHERE doc_id=?`, g.survivor, dupID); err != nil {
-				return fmt.Errorf("migrate: repoint snapshots for path dup %d: %w", dupID, err)
-			}
-			if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, dupID); err != nil {
-				return fmt.Errorf("migrate: delete path dup %d: %w", dupID, err)
-			}
+		if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
+			return fmt.Errorf("migrate v3: set user_version: %w", err)
 		}
 	}
 	return nil
@@ -498,7 +328,7 @@ func dedupByPath(tx *sql.Tx) error {
 // RenamedFrom is set when the file was renamed since the VFS last saw it.
 func (s *Store) OpenPath(path string) (DocRef, error) {
 	at := s.clock().UTC().Format(time.RFC3339Nano)
-	inode, device, ok := fileID(path)
+	inode, device, ok := s.statID(path)
 
 	if !ok || inode == 0 {
 		return s.openPathByName(path, at)
@@ -681,7 +511,7 @@ func (s *Store) ReserveChatDoc() (int64, error) {
 // unique indexes hold.
 func (s *Store) Bind(docID int64, path string) error {
 	at := s.clock().UTC().Format(time.RFC3339Nano)
-	inode, device, ok := fileID(path)
+	inode, device, ok := s.statID(path)
 
 	tx, err := s.perm.Begin()
 	if err != nil {
@@ -724,29 +554,13 @@ func (s *Store) Bind(docID int64, path string) error {
 	return nil
 }
 
-// DeleteDoc removes a document and its journal/snapshots from the VFS. Used when
-// the user explicitly discards an untitled buffer (Fix 7 §6) so it is not
-// offered for recovery on the next launch. Orphaned blobs are left for a future
-// blob GC (harmless — they are content-addressed and deduplicated).
+// DeleteDoc removes a document and its journal/snapshots from the VFS. Used
+// when the user explicitly discards an untitled buffer so it is not offered for
+// recovery on the next launch. ON DELETE CASCADE removes the child events and
+// snapshots rows automatically. Orphaned blobs are left for a future blob GC.
 func (s *Store) DeleteDoc(docID int64) error {
-	tx, err := s.perm.Begin()
-	if err != nil {
-		return fmt.Errorf("delete doc %d: begin: %w", docID, err)
-	}
-	if _, err := tx.Exec(`DELETE FROM events WHERE doc_id=?`, docID); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return fmt.Errorf("delete doc %d: events: %w", docID, err)
-	}
-	if _, err := tx.Exec(`DELETE FROM snapshots WHERE doc_id=?`, docID); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return fmt.Errorf("delete doc %d: snapshots: %w", docID, err)
-	}
-	if _, err := tx.Exec(`DELETE FROM documents WHERE id=?`, docID); err != nil {
-		tx.Rollback() //nolint:errcheck
-		return fmt.Errorf("delete doc %d: document: %w", docID, err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("delete doc %d: commit: %w", docID, err)
+	if _, err := s.perm.Exec(`DELETE FROM documents WHERE id=?`, docID); err != nil {
+		return fmt.Errorf("delete doc %d: %w", docID, err)
 	}
 	return nil
 }
@@ -781,36 +595,6 @@ func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
 // filter those zombie rows surface as fake "Untitled" tabs showing real-file
 // content (a data-corruption-looking bug). Emptiness is filtered by the caller,
 // which reconstructs each candidate and drops empty/whitespace-only content.
-// DocJournalPos returns the document's undo pointer, max journalled seq, and
-// last-saved seq. undoSeq.Valid is false when the document is at head (SQL
-// current_seq IS NULL). maxSeq is 0 when there are no events. savedSeq.Valid
-// is false when the file has never been explicitly saved through rune.
-// Called once at document load to initialise workspace dirty-tracking fields.
-func (s *Store) DocJournalPos(docID int64) (undoSeq sql.NullInt64, maxSeq int64, savedSeq sql.NullInt64, err error) {
-	var ms int64
-	if err := s.perm.QueryRow(
-		`SELECT d.current_seq,
-		        COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.doc_id=d.id), 0),
-		        d.saved_seq
-		 FROM documents d WHERE d.id=?`, docID).Scan(&undoSeq, &ms, &savedSeq); err != nil {
-		return sql.NullInt64{}, 0, sql.NullInt64{}, fmt.Errorf("doc journal pos %d: %w", docID, err)
-	}
-	return undoSeq, ms, savedSeq, nil
-}
-
-// RecordSaved persists the effective journal position that was just written to
-// disk. Only FileSavedMsg may call this — it is the single gate that advances
-// the clean boundary. Non-fatal if it fails: the dirty indicator may reappear
-// on the next tab switch, but no data is lost.
-func (s *Store) RecordSaved(docID, seq int64) error {
-	if _, err := s.perm.Exec(
-		`UPDATE documents SET saved_seq=? WHERE id=?`, seq, docID,
-	); err != nil {
-		return fmt.Errorf("record saved doc %d at seq %d: %w", docID, seq, err)
-	}
-	return nil
-}
-
 func (s *Store) RecoverableScratch(excludeID int64) ([]int64, error) {
 	rows, err := s.perm.Query(`
 		SELECT id FROM documents

@@ -61,7 +61,7 @@ func (m Model) evictSave() (Model, tea.Cmd) {
 	}
 	requestID := fmt.Sprintf("evict-%d-%v", victim.DocID, time.Now().UnixNano())
 	m.pendingDataLoss.requestID = requestID
-	return m, materializeCmd(victim.DocID, victim.Path, content, requestID, false, diskBaseline{})
+	return m, materializeCmd(m.fsys(), victim.DocID, victim.Path, content, requestID, false, diskBaseline{})
 }
 
 // evictDiscard closes the eviction victim without saving and opens the pending
