@@ -310,6 +310,49 @@ func TestBasicRedo(t *testing.T) {
 	}
 }
 
+// TestUndoUndoRedo verifies that the journal correctly returns a redo target
+// after two consecutive undos. This is the journal-layer counterpart to the
+// Reapply regression test in the textedit package.
+func TestUndoUndoRedo(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+
+	now := time.Now()
+	s.clock = func() time.Time { return now }
+
+	// Event A.
+	if _, err := s.AppendEdit(docID, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
+		t.Fatalf("AppendEdit A: %v", err)
+	}
+	// Event B (outside 300ms window → separate undo-stop).
+	now = now.Add(400 * time.Millisecond)
+	if _, err := s.AppendEdit(docID, "main", singleInsert("b"), noCursors, noCursors, "main"); err != nil {
+		t.Fatalf("AppendEdit B: %v", err)
+	}
+
+	// Undo B.
+	if _, _, _, _, ok := s.UndoTarget(docID); !ok {
+		t.Fatal("first UndoTarget returned ok=false")
+	}
+	// Undo A.
+	_, gotEditsA, _, _, ok := s.UndoTarget(docID)
+	if !ok {
+		t.Fatal("second UndoTarget returned ok=false")
+	}
+	if len(gotEditsA) == 0 || gotEditsA[0].Insert != "a" {
+		t.Errorf("second undo edits: got %+v, want insert=a", gotEditsA)
+	}
+
+	// Redo A — journal must return ok=true.
+	_, gotRedoEdits, _, _, okRedo := s.RedoTarget(docID)
+	if !okRedo {
+		t.Fatal("RedoTarget after Undo×2: expected ok=true, got false")
+	}
+	if len(gotRedoEdits) == 0 || gotRedoEdits[0].Insert != "a" {
+		t.Errorf("redo edits: got %+v, want insert=a", gotRedoEdits)
+	}
+}
+
 func TestCoalescingWithinWindow(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)

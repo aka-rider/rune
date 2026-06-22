@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS documents (
 	inode        INTEGER,
 	device       INTEGER,
 	current_seq  INTEGER,
+	saved_seq    INTEGER,
 	created_at   TEXT    NOT NULL,
 	last_seen_at TEXT    NOT NULL
 );
@@ -260,10 +261,7 @@ func migrate(db *sql.DB) error {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return fmt.Errorf("get user_version: %w", err)
 	}
-	if version >= 1 {
-		return nil
-	}
-
+	if version < 1 {
 	// Add new columns to existing tables (ignore "duplicate column name" — fresh
 	// installs have these columns already in the CREATE TABLE statement above).
 	for _, stmt := range []string{
@@ -351,6 +349,19 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
 		return fmt.Errorf("migrate: set user_version: %w", err)
 	}
+	} // end version < 1
+
+	if version < 2 {
+		if _, err := db.Exec(`ALTER TABLE documents ADD COLUMN saved_seq INTEGER`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("migration v2: add saved_seq: %w", err)
+			}
+		}
+		if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+			return fmt.Errorf("migration v2: set user_version: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -774,18 +785,38 @@ func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
 // undoSeq is -1 when the document is at head (SQL current_seq IS NULL).
 // maxSeq is 0 when there are no events for the document.
 // Called once at document load to initialise the workspace dirty-tracking fields.
-func (s *Store) DocJournalPos(docID int64) (undoSeq int64, maxSeq int64, err error) {
-	var cs sql.NullInt64
+func (s *Store) DocJournalPos(docID int64) (undoSeq int64, maxSeq int64, savedSeq int64, err error) {
+	var cs, ss sql.NullInt64
 	var ms int64
 	if err := s.perm.QueryRow(
-		`SELECT d.current_seq, COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.doc_id=d.id), 0)
-		 FROM documents d WHERE d.id=?`, docID).Scan(&cs, &ms); err != nil {
-		return -1, 0, fmt.Errorf("doc journal pos %d: %w", docID, err)
+		`SELECT d.current_seq,
+		        COALESCE((SELECT MAX(e.seq) FROM events e WHERE e.doc_id=d.id), 0),
+		        d.saved_seq
+		 FROM documents d WHERE d.id=?`, docID).Scan(&cs, &ms, &ss); err != nil {
+		return -1, 0, -1, fmt.Errorf("doc journal pos %d: %w", docID, err)
 	}
+	var us int64 = -1
 	if cs.Valid {
-		return cs.Int64, ms, nil
+		us = cs.Int64
 	}
-	return -1, ms, nil
+	var saved int64 = -1
+	if ss.Valid {
+		saved = ss.Int64
+	}
+	return us, ms, saved, nil
+}
+
+// RecordSaved persists the effective journal position that was just written to
+// disk. Only FileSavedMsg may call this — it is the single gate that advances
+// the clean boundary. Non-fatal if it fails: the dirty indicator may reappear
+// on the next tab switch, but no data is lost.
+func (s *Store) RecordSaved(docID, seq int64) error {
+	if _, err := s.perm.Exec(
+		`UPDATE documents SET saved_seq=? WHERE id=?`, seq, docID,
+	); err != nil {
+		return fmt.Errorf("record saved doc %d at seq %d: %w", docID, seq, err)
+	}
+	return nil
 }
 
 func (s *Store) RecoverableScratch(excludeID int64) ([]int64, error) {
