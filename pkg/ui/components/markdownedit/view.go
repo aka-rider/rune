@@ -21,8 +21,13 @@ func (m Model) View() string {
 
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
 	selStyle := m.styles.Selection
+	matchStyle := m.styles.SearchMatch
+	activeMatchStyle := m.styles.SearchActiveMatch
 	cursorOffsets := make(map[int]bool)
 	var selections []textedit.SelInterval
+
+	searchMatches := m.Model.SearchMatches()
+	searchActive := m.Model.SearchActive()
 
 	focused := m.Model.Focused()
 	readOnly := m.Model.ReadOnly()
@@ -57,7 +62,8 @@ func (m Model) View() string {
 					spaceCells[j] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
 				}
 				spaceCells = textedit.SliceCells(spaceCells, vp.ScrollCol, m.Model.Width())
-				renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle))
+				noStyle := lipgloss.NewStyle()
+				renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle))
 				imageLineFlags = append(imageLineFlags, true)
 				continue
 			}
@@ -65,7 +71,8 @@ func (m Model) View() string {
 			lineCells := imagePlaceholderCells(id, l.ImageRowIndex, l.ImageCols)
 			lineCells = append([]textedit.Cell{{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}}, lineCells...)
 			lineCells = textedit.SliceCells(lineCells, vp.ScrollCol, m.Model.Width())
-			renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle))
+			noStyle := lipgloss.NewStyle()
+			renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle))
 			imageLineFlags = append(imageLineFlags, true)
 			continue
 		}
@@ -77,7 +84,8 @@ func (m Model) View() string {
 				spaceCells[j] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
 			}
 			spaceCells = textedit.SliceCells(spaceCells, vp.ScrollCol, m.Model.Width())
-			renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle))
+			noStyle := lipgloss.NewStyle()
+			renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle))
 			imageLineFlags = append(imageLineFlags, true)
 			continue
 		}
@@ -117,7 +125,12 @@ func (m Model) View() string {
 			textedit.ApplyOverlays(lineCells, cursorOffsets, selections)
 		}
 
-		renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle))
+		// Apply match overlay unconditionally (not gated on focused).
+		if len(searchMatches) > 0 {
+			textedit.ApplyMatchOverlay(lineCells, searchMatches, searchActive)
+		}
+
+		renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, matchStyle, activeMatchStyle))
 		imageLineFlags = append(imageLineFlags, false)
 	}
 
@@ -137,6 +150,8 @@ func (m Model) View() string {
 	w := m.Model.Width()
 	h := m.Model.Height()
 
+	hasMatches := len(searchMatches) > 0
+
 	var composed string
 	if !focused && hasImageLine {
 		faint := lipgloss.NewStyle().Faint(true)
@@ -145,13 +160,18 @@ func (m Model) View() string {
 			if i < len(imageLineFlags) && imageLineFlags[i] {
 				faintedLines[i] = line
 			} else {
-				faintedLines[i] = faint.Render(line)
+				if hasMatches {
+					faintedLines[i] = line
+				} else {
+					faintedLines[i] = faint.Render(line)
+				}
 			}
 		}
 		composed = strings.Join(faintedLines, "\n")
 	} else {
 		composed = strings.Join(renderedLines, "\n")
-		if !focused {
+		// Suppress faint when search matches are visible so highlights remain legible.
+		if !focused && !hasMatches {
 			composed = lipgloss.NewStyle().Faint(true).Render(composed)
 		}
 	}

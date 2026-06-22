@@ -97,7 +97,7 @@ func Default() Bindings {
 		SaveFile:           key.NewBinding(key.WithKeys("super+s"), key.WithHelp("⌘s", "save")),
 		AddCursorAbove:     key.NewBinding(key.WithKeys("alt+super+up"), key.WithHelp("⌥⌘↑", "cursor above")),
 		AddCursorBelow:     key.NewBinding(key.WithKeys("alt+super+down"), key.WithHelp("⌥⌘↓", "cursor below")),
-		FindOpen:           key.NewBinding(key.WithKeys("super+f", "shift+super+f", "ctrl+f"), key.WithHelp("⇧⌘f", "find")),
+		FindOpen:           key.NewBinding(key.WithKeys("shift+super+f", "ctrl+f"), key.WithHelp("⇧⌘f / ^F", "find")),
 		FindReplaceOpen:    key.NewBinding(key.WithKeys("alt+super+f", "ctrl+alt+f"), key.WithHelp("⌥⌘f", "find & replace")),
 		FindNext:           key.NewBinding(key.WithKeys("super+g"), key.WithHelp("⌘g", "find next")),
 		FindPrev:           key.NewBinding(key.WithKeys("shift+super+g"), key.WithHelp("⇧⌘g", "find prev")),

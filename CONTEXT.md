@@ -54,6 +54,10 @@ _Avoid_: content editor, rich editor, workspace editor
 A virtual, read-only document shown as a tab in the main editor — a keybindings reference generated from the keymap (the single source of truth), plus short prose on voice input and Obsidian vaults. Opened and toggled with `^?` (fallback `F1`), closed like any file with `^w`. Has no file on disk and is ephemeral: not part of the journal/snapshot/autosave model and never goes dirty.
 _Avoid_: help overlay, help page, help screen, help modal, help panel
 
+**search bar**:
+A textedit instance (PlainSync, single-line) shown under the title for in-file live search. Owns the query input and ↑/↓ fuzzy history recall. Distinct from the future _global search_ over the vault. The keymap retains the `Find*` field names; UI and documentation say "search".
+_Avoid_: find overlay, find dialog, search modal
+
 ### Rendering Pipeline
 
 **display pipeline**:

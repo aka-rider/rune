@@ -48,7 +48,8 @@ func (m Model) recalcLayout() Model {
 
 	// Title occupies the first row inside the center pane border (D6)
 	titleH := m.title.Height()
-	editorH := innerH - titleH
+	searchH := m.search.Height() // 0 when not visible; 1 when visible
+	editorH := innerH - titleH - searchH
 	if editorH < 0 {
 		editorH = 0
 	}
@@ -63,6 +64,7 @@ func (m Model) recalcLayout() Model {
 	m.opentabs = m.opentabs.SetOffset(1, ftH+1)
 
 	m.title = m.title.SetSize(innerCenterW, titleH)
+	m.search = m.search.SetSize(innerCenterW, searchH)
 	m.breadcrumb = m.breadcrumb.SetSize(centerW, 1)
 
 	topOffset := 1
@@ -72,7 +74,7 @@ func (m Model) recalcLayout() Model {
 
 	m.editor = m.editor.SetRect(textedit.Rect{
 		X: leftW + 1,
-		Y: topOffset + titleH,
+		Y: topOffset + titleH + searchH,
 		W: innerCenterW,
 		H: editorH,
 	})
@@ -114,6 +116,9 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 	}
 	if y == topOffset {
 		return paneTitle, true
+	}
+	if m.search.Visible() && y == topOffset+m.title.Height() {
+		return paneSearch, true
 	}
 	return paneCenter, true
 }
@@ -170,7 +175,13 @@ func (m Model) View() tea.View {
 		centerW = 0
 	}
 
-	centerContent := lipgloss.JoinVertical(lipgloss.Left, m.title.View(), m.editor.View())
+	var centerParts []string
+	centerParts = append(centerParts, m.title.View())
+	if m.search.Visible() {
+		centerParts = append(centerParts, m.search.View())
+	}
+	centerParts = append(centerParts, m.editor.View())
+	centerContent := lipgloss.JoinVertical(lipgloss.Left, centerParts...)
 	centerBlock := borderStyle(m.focus.isCenter(), m.styles).
 		Width(centerW).Height(contentH).
 		Render(centerContent)

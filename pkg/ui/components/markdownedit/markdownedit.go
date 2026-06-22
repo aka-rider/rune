@@ -283,3 +283,27 @@ func (m Model) AppendText(text string) (Model, tea.Cmd) {
 func (m Model) ApplyMergeResult(content string) (Model, tea.Cmd) {
 	return m.ReplaceRange(0, len(m.Model.Content()), content)
 }
+
+// SetSearchQuery shadows textedit.Model.SetSearchQuery to return markdownedit.Model.
+func (m Model) SetSearchQuery(query string, caseInsensitive bool) Model {
+	m.Model = m.Model.SetSearchQuery(query, caseInsensitive)
+	return m
+}
+
+// FindNext shadows textedit.Model.FindNext to return markdownedit.Model.
+func (m Model) FindNext() Model {
+	m.Model = m.Model.FindNext()
+	return m
+}
+
+// FindPrev shadows textedit.Model.FindPrev to return markdownedit.Model.
+func (m Model) FindPrev() Model {
+	m.Model = m.Model.FindPrev()
+	return m
+}
+
+// ClearSearch shadows textedit.Model.ClearSearch to return markdownedit.Model.
+func (m Model) ClearSearch() Model {
+	m.Model = m.Model.ClearSearch()
+	return m
+}

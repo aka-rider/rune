@@ -92,6 +92,11 @@ CREATE TABLE IF NOT EXISTS drafts (
 	content    TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS search_history (
+	query        TEXT PRIMARY KEY,
+	last_used_at TEXT NOT NULL
+);
 `
 
 // ---- construction -----------------------------------------------------------

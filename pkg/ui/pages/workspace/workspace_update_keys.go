@@ -5,6 +5,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/editor/buffer"
+	searchcomp "rune/pkg/ui/components/search"
 )
 
 // handleKeyPress processes a tea.KeyPressMsg. It is called from Update() with
@@ -160,6 +161,32 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		m = m.syncDictationAllowed()
 
+	case key.Matches(msg, m.keys.FindOpen):
+		// Cmd+Shift+F / ^F — open (or toggle) the search bar.
+		if m.search.Visible() {
+			// Second press closes the bar and returns focus to the editor.
+			m.search = m.search.Close()
+			m.editor = m.editor.ClearSearch()
+			m.focus = paneCenter
+		} else {
+			m.search = m.search.Open()
+			m.focus = paneSearch
+			m = m.recalcLayout()
+		}
+		m = m.syncDictationAllowed()
+
+	case key.Matches(msg, m.keys.FindNext):
+		// ⌘G — navigate to the next match (works with bar closed).
+		m.editor = m.editor.FindNext()
+		idx, total := m.editor.MatchCount()
+		m.search = m.search.SetStatus(searchcomp.StatusFor(idx, total))
+
+	case key.Matches(msg, m.keys.FindPrev):
+		// ⇧⌘G — navigate to the previous match (works with bar closed).
+		m.editor = m.editor.FindPrev()
+		idx, total := m.editor.MatchCount()
+		m.search = m.search.SetStatus(searchcomp.StatusFor(idx, total))
+
 	default:
 		consumed = false
 	}
@@ -182,18 +209,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	if m.focus == paneCenter && !m.viewingHelp() && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
 		m.focus = paneTitle
 		m.title = m.title.FocusAtEnd()
-		return m.finalize(cmds)
-	}
-
-	// Priority 4: Editor modal input takes precedence over footer help toggle.
-	if m.focus == paneCenter && m.editor.WantsModalInput() {
-		prevCursors := m.editor.Cursors()
-		m.editor, cmd = m.editor.Update(msg)
-		cmds = append(cmds, cmd)
-		var modalEdits []buffer.AppliedEdit
-		m.editor, modalEdits = m.editor.DrainEdits()
-		m = m.journalEdit("main", modalEdits, prevCursors, m.editor.Cursors(), &cmds)
-		m = m.syncCursorToFooter()
 		return m.finalize(cmds)
 	}
 
@@ -222,6 +237,16 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		var chatEdits []buffer.AppliedEdit
 		m.chat, chatEdits = m.chat.DrainEdits()
 		m = m.journalEdit("chat", chatEdits, prevCursors, m.chat.Cursors(), &cmds)
+	case paneSearch:
+		prevQuery := m.search.Query()
+		m.search, cmd = m.search.Update(msg)
+		cmds = append(cmds, cmd)
+		if q := m.search.Query(); q != prevQuery {
+			// Live update: apply new query to editor and refresh status.
+			m.editor = m.editor.SetSearchQuery(q, true)
+			idx, total := m.editor.MatchCount()
+			m.search = m.search.SetStatus(searchcomp.StatusFor(idx, total))
+		}
 	case paneTree:
 		m.filetree, cmd = m.filetree.Update(msg)
 		cmds = append(cmds, cmd)

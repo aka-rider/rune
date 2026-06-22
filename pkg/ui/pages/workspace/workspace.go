@@ -18,6 +18,7 @@ import (
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/components/opentabs"
+	searchcomp "rune/pkg/ui/components/search"
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/components/title"
 	"rune/pkg/ui/help"
@@ -35,10 +36,11 @@ const (
 	paneCenter
 	paneTitle
 	paneChat
+	paneSearch
 )
 
 func (p pane) isLeft() bool   { return p == paneTree || p == paneTabs }
-func (p pane) isCenter() bool { return p == paneCenter || p == paneTitle }
+func (p pane) isCenter() bool { return p == paneCenter || p == paneTitle || p == paneSearch }
 
 // ---- Drag state ----
 
@@ -94,6 +96,9 @@ type AutosaveSettledMsg struct {
 // pendingFlushMsg is returned by the debounce goroutine. The handler checks
 // gen == m.flushGen before firing snapshotCmd so only the latest flush wins.
 type pendingFlushMsg struct{ gen uint64 }
+
+// historyLoadedMsg is returned when the search history is loaded from the store.
+type historyLoadedMsg struct{ entries []string }
 
 // ---- Data-loss action disambiguation ----
 
@@ -151,6 +156,9 @@ type Model struct {
 
 	// Help document — rendered once from the keymap; shown read-only under help.DocPath.
 	helpContent string
+
+	// In-file search bar (task 8)
+	search searchcomp.Model
 
 	// Dictation (D16)
 	dict dictcomp.Model
@@ -211,6 +219,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		),
 		footer:       footer.New(keys, st),
 		chat:         chat.New(keys, st, reg, resolver, caps),
+		search:       searchcomp.New(keys, st),
 		dict:         dictcomp.New(),
 		focus:        paneTree,
 		leftVisible:  true,
@@ -244,6 +253,7 @@ func (m Model) Init() tea.Cmd {
 		m.editor.Init(),
 		m.footer.Init(),
 		m.chat.Init(),
+		m.search.Init(),
 		m.dict.Init(),
 		loadDirCmd(m.workDir),
 		openStoreCmd(),

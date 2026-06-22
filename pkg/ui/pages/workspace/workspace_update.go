@@ -9,12 +9,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	dictengine "rune/pkg/dictation"
+	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
 	dictcomp "rune/pkg/ui/components/dictation"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/components/opentabs"
+	searchcomp "rune/pkg/ui/components/search"
 	"rune/pkg/ui/components/title"
 )
 
@@ -274,6 +276,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			// Surface prior-session unsaved untitled docs; GC empty scratch rows.
 			m = m.restoreScratch()
+
+			// Kick off an async load of the search history so the search bar can
+			// populate its ↑/↓ history navigation immediately.
+			store := m.store
+			cmds = append(cmds, func() tea.Msg {
+				entries, err := store.SearchHistory()
+				if err != nil || len(entries) == 0 {
+					return nil
+				}
+				return historyLoadedMsg{entries: entries}
+			})
 		}
 
 	case pendingFlushMsg:
@@ -457,6 +470,29 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Fatal {
 			m.footer = m.footer.SetDictating(false)
 		}
+
+	case searchcomp.SubmitMsg:
+		// Enter / Shift+Enter in the search bar — navigate to a match and persist the query.
+		if msg.Backward {
+			m.editor = m.editor.FindPrev()
+		} else {
+			m.editor = m.editor.FindNext()
+		}
+		idx, total := m.editor.MatchCount()
+		m.search = m.search.SetStatus(searchcomp.StatusFor(idx, total))
+		if m.store != nil && msg.Query != "" {
+			cmds = append(cmds, persistSearchQueryCmd(m.store, msg.Query))
+		}
+
+	case searchcomp.CloseMsg:
+		// Escape from the search bar — clear highlights and return focus to editor.
+		m.search = m.search.Close()
+		m.editor = m.editor.ClearSearch()
+		m.focus = paneCenter
+		m = m.syncDictationAllowed()
+
+	case historyLoadedMsg:
+		m.search = m.search.SetHistory(msg.entries)
 	}
 
 	// Forward non-key messages to all children (broadcast path).
@@ -475,6 +511,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.search, cmd = m.search.Update(msg)
+		cmds = append(cmds, cmd)
+
 		m.chat, cmd = m.chat.Update(msg)
 		cmds = append(cmds, cmd)
 
@@ -485,4 +524,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	return m.finalize(cmds)
+}
+
+// persistSearchQueryCmd writes a query to the search_history table asynchronously.
+// Errors are silently swallowed — history persistence is best-effort.
+func persistSearchQueryCmd(store *docstate.Store, query string) tea.Cmd {
+	return func() tea.Msg {
+		_ = store.AppendSearchQuery(query) // fire-and-forget: search history loss is tolerable
+		return nil
+	}
 }

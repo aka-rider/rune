@@ -12,13 +12,15 @@ import (
 
 // Cell represents a single visual character in the cell grid.
 type Cell struct {
-	Rune      rune
-	Grapheme  string
-	Width     int
-	Style     lipgloss.Style
-	BufOffset int
-	Selected  bool
-	Cursor    bool
+	Rune        rune
+	Grapheme    string
+	Width       int
+	Style       lipgloss.Style
+	BufOffset   int
+	Selected    bool
+	Cursor      bool
+	Match       bool // part of a search match
+	ActiveMatch bool // part of the currently-active search match
 }
 
 // SelInterval is a selection range [Start, End) used for overlay rendering.
@@ -174,7 +176,9 @@ func SliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
 }
 
 // CellsToString converts a slice of cells to a final ANSI-styled string.
-func CellsToString(cells []Cell, selStyle, cursorStyle lipgloss.Style) string {
+// matchStyle and activeMatchStyle are used for search-highlight overlays;
+// pass lipgloss.NewStyle() when no search is active.
+func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style) string {
 	if len(cells) == 0 {
 		return ""
 	}
@@ -184,10 +188,10 @@ func CellsToString(cells []Cell, selStyle, cursorStyle lipgloss.Style) string {
 
 	i := 0
 	for i < len(cells) {
-		effectiveStyle := cellEffectiveStyle(cells[i], selStyle, cursorStyle)
+		effectiveStyle := cellEffectiveStyle(cells[i], selStyle, cursorStyle, matchStyle, activeMatchStyle)
 		j := i + 1
 		for j < len(cells) {
-			nextStyle := cellEffectiveStyle(cells[j], selStyle, cursorStyle)
+			nextStyle := cellEffectiveStyle(cells[j], selStyle, cursorStyle, matchStyle, activeMatchStyle)
 			if !stylesEqual(effectiveStyle, nextStyle) {
 				break
 			}
@@ -210,13 +214,40 @@ func CellsToString(cells []Cell, selStyle, cursorStyle lipgloss.Style) string {
 	return b.String()
 }
 
+// ApplyMatchOverlay marks cells as Match or ActiveMatch based on their BufOffset.
+// activeIdx is the index into matches of the active match; -1 means no active match.
+func ApplyMatchOverlay(cells []Cell, matches []SelInterval, activeIdx int) {
+	for i := range cells {
+		if cells[i].BufOffset < 0 {
+			continue
+		}
+		for mi, m := range matches {
+			if cells[i].BufOffset >= m.Start && cells[i].BufOffset < m.End {
+				if mi == activeIdx {
+					cells[i].ActiveMatch = true
+				} else {
+					cells[i].Match = true
+				}
+				break
+			}
+		}
+	}
+}
+
 // cellEffectiveStyle computes the final style for a cell considering overlays.
-func cellEffectiveStyle(c Cell, selStyle, cursorStyle lipgloss.Style) lipgloss.Style {
+// Precedence: Cursor > ActiveMatch > Selected > Match > base style.
+func cellEffectiveStyle(c Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style) lipgloss.Style {
 	if c.Cursor {
 		return cursorStyle
 	}
+	if c.ActiveMatch {
+		return c.Style.Background(activeMatchStyle.GetBackground())
+	}
 	if c.Selected {
 		return c.Style.Background(selStyle.GetBackground())
+	}
+	if c.Match {
+		return c.Style.Background(matchStyle.GetBackground())
 	}
 	return c.Style
 }

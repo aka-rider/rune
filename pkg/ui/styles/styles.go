@@ -62,7 +62,9 @@ type Styles struct {
 	TaskChecked   lipgloss.Style
 	TaskUnchecked lipgloss.Style
 
-	Selection lipgloss.Style
+	Selection        lipgloss.Style
+	SearchMatch      lipgloss.Style
+	SearchActiveMatch lipgloss.Style
 
 	ChatTitle        lipgloss.Style
 	ChatUserMsg      lipgloss.Style
@@ -142,7 +144,9 @@ func Default() Styles {
 		TaskChecked:   lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
 		TaskUnchecked: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 
-		Selection: lipgloss.NewStyle().Background(lipgloss.Color("239")),
+		Selection:         lipgloss.NewStyle().Background(lipgloss.Color("239")),
+		SearchMatch:       lipgloss.NewStyle().Background(lipgloss.Color("58")),
+		SearchActiveMatch: lipgloss.NewStyle().Background(lipgloss.Color("130")),
 
 		ChatTitle:        lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
 		ChatUserMsg:      lipgloss.NewStyle().Foreground(subtle).Background(lipgloss.Color("236")),

@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"charm.land/bubbles/v2/key"
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
@@ -67,9 +66,13 @@ type Model struct {
 	height           int
 	offsetX          int
 	offsetY          int
-	focused          bool
-	findOverlay      FindOverlay
-	syncFunc         SyncFunc
+	focused              bool
+	searchMatches        []SelInterval
+	searchActive         int    // -1 = no active match
+	searchQuery          string // last query set via SetSearchQuery
+	searchCaseInsensitive bool
+	searchRev            uint64 // m.rev when searchMatches was last computed
+	syncFunc             SyncFunc
 	sanitizeFunc     SanitizeFunc
 	singleLine       bool
 	readOnly         bool
@@ -202,25 +205,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd) {
 	if !m.focused {
 		return m, nil
-	}
-
-	// Find overlay open commands (Cmd+F, Cmd+H) work regardless of overlay state
-	if key.Matches(msg, m.keys.FindOpen) {
-		m.findOverlay = m.findOverlay.open(false)
-		return m, nil
-	}
-	if key.Matches(msg, m.keys.FindReplaceOpen) {
-		m.findOverlay = m.findOverlay.open(true)
-		return m, nil
-	}
-
-	// When find overlay is visible, it consumes ALL keys
-	if m.findOverlay.visible {
-		var consumed bool
-		m.findOverlay, consumed = m.findOverlay.consumeKey(msg)
-		if consumed {
-			return m, nil
-		}
 	}
 
 	// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
@@ -414,8 +398,9 @@ func (m Model) Selections() []SelInterval {
 // Focused returns whether this component is focused.
 func (m Model) Focused() bool { return m.focused }
 
-// WantsModalInput returns whether a modal overlay (find) is active.
-func (m Model) WantsModalInput() bool { return m.findOverlay.visible }
+// WantsModalInput returns whether a modal overlay is active. Always false now
+// that the find overlay has been removed; the workspace search bar owns focus.
+func (m Model) WantsModalInput() bool { return false }
 
 // ReadOnly returns whether the editor is in read-only mode.
 func (m Model) ReadOnly() bool { return m.readOnly }
@@ -949,10 +934,11 @@ func (m Model) View() string {
 
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
 	selStyle := m.styles.Selection
+	noStyle := lipgloss.NewStyle()
 
 	var renderedLines []string
 	for _, lineCells := range cells {
-		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle))
+		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle))
 	}
 
 	for len(renderedLines) < contentHeight {

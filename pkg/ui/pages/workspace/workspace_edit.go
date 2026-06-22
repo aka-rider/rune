@@ -91,6 +91,7 @@ func (m Model) applyFocus() Model {
 	m.opentabs = m.opentabs.SetFocused(m.focus == paneTabs)
 	m.editor = m.editor.SetFocused(m.focus == paneCenter)
 	m.chat = m.chat.SetFocused(m.focus == paneChat)
+	m.search = m.search.SetFocused(m.focus == paneSearch)
 	return m
 }
 
