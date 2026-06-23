@@ -49,13 +49,25 @@ type parsedLine struct {
 }
 
 // parseMarkdown parses the full document and returns per-line span info and blocks.
-func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
+func parseMarkdown(content string) (result []parsedLine, blocks []mdBlock) {
+	lines := strings.Split(content, "\n")
+
+	defer func() {
+		if recover() != nil {
+			// goldmark bug (fcode_block.go:39): Open indexes line[BlockIndent()] without
+			// guarding against -1 (returned for blank lines in nested list blocks). On any
+			// goldmark panic, reset to nil/nil: the render's else-branch then shows raw
+			// buffer text for every line (fence markers included), nothing is hidden.
+			result = nil
+			blocks = nil
+		}
+	}()
+
 	src := []byte(content)
 	reader := text.NewReader(src)
 	tree := mdParser.Parse(reader)
 
-	lines := strings.Split(content, "\n")
-	result := make([]parsedLine, len(lines))
+	result = make([]parsedLine, len(lines))
 
 	// Compute line start offsets
 	lineOffsets := make([]int, len(lines))
@@ -65,7 +77,6 @@ func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
 		offset += len(line) + 1 // +1 for newline
 	}
 
-	var blocks []mdBlock
 	blockID := 0
 
 	// Walk the AST and extract inline elements and blocks
@@ -107,7 +118,7 @@ func parseMarkdown(content string) ([]parsedLine, []mdBlock) {
 		return ast.WalkContinue, nil
 	})
 
-	return result, blocks
+	return
 }
 
 // parseMarkdownAdvanced wraps parseMarkdown and adds advanced inline parsing.
