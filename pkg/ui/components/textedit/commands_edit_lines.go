@@ -11,21 +11,6 @@ import (
 
 var leadingWhitespaceRe = regexp.MustCompile(`^[ \t]*`)
 
-func lineRangeForCursor(buf buffer.Buffer, c cursor.Cursor) (startLine, endLine int) {
-	if c.HasSelection() {
-		startLine = buf.OffsetToLineCol(c.SelectionStart()).Line
-		endLine = buf.OffsetToLineCol(c.SelectionEnd()).Line
-		if buf.OffsetToLineCol(c.SelectionEnd()).Col == 0 && endLine > startLine {
-			endLine--
-		}
-	} else {
-		bp := buf.OffsetToLineCol(c.Position)
-		startLine = bp.Line
-		endLine = bp.Line
-	}
-	return
-}
-
 type editInfoItem struct {
 	edit buffer.Edit
 	cID  int

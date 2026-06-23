@@ -336,15 +336,6 @@ func (m Model) contentHeight() int {
 	return h
 }
 
-// imageMaxCols returns the maximum column width for rendered images.
-func (m Model) imageMaxCols() int {
-	w := m.width - 2
-	if w < 1 {
-		return 1
-	}
-	return w
-}
-
 // SetRect sets position and size atomically (D8).
 func (m Model) SetRect(r Rect) Model {
 	changed := r.W != m.width || r.H != m.height
@@ -988,6 +979,3 @@ func isPrintableChar(r rune) bool {
 	return r >= ' ' && r <= '~'
 }
 
-func firstRune(s string) (rune, int) {
-	return utf8.DecodeRuneInString(s)
-}

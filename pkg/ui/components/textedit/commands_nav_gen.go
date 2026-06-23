@@ -60,18 +60,6 @@ func execCursorEndLine(ctx command.CommandContext) command.Result {
 	})
 }
 
-func execCursorBeginDocument(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, false, func(c cursor.Cursor, _ bool) cursor.Cursor {
-		return updateHorizontal(ctx, c, 0, false)
-	})
-}
-
-func execCursorEndDocument(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, false, func(c cursor.Cursor, _ bool) cursor.Cursor {
-		return updateHorizontal(ctx, c, ctx.Buffer.Len(), false)
-	})
-}
-
 func execSelectLeft(ctx command.CommandContext) command.Result {
 	return handleCursorCmd(ctx, true, func(c cursor.Cursor, _ bool) cursor.Cursor {
 		return handleLeftCmd(ctx, c, true, prevRuneOffset)
@@ -120,18 +108,6 @@ func execSelectEndLine(ctx command.CommandContext) command.Result {
 	})
 }
 
-func execSelectBeginDocument(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, true, func(c cursor.Cursor, _ bool) cursor.Cursor {
-		return updateHorizontal(ctx, c, 0, true)
-	})
-}
-
-func execSelectEndDocument(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, true, func(c cursor.Cursor, _ bool) cursor.Cursor {
-		return updateHorizontal(ctx, c, ctx.Buffer.Len(), true)
-	})
-}
-
 // pageStep is the number of rows a page command scrolls: a full viewport
 // minus one row of overlap for context. Used for both editable and read-only
 // modes so paging behaves identically everywhere.
@@ -151,22 +127,6 @@ func execScrollPageUp(ctx command.CommandContext) command.Result {
 
 func execScrollPageDown(ctx command.CommandContext) command.Result {
 	return handleScrollCmd(ctx, 0, pageStep(ctx))
-}
-
-func execScrollToTop(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, -1000)
-}
-
-func execScrollToBottom(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, 1000)
-}
-
-func execScrollLeft(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, -1, 0)
-}
-
-func execScrollRight(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 1, 0)
 }
 
 func execSelectAll(ctx command.CommandContext) command.Result {

@@ -170,18 +170,6 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m Model) clearImages() (Model, tea.Cmd) {
-	var ids []uint32
-	for _, img := range m.images {
-		ids = append(ids, img.LiveIDs()...)
-	}
-	m.images = make(map[string]image.Model)
-	if len(ids) == 0 {
-		return m, nil
-	}
-	return m, image.DeleteCmd(ids)
-}
-
 func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	var path string

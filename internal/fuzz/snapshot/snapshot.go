@@ -74,7 +74,7 @@ type Snapshot struct {
 	GuardKind        footer.GuardKind
 	GuardOptionCount int
 	ChordPending     bool
-	FocusPane        int // 0=tree,1=tabs,2=center,3=title,4=chat
+	FocusPane        int // 0=tree,1=tabs,2=center,3=title,4=chat,5=search
 	AppQuitting      bool
 
 	// Filetree (for FT-BOUNDS)

@@ -524,16 +524,6 @@ func expandForDelimiters(node ast.Node, src []byte, contentStart, contentEnd int
 	return struct{ start, end int }{contentStart, contentEnd}
 }
 
-// nodeSegment gets byte range from a block node's lines.
-func nodeSegment(node ast.Node) struct{ start, end int } {
-	if node.Lines().Len() > 0 {
-		first := node.Lines().At(0)
-		last := node.Lines().At(node.Lines().Len() - 1)
-		return struct{ start, end int }{first.Start, last.Stop}
-	}
-	return struct{ start, end int }{-1, -1}
-}
-
 // extractChildText extracts the visible text content from a node's children.
 func extractChildText(node ast.Node, src []byte) string {
 	var buf bytes.Buffer

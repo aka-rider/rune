@@ -1,7 +1,6 @@
 package keymap
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 
@@ -34,31 +33,6 @@ var editorShortcutKeys = []string{
 	"Cancel",        // Escape → cancel/close modal
 	"Undo",          // Cmd+Z → undo
 	"Redo",          // Cmd+Shift+Z → redo
-}
-
-// chordToKeyString reconstructs the key string that parseChord() would
-// have produced from a Chord, so we can match against AllPhysicalKeys().
-func chordToKeyString(c keybind.Chord) string {
-	parts := make([]string, 0, 4)
-	if c.Ctrl {
-		parts = append(parts, "ctrl")
-	}
-	if c.Alt {
-		parts = append(parts, "alt")
-	}
-	if c.Shift {
-		parts = append(parts, "shift")
-	}
-	if c.Cmd {
-		parts = append(parts, "cmd")
-	}
-	if c.Key != "" {
-		parts = append(parts, c.Key)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%s", parts[0]) // Simplified: for multi-part chords we need join
 }
 
 // keyFromChord builds the key string that parseChord would produce.

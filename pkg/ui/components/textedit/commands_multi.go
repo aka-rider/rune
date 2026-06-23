@@ -1,10 +1,7 @@
 package textedit
 
 import (
-	"sort"
-
 	"rune/pkg/command"
-	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 )
 
@@ -133,44 +130,6 @@ func execMulticursorEscape(ctx command.CommandContext) command.Result {
 
 	// Neither multi-cursor nor selection — propagate (no-op from command perspective)
 	return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-}
-
-// lineRange represents a contiguous range of lines with associated cursor IDs.
-type lineRange struct {
-	startLine int
-	endLine   int
-	cursorIDs []int
-}
-
-// unifyLineRanges computes each cursor's line range and merges overlapping/adjacent ranges.
-func unifyLineRanges(buf buffer.Buffer, cursors []cursor.Cursor) []lineRange {
-	if len(cursors) == 0 {
-		return nil
-	}
-
-	var ranges []lineRange
-	for _, c := range cursors {
-		sl, el := lineRangeForCursor(buf, c)
-		ranges = append(ranges, lineRange{startLine: sl, endLine: el, cursorIDs: []int{c.ID}})
-	}
-
-	sort.Slice(ranges, func(i, j int) bool {
-		return ranges[i].startLine < ranges[j].startLine
-	})
-
-	merged := []lineRange{ranges[0]}
-	for i := 1; i < len(ranges); i++ {
-		last := &merged[len(merged)-1]
-		if ranges[i].startLine <= last.endLine+1 {
-			if ranges[i].endLine > last.endLine {
-				last.endLine = ranges[i].endLine
-			}
-			last.cursorIDs = append(last.cursorIDs, ranges[i].cursorIDs...)
-		} else {
-			merged = append(merged, ranges[i])
-		}
-	}
-	return merged
 }
 
 func registerMultiCommands(builder command.Builder) (command.Builder, error) {

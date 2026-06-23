@@ -77,8 +77,8 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 		}
 	}
 
-	// TR-focus-valid: FocusPane must be one of the known pane enum values (0–4).
-	const maxPane = 4
+	// TR-focus-valid: FocusPane must be one of the known pane enum values (0–5).
+	const maxPane = 5
 	if s.FocusPane < 0 || s.FocusPane > maxPane {
 		return &invariant.Violation{
 			InvariantID: "TR-focus-valid",

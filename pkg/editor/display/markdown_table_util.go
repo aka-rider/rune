@@ -26,12 +26,6 @@ func formatTableSeparatorSpansWithWidths(colWidths []int, lineStart int, lineTex
 	}}
 }
 
-// formatTableSeparatorSpans creates styled spans for a table separator line
-// using box-drawing characters.
-func formatTableSeparatorSpans(block mdBlock, lineStart int, lineText string) []SyntaxSpan {
-	return formatTableSeparatorSpansWithWidths(block.colWidths, lineStart, lineText, block)
-}
-
 // tableLineRole determines whether a table line is header, separator, or body.
 func tableLineRole(block mdBlock, lineIdx int) TableRoleKind {
 	if lineIdx == block.sepLine {

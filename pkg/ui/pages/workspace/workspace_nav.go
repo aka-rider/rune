@@ -314,7 +314,17 @@ func (m Model) executeClose(closeDocID int64, closePath string) (Model, tea.Cmd)
 	if !hasNext {
 		return m.CreateUntitled()
 	}
-	return m.requestOpenPath(next.DocID, next.Path)
+
+	var cmd tea.Cmd
+	m, cmd = m.requestOpenPath(next.DocID, next.Path)
+	// For async file loads requestOpenPath issues a loadFileCmd and leaves
+	// m.docID/m.filePath at 0/"". Set them optimistically so finalize() marks
+	// the incoming tab active during the transition, satisfying TAB-SET.
+	if m.docID == 0 && m.filePath == "" {
+		m.docID = next.DocID
+		m.filePath = next.Path
+	}
+	return m, cmd
 }
 
 // maybeFinalizeTitle validates and commits the title when focus is leaving paneTitle.
