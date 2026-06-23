@@ -33,6 +33,7 @@ brews:
   - name: rune-edit
     ids:
       - rune-archive
+    directory: Formula
     repository:
       owner: aka-rider
       name: homebrew-tap
