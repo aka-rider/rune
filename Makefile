@@ -28,8 +28,11 @@ test-fuzz:
 	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
 	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
 
+release-snapshot:
+	goreleaser release --snapshot --clean
+
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server
 
-.PHONY: build build-fuzz run test clean test-fuzz whisper.cpp-restart
+.PHONY: build build-fuzz run test clean test-fuzz release-snapshot whisper.cpp-restart
 

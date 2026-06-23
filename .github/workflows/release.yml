@@ -11,41 +11,20 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25.x'
+          go-version-file: go.mod
 
-      - name: Build
+      - name: Install build dependencies
+        run: brew install libgit2 pkg-config
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
         env:
-          CGO_ENABLED: "1"
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          go build \
-            -ldflags "-s -w -X main.version=${VERSION}" \
-            -o rune \
-            ./cmd/rune
-
-      - name: Sign
-        run: |
-          # Log the linked libgit2 path for the release record. Homebrew sets the
-          # dylib install ID to its stable opt path, so this is already correct on
-          # arm64; the formula re-points it to the user's prefix at install time.
-          otool -L rune | grep libgit2 || true
-          file rune | grep -q 'arm64' || { echo "ERROR: binary is not arm64"; exit 1; }
-          codesign --sign - --force rune
-
-      - name: Archive and checksum
-        run: |
-          tar -czf rune-darwin-arm64.tar.gz rune
-          SHA256=$(shasum -a 256 rune-darwin-arm64.tar.gz | awk '{print $1}')
-          echo "SHA256=${SHA256}" >> "$GITHUB_ENV"
-          echo "### sha256 for Formula/rune.rb" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "${SHA256}" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload release artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" rune-darwin-arm64.tar.gz
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
