@@ -53,6 +53,7 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	case "":
 		return m.showUntitled(docID), nil
 	default:
+		m.editor = m.editor.SetContent("")
 		return m, loadFileCmd(m.fsys(), context.Background(), path)
 	}
 }
