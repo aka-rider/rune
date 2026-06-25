@@ -3,7 +3,6 @@ package image
 import (
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,9 +40,9 @@ func writeTTY(seq string) error {
 }
 
 func DecodeCmd(m Model) tea.Cmd {
-	p, ap, mt, mc, mr, c := m.path, m.absPath, m.mtime, m.maxCols, m.maxRows, m.cellSize
+	p, ap, mt, mc, mr, c, fsys := m.path, m.absPath, m.mtime, m.maxCols, m.maxRows, m.cellSize, m.fsys()
 	return func() tea.Msg {
-		data, err := os.ReadFile(ap)
+		data, err := fsys.ReadFile(ap)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
 		}
@@ -74,9 +73,9 @@ func DecodeCmd(m Model) tea.Cmd {
 }
 
 func TransmitCmd(m Model) tea.Cmd {
-	p, ap, theID, c, r, sz := m.path, m.absPath, m.id, m.cols, m.rows, m.cellSize
+	p, ap, theID, c, r, sz, fsys := m.path, m.absPath, m.id, m.cols, m.rows, m.cellSize, m.fsys()
 	return func() tea.Msg {
-		data, err := os.ReadFile(ap)
+		data, err := fsys.ReadFile(ap)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
 		}
@@ -98,9 +97,9 @@ func TransmitCmd(m Model) tea.Cmd {
 }
 
 func TransmitAnimationCmd(m Model) tea.Cmd {
-	p, ap, ids, c, r, sz := m.path, m.absPath, append([]uint32(nil), m.frameIDs...), m.cols, m.rows, m.cellSize
+	p, ap, ids, c, r, sz, fsys := m.path, m.absPath, append([]uint32(nil), m.frameIDs...), m.cols, m.rows, m.cellSize, m.fsys()
 	return func() tea.Msg {
-		data, err := os.ReadFile(ap)
+		data, err := fsys.ReadFile(ap)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
 		}
@@ -129,9 +128,9 @@ func TransmitAnimationCmd(m Model) tea.Cmd {
 }
 
 func EncodeITerm2Cmd(m Model) tea.Cmd {
-	p, ap, c, r, sz := m.path, m.absPath, m.cols, m.rows, m.cellSize
+	p, ap, c, r, sz, fsys := m.path, m.absPath, m.cols, m.rows, m.cellSize, m.fsys()
 	return func() tea.Msg {
-		data, err := os.ReadFile(ap)
+		data, err := fsys.ReadFile(ap)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
 		}

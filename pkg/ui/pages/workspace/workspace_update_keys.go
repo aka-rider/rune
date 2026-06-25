@@ -19,6 +19,18 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		return m.finalize(cmds)
 	}
 
+	// Priority 2.1: a data-loss guard owns the keyboard until resolved (§1.4.4).
+	// While the guard is showing, NO global key (save/close/new/undo/redo) may act
+	// behind it — route the key only to the footer, which resolves on s/d/Esc and
+	// ignores everything else. Without this, ⌘S behind an open dirty-close guard
+	// issues a real save whose ack (pendingDataLoss still actionClose) then closes
+	// and blanks the buffer — a destructive transition the user never confirmed.
+	if m.footer.InGuard() {
+		m.footer, cmd = m.footer.Update(msg)
+		cmds = append(cmds, cmd)
+		return m.finalize(cmds)
+	}
+
 	// Priority 2.5: Global undo/redo (skipped when search is focused — the
 	// search component handles Undo internally for its own text field).
 	switch {

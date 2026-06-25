@@ -29,11 +29,22 @@ var humanPaths = []string{
 
 // seedMem returns a vfs.Mem pre-seeded with humanPaths so the filetree and
 // file-load machinery see real entries on bootstrap.
+//
+// The files are CROSS-LINKED (a↔b, both → notes/c, c → ../a) and salted with dead
+// links (missing targets) and external schemes (http/mailto). Each link sits at the
+// start of its own line so the followLink cluster (Home → Enter) lands the caret
+// inside the link span. With the VFS-aware resolver (§1.4.9) these resolve against
+// THIS Mem — the same backend the workspace loads from — so the follow path
+// exercises LinkInternal, LinkMissing, and LinkExternal, not just "missing".
 func seedMem() *vfs.Mem {
 	mem := vfs.NewMem()
-	_ = mem.WriteFile("/fuzz/a.md", []byte("# File A\n\nInitial content of A.\n"), 0o644)
-	_ = mem.WriteFile("/fuzz/b.md", []byte("# File B\n\nInitial content of B.\n"), 0o644)
-	_ = mem.WriteFile("/fuzz/notes/c.md", []byte("# Notes\n\n- item one\n- item two\n"), 0o644)
+	_ = mem.WriteFile("/fuzz/a.md", []byte(
+		"# File A\n\n[B](b.md)\n[notes](notes/c.md)\n[x](missing.md)\n"+
+			"[web](https://example.com)\n[mail](mailto:a@b.com)\n"), 0o644)
+	_ = mem.WriteFile("/fuzz/b.md", []byte(
+		"# File B\n\n[A](a.md)\n[c](notes/c.md)\n[gone](../gone.md)\n"), 0o644)
+	_ = mem.WriteFile("/fuzz/notes/c.md", []byte(
+		"# Notes\n\n[A](../a.md)\n[none](none.md)\n"), 0o644)
 	return mem
 }
 
@@ -101,6 +112,18 @@ func FuzzHumanSession(f *testing.F) {
 	f.Add([]byte{
 		1, 2,    // NavigateTreeAndOpen: Down×3 → Enter
 		5, 1, 0, // ExternalChange: pathIndex=1 (b.md), watchSub=0
+	})
+
+	// Seed: follow a link — descend to a link line in a.md, Enter (follow), drain guard.
+	// Cluster 8 = followLink: ^e → Down×k → Home → Enter → s/d/Esc.
+	f.Add([]byte{8, 2, 0}) // down×3 (→ [B](b.md)), guard=save
+	f.Add([]byte{8, 4, 1}) // down×5 (→ [x](missing.md) → LinkMissing), guard=discard
+	f.Add([]byte{8, 5, 2}) // down×6 (→ external link), guard=cancel
+
+	// Seed: dirty the open doc, then follow a link (eviction guard reachable), then save.
+	f.Add([]byte{
+		2, 5, 0, 0, 'd', 'i', 'r', 't', 'y', // EditUndoRedoSave: type "dirty", undo×1, no redo, ⌘S
+		8, 2, 0, // FollowLink: follow [B](b.md), guard=save
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {

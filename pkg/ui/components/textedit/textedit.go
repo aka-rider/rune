@@ -432,10 +432,17 @@ func (m Model) Cursors() []cursor.Cursor {
 	return m.cursors.All()
 }
 
-// SetCursors restores cursor state and scrolls to the primary cursor.
+// SetCursors restores cursor state and scrolls to the primary cursor. It re-runs
+// syncDisplay because the markdown reveal layer is a function of cursor position
+// (a span reveals its raw source when a caret is inside it): undo/redo restore the
+// caret here AFTER ApplyInverse/Reapply already laid out the display against the
+// pre-restore cursors, so without this the caret can land on hidden markup (a
+// heading's "# ", a link's delimiters) that has no rendered cell — leaving it
+// invisible until the next keystroke forces a re-render (R1).
 func (m Model) SetCursors(cs []cursor.Cursor) Model {
 	if len(cs) > 0 {
 		m.cursors = cursor.NewCursorSetFrom(cs)
+		m = m.syncDisplay()
 		m = m.ScrollToCursor()
 	}
 	return m

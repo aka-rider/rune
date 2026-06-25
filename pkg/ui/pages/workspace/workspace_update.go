@@ -504,8 +504,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.opentabs, cmd = m.opentabs.Update(msg)
 		cmds = append(cmds, cmd)
 
+		// A content-bearing broadcast (paste/clipboard, async image-insert) mutates
+		// the editor buffer, so it MUST drain+journal in THIS pass — exactly like the
+		// keypress path (workspace_update_keys.go paneCenter). Otherwise the edit is
+		// left un-drained and a later keystroke journals it, advancing the journal
+		// past the saved position and flipping dirty with no content change (§1.4.8).
+		// Non-mutating broadcasts (timers, image ticks, resize) drain empty, so
+		// journalEdit is a no-op. Gated on the focused editor, mirroring the key path.
+		prevEditorCursors := m.editor.Cursors()
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
+		if m.focus == paneCenter && !m.dict.Enabled() {
+			var editorEdits []buffer.AppliedEdit
+			m.editor, editorEdits = m.editor.DrainEdits()
+			m = m.journalEdit("main", editorEdits, prevEditorCursors, m.editor.Cursors(), &cmds)
+		}
 
 		prevSearchQuery := m.search.Query()
 		m.search, cmd = m.search.Update(msg)

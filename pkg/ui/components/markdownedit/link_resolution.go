@@ -16,16 +16,19 @@ package markdownedit
 // double-click — a plain follow, no "new tab".
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
+
+	"rune/pkg/vfs"
 )
 
 // resolveRef resolves a relative reference against docDir first, then root,
-// returning the absolute path of the first that exists. appendMD adds ".md" to an
-// extensionless target (wiki/markdown links). An absolute target is returned iff it
-// exists. This is the single resolver shared by link-follow and image embeds.
-func resolveRef(target, docDir, root string, appendMD bool) (string, bool) {
+// returning the absolute path of the first that exists. Existence is checked
+// through fsys (§1.4.9) so it agrees with the filesystem the workspace serves —
+// never a stray os.Stat against real disk. appendMD adds ".md" to an extensionless
+// target (wiki/markdown links). An absolute target is returned iff it exists. This
+// is the single resolver shared by link-follow and image embeds.
+func resolveRef(fsys vfs.FS, target, docDir, root string, appendMD bool) (string, bool) {
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return "", false
@@ -36,34 +39,34 @@ func resolveRef(target, docDir, root string, appendMD bool) (string, bool) {
 	}
 	if filepath.IsAbs(target) {
 		clean := filepath.Clean(target)
-		return clean, fileExistsForLink(clean)
+		return clean, fileExistsForLink(fsys, clean)
 	}
 	for _, base := range [2]string{docDir, root} {
 		if base == "" {
 			continue
 		}
 		cand := filepath.Clean(filepath.Join(base, target))
-		if fileExistsForLink(cand) {
+		if fileExistsForLink(fsys, cand) {
 			return cand, true
 		}
 	}
 	return "", false
 }
 
-func fileExistsForLink(path string) bool {
-	info, err := os.Stat(path)
+func fileExistsForLink(fsys vfs.FS, path string) bool {
+	info, err := fsys.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
 
-// resolveEmbed resolves an image/embed target to an existing on-disk path, against
-// the open document's folder then the workspace root — the SAME bases (and the same
-// resolver) as link following.
+// resolveEmbed resolves an image/embed target to an existing path (via the editor's
+// fsys), against the open document's folder then the workspace root — the SAME bases
+// (and the same resolver) as link following.
 func (m Model) resolveEmbed(target string) string {
-	if abs, ok := resolveRef(target, m.docDir(), m.root, false); ok {
+	if abs, ok := resolveRef(m.fsys(), target, m.docDir(), m.root, false); ok {
 		return abs
 	}
 	if filepath.Ext(strings.TrimSpace(target)) == "" {
-		if abs, ok := resolveRef(target, m.docDir(), m.root, true); ok {
+		if abs, ok := resolveRef(m.fsys(), target, m.docDir(), m.root, true); ok {
 			return abs
 		}
 	}

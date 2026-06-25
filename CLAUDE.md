@@ -71,7 +71,9 @@ Implementation-agnostic law: however persistence is built, it MUST satisfy every
 
 **1.4.8 Dirty is derived — recompute it on every transition.** "Dirty" is not a cached flag; it is the durable journal position vs the last-saved position. On every transition — open, tab switch, LRU eviction, close, quit — reload the position from the store and recompute. Never trust a flag cached from when the tab was last active; never let a transition silently drop or mis-mark a dirty buffer.
 
-*Implementation map (the laws above stay implementation-agnostic; this is today's wiring): atomic write → `pkg/atomicfile.Write`; recovery store → `pkg/docstate` (`AppendEdit` / `CreateSnapshot` / `RecoverDocument`); dirty state → `workspace` journal positions (`DocJournalPos` / `RecordSaved`).*
+**1.4.9 One filesystem — everything goes through `vfs.FS`.** Every filesystem operation the running editor performs — read, write, stat, readdir, mkdir, rename, existence check — MUST go through the injected `vfs.FS` (`pkg/vfs`), never a direct `os.*`/`ioutil`/`filepath.Walk` call. A component that needs the filesystem receives `vfs.FS` by dependency injection (as the workspace's `fsys()`, docstate's `UseFS`, and the editor's `SetFS` do) and defaults a `nil` shim to `vfs.Disk{}`; it never reaches for `os` itself. This is not stylistic: a stray `os.Stat`/`os.ReadFile` silently consults real disk instead of the FS the rest of the app is using, so in-memory tests and the session fuzzer diverge from production (e.g. cross-links resolving as "missing" because the resolver statted disk while the workspace served `vfs.Mem`) — and any future sandbox/remote backend is bypassed. There are exactly **two sanctioned boundaries** where real `os.*` lives: `pkg/vfs` (the `FS` implementations — `Disk` wraps `os`, `Mem` is in-memory) and `pkg/atomicfile` (the durable temp→fsync→rename primitive `vfs.Disk.WriteFile` delegates to). Three narrow, **documented** exceptions sit OUTSIDE document I/O: (a) launch bootstrap that must run before any FS exists — CWD resolution (`os.Getwd`), `-w` argument validation, and the SQLite recovery-DB path under the user data dir (SQLite owns a real file handle and cannot live in `vfs.Mem`); (b) the fsnotify directory watcher (the OS watch API has no in-memory analogue — it is `//go:build fuzzing`-stubbed and tests inject watch *messages*); (c) test/fuzz tooling (`*_test.go`, `internal/fuzz/**`, golden-file helpers). Anything else doing direct `os.*` FS I/O in `pkg/ui/**` or other runtime code is a violation.
+
+*Implementation map (the laws above stay implementation-agnostic; this is today's wiring): atomic write → `pkg/atomicfile.Write`; recovery store → `pkg/docstate` (`AppendEdit` / `CreateSnapshot` / `RecoverDocument`); dirty state → `workspace` journal positions (`DocJournalPos` / `RecordSaved`); filesystem → `pkg/vfs.FS` injected via `workspace.WithFS` → `markdownedit.SetFS` / `docstate.UseFS`, `nil`-defaulting to `vfs.Disk{}`.*
 
 ### 1.5 Two Coordinate Systems — Bytes vs. Runes
 
@@ -164,6 +166,7 @@ Each is a hard violation; the cited section is the rule. (UI-architecture pitfal
 | 12 | A magic sentinel (`-1` / `""` / `0`) overloading a variable to mean "invalid/absent" | §1.7 |
 | 13 | A magic value for an absent DB value instead of `NULL` | §1.7 |
 | 14 | Caching a dirty flag across a transition instead of recomputing it from the store | §1.4.8 |
+| 15 | Direct `os.*`/`ioutil`/`filepath.Walk` FS access in runtime code instead of the injected `vfs.FS` | §1.4.9 |
 
 ---
 
@@ -209,4 +212,5 @@ Before completing any change, mechanically verify. (UI-architecture checks are i
 - [ ] Edit/cursor offsets are computed in **bytes** (`len`); display widths in **runes** (`utf8.RuneCountInString`) — never mixed. (§1.5)
 - [ ] No variable carries a magic sentinel (`-1`/`""`/`0`) for "invalid/absent"; DB absence is `NULL` (read via `sql.NullXxx` + `.Valid`). (§1.7)
 - [ ] Reusable slices are reset with `[:0]`, not `nil` (`nil` only to release memory you won't refill).
+- [ ] All filesystem access in runtime code goes through the injected `vfs.FS` — no direct `os.*`/`ioutil`/`filepath.Walk`, except the `pkg/vfs` + `pkg/atomicfile` boundaries and the documented bootstrap/watcher/test exceptions. (§1.4.9)
 - [ ] No file exceeds 500 LoC.

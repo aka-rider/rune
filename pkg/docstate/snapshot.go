@@ -163,6 +163,49 @@ func (s *Store) Content(docID int64) (string, error) {
 	return s.RecoverDocument(docID)
 }
 
+// ActiveEdits returns the surface's edit batches that are LIVE at the document's
+// current undo position — i.e. with seq <= current_seq, honoring undo/redo (unlike
+// AllEdits, which returns the whole log regardless of the undo head). Ordered by
+// seq. Used by the fuzz mirror to reconstruct the live buffer as loaded-baseline +
+// ReplayForward(ActiveEdits); a snapshot-anchored RecoverDocument cannot serve that
+// because the loaded baseline is never snapshotted at genesis.
+func (s *Store) ActiveEdits(docID int64, surface string) ([][]buffer.AppliedEdit, error) {
+	var nullableCS sql.NullInt64
+	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
+		return nil, fmt.Errorf("active edits doc %d: read current_seq: %w", docID, err)
+	}
+	targetSeq := int64(math.MaxInt64)
+	if nullableCS.Valid {
+		targetSeq = nullableCS.Int64
+	}
+
+	rows, err := s.perm.Query(
+		`SELECT edits FROM events WHERE doc_id=? AND surface=? AND kind='edit' AND seq <= ? ORDER BY seq ASC`,
+		docID, surface, targetSeq,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("active edits doc %d surface %q: %w", docID, surface, err)
+	}
+	defer rows.Close()
+
+	var result [][]buffer.AppliedEdit
+	for rows.Next() {
+		var editsJSON string
+		if err := rows.Scan(&editsJSON); err != nil {
+			return nil, fmt.Errorf("active edits scan doc %d surface %q: %w", docID, surface, err)
+		}
+		var batch []buffer.AppliedEdit
+		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
+			return nil, fmt.Errorf("active edits unmarshal doc %d surface %q: %w", docID, surface, err)
+		}
+		result = append(result, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("active edits rows doc %d surface %q: %w", docID, surface, err)
+	}
+	return result, nil
+}
+
 // HasHistory reports whether docID has any events or snapshots in the VFS.
 // Use this to distinguish "no VFS record yet" (false → fall back to disk)
 // from "VFS record exists" (true → use RecoverDocument even if content is

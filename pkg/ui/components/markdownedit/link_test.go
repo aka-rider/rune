@@ -15,6 +15,7 @@ import (
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // newLinkModel builds a focused, sized markdownedit model wired with the real
@@ -148,6 +149,31 @@ func TestResolveRefAgainstFileDirThenRoot(t *testing.T) {
 	l3 := len("[a](pages/y.md)\n[b](q.md)\n") + 1
 	if la, ok := m.linkAt(l3); !ok || la.Kind != LinkMissing || la.Raw != "missing.md" {
 		t.Errorf("missing.md: got %+v ok=%v; want LinkMissing raw=missing.md", la, ok)
+	}
+}
+
+// TestResolveRefUsesInjectedFS proves §1.4.9: link resolution consults the
+// injected vfs.FS, not real disk. The target exists ONLY in vfs.Mem (there is no
+// /vault/b.md on disk), so resolving it to LinkInternal is impossible with the old
+// os.Stat — it can only succeed through the injected filesystem.
+func TestResolveRefUsesInjectedFS(t *testing.T) {
+	mem := vfs.NewMem()
+	if err := mem.WriteFile("/vault/b.md", []byte("# B"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "[to b](b.md)\n[dead](missing.md)"
+	m := newLinkModel(t, content)
+	m = m.SetFS(mem).SetDocPath("/vault/a.md").SetRoot("/vault")
+
+	// [to b](b.md): present only in the in-memory FS → LinkInternal via fsys.Stat.
+	if la, ok := m.linkAt(1); !ok || la.Kind != LinkInternal || la.Dest != "/vault/b.md" {
+		t.Errorf("b.md via vfs.Mem: got %+v ok=%v; want LinkInternal /vault/b.md", la, ok)
+	}
+	// [dead](missing.md): absent from the FS → LinkMissing.
+	off := len("[to b](b.md)\n") + 1
+	if la, ok := m.linkAt(off); !ok || la.Kind != LinkMissing {
+		t.Errorf("missing.md: got %+v ok=%v; want LinkMissing", la, ok)
 	}
 }
 

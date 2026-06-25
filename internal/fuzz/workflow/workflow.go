@@ -37,7 +37,7 @@ func DecodeWorkflow(data []byte) []event.Event {
 // decodeCluster selects one cluster by clusterID % numClusters and parameterises
 // it from the prefix of data, returning the events and bytes consumed.
 func decodeCluster(id byte, data []byte) ([]event.Event, int) {
-	const numClusters = 8
+	const numClusters = 9
 	switch id % numClusters {
 	case 0:
 		return openSearchAndFind(data)
@@ -55,6 +55,8 @@ func decodeCluster(id byte, data []byte) ([]event.Event, int) {
 		return resizeTerminal(data)
 	case 7:
 		return globalSeqDirtySpec(data)
+	case 8:
+		return followLink(data)
 	}
 	return nil, 0
 }
@@ -80,6 +82,8 @@ func keyPressToIndex(kp tea.KeyPressMsg) uint16 {
 		return 2
 	case kp.Code == tea.KeyRight && kp.Mod == 0:
 		return 3
+	case kp.Code == tea.KeyHome && kp.Mod == 0:
+		return 4
 	case kp.Code == tea.KeyEnter && kp.Mod == 0:
 		return 8
 	case kp.Code == tea.KeyBackspace && kp.Mod == 0:
@@ -130,6 +134,7 @@ func repeat(ev event.Event, n int) []event.Event {
 
 var (
 	evDown     = key(tea.KeyPressMsg{Code: tea.KeyDown})
+	evHome     = key(tea.KeyPressMsg{Code: tea.KeyHome})
 	evEnter    = key(tea.KeyPressMsg{Code: tea.KeyEnter})
 	evEsc      = key(tea.KeyPressMsg{Code: tea.KeyEscape})
 	evSave     = key(tea.KeyPressMsg{Code: 's', Mod: tea.ModSuper})
@@ -260,6 +265,33 @@ func guardResponseIndex(r uint8) uint16 {
 	default:
 		return 32 // Escape = cancel
 	}
+}
+
+// FollowLink: FocusEditor → Down×k → Home → Enter (follow) → guard response.
+// Descends to a link line in the open document and presses Enter, which follows
+// the link under a lone caret instead of inserting a newline (markdownedit). Each
+// seeded link starts its own line, so Home places the caret inside the link span.
+// Following opens the target as a new tab; if that evicts a DIRTY background tab the
+// data-loss guard appears, so a guard response (s/d/Esc) follows to drain it and keep
+// the session moving. When the caret is NOT on a link, Enter inserts a newline (also
+// valid) and the response key is a harmless keystroke.
+func followLink(data []byte) ([]event.Event, int) {
+	downs := 2
+	response := uint8(2) // default Esc (cancel): keep any dirty work intact
+	consumed := 0
+	if len(data) >= 2 {
+		downs = int(data[0]%6) + 1
+		response = data[1] % 3
+		consumed = 2
+	}
+	guardKey := event.Event{Kind: event.KindKey, KeyIndex: guardResponseIndex(response)}
+	var evs []event.Event
+	evs = append(evs, evEdit)
+	evs = append(evs, repeat(evDown, downs)...)
+	evs = append(evs, evHome)  // col 0 → inside the link span
+	evs = append(evs, evEnter) // follow under a lone caret
+	evs = append(evs, guardKey)
+	return evs, consumed
 }
 
 // ExternalChange (fsnotify simulation cluster):

@@ -117,7 +117,7 @@ func TestPendingImageReservesNoRows(t *testing.T) {
 
 	// A freshly-created image is PendingDecode — not Live — so it contributes
 	// no expanded footprint.
-	img := image.New("a.png", "/abs/a.png", 1, 0, m.termCaps, m.cellSize, 40, 10)
+	img := image.New("a.png", "/abs/a.png", 1, 0, m.termCaps, m.cellSize, 40, 10, nil)
 	if img.IsLive() {
 		t.Fatalf("freshly-created image should not be Live")
 	}

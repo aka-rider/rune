@@ -295,9 +295,13 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 
 // WithFS injects the filesystem shim used for all .md disk I/O. Production never
 // calls it (the nil default resolves to vfs.Disk); the session fuzzer injects a
-// shared vfs.Mem so load/save/rename/readdir run fully in memory.
+// shared vfs.Mem so load/save/rename/readdir run fully in memory. The same shim is
+// pushed to the editor so its link/embed resolution + image reads see the SAME
+// files the workspace serves (§1.4.9) — otherwise in-memory cross-links would all
+// resolve as missing against real disk.
 func (m Model) WithFS(fs vfs.FS) Model {
 	m.fs = fs
+	m.editor = m.editor.SetFS(fs)
 	return m
 }
 

@@ -16,6 +16,7 @@ import (
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // Model is the markdown editing component. It embeds textedit.Model for all
@@ -38,6 +39,7 @@ type Model struct {
 
 	docPath string        // the open document's path (golden source; set with content). "" = untitled
 	root    string        // workspace root (launch CWD); static fallback base for resolution
+	fs      vfs.FS        // filesystem for link/embed resolution + image reads; nil → vfs.Disk (§1.4.9)
 	styles  styles.Styles // cached for cell rendering
 }
 
@@ -304,6 +306,23 @@ func (m Model) SetRoot(root string) Model {
 // DocPath returns the pinned document path (the resolution base source). Exposed
 // for tests asserting the workspace projects it from its single source of truth.
 func (m Model) DocPath() string { return m.docPath }
+
+// SetFS injects the filesystem used for link/embed resolution and image-byte
+// reads. The workspace propagates its own vfs.FS here so the editor's existence
+// checks see the SAME files it loads from (§1.4.9). Nil → vfs.Disk (real disk),
+// so production — which never injects — is byte-identical to direct os calls.
+func (m Model) SetFS(fsys vfs.FS) Model {
+	m.fs = fsys
+	return m
+}
+
+// fsys returns the resolution/read filesystem, defaulting to real disk (§1.4.9).
+func (m Model) fsys() vfs.FS {
+	if m.fs == nil {
+		return vfs.Disk{}
+	}
+	return m.fs
+}
 
 // docDir is the directory the open document lives in — the base for resolving its
 // relative links and image embeds, derived from the golden path. "" for an untitled

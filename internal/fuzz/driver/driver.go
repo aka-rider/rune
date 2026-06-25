@@ -44,8 +44,13 @@ type runState struct {
 	monitors       []invariant.Monitor
 	frozenFrame    string
 	frozenCells    [][]textedit.Cell
-	mirror         string
-	appliedBatches int
+	// baselines maps a docID to the content it was LOADED with — captured the first
+	// time the doc is observed with zero journaled edits (when its buffer IS the
+	// freshly-loaded content). The SHADOW mirror for a doc is baseline +
+	// ReplayForward(all "main" edits): an independent reconstruction of the live
+	// buffer that, unlike a single global replay-from-empty, correctly handles a
+	// non-empty loaded baseline and multiple documents.
+	baselines map[int64]string
 	// externalWrites: set of paths for which RunHuman called mem.WriteFile but
 	// the workspace has not yet resolved the conflict. drainMsg annotates
 	// snap.ActiveFileExternallyModified = true whenever snap.ActiveFilePath is
@@ -74,19 +79,32 @@ func isLoadResult(msg tea.Msg) bool {
 	return false
 }
 
-func (rs *runState) updateMirror(docID int64) {
+// mirrorFor reconstructs the document's content independently of the live editor
+// buffer: the loaded baseline plus every journaled "main" edit replayed forward.
+// The baseline is captured the first time a doc is seen with zero edits (its buffer
+// IS the freshly-loaded content then); later edits replay on top — matching how the
+// editor builds the buffer (loaded content + edits). This lets SHADOW validate that
+// the journal faithfully tracks the buffer for LOADED files, not just untitled ones
+// born empty. AllEdits returns the full edit log (not just post-snapshot), so the
+// reconstruction is correct across autosave snapshots.
+func (rs *runState) mirrorFor(docID int64, bufferContent string) string {
 	if rs.store == nil || docID == 0 {
-		return
+		return ""
 	}
-	batches, err := rs.store.AllEdits(docID, "main")
+	// ActiveEdits (not AllEdits) so the mirror honors the undo head (seq <=
+	// current_seq): after an undo the buffer drops the undone edits, and the mirror
+	// must too, or it diverges (SHADOW).
+	batches, err := rs.store.ActiveEdits(docID, "main")
 	if err != nil {
-		return // fire-and-forget: mirror is diagnostic; a store read error degrades DL1 coverage, never loses data
+		return rs.baselines[docID] // fire-and-forget: store read error degrades SHADOW coverage, never loses data
 	}
-	if rs.appliedBatches >= len(batches) {
-		return
+	if len(batches) == 0 {
+		// No live edits (fresh load, or everything undone) → the buffer is exactly the
+		// loaded baseline; (re)record it per-doc so subsequent edits replay on top.
+		rs.baselines[docID] = bufferContent
+		return bufferContent
 	}
-	rs.mirror = buffer.ReplayForward(rs.mirror, batches[rs.appliedBatches:])
-	rs.appliedBatches = len(batches)
+	return buffer.ReplayForward(rs.baselines[docID], batches)
 }
 
 // drainMsg drives one message through Update, checks all invariants, then
@@ -96,11 +114,11 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 	m, cmd := m.Update(msg)
 	snap := m.FuzzInspect()
 
-	rs.updateMirror(snap.DocID)
+	mirror := rs.mirrorFor(snap.DocID, snap.Content)
 	snap.Frame = m.View().Content
 
-	if rs.mirror != "" || snap.Content != "" {
-		snap.MirrorContent = rs.mirror
+	if mirror != "" || snap.Content != "" {
+		snap.MirrorContent = mirror
 	}
 
 	snap.CloseFileKeyPressed = m.IsCloseFileMsg(msg)
@@ -206,7 +224,7 @@ func bootstrap(rs *runState, model pgworkspace.Model, store *docstate.Store, w, 
 // events, and returns the first invariant Violation found (or nil), the frozen
 // frame string, and the cell grid snapshot at the moment of violation.
 func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors()}
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
 
 	var v *invariant.Violation
 	model, v = bootstrap(rs, model, store, w, h)
@@ -243,7 +261,7 @@ func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w
 //   - otherwise the most-recent open's read wins regardless of delivery order; a
 //     re-open of the currently shown file is a no-op (requestOpenPath early-returns).
 func RunReorder(model pgworkspace.Model, settle string, opens []string, supersede bool, order []byte, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors()}
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
 
 	var v *invariant.Violation
 	model, v = bootstrap(rs, model, store, w, h)
@@ -353,7 +371,7 @@ func orUntitled(p string) string {
 //   - KindWatch(sub=1): injects workspace.FuzzFileWatchReadErrorMsg() so the
 //     read-error path is exercised.
 func RunHuman(model pgworkspace.Model, events []event.Event, store *docstate.Store, mem *vfs.Mem, paths []string, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors()}
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
 
 	var v *invariant.Violation
 	model, v = bootstrap(rs, model, store, w, h)

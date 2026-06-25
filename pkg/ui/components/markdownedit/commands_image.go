@@ -4,14 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-
-	"rune/pkg/atomicfile"
 )
 
 // ImageConfig holds configuration for image paste handling.
@@ -50,17 +47,18 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 	capturedBaseDir := baseDir
 	capturedExt := ext
 	capturedNow := now
+	capturedFsys := m.fsys() // §1.4.9: write through the editor's FS (Disk→atomicfile)
 
 	cmd := func() tea.Msg {
 		filename := generateImageFilename(capturedData, capturedNow, capturedExt)
 		targetDir := filepath.Join(capturedBaseDir, capturedAssetsDir)
 
-		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		if err := capturedFsys.MkdirAll(targetDir, 0o755); err != nil {
 			return ImageSaveErrorMsg{Err: fmt.Errorf("create assets dir %q: %w", targetDir, err)}
 		}
 
 		fullPath := filepath.Join(targetDir, filename)
-		if err := atomicfile.Write(fullPath, capturedData); err != nil {
+		if err := capturedFsys.WriteFile(fullPath, capturedData, 0o644); err != nil {
 			return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
 		}
 

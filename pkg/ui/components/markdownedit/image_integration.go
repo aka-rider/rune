@@ -2,13 +2,13 @@ package markdownedit
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/editor/display"
 	"rune/pkg/ui/components/image"
+	"rune/pkg/vfs"
 )
 
 // placedRegion is the on-screen footprint of one iTerm2 image at its last
@@ -144,14 +144,14 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		if absPath == "" {
 			continue
 		}
-		mtime := fileMtime(absPath)
+		mtime := fileMtime(m.fsys(), absPath)
 
 		if existing, ok := m.images[path]; ok {
 			if existing.Mtime() == mtime || existing.State() == image.PendingDecode || existing.State() == image.Failed {
 				continue
 			}
 			id := existing.ID()
-			newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows)
+			newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fsys())
 			m.images[path] = newImg
 			cmds = append(cmds, newImg.Init())
 			continue
@@ -159,7 +159,7 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 
 		id, na := m.idAlloc.AllocFreeID(absPath)
 		m.idAlloc = na
-		newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows)
+		newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fsys())
 		m.images[path] = newImg
 		cmds = append(cmds, newImg.Init())
 	}
@@ -354,8 +354,8 @@ func (m Model) imageCapable() bool {
 	return m.imageKittyCapable() || m.imageInlineCapable()
 }
 
-func fileMtime(absPath string) int64 {
-	info, err := os.Stat(absPath)
+func fileMtime(fsys vfs.FS, absPath string) int64 {
+	info, err := fsys.Stat(absPath)
 	if err != nil {
 		return 0
 	}

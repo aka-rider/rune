@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -392,7 +391,10 @@ func (m Model) nextUntitledName() string {
 func openExternalCmd(url string) tea.Cmd {
 	return func() tea.Msg {
 		name, args := externalOpener(url)
-		if err := exec.Command(name, args...).Start(); err != nil {
+		// runOpener spawns the OS handler; it is a no-op under the fuzzing build tag
+		// so the fuzzer exercises the LinkExternal dispatch + footer status without
+		// launching real browser/opener processes.
+		if err := runOpener(name, args...); err != nil {
 			return footer.ShowErrorMsg{Text: fmt.Errorf("open %q: %w", url, err).Error()}
 		}
 		return footer.ShowStatusMsg{Text: "→ " + url}

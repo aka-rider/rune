@@ -7,6 +7,7 @@ import (
 
 	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
+	"rune/pkg/vfs"
 )
 
 type State int
@@ -30,6 +31,7 @@ type Model struct {
 	pxH      int
 	mtime    int64
 	cellSize imagekit.CellSize
+	fs       vfs.FS // filesystem for reading image bytes; nil → vfs.Disk (§1.4.9)
 
 	visibleRows int
 
@@ -51,7 +53,7 @@ type Model struct {
 	maxRows    int
 }
 
-func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, cs imagekit.CellSize, maxCols, maxRows int) Model {
+func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, cs imagekit.CellSize, maxCols, maxRows int, fsys vfs.FS) Model {
 	return Model{
 		path:     path,
 		absPath:  absPath,
@@ -62,8 +64,19 @@ func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, c
 		cellSize: cs,
 		maxCols:  maxCols,
 		maxRows:  maxRows,
+		fs:       fsys,
 		state:    PendingDecode,
 	}
+}
+
+// fsys returns the image's filesystem, defaulting to real disk (§1.4.9). All
+// image-byte reads go through it so an in-memory VFS (tests/fuzz) resolves the
+// same files the workspace serves.
+func (m Model) fsys() vfs.FS {
+	if m.fs == nil {
+		return vfs.Disk{}
+	}
+	return m.fs
 }
 
 func (m Model) Init() tea.Cmd {

@@ -154,7 +154,7 @@ func (m Model) linkAtLine(bp coords.BufferPoint, offset int) (LinkActivatedMsg, 
 	if isExternalURL(raw) {
 		return LinkActivatedMsg{Raw: raw, Kind: LinkExternal, Dest: raw}, true
 	}
-	if abs, found := resolveRef(raw, m.docDir(), m.root, appendMD); found {
+	if abs, found := resolveRef(m.fsys(), raw, m.docDir(), m.root, appendMD); found {
 		return LinkActivatedMsg{Raw: raw, Kind: LinkInternal, Dest: abs}, true
 	}
 	return LinkActivatedMsg{Raw: raw, Kind: LinkMissing}, true

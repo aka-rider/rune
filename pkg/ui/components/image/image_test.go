@@ -45,7 +45,7 @@ func TestImageLifecycle(t *testing.T) {
 	absPath := filepath.Join(dir, path)
 
 	caps := terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true}
-	m := New(path, absPath, 1, 0, caps, imagekit.CellSize{}, 80, 24)
+	m := New(path, absPath, 1, 0, caps, imagekit.CellSize{}, 80, 24, nil)
 
 	// Step 2: Feed decodedMsg
 	m, cmd := m.Update(UpdateMsg{
@@ -74,7 +74,7 @@ func TestImageLifecycle(t *testing.T) {
 
 func TestAnimatedFrames(t *testing.T) {
 	caps := terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true}
-	m := New("anim.gif", "anim.gif", 2, 0, caps, imagekit.CellSize{}, 80, 24)
+	m := New("anim.gif", "anim.gif", 2, 0, caps, imagekit.CellSize{}, 80, 24, nil)
 	
 	m, _ = m.Update(UpdateMsg{
 		Path: "anim.gif",
