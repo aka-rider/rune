@@ -1,6 +1,7 @@
 package markdownedit
 
 import (
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -35,8 +36,9 @@ type Model struct {
 	pendingPlacementSeq string
 	placedRegions       map[string]placedRegion // iTerm2: last on-screen region per image, for erase-on-change
 
-	dir    string        // base directory for image/link resolution
-	styles styles.Styles // cached for cell rendering
+	docPath string        // the open document's path (golden source; set with content). "" = untitled
+	root    string        // workspace root (launch CWD); static fallback base for resolution
+	styles  styles.Styles // cached for cell rendering
 }
 
 // Option configures a markdownedit Model during construction.
@@ -157,23 +159,44 @@ func (m Model) routeUpdate(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseWheelMsg:
 		return m.handleMouseWheel(msg)
 
-	default:
-		// All other messages (keys, etc.) go to textedit, then afterContentChange.
-		var cmd tea.Cmd
-		prevRev := m.Model.Revision()
-		m.Model, cmd = m.Model.Update(msg)
-
-		// textedit's syncDisplay has already re-applied image-row expansion from
-		// the pushed dims, so the snapshot footprint is correct either way. We
-		// still reconcile image state: discovery + collapse on a content change,
-		// collapse only on a cursor-only move.
-		if m.Model.Revision() != prevRev {
-			m, aCmd := m.afterContentChange()
-			return m, tea.Batch(cmd, aCmd)
+	case tea.KeyPressMsg:
+		// Enter and Ctrl+Enter are aliases that follow the link under a lone
+		// caret instead of inserting a newline (a newline inside a link would
+		// break it). Gated to a single caret with no selection so a multi-cursor
+		// or selection edit is never hijacked. This pre-empts textedit's newline
+		// (textedit.go updateKeys); every other key falls through to it.
+		if msg.Code == tea.KeyEnter && (msg.Mod == 0 || msg.Mod == tea.ModCtrl) &&
+			m.Model.SingleCaretNoSelection() {
+			if la, ok := m.linkAt(m.Model.CursorOffset()); ok {
+				return m, func() tea.Msg { return la }
+			}
 		}
-		m, cCmd := m.afterCursorMove()
-		return m, tea.Batch(cmd, cCmd)
+		return m.delegateToModel(msg)
+
+	default:
+		// All other messages go to textedit, then afterContentChange.
+		return m.delegateToModel(msg)
 	}
+}
+
+// delegateToModel forwards a message to the embedded textedit and reconciles
+// image state afterward. textedit's syncDisplay has already re-applied image-row
+// expansion from the pushed dims, so the snapshot footprint is correct either
+// way; here we reconcile discovery + collapse on a content change, collapse only
+// on a cursor-only move.
+func (m Model) delegateToModel(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	prevRev := m.Model.Revision()
+	m.Model, cmd = m.Model.Update(msg)
+
+	if m.Model.Revision() != prevRev {
+		var aCmd tea.Cmd
+		m, aCmd = m.afterContentChange()
+		return m, tea.Batch(cmd, aCmd)
+	}
+	var cCmd tea.Cmd
+	m, cCmd = m.afterCursorMove()
+	return m, tea.Batch(cmd, cCmd)
 }
 
 // afterContentChange re-discovers embedded images and reconciles collapse state
@@ -261,10 +284,35 @@ func (m Model) SetContent(content string) Model {
 	return m
 }
 
-// SetDir sets the base directory for resolving relative image embeds and links.
-func (m Model) SetDir(dir string) Model {
-	m.dir = dir
+// SetDocPath pins the open document's path — the golden source for resolving its
+// relative links and image embeds (docDir = filepath.Dir(docPath); "" = untitled).
+// The workspace projects this from its single source of truth (docView) at one
+// authority point (finalize), so it tracks EVERY transition — load, untitled,
+// help, bind-new, rename — and can never desync from the displayed document.
+func (m Model) SetDocPath(path string) Model {
+	m.docPath = path
 	return m
+}
+
+// SetRoot sets the workspace root (launch CWD) — the static fallback base for
+// resolving relative refs. Set once; it never changes during a run.
+func (m Model) SetRoot(root string) Model {
+	m.root = root
+	return m
+}
+
+// DocPath returns the pinned document path (the resolution base source). Exposed
+// for tests asserting the workspace projects it from its single source of truth.
+func (m Model) DocPath() string { return m.docPath }
+
+// docDir is the directory the open document lives in — the base for resolving its
+// relative links and image embeds, derived from the golden path. "" for an untitled
+// doc (resolution then uses only the workspace root).
+func (m Model) docDir() string {
+	if m.docPath == "" {
+		return ""
+	}
+	return filepath.Dir(m.docPath)
 }
 
 // ReplaceRange replaces the range [start, end) with text and runs afterContentChange.

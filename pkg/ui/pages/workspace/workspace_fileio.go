@@ -18,11 +18,15 @@ import (
 
 // ---- Message types (D12: workspace owns the file/disk domain) ----
 
-// FileLoadedMsg is returned when a file has been read from disk.
+// FileLoadedMsg is returned when a file has been read from disk. Gen is the load
+// generation this read was issued under (§ workspace.loadGen); the handler installs
+// the content+identity ONLY if Gen still matches the awaited load, so a superseded
+// or out-of-order read can never display the wrong document.
 type FileLoadedMsg struct {
 	Path     string
 	Content  []byte
 	Baseline diskBaseline // fingerprint at read time (§1.4.7 external-change guard)
+	Gen      uint64       // load generation; stale (≠ current) results are dropped
 }
 
 // diskBaseline fingerprints a file as it was last read or written, so a later
@@ -58,10 +62,12 @@ func (b diskBaseline) divergedFrom(fsys vfs.FS, path string) bool {
 	return info.Size() != b.size || !info.ModTime().Equal(b.modTime)
 }
 
-// FileLoadErrorMsg is returned when a file load fails.
+// FileLoadErrorMsg is returned when a file load fails. Gen mirrors FileLoadedMsg.Gen
+// so a stale failure cannot surface an error for a load the user already moved past.
 type FileLoadErrorMsg struct {
 	Path string
 	Err  error
+	Gen  uint64
 }
 
 // FileSavedMsg is returned when a file has been materialized to disk.
@@ -103,9 +109,11 @@ type SaveIdentity struct {
 
 // ---- Cmd factories (D12) ----
 
-// loadFileCmd reads a file through the shim. Context-cancellable for rapid tab
-// switching. fsys is captured into the closure (§6.2), never read from the Model.
-func loadFileCmd(fsys vfs.FS, ctx context.Context, path string) tea.Cmd {
+// loadFileCmd reads a file through the shim. gen is the load generation this read
+// was issued under; it is stamped onto the result so the handler can drop a stale
+// (superseded / out-of-order) read. fsys is captured into the closure (§6.2), never
+// read from the Model.
+func loadFileCmd(fsys vfs.FS, ctx context.Context, path string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case <-ctx.Done():
@@ -114,9 +122,9 @@ func loadFileCmd(fsys vfs.FS, ctx context.Context, path string) tea.Cmd {
 		}
 		b, err := fsys.ReadFile(path)
 		if err != nil {
-			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err)}
+			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err), Gen: gen}
 		}
-		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(fsys, path)}
+		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(fsys, path), Gen: gen}
 	}
 }
 

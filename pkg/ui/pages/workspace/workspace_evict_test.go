@@ -30,7 +30,7 @@ func openToLimit(t *testing.T) (Model, []string) {
 	for i := 1; i <= tabLimit+1; i++ {
 		path := fmt.Sprintf("/tmp/file%02d.md", i)
 		paths = append(paths, path)
-		m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(fmt.Sprintf("content %d", i))})
+		m = loadFile(m, path, fmt.Sprintf("content %d", i))
 	}
 	return m, paths
 }
@@ -50,8 +50,8 @@ func TestEvict_ActiveTabSurvives(t *testing.T) {
 	m, paths := openToLimit(t)
 	// The last-opened file is the active one.
 	last := paths[len(paths)-1]
-	if m.filePath != last {
-		t.Errorf("active file should be the last-opened %q, got %q", last, m.filePath)
+	if m.view.Path() != last {
+		t.Errorf("active file should be the last-opened %q, got %q", last, m.view.Path())
 	}
 }
 
@@ -74,7 +74,7 @@ func TestEvict_NoEvictionForAlreadyOpenFile(t *testing.T) {
 
 	// Re-open the SECOND file (still in the bar after file 1 was evicted).
 	second := paths[1]
-	m, _ = m.Update(FileLoadedMsg{Path: second, Content: []byte("same")})
+	m = loadFile(m, second, "same")
 	if m.opentabs.Len() != before {
 		t.Errorf("re-opening an already-open file must not change tab count: before=%d after=%d", before, m.opentabs.Len())
 	}
@@ -94,7 +94,7 @@ func TestEvict_RefuseWhenNoEligibleVictim(t *testing.T) {
 	for i := 1; i < tabLimit; i++ {
 		path := fmt.Sprintf("/tmp/pin%02d.md", i)
 		realPaths = append(realPaths, path)
-		m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte("x")})
+		m = loadFile(m, path, "x")
 	}
 	// Pin all real tabs.
 	for i := 0; i < m.opentabs.Len(); i++ {
@@ -108,13 +108,13 @@ func TestEvict_RefuseWhenNoEligibleVictim(t *testing.T) {
 
 	// Try to open a brand-new file — should be refused.
 	countBefore := m.opentabs.Len()
-	fileBefore := m.filePath
-	m, _ = m.Update(FileLoadedMsg{Path: "/tmp/new.md", Content: []byte("new")})
+	fileBefore := m.view.Path()
+	m = loadFile(m, "/tmp/new.md", "new")
 	if m.opentabs.Len() != countBefore {
 		t.Errorf("refused open must not change tab count: before=%d after=%d", countBefore, m.opentabs.Len())
 	}
-	if m.filePath != fileBefore {
-		t.Errorf("refused open must not switch active file: before=%q after=%q", fileBefore, m.filePath)
+	if m.view.Path() != fileBefore {
+		t.Errorf("refused open must not switch active file: before=%q after=%q", fileBefore, m.view.Path())
 	}
 }
 
@@ -142,7 +142,7 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 			t.Fatal(err)
 		}
 		paths = append(paths, path)
-		m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(fmt.Sprintf("content %d", i))})
+		m = loadFile(m, path, fmt.Sprintf("content %d", i))
 	}
 
 	// Mark ALL non-active tabs dirty. The active tab is paths[tabLimit-1];
@@ -158,7 +158,7 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 	if err := os.WriteFile(pending, []byte("pending content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, _ = m.Update(FileLoadedMsg{Path: pending, Content: []byte("pending content")})
+	m = loadFile(m, pending, "pending content")
 	return m, victim, pending
 }
 
@@ -202,8 +202,8 @@ func TestEvict_DirtyVictim_Discard(t *testing.T) {
 		}
 	}
 	// Pending file must now be active.
-	if m.filePath != pending {
-		t.Errorf("pending file %q must be active after Discard, got %q", pending, m.filePath)
+	if m.view.Path() != pending {
+		t.Errorf("pending file %q must be active after Discard, got %q", pending, m.view.Path())
 	}
 	// Bar must be at tabLimit.
 	if m.opentabs.Len() != tabLimit {
@@ -275,10 +275,7 @@ func TestEvict_HelpTabNotEvicted(t *testing.T) {
 	// Help tabs (DocID==0) must never be eviction victims.
 	m := withStore(t, newTestWorkspace(t))
 	for i := 1; i <= tabLimit-1; i++ {
-		m, _ = m.Update(FileLoadedMsg{
-			Path:    fmt.Sprintf("/tmp/h%02d.md", i),
-			Content: []byte("x"),
-		})
+		m = loadFile(m, fmt.Sprintf("/tmp/h%02d.md", i), "x")
 	}
 	// Open help — should not trigger eviction.
 	m, cmd := m.toggleHelp()
@@ -288,7 +285,7 @@ func TestEvict_HelpTabNotEvicted(t *testing.T) {
 
 	// Now at tabLimit with help in the bar. Open one more file:
 	// help must not be the victim.
-	m, _ = m.Update(FileLoadedMsg{Path: "/tmp/new.md", Content: []byte("new")})
+	m = loadFile(m, "/tmp/new.md", "new")
 
 	// Verify help tab is still present.
 	foundHelp := false
@@ -364,8 +361,13 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 			if m.opentabs.Len() > tabLimit {
 				t.Fatalf("INV-CAP: %d > tabLimit=%d", m.opentabs.Len(), tabLimit)
 			}
-			if m.opentabs.Len() > 0 {
-				want := opentabs.TabHandle{DocID: m.docID, Path: m.filePath}
+			if m.opentabs.Len() > 0 && !m.pendingLoad.active {
+				// INV-ACTIVE-SYNC holds only after a load settles. During a
+				// close→neighbour transition the active handle intentionally leads
+				// the live identity by one async hop (finalize derives it from
+				// m.pendingLoad — see workspace_edit.go), so skip the check while a
+				// load is pending.
+				want := opentabs.TabHandle{DocID: m.view.DocID(), Path: m.view.Path()}
 				if !m.opentabs.ActiveHandle().Equal(want) {
 					t.Fatalf("INV-ACTIVE-SYNC: ActiveHandle=%v want=%v",
 						m.opentabs.ActiveHandle(), want)
@@ -389,10 +391,12 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 
 			switch op {
 			case 0:
-				m, cmd = m.Update(FileLoadedMsg{
-					Path:    pool[int(arg)%poolSize],
-					Content: []byte("x"),
-				})
+				// Open a file through the real gen handshake: arm the load, then
+				// deliver its matching-gen result (a raw FileLoadedMsg would be
+				// dropped by the displayed-doc gate and only open a tab).
+				openPath := pool[int(arg)%poolSize]
+				m, _ = m.beginLoad(0, openPath)
+				m, cmd = m.Update(FileLoadedMsg{Path: openPath, Content: []byte("x"), Gen: m.loadGen})
 			case 1:
 				m, cmd = m.requestCloseCurrent()
 				m, _ = m.finalize(nil)
@@ -400,8 +404,8 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 				// Mark active tab dirty directly on opentabs so it persists as
 				// non-active dirty when we switch away on the next open. This is
 				// how the fuzzer reaches the dirty-eviction guard path.
-				if m.docID != 0 {
-					m.opentabs = m.opentabs.MarkDirtyByID(m.docID)
+				if m.view.DocID() != 0 {
+					m.opentabs = m.opentabs.MarkDirtyByID(m.view.DocID())
 				}
 			case 3:
 				if m.footer.InGuard() {

@@ -3,6 +3,7 @@
 package workspace_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -306,6 +307,73 @@ func FuzzSessionWithFile(f *testing.F) {
 		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
 
 		if violation, _, _ := driver.Run(m, events, store, 80, 24); violation != nil {
+			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
+		}
+	})
+}
+
+// FuzzLoadReorder exercises the load-correlation guard AND its interaction with a
+// synchronous superseding transition under OUT-OF-ORDER delivery — the properties
+// the in-order session driver structurally cannot reach (it settles each load
+// inline, in issue order, so a load is never pending across another transition).
+// The driver optionally opens a "settle" file inline (view → a real file), opens
+// a fuzz-chosen sequence of files with their reads DEFERRED, optionally fires
+// Ctrl+N (CreateUntitled → supersedeLoad), then replays the deferred reads in a
+// fuzz-chosen permutation. It asserts the displayed doc equals what the last
+// display-changing transition requested (LOAD-LASTWINS): a superseded / out-of-
+// order read can never display the wrong document.
+//
+// data layout: [ctrl][nOpensSrc][settleIdx][openIdx × nOpens][deliveryOrder...].
+// ctrl bit0 = open a "settle" file inline first; bit1 = press Ctrl+N after deferring.
+func FuzzLoadReorder(f *testing.F) {
+	f.Add([]byte{3, 1, 0, 1, 2, 1, 0})       // settle r0; defer r1,r2; new → untitled (supersede drops both)
+	f.Add([]byte{1, 1, 0, 1, 2, 1, 0})       // settle r0; defer r1,r2; no new; reversed replay → r2
+	f.Add([]byte{0, 2, 0, 0, 1, 2, 2, 1, 0}) // no settle; defer r0,r1,r2 from untitled → r2
+	f.Add([]byte{3, 1, 1, 1, 0, 0, 0})       // settle r1; defer r1 (no-op re-open),r0; new → untitled
+	f.Add([]byte{2, 1, 0, 0, 1, 0, 0})       // no settle; defer r0,r1; Ctrl+N no-ops (untitled view) → r1
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) < 3 {
+			return
+		}
+		const poolSize = 4
+		pool := make([]string, poolSize)
+		mem := vfs.NewMem()
+		for i := range pool {
+			pool[i] = fmt.Sprintf("/fuzz/r%d.md", i)
+			_ = mem.WriteFile(pool[i], []byte(fmt.Sprintf("content %d", i)), 0o644)
+		}
+
+		store, err := docstate.OpenInMemory(time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		store.UseFS(mem)
+
+		ctrl := data[0]
+		settle := ""
+		if ctrl&1 != 0 {
+			settle = pool[int(data[2])%poolSize]
+		}
+		supersede := ctrl&2 != 0
+		nOpen := int(data[1])%6 + 1
+
+		opens := make([]string, 0, nOpen)
+		oi := 3
+		for k := 0; k < nOpen && oi < len(data); k++ {
+			opens = append(opens, pool[int(data[oi])%poolSize])
+			oi++
+		}
+		order := data[oi:]
+
+		keys := keymap.Default()
+		st := styles.Default()
+		reg := command.NewBuilder().Build()
+		res, _ := keybind.NewResolver(nil)
+		m := workspace.New(keys, st, reg, res, terminal.TermCaps{}, "/fuzz", nil).WithFS(mem)
+
+		if violation, _, _ := driver.RunReorder(m, settle, opens, supersede, order, store, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})

@@ -767,12 +767,18 @@ func (m Model) CursorOffset() int {
 	return m.cursors.Primary().Position
 }
 
-// SetDir sets the base directory for resolving relative image embeds.
-// In textedit this is a no-op (images are markdownedit concern), but the
-// method exists for API compatibility with markdownedit.
-func (m Model) SetDir(dir string) Model {
-	_ = dir // no-op in textedit
-	return m
+// OffsetToLineCol converts a buffer byte offset to a buffer line/column point.
+// Exposed so markdownedit can locate the syntax span (e.g. a link) under the
+// caret, which is keyed by buffer line.
+func (m Model) OffsetToLineCol(offset int) coords.BufferPoint {
+	return m.buf.OffsetToLineCol(offset)
+}
+
+// SingleCaretNoSelection reports whether there is exactly one cursor with no
+// active selection. Callers gate caret-position-sensitive actions on this so a
+// multi-cursor or selection edit is never hijacked.
+func (m Model) SingleCaretNoSelection() bool {
+	return m.cursors.Len() == 1 && !m.cursors.Primary().HasSelection()
 }
 
 // Width returns the allocated width.

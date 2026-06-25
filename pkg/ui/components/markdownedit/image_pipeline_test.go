@@ -179,8 +179,8 @@ func TestDiscoverImagesOnLoad(t *testing.T) {
 	// loaded into an editor running in a real (graphics-capable) terminal.
 	m := New(keys, st, terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true})
 	m = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
-	m = m.SetDir(tmpDir)
-	m = m.SetContent("![[photo.webp]]")
+	// The doc lives in tmpDir, so embeds resolve there (docDir = filepath.Dir(docPath)).
+	m = m.SetContent("![[photo.webp]]").SetDocPath(filepath.Join(tmpDir, "note.md"))
 
 	// No buffer edit has been made — images must still be discovered.
 	m2, cmd := m.DiscoverImages()

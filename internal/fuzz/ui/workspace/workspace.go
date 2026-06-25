@@ -63,8 +63,12 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 		}
 	}
 
-	// EDITOR-TAB-COH: editor path equals the active tab's path.
-	if len(s.Tabs) > 0 && s.ActiveTabIdx >= 0 && s.ActiveTabIdx < len(s.Tabs) {
+	// EDITOR-TAB-COH: editor path equals the active tab's path. Exempt while a
+	// load is in flight: close→neighbour and every async open leave the view as
+	// the save-safe transitional untitled while the active tab already points at
+	// the incoming doc (finalize, from pendingLoad). Coherence is restored when
+	// the read settles; ⌘S is inert meanwhile, so the gap is safe (§1.4).
+	if !s.Loading && len(s.Tabs) > 0 && s.ActiveTabIdx >= 0 && s.ActiveTabIdx < len(s.Tabs) {
 		activeTabPath := s.Tabs[s.ActiveTabIdx].Path
 		if s.EditorPath != activeTabPath {
 			return &invariant.Violation{

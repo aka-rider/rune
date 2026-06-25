@@ -55,10 +55,19 @@ type ShowErrorMsg struct{ Text string }
 // errorDismissedMsg is an internal timer message to clear the error after timeout.
 type errorDismissedMsg struct{ id int }
 
+// ShowStatusMsg tells the footer to display a transient, neutral status message
+// (e.g. a link-follow confirmation). Auto-dismisses like ShowErrorMsg, but
+// yields to a guard/chord prompt so it can never mask one (§1.4.4).
+type ShowStatusMsg struct{ Text string }
+
+// statusDismissedMsg is an internal timer message to clear the status after timeout.
+type statusDismissedMsg struct{ id int }
+
 type UpdateCursorMsg struct {
-	Line      int
-	Col       int
-	WordCount int
+	Line       int
+	Col        int
+	WordCount  int
+	LinkTarget string // raw target of the link under the caret ("" if none)
 }
 
 type Model struct {
@@ -76,6 +85,9 @@ type Model struct {
 	dictationAllowed bool
 	errorMsg         string
 	errorExpireID    int
+	statusMsg        string
+	statusExpireID   int
+	linkHint         string
 }
 
 // DictationStartMsg is emitted when the user activates voice dictation (^v).
@@ -181,6 +193,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.line = msg.Line
 		m.col = msg.Col
 		m.wordCount = msg.WordCount
+		m.linkHint = msg.LinkTarget
 
 	case ShowErrorMsg:
 		m.errorMsg = msg.Text
@@ -194,6 +207,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case errorDismissedMsg:
 		if msg.id == m.errorExpireID {
 			m.errorMsg = ""
+		}
+
+	case ShowStatusMsg:
+		m.statusMsg = msg.Text
+		m.statusExpireID++
+		id := m.statusExpireID
+		return m, func() tea.Msg {
+			time.Sleep(errorDismissDelay)
+			return statusDismissedMsg{id: id}
+		}
+
+	case statusDismissedMsg:
+		if msg.id == m.statusExpireID {
+			m.statusMsg = ""
 		}
 	}
 	return m, nil
@@ -248,6 +275,15 @@ func (m Model) View() string {
 		left = m.styles.FooterKey.Render("Press ^C again to exit")
 	} else if m.pendingKey == "d" {
 		left = m.styles.FooterKey.Render("Press ^D again to exit")
+	} else if m.statusMsg != "" {
+		// A transient status replaces the default hints but yields to
+		// dictation/guard/chord above, so it never masks a prompt.
+		left = m.styles.FooterHint.Render(m.statusMsg)
+	} else if m.linkHint != "" {
+		// Lowest priority: the link-under-caret hint. Yields to everything above
+		// (incl. the dirty guard, §1.4.4) so it can never mask a prompt.
+		left = m.styles.FooterHint.Render("→ "+m.linkHint+"  ") +
+			m.styles.FooterKey.Render("⏎") + m.styles.FooterHint.Render(" open")
 	}
 
 	micIcon := m.styles.FooterMeta.Render("🎤")

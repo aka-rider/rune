@@ -173,21 +173,35 @@ type Model struct {
 	watchedDir  string
 	cancelWatch context.CancelFunc
 
-	// File ownership (D12)
-	filePath   string
-	baseline   diskBaseline // fingerprint of m.filePath at last load/save (§1.4.7)
+	// File ownership (D12). view is the single settled source of truth for which
+	// document is displayed (kind + path + docID + baseline) — see docview.go. The
+	// editor buffer always corresponds to it; it changes only at a settled
+	// transition or a gen-matched load success.
+	view       docView
 	activeSave SaveIdentity
+
+	// pendingLoad gates the center pane blank during an in-flight async file
+	// load (preserving 16138bd's anti-flash) WITHOUT destroying the editor
+	// buffer or identity — so a failed load falls back to the previous,
+	// fully-consistent document and ⌘S can never write blank over a real file.
+	// docID/path carry the incoming tab so finalize() can mark it active during
+	// a close transition without forging a real identity. active is an
+	// out-of-band validity bit (§1.7), never a sentinel on docID/path.
+	pendingLoad pendingLoad
 
 	// Pending data-loss action — set when a dirty guard is raised so that the
 	// guard response handler knows to close a tab (^w) or quit (^C^C) after
 	// saving/discarding. Never persisted across guard sessions.
 	pendingDataLoss pendingDataLoss
 
-	// Persistence (docstate)
+	// Persistence (docstate). The active doc's VFS id lives in m.view.DocID().
 	store     *docstate.Store
-	docID     int64
 	chatDocID int64  // reserved chat sentinel doc
 	flushGen  uint64 // generation counter for debounced VFS autosave
+	loadGen   uint64 // monotonic load-request token; a FileLoadedMsg installs its
+	//                  content+identity only while its Gen == m.pendingLoad.gen, so a
+	//                  superseded/out-of-order read can never display the wrong doc.
+	//                  Never reset (generations are never reused).
 
 	// fs is the filesystem shim for all .md disk I/O (read/write/rename/stat/
 	// readdir). A nil fs means the production default (vfs.Disk); the session
@@ -199,6 +213,17 @@ type Model struct {
 	workDir      string   // absolute path or "." passed via -w
 	initialFiles []string // files to open on first Init
 	initErr      error    // non-nil when workDir fallback was triggered
+}
+
+// pendingLoad records an in-flight asynchronous file load. See the Model field
+// of the same name for the full contract. gen is the load-request token (from
+// m.loadGen) this load awaits; a FileLoadedMsg/FileLoadErrorMsg is applied only
+// when its Gen == gen AND active, so only the latest-requested load can settle.
+type pendingLoad struct {
+	gen    uint64
+	docID  int64
+	path   string
+	active bool
 }
 
 // New constructs the workspace page. New does NOT call Init — the runtime calls
@@ -224,7 +249,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		editor: markdownedit.New(keys, st, caps,
 			markdownedit.WithRegistry(reg),
 			markdownedit.WithResolver(resolver),
-		),
+		).SetRoot(workDir), // static base #2 for relative-ref resolution (launch CWD)
 		footer:       footer.New(keys, st),
 		chat:         chat.New(keys, st, reg, resolver, caps),
 		search: searchcomp.New(keys, st,
@@ -250,6 +275,18 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		// docID==0; StoreReadyMsg upgrades it to a durable VFS doc.
 		m, _ = m.CreateUntitled()
 		m.focus = paneTree // CreateUntitled sets paneCenter; restore startup default
+	} else {
+		// Files to open: seed the load overlay so Init's startup reads (issued with
+		// per-file generations 1..N) are gen-correlated. The last file is the
+		// awaited displayed doc (gen==N); earlier files open as tabs via the ungated
+		// bookkeeping path. The seed lives here, not in Init, because Init returns
+		// only a tea.Cmd and cannot retain the model.
+		m.loadGen = uint64(len(initialFiles))
+		m.pendingLoad = pendingLoad{
+			gen:    m.loadGen,
+			path:   initialFiles[len(initialFiles)-1],
+			active: true,
+		}
 	}
 	m = m.syncDictationAllowed()
 	m = m.applyFocus()
@@ -291,8 +328,12 @@ func (m Model) Init() tea.Cmd {
 		err := m.initErr
 		cmds = append(cmds, func() tea.Msg { return footer.ShowErrorMsg{Text: err.Error()} })
 	}
-	for _, path := range m.initialFiles {
-		cmds = append(cmds, loadFileCmd(m.fsys(), context.Background(), path))
+	for i, path := range m.initialFiles {
+		// Startup reads carry per-file generations 1..N matching the overlay seeded
+		// in New; the last (gen==N) becomes the displayed doc, earlier ones open
+		// tabs. Issued directly (not beginLoad) because Init can't retain the gen
+		// increment — so loadFileCmd has exactly two callers: beginLoad and Init.
+		cmds = append(cmds, loadFileCmd(m.fsys(), context.Background(), path, uint64(i+1)))
 	}
 	return tea.Batch(cmds...)
 }

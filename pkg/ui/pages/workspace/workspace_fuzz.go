@@ -42,9 +42,10 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 		TabLimit:     tabLimit,
 
 		// File / persistence
-		ActiveFilePath: m.filePath,
-		EditorPath:     m.filePath,
-		DocID:          m.docID,
+		ActiveFilePath: m.view.Path(),
+		EditorPath:     m.view.Path(),
+		DocID:          m.view.DocID(),
+		Loading:        m.pendingLoad.active,
 		FlushGen:       m.flushGen,
 		SaveSnapshot:   m.activeSave.SavedContent,
 		SaveInFlight:   m.activeSave.InFlight,

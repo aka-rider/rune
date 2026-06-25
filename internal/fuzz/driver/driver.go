@@ -13,6 +13,7 @@ import (
 	"rune/internal/fuzz/session"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
+	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/textedit"
 	pgworkspace "rune/pkg/ui/pages/workspace"
 	"rune/pkg/vfs"
@@ -53,6 +54,24 @@ type runState struct {
 	// The set covers both the active file and background tabs — the original
 	// single-string approach missed background tabs opened after the write.
 	externalWrites map[string]struct{}
+
+	// reorder, when true, makes drainCmd DEFER async file-load results
+	// (FileLoadedMsg/FileLoadErrorMsg) into `deferred` instead of delivering them
+	// inline. RunReorder then replays them in a fuzz-chosen order to exercise the
+	// out-of-order load race that the in-order drain structurally cannot reach.
+	reorder  bool
+	deferred []tea.Msg
+}
+
+// isLoadResult reports whether msg is an async file-load result — the only
+// message class RunReorder defers, since out-of-order delivery of these is the
+// race under test.
+func isLoadResult(msg tea.Msg) bool {
+	switch msg.(type) {
+	case pgworkspace.FileLoadedMsg, pgworkspace.FileLoadErrorMsg:
+		return true
+	}
+	return false
 }
 
 func (rs *runState) updateMirror(docID int64) {
@@ -156,6 +175,13 @@ func drainCmd(rs *runState, m pgworkspace.Model, cmd tea.Cmd) (pgworkspace.Model
 		}
 		return m, nil
 	}
+	if rs.reorder && isLoadResult(msg) {
+		// Defer the read result; RunReorder replays it (and its siblings) in a
+		// fuzz-chosen order. The read itself already ran (cmd() above), so the
+		// fsys access happened — only the delivery to Update is deferred.
+		rs.deferred = append(rs.deferred, msg)
+		return m, nil
+	}
 	return drainMsg(rs, m, msg)
 }
 
@@ -198,6 +224,117 @@ func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w
 		}
 	}
 	return nil, "", nil
+}
+
+// RunReorder fuzzes the load-correlation guard AND its interaction with a
+// synchronous superseding transition — the properties Run/RunHuman structurally
+// cannot reach (they settle every Cmd inline, in issue order, so a load is never
+// pending across another transition).
+//
+// Shape, all fuzz-chosen: optionally open `settle` and deliver its read INLINE so
+// the displayed doc becomes a real file; then open each of `opens` with its read
+// DEFERRED; then, if `supersede`, press Ctrl+N (CreateUntitled). Finally replay
+// every deferred read in the permutation `order`. A driver-side mirror of the
+// guard predicts the displayed doc; after replay the model MUST match it:
+//
+//   - supersede over a FILE view runs supersedeLoad, clearing the gate, so EVERY
+//     pending deferred read is stale and dropped → the new untitled stays shown
+//     (the gate-clearing transition the all-deferred path never exercises).
+//   - otherwise the most-recent open's read wins regardless of delivery order; a
+//     re-open of the currently shown file is a no-op (requestOpenPath early-returns).
+func RunReorder(model pgworkspace.Model, settle string, opens []string, supersede bool, order []byte, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
+	rs := &runState{store: store, monitors: session.NewMonitors()}
+
+	var v *invariant.Violation
+	model, v = bootstrap(rs, model, store, w, h)
+	if v != nil {
+		return v, rs.frozenFrame, rs.frozenCells
+	}
+
+	// Mirror of the guard, enough to predict the displayed doc. display is the
+	// shown path ("" = the bootstrap untitled; this harness never types, so
+	// display=="" ⇔ untitled). pendActive/pendPath track the single still-pending
+	// read that would win — the model keeps only the latest request's generation.
+	display := ""
+	pendActive := false
+	pendPath := ""
+
+	if settle != "" {
+		rs.reorder = false // deliver this read inline so the view becomes a file
+		model, v = drainMsg(rs, model, filetree.FileSelectedMsg{Path: settle})
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+		display = settle
+	}
+
+	rs.reorder = true // from here, file-load results are deferred
+	for _, p := range opens {
+		if p == "" || p == display {
+			continue // re-open of the shown file issues no new read (early return)
+		}
+		model, v = drainMsg(rs, model, filetree.FileSelectedMsg{Path: p})
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+		pendActive = true
+		pendPath = p // display unchanged: the read is deferred
+	}
+
+	if supersede {
+		rs.reorder = false // Ctrl+N emits only title/snapshot cmds — deliver inline
+		model, v = drainMsg(rs, model, tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+		if display != "" {
+			// View was a file → CreateUntitled ran supersedeLoad: the gate is
+			// cleared, so every pending deferred read is now stale.
+			display = ""
+			pendActive = false
+		}
+		// else already untitled → Ctrl+N no-ops (guard); the pending read stands.
+	}
+
+	// Replay the deferred reads in the fuzz-chosen order; every invariant runs on
+	// each delivery (so the whole suite is exercised under reordering, not just
+	// the final property).
+	oi := 0
+	for len(rs.deferred) > 0 {
+		pick := 0
+		if oi < len(order) {
+			pick = int(order[oi]) % len(rs.deferred)
+		}
+		oi++
+		msg := rs.deferred[pick]
+		rs.deferred = append(rs.deferred[:pick:pick], rs.deferred[pick+1:]...)
+		model, v = drainMsg(rs, model, msg)
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+	}
+
+	// Predicted vs actual displayed doc.
+	want := display
+	if pendActive {
+		want = pendPath
+	}
+	if snap := model.FuzzInspect(); snap.ActiveFilePath != want {
+		return &invariant.Violation{
+			InvariantID: "LOAD-LASTWINS",
+			Message: "displayed " + invariant.Trunc(orUntitled(snap.ActiveFilePath), 80) +
+				", want last-transition " + invariant.Trunc(orUntitled(want), 80),
+		}, model.View().Content, nil
+	}
+	return nil, "", nil
+}
+
+// orUntitled renders the empty (untitled) path readably in a violation message.
+func orUntitled(p string) string {
+	if p == "" {
+		return "<untitled>"
+	}
+	return p
 }
 
 // RunHuman is the entry point for FuzzHumanSession. It extends Run with

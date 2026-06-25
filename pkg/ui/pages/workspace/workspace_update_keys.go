@@ -44,7 +44,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	consumed := true
 	switch {
 	case key.Matches(msg, m.keys.SaveFile):
-		if m.filePath != "" && !m.activeSave.InFlight {
+		if m.view.IsFile() && !m.activeSave.InFlight {
 			m, cmd = m.startSave()
 			cmds = append(cmds, cmd)
 		}
@@ -130,7 +130,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		// The outgoing untitled (if any) stays as its own durable VFS doc/tab —
 		// nothing is written to disk and nothing is lost (Fix 2 §5).
-		if m.filePath != "" || m.editor.Content() != "" {
+		if !m.view.IsUntitled() || m.editor.Content() != "" {
 			m, cmd = m.CreateUntitled()
 			cmds = append(cmds, cmd)
 		}

@@ -7,8 +7,7 @@ before:
     - go mod tidy
 
 builds:
-  - id: rune
-    main: ./cmd/rune/
+  - main: ./cmd/rune/
     binary: rune
     env:
       - CGO_ENABLED=1
@@ -23,25 +22,19 @@ builds:
         - codesign --sign - --force {{ .Path }}
 
 archives:
-  - id: rune-archive
-    ids:
-      - rune
-    name_template: "rune-darwin-arm64"
-    format: tar.gz
+  - name_template: "rune-darwin-arm64"
+    formats:
+      - tar.gz
 
-brews:
+homebrew_casks:
   - name: rune-edit
-    ids:
-      - rune-archive
-    directory: Formula
+    binaries:
+      - rune
     repository:
       owner: aka-rider
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     description: "TUI markdown editor"
     homepage: "https://github.com/aka-rider/rune"
-    license: MIT
-    install: |
-      bin.install "rune"
-    test: |
-      system "#{bin}/rune", "--version"
+    url:
+      verified: github.com/aka-rider/rune

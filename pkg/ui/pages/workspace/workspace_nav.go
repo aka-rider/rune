@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,6 +27,7 @@ func (m Model) currentDir() string {
 	return cwd
 }
 
+
 // requestOpenPath switches the editor to a document. Untitled documents all
 // share path "", so they are identified by docID; bound documents and help are
 // identified by path. Switching away first forces a VFS snapshot of the
@@ -36,16 +39,22 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 			return m, nil
 		}
 	case "":
-		if m.filePath == "" && docID != 0 && docID == m.docID {
+		if m.view.IsUntitled() && docID != 0 && docID == m.view.DocID() {
 			return m, nil
 		}
 	default:
-		if path == m.filePath {
+		if m.view.IsFile() && path == m.view.Path() {
 			return m, nil
 		}
 	}
 
 	m = m.forceSnapshot()
+
+	// This call supersedes any in-flight load — it replaces what the editor
+	// shows. supersedeLoad bumps the load token (so a still-pending read fails the
+	// gen guard and is dropped) and clears the gate (so a synchronous branch is
+	// never masked by a blank frame); the async branch re-arms it in beginLoad.
+	m = m.supersedeLoad()
 
 	switch path {
 	case help.DocPath:
@@ -53,13 +62,37 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	case "":
 		return m.showUntitled(docID), nil
 	default:
-		m.editor = m.editor.SetContent("")
-		return m, loadFileCmd(m.fsys(), context.Background(), path)
+		return m.beginLoad(docID, path)
 	}
 }
 
+// beginLoad is the single entry point for every asynchronous file load. It arms
+// the non-destructive pending-load gate (the center pane renders blank during
+// the load WITHOUT destroying the buffer — preserving 16138bd's anti-flash) and
+// issues the read. Interactive open, tab switch, link, eviction, close→neighbor,
+// and startup all funnel through here, so load discipline lives in exactly one
+// place. On any load result the buffer + identity change together, so a failed
+// load is a no-op on state (§1.4: ⌘S can never write blank over a real file).
+func (m Model) beginLoad(docID int64, path string) (Model, tea.Cmd) {
+	m.loadGen++
+	gen := m.loadGen // capture into a local before the closure (§5.5)
+	m.pendingLoad = pendingLoad{gen: gen, docID: docID, path: path, active: true}
+	return m, loadFileCmd(m.fsys(), context.Background(), path, gen)
+}
+
+// supersedeLoad invalidates any in-flight async load without issuing a new one: it
+// bumps the load token so a still-pending read fails the gen guard (dropped, never
+// displayed) and clears the gate so a synchronous transition (help/untitled/new) is
+// not masked by a blank frame. The sole way to "cancel" a load from a synchronous
+// transition; mirrors forceSnapshot bumping flushGen on every switch-away.
+func (m Model) supersedeLoad() Model {
+	m.loadGen++
+	m.pendingLoad = pendingLoad{}
+	return m
+}
+
 // viewingHelp reports whether the read-only help document is the active doc.
-func (m Model) viewingHelp() bool { return m.filePath == help.DocPath }
+func (m Model) viewingHelp() bool { return m.view.IsHelp() }
 
 // toggleHelp opens, focuses, or closes the help document, per ^?.
 func (m Model) toggleHelp() (Model, tea.Cmd) {
@@ -79,9 +112,7 @@ func (m Model) toggleHelp() (Model, tea.Cmd) {
 // Synchronous: the content is generated in memory, no I/O deferred.
 func (m Model) showHelp() Model {
 	m.editor = m.editor.SetContent(m.helpContent).SetReadOnly(true)
-	m.filePath = help.DocPath
-	m.docID = 0
-	m.baseline = diskBaseline{}
+	m.view = helpView()
 	m.title = m.title.SetText("(Help)")
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
@@ -105,9 +136,7 @@ func (m Model) showUntitled(docID int64) Model {
 		}
 	}
 	m.editor = m.editor.SetContent(content).SetReadOnly(false)
-	m.filePath = ""
-	m.docID = docID
-	m.baseline = diskBaseline{}
+	m.view = untitledView(docID)
 	if name := m.opentabs.NameByID(docID); name != "" {
 		m.title = m.title.SetText(name)
 	}
@@ -124,16 +153,16 @@ func (m Model) showUntitled(docID int64) Model {
 // anchor; failure is non-fatal (the journal remains the durable record).
 func (m Model) forceSnapshot() Model {
 	m.flushGen++
-	if m.store == nil || m.docID == 0 {
+	if m.store == nil || m.view.DocID() == 0 {
 		return m
 	}
-	seq, err := m.store.CurrentSeq(m.docID)
+	seq, err := m.store.CurrentSeq(m.view.DocID())
 	if err != nil {
 		// fire-and-forget: can't position the snapshot; skip it rather than
 		// mistag at seq 0. The journal is the durable record (§1.4.3).
 		return m
 	}
-	if _, err := m.store.CreateSnapshot(m.docID, m.editor.Content(), "switch", seq); err != nil {
+	if _, err := m.store.CreateSnapshot(m.view.DocID(), m.editor.Content(), "switch", seq); err != nil {
 		_ = err // fire-and-forget: snapshot is an optimization; the journal is durable
 	}
 	return m
@@ -145,7 +174,7 @@ func (m Model) forceSnapshot() Model {
 // and a crash would lose the whole session (§1.4.3). Any content typed before
 // the store was ready is snapshotted so it is recoverable.
 func (m Model) ensureScratchDoc() Model {
-	if m.store == nil || m.docID != 0 || m.filePath != "" || m.viewingHelp() {
+	if m.store == nil || !m.view.IsUntitled() || m.view.DocID() != 0 {
 		return m
 	}
 	if !m.opentabs.HasUntitledPlaceholder() {
@@ -156,7 +185,7 @@ func (m Model) ensureScratchDoc() Model {
 		m.err = fmt.Errorf("create scratch document: %w", err)
 		return m
 	}
-	m.docID = ref.ID
+	m.view = m.view.withDocID(ref.ID)
 	m.opentabs = m.opentabs.AssignDocID("", ref.ID)
 	if content := m.editor.Content(); content != "" {
 		if _, err := m.store.CreateSnapshot(ref.ID, content, "scratch", 0); err != nil {
@@ -170,23 +199,26 @@ func (m Model) ensureScratchDoc() Model {
 // materialize just created. The VFS doc id is preserved (Store.Bind), so the
 // undo history built while untitled survives the bind (§1.4.6).
 func (m Model) bindMaterialized(path string) Model {
-	oldDocID := m.docID
-	m.filePath = path
+	oldDocID := m.view.DocID()
+	docID := oldDocID
 	if m.store != nil {
-		if m.docID != 0 {
-			if err := m.store.Bind(m.docID, path); err != nil {
+		if docID != 0 {
+			if err := m.store.Bind(docID, path); err != nil {
 				m.err = fmt.Errorf("bind document to %q: %w", path, err)
 			}
 		} else if ref, err := m.store.OpenPath(path); err == nil {
-			m.docID = ref.ID
+			docID = ref.ID
 		}
 	}
+	// Bind the untitled to its new file path, preserving the baseline the
+	// FileSavedMsg handler just stamped (withBaseline) before calling us.
+	m.view = fileView(path, docID, m.view.Baseline())
 	if oldDocID != 0 {
-		m.opentabs = m.opentabs.OpenFile(m.docID, path)
+		m.opentabs = m.opentabs.OpenFile(docID, path)
 	} else {
 		m.opentabs = m.opentabs.RenameFile("", path)
-		if m.docID != 0 {
-			m.opentabs = m.opentabs.AssignDocID(path, m.docID)
+		if docID != 0 {
+			m.opentabs = m.opentabs.AssignDocID(path, docID)
 		}
 	}
 	m.breadcrumb = m.breadcrumb.SetPath(path)
@@ -207,7 +239,7 @@ func (m Model) restoreScratch() Model {
 	if m.store == nil {
 		return m
 	}
-	if ids, err := m.store.RecoverableScratch(m.docID); err == nil {
+	if ids, err := m.store.RecoverableScratch(m.view.DocID()); err == nil {
 		for _, id := range ids {
 			content, err := m.store.RecoverDocument(id)
 			if err != nil || strings.TrimSpace(content) == "" {
@@ -219,7 +251,7 @@ func (m Model) restoreScratch() Model {
 		}
 		// Active state is restored by finalize() → SetActive(m.docID) after this returns.
 	}
-	if _, err := m.store.GCEmptyScratch(m.docID); err != nil {
+	if _, err := m.store.GCEmptyScratch(m.view.DocID()); err != nil {
 		_ = err // fire-and-forget: housekeeping; non-fatal
 	}
 	return m
@@ -247,10 +279,10 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		if h.Path == "" {
 			continue // untitled — nothing to write
 		}
-		isCurrent := (m.docID != 0 && h.DocID == m.docID) || (m.docID == 0 && h.Path == m.filePath)
+		isCurrent := h.Equal(m.view.Handle())
 		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
 		if isCurrent {
-			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), requestID, false, m.baseline))
+			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), requestID, false, m.view.Baseline()))
 			continue
 		}
 		// Non-current tab: reconstruct its bytes from the VFS. Skip (never write
@@ -276,8 +308,8 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 	if !m.viewingHelp() {
 		isDirty := false
-		if m.store != nil && m.docID != 0 {
-			if d, err := m.store.IsDirty(m.docID); err == nil {
+		if m.store != nil && m.view.DocID() != 0 {
+			if d, err := m.store.IsDirty(m.view.DocID()); err == nil {
 				isDirty = d
 			} else {
 				isDirty = m.opentabs.HasDirty() // on error, keep buffer safe
@@ -290,11 +322,11 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 		}
 	}
 
-	_, hasNext := m.opentabs.NeighborOf(m.docID, m.filePath)
-	if m.filePath == "" && !hasNext {
+	_, hasNext := m.opentabs.NeighborOf(m.view.DocID(), m.view.Path())
+	if m.view.IsUntitled() && !hasNext {
 		return m, nil // sole untitled tab — keep it
 	}
-	return m.executeClose(m.docID, m.filePath)
+	return m.executeClose(m.view.DocID(), m.view.Path())
 }
 
 // executeClose removes the identified tab and switches to its neighbour (or a
@@ -309,23 +341,19 @@ func (m Model) executeClose(closeDocID int64, closePath string) (Model, tea.Cmd)
 		m.opentabs = m.opentabs.CloseFile(closePath)
 	}
 
-	m.docID = 0
-	m.filePath = ""
+	m.view = untitledView(0)
 
 	if !hasNext {
 		return m.CreateUntitled()
 	}
 
-	var cmd tea.Cmd
-	m, cmd = m.requestOpenPath(next.DocID, next.Path)
-	// For async file loads requestOpenPath issues a loadFileCmd and leaves
-	// m.docID/m.filePath at 0/"". Set them optimistically so finalize() marks
-	// the incoming tab active during the transition, satisfying TAB-SET.
-	if m.docID == 0 && m.filePath == "" {
-		m.docID = next.DocID
-		m.filePath = next.Path
-	}
-	return m, cmd
+	// requestOpenPath leaves m.docID/m.filePath at 0/"" for an async load (the
+	// save-safe transitional identity: ⌘S is inert while a load is pending, and
+	// 0/"" can never be clobbered). TAB-SET — marking the incoming tab active
+	// during the gap — is handled in finalize() from m.pendingLoad, NOT by
+	// forging a real identity here (which would strand blank-buffer + real-path
+	// on a failed neighbour load).
+	return m.requestOpenPath(next.DocID, next.Path)
 }
 
 // maybeFinalizeTitle validates and commits the title when focus is leaving paneTitle.
@@ -356,15 +384,42 @@ func (m Model) nextUntitledName() string {
 	}
 }
 
+// openExternalCmd opens an external URL in the OS default handler. Only http(s)
+// and mailto reach here (markdownedit.isExternalURL is the allowlist), and the
+// URL is passed as a separate exec argument — never through a shell — so a
+// crafted link cannot inject a command. The buffer is never touched (§1.4); the
+// outcome surfaces as a transient footer status or error (§1.3).
+func openExternalCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		name, args := externalOpener(url)
+		if err := exec.Command(name, args...).Start(); err != nil {
+			return footer.ShowErrorMsg{Text: fmt.Errorf("open %q: %w", url, err).Error()}
+		}
+		return footer.ShowStatusMsg{Text: "→ " + url}
+	}
+}
+
+// externalOpener returns the platform command and args that open url in the OS
+// default handler.
+func externalOpener(url string) (string, []string) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "open", []string{url}
+	case "windows":
+		return "rundll32", []string{"url.dll,FileProtocolHandler", url}
+	default:
+		return "xdg-open", []string{url}
+	}
+}
+
 // CreateUntitled opens a fresh untitled buffer as a durable VFS document. Any
 // previously-open untitled stays as its own tab and VFS doc — there is no disk
 // file and nothing to preserve to disk (Fix 2 §5).
 func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	m = m.forceSnapshot()
+	m = m.supersedeLoad() // synchronous: drop any in-flight read so it can't display over this buffer
 
 	m.editor = m.editor.SetContent("").SetReadOnly(false)
-	m.filePath = ""
-	m.baseline = diskBaseline{}
 
 	name := m.nextUntitledName()
 	var newDocID int64
@@ -373,7 +428,7 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 			newDocID = ref.ID
 		}
 	}
-	m.docID = newDocID
+	m.view = untitledView(newDocID)
 
 	m.title = m.title.SetText(name)
 	m.breadcrumb = m.breadcrumb.SetPath("")

@@ -22,8 +22,8 @@ func TestHelpOpensReadOnlyTab(t *testing.T) {
 	if !m.viewingHelp() {
 		t.Fatal("expected to be viewing help after F1")
 	}
-	if m.filePath != help.DocPath {
-		t.Fatalf("expected filePath %q, got %q", help.DocPath, m.filePath)
+	if m.view.Path() != help.DocPath {
+		t.Fatalf("expected filePath %q, got %q", help.DocPath, m.view.Path())
 	}
 	if !m.editor.ReadOnly() {
 		t.Fatal("help document must be read-only")
@@ -77,8 +77,8 @@ func TestHelpToggleClosesAndRestoresEditable(t *testing.T) {
 	if m.editor.ReadOnly() {
 		t.Fatal("editor must be editable after closing help")
 	}
-	if m.filePath != "" {
-		t.Fatalf("expected untitled (empty filePath) after close, got %q", m.filePath)
+	if m.view.Path() != "" {
+		t.Fatalf("expected untitled (empty filePath) after close, got %q", m.view.Path())
 	}
 }
 
@@ -196,8 +196,8 @@ func TestSwitchBackToUntitledRestoresContent(t *testing.T) {
 	if m.viewingHelp() {
 		t.Fatal("Ctrl+1 should switch away from help")
 	}
-	if m.filePath != "" {
-		t.Fatalf("expected the untitled tab, got %q", m.filePath)
+	if m.view.Path() != "" {
+		t.Fatalf("expected the untitled tab, got %q", m.view.Path())
 	}
 	if m.editor.ReadOnly() {
 		t.Fatal("untitled buffer must be editable")

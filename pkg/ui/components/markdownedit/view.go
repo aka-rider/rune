@@ -183,3 +183,32 @@ func (m Model) View() string {
 		Height(h).
 		Render(composed)
 }
+
+// RenderEmpty renders the editor's empty frame (the Vim-style "~" fill) at the
+// current dimensions WITHOUT touching the buffer — pure, no I/O, no mutation
+// (§5.2). The workspace substitutes it for View() while a file load is in flight
+// so the center pane blanks without the old destructive SetContent("") that
+// stranded the editor on a failed load. It reproduces View()'s empty-buffer
+// output exactly (same ContentHeight tildes, same faint-when-unfocused, same
+// outer wrap) so the pane height never jumps between the pending and loaded frame.
+func (m Model) RenderEmpty() string {
+	w := m.Model.Width()
+	h := m.Model.Height()
+	if w == 0 || h == 0 {
+		return ""
+	}
+	lines := make([]string, m.Model.ContentHeight())
+	for i := range lines {
+		lines[i] = "~"
+	}
+	composed := strings.Join(lines, "\n")
+	if !m.Model.Focused() {
+		composed = lipgloss.NewStyle().Faint(true).Render(composed)
+	}
+	return lipgloss.NewStyle().
+		MaxWidth(w).
+		MaxHeight(h).
+		Width(w).
+		Height(h).
+		Render(composed)
+}

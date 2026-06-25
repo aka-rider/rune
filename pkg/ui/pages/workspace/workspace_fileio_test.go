@@ -145,14 +145,14 @@ func TestRestore_OnlyNonEmptyGenuineScratch(t *testing.T) {
 func TestStartupUntitled_DurableAfterStoreReady(t *testing.T) {
 	m := newTestWorkspace(t)
 	m = withStore(t, m)
-	if m.docID == 0 {
+	if m.view.DocID() == 0 {
 		t.Fatal("startup untitled was not upgraded to a durable VFS doc")
 	}
 	m = focusEditor(m)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
 
-	got, err := m.store.RecoverDocument(m.docID)
+	got, err := m.store.RecoverDocument(m.view.DocID())
 	if err != nil {
 		t.Fatalf("RecoverDocument: %v", err)
 	}

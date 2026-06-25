@@ -194,7 +194,15 @@ func (m Model) View() tea.View {
 	if m.search.Visible() {
 		centerParts = append(centerParts, m.search.View())
 	}
-	centerParts = append(centerParts, m.editor.View())
+	editorView := m.editor.View()
+	if m.pendingLoad.active {
+		// Non-destructive anti-flash: render the editor's empty frame while a
+		// load is in flight, leaving the real buffer intact (preserves 16138bd
+		// without the SetContent("") stranding). RenderEmpty matches View()'s
+		// height exactly, so the pane does not jump when the load lands.
+		editorView = m.editor.RenderEmpty()
+	}
+	centerParts = append(centerParts, editorView)
 	centerContent := lipgloss.JoinVertical(lipgloss.Left, centerParts...)
 	centerBlock := borderStyle(m.focus.isCenter(), m.styles).
 		Width(centerW).Height(contentH).

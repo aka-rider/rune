@@ -61,6 +61,24 @@ func newScrollWorkspace(t *testing.T) Model {
 	return m
 }
 
+// newWorkspaceWithFiles is newTestWorkspace but with initialFiles set, so New
+// seeds the startup load overlay. Used to exercise the startup generation path.
+func newWorkspaceWithFiles(t *testing.T, files ...string) Model {
+	t.Helper()
+	keys := keymap.Default()
+	st := styles.Default()
+	builder := command.NewBuilder()
+	builder, err := markdownedit.RegisterCommands(builder)
+	if err != nil {
+		t.Fatalf("register commands: %v", err)
+	}
+	reg := builder.Build()
+	res, _ := keybind.NewResolver(nil)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", files)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	return m
+}
+
 // withStore wires a real file-backed VFS store into the workspace, exactly as
 // the app does once StoreReadyMsg arrives. This upgrades the startup untitled to
 // a durable VFS document (ensureScratchDoc), so untitled content survives tab
@@ -75,10 +93,14 @@ func withStore(t *testing.T, m Model) Model {
 	return m
 }
 
-// loadFile simulates loading a file into the workspace (via FileLoadedMsg).
+// loadFile simulates loading a file into the workspace through the real load
+// generation handshake: arm the load (beginLoad, which stamps the current gen)
+// then deliver the matching FileLoadedMsg, so the displayed-document gen gate
+// accepts it. Delivering a raw FileLoadedMsg with no matching pending gen would be
+// dropped (it would only open a tab), so all simulated loads must go through here.
 func loadFile(m Model, path string, content string) Model {
-	// Directly send FileLoadedMsg — workspace owns file/disk domain (D12).
-	m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(content)})
+	m, _ = m.beginLoad(0, path)
+	m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(content), Gen: m.loadGen})
 	return m
 }
 
@@ -169,8 +191,8 @@ func TestCloseLastTabResetsToUntitled(t *testing.T) {
 		t.Fatalf("expected title starting with 'Untitled', got %q", titleText)
 	}
 	// Workspace must have no file path.
-	if m.filePath != "" {
-		t.Fatalf("expected empty file path after last-tab close, got %q", m.filePath)
+	if m.view.Path() != "" {
+		t.Fatalf("expected empty file path after last-tab close, got %q", m.view.Path())
 	}
 	// Opentabs should show exactly one tab (the new untitled slot) with empty path.
 	if path := m.opentabs.PathAt(0); path != "" {
@@ -193,8 +215,8 @@ func TestBindNewConflict_KeepsBufferUntitled(t *testing.T) {
 		Conflict:  true,
 		Err:       errors.New(`materialize "foo.md": file already exists`),
 	})
-	if m.filePath != "" {
-		t.Fatalf("expected buffer to stay untitled after bind conflict, got filePath %q", m.filePath)
+	if m.view.Path() != "" {
+		t.Fatalf("expected buffer to stay untitled after bind conflict, got filePath %q", m.view.Path())
 	}
 	if m.activeSave.InFlight {
 		t.Fatal("expected activeSave cleared after bind conflict")

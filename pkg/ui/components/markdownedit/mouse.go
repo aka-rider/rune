@@ -1,6 +1,7 @@
 package markdownedit
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -55,16 +56,8 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 
 	bp, offset := m.Model.DisplayToBuffer(dp)
 
-	// Check if click is on a link span — only when not read-only.
-	if !m.Model.ReadOnly() {
-		if linkPath := m.resolveLinkClick(bp, offset); linkPath != "" {
-			m.Model = m.Model.MousePositionCursor(offset)
-			m.mouse.dragAnchor = offset
-			return m, func() tea.Msg { return LinkClickedMsg{Path: linkPath} }
-		}
-	}
-
-	// Detect multi-click
+	// Detect multi-click (link clicks participate too: a single click positions
+	// the caret and reveals the link; a second click on it follows).
 	clickCount := 1
 	if now.Sub(m.mouse.lastClickTime) < multiClickThreshold &&
 		msg.X == m.mouse.lastClickX && msg.Y == m.mouse.lastClickY {
@@ -84,6 +77,14 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	case clickCount >= 3:
 		m.Model = m.Model.MouseSelectLine(bp.Line)
 	case clickCount == 2:
+		// Double-click on a link follows it (Ctrl is an alias — not inspected);
+		// double-click elsewhere selects the word. Following works even in a
+		// read-only doc (it doesn't edit).
+		if la, ok := m.linkAtLine(bp, offset); ok {
+			m.Model = m.Model.MousePositionCursor(offset)
+			m.mouse.dragAnchor = offset
+			return m, func() tea.Msg { return la }
+		}
 		m.Model = m.Model.MouseSelectWord(offset)
 	default:
 		m.Model = m.Model.MousePositionCursor(offset)
@@ -93,40 +94,70 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	return m, nil
 }
 
-func (m Model) resolveLinkClick(bp coords.BufferPoint, offset int) string {
+// LinkAtCursor returns the raw target of the navigable link under the primary
+// caret (as written, e.g. "pages/foo.md" or "https://…") for the footer hint. It
+// does NOT resolve / touch the filesystem — it runs on the cursor-move hot path
+// (syncCursorToFooter, every keypress); resolution (and its os.Stat) happens only
+// on a follow.
+func (m Model) LinkAtCursor() (string, bool) {
+	off := m.Model.CursorOffset()
+	raw, _, ok := m.rawLinkAtLine(m.Model.OffsetToLineCol(off), off)
+	return raw, ok
+}
+
+// rawLinkAtLine reports the navigable link target AS WRITTEN whose buffer range
+// contains offset on the given line — no resolution, no I/O. appendMD is true for
+// wiki links. Images, non-links, and empty/data: targets yield no hit.
+func (m Model) rawLinkAtLine(bp coords.BufferPoint, offset int) (raw string, appendMD bool, ok bool) {
 	ss := m.Model.SyntaxSnap()
 	if bp.Line < 0 || bp.Line >= len(ss.Lines) {
-		return ""
+		return "", false, false
 	}
-
-	line := ss.Lines[bp.Line]
-	col := offset
-
-	for _, sp := range line.Spans {
-		if sp.BufferStart > col {
+	for _, sp := range ss.Lines[bp.Line].Spans {
+		if sp.BufferStart > offset {
 			break
 		}
-		if col >= sp.BufferEnd {
+		if offset >= sp.BufferEnd {
 			continue
 		}
-
-		switch sp.LinkRole() {
-		case display.LinkRoleImage:
-			return ""
-		case display.LinkRoleNavigable:
-			if sp.Kind == display.TokenWikiLink {
-				if sp.WikiLinkTarget == "" {
-					return ""
-				}
-				return m.resolveNavigation(sp.WikiLinkTarget, true)
-			}
-			if sp.LinkURL == "" {
-				return ""
-			}
-			return m.resolveNavigation(sp.LinkURL, false)
+		if sp.LinkRole() != display.LinkRoleNavigable {
+			continue // images and non-link spans are not navigable
 		}
+		raw, appendMD = sp.LinkURL, false
+		if sp.Kind == display.TokenWikiLink {
+			raw, appendMD = sp.WikiLinkTarget, true
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" || strings.HasPrefix(strings.ToLower(raw), "data:") {
+			return "", false, false // not a navigable link
+		}
+		return raw, appendMD, true
 	}
-	return ""
+	return "", false, false
+}
+
+// linkAt reports the navigable link under a buffer byte offset, fully RESOLVED
+// (does I/O). Used by the keyboard follow path, which knows only the caret offset.
+func (m Model) linkAt(offset int) (LinkActivatedMsg, bool) {
+	return m.linkAtLine(m.Model.OffsetToLineCol(offset), offset)
+}
+
+// linkAtLine resolves the navigable link under offset on the given line into a
+// LinkActivatedMsg the workspace acts on by Kind — via the ONE resolver (resolveRef,
+// existence-checked). A relative target that resolves to no existing file is
+// LinkMissing (still a hit; the follow reports it). The follow path only.
+func (m Model) linkAtLine(bp coords.BufferPoint, offset int) (LinkActivatedMsg, bool) {
+	raw, appendMD, ok := m.rawLinkAtLine(bp, offset)
+	if !ok {
+		return LinkActivatedMsg{}, false
+	}
+	if isExternalURL(raw) {
+		return LinkActivatedMsg{Raw: raw, Kind: LinkExternal, Dest: raw}, true
+	}
+	if abs, found := resolveRef(raw, m.docDir(), m.root, appendMD); found {
+		return LinkActivatedMsg{Raw: raw, Kind: LinkInternal, Dest: abs}, true
+	}
+	return LinkActivatedMsg{Raw: raw, Kind: LinkMissing}, true
 }
 
 func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {

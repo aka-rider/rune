@@ -58,6 +58,13 @@ type Snapshot struct {
 	ActiveFilePath string // m.filePath; empty = Untitled/unsaved file
 	EditorPath     string // same as filePath; named for clarity in invariants
 	DocID          int64
+
+	// Loading is true while an async file read is in flight (pendingLoad.active).
+	// During this window the view holds the save-safe transitional untitled while
+	// the active tab already points at the incoming doc — the active handle
+	// intentionally LEADS the view by one async hop (executeClose/finalize), so
+	// path-coherence invariants (EDITOR-TAB-COH) hold only after the load settles.
+	Loading bool
 	FlushGen       uint64
 	SaveSnapshot   []byte // activeSave.SavedContent — content captured at save-start
 	SaveInFlight   bool

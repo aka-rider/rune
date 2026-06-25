@@ -1,96 +1,53 @@
 package markdownedit
 
+// Relative-reference resolution — ONE resolver (resolveRef), reused by both link
+// following and image embeds:
+//
+//	follow (mouse/Enter) ─┐
+//	image embed ──────────┴─→ resolveRef(target, docDir, root) → abs path (existence-checked)
+//
+// The base directories are NEVER stored/derived state: they come from the golden
+// source — the open document's path (docDir = filepath.Dir(docPath)) — and the
+// static workspace root (launch CWD). A relative target resolves against the
+// document's own folder first, then the root. External schemes (http/https/mailto)
+// bypass this and go to the OS opener (isExternalURL is that allowlist).
+//
+// Ctrl is an alias, not a mode: Ctrl+Enter ≡ Enter and Ctrl+double-click ≡
+// double-click — a plain follow, no "new tab".
+
 import (
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-type linkResolutionMode int
-
-const (
-	resolveFromFileDir linkResolutionMode = iota
-	resolveFromCWD
-	resolveAbsolute
-	resolveSkip
-)
-
-func classifyLink(raw string) linkResolutionMode {
-	if raw == "" {
-		return resolveSkip
+// resolveRef resolves a relative reference against docDir first, then root,
+// returning the absolute path of the first that exists. appendMD adds ".md" to an
+// extensionless target (wiki/markdown links). An absolute target is returned iff it
+// exists. This is the single resolver shared by link-follow and image embeds.
+func resolveRef(target, docDir, root string, appendMD bool) (string, bool) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", false
 	}
-	if filepath.IsAbs(raw) {
-		return resolveAbsolute
-	}
-	lower := strings.ToLower(raw)
-	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
-		return resolveSkip
-	}
-	stripped := raw
-	if strings.HasPrefix(raw, "./") {
-		stripped = raw[2:]
-	}
-	if !strings.ContainsRune(stripped, '/') && !strings.ContainsRune(stripped, '\\') {
-		return resolveFromFileDir
-	}
-	return resolveFromCWD
-}
-
-// resolveLink resolves a raw link target to an absolute file path.
-func resolveLink(raw string, fileDir string, appendMD bool, existCheck bool) string {
-	mode := classifyLink(raw)
-	switch mode {
-	case resolveSkip:
-		return ""
-	case resolveAbsolute:
-		cleaned := filepath.Clean(raw)
-		if existCheck && !fileExistsForLink(cleaned) {
-			return ""
-		}
-		return cleaned
-	}
-
-	target := strings.TrimSpace(raw)
-	explicitRelative := strings.HasPrefix(target, "./")
-	if explicitRelative {
-		target = target[2:]
-	}
+	target = strings.TrimPrefix(target, "./")
 	if appendMD && filepath.Ext(target) == "" {
-		target = target + ".md"
+		target += ".md"
 	}
-
-	cwd, _ := os.Getwd()
-
-	switch mode {
-	case resolveFromFileDir:
-		if fileDir != "" {
-			candidate := filepath.Join(fileDir, target)
-			if existCheck && fileExistsForLink(candidate) {
-				return filepath.Clean(candidate)
-			}
-			if !existCheck && fileDir != "" {
-				return filepath.Clean(candidate)
-			}
-		}
-		if !explicitRelative && cwd != "" {
-			candidate := filepath.Join(cwd, target)
-			if existCheck && fileExistsForLink(candidate) {
-				return filepath.Clean(candidate)
-			}
-			if !existCheck {
-				return filepath.Clean(candidate)
-			}
-		}
-		return ""
-	case resolveFromCWD:
-		candidate := filepath.Join(cwd, target)
-		if existCheck && !fileExistsForLink(candidate) {
-			return ""
-		}
-		return filepath.Clean(candidate)
-	default:
-		return ""
+	if filepath.IsAbs(target) {
+		clean := filepath.Clean(target)
+		return clean, fileExistsForLink(clean)
 	}
+	for _, base := range [2]string{docDir, root} {
+		if base == "" {
+			continue
+		}
+		cand := filepath.Clean(filepath.Join(base, target))
+		if fileExistsForLink(cand) {
+			return cand, true
+		}
+	}
+	return "", false
 }
 
 func fileExistsForLink(path string) bool {
@@ -98,21 +55,29 @@ func fileExistsForLink(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// resolveEmbed resolves an image/embed target to an existing on-disk path.
-// Uses m.dir as the base directory.
+// resolveEmbed resolves an image/embed target to an existing on-disk path, against
+// the open document's folder then the workspace root — the SAME bases (and the same
+// resolver) as link following.
 func (m Model) resolveEmbed(target string) string {
-	if resolved := resolveLink(target, m.dir, false, true); resolved != "" {
-		return resolved
+	if abs, ok := resolveRef(target, m.docDir(), m.root, false); ok {
+		return abs
 	}
 	if filepath.Ext(strings.TrimSpace(target)) == "" {
-		if resolved := resolveLink(target, m.dir, true, true); resolved != "" {
-			return resolved
+		if abs, ok := resolveRef(target, m.docDir(), m.root, true); ok {
+			return abs
 		}
 	}
 	return ""
 }
 
-// resolveNavigation resolves a navigable link target.
-func (m Model) resolveNavigation(target string, appendMD bool) string {
-	return resolveLink(target, m.dir, appendMD, false)
+// isExternalURL reports whether raw is a scheme that should open in the OS
+// default handler rather than inside rune. This allowlist is the security
+// boundary for the shell-out in workspace_nav.go: only these schemes ever reach
+// the OS opener, so a link can never invoke an arbitrary handler (e.g. file://,
+// javascript:). data: is intentionally excluded — it is non-navigable.
+func isExternalURL(raw string) bool {
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	return strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "mailto:")
 }

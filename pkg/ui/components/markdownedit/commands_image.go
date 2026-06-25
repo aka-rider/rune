@@ -24,9 +24,12 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 		return m, nil
 	}
 
-	baseDir := m.dir
+	baseDir := m.docDir() // pasted images save next to the note
 	if baseDir == "" {
-		return m, nil
+		baseDir = m.root // untitled (no folder of its own): fall back to the workspace root
+	}
+	if baseDir == "" {
+		return m, nil // no resolvable location at all
 	}
 
 	assetsDir := m.imageConfig.AssetsDir

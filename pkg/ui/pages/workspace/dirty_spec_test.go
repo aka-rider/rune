@@ -57,7 +57,7 @@ func redoOnce(m Model) Model {
 func save(m Model) Model {
 	m, _ = m.startSave()
 	reqID := m.activeSave.RequestID
-	m, _ = m.Update(FileSavedMsg{Path: m.filePath, RequestID: reqID})
+	m, _ = m.Update(FileSavedMsg{Path: m.view.Path(), RequestID: reqID})
 	return m
 }
 

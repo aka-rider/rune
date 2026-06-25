@@ -42,6 +42,19 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, t
 				}
 			}
 			m.focus = newFocus
+			if newFocus == paneCenter {
+				// Forward the click to the editor so it positions the caret,
+				// follows a link, or sets the drag anchor. applyFocus is the only
+				// sanctioned focus projection (pkg/ui/CLAUDE.md §2); the editor
+				// gates on Focused() before acting on the click.
+				m = m.applyFocus()
+				var ecmd tea.Cmd
+				m.editor, ecmd = m.editor.Update(msg)
+				cmds = append(cmds, ecmd)
+				// Refresh the link-under-caret hint now that the caret moved —
+				// finalize() does not, so otherwise it'd be stale until a keypress.
+				m = m.syncCursorToFooter()
+			}
 		}
 		m = m.syncDictationAllowed()
 	}
@@ -50,6 +63,13 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, t
 
 func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model, tea.Cmd) {
 	if m.drag == dragNone {
+		// Not dragging a pane divider — forward a left-button drag to the editor
+		// for text selection (it extends from the anchor the click set).
+		if msg.Button == tea.MouseLeft && m.focus == paneCenter {
+			var ecmd tea.Cmd
+			m.editor, ecmd = m.editor.Update(msg)
+			cmds = append(cmds, ecmd)
+		}
 		return m.finalize(cmds)
 	}
 	if msg.Button != tea.MouseLeft {
@@ -104,7 +124,13 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 }
 
 func (m Model) startSave() (Model, tea.Cmd) {
-	if m.filePath == "" || m.activeSave.InFlight {
+	// Inert while a load is pending: the editor buffer may not yet match the
+	// incoming identity (close→neighbour transition), so a save now could write
+	// the wrong bytes. The gate clears on the load result (§1.4).
+	// Not a file (untitled / help / transitional 0/""), a save in flight, or a load
+	// pending → inert. !IsFile() also makes the read-only help structurally
+	// non-saveable. The gate clears on the load result (§1.4).
+	if !m.view.IsFile() || m.activeSave.InFlight || m.pendingLoad.active {
 		return m, nil
 	}
 	content := m.editor.Content()
@@ -116,29 +142,45 @@ func (m Model) startSave() (Model, tea.Cmd) {
 	}
 	// Overwrite an already-bound file: materializeCmd refuses if it diverged from
 	// our baseline since load (§1.4.7).
-	return m, materializeCmd(m.fsys(), m.docID, m.filePath, content, requestID, false, m.baseline)
+	return m, materializeCmd(m.fsys(), m.view.DocID(), m.view.Path(), content, requestID, false, m.view.Baseline())
 }
 
 func (m Model) syncDirty() Model {
-	if m.viewingHelp() || m.store == nil || m.docID == 0 {
+	if m.viewingHelp() || m.store == nil || m.view.DocID() == 0 {
 		return m // no DB record — last-known mark stands
 	}
-	dirty, err := m.store.IsDirty(m.docID)
+	dirty, err := m.store.IsDirty(m.view.DocID())
 	if err != nil {
 		// fire-and-forget: dirty is a rung-3 display indicator; the journal is the durable truth
 		return m
 	}
 	if dirty {
-		m.opentabs = m.opentabs.MarkDirtyByID(m.docID)
+		m.opentabs = m.opentabs.MarkDirtyByID(m.view.DocID())
 	} else {
-		m.opentabs = m.opentabs.MarkCleanByID(m.docID)
+		m.opentabs = m.opentabs.MarkCleanByID(m.view.DocID())
 	}
 	return m
 }
 
 func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 	m = m.syncDirty()
-	m.opentabs = m.opentabs.SetActive(opentabs.TabHandle{DocID: m.docID, Path: m.filePath})
+	// TAB-SET: mirror the active tab to the live identity. During a close→neighbour
+	// transition the live identity is the save-safe 0/"" (executeClose left it
+	// there), so derive the active tab + link base dir from the pending target
+	// instead — the active handle intentionally LEADS the identity by one async
+	// hop here (INV-ACTIVE-SYNC holds only after settle; do NOT "fix" it by
+	// tracking live identity — that reintroduces the stranding). Every other load
+	// path keeps a non-empty live identity, so it is unaffected.
+	active := m.view.Handle()
+	if m.pendingLoad.active && m.view.IsUntitled() && m.view.DocID() == 0 {
+		active = opentabs.TabHandle{DocID: m.pendingLoad.docID, Path: m.pendingLoad.path}
+	}
+	m.opentabs = m.opentabs.SetActive(active)
+	// Project the editor's link/embed base from the single source (m.view) at this
+	// one authority point — like applyFocus projects m.focus. The GOLDEN path
+	// verbatim (the editor derives Dir() itself), so it tracks every settled
+	// transition (load/untitled/help/bind/rename) and never drifts.
+	m.editor = m.editor.SetDocPath(m.view.Path())
 	m = m.applyFocus()
 	if m.totalWidth > 0 {
 		m = m.recalcLayout()
@@ -173,11 +215,13 @@ func (m Model) applyFocus() Model {
 }
 
 func (m Model) syncCursorToFooter() Model {
-	m.footer, _ = m.footer.Update(footer.UpdateCursorMsg{
-		Line:      0,
-		Col:       0,
-		WordCount: 0,
-	})
+	// Surface the link under the caret as a footer hint, but only while the
+	// editor is focused (the caret is meaningless to the user otherwise).
+	linkTarget := ""
+	if m.focus == paneCenter {
+		linkTarget, _ = m.editor.LinkAtCursor()
+	}
+	m.footer, _ = m.footer.Update(footer.UpdateCursorMsg{LinkTarget: linkTarget})
 	return m
 }
 
@@ -190,7 +234,7 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsBefore, _, ok := m.store.UndoTarget(m.docID)
+	surface, edits, cursorsBefore, _, ok := m.store.UndoTarget(m.view.DocID())
 	if !ok {
 		return m, nil
 	}
@@ -222,7 +266,7 @@ func (m Model) handleRedo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsAfter, _, ok := m.store.RedoTarget(m.docID)
+	surface, edits, cursorsAfter, _, ok := m.store.RedoTarget(m.view.DocID())
 	if !ok {
 		return m, nil
 	}
@@ -279,10 +323,10 @@ func snapshotCmd(store *docstate.Store, docID int64, content string, seq, gen ui
 // journalEdit appends an edit to the per-document journal and schedules VFS
 // autosave. Call after DrainEdits returns non-empty edits.
 func (m Model) journalEdit(surface string, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) Model {
-	if m.store == nil || m.docID == 0 || len(edits) == 0 {
+	if m.store == nil || m.view.DocID() == 0 || len(edits) == 0 {
 		return m
 	}
-	_, err := m.store.AppendEdit(m.docID, surface, edits, cursorsBefore, cursorsAfter, surface)
+	_, err := m.store.AppendEdit(m.view.DocID(), surface, edits, cursorsBefore, cursorsAfter, surface)
 	if err != nil {
 		// §1.3: a failed journal write leaves undo history incomplete, and a
 		// snapshot taken afterward would tag the new buffer against a stale head
