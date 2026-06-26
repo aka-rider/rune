@@ -24,7 +24,7 @@ func TestTable_InlineSpansExtracted(t *testing.T) {
 	// Line 2 (body line with **bold**) should have spans with TokenBold kind
 	foundBold := false
 	for _, sp := range snap.Lines[2].Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			foundBold = true
 			if sp.Text != "bold" {
 				t.Errorf("bold span text: got %q, want %q", sp.Text, "bold")
@@ -46,7 +46,7 @@ func TestTable_HeaderHasSpans(t *testing.T) {
 	// Line 0 (header with **Name**) should have TokenBold span
 	foundBold := false
 	for _, sp := range snap.Lines[0].Spans {
-		if sp.Kind == display.TokenBold && sp.TableRole == display.TableRoleHeader {
+		if sp.Marks.Has(display.MarkBold) && sp.TableRole == display.TableRoleHeader {
 			foundBold = true
 			if sp.Text != "Name" {
 				t.Errorf("bold header span text: got %q, want %q", sp.Text, "Name")
@@ -122,7 +122,7 @@ func TestTable_MixedFormatting(t *testing.T) {
 	hasBold := false
 	hasLink := false
 	for _, sp := range snap.Lines[2].Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			hasBold = true
 		}
 		if sp.Kind == display.TokenLink {
@@ -374,7 +374,7 @@ func TestTable_StrikethroughInCell(t *testing.T) {
 	// Line 2 should have TokenStrikethrough span
 	foundStrike := false
 	for _, sp := range snap.Lines[2].Spans {
-		if sp.Kind == display.TokenStrikethrough {
+		if sp.Marks.Has(display.MarkStrikethrough) {
 			foundStrike = true
 			if sp.Text != "old" {
 				t.Errorf("strikethrough span text: got %q, want %q", sp.Text, "old")

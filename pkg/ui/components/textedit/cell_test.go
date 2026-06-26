@@ -1,6 +1,7 @@
 package textedit_test
 
 import (
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -27,5 +28,40 @@ func TestSpanToCells_NewlineSkipped(t *testing.T) {
 	}
 	if len(cells) != 5 {
 		t.Errorf("cell count = %d, want 5 (\\n must be skipped, only 'hello' = 5 cells)", len(cells))
+	}
+}
+
+// TestCellsToString_DimPerRun verifies BUG2: when dimming an unfocused line,
+// faint must apply to EVERY style run, not just the first. The old post-hoc
+// Faint(true).Render(assembledANSI) left only the first run dim because the
+// inner reset cleared faint. With per-run dimming, a plain run AFTER an
+// intervening styled (link) run is still faint.
+func TestCellsToString_DimPerRun(t *testing.T) {
+	plain := lipgloss.NewStyle()
+	link := lipgloss.NewStyle().Underline(true)
+	cells := []textedit.Cell{
+		{Rune: 's', Width: 1, Style: plain, BufOffset: 0},
+		{Rune: 'e', Width: 1, Style: plain, BufOffset: 1},
+		{Rune: 'L', Width: 1, Style: link, BufOffset: 2},
+		{Rune: 'K', Width: 1, Style: link, BufOffset: 3},
+		{Rune: 'e', Width: 1, Style: plain, BufOffset: 4},
+		{Rune: 'd', Width: 1, Style: plain, BufOffset: 5},
+	}
+	no := lipgloss.NewStyle()
+
+	const faint = "\x1b[2m"
+	dimOut := textedit.CellsToString(cells, no, no, no, no, true)
+	plainOut := textedit.CellsToString(cells, no, no, no, no, false)
+
+	// Both plain runs ("se" before the link, "ed" after it) must carry faint —
+	// proving faint survives past the link run's reset.
+	if got := strings.Count(dimOut, faint); got < 2 {
+		t.Errorf("dim output has %d faint markers, want >=2 (faint must apply to every run): %q", got, dimOut)
+	}
+	if strings.Contains(plainOut, faint) {
+		t.Errorf("non-dim output must not contain faint: %q", plainOut)
+	}
+	if dimOut == plainOut {
+		t.Error("dim and non-dim output are identical; dimming had no effect")
 	}
 }

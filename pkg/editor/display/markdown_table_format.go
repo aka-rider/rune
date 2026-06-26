@@ -273,9 +273,10 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 
 	// Build per-visual-cell kind classification
 	type cellInfo struct {
-		kind TokenKind
-		sp   *mdSpan
-		cm   CellMapping
+		kind  TokenKind
+		marks InlineMarks
+		sp    *mdSpan
+		cm    CellMapping
 	}
 
 	cellInfos := make([]cellInfo, len(cm))
@@ -283,18 +284,20 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 	for i, cellMap := range cm {
 		bufOff := cellMap.BufOffset
 		kind := TokenTable
+		var marks InlineMarks
 		var activeSpan *mdSpan
 
 		if bufOff >= 0 {
 			relOff := bufOff - lineStart
 
-			// Find the innermost span that covers this offset
-			// Exclude delimiter bytes from span styling
+			// Find the span that covers this offset (the flattened emitter output
+			// has exactly one visible span per content byte). Exclude delimiters.
 			for _, ms := range sorted {
 				contentStart := ms.start + ms.delimLeft
 				contentEnd := ms.end - ms.delimRight
 				if relOff >= contentStart && relOff < contentEnd {
 					kind = ms.kind
+					marks = ms.marks
 					spanCopy := ms
 					activeSpan = &spanCopy
 					break
@@ -302,7 +305,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 			}
 		}
 
-		cellInfos[i] = cellInfo{kind: kind, sp: activeSpan, cm: cellMap}
+		cellInfos[i] = cellInfo{kind: kind, marks: marks, sp: activeSpan, cm: cellMap}
 	}
 
 	// Group consecutive cells with the same kind into spans
@@ -310,6 +313,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 	var currentText strings.Builder
 	var currentCM []CellMapping
 	var currentKind TokenKind
+	var currentMarks InlineMarks
 	var currentActiveSpan *mdSpan
 
 	flushSpan := func() {
@@ -317,6 +321,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 			sp := SyntaxSpan{
 				Text:        currentText.String(),
 				Kind:        currentKind,
+				Marks:       currentMarks,
 				State:       Rendered,
 				BufferStart: lineStart,
 				BufferEnd:   lineStart + len(lineText),
@@ -346,7 +351,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 	runeIdx := 0
 	for pos := 0; pos < len(formatted); {
 		ci := cellInfos[runeIdx]
-		kindChanged := ci.kind != currentKind
+		kindChanged := ci.kind != currentKind || ci.marks != currentMarks
 		spanChanged := (ci.sp == nil && currentActiveSpan != nil) ||
 			(ci.sp != nil && currentActiveSpan == nil) ||
 			(ci.sp != nil && currentActiveSpan != nil && ci.sp.kind != currentActiveSpan.kind)
@@ -354,6 +359,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 		if kindChanged || spanChanged {
 			flushSpan()
 			currentKind = ci.kind
+			currentMarks = ci.marks
 			currentActiveSpan = ci.sp
 		}
 

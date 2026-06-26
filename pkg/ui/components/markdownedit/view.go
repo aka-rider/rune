@@ -32,6 +32,10 @@ func (m Model) View() string {
 	focused := m.Model.Focused()
 	readOnly := m.Model.ReadOnly()
 
+	// Dim content when unfocused, except while search matches are shown (keep
+	// highlights legible). Applied per style run inside CellsToString.
+	dimContent := !focused && len(searchMatches) == 0
+
 	if focused && !readOnly {
 		for off := range m.Model.CursorOffsets() {
 			cursorOffsets[off] = true
@@ -45,7 +49,6 @@ func (m Model) View() string {
 	imageInline := m.imageInlineCapable()
 
 	var renderedLines []string
-	var imageLineFlags []bool
 
 	for i, l := range lines {
 		// Reserved image row: emit Kitty placeholder cells when the image is
@@ -63,8 +66,7 @@ func (m Model) View() string {
 				}
 				spaceCells = textedit.SliceCells(spaceCells, vp.ScrollCol, m.Model.Width())
 				noStyle := lipgloss.NewStyle()
-				renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle))
-				imageLineFlags = append(imageLineFlags, true)
+				renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle, false))
 				continue
 			}
 			id := m.imageIDFor(l.ImagePath)
@@ -72,8 +74,7 @@ func (m Model) View() string {
 			lineCells = append([]textedit.Cell{{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}}, lineCells...)
 			lineCells = textedit.SliceCells(lineCells, vp.ScrollCol, m.Model.Width())
 			noStyle := lipgloss.NewStyle()
-			renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle))
-			imageLineFlags = append(imageLineFlags, true)
+			renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle, false))
 			continue
 		}
 
@@ -85,8 +86,7 @@ func (m Model) View() string {
 			}
 			spaceCells = textedit.SliceCells(spaceCells, vp.ScrollCol, m.Model.Width())
 			noStyle := lipgloss.NewStyle()
-			renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle))
-			imageLineFlags = append(imageLineFlags, true)
+			renderedLines = append(renderedLines, textedit.CellsToString(spaceCells, selStyle, cursorStyle, noStyle, noStyle, false))
 			continue
 		}
 
@@ -130,51 +130,25 @@ func (m Model) View() string {
 			textedit.ApplyMatchOverlay(lineCells, searchMatches, searchActive)
 		}
 
-		renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, matchStyle, activeMatchStyle))
-		imageLineFlags = append(imageLineFlags, false)
+		renderedLines = append(renderedLines, textedit.CellsToString(lineCells, selStyle, cursorStyle, matchStyle, activeMatchStyle, dimContent))
 	}
 
+	// Filler tildes carry no embedded ANSI, so a single faint render is correct.
+	tilde := "~"
+	if dimContent {
+		tilde = lipgloss.NewStyle().Faint(true).Render("~")
+	}
 	for len(renderedLines) < contentH {
-		renderedLines = append(renderedLines, "~")
-		imageLineFlags = append(imageLineFlags, false)
-	}
-
-	hasImageLine := false
-	for _, f := range imageLineFlags {
-		if f {
-			hasImageLine = true
-			break
-		}
+		renderedLines = append(renderedLines, tilde)
 	}
 
 	w := m.Model.Width()
 	h := m.Model.Height()
 
-	hasMatches := len(searchMatches) > 0
-
-	var composed string
-	if !focused && hasImageLine {
-		faint := lipgloss.NewStyle().Faint(true)
-		faintedLines := make([]string, len(renderedLines))
-		for i, line := range renderedLines {
-			if i < len(imageLineFlags) && imageLineFlags[i] {
-				faintedLines[i] = line
-			} else {
-				if hasMatches {
-					faintedLines[i] = line
-				} else {
-					faintedLines[i] = faint.Render(line)
-				}
-			}
-		}
-		composed = strings.Join(faintedLines, "\n")
-	} else {
-		composed = strings.Join(renderedLines, "\n")
-		// Suppress faint when search matches are visible so highlights remain legible.
-		if !focused && !hasMatches {
-			composed = lipgloss.NewStyle().Faint(true).Render(composed)
-		}
-	}
+	// Dimming is applied per style run inside CellsToString (dimContent), so the
+	// composed string is assembled as-is — no post-hoc Faint wrap (which would be
+	// cleared by the embedded resets of inner styled runs, e.g. links).
+	composed := strings.Join(renderedLines, "\n")
 
 	return lipgloss.NewStyle().
 		MaxWidth(w).

@@ -178,7 +178,12 @@ func SliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
 // CellsToString converts a slice of cells to a final ANSI-styled string.
 // matchStyle and activeMatchStyle are used for search-highlight overlays;
 // pass lipgloss.NewStyle() when no search is active.
-func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style) string {
+//
+// dim folds Faint(true) into every style run (used when the editor is unfocused).
+// It MUST be applied per-run here rather than wrapping the assembled string: the
+// embedded \x1b[0m reset at the end of each styled run would otherwise clear the
+// faint for the remainder of the line (only the first run would dim).
+func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style, dim bool) string {
 	if len(cells) == 0 {
 		return ""
 	}
@@ -188,10 +193,10 @@ func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchS
 
 	i := 0
 	for i < len(cells) {
-		effectiveStyle := cellEffectiveStyle(cells[i], selStyle, cursorStyle, matchStyle, activeMatchStyle)
+		effectiveStyle := cellEffectiveStyle(cells[i], selStyle, cursorStyle, matchStyle, activeMatchStyle, dim)
 		j := i + 1
 		for j < len(cells) {
-			nextStyle := cellEffectiveStyle(cells[j], selStyle, cursorStyle, matchStyle, activeMatchStyle)
+			nextStyle := cellEffectiveStyle(cells[j], selStyle, cursorStyle, matchStyle, activeMatchStyle, dim)
 			if !stylesEqual(effectiveStyle, nextStyle) {
 				break
 			}
@@ -236,20 +241,24 @@ func ApplyMatchOverlay(cells []Cell, matches []SelInterval, activeIdx int) {
 
 // cellEffectiveStyle computes the final style for a cell considering overlays.
 // Precedence: Cursor > ActiveMatch > Selected > Match > base style.
-func cellEffectiveStyle(c Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style) lipgloss.Style {
-	if c.Cursor {
-		return cursorStyle
+// When dim is set, Faint(true) is folded into the result so each style run emits
+// the faint attribute as part of its own SGR sequence.
+func cellEffectiveStyle(c Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style, dim bool) lipgloss.Style {
+	s := c.Style
+	switch {
+	case c.Cursor:
+		s = cursorStyle
+	case c.ActiveMatch:
+		s = c.Style.Background(activeMatchStyle.GetBackground())
+	case c.Selected:
+		s = c.Style.Background(selStyle.GetBackground())
+	case c.Match:
+		s = c.Style.Background(matchStyle.GetBackground())
 	}
-	if c.ActiveMatch {
-		return c.Style.Background(activeMatchStyle.GetBackground())
+	if dim {
+		s = s.Faint(true)
 	}
-	if c.Selected {
-		return c.Style.Background(selStyle.GetBackground())
-	}
-	if c.Match {
-		return c.Style.Background(matchStyle.GetBackground())
-	}
-	return c.Style
+	return s
 }
 
 // stylesEqual compares two lipgloss styles for equality.

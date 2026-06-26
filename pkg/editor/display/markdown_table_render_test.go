@@ -23,7 +23,7 @@ func TestTable_InlineBoldRendered(t *testing.T) {
 	dataLine := snap.Lines[2]
 	var foundBold bool
 	for _, sp := range dataLine.Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			foundBold = true
 			if sp.Text != "x" {
 				t.Errorf("Expected bold text 'x', got %q", sp.Text)
@@ -243,7 +243,7 @@ func TestTable_MixedPlainAndBoldText(t *testing.T) {
 	var foundBold bool
 	for _, sp := range dataLine.Spans {
 		fullText.WriteString(sp.Text)
-		if sp.Kind == display.TokenBold && strings.Contains(sp.Text, "world") {
+		if sp.Marks.Has(display.MarkBold) && strings.Contains(sp.Text, "world") {
 			foundBold = true
 		}
 	}

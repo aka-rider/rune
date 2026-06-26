@@ -13,7 +13,9 @@ import (
 )
 
 // spanToCellsStyled converts a span to styled cells, applying markdown-specific
-// styling (bold, inline code, headings, tables, code fences with syntax highlight).
+// styling: the content Kind/LinkRole selects a base style, then composable
+// decorations (bold/italic/strike via Marks) are folded on top — so a bold link
+// (**[x](y)**) renders as a single underlined+bold span.
 func (m Model) spanToCellsStyled(sp display.DisplaySpan) []textedit.Cell {
 	if sp.State == display.Revealed {
 		return textedit.SpanToCells(sp, lipgloss.NewStyle())
@@ -23,39 +25,63 @@ func (m Model) spanToCellsStyled(sp display.DisplaySpan) []textedit.Cell {
 		return m.tableSpanToCells(sp)
 	}
 
-	switch sp.LinkRole() {
-	case display.LinkRoleImage:
-		return textedit.SpanToCells(sp, lipgloss.NewStyle())
-	case display.LinkRoleNavigable:
-		return textedit.SpanToCells(sp, m.styles.Link)
-	}
-
+	// Tokens with bespoke cell builders.
 	switch sp.Kind {
 	case display.TokenCodeFence:
 		return m.codeFenceSpanToCells(sp)
-	case display.TokenHeading:
-		return textedit.SpanToCells(sp, m.headingStyle(sp.HeadingLevel))
-	case display.TokenInlineCode:
-		return textedit.SpanToCells(sp, m.styles.InlineCode)
-	case display.TokenBold:
-		return textedit.SpanToCells(sp, m.styles.MdBold)
-	case display.TokenItalic:
-		return textedit.SpanToCells(sp, m.styles.MdItalic)
-	case display.TokenStrikethrough:
-		return textedit.SpanToCells(sp, m.styles.MdStrikethrough)
-	case display.TokenBlockquote:
-		return textedit.SpanToCells(sp, m.styles.MdBlockquote)
-	case display.TokenHorizontalRule:
-		return textedit.SpanToCells(sp, m.styles.HorizontalRule)
-	case display.TokenTag:
-		return textedit.SpanToCells(sp, m.styles.Tag)
-	case display.TokenListMarker:
-		return textedit.SpanToCells(sp, m.styles.ListMarker)
 	case display.TokenTaskList:
 		return m.taskListSpanToCells(sp)
-	default:
-		return textedit.SpanToCells(sp, lipgloss.NewStyle())
 	}
+
+	return textedit.SpanToCells(sp, applyMarks(m.inlineBaseStyle(sp), sp.Marks))
+}
+
+// inlineBaseStyle returns the content-role base style for a rendered span, before
+// decoration marks are applied.
+func (m Model) inlineBaseStyle(sp display.DisplaySpan) lipgloss.Style {
+	switch sp.LinkRole() {
+	case display.LinkRoleImage:
+		return lipgloss.NewStyle()
+	case display.LinkRoleNavigable:
+		return m.styles.Link
+	}
+
+	switch sp.Kind {
+	case display.TokenHeading:
+		return m.headingStyle(sp.HeadingLevel)
+	case display.TokenInlineCode:
+		return m.styles.InlineCode
+	case display.TokenBold:
+		return m.styles.MdBold
+	case display.TokenItalic:
+		return m.styles.MdItalic
+	case display.TokenStrikethrough:
+		return m.styles.MdStrikethrough
+	case display.TokenBlockquote:
+		return m.styles.MdBlockquote
+	case display.TokenHorizontalRule:
+		return m.styles.HorizontalRule
+	case display.TokenTag:
+		return m.styles.Tag
+	case display.TokenListMarker:
+		return m.styles.ListMarker
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+// applyMarks folds composable decorations (bold/italic/strike) onto a base style.
+func applyMarks(base lipgloss.Style, m display.InlineMarks) lipgloss.Style {
+	if m.Has(display.MarkBold) {
+		base = base.Bold(true)
+	}
+	if m.Has(display.MarkItalic) {
+		base = base.Italic(true)
+	}
+	if m.Has(display.MarkStrikethrough) {
+		base = base.Strikethrough(true)
+	}
+	return base
 }
 
 func (m Model) tableRoleStyle(role display.TableRoleKind) lipgloss.Style {
@@ -98,7 +124,7 @@ func (m Model) taskListSpanToCells(sp display.DisplaySpan) []textedit.Cell {
 
 func (m Model) tableSpanToCells(sp display.DisplaySpan) []textedit.Cell {
 	baseStyle := m.tableRoleStyle(sp.TableRole)
-	style := mergeInlineStyle(baseStyle, sp.Kind, m.styles)
+	style := applyMarks(mergeInlineStyle(baseStyle, sp.Kind, m.styles), sp.Marks)
 	cells := textedit.SpanToCells(sp, style)
 	for i := range cells {
 		if cells[i].Rune == '│' {

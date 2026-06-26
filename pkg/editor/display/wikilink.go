@@ -18,6 +18,17 @@ type WikiLinkNode struct {
 	Fragment []byte
 	Label    []byte
 	Embed    bool
+
+	// Absolute source byte offsets, captured by the parser (which knows them
+	// exactly). The inline emitter uses these to fold the link precisely instead
+	// of guessing delimiter widths from the label position.
+	// TokenStart..TokenStop spans the whole [[...]] / ![[...]] token; the visible
+	// label occupies LabelStart..LabelStop. Everything else is a hidden delimiter:
+	// the prefix [[target| (or ![[target|) and the suffix ]].
+	TokenStart int
+	TokenStop  int
+	LabelStart int
+	LabelStop  int
 }
 
 func (n *WikiLinkNode) Kind() ast.NodeKind {
@@ -82,10 +93,14 @@ func (p *wikiLinkParser) Parse(parent ast.Node, block text.Reader, pc parser.Con
 	}
 
 	node := &WikiLinkNode{
-		Target:   target,
-		Fragment: fragment,
-		Label:    label,
-		Embed:    embed,
+		Target:     target,
+		Fragment:   fragment,
+		Label:      label,
+		Embed:      embed,
+		TokenStart: seg.Start,
+		TokenStop:  seg.Start + stop + 2, // include the closing ]]
+		LabelStart: innerSeg.Start,       // after [[/![[ and any target| prefix
+		LabelStop:  innerSeg.Stop,        // before ]]
 	}
 
 	// Make the label the child text so it's extractable and bounds are computable

@@ -135,6 +135,12 @@ func FuzzSession(f *testing.F) {
 	// This is the only way to reach syntax_map.go Rendered path via the fuzzer.
 	f.Add(paste("# H1\n**bold** _i_ `code`\n| a | b |\n|---|---|\n| 1 | 2 |\n![x](y.png)\n"))
 
+	// Seed: link folding edge cases (LINK-FOLD / LINK-CLEAN invariants). The
+	// trailing "\nz" puts the cursor off the link's line so each link folds.
+	f.Add(paste("[[Authentication (sorry).md|Original]]\nz")) // wiki alias
+	f.Add(paste("**[Ghostty](https://ghostty.org/)**\nz"))   // bold-wrapped link
+	f.Add(paste("![](assets/rune-intro.gif)\nz"))            // empty-alt image
+
 	// Seed: wrap-stress — paste a 100-char line then squeeze the terminal to force
 	// soft-wrap (exercises sliceOriginalSpans + CellMap slicing), then restore.
 	// Use w=40 (not 20) — the workspace has a known overflow bug at very narrow widths;

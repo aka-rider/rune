@@ -44,7 +44,7 @@ func TestTableBoldTextNoTruncation(t *testing.T) {
 	// Also check that bold span text is correct
 	foundBold := false
 	for _, sp := range bodyLine.Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			foundBold = true
 			if sp.Text != "bold text inside of tables" {
 				t.Errorf("bold span text: got %q, want %q", sp.Text, "bold text inside of tables")
@@ -56,7 +56,7 @@ func TestTableBoldTextNoTruncation(t *testing.T) {
 	}
 }
 
-// TestTableNestedInlineSpanBoundaries verifies that spanSegment correctly
+// TestTableNestedInlineSpanBoundaries verifies that the inline emitter correctly
 // finds the full extent of emphasis nodes containing nested inline elements.
 func TestTableNestedInlineSpanBoundaries(t *testing.T) {
 	// Bold with italic inside a table cell
@@ -101,7 +101,7 @@ func TestTableBoldSpanCellMapConsistency(t *testing.T) {
 
 	bodyLine := snap.Lines[2]
 	for _, sp := range bodyLine.Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			// CellMap should have same length as Text in runes (visual cells)
 			if sp.CellMap == nil {
 				t.Error("TokenBold span has nil CellMap")

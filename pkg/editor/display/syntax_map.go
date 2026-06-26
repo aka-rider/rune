@@ -64,6 +64,7 @@ const (
 type SyntaxSpan struct {
 	Text         string
 	Kind         TokenKind
+	Marks        InlineMarks // composable decorations (bold/italic/strike) on top of Kind
 	State        RevealState
 	BufferStart  int
 	BufferEnd    int
@@ -431,6 +432,7 @@ func buildSyntaxLine(
 			spans = append(spans, SyntaxSpan{
 				Text:            raw,
 				Kind:            ms.kind,
+				Marks:           ms.marks,
 				State:           Revealed,
 				BufferStart:     lineStart + ms.start,
 				BufferEnd:       lineStart + ms.end,
@@ -483,6 +485,7 @@ func buildSyntaxLine(
 			spans = append(spans, SyntaxSpan{
 				Text:            ms.text,
 				Kind:            ms.kind,
+				Marks:           ms.marks,
 				State:           Rendered,
 				BufferStart:     lineStart + ms.start,
 				BufferEnd:       lineStart + ms.end,
@@ -531,17 +534,18 @@ func shouldReveal(ms mdSpan, lineIdx, cursorLine, cursorCol int) bool {
 	case TokenHeading, TokenBlockquote, TokenHorizontalRule, TokenTaskList, TokenCallout:
 		// Line-level reveal
 		return lineIdx == cursorLine
-	case TokenInlineMath, TokenHighlight, TokenImage:
-		// Per-token reveal: cursor must be within the span
-		if lineIdx != cursorLine {
-			return false
-		}
-		return cursorCol >= ms.start && cursorCol < ms.end
 	default:
+		// Per-token reveal: cursor must be within the token. For nested tokens
+		// the emitter stamps the whole outer token's range on every sub-span so
+		// they reveal as a unit.
 		if lineIdx != cursorLine {
 			return false
 		}
-		return cursorCol >= ms.start && cursorCol < ms.end
+		start, end := ms.start, ms.end
+		if ms.revealSet {
+			start, end = ms.revealStart, ms.revealEnd
+		}
+		return cursorCol >= start && cursorCol < end
 	}
 }
 

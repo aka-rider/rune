@@ -44,6 +44,7 @@ func linkRoleFor(kind TokenKind, wikiIsImage bool) LinkRole {
 type DisplaySpan struct {
 	Text         string
 	Kind         TokenKind
+	Marks        InlineMarks // composable decorations (bold/italic/strike) on top of Kind
 	State        RevealState
 	BufferStart  int
 	BufferEnd    int
@@ -103,6 +104,7 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 			spans = append(spans, DisplaySpan{
 				Text:            s.Text,
 				Kind:            s.Kind,
+				Marks:           s.Marks,
 				State:           s.State,
 				BufferStart:     s.BufferStart,
 				BufferEnd:       s.BufferEnd,

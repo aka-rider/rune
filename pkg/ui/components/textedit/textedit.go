@@ -969,19 +969,25 @@ func (m Model) View() string {
 	selStyle := m.styles.Selection
 	noStyle := lipgloss.NewStyle()
 
+	dim := !m.focused
+
 	var renderedLines []string
 	for _, lineCells := range cells {
-		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle))
+		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle, dim))
 	}
 
+	// Filler tildes carry no embedded ANSI, so a single faint render is correct.
+	tilde := "~"
+	if dim {
+		tilde = lipgloss.NewStyle().Faint(true).Render("~")
+	}
 	for len(renderedLines) < contentHeight {
-		renderedLines = append(renderedLines, "~")
+		renderedLines = append(renderedLines, tilde)
 	}
 
+	// Dimming is folded per style run inside CellsToString — no post-hoc Faint
+	// wrap, which would be cleared by inner styled runs' embedded resets.
 	content := strings.Join(renderedLines, "\n")
-	if !m.focused {
-		content = lipgloss.NewStyle().Faint(true).Render(content)
-	}
 
 	return lipgloss.NewStyle().
 		MaxWidth(m.width).

@@ -90,7 +90,7 @@ func TestSyntaxMap_BoldSourceRange(t *testing.T) {
 	line := snap.Lines[0]
 	var boldSpan *display.SyntaxSpan
 	for i := range line.Spans {
-		if line.Spans[i].Kind == display.TokenBold {
+		if line.Spans[i].Marks.Has(display.MarkBold) {
 			boldSpan = &line.Spans[i]
 			break
 		}
@@ -122,7 +122,7 @@ func TestSyntaxMap_ItalicSourceRange(t *testing.T) {
 	line := snap.Lines[0]
 	var italicSpan *display.SyntaxSpan
 	for i := range line.Spans {
-		if line.Spans[i].Kind == display.TokenItalic {
+		if line.Spans[i].Marks.Has(display.MarkItalic) {
 			italicSpan = &line.Spans[i]
 			break
 		}
@@ -154,7 +154,7 @@ func TestSyntaxMap_StrikethroughSourceRange(t *testing.T) {
 	line := snap.Lines[0]
 	var span *display.SyntaxSpan
 	for i := range line.Spans {
-		if line.Spans[i].Kind == display.TokenStrikethrough {
+		if line.Spans[i].Marks.Has(display.MarkStrikethrough) {
 			span = &line.Spans[i]
 			break
 		}
@@ -450,10 +450,10 @@ func TestMarkdownInline_RevealIsolation(t *testing.T) {
 	line := snap.Lines[0]
 	var boldSpan, italicSpan *display.SyntaxSpan
 	for i := range line.Spans {
-		switch line.Spans[i].Kind {
-		case display.TokenBold:
+		switch {
+		case line.Spans[i].Marks.Has(display.MarkBold):
 			boldSpan = &line.Spans[i]
-		case display.TokenItalic:
+		case line.Spans[i].Marks.Has(display.MarkItalic):
 			italicSpan = &line.Spans[i]
 		}
 	}
@@ -481,10 +481,10 @@ func TestMarkdownInline_RevealIsolation(t *testing.T) {
 	line2 := snap2.Lines[0]
 	var boldSpan2, italicSpan2 *display.SyntaxSpan
 	for i := range line2.Spans {
-		switch line2.Spans[i].Kind {
-		case display.TokenBold:
+		switch {
+		case line2.Spans[i].Marks.Has(display.MarkBold):
 			boldSpan2 = &line2.Spans[i]
-		case display.TokenItalic:
+		case line2.Spans[i].Marks.Has(display.MarkItalic):
 			italicSpan2 = &line2.Spans[i]
 		}
 	}
@@ -722,7 +722,7 @@ func TestMarkdownInline_RevealTransition(t *testing.T) {
 	lineOutside := snapOutside.Lines[0]
 	var boldOutside *display.SyntaxSpan
 	for i := range lineOutside.Spans {
-		if lineOutside.Spans[i].Kind == display.TokenBold {
+		if lineOutside.Spans[i].Marks.Has(display.MarkBold) {
 			boldOutside = &lineOutside.Spans[i]
 			break
 		}
@@ -742,7 +742,7 @@ func TestMarkdownInline_RevealTransition(t *testing.T) {
 	lineInside := snapInside.Lines[0]
 	var boldInside *display.SyntaxSpan
 	for i := range lineInside.Spans {
-		if lineInside.Spans[i].Kind == display.TokenBold {
+		if lineInside.Spans[i].Marks.Has(display.MarkBold) {
 			boldInside = &lineInside.Spans[i]
 			break
 		}
@@ -762,7 +762,7 @@ func TestMarkdownInline_RevealTransition(t *testing.T) {
 	lineAfter := snapAfter.Lines[0]
 	var boldAfter *display.SyntaxSpan
 	for i := range lineAfter.Spans {
-		if lineAfter.Spans[i].Kind == display.TokenBold {
+		if lineAfter.Spans[i].Marks.Has(display.MarkBold) {
 			boldAfter = &lineAfter.Spans[i]
 			break
 		}
@@ -839,7 +839,7 @@ func TestSyntaxMap_CursorAtBoldDelimiterBoundary(t *testing.T) {
 	_, snap := sMap.Sync(buf, cursor.NewCursorSet(6))
 	line := snap.Lines[0]
 	for _, sp := range line.Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			if sp.State != display.Revealed {
 				t.Errorf("cursor at start of delim should reveal, got %v", sp.State)
 			}
@@ -850,7 +850,7 @@ func TestSyntaxMap_CursorAtBoldDelimiterBoundary(t *testing.T) {
 	_, snap2 := sMap.Sync(buf, cursor.NewCursorSet(13))
 	line2 := snap2.Lines[0]
 	for _, sp := range line2.Spans {
-		if sp.Kind == display.TokenBold {
+		if sp.Marks.Has(display.MarkBold) {
 			if sp.State != display.Revealed {
 				t.Errorf("cursor at last char of right delim should reveal, got %v", sp.State)
 			}
@@ -937,7 +937,7 @@ func TestSyntaxMap_CoordinateRoundTrip_MultiByteBold(t *testing.T) {
 
 	var boldSpan *display.SyntaxSpan
 	for i := range snap.Lines[0].Spans {
-		if snap.Lines[0].Spans[i].Kind == display.TokenBold {
+		if snap.Lines[0].Spans[i].Marks.Has(display.MarkBold) {
 			boldSpan = &snap.Lines[0].Spans[i]
 			break
 		}
@@ -983,13 +983,13 @@ func TestSyntaxMap_InlineSpanAtLineEnd_NoNewline(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
-		kind    display.TokenKind
+		match   func(display.SyntaxSpan) bool
 		want    string
 	}{
-		{"bold at end", "- [x] **done**\nnext", display.TokenBold, "done"},
-		{"italic at end", "- [x] *done*\nnext", display.TokenItalic, "done"},
-		{"code at end", "- [x] `done`\nnext", display.TokenInlineCode, "done"},
-		{"link at end", "- [x] [done](url)\nnext", display.TokenLink, "done"},
+		{"bold at end", "- [x] **done**\nnext", func(sp display.SyntaxSpan) bool { return sp.Marks.Has(display.MarkBold) }, "done"},
+		{"italic at end", "- [x] *done*\nnext", func(sp display.SyntaxSpan) bool { return sp.Marks.Has(display.MarkItalic) }, "done"},
+		{"code at end", "- [x] `done`\nnext", func(sp display.SyntaxSpan) bool { return sp.Kind == display.TokenInlineCode }, "done"},
+		{"link at end", "- [x] [done](url)\nnext", func(sp display.SyntaxSpan) bool { return sp.Kind == display.TokenLink }, "done"},
 	}
 	sMap := display.NewSyntaxMap()
 	for _, tc := range cases {
@@ -997,7 +997,7 @@ func TestSyntaxMap_InlineSpanAtLineEnd_NoNewline(t *testing.T) {
 			buf := buffer.New(tc.content)
 			_, snap := sMap.Sync(buf, cursor.NewCursorSet(0))
 			for _, sp := range snap.Lines[0].Spans {
-				if sp.Kind == tc.kind {
+				if tc.match(sp) {
 					if strings.Contains(sp.Text, "\n") {
 						t.Errorf("span Text contains \\n: %q", sp.Text)
 					}
@@ -1019,7 +1019,7 @@ func TestSyntaxMap_CoordinateRoundTrip_MultiByteCJK(t *testing.T) {
 
 	var boldSpan *display.SyntaxSpan
 	for i := range snap.Lines[0].Spans {
-		if snap.Lines[0].Spans[i].Kind == display.TokenBold {
+		if snap.Lines[0].Spans[i].Marks.Has(display.MarkBold) {
 			boldSpan = &snap.Lines[0].Spans[i]
 			break
 		}

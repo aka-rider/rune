@@ -29,14 +29,21 @@ func init() {
 // mdSpan represents a parsed markdown element with byte ranges within a line.
 type mdSpan struct {
 	kind       TokenKind
-	lineStart  int // byte offset of the line within the full document
-	start      int // start byte within the line
-	end        int // end byte within the line
+	marks      InlineMarks // composable decorations (bold/italic/strike) on top of kind
+	lineStart  int         // byte offset of the line within the full document
+	start      int         // start byte within the line
+	end        int         // end byte within the line
 	text       string
 	delimLeft  int // bytes of left delimiter to hide
 	delimRight int // bytes of right delimiter to hide
 	linkURL    string
 	level      int // heading level (1-6)
+	// Reveal range (line-local). When revealSet, a cursor anywhere in
+	// [revealStart,revealEnd) reveals this span (used to reveal a whole nested
+	// token, e.g. **[x](y)**, as a unit). When false, [start,end) is used.
+	revealStart int
+	revealEnd   int
+	revealSet   bool
 	// Wiki link metadata (set for TokenWikiLink spans)
 	wikiLinkTarget  string // resolved file path for wiki links
 	wikiLinkLabel   string // display text for wiki links
@@ -88,14 +95,6 @@ func parseMarkdown(content string) (result []parsedLine, blocks []mdBlock) {
 		switch node := n.(type) {
 		case *ast.Heading:
 			walkHeading(node, src, lines, lineOffsets, result)
-		case *ast.Emphasis:
-			walkEmphasis(node, src, lines, lineOffsets, result)
-		case *east.Strikethrough:
-			walkStrikethrough(node, src, lines, lineOffsets, result)
-		case *ast.CodeSpan:
-			walkCodeSpan(node, src, lines, lineOffsets, result)
-		case *ast.Link:
-			walkLink(node, src, lines, lineOffsets, result)
 		case *ast.Blockquote:
 			walkBlockquote(node, src, lines, lineOffsets, result)
 		case *ast.ThematicBreak:
@@ -107,11 +106,11 @@ func parseMarkdown(content string) (result []parsedLine, blocks []mdBlock) {
 			return ast.WalkSkipChildren, nil
 		case *east.Table:
 			walkTable(node, src, lines, lineOffsets, result, &blockID, &blocks)
-			// Do NOT skip children — let inline walkers visit cell content for rich rendering
-		case *WikiLinkNode:
-			walkWikiLink(node, src, lines, lineOffsets, result)
-		case *ast.Image:
-			walkImage(node, src, lines, lineOffsets, result)
+			// Do NOT skip children — let the inline emitter visit cell content for rich rendering
+		case *ast.Emphasis, *east.Strikethrough, *ast.CodeSpan, *ast.Link, *WikiLinkNode, *ast.Image:
+			// Flatten the whole inline token subtree here, then skip its children
+			// so nested tokens aren't re-emitted (ast.Walk is preorder DFS).
+			emitInline(n, src, lines, lineOffsets, result)
 			return ast.WalkSkipChildren, nil
 		}
 
