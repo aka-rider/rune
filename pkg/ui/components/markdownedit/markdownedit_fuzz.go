@@ -29,6 +29,9 @@ func (m Model) FuzzBufferVersion() uint64 { return m.Model.FuzzBufferVersion() }
 // FuzzLineCount forwards to the embedded textedit.Model.
 func (m Model) FuzzLineCount() int { return m.Model.FuzzLineCount() }
 
+// FuzzEditorWidth forwards to the embedded textedit.Model.
+func (m Model) FuzzEditorWidth() int { return m.Model.FuzzEditorWidth() }
+
 // FuzzWrapSnapshot forwards to the embedded textedit.Model.
 func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.Model.FuzzWrapSnapshot() }
 

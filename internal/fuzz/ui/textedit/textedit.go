@@ -14,15 +14,14 @@ import (
 	"rune/internal/fuzz/snapshot"
 )
 
-func trunc(s string, n int) string { return invariant.Trunc(s, n) }
-
 // Check runs all L0 textedit/cursor/buffer invariants against s.
 // Returns the first violation, or nil.
 func Check(s snapshot.Snapshot) *invariant.Violation {
 	contentLen := len(s.Content)
 
-	// R1: cursor-cell count == active cursor count (only when editor is focused)
-	if s.Focused && s.CursorOffsets != nil {
+	// R1: cursor-cell count == active cursor count (only when editor is focused and
+	// has at least one visible row — height==0 renders nothing, so no cursor cells exist)
+	if s.Focused && s.CursorOffsets != nil && len(s.Cells) > 0 {
 		activeCursorCount := len(s.CursorOffsets)
 		cursorCellCount := 0
 		for _, line := range s.Cells {
@@ -33,6 +32,7 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 			}
 		}
 		if cursorCellCount != activeCursorCount {
+			// Build cursor offset list and per-line cell BufOffset summary for diagnosis.
 			return &invariant.Violation{
 				InvariantID: "R1",
 				Message: fmt.Sprintf(
@@ -44,7 +44,7 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 	}
 
 	// R2: every offset in CursorOffsets must appear as Cursor=true in at least one cell.
-	if s.Focused && s.CursorOffsets != nil {
+	if s.Focused && s.CursorOffsets != nil && len(s.Cells) > 0 {
 		seen := make(map[int]bool, len(s.CursorOffsets))
 		for _, line := range s.Cells {
 			for _, c := range line {

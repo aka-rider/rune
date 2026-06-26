@@ -33,6 +33,9 @@ func (m Model) FuzzBufferVersion() uint64 { return m.buf.Version() }
 // FuzzLineCount returns the buffer's line count (number of '\n' + 1).
 func (m Model) FuzzLineCount() int { return m.buf.LineCount() }
 
+// FuzzEditorWidth returns the textedit model's current width (0 = unset/unwrapped).
+func (m Model) FuzzEditorWidth() int { return m.width }
+
 // FuzzWrapSnapshot returns the current wrap-layer snapshot.
 // Used for WRAP-RT, COORD-RT, and SPAN-COVER invariants.
 func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.wrapSnap }

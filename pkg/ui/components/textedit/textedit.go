@@ -377,12 +377,18 @@ func (m Model) CursorOffsets() map[int]bool {
 	return offs
 }
 
-// Selections returns selection intervals for overlay rendering.
+// Selections returns selection intervals for overlay rendering and external
+// consumers (e.g. image paste). For reversed selections the End is advanced
+// past the anchor character so it is included in the interval.
 func (m Model) Selections() []SelInterval {
 	var sels []SelInterval
 	for _, c := range m.cursors.All() {
 		if c.HasSelection() {
-			sels = append(sels, SelInterval{c.SelectionStart(), c.SelectionEnd()})
+			end := c.SelectionEnd()
+			if c.Reversed() {
+				end = nextRuneOffset(m.buf, end)
+			}
+			sels = append(sels, SelInterval{Start: c.SelectionStart(), End: end})
 		}
 	}
 	return sels
@@ -892,22 +898,14 @@ func (m Model) renderCells(contentHeight int) [][]Cell {
 	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
 
 	cursorOffsets := make(map[int]bool)
-	var selections []SelInterval
 	if m.focused && !m.readOnly {
 		for _, c := range m.cursors.All() {
 			cursorOffsets[c.Position] = true
-			if c.HasSelection() {
-				selections = append(selections, SelInterval{c.SelectionStart(), c.SelectionEnd()})
-			}
 		}
 	}
-	// In read-only mode, keep selections visible but hide cursor
-	if m.readOnly {
-		for _, c := range m.cursors.All() {
-			if c.HasSelection() {
-				selections = append(selections, SelInterval{c.SelectionStart(), c.SelectionEnd()})
-			}
-		}
+	var selections []SelInterval
+	if m.focused || m.readOnly {
+		selections = m.Selections()
 	}
 
 	result := make([][]Cell, len(lines))
@@ -919,7 +917,14 @@ func (m Model) renderCells(contentHeight int) [][]Cell {
 			lineCells = append(lineCells, spCells...)
 		}
 
-		// EOL cursor: append synthetic cell if cursor is at end-of-line
+		// Horizontal scrolling at cell level
+		lineCells = SliceCells(lineCells, m.viewport.ScrollCol, m.width)
+
+		// EOL cursor: append a synthetic cell when the cursor sits at the end-of-line
+		// position (lineEnd = last span's BufferEnd). Added AFTER SliceCells so it
+		// survives even when the preceding content fills the viewport exactly (e.g. a
+		// double-width CJK character at the last column pushes usedWidth to m.width and
+		// causes the loop in SliceCells to exit before processing this cell).
 		if m.focused && !m.readOnly {
 			lineEnd := 0
 			if len(l.Spans) > 0 {
@@ -941,9 +946,6 @@ func (m Model) renderCells(contentHeight int) [][]Cell {
 				}
 			}
 		}
-
-		// Horizontal scrolling at cell level
-		lineCells = SliceCells(lineCells, m.viewport.ScrollCol, m.width)
 
 		// Apply cursor and selection overlays
 		if m.focused && (len(cursorOffsets) > 0 || len(selections) > 0) {

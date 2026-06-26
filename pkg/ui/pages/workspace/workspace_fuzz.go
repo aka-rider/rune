@@ -51,8 +51,9 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 		SaveInFlight:   m.activeSave.InFlight,
 
 		// Layout — Frame is set by driver; driver also sets Width/Height
-		Width:  m.totalWidth,
-		Height: m.totalHeight,
+		Width:       m.totalWidth,
+		Height:      m.totalHeight,
+		EditorWidth: m.editor.FuzzEditorWidth(),
 
 		// Guard / chord / focus
 		HasDirtyFile:     hasDirty,

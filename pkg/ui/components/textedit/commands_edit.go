@@ -20,7 +20,7 @@ func execInsertChar(ctx command.CommandContext) command.Result {
 	for _, c := range all {
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: char}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: char}
 		} else {
 			e = buffer.Edit{Start: c.Position, End: c.Position, Insert: char}
 		}
@@ -50,7 +50,7 @@ func execNewline(ctx command.CommandContext) command.Result {
 
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: insertText}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: insertText}
 		} else {
 			e = buffer.Edit{Start: c.Position, End: c.Position, Insert: insertText}
 		}
@@ -71,7 +71,7 @@ func execDeleteLeft(ctx command.CommandContext) command.Result {
 	for _, c := range all {
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: ""}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
 		} else if c.Position > 0 {
 			prev := prevRuneOffset(ctx.Buffer, c.Position)
 			e = buffer.Edit{Start: prev, End: c.Position, Insert: ""}
@@ -99,7 +99,7 @@ func execDeleteRight(ctx command.CommandContext) command.Result {
 	for _, c := range all {
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: ""}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
 		} else if c.Position < ctx.Buffer.Len() {
 			next := nextRuneOffset(ctx.Buffer, c.Position)
 			e = buffer.Edit{Start: c.Position, End: next, Insert: ""}
@@ -127,7 +127,7 @@ func execDeleteWordLeft(ctx command.CommandContext) command.Result {
 	for _, c := range all {
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: ""}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
 		} else if c.Position > 0 {
 			wl := wordLeftOffset(ctx.Buffer, c.Position)
 			e = buffer.Edit{Start: wl, End: c.Position, Insert: ""}
@@ -155,7 +155,7 @@ func execDeleteWordRight(ctx command.CommandContext) command.Result {
 	for _, c := range all {
 		var e buffer.Edit
 		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: c.SelectionEnd(), Insert: ""}
+			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
 		} else if c.Position < ctx.Buffer.Len() {
 			wr := wordRightOffset(ctx.Buffer, c.Position)
 			e = buffer.Edit{Start: c.Position, End: wr, Insert: ""}

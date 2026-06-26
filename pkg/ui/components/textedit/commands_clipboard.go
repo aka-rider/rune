@@ -111,7 +111,7 @@ func extractCopyText(buf buffer.Buffer, cursors cursor.CursorSet) string {
 	if len(all) == 1 {
 		c := all[0]
 		if c.HasSelection() {
-			start, end := c.SelectionRange()
+			start, end := c.SelectionStart(), selectionEndInclusive(c, buf)
 			return buf.Slice(start, end)
 		}
 		// No selection: copy entire line including newline
@@ -122,7 +122,7 @@ func extractCopyText(buf buffer.Buffer, cursors cursor.CursorSet) string {
 	var parts []string
 	for _, c := range all {
 		if c.HasSelection() {
-			start, end := c.SelectionRange()
+			start, end := c.SelectionStart(), selectionEndInclusive(c, buf)
 			parts = append(parts, buf.Slice(start, end))
 		} else {
 			parts = append(parts, copyEntireLine(buf, c.Position))
@@ -155,7 +155,7 @@ func buildDeleteEdits(buf buffer.Buffer, cursors cursor.CursorSet) ([]buffer.Edi
 	var infos []cutEditInfo
 	for _, c := range all {
 		if c.HasSelection() {
-			start, end := c.SelectionRange()
+			start, end := c.SelectionStart(), selectionEndInclusive(c, buf)
 			infos = append(infos, cutEditInfo{
 				edit: buffer.Edit{Start: start, End: end, Insert: ""},
 				cID:  c.ID,
@@ -239,7 +239,7 @@ func (m Model) handlePasteContent(text string) (Model, tea.Cmd) {
 		}
 
 		if c.HasSelection() {
-			start, end := c.SelectionRange()
+			start, end := c.SelectionStart(), selectionEndInclusive(c, m.buf)
 			infos = append(infos, editInfo{
 				edit: buffer.Edit{Start: start, End: end, Insert: insertText},
 				cID:  c.ID,

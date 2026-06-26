@@ -54,6 +54,18 @@ func nextRuneOffset(b buffer.Buffer, offset int) int {
 	return offset + size
 }
 
+// selectionEndInclusive returns the effective exclusive end byte for
+// selection-consuming operations. When the selection is reversed (cursor left
+// of anchor), the anchor character is part of the user's visible selection and
+// must be included, so we advance past it. Forward selections are unchanged.
+func selectionEndInclusive(c cursor.Cursor, b buffer.Buffer) int {
+	end := c.SelectionEnd()
+	if c.Reversed() {
+		end = nextRuneOffset(b, end)
+	}
+	return end
+}
+
 func wordLeftOffset(b buffer.Buffer, offset int) int {
 	if offset <= 0 {
 		return 0

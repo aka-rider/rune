@@ -66,9 +66,10 @@ type Snapshot struct {
 	SaveInFlight bool
 
 	// Layout (for L1/L2)
-	Frame  string
-	Width  int
-	Height int
+	Frame       string
+	Width       int
+	Height      int
+	EditorWidth int // textedit Model.width — 0 means no width set (unwrapped)
 
 	// Guard / chord / focus
 	HasDirtyFile     bool
