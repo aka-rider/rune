@@ -1,15 +1,12 @@
-<h1 align="center">rune — TUI Markdown Editor for MacOS 📎</h1>
+<h1 align="center">rune — Markdown Editor for macOS terminal 📎</h1>
 
 <p align="center"><img src="assets/rune-intro.gif" alt="Rune into screencast" width="80%" /></p>
-
 
 ---
 
 ## Good News Everyone
 
-Think **Obsidian** but in your terminal. And it's snappy.
-
-- **MacOS-ish** look and feel with **⌘** - combinations
+- **MacOS-native** look and feel with familiar **⌘** - combinations
 - **Live Markdown Rendering** — Bold, italic, headings, blockquotes, code blocks with syntax highlighting, tables, task lists, horizontal rules, YAML frontmatter, and `[[wikilinks]]`.
 - **Voice Dictation** — on your local machine.
 - **Task lists** - `- [x] buy milk` syntax
@@ -22,7 +19,7 @@ Think **Obsidian** but in your terminal. And it's snappy.
 
 ### File Explorer
 
-quick keyboard navigation, just start typing
+quick search, just start typing
 
 <p align="center"><img src="assets/rune-explorer.gif" alt="Rune file explorer screencast" width="80%" /></p>
 
@@ -43,8 +40,8 @@ Requires macOS on Apple Silicon (arm64).
 
 ```sh
 brew tap aka-rider/tap
-brew trust aka-rider/tap # trust me bro
-brew install rune-edit
+brew trust aka-rider/tap
+brew install --cask rune-edit
 ```
 
 ### Voice input (optional) 
@@ -73,9 +70,10 @@ Press `F1` inside Rune for the list of keyboard shortcuts — the help page is g
 
 | Terminal | Notes |
 |----------|-------|
-| **[Ghostty](https://ghostty.org/)** | Full image support, native macOS feel |
+| [Ghostty](https://ghostty.org/) | Focused compatibility with VT standards |
 
-(Kitty, iTerm2, WezTerm work too, with all kinds of bugs)
+Kitty, iTerm2, WezTerm work too, with all kinds of bugs. 
+rune relies on terminal protocol extensions (super key, image rendering, clipboard, etc.).
 
 ## Credits
 
