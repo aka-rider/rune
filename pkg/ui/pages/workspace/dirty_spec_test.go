@@ -53,11 +53,13 @@ func redoOnce(m Model) Model {
 	return m
 }
 
-// save simulates a complete ⌘S round-trip (startSave → FileSavedMsg).
+// save simulates a complete ⌘S round-trip (startSave → FileSavedMsg). The ack
+// carries SavedSeq exactly as production does (the journal position captured at
+// save-start) — MarkSavedAt stamps that position, not the live head (§1.4.2).
 func save(m Model) Model {
 	m, _ = m.startSave()
 	reqID := m.activeSave.RequestID
-	m, _ = m.Update(FileSavedMsg{Path: m.view.Path(), RequestID: reqID})
+	m, _ = m.Update(FileSavedMsg{Path: m.view.Path(), RequestID: reqID, SavedSeq: m.savedSeqFor(m.view.DocID())})
 	return m
 }
 
@@ -112,7 +114,7 @@ func TestDirtySpec_P1_UndoToSaveStateClearsDirty(t *testing.T) {
 func TestDirtySpec_P2_UndoPastSaveStateStaysDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
-	m = typeSeq(m, 'a') // event seq=1
+	m = typeSeq(m, 'a')  // event seq=1
 	m = save(m)          // clean at seq=1
 	m = typeChar(m, 'b') // event seq=2, dirty
 	m = undoOnce(m)      // back at seq=1: clean
@@ -133,7 +135,7 @@ func TestDirtySpec_P2_UndoPastSaveStateStaysDirty(t *testing.T) {
 func TestDirtySpec_P3_RedoToSaveStateClearsDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
-	m = typeSeq(m, 'a') // seq=1
+	m = typeSeq(m, 'a')  // seq=1
 	m = save(m)          // clean at seq=1
 	m = typeChar(m, 'b') // seq=2, dirty
 	m = undoOnce(m)      // clean at seq=1
@@ -155,7 +157,7 @@ func TestDirtySpec_P3_RedoToSaveStateClearsDirty(t *testing.T) {
 func TestDirtySpec_P4_RedoPastSaveStateDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
-	m = typeSeq(m, 'a') // seq=1
+	m = typeSeq(m, 'a')  // seq=1
 	m = save(m)          // clean at seq=1
 	m = typeChar(m, 'b') // seq=2, dirty
 	m = undoOnce(m)      // clean at seq=1
@@ -231,7 +233,7 @@ func TestDirtySpec_P6_SaveAtMidUndoPosition(t *testing.T) {
 	m := dirtyWorkspace(t)
 
 	// Create two separate events.
-	m = typeSeq(m, 'a') // seq=1 = "a\n"
+	m = typeSeq(m, 'a')  // seq=1 = "a\n"
 	m = typeChar(m, 'b') // seq=2 = "b"
 
 	// Undo×1: now positioned at seq=1.

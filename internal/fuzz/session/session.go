@@ -16,11 +16,11 @@ package session
 import (
 	tea "charm.land/bubbletea/v2"
 
+	displaychk "rune/internal/fuzz/editor/display"
 	"rune/internal/fuzz/invariant"
 	"rune/internal/fuzz/snapshot"
-	displaychk "rune/internal/fuzz/editor/display"
-	footerchk "rune/internal/fuzz/ui/footer"
 	filetreechk "rune/internal/fuzz/ui/filetree"
+	footerchk "rune/internal/fuzz/ui/footer"
 	opentabschk "rune/internal/fuzz/ui/opentabs"
 	texteditchk "rune/internal/fuzz/ui/textedit"
 	workspacechk "rune/internal/fuzz/ui/workspace"
@@ -66,6 +66,13 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 // checker packages stay docstate-free).
 func CheckDataLoss(s snapshot.Snapshot, vfsContent string) *invariant.Violation {
 	return workspacechk.CheckDataLoss(s, vfsContent)
+}
+
+// CheckSaveDirty checks TR-dirty-clear: after a FileSavedMsg settles, the saved
+// document must be clean. savedDocDirty is the store's IsDirty for the saved doc,
+// provided by the driver (so the checker packages stay docstate-free).
+func CheckSaveDirty(savedDocDirty bool) *invariant.Violation {
+	return workspacechk.CheckSaveDirty(savedDocDirty)
 }
 
 // NewMonitors creates a fresh set of all L2 stateful monitors for one Run

@@ -123,6 +123,22 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 	return m.finalizeLayoutChange(cmds)
 }
 
+// savedSeqFor returns the journal position docID currently reflects, read
+// SYNCHRONOUSLY (co-atomic with the content the caller captured) so a save stamps
+// saved_seq at the position the bytes it writes correspond to — never the live head
+// a later edit advances to while the async write is in flight (§1.4.2/§1.4.8).
+// 0 when there is no store/doc.
+func (m Model) savedSeqFor(docID int64) int64 {
+	if m.store == nil || docID == 0 {
+		return 0
+	}
+	seq, err := m.store.CurrentSeq(docID)
+	if err != nil {
+		return 0 // fire-and-forget: read error → seq 0; MarkSavedAt stays conservative
+	}
+	return seq
+}
+
 func (m Model) startSave() (Model, tea.Cmd) {
 	// Inert while a load is pending: the editor buffer may not yet match the
 	// incoming identity (close→neighbour transition), so a save now could write
@@ -142,7 +158,7 @@ func (m Model) startSave() (Model, tea.Cmd) {
 	}
 	// Overwrite an already-bound file: materializeCmd refuses if it diverged from
 	// our baseline since load (§1.4.7).
-	return m, materializeCmd(m.fsys(), m.view.DocID(), m.view.Path(), content, requestID, false, m.view.Baseline())
+	return m, materializeCmd(m.fsys(), m.view.DocID(), m.view.Path(), content, m.savedSeqFor(m.view.DocID()), requestID, false, m.view.Baseline())
 }
 
 func (m Model) syncDirty() Model {
@@ -230,25 +246,52 @@ func (m Model) syncDictationAllowed() Model {
 	return m
 }
 
+// errorCmd surfaces err on the footer status line. Per §1.3 a buffer-edit failure
+// is a Tolerable halt that keeps the buffer — never a silent drop.
+func errorCmd(err error) tea.Cmd {
+	text := err.Error()
+	return func() tea.Msg { return footer.ShowErrorMsg{Text: text} }
+}
+
+// handleUndo applies one undo step with journal⇄buffer coherence (§1.4.8): it
+// PEEKS the target (without moving the journal), applies the inverse to the
+// buffer, and commits the position move ONLY if the buffer edit succeeds. A
+// failed reapply (stale/out-of-bounds positions — the buffer and journal already
+// diverged) surfaces a §1.3 error and leaves the position unmoved, so the journal
+// never ends up ahead of the buffer.
 func (m Model) handleUndo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsBefore, _, ok := m.store.UndoTarget(m.view.DocID())
+	docID := m.view.DocID()
+	surface, edits, cursorsBefore, newPos, ok := m.store.UndoPeek(docID)
 	if !ok {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	var err error
 	switch surface {
 	case "main":
-		m.editor, cmd = m.editor.ApplyInverse(edits)
-		m.editor = m.editor.SetCursors(cursorsBefore)
+		m.editor, cmd, err = m.editor.ApplyInverse(edits)
+		if err == nil {
+			m.editor = m.editor.SetCursors(cursorsBefore)
+		}
 	case "title":
-		m.title = m.title.ApplyInverse(edits)
-		m.title = m.title.SetCursors(cursorsBefore)
+		m.title, err = m.title.ApplyInverse(edits)
+		if err == nil {
+			m.title = m.title.SetCursors(cursorsBefore)
+		}
 	case "chat":
-		m.chat = m.chat.ApplyInverse(edits)
-		m.chat = m.chat.SetCursors(cursorsBefore)
+		m.chat, err = m.chat.ApplyInverse(edits)
+		if err == nil {
+			m.chat = m.chat.SetCursors(cursorsBefore)
+		}
+	}
+	if err != nil {
+		return m, errorCmd(fmt.Errorf("undo %s: %w", surface, err))
+	}
+	if cerr := m.store.MoveUndoPos(docID, newPos); cerr != nil {
+		return m, errorCmd(fmt.Errorf("undo %s: commit position: %w", surface, cerr))
 	}
 	switch surface {
 	case "main":
@@ -262,25 +305,42 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleRedo mirrors handleUndo: peek the redo target, reapply to the buffer, and
+// advance the journal position only on a clean apply (§1.4.8). A failed reapply
+// surfaces a §1.3 error and leaves the position unmoved.
 func (m Model) handleRedo() (Model, tea.Cmd) {
 	if m.store == nil || m.viewingHelp() {
 		return m, nil
 	}
-	surface, edits, cursorsAfter, _, ok := m.store.RedoTarget(m.view.DocID())
+	docID := m.view.DocID()
+	surface, edits, cursorsAfter, newPos, ok := m.store.RedoPeek(docID)
 	if !ok {
 		return m, nil
 	}
 	var cmd tea.Cmd
+	var err error
 	switch surface {
 	case "main":
-		m.editor, cmd = m.editor.Reapply(edits)
-		m.editor = m.editor.SetCursors(cursorsAfter)
+		m.editor, cmd, err = m.editor.Reapply(edits)
+		if err == nil {
+			m.editor = m.editor.SetCursors(cursorsAfter)
+		}
 	case "title":
-		m.title = m.title.Reapply(edits)
-		m.title = m.title.SetCursors(cursorsAfter)
+		m.title, err = m.title.Reapply(edits)
+		if err == nil {
+			m.title = m.title.SetCursors(cursorsAfter)
+		}
 	case "chat":
-		m.chat = m.chat.Reapply(edits)
-		m.chat = m.chat.SetCursors(cursorsAfter)
+		m.chat, err = m.chat.Reapply(edits)
+		if err == nil {
+			m.chat = m.chat.SetCursors(cursorsAfter)
+		}
+	}
+	if err != nil {
+		return m, errorCmd(fmt.Errorf("redo %s: %w", surface, err))
+	}
+	if cerr := m.store.MoveUndoPos(docID, newPos); cerr != nil {
+		return m, errorCmd(fmt.Errorf("redo %s: commit position: %w", surface, cerr))
 	}
 	switch surface {
 	case "main":

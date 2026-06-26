@@ -19,10 +19,17 @@ import (
 
 // DecodeWorkflow decodes a binary fuzzer input to a slice of Events using
 // the cluster grammar. Every byte string produces some (possibly empty) list.
+// maxWorkflowEvents bounds the events one fuzz input may expand to. Each cluster
+// byte expands to several events, so a degenerate input (a long run of one cluster
+// id) otherwise generates tens of thousands of events and times out in rendering —
+// a fuzzer pathology that wastes the time budget, not a defect under test. Far above
+// any realistic session, so it never clips genuine exploration.
+const maxWorkflowEvents = 2000
+
 func DecodeWorkflow(data []byte) []event.Event {
 	var out []event.Event
 	i := 0
-	for i < len(data) {
+	for i < len(data) && len(out) < maxWorkflowEvents {
 		clusterID := data[i]
 		i++
 		var consumed int
@@ -159,7 +166,7 @@ func openSearchAndFind(data []byte) ([]event.Event, int) {
 	}
 	queryLen := int(data[0]%16) + 1
 	nexts := int(data[1]%4) + 1
-	prevs := int(data[2]%4)
+	prevs := int(data[2] % 4)
 	consumed := 3
 	query := "search"
 	if consumed+queryLen <= len(data) {
@@ -200,7 +207,7 @@ func editUndoRedoSave(data []byte) ([]event.Event, int) {
 	}
 	textLen := int(data[0]%20) + 1
 	undos := int(data[1]%4) + 1
-	redos := int(data[2]%4)
+	redos := int(data[2] % 4)
 	consumed := 3
 	text := "hello world"
 	if consumed+textLen <= len(data) {
@@ -383,4 +390,3 @@ func clampU8(v, lo, hi uint8) uint8 {
 	}
 	return v
 }
-

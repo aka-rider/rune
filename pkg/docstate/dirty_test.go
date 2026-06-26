@@ -101,7 +101,7 @@ func TestIsDirty_GlobalSeqRegression(t *testing.T) {
 
 	// undo × 2 — lands at firstEventSeq-1 (below the doc's first event)
 	for i := 0; i < 2; i++ {
-		_, _, _, _, ok := s.UndoTarget(docID)
+		_, _, _, _, ok := undoStep(t, s, docID)
 		if !ok {
 			t.Fatalf("undo %d: no undo target", i+1)
 		}
@@ -138,8 +138,14 @@ func TestMarkSaved(t *testing.T) {
 		t.Fatalf("want dirty before save, got dirty=%v err=%v", dirty, err)
 	}
 
-	if err := s.MarkSaved(docID); err != nil {
-		t.Fatalf("MarkSaved: %v", err)
+	// Capture the position synchronously and stamp it (the production save path):
+	// MarkSavedAt records the saved position, never the live head (§1.4.2).
+	savedSeq, err := s.CurrentSeq(docID)
+	if err != nil {
+		t.Fatalf("CurrentSeq: %v", err)
+	}
+	if err := s.MarkSavedAt(docID, savedSeq); err != nil {
+		t.Fatalf("MarkSavedAt: %v", err)
 	}
 
 	// clean after save
@@ -156,7 +162,7 @@ func TestMarkSaved(t *testing.T) {
 	}
 
 	// undo back to save point → clean
-	if _, _, _, _, ok := s.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := undoStep(t, s, docID); !ok {
 		t.Fatal("undo: no target")
 	}
 	if dirty, err := s.IsDirty(docID); err != nil || dirty {
@@ -164,7 +170,7 @@ func TestMarkSaved(t *testing.T) {
 	}
 
 	// redo past save point → dirty
-	if _, _, _, _, ok := s.RedoTarget(docID); !ok {
+	if _, _, _, _, ok := redoStep(t, s, docID); !ok {
 		t.Fatal("redo: no target")
 	}
 	if dirty, err := s.IsDirty(docID); err != nil || !dirty {
@@ -202,7 +208,7 @@ func TestCurrentSeq(t *testing.T) {
 	}
 
 	// After undo → mid-undo seq
-	_, _, _, midSeq, ok := s.UndoTarget(docID)
+	_, _, _, midSeq, ok := undoStep(t, s, docID)
 	if !ok {
 		t.Fatal("undo: no target")
 	}

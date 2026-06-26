@@ -73,9 +73,10 @@ type FileLoadErrorMsg struct {
 // FileSavedMsg is returned when a file has been materialized to disk.
 type FileSavedMsg struct {
 	Path         string
-	DocID        int64        // the VFS doc materialized (0 if storeless)
+	DocID        int64 // the VFS doc materialized (0 if storeless)
 	RequestID    string
 	SavedContent []byte       // exact bytes written — used as new origContent (D13 Finding A)
+	SavedSeq     int64        // journal position the written bytes reflect, captured at save-start (§1.4.2)
 	BindNew      bool         // true when this was a first-bind of an untitled doc
 	Baseline     diskBaseline // fingerprint of the file just written (§1.4.7)
 }
@@ -141,7 +142,7 @@ func loadFileCmd(fsys vfs.FS, ctx context.Context, path string, gen uint64) tea.
 //
 // Bytes are written verbatim — no line-ending / trailing-newline / BOM
 // normalization (§1.4.5). The returned FileSavedMsg carries the fresh baseline.
-func materializeCmd(fsys vfs.FS, docID int64, path, content, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
+func materializeCmd(fsys vfs.FS, docID int64, path, content string, savedSeq int64, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
 	data := []byte(content)
 	return func() tea.Msg {
 		if bindNew {
@@ -178,7 +179,7 @@ func materializeCmd(fsys vfs.FS, docID int64, path, content, requestID string, b
 		}
 		return FileSavedMsg{
 			Path: path, DocID: docID, RequestID: requestID,
-			SavedContent: data, BindNew: bindNew, Baseline: baselineOf(fsys, path),
+			SavedContent: data, SavedSeq: savedSeq, BindNew: bindNew, Baseline: baselineOf(fsys, path),
 		}
 	}
 }

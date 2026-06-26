@@ -2,10 +2,13 @@
 
 // Package workspace contains invariant checkers for the workspace page:
 // SHADOW (buffer vs journal mirror), L1/L2 (layout bounds), EDITOR-TAB-COH
-// (editor path matches active tab), TR-focus-valid, SAVE-SM, and all
-// persistence/guard transition invariants (RESIZE-INV, SAVE-NOMUT,
-// TR-dirty-clear, G1, G3, TR-cursor-not-dirty, DL1, EXT-NOCLOBBER,
-// RELOAD-NOMUT). L2 monitors (F1, DL3) live in monitors.go.
+// (editor path matches active tab), TR-focus-valid, SAVE-SM, and the
+// persistence/guard transition invariants (RESIZE-INV, SAVE-NOMUT, G1, G3,
+// TR-cursor-not-dirty, RELOAD-NOMUT). DL1 (CheckDataLoss) and TR-dirty-clear
+// (CheckSaveDirty) are store-derived and fed by the driver so this package stays
+// docstate-free. The sole remaining L2 monitor (F1, quit liveness) lives in
+// monitors.go; DL3 is subsumed by the store-derived SHADOW invariant, and
+// EXT-NOCLOBBER is now an authoritative driver-level check (rs.externalWrites).
 package workspace
 
 import (
@@ -127,16 +130,15 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 	}
 
 	// SAVE-NOMUT: a save message must not mutate the buffer content.
+	// (TR-dirty-clear moved to the driver-level, store-derived CheckSaveDirty,
+	// keyed to the SAVED doc. The global next.HasDirtyFile used here fired a false
+	// positive whenever any *other* tab was still dirty after saving one tab.)
 	if typeName == "workspace.FileSavedMsg" {
 		if next.Content != prev.Content {
 			add("SAVE-NOMUT", fmt.Sprintf(
 				"Content changed during save: %q → %q",
 				trunc(prev.Content, 40), trunc(next.Content, 40),
 			))
-		}
-		// TR-dirty-clear: after a save, active file must not be dirty.
-		if next.HasDirtyFile {
-			add("TR-dirty-clear", "active file still dirty after FileSavedMsg settled")
 		}
 	}
 
@@ -152,10 +154,17 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 		add("G3", "dirty active tab + CloseFile key (^w) did not raise guard")
 	}
 
-	// TR-cursor-not-dirty: a key press that does not change buffer content must not
-	// set the dirty flag.
-	if typeName == "tea.KeyPressMsg" && !prev.HasDirtyFile && next.HasDirtyFile && next.Content == prev.Content {
-		add("TR-cursor-not-dirty", "key press set dirty flag without any content change")
+	// TR-cursor-not-dirty: an EDITOR-directed key press that does not change the
+	// editor buffer must not set the dirty flag. Gated to the editor pane
+	// (FocusPane==paneEditor): a keystroke routed to the title or chat surface
+	// legitimately journals an edit there — marking the doc dirty — WITHOUT changing
+	// the editor content, so firing on those is a false positive (the predicate
+	// only compares editor Content). The invariant's intent is "editor navigation
+	// does not dirty"; that only holds when the editor is the key target.
+	const paneEditor = 2 // FocusPane: 0=tree 1=tabs 2=center(editor) 3=title 4=chat 5=search
+	if typeName == "tea.KeyPressMsg" && prev.FocusPane == paneEditor &&
+		!prev.HasDirtyFile && next.HasDirtyFile && next.Content == prev.Content {
+		add("TR-cursor-not-dirty", "editor-focused key press set dirty flag without any content change")
 	}
 
 	// RELOAD-NOMUT: a dirChangedMsg-driven reload must not mutate buffer content,
@@ -186,15 +195,12 @@ func CheckDataLoss(s snapshot.Snapshot, vfsContent string) *invariant.Violation 
 	if s.DocID == 0 {
 		return nil // no VFS doc yet — untitled without a scratch allocation
 	}
-	if vfsContent == "" {
-		return &invariant.Violation{
-			InvariantID: "DL1",
-			Message: fmt.Sprintf(
-				"autosave settled but VFS has no content for docID=%d (buffer[:%d]=%q)",
-				s.DocID, min(len(s.Content), 40), trunc(s.Content, 40),
-			),
-		}
-	}
+	// An empty document is valid: when the user deletes all text, autosave snapshots
+	// "" and RecoverDocument reconstructs "" faithfully. The sole data-loss signal is
+	// a genuine mismatch between durable VFS content and the live buffer — an
+	// unconditional vfsContent=="" guard fired on legitimately-empty documents. (The
+	// "no VFS record at all" case is distinguished upstream by HasHistory, and the
+	// driver skips this check entirely on a store read error.)
 	if vfsContent != s.Content {
 		return &invariant.Violation{
 			InvariantID: "DL1",
@@ -203,6 +209,23 @@ func CheckDataLoss(s snapshot.Snapshot, vfsContent string) *invariant.Violation 
 				min(len(vfsContent), 40), trunc(vfsContent, 40),
 				min(len(s.Content), 40), trunc(s.Content, 40),
 			),
+		}
+	}
+	return nil
+}
+
+// CheckSaveDirty checks TR-dirty-clear: after a FileSavedMsg settles, the SAVED
+// document must be clean. savedDocDirty is the store's derived dirty state for the
+// saved doc (a live event between saved_seq and current_seq), passed by the driver
+// so this package stays docstate-free (N2). Keying to the saved doc — not the global
+// any-tab HasDirtyFile flag — means a still-dirty *other* tab no longer trips a false
+// positive. A residual dirty here means saved_seq did not advance to cover the bytes
+// that were written (the §1.4.2/§1.4.8 MarkSaved hazard).
+func CheckSaveDirty(savedDocDirty bool) *invariant.Violation {
+	if savedDocDirty {
+		return &invariant.Violation{
+			InvariantID: "TR-dirty-clear",
+			Message:     "saved document still dirty after FileSavedMsg settled (saved_seq did not advance to cover the buffer)",
 		}
 	}
 	return nil

@@ -110,7 +110,7 @@ func FuzzHumanSession(f *testing.F) {
 
 	// Seed: navigate to b.md then trigger external-change on it.
 	f.Add([]byte{
-		1, 2,    // NavigateTreeAndOpen: Down×3 → Enter
+		1, 2, // NavigateTreeAndOpen: Down×3 → Enter
 		5, 1, 0, // ExternalChange: pathIndex=1 (b.md), watchSub=0
 	})
 

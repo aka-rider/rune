@@ -41,6 +41,33 @@ func singleInsert(ch string) []buffer.AppliedEdit {
 	return []buffer.AppliedEdit{{Start: 0, End: 0, Deleted: "", Insert: ch}}
 }
 
+// undoStep / redoStep exercise the production undo/redo primitives: peek the
+// target, then commit the journal move (MoveUndoPos) — the same peek→commit the
+// workspace uses to keep the position coherent with the buffer (§1.4.8). They
+// replicate the old advance-on-success UndoTarget/RedoTarget so existing
+// positional assertions hold against the real primitives.
+func undoStep(t *testing.T, s *Store, docID int64) (string, []buffer.AppliedEdit, []cursor.Cursor, int64, bool) {
+	t.Helper()
+	surface, edits, before, newPos, ok := s.UndoPeek(docID)
+	if ok {
+		if err := s.MoveUndoPos(docID, newPos); err != nil {
+			t.Fatalf("undoStep: MoveUndoPos: %v", err)
+		}
+	}
+	return surface, edits, before, newPos, ok
+}
+
+func redoStep(t *testing.T, s *Store, docID int64) (string, []buffer.AppliedEdit, []cursor.Cursor, int64, bool) {
+	t.Helper()
+	surface, edits, after, newPos, ok := s.RedoPeek(docID)
+	if ok {
+		if err := s.MoveUndoPos(docID, newPos); err != nil {
+			t.Fatalf("redoStep: MoveUndoPos: %v", err)
+		}
+	}
+	return surface, edits, after, newPos, ok
+}
+
 // testDoc creates a scratch document and returns its docID. Fatal on error.
 func testDoc(t *testing.T, s *Store) int64 {
 	t.Helper()
@@ -251,7 +278,7 @@ func TestBasicUndo(t *testing.T) {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 
-	surface, gotEdits, gotBefore, _, ok := s.UndoTarget(docID)
+	surface, gotEdits, gotBefore, _, ok := undoStep(t, s, docID)
 	if !ok {
 		t.Fatal("UndoTarget: expected ok=true, got false")
 	}
@@ -266,7 +293,7 @@ func TestBasicUndo(t *testing.T) {
 	}
 
 	// Second undo: nothing left.
-	_, _, _, _, ok2 := s.UndoTarget(docID)
+	_, _, _, _, ok2 := undoStep(t, s, docID)
 	if ok2 {
 		t.Error("second UndoTarget: expected ok=false (nothing left to undo)")
 	}
@@ -284,12 +311,12 @@ func TestBasicRedo(t *testing.T) {
 	}
 
 	// Undo.
-	if _, _, _, _, ok := s.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := undoStep(t, s, docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 
 	// Redo.
-	surface, gotEdits, gotAfter, _, ok := s.RedoTarget(docID)
+	surface, gotEdits, gotAfter, _, ok := redoStep(t, s, docID)
 	if !ok {
 		t.Fatal("RedoTarget: expected ok=true, got false")
 	}
@@ -304,7 +331,7 @@ func TestBasicRedo(t *testing.T) {
 	}
 
 	// Second redo: nothing left.
-	_, _, _, _, ok2 := s.RedoTarget(docID)
+	_, _, _, _, ok2 := redoStep(t, s, docID)
 	if ok2 {
 		t.Error("second RedoTarget: expected ok=false (nothing left to redo)")
 	}
@@ -331,11 +358,11 @@ func TestUndoUndoRedo(t *testing.T) {
 	}
 
 	// Undo B.
-	if _, _, _, _, ok := s.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := undoStep(t, s, docID); !ok {
 		t.Fatal("first UndoTarget returned ok=false")
 	}
 	// Undo A.
-	_, gotEditsA, _, _, ok := s.UndoTarget(docID)
+	_, gotEditsA, _, _, ok := undoStep(t, s, docID)
 	if !ok {
 		t.Fatal("second UndoTarget returned ok=false")
 	}
@@ -344,7 +371,7 @@ func TestUndoUndoRedo(t *testing.T) {
 	}
 
 	// Redo A — journal must return ok=true.
-	_, gotRedoEdits, _, _, okRedo := s.RedoTarget(docID)
+	_, gotRedoEdits, _, _, okRedo := redoStep(t, s, docID)
 	if !okRedo {
 		t.Fatal("RedoTarget after Undo×2: expected ok=true, got false")
 	}
@@ -472,11 +499,11 @@ func TestTruncateOnNewEdit(t *testing.T) {
 	}
 
 	// Undo once to step back.
-	if _, _, _, _, ok := s3.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := undoStep(t, s3, docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
 	// Undo again.
-	if _, _, _, _, ok := s3.UndoTarget(docID); !ok {
+	if _, _, _, _, ok := undoStep(t, s3, docID); !ok {
 		t.Fatal("second UndoTarget returned ok=false")
 	}
 
@@ -495,7 +522,7 @@ func TestTruncateOnNewEdit(t *testing.T) {
 	}
 
 	// Redo should now return false (future was truncated).
-	_, _, _, _, ok := s3.RedoTarget(docID)
+	_, _, _, _, ok := redoStep(t, s3, docID)
 	if ok {
 		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
 	}
@@ -637,8 +664,8 @@ func TestRecoverableScratch_ExcludesZombies(t *testing.T) {
 // empty unbound docs — never one with history, never the live doc.
 func TestGCEmptyScratch_KeepsHistoryAndLive(t *testing.T) {
 	s := NewTestStore(t)
-	live := testDoc(t, s)    // empty, but the live buffer — must survive
-	empty := testDoc(t, s)   // empty, no history — should be collected
+	live := testDoc(t, s)     // empty, but the live buffer — must survive
+	empty := testDoc(t, s)    // empty, no history — should be collected
 	withHist := testDoc(t, s) // has an event — must survive
 	if _, err := s.AppendEdit(withHist, "main", singleInsert("a"), noCursors, noCursors, "main"); err != nil {
 		t.Fatalf("AppendEdit: %v", err)

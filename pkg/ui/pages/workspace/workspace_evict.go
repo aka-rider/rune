@@ -61,7 +61,7 @@ func (m Model) evictSave() (Model, tea.Cmd) {
 	}
 	requestID := fmt.Sprintf("evict-%d-%v", victim.DocID, time.Now().UnixNano())
 	m.pendingDataLoss.requestID = requestID
-	return m, materializeCmd(m.fsys(), victim.DocID, victim.Path, content, requestID, false, diskBaseline{})
+	return m, materializeCmd(m.fsys(), victim.DocID, victim.Path, content, m.savedSeqFor(victim.DocID), requestID, false, diskBaseline{})
 }
 
 // evictDiscard closes the eviction victim without saving and opens the pending
@@ -83,13 +83,13 @@ func (m Model) isEvictSaveAck(requestID string) bool {
 // evictSaveAck handles a successful eviction save: marks the victim clean,
 // re-binds its VFS identity (atomic write changed the inode), closes the tab,
 // and opens the pending file.
-func (m Model) evictSaveAck() (Model, tea.Cmd) {
+func (m Model) evictSaveAck(savedSeq int64) (Model, tea.Cmd) {
 	victim := m.pendingDataLoss.victim
 	pendingPath := m.pendingDataLoss.pendingOpenPath
 	m.opentabs = m.opentabs.MarkCleanByID(victim.DocID)
 	if m.store != nil && victim.DocID != 0 {
-		_ = m.store.Bind(victim.DocID, victim.Path) // fire-and-forget: re-sync inode
-		_ = m.store.MarkSaved(victim.DocID)         // fire-and-forget: §1.3
+		_ = m.store.Bind(victim.DocID, victim.Path)     // fire-and-forget: re-sync inode
+		_ = m.store.MarkSavedAt(victim.DocID, savedSeq) // fire-and-forget: §1.3; saved position, not live head
 	}
 	m.pendingDataLoss = pendingDataLoss{}
 	m.opentabs = m.opentabs.CloseByID(victim.DocID)

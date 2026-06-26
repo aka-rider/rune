@@ -117,15 +117,19 @@ func (m Model) Cursors() []cursor.Cursor {
 }
 
 // ApplyInverse applies inverse edits to the prompt (workspace-driven undo).
-func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
-	m.prompt = m.prompt.ApplyInverse(edits)
-	return m
+// Propagates the §1.3 bounds error: on failure the prompt is unchanged.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, error) {
+	var err error
+	m.prompt, err = m.prompt.ApplyInverse(edits)
+	return m, err
 }
 
 // Reapply applies edits forward to the prompt (workspace-driven redo).
-func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
-	m.prompt = m.prompt.Reapply(edits)
-	return m
+// Propagates the §1.3 bounds error: on failure the prompt is unchanged.
+func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, error) {
+	var err error
+	m.prompt, err = m.prompt.Reapply(edits)
+	return m, err
 }
 
 // SetCursors restores cursor state on the prompt.

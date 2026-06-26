@@ -14,6 +14,27 @@ func newModel(content string) textedit.Model {
 	return m.SetContent(content)
 }
 
+// mustReapply / mustApplyInverse assert the happy path: the edits fit the buffer
+// and the operation succeeds. Reapply/ApplyInverse now return an error (§1.3) so a
+// stale/out-of-bounds edit is surfaced rather than silently dropped.
+func mustReapply(t *testing.T, m textedit.Model, edits []buffer.AppliedEdit) textedit.Model {
+	t.Helper()
+	m, err := m.Reapply(edits)
+	if err != nil {
+		t.Fatalf("Reapply: unexpected error: %v", err)
+	}
+	return m
+}
+
+func mustApplyInverse(t *testing.T, m textedit.Model, edits []buffer.AppliedEdit) textedit.Model {
+	t.Helper()
+	m, err := m.ApplyInverse(edits)
+	if err != nil {
+		t.Fatalf("ApplyInverse: unexpected error: %v", err)
+	}
+	return m
+}
+
 // TestReapplyCoalescedInserts is the regression test for the Undo×2→Redo
 // data-loss bug. Rapid single-cursor typing coalesces into one journal event
 // whose AppliedEdits are in ascending Start order. The old Reapply algorithm
@@ -25,7 +46,7 @@ func TestReapplyCoalescedInserts(t *testing.T) {
 		{Start: 0, Insert: "a"},
 		{Start: 1, Insert: "b"},
 	}
-	m = m.Reapply(edits)
+	m = mustReapply(t, m, edits)
 	if got := m.Content(); got != "ab" {
 		t.Errorf("Reapply coalesced inserts: got %q, want %q", got, "ab")
 	}
@@ -42,7 +63,7 @@ func TestReapplyMultiCursorInserts(t *testing.T) {
 		{Start: 6, Insert: "a"}, // descending order as stored in journal
 		{Start: 0, Insert: "a"},
 	}
-	m = m.Reapply(edits)
+	m = mustReapply(t, m, edits)
 	if got := m.Content(); got != "ahelloa world" {
 		t.Errorf("Reapply multi-cursor inserts: got %q, want %q", got, "ahelloa world")
 	}
@@ -54,7 +75,7 @@ func TestReapplySingleEdit(t *testing.T) {
 	edits := []buffer.AppliedEdit{
 		{Start: 5, Insert: " world"},
 	}
-	m = m.Reapply(edits)
+	m = mustReapply(t, m, edits)
 	if got := m.Content(); got != "hello world" {
 		t.Errorf("Reapply single edit: got %q, want %q", got, "hello world")
 	}
@@ -76,27 +97,45 @@ func TestReapplyAfterUndoUndo(t *testing.T) {
 	}
 
 	// Apply both events forward to reach "abc".
-	m = m.Reapply(eventA)
-	m = m.Reapply(eventB)
+	m = mustReapply(t, m, eventA)
+	m = mustReapply(t, m, eventB)
 	if m.Content() != "abc" {
 		t.Fatalf("setup: expected %q, got %q", "abc", m.Content())
 	}
 
 	// Undo B: "abc" → "ab".
-	m = m.ApplyInverse(eventB)
+	m = mustApplyInverse(t, m, eventB)
 	if m.Content() != "ab" {
 		t.Fatalf("undo B: expected %q, got %q", "ab", m.Content())
 	}
 
 	// Undo A: "ab" → "".
-	m = m.ApplyInverse(eventA)
+	m = mustApplyInverse(t, m, eventA)
 	if m.Content() != "" {
 		t.Fatalf("undo A: expected %q, got %q", "", m.Content())
 	}
 
 	// Redo A — the previously broken path.
-	m = m.Reapply(eventA)
+	m = mustReapply(t, m, eventA)
 	if got := m.Content(); got != "ab" {
 		t.Errorf("Undo×2 then Redo: got %q, want %q (DATA LOSS)", got, "ab")
+	}
+}
+
+// TestReapplyOutOfBoundsSurfacesError verifies the §1.3 contract: a stale,
+// out-of-bounds redo edit returns a non-nil error and leaves the buffer UNCHANGED
+// (never a silent no-op). The workspace relies on this to keep the journal
+// position coherent with the buffer on a failed reapply.
+func TestReapplyOutOfBoundsSurfacesError(t *testing.T) {
+	m := newModel("hi") // length 2
+	edits := []buffer.AppliedEdit{
+		{Start: 100, Insert: "x"}, // far past the buffer end
+	}
+	got, err := m.Reapply(edits)
+	if err == nil {
+		t.Fatal("Reapply out-of-bounds: expected error, got nil")
+	}
+	if got.Content() != "hi" {
+		t.Errorf("Reapply out-of-bounds: buffer mutated to %q, want unchanged %q", got.Content(), "hi")
 	}
 }

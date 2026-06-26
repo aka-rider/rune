@@ -108,12 +108,18 @@ func (s *Store) RecoverDocument(docID int64) (string, error) {
 		targetSeq = nullableCS.Int64
 	}
 
-	// Step 2: find the nearest snapshot at or before targetSeq.
+	// Step 2: find the nearest snapshot at or before targetSeq. Break ties by id
+	// DESC (most-recently-written wins): coalesced edits keep the SAME journal seq
+	// (AppendEdit updates the existing event in place), so several snapshots can
+	// share one seq with progressively newer content. A seq-only `ORDER BY seq DESC`
+	// picks an arbitrary one at the tie and can anchor on STALE content, dropping the
+	// latest coalesced keystroke from recovery (a §1.4.3 data-loss). id DESC selects
+	// the freshest snapshot at that seq, matching LatestSnapshot's ordering.
 	var anchorSnapshotSeq int64
 	var anchorContent string
 	var blobHash string
 	err := s.perm.QueryRow(
-		`SELECT seq, blob_hash FROM snapshots WHERE doc_id=? AND seq <= ? ORDER BY seq DESC LIMIT 1`,
+		`SELECT seq, blob_hash FROM snapshots WHERE doc_id=? AND seq <= ? ORDER BY seq DESC, id DESC LIMIT 1`,
 		docID, targetSeq,
 	).Scan(&anchorSnapshotSeq, &blobHash)
 	if err != nil && err != sql.ErrNoRows {

@@ -1,6 +1,7 @@
 package textedit
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -47,38 +48,38 @@ type SanitizeFunc func(s string) string
 
 // Model is the text-editing component (no markdown rendering).
 type Model struct {
-	buf              buffer.Buffer
-	cursors          cursor.CursorSet
-	pendingEdits     []buffer.AppliedEdit
-	softWrap         bool
-	indent           IndentConfig
-	syntaxMap        display.SyntaxMap
-	wrapMap          display.WrapMap
-	snapshot         display.DisplaySnapshot
-	imageDims        map[string]display.ImageDims // per-image cell footprints; drives image-row expansion in syncDisplay
-	syntaxSnap       display.SyntaxSnapshot
-	wrapSnap         display.WrapSnapshot
-	resolver         keybind.Resolver
-	registry         command.Registry
-	viewport         ViewportState
-	keys             keymap.Bindings
-	styles           styles.Styles
-	width            int
-	height           int
-	offsetX          int
-	offsetY          int
-	focused              bool
-	searchMatches        []SelInterval
-	searchActive         int    // -1 = no active match
-	searchQuery          string // last query set via SetSearchQuery
+	buf                   buffer.Buffer
+	cursors               cursor.CursorSet
+	pendingEdits          []buffer.AppliedEdit
+	softWrap              bool
+	indent                IndentConfig
+	syntaxMap             display.SyntaxMap
+	wrapMap               display.WrapMap
+	snapshot              display.DisplaySnapshot
+	imageDims             map[string]display.ImageDims // per-image cell footprints; drives image-row expansion in syncDisplay
+	syntaxSnap            display.SyntaxSnapshot
+	wrapSnap              display.WrapSnapshot
+	resolver              keybind.Resolver
+	registry              command.Registry
+	viewport              ViewportState
+	keys                  keymap.Bindings
+	styles                styles.Styles
+	width                 int
+	height                int
+	offsetX               int
+	offsetY               int
+	focused               bool
+	searchMatches         []SelInterval
+	searchActive          int    // -1 = no active match
+	searchQuery           string // last query set via SetSearchQuery
 	searchCaseInsensitive bool
-	searchRev            uint64 // m.rev when searchMatches was last computed
-	syncFunc             SyncFunc
-	sanitizeFunc     SanitizeFunc
-	singleLine       bool
-	readOnly         bool
-	headerHeight     int
-	rev              uint64 // monotonic buffer-mutation counter (D13)
+	searchRev             uint64 // m.rev when searchMatches was last computed
+	syncFunc              SyncFunc
+	sanitizeFunc          SanitizeFunc
+	singleLine            bool
+	readOnly              bool
+	headerHeight          int
+	rev                   uint64 // monotonic buffer-mutation counter (D13)
 }
 
 type ViewportState struct {
@@ -450,7 +451,12 @@ func (m Model) SetCursors(cs []cursor.Cursor) Model {
 
 // ApplyInverse applies the inverse of the given edits (undo).
 // Does NOT accumulate into pendingEdits.
-func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
+//
+// Returns a non-nil error when the inverse edits do not fit the live buffer
+// (stale/out-of-bounds positions). Per §1.3 the failure is SURFACED, never
+// swallowed: the buffer is left unchanged so the caller can halt and keep the
+// journal position coherent with it, rather than silently dropping the undo.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, error) {
 	inverse := make([]buffer.Edit, len(edits))
 	for i, ae := range edits {
 		inverse[i] = buffer.Edit{
@@ -461,12 +467,13 @@ func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
 	}
 	inverse = buffer.CloneAndSortEditsDescending(inverse)
 	newBuf, _, err := m.buf.ApplyEdits(inverse)
-	if err == nil {
-		m.buf = newBuf
+	if err != nil {
+		return m, fmt.Errorf("apply inverse (undo): %w", err)
 	}
+	m.buf = newBuf
 	m.rev++
 	m = m.syncDisplay()
-	return m
+	return m, nil
 }
 
 // Reapply applies the given edits forward (redo).
@@ -481,10 +488,13 @@ func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
 // invariant replayOneBatch in pkg/editor/buffer/replay.go relies on.
 //
 // Applies all edits to a working copy and commits only if every edit succeeds,
-// leaving the buffer unchanged on any error (all-or-nothing).
-func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
+// leaving the buffer unchanged on any error (all-or-nothing). Per §1.3 an
+// out-of-bounds or failed edit returns a non-nil error rather than a silent
+// no-op: the caller MUST surface it and keep the journal position coherent with
+// the (unchanged) buffer, never drop the redo silently.
+func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, error) {
 	if len(edits) == 0 {
-		return m
+		return m, nil
 	}
 	sorted := append([]buffer.AppliedEdit(nil), edits...)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -495,18 +505,18 @@ func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
 		start := e.Start
 		end := e.Start + len(e.Deleted)
 		if start < 0 || end > work.Len() || start > end {
-			return m
+			return m, fmt.Errorf("reapply edit out of bounds: start=%d end=%d bufLen=%d", start, end, work.Len())
 		}
 		newBuf, _, err := work.ApplyEdits([]buffer.Edit{{Start: start, End: end, Insert: e.Insert}})
 		if err != nil {
-			return m
+			return m, fmt.Errorf("reapply edit [%d,%d): %w", start, end, err)
 		}
 		work = newBuf
 	}
 	m.buf = work
 	m.rev++
 	m = m.syncDisplay()
-	return m
+	return m, nil
 }
 
 // clampScroll clamps viewport.TopRow to [0, maxTop].
@@ -991,4 +1001,3 @@ type Rect struct {
 func isPrintableChar(r rune) bool {
 	return r >= ' ' && r <= '~'
 }
-

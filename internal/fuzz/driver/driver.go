@@ -4,6 +4,7 @@ package driver
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 
 	tea "charm.land/bubbletea/v2"
@@ -40,10 +41,10 @@ func asCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
 
 // runState holds per-run mutable state shared by drainMsg/drainCmd.
 type runState struct {
-	store          *docstate.Store
-	monitors       []invariant.Monitor
-	frozenFrame    string
-	frozenCells    [][]textedit.Cell
+	store       *docstate.Store
+	monitors    []invariant.Monitor
+	frozenFrame string
+	frozenCells [][]textedit.Cell
 	// baselines maps a docID to the content it was LOADED with — captured the first
 	// time the doc is observed with zero journaled edits (when its buffer IS the
 	// freshly-loaded content). The SHADOW mirror for a doc is baseline +
@@ -51,13 +52,15 @@ type runState struct {
 	// buffer that, unlike a single global replay-from-empty, correctly handles a
 	// non-empty loaded baseline and multiple documents.
 	baselines map[int64]string
-	// externalWrites: set of paths for which RunHuman called mem.WriteFile but
-	// the workspace has not yet resolved the conflict. drainMsg annotates
-	// snap.ActiveFileExternallyModified = true whenever snap.ActiveFilePath is
-	// in this set, arming the EXT-NOCLOBBER monitor. A path is removed once
-	// the save resolves (FileSavedMsg or FileSaveErrorMsg{Conflict:true}).
-	// The set covers both the active file and background tabs — the original
-	// single-string approach missed background tabs opened after the write.
+	// externalWrites: set of paths for which RunHuman called mem.WriteFile but the
+	// workspace has not yet reconciled the conflict. drainMsg checks EXT-NOCLOBBER
+	// directly against this set (the driver authoritatively owns it): a FileSavedMsg
+	// for a path still in the set means production clobbered newer bytes instead of
+	// refusing. A path is removed once reconciled — a refused save
+	// (FileSaveErrorMsg{Conflict:true}) or a reload (FileLoadedMsg) that refreshes
+	// production's diskBaseline. The set covers both the active file and background
+	// tabs — the original single-string approach missed background tabs opened after
+	// the write.
 	externalWrites map[string]struct{}
 
 	// reorder, when true, makes drainCmd DEFER async file-load results
@@ -66,6 +69,25 @@ type runState struct {
 	// out-of-order load race that the in-order drain structurally cannot reach.
 	reorder  bool
 	deferred []tea.Msg
+
+	// reorderSaves, when true, makes drainCmd DEFER async SAVE results
+	// (FileSavedMsg/FileSaveErrorMsg) into `deferredSaves` instead of delivering
+	// them inline, so subsequent fuzz events (edits) are journaled while the save
+	// is "in flight". RunReorderSaves replays the deferred save afterward; the
+	// SAVE-RACE invariant then asserts the saved doc is correctly STILL dirty —
+	// the edit-during-save interleaving that exposes the MarkSaved seq race
+	// (§1.4.2/§1.4.8), which the inline drain structurally cannot reach.
+	reorderSaves  bool
+	deferredSaves []deferredSave
+}
+
+// deferredSave records an async save result whose delivery to Update is delayed,
+// together with the journal position captured when it was issued, so the SAVE-RACE
+// invariant can tell whether edits were journaled while the save was in flight.
+type deferredSave struct {
+	msg      tea.Msg
+	docID    int64
+	issueSeq int64 // store.CurrentSeq(docID) at the moment the save was issued
 }
 
 // isLoadResult reports whether msg is an async file-load result — the only
@@ -127,18 +149,30 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 		snap.AppQuitting = true
 	}
 
-	// EXT-NOCLOBBER annotation: if the active file has a pending external write,
-	// flag the snapshot so the monitor arms. Use msg.Path (not snap.ActiveFilePath)
-	// to clear, because in-flight saves can settle on a tab that is no longer active.
+	// EXT-NOCLOBBER (§1.4.7): the driver authoritatively owns the set of paths with
+	// an unreconciled external write (it performed them), so the check lives here
+	// rather than in a monitor re-deriving it from a snapshot flag. A FileSavedMsg
+	// for such a path means production overwrote newer bytes instead of refusing. A
+	// refused save (FileSaveErrorMsg{Conflict}) OR a reload (FileLoadedMsg, which
+	// refreshes production's diskBaseline) reconciles the obligation.
 	if len(rs.externalWrites) > 0 {
-		if _, pending := rs.externalWrites[snap.ActiveFilePath]; pending {
-			snap.ActiveFileExternallyModified = true
-		}
-		if savedMsg, ok := msg.(pgworkspace.FileSavedMsg); ok {
-			delete(rs.externalWrites, savedMsg.Path)
-		}
-		if errMsg, ok := msg.(pgworkspace.FileSaveErrorMsg); ok && errMsg.Conflict {
-			delete(rs.externalWrites, errMsg.Path)
+		switch dm := msg.(type) {
+		case pgworkspace.FileSavedMsg:
+			if _, pending := rs.externalWrites[dm.Path]; pending {
+				rs.frozenFrame = snap.Frame
+				rs.frozenCells = snap.Cells
+				return m, &invariant.Violation{
+					InvariantID: "EXT-NOCLOBBER",
+					Message: "FileSavedMsg succeeded for " + invariant.Trunc(dm.Path, 80) +
+						" after external write — expected FileSaveErrorMsg{Conflict:true}",
+				}
+			}
+		case pgworkspace.FileSaveErrorMsg:
+			if dm.Conflict {
+				delete(rs.externalWrites, dm.Path)
+			}
+		case pgworkspace.FileLoadedMsg:
+			delete(rs.externalWrites, dm.Path)
 		}
 	}
 
@@ -157,15 +191,32 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 		rs.frozenCells = snap.Cells
 		return m, &vs[0]
 	}
-	if _, ok := msg.(pgworkspace.AutosaveSettledMsg); ok {
-		var vfsContent string
-		if rs.store != nil && snap.DocID != 0 {
-			vfsContent, _ = rs.store.Content(snap.DocID) // fire-and-forget: read error → empty vfsContent → DL1 skips; no data loss
+
+	// TR-dirty-clear (§1.4.8): after a save settles, the SAVED doc must be clean.
+	// Dirtiness is derived from the store (saved_seq vs current_seq), keyed to the
+	// saved doc, so a still-dirty *other* tab no longer trips a false positive. Skip
+	// in save-deferral mode, where edits are deliberately interleaved and the
+	// SAVE-RACE invariant owns the (correctly-dirty) outcome.
+	if savedMsg, ok := msg.(pgworkspace.FileSavedMsg); ok && !rs.reorderSaves && rs.store != nil && savedMsg.DocID != 0 {
+		if dirty, err := rs.store.IsDirty(savedMsg.DocID); err == nil {
+			if v := session.CheckSaveDirty(dirty); v != nil {
+				rs.frozenFrame = snap.Frame
+				rs.frozenCells = snap.Cells
+				return m, v
+			}
 		}
-		if v := session.CheckDataLoss(snap, vfsContent); v != nil {
-			rs.frozenFrame = snap.Frame
-			rs.frozenCells = snap.Cells
-			return m, v
+	}
+
+	if _, ok := msg.(pgworkspace.AutosaveSettledMsg); ok && rs.store != nil && snap.DocID != 0 {
+		// A store read error means we cannot observe the durable VFS state — skip DL1
+		// rather than fire a false positive. An empty but *successful* read is a valid
+		// empty document (RecoverDocument reconstructs "" faithfully).
+		if vfsContent, err := rs.store.Content(snap.DocID); err == nil {
+			if v := session.CheckDataLoss(snap, vfsContent); v != nil {
+				rs.frozenFrame = snap.Frame
+				rs.frozenCells = snap.Cells
+				return m, v
+			}
 		}
 	}
 
@@ -199,6 +250,17 @@ func drainCmd(rs *runState, m pgworkspace.Model, cmd tea.Cmd) (pgworkspace.Model
 		// fsys access happened — only the delivery to Update is deferred.
 		rs.deferred = append(rs.deferred, msg)
 		return m, nil
+	}
+	if rs.reorderSaves {
+		if savedMsg, ok := msg.(pgworkspace.FileSavedMsg); ok && rs.store != nil && savedMsg.DocID != 0 {
+			// Capture the journal position the saved bytes reflect — the save Cmd
+			// ran inline immediately after ⌘S, so no edits have advanced the head
+			// yet — then DEFER delivery so RunReorderSaves can journal more edits
+			// before MarkSaved runs, exposing the seq race (§1.4.2/§1.4.8).
+			issueSeq, _ := rs.store.CurrentSeq(savedMsg.DocID) // fire-and-forget: read error → issueSeq 0, SAVE-RACE still conservative
+			rs.deferredSaves = append(rs.deferredSaves, deferredSave{msg: msg, docID: savedMsg.DocID, issueSeq: issueSeq})
+			return m, nil
+		}
 	}
 	return drainMsg(rs, m, msg)
 }
@@ -353,6 +415,84 @@ func orUntitled(p string) string {
 		return "<untitled>"
 	}
 	return p
+}
+
+// RunReorderSaves exercises the edit-during-save race that the in-order drain
+// structurally cannot reach: it DEFERS each async save result (FileSavedMsg) so
+// subsequent fuzz events keep journaling edits while the save is "in flight", then
+// delivers the deferred saves and asserts SAVE-RACE — if edits were journaled after
+// a save's issue position, the saved doc MUST still be dirty after the save settles.
+// A MarkSaved that stamps the live journal head (instead of the position the written
+// bytes reflect) marks the doc clean despite unsaved edits — a §1.4.2/§1.4.8
+// durability bug the inline fuzzer (which settles each save before the next event)
+// never sees.
+func RunReorderSaves(model pgworkspace.Model, events []event.Event, store *docstate.Store, mem *vfs.Mem, paths []string, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}, reorderSaves: true}
+
+	var v *invariant.Violation
+	model, v = bootstrap(rs, model, store, w, h)
+	if v != nil {
+		return v, rs.frozenFrame, rs.frozenCells
+	}
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case event.KindExternalWrite:
+			// Advance the Mem mod-clock (not the focus of this harness — EXT-NOCLOBBER
+			// is covered elsewhere; here it only perturbs save divergence).
+			if mem != nil && len(paths) > 0 {
+				path := paths[int(ev.PathIndex)%len(paths)]
+				content := ev.Text
+				if content == "" {
+					content = "external-write\n"
+				}
+				_ = mem.WriteFile(path, []byte(content), 0o644) // fire-and-forget: Mem never fails
+			}
+			continue
+		default:
+			msg := eventToMsg(ev)
+			if msg == nil {
+				continue
+			}
+			model, v = drainMsg(rs, model, msg)
+		}
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+	}
+
+	// Deliver each deferred save (running MarkSaved) AFTER the interleaved edits, then
+	// assert the durability invariant. reorderSaves stays true so the inline
+	// TR-dirty-clear check (which expects a clean doc) is skipped here — SAVE-RACE
+	// owns the correctly-dirty outcome.
+	for _, ds := range rs.deferredSaves {
+		model, v = drainMsg(rs, model, ds.msg)
+		if v != nil {
+			return v, rs.frozenFrame, rs.frozenCells
+		}
+		if rs.store == nil || ds.docID == 0 {
+			continue
+		}
+		cur, cerr := rs.store.CurrentSeq(ds.docID)
+		if cerr != nil || cur <= ds.issueSeq {
+			continue // no edits interleaved while the save was in flight → nothing to assert
+		}
+		dirty, derr := rs.store.IsDirty(ds.docID)
+		if derr != nil {
+			continue
+		}
+		if !dirty {
+			snap := model.FuzzInspect()
+			return &invariant.Violation{
+				InvariantID: "SAVE-RACE",
+				Message: fmt.Sprintf(
+					"doc %d marked clean after save settled, but %d edit(s) were journaled while the save was in flight (saved@seq=%d, head=%d) — unsaved edits silently lost (§1.4.2)",
+					ds.docID, cur-ds.issueSeq, ds.issueSeq, cur,
+				),
+			}, snap.Frame, snap.Cells
+		}
+	}
+	return nil, "", nil
 }
 
 // RunHuman is the entry point for FuzzHumanSession. It extends Run with

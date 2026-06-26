@@ -3,8 +3,8 @@ package title
 import (
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"rune/pkg/editor/buffer"
@@ -120,15 +120,19 @@ func (m Model) Cursors() []cursor.Cursor {
 }
 
 // ApplyInverse applies inverse edits to the underlying field (workspace-driven undo).
-func (m Model) ApplyInverse(edits []buffer.AppliedEdit) Model {
-	m.field = m.field.ApplyInverse(edits)
-	return m
+// Propagates the §1.3 bounds error: on failure the field is unchanged.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, error) {
+	var err error
+	m.field, err = m.field.ApplyInverse(edits)
+	return m, err
 }
 
 // Reapply applies edits forward to the underlying field (workspace-driven redo).
-func (m Model) Reapply(edits []buffer.AppliedEdit) Model {
-	m.field = m.field.Reapply(edits)
-	return m
+// Propagates the §1.3 bounds error: on failure the field is unchanged.
+func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, error) {
+	var err error
+	m.field, err = m.field.Reapply(edits)
+	return m, err
 }
 
 // SetCursors restores cursor state on the underlying field.

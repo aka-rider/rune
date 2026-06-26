@@ -26,7 +26,6 @@ func (m Model) currentDir() string {
 	return cwd
 }
 
-
 // requestOpenPath switches the editor to a document. Untitled documents all
 // share path "", so they are identified by docID; bound documents and help are
 // identified by path. Switching away first forces a VFS snapshot of the
@@ -281,7 +280,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		isCurrent := h.Equal(m.view.Handle())
 		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
 		if isCurrent {
-			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), requestID, false, m.view.Baseline()))
+			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), m.savedSeqFor(h.DocID), requestID, false, m.view.Baseline()))
 			continue
 		}
 		// Non-current tab: reconstruct its bytes from the VFS. Skip (never write
@@ -294,7 +293,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		if err != nil {
 			continue
 		}
-		batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, content, requestID, false, diskBaseline{}))
+		batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, content, m.savedSeqFor(h.DocID), requestID, false, diskBaseline{}))
 	}
 	if len(batch) == 0 {
 		return m.teardownAndQuit() // only untitled docs are dirty — quit now

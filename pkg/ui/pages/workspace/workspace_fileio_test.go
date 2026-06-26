@@ -28,7 +28,7 @@ func TestMaterialize_BindNewRefusesClobber(t *testing.T) {
 	if err := os.WriteFile(path, []byte("original"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := materializeCmd(vfs.Disk{}, 1, path, "new content", "r1", true, diskBaseline{})()
+	msg := materializeCmd(vfs.Disk{}, 1, path, "new content", 0, "r1", true, diskBaseline{})()
 	e, ok := msg.(FileSaveErrorMsg)
 	if !ok || !e.Conflict {
 		t.Fatalf("expected conflict FileSaveErrorMsg, got %#v", msg)
@@ -50,7 +50,7 @@ func TestMaterialize_OverwriteRefusesExternalChange(t *testing.T) {
 	if err := os.WriteFile(path, []byte("v2 external longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := materializeCmd(vfs.Disk{}, 1, path, "mine", "r1", false, base)()
+	msg := materializeCmd(vfs.Disk{}, 1, path, "mine", 0, "r1", false, base)()
 	e, ok := msg.(FileSaveErrorMsg)
 	if !ok || !e.Conflict {
 		t.Fatalf("expected conflict FileSaveErrorMsg, got %#v", msg)
@@ -69,7 +69,7 @@ func TestMaterialize_OverwriteWritesVerbatim(t *testing.T) {
 		t.Fatal(err)
 	}
 	const want = "line1\r\nline2 no trailing nl"
-	msg := materializeCmd(vfs.Disk{}, 1, path, want, "r1", false, baselineOf(vfs.Disk{}, path))()
+	msg := materializeCmd(vfs.Disk{}, 1, path, want, 0, "r1", false, baselineOf(vfs.Disk{}, path))()
 	saved, ok := msg.(FileSavedMsg)
 	if !ok {
 		t.Fatalf("expected FileSavedMsg, got %#v", msg)

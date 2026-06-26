@@ -134,20 +134,17 @@ func (s *Store) AppendEdit(docID int64, surface string, edits []buffer.AppliedEd
 	return newSeq, nil
 }
 
-// UndoTarget returns the most recent undo-stop event at or before the current
-// journal position for docID. On success it steps the position one behind the
-// returned event so that a subsequent UndoTarget targets the event before it,
-// and a RedoTarget can return to this one.
-func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, newPos int64, ok bool) {
-	tx, err := s.perm.Begin()
-	if err != nil {
-		return "", nil, nil, 0, false
-	}
-
+// UndoPeek returns the most recent undo-stop event at or before the current
+// journal position for docID, plus newPos — the position the journal should move
+// to (one behind that event) once the buffer edit applies. It is READ-ONLY: it
+// does NOT mutate current_seq. The caller commits the move via MoveUndoPos ONLY
+// after the buffer reapply succeeds, so a failed apply never leaves current_seq
+// ahead of the buffer (§1.4.8 coherence; the silent-swallow corruption window the
+// old advance-then-apply order opened). ok=false means nothing to undo.
+func (s *Store) UndoPeek(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, newPos int64, ok bool) {
 	// Determine position: NULL = head (use MAX seq).
 	var nullableCS sql.NullInt64
-	if err := tx.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
 		return "", nil, nil, 0, false
 	}
 
@@ -156,8 +153,7 @@ func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedE
 		position = nullableCS.Int64
 	} else {
 		var maxSeq sql.NullInt64
-		if err := tx.QueryRow(`SELECT MAX(seq) FROM events WHERE doc_id=?`, docID).Scan(&maxSeq); err != nil || !maxSeq.Valid {
-			tx.Rollback() //nolint:errcheck
+		if err := s.perm.QueryRow(`SELECT MAX(seq) FROM events WHERE doc_id=?`, docID).Scan(&maxSeq); err != nil || !maxSeq.Valid {
 			return "", nil, nil, 0, false
 		}
 		position = maxSeq.Int64
@@ -165,90 +161,75 @@ func (s *Store) UndoTarget(docID int64) (surface string, edits []buffer.AppliedE
 
 	var seq int64
 	var editsJSON, cursorsJSON string
-	err = tx.QueryRow(
+	err := s.perm.QueryRow(
 		`SELECT seq, surface, edits, cursors_before FROM events
 		 WHERE doc_id=? AND is_undo_stop=1 AND seq<=?
 		 ORDER BY seq DESC LIMIT 1`,
 		docID, position,
 	).Scan(&seq, &surface, &editsJSON, &cursorsJSON)
-	if err == sql.ErrNoRows || err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err != nil { // includes sql.ErrNoRows → nothing to undo
 		return "", nil, nil, 0, false
 	}
 
-	if unmarshalErr := json.Unmarshal([]byte(editsJSON), &edits); unmarshalErr != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := json.Unmarshal([]byte(editsJSON), &edits); err != nil {
 		return "", nil, nil, 0, false
 	}
-	if unmarshalErr := json.Unmarshal([]byte(cursorsJSON), &cursorsBefore); unmarshalErr != nil {
-		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, 0, false
-	}
-
-	writtenPos := seq - 1
-	if _, err := tx.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, writtenPos, docID); err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := json.Unmarshal([]byte(cursorsJSON), &cursorsBefore); err != nil {
 		return "", nil, nil, 0, false
 	}
 
-	if err := tx.Commit(); err != nil {
-		return "", nil, nil, 0, false
-	}
-	return surface, edits, cursorsBefore, writtenPos, true
+	return surface, edits, cursorsBefore, seq - 1, true
 }
 
-// RedoTarget returns the next undo-stop event after the current journal
-// position for docID. On success it advances the position to the returned event.
-func (s *Store) RedoTarget(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsAfter []cursor.Cursor, newPos int64, ok bool) {
-	tx, err := s.perm.Begin()
-	if err != nil {
-		return "", nil, nil, 0, false
-	}
-
+// RedoPeek returns the next undo-stop event after the current journal position for
+// docID, plus newPos — the position the journal should advance to once the buffer
+// edit applies. Like UndoPeek it is READ-ONLY; the caller commits via MoveUndoPos
+// after a successful reapply. ok=false means nothing to redo.
+func (s *Store) RedoPeek(docID int64) (surface string, edits []buffer.AppliedEdit, cursorsAfter []cursor.Cursor, newPos int64, ok bool) {
 	var nullableCS sql.NullInt64
-	if err := tx.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
 		return "", nil, nil, 0, false
 	}
 
 	// NULL = at head → nothing to redo.
 	if !nullableCS.Valid {
-		tx.Rollback() //nolint:errcheck
 		return "", nil, nil, 0, false
 	}
 	position := nullableCS.Int64
 
 	var seq int64
 	var editsJSON, cursorsJSON string
-	err = tx.QueryRow(
+	err := s.perm.QueryRow(
 		`SELECT seq, surface, edits, cursors_after FROM events
 		 WHERE doc_id=? AND is_undo_stop=1 AND seq>?
 		 ORDER BY seq ASC LIMIT 1`,
 		docID, position,
 	).Scan(&seq, &surface, &editsJSON, &cursorsJSON)
-	if err == sql.ErrNoRows || err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err != nil { // includes sql.ErrNoRows → nothing to redo
 		return "", nil, nil, 0, false
 	}
 
-	if unmarshalErr := json.Unmarshal([]byte(editsJSON), &edits); unmarshalErr != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := json.Unmarshal([]byte(editsJSON), &edits); err != nil {
 		return "", nil, nil, 0, false
 	}
-	if unmarshalErr := json.Unmarshal([]byte(cursorsJSON), &cursorsAfter); unmarshalErr != nil {
-		tx.Rollback() //nolint:errcheck
-		return "", nil, nil, 0, false
-	}
-
-	if _, err := tx.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, seq, docID); err != nil {
-		tx.Rollback() //nolint:errcheck
+	if err := json.Unmarshal([]byte(cursorsJSON), &cursorsAfter); err != nil {
 		return "", nil, nil, 0, false
 	}
 
-	if err := tx.Commit(); err != nil {
-		return "", nil, nil, 0, false
-	}
 	return surface, edits, cursorsAfter, seq, true
+}
+
+// MoveUndoPos commits the journal undo position to pos for docID. Pair it with
+// UndoPeek/RedoPeek: peek to read the target, apply the buffer edit, and only then
+// MoveUndoPos — so a failed buffer reapply never leaves current_seq ahead of the
+// buffer (§1.4.8). pos is always a concrete seq returned by UndoPeek/RedoPeek,
+// matching the prior UndoTarget/RedoTarget behavior of writing a numeric position
+// (functionally equivalent to NULL at head via COALESCE).
+func (s *Store) MoveUndoPos(docID, pos int64) error {
+	if _, err := s.perm.Exec(`UPDATE documents SET current_seq=? WHERE id=?`, pos, docID); err != nil {
+		return fmt.Errorf("move undo pos doc %d → %d: %w", docID, pos, err)
+	}
+	return nil
 }
 
 // AllEdits returns all edit events for the given docID and surface in journal

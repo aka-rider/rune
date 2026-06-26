@@ -50,10 +50,6 @@ type Snapshot struct {
 	// CloseFileKeyPressed: set by driver (not by FuzzInspect) when the message was a CloseFile key press.
 	CloseFileKeyPressed bool
 
-	// ActiveFileExternallyModified: set by RunHuman when KindExternalWrite fires
-	// for the currently active file. Used by the EXT-NOCLOBBER monitor.
-	ActiveFileExternallyModified bool
-
 	// File / persistence
 	ActiveFilePath string // m.filePath; empty = Untitled/unsaved file
 	EditorPath     string // same as filePath; named for clarity in invariants
@@ -64,10 +60,10 @@ type Snapshot struct {
 	// the active tab already points at the incoming doc — the active handle
 	// intentionally LEADS the view by one async hop (executeClose/finalize), so
 	// path-coherence invariants (EDITOR-TAB-COH) hold only after the load settles.
-	Loading bool
-	FlushGen       uint64
-	SaveSnapshot   []byte // activeSave.SavedContent — content captured at save-start
-	SaveInFlight   bool
+	Loading      bool
+	FlushGen     uint64
+	SaveSnapshot []byte // activeSave.SavedContent — content captured at save-start
+	SaveInFlight bool
 
 	// Layout (for L1/L2)
 	Frame  string

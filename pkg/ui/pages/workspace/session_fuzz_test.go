@@ -33,27 +33,27 @@ import (
 //   76=SaveFile(super+s)  77=Undo(super+z)  78=Redo(ctrl+y)
 
 const (
-	keyUp       = byte(0)
-	keyDown     = byte(1)
-	keyLeft     = byte(2)
-	keyRight    = byte(3)
-	keyHome     = byte(4)
-	keyEnd      = byte(5)
-	keyEnter    = byte(8)
-	keyBS       = byte(9)
-	keyTab      = byte(11)
-	keyShiftTab = byte(12)
-	keyCW       = byte(14) // ctrl+w close file
-	keyCN       = byte(18) // ctrl+n new file
-	keyCP       = byte(19) // ctrl+p pin
-	keySelectAll = byte(22) // ctrl+a
-	keyCtrlC    = byte(23) // ctrl+c confirm-exit
-	keyShiftLeft = byte(26)
+	keyUp         = byte(0)
+	keyDown       = byte(1)
+	keyLeft       = byte(2)
+	keyRight      = byte(3)
+	keyHome       = byte(4)
+	keyEnd        = byte(5)
+	keyEnter      = byte(8)
+	keyBS         = byte(9)
+	keyTab        = byte(11)
+	keyShiftTab   = byte(12)
+	keyCW         = byte(14) // ctrl+w close file
+	keyCN         = byte(18) // ctrl+n new file
+	keyCP         = byte(19) // ctrl+p pin
+	keySelectAll  = byte(22) // ctrl+a
+	keyCtrlC      = byte(23) // ctrl+c confirm-exit
+	keyShiftLeft  = byte(26)
 	keyShiftRight = byte(27)
-	keyEscape   = byte(32)
-	keySave     = byte(76) // super+s
-	keyUndo     = byte(77) // super+z
-	keyRedo     = byte(78) // ctrl+y
+	keyEscape     = byte(32)
+	keySave       = byte(76) // super+s
+	keyUndo       = byte(77) // super+z
+	keyRedo       = byte(78) // ctrl+y
 )
 
 // key encodes a KindKey event for seed construction.
@@ -149,8 +149,8 @@ func FuzzSession(f *testing.F) {
 	// Today every seed is effectively single-line; line ops need >1 line.
 	f.Add(concat(
 		paste("a\nb\nc\nd\n"),
-		key(31), // AltDown = MoveLineDown
-		key(30), // AltUp  = MoveLineUp
+		key(31),       // AltDown = MoveLineDown
+		key(30),       // AltUp  = MoveLineUp
 		key(byte(22)), // SelectAll
 	))
 
@@ -374,6 +374,52 @@ func FuzzLoadReorder(f *testing.F) {
 		m := workspace.New(keys, st, reg, res, terminal.TermCaps{}, "/fuzz", nil).WithFS(mem)
 
 		if violation, _, _ := driver.RunReorder(m, settle, opens, supersede, order, store, 80, 24); violation != nil {
+			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
+		}
+	})
+}
+
+// FuzzSaveRace exercises the edit-during-save durability race (§1.4.2/§1.4.8) that
+// the in-order session driver structurally cannot reach (it settles each save before
+// the next event). RunReorderSaves DEFERS the FileSavedMsg so edits typed "while the
+// save is in flight" advance the journal head before MarkSaved runs; the SAVE-RACE
+// invariant then asserts the doc stays dirty (the post-save edits are genuinely
+// unsaved). A MarkSaved that stamps the live head instead of the position the written
+// bytes reflect marks the doc clean → those edits are silently lost.
+func FuzzSaveRace(f *testing.F) {
+	const keyFocusEditor = byte(16) // ctrl+e — route pastes to the editor buffer
+	// Seed: focus editor, paste, ⌘S (deferred), then a cursor move + paste so the
+	// post-save edit is a SEPARATE journal event (a new seq past the save's issue
+	// position) — exactly the interleaving that exposes the MarkSaved seq race.
+	f.Add(concat(key(keyFocusEditor), paste("hello"), key(keySave), key(keyEnd), paste(" world")))
+	// Seed: two interleaved edits after the save, each separated by a caret move.
+	f.Add(concat(key(keyFocusEditor), paste("abc"), key(keySave), key(keyEnd), paste("d"), key(keyHome), paste("e")))
+	// Seed: newline after the save breaks coalescing and advances the journal.
+	f.Add(concat(key(keyFocusEditor), paste("x"), key(keySave), key(keyEnd), paste("\ny")))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		events := event.Decode(data)
+
+		mem := vfs.NewMem()
+		const testFile = "/fuzz/test.md"
+		_ = mem.WriteFile(testFile, []byte("# Test\n\nInitial content.\n"), 0o644)
+
+		store, err := docstate.OpenInMemory(time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		store.UseFS(mem)
+
+		keys := keymap.Default()
+		st := styles.Default()
+		reg := command.NewBuilder().Build()
+		res, _ := keybind.NewResolver(nil)
+		caps := terminal.TermCaps{}
+
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
+
+		if violation, _, _ := driver.RunReorderSaves(m, events, store, mem, []string{testFile}, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})

@@ -32,7 +32,7 @@ import (
 type pane int
 
 const (
-	paneTree   pane = iota
+	paneTree pane = iota
 	paneTabs
 	paneCenter
 	paneTitle
@@ -48,7 +48,7 @@ func (p pane) isCenter() bool { return p == paneCenter || p == paneTitle || p ==
 type dragState int
 
 const (
-	dragNone  dragState = iota
+	dragNone dragState = iota
 	dragLeft
 	dragRight
 )
@@ -250,8 +250,8 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 			markdownedit.WithRegistry(reg),
 			markdownedit.WithResolver(resolver),
 		).SetRoot(workDir), // static base #2 for relative-ref resolution (launch CWD)
-		footer:       footer.New(keys, st),
-		chat:         chat.New(keys, st, reg, resolver, caps),
+		footer: footer.New(keys, st),
+		chat:   chat.New(keys, st, reg, resolver, caps),
 		search: searchcomp.New(keys, st,
 			textedit.WithRegistry(reg),
 			textedit.WithResolver(resolver),

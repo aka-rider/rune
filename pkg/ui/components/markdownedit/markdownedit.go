@@ -108,15 +108,31 @@ func (m Model) SetCursors(cs []cursor.Cursor) Model {
 }
 
 // ApplyInverse shadows textedit.Model.ApplyInverse, also running afterContentChange.
-func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, tea.Cmd) {
-	m.Model = m.Model.ApplyInverse(edits)
-	return m.afterContentChange()
+// A non-nil error means the inverse edits did not fit the buffer (§1.3): the buffer
+// is left unchanged and the caller surfaces the failure instead of advancing undo.
+func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, tea.Cmd, error) {
+	var err error
+	m.Model, err = m.Model.ApplyInverse(edits)
+	if err != nil {
+		return m, nil, err
+	}
+	var cmd tea.Cmd
+	m, cmd = m.afterContentChange()
+	return m, cmd, nil
 }
 
 // Reapply shadows textedit.Model.Reapply, also running afterContentChange.
-func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, tea.Cmd) {
-	m.Model = m.Model.Reapply(edits)
-	return m.afterContentChange()
+// A non-nil error means a redo edit was out of bounds (§1.3); the buffer is left
+// unchanged so the caller can keep the journal position coherent with it.
+func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, tea.Cmd, error) {
+	var err error
+	m.Model, err = m.Model.Reapply(edits)
+	if err != nil {
+		return m, nil, err
+	}
+	var cmd tea.Cmd
+	m, cmd = m.afterContentChange()
+	return m, cmd, nil
 }
 
 // Update is the outermost wrapper: routes the message, then emits inline

@@ -10,7 +10,8 @@ import "fmt"
 // dirty ⟺ ∃ event with seq in (MIN(cur,saved), MAX(cur,saved)]
 //
 // where cur  = COALESCE(current_seq, MAX(events.seq), 0)
-//       saved = COALESCE(saved_seq, 0)
+//
+//	saved = COALESCE(saved_seq, 0)
 func (s *Store) IsDirty(docID int64) (bool, error) {
 	var isDirty bool
 	err := s.perm.QueryRow(`
@@ -34,18 +35,17 @@ func (s *Store) IsDirty(docID int64) (bool, error) {
 	return isDirty, nil
 }
 
-// MarkSaved records the current effective journal position as the saved
-// baseline. Called only from FileSavedMsg — the single gate that advances the
-// clean boundary.
-func (s *Store) MarkSaved(docID int64) error {
-	_, err := s.perm.Exec(`
-		UPDATE documents
-		SET saved_seq = COALESCE(current_seq, (SELECT MAX(seq) FROM events WHERE doc_id = ?), 0)
-		WHERE id = ?`,
-		docID, docID,
-	)
-	if err != nil {
-		return fmt.Errorf("mark saved doc %d: %w", docID, err)
+// MarkSavedAt records seq as the saved baseline for docID — the journal position
+// the bytes written to disk correspond to, captured SYNCHRONOUSLY at save-start
+// (via CurrentSeq, co-atomic with the content) and threaded through
+// FileSavedMsg.SavedSeq. It deliberately does NOT re-read the live head: while an
+// async write is in flight the user can journal new edits that advance the head,
+// and stamping that head would mark the file clean at a position the written bytes
+// never reflected — silently swallowing the in-flight edits (§1.4.2/§1.4.8). The
+// clean boundary advances only to the position actually persisted.
+func (s *Store) MarkSavedAt(docID, seq int64) error {
+	if _, err := s.perm.Exec(`UPDATE documents SET saved_seq = ? WHERE id = ?`, seq, docID); err != nil {
+		return fmt.Errorf("mark saved doc %d at seq %d: %w", docID, seq, err)
 	}
 	return nil
 }

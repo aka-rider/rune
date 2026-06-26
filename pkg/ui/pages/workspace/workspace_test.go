@@ -691,10 +691,11 @@ func TestDirtyFlagClearedOnSave(t *testing.T) {
 		t.Fatal("tab must be dirty after edit")
 	}
 
-	// Start a save to get a request ID, then deliver the completion message.
+	// Start a save to get a request ID, then deliver the completion message. The ack
+	// carries SavedSeq (the journal position captured at save-start) as production does.
 	m, _ = m.startSave()
 	reqID := m.activeSave.RequestID
-	m, _ = m.Update(FileSavedMsg{Path: "note.md", RequestID: reqID})
+	m, _ = m.Update(FileSavedMsg{Path: "note.md", RequestID: reqID, SavedSeq: m.savedSeqFor(m.view.DocID())})
 
 	if m.opentabs.HasDirty() {
 		t.Fatal("tab must be clean after save")

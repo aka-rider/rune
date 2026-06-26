@@ -71,7 +71,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			newPath := filepath.Join(m.currentDir(), msg.Name+".md")
 			requestID := fmt.Sprintf("bind-%v", time.Now().UnixNano())
 			m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(m.editor.Content()), InFlight: true}
-			cmds = append(cmds, materializeCmd(m.fsys(), m.view.DocID(), newPath, m.editor.Content(), requestID, true, diskBaseline{}))
+			cmds = append(cmds, materializeCmd(m.fsys(), m.view.DocID(), newPath, m.editor.Content(), m.savedSeqFor(m.view.DocID()), requestID, true, diskBaseline{}))
 		} else {
 			dir := filepath.Dir(m.view.Path())
 			newPath := filepath.Join(dir, msg.Name+".md")
@@ -235,7 +235,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 			if m.store != nil && m.view.DocID() != 0 {
-				_ = m.store.MarkSaved(m.view.DocID()) // fire-and-forget: §1.3
+				_ = m.store.MarkSavedAt(m.view.DocID(), msg.SavedSeq) // fire-and-forget: §1.3; stamp the saved position, not the live head
 			}
 			if m.view.DocID() != 0 {
 				m.opentabs = m.opentabs.MarkCleanByID(m.view.DocID())
@@ -253,7 +253,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Eviction background save ack: victim is clean, close it, open pending file.
 		if m.isEvictSaveAck(msg.RequestID) {
 			var openCmd tea.Cmd
-			m, openCmd = m.evictSaveAck()
+			m, openCmd = m.evictSaveAck(msg.SavedSeq)
 			cmds = append(cmds, openCmd)
 			break
 		}
@@ -263,8 +263,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// Keep the saved doc's recorded inode in sync (atomic write changed it),
 			// so a later session reopens it without orphaning its history.
 			if m.store != nil && msg.DocID != 0 {
-				_ = m.store.Bind(msg.DocID, msg.Path) // fire-and-forget: best-effort on quit
-				_ = m.store.MarkSaved(msg.DocID)      // fire-and-forget: §1.3
+				_ = m.store.Bind(msg.DocID, msg.Path)            // fire-and-forget: best-effort on quit
+				_ = m.store.MarkSavedAt(msg.DocID, msg.SavedSeq) // fire-and-forget: §1.3; saved position, not live head
 			}
 			m.pendingDataLoss.saveLeft--
 			if m.pendingDataLoss.saveLeft == 0 {
