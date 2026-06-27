@@ -12,6 +12,7 @@ import (
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/scroll"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 type FileSelectedMsg struct{ Path string }
@@ -195,6 +196,7 @@ func renderFileList(m Model) string {
 	if root == "" {
 		root = "."
 	}
+	root = vfs.NormPath(root)
 	if m.width > 3 {
 		root = truncatePath(root, m.width)
 	}

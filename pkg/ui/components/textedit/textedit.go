@@ -384,10 +384,7 @@ func (m Model) Selections() []SelInterval {
 	var sels []SelInterval
 	for _, c := range m.cursors.All() {
 		if c.HasSelection() {
-			end := c.SelectionEnd()
-			if c.Reversed() {
-				end = nextRuneOffset(m.buf, end)
-			}
+			end := selectionEndInclusive(c, m.buf)
 			sels = append(sels, SelInterval{Start: c.SelectionStart(), End: end})
 		}
 	}

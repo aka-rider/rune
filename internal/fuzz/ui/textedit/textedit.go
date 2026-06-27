@@ -329,6 +329,43 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 		}
 	}
 
+	// NL-SEL: a selection whose boundary lands on '\n' must not consume it.
+	// If cursor[i]'s SelectionEnd() pointed to '\n' in prev, next.Content must
+	// retain at least as many '\n' starting from SelectionStart() as prev had
+	// starting from SelectionEnd(). Covers all selection-consuming commands
+	// (delete-left/right, insert-char, newline, cut, paste) via the shared
+	// selectionEndInclusive chokepoint.
+	if next.Content != prev.Content {
+		for i, c := range prev.Cursors {
+			if !c.HasSelection() {
+				continue
+			}
+			end := c.SelectionEnd()
+			if end >= len(prev.Content) || prev.Content[end] != '\n' {
+				continue
+			}
+			want := strings.Count(prev.Content[end:], "\n")
+			start := c.SelectionStart()
+			got := 0
+			if start <= len(next.Content) {
+				got = strings.Count(next.Content[start:], "\n")
+			}
+			if got < want {
+				vs = append(vs, invariant.Violation{
+					InvariantID: "NL-SEL",
+					Message: fmt.Sprintf(
+						"cursor[%d] selection [%d,%d) ended at '\\n': "+
+							"'\\n' count from SelectionStart dropped (%d → %d); "+
+							"prev=%q next=%q",
+						i, start, end, want, got,
+						invariant.Trunc(prev.Content, 60),
+						invariant.Trunc(next.Content, 60),
+					),
+				})
+			}
+		}
+	}
+
 	_ = typeName // reserved for future textedit transition invariants
 	return vs
 }
