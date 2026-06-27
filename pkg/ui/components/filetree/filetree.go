@@ -222,11 +222,11 @@ func renderFileList(m Model) string {
 		}
 
 		b.WriteByte('\n')
-		if i == m.cursor {
-			b.WriteString("> ")
+		if i == m.cursor && m.focused {
+			b.WriteString(">")
 			b.WriteString(m.styles.FileSelected.Render(name))
 		} else {
-			b.WriteString("  ")
+			b.WriteString(" ")
 			b.WriteString(m.styles.FileNormal.Render(name))
 		}
 	}
