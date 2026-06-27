@@ -1,38 +1,32 @@
 # Rune — TUI Architecture (`pkg/ui/`)
 
-This file extends the repository-root `CLAUDE.md` and governs all code under `pkg/ui/` — the only Bubble Tea / Elm-cycle code in the repo. It carries §2–§7 plus the UI-architecture rows of the §9 pitfalls table and §11 pre-merge checklist.
+This file extends the repository-root `CLAUDE.md` and governs all code under `pkg/ui/` — the only Bubble Tea / Elm-cycle code in the repo. It carries §2–§7 plus the UI rows of the §9 pitfalls table and the §11 checklist.
 
-**The root `CLAUDE.md` always loads alongside this file. Its §0 (Prime Directive — protect the user's words) and §1 (Go fundamentals) bind here too — read them first; this file does not repeat them.** References below to §0/§1/§8/§10 point to the root file.
+The root `CLAUDE.md` loads alongside this file; its §0 (Prime Directive) and §1 (Go fundamentals) bind here too — read them first, this file doesn't repeat them. References to §0/§1/§8/§10 point to the root file.
 
-Section numbers match the original monolithic `CLAUDE.md` and are **stable** — source code and ADRs cite them by number (e.g. §3.2, §6.3). Do NOT renumber.
+Section numbers match the original monolithic `CLAUDE.md` and are **stable** — source code and ADRs cite them by number (e.g. §3.2, §6.3). Don't renumber.
 
 ---
 
 ## 2. Component Architecture
 
-Most architectural defects stem from violating this section.
+Most architectural defects start here.
 
-### 2.1 The State Residency Rule
+### 2.1 State Residency Rule
 
-> **The component that RENDERS a piece of state MUST OWN that state on its Model.**
+> **The component that RENDERS a piece of state OWNS that state on its Model.**
 
-Litmus test: if deleting a component's `View()` call from its parent would turn a parent field into dead code, that field belongs on the component, not the parent.
+Litmus: if deleting a child's `View()` call would make a parent field dead code, that field belongs on the child.
 
 ```go
-// WRONG — page holds the editor's rendering state
-type Model struct {            // pages/workspace
-    viewport   viewport.Model  // ← only rendered in the center pane
-    openPath   string          // ← only displayed by the editor
-    breadcrumb breadcrumb.Model
-}
-
-// RIGHT — editor owns its rendering state; page holds it by value, untouched
-type Model struct { editor editor.Model }  // pages/workspace
+// ✓ page holds the child by value, untouched
+type Model struct { editor editor.Model }       // pages/workspace
+// ✗ page holding viewport / openPath / breadcrumb — those are the editor's render state
 ```
 
 ### 2.2 Component Contract
 
-Every component MUST expose this contract via concrete methods (NOT Go interfaces — avoid boxing):
+Every component exposes this contract as concrete methods (not Go interfaces — avoid boxing):
 
 ```go
 func New(keys keymap.Bindings, st styles.Styles) Model // constructor with deps
@@ -44,8 +38,8 @@ func (m Model) Height() int                             // intrinsic/allocated h
 ```
 
 - `SetSize` returns a new Model (value semantics); the component stores its dimensions and uses them in `View()`.
-- `Height()` returns intrinsic or currently-allocated height. Parents query it — they NEVER hardcode it.
-- Components that manage focus MUST expose `SetFocused(bool) Model`.
+- `Height()` returns intrinsic or allocated height. Parents query it; they never hardcode it.
+- A component that manages focus also exposes `SetFocused(bool) Model`.
 
 ### 2.3 Pages vs Components
 
@@ -54,17 +48,17 @@ func (m Model) Height() int                             // intrinsic/allocated h
 | Holds child Models | ✓ by value | ✓ by value (sub-components) |
 | Handles focus routing | ✓ | ✗ (receives `SetFocused`) |
 | Translates cross-component messages | ✓ | ✗ |
-| Owns rendering state (text, content, scroll position) | ✗ NEVER | ✓ ALWAYS |
-| Defines layout geometry | ✓ queries children, allocates remaining space | ✗ accepts via `SetSize` |
+| Owns rendering state (text, content, scroll) | ✗ | ✓ |
+| Defines layout geometry | ✓ queries children, allocates space | ✗ accepts via `SetSize` |
 | Emits I/O commands (file reads, network) | ✓ orchestrates | ✓ for component-owned I/O |
 | Handles global keybindings (quit, focus change) | ✓ | ✗ |
 | Handles scoped keybindings (navigation, selection) | ✗ forwards to focused child | ✓ when `m.focused` |
 
-**Extraction rule:** if a page's `View()` composes multiple sub-views into a logical unit (e.g. breadcrumb + viewport = "editor pane"), that unit MUST be extracted into a component. A page MUST NOT inline rendering logic for what should be a component.
+**Extraction rule:** if a page's `View()` composes multiple sub-views into a logical unit (breadcrumb + viewport = "editor pane"), extract that unit into a component. Don't inline a component's rendering in a page.
 
 ### 2.4 Message Ownership & Flow
 
-Messages are defined in the **producer's** package — the component that generates the event or owns the data the message carries.
+Define a message in the **producer's** package — the component that generates the event or owns the data it carries.
 
 | Message type | Defined in | Consumed by |
 |---|---|---|
@@ -73,9 +67,7 @@ Messages are defined in the **producer's** package — the component that genera
 | `TabSelectedMsg{Path}` | `components/opentabs` | page (orchestrates file load) |
 | `ConfirmQuitMsg` | `components/footer` | page (calls `tea.Quit`) |
 
-**Rule:** if a message carries data that only ONE component renders, it MUST be defined in that component's package.
-
-**Cmd factory rule:** if a `tea.Cmd` produces a message that only one component consumes, both the factory AND the message type live in that component's package. The page calls the factory — it does not implement the I/O.
+If a message carries data only ONE component renders, define it in that component's package. Same for a Cmd factory: if its message has a single consumer, both factory and message type live in that component's package — the page calls the factory, it doesn't implement the I/O.
 
 ```go
 // Page receives from child A, translates, forwards to child B
@@ -85,13 +77,13 @@ case editor.FileLoadedMsg:                   // editor handled it internally; pa
     m.opentabs, cmd = m.opentabs.Update(opentabs.FileOpenedMsg{Path: msg.Path})
 ```
 
-**Internal messages:** timer/expiry messages for state machines (e.g. chord timeout) MUST be unexported types within the owning component. Only the final result message (e.g. `ConfirmQuitMsg`) is exported.
+Keep timer/expiry messages for internal state machines (e.g. chord timeout) as unexported types in the owning component; export only the final result message (e.g. `ConfirmQuitMsg`).
 
 ### 2.5 Dependency Injection
 
-- Pass `keymap.Bindings` and `styles.Styles` as value types via constructors.
-- NEVER store `context.Context` (see §6) or `*log.Logger` as a Model field. If a `tea.Cmd` needs a logger, pass it into the Cmd factory.
-- Shared UI environment (styles, keymaps) flows top-down through constructors. Components do NOT import pages or domain packages.
+- Pass `keymap.Bindings` and `styles.Styles` by value via constructors.
+- Pass a `context.Context` (see §6) or `*log.Logger` into the `tea.Cmd` factory that needs it — keep both off every Model field.
+- Shared UI environment (styles, keymaps) flows top-down through constructors. Components import neither pages nor domain packages.
 
 ---
 
@@ -99,13 +91,11 @@ case editor.FileLoadedMsg:                   // editor handled it internally; pa
 
 ### 3.1 Binding Organization
 
-All keybindings live in `pkg/ui/keymap/keymap.go` as a single `Bindings` struct — the single source of truth.
-
-**No overlapping bindings:** before adding a key, verify NO other binding uses that key string. If `ctrl+1` is in `TabSwitch`, it MUST NOT also be in `FocusLeft`. One physical keypress MUST resolve to exactly ONE logical action. Scan every `key.WithKeys(...)` in `Default()`; each key string appears in exactly one binding — duplicates are a compile-time-equivalent defect.
+All keybindings live in `keymap.Bindings` (one struct) — the single source of truth. Give each key string exactly one binding: before adding a key, scan every `key.WithKeys(...)` in `Default()` and confirm no other binding uses it. One physical keypress resolves to exactly one logical action; a duplicate is a defect.
 
 ### 3.2 Chord & Multi-Press Keybindings
 
-A chord is a multi-press sequence (e.g. `^C` twice to quit). The chord state machine MUST be owned by the component that **renders the confirmation feedback**.
+A chord is a multi-press sequence (e.g. `^C` twice to quit). Own the chord state machine in the component that **renders the confirmation feedback**.
 
 ```go
 // components/footer — owns the confirm-exit chord
@@ -130,14 +120,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 }
 // startConfirmTimer: a tea.Cmd that sleeps ~2s then returns confirmExpired{}.
 // View shows "Press ^C again to exit" while m.pendingKey == "c".
-// The page only handles the result:  case footer.ConfirmQuitMsg: return m, tea.Quit
+// The page handles only the result:  case footer.ConfirmQuitMsg: return m, tea.Quit
 ```
 
-**NEVER implement chord state in a page** — it does not render the prompt, so it must not own the pending state. A page MUST NOT match chord-sequence bindings (`ConfirmExitC`, etc.) in its own `KeyPressMsg` switch; it forwards the `KeyPressMsg` to the owning component, which matches internally and emits the result message when the chord completes.
+A page doesn't render the prompt, so it doesn't own the pending state and doesn't match chord-sequence bindings (`ConfirmExitC`, etc.) in its own `KeyPressMsg` switch. It forwards the `KeyPressMsg`; the owning component matches internally and emits the result message on completion.
 
 ### 3.3 Focus-Scoped Key Handling
 
-Handle global keys FIRST in the page; then forward the message to all children, which internally gate on `m.focused`.
+Handle global keys FIRST in the page, then forward the message to all children, each gating on `m.focused`.
 
 ```go
 // Page Update
@@ -146,7 +136,7 @@ case tea.KeyPressMsg:
     case key.Matches(msg, m.keys.FocusExplorer): m.focus = paneTree
     case key.Matches(msg, m.keys.ZenMode):       m.leftVisible = !m.leftVisible
     }
-    // do NOT forward global keys to children (return early / use a consumed flag)
+    // global keys stop here (return early / use a consumed flag — don't forward them)
 // then forward, letting children gate on focus:
 //   m.filetree = m.filetree.SetFocused(m.focus == paneTree)
 //   m.filetree, cmd = m.filetree.Update(msg)
@@ -159,7 +149,7 @@ case tea.KeyPressMsg:
 
 ### 3.4 Key Matching Order
 
-`key.Matches` checks run sequentially, so order matters:
+`key.Matches` runs sequentially, so order matters:
 
 1. **Chord completions** — check pending state first (most specific).
 2. **Global actions** — quit, focus changes, zen mode.
@@ -172,21 +162,20 @@ case tea.KeyPressMsg:
 
 ### 4.1 Intrinsic vs Extrinsic Sizing
 
-- **Intrinsic:** a component knows its own natural size (footer = 1 line; opentabs = `len(tabs)+1`). Exposed via `Height() int`.
-- **Extrinsic:** a parent allocates space (available room minus children's intrinsic sizes), passed via `SetSize(w, h)`.
+- **Intrinsic:** a component knows its own natural size (footer = 1 line; opentabs = `len(tabs)+1`). Expose via `Height()`.
+- **Extrinsic:** a parent allocates space (room minus children's intrinsic sizes), passed via `SetSize(w, h)`.
 
-NEVER use a package-level `const` for a dimension that belongs to a component — query the component instead:
+Query the component for a dimension it owns — never a package-level `const`:
 
 ```go
-const footerH = 1; contentH := totalH - footerH  // WRONG — magic number
-contentH := totalH - m.footer.Height()            // RIGHT — query the component
-const leftPaneW = 22                              // WRONG for a child's width too
-leftW := m.sidebar.PreferredWidth()               // RIGHT — a method, or a configurable field
+contentH := totalH - m.footer.Height()   // ✓ query the component
+leftW := m.sidebar.PreferredWidth()       // ✓ a method, or a configurable field
+// const footerH = 1; const leftPaneW = 22 ✗ magic numbers for a child's dimension
 ```
 
 ### 4.2 Dimension Calculation Flow
 
-All dimension math happens in a `recalcLayout()` method called from `Update`, after `tea.WindowSizeMsg` OR any structural change (pane toggled, tab added/removed): query children's intrinsic sizes → compute allocations → `SetSize(w,h)` every child → return the model.
+Do all dimension math in `recalcLayout()`, called from `Update` after `tea.WindowSizeMsg` OR any structural change (pane toggled, tab added/removed): query children's intrinsic sizes → compute allocations → `SetSize(w,h)` every child → return the model.
 
 ```go
 func (m Model) recalcLayout() Model {
@@ -201,9 +190,9 @@ func (m Model) recalcLayout() Model {
 
 ### 4.3 Border Arithmetic — lipgloss v2 is Border-Box
 
-In lipgloss v2, `Width(n)`/`Height(n)` are **border-box**: `n` is the **total** rendered dimension including borders and padding; the content area is `n - frame_size`. `Height(n)` is minimum-only — it pads short content but NEVER truncates tall content.
+In lipgloss v2, `Width(n)`/`Height(n)` are **border-box**: `n` is the **total** rendered dimension including borders and padding; the content area is `n - frame_size`. `Height(n)` is minimum-only — it pads short content but never truncates tall content.
 
-**Subtract the frame ONCE — in `recalcLayout()`, when computing child dimensions.** The border style in `View()` receives the OUTER dimension; children receive INNER (outer − frame). Do NOT subtract in both places.
+Subtract the frame ONCE — in `recalcLayout()`, when computing child dimensions. The border style in `View()` gets the OUTER dimension; children get INNER (outer − frame):
 
 ```go
 // recalcLayout — inner dimension for the child (subtract the frame ONCE)
@@ -211,17 +200,17 @@ innerH := contentH - 2
 m.editor = m.editor.SetSize(innerCenterW, innerH)
 // View — the border style gets the OUTER dimension
 borderStyle.Width(centerW).Height(contentH).Render(m.editor.View())
-// NOT Width(centerW-2).Height(contentH-2) — that double-subtracts.
+// borderStyle.Width(centerW-2).Height(contentH-2) ✗ double-subtracts the frame
 ```
 
-Use `GetHorizontalFrameSize()`/`GetVerticalFrameSize()` instead of hardcoding `2` when you need the exact overhead.
+Use `GetHorizontalFrameSize()`/`GetVerticalFrameSize()` instead of a hardcoded `2` for the exact overhead.
 
 ### 4.4 Hard Dimension Clamping (`MaxWidth` / `MaxHeight`)
 
-- `Height(n)` is a **minimum** (pads, never truncates); `Width(n)` **wraps** overflow beyond `n - frame_size` cells (ADDING visual lines).
-- `MaxHeight(n)` / `MaxWidth(n)` **truncate** — hard-clamp total output to at most `n` lines / each line to at most `n` cells (no wrapping).
+- `Height(n)` is a **minimum** (pads, never truncates); `Width(n)` **wraps** overflow beyond `n - frame_size` (adding visual lines).
+- `MaxHeight(n)` / `MaxWidth(n)` **truncate** — hard-clamp to at most `n` lines / `n` cells (no wrapping).
 
-**Clamping is single-owner.** The component that receives `SetSize(w,h)` is solely responsible for making its `View()` fit `w×h`, via `MaxWidth(m.width).MaxHeight(m.height)` as the outermost style in `View()`:
+Clamping is single-owner: the component that received `SetSize(w,h)` makes its `View()` fit `w×h`, via `MaxWidth(m.width).MaxHeight(m.height)` as the outermost style:
 
 ```go
 func (m Model) View() string {
@@ -230,25 +219,25 @@ func (m Model) View() string {
 }
 ```
 
-**Pages MUST NOT re-clamp child output.** Once a child is sized, the page trusts its `View()` contract. Re-wrapping a child view in `MaxWidth`/`MaxHeight` is redundant if the child is correct, masks the bug if it isn't, and duplicates dimension math.
+A page trusts a sized child's `View()` — it doesn't re-clamp:
 
 ```go
-borderStyle.Render(m.editor.View())  // RIGHT — trust the child contract
-// WRONG: borderStyle.Render(lipgloss.NewStyle().MaxWidth(w).MaxHeight(h).Render(m.editor.View()))
+borderStyle.Render(m.editor.View())  // ✓ trust the child contract
+// borderStyle.Render(lipgloss.NewStyle().MaxWidth(w).MaxHeight(h).Render(m.editor.View())) ✗ redundant, masks bugs
 ```
 
-Pages DO use `Height`/`Width` on their own layout wrappers (e.g. border styles) to fill space — that is the page's own box-sizing, not child-clamping. The border's `Height(innerH)` pads the box if the child's content is shorter.
+A page DOES use `Height`/`Width` on its own layout wrappers (e.g. border styles) to fill space — that's its own box-sizing, not child-clamping. The border's `Height(innerH)` pads the box when the child is shorter.
 
 ### 4.5 Rendering & Unicode
 
-Every rendering calculation — span position, cell column, wrap boundary, table cell width — counts **display characters**, not bytes (see §1.5 in the root file).
+Every rendering calculation — span position, cell column, wrap boundary, table-cell width — counts **display characters**, not bytes (root §1.5):
 
 ```go
-for i := 0; i < len(sp.Text); i++ { /* WRONG — byte offsets break on CJK/emoji/accents */ }
-cellEnd := cellStart + utf8.RuneCountInString(cellText) // RIGHT — rune-based offsets
+cellEnd := cellStart + utf8.RuneCountInString(cellText) // ✓ rune-based offset
+// for i := 0; i < len(sp.Text); i++ { … }              ✗ byte offsets break on CJK/emoji/accents
 ```
 
-If the calculation affects what the user sees, use `utf8.RuneCountInString`. Purely internal offsets (buffer, syntax tree) may use `len()` — but double-check that assumption.
+If the calculation affects what the user sees, use `utf8.RuneCountInString`. Purely internal offsets (buffer, syntax tree) may use `len()` — but double-check the assumption.
 
 ---
 
@@ -256,31 +245,30 @@ If the calculation affects what the user sees, use `utf8.RuneCountInString`. Pur
 
 ### 5.1 Value Receivers — No Exceptions
 
-`Init`, `Update`, `View` MUST use value receivers — `func (m Model) Update(...)`, NEVER `func (m *Model) Update(...)`. Do NOT add pointer receivers to satisfy an interface; if a bubbles library requires the pointer-based `tea.Model`, wrap it with a thin adapter at the boundary — do not infect the component tree.
+`Init`, `Update`, `View` use value receivers — `func (m Model) Update(...)`, not `func (m *Model) Update(...)`. Don't add a pointer receiver to satisfy an interface; if a bubbles library needs the pointer-based `tea.Model`, wrap it with a thin adapter at the boundary rather than infecting the component tree.
 
 ### 5.2 Pure View
 
-`View()` MUST be a pure function of Model state. It MUST NOT: assign to variables that outlive the call; perform I/O; call `SetWidth`/`SetHeight` or any mutating method on child models; return or emit a `tea.Cmd`.
+`View()` is a pure function of Model state. It assigns nothing that outlives the call, does no I/O, calls no mutating method on child models (`SetWidth`/`SetHeight`), and returns/emits no `tea.Cmd`.
 
 ### 5.3 Non-Blocking Update
 
-NEVER block in `Update()` or `Init()`. File I/O, network, and timers each become a `tea.Cmd` that returns a typed result `Msg` (a timer is a Cmd with `time.Sleep` inside that returns an expiry `Msg`). `time.Sleep` directly in `Update` is ALWAYS wrong.
+Keep `Update()` and `Init()` non-blocking. File I/O, network, and timers each become a `tea.Cmd` that returns a typed result `Msg` (a timer is a Cmd with `time.Sleep` inside that returns an expiry `Msg`). `time.Sleep` directly in `Update` is always wrong.
 
 ### 5.4 Synchronous State vs Async Commands
 
-`tea.Cmd` is ONLY for operations that leave the goroutine: file I/O, network, timers, syscalls. NEVER wrap a synchronous state transition in a Cmd:
+Use a `tea.Cmd` only for work that leaves the goroutine: file I/O, network, timers, syscalls. Mutate synchronous state directly in the same `Update` pass — don't wrap it in a Cmd:
 
 ```go
-// WRONG — wrapping a state change in a Cmd to "send a message to self"
-cmds = append(cmds, func() tea.Msg { return opentabs.TabSwitchIndexMsg{Index: idx} })
-// RIGHT — mutate the child directly in the same Update pass; only the I/O is a Cmd
+// ✓ mutate the child directly; only the I/O is a Cmd
 if path := m.opentabs.PathAt(idx); path != "" {
     m.opentabs = m.opentabs.SelectIndex(idx)
     cmds = append(cmds, editor.LoadFileCmd(path))
 }
+// cmds = append(cmds, func() tea.Msg { return opentabs.TabSwitchIndexMsg{Index: idx} }) ✗ self-message
 ```
 
-A self-messaging Cmd delays delivery by one frame, creates page→Cmd→runtime→page→child ping-pong, and leaks internal message types. **If the page already knows the intent and has the data, it MUST act directly via child methods.** Components expose query + mutation methods for the page to orchestrate:
+A self-messaging Cmd delays delivery by a frame, creates page→Cmd→runtime→page→child ping-pong, and leaks internal message types. If the page knows the intent and has the data, it acts directly via child methods. Components expose query + mutation methods for the page to orchestrate:
 
 ```go
 func (m Model) PathAt(i int) string      // query: what file is at this index?
@@ -290,7 +278,7 @@ func (m Model) OpenFile(p string) Model  // mutate: add/activate tab
 func (m Model) CloseFile(p string) Model // mutate: remove tab
 ```
 
-Components emit messages ONLY to report user-initiated actions the page cannot anticipate (e.g. Enter on a focused item):
+Components emit a message only to report a user-initiated action the page can't anticipate (e.g. Enter on a focused item):
 
 ```go
 case key.Matches(msg, m.keys.Select):
@@ -300,29 +288,27 @@ case key.Matches(msg, m.keys.Select):
 
 ### 5.5 Cmd Closure Safety
 
-ALWAYS capture model-derived values into locals BEFORE the closure — it runs asynchronously, so the snapshot at creation is what matters (true even with value receivers):
+Capture model-derived values into locals BEFORE the closure — it runs asynchronously, so the snapshot at creation is what matters (true even with value receivers):
 
 ```go
-// WRONG — reads a model field at execution time (race: m may change)
-cmds = append(cmds, func() tea.Msg { return TabPinnedMsg{Index: m.opentabs.Cursor()} })
-// RIGHT — capture into a local first
-idx := m.opentabs.Cursor()
+idx := m.opentabs.Cursor()                                          // ✓ capture into a local first
 cmds = append(cmds, func() tea.Msg { return TabPinnedMsg{Index: idx} })
+// func() tea.Msg { return TabPinnedMsg{Index: m.opentabs.Cursor()} } ✗ reads m at run time → race
 ```
 
 ### 5.6 Cmd Forwarding & Batching
 
-After every `child.Update(msg)`, capture and accumulate the returned `tea.Cmd` — NEVER drop it by ignoring the second return. Return `tea.Batch(cmds...)`. `tea.WindowSizeMsg` MUST reach every child that stores dimensions.
+After every `child.Update(msg)`, capture and accumulate the returned `tea.Cmd` — don't drop it by ignoring the second return. Return `tea.Batch(cmds...)`. `tea.WindowSizeMsg` reaches every child that stores dimensions.
 
 ```go
-m.editor, cmd = m.editor.Update(msg); cmds = append(cmds, cmd) // NEVER omit this line
+m.editor, cmd = m.editor.Update(msg); cmds = append(cmds, cmd) // accumulate every child Cmd
 m.footer, cmd = m.footer.Update(msg); cmds = append(cmds, cmd)
 return m, tea.Batch(cmds...)
 ```
 
 ### 5.7 Viewport Scroll Preservation
 
-`viewport.SetContent()` is scroll-destructive. Preserve the offset around it:
+`viewport.SetContent()` is scroll-destructive — preserve the offset around it:
 
 ```go
 wasAtBottom := m.viewport.AtBottom()
@@ -335,26 +321,26 @@ if wasAtBottom { m.viewport.GotoBottom() } else { m.viewport.SetYOffset(offset) 
 
 ## 6. Context & Async Operations
 
-### 6.1 Context on Models — PROHIBITED
+### 6.1 Context on Models
 
-NEVER store `context.Context` as a struct field on any Model (or any "shared"/`Common` struct):
+Keep `context.Context` off every Model field (and off any "shared"/`Common` struct):
 
 ```go
-type Model struct { ctx context.Context } // ✗ NEVER — even in a shared struct
+type Model struct { ctx context.Context } // ✗ never — even in a shared struct
 ```
 
-### 6.2 Context in Cmd Closures — ENCOURAGED
+### 6.2 Context in Cmd Closures
 
-Pass context INTO `tea.Cmd` factory functions for cancellation of I/O:
+Pass context INTO a `tea.Cmd` factory for I/O cancellation:
 
 ```go
-func loadFileCmd(ctx context.Context, path string) tea.Cmd {
+func loadFileCmd(ctx context.Context, fsys vfs.FS, path string) tea.Cmd {
     return func() tea.Msg {
         select {
         case <-ctx.Done(): return FileLoadCancelledMsg{Path: path}
         default:
         }
-        b, err := os.ReadFile(path)
+        b, err := fsys.ReadFile(path)   // through vfs.FS, never os.ReadFile (root §1.4.9)
         if err != nil { return ErrMsg{Err: fmt.Errorf("open %q: %w", path, err)} }
         return FileLoadedMsg{Path: path, Content: string(b)}
     }
@@ -382,7 +368,7 @@ func (m Model) startSearch(query string) (Model, tea.Cmd) {
 
 ### 7.1 Top-Level Router
 
-`pkg/ui/app.go`'s Model is a **router**: it holds zero rendering state and delegates entirely to the active page.
+`app.go`'s Model is a **router**: it holds zero rendering state and delegates to the active page.
 
 ```go
 type Model struct {
@@ -403,7 +389,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 ### 7.2 Page Lifecycle
 
 - A page's `Init()` runs when it becomes active (not at app startup for every page).
-- Backgrounded pages retain their state but do NOT receive messages.
+- Backgrounded pages retain state but don't receive messages.
 - Only the active page's `View()` is called.
 
 ### 7.3 Inter-Page Communication
@@ -420,28 +406,28 @@ case editor.OpenSettingsMsg:
 
 ## 9. LLM-Specific Pitfalls (TUI)
 
-UI-layer mistakes LLMs commonly produce here; each is a hard violation. (Data-safety and Go pitfalls are in the root `CLAUDE.md` §9.)
+Do the left — it's the fix for the middle. (Data-safety / Go pitfalls: root `CLAUDE.md` §9.)
 
-| # | Anti-Pattern | Why It's Wrong | Rule Violated |
-|---|---|---|---|
-| 1 | Defining a Go `interface` for a single concrete component | Unnecessary boxing. Components are concrete value types. | §2.2 |
-| 2 | Adding pointer receivers to `Init`/`Update`/`View` | Breaks value semantics, enables aliasing | §5.1 |
-| 3 | Storing `context.Context` or `*log.Logger` on Model | Violates Elm purity, leaks non-serializable state | §6.1 |
-| 4 | Defining a message in the CONSUMER's package | Message belongs to the producer/owner of the data | §2.4 |
-| 5 | Page holds state that only one child component renders | Violates State Residency Rule | §2.1 |
-| 6 | Package-level `const` for a child component's dimension | Magic number; component must expose `Height()`/`Width()` | §4.1 |
-| 7 | Same key string appears in two different Bindings fields | Keybinding collision — ambiguous dispatch | §3.1 |
-| 8 | Capturing `m.field` or `m.child.Method()` inside a `tea.Cmd` closure | Race condition; must capture into local variable | §5.4 |
-| 9 | Implementing chord/confirm state in a page instead of the rendering component | Chord state machine belongs to the component that displays feedback | §3.2 |
-| 10 | Returning `nil` Cmd without propagating child Cmds | Silently dropped commands | §5.5 |
-| 11 | Forwarding `tea.KeyPressMsg` to ALL children unconditionally | Unfocused components must not process navigation keys | §3.3 |
-| 12 | Using `time.Sleep` inside `Update()` or `Init()` | Blocks the event loop; must use a Cmd | §5.3 |
-| 13 | Inlining a multi-view logical unit in a page's `View()` instead of extracting a component | God-struct; violates extraction rule | §2.3 |
-| 14 | Adding a `SetWidth`/`SetHeight` call inside `View()` | Mutates state in a pure function | §5.2 |
-| 15 | Wrapping synchronous state transitions in `func() tea.Msg{}` Cmds | Unnecessary frame delay, message ping-pong, leaks internals | §5.4 |
-| 16 | Using lipgloss `Height()`/`Width()` without `MaxHeight()`/`MaxWidth()` at render boundaries | Content overflows: Height is minimum-only, Width wraps (adding lines) | §4.4 |
-| 17 | Page re-clamping child output with `MaxWidth`/`MaxHeight` wrappers | Redundant, masks bugs, duplicates dimension arithmetic | §4.4 |
-| 18 | Treating lipgloss `Width(n)`/`Height(n)` as content-box (subtracting frame in BOTH recalcLayout and View) | Double-subtraction: Width/Height are border-box in lipgloss v2 | §4.3 |
+| Do this | Instead of | § |
+|---|---|---|
+| Use a concrete value type for a component | a Go `interface` for a single concrete component | §2.2 |
+| Value receivers on `Init`/`Update`/`View` | pointer receivers | §5.1 |
+| Keep `context.Context`/`*log.Logger` off Models; pass into the Cmd | storing them on a Model | §6.1 |
+| Define a message in the producer/owner package | defining it in the consumer | §2.4 |
+| Let the child own state only it renders | a page holding it | §2.1 |
+| Query the child's `Height()`/`Width()` | a package-level `const` for its dimension | §4.1 |
+| Give each key string one binding | the same key in two `Bindings` fields | §3.1 |
+| Capture model fields into locals before a `tea.Cmd` closure | reading `m.field`/`m.child.M()` inside it | §5.5 |
+| Own chord/confirm state in the rendering component | implementing it in a page | §3.2 |
+| Accumulate every child Cmd and `tea.Batch` them | returning `nil` and dropping child Cmds | §5.6 |
+| Gate forwarded keys on `m.focused` in each child | forwarding `KeyPressMsg` to all children unconditionally | §3.3 |
+| Run timers/sleep as a `tea.Cmd` | `time.Sleep` inside `Update()`/`Init()` | §5.3 |
+| Extract a multi-view logical unit into a component | inlining it in a page's `View()` | §2.3 |
+| Size children in `recalcLayout` (Update) | `SetWidth`/`SetHeight` inside `View()` | §5.2 |
+| Mutate the child directly in the same `Update` | wrapping a sync transition in a `func() tea.Msg{}` Cmd | §5.4 |
+| Clamp render output with `MaxWidth`/`MaxHeight` | bare `Height()`/`Width()` (Height pads, Width wraps) | §4.4 |
+| Trust a sized child's `View()` | a page re-clamping it with `MaxWidth`/`MaxHeight` | §4.4 |
+| Treat lipgloss `Width(n)`/`Height(n)` as border-box (subtract frame once) | subtracting the frame in both `recalcLayout` and `View` | §4.3 |
 
 ---
 
@@ -449,14 +435,14 @@ UI-layer mistakes LLMs commonly produce here; each is a hard violation. (Data-sa
 
 Verify alongside the root checklist (root `CLAUDE.md` §11):
 
-- [ ] No pointer receivers on `Init`, `Update`, `View` methods.
-- [ ] No `context.Context` or `*log.Logger` fields on any Model struct.
-- [ ] ALL `tea.Cmd` from child `.Update()` calls are accumulated and returned via `tea.Batch`.
+- [ ] `Init`, `Update`, `View` use value receivers.
+- [ ] No Model holds `context.Context` or `*log.Logger` (pass into the Cmd instead).
+- [ ] Every child `Update` Cmd is accumulated and returned via `tea.Batch`.
 - [ ] `tea.WindowSizeMsg` reaches every child that stores dimensions.
-- [ ] `View()` is pure — no assignments, no I/O, no `SetWidth`/`SetHeight`.
+- [ ] `View()` is pure — no assignments that outlive it, no I/O, no `SetWidth`/`SetHeight`.
 - [ ] Every rendered piece of state lives on the component that renders it (State Residency Rule).
-- [ ] No package-level `const` for dimensions — components expose `Height()`/`Width()`.
-- [ ] No overlapping key strings across different `Bindings` fields.
+- [ ] Dimensions come from a child's `Height()`/`Width()`, not a package-level `const`.
+- [ ] Each key string maps to exactly one binding.
 - [ ] Chord/multi-press state lives in the component that renders the feedback.
-- [ ] All `tea.Cmd` closures capture local variables, not model fields or method calls.
+- [ ] Every `tea.Cmd` closure captures locals, not model fields or method calls.
 - [ ] No page holds rendering state that belongs to a child component.
