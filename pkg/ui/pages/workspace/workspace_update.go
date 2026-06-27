@@ -55,7 +55,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.handleKeyPress(msg, cmds)
 
 	case title.FocusReturnMsg:
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 		m = m.syncDictationAllowed()
 
 	case title.RenameRequestMsg:
@@ -486,7 +486,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Escape from the search bar — clear highlights and return focus to editor.
 		m.search = m.search.Close()
 		m.editor = m.editor.ClearSearch()
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 		m = m.syncDictationAllowed()
 
 	}

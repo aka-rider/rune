@@ -11,6 +11,7 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
+	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
@@ -767,5 +768,67 @@ func TestQuitProceedsWhenClean(t *testing.T) {
 	// A non-nil cmd means the quit sequence was initiated.
 	if cmd == nil {
 		t.Fatal("expected a quit cmd for clean file")
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mouse click routing: filetree
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestMouseClickOnUnfocusedFiletreeMovesAndSelects verifies the invariant:
+// a left click on the filetree pane while another pane is focused must (a)
+// switch focus to paneTree AND (b) move the filetree cursor to the clicked row
+// in the same Update — not defer it to the second click.
+//
+// This is a regression test for the bug where handleMouseClick set m.focus but
+// did not forward the click to the filetree, so the first click silently left
+// the cursor at its previous position and only the second click moved it.
+func TestMouseClickOnUnfocusedFiletreeMovesAndSelects(t *testing.T) {
+	const W, H = 100, 30
+	m := resizeWorkspace(t, W, H)
+	m = m.setFocus(paneCenter) // start with editor focused
+
+	// Populate the filetree with three entries.
+	entries := []filetree.Entry{
+		{Name: "alpha.md", Path: "/test/alpha.md"},
+		{Name: "beta.md", Path: "/test/beta.md"},
+		{Name: "gamma.md", Path: "/test/gamma.md"},
+	}
+	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: entries})
+	// DirLoadedMsg resets the cursor to 0.
+
+	// Click on the second entry (row index 1).
+	// recalcLayout sets filetree offsetY=1 via SetOffset(1,1), so:
+	//   relY = clickY - offsetY = 3 - 1 = 2  →  idx = top + (relY-1) = 0 + 1 = 1
+	clickX := m.leftPaneW / 2
+	const clickY = 3
+	m, _ = m.Update(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
+
+	if m.focus != paneTree {
+		t.Fatalf("after click: focus=%v, want paneTree", m.focus)
+	}
+	if !m.filetree.Focused() {
+		t.Fatal("after click: filetree.Focused()=false, want true")
+	}
+	// Regression check: old code focused the pane but discarded the click, so
+	// the cursor stayed at 0. With the fix, cursor must have moved to 1.
+	if got := m.filetree.Cursor(); got != 1 {
+		t.Fatalf("first click on row 1: cursor=%d, want 1", got)
+	}
+
+	// Second click at the same position: cursor is already at row 1, so the
+	// filetree emits FileSelectedMsg (no cursor move).
+	m, cmd := m.Update(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
+	if got := m.filetree.Cursor(); got != 1 {
+		t.Fatalf("second click: cursor moved to %d, want 1", got)
+	}
+	var selectedPath string
+	for _, msg := range execCmds(cmd) {
+		if sel, ok := msg.(filetree.FileSelectedMsg); ok {
+			selectedPath = sel.Path
+		}
+	}
+	if selectedPath != "/test/beta.md" {
+		t.Fatalf("second click: FileSelectedMsg.Path=%q, want /test/beta.md", selectedPath)
 	}
 }

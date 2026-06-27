@@ -274,7 +274,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		// never empty. The store is not open yet, so this scratch starts with
 		// docID==0; StoreReadyMsg upgrades it to a durable VFS doc.
 		m, _ = m.CreateUntitled()
-		m.focus = paneTree // CreateUntitled sets paneCenter; restore startup default
+		m = m.setFocus(paneTree) // CreateUntitled sets paneCenter; restore startup default
 	} else {
 		// Files to open: seed the load overlay so Init's startup reads (issued with
 		// per-file generations 1..N) are gen-correlated. The last file is the

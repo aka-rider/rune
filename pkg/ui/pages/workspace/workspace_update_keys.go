@@ -102,7 +102,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		if !ok {
 			return m.finalize(cmds)
 		}
-		m.focus = paneTree
+		m = m.setFocus(paneTree)
 		m.leftVisible = true
 		m = m.syncDictationAllowed()
 
@@ -113,7 +113,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		if !ok {
 			return m.finalize(cmds)
 		}
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.FocusChat):
@@ -125,10 +125,10 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		if m.rightVisible && m.focus == paneChat {
 			m.rightVisible = false
-			m.focus = paneCenter
+			m = m.setFocus(paneCenter)
 		} else {
 			m.rightVisible = true
-			m.focus = paneChat
+			m = m.setFocus(paneChat)
 		}
 		m = m.syncDictationAllowed()
 
@@ -147,7 +147,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			cmds = append(cmds, cmd)
 		}
 		m.title = m.title.FocusAndSelectAll()
-		m.focus = paneTitle
+		m = m.setFocus(paneTitle)
 		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.CloseFile):
@@ -179,7 +179,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		m.leftVisible = !m.leftVisible
 		if !m.leftVisible && m.focus.isLeft() {
-			m.focus = paneCenter
+			m = m.setFocus(paneCenter)
 		}
 		m = m.syncDictationAllowed()
 
@@ -189,10 +189,10 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			// Second press closes the bar and returns focus to the editor.
 			m.search = m.search.Close()
 			m.editor = m.editor.ClearSearch()
-			m.focus = paneCenter
+			m = m.setFocus(paneCenter)
 		} else {
 			m.search = m.search.Open()
-			m.focus = paneSearch
+			m = m.setFocus(paneSearch)
 			m = m.recalcLayout()
 		}
 		m = m.syncDictationAllowed()
@@ -229,7 +229,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	// D11 — Up at editor top transfers focus to title.
 	if m.focus == paneCenter && !m.viewingHelp() && msg.Code == tea.KeyUp && msg.Mod == 0 && m.editor.CursorAtTop() {
-		m.focus = paneTitle
+		m = m.setFocus(paneTitle)
 		m.title = m.title.FocusAtEnd()
 		return m.finalize(cmds)
 	}

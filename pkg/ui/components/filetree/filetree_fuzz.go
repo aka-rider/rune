@@ -2,8 +2,8 @@
 
 package filetree
 
-// FuzzCursor returns the current cursor index in the file list.
-func (m Model) FuzzCursor() int { return m.cursor }
+// FuzzCursor delegates to the always-available Cursor() for fuzz harness use.
+func (m Model) FuzzCursor() int { return m.Cursor() }
 
-// FuzzLen returns the number of entries in the file list.
-func (m Model) FuzzLen() int { return len(m.entries) }
+// FuzzLen delegates to the always-available Len() for fuzz harness use.
+func (m Model) FuzzLen() int { return m.Len() }

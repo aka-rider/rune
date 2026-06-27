@@ -29,7 +29,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, t
 	}
 	if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
 		if newFocus == paneTitle {
-			m.focus = paneTitle
+			m = m.setFocus(paneTitle)
 			m.title = m.title.FocusAtEnd()
 		} else {
 			if m.focus == paneTitle {
@@ -41,20 +41,19 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, t
 					return m.finalize(cmds)
 				}
 			}
-			m.focus = newFocus
-			if newFocus == paneCenter {
-				// Forward the click to the editor so it positions the caret,
-				// follows a link, or sets the drag anchor. applyFocus is the only
-				// sanctioned focus projection (pkg/ui/CLAUDE.md §2); the editor
-				// gates on Focused() before acting on the click.
-				m = m.applyFocus()
-				var ecmd tea.Cmd
-				m.editor, ecmd = m.editor.Update(msg)
-				cmds = append(cmds, ecmd)
-				// Refresh the link-under-caret hint now that the caret moved —
-				// finalize() does not, so otherwise it'd be stale until a keypress.
-				m = m.syncCursorToFooter()
-			}
+			// setFocus is the single chokepoint: focus enum + projection onto children
+			// happen atomically, so each child's handleMouseClick sees Focused()==true
+			// for the intended target when we forward the click below.
+			m = m.setFocus(newFocus)
+			var ftcmd, tabcmd, ecmd, chatcmd tea.Cmd
+			m.filetree, ftcmd = m.filetree.Update(msg)
+			m.opentabs, tabcmd = m.opentabs.Update(msg)
+			m.editor, ecmd = m.editor.Update(msg)
+			m.chat, chatcmd = m.chat.Update(msg)
+			cmds = append(cmds, ftcmd, tabcmd, ecmd, chatcmd)
+			// Refresh the link-under-caret hint; syncCursorToFooter gates on
+			// m.focus == paneCenter internally, so this is safe to call always.
+			m = m.syncCursorToFooter()
 		}
 		m = m.syncDictationAllowed()
 	}
@@ -84,7 +83,7 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 			m.leftPaneW = defaultLeftPaneW
 			m.drag = dragNone
 			if m.focus.isLeft() {
-				m.focus = paneCenter
+				m = m.setFocus(paneCenter)
 				m = m.syncDictationAllowed()
 			}
 		} else {
@@ -105,7 +104,7 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 			m.rightPaneW = defaultRightPaneW
 			m.drag = dragNone
 			if m.focus == paneChat {
-				m.focus = paneCenter
+				m = m.setFocus(paneCenter)
 				m = m.syncDictationAllowed()
 			}
 		} else {
@@ -217,9 +216,16 @@ func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// setFocus is the only sanctioned way to change m.focus. It atomically sets the
+// focus enum and projects it onto every child via applyFocus, so a bare
+// m.focus = x that skips the projection is impossible by construction.
+func (m Model) setFocus(p pane) Model {
+	m.focus = p
+	return m.applyFocus()
+}
+
 // applyFocus projects the single focus authority (m.focus) onto every child's
-// focus state. This is the ONLY place component focus is derived from the enum;
-// it runs before every dispatch to children and on every Update exit.
+// focus state. Called by setFocus and as a safety-net at every Update exit.
 func (m Model) applyFocus() Model {
 	m.title = m.title.SetFocused(m.focus == paneTitle)
 	m.filetree = m.filetree.SetFocused(m.focus == paneTree)
@@ -295,11 +301,11 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 	}
 	switch surface {
 	case "main":
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 	case "title":
-		m.focus = paneTitle
+		m = m.setFocus(paneTitle)
 	case "chat":
-		m.focus = paneChat
+		m = m.setFocus(paneChat)
 	}
 	m = m.syncDictationAllowed()
 	return m, cmd
@@ -344,11 +350,11 @@ func (m Model) handleRedo() (Model, tea.Cmd) {
 	}
 	switch surface {
 	case "main":
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 	case "title":
-		m.focus = paneTitle
+		m = m.setFocus(paneTitle)
 	case "chat":
-		m.focus = paneChat
+		m = m.setFocus(paneChat)
 	}
 	m = m.syncDictationAllowed()
 	return m, cmd

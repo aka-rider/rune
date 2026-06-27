@@ -98,7 +98,7 @@ func (m Model) toggleHelp() (Model, tea.Cmd) {
 		if m.focus == paneCenter {
 			return m.requestCloseCurrent()
 		}
-		m.focus = paneCenter
+		m = m.setFocus(paneCenter)
 		return m, nil
 	}
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
@@ -116,7 +116,7 @@ func (m Model) showHelp() Model {
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
 	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
 	m.opentabs = m.opentabs.MarkClean(help.DocPath)
-	m.focus = paneCenter
+	m = m.setFocus(paneCenter)
 	return m
 }
 
@@ -140,7 +140,7 @@ func (m Model) showUntitled(docID int64) Model {
 	}
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(docID, "")
-	m.focus = paneCenter
+	m = m.setFocus(paneCenter)
 	return m
 }
 
@@ -439,7 +439,7 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	} else {
 		m.opentabs = m.opentabs.SetTabName("", name)
 	}
-	m.focus = paneCenter
+	m = m.setFocus(paneCenter)
 
 	return m, nil
 }
