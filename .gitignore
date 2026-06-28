@@ -1,0 +1,7 @@
+.orqestra/
+/dbg_keyboard
+/rune
+coverage.out
+.docs/
+.DS_Store
+.claude/

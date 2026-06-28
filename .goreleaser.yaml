@@ -1,0 +1,40 @@
+version: 2
+
+project_name: rune
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/rune/
+    binary: rune
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    hooks:
+      post:
+        - codesign --sign - --force {{ .Path }}
+
+archives:
+  - name_template: "rune-darwin-arm64"
+    formats:
+      - tar.gz
+
+homebrew_casks:
+  - name: rune-edit
+    binaries:
+      - rune
+    repository:
+      owner: aka-rider
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    description: "TUI markdown editor"
+    homepage: "https://github.com/aka-rider/rune"
+    url:
+      verified: github.com/aka-rider/rune

@@ -1,0 +1,294 @@
+package terminal
+
+import "testing"
+
+// mockProber implements Prober for deterministic testing.
+type mockProber struct {
+	vars map[string]string
+}
+
+func (m mockProber) Env(key string) string {
+	return m.vars[key]
+}
+
+func TestDetect_KittyFromTermProgram(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "kitty"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.KittyKeyboard {
+		t.Error("expected KittyKeyboard=true for kitty")
+	}
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for kitty")
+	}
+}
+
+func TestDetect_ITermFromTermProgram(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "iTerm.app"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsITerm2 {
+		t.Errorf("expected GraphicsITerm2, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for iTerm")
+	}
+}
+
+func TestDetect_WezTermFromTermProgram(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "WezTerm"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsWezTerm {
+		t.Errorf("expected GraphicsWezTerm, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for WezTerm")
+	}
+}
+
+func TestDetect_KittyWindowIDFallback(t *testing.T) {
+	// No TERM_PROGRAM but KITTY_WINDOW_ID present
+	p := mockProber{vars: map[string]string{"KITTY_WINDOW_ID": "1"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty from KITTY_WINDOW_ID, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.KittyKeyboard {
+		t.Error("expected KittyKeyboard=true from KITTY_WINDOW_ID")
+	}
+}
+
+func TestDetect_UnknownTerminal_SafeDefaults(t *testing.T) {
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM": "unknown-terminal",
+		"TERM":         "xterm",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsNone {
+		t.Errorf("expected GraphicsNone for unknown terminal, got %v", caps.GraphicsProtocol)
+	}
+	if caps.KittyKeyboard {
+		t.Error("expected KittyKeyboard=false for unknown terminal")
+	}
+	if caps.OSC52Clipboard {
+		t.Error("expected OSC52=false for unknown terminal")
+	}
+	if !caps.BracketedPaste {
+		t.Error("expected BracketedPaste=true (safe default)")
+	}
+}
+
+func TestDetect_EmptyEnv_SafeDefaults(t *testing.T) {
+	p := mockProber{vars: map[string]string{}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsNone {
+		t.Errorf("expected GraphicsNone for empty env, got %v", caps.GraphicsProtocol)
+	}
+	if caps.SupportsGraphics() {
+		t.Error("SupportsGraphics should be false for empty env")
+	}
+	if !caps.BracketedPaste {
+		t.Error("BracketedPaste should default to true")
+	}
+	if caps.TrueColor {
+		t.Error("TrueColor should be false without COLORTERM")
+	}
+}
+
+func TestDetect_TrueColor_Colorterm(t *testing.T) {
+	p := mockProber{vars: map[string]string{"COLORTERM": "truecolor"}}
+	caps := DetectWithProber(p)
+
+	if !caps.TrueColor {
+		t.Error("expected TrueColor=true with COLORTERM=truecolor")
+	}
+}
+
+func TestDetect_TrueColor_24bit(t *testing.T) {
+	p := mockProber{vars: map[string]string{"COLORTERM": "24bit"}}
+	caps := DetectWithProber(p)
+
+	if !caps.TrueColor {
+		t.Error("expected TrueColor=true with COLORTERM=24bit")
+	}
+}
+
+func TestDetect_TrueColor_Term256(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM": "xterm-256color"}}
+	caps := DetectWithProber(p)
+
+	if !caps.TrueColor {
+		t.Error("expected TrueColor=true with TERM containing 256color")
+	}
+}
+
+func TestDetect_OSC52_Tmux(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TMUX": "/tmp/tmux-1000/default,12345,0"}}
+	caps := DetectWithProber(p)
+
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true with TMUX set")
+	}
+}
+
+func TestDetect_OSC52_Alacritty(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "alacritty"}}
+	caps := DetectWithProber(p)
+
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for alacritty")
+	}
+	// Alacritty has no image graphics
+	if caps.GraphicsProtocol != GraphicsNone {
+		t.Errorf("expected GraphicsNone for alacritty, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_GhosttyFromTermProgram(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM_PROGRAM": "ghostty"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty for ghostty, got %v", caps.GraphicsProtocol)
+	}
+	if !caps.OSC52Clipboard {
+		t.Error("expected OSC52=true for ghostty")
+	}
+}
+
+func TestDetect_GhosttyFromTerm(t *testing.T) {
+	p := mockProber{vars: map[string]string{"TERM": "xterm-ghostty"}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsKitty {
+		t.Errorf("expected GraphicsKitty from TERM=xterm-ghostty, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestSupportsKittyGraphics(t *testing.T) {
+	tests := []struct {
+		name      string
+		proto     GraphicsProto
+		trueColor bool
+		expect    bool
+	}{
+		{"Kitty+TrueColor", GraphicsKitty, true, true},
+		{"Kitty no TrueColor", GraphicsKitty, false, false},
+		{"WezTerm excluded", GraphicsWezTerm, true, false},
+		{"ITerm2 excluded", GraphicsITerm2, true, false},
+		{"None", GraphicsNone, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := TermCaps{GraphicsProtocol: tt.proto, TrueColor: tt.trueColor}
+			if caps.SupportsKittyGraphics() != tt.expect {
+				t.Errorf("SupportsKittyGraphics()=%v, want %v", caps.SupportsKittyGraphics(), tt.expect)
+			}
+		})
+	}
+}
+
+func TestSupportsGraphics(t *testing.T) {
+	tests := []struct {
+		name   string
+		proto  GraphicsProto
+		expect bool
+	}{
+		{"None", GraphicsNone, false},
+		{"Kitty", GraphicsKitty, true},
+		{"ITerm2", GraphicsITerm2, true},
+		{"WezTerm", GraphicsWezTerm, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := TermCaps{GraphicsProtocol: tt.proto}
+			if caps.SupportsGraphics() != tt.expect {
+				t.Errorf("SupportsGraphics()=%v, want %v", caps.SupportsGraphics(), tt.expect)
+			}
+		})
+	}
+}
+
+func TestSupportsInlineImages(t *testing.T) {
+	tests := []struct {
+		name      string
+		proto     GraphicsProto
+		trueColor bool
+		expect    bool
+	}{
+		{"WezTerm+TrueColor", GraphicsWezTerm, true, true},
+		{"WezTerm no TrueColor", GraphicsWezTerm, false, true}, // iTerm2 protocol doesn't need truecolor
+		{"ITerm2+TrueColor", GraphicsITerm2, true, true},
+		{"ITerm2 no TrueColor", GraphicsITerm2, false, true},
+		{"Kitty excluded", GraphicsKitty, true, false},
+		{"None", GraphicsNone, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := TermCaps{GraphicsProtocol: tt.proto, TrueColor: tt.trueColor}
+			if caps.SupportsInlineImages() != tt.expect {
+				t.Errorf("SupportsInlineImages()=%v, want %v", caps.SupportsInlineImages(), tt.expect)
+			}
+		})
+	}
+}
+
+func TestDetect_WezTermFallback_FromPane(t *testing.T) {
+	// TERM_PROGRAM is a passthrough multiplexer but WEZTERM_PANE identifies WezTerm
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM": "tmux",
+		"WEZTERM_PANE": "2",
+		"TERM":         "screen-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsWezTerm {
+		t.Errorf("expected GraphicsWezTerm from WEZTERM_PANE+tmux fallback, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_WezTermFallback_BlockedByVSCode(t *testing.T) {
+	// VS Code terminal can't render images even inside WezTerm
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM": "vscode",
+		"WEZTERM_PANE": "2",
+		"TERM":         "xterm-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsNone {
+		t.Errorf("expected GraphicsNone for vscode+WEZTERM_PANE, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_WezTermFallback_EmptyTermProgram(t *testing.T) {
+	// TERM_PROGRAM unset but WEZTERM_PANE present
+	p := mockProber{vars: map[string]string{
+		"WEZTERM_PANE": "0",
+		"TERM":         "xterm-256color",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsWezTerm {
+		t.Errorf("expected GraphicsWezTerm from WEZTERM_PANE with empty TERM_PROGRAM, got %v", caps.GraphicsProtocol)
+	}
+}
+
+func TestDetect_ITermFallback_FromSessionID(t *testing.T) {
+	p := mockProber{vars: map[string]string{
+		"TERM_PROGRAM":     "tmux",
+		"ITERM_SESSION_ID": "w0t0p0:12345",
+	}}
+	caps := DetectWithProber(p)
+
+	if caps.GraphicsProtocol != GraphicsITerm2 {
+		t.Errorf("expected GraphicsITerm2 from ITERM_SESSION_ID fallback, got %v", caps.GraphicsProtocol)
+	}
+}
