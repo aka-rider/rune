@@ -17,9 +17,6 @@ builds:
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}}
-    hooks:
-      post:
-        - codesign --sign - --force {{ .Path }}
 
 archives:
   - name_template: "rune-darwin-arm64"
@@ -38,3 +35,9 @@ homebrew_casks:
     homepage: "https://github.com/aka-rider/rune"
     url:
       verified: github.com/aka-rider/rune
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/rune"]
+          end

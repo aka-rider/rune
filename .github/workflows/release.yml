@@ -19,9 +19,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install build dependencies
-        run: brew install libgit2 pkg-config
-
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: '~> v2'
