@@ -13,6 +13,7 @@ package workspace
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -181,6 +182,47 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 				"HasDirtyFile changed on dir reload: %v → %v",
 				prev.HasDirtyFile, next.HasDirtyFile,
 			))
+		}
+	}
+
+	// TRASH-DIRTY-BLOCK / TRASH-OPT-REMOVE / TRASH-GUARD-RAISED: FileDeleteRequestedMsg invariants.
+	// When the targeted path is the dirty active document, RemoveEntry must NOT run
+	// (§1.4.4 guard bailed first) → FiletreeLen unchanged.
+	// When it is not the dirty active document, a confirmation guard must appear and
+	// the filetree must remain unchanged (removal deferred until guard confirmation).
+	if typeName == "filetree.FileDeleteRequestedMsg" {
+		path := reflect.ValueOf(msg).FieldByName("Path").String()
+		isDirtyActive := path == prev.ActiveFilePath && prev.ActiveTabDirty
+		if isDirtyActive {
+			if next.FiletreeLen < prev.FiletreeLen {
+				add("TRASH-DIRTY-BLOCK", fmt.Sprintf(
+					"FileDeleteRequestedMsg for dirty active %q removed entry (len %d→%d); §1.4.4 guard bypassed",
+					path, prev.FiletreeLen, next.FiletreeLen))
+			}
+		} else {
+			if next.FiletreeLen != prev.FiletreeLen {
+				add("TRASH-OPT-REMOVE", fmt.Sprintf(
+					"FileDeleteRequestedMsg for %q mutated filetree before guard confirmation (len %d→%d)",
+					path, prev.FiletreeLen, next.FiletreeLen))
+			}
+			if !next.GuardVisible {
+				add("TRASH-GUARD-RAISED", fmt.Sprintf(
+					"FileDeleteRequestedMsg for %q did not raise confirmation guard", path))
+			}
+		}
+	}
+
+	// TRASH-TAB-GONE: after FileDeletedMsg the deleted path must not remain in
+	// the tab bar — either the active tab closed (executeClose) or the background
+	// tab was removed (opentabs.CloseFile).
+	if typeName == "workspace.FileDeletedMsg" {
+		path := reflect.ValueOf(msg).FieldByName("Path").String()
+		for _, tab := range next.Tabs {
+			if tab.Path == path {
+				add("TRASH-TAB-GONE", fmt.Sprintf(
+					"FileDeletedMsg{Path:%q} but tab still present in next snapshot", path))
+				break
+			}
 		}
 	}
 

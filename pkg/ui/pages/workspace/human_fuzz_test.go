@@ -126,6 +126,27 @@ func FuzzHumanSession(f *testing.F) {
 		8, 2, 0, // FollowLink: follow [B](b.md), guard=save
 	})
 
+	// Seed: trash b.md from the explorer — confirm (cluster 9: ^x → Down×2 → ⌦ → y).
+	// Cluster 9 consumes 2 bytes: data[0]=downs, data[1]=guard-response (0=y, 1=Esc).
+	f.Add([]byte{9, 1, 0})
+	// Seed: trash b.md — cancel via Esc.
+	f.Add([]byte{9, 1, 1})
+
+	// Seed: create a new file (^n) while focused in the explorer (cluster 10).
+	// ^x → Down×2 → ^n → ^e.
+	f.Add([]byte{10, 1})
+
+	// Seed: make active doc dirty (cancel ^w), then try to trash it from the explorer.
+	// Cluster 4 (Esc=2) → cluster 9 (Down×1 = a.md, the dirty active doc).
+	// TRASH-DIRTY-BLOCK must hold: entry must not be removed; no guard raised.
+	// Guard-response byte (1=Esc) is harmless noise since dirty-active shows an error.
+	f.Add([]byte{4, 2, 9, 0, 1})
+
+	// Seed: trash b.md (confirm), then create a new file from the explorer.
+	// Cluster 9 consumes 2 bytes (data[0]=1→downs=2, data[1]=0→confirm);
+	// cluster 10 gets its own byte (data[0]=0→downs=1).
+	f.Add([]byte{9, 1, 0, 10, 0})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		events := workflow.DecodeWorkflow(data)
 

@@ -73,6 +73,8 @@ var bindingTable = []tea.KeyPressMsg{
 	{Code: 'g', Mod: tea.ModSuper},                           // ⌘G = FindNext
 	{Code: 'g', Mod: tea.ModShift | tea.ModSuper},            // ⇧⌘G = FindPrev
 	{Code: 'f', Mod: tea.ModAlt | tea.ModSuper},              // ⌥⌘F = FindReplaceOpen
+	// Explorer action
+	{Code: tea.KeyBackspace, Mod: tea.ModSuper}, // super+backspace = TrashFile (84)
 }
 
 // eventToMsg converts a fuzz Event to a tea.Msg.

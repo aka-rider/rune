@@ -28,6 +28,9 @@ type FS interface {
 	MkdirAll(path string, perm fs.FileMode) error
 	// ReadDir lists the directory at name, sorted by filename (like os.ReadDir).
 	ReadDir(name string) ([]fs.DirEntry, error)
+	// Trash moves path to the OS trash. Works for files and directories.
+	// Disk delegates to /usr/bin/trash; Mem removes from the in-memory map.
+	Trash(path string) error
 }
 
 // Identity is the stable (inode, device) identity of a file. History is keyed to

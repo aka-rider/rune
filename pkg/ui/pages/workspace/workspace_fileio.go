@@ -101,6 +101,15 @@ type FileRenameErrorMsg struct {
 	Err error
 }
 
+// FileDeletedMsg is returned after path was successfully moved to trash.
+type FileDeletedMsg struct{ Path string }
+
+// FileDeleteErrorMsg is returned when the trash operation fails.
+type FileDeleteErrorMsg struct {
+	Path string
+	Err  error
+}
+
 // SaveIdentity tracks an in-flight save operation (D12, D13).
 type SaveIdentity struct {
 	RequestID    string
@@ -181,6 +190,16 @@ func materializeCmd(fsys vfs.FS, docID int64, path, content string, savedSeq int
 			Path: path, DocID: docID, RequestID: requestID,
 			SavedContent: data, SavedSeq: savedSeq, BindNew: bindNew, Baseline: baselineOf(fsys, path),
 		}
+	}
+}
+
+// fileTrashCmd moves path to the OS trash via the vfs shim.
+func fileTrashCmd(fsys vfs.FS, path string) tea.Cmd {
+	return func() tea.Msg {
+		if err := fsys.Trash(path); err != nil {
+			return FileDeleteErrorMsg{Path: path, Err: fmt.Errorf("trash %q: %w", path, err)}
+		}
+		return FileDeletedMsg{Path: path}
 	}
 }
 

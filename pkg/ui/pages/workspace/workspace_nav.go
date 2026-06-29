@@ -302,6 +302,20 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 	return m, tea.Batch(batch...)
 }
 
+// isViewDirty reports whether the currently displayed document has unsaved
+// changes according to the docstate store. Returns false when no store or
+// docID is available (safe default: assume clean, don't block).
+func (m Model) isViewDirty() bool {
+	if m.store == nil || m.view.DocID() == 0 {
+		return false
+	}
+	d, err := m.store.IsDirty(m.view.DocID())
+	if err != nil {
+		return false
+	}
+	return d
+}
+
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 	if !m.viewingHelp() {

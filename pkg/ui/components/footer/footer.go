@@ -22,6 +22,7 @@ type GuardKind int
 const (
 	GuardDirty GuardKind = iota
 	GuardMerge
+	GuardTrash
 )
 
 // GuardOption maps a keyboard input to a guard response.
@@ -39,6 +40,7 @@ const (
 	DataLossCancel
 	DataLossMergeAccept
 	DataLossMergeReject
+	DataLossTrash
 )
 
 // DataLossGuardResponseMsg is emitted when the user responds to a guard prompt.
@@ -271,6 +273,13 @@ func (m Model) View() string {
 			m.styles.FooterHint.Render("]es [") +
 			m.styles.FooterKey.Render("N") +
 			m.styles.FooterHint.Render("]o")
+	} else if m.guardKind == GuardTrash && len(m.guardOptions) > 0 {
+		left = m.styles.FooterKey.Render("Trash file?") +
+			m.styles.FooterHint.Render(" [") +
+			m.styles.FooterKey.Render("Y") +
+			m.styles.FooterHint.Render("]es [") +
+			m.styles.FooterKey.Render("Esc") +
+			m.styles.FooterHint.Render("] Cancel")
 	} else if m.pendingKey == "c" {
 		left = m.styles.FooterKey.Render("Press ^C again to exit")
 	} else if m.pendingKey == "d" {

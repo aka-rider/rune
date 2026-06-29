@@ -44,7 +44,7 @@ func DecodeWorkflow(data []byte) []event.Event {
 // decodeCluster selects one cluster by clusterID % numClusters and parameterises
 // it from the prefix of data, returning the events and bytes consumed.
 func decodeCluster(id byte, data []byte) ([]event.Event, int) {
-	const numClusters = 9
+	const numClusters = 11
 	switch id % numClusters {
 	case 0:
 		return openSearchAndFind(data)
@@ -64,6 +64,10 @@ func decodeCluster(id byte, data []byte) ([]event.Event, int) {
 		return globalSeqDirtySpec(data)
 	case 8:
 		return followLink(data)
+	case 9:
+		return navigateTreeAndTrash(data)
+	case 10:
+		return navigateTreeAndNewFile(data)
 	}
 	return nil, 0
 }
@@ -120,6 +124,9 @@ func keyPressToIndex(kp tea.KeyPressMsg) uint16 {
 		return 81
 	case kp.Code == 'g' && kp.Mod == (tea.ModShift|tea.ModSuper): // FindPrev
 		return 82
+	// Explorer action
+	case kp.Code == tea.KeyBackspace && kp.Mod == tea.ModSuper: // TrashFile
+		return 84
 	}
 	return 0
 }
@@ -155,6 +162,7 @@ var (
 	evSearch   = key(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
 	evFindNext = key(tea.KeyPressMsg{Code: 'g', Mod: tea.ModSuper})
 	evFindPrev = key(tea.KeyPressMsg{Code: 'g', Mod: tea.ModShift | tea.ModSuper})
+	evTrash    = key(tea.KeyPressMsg{Code: tea.KeyBackspace, Mod: tea.ModSuper})
 )
 
 // ---- cluster implementations ----
@@ -389,4 +397,56 @@ func clampU8(v, lo, hi uint8) uint8 {
 		return hi
 	}
 	return v
+}
+
+// NavigateTreeAndTrash: FocusExplorer → Down×n → ⌘⌫ (TrashFile).
+// When the selected entry is the dirty active document, the §1.4.4 guard
+// fires instead (TRASH-DIRTY-BLOCK); otherwise the entry is optimistically
+// removed and the async trash Cmd runs (TRASH-OPT-REMOVE / TRASH-TAB-GONE).
+// trashGuardResponseIndex maps a 0–1 response to the bindingTable index for
+// y (confirm, 57) or Escape (cancel, 32).
+func trashGuardResponseIndex(r uint8) uint16 {
+	if r == 0 {
+		return 57 // 'y' = confirm trash
+	}
+	return 32 // Escape = cancel
+}
+
+func navigateTreeAndTrash(data []byte) ([]event.Event, int) {
+	downs := 2
+	response := uint8(1) // default: cancel (safe)
+	consumed := 0
+	if len(data) >= 1 {
+		downs = int(data[0]%8) + 1
+		consumed = 1
+	}
+	if len(data) >= 2 {
+		response = data[1] % 2
+		consumed = 2
+	}
+	guardKey := event.Event{Kind: event.KindKey, KeyIndex: trashGuardResponseIndex(response)}
+	var evs []event.Event
+	evs = append(evs, evTree)
+	evs = append(evs, repeat(evDown, downs)...)
+	evs = append(evs, evTrash)
+	evs = append(evs, guardKey)
+	return evs, consumed
+}
+
+// NavigateTreeAndNewFile: FocusExplorer → Down×n → ^n (CreateNewFile) → FocusEditor.
+// Exercises the global CreateNewFile shortcut while the filetree has focus, then
+// returns focus to the editor so subsequent clusters can type into the new doc.
+func navigateTreeAndNewFile(data []byte) ([]event.Event, int) {
+	downs := 1
+	consumed := 0
+	if len(data) >= 1 {
+		downs = int(data[0]%8) + 1
+		consumed = 1
+	}
+	var evs []event.Event
+	evs = append(evs, evTree)
+	evs = append(evs, repeat(evDown, downs)...)
+	evs = append(evs, evNew)
+	evs = append(evs, evEdit)
+	return evs, consumed
 }

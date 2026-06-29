@@ -112,6 +112,7 @@ const (
 	actionClose            // raised by requestCloseCurrent (^w)
 	actionQuit             // raised by ConfirmQuitMsg (^C^C)
 	actionEvict            // raised when a dirty tab must be evicted to open a new file
+	actionTrash            // raised when the user requests to trash a file (⌦/⌘⌫)
 )
 
 // pendingDataLoss carries the state a raised dirty guard must survive across the
@@ -126,9 +127,17 @@ type pendingDataLoss struct {
 	victim          opentabs.TabHandle // eviction target (actionEvict)
 	pendingOpenPath string             // file to open after eviction (actionEvict)
 	requestID       string             // correlates evict-save ack (actionEvict + Save)
+	pendingTrashPath string            // path to trash after guard confirmation (actionTrash)
 }
 
 // ---- Guard options ----
+
+// trashGuardOptions drives the trash-file confirmation prompt. Cancel is LAST
+// so Escape means Cancel — Escape must never cause data loss (§1.4.4).
+var trashGuardOptions = []footer.GuardOption{
+	{Key: 'y', Response: footer.DataLossTrash},
+	{Key: 0, Response: footer.DataLossCancel}, // Esc → last option = Cancel
+}
 
 // dataLossGuardOptions drives the dirty-buffer prompt. Cancel is LAST so that
 // Escape (which the footer resolves to the final option) means Cancel, never

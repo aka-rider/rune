@@ -82,6 +82,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.requestOpenPath(0, msg.Path)
 		cmds = append(cmds, cmd)
 
+	case filetree.FileDeleteRequestedMsg:
+		// §1.4.4 — block trash of the active dirty document without prompting.
+		// executeClose skips the dirty guard; refusing here keeps the unsaved buffer safe.
+		if msg.Path == m.view.Path() && m.isViewDirty() {
+			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Unsaved changes — save (⌘S) or close first"})
+			cmds = append(cmds, cmd)
+			break
+		}
+		// Raise a confirmation guard before acting — §1.4.4.
+		m.pendingDataLoss = pendingDataLoss{kind: actionTrash, pendingTrashPath: msg.Path}
+		m.footer = m.footer.SetGuard(footer.GuardTrash, trashGuardOptions)
+
+	case FileDeletedMsg:
+		// Trash succeeded — optimistic removal was correct.
+		if m.view.Path() == msg.Path {
+			// Active doc deleted: close its tab and open the neighbour (or untitled).
+			m, cmd = m.executeClose(m.view.DocID(), m.view.Path())
+			cmds = append(cmds, cmd)
+		} else {
+			// Background tab — remove without touching the active view.
+			m.opentabs = m.opentabs.CloseFile(msg.Path)
+		}
+
+	case FileDeleteErrorMsg:
+		// Trash failed — restore the view to real disk state and surface the error.
+		cmds = append(cmds, reloadDirCmd(m.fsys(), m.filetree.Root()))
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
+		cmds = append(cmds, cmd)
+
 	case filetree.DirSelectedMsg:
 		cmds = append(cmds, loadDirCmd(m.fsys(), msg.Path))
 
@@ -95,6 +124,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case dirChangedMsg:
 		dir := m.watchedDir
 		cmds = append(cmds, reloadDirCmd(m.fsys(), dir))
+		m, cmd = m.startWatch(dir)
+		cmds = append(cmds, cmd)
 
 	case opentabs.TabSelectedMsg:
 		m, cmd = m.requestOpenPath(msg.DocID, msg.Path)
@@ -211,6 +242,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.view = fileView(msg.NewPath, renamedDocID, baselineOf(m.fsys(), msg.NewPath))
 		m.breadcrumb = m.breadcrumb.SetPath(msg.NewPath)
 		m.title = m.title.SetText(strings.TrimSuffix(filepath.Base(msg.NewPath), ".md"))
+		if root := m.filetree.Root(); root != "" {
+			cmds = append(cmds, reloadDirCmd(m.fsys(), root))
+		}
 
 	case FileRenameErrorMsg:
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
@@ -226,6 +260,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.view = m.view.withBaseline(msg.Baseline)
 			if msg.BindNew {
 				m = m.bindMaterialized(msg.Path)
+				if root := m.filetree.Root(); root != "" {
+					cmds = append(cmds, reloadDirCmd(m.fsys(), root))
+				}
 			} else if m.store != nil && m.view.DocID() != 0 {
 				// Overwrite save: the atomic write gave the file a new inode.
 				// Re-bind so the recorded identity stays in sync and the next
@@ -393,6 +430,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case footer.DataLossGuardResponseMsg:
 		switch msg.Response {
+		case footer.DataLossTrash:
+			if m.pendingDataLoss.kind == actionTrash {
+				path := m.pendingDataLoss.pendingTrashPath
+				m.pendingDataLoss = pendingDataLoss{}
+				m.filetree = m.filetree.RemoveEntry(path)
+				cmds = append(cmds, fileTrashCmd(m.fsys(), path))
+			}
+
 		case footer.DataLossSave:
 			if m.pendingDataLoss.kind == actionEvict {
 				// Evict: save the dirty background victim; FileSavedMsg closes it + opens pending.

@@ -94,6 +94,26 @@ func (m *Mem) Stat(name string) (fs.FileInfo, error) {
 // MkdirAll is a no-op: Mem has no directory tree, only flat path→content keys.
 func (m *Mem) MkdirAll(string, fs.FileMode) error { return nil }
 
+// Trash removes all entries at path (file) or under path (directory) from the
+// in-memory map, mirroring Disk.Trash for tests without touching real disk.
+func (m *Mem) Trash(path string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clean := filepath.Clean(path)
+	prefix := clean + "/"
+	found := false
+	for k := range m.files {
+		if k == clean || strings.HasPrefix(k, prefix) {
+			delete(m.files, k)
+			found = true
+		}
+	}
+	if !found {
+		return &fs.PathError{Op: "trash", Path: path, Err: fs.ErrNotExist}
+	}
+	return nil
+}
+
 // ReadDir lists the direct children of dir, synthesizing intermediate
 // directories from the flat path map. Like os.ReadDir, entries are sorted by
 // name; a directory with no entries returns an empty slice (not an error).

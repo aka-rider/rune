@@ -16,6 +16,7 @@ import (
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // newTestWorkspace creates a sized workspace for testing with a file pre-loaded.
@@ -830,5 +831,301 @@ func TestMouseClickOnUnfocusedFiletreeMovesAndSelects(t *testing.T) {
 	}
 	if selectedPath != "/test/beta.md" {
 		t.Fatalf("second click: FileSelectedMsg.Path=%q, want /test/beta.md", selectedPath)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete in explorer (trash)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestFileDeletedMsg_ClosesActiveTab verifies that FileDeletedMsg for the active
+// document closes its tab and transitions the editor away from the deleted path.
+func TestFileDeletedMsg_ClosesActiveTab(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+	if m.view.Path() != "a.md" {
+		t.Fatalf("prerequisite: active path = %q, want a.md", m.view.Path())
+	}
+
+	m, cmd := m.Update(FileDeletedMsg{Path: "a.md"})
+	// Drive any resulting Cmds (executeClose may issue a CreateUntitled cmd).
+	for _, msg := range execCmds(cmd) {
+		m, _ = m.Update(msg)
+	}
+
+	if m.view.Path() == "a.md" {
+		t.Fatal("active view path is still a.md after FileDeletedMsg — tab not closed")
+	}
+}
+
+// TestFileDeletedMsg_RemovesBackgroundTab verifies that FileDeletedMsg for a
+// background tab removes that tab without disturbing the active view.
+func TestFileDeletedMsg_RemovesBackgroundTab(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+	m = loadFile(m, "b.md", "content B") // second tab; b.md is now active
+
+	if m.view.Path() != "b.md" {
+		t.Fatalf("prerequisite: active path = %q, want b.md", m.view.Path())
+	}
+	tabsBefore := m.opentabs.Len()
+
+	// a.md is the background tab — deleting it must not change the active view.
+	m, _ = m.Update(FileDeletedMsg{Path: "a.md"})
+
+	if m.view.Path() != "b.md" {
+		t.Fatalf("active view changed to %q after background-tab delete — should stay b.md", m.view.Path())
+	}
+	if m.opentabs.Len() != tabsBefore-1 {
+		t.Fatalf("opentabs.Len() = %d, want %d (background tab not removed)", m.opentabs.Len(), tabsBefore-1)
+	}
+}
+
+// TestFileDeleteErrorMsg_ShowsFooterError verifies that FileDeleteErrorMsg
+// surfaces the error in the footer and does not close any tab.
+func TestFileDeleteErrorMsg_ShowsFooterError(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+	pathBefore := m.view.Path()
+
+	m, _ = m.Update(FileDeleteErrorMsg{
+		Path: "a.md",
+		Err:  errors.New(`trash "a.md": exit status 1`),
+	})
+
+	if m.view.Path() != pathBefore {
+		t.Fatalf("active view changed to %q — should not happen on error", m.view.Path())
+	}
+	footerView := m.footer.View()
+	if !strings.Contains(footerView, `trash "a.md"`) {
+		t.Fatalf("footer does not show error: %q", footerView)
+	}
+}
+
+// TestFileDeleteRequestedMsg_RaisesGuard verifies that FileDeleteRequestedMsg
+// for a clean (non-dirty-active) file raises the trash confirmation guard without
+// touching the filetree entry yet (guard-first, §1.4.4).
+func TestFileDeleteRequestedMsg_RaisesGuard(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+
+	m, _ = m.Update(filetree.DirLoadedMsg{
+		Root: ".",
+		Entries: []filetree.Entry{
+			{Name: "b.md", Path: "b.md"},
+		},
+	})
+	entriesBefore := m.filetree.Len()
+
+	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
+
+	if m.filetree.Len() != entriesBefore {
+		t.Fatalf("filetree.Len() = %d, want %d — must not remove entry before guard confirmation",
+			m.filetree.Len(), entriesBefore)
+	}
+	if !strings.Contains(m.footer.View(), "Trash file?") {
+		t.Fatalf("footer does not show trash guard: %q", m.footer.View())
+	}
+}
+
+// TestFileDeleteGuardConfirm_RemovesEntryAndIssuesCmd verifies that
+// DataLossGuardResponseMsg{DataLossTrash} triggers optimistic removal and a
+// fileTrashCmd (§5.4).
+func TestFileDeleteGuardConfirm_RemovesEntryAndIssuesCmd(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+
+	m, _ = m.Update(filetree.DirLoadedMsg{
+		Root: ".",
+		Entries: []filetree.Entry{
+			{Name: "b.md", Path: "b.md"},
+		},
+	})
+	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
+
+	entriesAfterGuard := m.filetree.Len()
+	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossTrash})
+
+	if m.filetree.Len() != entriesAfterGuard-1 {
+		t.Fatalf("filetree.Len() = %d, want %d — entry not removed after guard confirm",
+			m.filetree.Len(), entriesAfterGuard-1)
+	}
+	if cmd == nil {
+		t.Fatal("expected a fileTrashCmd to be issued, got nil Cmd")
+	}
+}
+
+// TestFileDeleteGuardCancel_LeavesFiletreeUnchanged verifies that
+// DataLossGuardResponseMsg{DataLossCancel} leaves the filetree intact.
+func TestFileDeleteGuardCancel_LeavesFiletreeUnchanged(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = loadFile(m, "a.md", "content A")
+
+	m, _ = m.Update(filetree.DirLoadedMsg{
+		Root: ".",
+		Entries: []filetree.Entry{
+			{Name: "b.md", Path: "b.md"},
+		},
+	})
+	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
+
+	entriesAfterGuard := m.filetree.Len()
+	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
+
+	if m.filetree.Len() != entriesAfterGuard {
+		t.Fatalf("filetree.Len() = %d, want %d — cancel must not change filetree",
+			m.filetree.Len(), entriesAfterGuard)
+	}
+	if strings.Contains(m.footer.View(), "Trash file?") {
+		t.Fatal("guard still visible after cancel")
+	}
+	_ = cmd // cancel produces no trash cmd; batch may contain footer state Cmd
+}
+
+// TestFileDeleteRequestedMsg_DirtyActiveDoc_BlocksTrash verifies that sending
+// FileDeleteRequestedMsg for the currently active dirty document does NOT
+// optimistically remove the entry from the filetree (§1.4.4).
+func TestFileDeleteRequestedMsg_DirtyActiveDoc_BlocksTrash(t *testing.T) {
+	m := newTestWorkspace(t)
+	m = withStore(t, m)
+	m = loadFile(m, "a.md", "content A")
+	m = focusEditor(m)
+
+	// Type to make the buffer dirty.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'x'})
+	if !m.opentabs.HasDirty() {
+		t.Fatal("prerequisite: buffer must be dirty before testing the guard")
+	}
+
+	// Populate filetree so there is an entry to check.
+	m, _ = m.Update(filetree.DirLoadedMsg{
+		Root: ".",
+		Entries: []filetree.Entry{
+			{Name: "a.md", Path: "a.md"},
+		},
+	})
+	entriesBefore := m.filetree.Len()
+
+	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "a.md"})
+
+	if m.filetree.Len() != entriesBefore {
+		t.Fatalf("filetree.Len() = %d, want %d — dirty guard did not block optimistic remove",
+			m.filetree.Len(), entriesBefore)
+	}
+	footerView := m.footer.View()
+	if !strings.Contains(footerView, "Unsaved changes") {
+		t.Fatalf("footer does not show unsaved-changes message: %q", footerView)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filetree reload after dir changes and internal file mutations (Fix A / B1 / B2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// TestDirChangedMsg_EmitsReloadAndKeepsWatchedDir verifies Fix A: dirChangedMsg
+// emits a non-nil Cmd (containing the reloadDirCmd + a watcher restart) and
+// leaves m.watchedDir set so subsequent changes are still tracked.
+// The goroutine restart itself cannot be verified without real FS events; this
+// test covers the observable model-level invariants.
+func TestDirChangedMsg_EmitsReloadAndKeepsWatchedDir(t *testing.T) {
+	m := newTestWorkspace(t)
+	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: nil})
+	if m.watchedDir != "/test" {
+		t.Fatalf("prerequisite: watchedDir = %q, want /test", m.watchedDir)
+	}
+
+	m2, cmd := m.Update(dirChangedMsg{})
+	if cmd == nil {
+		t.Fatal("dirChangedMsg must return a non-nil Cmd (at least reloadDirCmd)")
+	}
+	if m2.watchedDir != "/test" {
+		t.Fatalf("watchedDir after dirChangedMsg = %q, want /test", m2.watchedDir)
+	}
+}
+
+// TestFileSavedMsg_BindNew_RefreshesFiletree verifies Fix B1: after a ^n file
+// creation (FileSavedMsg{BindNew: true}), executing the returned Cmd produces a
+// DirReloadedMsg that includes the new file. Without Fix B1 the Cmd is nil and
+// the filetree never learns about the new entry.
+func TestFileSavedMsg_BindNew_RefreshesFiletree(t *testing.T) {
+	fsys := vfs.NewMem()
+	if err := fsys.WriteFile("/test/new.md", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestWorkspace(t)
+	m = m.WithFS(fsys)
+	// Populate the filetree root so Root() returns "/test".
+	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: nil})
+
+	// Simulate a BindNew save: mark an in-flight save, then acknowledge it.
+	reqID := "test-bind-new"
+	m.activeSave = SaveIdentity{RequestID: reqID, InFlight: true}
+
+	_, cmd := m.Update(FileSavedMsg{
+		Path:         "/test/new.md",
+		RequestID:    reqID,
+		BindNew:      true,
+		SavedContent: []byte("hello"),
+	})
+
+	// execCmds is safe here: the BindNew handler only adds reloadDirCmd (no
+	// startWatch), and reloadDirCmd on a vfs.Mem returns immediately.
+	var gotReload bool
+	for _, msg := range execCmds(cmd) {
+		rld, ok := msg.(filetree.DirReloadedMsg)
+		if !ok {
+			continue
+		}
+		gotReload = true
+		for _, e := range rld.Entries {
+			if e.Name == "new.md" {
+				return // new file present in the reload — fix is working
+			}
+		}
+		t.Fatalf("DirReloadedMsg.Entries = %v, want entry named new.md", rld.Entries)
+	}
+	if !gotReload {
+		t.Fatal("FileSavedMsg{BindNew:true} produced no DirReloadedMsg — filetree will never show the new file")
+	}
+}
+
+// TestFileRenamedMsg_RefreshesFiletree verifies Fix B2: after a file rename,
+// executing the returned Cmd produces a DirReloadedMsg with the new name.
+// Without Fix B2 no reload is emitted and the filetree keeps the old name.
+func TestFileRenamedMsg_RefreshesFiletree(t *testing.T) {
+	fsys := vfs.NewMem()
+	// Only the renamed-to path needs to exist for reloadDirCmd.
+	if err := fsys.WriteFile("/test/new.md", []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newTestWorkspace(t)
+	m = m.WithFS(fsys)
+	m, _ = m.Update(filetree.DirLoadedMsg{
+		Root:    "/test",
+		Entries: []filetree.Entry{{Name: "old.md", Path: "/test/old.md"}},
+	})
+	m = loadFile(m, "/test/old.md", "hello")
+
+	_, cmd := m.Update(FileRenamedMsg{OldPath: "/test/old.md", NewPath: "/test/new.md"})
+
+	// execCmds is safe: FileRenamedMsg handler adds only reloadDirCmd (no startWatch).
+	var gotReload bool
+	for _, msg := range execCmds(cmd) {
+		rld, ok := msg.(filetree.DirReloadedMsg)
+		if !ok {
+			continue
+		}
+		gotReload = true
+		for _, e := range rld.Entries {
+			if e.Name == "new.md" {
+				return // renamed file present — fix is working
+			}
+		}
+		t.Fatalf("DirReloadedMsg.Entries = %v, want entry named new.md", rld.Entries)
+	}
+	if !gotReload {
+		t.Fatal("FileRenamedMsg produced no DirReloadedMsg — filetree will never show the renamed file")
 	}
 }

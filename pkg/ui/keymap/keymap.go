@@ -32,7 +32,6 @@ type Bindings struct {
 	CreateNewFile         key.Binding
 	Help                  key.Binding
 	Backspace             key.Binding
-	Delete                key.Binding
 	Indent                key.Binding
 	Outdent               key.Binding
 	SaveFile              key.Binding
@@ -63,6 +62,7 @@ type Bindings struct {
 	VoiceDictation        key.Binding
 	Undo                  key.Binding
 	Redo                  key.Binding
+	TrashFile             key.Binding
 }
 
 func Default() Bindings {
@@ -91,7 +91,6 @@ func Default() Bindings {
 		CreateNewFile:      key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("^n", "new file")),
 		Help:               key.NewBinding(key.WithKeys("f1"), key.WithHelp("F1", "help")),
 		Backspace:          key.NewBinding(key.WithKeys("backspace"), key.WithHelp("⌫", "delete")),
-		Delete:             key.NewBinding(key.WithKeys("delete"), key.WithHelp("⌦", "delete right")),
 		Indent:             key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "indent")),
 		Outdent:            key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "outdent")),
 		SaveFile:           key.NewBinding(key.WithKeys("super+s"), key.WithHelp("⌘s", "save")),
@@ -122,6 +121,7 @@ func Default() Bindings {
 		VoiceDictation:     key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("^v", "dictate")),
 		Undo:               key.NewBinding(key.WithKeys("super+z", "ctrl+z"), key.WithHelp("⌘z", "undo")),
 		Redo:               key.NewBinding(key.WithKeys("shift+super+z", "ctrl+y"), key.WithHelp("⇧⌘z", "redo")),
+		TrashFile:          key.NewBinding(key.WithKeys("super+backspace", "delete"), key.WithHelp("⌘⌫/⌦", "trash")),
 	}
 }
 
@@ -230,7 +230,7 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.GotoBottom, "cursor.line-end", "editorFocused")
 	add(b.ShiftGotoBottom, "select.line-end", "editorFocused")
 	add(b.Backspace, "edit.delete-left", "editorFocused && !readOnly")
-	add(b.Delete, "edit.delete-right", "editorFocused && !readOnly")
+	add(key.NewBinding(key.WithKeys("delete")), "edit.delete-right", "editorFocused && !readOnly")
 	add(b.Indent, "edit.indent", "editorFocused && !readOnly")
 	add(b.Outdent, "edit.outdent", "editorFocused && !readOnly")
 	add(b.AddCursorAbove, "multicursor.add-above", "editorFocused")

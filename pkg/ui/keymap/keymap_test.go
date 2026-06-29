@@ -35,6 +35,13 @@ var editorShortcutKeys = []string{
 	"Redo",          // Cmd+Shift+Z → redo
 }
 
+// componentKeys lists Binding field names handled by a non-editor child
+// component (filetree, opentabs, etc.) rather than at the workspace page
+// level or inside the editor's key resolver.
+var componentKeys = []string{
+	"TrashFile", // ⌘⌫/⌦ → filetree.Update handles and emits FileDeleteRequestedMsg
+}
+
 // keyFromChord builds the key string that parseChord would produce.
 func keyFromChord(c keybind.Chord) string {
 	if !c.Ctrl && !c.Alt && !c.Shift && !c.Cmd {
@@ -119,7 +126,7 @@ func TestBindingsFullyWired(t *testing.T) {
 	// Collect all physical keys from editor shortcut bindings.
 	for i := 0; i < v.NumField(); i++ {
 		fieldName := typ.Field(i).Name
-		for _, ek := range editorShortcutKeys {
+		for _, ek := range append(editorShortcutKeys, componentKeys...) {
 			if fieldName == ek {
 				keysMethod := v.Field(i).MethodByName("Keys")
 				if !keysMethod.IsValid() {

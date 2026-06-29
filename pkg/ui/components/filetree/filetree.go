@@ -18,6 +18,10 @@ import (
 type FileSelectedMsg struct{ Path string }
 type DirSelectedMsg struct{ Path string }
 
+// FileDeleteRequestedMsg is emitted when the user presses the trash key on the
+// selected entry. The ".." parent-navigation entry is never emitted.
+type FileDeleteRequestedMsg struct{ Path string }
+
 type DirLoadedMsg struct {
 	Root    string
 	Entries []Entry
@@ -67,6 +71,23 @@ func (m Model) Focused() bool            { return m.focused }
 func (m Model) Height() int              { return m.height }
 func (m Model) Root() string             { return m.root }
 
+// RemoveEntry removes the entry at path from the visible list and clamps the
+// cursor. Called by the workspace for optimistic delete before the async trash
+// Cmd completes (§5.4 — direct mutation, no self-message Cmd).
+func (m Model) RemoveEntry(path string) Model {
+	filtered := make([]Entry, 0, len(m.entries))
+	for _, e := range m.entries {
+		if e.Path != path {
+			filtered = append(filtered, e)
+		}
+	}
+	m.entries = filtered
+	if len(m.entries) > 0 && m.cursor >= len(m.entries) {
+		m.cursor = len(m.entries) - 1
+	}
+	return m.ensureVisible()
+}
+
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -113,6 +134,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, func() tea.Msg { return DirSelectedMsg{Path: e.Path} }
 				}
 				return m, func() tea.Msg { return FileSelectedMsg{Path: e.Path} }
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.TrashFile):
+			if len(m.entries) > 0 && m.entries[m.cursor].Name != ".." {
+				e := m.entries[m.cursor]
+				return m, func() tea.Msg { return FileDeleteRequestedMsg{Path: e.Path} }
 			}
 			return m, nil
 		}
