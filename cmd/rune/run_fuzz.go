@@ -11,9 +11,7 @@ import (
 	"rune/internal/fuzz/artifact"
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/event"
-	"rune/pkg/command"
 	"rune/pkg/docstate"
-	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
 	ui "rune/pkg/ui"
 	"rune/pkg/ui/keymap"
@@ -54,14 +52,21 @@ func run(_ ui.Model) error {
 
 	keys := keymap.Default()
 	st := styles.Default()
-	reg := command.NewBuilder().Build()
-	res, _ := keybind.NewResolver(nil)
+	reg, res, err := driver.BuildFuzzApp(keys)
+	if err != nil {
+		return fmt.Errorf("build fuzz app: %w", err)
+	}
 	caps := terminal.TermCaps{}
 
 	m := workspace.New(keys, st, reg, res, caps, tmpDir, nil)
 
 	const fuzzW, fuzzH = 80, 24
-	violation, frame, cells := driver.Run(m, events, store, fuzzW, fuzzH)
+	// mem=nil: this runner drives a real tmpDir through vfs.Disk (WithFS
+	// never called), not an in-memory VFS — driver_verbatim.go's checks
+	// skip cleanly on a nil mem (§1.4.5 verbatim checks need a byte-for-byte
+	// readable backing store; a real disk read here would just re-derive
+	// what Materialize already wrote, at the cost of a live temp-dir read).
+	violation, frame, cells := driver.Run(m, events, store, nil, fuzzW, fuzzH)
 
 	if violation != nil {
 		sentinel := fmt.Sprintf("<<RUNE_FUZZ_VIOLATION id=%s>>\n", violation.InvariantID)

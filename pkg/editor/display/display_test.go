@@ -2,12 +2,27 @@ package display_test
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/coords"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
 )
+
+// syntaxColWidth returns the RUNE-count width (§1.5 — display width is
+// runes, not bytes) of line's syntax-space spans, built from the exported
+// SyntaxSnapshot.Lines/SyntaxSpan.Text fields.
+func syntaxColWidth(s display.SyntaxSnapshot, line int) int {
+	if line < 0 || line >= len(s.Lines) {
+		return 0
+	}
+	width := 0
+	for _, span := range s.Lines[line].Spans {
+		width += utf8.RuneCountInString(span.Text)
+	}
+	return width
+}
 
 // Gate 1: P5a SyntaxMap coordinate round-trip invariant
 // After WP14A, the map is no longer pass-through for markdown content.
@@ -80,7 +95,7 @@ func FuzzWrapMapRoundtrip(f *testing.F) {
 		for line := 0; line < buf.LineCount(); line++ {
 			// Use syntax-space column bounds (not buffer-space) since
 			// SyntaxToWrap only guarantees roundtrip for valid syntax positions.
-			syntaxLen := sSnapshot.SyntaxColWidth(line)
+			syntaxLen := syntaxColWidth(sSnapshot, line)
 			for col := 0; col <= syntaxLen; col++ {
 				sp := coords.SyntaxPoint{Line: line, Col: col}
 				wp := wSnapshot.SyntaxToWrap(sp)

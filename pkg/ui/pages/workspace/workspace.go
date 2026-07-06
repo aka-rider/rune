@@ -23,6 +23,7 @@ import (
 	"rune/pkg/ui/components/title"
 	"rune/pkg/ui/help"
 	"rune/pkg/ui/keymap"
+	"rune/pkg/ui/pages/workspace/mergemode"
 	"rune/pkg/ui/styles"
 	"rune/pkg/vfs"
 )
@@ -66,87 +67,11 @@ const (
 
 const tabLimit = 10
 
-// ---- Message types ----
-
-// ErrMsg signals a non-fatal I/O error to the workspace.
-type ErrMsg struct{ Err error }
-
-// dirChangedMsg signals the watched directory changed on disk.
-type dirChangedMsg struct{}
-
-// fileWatchReadError signals fsnotify detected a write but the file could not
-// be re-read (deleted, moved, or permission denied).
-type fileWatchReadError struct {
-	path string
-	err  error
-}
-
-// StoreReadyMsg is emitted when the docstate store has been opened.
-type StoreReadyMsg struct {
-	Store   *docstate.Store
-	Warning string
-}
-
-// AutosaveSettledMsg is emitted after a VFS snapshot goroutine completes.
-// Exported so the fuzz driver can detect autosave completion for DL1 checks.
-// err is non-nil when the snapshot write failed (surfaced to the user; the
-// journal remains the durable record).
-type AutosaveSettledMsg struct {
-	gen uint64
-	err error
-}
-
-// pendingFlushMsg is returned by the debounce goroutine. The handler checks
-// gen == m.flushGen before firing snapshotCmd so only the latest flush wins.
-type pendingFlushMsg struct{ gen uint64 }
-
-// ---- Data-loss action disambiguation ----
-
-// actionKind records WHY the dirty-buffer guard was raised, so the guard
-// response (and the async Save round-trip) knows whether to close this tab,
-// quit, or do nothing.
-type actionKind int
-
-const (
-	actionNone  actionKind = iota
-	actionClose            // raised by requestCloseCurrent (^w)
-	actionQuit             // raised by ConfirmQuitMsg (^C^C)
-	actionEvict            // raised when a dirty tab must be evicted to open a new file
-	actionTrash            // raised when the user requests to trash a file (⌦/⌘⌫)
-)
-
-// pendingDataLoss carries the state a raised dirty guard must survive across the
-// async Save→FileSavedMsg round-trip (§5.5). For actionQuit "Save", saveLeft
-// counts the outstanding per-tab materialize acks before teardown; the first
-// failure clears the whole action so every buffer is kept. For actionEvict,
-// victim identifies the tab to close and pendingOpenPath is the file to open
-// once the victim is dealt with; requestID correlates the background save ack.
-type pendingDataLoss struct {
-	kind            actionKind
-	saveLeft        int
-	victim          opentabs.TabHandle // eviction target (actionEvict)
-	pendingOpenPath string             // file to open after eviction (actionEvict)
-	requestID       string             // correlates evict-save ack (actionEvict + Save)
-	pendingTrashPath string            // path to trash after guard confirmation (actionTrash)
-}
-
-// ---- Guard options ----
-
-// trashGuardOptions drives the trash-file confirmation prompt. Cancel is LAST
-// so Escape means Cancel — Escape must never cause data loss (§1.4.4).
-var trashGuardOptions = []footer.GuardOption{
-	{Key: 'y', Response: footer.DataLossTrash},
-	{Key: 0, Response: footer.DataLossCancel}, // Esc → last option = Cancel
-}
-
-// dataLossGuardOptions drives the dirty-buffer prompt. Cancel is LAST so that
-// Escape (which the footer resolves to the final option) means Cancel, never
-// Discard — Escape must never lose data (Fix 7 §1).
-var dataLossGuardOptions = []footer.GuardOption{
-	{Key: 's', Response: footer.DataLossSave},
-	{Key: 'd', Response: footer.DataLossDiscard},
-	{Key: 0, Response: footer.DataLossCancel}, // Esc → guardOptions[len-1] = Cancel
-}
+// Message types (ErrMsg, dirChangedMsg, fileChangedMsg, fileWatchReadError,
+// StoreReadyMsg, AutosaveSettledMsg, pendingFlushMsg) live in
+// workspace_msgs.go. Data-loss action disambiguation (actionKind,
+// pendingDataLoss, pendingDeleted) and the guard option var declarations
+// live in workspace_guardopts.go.
 
 // ---- Model ----
 
@@ -157,6 +82,7 @@ type Model struct {
 	filetree                filetree.Model
 	opentabs                opentabs.Model
 	editor                  markdownedit.Model
+	merge                   mergemode.State // active 3-way merge resolver (§4); mergemode.IsActive(m.merge) is the merge discriminant
 	footer                  footer.Model
 	focus                   pane
 	leftVisible             bool
@@ -183,11 +109,19 @@ type Model struct {
 	cancelWatch context.CancelFunc
 
 	// File ownership (D12). view is the single settled source of truth for which
-	// document is displayed (kind + path + docID + baseline) — see docview.go. The
+	// document is displayed (kind + path + docID) — see docview.go. The
 	// editor buffer always corresponds to it; it changes only at a settled
-	// transition or a gen-matched load success.
+	// transition or a gen-matched load success. WP5: no more per-tab size/
+	// mtime baseline cache — every divergence decision is driven by
+	// docstate.SyncState (Sync/Probe/Load's own comparison of recorded
+	// facts), never a workspace-side fingerprint.
 	view       docView
 	activeSave SaveIdentity
+
+	// diskChangedHint is true when a cheap stat-on-focus (G) detects that the
+	// current file changed on disk relative to its view baseline. The footer shows
+	// a passive hint; no modal is raised.
+	diskChangedHint bool
 
 	// pendingLoad gates the center pane blank during an in-flight async file
 	// load (preserving 16138bd's anti-flash) WITHOUT destroying the editor
@@ -203,6 +137,53 @@ type Model struct {
 	// saving/discarding. Never persisted across guard sessions.
 	pendingDataLoss pendingDataLoss
 
+	// pendingReopen holds a navigation request requestOpenPath deferred because
+	// it targeted the exact file an in-flight interactive save is writing
+	// (savingTarget, workspace_probe.go) — reloading it now could observe
+	// the atomic-rewrite's post-rename inode before docstate.Bind re-stamps it,
+	// orphaning the doc's history onto a fresh docID (§1.4.6). Flushed via
+	// flushPendingReopen once that save settles. active is an out-of-band
+	// validity bit (§1.7), never a sentinel on docID/path.
+	pendingReopen pendingReopen
+
+	// pendingConflict holds the identity (docID/path) and the conflicting
+	// disk observation (freshObs) captured when a FileSaveErrorMsg{Conflict:
+	// true} or a load-time/undo-unwind divergence is detected for the current
+	// document — never the theirs/ancestor bytes themselves, which are
+	// derived fresh at guard-raise or resolution time via GetBlob/Probe.
+	// Consumed by DataLossSaveAnyway / DataLossDiscard / DataLossMerge guard
+	// responses. Zero value = no pending conflict. Cleared on every guard
+	// resolution. (workspace_conflict.go)
+	pendingConflict pendingConflict
+
+	// pendingDeleted holds the docID/path of the current document when its file
+	// is detected missing on disk (deletion, or parent-dir removal). Raised by
+	// handleProbeResult (workspace_probe.go — probeDocCmd's callers: dirChangedMsg
+	// / the flush tick) and handleFileSaveErrorMsg (a save-time Missing outcome);
+	// consumed by DataLossSaveAnyway (recreate) / DataLossDiscard (purge) guard
+	// responses. Zero value = no pending deletion. (workspace_probe.go /
+	// workspace_deleted.go)
+	pendingDeleted pendingDeleted
+
+	// pendingRaced holds the two competing observations (Saved/Fresh) when a
+	// Materialize commits via the F5 swap-race path (MatResult{Committed:
+	// true, Raced: true}): our write landed for real, but a concurrent
+	// writer's displaced bytes were captured too. A DISTINCT guard from
+	// pendingConflict (critic R1) — never routed through the fresh-probe
+	// [D]/[M] handlers, which would re-read disk, find OUR already-committed
+	// bytes, and read Clean, silently dissolving the guard. Consumed by
+	// DataLossKeepMine / DataLossRestoreTheirs. Zero value = no pending race.
+	// (workspace_raced.go)
+	pendingRaced pendingRaced
+
+	// racedQueue holds raced-save outcomes for documents that were NOT
+	// displayed when their Materialize ack arrived (evict/quit-batch saves, a
+	// tab switched away mid-save): the guard raises the moment the doc is
+	// next displayed (drainRacedQueue at load-settle). A race must never
+	// resolve silently just because its tab was in the background (review
+	// finding). Lazily allocated; nil means empty. (workspace_raced.go)
+	racedQueue map[int64]pendingRaced
+
 	// Persistence (docstate). The active doc's VFS id lives in m.view.DocID().
 	store     *docstate.Store
 	chatDocID int64  // reserved chat sentinel doc
@@ -210,7 +191,20 @@ type Model struct {
 	loadGen   uint64 // monotonic load-request token; a FileLoadedMsg installs its
 	//                  content+identity only while its Gen == m.pendingLoad.gen, so a
 	//                  superseded/out-of-order read can never display the wrong doc.
-	//                  Never reset (generations are never reused).
+	//                  Never reset (generations are never reused). Loads keep this
+	//                  mechanism (rather than migrating onto epoch below) — Part IV
+	//                  §WP6 leaves that choice to the worker; loadGen is already the
+	//                  single, heavily-tested mechanism for load staleness.
+
+	// epoch is workspace-OWNED, in-memory, and bumps on every NON-journaled
+	// buffer transition: a load install, untitled/help switch, undo/redo
+	// MoveUndoPos, a merge/discard resolve ReplaceAll, or a recovery install
+	// (Part IV "the ticket + chokepoint"). Journaled edits (typing, dictation
+	// chunks once applied, drained broadcasts) do NOT bump it — those are
+	// already the CURRENT epoch's own content, not a wholesale replacement of
+	// it. Never reset; staleness is a session concept, never persisted to
+	// docstate. See viewTicket/applyViewResult (workspace_ticket.go).
+	epoch uint64
 
 	// fs is the filesystem shim for all .md disk I/O (read/write/rename/stat/
 	// readdir). A nil fs means the production default (vfs.Disk); the session
@@ -235,6 +229,17 @@ type pendingLoad struct {
 	active bool
 }
 
+// pendingReopen records a navigation request deferred by requestOpenPath. See
+// the Model field of the same name for the full contract. A fresh navigation
+// request always supersedes a stale deferral (requestOpenPath clears it
+// unconditionally before arming a new one), so only the most recently
+// requested reopen ever replays.
+type pendingReopen struct {
+	docID  int64
+	path   string
+	active bool
+}
+
 // New constructs the workspace page. New does NOT call Init — the runtime calls
 // Init when the page becomes active.
 func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps, workDir string, initialFiles []string) Model {
@@ -252,13 +257,14 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 			textedit.WithRegistry(reg),
 			textedit.WithResolver(resolver),
 		),
-		breadcrumb: breadcrumb.New(st, nil),
+		breadcrumb: breadcrumb.New(st).SetDir(workDir), // §1.4.9: inject launch dir, no per-render os.Getwd
 		filetree:   filetree.New(keys, st),
 		opentabs:   opentabs.New(keys, st),
 		editor: markdownedit.New(keys, st, caps,
 			markdownedit.WithRegistry(reg),
 			markdownedit.WithResolver(resolver),
 		).SetRoot(workDir), // static base #2 for relative-ref resolution (launch CWD)
+		merge:  mergemode.New(keys, st),
 		footer: footer.New(keys, st),
 		chat:   chat.New(keys, st, reg, resolver, caps),
 		search: searchcomp.New(keys, st,
@@ -302,15 +308,22 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 	return m
 }
 
-// WithFS injects the filesystem shim used for all .md disk I/O. Production never
-// calls it (the nil default resolves to vfs.Disk); the session fuzzer injects a
-// shared vfs.Mem so load/save/rename/readdir run fully in memory. The same shim is
-// pushed to the editor so its link/embed resolution + image reads see the SAME
-// files the workspace serves (§1.4.9) — otherwise in-memory cross-links would all
-// resolve as missing against real disk.
+// WithFS injects the filesystem shim used for all .md disk I/O. pkg/ui.NewApp
+// calls it once at construction with vfs.Disk{} (S6: one shared value, rather
+// than workspace and store each independently nil-defaulting); the session
+// fuzzer injects a shared vfs.Mem so load/save/rename/readdir run fully in
+// memory. The same shim is pushed to the editor (link/embed resolution + image
+// reads) and, if the store is already wired, to the store too — otherwise a
+// test or a future re-injection after StoreReadyMsg could strand the store on
+// a stale/disconnected FS while the workspace serves a different one, and
+// in-memory cross-links would all resolve as missing against real disk
+// (§1.4.9).
 func (m Model) WithFS(fs vfs.FS) Model {
 	m.fs = fs
 	m.editor = m.editor.SetFS(fs)
+	if m.store != nil {
+		m.store.UseFS(fs)
+	}
 	return m
 }
 
@@ -335,7 +348,7 @@ func (m Model) Init() tea.Cmd {
 		m.search.Init(),
 		m.dict.Init(),
 		loadDirCmd(m.fsys(), m.workDir),
-		openStoreCmd(),
+		openStoreCmd(m.fsys(), m.workDir),
 	}
 	if m.initErr != nil {
 		err := m.initErr
@@ -346,7 +359,7 @@ func (m Model) Init() tea.Cmd {
 		// in New; the last (gen==N) becomes the displayed doc, earlier ones open
 		// tabs. Issued directly (not beginLoad) because Init can't retain the gen
 		// increment — so loadFileCmd has exactly two callers: beginLoad and Init.
-		cmds = append(cmds, loadFileCmd(m.fsys(), context.Background(), path, uint64(i+1)))
+		cmds = append(cmds, loadFileCmd(m.store, m.fsys(), context.Background(), path, uint64(i+1)))
 	}
 	return tea.Batch(cmds...)
 }

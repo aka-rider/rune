@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
+	"rune/pkg/dictation"
 	"rune/pkg/microphone"
-	"rune/pkg/whisper"
 )
 
 func main() {
@@ -52,7 +52,7 @@ loop:
 		os.Exit(1)
 	}
 
-	wav := whisper.EncodePCM(pcm, 16000, 1, 16)
+	wav := dictation.EncodePCM(pcm, 16000, 1, 16)
 	if err := os.WriteFile(*output, wav, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "write: %v\n", err)
 		os.Exit(1)

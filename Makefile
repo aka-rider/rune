@@ -28,6 +28,10 @@ test-fuzz:
 	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
 	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
 	go test -tags fuzzing -count=1 -fuzz='^FuzzLoadReorder$$'                 -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzSaveRace$$'                    -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzDelayedViewResult$$'           -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzHumanSession$$'                -fuzztime=$(T) ./pkg/ui/pages/workspace
+	go test -tags fuzzing -count=1 -fuzz='^FuzzTwoSessionsSharedDoc$$'        -fuzztime=$(T) ./pkg/ui/pages/workspace
 
 release-snapshot:
 	goreleaser release --snapshot --clean

@@ -11,15 +11,18 @@ import (
 // points in workspace_nav.go and the gen-matched FileLoadedMsg success), never at
 // load start — so the editor buffer always corresponds to it.
 //
+// WP5: no more per-view size/mtime fingerprint — every divergence decision is
+// driven by docstate.SyncState (Sync/Probe/Load), never a workspace-cached
+// snapshot of disk metadata. docView keeps exactly kind/path/docID.
+//
 // Unexported fields + accessors make raw reads impossible outside this file, so
 // "untitled" and "help" are carried by the discriminant docKind, never by a magic
 // empty/sentinel string a reader must decode (§1.7). Branch on Kind()/IsX() for
 // behaviour; Path() is for disk I/O and tab/breadcrumb identity only.
 type docView struct {
-	kind     docKind
-	path     string       // valid only when kind == docFile
-	docID    int64        // VFS store id; 0 before the store binds an untitled
-	baseline diskBaseline // §1.4.7 fingerprint; valid only when kind == docFile
+	kind  docKind
+	path  string // valid only when kind == docFile
+	docID int64  // VFS store id; 0 before the store binds an untitled
 }
 
 // docKind discriminates what the editor is displaying. The zero value docUntitled
@@ -33,18 +36,15 @@ const (
 	docHelp                    // the read-only built-in help document
 )
 
-func fileView(path string, docID int64, b diskBaseline) docView {
-	return docView{kind: docFile, path: path, docID: docID, baseline: b}
-}
-func untitledView(docID int64) docView { return docView{kind: docUntitled, docID: docID} }
-func helpView() docView                { return docView{kind: docHelp} }
+func fileView(path string, docID int64) docView { return docView{kind: docFile, path: path, docID: docID} }
+func untitledView(docID int64) docView           { return docView{kind: docUntitled, docID: docID} }
+func helpView() docView                          { return docView{kind: docHelp} }
 
-func (v docView) Kind() docKind          { return v.kind }
-func (v docView) IsFile() bool           { return v.kind == docFile }
-func (v docView) IsUntitled() bool       { return v.kind == docUntitled }
-func (v docView) IsHelp() bool           { return v.kind == docHelp }
-func (v docView) DocID() int64           { return v.docID }
-func (v docView) Baseline() diskBaseline { return v.baseline }
+func (v docView) Kind() docKind    { return v.kind }
+func (v docView) IsFile() bool     { return v.kind == docFile }
+func (v docView) IsUntitled() bool { return v.kind == docUntitled }
+func (v docView) IsHelp() bool     { return v.kind == docHelp }
+func (v docView) DocID() int64     { return v.docID }
 
 // Path returns the disk path for a file, help.DocPath for help, or "" for an
 // untitled doc.
@@ -63,10 +63,6 @@ func (v docView) Path() string {
 func (v docView) Handle() opentabs.TabHandle {
 	return opentabs.TabHandle{DocID: v.docID, Path: v.Path()}
 }
-
-// withBaseline returns a copy with only the baseline replaced (kind/path/docID
-// preserved) — the ⌘S overwrite re-stamp (§1.4.7). Meaningful only on a docFile.
-func (v docView) withBaseline(b diskBaseline) docView { v.baseline = b; return v }
 
 // withDocID returns a copy with only the docID replaced — StoreReadyMsg late
 // binding of a file opened before the store was ready.

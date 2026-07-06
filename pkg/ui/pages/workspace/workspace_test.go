@@ -1,9 +1,18 @@
 package workspace
 
+// Shared test constructors and low-level Cmd-draining helpers used across
+// every *_test.go file in this package (§1.6 — the actual test CASES that
+// used to live alongside these are split into workspace_open_test.go,
+// workspace_saveident_test.go, workspace_layout_test.go,
+// workspace_dirtyflag_test.go, and workspace_filedelete_test.go, keeping
+// each file under the 500-LoC limit; this file now holds only what every
+// other test file depends on).
+
 import (
 	"errors"
-	"strings"
+	"path/filepath"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -11,8 +20,6 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
-	"rune/pkg/ui/components/filetree"
-	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
@@ -81,13 +88,26 @@ func newWorkspaceWithFiles(t *testing.T, files ...string) Model {
 	return m
 }
 
-// withStore wires a real file-backed VFS store into the workspace, exactly as
-// the app does once StoreReadyMsg arrives. This upgrades the startup untitled to
-// a durable VFS document (ensureScratchDoc), so untitled content survives tab
-// switches via reconstruction rather than the old in-memory stash.
+// withStore wires a real, in-memory-backed VFS store into the workspace,
+// exactly as the app does once StoreReadyMsg arrives. This upgrades the
+// startup untitled to a durable VFS document (ensureScratchDoc), so untitled
+// content survives tab switches via reconstruction rather than the old
+// in-memory stash. Defaults the workspace (and, via WithFS's propagation, the
+// store) to a fresh hermetic vfs.Mem when the caller hasn't already injected
+// one — WP5's loadFile drives real store.Load/Materialize calls, so an
+// un-wired nil-default to vfs.Disk{} would touch the real filesystem at
+// whatever (often relative) path a test passes. A caller that wants real disk
+// (a t.TempDir()-rooted test) still works: apply .WithFS(vfs.Disk{}) — or any
+// other vfs.FS — BEFORE or AFTER calling withStore; WithFS propagates to
+// m.store whenever it's already set, so the two can never strand on
+// different backends regardless of call order.
 func withStore(t *testing.T, m Model) Model {
 	t.Helper()
+	if m.fs == nil {
+		m = m.WithFS(vfs.NewMem())
+	}
 	store := docstate.NewTestStore(t)
+	store.UseFS(m.fsys())
 	m, cmd := m.Update(StoreReadyMsg{Store: store})
 	for _, msg := range execCmds(cmd) {
 		m, _ = m.Update(msg)
@@ -98,206 +118,54 @@ func withStore(t *testing.T, m Model) Model {
 // loadFile simulates loading a file into the workspace through the real load
 // generation handshake: arm the load (beginLoad, which stamps the current gen)
 // then deliver the matching FileLoadedMsg, so the displayed-document gen gate
-// accepts it. Delivering a raw FileLoadedMsg with no matching pending gen would be
-// dropped (it would only open a tab), so all simulated loads must go through here.
+// accepts it. Delivering a raw FileLoadedMsg with no matching pending gen would
+// be dropped (it would only open a tab), so all simulated loads must go through
+// here. When a store is wired, drives the REAL store.Load(path) — writing
+// content to the shared vfs.FS first, UNLESS the file already holds that exact
+// content (a caller that pre-arranged the file itself, e.g. simulating an
+// external rename): a redundant WriteFile would needlessly churn the inode
+// (vfs.Disk's atomic write always creates a fresh one), destroying a
+// same-inode invariant a test may be relying on — so tests exercise the actual
+// production identity/history/SyncState path, not a hand-built stand-in. A
+// path whose parent directory doesn't really exist (many tests use a
+// throwaway "/fake/..." path with vfs.Disk{}, not caring whether it's real)
+// makes the disk write/load fail — falls back to store.OpenPath, which is
+// safe even for a nonexistent file (path-keyed identity, inode=0), so the
+// test still gets a REAL, usable docID rather than stranding on a synthetic
+// zero one. Without a store at all (the pre-store-ready race window some
+// tests deliberately exercise), falls back to a synthetic LoadResult
+// mirroring loadFileCmd's own store==nil branch.
 func loadFile(m Model, path string, content string) Model {
 	m, _ = m.beginLoad(0, path)
-	m, _ = m.Update(FileLoadedMsg{Path: path, Content: []byte(content), Gen: m.loadGen})
+	var result docstate.LoadResult
+	if m.store != nil {
+		if dir := filepath.Dir(path); dir != "" && dir != "." {
+			_ = m.fsys().MkdirAll(dir, 0o755) // fire-and-forget: test setup
+		}
+		needsWrite := true
+		if existing, err := m.fsys().ReadFile(path); err == nil && string(existing) == content {
+			needsWrite = false
+		}
+		writeErr := error(nil)
+		if needsWrite {
+			writeErr = m.fsys().WriteFile(path, []byte(content), 0o644)
+		}
+		if writeErr == nil {
+			if loaded, err := m.store.Load(path); err == nil {
+				result = loaded
+			}
+		}
+		if result.DocID == 0 {
+			if ref, err := m.store.OpenPath(path); err == nil {
+				result = docstate.LoadResult{DocID: ref.ID, DiskContent: content, Recovered: content}
+			}
+		}
+	} else {
+		result = docstate.LoadResult{DiskContent: content, Recovered: content}
+	}
+	m, _ = m.Update(FileLoadedMsg{Path: path, Result: result, Gen: m.loadGen})
 	return m
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 4: Global keys do NOT produce text insertion in editor
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestGate4_GlobalKeysDoNotInsertText(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "hello")
-	m.focus = paneCenter
-
-	original := m.editor.Content()
-
-	// Send focus explorer key (ctrl+x).
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl})
-	if m.editor.Content() != original {
-		t.Fatal("ctrl+x (FocusExplorer) inserted text in editor")
-	}
-
-	// Send zen mode key (ctrl+o).
-	m.focus = paneCenter
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
-	if m.editor.Content() != original {
-		t.Fatal("ctrl+o (ZenMode) inserted text in editor")
-	}
-
-	// Send focus editor key (ctrl+e).
-	m.focus = paneCenter
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
-	if m.editor.Content() != original {
-		t.Fatal("ctrl+e (FocusEditor) inserted text in editor")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Gate 11: editor.WantsModalInput() routes keys to editor before globals
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestGate11_WantsModalInputRoutesToEditor(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "hello")
-	m.focus = paneCenter
-
-	// Verify the code path: if editor doesn't want modal, global keys work.
-	leftBefore := m.leftVisible
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
-	if m.leftVisible == leftBefore {
-		// Good - zen mode toggled, confirming global key path works when
-		// editor doesn't want modal.
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Same-file switch is a no-op (no load issued)
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestSameFileOpenIsNoop(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "content A")
-
-	// Open same file — should be a no-op (no cmd issued).
-	_, cmd := m.requestOpenPath(0, "a.txt")
-	if cmd != nil {
-		t.Fatal("opening same file should not issue a load cmd")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Bug fix: ^W on last tab resets editor to Untitled
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestCloseLastTabResetsToUntitled(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "content A")
-
-	// Only one tab — closing it must reset the editor to a fresh untitled buffer.
-	m, cmd := m.requestCloseCurrent()
-	msgs := execCmds(cmd)
-	for _, msg := range msgs {
-		m, cmd = m.Update(msg)
-		msgs = append(msgs, execCmds(cmd)...)
-	}
-
-	// Title should start with "Untitled" (owned by workspace title component — D6).
-	titleText := m.title.Text()
-	if !strings.HasPrefix(titleText, "Untitled") {
-		t.Fatalf("expected title starting with 'Untitled', got %q", titleText)
-	}
-	// Workspace must have no file path.
-	if m.view.Path() != "" {
-		t.Fatalf("expected empty file path after last-tab close, got %q", m.view.Path())
-	}
-	// Opentabs should show exactly one tab (the new untitled slot) with empty path.
-	if path := m.opentabs.PathAt(0); path != "" {
-		t.Fatalf("expected untitled tab with empty path, got %q", path)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A bind-new conflict (file already exists) keeps the buffer untitled and is
-// NOT silently bound — guards against the optimistic-bind clobber (rung 1).
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestBindNewConflict_KeepsBufferUntitled(t *testing.T) {
-	m := newTestWorkspace(t)
-	// Simulate an in-flight bind-new (naming an untitled).
-	m.activeSave = SaveIdentity{RequestID: "bind-1", InFlight: true}
-	m, _ = m.Update(FileSaveErrorMsg{
-		Path:      "foo.md",
-		RequestID: "bind-1",
-		Conflict:  true,
-		Err:       errors.New(`materialize "foo.md": file already exists`),
-	})
-	if m.view.Path() != "" {
-		t.Fatalf("expected buffer to stay untitled after bind conflict, got filePath %q", m.view.Path())
-	}
-	if m.activeSave.InFlight {
-		t.Fatal("expected activeSave cleared after bind conflict")
-	}
-	if m.pendingDataLoss.kind != actionNone {
-		t.Fatal("expected pending data-loss action cleared after a failed guard save")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FileSavedMsg with matching RequestID clears InFlight
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestFileSaved_MatchingIDClearsInFlight(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "content A")
-
-	var saveCmd tea.Cmd
-	m, saveCmd = m.startSave()
-	reqID := m.activeSave.RequestID
-	_ = saveCmd
-
-	if !m.activeSave.InFlight {
-		t.Fatal("expected InFlight=true")
-	}
-
-	m, _ = m.Update(FileSavedMsg{
-		Path:         "a.txt",
-		RequestID:    reqID,
-		SavedContent: []byte("content A"),
-	})
-
-	if m.activeSave.InFlight {
-		t.Fatal("expected InFlight=false after matching save ack")
-	}
-}
-
-func TestFileSaved_NonMatchingIDIgnored(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.txt", "content A")
-
-	var saveCmd tea.Cmd
-	m, saveCmd = m.startSave()
-	_ = saveCmd
-
-	if !m.activeSave.InFlight {
-		t.Fatal("expected InFlight=true")
-	}
-
-	m, _ = m.Update(FileSavedMsg{
-		Path:         "a.txt",
-		RequestID:    "wrong-id",
-		SavedContent: []byte("content A"),
-	})
-
-	if !m.activeSave.InFlight {
-		t.Fatal("expected InFlight still true after non-matching save ack")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// StoreReadyMsg sets the store and warns on degradation
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestStoreReadyMsg_SetsStore(t *testing.T) {
-	m := newTestWorkspace(t)
-	if m.store != nil {
-		t.Fatal("expected store nil before StoreReadyMsg")
-	}
-	// We can't easily open a real store in a unit test without cgo/sqlite;
-	// just verify the nil-store path is safe.
-	m, _ = m.Update(StoreReadyMsg{Store: nil, Warning: ""})
-	// No panic, store stays nil.
-	_ = m
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mouse-driven panel resizing
-// ─────────────────────────────────────────────────────────────────────────────
 
 // resizeWorkspace returns a workspace sized to the given dimensions with both
 // panes visible and at default widths. Width 100 is wide enough to satisfy the
@@ -312,294 +180,6 @@ func resizeWorkspace(t *testing.T, w, h int) Model {
 	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return m
-}
-
-func TestDividerAtPoint(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-
-	contentMidY := 5
-
-	cases := []struct {
-		name string
-		x    int
-		want dragState
-	}{
-		{"left divider inside col", m.leftPaneW - 1, dragLeft},
-		{"left divider outside col", m.leftPaneW, dragLeft},
-		{"right divider inside col", W - m.rightPaneW - 1, dragRight},
-		{"right divider outside col", W - m.rightPaneW, dragRight},
-		{"center mid", W / 2, dragNone},
-		{"left pane interior", 5, dragNone},
-		{"right pane interior", W - 5, dragNone},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, ok := m.dividerAtPoint(c.x, contentMidY)
-			if c.want == dragNone {
-				if ok {
-					t.Fatalf("x=%d: expected no divider, got %v", c.x, got)
-				}
-				return
-			}
-			if !ok || got != c.want {
-				t.Fatalf("x=%d: expected %v, got %v (ok=%v)", c.x, c.want, got, ok)
-			}
-		})
-	}
-
-	// Outside content height → no divider.
-	if _, ok := m.dividerAtPoint(m.leftPaneW-1, H); ok {
-		t.Fatal("y past content height should not resolve to a divider")
-	}
-}
-
-func TestDividerAtPointHiddenPanes(t *testing.T) {
-	const W, H = 100, 30
-	contentMidY := 5
-
-	t.Run("left hidden: only x=0 restores", func(t *testing.T) {
-		m := resizeWorkspace(t, W, H)
-		m.leftVisible = false
-		m = m.recalcLayout()
-
-		if d, ok := m.dividerAtPoint(0, contentMidY); !ok || d != dragLeft {
-			t.Fatalf("x=0 should be left restore, got d=%v ok=%v", d, ok)
-		}
-		// x=1 is editor content — must NOT trigger restore.
-		if d, ok := m.dividerAtPoint(1, contentMidY); ok {
-			t.Fatalf("x=1 must be editor content, got divider %v", d)
-		}
-	})
-
-	t.Run("right hidden: only x=W-1 restores", func(t *testing.T) {
-		m := resizeWorkspace(t, W, H)
-		m.rightVisible = false
-		m = m.recalcLayout()
-
-		if d, ok := m.dividerAtPoint(W-1, contentMidY); !ok || d != dragRight {
-			t.Fatalf("x=W-1 should be right restore, got d=%v ok=%v", d, ok)
-		}
-		// x=W-2 is editor content — must NOT trigger restore.
-		if d, ok := m.dividerAtPoint(W-2, contentMidY); ok {
-			t.Fatalf("x=W-2 must be editor content, got divider %v", d)
-		}
-	})
-
-	t.Run("both hidden", func(t *testing.T) {
-		m := resizeWorkspace(t, W, H)
-		m.leftVisible = false
-		m.rightVisible = false
-		m = m.recalcLayout()
-
-		if d, ok := m.dividerAtPoint(0, contentMidY); !ok || d != dragLeft {
-			t.Fatalf("x=0 should be left restore, got d=%v ok=%v", d, ok)
-		}
-		if d, ok := m.dividerAtPoint(W-1, contentMidY); !ok || d != dragRight {
-			t.Fatalf("x=W-1 should be right restore, got d=%v ok=%v", d, ok)
-		}
-		if d, ok := m.dividerAtPoint(W/2, contentMidY); ok {
-			t.Fatalf("center mid should not be divider, got %v", d)
-		}
-	})
-}
-
-func TestDragLeftResizeAndHide(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-
-	// Click on the left divider to start drag.
-	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
-	if m.drag != dragLeft {
-		t.Fatalf("expected drag=dragLeft after click on divider, got %v", m.drag)
-	}
-
-	// Shrink toward the floor: motion to X=20.
-	m, _ = m.Update(tea.MouseMotionMsg{X: 20, Y: 5, Button: tea.MouseLeft})
-	if !m.leftVisible || m.leftPaneW != 20 {
-		t.Fatalf("expected leftPaneW=20 leftVisible=true, got leftPaneW=%d leftVisible=%v",
-			m.leftPaneW, m.leftVisible)
-	}
-
-	// Cross below min → hide.
-	m, _ = m.Update(tea.MouseMotionMsg{X: minLeftPaneW - 1, Y: 5, Button: tea.MouseLeft})
-	if m.leftVisible {
-		t.Fatalf("expected leftVisible=false after motion below min, got true")
-	}
-	if m.drag != dragNone {
-		t.Fatalf("expected drag cleared after hiding, got %v", m.drag)
-	}
-	if m.leftPaneW != defaultLeftPaneW {
-		t.Fatalf("expected leftPaneW reset to default, got %d", m.leftPaneW)
-	}
-}
-
-func TestDragLeftFocusFollowsHide(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.focus = paneTree
-
-	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
-	m, _ = m.Update(tea.MouseMotionMsg{X: 1, Y: 5, Button: tea.MouseLeft})
-
-	if m.leftVisible {
-		t.Fatal("expected left hidden")
-	}
-	if m.focus != paneCenter {
-		t.Fatalf("expected focus moved to paneCenter, got %v", m.focus)
-	}
-}
-
-func TestDragLeftCenterFloor(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m.rightPaneW = defaultRightPaneW
-	m = m.recalcLayout()
-
-	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
-
-	// Try to expand far past the center floor.
-	m, _ = m.Update(tea.MouseMotionMsg{X: W - 10, Y: 5, Button: tea.MouseLeft})
-
-	maxLeft := W - defaultRightPaneW - minCenterW
-	if m.leftPaneW != maxLeft {
-		t.Fatalf("expected leftPaneW clamped to %d, got %d", maxLeft, m.leftPaneW)
-	}
-}
-
-func TestDragRightResizeAndHide(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-
-	rightStart := W - m.rightPaneW
-	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
-	if m.drag != dragRight {
-		t.Fatalf("expected drag=dragRight, got %v", m.drag)
-	}
-
-	// Shrink: motion further right.
-	m, _ = m.Update(tea.MouseMotionMsg{X: W - 25, Y: 5, Button: tea.MouseLeft})
-	if !m.rightVisible || m.rightPaneW != 25 {
-		t.Fatalf("expected rightPaneW=25 rightVisible=true, got rightPaneW=%d rightVisible=%v",
-			m.rightPaneW, m.rightVisible)
-	}
-
-	// Cross below min → hide.
-	m, _ = m.Update(tea.MouseMotionMsg{X: W - (minRightPaneW - 1), Y: 5, Button: tea.MouseLeft})
-	if m.rightVisible {
-		t.Fatal("expected rightVisible=false after motion below min")
-	}
-	if m.drag != dragNone {
-		t.Fatalf("expected drag cleared, got %v", m.drag)
-	}
-	if m.rightPaneW != defaultRightPaneW {
-		t.Fatalf("expected rightPaneW reset to default, got %d", m.rightPaneW)
-	}
-}
-
-func TestDragRightFocusFollowsHide(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-	m.focus = paneChat
-
-	rightStart := W - m.rightPaneW
-	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
-	m, _ = m.Update(tea.MouseMotionMsg{X: W - 1, Y: 5, Button: tea.MouseLeft})
-
-	if m.rightVisible {
-		t.Fatal("expected right hidden")
-	}
-	if m.focus != paneCenter {
-		t.Fatalf("expected focus moved to paneCenter, got %v", m.focus)
-	}
-}
-
-func TestDragRightCenterFloor(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-
-	rightStart := W - m.rightPaneW
-	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
-	// Drag the right divider far to the left, exceeding center floor.
-	m, _ = m.Update(tea.MouseMotionMsg{X: 10, Y: 5, Button: tea.MouseLeft})
-
-	maxRight := W - defaultLeftPaneW - minCenterW
-	if m.rightPaneW != maxRight {
-		t.Fatalf("expected rightPaneW clamped to %d, got %d", maxRight, m.rightPaneW)
-	}
-}
-
-func TestRestoreHiddenLeftOnEdgeClick(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.leftVisible = false
-	m = m.recalcLayout()
-
-	m, _ = m.Update(tea.MouseClickMsg{X: 0, Y: 5, Button: tea.MouseLeft})
-
-	if !m.leftVisible {
-		t.Fatal("expected leftVisible=true after edge click")
-	}
-	if m.leftPaneW != minLeftPaneW {
-		t.Fatalf("expected leftPaneW=minLeftPaneW=%d, got %d", minLeftPaneW, m.leftPaneW)
-	}
-}
-
-func TestRestoreHiddenRightOnEdgeClick(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = false
-	m = m.recalcLayout()
-
-	m, _ = m.Update(tea.MouseClickMsg{X: W - 1, Y: 5, Button: tea.MouseLeft})
-
-	if !m.rightVisible {
-		t.Fatal("expected rightVisible=true after edge click")
-	}
-	if m.rightPaneW != minRightPaneW {
-		t.Fatalf("expected rightPaneW=minRightPaneW=%d, got %d", minRightPaneW, m.rightPaneW)
-	}
-}
-
-func TestMotionWithoutDragDoesNotResize(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.rightVisible = true
-	m = m.recalcLayout()
-
-	beforeLeft := m.leftPaneW
-	beforeRight := m.rightPaneW
-
-	m, _ = m.Update(tea.MouseMotionMsg{X: 40, Y: 5, Button: tea.MouseLeft})
-
-	if m.leftPaneW != beforeLeft || m.rightPaneW != beforeRight {
-		t.Fatalf("motion without drag changed widths: leftPaneW %d→%d rightPaneW %d→%d",
-			beforeLeft, m.leftPaneW, beforeRight, m.rightPaneW)
-	}
-}
-
-func TestClickClearsStaleDrag(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m.drag = dragLeft
-
-	// Click in the editor interior (not on a divider).
-	m, _ = m.Update(tea.MouseClickMsg{X: W / 2, Y: 5, Button: tea.MouseLeft})
-
-	if m.drag != dragNone {
-		t.Fatalf("expected drag cleared by non-divider click, got %v", m.drag)
-	}
 }
 
 // execCmds executes a tea.Cmd and collects all resulting messages.
@@ -622,36 +202,42 @@ func execCmds(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
-var errTest = errors.New("test error")
-
-func TestLayoutFooterAlwaysVisible(t *testing.T) {
-	m := newTestWorkspace(t)
-	view := m.View()
-	lines := strings.Split(view.Content, "\n")
-	if len(lines) != 24 {
-		t.Fatalf("expected 24 lines, got %d", len(lines))
+// execFastCmds is execCmds for a Cmd batch that mixes fast, deterministic
+// leaves (a probeDocCmd's single fsys.Stat/ReadFile) with the real directory
+// watcher Cmd (workspace_watch.go's watchDirCmd) — dirChangedMsg's and
+// fileChangedMsg's handlers both re-arm startWatch alongside issuing a probe.
+// The real watcher blocks indefinitely on a live fsnotify channel with no
+// timeout of its own; execCmds (or drainCmd, which calls it) would hang a
+// test forever waiting for a filesystem event that never comes. Each leaf
+// gets a short bounded window; a leaf that doesn't return in time (the
+// watcher) is silently dropped rather than awaited — its goroutine is
+// abandoned, which is fine in a short-lived test process.
+func execFastCmds(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
 	}
-	lastLine := lines[len(lines)-1]
-	if !strings.Contains(lastLine, "Ln") {
-		t.Fatalf("footer not on last line: %q", lastLine)
-	}
-}
-
-func TestLayoutFooterVisibleAfterResize(t *testing.T) {
-	m := newTestWorkspace(t)
-	for _, size := range []struct{ w, h int }{{40, 10}, {120, 50}, {80, 24}} {
-		m, _ = m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		view := m.View()
-		lines := strings.Split(view.Content, "\n")
-		if len(lines) != size.h {
-			t.Fatalf("at %dx%d: expected %d lines, got %d", size.w, size.h, size.h, len(lines))
+	type result struct{ msg tea.Msg }
+	ch := make(chan result, 1)
+	go func() { ch <- result{cmd()} }()
+	select {
+	case r := <-ch:
+		if r.msg == nil {
+			return nil
 		}
+		if batch, ok := r.msg.(tea.BatchMsg); ok {
+			var msgs []tea.Msg
+			for _, c := range batch {
+				msgs = append(msgs, execFastCmds(c)...)
+			}
+			return msgs
+		}
+		return []tea.Msg{r.msg}
+	case <-time.After(200 * time.Millisecond):
+		return nil // leaf never returned (the real fsnotify watcher) — drop it
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dirty flag: edit sets it, save clears it, quit guard fires when dirty
-// ─────────────────────────────────────────────────────────────────────────────
+var errTest = errors.New("test error")
 
 // focusEditor sets workspace focus to the editor pane and flushes the focus
 // state to all children via a WindowSizeMsg. Required because applyFocus runs
@@ -661,471 +247,4 @@ func focusEditor(m Model) Model {
 	m.focus = paneCenter
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
-}
-
-func TestDirtyFlagSetOnEdit(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = withStore(t, m)
-	m = loadFile(m, "note.md", "hello")
-	m = focusEditor(m)
-
-	if m.opentabs.HasDirty() {
-		t.Fatal("tab should not be dirty after file load")
-	}
-
-	// Type a character — buffer revision advances, dirty flag must be set.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
-
-	if !m.opentabs.HasDirty() {
-		t.Fatal("tab must be dirty after edit")
-	}
-}
-
-func TestDirtyFlagClearedOnSave(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = withStore(t, m)
-	m = loadFile(m, "note.md", "hello")
-	m = focusEditor(m)
-
-	// Edit to make dirty.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
-	if !m.opentabs.HasDirty() {
-		t.Fatal("tab must be dirty after edit")
-	}
-
-	// Start a save to get a request ID, then deliver the completion message. The ack
-	// carries SavedSeq (the journal position captured at save-start) as production does.
-	m, _ = m.startSave()
-	reqID := m.activeSave.RequestID
-	m, _ = m.Update(FileSavedMsg{Path: "note.md", RequestID: reqID, SavedSeq: m.savedSeqFor(m.view.DocID())})
-
-	if m.opentabs.HasDirty() {
-		t.Fatal("tab must be clean after save")
-	}
-}
-
-func TestQuitGuardAppearsWhenDirty(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = withStore(t, m)
-	m = loadFile(m, "note.md", "hello")
-	m = focusEditor(m)
-
-	// Edit to make dirty.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'a'})
-	if !m.opentabs.HasDirty() {
-		t.Fatal("tab must be dirty after edit (prerequisite)")
-	}
-
-	// ConfirmQuitMsg must raise the guard, not quit.
-	m, cmd := m.Update(footer.ConfirmQuitMsg{})
-	if cmd != nil {
-		// The returned cmd must not be tea.Quit — execute it and check.
-		result := execCmds(cmd)
-		for _, msg := range result {
-			if _, isQuit := msg.(tea.QuitMsg); isQuit {
-				t.Fatal("workspace quit immediately with unsaved changes — guard not raised")
-			}
-		}
-	}
-	if !m.footer.InGuard() {
-		t.Fatal("footer guard must be visible after ConfirmQuitMsg with dirty file")
-	}
-}
-
-func TestCursorMovementDoesNotSetDirty(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "note.md", "hello world")
-	m = focusEditor(m)
-
-	if m.opentabs.HasDirty() {
-		t.Fatal("tab should not be dirty after file load")
-	}
-
-	navKeys := []tea.KeyPressMsg{
-		{Code: tea.KeyRight},
-		{Code: tea.KeyLeft},
-		{Code: tea.KeyDown},
-		{Code: tea.KeyUp},
-		{Code: tea.KeyEnd},
-		{Code: tea.KeyHome},
-	}
-	for _, k := range navKeys {
-		m, _ = m.Update(k)
-		if m.opentabs.HasDirty() {
-			t.Fatalf("cursor movement (%v) must not set dirty flag", k)
-		}
-	}
-}
-
-func TestQuitProceedsWhenClean(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "note.md", "hello")
-
-	// No edits — ConfirmQuitMsg must not raise a guard (proceed directly to quit).
-	m, cmd := m.Update(footer.ConfirmQuitMsg{})
-	if m.footer.InGuard() {
-		t.Fatal("guard must not appear when file is clean")
-	}
-	// A non-nil cmd means the quit sequence was initiated.
-	if cmd == nil {
-		t.Fatal("expected a quit cmd for clean file")
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mouse click routing: filetree
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestMouseClickOnUnfocusedFiletreeMovesAndSelects verifies the invariant:
-// a left click on the filetree pane while another pane is focused must (a)
-// switch focus to paneTree AND (b) move the filetree cursor to the clicked row
-// in the same Update — not defer it to the second click.
-//
-// This is a regression test for the bug where handleMouseClick set m.focus but
-// did not forward the click to the filetree, so the first click silently left
-// the cursor at its previous position and only the second click moved it.
-func TestMouseClickOnUnfocusedFiletreeMovesAndSelects(t *testing.T) {
-	const W, H = 100, 30
-	m := resizeWorkspace(t, W, H)
-	m = m.setFocus(paneCenter) // start with editor focused
-
-	// Populate the filetree with three entries.
-	entries := []filetree.Entry{
-		{Name: "alpha.md", Path: "/test/alpha.md"},
-		{Name: "beta.md", Path: "/test/beta.md"},
-		{Name: "gamma.md", Path: "/test/gamma.md"},
-	}
-	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: entries})
-	// DirLoadedMsg resets the cursor to 0.
-
-	// Click on the second entry (row index 1).
-	// recalcLayout sets filetree offsetY=1 via SetOffset(1,1), so:
-	//   relY = clickY - offsetY = 3 - 1 = 2  →  idx = top + (relY-1) = 0 + 1 = 1
-	clickX := m.leftPaneW / 2
-	const clickY = 3
-	m, _ = m.Update(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
-
-	if m.focus != paneTree {
-		t.Fatalf("after click: focus=%v, want paneTree", m.focus)
-	}
-	if !m.filetree.Focused() {
-		t.Fatal("after click: filetree.Focused()=false, want true")
-	}
-	// Regression check: old code focused the pane but discarded the click, so
-	// the cursor stayed at 0. With the fix, cursor must have moved to 1.
-	if got := m.filetree.Cursor(); got != 1 {
-		t.Fatalf("first click on row 1: cursor=%d, want 1", got)
-	}
-
-	// Second click at the same position: cursor is already at row 1, so the
-	// filetree emits FileSelectedMsg (no cursor move).
-	m, cmd := m.Update(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
-	if got := m.filetree.Cursor(); got != 1 {
-		t.Fatalf("second click: cursor moved to %d, want 1", got)
-	}
-	var selectedPath string
-	for _, msg := range execCmds(cmd) {
-		if sel, ok := msg.(filetree.FileSelectedMsg); ok {
-			selectedPath = sel.Path
-		}
-	}
-	if selectedPath != "/test/beta.md" {
-		t.Fatalf("second click: FileSelectedMsg.Path=%q, want /test/beta.md", selectedPath)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Delete in explorer (trash)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestFileDeletedMsg_ClosesActiveTab verifies that FileDeletedMsg for the active
-// document closes its tab and transitions the editor away from the deleted path.
-func TestFileDeletedMsg_ClosesActiveTab(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-	if m.view.Path() != "a.md" {
-		t.Fatalf("prerequisite: active path = %q, want a.md", m.view.Path())
-	}
-
-	m, cmd := m.Update(FileDeletedMsg{Path: "a.md"})
-	// Drive any resulting Cmds (executeClose may issue a CreateUntitled cmd).
-	for _, msg := range execCmds(cmd) {
-		m, _ = m.Update(msg)
-	}
-
-	if m.view.Path() == "a.md" {
-		t.Fatal("active view path is still a.md after FileDeletedMsg — tab not closed")
-	}
-}
-
-// TestFileDeletedMsg_RemovesBackgroundTab verifies that FileDeletedMsg for a
-// background tab removes that tab without disturbing the active view.
-func TestFileDeletedMsg_RemovesBackgroundTab(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-	m = loadFile(m, "b.md", "content B") // second tab; b.md is now active
-
-	if m.view.Path() != "b.md" {
-		t.Fatalf("prerequisite: active path = %q, want b.md", m.view.Path())
-	}
-	tabsBefore := m.opentabs.Len()
-
-	// a.md is the background tab — deleting it must not change the active view.
-	m, _ = m.Update(FileDeletedMsg{Path: "a.md"})
-
-	if m.view.Path() != "b.md" {
-		t.Fatalf("active view changed to %q after background-tab delete — should stay b.md", m.view.Path())
-	}
-	if m.opentabs.Len() != tabsBefore-1 {
-		t.Fatalf("opentabs.Len() = %d, want %d (background tab not removed)", m.opentabs.Len(), tabsBefore-1)
-	}
-}
-
-// TestFileDeleteErrorMsg_ShowsFooterError verifies that FileDeleteErrorMsg
-// surfaces the error in the footer and does not close any tab.
-func TestFileDeleteErrorMsg_ShowsFooterError(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-	pathBefore := m.view.Path()
-
-	m, _ = m.Update(FileDeleteErrorMsg{
-		Path: "a.md",
-		Err:  errors.New(`trash "a.md": exit status 1`),
-	})
-
-	if m.view.Path() != pathBefore {
-		t.Fatalf("active view changed to %q — should not happen on error", m.view.Path())
-	}
-	footerView := m.footer.View()
-	if !strings.Contains(footerView, `trash "a.md"`) {
-		t.Fatalf("footer does not show error: %q", footerView)
-	}
-}
-
-// TestFileDeleteRequestedMsg_RaisesGuard verifies that FileDeleteRequestedMsg
-// for a clean (non-dirty-active) file raises the trash confirmation guard without
-// touching the filetree entry yet (guard-first, §1.4.4).
-func TestFileDeleteRequestedMsg_RaisesGuard(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-
-	m, _ = m.Update(filetree.DirLoadedMsg{
-		Root: ".",
-		Entries: []filetree.Entry{
-			{Name: "b.md", Path: "b.md"},
-		},
-	})
-	entriesBefore := m.filetree.Len()
-
-	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
-
-	if m.filetree.Len() != entriesBefore {
-		t.Fatalf("filetree.Len() = %d, want %d — must not remove entry before guard confirmation",
-			m.filetree.Len(), entriesBefore)
-	}
-	if !strings.Contains(m.footer.View(), "Trash file?") {
-		t.Fatalf("footer does not show trash guard: %q", m.footer.View())
-	}
-}
-
-// TestFileDeleteGuardConfirm_RemovesEntryAndIssuesCmd verifies that
-// DataLossGuardResponseMsg{DataLossTrash} triggers optimistic removal and a
-// fileTrashCmd (§5.4).
-func TestFileDeleteGuardConfirm_RemovesEntryAndIssuesCmd(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-
-	m, _ = m.Update(filetree.DirLoadedMsg{
-		Root: ".",
-		Entries: []filetree.Entry{
-			{Name: "b.md", Path: "b.md"},
-		},
-	})
-	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
-
-	entriesAfterGuard := m.filetree.Len()
-	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossTrash})
-
-	if m.filetree.Len() != entriesAfterGuard-1 {
-		t.Fatalf("filetree.Len() = %d, want %d — entry not removed after guard confirm",
-			m.filetree.Len(), entriesAfterGuard-1)
-	}
-	if cmd == nil {
-		t.Fatal("expected a fileTrashCmd to be issued, got nil Cmd")
-	}
-}
-
-// TestFileDeleteGuardCancel_LeavesFiletreeUnchanged verifies that
-// DataLossGuardResponseMsg{DataLossCancel} leaves the filetree intact.
-func TestFileDeleteGuardCancel_LeavesFiletreeUnchanged(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "a.md", "content A")
-
-	m, _ = m.Update(filetree.DirLoadedMsg{
-		Root: ".",
-		Entries: []filetree.Entry{
-			{Name: "b.md", Path: "b.md"},
-		},
-	})
-	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "b.md"})
-
-	entriesAfterGuard := m.filetree.Len()
-	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-
-	if m.filetree.Len() != entriesAfterGuard {
-		t.Fatalf("filetree.Len() = %d, want %d — cancel must not change filetree",
-			m.filetree.Len(), entriesAfterGuard)
-	}
-	if strings.Contains(m.footer.View(), "Trash file?") {
-		t.Fatal("guard still visible after cancel")
-	}
-	_ = cmd // cancel produces no trash cmd; batch may contain footer state Cmd
-}
-
-// TestFileDeleteRequestedMsg_DirtyActiveDoc_BlocksTrash verifies that sending
-// FileDeleteRequestedMsg for the currently active dirty document does NOT
-// optimistically remove the entry from the filetree (§1.4.4).
-func TestFileDeleteRequestedMsg_DirtyActiveDoc_BlocksTrash(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = withStore(t, m)
-	m = loadFile(m, "a.md", "content A")
-	m = focusEditor(m)
-
-	// Type to make the buffer dirty.
-	m, _ = m.Update(tea.KeyPressMsg{Code: 'x'})
-	if !m.opentabs.HasDirty() {
-		t.Fatal("prerequisite: buffer must be dirty before testing the guard")
-	}
-
-	// Populate filetree so there is an entry to check.
-	m, _ = m.Update(filetree.DirLoadedMsg{
-		Root: ".",
-		Entries: []filetree.Entry{
-			{Name: "a.md", Path: "a.md"},
-		},
-	})
-	entriesBefore := m.filetree.Len()
-
-	m, _ = m.Update(filetree.FileDeleteRequestedMsg{Path: "a.md"})
-
-	if m.filetree.Len() != entriesBefore {
-		t.Fatalf("filetree.Len() = %d, want %d — dirty guard did not block optimistic remove",
-			m.filetree.Len(), entriesBefore)
-	}
-	footerView := m.footer.View()
-	if !strings.Contains(footerView, "Unsaved changes") {
-		t.Fatalf("footer does not show unsaved-changes message: %q", footerView)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Filetree reload after dir changes and internal file mutations (Fix A / B1 / B2)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// TestDirChangedMsg_EmitsReloadAndKeepsWatchedDir verifies Fix A: dirChangedMsg
-// emits a non-nil Cmd (containing the reloadDirCmd + a watcher restart) and
-// leaves m.watchedDir set so subsequent changes are still tracked.
-// The goroutine restart itself cannot be verified without real FS events; this
-// test covers the observable model-level invariants.
-func TestDirChangedMsg_EmitsReloadAndKeepsWatchedDir(t *testing.T) {
-	m := newTestWorkspace(t)
-	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: nil})
-	if m.watchedDir != "/test" {
-		t.Fatalf("prerequisite: watchedDir = %q, want /test", m.watchedDir)
-	}
-
-	m2, cmd := m.Update(dirChangedMsg{})
-	if cmd == nil {
-		t.Fatal("dirChangedMsg must return a non-nil Cmd (at least reloadDirCmd)")
-	}
-	if m2.watchedDir != "/test" {
-		t.Fatalf("watchedDir after dirChangedMsg = %q, want /test", m2.watchedDir)
-	}
-}
-
-// TestFileSavedMsg_BindNew_RefreshesFiletree verifies Fix B1: after a ^n file
-// creation (FileSavedMsg{BindNew: true}), executing the returned Cmd produces a
-// DirReloadedMsg that includes the new file. Without Fix B1 the Cmd is nil and
-// the filetree never learns about the new entry.
-func TestFileSavedMsg_BindNew_RefreshesFiletree(t *testing.T) {
-	fsys := vfs.NewMem()
-	if err := fsys.WriteFile("/test/new.md", []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := newTestWorkspace(t)
-	m = m.WithFS(fsys)
-	// Populate the filetree root so Root() returns "/test".
-	m, _ = m.Update(filetree.DirLoadedMsg{Root: "/test", Entries: nil})
-
-	// Simulate a BindNew save: mark an in-flight save, then acknowledge it.
-	reqID := "test-bind-new"
-	m.activeSave = SaveIdentity{RequestID: reqID, InFlight: true}
-
-	_, cmd := m.Update(FileSavedMsg{
-		Path:         "/test/new.md",
-		RequestID:    reqID,
-		BindNew:      true,
-		SavedContent: []byte("hello"),
-	})
-
-	// execCmds is safe here: the BindNew handler only adds reloadDirCmd (no
-	// startWatch), and reloadDirCmd on a vfs.Mem returns immediately.
-	var gotReload bool
-	for _, msg := range execCmds(cmd) {
-		rld, ok := msg.(filetree.DirReloadedMsg)
-		if !ok {
-			continue
-		}
-		gotReload = true
-		for _, e := range rld.Entries {
-			if e.Name == "new.md" {
-				return // new file present in the reload — fix is working
-			}
-		}
-		t.Fatalf("DirReloadedMsg.Entries = %v, want entry named new.md", rld.Entries)
-	}
-	if !gotReload {
-		t.Fatal("FileSavedMsg{BindNew:true} produced no DirReloadedMsg — filetree will never show the new file")
-	}
-}
-
-// TestFileRenamedMsg_RefreshesFiletree verifies Fix B2: after a file rename,
-// executing the returned Cmd produces a DirReloadedMsg with the new name.
-// Without Fix B2 no reload is emitted and the filetree keeps the old name.
-func TestFileRenamedMsg_RefreshesFiletree(t *testing.T) {
-	fsys := vfs.NewMem()
-	// Only the renamed-to path needs to exist for reloadDirCmd.
-	if err := fsys.WriteFile("/test/new.md", []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m := newTestWorkspace(t)
-	m = m.WithFS(fsys)
-	m, _ = m.Update(filetree.DirLoadedMsg{
-		Root:    "/test",
-		Entries: []filetree.Entry{{Name: "old.md", Path: "/test/old.md"}},
-	})
-	m = loadFile(m, "/test/old.md", "hello")
-
-	_, cmd := m.Update(FileRenamedMsg{OldPath: "/test/old.md", NewPath: "/test/new.md"})
-
-	// execCmds is safe: FileRenamedMsg handler adds only reloadDirCmd (no startWatch).
-	var gotReload bool
-	for _, msg := range execCmds(cmd) {
-		rld, ok := msg.(filetree.DirReloadedMsg)
-		if !ok {
-			continue
-		}
-		gotReload = true
-		for _, e := range rld.Entries {
-			if e.Name == "new.md" {
-				return // renamed file present — fix is working
-			}
-		}
-		t.Fatalf("DirReloadedMsg.Entries = %v, want entry named new.md", rld.Entries)
-	}
-	if !gotReload {
-		t.Fatal("FileRenamedMsg produced no DirReloadedMsg — filetree will never show the renamed file")
-	}
 }

@@ -1,6 +1,8 @@
 package display
 
 import (
+	"bytes"
+
 	"github.com/yuin/goldmark/ast"
 	east "github.com/yuin/goldmark/extension/ast"
 )
@@ -102,7 +104,33 @@ func buildInlineSpans(node ast.Node, src []byte, marks InlineMarks) []mdSpan {
 func buildChildSpans(node ast.Node, src []byte, marks InlineMarks) []mdSpan {
 	var out []mdSpan
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-		out = append(out, buildInlineSpans(child, src, marks)...)
+		out = appendCoalesced(out, buildInlineSpans(child, src, marks)...)
+	}
+	return out
+}
+
+// appendCoalesced merges a new plain-text span into the previous one when they
+// are byte-contiguous, same marks, and neither yet carries hidden delimiter
+// bytes on the touching edge. Goldmark's unmatched-delimiter cleanup
+// (ast.MergeOrReplaceTextSegment, which only merges a leftover delimiter into
+// a PRECEDING Text sibling, never a following one) can hand back two sibling
+// ast.Text nodes for one physically uninterrupted run — e.g. "*00000" when
+// the leading "*" never pairs with a closer anywhere in the paragraph (BUG5).
+// Restricted to TokenText so it never touches an already-classified content
+// span (code/link/image/wikilink).
+func appendCoalesced(out []mdSpan, spans ...mdSpan) []mdSpan {
+	for _, sp := range spans {
+		if n := len(out); n > 0 {
+			prev := &out[n-1]
+			if prev.kind == TokenText && sp.kind == TokenText &&
+				prev.marks == sp.marks && prev.end == sp.start &&
+				prev.delimRight == 0 && sp.delimLeft == 0 {
+				prev.end = sp.end
+				prev.text += sp.text
+				continue
+			}
+		}
+		out = append(out, sp)
 	}
 	return out
 }
@@ -183,6 +211,30 @@ func codeSpanSpans(n *ast.CodeSpan, src []byte, marks InlineMarks) []mdSpan {
 	}}
 }
 
+// absorbOpenDelim extends children[0] backward to cover its node's own
+// opening delimiter, using the AST's own recorded position (nodePos —
+// goldmark's link/image parser sets ast.Node.Pos() to the exact byte offset
+// of "[" or "![", parser/link.go) rather than assuming a fixed byte count.
+// The absorbed range is clamped to the child's own line: a SyntaxSpan's
+// hidden prefix cannot cross a buffer line boundary (SyntaxLine/
+// buildSyntaxLine models hidden ranges per line), so if the true delimiter
+// sits on an earlier line (a label starting right after a soft break), it is
+// left as ordinary text on its own line instead of corrupting this span's
+// BufferStart. fallbackWidth reproduces the previous fixed-width behavior if
+// nodePos is ever the documented -1 "unset" sentinel.
+func absorbOpenDelim(src []byte, children []mdSpan, nodePos, fallbackWidth int) {
+	origStart := children[0].start
+	newStart := origStart - fallbackWidth
+	if nodePos >= 0 && nodePos < origStart {
+		newStart = nodePos
+		if nl := bytes.LastIndexByte(src[nodePos:origStart], '\n'); nl >= 0 {
+			newStart = nodePos + nl + 1 // clamp to start of origStart's own line
+		}
+	}
+	children[0].delimLeft += origStart - newStart
+	children[0].start = newStart
+}
+
 // linkSpans flattens [text](url) (and reference/shortcut links) into spans, then
 // folds the opening [ and closing ](url) into the edge spans' delimiters.
 func linkSpans(n *ast.Link, src []byte, marks InlineMarks) []mdSpan {
@@ -200,8 +252,7 @@ func linkSpans(n *ast.Link, src []byte, marks InlineMarks) []mdSpan {
 			children[i].linkURL = string(n.Destination)
 		}
 	}
-	children[0].start--
-	children[0].delimLeft++
+	absorbOpenDelim(src, children, n.Pos(), 1)
 	last := len(children) - 1
 	children[last].delimRight += end - children[last].end
 	children[last].end = end
@@ -222,8 +273,7 @@ func imageSpans(n *ast.Image, src []byte, marks InlineMarks) []mdSpan {
 		children[i].kind = TokenImage
 		children[i].linkURL = url
 	}
-	children[0].start -= 2 // ![
-	children[0].delimLeft += 2
+	absorbOpenDelim(src, children, n.Pos(), 2)
 	last := len(children) - 1
 	children[last].delimRight += end - children[last].end
 	children[last].end = end

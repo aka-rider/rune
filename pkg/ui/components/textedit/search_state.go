@@ -6,6 +6,17 @@ import (
 	"rune/pkg/editor/search"
 )
 
+// ActiveMatch identifies which search match (if any) currently has focus.
+// Valid carries "is a match active" out of band (§1.7) instead of overloading
+// Index with a -1 sentinel — the class of bug where a missed -1 check lets an
+// invalid index flow into a slice bound or, here, an equality comparison
+// (applyMatchOverlay's mi == activeIdx) that would silently mismatch instead
+// of failing loudly.
+type ActiveMatch struct {
+	Index int
+	Valid bool
+}
+
 // SetSearchQuery updates the set of search matches for the given query.
 // It recomputes matches against the current buffer and filters to only those
 // that cover at least one rendered cell (so hidden markdown syntax is excluded).
@@ -16,14 +27,14 @@ func (m Model) SetSearchQuery(query string, caseInsensitive bool) Model {
 
 	if query == "" {
 		m.searchMatches = nil
-		m.searchActive = -1
+		m.searchActive = ActiveMatch{}
 		m.searchRev = m.rev
 		return m
 	}
 
 	rawMatches := search.Find(m.buf.Content(), query, caseInsensitive)
 	m.searchMatches = m.filterVisibleMatches(rawMatches)
-	m.searchActive = -1
+	m.searchActive = ActiveMatch{}
 	m.searchRev = m.rev
 	return m
 }
@@ -88,23 +99,23 @@ func (m Model) FindNext() Model {
 		return m
 	}
 
-	if m.searchActive == -1 {
+	if !m.searchActive.Valid {
 		// Pick nearest match at or after the primary cursor.
 		cursorOff := m.cursors.Primary().Position
 		found := false
 		for i, sm := range m.searchMatches {
 			if sm.Start >= cursorOff {
-				m.searchActive = i
+				m.searchActive = ActiveMatch{Index: i, Valid: true}
 				found = true
 				break
 			}
 		}
 		if !found {
 			// Wrap: use first match.
-			m.searchActive = 0
+			m.searchActive = ActiveMatch{Index: 0, Valid: true}
 		}
 	} else {
-		m.searchActive = (m.searchActive + 1) % len(m.searchMatches)
+		m.searchActive = ActiveMatch{Index: (m.searchActive.Index + 1) % len(m.searchMatches), Valid: true}
 	}
 
 	return m.selectActiveMatch()
@@ -119,23 +130,23 @@ func (m Model) FindPrev() Model {
 		return m
 	}
 
-	if m.searchActive == -1 {
+	if !m.searchActive.Valid {
 		// Pick nearest match at or before the primary cursor.
 		cursorOff := m.cursors.Primary().Position
 		found := false
 		for i := len(m.searchMatches) - 1; i >= 0; i-- {
 			if m.searchMatches[i].End <= cursorOff {
-				m.searchActive = i
+				m.searchActive = ActiveMatch{Index: i, Valid: true}
 				found = true
 				break
 			}
 		}
 		if !found {
 			// Wrap: use last match.
-			m.searchActive = len(m.searchMatches) - 1
+			m.searchActive = ActiveMatch{Index: len(m.searchMatches) - 1, Valid: true}
 		}
 	} else {
-		m.searchActive = (m.searchActive - 1 + len(m.searchMatches)) % len(m.searchMatches)
+		m.searchActive = ActiveMatch{Index: (m.searchActive.Index - 1 + len(m.searchMatches)) % len(m.searchMatches), Valid: true}
 	}
 
 	return m.selectActiveMatch()
@@ -143,10 +154,10 @@ func (m Model) FindPrev() Model {
 
 // selectActiveMatch places the cursor at the active match and scrolls it into view.
 func (m Model) selectActiveMatch() Model {
-	if m.searchActive < 0 || m.searchActive >= len(m.searchMatches) {
+	if !m.searchActive.Valid || m.searchActive.Index < 0 || m.searchActive.Index >= len(m.searchMatches) {
 		return m
 	}
-	active := m.searchMatches[m.searchActive]
+	active := m.searchMatches[m.searchActive.Index]
 	// Clamp to live buffer length to guard against stale spans.
 	bufLen := m.buf.Len()
 	start := active.Start
@@ -171,24 +182,23 @@ func (m Model) selectActiveMatch() Model {
 // intact so the user ends up with the last navigated match selected on close.
 func (m Model) ClearSearch() Model {
 	m.searchMatches = nil
-	m.searchActive = -1
+	m.searchActive = ActiveMatch{}
 	m.searchQuery = ""
 	return m
 }
 
-// SearchMatches returns the current slice of match intervals.
-func (m Model) SearchMatches() []SelInterval { return m.searchMatches }
-
-// SearchActive returns the index of the currently-active match, or -1.
-func (m Model) SearchActive() int { return m.searchActive }
+// D5: the SearchMatches()/SearchActive() accessor methods that used to live
+// here were deleted — no caller outside this package (grep-verified) used
+// them; MatchCount below is the exported surface production code actually
+// needs, and this package's own tests read the searchMatches/searchActive
+// fields directly.
 
 // MatchCount returns the 1-based index of the active match and total count.
 // idx is 0 when no match is active.
 func (m Model) MatchCount() (idx, total int) {
 	total = len(m.searchMatches)
-	if m.searchActive >= 0 {
-		idx = m.searchActive + 1
+	if m.searchActive.Valid {
+		idx = m.searchActive.Index + 1
 	}
 	return
 }
-

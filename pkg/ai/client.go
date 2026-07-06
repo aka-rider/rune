@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
+	"time"
 )
 
 // Message is a single chat message in OpenAI-compatible format.
@@ -23,37 +23,11 @@ type Client struct {
 	Model   string
 }
 
-// NewClient constructs a Client from environment variables.
-//
-// Reads:
-//   - OPENAI_API_KEY   — required when using the public OpenAI endpoint
-//   - OPENAI_BASE_URL  — defaults to "https://api.openai.com/v1"
-//   - OPENAI_MODEL     — defaults to "gpt-4o"
-func NewClient() (Client, error) {
-	const defaultBaseURL = "https://api.openai.com/v1"
-	const defaultModel = "gpt-4o"
-
-	baseURL := os.Getenv("OPENAI_BASE_URL")
-	if baseURL == "" {
-		baseURL = defaultBaseURL
-	}
-
-	model := os.Getenv("OPENAI_MODEL")
-	if model == "" {
-		model = defaultModel
-	}
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" && baseURL == defaultBaseURL {
-		return Client{}, fmt.Errorf("OPENAI_API_KEY is required when using the public OpenAI endpoint")
-	}
-
-	return Client{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		Model:   model,
-	}, nil
-}
+// httpClient is the shared transport for all API calls. Unlike
+// http.DefaultClient it carries a hard timeout: a black-holed dial or a
+// stalled response must fail and surface, never leave the chat pane
+// "loading" forever waiting on a request only a resubmit would cancel.
+var httpClient = &http.Client{Timeout: 60 * time.Second}
 
 // Chat sends messages to the API and returns the assistant reply.
 // The provided ctx is used for request cancellation.
@@ -80,7 +54,7 @@ func (c Client) Chat(ctx context.Context, messages []Message) (string, error) {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("ai: http: %w", err)
 	}

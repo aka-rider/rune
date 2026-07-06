@@ -2,6 +2,10 @@
 
 package workspace
 
-import tea "charm.land/bubbletea/v2"
+import (
+	tea "charm.land/bubbletea/v2"
 
-func openStoreCmd() tea.Cmd { return nil }
+	"rune/pkg/vfs"
+)
+
+func openStoreCmd(vfs.FS, string) tea.Cmd { return nil }

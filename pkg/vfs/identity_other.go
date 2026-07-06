@@ -9,3 +9,8 @@ import "io/fs"
 func sysFileID(_ fs.FileInfo) (inode, device uint64, ok bool) {
 	return 0, 0, false
 }
+
+// sysNLink returns ok=false on non-unix platforms.
+func sysNLink(_ fs.FileInfo) (nlink uint64, ok bool) {
+	return 0, false
+}

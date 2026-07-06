@@ -1,8 +1,11 @@
 //go:build fuzzing
 
 // Package display contains invariant checkers for the display pipeline:
-// D1–D6 (span properties), WRAP-RT (wrap↔syntax round-trip), and
-// SPAN-COVER (span coverage of each syntax line).
+// D1–D3, D5–D6 (span properties; D4 retired — ID reserved, never
+// implemented, never reused per the corpus-artifact ID-stability rule),
+// WRAP-RT (wrap↔syntax round-trip), SPAN-COVER (span coverage of each
+// syntax line), and LINK-FOLD / LINK-CLEAN (folded link/wiki-link rendering:
+// real delimiters hidden, no leaked wrapping punctuation).
 package display
 
 import (
@@ -195,8 +198,27 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 			// (a) The hidden prefix [BufferStart, firstCellOffset) must be a valid
 			// opening delimiter for the kind. A wiki span whose start landed inside
 			// the target (the BUG1 leak) has a prefix like "d|" — not "[[".
+			//
+			// EXEMPT a multi-line link-label CONTINUATION line: CommonMark permits
+			// a soft line break inside a link label ("[line one\nline two](url)"
+			// is one link, spanning two source lines, within a single paragraph —
+			// goldmark's AST correctly parses this as one *ast.Link node, per
+			// linkSpans in pkg/editor/display/inline_emit.go). This editor renders
+			// per source LINE, so a CONTINUATION line's own span legitimately has
+			// NO local opening delimiter — the "[" is on an EARLIER line entirely
+			// — while its buffer slice still starts exactly at this line's own
+			// first byte (immediately after the preceding '\n'). That is the
+			// checker's own signal to tell "genuinely missing/corrupted delimiter"
+			// (BUG1) apart from "this line is mid-link, its delimiter is upstream":
+			// spanIdx==0 (nothing else precedes it on this line) AND the byte just
+			// before BufferStart is '\n' — deliberately NOT BufferStart==0 (start
+			// of doc), so a genuine BUG1 landing at offset 0 is still caught —
+			// found via FuzzHumanSession's multi-cursor clipboard-paste-distribute
+			// cluster landing "\n"-separated fragments inside an existing link's
+			// label.
 			firstOff := sp.CellMap[0].BufOffset
-			if firstOff >= 0 && sp.BufferStart >= 0 && firstOff >= sp.BufferStart && firstOff <= len(s.Content) {
+			isLineContinuation := spanIdx == 0 && sp.BufferStart > 0 && sp.BufferStart <= len(s.Content) && s.Content[sp.BufferStart-1] == '\n'
+			if firstOff >= 0 && sp.BufferStart >= 0 && firstOff >= sp.BufferStart && firstOff <= len(s.Content) && !isLineContinuation {
 				prefix := s.Content[sp.BufferStart:firstOff]
 				if !validLinkPrefix(sp.Kind, prefix) {
 					return &invariant.Violation{

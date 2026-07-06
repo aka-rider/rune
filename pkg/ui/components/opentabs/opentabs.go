@@ -92,23 +92,28 @@ func (m Model) DocIDAt(index int) int64 {
 	return m.tabs[index].DocID
 }
 
+// AllDocIDs returns the VFS document id of every open tab that has one
+// (0 excluded — the help tab is never store-backed). Lets the page batch a
+// fresh, ground-truth dirty query (docstate.Store.DirtyDocs) instead of
+// trusting the per-tab cached Dirty flag for a destructive decision (quit /
+// evict — §1.4.8): opentabs' own flag stays render-only, the tab-bar dirty
+// dot fed by the SAME query results the page already has in hand.
+func (m Model) AllDocIDs() []int64 {
+	var ids []int64
+	for _, t := range m.tabs {
+		if t.DocID != 0 {
+			ids = append(ids, t.DocID)
+		}
+	}
+	return ids
+}
+
 // SelectIndex moves the navigation cursor to the given index.
 func (m Model) SelectIndex(index int) Model {
 	if index < 0 || index >= len(m.tabs) {
 		return m
 	}
 	m.cursor = index
-	return m
-}
-
-// SelectByID moves the navigation cursor to the tab with the given docID.
-// Returns unchanged if not found.
-func (m Model) SelectByID(docID int64) Model {
-	for i, t := range m.tabs {
-		if t.DocID == docID {
-			return m.SelectIndex(i)
-		}
-	}
 	return m
 }
 
@@ -159,10 +164,39 @@ func (m Model) PinIndex(index int) Model {
 // When docID != 0, the tab is keyed by docID (rename-safe).
 // When docID == 0, falls back to path-keying for virtual docs (help, initial
 // untitled) where no VFS identity has been assigned yet.
+//
+// If path already belongs to a DIFFERENT tab, that tab is DETACHED (Path
+// cleared to "") first — the same disk-truth-wins, content-preserving
+// reconciliation RenameFile uses (see its doc comment): path can only
+// legitimately belong to one document, and this docID is the one a fresh
+// Load just verified is CURRENTLY there. Without this, a rename detected via
+// handleFileLoadedMsg's RenamedFrom branch (which calls RenameFile first,
+// then this) would have this call silently re-introduce the exact duplicate
+// RenameFile just resolved.
 func (m Model) OpenFile(docID int64, path string) Model {
+	detachOther := func(exceptIdx int) {
+		// path=="" is never a real collision: it's the untitled sentinel
+		// (§1.7 — presence/absence, not a value to compare for identity),
+		// and T1 explicitly permits multiple ""-path tabs to coexist.
+		// Without this guard, assigning a real docID to a FRESH untitled
+		// tab (still path=="" at that point) walked every OTHER untitled
+		// tab and "detached" it too — a no-op here since they're already
+		// path=="", but the wrong operation for the wrong reason (found via
+		// FUZZ_TRACE instrumentation, WP6 session: 27 spurious detaches in
+		// one eviction-pressure run).
+		if path == "" {
+			return
+		}
+		for i := range m.tabs {
+			if i != exceptIdx && m.tabs[i].Path == path {
+				m.tabs[i].Path = ""
+			}
+		}
+	}
 	if docID != 0 {
 		for i, t := range m.tabs {
 			if t.DocID == docID {
+				detachOther(i)
 				m.tabs[i].Path = path
 				m.tabs[i].Name = tabName(path)
 				return m
@@ -175,6 +209,7 @@ func (m Model) OpenFile(docID int64, path string) Model {
 			}
 		}
 	}
+	detachOther(-1) // -1 never matches a real index — detaches ANY tab holding path
 	// Not found — add new tab.
 	m.tabs = append(m.tabs, Tab{
 		DocID: docID,
@@ -230,47 +265,6 @@ func (m Model) HasTabNamed(name string) bool {
 	return false
 }
 
-// CloseByID removes the tab with the given docID.
-func (m Model) CloseByID(docID int64) Model {
-	for i, t := range m.tabs {
-		if t.DocID == docID {
-			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
-			if m.cursor >= len(m.tabs) && m.cursor > 0 {
-				m.cursor = len(m.tabs) - 1
-			}
-			break
-		}
-	}
-	return m
-}
-
-// CloseFile removes the tab for the given path. Prefer CloseByID when the
-// docID is known.
-func (m Model) CloseFile(path string) Model {
-	for i, t := range m.tabs {
-		if t.Path == path {
-			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
-			if m.cursor >= len(m.tabs) && m.cursor > 0 {
-				m.cursor = len(m.tabs) - 1
-			}
-			break
-		}
-	}
-	return m
-}
-
-// RenameFile updates path and display name for the tab matching oldPath.
-func (m Model) RenameFile(oldPath, newPath string) Model {
-	for i := range m.tabs {
-		if m.tabs[i].Path == oldPath {
-			m.tabs[i].Path = newPath
-			m.tabs[i].Name = tabName(newPath)
-			return m
-		}
-	}
-	return m
-}
-
 // SetTabNameByID overrides the display name of the tab with the given docID.
 func (m Model) SetTabNameByID(docID int64, name string) Model {
 	for i := range m.tabs {
@@ -310,18 +304,6 @@ func (m Model) MarkCleanByID(docID int64) Model {
 	for i := range m.tabs {
 		if m.tabs[i].DocID == docID {
 			m.tabs[i].Dirty = false
-			break
-		}
-	}
-	return m
-}
-
-// MarkDirty sets the dirty indicator on the tab matching path.
-// Prefer MarkDirtyByID when the docID is known.
-func (m Model) MarkDirty(path string) Model {
-	for i := range m.tabs {
-		if m.tabs[i].Path == path {
-			m.tabs[i].Dirty = true
 			break
 		}
 	}

@@ -54,7 +54,7 @@ func TestDirtyFlagPosition(t *testing.T) {
 	}
 
 	// Dirty: 'x' must appear before the filename (in the number-prefix slot).
-	m = m.MarkDirty("/notes/tickets.txt")
+	m = m.MarkDirtyByID(1)
 	view = m.View()
 	nameIdx = strings.Index(view, "tickets.txt")
 	if nameIdx < 0 {

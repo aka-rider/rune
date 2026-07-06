@@ -2,63 +2,55 @@ package docstate
 
 import "fmt"
 
-// IsDirty reports whether docID has unsaved changes: true iff a live event
-// exists strictly between the saved and current positions (order-independent).
-// This is robust to the global AUTOINCREMENT: the predicate never assumes the
-// document's first event has seq=1.
-//
-// dirty ⟺ ∃ event with seq in (MIN(cur,saved), MAX(cur,saved)]
-//
-// where cur  = COALESCE(current_seq, MAX(events.seq), 0)
-//
-//	saved = COALESCE(saved_seq, 0)
+// IsDirty reports whether docID has unsaved changes: dirty ⟺ ours (the
+// journal reconstruction) differs from the derived 3-way-merge ancestor —
+// SyncBufferAhead or SyncDiverged. NEVER Kind != Clean: that would also flag
+// SyncDiskAhead (disk moved, the buffer didn't — a pure external change with
+// nothing of the user's unsaved) as phantom-dirty. Ancestor-derived (WP5,
+// §1.4.8 — recomputed from the store on every call, never a cached flag).
 func (s *Store) IsDirty(docID int64) (bool, error) {
-	var isDirty bool
-	err := s.perm.QueryRow(`
-		WITH pos AS (
-		  SELECT COALESCE(d.current_seq,
-		                  (SELECT MAX(seq) FROM events WHERE doc_id = d.id), 0) AS cur,
-		         COALESCE(d.saved_seq, 0)                                       AS saved
-		  FROM documents d WHERE d.id = ?
-		)
-		SELECT EXISTS(
-		  SELECT 1 FROM events, pos
-		  WHERE events.doc_id = ?
-		    AND events.seq >  MIN(pos.cur, pos.saved)
-		    AND events.seq <= MAX(pos.cur, pos.saved)
-		)`,
-		docID, docID,
-	).Scan(&isDirty)
+	state, err := s.Sync(docID)
 	if err != nil {
 		return false, fmt.Errorf("is dirty doc %d: %w", docID, err)
 	}
-	return isDirty, nil
+	return state.Kind == SyncBufferAhead || state.Kind == SyncDiverged, nil
 }
 
-// MarkSavedAt records seq as the saved baseline for docID — the journal position
-// the bytes written to disk correspond to, captured SYNCHRONOUSLY at save-start
-// (via CurrentSeq, co-atomic with the content) and threaded through
-// FileSavedMsg.SavedSeq. It deliberately does NOT re-read the live head: while an
-// async write is in flight the user can journal new edits that advance the head,
-// and stamping that head would mark the file clean at a position the written bytes
-// never reflected — silently swallowing the in-flight edits (§1.4.2/§1.4.8). The
-// clean boundary advances only to the position actually persisted.
-func (s *Store) MarkSavedAt(docID, seq int64) error {
-	if _, err := s.perm.Exec(`UPDATE documents SET saved_seq = ? WHERE id = ?`, seq, docID); err != nil {
-		return fmt.Errorf("mark saved doc %d at seq %d: %w", docID, seq, err)
+// DirtyDocs reports dirty status for every id in ids, each ONE INDEPENDENTLY
+// recomputed from the store (never a cached per-tab flag) — closes H3: a
+// background tab whose cached "clean" flag went stale is caught here because
+// every id is re-derived from the durable journal/observation state at
+// quit/evict decision time (§1.4.8). Unknown/missing ids are simply absent
+// from the returned map — never defaulted to false or true (§1.7); a caller
+// that needs a definite answer checks the map's second return.
+func (s *Store) DirtyDocs(ids []int64) (map[int64]bool, error) {
+	result := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		dirty, err := s.IsDirty(id)
+		if err != nil {
+			return nil, fmt.Errorf("dirty docs: doc %d: %w", id, err)
+		}
+		result[id] = dirty
 	}
-	return nil
+	return result, nil
 }
 
-// CurrentSeq returns the effective journal position for docID: the undo
-// pointer (current_seq) if set, or MAX(events.seq), or 0 if no events.
-// Used to tag VFS snapshots at content-capture time (never inside goroutines).
+// CurrentSeq returns the effective journal position for docID AS SEEN BY
+// THIS SESSION (v10): this session's own undo pointer
+// (session_documents.current_seq) if set, or MAX(events.seq) among only
+// this session's own events for docID, or 0 if this session has no events
+// for docID at all — a brand-new session on a docID with lots of history
+// under OTHER sessions still starts at 0, exactly like a genuinely fresh
+// document. Used to tag VFS snapshots at content-capture time (never inside
+// goroutines).
 func (s *Store) CurrentSeq(docID int64) (int64, error) {
 	var seq int64
 	err := s.perm.QueryRow(`
-		SELECT COALESCE(current_seq, (SELECT MAX(seq) FROM events WHERE doc_id = ?), 0)
-		FROM documents WHERE id = ?`,
-		docID, docID,
+		SELECT COALESCE(
+			(SELECT current_seq FROM session_documents WHERE session_id = ? AND doc_id = ?),
+			(SELECT MAX(seq) FROM events WHERE doc_id = ? AND session_id = ?),
+			0)`,
+		s.sessionID, docID, docID, s.sessionID,
 	).Scan(&seq)
 	if err != nil {
 		return 0, fmt.Errorf("current seq doc %d: %w", docID, err)

@@ -46,6 +46,48 @@ func TestLinkInvariants_NoFalsePositives(t *testing.T) {
 		"[`code`](https://x.com)",              // code inside link
 		"***both***",                           // bold+italic
 		"a [x](y)* not emphasis",               // lone trailing * must not trip LINK-CLEAN
+		"[*00000](b.md)",                       // BUG5 (unmatched delim in link label) — fixed
+	}
+	for _, c := range cases {
+		for _, w := range []int{0, 8} {
+			if v := Check(buildSnap(c, w)); v != nil {
+				t.Errorf("Check(%q, w=%d) = %s: %s; want nil", c, w, v.InvariantID, v.Message)
+			}
+		}
+	}
+}
+
+// TestLinkInvariants_UnmatchedDelimiterInLinkLabel pins BUG5: found by
+// FuzzHumanSession. A link label containing an unpaired emphasis delimiter
+// (no closing "*" anywhere in the containing paragraph) causes goldmark to
+// hand back the label as TWO sibling text nodes instead of one contiguous
+// run — linkSpans only extends the delimiter width on the first, leaving the
+// second with an empty hidden prefix.
+func TestLinkInvariants_UnmatchedDelimiterInLinkLabel(t *testing.T) {
+	cases := []string{
+		"[*00000](b.md)",
+		"# File A\n\n[*00000](b.md)\n[notes](notes/c.md)\n[x](missing.md)\n" +
+			"[web](https://example.com)\n[mail](mailto:a@b.com)\n",
+	}
+	for _, c := range cases {
+		for _, w := range []int{0, 8} {
+			if v := Check(buildSnap(c, w)); v != nil {
+				t.Errorf("Check(%q, w=%d) = %s: %s; want nil", c, w, v.InvariantID, v.Message)
+			}
+		}
+	}
+}
+
+// TestTableInvariants_DecorativeSpansAbutNeighbors pins BUG7: a table row
+// mixing decorative content (borders/padding/unstyled cells) with a styled
+// span used to fail SPAN-COVER — the styled span got its own correct bounds
+// (BUG6) but decorative spans on either side still claimed the whole row,
+// so they no longer tiled. Covers both the originally-found shape (a link in
+// a non-first cell) and the broader class (a styled span in the first cell).
+func TestTableInvariants_DecorativeSpansAbutNeighbors(t *testing.T) {
+	cases := []string{
+		"| A | B |\n| --- | --- |\n| x | [bar](baz.md) |",
+		"| **bold** | x |\n| --- | --- |\n| **bold** | x |",
 	}
 	for _, c := range cases {
 		for _, w := range []int{0, 8} {
@@ -102,5 +144,35 @@ func TestLinkInvariants_DetectCorruption(t *testing.T) {
 	})
 	if v := Check(bug3); v == nil || v.InvariantID != "LINK-CLEAN" {
 		t.Errorf("BUG3 snapshot: got %v, want LINK-CLEAN", v)
+	}
+
+	// BUG5: an unmatched emphasis delimiter as the link's first child (no
+	// closing "*" anywhere in the paragraph) split the label into two sibling
+	// spans; linkSpans only extended the first's delimLeft, leaving "00000"
+	// with delimLeft=0 — a zero-width hidden prefix.
+	bug5 := mk("[*00000](b.md)", []disp.SyntaxSpan{
+		{Text: "*", Kind: disp.TokenLink, State: disp.Rendered, BufferStart: 0, BufferEnd: 2,
+			CellMap: []disp.CellMapping{{BufOffset: 1}}, LinkURL: "b.md"},
+		{Text: "00000", Kind: disp.TokenLink, State: disp.Rendered, BufferStart: 2, BufferEnd: 14,
+			CellMap: []disp.CellMapping{{BufOffset: 2}, {BufOffset: 3}, {BufOffset: 4}, {BufOffset: 5}, {BufOffset: 6}},
+			LinkURL: "b.md"},
+	})
+	if v := Check(bug5); v == nil || v.InvariantID != "LINK-FOLD" {
+		t.Errorf("BUG5 snapshot: got %v, want LINK-FOLD", v)
+	}
+
+	// BUG6: buildTableStyledSpans pinned every emitted span's BufferStart/
+	// BufferEnd to the whole table row instead of the token's own bounds, so a
+	// folded link in a non-first cell computed its hidden prefix against
+	// everything before it in the row, not just its own "[".
+	row := "| x | [bar](baz.md) |"
+	bug6 := mk(row, []disp.SyntaxSpan{
+		{Text: "bar", Kind: disp.TokenLink, State: disp.Rendered,
+			BufferStart: 0, BufferEnd: len(row), // BUG: pinned to the whole row
+			CellMap: []disp.CellMapping{{BufOffset: 7}, {BufOffset: 8}, {BufOffset: 9}},
+			LinkURL: "baz.md"},
+	})
+	if v := Check(bug6); v == nil || v.InvariantID != "LINK-FOLD" {
+		t.Errorf("BUG6 snapshot: got %v, want LINK-FOLD", v)
 	}
 }

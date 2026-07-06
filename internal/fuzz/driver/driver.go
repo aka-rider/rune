@@ -3,8 +3,6 @@
 package driver
 
 import (
-	"errors"
-	"fmt"
 	"reflect"
 
 	tea "charm.land/bubbletea/v2"
@@ -13,8 +11,8 @@ import (
 	"rune/internal/fuzz/invariant"
 	"rune/internal/fuzz/session"
 	"rune/pkg/docstate"
-	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/filetree"
+	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/textedit"
 	pgworkspace "rune/pkg/ui/pages/workspace"
 	"rune/pkg/vfs"
@@ -45,6 +43,20 @@ type runState struct {
 	monitors    []invariant.Monitor
 	frozenFrame string
 	frozenCells [][]textedit.Cell
+
+	// quit is set the instant a tea.QuitMsg is drained — see drainMsg's
+	// comment. Every Run*/RunHuman event loop checks it and stops feeding
+	// further script events once true (production has no "after quit"
+	// state to keep exercising; the bubbletea runtime is already gone).
+	quit bool
+
+	// mem is the shared in-memory VFS every fuzz caller already constructs
+	// (nil only for a caller that genuinely has none — checks using it are
+	// skipped, never a false positive). Backs the disk↔buffer verbatim edge
+	// of §1.4.5 (driver_verbatim.go): SAVE-VERBATIM/LOAD-VERBATIM compare
+	// actual VFS bytes against the journal/buffer, which nothing before WP2
+	// did (DL1/WP7(b) only pin store↔buffer).
+	mem *vfs.Mem
 	// baselines maps a docID to the content it was LOADED with — captured the first
 	// time the doc is observed with zero journaled edits (when its buffer IS the
 	// freshly-loaded content). The SHADOW mirror for a doc is baseline +
@@ -70,6 +82,14 @@ type runState struct {
 	reorder  bool
 	deferred []tea.Msg
 
+	// steps counts settled messages, for checkV4Properties' deterministic
+	// sampling of the expensive full-reconstruction property on very long
+	// inputs (a full RecoverDocument per step is quadratic in journal
+	// length — pathological ~300-op inputs took >5s per exec and tripped
+	// the Go fuzz coordinator's worker-hang kill as flaky "hung or
+	// terminated unexpectedly" failures).
+	steps int
+
 	// reorderSaves, when true, makes drainCmd DEFER async SAVE results
 	// (FileSavedMsg/FileSaveErrorMsg) into `deferredSaves` instead of delivering
 	// them inline, so subsequent fuzz events (edits) are journaled while the save
@@ -90,45 +110,6 @@ type deferredSave struct {
 	issueSeq int64 // store.CurrentSeq(docID) at the moment the save was issued
 }
 
-// isLoadResult reports whether msg is an async file-load result — the only
-// message class RunReorder defers, since out-of-order delivery of these is the
-// race under test.
-func isLoadResult(msg tea.Msg) bool {
-	switch msg.(type) {
-	case pgworkspace.FileLoadedMsg, pgworkspace.FileLoadErrorMsg:
-		return true
-	}
-	return false
-}
-
-// mirrorFor reconstructs the document's content independently of the live editor
-// buffer: the loaded baseline plus every journaled "main" edit replayed forward.
-// The baseline is captured the first time a doc is seen with zero edits (its buffer
-// IS the freshly-loaded content then); later edits replay on top — matching how the
-// editor builds the buffer (loaded content + edits). This lets SHADOW validate that
-// the journal faithfully tracks the buffer for LOADED files, not just untitled ones
-// born empty. AllEdits returns the full edit log (not just post-snapshot), so the
-// reconstruction is correct across autosave snapshots.
-func (rs *runState) mirrorFor(docID int64, bufferContent string) string {
-	if rs.store == nil || docID == 0 {
-		return ""
-	}
-	// ActiveEdits (not AllEdits) so the mirror honors the undo head (seq <=
-	// current_seq): after an undo the buffer drops the undone edits, and the mirror
-	// must too, or it diverges (SHADOW).
-	batches, err := rs.store.ActiveEdits(docID, "main")
-	if err != nil {
-		return rs.baselines[docID] // fire-and-forget: store read error degrades SHADOW coverage, never loses data
-	}
-	if len(batches) == 0 {
-		// No live edits (fresh load, or everything undone) → the buffer is exactly the
-		// loaded baseline; (re)record it per-doc so subsequent edits replay on top.
-		rs.baselines[docID] = bufferContent
-		return bufferContent
-	}
-	return buffer.ReplayForward(rs.baselines[docID], batches)
-}
-
 // drainMsg drives one message through Update, checks all invariants, then
 // drains any returned Cmd recursively.
 func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model, *invariant.Violation) {
@@ -136,7 +117,7 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 	m, cmd := m.Update(msg)
 	snap := m.FuzzInspect()
 
-	mirror := rs.mirrorFor(snap.DocID, snap.Content)
+	mirror := rs.mirrorFor(snap.DocID, snap.Content, isLoadFamilyMsg(msg, prev))
 	snap.Frame = m.View().Content
 
 	if mirror != "" || snap.Content != "" {
@@ -147,6 +128,17 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 
 	if _, ok := msg.(tea.QuitMsg); ok {
 		snap.AppQuitting = true
+		// The driver owns quit-liveness for every Run* loop: in production,
+		// tea.Quit ends the bubbletea runtime — no further Msg is EVER
+		// delivered to Update. The synchronous fuzz driver has no such
+		// runtime to stop, so without this flag it keeps feeding subsequent
+		// script events (KindWatch/KindExternalWrite/trash-confirm/etc.,
+		// all reachable now that KindQuitRequest + quitSaveAll make a FULL
+		// quit completable mid-run) into a torn-down Model whose store is
+		// already closed (teardownAndQuit) — undefined territory production
+		// never exercises. rs.quit lets every Run*/RunHuman loop stop
+		// feeding events the instant that happens, mirroring reality.
+		rs.quit = true
 	}
 
 	// EXT-NOCLOBBER (§1.4.7): the driver authoritatively owns the set of paths with
@@ -173,6 +165,21 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 			}
 		case pgworkspace.FileLoadedMsg:
 			delete(rs.externalWrites, dm.Path)
+		}
+		// A THIRD reconciliation path: startSave's own pre-write §1.4.8 re-check
+		// (workspace_edit.go) calls store.Sync synchronously BEFORE issuing any
+		// Materialize Cmd, and raises GuardMerge directly — via the same
+		// raiseConflictGuard chokepoint FileSaveErrorMsg{Conflict} and
+		// FileLoadedMsg's load-time conflict use — the instant it sees
+		// SyncDiverged. No FileSaveErrorMsg is ever emitted on that path, so the
+		// two msg-type cases above never fire, yet the user has unambiguously
+		// been shown the conflict (the same surfaced obligation FileSaveErrorMsg
+		// reconciles) before any subsequent [S]ave-anyway can act. Reconciling
+		// on "GuardMerge is now visible for the active path" — the one shared
+		// discriminant every raiseConflictGuard caller produces — covers all
+		// entry points without enumerating each one's message type.
+		if snap.GuardVisible && snap.GuardKind == footer.GuardMerge {
+			delete(rs.externalWrites, snap.ActiveFilePath)
 		}
 	}
 
@@ -220,6 +227,31 @@ func drainMsg(rs *runState, m pgworkspace.Model, msg tea.Msg) (pgworkspace.Model
 		}
 	}
 
+	// WP7 properties (a)/(b)/(c) — extracted to driver_v4_properties.go to
+	// keep this file under the 500-LoC limit (§1.6/§11).
+	if v := checkV4Properties(rs, msg, snap); v != nil {
+		rs.frozenFrame = snap.Frame
+		rs.frozenCells = snap.Cells
+		return m, v
+	}
+
+	// WP2 driver-level ground-truth checks (disk↔buffer verbatim edge of
+	// §1.4.5) — extracted to driver_verbatim.go to keep this file under the
+	// 500-LoC limit (§1.6/§11).
+	if v := checkVerbatim(rs, m, msg, prev, snap); v != nil {
+		rs.frozenFrame = snap.Frame
+		rs.frozenCells = snap.Cells
+		return m, v
+	}
+
+	// WP5 merge-lifecycle checks (DISCARD-ADOPT, MERGE-RESOLVE-ADOPT,
+	// UNWIND-REDETECT(L1)) — driver_verbatim.go.
+	if v := checkMergeLifecycle(rs, msg, snap); v != nil {
+		rs.frozenFrame = snap.Frame
+		rs.frozenCells = snap.Cells
+		return m, v
+	}
+
 	if cmd == nil {
 		return m, nil
 	}
@@ -244,10 +276,15 @@ func drainCmd(rs *runState, m pgworkspace.Model, cmd tea.Cmd) (pgworkspace.Model
 		}
 		return m, nil
 	}
-	if rs.reorder && isLoadResult(msg) {
-		// Defer the read result; RunReorder replays it (and its siblings) in a
-		// fuzz-chosen order. The read itself already ran (cmd() above), so the
-		// fsys access happened — only the delivery to Update is deferred.
+	if rs.reorder && (isLoadResult(msg) || isViewProbeResult(msg)) {
+		// Defer the read result; RunReorder replays load results (and their
+		// siblings) in a fuzz-chosen order, RunDelayedViewResult replays a
+		// deferred view-probe result after forcing the ticket stale
+		// (driver_delayed_view.go, Part IV). The read itself already ran
+		// (cmd() above), so the fsys access happened — only the delivery to
+		// Update is deferred. isViewProbeResult never matches during
+		// RunReorder's own scenarios (they never raise a conflict guard), so
+		// this extension is a no-op there.
 		rs.deferred = append(rs.deferred, msg)
 		return m, nil
 	}
@@ -285,8 +322,10 @@ func bootstrap(rs *runState, model pgworkspace.Model, store *docstate.Store, w, 
 // Run bootstraps a workspace.Model with the given store, drives it through
 // events, and returns the first invariant Violation found (or nil), the frozen
 // frame string, and the cell grid snapshot at the moment of violation.
-func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
+// mem is the same vfs.Mem the caller passed to workspace.New(...).WithFS —
+// nil is accepted (verbatim checks skip); every current caller already holds one.
+func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, mem *vfs.Mem, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}, mem: mem}
 
 	var v *invariant.Violation
 	model, v = bootstrap(rs, model, store, w, h)
@@ -301,6 +340,9 @@ func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w
 		model, v = drainMsg(rs, model, msg)
 		if v != nil {
 			return v, rs.frozenFrame, rs.frozenCells
+		}
+		if rs.quit {
+			break // production has no "after quit" state to keep exercising
 		}
 	}
 	return nil, "", nil
@@ -322,8 +364,8 @@ func Run(model pgworkspace.Model, events []event.Event, store *docstate.Store, w
 //     (the gate-clearing transition the all-deferred path never exercises).
 //   - otherwise the most-recent open's read wins regardless of delivery order; a
 //     re-open of the currently shown file is a no-op (requestOpenPath early-returns).
-func RunReorder(model pgworkspace.Model, settle string, opens []string, supersede bool, order []byte, store *docstate.Store, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
+func RunReorder(model pgworkspace.Model, settle string, opens []string, supersede bool, order []byte, store *docstate.Store, mem *vfs.Mem, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
+	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}, mem: mem}
 
 	var v *invariant.Violation
 	model, v = bootstrap(rs, model, store, w, h)
@@ -415,150 +457,4 @@ func orUntitled(p string) string {
 		return "<untitled>"
 	}
 	return p
-}
-
-// RunReorderSaves exercises the edit-during-save race that the in-order drain
-// structurally cannot reach: it DEFERS each async save result (FileSavedMsg) so
-// subsequent fuzz events keep journaling edits while the save is "in flight", then
-// delivers the deferred saves and asserts SAVE-RACE — if edits were journaled after
-// a save's issue position, the saved doc MUST still be dirty after the save settles.
-// A MarkSaved that stamps the live journal head (instead of the position the written
-// bytes reflect) marks the doc clean despite unsaved edits — a §1.4.2/§1.4.8
-// durability bug the inline fuzzer (which settles each save before the next event)
-// never sees.
-func RunReorderSaves(model pgworkspace.Model, events []event.Event, store *docstate.Store, mem *vfs.Mem, paths []string, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}, reorderSaves: true}
-
-	var v *invariant.Violation
-	model, v = bootstrap(rs, model, store, w, h)
-	if v != nil {
-		return v, rs.frozenFrame, rs.frozenCells
-	}
-
-	for _, ev := range events {
-		switch ev.Kind {
-		case event.KindExternalWrite:
-			// Advance the Mem mod-clock (not the focus of this harness — EXT-NOCLOBBER
-			// is covered elsewhere; here it only perturbs save divergence).
-			if mem != nil && len(paths) > 0 {
-				path := paths[int(ev.PathIndex)%len(paths)]
-				content := ev.Text
-				if content == "" {
-					content = "external-write\n"
-				}
-				_ = mem.WriteFile(path, []byte(content), 0o644) // fire-and-forget: Mem never fails
-			}
-			continue
-		default:
-			msg := eventToMsg(ev)
-			if msg == nil {
-				continue
-			}
-			model, v = drainMsg(rs, model, msg)
-		}
-		if v != nil {
-			return v, rs.frozenFrame, rs.frozenCells
-		}
-	}
-
-	// Deliver each deferred save (running MarkSaved) AFTER the interleaved edits, then
-	// assert the durability invariant. reorderSaves stays true so the inline
-	// TR-dirty-clear check (which expects a clean doc) is skipped here — SAVE-RACE
-	// owns the correctly-dirty outcome.
-	for _, ds := range rs.deferredSaves {
-		model, v = drainMsg(rs, model, ds.msg)
-		if v != nil {
-			return v, rs.frozenFrame, rs.frozenCells
-		}
-		if rs.store == nil || ds.docID == 0 {
-			continue
-		}
-		cur, cerr := rs.store.CurrentSeq(ds.docID)
-		if cerr != nil || cur <= ds.issueSeq {
-			continue // no edits interleaved while the save was in flight → nothing to assert
-		}
-		dirty, derr := rs.store.IsDirty(ds.docID)
-		if derr != nil {
-			continue
-		}
-		if !dirty {
-			snap := model.FuzzInspect()
-			return &invariant.Violation{
-				InvariantID: "SAVE-RACE",
-				Message: fmt.Sprintf(
-					"doc %d marked clean after save settled, but %d edit(s) were journaled while the save was in flight (saved@seq=%d, head=%d) — unsaved edits silently lost (§1.4.2)",
-					ds.docID, cur-ds.issueSeq, ds.issueSeq, cur,
-				),
-			}, snap.Frame, snap.Cells
-		}
-	}
-	return nil, "", nil
-}
-
-// RunHuman is the entry point for FuzzHumanSession. It extends Run with
-// support for KindExternalWrite and KindWatch events, which require access to
-// the shared vfs.Mem and the list of seeded file paths.
-//
-//   - KindExternalWrite: calls mem.WriteFile for paths[ev.PathIndex % len(paths)].
-//     Advances Mem's mod-clock so the workspace's diskBaseline becomes stale;
-//     the next ⌘S must surface FileSaveErrorMsg{Conflict:true} (§1.4.7).
-//     No model message is injected. Adds the path to rs.externalWrites so the
-//     EXT-NOCLOBBER monitor is armed both for the active file and background tabs.
-//
-//   - KindWatch(sub=0): injects workspace.FuzzDirChangedMsg() → workspace calls
-//     reloadDirCmd → drains to filetree.DirReloadedMsg.
-//
-//   - KindWatch(sub=1): injects workspace.FuzzFileWatchReadErrorMsg() so the
-//     read-error path is exercised.
-func RunHuman(model pgworkspace.Model, events []event.Event, store *docstate.Store, mem *vfs.Mem, paths []string, w, h int) (*invariant.Violation, string, [][]textedit.Cell) {
-	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}}
-
-	var v *invariant.Violation
-	model, v = bootstrap(rs, model, store, w, h)
-	if v != nil {
-		return v, rs.frozenFrame, rs.frozenCells
-	}
-
-	for _, ev := range events {
-		switch ev.Kind {
-		case event.KindExternalWrite:
-			if mem == nil || len(paths) == 0 {
-				continue
-			}
-			path := paths[int(ev.PathIndex)%len(paths)]
-			content := ev.Text
-			if content == "" {
-				content = "external-write\n" // non-empty so baseline size diverges
-			}
-			_ = mem.WriteFile(path, []byte(content), 0o644) // fire-and-forget: Mem never fails
-			// Arm EXT-NOCLOBBER for this path — covers both active and background tabs.
-			if rs.externalWrites == nil {
-				rs.externalWrites = make(map[string]struct{})
-			}
-			rs.externalWrites[path] = struct{}{}
-			continue
-
-		case event.KindWatch:
-			var msg tea.Msg
-			if ev.WatchSub == 0 {
-				msg = pgworkspace.FuzzDirChangedMsg()
-			} else {
-				snap := model.FuzzInspect()
-				msg = pgworkspace.FuzzFileWatchReadErrorMsg(snap.ActiveFilePath, errors.New("watch: simulated read error"))
-			}
-			model, v = drainMsg(rs, model, msg)
-
-		default:
-			msg := eventToMsg(ev)
-			if msg == nil {
-				continue
-			}
-			model, v = drainMsg(rs, model, msg)
-		}
-
-		if v != nil {
-			return v, rs.frozenFrame, rs.frozenCells
-		}
-	}
-	return nil, "", nil
 }

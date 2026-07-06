@@ -261,3 +261,23 @@ func TestInlineEmit_LinkCellMapFidelity(t *testing.T) {
 		}
 	}
 }
+
+// TestInlineEmit_UnmatchedDelimiterInLinkLabel pins BUG5: a link label with an
+// unpaired emphasis delimiter (no closing "*" anywhere in the paragraph) used
+// to split into two sibling spans, and only the first absorbed the link's
+// opening "[" into its hidden prefix — the second span's hidden prefix was
+// empty. CellMapFidelity above wouldn't catch this: each span's CellMap was
+// already internally self-consistent: the bug is BufferStart disagreeing with
+// CellMap[0].BufOffset, which this test checks directly.
+func TestInlineEmit_UnmatchedDelimiterInLinkLabel(t *testing.T) {
+	const content = "[*00000](b.md)"
+	for _, sp := range foldedSpans(t, content, 0) {
+		if sp.State != display.Rendered || sp.CellMap == nil || sp.LinkRole() != display.LinkRoleNavigable {
+			continue
+		}
+		prefix := content[sp.BufferStart:sp.CellMap[0].BufOffset]
+		if !strings.HasPrefix(prefix, "[") {
+			t.Errorf("span %q: hidden prefix %q does not start with \"[\"", sp.Text, prefix)
+		}
+	}
+}

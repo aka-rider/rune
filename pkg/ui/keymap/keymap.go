@@ -63,6 +63,10 @@ type Bindings struct {
 	Undo                  key.Binding
 	Redo                  key.Binding
 	TrashFile             key.Binding
+	MergeAcceptOurs       key.Binding
+	MergeAcceptTheirs     key.Binding
+	MergeNext             key.Binding
+	MergePrev             key.Binding
 }
 
 func Default() Bindings {
@@ -122,6 +126,10 @@ func Default() Bindings {
 		Undo:               key.NewBinding(key.WithKeys("super+z", "ctrl+z"), key.WithHelp("⌘z", "undo")),
 		Redo:               key.NewBinding(key.WithKeys("shift+super+z", "ctrl+y"), key.WithHelp("⇧⌘z", "redo")),
 		TrashFile:          key.NewBinding(key.WithKeys("super+backspace", "delete"), key.WithHelp("⌘⌫/⌦", "trash")),
+		MergeAcceptOurs:    key.NewBinding(key.WithKeys("o", "O"), key.WithHelp("o", "merge: keep ours")),
+		MergeAcceptTheirs:  key.NewBinding(key.WithKeys("t", "T"), key.WithHelp("t", "merge: keep theirs")),
+		MergeNext:          key.NewBinding(key.WithKeys("n", "N"), key.WithHelp("n", "merge: next conflict")),
+		MergePrev:          key.NewBinding(key.WithKeys("p", "P"), key.WithHelp("p", "merge: prev conflict")),
 	}
 }
 
@@ -167,6 +175,26 @@ func (b Bindings) AllPhysicalKeys() []string {
 	return keys
 }
 
+// ValidateNoPhysicalKeyCollisions checks two independent namespaces for a
+// physical key bound to two different handlers:
+//
+//  1. A flat dedup over every Bindings struct field (AllPhysicalKeys) — the
+//     "global"/component-owned keys (TrashFile, SaveFile, Undo, mergemode's
+//     o/O-t/T-n/N-p/P, …) that are matched directly in workspace/component
+//     code rather than through the chord resolver. These have no When scope
+//     visible to keymap, so any two of them sharing a key IS a genuine
+//     collision — flat dedup is correct here.
+//  2. A scope-aware scan of CommandBindings()'s registry (§3.1) — the
+//     chord-resolver-routed commands, which include INLINE ad-hoc bindings
+//     invisible to (1) (e.g. edit.delete-right's "delete", added directly in
+//     CommandBindings rather than as a struct field). Two DIFFERENT commands
+//     sharing a chord are flagged only when their When scope is identical —
+//     e.g. TrashFile's "delete" (namespace 1, paneTree-focused, handled by
+//     filetree.Update — never enters this registry at all) and
+//     edit.delete-right's "delete" (namespace 2, When="editorFocused &&
+//     !readOnly") coexist safely: disjoint focus makes them mutually
+//     exclusive at runtime, and neither is a struct field colliding with the
+//     other in namespace 1's flat scan.
 func (b Bindings) ValidateNoPhysicalKeyCollisions() error {
 	keys := b.AllPhysicalKeys()
 	seen := make(map[string]bool)
@@ -176,7 +204,68 @@ func (b Bindings) ValidateNoPhysicalKeyCollisions() error {
 		}
 		seen[k] = true
 	}
+
+	cmdBindings, err := b.CommandBindings()
+	if err != nil {
+		return err
+	}
+	return ValidateCommandBindingScopeCollisions(cmdBindings)
+}
+
+// ValidateCommandBindingScopeCollisions scans cmdBindings (typically
+// Bindings.CommandBindings()'s output) for two DIFFERENT commands bound to
+// the same physical chord with an IDENTICAL When string.
+//
+// D1: comparison is by exact string identity, not predicate overlap — there
+// is no expression engine here that parses/evaluates When. Two DIFFERENT
+// When strings that can both evaluate true for the SAME ResolverContext
+// (e.g. "editorFocused" and "editorFocused && !readOnly" — both true
+// whenever readOnly is false) are NOT flagged, even though
+// keybind.Resolver.Resolve would treat both bindings as live candidates for
+// that keypress and actually race at runtime. This validator only proves
+// the narrower "exact-duplicate-scope" case is absent; it cannot prove two
+// syntactically different scopes are disjoint (or catch it when they
+// aren't) — reviewing overlapping When strings for a real collision is
+// still a human job when adding a binding.
+// Exported as a standalone function (not a Bindings method) so it can be
+// exercised directly against a synthetic []keybind.Binding in tests, without
+// threading a full collision through the production Default() keymap.
+func ValidateCommandBindingScopeCollisions(cmdBindings []keybind.Binding) error {
+	type scopedChord struct {
+		chord keybind.Chord
+		when  string
+	}
+	seen := make(map[scopedChord]string) // (chord, scope) -> the command that first claimed it
+	for _, binding := range cmdBindings {
+		for _, c := range binding.Chords {
+			sc := scopedChord{chord: c, when: binding.When}
+			if prev, ok := seen[sc]; ok && prev != binding.Command {
+				return fmt.Errorf("physical key %q is bound to both %q and %q in the same scope %q",
+					formatChord(c), prev, binding.Command, binding.When)
+			}
+			seen[sc] = binding.Command
+		}
+	}
 	return nil
+}
+
+// formatChord renders a Chord for a validator error message.
+func formatChord(c keybind.Chord) string {
+	var parts []string
+	if c.Ctrl {
+		parts = append(parts, "ctrl")
+	}
+	if c.Alt {
+		parts = append(parts, "alt")
+	}
+	if c.Shift {
+		parts = append(parts, "shift")
+	}
+	if c.Cmd {
+		parts = append(parts, "super")
+	}
+	parts = append(parts, c.Key)
+	return strings.Join(parts, "+")
 }
 
 func parseChord(s string) []keybind.Chord {
@@ -201,7 +290,6 @@ func parseChord(s string) []keybind.Chord {
 
 func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	var mappings []keybind.Binding
-	var parseErr error
 
 	add := func(binding key.Binding, command string, when string) {
 		for _, k := range binding.Keys() {
@@ -255,5 +343,5 @@ func (b Bindings) CommandBindings() ([]keybind.Binding, error) {
 	add(b.CopyToClipboard, "clipboard.copy", "editorFocused")
 	add(b.CutToClipboard, "clipboard.cut", "editorFocused && !readOnly")
 	add(b.PasteFromClipboard, "clipboard.paste", "editorFocused && !readOnly")
-	return mappings, parseErr
+	return mappings, nil
 }

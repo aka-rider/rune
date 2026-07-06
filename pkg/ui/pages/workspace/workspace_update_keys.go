@@ -1,11 +1,14 @@
 package workspace
 
 import (
+	"fmt"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/editor/buffer"
 	searchcomp "rune/pkg/ui/components/search"
+	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
 // handleKeyPress processes a tea.KeyPressMsg. It is called from Update() with
@@ -63,8 +66,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.TabSwitch):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -88,8 +90,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.PinTab):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -97,8 +98,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.FocusExplorer):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -108,8 +108,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.FocusEditor):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -118,8 +117,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.FocusChat):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -133,10 +131,17 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.CreateNewFile):
+		// Modal merge (§4): ⌘N → CreateUntitled SetContent("")s over the hidden
+		// marker buffer, backgrounding the mid-merge doc (its markers then sit in
+		// the store and a later quit-save could reach disk). Refuse early — before
+		// maybeFinalizeTitle and the setFocus(paneTitle) below — Esc-abort first.
+		if m.HasUnresolvedConflicts() {
+			m, cmd = m.refuseMergeTransition("creating a new file")
+			cmds = append(cmds, cmd)
+			return m.finalize(cmds)
+		}
 		var ok bool
-		var titleCmd tea.Cmd
-		m, titleCmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, titleCmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -152,8 +157,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.CloseFile):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -162,8 +166,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.Help):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -172,8 +175,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 
 	case key.Matches(msg, m.keys.ZenMode):
 		var ok bool
-		m, cmd, ok = m.maybeFinalizeTitle()
-		cmds = append(cmds, cmd)
+		m, cmds, ok = m.withFinalizedTitle(cmds)
 		if !ok {
 			return m.finalize(cmds)
 		}
@@ -246,8 +248,60 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	case paneCenter:
 		if !m.dict.Enabled() {
 			prevCursors := m.editor.Cursors()
-			m.editor, cmd = m.editor.Update(msg)
-			cmds = append(cmds, cmd)
+			// Merge resolver pre-intercept (§4): while active, [O]/[T]/[n]/[p]/
+			// scroll keys resolve against the MAIN editor (the hidden marker
+			// buffer) — mirroring the dictation drain precedent above. Esc
+			// aborts the modal merge (reverts to pre-merge ours); every other
+			// key is consumed by mergemode so no free-text edit reaches the
+			// (hidden) buffer mid-merge.
+			var consumed bool
+			if mergemode.IsActive(m.merge) {
+				if key.Matches(msg, m.keys.Cancel) {
+					var abortErr error
+					m.merge, m.editor, cmd, abortErr = mergemode.Abort(m.merge, m.editor)
+					if abortErr != nil {
+						// D10: this used to `return m.finalize(cmds)` here,
+						// early-exiting handleKeyPress and skipping the
+						// footer-routing / syncCursorToFooter / syncMergeHint
+						// tail below that every OTHER key path (including the
+						// sibling mergemode.HandleKey error branch just below)
+						// still reaches — the footer's chord/help state
+						// machine never saw this keypress at all. Surface the
+						// error and fall through like every other path
+						// instead of returning early.
+						cmds = append(cmds, errorCmd(fmt.Errorf("abort merge: %w", abortErr)))
+						consumed = true
+					} else {
+						// Part IV: reverting to pre-merge content is a
+						// wholesale buffer install, invalidating every
+						// outstanding view ticket — conservative/safety-
+						// additive even though the plan's four listed
+						// transition classes don't name Abort specifically
+						// (worst case a still-safe async result is
+						// needlessly refused, never a data-loss regression).
+						m = m.bumpEpoch()
+						// F3: undo the CAS-baseline adoption entering merge
+						// made (resolveAdoptAt) and re-probe fresh, so a
+						// dismissed merge re-raises the Diverged guard
+						// immediately instead of leaving a stale "resolved"
+						// baseline a later ⌘S could silently write over
+						// theirs with.
+						m = m.abandonMergeResolve(&cmds)
+						consumed = true
+					}
+				} else {
+					var handleErr error
+					m.merge, m.editor, cmd, consumed, handleErr = mergemode.HandleKey(m.merge, m.editor, msg)
+					if handleErr != nil {
+						cmds = append(cmds, errorCmd(fmt.Errorf("merge resolve: %w", handleErr)))
+					}
+				}
+				cmds = append(cmds, cmd)
+			}
+			if !consumed {
+				m.editor, cmd = m.editor.Update(msg)
+				cmds = append(cmds, cmd)
+			}
 			var editorEdits []buffer.AppliedEdit
 			m.editor, editorEdits = m.editor.DrainEdits()
 			m = m.journalEdit("main", editorEdits, prevCursors, m.editor.Cursors(), &cmds)
@@ -281,5 +335,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	cmds = append(cmds, cmd)
 
 	m = m.syncCursorToFooter()
+	m = m.syncMergeHint()
 	return m.finalize(cmds)
 }

@@ -1,6 +1,7 @@
 package display
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -56,7 +57,7 @@ func TestFrontmatterRenderedSpans_CollapsedNoError(t *testing.T) {
 		startLine: 0,
 		endLine:   3,
 	}
-	spans := frontmatterRenderedSpans(block, 0, "---", 0, FrontmatterCollapsed, "")
+	spans := frontmatterRenderedSpans(block, 0, "---", 0, FrontmatterCollapsed, nil)
 	if len(spans) == 0 {
 		t.Fatal("expected spans")
 	}
@@ -72,7 +73,7 @@ func TestFrontmatterRenderedSpans_CollapsedWithError(t *testing.T) {
 		startLine: 0,
 		endLine:   3,
 	}
-	spans := frontmatterRenderedSpans(block, 0, "---", 0, FrontmatterCollapsed, "some error")
+	spans := frontmatterRenderedSpans(block, 0, "---", 0, FrontmatterCollapsed, errors.New("some error"))
 	if len(spans) == 0 {
 		t.Fatal("expected spans")
 	}
@@ -89,7 +90,7 @@ func TestFrontmatterRenderedSpans_SourceModeIgnoresError(t *testing.T) {
 		endLine:   3,
 	}
 	lineText := "---"
-	spans := frontmatterRenderedSpans(block, 0, lineText, 0, FrontmatterSource, "some error")
+	spans := frontmatterRenderedSpans(block, 0, lineText, 0, FrontmatterSource, errors.New("some error"))
 	if len(spans) == 0 {
 		t.Fatal("expected spans")
 	}

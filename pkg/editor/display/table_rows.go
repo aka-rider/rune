@@ -174,51 +174,24 @@ func isBodyRowBoundary(lines []DisplayLine, i int) bool {
 	return cur.ModelLine != next.ModelLine
 }
 
-// getTableColWidths extracts column widths by parsing the rendered row text.
-// Grid rows have format: │ cell │ cell │ — we count the content width between pipes.
-func getTableColWidths(l DisplayLine) []int {
-	text := ""
+// colWidthsFromLine returns the column widths that formatted l's table row,
+// carried on DisplayLine.Spans[*].ColWidths (set uniformly across every span
+// a row produces — see formatGridRow/formatWrappedRow/
+// formatTableSeparatorSpansWithWidths). Replaces re-parsing the rendered
+// │ cell │ cell │ text to recover widths that were already computed once,
+// upstream, to build that same text.
+func colWidthsFromLine(l DisplayLine) []int {
 	for _, sp := range l.Spans {
-		text += sp.Text
-	}
-	if len(text) == 0 {
-		return nil
-	}
-
-	// Parse column widths from the rendered row format: │ content │ content │
-	// Each column contributes: │ + space + content + space (the last has trailing │)
-	// Use rune-based iteration — byte-based len() inflates widths for multi-byte UTF-8.
-	var widths []int
-	inCell := false
-	cellWidth := 0
-
-	for _, r := range []rune(text) {
-		if r == '│' {
-			if inCell {
-				// End of cell — subtract the padding spaces (1 before content + 1 after)
-				// The cellWidth includes the leading space, content, and trailing space
-				w := cellWidth - 2 // subtract leading and trailing space
-				if w < 0 {
-					w = 0
-				}
-				widths = append(widths, w)
-				cellWidth = 0
-			}
-			inCell = true
-			continue
-		}
-
-		if inCell {
-			cellWidth++
+		if len(sp.ColWidths) > 0 {
+			return sp.ColWidths
 		}
 	}
-
-	return widths
+	return nil
 }
 
 // buildTableBorder creates a border DisplayLine for a table.
 func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
-	colWidths := getTableColWidths(l)
+	colWidths := colWidthsFromLine(l)
 	if len(colWidths) == 0 {
 		return nil
 	}
@@ -334,6 +307,7 @@ func splitDisplayLine(l DisplayLine) []DisplayLine {
 			BlockEnd:       src.BlockEnd,
 			TableRole:      src.TableRole,
 			TableLayout:    src.TableLayout,
+			ColWidths:      src.ColWidths,
 			WikiLinkTarget: src.WikiLinkTarget,
 			LinkURL:        src.LinkURL,
 		})

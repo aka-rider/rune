@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 
+	"rune/pkg/dictation"
 	"rune/pkg/microphone"
 	"rune/pkg/whisper"
 )
@@ -33,7 +34,7 @@ func main() {
 			cancel()
 			break
 		}
-		wav := whisper.EncodePCM(chunk, 16000, 1, 16)
+		wav := dictation.EncodePCM(chunk, 16000, 1, 16)
 		text, err := c.Transcribe(context.Background(), wav, "")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "chunk %d: transcribe: %v\n", count+1, err)

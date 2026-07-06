@@ -27,6 +27,19 @@ type Model struct {
 	appliedLen int  // byte length of the last-applied chunk
 	enabled    bool // true while a session is anchored
 
+	// ticketDocID/ticketEpoch are the page's view-targeted result ticket
+	// (Part IV), captured at Enable and validated by the page BEFORE draining
+	// a pending edit — plain scalars, never the page's viewTicket type
+	// (components import no page types, §10). A session anchored on one
+	// buffer must never have its chunk applied to a different one (or the
+	// SAME doc after a later undo/load/resolve replaced the buffer
+	// wholesale) — the scattered Disable() calls at every known transition
+	// (workspace_edit.go/workspace_merge_fresh.go) are the fast, immediate
+	// UI-feedback path; this ticket is the structural backstop that catches
+	// any transition those calls miss.
+	ticketDocID int64
+	ticketEpoch uint64
+
 	// Engine state (§6.3 cancellation pattern)
 	cancel context.CancelFunc
 	dictCh <-chan tea.Msg
@@ -45,13 +58,20 @@ func (m Model) Init() tea.Cmd { return nil }
 // Enabled reports whether a session is active.
 func (m Model) Enabled() bool { return m.enabled }
 
-// Enable anchors a dictation session to a byte offset in the focused editor.
-// Call before StartCmd.
-func (m Model) Enable(startOff int) Model {
+// Ticket returns the (docID, epoch) captured at Enable, for the page to
+// validate a drained pending edit against before applying it (Part IV).
+func (m Model) Ticket() (docID int64, epoch uint64) { return m.ticketDocID, m.ticketEpoch }
+
+// Enable anchors a dictation session to a byte offset in the focused editor,
+// tagged with the page's current view ticket (docID/epoch) so a later drain
+// can be validated against it. Call before StartCmd.
+func (m Model) Enable(startOff int, ticketDocID int64, ticketEpoch uint64) Model {
 	m.startOff = startOff
 	m.appliedLen = 0
 	m.enabled = true
 	m.hasPending = false
+	m.ticketDocID = ticketDocID
+	m.ticketEpoch = ticketEpoch
 	return m
 }
 
@@ -116,9 +136,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case dictengine.FinalTranscriptionMsg:
 		finalText := msg.Text
-		if m.enabled && m.appliedLen > 0 {
+		// §1.3/CLAUDE.md #24: mirrors the PartialTranscriptionMsg clamp above
+		// — an empty/whitespace-only Final is an upstream reset, not a user
+		// deletion. Without this guard, a session that had already applied a
+		// non-empty partial (appliedLen>0) followed by an empty Final erased
+		// the committed dictated text via a destructive ReplaceRange with no
+		// TrimSpace guard (confirmed via FuzzHumanSession cluster 18 v=1 —
+		// the "empty-reset hazard" variant). Dropping the update here keeps
+		// the last-applied (non-empty) partial's text exactly as committed;
+		// the session still ends normally (enabled=false, DoneMsg emitted).
+		if m.enabled && m.appliedLen > 0 && strings.TrimSpace(finalText) != "" {
 			// Finalize with the exact last text already in the buffer
-			finalText = msg.Text
 			m.pending = pendingEdit{
 				start: m.startOff,
 				end:   m.startOff + m.appliedLen,

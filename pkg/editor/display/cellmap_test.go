@@ -34,39 +34,6 @@ func TestBuildInlineCellMap_MultiByte(t *testing.T) {
 	}
 }
 
-func TestTableCellMapGeneration(t *testing.T) {
-	// A simple table row: "| abc | de |"
-	line := "| abc | de |"
-	colWidths := []int{4, 4} // each column padded to width 4
-	alignments := []int{0, 0}
-	lineStart := 100
-
-	formatted, cm := formatTableRow(line, colWidths, alignments, lineStart)
-	if formatted == "" {
-		t.Fatal("formatted row should not be empty")
-	}
-	if len(cm) != len(formatted) {
-		t.Fatalf("CellMap length %d should match formatted length %d", len(cm), len(formatted))
-	}
-
-	// Find content cells — they should have non-negative BufOffset
-	contentCount := 0
-	decorativeCount := 0
-	for _, m := range cm {
-		if m.BufOffset >= 0 {
-			contentCount++
-		} else {
-			decorativeCount++
-		}
-	}
-	if contentCount == 0 {
-		t.Error("expected some content cells with non-negative BufOffset")
-	}
-	if decorativeCount == 0 {
-		t.Error("expected some decorative cells with BufOffset=-1")
-	}
-}
-
 func TestTableSeparatorCellMap_AllDecorative(t *testing.T) {
 	colWidths := []int{3, 4}
 	formatted := formatTableSeparator(colWidths)

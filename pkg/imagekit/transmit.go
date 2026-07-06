@@ -83,6 +83,11 @@ func EncodeTransmit(img image.Image, id uint32, cols, rows int) (string, error) 
 // and frees its data from the terminal.
 func EncodeDelete(id uint32) string {
 	var b strings.Builder
+	// fire-and-forget: with a nil image and Chunk unset, EncodeGraphics writes
+	// only to the in-memory strings.Builder (whose Write never errors) after
+	// an image-less encode step that short-circuits to a nil error — this
+	// specific (nil image, unchunked, in-memory writer) combination cannot
+	// itself produce a non-nil error.
 	_ = kitty.EncodeGraphics(&b, nil, &kitty.Options{
 		Action:          kitty.Delete,
 		Delete:          kitty.DeleteID,
@@ -97,6 +102,8 @@ func EncodeDelete(id uint32) string {
 // their data from the terminal.
 func EncodeDeleteAll() string {
 	var b strings.Builder
+	// fire-and-forget: see EncodeDelete above — same nil-image/unchunked/
+	// in-memory-writer combination that cannot itself produce a non-nil error.
 	_ = kitty.EncodeGraphics(&b, nil, &kitty.Options{
 		Action:          kitty.Delete,
 		Delete:          kitty.DeleteAll,

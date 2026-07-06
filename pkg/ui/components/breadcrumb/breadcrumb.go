@@ -10,52 +10,35 @@ import (
 	"rune/pkg/ui/styles"
 )
 
-type SetPathMsg struct{ Path string }
-
 type Model struct {
-	path         string
-	dirPath      string
-	untitledName string
-	width        int
-	styles       styles.Styles
+	path    string
+	dirPath string
+	width   int
+	styles  styles.Styles
 }
 
-func New(st styles.Styles, _ func(string) error) Model {
+func New(st styles.Styles) Model {
 	return Model{styles: st}
 }
 
-func (m Model) SetSize(w, _ int) Model             { m.width = w; return m }
-func (m Model) SetPath(path string) Model           { m.path = path; return m }
-func (m Model) SetDir(dir string) Model             { m.dirPath = dir; return m }
-func (m Model) SetUntitledName(name string) Model   { m.untitledName = name; return m }
-func (m Model) Height() int                         { return 1 }
+func (m Model) SetSize(w, _ int) Model    { m.width = w; return m }
+func (m Model) SetPath(path string) Model { m.path = path; return m }
+func (m Model) SetDir(dir string) Model   { m.dirPath = dir; return m }
+func (m Model) Height() int               { return 1 }
 
 func (m Model) Init() tea.Cmd { return nil }
 
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case SetPathMsg:
-		m.path = msg.Path
-	}
-	return m, nil
-}
-
+// View renders the breadcrumb. Pure string math (§1.4.9, §5.2) — no
+// filesystem access. m.dirPath and m.path are both injected as absolute
+// paths by the caller (the workspace's launch-captured workDir via SetDir,
+// and file-load/rename paths via SetPath), so no per-render os.Getwd/
+// filepath.Abs is needed to relativize them.
 func (m Model) View() string {
-	cwd, _ := filepath.Abs(".")
 	var targetPath string
 	if m.path == "" {
-		// When path is empty, it's an untitled file.
-		// If dirPath isn't set, default it to CWD to ensure it renders relative to vault.
-		dir := m.dirPath
-		if dir == "" {
-			dir = cwd
-		}
-
-		name := m.untitledName
-		if name == "" {
-			name = "Untitled.md" // Safe fallback
-		}
-		targetPath = filepath.Join(dir, name)
+		// When path is empty, it's an untitled file — anchor it under the
+		// injected workspace dir (empty dirPath renders just the filename).
+		targetPath = filepath.Join(m.dirPath, "Untitled.md")
 	} else {
 		targetPath = m.path
 	}
@@ -64,36 +47,35 @@ func (m Model) View() string {
 		return ""
 	}
 
-	return buildCrumb(targetPath, m.styles, cwd, m.width)
+	return buildCrumb(targetPath, m.styles, m.dirPath, m.width)
 }
 
-func buildCrumb(path string, st styles.Styles, cwd string, maxWidth int) string {
+// buildCrumb relativizes path against root by string prefix — both are
+// assumed already-absolute (View's contract above), so this never touches
+// the filesystem.
+func buildCrumb(path string, st styles.Styles, root string, maxWidth int) string {
 	var relPath string
-	if cwd != "" {
-		absCwd, err := filepath.Abs(cwd)
-		if err == nil {
-			cwd = absCwd
-		}
-
-		absPath, err := filepath.Abs(path)
-		if err == nil {
-			path = absPath
-		}
-
-		// String Prefix Replacement logic
-		if strings.HasPrefix(path, cwd) {
-			remainder := strings.TrimPrefix(path, cwd)
+	if root != "" {
+		// String Prefix Replacement logic. B3: a bare strings.HasPrefix has no
+		// separator boundary, so root=/a/vault would wrongly claim
+		// /a/vault2/notes.md too (remainder "2/notes.md" doesn't start with a
+		// separator) — accept the match only when the remainder is empty
+		// (path == root exactly) or itself starts with a path separator.
+		remainder := strings.TrimPrefix(path, root)
+		isUnderRoot := strings.HasPrefix(path, root) &&
+			(remainder == "" || strings.HasPrefix(remainder, string(filepath.Separator)))
+		if isUnderRoot {
 			// Remove leading slash if present
 			remainder = strings.TrimPrefix(remainder, string(filepath.Separator))
 
-			baseName := filepath.Base(cwd)
+			baseName := filepath.Base(root)
 			if remainder == "" {
 				relPath = baseName
 			} else {
 				relPath = filepath.Join(baseName, remainder)
 			}
 		} else {
-			// Fallback to absolute if it's not under CWD
+			// Fallback to absolute if it's not under root
 			relPath = path
 		}
 	} else {

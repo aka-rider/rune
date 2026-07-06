@@ -12,6 +12,7 @@ import (
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // Model is the top-level tea.Model, delegating to the workspace page.
@@ -64,7 +65,15 @@ func NewApp(workDir string, initialFiles []string) (Model, error) {
 	// 8. Detect terminal capabilities
 	caps := terminal.DetectCapabilities()
 
-	ws := workspace.New(keys, st, registry, resolver, caps, workDir, initialFiles)
+	// Construct the ONE production filesystem value and wire it through both
+	// the workspace (editor link/embed resolution, file I/O) and the
+	// docstate store (Load/Probe/Materialize, opened later via
+	// StoreReadyMsg/openStoreCmd, which reads it back via m.fsys()) — closes
+	// S6 (workspace and store used to independently nil-default to
+	// vfs.Disk{} instead of sharing one injected value; the fuzz harness
+	// already shared one vfs.Mem this way).
+	fsys := vfs.Disk{}
+	ws := workspace.New(keys, st, registry, resolver, caps, workDir, initialFiles).WithFS(fsys)
 	return Model{ws: ws}, nil
 }
 

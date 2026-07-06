@@ -195,9 +195,12 @@ func (m Model) codeFenceSpanToCells(sp display.DisplaySpan) []textedit.Cell {
 				size = 1
 				r = utf8.RuneError
 			}
-			w := runewidth.RuneWidth(r)
+			w := display.ControlAwareWidth(r)
 			if w == 0 {
-				w = 1
+				// \n and \r: no cell (mirrors textedit/wrap-map behaviour)
+				pos += size
+				bufPos += size
+				continue
 			}
 			cells = append(cells, textedit.Cell{
 				Rune:      r,

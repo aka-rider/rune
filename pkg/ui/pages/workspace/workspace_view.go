@@ -7,10 +7,33 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"rune/pkg/ui/components/textedit"
+	"rune/pkg/ui/pages/workspace/mergemode"
 	"rune/pkg/ui/styles"
 )
 
-func (m Model) recalcLayout() Model {
+// paneGeometry is the shared top-level layout — the SAME numbers recalcLayout
+// uses to size every child AND paneAtPoint/dividerAtPoint use to hit-test the
+// mouse. Before this chokepoint, recalcLayout/paneAtPoint/dividerAtPoint/View
+// each independently recomputed contentH/leftW/rightW/centerW, and
+// recalcLayout/paneAtPoint each independently recomputed the filetree/
+// opentabs height split — four (resp. two) copies that could silently drift
+// apart, misrouting a mouse click to the wrong pane/row (critic: "layout vs
+// mouse hit-testing must agree").
+type paneGeometry struct {
+	ContentH   int // total height available above the footer
+	InnerH     int // ContentH - 2 (border top+bottom), clamped at 0 — the bordered interior height shared by every pane (D8: folds recalcLayout's own duplicate "contentH-2" clamp into this one computation)
+	LeftW      int // 0 when the left pane is hidden
+	CenterW    int
+	RightW     int // 0 when the right pane is hidden
+	RightStart int // m.totalWidth - m.rightPaneW — the right pane's X REGARDLESS of visibility (dividerAtPoint's hidden-pane restore zone needs this even when RightW is 0)
+	FiletreeH  int // filetree height within the left column's bordered interior
+	OpentabsH  int // opentabs height within the left column's bordered interior
+}
+
+// paneGeometry computes the shared geometry described by the paneGeometry
+// type above — the one place recalcLayout/paneAtPoint/dividerAtPoint/View
+// all read it from.
+func (m Model) paneGeometry() paneGeometry {
 	contentH := m.totalHeight - m.footer.Height()
 	if contentH < 0 {
 		contentH = 0
@@ -33,6 +56,38 @@ func (m Model) recalcLayout() Model {
 	if innerH < 0 {
 		innerH = 0
 	}
+	otH := m.opentabs.Height()
+	avail := innerH - otH
+	if avail < 0 {
+		avail = 0
+	}
+	ftH := avail
+	if ftH < 4 {
+		ftH = 4
+	}
+	if ftH > avail {
+		ftH = avail
+	}
+
+	return paneGeometry{
+		ContentH:   contentH,
+		InnerH:     innerH,
+		LeftW:      leftW,
+		CenterW:    centerW,
+		RightW:     rightW,
+		RightStart: m.totalWidth - m.rightPaneW,
+		FiletreeH:  ftH,
+		OpentabsH:  otH,
+	}
+}
+
+func (m Model) recalcLayout() Model {
+	g := m.paneGeometry()
+	leftW := g.LeftW
+	rightW := g.RightW
+	centerW := g.CenterW
+	innerH := g.InnerH
+
 	innerLeftW := leftW - 2
 	if innerLeftW < 0 {
 		innerLeftW = 0
@@ -54,18 +109,8 @@ func (m Model) recalcLayout() Model {
 		editorH = 0
 	}
 
-	otH := m.opentabs.Height()
-	available := innerH - otH
-	if available < 0 {
-		available = 0
-	}
-	ftH := available
-	if ftH < 4 {
-		ftH = 4
-	}
-	if ftH > available {
-		ftH = available
-	}
+	otH := g.OpentabsH
+	ftH := g.FiletreeH
 	m.filetree = m.filetree.SetSize(innerLeftW, ftH)
 	m.opentabs = m.opentabs.SetSize(innerLeftW, otH)
 	m.opentabs = m.opentabs.SetOffset(1, ftH+1)
@@ -74,10 +119,10 @@ func (m Model) recalcLayout() Model {
 	m.search = m.search.SetSize(innerCenterW, searchH)
 	m.breadcrumb = m.breadcrumb.SetSize(centerW, 1)
 
+	// The error banner (§4) is composed INTO body's existing top row in
+	// View() (overlayErrorLine) rather than adding a row above it, so no
+	// geometry here shifts when m.err is set — topOffset is always 1.
 	topOffset := 1
-	if m.err != nil {
-		topOffset = 2
-	}
 
 	m.editor = m.editor.SetRect(textedit.Rect{
 		X: leftW + 1,
@@ -85,6 +130,9 @@ func (m Model) recalcLayout() Model {
 		W: innerCenterW,
 		H: editorH,
 	})
+	// The merge view substitutes for the main editor in the center pane while
+	// active (§4) — same box, so it never jumps size when merge toggles.
+	m.merge = mergemode.SetSize(m.merge, innerCenterW, editorH)
 
 	m.chat = m.chat.SetSize(innerRightW, innerH)
 	m.footer = m.footer.SetSize(m.totalWidth, m.footer.Height())
@@ -95,39 +143,25 @@ func (m Model) recalcLayout() Model {
 }
 
 func (m Model) paneAtPoint(x, y int) (pane, bool) {
-	contentH := m.totalHeight - m.footer.Height()
-	if y >= contentH {
+	g := m.paneGeometry()
+	if y >= g.ContentH {
 		return 0, false
 	}
 
 	if m.leftVisible && x < m.leftPaneW {
-		innerH := contentH - 2
-		otH := m.opentabs.Height()
-		avail := innerH - otH
-		if avail < 0 {
-			avail = 0
-		}
-		ftH := avail
-		if ftH < 4 {
-			ftH = 4
-		}
-		if ftH > avail {
-			ftH = avail
-		}
-		if y > ftH {
+		if y > g.FiletreeH {
 			return paneTabs, true
 		}
 		return paneTree, true
 	}
-	rightStart := m.totalWidth - m.rightPaneW
-	if m.rightVisible && x >= rightStart {
+	if m.rightVisible && x >= g.RightStart {
 		return paneChat, true
 	}
 
+	// Mirrors recalcLayout's topOffset (§4): the error banner overlays body's
+	// existing top row (overlayErrorLine) rather than shifting it, so hit
+	// testing never depends on m.err.
 	topOffset := 1
-	if m.err != nil {
-		topOffset = 2
-	}
 	if y == topOffset {
 		return paneTitle, true
 	}
@@ -138,8 +172,8 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 }
 
 func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
-	contentH := m.totalHeight - m.footer.Height()
-	if y < 0 || y >= contentH {
+	g := m.paneGeometry()
+	if y < 0 || y >= g.ContentH {
 		return dragNone, false
 	}
 
@@ -154,8 +188,7 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 	}
 
 	if m.rightVisible {
-		rightStart := m.totalWidth - m.rightPaneW
-		if x == rightStart-1 || x == rightStart {
+		if x == g.RightStart-1 || x == g.RightStart {
 			return dragRight, true
 		}
 	} else {
@@ -172,22 +205,11 @@ func (m Model) View() tea.View {
 		return tea.NewView("")
 	}
 
-	contentH := m.totalHeight - m.footer.Height()
-	if contentH < 0 {
-		contentH = 0
-	}
-	leftW := 0
-	if m.leftVisible {
-		leftW = m.leftPaneW
-	}
-	rightW := 0
-	if m.rightVisible {
-		rightW = m.rightPaneW
-	}
-	centerW := m.totalWidth - leftW - rightW
-	if centerW < 0 {
-		centerW = 0
-	}
+	g := m.paneGeometry()
+	contentH := g.ContentH
+	leftW := g.LeftW
+	rightW := g.RightW
+	centerW := g.CenterW
 
 	var centerParts []string
 	centerParts = append(centerParts, m.title.View())
@@ -195,7 +217,20 @@ func (m Model) View() tea.View {
 		centerParts = append(centerParts, m.search.View())
 	}
 	editorView := m.editor.View()
-	if m.pendingLoad.active {
+	switch {
+	case mergemode.IsActive(m.merge):
+		// The merge resolver is active: substitute the read-only diff view for
+		// the main editor (which is hidden — it holds the marker working
+		// buffer, §3/§4). Title/breadcrumb stay so the doc identity is clear.
+		editorView = m.merge.View()
+	case m.pendingConflict.active:
+		// Fix D (BUG2): the [S]/[D]/[M] guard is up — render the read-only
+		// ours-vs-theirs PREVIEW (built by raiseConflictGuard) in place of the
+		// main editor, so the diff is visible before the user chooses. Mutually
+		// exclusive with the IsActive case above: pendingConflict is always
+		// cleared before mergemode.Enter activates the resolver.
+		editorView = m.merge.View()
+	case m.pendingLoad.active:
 		// Non-destructive anti-flash: render the editor's empty frame while a
 		// load is in flight, leaving the real buffer intact (preserves 16138bd
 		// without the SetContent("") stranding). RenderEmpty matches View()'s
@@ -245,14 +280,64 @@ func (m Model) View() tea.View {
 		body = centerBlock
 	}
 
+	// §4: compose the error banner INTO body's existing top row rather than
+	// prepending a new one — recalcLayout's contentH already reserves exactly
+	// m.totalHeight-footer.Height() rows for body, and m.err is set/cleared
+	// at sites that never call recalcLayout, so a row "reserved" there would
+	// desync from a live m.err transition. Prepending unconditionally added a
+	// row ABOVE that budget, which MaxHeight below then clipped off the
+	// footer's bottom row to compensate — composing within the existing
+	// budget here means the total height is always exactly m.totalHeight.
+	body = overlayErrorLine(body, m.err, m.styles)
+
 	clamp := lipgloss.NewStyle().MaxWidth(m.totalWidth).MaxHeight(m.totalHeight)
-	if m.err != nil {
-		errLine := m.styles.Error.Render("error: " + m.err.Error())
-		frame := lipgloss.JoinVertical(lipgloss.Left, errLine, body, m.footer.View())
-		return tea.NewView(clamp.Render(frame))
-	}
 	frame := lipgloss.JoinVertical(lipgloss.Left, body, m.footer.View())
 	return tea.NewView(clamp.Render(frame))
+}
+
+// overlayErrorLine composes err onto body's first rendered row (its top
+// border row) in place, so no row is added and the frame's total height
+// never exceeds its existing budget. A nil err leaves body unchanged.
+//
+// B1: lipgloss v2's Width(n) WORD-WRAPS content that doesn't fit rather than
+// truncating it, so a long error (a long path is common) used to expand
+// lines[0] into several physical rows — growing body past recalcLayout's
+// contentH budget, which the outer MaxHeight(m.totalHeight) in View() then
+// satisfied by silently clipping the footer's bottom row instead. MaxHeight(1)
+// here constrains the rendered error to exactly the one row this function's
+// own contract promises (verified: Width+MaxWidth+MaxHeight(1) always yields
+// a single row of exactly rowWidth cells, never more).
+//
+// S2: err.Error() can carry a filename (from a real OS error) containing raw
+// C0 control bytes (e.g. an embedded ESC), which — written verbatim into the
+// terminal frame — would inject escape sequences. sanitizeErrorText strips
+// C0 bytes before this ever reaches lipgloss.Render.
+func overlayErrorLine(body string, err error, st styles.Styles) string {
+	if err == nil {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 {
+		return body
+	}
+	rowWidth := lipgloss.Width(lines[0])
+	errLine := st.Error.Width(rowWidth).MaxWidth(rowWidth).MaxHeight(1).
+		Render(" error: " + sanitizeErrorText(err.Error()))
+	lines[0] = errLine
+	return strings.Join(lines, "\n")
+}
+
+// sanitizeErrorText strips C0 control bytes (0x00-0x1F, including ESC) from
+// display text at the terminal-frame boundary — an untrusted error string
+// (e.g. built from a filename or path an external actor controls) must never
+// be able to inject an escape sequence into the rendered frame (S2).
+func sanitizeErrorText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func overlayBreadcrumb(block, crumb string, active bool, st styles.Styles) string {

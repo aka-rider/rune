@@ -14,7 +14,7 @@ import (
 func TestFinalizeProjectsDocPathToEditor(t *testing.T) {
 	m := newTestWorkspace(t)
 	// Simulate bind-new / rename: m.view changes, NO SetContent.
-	m.view = fileView("/vault/sub/note.md", 7, diskBaseline{})
+	m.view = fileView("/vault/sub/note.md", 7)
 	m, _ = m.finalize(nil)
 	if got := m.editor.DocPath(); got != "/vault/sub/note.md" {
 		t.Errorf("editor docPath = %q after finalize; want it projected from m.view.Path()", got)
@@ -28,7 +28,7 @@ func TestFinalizeProjectsDocPathToEditor(t *testing.T) {
 func TestFollowMissingInternalLinkKeepsContent(t *testing.T) {
 	m := newTestWorkspace(t)
 	m.editor = m.editor.SetContent("# Real content\nstays put\n")
-	m.view = fileView("/some/note.md", 0, diskBaseline{})
+	m.view = fileView("/some/note.md", 0)
 	before := m.editor.Content()
 
 	m, cmd := m.Update(markdownedit.LinkActivatedMsg{Kind: markdownedit.LinkMissing, Raw: "missing.md"})

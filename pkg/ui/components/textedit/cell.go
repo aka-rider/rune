@@ -1,11 +1,11 @@
 package textedit
 
 import (
+	"image/color"
 	"strings"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
-	"github.com/mattn/go-runewidth"
 
 	"rune/pkg/editor/display"
 )
@@ -25,6 +25,35 @@ type Cell struct {
 
 // SelInterval is a selection range [Start, End) used for overlay rendering.
 type SelInterval struct{ Start, End int }
+
+// BgInterval tints the background of every cell whose BufOffset ∈ [Start,End)
+// with Color, as part of the base cell style (cursor/selection/match overlays
+// still take precedence via cellEffectiveStyle). A render-time overlay — it
+// reads from caller-supplied ranges, never from buffer text, so it stays
+// merge-agnostic and reusable by any textedit consumer.
+type BgInterval struct {
+	Start, End int
+	Color      color.Color
+}
+
+// ApplyBackgroundIntervals sets a background colour on every cell whose
+// BufOffset falls within one of ivs. Called BEFORE sliceCells (in the
+// cell-builder, not View) so the tint is part of the base cell style; cursor /
+// selection / match overlays applied later still take precedence.
+func ApplyBackgroundIntervals(cells []Cell, ivs []BgInterval) {
+	for i := range cells {
+		off := cells[i].BufOffset
+		if off < 0 {
+			continue
+		}
+		for _, iv := range ivs {
+			if off >= iv.Start && off < iv.End {
+				cells[i].Style = cells[i].Style.Background(iv.Color)
+				break
+			}
+		}
+	}
+}
 
 // SpanToCells converts a DisplaySpan into a slice of Cells.
 func SpanToCells(sp display.DisplaySpan, baseStyle lipgloss.Style) []Cell {
@@ -51,10 +80,7 @@ func revealedSpanToCells(text string, bufStart int, style lipgloss.Style) []Cell
 			pos += size
 			continue
 		}
-		w := runewidth.RuneWidth(r)
-		if w == 0 {
-			w = 1
-		}
+		w := display.ControlAwareWidth(r)
 		cells = append(cells, Cell{
 			Rune:      r,
 			Width:     w,
@@ -82,10 +108,7 @@ func renderedSpanToCells(text string, cm []display.CellMapping, style lipgloss.S
 			mapIdx++
 			continue
 		}
-		w := runewidth.RuneWidth(r)
-		if w == 0 {
-			w = 1
-		}
+		w := display.ControlAwareWidth(r)
 		bufOff := -1
 		if mapIdx < len(cm) {
 			bufOff = cm[mapIdx].BufOffset
@@ -112,8 +135,9 @@ func isInSelection(off int, selections []SelInterval) bool {
 	return false
 }
 
-// ApplyOverlays marks cells as Selected or Cursor based on their BufOffset.
-func ApplyOverlays(cells []Cell, cursorOffsets map[int]bool, selections []SelInterval) {
+// applyOverlays marks cells as Selected or Cursor based on their BufOffset.
+// D5: unexported — no caller outside this package.
+func applyOverlays(cells []Cell, cursorOffsets map[int]bool, selections []SelInterval) {
 	for i := range cells {
 		if cells[i].BufOffset < 0 {
 			continue
@@ -127,8 +151,9 @@ func ApplyOverlays(cells []Cell, cursorOffsets map[int]bool, selections []SelInt
 	}
 }
 
-// SliceCells performs horizontal scrolling at the cell level.
-func SliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
+// sliceCells performs horizontal scrolling at the cell level. D5: unexported
+// — no caller outside this package.
+func sliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
 	if scrollCol <= 0 && viewWidth <= 0 {
 		return cells
 	}
@@ -175,7 +200,7 @@ func SliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
 	return result
 }
 
-// CellsToString converts a slice of cells to a final ANSI-styled string.
+// cellsToString converts a slice of cells to a final ANSI-styled string.
 // matchStyle and activeMatchStyle are used for search-highlight overlays;
 // pass lipgloss.NewStyle() when no search is active.
 //
@@ -183,7 +208,9 @@ func SliceCells(cells []Cell, scrollCol, viewWidth int) []Cell {
 // It MUST be applied per-run here rather than wrapping the assembled string: the
 // embedded \x1b[0m reset at the end of each styled run would otherwise clear the
 // faint for the remainder of the line (only the first run would dim).
-func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style, dim bool) string {
+//
+// D5: unexported — no caller outside this package.
+func cellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchStyle lipgloss.Style, dim bool) string {
 	if len(cells) == 0 {
 		return ""
 	}
@@ -219,16 +246,18 @@ func CellsToString(cells []Cell, selStyle, cursorStyle, matchStyle, activeMatchS
 	return b.String()
 }
 
-// ApplyMatchOverlay marks cells as Match or ActiveMatch based on their BufOffset.
-// activeIdx is the index into matches of the active match; -1 means no active match.
-func ApplyMatchOverlay(cells []Cell, matches []SelInterval, activeIdx int) {
+// applyMatchOverlay marks cells as Match or ActiveMatch based on their
+// BufOffset. active.Valid=false means no match is currently active — every
+// matching cell is then plain Match (§1.7: no -1 sentinel comparison).
+// D5: unexported — no caller outside this package.
+func applyMatchOverlay(cells []Cell, matches []SelInterval, active ActiveMatch) {
 	for i := range cells {
 		if cells[i].BufOffset < 0 {
 			continue
 		}
 		for mi, m := range matches {
 			if cells[i].BufOffset >= m.Start && cells[i].BufOffset < m.End {
-				if mi == activeIdx {
+				if active.Valid && mi == active.Index {
 					cells[i].ActiveMatch = true
 				} else {
 					cells[i].Match = true

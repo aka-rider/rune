@@ -382,7 +382,7 @@ func blockSpansForLine(
 	lineStart int,
 	revealed bool,
 	fmMode FrontmatterMode,
-	fmError string,
+	fmError error,
 	mdSpans []mdSpan,
 	parsed []parsedLine,
 	availableWidth int,

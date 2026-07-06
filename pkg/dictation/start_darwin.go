@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !fuzzing
 
 package dictation
 
@@ -10,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/microphone"
-	whisperPkg "rune/pkg/whisper"
 )
 
 // StartCmd starts the microphone capture goroutine.
@@ -38,7 +37,7 @@ func StartCmd(ctx context.Context, cfg Config) tea.Cmd {
 					if len(allAudio) > 0 {
 						// Use a fresh context for the final transcription since ctx is cancelled.
 						finalCtx, finalCancel := context.WithTimeout(context.Background(), 30*time.Second)
-						wav := whisperPkg.EncodePCM(allAudio, 16000, 1, 16)
+						wav := EncodePCM(allAudio, 16000, 1, 16)
 						text, err := cfg.Whisper.Transcribe(finalCtx, wav, lang)
 						finalCancel()
 						if err == nil && strings.TrimSpace(text) != "" {
@@ -55,7 +54,7 @@ func StartCmd(ctx context.Context, cfg Config) tea.Cmd {
 					}
 					allAudio = append(allAudio, chunk...)
 
-					wav := whisperPkg.EncodePCM(allAudio, 16000, 1, 16)
+					wav := EncodePCM(allAudio, 16000, 1, 16)
 					text, err := cfg.Whisper.Transcribe(ctx, wav, lang)
 					if err != nil {
 						out <- ErrorMsg{Err: err, Fatal: false}

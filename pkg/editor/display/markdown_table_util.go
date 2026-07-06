@@ -23,6 +23,7 @@ func formatTableSeparatorSpansWithWidths(colWidths []int, lineStart int, lineTex
 		BlockStart:  block.startOff,
 		BlockEnd:    block.endOff,
 		TableRole:   TableRoleSeparator,
+		ColWidths:   colWidths,
 	}}
 }
 
@@ -186,34 +187,27 @@ func longestAtomicWidth(cell string) int {
 	return maxW
 }
 
-// runewidthSafe returns the visual width of a string.
+// runewidthSafe returns the visual width of a string, funneled through the
+// same ControlAwareWidth (wrap_map.go) every other display-width decision in
+// this package uses — go-runewidth's full Unicode East Asian Width tables,
+// not the hand-rolled partial CJK-range table this used to carry (which
+// covered only a handful of wide-CJK blocks and, being a hand-copy, could
+// silently drift from upstream Unicode data).
+//
+// D11: ControlAwareWidth clamps zero-width runes (C0 control chars,
+// combining marks) to 1, EXCEPT \n and \r, which it always counts as 0
+// columns — so this is NOT a "≥1 per rune, no exceptions" guarantee for
+// arbitrary input; a string containing \n/\r contributes 0 for those runes.
+// It holds for the newline-free single-line cell/word text this function is
+// actually called on (table cell content never carries embedded \n before
+// this is measured), which is what computeTableMetrics' column-width math
+// depends on to avoid a misaligned table.
 func runewidthSafe(s string) int {
 	w := 0
 	for _, r := range s {
-		w += runeWidth(r)
+		w += ControlAwareWidth(r)
 	}
 	return w
-}
-
-// runeWidth returns the visual width of a rune (2 for CJK, 1 otherwise).
-func runeWidth(r rune) int {
-	if r >= 0x1100 && isWide(r) {
-		return 2
-	}
-	return 1
-}
-
-// isWide checks if a rune is East Asian wide.
-func isWide(r rune) bool {
-	return (r >= 0x1100 && r <= 0x115F) ||
-		(r >= 0x2E80 && r <= 0x9FFF) ||
-		(r >= 0xAC00 && r <= 0xD7AF) ||
-		(r >= 0xF900 && r <= 0xFAFF) ||
-		(r >= 0xFE10 && r <= 0xFE6F) ||
-		(r >= 0xFF01 && r <= 0xFF60) ||
-		(r >= 0xFFE0 && r <= 0xFFE6) ||
-		(r >= 0x20000 && r <= 0x2FFFD) ||
-		(r >= 0x30000 && r <= 0x3FFFD)
 }
 
 // separatorType determines which corner/junction characters to use for separators.
@@ -261,98 +255,6 @@ func formatTableSeparatorWithType(colWidths []int, sepType separatorType) string
 	}
 	b.WriteRune(rightCorner)
 	return b.String()
-}
-
-// formatTableRow formats a pipe-delimited row with padded cells.
-// Returns the formatted string and a CellMap mapping each output visual cell to a buffer offset.
-// NOTE: This function is kept for backward compatibility. New code should use
-// formatTableRowRendered for span-aware rendering.
-func formatTableRow(line string, colWidths []int, alignments []int, lineStart int) (string, []CellMapping) {
-	cells := parseTableCells(line)
-	cellOffsets := parseTableCellOffsets(line)
-
-	var b strings.Builder
-	var cm []CellMapping
-	for i, w := range colWidths {
-		if i == 0 {
-			b.WriteByte('|')
-			cm = append(cm, CellMapping{BufOffset: -1})
-		}
-		b.WriteByte(' ')
-		cm = append(cm, CellMapping{BufOffset: -1})
-
-		cell := ""
-		if i < len(cells) {
-			cell = cells[i]
-		}
-
-		cw := cellWidth(cell)
-		pad := w - cw
-		if pad < 0 {
-			pad = 0
-		}
-
-		align := 0 // left
-		if i < len(alignments) {
-			align = alignments[i]
-		}
-
-		cellBufStart := -1
-		if i < len(cellOffsets) {
-			cellBufStart = lineStart + cellOffsets[i]
-		}
-
-		switch align {
-		case 2: // right
-			for j := 0; j < pad; j++ {
-				b.WriteByte(' ')
-				cm = append(cm, CellMapping{BufOffset: -1})
-			}
-			writeCellWithMap(&b, &cm, cell, cellBufStart)
-		case 1: // center
-			leftPad := pad / 2
-			rightPad := pad - leftPad
-			for j := 0; j < leftPad; j++ {
-				b.WriteByte(' ')
-				cm = append(cm, CellMapping{BufOffset: -1})
-			}
-			writeCellWithMap(&b, &cm, cell, cellBufStart)
-			for j := 0; j < rightPad; j++ {
-				b.WriteByte(' ')
-				cm = append(cm, CellMapping{BufOffset: -1})
-			}
-		default: // left
-			writeCellWithMap(&b, &cm, cell, cellBufStart)
-			for j := 0; j < pad; j++ {
-				b.WriteByte(' ')
-				cm = append(cm, CellMapping{BufOffset: -1})
-			}
-		}
-
-		b.WriteByte(' ')
-		cm = append(cm, CellMapping{BufOffset: -1})
-		b.WriteByte('|')
-		cm = append(cm, CellMapping{BufOffset: -1})
-	}
-	return b.String(), cm
-}
-
-// writeCellWithMap writes cell content to the builder and appends CellMapping entries.
-// CellMap is built per-visual-cell (per-rune), not per-byte.
-func writeCellWithMap(b *strings.Builder, cm *[]CellMapping, cell string, bufStart int) {
-	for pos := 0; pos < len(cell); {
-		b.WriteRune(rune(cell[pos]))
-		off := -1
-		if bufStart >= 0 {
-			off = bufStart + pos
-		}
-		*cm = append(*cm, CellMapping{BufOffset: off})
-		_, size := utf8.DecodeRuneInString(cell[pos:])
-		if size == 0 {
-			size = 1
-		}
-		pos += size
-	}
 }
 
 // parseTableCellOffsets returns the byte offset within the line where each cell's

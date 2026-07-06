@@ -3,27 +3,29 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/help"
+	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
+// currentDir returns the directory new files/renames resolve against. Falls
+// back to the launch-captured m.workDir (§1.4.9) rather than a runtime
+// os.Getwd() — the process cwd can differ from the vault root the user
+// launched rune against, and re-statting it on every rename is FS I/O this
+// component doesn't need (New's own os.Getwd fallback, workspace.go, is the
+// one sanctioned bootstrap call — see §1.4.9(a)).
 func (m Model) currentDir() string {
 	if m.watchedDir != "" {
 		return m.watchedDir
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "."
+	if m.workDir != "" {
+		return m.workDir
 	}
-	return cwd
+	return "."
 }
 
 // requestOpenPath switches the editor to a document. Untitled documents all
@@ -46,6 +48,45 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 		}
 	}
 
+	// Modal merge (§4): a mid-merge doc must never be backgrounded — its
+	// marker buffer would be snapshotted to the store, and a later quit-save or
+	// evict-save could write markers to the .md with HasUnresolvedConflicts()
+	// reading false for a NON-active doc. Refuse the switch; Esc-abort is the
+	// escape hatch.
+	if m.HasUnresolvedConflicts() {
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before switching files"})
+		return m, cmd
+	}
+	// The switch is proceeding — m.merge is single, workspace-wide state that
+	// pertains only to the doc being left (a FULLY-RESOLVED merge deactivates
+	// without clearing its conflict list until Reset/Abort, so it could
+	// otherwise linger into the next document). Clear it so it never bleeds
+	// across documents; Reset is a no-op if there was nothing to clear.
+	m.merge = mergemode.Reset(m.merge)
+
+	// H1: a dictation session anchored on the outgoing document's buffer must
+	// not survive the switch — its startOff/appliedLen would target whatever
+	// buffer is displayed when the next chunk lands, not the one it started
+	// against.
+	var cmds []tea.Cmd
+	m = m.disableDictationForTransition(&cmds)
+
+	// Any new navigation intent supersedes a stale deferral (below) — mirrors
+	// supersedeLoad's "most recent request wins" semantics.
+	m.pendingReopen = pendingReopen{}
+	if m.savingTarget(docID, path) {
+		// The requested file is the exact one our own interactive save is
+		// currently writing. Materialize's atomic swap may already be
+		// mid-flight or complete on disk while its FileSavedMsg is still
+		// in-transit — reloading now could observe the post-rename inode before
+		// docstate.Bind re-stamps it, orphaning the doc's undo/snapshot history
+		// onto a fresh docID (§1.4.6). Defer instead; flushPendingReopen replays
+		// this once the save settles (workspace_probe.go).
+		m.pendingReopen = pendingReopen{docID: docID, path: path, active: true}
+		return m, tea.Batch(cmds...)
+	}
+
 	m = m.forceSnapshot()
 
 	// This call supersedes any in-flight load — it replaces what the editor
@@ -54,14 +95,17 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	// never masked by a blank frame); the async branch re-arms it in beginLoad.
 	m = m.supersedeLoad()
 
+	var switchCmd tea.Cmd
 	switch path {
 	case help.DocPath:
-		return m.showHelp(), nil
+		m = m.showHelp()
 	case "":
-		return m.showUntitled(docID), nil
+		m = m.showUntitled(docID)
 	default:
-		return m.beginLoad(docID, path)
+		m, switchCmd = m.beginLoad(docID, path)
 	}
+	cmds = append(cmds, switchCmd)
+	return m, tea.Batch(cmds...)
 }
 
 // beginLoad is the single entry point for every asynchronous file load. It arms
@@ -75,7 +119,7 @@ func (m Model) beginLoad(docID int64, path string) (Model, tea.Cmd) {
 	m.loadGen++
 	gen := m.loadGen // capture into a local before the closure (§5.5)
 	m.pendingLoad = pendingLoad{gen: gen, docID: docID, path: path, active: true}
-	return m, loadFileCmd(m.fsys(), context.Background(), path, gen)
+	return m, loadFileCmd(m.store, m.fsys(), context.Background(), path, gen)
 }
 
 // supersedeLoad invalidates any in-flight async load without issuing a new one: it
@@ -93,7 +137,24 @@ func (m Model) supersedeLoad() Model {
 func (m Model) viewingHelp() bool { return m.view.IsHelp() }
 
 // toggleHelp opens, focuses, or closes the help document, per ^?.
+// refuseMergeTransition surfaces the modal-merge refusal hint (§4): a mid-merge
+// doc must never be backgrounded/closed/renamed — its marker working buffer
+// would be snapshotted to the store and a later quit/evict save could write
+// markers to the .md (rung-1). Shared by every transition guard so the message
+// and behavior stay consistent; Esc-abort is the escape hatch. action is the
+// verb phrase completing "... before <action>".
+func (m Model) refuseMergeTransition(action string) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before " + action})
+	return m, cmd
+}
+
 func (m Model) toggleHelp() (Model, tea.Cmd) {
+	// Modal merge (§4): opening help would background the mid-merge marker doc
+	// (and the stray tab-add below would run before requestOpenPath's own gate).
+	if m.HasUnresolvedConflicts() {
+		return m.refuseMergeTransition("opening help")
+	}
 	if m.viewingHelp() {
 		if m.focus == paneCenter {
 			return m.requestCloseCurrent()
@@ -106,43 +167,8 @@ func (m Model) toggleHelp() (Model, tea.Cmd) {
 	return m.requestOpenPath(0, help.DocPath)
 }
 
-// showHelp loads the read-only help document into the shared editor.
-// Synchronous: the content is generated in memory, no I/O deferred.
-func (m Model) showHelp() Model {
-	m.editor = m.editor.SetContent(m.helpContent).SetReadOnly(true)
-	m.view = helpView()
-	m.title = m.title.SetText("(Help)")
-	m.breadcrumb = m.breadcrumb.SetPath("")
-	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
-	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
-	m.opentabs = m.opentabs.MarkClean(help.DocPath)
-	m = m.setFocus(paneCenter)
-	return m
-}
-
-// showUntitled switches to the untitled document with the given docID,
-// reconstructing its content from the VFS (crash-safe). All untitled tabs share
-// path ""; the docID is the only stable key (N4). HasHistory distinguishes a
-// brand-new scratch (no record → empty) from one whose content was deleted.
-func (m Model) showUntitled(docID int64) Model {
-	content := ""
-	if docID > 0 && m.store != nil {
-		if has, err := m.store.HasHistory(docID); err == nil && has {
-			if vfs, err := m.store.RecoverDocument(docID); err == nil {
-				content = vfs
-			}
-		}
-	}
-	m.editor = m.editor.SetContent(content).SetReadOnly(false)
-	m.view = untitledView(docID)
-	if name := m.opentabs.NameByID(docID); name != "" {
-		m.title = m.title.SetText(name)
-	}
-	m.breadcrumb = m.breadcrumb.SetPath("")
-	m.opentabs = m.opentabs.OpenFile(docID, "")
-	m = m.setFocus(paneCenter)
-	return m
-}
+// showHelp and showUntitled — the requestOpenPath switch's two synchronous
+// (non-async-load) targets — live in workspace_view_switch.go.
 
 // forceSnapshot writes a synchronous VFS snapshot of the current document at its
 // head seq before the workspace switches away from it (Fix 5 §4), and bumps
@@ -160,147 +186,14 @@ func (m Model) forceSnapshot() Model {
 		// mistag at seq 0. The journal is the durable record (§1.4.3).
 		return m
 	}
-	if _, err := m.store.CreateSnapshot(m.view.DocID(), m.editor.Content(), "switch", seq); err != nil {
+	if _, err := m.store.CreateSnapshot(m.view.DocID(), m.editor.Content(), seq); err != nil {
 		_ = err // fire-and-forget: snapshot is an optimization; the journal is durable
 	}
 	return m
 }
 
-// ensureScratchDoc gives the current store-less untitled buffer a durable VFS
-// document once the store is available. The startup untitled is created before
-// the store opens (docID==0); without this its edits would never be journaled
-// and a crash would lose the whole session (§1.4.3). Any content typed before
-// the store was ready is snapshotted so it is recoverable.
-func (m Model) ensureScratchDoc() Model {
-	if m.store == nil || !m.view.IsUntitled() || m.view.DocID() != 0 {
-		return m
-	}
-	if !m.opentabs.HasUntitledPlaceholder() {
-		return m // launched onto a file (no startup untitled to upgrade)
-	}
-	ref, err := m.store.CreateScratch(m.title.Text())
-	if err != nil {
-		m.err = fmt.Errorf("create scratch document: %w", err)
-		return m
-	}
-	m.view = m.view.withDocID(ref.ID)
-	m.opentabs = m.opentabs.AssignDocID("", ref.ID)
-	if content := m.editor.Content(); content != "" {
-		if _, err := m.store.CreateSnapshot(ref.ID, content, "scratch", 0); err != nil {
-			_ = err // fire-and-forget: best-effort; subsequent edits journal normally
-		}
-	}
-	return m
-}
-
-// bindMaterialized binds the current untitled doc to a file that a bind-new
-// materialize just created. The VFS doc id is preserved (Store.Bind), so the
-// undo history built while untitled survives the bind (§1.4.6).
-func (m Model) bindMaterialized(path string) Model {
-	oldDocID := m.view.DocID()
-	docID := oldDocID
-	if m.store != nil {
-		if docID != 0 {
-			if err := m.store.Bind(docID, path); err != nil {
-				m.err = fmt.Errorf("bind document to %q: %w", path, err)
-			}
-		} else if ref, err := m.store.OpenPath(path); err == nil {
-			docID = ref.ID
-		}
-	}
-	// Bind the untitled to its new file path, preserving the baseline the
-	// FileSavedMsg handler just stamped (withBaseline) before calling us.
-	m.view = fileView(path, docID, m.view.Baseline())
-	if oldDocID != 0 {
-		m.opentabs = m.opentabs.OpenFile(docID, path)
-	} else {
-		m.opentabs = m.opentabs.RenameFile("", path)
-		if docID != 0 {
-			m.opentabs = m.opentabs.AssignDocID(path, docID)
-		}
-	}
-	m.breadcrumb = m.breadcrumb.SetPath(path)
-	m.title = m.title.SetText(strings.TrimSuffix(filepath.Base(path), ".md"))
-	return m
-}
-
-// restoreScratch surfaces genuine, NON-EMPTY unsaved untitled documents left in
-// the VFS by a prior session as recoverable tabs, then garbage-collects empty
-// scratch rows so the store does not grow unbounded (Decision 2).
-//
-// Two filters keep this from resurrecting junk: RecoverableScratch already
-// excludes orphaned bound-doc rows (inode != 0); here we reconstruct each
-// candidate and skip any whose content is empty/whitespace-only, so a blank
-// scratch never reopens as a tab. Best-effort — failures never block startup;
-// content loads lazily when the user selects the tab.
-func (m Model) restoreScratch() Model {
-	if m.store == nil {
-		return m
-	}
-	if ids, err := m.store.RecoverableScratch(m.view.DocID()); err == nil {
-		for _, id := range ids {
-			content, err := m.store.RecoverDocument(id)
-			if err != nil || strings.TrimSpace(content) == "" {
-				continue // skip empty scratches — recover non-empty work only
-			}
-			name := m.nextUntitledName()
-			m.opentabs = m.opentabs.OpenFile(id, "")
-			m.opentabs = m.opentabs.SetTabNameByID(id, name)
-		}
-		// Active state is restored by finalize() → SetActive(m.docID) after this returns.
-	}
-	if _, err := m.store.GCEmptyScratch(m.view.DocID()); err != nil {
-		_ = err // fire-and-forget: housekeeping; non-fatal
-	}
-	return m
-}
-
-// teardownAndQuit runs the shared quit sequence: clear pending state, disable
-// dictation, close the store, delete pasted images, and quit.
-func (m Model) teardownAndQuit() (Model, tea.Cmd) {
-	m.pendingDataLoss = pendingDataLoss{}
-	m.dict = m.dict.Disable()
-	if m.store != nil {
-		_ = m.store.Close() // fire-and-forget: best-effort flush before quit
-	}
-	return m, tea.Sequence(m.editor.DeleteAllImagesCmd(), tea.Quit)
-}
-
-// saveAllDirtyForQuit materializes every dirty BOUND tab to disk before quit:
-// the current tab from the editor buffer, others from their VFS reconstruction.
-// Untitled dirty tabs are left untouched — durable in the VFS and recoverable
-// next launch (Fix 7 §6) — so quit never blocks on a never-named doc
-// (Decision 2). Teardown happens once every materialize has acked.
-func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
-	var batch []tea.Cmd
-	for i, h := range m.opentabs.DirtyTabs() {
-		if h.Path == "" {
-			continue // untitled — nothing to write
-		}
-		isCurrent := h.Equal(m.view.Handle())
-		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
-		if isCurrent {
-			batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, m.editor.Content(), m.savedSeqFor(h.DocID), requestID, false, m.view.Baseline()))
-			continue
-		}
-		// Non-current tab: reconstruct its bytes from the VFS. Skip (never write
-		// empty/stale over a real file) if there is no store or reconstruction
-		// fails — the work stays safe in the VFS.
-		if m.store == nil {
-			continue
-		}
-		content, err := m.store.Content(h.DocID)
-		if err != nil {
-			continue
-		}
-		batch = append(batch, materializeCmd(m.fsys(), h.DocID, h.Path, content, m.savedSeqFor(h.DocID), requestID, false, diskBaseline{}))
-	}
-	if len(batch) == 0 {
-		return m.teardownAndQuit() // only untitled docs are dirty — quit now
-	}
-	m.pendingDataLoss = pendingDataLoss{kind: actionQuit, saveLeft: len(batch)}
-	return m, tea.Batch(batch...)
-}
+// ensureScratchDoc, bindMaterialized, and restoreScratch — untitled/scratch
+// VFS-identity bookkeeping — live in workspace_view_switch.go.
 
 // isViewDirty reports whether the currently displayed document has unsaved
 // changes according to the docstate store. Returns false when no store or
@@ -318,6 +211,13 @@ func (m Model) isViewDirty() bool {
 
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
+	// Modal merge (§4): refuse closing the active doc while unresolved —
+	// Esc-abort is the escape hatch.
+	if m.HasUnresolvedConflicts() {
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before closing"})
+		return m, cmd
+	}
 	if !m.viewingHelp() {
 		isDirty := false
 		if m.store != nil && m.view.DocID() != 0 {
@@ -384,6 +284,22 @@ func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
 	return m, renameCmd, true
 }
 
+// withFinalizedTitle is the chokepoint every global-key handler in
+// handleKeyPress guards on before acting: run maybeFinalizeTitle and append
+// its cmd to cmds in one call, instead of the four-line
+// "var ok bool; m, cmd, ok = m.maybeFinalizeTitle(); cmds = append(cmds, cmd)"
+// repeated at every one of the ×9 call sites. ok=false still means "focus
+// change blocked" — the caller's own `if !ok { return m.finalize(cmds) }`
+// stays inline (each case's subsequent body differs, so the early return
+// itself can't be centralized without a callback-shaped rewrite).
+func (m Model) withFinalizedTitle(cmds []tea.Cmd) (Model, []tea.Cmd, bool) {
+	var cmd tea.Cmd
+	var ok bool
+	m, cmd, ok = m.maybeFinalizeTitle()
+	cmds = append(cmds, cmd)
+	return m, cmds, ok
+}
+
 // nextUntitledName returns the first "Untitled N" label not already shown by an
 // open tab. VFS-side only — it never touches the disk (untitled docs are VFS
 // files, not disk files).
@@ -435,6 +351,7 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	m = m.supersedeLoad() // synchronous: drop any in-flight read so it can't display over this buffer
 
 	m.editor = m.editor.SetContent("").SetReadOnly(false)
+	m = m.bumpEpoch() // Part IV: a fresh-untitled buffer install invalidates every outstanding view ticket
 
 	name := m.nextUntitledName()
 	var newDocID int64

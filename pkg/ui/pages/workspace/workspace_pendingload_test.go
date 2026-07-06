@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"rune/pkg/docstate"
 	"rune/pkg/ui/help"
 	"rune/pkg/vfs"
 )
@@ -33,7 +34,6 @@ func openReal(m Model, path string) Model {
 func TestPendingLoad_FailedLoadPreservesPreviousDoc(t *testing.T) {
 	m := loadFile(newTestWorkspace(t), "a.md", "ALPHA")
 	wantPath, wantContent := m.view.Path(), m.editor.Content()
-	wantBaseline := m.view.Baseline()
 
 	// Switch to a different path; arm the gate but don't deliver the result yet.
 	m, _ = m.requestOpenPath(0, "b.md")
@@ -52,9 +52,6 @@ func TestPendingLoad_FailedLoadPreservesPreviousDoc(t *testing.T) {
 	}
 	if m.view.Path() != wantPath {
 		t.Errorf("filePath changed on failed load: %q want %q", m.view.Path(), wantPath)
-	}
-	if m.view.Baseline() != wantBaseline {
-		t.Error("baseline changed on failed load")
 	}
 }
 
@@ -162,7 +159,7 @@ func TestPendingLoad_AntiFlashPreservedNoHeightJump(t *testing.T) {
 		t.Errorf("RenderEmpty height %d != View height %d — pane would jump", h1, h2)
 	}
 
-	m, _ = m.Update(FileLoadedMsg{Path: "b.md", Content: []byte("Zmarker-beta"), Gen: m.loadGen})
+	m, _ = m.Update(FileLoadedMsg{Path: "b.md", Result: docstate.LoadResult{DiskContent: "Zmarker-beta", Recovered: "Zmarker-beta"}, Gen: m.loadGen})
 	if m.pendingLoad.active {
 		t.Error("gate not cleared after successful load")
 	}
@@ -192,7 +189,7 @@ func TestPendingLoad_TabSetLeadsDuringCloseTransition(t *testing.T) {
 		t.Fatalf("identity should still be transitional, got path=%q docID=%d", m.view.Path(), m.view.DocID())
 	}
 
-	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Content: []byte("ALPHA"), Gen: gen})
+	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Result: docstate.LoadResult{DiskContent: "ALPHA", Recovered: "ALPHA"}, Gen: gen})
 	m, _ = m.finalize(nil)
 	if m.view.Path() != "a.md" {
 		t.Fatalf("identity not synced after load: %q", m.view.Path())
@@ -327,9 +324,9 @@ func TestLoadGen_LatestWinsStaleDropped(t *testing.T) {
 	}
 
 	// B settles first (the awaited load).
-	m, _ = m.Update(FileLoadedMsg{Path: "b.md", Content: []byte("BBB"), Gen: genB})
+	m, _ = m.Update(FileLoadedMsg{Path: "b.md", Result: docstate.LoadResult{DiskContent: "BBB", Recovered: "BBB"}, Gen: genB})
 	// A's stale read arrives LAST — must NOT clobber B.
-	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Content: []byte("AAA"), Gen: genA})
+	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Result: docstate.LoadResult{DiskContent: "AAA", Recovered: "AAA"}, Gen: genA})
 
 	if m.view.Path() != "b.md" {
 		t.Errorf("displayed filePath = %q, want b.md (stale A clobbered it)", m.view.Path())
@@ -348,7 +345,7 @@ func TestLoadGen_StaleAfterSyncSwitchDropped(t *testing.T) {
 	genA := m.pendingLoad.gen
 	m, _ = m.CreateUntitled() // synchronous: supersedeLoad bumps the token
 
-	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Content: []byte("AAA"), Gen: genA})
+	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Result: docstate.LoadResult{DiskContent: "AAA", Recovered: "AAA"}, Gen: genA})
 
 	if m.view.Path() != "" {
 		t.Errorf("stale read displayed over the untitled: filePath = %q", m.view.Path())
@@ -358,10 +355,18 @@ func TestLoadGen_StaleAfterSyncSwitchDropped(t *testing.T) {
 	}
 }
 
-// G3 — two reads of the SAME path with different baselines (an external change
-// between issues): the newer read's baseline must win, even if the older arrives
-// last (the §1.4.7 stale-baseline window).
-func TestLoadGen_StaleSamePathBaselineDropped(t *testing.T) {
+// G3 — two reads of the SAME path with different SyncStates (an external
+// change between issues): the newer read's SyncState must win, even if the
+// older arrives last (the §1.4.7 stale-state window — WP5's SyncState
+// replaces the pre-v4 per-read size/mtime baseline as the freshness carrier).
+// Uses SyncDiverged (not SyncDiskAhead) for the newer read: data-integrity-v4
+// remediation's F1 fix auto-adopts SyncDiskAhead and clears the hint
+// immediately (nothing left to warn about once installDiskAhead reconciles
+// it), which would make this test's two Sync kinds coincidentally produce
+// the SAME hint value and stop actually exercising the staleness guard.
+// SyncDiverged is untouched by that carve-out, so it still isolates the
+// property under test: a stale read must never clobber a newer one's hint.
+func TestLoadGen_StaleSamePathSyncStateDropped(t *testing.T) {
 	m := loadFile(newTestWorkspace(t), "a.md", "OLD")
 
 	m, _ = m.requestOpenPath(0, "a.md") // first re-open
@@ -370,14 +375,16 @@ func TestLoadGen_StaleSamePathBaselineDropped(t *testing.T) {
 	// return, so supersede + re-arm directly via beginLoad).
 	m, _ = m.beginLoad(0, "a.md")
 	gen2 := m.pendingLoad.gen
-	newBaseline := diskBaseline{size: 999, valid: true}
 
-	// Newer read settles, then the older arrives last with a STALE baseline.
-	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Content: []byte("NEW"), Baseline: newBaseline, Gen: gen2})
-	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Content: []byte("OLD"), Baseline: diskBaseline{size: 1, valid: true}, Gen: gen1})
+	newResult := docstate.LoadResult{DiskContent: "NEW-DISK", Recovered: "NEW", Sync: docstate.SyncState{Kind: docstate.SyncDiverged}}
+	oldResult := docstate.LoadResult{DiskContent: "OLD-DISK", Recovered: "OLD", Sync: docstate.SyncState{Kind: docstate.SyncClean}}
 
-	if m.view.Baseline() != newBaseline {
-		t.Errorf("stale baseline retained: got %+v want %+v", m.view.Baseline(), newBaseline)
+	// Newer read settles, then the older arrives last with a STALE SyncState.
+	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Result: newResult, Gen: gen2})
+	m, _ = m.Update(FileLoadedMsg{Path: "a.md", Result: oldResult, Gen: gen1})
+
+	if !m.diskChangedHint {
+		t.Error("stale read's Clean sync overrode the newer Diverged sync's changed-on-disk hint")
 	}
 	if m.editor.Content() != "NEW" {
 		t.Errorf("stale content retained: %q want NEW", m.editor.Content())
@@ -393,11 +400,11 @@ func TestLoadGen_StartupTokenAcceptedThenSuperseded(t *testing.T) {
 	// New seeded the overlay for the LAST initial file at gen == len(initialFiles).
 	lastGen := m.pendingLoad.gen
 	// The first startup read (gen 1) only opens a tab; the last (gen==lastGen) displays.
-	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Content: []byte("ONE"), Gen: 1})
+	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
 	if m.view.Path() == "one.md" {
 		t.Error("non-last startup read should not become the displayed doc")
 	}
-	m, _ = m.Update(FileLoadedMsg{Path: "two.md", Content: []byte("TWO"), Gen: lastGen})
+	m, _ = m.Update(FileLoadedMsg{Path: "two.md", Result: docstate.LoadResult{DiskContent: "TWO", Recovered: "TWO"}, Gen: lastGen})
 	if m.view.Path() != "two.md" {
 		t.Fatalf("last startup file should be displayed; filePath=%q", m.view.Path())
 	}

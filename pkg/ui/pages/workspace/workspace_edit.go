@@ -7,138 +7,112 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/docstate"
-	"rune/pkg/editor/buffer"
-	"rune/pkg/editor/cursor"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
+	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
-func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, tea.Cmd) {
-	m.drag = dragNone
-
-	if d, ok := m.dividerAtPoint(msg.X, msg.Y); ok {
-		m.drag = d
-		if d == dragLeft && !m.leftVisible {
-			m.leftVisible = true
-			m.leftPaneW = minLeftPaneW
-		} else if d == dragRight && !m.rightVisible {
-			m.rightVisible = true
-			m.rightPaneW = minRightPaneW
-		}
-		return m.finalizeLayoutChange(cmds)
-	}
-	if newFocus, ok := m.paneAtPoint(msg.X, msg.Y); ok {
-		if newFocus == paneTitle {
-			m = m.setFocus(paneTitle)
-			m.title = m.title.FocusAtEnd()
-		} else {
-			if m.focus == paneTitle {
-				var finalizeCmd tea.Cmd
-				var finalizeOk bool
-				m, finalizeCmd, finalizeOk = m.maybeFinalizeTitle()
-				cmds = append(cmds, finalizeCmd)
-				if !finalizeOk {
-					return m.finalize(cmds)
-				}
-			}
-			// setFocus is the single chokepoint: focus enum + projection onto children
-			// happen atomically, so each child's handleMouseClick sees Focused()==true
-			// for the intended target when we forward the click below.
-			m = m.setFocus(newFocus)
-			var ftcmd, tabcmd, ecmd, chatcmd tea.Cmd
-			m.filetree, ftcmd = m.filetree.Update(msg)
-			m.opentabs, tabcmd = m.opentabs.Update(msg)
-			m.editor, ecmd = m.editor.Update(msg)
-			m.chat, chatcmd = m.chat.Update(msg)
-			cmds = append(cmds, ftcmd, tabcmd, ecmd, chatcmd)
-			// Refresh the link-under-caret hint; syncCursorToFooter gates on
-			// m.focus == paneCenter internally, so this is safe to call always.
-			m = m.syncCursorToFooter()
-		}
-		m = m.syncDictationAllowed()
-	}
-	return m.finalize(cmds)
-}
-
-func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model, tea.Cmd) {
-	if m.drag == dragNone {
-		// Not dragging a pane divider — forward a left-button drag to the editor
-		// for text selection (it extends from the anchor the click set).
-		if msg.Button == tea.MouseLeft && m.focus == paneCenter {
-			var ecmd tea.Cmd
-			m.editor, ecmd = m.editor.Update(msg)
-			cmds = append(cmds, ecmd)
-		}
-		return m.finalize(cmds)
-	}
-	if msg.Button != tea.MouseLeft {
-		m.drag = dragNone
-		return m.finalize(cmds)
-	}
-	switch m.drag {
-	case dragLeft:
-		newW := msg.X
-		if newW < minLeftPaneW {
-			m.leftVisible = false
-			m.leftPaneW = defaultLeftPaneW
-			m.drag = dragNone
-			if m.focus.isLeft() {
-				m = m.setFocus(paneCenter)
-				m = m.syncDictationAllowed()
-			}
-		} else {
-			rightW := 0
-			if m.rightVisible {
-				rightW = m.rightPaneW
-			}
-			if max := m.totalWidth - rightW - minCenterW; newW > max {
-				newW = max
-			}
-			m.leftPaneW = newW
-			m.leftVisible = true
-		}
-	case dragRight:
-		newW := m.totalWidth - msg.X
-		if newW < minRightPaneW {
-			m.rightVisible = false
-			m.rightPaneW = defaultRightPaneW
-			m.drag = dragNone
-			if m.focus == paneChat {
-				m = m.setFocus(paneCenter)
-				m = m.syncDictationAllowed()
-			}
-		} else {
-			leftW := 0
-			if m.leftVisible {
-				leftW = m.leftPaneW
-			}
-			if max := m.totalWidth - leftW - minCenterW; newW > max {
-				newW = max
-			}
-			m.rightPaneW = newW
-			m.rightVisible = true
-		}
-	}
-	return m.finalizeLayoutChange(cmds)
-}
-
-// savedSeqFor returns the journal position docID currently reflects, read
-// SYNCHRONOUSLY (co-atomic with the content the caller captured) so a save stamps
-// saved_seq at the position the bytes it writes correspond to — never the live head
-// a later edit advances to while the async write is in flight (§1.4.2/§1.4.8).
-// 0 when there is no store/doc.
-func (m Model) savedSeqFor(docID int64) int64 {
+// currentSeqFor returns the journal position docID currently reflects, read
+// SYNCHRONOUSLY (co-atomic with the content the caller captured) so a save
+// tags its Materialize observation at the position the bytes it writes
+// correspond to — never the live head a later edit advances to while the
+// async write is in flight (§1.4.2/§1.4.8). 0 when there is no store/doc.
+func (m Model) currentSeqFor(docID int64) int64 {
 	if m.store == nil || docID == 0 {
 		return 0
 	}
 	seq, err := m.store.CurrentSeq(docID)
 	if err != nil {
-		return 0 // fire-and-forget: read error → seq 0; MarkSavedAt stays conservative
+		return 0 // fire-and-forget: read error → seq 0; conservative
 	}
 	return seq
 }
 
+// savedObsFor returns docID's current CAS expectation (the disk fact we
+// believe is current), read SYNCHRONOUSLY at save-start alongside
+// currentSeqFor and the live content — all three captured co-atomically so
+// Materialize's CAS check and its resulting save observation both describe
+// EXACTLY the state save-start saw, never a value a later edit could have
+// moved out from under the in-flight write. ok=false (§1.7 — validity
+// out-of-band, never an ObsID(0) sentinel) means there is no prior disk fact
+// (no store, no doc, or the document has never been materialized/loaded);
+// callers that bindNew=true (create/recreate) never consult the returned
+// ObsID at all in that case — Materialize's create path never reads expect
+// — but an overwrite-intent caller (bindNew=false) MUST check ok and refuse
+// rather than pass a meaningless id into a CAS check (§1.3).
+func (m Model) savedObsFor(docID int64) (docstate.ObsID, bool) {
+	if m.store == nil || docID == 0 {
+		return 0, false
+	}
+	obs, ok, err := m.store.SavedObs(docID)
+	if err != nil || !ok {
+		return 0, false
+	}
+	return obs.ID, true
+}
+
+// vetSaveOutcome is vetSave's result. Callers branch on it in this order —
+// SyncErr, then Sync.Kind == docstate.SyncDiverged, then !HasExpect — with
+// their OWN site-specific error text, guard-raising, and abort/skip
+// semantics (startSave surfaces a footer error; evictSave also clears
+// pendingDataLoss; saveAllDirtyForQuit aborts the whole quit and names the
+// path); vetSave itself never decides what a caller does with a refusal.
+type vetSaveOutcome struct {
+	Sync      docstate.SyncState // valid when SyncErr == nil
+	SyncErr   error
+	Expect    docstate.ObsID // valid when HasExpect; the CAS baseline to Materialize against
+	HasExpect bool           // false: no prior disk baseline (§1.7 — never an ObsID(0) sentinel)
+}
+
+// vetSave is the save-gate chokepoint shared by startSave, evictSave, and
+// saveAllDirtyForQuit: it re-derives the two facts every overwrite-intent
+// save must check FRESH before writing (§1.4.8 — never a flag cached from an
+// earlier detection, always recomputed from the store on this transition):
+//
+//  1. Sync(docID) — Load unconditionally advances saved_obs to the latest
+//     disk sighting it records, even a SyncDiverged conflict the user never
+//     resolved, so once a guard is merely dismissed (Esc) CAS's own expect
+//     can legitimately still match disk; this re-check is the only thing
+//     that catches "what I last looked at was itself an unresolved
+//     conflict" (CAS alone only proves "disk didn't move since I looked").
+//  2. savedObsFor(docID) — the CAS baseline itself.
+//
+// A caller with bindNew=true (create/recreate) never needs this at all —
+// Materialize's create path never reads expect.
+func (m Model) vetSave(docID int64) vetSaveOutcome {
+	// D2: mirrors savedObsFor's own nil-store guard (m.store.Sync would
+	// otherwise dereference a nil *docstate.Store). Every current caller
+	// already checks m.store == nil before reaching here, but that
+	// invariant lives in the callers, not this function — surface a SyncErr
+	// so a future/careless caller refuses the save (§1.3) instead of
+	// panicking (a panic here would take the unsaved buffer with it).
+	if m.store == nil {
+		return vetSaveOutcome{SyncErr: fmt.Errorf("vetSave: no store")}
+	}
+	sync, syncErr := m.store.Sync(docID)
+	if syncErr != nil {
+		return vetSaveOutcome{SyncErr: syncErr}
+	}
+	if sync.Kind == docstate.SyncDiverged {
+		return vetSaveOutcome{Sync: sync}
+	}
+	expect, ok := m.savedObsFor(docID)
+	return vetSaveOutcome{Sync: sync, Expect: expect, HasExpect: ok}
+}
+
+// startSave is the ⌘S entry point: an ordinary interactive save request,
+// never bypassing the degraded-store confirmation guard.
 func (m Model) startSave() (Model, tea.Cmd) {
+	return m.startSaveDegradedConfirmed(false)
+}
+
+// startSaveDegradedConfirmed runs the ordinary startSave sequence.
+// degradedConfirmed is true ONLY when re-entering after the user answered
+// [Y]es to the GuardDegraded prompt (handleDataLossConfirmDegraded) — every
+// other caller passes false, so the guard is re-evaluated fresh on every
+// independent save attempt (never "confirmed once, silently skipped for the
+// rest of the session").
+func (m Model) startSaveDegradedConfirmed(degradedConfirmed bool) (Model, tea.Cmd) {
 	// Inert while a load is pending: the editor buffer may not yet match the
 	// incoming identity (close→neighbour transition), so a save now could write
 	// the wrong bytes. The gate clears on the load result (§1.4).
@@ -148,16 +122,104 @@ func (m Model) startSave() (Model, tea.Cmd) {
 	if !m.view.IsFile() || m.activeSave.InFlight || m.pendingLoad.active {
 		return m, nil
 	}
+	// R2 save-gating while MERGING (BUG3): ⌘S with unresolved conflict blocks must
+	// NOT re-raise the external-change guard ("File changed on disk" + [S]/[D]/[M]).
+	// By the time the user is in merge mode the external change has already been
+	// reconciled — handleDataLossMerge re-stamped the baseline to theirs and the
+	// buffer is a valid, marker-free merge result, so the doc is legitimately just
+	// *dirty*. Re-raising GuardMerge conflated "external change detected" with
+	// "mid-merge"; instead surface a merge-resolution hint and leave the user in the
+	// resolver. (Writing is gated until the blocks are resolved so theirs is never
+	// silently dropped — §0; resolution itself is the markdownedit resolver UX.)
+	if m.HasUnresolvedConflicts() {
+		n := mergemode.ConflictsLeft(m.merge)
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowStatusMsg{
+			Text: fmt.Sprintf("%d conflict(s) to resolve — [O]urs / [T]heirs", n),
+		})
+		return m, cmd
+	}
+	if m.store == nil {
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "cannot save: storage not ready"})
+		return m, cmd
+	}
+	// Degraded-store confirmation (verified below-cap item, WP-R4 item 5):
+	// capture-into-RAM must never masquerade as durability. Asked BEFORE
+	// every Materialize the interactive ⌘S path reaches, never bypassed by
+	// an earlier confirmation in the same session.
+	if m.store.Degraded() && !degradedConfirmed {
+		m.footer = m.footer.SetGuard(footer.GuardDegraded, guardDegradedOptions)
+		return m, nil
+	}
+	// §1.4.8: vetSave re-derives divergence + CAS baseline fresh at save-time
+	// — never trust a flag cached from an earlier detection (see vetSave's
+	// own doc comment for why this re-check is the guard CAS alone can't
+	// provide).
+	v := m.vetSave(m.view.DocID())
+	if v.SyncErr != nil {
+		// §1.3/WP-R4: a Sync error refuses the save with a surfaced error —
+		// never falls through to write. The pre-save re-check is the ONLY
+		// guard against writing over an Esc-dismissed divergence (CAS's
+		// expect can legitimately match disk in that state), so skipping it
+		// on error would silently clobber theirs exactly when the store is
+		// least trustworthy (review finding).
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "cannot save: divergence check failed: " + v.SyncErr.Error()})
+		return m, cmd
+	}
+	if v.Sync.Kind == docstate.SyncDiverged {
+		var guardCmd tea.Cmd
+		m, guardCmd = m.raiseConflictGuard(m.view.DocID(), m.view.Path(), m.editor.Content(), v.Sync.Theirs.Hash, v.Sync.Theirs.Obs)
+		return m, guardCmd
+	}
+	// Overwrite an already-bound file: store.Materialize's own CAS check
+	// (unconditional pre-write hash, Part III step 1-2) refuses if disk
+	// diverged from the CAS expectation captured here — content-hash based,
+	// no separate baseline/backstop plumbing needed (closes G3). This is an
+	// overwrite-intent save (bindNew=false), so a missing CAS baseline
+	// (§1.7 — no ObsID(0) sentinel) is refused outright rather than passed
+	// into Materialize as a meaningless expect: the document is displayed as
+	// a bound file, so SavedObs failing to produce a baseline here means
+	// something is genuinely wrong, not "nothing to compare against yet".
+	if !v.HasExpect {
+		var cmd tea.Cmd
+		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "cannot save: no prior disk baseline for this document"})
+		return m, cmd
+	}
+	expect := v.Expect
 	content := m.editor.Content()
 	requestID := fmt.Sprintf("save-%v", time.Now().UnixNano())
+	// Stamp pendingDataLoss with THIS save's requestID only when it's the
+	// continuation of an existing pending actionClose (the confirmed
+	// close-save flow, footer.DataLossSave -> startSave, reached with
+	// pendingDataLoss still actionClose) — never when it's actionNone (plain
+	// ⌘S; Priority 2.1's guard-in-progress gate already guarantees no other
+	// key can raise a guard while this is reached with kind==actionNone).
+	// MUST be an exact actionClose match, not merely != actionNone: an
+	// eviction victim's background save (evictSave) never touches
+	// activeSave/InFlight and resolves its OWN guard synchronously before
+	// dispatching, so nothing blocks a totally ordinary, unrelated ⌘S on the
+	// currently-displayed file while that eviction save is still in flight
+	// with pendingDataLoss.kind==actionEvict — a broader `!= actionNone`
+	// guard here would clobber pendingDataLoss.requestID with THIS save's ID,
+	// breaking isEvictSaveAck's correlation and silently dropping the
+	// eviction's own ack (review finding). This correlation is what lets
+	// handleFileSaveErrorMsg/handleFileSavedMsg's ack handlers tell "this
+	// save owns the pending guard" apart from "an unrelated guard happens to
+	// be up right now" (GUARD-STATE-COH).
+	if m.pendingDataLoss.kind == actionClose {
+		m.pendingDataLoss.requestID = requestID
+	}
 	m.activeSave = SaveIdentity{
 		RequestID:    requestID,
 		SavedContent: []byte(content),
 		InFlight:     true,
+		Path:         m.view.Path(),
+		DocID:        m.view.DocID(),
 	}
-	// Overwrite an already-bound file: materializeCmd refuses if it diverged from
-	// our baseline since load (§1.4.7).
-	return m, materializeCmd(m.fsys(), m.view.DocID(), m.view.Path(), content, m.savedSeqFor(m.view.DocID()), requestID, false, m.view.Baseline())
+	seq := m.currentSeqFor(m.view.DocID())
+	return m, materializeStoreCmd(m.store, m.view.DocID(), m.view.Path(), content, expect, seq, requestID, false)
 }
 
 func (m Model) syncDirty() Model {
@@ -252,6 +314,37 @@ func (m Model) syncDictationAllowed() Model {
 	return m
 }
 
+// disableDictationForTransition stops any active dictation session before a
+// buffer-identity transition (tab switch/load, undo/redo, conflict
+// resolution) that a stale dictation anchor could otherwise corrupt. H1: the
+// anchor (startOff/appliedLen, fixed at Enable) targets whatever buffer is
+// displayed when the NEXT chunk lands — not necessarily the one dictation
+// started against. dict.Disable() previously existed at only 3 sites
+// (merge-gate routeDictationEdit, user stop, quit); this is the shared helper
+// for the sites the transitions below add. A no-op (no footer notice queued)
+// when no session is active, so it is safe to call unconditionally.
+func (m Model) disableDictationForTransition(cmds *[]tea.Cmd) Model {
+	if !m.dict.Enabled() {
+		return m
+	}
+	m.dict = m.dict.Disable()
+	m.footer = m.footer.SetDictating(false)
+	*cmds = append(*cmds, func() tea.Msg {
+		return footer.ShowStatusMsg{Text: "Dictation stopped — document changed"}
+	})
+	return m
+}
+
+// syncMergeHint mirrors the merge resolver's active/left-count onto the
+// footer so the persistent "[O]urs [T]heirs ... N left" hint (§5) always
+// reflects the current mergemode.State. Called from the same three points as
+// syncCursorToFooter (workspace_update_keys.go, workspace_update.go,
+// workspace_edit.go: handleUndo/handleRedo).
+func (m Model) syncMergeHint() Model {
+	m.footer = m.footer.SetMergeMode(mergemode.IsActive(m.merge), mergemode.ConflictsLeft(m.merge))
+	return m
+}
+
 // errorCmd surfaces err on the footer status line. Per §1.3 a buffer-edit failure
 // is a Tolerable halt that keeps the buffer — never a silent drop.
 func errorCmd(err error) tea.Cmd {
@@ -259,153 +352,8 @@ func errorCmd(err error) tea.Cmd {
 	return func() tea.Msg { return footer.ShowErrorMsg{Text: text} }
 }
 
-// handleUndo applies one undo step with journal⇄buffer coherence (§1.4.8): it
-// PEEKS the target (without moving the journal), applies the inverse to the
-// buffer, and commits the position move ONLY if the buffer edit succeeds. A
-// failed reapply (stale/out-of-bounds positions — the buffer and journal already
-// diverged) surfaces a §1.3 error and leaves the position unmoved, so the journal
-// never ends up ahead of the buffer.
-func (m Model) handleUndo() (Model, tea.Cmd) {
-	if m.store == nil || m.viewingHelp() {
-		return m, nil
-	}
-	docID := m.view.DocID()
-	surface, edits, cursorsBefore, newPos, ok := m.store.UndoPeek(docID)
-	if !ok {
-		return m, nil
-	}
-	var cmd tea.Cmd
-	var err error
-	switch surface {
-	case "main":
-		m.editor, cmd, err = m.editor.ApplyInverse(edits)
-		if err == nil {
-			m.editor = m.editor.SetCursors(cursorsBefore)
-		}
-	case "title":
-		m.title, err = m.title.ApplyInverse(edits)
-		if err == nil {
-			m.title = m.title.SetCursors(cursorsBefore)
-		}
-	case "chat":
-		m.chat, err = m.chat.ApplyInverse(edits)
-		if err == nil {
-			m.chat = m.chat.SetCursors(cursorsBefore)
-		}
-	}
-	if err != nil {
-		return m, errorCmd(fmt.Errorf("undo %s: %w", surface, err))
-	}
-	if cerr := m.store.MoveUndoPos(docID, newPos); cerr != nil {
-		return m, errorCmd(fmt.Errorf("undo %s: commit position: %w", surface, cerr))
-	}
-	switch surface {
-	case "main":
-		m = m.setFocus(paneCenter)
-	case "title":
-		m = m.setFocus(paneTitle)
-	case "chat":
-		m = m.setFocus(paneChat)
-	}
-	m = m.syncDictationAllowed()
-	return m, cmd
-}
-
-// handleRedo mirrors handleUndo: peek the redo target, reapply to the buffer, and
-// advance the journal position only on a clean apply (§1.4.8). A failed reapply
-// surfaces a §1.3 error and leaves the position unmoved.
-func (m Model) handleRedo() (Model, tea.Cmd) {
-	if m.store == nil || m.viewingHelp() {
-		return m, nil
-	}
-	docID := m.view.DocID()
-	surface, edits, cursorsAfter, newPos, ok := m.store.RedoPeek(docID)
-	if !ok {
-		return m, nil
-	}
-	var cmd tea.Cmd
-	var err error
-	switch surface {
-	case "main":
-		m.editor, cmd, err = m.editor.Reapply(edits)
-		if err == nil {
-			m.editor = m.editor.SetCursors(cursorsAfter)
-		}
-	case "title":
-		m.title, err = m.title.Reapply(edits)
-		if err == nil {
-			m.title = m.title.SetCursors(cursorsAfter)
-		}
-	case "chat":
-		m.chat, err = m.chat.Reapply(edits)
-		if err == nil {
-			m.chat = m.chat.SetCursors(cursorsAfter)
-		}
-	}
-	if err != nil {
-		return m, errorCmd(fmt.Errorf("redo %s: %w", surface, err))
-	}
-	if cerr := m.store.MoveUndoPos(docID, newPos); cerr != nil {
-		return m, errorCmd(fmt.Errorf("redo %s: commit position: %w", surface, cerr))
-	}
-	switch surface {
-	case "main":
-		m = m.setFocus(paneCenter)
-	case "title":
-		m = m.setFocus(paneTitle)
-	case "chat":
-		m = m.setFocus(paneChat)
-	}
-	m = m.syncDictationAllowed()
-	return m, cmd
-}
-
-// scheduleFlush debounces VFS autosave. It increments the generation counter
-// and launches a goroutine that sleeps for flushDelay then returns
-// pendingFlushMsg. The handler drops stale generations (gen != m.flushGen)
-// so only the last scheduled flush fires a snapshot (N5).
-func (m Model) scheduleFlush(cmds *[]tea.Cmd) Model {
-	m.flushGen++
-	gen := m.flushGen
-	*cmds = append(*cmds, func() tea.Msg {
-		time.Sleep(flushDelay)
-		return pendingFlushMsg{gen: gen}
-	})
-	return m
-}
-
-// snapshotCmd writes a VFS snapshot for docID at the given journal seq (the
-// document's current position, captured synchronously by the caller — it is NOT
-// always the head, e.g. after an undo) and reports the result via
-// AutosaveSettledMsg. Disk is NOT written here; that only happens on explicit ⌘S
-// (§1.4.2).
-func snapshotCmd(store *docstate.Store, docID int64, content string, seq, gen uint64) tea.Cmd {
-	return func() tea.Msg {
-		_, err := store.CreateSnapshot(docID, content, "local", int64(seq))
-		return AutosaveSettledMsg{gen: gen, err: err}
-	}
-}
-
-// journalEdit appends an edit to the per-document journal and schedules VFS
-// autosave. Call after DrainEdits returns non-empty edits.
-func (m Model) journalEdit(surface string, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) Model {
-	if m.store == nil || m.view.DocID() == 0 || len(edits) == 0 {
-		return m
-	}
-	_, err := m.store.AppendEdit(m.view.DocID(), surface, edits, cursorsBefore, cursorsAfter, surface)
-	if err != nil {
-		// §1.3: a failed journal write leaves undo history incomplete, and a
-		// snapshot taken afterward would tag the new buffer against a stale head
-		// seq — re-opening the B2/N5 corruption window. Surface the error and do
-		// NOT schedule a snapshot for this edit.
-		capturedErr := err
-		*cmds = append(*cmds, func() tea.Msg {
-			return footer.ShowErrorMsg{Text: "journal write failed: " + capturedErr.Error()}
-		})
-		return m
-	}
-	if surface == "main" {
-		m = m.scheduleFlush(cmds)
-	}
-	return m
-}
+// undoTarget, handleUndo, and handleRedo live in workspace_undo.go (§1.6,
+// split out of this file to stay under the 500-LoC limit).
+//
+// scheduleFlush, snapshotCmd, journalEdit, and rollbackFailedJournal (the
+// journal/autosave plumbing) live in workspace_journal.go.

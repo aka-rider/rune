@@ -9,8 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/pkg/docstate"
+	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
+	"rune/pkg/vfs"
 )
 
 // openFiles sends tabLimit+1 distinct FileLoadedMsg events, returning the
@@ -136,6 +139,7 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 	m = withStore(t, newTestWorkspace(t))
 
 	var paths []string
+	var docIDs []int64
 	for i := 1; i <= tabLimit; i++ {
 		path := filepath.Join(dir, fmt.Sprintf("dirty%02d.md", i))
 		if err := os.WriteFile(path, []byte(fmt.Sprintf("content %d", i)), 0o644); err != nil {
@@ -143,13 +147,20 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 		}
 		paths = append(paths, path)
 		m = loadFile(m, path, fmt.Sprintf("content %d", i))
+		docIDs = append(docIDs, m.view.DocID())
 	}
 
-	// Mark ALL non-active tabs dirty. The active tab is paths[tabLimit-1];
-	// with every other tab dirty there are no clean eviction candidates, so
+	// Mark ALL non-active tabs dirty — a REAL journaled edit for each, so the
+	// store's ground truth (H3/§1.4.8: enforceTabLimit now re-verifies via
+	// isDirtyGroundTruth before a silent evict) backs the cached opentabs
+	// flag, not the flag alone. The active tab is paths[tabLimit-1]; with
+	// every other tab dirty there are no clean eviction candidates, so
 	// EvictionCandidate picks the LRU dirty tab (paths[0]).
 	for i := 0; i < len(paths)-1; i++ {
-		m.opentabs = m.opentabs.MarkDirty(paths[i])
+		if _, err := m.store.AppendEdit(docIDs[i], []buffer.AppliedEdit{{Insert: "X"}}, nil, nil); err != nil {
+			t.Fatalf("AppendEdit: %v", err)
+		}
+		m.opentabs = m.opentabs.MarkDirtyByID(docIDs[i])
 	}
 	victim = paths[0]
 
@@ -396,7 +407,7 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 				// dropped by the displayed-doc gate and only open a tab).
 				openPath := pool[int(arg)%poolSize]
 				m, _ = m.beginLoad(0, openPath)
-				m, cmd = m.Update(FileLoadedMsg{Path: openPath, Content: []byte("x"), Gen: m.loadGen})
+				m, cmd = m.Update(FileLoadedMsg{Path: openPath, Result: docstate.LoadResult{DiskContent: "x", Recovered: "x"}, Gen: m.loadGen})
 			case 1:
 				m, cmd = m.requestCloseCurrent()
 				m, _ = m.finalize(nil)
@@ -424,5 +435,59 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 			checkInvariants()
 		}
 	})
+}
+
+// TestStartSave_DoesNotClobberInFlightEvictRequestID is a regression for a
+// review finding: startSave's pendingDataLoss.requestID stamp (workspace_edit.go)
+// must be gated on kind==actionClose EXACTLY, not merely !=actionNone. An
+// eviction victim's background save (evictSave) never touches
+// activeSave/InFlight and resolves its OWN footer guard synchronously before
+// dispatching (footer.resolveGuard, called from the [S] keypress itself) — so
+// nothing blocks a completely ordinary, unrelated ⌘S on the currently
+// displayed file while that eviction save is still in flight with
+// pendingDataLoss.kind==actionEvict. A broader `!= actionNone` guard would
+// clobber pendingDataLoss.requestID with the unrelated ⌘S's own ID, breaking
+// isEvictSaveAck's correlation and silently dropping the eviction's own ack
+// (the victim never gets marked clean/closed, and the file the user
+// originally tried to open never opens, with no error surfaced).
+func TestStartSave_DoesNotClobberInFlightEvictRequestID(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.md")
+	pathB := filepath.Join(dir, "b.md")
+
+	m := withStore(t, newTestWorkspace(t))
+	m = m.WithFS(vfs.Disk{})
+	m = loadFile(m, pathB, "b content\n")
+	docB := m.view.DocID()
+	m = loadFile(m, pathA, "a content\n") // A displayed; B in background
+	docA := m.view.DocID()
+	if docA == 0 || docB == 0 {
+		t.Skip("store not available")
+	}
+
+	// Simulate evictSave() already having run for background victim B: its
+	// own background save is in flight, tracked purely via
+	// pendingDataLoss.requestID (never activeSave) — exactly as
+	// workspace_evict.go's evictSave does.
+	m.pendingDataLoss = pendingDataLoss{
+		kind:            actionEvict,
+		victim:          opentabs.TabHandle{DocID: docB, Path: pathB},
+		pendingOpenPath: filepath.Join(dir, "c.md"),
+		requestID:       "evict-1",
+	}
+
+	// An entirely ordinary, unrelated ⌘S on the currently displayed file A —
+	// nothing blocks it: no footer guard is up (evictSave's own guard already
+	// resolved synchronously before dispatching) and activeSave.InFlight is
+	// false (eviction never touches activeSave).
+	m, cmd := m.startSave()
+	_ = cmd
+
+	if m.pendingDataLoss.kind != actionEvict {
+		t.Fatalf("unrelated ⌘S changed pendingDataLoss.kind to %v, want actionEvict unchanged", m.pendingDataLoss.kind)
+	}
+	if m.pendingDataLoss.requestID != "evict-1" {
+		t.Fatalf("unrelated ⌘S clobbered the in-flight eviction's requestID: got %q, want unchanged %q — isEvictSaveAck will now silently drop the eviction's own ack", m.pendingDataLoss.requestID, "evict-1")
+	}
 }
 

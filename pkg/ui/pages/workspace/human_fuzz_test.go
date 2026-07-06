@@ -8,9 +8,7 @@ import (
 
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/workflow"
-	"rune/pkg/command"
 	"rune/pkg/docstate"
-	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
@@ -20,11 +18,16 @@ import (
 
 // humanPaths is the fixed set of virtual paths the human fuzzer can read,
 // write, and navigate. RunHuman maps KindExternalWrite.PathIndex modulo
-// len(humanPaths) to one of these paths.
+// len(humanPaths) to one of these paths. WP4 appends d.md (CRLF/no-trailing-
+// newline byte-hostile — a §1.4.5 verbatim probe) and notes/e.md (a rename/
+// delete target for the externalRename/externalDelete clusters) — appended,
+// not inserted, so existing PathIndex 0/1/2 seeds keep their meaning.
 var humanPaths = []string{
 	"/fuzz/a.md",
 	"/fuzz/b.md",
 	"/fuzz/notes/c.md",
+	"/fuzz/d.md",
+	"/fuzz/notes/e.md",
 }
 
 // seedMem returns a vfs.Mem pre-seeded with humanPaths so the filetree and
@@ -45,6 +48,14 @@ func seedMem() *vfs.Mem {
 		"# File B\n\n[A](a.md)\n[c](notes/c.md)\n[gone](../gone.md)\n"), 0o644)
 	_ = mem.WriteFile("/fuzz/notes/c.md", []byte(
 		"# Notes\n\n[A](../a.md)\n[none](none.md)\n"), 0o644)
+	// d.md: deliberately byte-hostile — CRLF line endings and no trailing
+	// newline, seeded verbatim (§1.4.5) so LOAD-VERBATIM/SAVE-VERBATIM can
+	// catch a silent CRLF→LF or missing/added-trailing-newline normalization.
+	_ = mem.WriteFile("/fuzz/d.md", []byte(
+		"# D\r\nCRLF line\r\nlast line no eol"), 0o644)
+	// e.md: a plain rename/delete target for externalRename/externalDelete.
+	_ = mem.WriteFile("/fuzz/notes/e.md", []byte(
+		"# E\n\nplain target file\n"), 0o644)
 	return mem
 }
 
@@ -59,6 +70,12 @@ func seedMem() *vfs.Mem {
 // so the §1.4.7 save-divergence guard (EXT-NOCLOBBER) is reachable; the
 // RELOAD-NOMUT invariant is exercised by KindWatch(dir-changed).
 func FuzzHumanSession(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, err := driver.BuildFuzzApp(keys)
+	if err != nil {
+		f.Fatalf("BuildFuzzApp: %v", err)
+	}
+
 	// --- Seeds ---
 
 	// Seed: global-seq dirty bug spec (Goal 4).
@@ -71,6 +88,7 @@ func FuzzHumanSession(f *testing.F) {
 	// then type + ⌘S — must surface FileSaveErrorMsg{Conflict:true}.
 	f.Add([]byte{5, 0, 0}) // pathIndex=0 (a.md), watchSub=0 (dir-changed)
 	f.Add([]byte{5, 0, 1}) // pathIndex=0 (a.md), watchSub=1 (read-error)
+	f.Add([]byte{5, 0, 2}) // pathIndex=0 (a.md), watchSub=2 (in-place file-changed, BUG1)
 
 	// Seed: open in-file search and navigate results.
 	// Cluster 0: ^F → type "hello" → FindNext×1 → Esc.
@@ -147,8 +165,76 @@ func FuzzHumanSession(f *testing.F) {
 	// cluster 10 gets its own byte (data[0]=0→downs=1).
 	f.Add([]byte{9, 1, 0, 10, 0})
 
+	// WP4 seeds — clusters 11-15 (numClusters is now 20).
+
+	// Cluster 11 mergeResolve: edit ours, external write, ⌘S → refused → GuardMerge.
+	// r%4 selects the response; u is the undo count (merge branch only).
+	f.Add([]byte{11, 0, 0}) // r=0 [M]erge, u=0 → resolver keys, persist via ⌘S
+	f.Add([]byte{11, 0, 1}) // r=0 [M]erge, u=1 → undo unwinds into the resolver, drain re-raised guard
+	f.Add([]byte{11, 0, 2}) // r=0 [M]erge, u=2 → more undo steps
+	f.Add([]byte{11, 1, 0}) // r=1 [D]iscard → handleDataLossDiscardConflict/applyDiscardConflict
+	f.Add([]byte{11, 2, 0}) // r=2 [S]ave anyway → handleDataLossSaveAnyway (CAS force-write)
+	f.Add([]byte{11, 3, 0}) // r=3 Esc → Cancel
+
+	// Cluster 12 externalRename [src]: rename a tracked file to d.md externally,
+	// watch fires, letter-jump-and-open d.md — RenamedFrom branch of handleFileLoadedMsg.
+	f.Add([]byte{12, 0}) // a.md → d.md
+	f.Add([]byte{12, 1}) // b.md → d.md
+
+	// Cluster 13 externalDelete [_,r,v]: v=0 watch-detect (idle probe → GuardDeleted),
+	// v=1 save-detect (⌘S → FileSaveErrorMsg{Missing} → GuardDeleted). r selects s/d/Esc.
+	f.Add([]byte{13, 0, 0, 0}) // v=0 watch-detect, r=0 [S]ave (recreate)
+	f.Add([]byte{13, 0, 1, 1}) // v=1 save-detect, r=1 [D]iscard (purge)
+
+	// Cluster 14 evictionPressure [n,v]: v=0 dirty-victim (GuardDirty(evict)),
+	// v=1 no-eligible-victim refusal (pin a.md, 10 untitleds, tree-open refused).
+	f.Add([]byte{14, 0, 0}) // v=0 dirty-victim, response=0%3=0 [S]ave → evictSave/evictSaveAck
+	f.Add([]byte{14, 1, 0}) // v=0 dirty-victim, response=1%3=1 [D]iscard → evictDiscard
+	f.Add([]byte{14, 1, 1}) // v=1 no-eligible-victim refusal
+
+	// Cluster 15 quitSaveAll [r]: dirty two tabs → KindQuitRequest → GuardDirty(quit).
+	f.Add([]byte{15, 0}) // r=0 [S]ave all → saveAllDirtyForQuit + teardownAndQuit
+	f.Add([]byte{15, 1}) // r=1 [D]iscard all → immediate teardownAndQuit
+	f.Add([]byte{15, 2}) // r=2 Esc → cancel, quit aborted
+
+	// Cluster 16 selectionClipboard [op,t]: select → action → undo → save.
+	f.Add([]byte{16, 0, 2}) // op=0 Copy, t=2 (ShiftWordRight selection, CJK text)
+	f.Add([]byte{16, 1, 0}) // op=1 Cut + KindClipboard paste-over, t=0 (SelectAll)
+	f.Add([]byte{16, 2, 1}) // op=2 MoveLineUp/Down, t=1 (Shift+Right x3 selection)
+	f.Add([]byte{16, 3, 2}) // op=3 AddCursorBelow + multi-line paste distribute + Esc
+
+	// Cluster 17 unicodeTyping [t1,t2,k]: paste → multi-byte keys → Left/Backspace → paste.
+	f.Add([]byte{17, 1, 0, 0}) // t1=ascii, t2=empty, k=0 → 1 multi-byte key (CJK)
+	f.Add([]byte{17, 2, 6, 5}) // t1=CJK, t2=math-alnum, k=5 → 6 multi-byte keys (cycles all 3)
+
+	// Cluster 18 dictationCluster [t,v]: seed → ^V start → dictation events, v%4 scenario.
+	f.Add([]byte{18, 1, 0}) // v=0 happy path
+	f.Add([]byte{18, 1, 1}) // v=1 empty-reset hazard — the fixed FinalTranscriptionMsg bug
+	f.Add([]byte{18, 1, 2}) // v=2 stale-ticket (^N invalidates the session mid-flight)
+	f.Add([]byte{18, 1, 3}) // v=3 transient-then-fatal ErrorMsg
+
+	// Cluster 19 workspaceChrome [d]: TabSwitch/Pin/Zen/Help/Chat/chord/scroll.
+	f.Add([]byte{19, 0}) // TabSwitch(0)
+	f.Add([]byte{19, 5}) // TabSwitch(5)
+
+	// Cross-cluster seed: externalChange (cluster 5) leaves a divergence
+	// undetected, then mergeResolve (cluster 11) layers its OWN conflict on
+	// top — exercises the two clusters' interaction, not just either alone.
+	f.Add([]byte{5, 0, 0, 11, 0, 0})
+
 	f.Fuzz(func(t *testing.T, data []byte) {
 		events := workflow.DecodeWorkflow(data)
+		// Bound per-exec wall-clock: every event runs a real cgo/SQLite
+		// journal round-trip plus (flushDelay=0) a full-content snapshot, so
+		// pathological long inputs (~300+ events of steady typing) took >5s
+		// per exec and tripped the fuzz coordinator's worker-hang kill as
+		// flaky "hung or terminated unexpectedly" failures. Truncation (not
+		// skip) keeps the prefix coverage of long inputs and keeps existing
+		// corpus entries valid; median inputs are far shorter and unaffected.
+		const maxHumanEvents = 160
+		if len(events) > maxHumanEvents {
+			events = events[:maxHumanEvents]
+		}
 
 		mem := seedMem()
 
@@ -159,10 +245,7 @@ func FuzzHumanSession(f *testing.F) {
 		defer store.Close()
 		store.UseFS(mem)
 
-		keys := keymap.Default()
 		st := styles.Default()
-		reg := command.NewBuilder().Build()
-		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
 		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{"/fuzz/a.md"}).WithFS(mem)

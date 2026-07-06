@@ -2,6 +2,7 @@ package docstate
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,31 +30,80 @@ import (
 type Store struct {
 	perm  *sql.DB
 	clock func() time.Time
-	// fs supplies the file identity stat for OpenPath/Bind. A nil fs defaults to
-	// vfs.Disk (real disk); the fuzz harness injects vfs.Mem via UseFS so the
-	// store and workspace resolve identity against the same in-memory files.
+	// fs is the ONE injected filesystem for every disk operation the store
+	// performs — file-identity stats (OpenPath/Bind) AND, from WP4, the
+	// Load/Probe/Materialize disk layer. A nil fs defaults to vfs.Disk (real
+	// disk); the fuzz harness / workspace bootstrap inject a shared vfs.Mem
+	// via UseFS so the store and workspace resolve identity and disk state
+	// against the SAME files (closes S6 once workspace.WithFS and
+	// docstate.UseFS share one value at bootstrap — WP5).
 	fs vfs.FS
+	// degraded is true ONLY for the in-memory fallback Open/OpenAt take when
+	// the real on-disk database could not be opened (permissions, disk full,
+	// etc.) — never for an intentional OpenInMemory (fuzz/tests). Degraded()
+	// drives a persistent footer banner and a confirmation guard before every
+	// Materialize (capture-into-RAM must never masquerade as durability).
+	degraded bool
+	// sessionID is this Store's own row in `sessions` (v10) — established
+	// once at construction (Open/OpenAt/OpenInMemory/NewTestStore) and never
+	// mutated after. It gives every journaled edit and recorded observation a
+	// process identity, so two Store handles sharing one rune.db (two rune
+	// windows on the same workDir) tell their own history apart from each
+	// other instead of racing a single shared journal — see liveness.go and
+	// CONSTITUTION.md §12. Every session-scoped method (AppendEdit,
+	// RecoverDocument, HasHistory, UndoPeek/RedoPeek/MoveUndoPos, CurrentSeq,
+	// SavedObs, Sync/ancestorAt) filters/joins on this internally; no
+	// caller-visible signature changes anywhere outside this package.
+	sessionID int64
+	// livenessCheck decides whether a RECORDED (pid, proc_started_at) pair
+	// still identifies a running process — real isProcessAlive in
+	// production, overridable via SetLivenessCheck so tests can simulate a
+	// dead session deterministically (mirrors the SetClock pattern) without
+	// spawning and killing a real process. Consulted only by Load's
+	// cross-session inheritance decision and RecoverAcrossSessions — never
+	// by the dead-session reaper, which runs before a Store exists and takes
+	// its own liveness function as a parameter.
+	livenessCheck func(pid int, startedAt string) bool
 }
 
-// UseFS injects the filesystem used for file-identity stats (OpenPath/Bind).
-// Production leaves it as the default Disk; the session fuzzer sets a shared
-// vfs.Mem so document identity matches the in-memory files the workspace writes.
+// SetLivenessCheck overrides how this Store decides whether a different
+// session's recorded process is still alive — Load's cross-session
+// inheritance decision and RecoverAcrossSessions are the only consumers.
+// Used in tests to simulate a dead (or alive) session deterministically,
+// mirroring SetClock.
+func (s *Store) SetLivenessCheck(fn func(pid int, startedAt string) bool) {
+	s.livenessCheck = fn
+}
+
+// UseFS injects the filesystem used for every disk operation the store
+// performs. Production leaves it as the default Disk; the session fuzzer
+// sets a shared vfs.Mem so document identity and disk state match the
+// in-memory files the workspace writes.
 func (s *Store) UseFS(fs vfs.FS) { s.fs = fs }
+
+// fsys returns the active filesystem, defaulting to real disk.
+func (s *Store) fsys() vfs.FS {
+	if s.fs == nil {
+		return vfs.Disk{}
+	}
+	return s.fs
+}
 
 // statID returns the (inode, device) identity of path via the injected FS,
 // defaulting to real disk. ok is false when stat fails or identity is
 // unavailable, in which case the caller degrades to path-keying.
 func (s *Store) statID(path string) (inode, device uint64, ok bool) {
-	fsys := s.fs
-	if fsys == nil {
-		fsys = vfs.Disk{}
-	}
-	fi, err := fsys.Stat(path)
+	fi, err := s.fsys().Stat(path)
 	if err != nil {
 		return 0, 0, false
 	}
 	return vfs.FileID(fi)
 }
+
+// Degraded reports whether this Store is the in-memory fallback taken when
+// the real on-disk database could not be opened. See the Store.degraded doc
+// comment.
+func (s *Store) Degraded() bool { return s.degraded }
 
 // DocRef is returned by OpenPath and CreateScratch.
 // ID is the stable VFS document primary key.
@@ -64,142 +114,97 @@ type DocRef struct {
 	RenamedFrom string // non-empty when a rename was detected
 }
 
-// ---- schema -----------------------------------------------------------------
-
-// permSchema is the canonical, complete schema for a fresh database.
-// It includes all tables, CHECK/FK constraints, and UNIQUE indexes.
-// migrate() v3 drops legacy data tables and re-runs this schema so that
-// existing installations converge to the same final shape.
+// ---- schema & low-level DSN construction ----
 //
-// current_seq is a position (seq-1 after an undo), not a foreign key —
-// it need not match an existing event row. This is a conscious denormalization.
-const permSchema = `
-CREATE TABLE IF NOT EXISTS documents (
-	id           INTEGER PRIMARY KEY,
-	path         TEXT    NOT NULL DEFAULT '',
-	inode        INTEGER,
-	device       INTEGER,
-	current_seq  INTEGER CHECK(current_seq IS NULL OR current_seq >= 0),
-	saved_seq    INTEGER CHECK(saved_seq IS NULL OR saved_seq >= 0),
-	created_at   TEXT    NOT NULL,
-	last_seen_at TEXT    NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_inode ON documents(inode, device) WHERE inode IS NOT NULL AND inode != 0;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_path  ON documents(path)           WHERE path != '';
+// schemaVersion, permSchema, sqliteURIPath, dropIfStale, readUserVersion,
+// openPerm, openInMemPerm, and initPermSchema live in store_schema.go (§1.6,
+// split out to stay under the 500-LoC limit — this file now holds the Store
+// type, filesystem/identity accessors, and the Open/Close lifecycle that
+// build on top of that schema layer).
 
-CREATE TABLE IF NOT EXISTS blobs (
-	hash    TEXT PRIMARY KEY,
-	content BLOB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS snapshots (
-	id         INTEGER PRIMARY KEY,
-	doc_id     INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-	blob_hash  TEXT    NOT NULL REFERENCES blobs(hash),
-	source     TEXT    NOT NULL,
-	seq        INTEGER NOT NULL DEFAULT 0 CHECK(seq >= 0),
-	created_at TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_snapshots_doc ON snapshots(doc_id, id);
-
-CREATE TABLE IF NOT EXISTS events (
-	seq                INTEGER PRIMARY KEY AUTOINCREMENT,
-	doc_id             INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-	surface            TEXT    NOT NULL,
-	kind               TEXT    NOT NULL CHECK(kind <> ''),
-	edits              BLOB,
-	cursors_before     BLOB,
-	cursors_after      BLOB,
-	focus_before       TEXT,
-	focus_after        TEXT,
-	is_undo_stop       INTEGER NOT NULL DEFAULT 0 CHECK(is_undo_stop IN (0,1)),
-	anchor_snapshot_id INTEGER,
-	at                 TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_events_doc  ON events(doc_id, seq);
-CREATE INDEX IF NOT EXISTS idx_events_undo ON events(doc_id, seq) WHERE is_undo_stop = 1;
-
-CREATE TABLE IF NOT EXISTS drafts (
-	surface    TEXT PRIMARY KEY,
-	content    TEXT NOT NULL,
-	updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS search_history (
-	query        TEXT PRIMARY KEY,
-	last_used_at TEXT NOT NULL
-);
-`
-
-// ---- construction -----------------------------------------------------------
-
-func openPerm(path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_foreign_keys=on&_txlock=immediate&_busy_timeout=5000", path)
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, err
+// ensureRuneDir creates runeDir (workDir/.rune) if it doesn't already exist
+// and, ONLY when freshly created, seeds a .gitignore containing "*" inside
+// it — self-contained (works whether or not workDir is a git repo, never
+// touches the user's own .gitignore) so a vault that happens to be a git
+// repo never shows .rune/ as untracked. An already-existing runeDir is left
+// untouched (no re-seeding, no clobbering a user's own edits to that file).
+func ensureRuneDir(runeDir string) error {
+	if _, err := os.Stat(runeDir); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat %q: %w", runeDir, err)
 	}
-	db.SetMaxOpenConns(1)
-	if err := initPermSchema(db); err != nil {
-		db.Close()
-		return nil, err
+	if err := os.MkdirAll(runeDir, 0o700); err != nil {
+		return fmt.Errorf("mkdir %q: %w", runeDir, err)
 	}
-	return db, nil
-}
-
-func openInMemPerm() (*sql.DB, error) {
-	dsn := "file::memory:?mode=memory&_foreign_keys=on&_txlock=immediate&_busy_timeout=5000"
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open in-memory perm db: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := initPermSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init in-memory perm schema: %w", err)
-	}
-	return db, nil
-}
-
-func initPermSchema(db *sql.DB) error {
-	// WAL mode for file-backed databases; silent no-op for :memory:.
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		return fmt.Errorf("set WAL mode: %w", err)
-	}
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		return fmt.Errorf("enable foreign keys: %w", err)
-	}
-	if _, err := db.Exec(permSchema); err != nil {
-		return fmt.Errorf("init perm schema: %w", err)
-	}
-	if err := migrate(db); err != nil {
-		return fmt.Errorf("migrate schema: %w", err)
+	if err := os.WriteFile(filepath.Join(runeDir, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+		return fmt.Errorf("write %q: %w", filepath.Join(runeDir, ".gitignore"), err)
 	}
 	return nil
 }
 
-// Open opens (or creates) the on-disk rune.db and starts the VFS store.
+// Open opens (or creates) workDir/.rune/rune.db and starts the VFS store.
+// Different workDirs never share a database — unrelated vaults never
+// contend. Opening the SAME workDir from multiple rune processes is also
+// normal usage, not an edge case (§12 Standing Decisions: "Per-workspace
+// store, SQLite-native concurrency") — but only because every mutating
+// method is session-scoped (v10): each Open call establishes its own
+// `sessions` row and journals/observes under its own session_id, so two
+// windows on the same file never race a single shared journal the way an
+// unscoped design would. It is NOT "normal usage by omission" — see
+// liveness.go and CONSTITUTION.md §12 for the actual mechanism.
 //
 // The returned string is a non-fatal degradation warning; callers may surface
 // it to the user but MUST NOT fail on a non-empty warning. The error return is
-// reserved for hard failures (e.g., :memory: itself cannot be opened).
+// reserved for the near-degenerate case where even the :memory: fallback
+// itself cannot be opened, OR this process's own session row cannot be
+// established (session identity is now load-bearing for every write this
+// Store will ever perform) — there is no fallback left below that.
+//
+// Concurrent opens of the SAME workDir are arbitrated by SQLite's own locking
+// (_txlock=immediate + _busy_timeout=5000 on openPerm's DSN), not a custom
+// flock — see the invariant every mutating Store method must uphold,
+// documented in CONSTITUTION.md §12.
 //
 // Open ladder:
-//  1. Try $HOME/.local/share/rune/rune.db
-//  2. On failure: os.MkdirAll and retry
+//  1. Try workDir/.rune/rune.db
+//  2. On failure: ensureRuneDir (mkdir + seed .gitignore on first creation) and retry
 //  3. On failure: fall back to :memory: for perm + set warning
-//  4. Hard fail only if :memory: fails
-func Open() (*Store, string, error) {
-	permPath := filepath.Join(os.Getenv("HOME"), ".local", "share", "rune", "rune.db")
+//  4. Establish this process's own session row (+ best-effort dead-session
+//     reaping); hard fail only if even THAT fails on top of the :memory:
+//     fallback already having been taken.
+func Open(workDir string) (*Store, string, error) {
+	runeDir := filepath.Join(workDir, ".rune")
+	permPath := filepath.Join(runeDir, "rune.db")
+	return openStoreAt(permPath, func() error { return ensureRuneDir(runeDir) })
+}
 
+// OpenAt creates a Store backed by baseDir/rune.db.
+// Intended for tests that need real files (durability, crash-recovery).
+func OpenAt(baseDir string) (*Store, string, error) {
+	permPath := filepath.Join(baseDir, "rune.db")
+	return openStoreAt(permPath, func() error { return os.MkdirAll(baseDir, 0o700) })
+}
+
+// openStoreAt is the shared open ladder for Open/OpenAt: open, retrying once
+// via mkdirRetry on failure, then degrading to an in-memory perm db (with a
+// warning) if the real file still can't be opened. Every failure mode up to
+// that point degrades uniformly; establishing this process's OWN session row
+// is the one remaining hard-fail case (v10 — session identity is load-
+// bearing for every subsequent write), alongside the fallback :memory: open
+// itself failing (see Open's doc comment). The dead-session reaper runs
+// once here too, best-effort (never blocks Open on a reaper error — mirrors
+// GCEmptyScratch's own fire-and-forget housekeeping precedent).
+func openStoreAt(permPath string, mkdirRetry func() error) (*Store, string, error) {
 	perm, permErr := openPerm(permPath)
 	if permErr != nil {
-		if mkErr := os.MkdirAll(filepath.Dir(permPath), 0o700); mkErr == nil {
+		if mkErr := mkdirRetry(); mkErr == nil {
 			perm, permErr = openPerm(permPath)
 		}
 	}
 
 	var warning string
+	var degraded bool
 	if permErr != nil {
 		var err error
 		perm, err = openInMemPerm()
@@ -207,13 +212,24 @@ func Open() (*Store, string, error) {
 			return nil, "", fmt.Errorf("open fallback perm db: %w", err)
 		}
 		warning = "history disabled — storage unavailable"
+		degraded = true
 	}
 
-	return &Store{perm: perm, clock: time.Now}, warning, nil
+	sessionID, err := establishSession(perm, time.Now)
+	if err != nil {
+		return nil, "", fmt.Errorf("establish session: %w", err)
+	}
+	store := &Store{perm: perm, clock: time.Now, degraded: degraded, sessionID: sessionID, livenessCheck: isProcessAlive}
+	if rerr := reapDeadSessions(perm, store.livenessCheck); rerr != nil {
+		_ = rerr // fire-and-forget: best-effort housekeeping (R1), never blocks Open
+	}
+
+	return store, warning, nil
 }
 
 // OpenInMemory creates a Store with the perm database in :memory:.
-// Useful for testing and fuzzing — no disk I/O, no path threading required.
+// Useful for testing and fuzzing — no disk I/O, no path threading required,
+// and no lock (there is no real file to protect).
 func OpenInMemory(clock func() time.Time) (*Store, error) {
 	perm, err := openInMemPerm()
 	if err != nil {
@@ -222,32 +238,11 @@ func OpenInMemory(clock func() time.Time) (*Store, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Store{perm: perm, clock: clock}, nil
-}
-
-// OpenAt creates a Store backed by baseDir/rune.db.
-// Intended for tests that need real files (durability, crash-recovery).
-func OpenAt(baseDir string) (*Store, string, error) {
-	permPath := filepath.Join(baseDir, "rune.db")
-
-	perm, permErr := openPerm(permPath)
-	if permErr != nil {
-		if mkErr := os.MkdirAll(baseDir, 0o700); mkErr == nil {
-			perm, permErr = openPerm(permPath)
-		}
+	sessionID, err := establishSession(perm, clock)
+	if err != nil {
+		return nil, fmt.Errorf("open in-memory store: establish session: %w", err)
 	}
-
-	var warning string
-	if permErr != nil {
-		var err error
-		perm, err = openInMemPerm()
-		if err != nil {
-			return nil, "", fmt.Errorf("open fallback perm db: %w", err)
-		}
-		warning = "history disabled — storage unavailable"
-	}
-
-	return &Store{perm: perm, clock: time.Now}, warning, nil
+	return &Store{perm: perm, clock: clock, sessionID: sessionID, livenessCheck: isProcessAlive}, nil
 }
 
 // SetClock replaces the Store's clock function. Used in deterministic tests.
@@ -255,8 +250,10 @@ func (s *Store) SetClock(clock func() time.Time) {
 	s.clock = clock
 }
 
-// NewTestStore opens a Store suitable for tests: perm backed by a temp file.
-// The store is closed automatically via t.Cleanup.
+// NewTestStore opens a Store suitable for tests: perm backed by a temp file,
+// opened exactly like a real Open/OpenAt (minus the workDir/baseDir
+// indirection — tests get exact path control). The store is closed
+// automatically via t.Cleanup.
 func NewTestStore(t *testing.T) *Store {
 	t.Helper()
 	permPath := filepath.Join(t.TempDir(), "rune_test.db")
@@ -265,8 +262,12 @@ func NewTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("NewTestStore: open perm: %v", err)
 	}
+	sessionID, err := establishSession(perm, time.Now)
+	if err != nil {
+		t.Fatalf("NewTestStore: establish session: %v", err)
+	}
 
-	s := &Store{perm: perm, clock: time.Now}
+	s := &Store{perm: perm, clock: time.Now, sessionID: sessionID, livenessCheck: isProcessAlive}
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Logf("NewTestStore cleanup: %v", err)
@@ -277,45 +278,11 @@ func NewTestStore(t *testing.T) *Store {
 
 // Close closes the underlying database connection.
 func (s *Store) Close() error {
-	if s.perm != nil {
-		if err := s.perm.Close(); err != nil {
-			return fmt.Errorf("close perm db: %w", err)
-		}
+	if s.perm == nil {
+		return nil
 	}
-	return nil
-}
-
-// ---- migration --------------------------------------------------------------
-
-// migrate converges any existing database to the current schema.
-//
-// v3: drop all data tables (owner authorised the drop), then re-run permSchema
-// so the constrained, fully-indexed schema is in place. A fresh DB (version 0)
-// runs permSchema directly from initPermSchema and the v3 drop-if-exists is a
-// harmless no-op. drafts/search_history have no FK children and are preserved.
-func migrate(db *sql.DB) error {
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		return fmt.Errorf("get user_version: %w", err)
-	}
-	if version < 3 {
-		// Drop in FK-safe child→parent order so FK enforcement cannot block the drops.
-		for _, stmt := range []string{
-			`DROP TABLE IF EXISTS events`,
-			`DROP TABLE IF EXISTS snapshots`,
-			`DROP TABLE IF EXISTS blobs`,
-			`DROP TABLE IF EXISTS documents`,
-		} {
-			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate v3: %s: %w", stmt, err)
-			}
-		}
-		if _, err := db.Exec(permSchema); err != nil {
-			return fmt.Errorf("migrate v3: recreate schema: %w", err)
-		}
-		if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
-			return fmt.Errorf("migrate v3: set user_version: %w", err)
-		}
+	if err := s.perm.Close(); err != nil {
+		return fmt.Errorf("close perm db: %w", err)
 	}
 	return nil
 }

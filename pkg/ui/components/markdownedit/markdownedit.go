@@ -350,20 +350,25 @@ func (m Model) docDir() string {
 	return filepath.Dir(m.docPath)
 }
 
-// ReplaceRange replaces the range [start, end) with text and runs afterContentChange.
-func (m Model) ReplaceRange(start, end int, text string) (Model, tea.Cmd) {
-	m.Model = m.Model.ReplaceRange(start, end, text)
-	return m.afterContentChange()
+// ReplaceRange replaces the range [start, end) with text and runs
+// afterContentChange. Propagates textedit.ReplaceRange's §1.3 bounds error
+// unchanged — the buffer is left untouched on error, so the caller MUST
+// surface it (e.g. via the workspace's errorCmd) rather than drop it.
+func (m Model) ReplaceRange(start, end int, text string) (Model, tea.Cmd, error) {
+	var err error
+	m.Model, err = m.Model.ReplaceRange(start, end, text)
+	if err != nil {
+		return m, nil, err
+	}
+	rm, cmd := m.afterContentChange()
+	return rm, cmd, nil
 }
 
-// AppendText appends text at the primary cursor position and runs afterContentChange.
-func (m Model) AppendText(text string) (Model, tea.Cmd) {
-	m.Model = m.Model.AppendText(text)
-	return m.afterContentChange()
-}
-
-// ApplyMergeResult applies merged content from a 3-way merge operation.
-func (m Model) ApplyMergeResult(content string) (Model, tea.Cmd) {
+// ReplaceAll replaces the entire buffer content in one journaled edit. Used by
+// the conflict [D]iscard path (loads theirs) and by mergemode.Enter/Abort (loads
+// the marker buffer / reverts to pre-merge ours) — merge semantics live entirely
+// in the mergemode package (§10); this is a plain whole-buffer replace.
+func (m Model) ReplaceAll(content string) (Model, tea.Cmd, error) {
 	return m.ReplaceRange(0, len(m.Model.Content()), content)
 }
 

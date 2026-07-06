@@ -1,20 +1,57 @@
 package docstate
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	"rune/pkg/editor/buffer"
 )
 
-// newDirtyTestStore creates an in-memory Store for dirty-tracking tests.
+// markSavedNow simulates the disk-write side of a save WITHOUT touching disk
+// (this file's tests never wire a vfs.FS): records a 'save'-origin
+// observation of the doc's CURRENT reconstructed content, correlated to the
+// current journal position, and advances saved_obs to it — the same two
+// facts Materialize's commitSave commits in its one tx, minus the actual
+// disk I/O. A white-box helper (same package) standing in for the pre-v4
+// MarkSavedAt this test used to drive directly.
+func markSavedNow(t *testing.T, s *Store, docID int64) {
+	t.Helper()
+	content, err := s.RecoverDocument(docID)
+	if err != nil {
+		t.Fatalf("markSavedNow: RecoverDocument: %v", err)
+	}
+	hash, err := s.PutBlob(content)
+	if err != nil {
+		t.Fatalf("markSavedNow: PutBlob: %v", err)
+	}
+	seq, err := s.CurrentSeq(docID)
+	if err != nil {
+		t.Fatalf("markSavedNow: CurrentSeq: %v", err)
+	}
+	at := s.clock().UTC().Format(time.RFC3339Nano)
+	obsID, err := s.recordObservation(docID, hash, sql.NullInt64{Int64: seq, Valid: true}, 0, "", sql.NullInt64{}, sql.NullInt64{}, sql.NullInt64{}, "save", at)
+	if err != nil {
+		t.Fatalf("markSavedNow: recordObservation: %v", err)
+	}
+	if err := s.setSavedObs(docID, obsID); err != nil {
+		t.Fatalf("markSavedNow: setSavedObs: %v", err)
+	}
+}
+
+// newDirtyTestStore creates an in-memory Store for dirty-tracking tests,
+// with its own established session (v10).
 func newDirtyTestStore(t *testing.T) *Store {
 	t.Helper()
 	perm, err := openPerm(":memory:")
 	if err != nil {
 		t.Fatalf("openPerm: %v", err)
 	}
-	s := &Store{perm: perm, clock: time.Now}
+	sessionID, err := establishSession(perm, time.Now)
+	if err != nil {
+		t.Fatalf("establish session: %v", err)
+	}
+	s := &Store{perm: perm, clock: time.Now, sessionID: sessionID, livenessCheck: isProcessAlive}
 	t.Cleanup(func() { perm.Close() })
 	return s
 }
@@ -28,7 +65,7 @@ func wordInsert(text string) []buffer.AppliedEdit {
 
 // appendWord appends a non-coalesceable edit for docID.
 func appendWord(s *Store, docID int64, text string) (int64, error) {
-	return s.AppendEdit(docID, "main", wordInsert(text), noCursors, noCursors, "main")
+	return s.AppendEdit(docID, wordInsert(text), noCursors, noCursors)
 }
 
 // TestIsDirty_Pristine: a doc with no events is clean.
@@ -54,7 +91,7 @@ func TestIsDirty_AfterEdit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.AppendEdit(ref.ID, "main", singleInsert("A"), noCursors, noCursors, "main"); err != nil {
+	if _, err := s.AppendEdit(ref.ID, singleInsert("A"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 	dirty, err := s.IsDirty(ref.ID)
@@ -100,8 +137,8 @@ func TestIsDirty_GlobalSeqRegression(t *testing.T) {
 	}
 
 	// undo × 2 — lands at firstEventSeq-1 (below the doc's first event)
-	for i := 0; i < 2; i++ {
-		_, _, _, _, ok := undoStep(t, s, docID)
+	for i := range 2 {
+		_, ok := undoStep(t, s, docID)
 		if !ok {
 			t.Fatalf("undo %d: no undo target", i+1)
 		}
@@ -117,8 +154,12 @@ func TestIsDirty_GlobalSeqRegression(t *testing.T) {
 	}
 }
 
-// TestMarkSaved: dirty → MarkSaved → clean; edit after → dirty; undo back → clean; redo past → dirty.
-func TestMarkSaved(t *testing.T) {
+// TestIsDirty_AncestorDerived_SaveUndoRedo: dirty → save → clean; edit after
+// → dirty; undo back → clean; redo past → dirty. Ancestor-derived (WP5): a
+// "save" is now recorded as a saved_obs observation (markSavedNow stands in
+// for Materialize's disk write), and IsDirty is Sync(docID).Kind != Clean —
+// there is no separate saved-position column anymore.
+func TestIsDirty_AncestorDerived_SaveUndoRedo(t *testing.T) {
 	s := newDirtyTestStore(t)
 	ref, err := s.CreateScratch("save-doc")
 	if err != nil {
@@ -138,15 +179,7 @@ func TestMarkSaved(t *testing.T) {
 		t.Fatalf("want dirty before save, got dirty=%v err=%v", dirty, err)
 	}
 
-	// Capture the position synchronously and stamp it (the production save path):
-	// MarkSavedAt records the saved position, never the live head (§1.4.2).
-	savedSeq, err := s.CurrentSeq(docID)
-	if err != nil {
-		t.Fatalf("CurrentSeq: %v", err)
-	}
-	if err := s.MarkSavedAt(docID, savedSeq); err != nil {
-		t.Fatalf("MarkSavedAt: %v", err)
-	}
+	markSavedNow(t, s, docID)
 
 	// clean after save
 	if dirty, err := s.IsDirty(docID); err != nil || dirty {
@@ -162,7 +195,7 @@ func TestMarkSaved(t *testing.T) {
 	}
 
 	// undo back to save point → clean
-	if _, _, _, _, ok := undoStep(t, s, docID); !ok {
+	if _, ok := undoStep(t, s, docID); !ok {
 		t.Fatal("undo: no target")
 	}
 	if dirty, err := s.IsDirty(docID); err != nil || dirty {
@@ -170,7 +203,7 @@ func TestMarkSaved(t *testing.T) {
 	}
 
 	// redo past save point → dirty
-	if _, _, _, _, ok := redoStep(t, s, docID); !ok {
+	if _, ok := redoStep(t, s, docID); !ok {
 		t.Fatal("redo: no target")
 	}
 	if dirty, err := s.IsDirty(docID); err != nil || !dirty {
@@ -208,13 +241,13 @@ func TestCurrentSeq(t *testing.T) {
 	}
 
 	// After undo → mid-undo seq
-	_, _, _, midSeq, ok := undoStep(t, s, docID)
+	step, ok := undoStep(t, s, docID)
 	if !ok {
 		t.Fatal("undo: no target")
 	}
 	seq, err = s.CurrentSeq(docID)
-	if err != nil || seq != midSeq {
-		t.Fatalf("want seq=%d (mid-undo), got %d err=%v", midSeq, seq, err)
+	if err != nil || seq != step.NewPos {
+		t.Fatalf("want seq=%d (mid-undo), got %d err=%v", step.NewPos, seq, err)
 	}
 	_ = s1
 }

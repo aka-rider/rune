@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -42,6 +41,10 @@ func (s *Store) PutBlob(content string) (string, error) {
 	return hash, nil
 }
 
+// GetBlob decompresses and returns the content stored under hash, verifying
+// its SHA-256 against hash before returning (blob rot / bit-flip detection —
+// closes the "GetBlob never re-verifies SHA-256" structural gap). A mismatch
+// is a corrupt blob and is surfaced as an error, never silently returned.
 func (s *Store) GetBlob(hash string) (string, error) {
 	var compressed []byte
 	err := s.perm.QueryRow(`SELECT content FROM blobs WHERE hash=?`, hash).Scan(&compressed)
@@ -59,13 +62,24 @@ func (s *Store) GetBlob(hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get blob %s: decompress: %w", hash, err)
 	}
+
+	sum := sha256.Sum256(data)
+	if got := hex.EncodeToString(sum[:]); got != hash {
+		return "", fmt.Errorf("get blob %s: content hash mismatch (corrupt blob): got %s", hash, got)
+	}
 	return string(data), nil
 }
 
-// CreateSnapshot stores a snapshot for docID at the current journal position
-// (seq). seq should be the most recently returned seq from AppendEdit so that
-// RecoverDocument can find this snapshot as the closest anchor for any replay.
-func (s *Store) CreateSnapshot(docID int64, content, source string, seq int64) (int64, error) {
+// CreateSnapshot stores a PURE recovery anchor for docID at the current
+// journal position (seq), tagged with THIS Store's own session_id (v10) —
+// a snapshot anchors ONE session's own replay window; two sessions editing
+// the same docID keep entirely separate anchor chains. seq should be the
+// most recently returned seq from AppendEdit so that RecoverDocument can
+// find this snapshot as the closest anchor for any replay. No source
+// taxonomy (Part III) — the disk fact and the 3-way-merge ancestor are
+// served entirely by observations/saved_obs/ancestorAt; a snapshot's only
+// job is bounding how far RecoverDocument ever has to replay.
+func (s *Store) CreateSnapshot(docID int64, content string, seq int64) (int64, error) {
 	hash, err := s.PutBlob(content)
 	if err != nil {
 		return 0, fmt.Errorf("create snapshot doc %d: %w", docID, err)
@@ -73,8 +87,8 @@ func (s *Store) CreateSnapshot(docID int64, content, source string, seq int64) (
 
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 	res, err := s.perm.Exec(
-		`INSERT INTO snapshots(doc_id, blob_hash, source, seq, created_at) VALUES(?,?,?,?,?)`,
-		docID, hash, source, seq, at,
+		`INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at) VALUES(?,?,?,?,?)`,
+		docID, s.sessionID, hash, seq, at,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create snapshot doc %d: %w", docID, err)
@@ -87,79 +101,81 @@ func (s *Store) CreateSnapshot(docID int64, content, source string, seq int64) (
 	return id, nil
 }
 
-// RecoverDocument reconstructs the current content for docID by finding the
-// most recent snapshot whose seq is ≤ the document's current undo position,
-// then forward-replaying all edit events between the snapshot seq and the
-// current position using buffer.ReplayForward.
+// recoverAt reconstructs docID's content AS SEEN BY sessionID specifically
+// (v10) — the session-scoped engine behind both RecoverDocument (always
+// s.sessionID) and RecoverAcrossSessions/Load's cross-session read of an
+// already-identified OTHER (confirmed-dead) session's content. Finds the
+// most recent snapshot tagged with sessionID whose seq is ≤ that session's
+// current undo position, then forward-replays only THAT session's own edit
+// events between the snapshot seq and the current position using
+// buffer.ReplayForward.
 //
 // Algorithm:
-//  1. Read current_seq from documents (NULL = at head → use MaxInt64).
-//  2. Find newest snapshot with seq ≤ targetSeq; anchorContent = "" if none.
-//  3. Gather edits from events with seq > anchorSnapshotSeq AND seq ≤ targetSeq.
+//  1. Read sessionID's own current_seq from session_documents (no row, or
+//     NULL = at head → use MaxInt64).
+//  2. Find newest snapshot tagged sessionID with seq ≤ targetSeq;
+//     anchorContent = "" if none.
+//  3. Gather sessionID's own edits from events with seq > anchorSnapshotSeq
+//     AND seq ≤ targetSeq.
 //  4. Apply buffer.ReplayForward(anchorContent, batches) and return.
-func (s *Store) RecoverDocument(docID int64) (string, error) {
-	// Step 1: read current undo position.
+func (s *Store) recoverAt(docID, sessionID int64) (string, error) {
+	// Step 1: read sessionID's own current undo position.
 	var nullableCS sql.NullInt64
-	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
-		return "", fmt.Errorf("recover doc %d: read current_seq: %w", docID, err)
+	if err := s.perm.QueryRow(`SELECT current_seq FROM session_documents WHERE session_id=? AND doc_id=?`, sessionID, docID).Scan(&nullableCS); err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("recover doc %d session %d: read current_seq: %w", docID, sessionID, err)
 	}
 	targetSeq := int64(math.MaxInt64)
 	if nullableCS.Valid {
 		targetSeq = nullableCS.Int64
 	}
 
-	// Step 2: find the nearest snapshot at or before targetSeq. Break ties by id
-	// DESC (most-recently-written wins): coalesced edits keep the SAME journal seq
-	// (AppendEdit updates the existing event in place), so several snapshots can
-	// share one seq with progressively newer content. A seq-only `ORDER BY seq DESC`
-	// picks an arbitrary one at the tie and can anchor on STALE content, dropping the
-	// latest coalesced keystroke from recovery (a §1.4.3 data-loss). id DESC selects
-	// the freshest snapshot at that seq, matching LatestSnapshot's ordering.
+	// Step 2: find the nearest snapshot, TAGGED WITH sessionID, at or before
+	// targetSeq. Break ties by id DESC (most-recently-written wins):
+	// coalesced edits keep the SAME journal seq (AppendEdit updates the
+	// existing event in place), so several snapshots can share one seq with
+	// progressively newer content. A seq-only `ORDER BY seq DESC` picks an
+	// arbitrary one at the tie and can anchor on STALE content, dropping the
+	// latest coalesced keystroke from recovery (a §1.4.3 data-loss). id DESC
+	// selects the freshest snapshot at that seq — the tie-break policy this
+	// query alone implements (D7: the doc comment used to cite a
+	// `LatestSnapshot` helper that no longer exists in this package).
 	var anchorSnapshotSeq int64
 	var anchorContent string
 	var blobHash string
 	err := s.perm.QueryRow(
-		`SELECT seq, blob_hash FROM snapshots WHERE doc_id=? AND seq <= ? ORDER BY seq DESC, id DESC LIMIT 1`,
-		docID, targetSeq,
+		`SELECT seq, blob_hash FROM snapshots WHERE doc_id=? AND session_id=? AND seq <= ? ORDER BY seq DESC, id DESC LIMIT 1`,
+		docID, sessionID, targetSeq,
 	).Scan(&anchorSnapshotSeq, &blobHash)
 	if err != nil && err != sql.ErrNoRows {
-		return "", fmt.Errorf("recover doc %d: find anchor snapshot: %w", docID, err)
+		return "", fmt.Errorf("recover doc %d session %d: find anchor snapshot: %w", docID, sessionID, err)
 	}
 	if err == nil {
 		anchorContent, err = s.GetBlob(blobHash)
 		if err != nil {
-			return "", fmt.Errorf("recover doc %d: get anchor blob: %w", docID, err)
+			return "", fmt.Errorf("recover doc %d session %d: get anchor blob: %w", docID, sessionID, err)
 		}
 	}
 
-	// Step 3: gather edit batches between the anchor and the target position.
-	rows, err := s.perm.Query(
-		`SELECT edits FROM events WHERE doc_id=? AND kind='edit' AND seq > ? AND seq <= ? ORDER BY seq ASC`,
-		docID, anchorSnapshotSeq, targetSeq,
+	// Step 3: gather sessionID's OWN edit batches between the anchor and the
+	// target position — never a different session's, even for the same doc.
+	batches, err := s.readEditBatches(
+		`SELECT edits FROM events WHERE doc_id=? AND session_id=? AND seq > ? AND seq <= ? ORDER BY seq ASC`,
+		docID, sessionID, anchorSnapshotSeq, targetSeq,
 	)
 	if err != nil {
-		return "", fmt.Errorf("recover doc %d: query events: %w", docID, err)
-	}
-	defer rows.Close()
-
-	var batches [][]buffer.AppliedEdit
-	for rows.Next() {
-		var editsJSON string
-		if err := rows.Scan(&editsJSON); err != nil {
-			return "", fmt.Errorf("recover doc %d: scan event edits: %w", docID, err)
-		}
-		var batch []buffer.AppliedEdit
-		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
-			return "", fmt.Errorf("recover doc %d: unmarshal edits: %w", docID, err)
-		}
-		batches = append(batches, batch)
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("recover doc %d: events rows: %w", docID, err)
+		return "", fmt.Errorf("recover doc %d session %d: %w", docID, sessionID, err)
 	}
 
 	// Step 4: replay edits from the anchor snapshot forward.
 	return buffer.ReplayForward(anchorContent, batches), nil
+}
+
+// RecoverDocument reconstructs the current content for docID AS SEEN BY
+// THIS SESSION (v10 — recoverAt, above). Two sessions editing the same
+// docID each reconstruct only their own journal; neither can ever see the
+// other's unsaved edits through this call.
+func (s *Store) RecoverDocument(docID int64) (string, error) {
+	return s.recoverAt(docID, s.sessionID)
 }
 
 // Content returns the current content of docID by reconstructing it from the
@@ -169,15 +185,19 @@ func (s *Store) Content(docID int64) (string, error) {
 	return s.RecoverDocument(docID)
 }
 
-// ActiveEdits returns the surface's edit batches that are LIVE at the document's
-// current undo position — i.e. with seq <= current_seq, honoring undo/redo (unlike
-// AllEdits, which returns the whole log regardless of the undo head). Ordered by
-// seq. Used by the fuzz mirror to reconstruct the live buffer as loaded-baseline +
-// ReplayForward(ActiveEdits); a snapshot-anchored RecoverDocument cannot serve that
-// because the loaded baseline is never snapshotted at genesis.
-func (s *Store) ActiveEdits(docID int64, surface string) ([][]buffer.AppliedEdit, error) {
+// ActiveEdits returns docID's edit batches that are LIVE at THIS SESSION's
+// current undo position — i.e. with seq <= this session's own current_seq,
+// honoring undo/redo (unlike AllEdits, which returns the whole log regardless
+// of the undo head OR session). Ordered by seq. Used by the fuzz mirror to
+// reconstruct the live buffer as loaded-baseline + ReplayForward(ActiveEdits);
+// a snapshot-anchored RecoverDocument cannot serve that because the loaded
+// baseline is never snapshotted at genesis. Session-scoped (v10): each
+// fuzzed Store/workspace pair is its own session, so its shadow mirror
+// reflects only its own edits, never a different session's sharing the
+// same docID.
+func (s *Store) ActiveEdits(docID int64) ([][]buffer.AppliedEdit, error) {
 	var nullableCS sql.NullInt64
-	if err := s.perm.QueryRow(`SELECT current_seq FROM documents WHERE id=?`, docID).Scan(&nullableCS); err != nil {
+	if err := s.perm.QueryRow(`SELECT current_seq FROM session_documents WHERE session_id=? AND doc_id=?`, s.sessionID, docID).Scan(&nullableCS); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("active edits doc %d: read current_seq: %w", docID, err)
 	}
 	targetSeq := int64(math.MaxInt64)
@@ -185,72 +205,33 @@ func (s *Store) ActiveEdits(docID int64, surface string) ([][]buffer.AppliedEdit
 		targetSeq = nullableCS.Int64
 	}
 
-	rows, err := s.perm.Query(
-		`SELECT edits FROM events WHERE doc_id=? AND surface=? AND kind='edit' AND seq <= ? ORDER BY seq ASC`,
-		docID, surface, targetSeq,
-	)
+	result, err := s.readEditBatches(`SELECT edits FROM events WHERE doc_id=? AND session_id=? AND seq <= ? ORDER BY seq ASC`, docID, s.sessionID, targetSeq)
 	if err != nil {
-		return nil, fmt.Errorf("active edits doc %d surface %q: %w", docID, surface, err)
-	}
-	defer rows.Close()
-
-	var result [][]buffer.AppliedEdit
-	for rows.Next() {
-		var editsJSON string
-		if err := rows.Scan(&editsJSON); err != nil {
-			return nil, fmt.Errorf("active edits scan doc %d surface %q: %w", docID, surface, err)
-		}
-		var batch []buffer.AppliedEdit
-		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
-			return nil, fmt.Errorf("active edits unmarshal doc %d surface %q: %w", docID, surface, err)
-		}
-		result = append(result, batch)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("active edits rows doc %d surface %q: %w", docID, surface, err)
+		return nil, fmt.Errorf("active edits doc %d: %w", docID, err)
 	}
 	return result, nil
 }
 
-// HasHistory reports whether docID has any events or snapshots in the VFS.
-// Use this to distinguish "no VFS record yet" (false → fall back to disk)
-// from "VFS record exists" (true → use RecoverDocument even if content is
-// empty, e.g. the user deleted all text and the deletion was journaled).
+// HasHistory reports whether docID has any events or snapshots RECORDED BY
+// THIS SESSION (v10). Use this to distinguish "this session has no VFS
+// record yet" (false → fall back to disk, or to a DIFFERENT session's
+// history via RecoverAcrossSessions/Load's cross-session inheritance) from
+// "this session's VFS record exists" (true → use RecoverDocument even if
+// content is empty, e.g. the user deleted all text and the deletion was
+// journaled). A docID with lots of history under OTHER sessions still
+// reports false here for a session that has never itself touched it.
 func (s *Store) HasHistory(docID int64) (bool, error) {
 	var n int
 	err := s.perm.QueryRow(
 		`SELECT EXISTS(
-			SELECT 1 FROM events WHERE doc_id=?
+			SELECT 1 FROM events WHERE doc_id=? AND session_id=?
 			UNION ALL
-			SELECT 1 FROM snapshots WHERE doc_id=?
+			SELECT 1 FROM snapshots WHERE doc_id=? AND session_id=?
 		)`,
-		docID, docID,
+		docID, s.sessionID, docID, s.sessionID,
 	).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("has history doc %d: %w", docID, err)
 	}
 	return n > 0, nil
-}
-
-// LatestSnapshot returns the raw content of the most recent snapshot for
-// docID. Prefer RecoverDocument/Content in new code — this does not apply
-// pending edits and is only useful for diagnostic / migration purposes.
-func (s *Store) LatestSnapshot(docID int64) (string, error) {
-	var hash string
-	err := s.perm.QueryRow(
-		`SELECT blob_hash FROM snapshots WHERE doc_id=? ORDER BY id DESC LIMIT 1`,
-		docID,
-	).Scan(&hash)
-	if err == sql.ErrNoRows {
-		return "", sql.ErrNoRows
-	}
-	if err != nil {
-		return "", fmt.Errorf("latest snapshot doc %d: %w", docID, err)
-	}
-
-	content, err := s.GetBlob(hash)
-	if err != nil {
-		return "", fmt.Errorf("latest snapshot doc %d: %w", docID, err)
-	}
-	return content, nil
 }

@@ -8,58 +8,25 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/pkg/docstate"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/vfs"
 )
 
 // ---- Message types (D12: workspace owns the file/disk domain) ----
 
-// FileLoadedMsg is returned when a file has been read from disk. Gen is the load
-// generation this read was issued under (§ workspace.loadGen); the handler installs
-// the content+identity ONLY if Gen still matches the awaited load, so a superseded
-// or out-of-order read can never display the wrong document.
+// FileLoadedMsg is returned when store.Load has read a file and recorded its
+// disk-fact observation. Gen is the load generation this read was issued
+// under (§ workspace.loadGen); the handler installs the content+identity
+// ONLY if Gen still matches the awaited load, so a superseded or
+// out-of-order read can never display the wrong document.
 type FileLoadedMsg struct {
-	Path     string
-	Content  []byte
-	Baseline diskBaseline // fingerprint at read time (§1.4.7 external-change guard)
-	Gen      uint64       // load generation; stale (≠ current) results are dropped
-}
-
-// diskBaseline fingerprints a file as it was last read or written, so a later
-// overwrite can detect that another process changed it underneath us (§1.4.7).
-type diskBaseline struct {
-	size    int64
-	modTime time.Time
-	valid   bool
-}
-
-// baselineOf stats path through the shim and returns its current fingerprint.
-// An unreadable file yields an invalid (zero) baseline.
-func baselineOf(fsys vfs.FS, path string) diskBaseline {
-	info, err := fsys.Stat(path)
-	if err != nil {
-		return diskBaseline{}
-	}
-	return diskBaseline{size: info.Size(), modTime: info.ModTime(), valid: true}
-}
-
-// divergedFrom reports whether the file at path differs from this baseline. A
-// missing file is NOT divergence (recreating it cannot clobber anything); an
-// unreadable file or a size/mtime mismatch is. An invalid baseline never
-// diverges (we have nothing to compare against).
-func (b diskBaseline) divergedFrom(fsys vfs.FS, path string) bool {
-	if !b.valid {
-		return false
-	}
-	info, err := fsys.Stat(path)
-	if err != nil {
-		return !errors.Is(err, fs.ErrNotExist)
-	}
-	return info.Size() != b.size || !info.ModTime().Equal(b.modTime)
+	Path   string
+	Result docstate.LoadResult
+	Gen    uint64
 }
 
 // FileLoadErrorMsg is returned when a file load fails. Gen mirrors FileLoadedMsg.Gen
@@ -70,24 +37,29 @@ type FileLoadErrorMsg struct {
 	Gen  uint64
 }
 
-// FileSavedMsg is returned when a file has been materialized to disk.
+// FileSavedMsg is returned when store.Materialize has committed a write.
 type FileSavedMsg struct {
-	Path         string
-	DocID        int64 // the VFS doc materialized (0 if storeless)
-	RequestID    string
-	SavedContent []byte       // exact bytes written — used as new origContent (D13 Finding A)
-	SavedSeq     int64        // journal position the written bytes reflect, captured at save-start (§1.4.2)
-	BindNew      bool         // true when this was a first-bind of an untitled doc
-	Baseline     diskBaseline // fingerprint of the file just written (§1.4.7)
+	Path      string
+	DocID     int64 // the VFS doc materialized (0 if storeless)
+	RequestID string
+	BindNew   bool // true when this was a first-bind of an untitled doc
+	Result    docstate.MatResult
 }
 
-// FileSaveErrorMsg is returned when a file materialize fails.
+// FileSaveErrorMsg is returned when store.Materialize refuses (Conflict or
+// Missing) or fails outright (Err). Conflict is a CAS refusal — a fresher
+// disk observation was recorded instead (Fresh). Missing means the target
+// vanished and the save was not an explicit bindNew — never a silent
+// recreate (§1.4.4); the caller routes to the deleted guard instead. The
+// three are mutually exclusive discriminants (§1.7).
 type FileSaveErrorMsg struct {
 	Path      string
 	DocID     int64
 	RequestID string
 	Err       error
-	Conflict  bool // refused to clobber: file exists (bind-new) or changed (overwrite)
+	Conflict  bool
+	Missing   bool
+	Fresh     docstate.Observation // populated when Conflict
 }
 
 // FileRenamedMsg is returned after a successful file rename.
@@ -110,86 +82,83 @@ type FileDeleteErrorMsg struct {
 	Err  error
 }
 
-// SaveIdentity tracks an in-flight save operation (D12, D13).
+// SaveIdentity tracks an in-flight save operation (D12, D13). Path/DocID are the
+// identity of the file THIS save is writing, captured once at save-start — never
+// re-derived from m.view later, since m.view can drift to a different document
+// while the save's write is still in flight (mouse-driven tab switch has no
+// keyboard-style InFlight gate). savingTarget (workspace_probe.go)
+// compares against these, not against m.view's current identity.
 type SaveIdentity struct {
 	RequestID    string
 	SavedContent []byte // snapshot of content at save-start; used as new origContent on ack
 	InFlight     bool
+	Path         string
+	DocID        int64
 }
 
 // ---- Cmd factories (D12) ----
 
-// loadFileCmd reads a file through the shim. gen is the load generation this read
-// was issued under; it is stamped onto the result so the handler can drop a stale
-// (superseded / out-of-order) read. fsys is captured into the closure (§6.2), never
-// read from the Model.
-func loadFileCmd(fsys vfs.FS, ctx context.Context, path string, gen uint64) tea.Cmd {
+// loadFileCmd reads path through the store (identity, recovery, and the
+// resulting SyncState in ONE round trip — docstate.Store.Load). gen is the
+// load generation this read was issued under; it is stamped onto the result
+// so the handler can drop a stale (superseded/out-of-order) read.
+//
+// store may be nil early in startup (the async StoreReadyMsg has not landed
+// yet, e.g. opening files passed on the command line) — falls back to a raw
+// disk read with no identity/history/SyncState, exactly like the pre-v4
+// loadFileCmd; StoreReadyMsg's handler re-resolves identity for whatever is
+// displayed once the store becomes ready (workspace_io_handlers.go).
+func loadFileCmd(store *docstate.Store, fsys vfs.FS, ctx context.Context, path string, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
-		b, err := fsys.ReadFile(path)
-		if err != nil {
-			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err), Gen: gen}
+		if store == nil {
+			data, err := fsys.ReadFile(path)
+			if err != nil {
+				return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("read %q: %w", path, err), Gen: gen}
+			}
+			content := string(data)
+			return FileLoadedMsg{
+				Path:   path,
+				Result: docstate.LoadResult{DiskContent: content, Recovered: content},
+				Gen:    gen,
+			}
 		}
-		return FileLoadedMsg{Path: path, Content: b, Baseline: baselineOf(fsys, path), Gen: gen}
+		result, err := store.Load(path)
+		if err != nil {
+			return FileLoadErrorMsg{Path: path, Err: fmt.Errorf("load %q: %w", path, err), Gen: gen}
+		}
+		return FileLoadedMsg{Path: path, Result: result, Gen: gen}
 	}
 }
 
-// materializeCmd is the single VFS→disk write primitive (Fix 4). It writes the
-// document's bytes to disk atomically (temp→Sync→Rename→dir-fsync, CLAUDE.md
-// §1.4.1) with two clobber guards:
-//
-//   - bindNew (first save / naming an untitled / rename to a new name): refuses
-//     if the target already exists — naming over a real file would truncate it
-//     (Catastrophic, rung 1). The buffer is kept; nothing is bound.
-//   - overwrite (⌘S on a bound doc): refuses if the file diverged from baseline
-//     since it was opened — another editor/tool changed it (§1.4.7). Never
-//     silently wins.
-//
-// Bytes are written verbatim — no line-ending / trailing-newline / BOM
-// normalization (§1.4.5). The returned FileSavedMsg carries the fresh baseline.
-func materializeCmd(fsys vfs.FS, docID int64, path, content string, savedSeq int64, requestID string, bindNew bool, baseline diskBaseline) tea.Cmd {
-	data := []byte(content)
+// materializeStoreCmd is the single VFS→disk write primitive (Fix 4, WP5):
+// store.Materialize performs the full CAS-write protocol (Part III) —
+// unconditional pre-write hash, atomic swap, displaced-bytes re-check, one
+// commit tx — so there is no separate baseline/backstop plumbing here
+// anymore. expect is the CAS expectation (typically SavedObs captured
+// synchronously at save-start); seq is the journal position content
+// corresponds to, ALSO captured at save-start (co-atomic with content —
+// §1.4.2/§1.4.8; see docstate.Store.Materialize's doc comment).
+func materializeStoreCmd(store *docstate.Store, docID int64, path, content string, expect docstate.ObsID, seq int64, requestID string, bindNew bool) tea.Cmd {
 	return func() tea.Msg {
-		if bindNew {
-			if _, err := fsys.Stat(path); err == nil {
-				return FileSaveErrorMsg{
-					Path: path, DocID: docID, RequestID: requestID, Conflict: true,
-					Err: fmt.Errorf("materialize %q: file already exists", path),
-				}
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return FileSaveErrorMsg{
-					Path: path, DocID: docID, RequestID: requestID,
-					Err: fmt.Errorf("materialize %q: stat target: %w", path, err),
-				}
-			}
-			if dir := filepath.Dir(path); dir != "" {
-				if err := fsys.MkdirAll(dir, 0o755); err != nil {
-					return FileSaveErrorMsg{
-						Path: path, DocID: docID, RequestID: requestID,
-						Err: fmt.Errorf("materialize %q: mkdir: %w", path, err),
-					}
-				}
-			}
-		} else if baseline.divergedFrom(fsys, path) {
-			return FileSaveErrorMsg{
-				Path: path, DocID: docID, RequestID: requestID, Conflict: true,
-				Err: fmt.Errorf("materialize %q: file changed on disk since it was opened — not overwritten", path),
-			}
-		}
-		if err := fsys.WriteFile(path, data, 0o644); err != nil {
+		result, err := store.Materialize(docID, path, content, expect, seq, bindNew)
+		if err != nil {
 			return FileSaveErrorMsg{
 				Path: path, DocID: docID, RequestID: requestID,
 				Err: fmt.Errorf("materialize %q: %w", path, err),
 			}
 		}
-		return FileSavedMsg{
-			Path: path, DocID: docID, RequestID: requestID,
-			SavedContent: data, SavedSeq: savedSeq, BindNew: bindNew, Baseline: baselineOf(fsys, path),
+		if !result.Committed {
+			return FileSaveErrorMsg{
+				Path: path, DocID: docID, RequestID: requestID,
+				Conflict: !result.Missing, Missing: result.Missing, Fresh: result.Fresh,
+			}
 		}
+		return FileSavedMsg{Path: path, DocID: docID, RequestID: requestID, BindNew: bindNew, Result: result}
 	}
 }
 
@@ -203,10 +172,32 @@ func fileTrashCmd(fsys vfs.FS, path string) tea.Cmd {
 	}
 }
 
-// fileRenameCmd moves a file on disk. It refuses to clobber an existing target
-// (os.Rename would silently destroy it — Catastrophic, rung 1).
+// fileRenameCmd moves a file on disk. It refuses to clobber an existing
+// target (F9): vfs.RenameExcl is atomic and no-clobber (fs.ErrExist if
+// newPath already exists), closing the Stat-then-Rename TOCTOU window a
+// concurrent creator could otherwise win (G1). Where RenameExcl itself is
+// unsupported on this platform/filesystem (vfs.ErrUnsupported — no hardlink
+// support), falls back to the previous Stat-guarded Rename with the residual
+// (documented, narrow) race window.
 func fileRenameCmd(fsys vfs.FS, oldPath, newPath string) tea.Cmd {
 	return func() tea.Msg {
+		err := fsys.RenameExcl(oldPath, newPath)
+		switch {
+		case err == nil:
+			return FileRenamedMsg{OldPath: oldPath, NewPath: newPath}
+		case errors.Is(err, fs.ErrExist):
+			return FileRenameErrorMsg{
+				Err: fmt.Errorf("rename %q → %q: target already exists", oldPath, newPath),
+			}
+		case !errors.Is(err, vfs.ErrUnsupported):
+			return FileRenameErrorMsg{
+				Err: fmt.Errorf("rename %q → %q: %w", oldPath, newPath, err),
+			}
+		}
+		// Portable fallback: RenameExcl unsupported here — degrade to the
+		// Stat-then-Rename check. A creator racing between the Stat and the
+		// Rename can still win; RenameExcl's atomic no-clobber guarantee
+		// only holds where the platform actually supports it.
 		if _, err := fsys.Stat(newPath); err == nil {
 			return FileRenameErrorMsg{
 				Err: fmt.Errorf("rename %q → %q: target already exists", oldPath, newPath),

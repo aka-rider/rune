@@ -96,13 +96,18 @@ func formatGridRow(block mdBlock, lineIdx int, renderedCells []renderedCellData,
 			BlockEnd:    block.endOff,
 			TableRole:   role,
 			TableLayout: layout,
+			ColWidths:   colWidths,
 		}}
 	}
 
 	spans := buildTableStyledSpans(block, lineIdx, formatted, cm, lineStart, lineText, lineSpans, role)
-	// Set layout on all spans
+	// Set layout and column widths on all spans — ExpandTableRows' border
+	// builder reads ColWidths back off whichever span it finds on the line
+	// (buildTableBorder/table_rows.go), so every span this row produces must
+	// carry the same value.
 	for i := range spans {
 		spans[i].TableLayout = layout
+		spans[i].ColWidths = colWidths
 	}
 	return spans
 }
@@ -140,10 +145,12 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 		}
 
 		for col, w := range colWidths {
-			// Opening border
+			// Opening border — CellMap is per-rune (§1.5 display side; D1:
+			// len(CellMap) == RuneCount(Text)): '│' is 3 bytes but ONE visual
+			// cell, so exactly one mapping.
 			if col == 0 {
 				b.WriteRune('│')
-				cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 			// Left padding
 			b.WriteByte(' ')
@@ -160,9 +167,10 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 				pad = 0
 			}
 
-			// Write cell text (left-aligned for wrapped mode)
+			// Write cell text (left-aligned for wrapped mode) — one mapping
+			// per RUNE (range over a string yields runes), not per byte.
 			b.WriteString(cellText)
-			for i := 0; i < len(cellText); i++ {
+			for range cellText {
 				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 			// Right padding
@@ -171,11 +179,12 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 
-			// Right padding space + closing border
+			// Right padding space + closing border (one mapping per rune —
+			// see the opening-border comment above)
 			b.WriteByte(' ')
 			cm = append(cm, CellMapping{BufOffset: -1})
 			b.WriteRune('│')
-			cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
+			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 	}
 
@@ -191,6 +200,7 @@ func formatWrappedRow(block mdBlock, lineIdx int, renderedCells []renderedCellDa
 		BlockEnd:    block.endOff,
 		TableRole:   role,
 		TableLayout: TableLayoutWrapped,
+		ColWidths:   colWidths,
 	}}
 }
 
@@ -237,11 +247,10 @@ func formatPivotedRow(block mdBlock, lineIdx int, lineText string, lineStart int
 		if sepWidth <= 0 {
 			sepWidth = 40
 		}
+		// One mapping per RUNE ('─' is 3 bytes but one visual cell — §1.5
+		// display side; D1: len(CellMap) == RuneCount(Text)).
 		for i := 0; i < sepWidth; i++ {
 			b.WriteRune('─')
-		}
-		// ─ is 3 bytes UTF-8
-		for i := 0; i < sepWidth*3; i++ {
 			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 		b.WriteByte('\n')
@@ -268,7 +277,7 @@ func formatPivotedRow(block mdBlock, lineIdx int, lineText string, lineStart int
 		cm = append(cm, CellMapping{BufOffset: -1}, CellMapping{BufOffset: -1})
 
 		b.WriteString(label)
-		for i := 0; i < len(label); i++ {
+		for range label { // per RUNE, not per byte
 			cm = append(cm, CellMapping{BufOffset: -1})
 		}
 
@@ -280,7 +289,7 @@ func formatPivotedRow(block mdBlock, lineIdx int, lineText string, lineStart int
 		if len(rc.cm) > 0 {
 			cm = append(cm, rc.cm...)
 		} else {
-			for i := 0; i < len(rc.text); i++ {
+			for range rc.text { // per RUNE, not per byte
 				cm = append(cm, CellMapping{BufOffset: -1})
 			}
 		}

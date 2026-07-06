@@ -43,8 +43,8 @@ func TestTitle_DefaultText(t *testing.T) {
 	if m.Text() != "Untitled 1" {
 		t.Errorf("expected 'Untitled 1', got %q", m.Text())
 	}
-	if !m.IsPlaceholder() {
-		t.Error("expected IsPlaceholder to be true")
+	if m.Text() != m.placeholder {
+		t.Error("expected the default text to equal the placeholder")
 	}
 }
 
@@ -54,8 +54,8 @@ func TestTitle_SetText(t *testing.T) {
 	if m.Text() != "my-note" {
 		t.Errorf("expected 'my-note', got %q", m.Text())
 	}
-	if m.IsPlaceholder() {
-		t.Error("expected IsPlaceholder to be false after SetText")
+	if m.Text() == m.placeholder {
+		t.Error("expected the text to no longer equal the placeholder after SetText")
 	}
 }
 

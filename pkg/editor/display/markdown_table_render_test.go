@@ -427,9 +427,13 @@ func TestTable_GridTopBottomBorders(t *testing.T) {
 
 func TestTable_BodyRowSeparatorWidthsWithMultiByteChars(t *testing.T) {
 	// Body→body separator widths must match header→body separator widths.
-	// Regression test: getTableColWidths used byte-based iteration which
-	// inflated widths for cells containing multi-byte UTF-8 chars (→, CJK, etc.).
-	// This caused mismatched separator widths between header-body and body-body rows.
+	// Regression test: the border builder used to recover column widths by
+	// re-parsing the already-rendered │ cell │ cell │ text with byte-based
+	// iteration, which inflated widths for cells containing multi-byte UTF-8
+	// chars (→, CJK, etc.) — causing mismatched separator widths between
+	// header-body and body-body rows. Border widths now come straight off
+	// DisplaySpan.ColWidths (set once, upstream, when the row was formatted),
+	// so this bug class no longer exists — kept as a regression guard.
 	md := `| Conversion | Invariant | Condition |
 |------------|-----------|-----------|
 | Buffer→Syntax→Buffer | Identity | All valid offsets |

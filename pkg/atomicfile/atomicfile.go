@@ -44,8 +44,8 @@ func Write(target string, data []byte) error {
 
 	// Best-effort: fsync the parent directory so the rename itself survives a crash.
 	if d, openErr := os.Open(dir); openErr == nil {
-		d.Sync() // fire-and-forget: directory fsync is advisory
-		d.Close()
+		_ = d.Sync()  // fire-and-forget: directory fsync is advisory
+		_ = d.Close() // fire-and-forget: read-only fd, nothing left to flush; the rename above already committed
 	}
 	return nil
 }

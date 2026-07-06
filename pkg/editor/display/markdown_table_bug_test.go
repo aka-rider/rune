@@ -121,3 +121,32 @@ func TestTableBoldSpanCellMapConsistency(t *testing.T) {
 		}
 	}
 }
+
+// TestTableLinkNonFirstCellBufferStart pins BUG6: buildTableStyledSpans
+// pinned every emitted span's BufferStart/BufferEnd to the whole table row
+// instead of the token's own bounds, so a folded link in a non-first cell
+// computed its hidden prefix against everything before it in the row.
+func TestTableLinkNonFirstCellBufferStart(t *testing.T) {
+	text := "| A | B |\n| --- | --- |\n| x | [bar](baz.md) |"
+	buf := buffer.New(text)
+	sMap := display.NewSyntaxMap()
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
+
+	lineStart := buf.LineStart(2)
+	lineText := buf.Line(2)
+	wantBracket := lineStart + strings.Index(lineText, "[")
+
+	found := false
+	for _, sp := range snap.Lines[2].Spans {
+		if sp.Kind != display.TokenLink || sp.CellMap == nil {
+			continue
+		}
+		found = true
+		if sp.BufferStart != wantBracket {
+			t.Errorf("link span BufferStart = %d, want %d (position of '[')", sp.BufferStart, wantBracket)
+		}
+	}
+	if !found {
+		t.Fatal("no TokenLink span found on table body line")
+	}
+}

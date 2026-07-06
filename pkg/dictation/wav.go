@@ -1,4 +1,4 @@
-package whisper
+package dictation
 
 import "encoding/binary"
 

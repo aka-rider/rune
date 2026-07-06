@@ -310,6 +310,7 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 
 	// Group consecutive cells with the same kind into spans
 	var result []SyntaxSpan
+	var decorativeIdx []int // result indices needing the abutment pass below
 	var currentText strings.Builder
 	var currentCM []CellMapping
 	var currentKind TokenKind
@@ -332,6 +333,12 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 				TableRole:   role,
 			}
 			if currentActiveSpan != nil {
+				// Use the token's own bounds, not the whole row (BUG6) — mirrors
+				// buildSyntaxLine's non-table BufferStart/BufferEnd computation.
+				// currentActiveSpan.start/.end are line-local, same coordinate
+				// space relOff uses above (bufOff - lineStart).
+				sp.BufferStart = lineStart + currentActiveSpan.start
+				sp.BufferEnd = lineStart + currentActiveSpan.end
 				sp.AltText = spanAltText(*currentActiveSpan)
 				sp.ImagePath = spanImagePath(*currentActiveSpan)
 				sp.EmbedRef = spanEmbedRef(*currentActiveSpan)
@@ -340,6 +347,12 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 				sp.WikiLinkTarget = spanWikiLinkTarget(*currentActiveSpan)
 				sp.WikiLinkIsImage = spanWikiLinkIsImage(*currentActiveSpan)
 				sp.LinkURL = spanLinkURL(*currentActiveSpan)
+			} else {
+				// Decorative (borders/padding/unstyled text): its true bounds
+				// aren't recoverable — border/padding runes are synthesized with
+				// no source byte at all (formatTableRowRendered's BufOffset:-1).
+				// Fixed up below to abut its real neighbors instead (BUG7).
+				decorativeIdx = append(decorativeIdx, len(result))
 			}
 			result = append(result, sp)
 			currentText.Reset()
@@ -354,7 +367,8 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 		kindChanged := ci.kind != currentKind || ci.marks != currentMarks
 		spanChanged := (ci.sp == nil && currentActiveSpan != nil) ||
 			(ci.sp != nil && currentActiveSpan == nil) ||
-			(ci.sp != nil && currentActiveSpan != nil && ci.sp.kind != currentActiveSpan.kind)
+			(ci.sp != nil && currentActiveSpan != nil &&
+				(ci.sp.start != currentActiveSpan.start || ci.sp.end != currentActiveSpan.end))
 
 		if kindChanged || spanChanged {
 			flushSpan()
@@ -374,6 +388,21 @@ func buildTableStyledSpans(block mdBlock, lineIdx int, formatted string, cm []Ce
 		pos += size
 	}
 	flushSpan()
+
+	// Abut decorative spans to their real neighbors so BufferStart/BufferEnd
+	// tile [lineStart, lineStart+len(lineText)) exactly (SPAN-COVER, BUG7).
+	// Safe: two decorative cellInfos always share (kind:TokenTable, marks:0,
+	// sp:nil), so kindChanged/spanChanged above never trips between them —
+	// decorative runs never neighbor each other, only real/styled spans or a
+	// row edge do.
+	for _, i := range decorativeIdx {
+		if i > 0 {
+			result[i].BufferStart = result[i-1].BufferEnd
+		}
+		if i+1 < len(result) {
+			result[i].BufferEnd = result[i+1].BufferStart
+		}
+	}
 
 	return result
 }

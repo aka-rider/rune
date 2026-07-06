@@ -12,12 +12,11 @@ import (
 // IsFile/IsUntitled/IsHelp and Path(), so "untitled"/"help" are never decoded
 // from a magic string (§1.7).
 func TestDocView_Accessors(t *testing.T) {
-	base := diskBaseline{size: 7, valid: true}
-	f := fileView("/x/note.md", 42, base)
+	f := fileView("/x/note.md", 42)
 	if !f.IsFile() || f.IsUntitled() || f.IsHelp() {
 		t.Errorf("fileView kind wrong: %+v", f)
 	}
-	if f.Path() != "/x/note.md" || f.DocID() != 42 || f.Baseline() != base {
+	if f.Path() != "/x/note.md" || f.DocID() != 42 {
 		t.Errorf("fileView accessors wrong: %+v", f)
 	}
 
@@ -35,11 +34,8 @@ func TestDocView_Accessors(t *testing.T) {
 		t.Errorf("helpView wrong: %+v", h)
 	}
 
-	// withBaseline / withDocID copy one field, preserving kind + the rest.
-	if got := f.withBaseline(diskBaseline{size: 99}); got.Path() != "/x/note.md" || got.DocID() != 42 || got.Baseline().size != 99 || !got.IsFile() {
-		t.Errorf("withBaseline wrong: %+v", got)
-	}
-	if got := f.withDocID(100); got.Path() != "/x/note.md" || got.DocID() != 100 || got.Baseline() != base {
+	// withDocID copies only the docID, preserving kind + path.
+	if got := f.withDocID(100); got.Path() != "/x/note.md" || got.DocID() != 100 || !got.IsFile() {
 		t.Errorf("withDocID wrong: %+v", got)
 	}
 }

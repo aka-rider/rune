@@ -183,11 +183,33 @@ func (w WrapMap) SetWidth(width int) WrapMap {
 	return w
 }
 
+// ControlAwareWidth is the single source of truth for a rune's display width,
+// shared by the wrap/coordinate layer (runeWidthWithTab, VisualCol,
+// ByteColFromVisual) and the cell renderer (revealedSpanToCells /
+// renderedSpanToCells in textedit). The two layers MUST agree: if one counts a
+// rune as zero-width while the other emits a width-1 cell, horizontal slicing
+// drops cells and can strand the cursor with no rendered cell (fuzz invariant
+// R1 — caret with no cell).
+//
+// Rule: \n and \r occupy no column (the cell renderer emits no cell for them);
+// every other rune that runewidth reports as zero-width (C0 control chars,
+// combining marks) is clamped to 1 so it matches the cell it will be drawn into.
+// This is a DISPLAY-width decision only — buffer bytes stay verbatim (§1.4.5).
+func ControlAwareWidth(r rune) int {
+	if r == '\n' || r == '\r' {
+		return 0
+	}
+	if w := runewidth.RuneWidth(r); w > 0 {
+		return w
+	}
+	return 1
+}
+
 func runeWidthWithTab(r rune, currentWidth int) int {
 	if r == '\t' {
 		return 4 - (currentWidth % 4)
 	}
-	return runewidth.RuneWidth(r)
+	return ControlAwareWidth(r)
 }
 
 func (w WrapMap) Sync(ss SyntaxSnapshot) WrapSnapshot {

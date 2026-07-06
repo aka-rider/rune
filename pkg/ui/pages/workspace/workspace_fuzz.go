@@ -9,6 +9,7 @@ import (
 	"rune/internal/fuzz/snapshot"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/opentabs"
+	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
 // FuzzInspect returns a read-only snapshot of model state for invariant checking.
@@ -23,6 +24,7 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 		Cells:         m.editor.FuzzCells(),
 		CursorOffsets: m.editor.CursorOffsets(),
 		Focused:       m.editor.Focused(),
+		ReadOnly:      m.editor.ReadOnly(),
 
 		// Editor structural
 		Cursors:       m.editor.FuzzCursors(),
@@ -42,13 +44,23 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 		TabLimit:     tabLimit,
 
 		// File / persistence
-		ActiveFilePath: m.view.Path(),
-		EditorPath:     m.view.Path(),
-		DocID:          m.view.DocID(),
-		Loading:        m.pendingLoad.active,
-		FlushGen:       m.flushGen,
-		SaveSnapshot:   m.activeSave.SavedContent,
-		SaveInFlight:   m.activeSave.InFlight,
+		ActiveFilePath:      m.view.Path(),
+		EditorPath:          m.view.Path(),
+		DocID:               m.view.DocID(),
+		Loading:             m.pendingLoad.active,
+		FlushGen:            m.flushGen,
+		SaveSnapshot:        m.activeSave.SavedContent,
+		SaveInFlight:        m.activeSave.InFlight,
+		PendingDataLossKind: int(m.pendingDataLoss.kind), // mirrors actionKind iota order
+		SaveRequestID:       m.activeSave.RequestID,
+
+		PendingConflictActive: m.pendingConflict.active,
+		PendingDeletedActive:  m.pendingDeleted.active,
+		PendingRacedActive:    m.pendingRaced.active,
+		StoreDegraded:         m.footer.Degraded(),
+
+		MergeActive:     mergemode.IsActive(m.merge),
+		MergeUnresolved: mergemode.HasUnresolvedConflicts(m.merge),
 
 		// Layout — Frame is set by driver; driver also sets Width/Height
 		Width:       m.totalWidth,
@@ -79,7 +91,7 @@ func tabsInfo(m Model) ([]snapshot.TabInfo, []bool, bool, bool) {
 	hasDirty := false
 	activeTabDirty := false
 	for i, t := range raw {
-		tabs[i] = snapshot.TabInfo{Path: t.Path, Name: t.Name}
+		tabs[i] = snapshot.TabInfo{Path: t.Path, Name: t.Name, DocID: t.DocID}
 		th := opentabs.TabHandle{DocID: t.DocID, Path: t.Path}
 		isActive := th.Equal(activeHandle)
 		active[i] = isActive
@@ -101,4 +113,17 @@ func (m Model) IsCloseFileMsg(msg tea.Msg) bool {
 		return false
 	}
 	return key.Matches(kp, m.keys.CloseFile)
+}
+
+// IsUndoRedoMsg reports whether msg is an Undo (⌘Z) or Redo (^Y) key press —
+// the same key.Matches checks handleKeyPress's Priority 2.5 branch uses.
+// REDO-CLEAR (WP2) excludes these from "a buffer-changing key press must
+// truncate the redo future": undo/redo themselves move the journal position,
+// they don't append a fresh edit that abandons one.
+func (m Model) IsUndoRedoMsg(msg tea.Msg) bool {
+	kp, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return false
+	}
+	return key.Matches(kp, m.keys.Undo) || key.Matches(kp, m.keys.Redo)
 }

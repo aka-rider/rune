@@ -39,7 +39,11 @@ var editorShortcutKeys = []string{
 // component (filetree, opentabs, etc.) rather than at the workspace page
 // level or inside the editor's key resolver.
 var componentKeys = []string{
-	"TrashFile", // ⌘⌫/⌦ → filetree.Update handles and emits FileDeleteRequestedMsg
+	"TrashFile",         // ⌘⌫/⌦ → filetree.Update handles and emits FileDeleteRequestedMsg
+	"MergeAcceptOurs",   // o/O → mergemode.HandleKey (only while a merge is active)
+	"MergeAcceptTheirs", // t/T → mergemode.HandleKey (only while a merge is active)
+	"MergeNext",         // n/N → mergemode.HandleKey (only while a merge is active)
+	"MergePrev",         // p/P → mergemode.HandleKey (only while a merge is active)
 }
 
 // keyFromChord builds the key string that parseChord would produce.
@@ -218,6 +222,66 @@ func TestNoKeybindingCollisions(t *testing.T) {
 	err := keys.ValidateNoPhysicalKeyCollisions()
 	if err != nil {
 		t.Errorf("ValidateNoPhysicalKeyCollisions returned error: %v", err)
+	}
+}
+
+// TestValidateNoPhysicalKeyCollisions_BothDeleteBindingsCoexist is the
+// regression test for §3.1: TrashFile (a struct field, paneTree-focused,
+// matched directly by filetree.Update) and edit.delete-right (an INLINE
+// binding added directly in CommandBindings, When="editorFocused &&
+// !readOnly") both use the physical "delete" key. Promoting the inline
+// binding to a struct field would make the flat AllPhysicalKeys() dedup
+// falsely flag this as a collision and os.Exit(1) at startup (app.go) — the
+// scope-aware validator must pass cleanly instead, since the two scopes are
+// mutually exclusive by focus.
+func TestValidateNoPhysicalKeyCollisions_BothDeleteBindingsCoexist(t *testing.T) {
+	keys := Default()
+	if err := keys.ValidateNoPhysicalKeyCollisions(); err != nil {
+		t.Fatalf("Default() keymap must validate cleanly with both TrashFile and edit.delete-right using \"delete\": %v", err)
+	}
+}
+
+// TestValidateCommandBindingScopeCollisions_DifferentScopesOK verifies the
+// scope-aware check directly: two different commands sharing a chord across
+// two DIFFERENT When scopes are NOT flagged (they can never both match the
+// same live ResolverContext).
+func TestValidateCommandBindingScopeCollisions_DifferentScopesOK(t *testing.T) {
+	bindings := []keybind.Binding{
+		{Chords: []keybind.Chord{{Key: "delete"}}, Command: "filetree.trash", When: "paneTreeFocused"},
+		{Chords: []keybind.Chord{{Key: "delete"}}, Command: "edit.delete-right", When: "editorFocused && !readOnly"},
+	}
+	if err := ValidateCommandBindingScopeCollisions(bindings); err != nil {
+		t.Fatalf("expected no error for a chord reused across different scopes, got %v", err)
+	}
+}
+
+// TestValidateCommandBindingScopeCollisions_CatchesSameScopeCollision
+// verifies the scope-aware check catches a REAL collision: two different
+// commands sharing both the same chord AND the same When scope — the case
+// that can actually contend for the same keypress at runtime
+// (keybind.Resolver.Resolve treats both as live candidates simultaneously).
+func TestValidateCommandBindingScopeCollisions_CatchesSameScopeCollision(t *testing.T) {
+	bindings := []keybind.Binding{
+		{Chords: []keybind.Chord{{Key: "x"}}, Command: "edit.foo", When: "editorFocused"},
+		{Chords: []keybind.Chord{{Key: "x"}}, Command: "edit.bar", When: "editorFocused"},
+	}
+	if err := ValidateCommandBindingScopeCollisions(bindings); err == nil {
+		t.Fatal("expected an error for two commands sharing a chord in the same scope, got nil")
+	}
+}
+
+// TestValidateCommandBindingScopeCollisions_SameCommandRepeatedChordOK
+// guards against a false positive when the SAME command legitimately
+// registers the same chord+scope twice (e.g. via multiple key aliases that
+// happen to normalize to one chord) — only a DIFFERENT command claiming an
+// already-seen (chord, scope) pair is a collision.
+func TestValidateCommandBindingScopeCollisions_SameCommandRepeatedChordOK(t *testing.T) {
+	bindings := []keybind.Binding{
+		{Chords: []keybind.Chord{{Key: "x"}}, Command: "edit.foo", When: "editorFocused"},
+		{Chords: []keybind.Chord{{Key: "x"}}, Command: "edit.foo", When: "editorFocused"},
+	}
+	if err := ValidateCommandBindingScopeCollisions(bindings); err != nil {
+		t.Fatalf("expected no error when the same command repeats a (chord,scope) pair, got %v", err)
 	}
 }
 

@@ -28,3 +28,9 @@ func FuzzFileWatchReadErrorMsg(path string, err error) tea.Msg {
 	}
 	return fileWatchReadError{path: path, err: err}
 }
+
+// FuzzFileChangedMsg returns a tea.Msg equivalent to fileChangedMsg, the internal
+// message produced when fsnotify observes an in-place Write to a file in the
+// watched dir (BUG1). The driver injects this to simulate an external in-place
+// edit without a real watcher.
+func FuzzFileChangedMsg(path string) tea.Msg { return fileChangedMsg{path: path} }

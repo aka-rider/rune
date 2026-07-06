@@ -95,18 +95,16 @@ type Favor int
 
 const (
 	// FavorNormal emits standard <<<<<<< / ======= / >>>>>>> conflict markers.
-	// automergeable will be false in Result when conflicts exist.
+	// automergeable will be false in result when conflicts exist. The only
+	// Favor MergeHunks uses (§10) — conflicts are surfaced to the user via
+	// mergemode, never silently resolved.
 	FavorNormal Favor = 0
-
-	// FavorOurs silently resolves all conflicts by taking our side.
-	FavorOurs Favor = 1
-
-	// FavorTheirs silently resolves all conflicts by taking their side.
-	FavorTheirs Favor = 2
 
 	// FavorUnion includes both sides of every conflict region without markers.
 	// Suitable for append-oriented content; not recommended for markdown prose
-	// as it produces duplicate headings on structural conflicts.
+	// as it produces duplicate headings on structural conflicts. Not used by
+	// MergeHunks today — kept as a documented capability of the underlying
+	// libgit2 wrapper and exercised directly in merge_internal_test.go.
 	FavorUnion Favor = 3
 )
 
@@ -115,51 +113,11 @@ const (
 type Flag uint32
 
 const (
-	// FlagDefault uses the xdiff histogram algorithm with no whitespace
-	// handling. This is the recommended baseline for markdown.
-	FlagDefault Flag = 0
-
-	// FlagStyleMerge emits standard <<<<<<< / ======= / >>>>>>> markers.
-	// This is the default conflict style when FlagStyleDiff3 is not set.
-	FlagStyleMerge Flag = 1 << 0
-
 	// FlagStyleDiff3 adds a ||||||| ancestor block inside conflict regions,
-	// giving the user three-way context in the output file.
+	// giving the user three-way context in the output file. The only Flag
+	// MergeHunks sets — its diff3 parser (hunks.go) depends on this exact
+	// marker shape to classify conflict boundaries.
 	FlagStyleDiff3 Flag = 1 << 1
-
-	// FlagSimplifyAlnum condenses non-alphanumeric regions to reduce noise.
-	FlagSimplifyAlnum Flag = 1 << 2
-
-	// FlagIgnoreWhitespace ignores all whitespace. Dangerous for markdown
-	// where leading spaces denote indented code blocks and list nesting.
-	FlagIgnoreWhitespace Flag = 1 << 3
-
-	// FlagIgnoreWhitespaceChange ignores changes in the amount of whitespace.
-	FlagIgnoreWhitespaceChange Flag = 1 << 4
-
-	// FlagIgnoreWhitespaceEOL ignores trailing whitespace only.
-	// Safe for markdown; trailing spaces are not syntactically meaningful
-	// in most renderers.
-	FlagIgnoreWhitespaceEOL Flag = 1 << 5
-
-	// FlagDiffPatience uses the patience diff algorithm instead of histogram.
-	// On documents with many unique anchor lines (e.g. headings), patience
-	// and histogram produce identical output. Prefer FlagDefault (histogram).
-	FlagDiffPatience Flag = 1 << 6
-
-	// FlagDiffMinimal uses exhaustive Myers diff (smallest possible edit script).
-	// Slower than histogram; rarely better for prose.
-	FlagDiffMinimal Flag = 1 << 7
-
-	// FlagStyleZdiff3 uses zealous diff3 style (condensed ancestor hunks).
-	// Requires libgit2 >= 1.4.
-	FlagStyleZdiff3 Flag = 1 << 8
-
-	// FlagAcceptConflicts writes conflict markers into the result and still
-	// reports automergeable = true. Useful for tooling that wants to post-
-	// process conflict markers rather than treat them as failures.
-	// Requires libgit2 >= 1.4.
-	FlagAcceptConflicts Flag = 1 << 9
 )
 
 // Options configures a merge operation.
@@ -167,8 +125,8 @@ type Options struct {
 	// Favor controls conflict resolution strategy. Default: FavorNormal.
 	Favor Favor
 
-	// Flags is a bitmask of Flag values. Default: FlagDefault (histogram, no
-	// whitespace handling). Recommended for markdown: FlagIgnoreWhitespaceEOL.
+	// Flags is a bitmask of Flag values. Default: no flags (xdiff histogram,
+	// no whitespace handling, standard conflict-marker style).
 	Flags Flag
 
 	// Labels for conflict markers. Empty strings use libgit2 defaults
@@ -178,25 +136,11 @@ type Options struct {
 	TheirsLabel   string
 }
 
-// DefaultOptions returns the recommended options for markdown file merging:
-// histogram diff (xdiff default), trailing-whitespace ignored, normal conflict
-// markers with labels. Callers should set OursLabel / TheirsLabel to
-// meaningful branch or author names.
-func DefaultOptions() Options {
-	return Options{
-		Favor:         FavorNormal,
-		Flags:         FlagIgnoreWhitespaceEOL,
-		AncestorLabel: "ancestor",
-		OursLabel:     "ours",
-		TheirsLabel:   "theirs",
-	}
-}
-
-// Result is the output of a merge operation.
-type Result struct {
+// result is the output of a merge operation.
+type result struct {
 	// Output is the merged content. When Conflicted is true, it contains
-	// conflict markers (unless FavorUnion / FavorOurs / FavorTheirs was used,
-	// in which case conflicts are silently resolved and Conflicted is false).
+	// conflict markers (unless FavorUnion was used, in which case conflicts
+	// are silently resolved and Conflicted is false).
 	Output []byte
 
 	// Conflicted is true when the merge could not be completed automatically
@@ -205,15 +149,19 @@ type Result struct {
 	Conflicted bool
 }
 
-// Merge performs an in-memory 3-way merge of ancestor, ours, and theirs using
+// merge performs an in-memory 3-way merge of ancestor, ours, and theirs using
 // libgit2's git_merge_file (xdiff histogram algorithm).
 //
 // None of the inputs are modified. The function is safe to call concurrently:
 // libgit2's merge-file path is stateless and does not reference a repository.
 //
-// Memory: the C-side result buffer is copied into Result.Output and then freed
-// before Merge returns. No C memory escapes.
-func Merge(ancestor, ours, theirs []byte, opts Options) (Result, error) {
+// Memory: the C-side result buffer is copied into result.Output and then
+// freed before merge returns. No C memory escapes.
+//
+// Unexported (§3.1/critic R10): MergeHunks (hunks.go) is the only production
+// caller, always with Favor:FavorNormal, Flags:FlagStyleDiff3 — the low-level
+// Favor/Flag surface is not otherwise part of the package's public contract.
+func merge(ancestor, ours, theirs []byte, opts Options) (result, error) {
 	ensureInit()
 
 	// C strings for labels — must stay alive across the C call.
@@ -261,7 +209,7 @@ func Merge(ancestor, ours, theirs []byte, opts Options) (Result, error) {
 	defer C.git_merge_file_result_free(&out)
 
 	if rc < 0 {
-		return Result{}, fmt.Errorf("merge: libgit2 error code %d: %w", int(rc), libgit2Error())
+		return result{}, fmt.Errorf("merge: libgit2 error code %d: %w", int(rc), libgit2Error())
 	}
 
 	// Copy result bytes into Go memory before freeing.
@@ -270,7 +218,7 @@ func Merge(ancestor, ours, theirs []byte, opts Options) (Result, error) {
 		output = C.GoBytes(unsafe.Pointer(out.ptr), C.int(out.len))
 	}
 
-	return Result{
+	return result{
 		Output:     output,
 		Conflicted: out.automergeable == 0,
 	}, nil

@@ -80,12 +80,19 @@ func (m Model) insertTextAtCursors(text string, now time.Time) (Model, tea.Cmd) 
 		return m, nil
 	}
 
+	var err error
 	sels := m.Model.Selections()
 	if len(sels) > 0 {
-		m.Model = m.Model.ReplaceRange(sels[0].Start, sels[0].End, text)
+		m.Model, err = m.Model.ReplaceRange(sels[0].Start, sels[0].End, text)
 	} else {
 		offset := m.Model.CursorOffset()
-		m.Model = m.Model.ReplaceRange(offset, offset, text)
+		m.Model, err = m.Model.ReplaceRange(offset, offset, text)
+	}
+	if err != nil {
+		// §1.3: the buffer is left unchanged (ReplaceRange's guarantee) — surface
+		// on the existing image-error channel rather than silently proceed as if
+		// the image reference had been inserted.
+		return m, func() tea.Msg { return ImageSaveErrorMsg{Err: err} }
 	}
 
 	return m.afterContentChange()

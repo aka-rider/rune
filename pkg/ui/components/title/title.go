@@ -3,7 +3,6 @@ package title
 import (
 	"strings"
 
-	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -57,9 +56,6 @@ func (m Model) Text() string {
 }
 
 func (m Model) Focused() bool { return m.focused }
-
-// IsPlaceholder reports whether the title is still the original placeholder.
-func (m Model) IsPlaceholder() bool { return m.Text() == m.placeholder }
 
 func (m Model) SetSize(w, _ int) Model {
 	m.width = w
@@ -214,6 +210,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleKey never sees Undo/Redo (⌘Z/⇧⌘Z): the workspace's own Priority-2.5
+// key intercept (workspace_update_keys.go) consumes them before routing
+// reaches any focused child, for every focus except paneSearch — so a
+// consume-and-noop branch here would be unreachable. This is intentional
+// product behavior (documented on undoTarget, workspace_undo.go): ⌘Z while
+// renaming undoes the DOCUMENT (not the in-progress rename text) and yanks
+// focus back to the editor, since rune has no separate undo stack for the
+// title field.
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// Down / Enter — commit and return focus to editor.
 	if msg.Code == tea.KeyDown && msg.Mod == 0 ||
@@ -231,12 +235,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.field = m.field.SetFocused(false)
 		m.focused = false
 		return m, func() tea.Msg { return FocusReturnMsg{} }
-	}
-
-	// Undo/Redo are handled at the workspace level. Consume them here so
-	// they never reach the textedit field (which would insert 'z' or 'y').
-	if key.Matches(msg, m.keys.Undo) || key.Matches(msg, m.keys.Redo) {
-		return m, nil
 	}
 
 	// Filter invalid filename chars from text input.

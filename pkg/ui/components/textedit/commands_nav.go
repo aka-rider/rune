@@ -279,6 +279,17 @@ func handleScrollCmd(ctx command.CommandContext, dx, dy int) command.Result {
 	}
 }
 
+// handleRowMoveCmd moves the cursor by delta rows (via moveRow) in an editable
+// buffer, or scrolls the viewport by delta rows when read-only (no caret to move).
+func handleRowMoveCmd(ctx command.CommandContext, selectMode bool, delta int) command.Result {
+	if ctx.ReadOnly {
+		return handleScrollCmd(ctx, 0, delta)
+	}
+	return handleCursorCmd(ctx, selectMode, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
+		return moveRow(ctx, c, delta, selectMode)
+	})
+}
+
 func handleLeftCmd(ctx command.CommandContext, c cursor.Cursor, selectMode bool, stepFunc func(buffer.Buffer, int) int) cursor.Cursor {
 	offset := stepFunc(ctx.Buffer, c.Position)
 	if !selectMode && c.HasSelection() {

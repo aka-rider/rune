@@ -1,9 +1,5 @@
 package display
 
-import (
-	"github.com/mattn/go-runewidth"
-)
-
 // LinkRole classifies a link-like span by how it should be treated for
 // rendering and click handling, unifying standard markdown and Obsidian wiki
 // syntaxes onto one set of behaviors.
@@ -57,9 +53,10 @@ type DisplaySpan struct {
 	ImagePath    string
 	EmbedRef     string
 	CalloutKind  string
-	HeadingLevel  int
-	TableRole     TableRoleKind
-	TableLayout   TableLayoutKind // layout state (grid/wrapped/pivoted)
+	HeadingLevel int
+	TableRole    TableRoleKind
+	TableLayout  TableLayoutKind // layout state (grid/wrapped/pivoted)
+	ColWidths    []int           // per-column visual widths used to format this table row; nil for non-table spans
 	// Wiki link metadata (set for TokenWikiLink spans)
 	WikiLinkTarget  string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
@@ -117,6 +114,7 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 				HeadingLevel:    s.HeadingLevel,
 				TableRole:       s.TableRole,
 				TableLayout:     s.TableLayout,
+				ColWidths:       s.ColWidths,
 				ImagePath:       s.ImagePath,
 				EmbedRef:        s.EmbedRef,
 				CalloutKind:     s.CalloutKind,
@@ -165,7 +163,7 @@ func sliceSpanStr(text string, scrollCol, width int, startW int) (string, int) {
 	endByte := -1
 
 	for i, r := range text {
-		rw := runewidth.RuneWidth(r)
+		rw := ControlAwareWidth(r)
 		if r == '\t' {
 			rw = 4 - (curr % 4)
 		}

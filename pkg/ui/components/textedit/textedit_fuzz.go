@@ -14,7 +14,7 @@ func (m Model) FuzzCells() [][]Cell {
 	if m.height == 0 {
 		return nil
 	}
-	return m.renderCells(m.contentHeight())
+	return m.renderCells(m.contentHeight(), nil, nil)
 }
 
 // FuzzSnapshot returns the current display snapshot.

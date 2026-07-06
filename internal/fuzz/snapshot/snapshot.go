@@ -14,8 +14,9 @@ import (
 
 // TabInfo represents a single tab's identity for invariant checking.
 type TabInfo struct {
-	Path string
-	Name string
+	Path  string
+	Name  string
+	DocID int64
 }
 
 // Snapshot is a flat read-only value capturing workspace state after each
@@ -26,6 +27,9 @@ type Snapshot struct {
 	Cells         [][]textedit.Cell // from renderCells() — same cells View() renders
 	CursorOffsets map[int]bool      // active cursor byte offsets
 	Focused       bool              // whether the editor pane has focus
+	ReadOnly      bool              // WithReadOnly/SetReadOnly(true) — Help view: renderCells
+	// deliberately emits zero Cursor=true cells here ("no caret" — its own
+	// doc comment), so CursorOffsets legitimately has no matching cell.
 
 	// Editor structural state (from FuzzCursors / fuzz accessors)
 	Cursors       []cursor.Cursor
@@ -64,6 +68,40 @@ type Snapshot struct {
 	FlushGen     uint64
 	SaveSnapshot []byte // activeSave.SavedContent — content captured at save-start
 	SaveInFlight bool
+
+	// PendingDataLossKind mirrors workspace.actionKind's iota order (None=0,
+	// Close=1, Quit=2, Evict=3, Trash=4) — WHY the dirty-buffer guard was
+	// raised, if it was. A save whose response resolves a Close/Quit/Evict
+	// guard legitimately swaps the displayed buffer once the save settles
+	// (save-then-close/quit/evict); a plain interactive ⌘S (kind==None) must
+	// not mutate the buffer it just saved.
+	PendingDataLossKind int
+
+	// PendingConflictActive/PendingDeletedActive/PendingRacedActive mirror
+	// the out-of-band validity bit (§1.7) on workspace's pendingConflict/
+	// pendingDeleted/pendingRaced — WHICH non-dirty guard (if any) is armed.
+	// StoreDegraded mirrors m.footer.Degraded() (itself mirroring
+	// m.store.Degraded(), fixed at store-open time) — the fact GuardDegraded
+	// requires to have been raised at all (workspace_edit.go's
+	// startSaveDegradedConfirmed), since GuardDegraded has no dedicated
+	// pendingXxx struct of its own.
+	PendingConflictActive bool
+	PendingDeletedActive  bool
+	PendingRacedActive    bool
+	StoreDegraded         bool
+
+	// SaveRequestID is the in-flight interactive save's RequestID (empty when
+	// none) — activeSave.RequestID. MERGE-GUARD-RAISE/DELETED-GUARD-RAISE
+	// correlate a FileSaveErrorMsg to THIS save (not a concurrent quit-batch/
+	// evict background save acking the same DocID) the same way production's
+	// handleFileSaveErrorMsg does: m.activeSave.RequestID == msg.RequestID.
+	SaveRequestID string
+
+	// MergeActive/MergeUnresolved mirror mergemode.IsActive/
+	// HasUnresolvedConflicts(m.merge) — whether the 3-way merge resolver is
+	// currently engaged, and whether it still has unresolved conflict blocks.
+	MergeActive     bool
+	MergeUnresolved bool
 
 	// Layout (for L1/L2)
 	Frame       string

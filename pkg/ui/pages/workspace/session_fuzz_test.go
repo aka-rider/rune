@@ -9,9 +9,7 @@ import (
 
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/event"
-	"rune/pkg/command"
 	"rune/pkg/docstate"
-	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/pages/workspace"
@@ -81,6 +79,12 @@ func concat(parts ...[]byte) []byte {
 }
 
 func FuzzSession(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, err := driver.BuildFuzzApp(keys)
+	if err != nil {
+		f.Fatalf("BuildFuzzApp: %v", err)
+	}
+
 	// --- Existing seeds (updated comments: KindText now pastes full string) ---
 
 	// Seed: paste "hello" — now inserts all 5 chars (KindText → PasteMsg)
@@ -248,21 +252,24 @@ func FuzzSession(f *testing.F) {
 		mem := vfs.NewMem()
 		store.UseFS(mem)
 
-		keys := keymap.Default()
 		st := styles.Default()
-		reg := command.NewBuilder().Build()
-		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
 		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
 
-		if violation, _, _ := driver.Run(m, events, store, 80, 24); violation != nil {
+		if violation, _, _ := driver.Run(m, events, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})
 }
 
 func FuzzSessionWithFile(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, err := driver.BuildFuzzApp(keys)
+	if err != nil {
+		f.Fatalf("BuildFuzzApp: %v", err)
+	}
+
 	// Seed: paste text (autosave snapshots to VFS; DL1 check fires on AutosaveSettledMsg)
 	f.Add([]byte{byte(event.KindText), 5, 'h', 'e', 'l', 'l', 'o'})
 	// Seed: paste text then navigate
@@ -304,15 +311,12 @@ func FuzzSessionWithFile(f *testing.F) {
 		defer store.Close()
 		store.UseFS(mem)
 
-		keys := keymap.Default()
 		st := styles.Default()
-		reg := command.NewBuilder().Build()
-		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
 		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
 
-		if violation, _, _ := driver.Run(m, events, store, 80, 24); violation != nil {
+		if violation, _, _ := driver.Run(m, events, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})
@@ -332,6 +336,12 @@ func FuzzSessionWithFile(f *testing.F) {
 // data layout: [ctrl][nOpensSrc][settleIdx][openIdx × nOpens][deliveryOrder...].
 // ctrl bit0 = open a "settle" file inline first; bit1 = press Ctrl+N after deferring.
 func FuzzLoadReorder(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, buildErr := driver.BuildFuzzApp(keys)
+	if buildErr != nil {
+		f.Fatalf("BuildFuzzApp: %v", buildErr)
+	}
+
 	f.Add([]byte{3, 1, 0, 1, 2, 1, 0})       // settle r0; defer r1,r2; new → untitled (supersede drops both)
 	f.Add([]byte{1, 1, 0, 1, 2, 1, 0})       // settle r0; defer r1,r2; no new; reversed replay → r2
 	f.Add([]byte{0, 2, 0, 0, 1, 2, 2, 1, 0}) // no settle; defer r0,r1,r2 from untitled → r2
@@ -373,13 +383,10 @@ func FuzzLoadReorder(f *testing.F) {
 		}
 		order := data[oi:]
 
-		keys := keymap.Default()
 		st := styles.Default()
-		reg := command.NewBuilder().Build()
-		res, _ := keybind.NewResolver(nil)
 		m := workspace.New(keys, st, reg, res, terminal.TermCaps{}, "/fuzz", nil).WithFS(mem)
 
-		if violation, _, _ := driver.RunReorder(m, settle, opens, supersede, order, store, 80, 24); violation != nil {
+		if violation, _, _ := driver.RunReorder(m, settle, opens, supersede, order, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})
@@ -393,6 +400,12 @@ func FuzzLoadReorder(f *testing.F) {
 // unsaved). A MarkSaved that stamps the live head instead of the position the written
 // bytes reflect marks the doc clean → those edits are silently lost.
 func FuzzSaveRace(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, buildErr := driver.BuildFuzzApp(keys)
+	if buildErr != nil {
+		f.Fatalf("BuildFuzzApp: %v", buildErr)
+	}
+
 	const keyFocusEditor = byte(16) // ctrl+e — route pastes to the editor buffer
 	// Seed: focus editor, paste, ⌘S (deferred), then a cursor move + paste so the
 	// post-save edit is a SEPARATE journal event (a new seq past the save's issue
@@ -417,15 +430,52 @@ func FuzzSaveRace(f *testing.F) {
 		defer store.Close()
 		store.UseFS(mem)
 
-		keys := keymap.Default()
 		st := styles.Default()
-		reg := command.NewBuilder().Build()
-		res, _ := keybind.NewResolver(nil)
 		caps := terminal.TermCaps{}
 
 		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
 
 		if violation, _, _ := driver.RunReorderSaves(m, events, store, mem, []string{testFile}, 80, 24); violation != nil {
+			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
+		}
+	})
+}
+
+// FuzzDelayedViewResult exercises the Part IV viewTicket chokepoint: a
+// [D]iscard/[M]erge conflict resolution's fresh disk probe (resolveProbeMsg)
+// is deferred, an UNCONDITIONAL epoch bump (Ctrl+N) forces it stale, then
+// it's replayed. Property VIEW-TICKET-STALE (driver_delayed_view.go): the
+// stale result must never mutate the buffer or identity the user is now
+// looking at. The in-order drain (FuzzSession/FuzzHumanSession) structurally
+// cannot reach this — it always settles the probe's Cmd before the next
+// event runs, so the result is never still in flight when Ctrl+N lands.
+func FuzzDelayedViewResult(f *testing.F) {
+	keys := keymap.Default()
+	reg, res, buildErr := driver.BuildFuzzApp(keys)
+	if buildErr != nil {
+		f.Fatalf("BuildFuzzApp: %v", buildErr)
+	}
+
+	f.Add(false) // discard
+	f.Add(true)  // merge
+
+	f.Fuzz(func(t *testing.T, useMerge bool) {
+		mem := vfs.NewMem()
+		const testFile = "/fuzz/conflict.md"
+
+		store, err := docstate.OpenInMemory(time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		store.UseFS(mem)
+
+		st := styles.Default()
+		caps := terminal.TermCaps{}
+
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
+
+		if violation, _, _ := driver.RunDelayedViewResult(m, testFile, useMerge, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
 		}
 	})

@@ -150,10 +150,15 @@ func (m Model) SetPromptContent(s string) Model {
 }
 
 // ApplyToPrompt replaces the range [start, end) in the prompt with text.
-// Called by the workspace to route dictation chunks (D16).
-func (m Model) ApplyToPrompt(start, end int, text string) Model {
-	m.prompt = m.prompt.ReplaceRange(start, end, text)
-	return m.recalcLayout()
+// Called by the workspace to route dictation chunks (D16). Propagates the
+// §1.3 bounds error: on failure the prompt is unchanged.
+func (m Model) ApplyToPrompt(start, end int, text string) (Model, error) {
+	var err error
+	m.prompt, err = m.prompt.ReplaceRange(start, end, text)
+	if err != nil {
+		return m, err
+	}
+	return m.recalcLayout(), nil
 }
 
 // SetFileContext updates the file path and content used as the system prompt.
@@ -213,6 +218,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m Model) submit() (Model, tea.Cmd) {
 	text := strings.TrimSpace(m.prompt.Content())
 	if text == "" || m.loading {
+		return m, nil
+	}
+	if m.initErr != "" {
+		// No configured client (ai.NewClient failed at construction — the
+		// zero-value Client would fire a doomed request with an empty key
+		// at the live endpoint). The config error is already rendered by
+		// View; refuse fast instead of failing slowly (§1.3).
 		return m, nil
 	}
 	m.prompt = m.prompt.SetContent("")

@@ -136,9 +136,16 @@ func parseFrontmatterYAML(lines []string, fmEnd int) (map[string]any, error) {
 	return out, nil
 }
 
-// frontmatterRenderedSpans produces spans for frontmatter lines in rendered mode.
+// frontmatterRenderedSpans produces spans for frontmatter lines in rendered
+// mode. fmError is kept as error (not downgraded to a string upstream) all
+// the way to this render boundary — the ONLY place its value is consulted —
+// per §1.3/CLAUDE.md "keep errors as error, call .Error() only at the
+// display boundary." Today that boundary never actually renders the message
+// text (only its presence, for the "(invalid YAML)" label); a future
+// tooltip/status hint can call fmError.Error() here without threading a new
+// parameter back through syncInternal.
 func frontmatterRenderedSpans(
-	block mdBlock, lineIdx int, lineText string, lineStart int, fmMode FrontmatterMode, fmError string,
+	block mdBlock, lineIdx int, lineText string, lineStart int, fmMode FrontmatterMode, fmError error,
 ) []SyntaxSpan {
 	switch fmMode {
 	case FrontmatterHidden:
@@ -169,7 +176,7 @@ func frontmatterRenderedSpans(
 		// Fence lines (first and last) show a collapsed indicator on first line only
 		if lineIdx == block.startLine {
 			label := "··· frontmatter ···"
-			if fmError != "" {
+			if fmError != nil {
 				label = "··· frontmatter (invalid YAML) ···"
 			}
 			return []SyntaxSpan{{

@@ -206,9 +206,19 @@ func buildDeleteEdits(buf buffer.Buffer, cursors cursor.CursorSet) ([]buffer.Edi
 	return edits, newCursors
 }
 
-// handlePasteContent is phase 2: apply the clipboard text as edits.
+// handlePasteContent is phase 2: apply the clipboard text as edits. Read-only
+// content (e.g. the Help view) must never be mutated by ANY input path —
+// edit.insert-character's ResultNoMatch branch already guards read-only for
+// keyboard characters (textedit.go), but paste/clipboard bypassed it
+// entirely: pressing F1 then pasting silently mutated the "read-only" Help
+// buffer (found via FuzzSaveRace — a read-only doc getting Paste'd into
+// produced a reversed selection whose Selected cells then tripped S1, but
+// the mutation itself, independent of that checker finding, is the real
+// bug — a read-only view is supposed to mean read-only). Guarded HERE, the
+// single function all three callers (ClipboardContentMsg, tea.ClipboardMsg,
+// tea.PasteMsg) funnel through, rather than patching each call site.
 func (m Model) handlePasteContent(text string) (Model, tea.Cmd) {
-	if text == "" {
+	if text == "" || m.readOnly {
 		return m, nil
 	}
 

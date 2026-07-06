@@ -114,17 +114,10 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 			m.loopCount = msg.loopCount
 			m.frameIdx = 0
 			m.loopsDone = 0
-			// frameIDs will be populated via SetFrameIDs
-			return m, func() tea.Msg {
-				// We don't automatically trigger transmit here for animated images,
-				// because frameIDs need to be allocated first by the editor.
-				// Wait, the editor can't easily intercept after decode to allocate IDs
-				// and *then* transmit as a side effect.
-				// Let's emit a ReadyMsg equivalent but indicating needs-frame-IDs?
-				// Actually, we can return a message to let the editor know decode is done.
-				// Or wait, if we allocate frame IDs in imageIDAllocator, we can do it when the editor receives ReadyMsg? No, ReadyMsg means it's ready to draw.
-				return nil
-			}
+			// frameIDs will be populated via SetFrameIDs; transmit is NOT
+			// triggered here for animated images — the editor allocates frame
+			// IDs first (SetFrameIDs) and drives the transmit from there.
+			return m, nil
 		}
 
 		if kitty {
@@ -172,11 +165,9 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 
 // SetVisibleRows records how many of the image's rows are currently within the
 // viewport. It gates animation ticking (ArmTick / frameTickMsg) so offscreen
-// animated images don't schedule frames. NOTE: no production caller sets this
-// today — markdownedit owns viewport math in the current render design — so
-// visibleRows stays 0 and animation does not arm. Preserved (not deleted) to
-// keep the animation-tick path and its test coverage intact; wiring a real
-// caller is a separate follow-up.
+// animated images don't schedule frames. Called from markdownedit's
+// updateImages/armImageTicks (image_integration.go) on every image message and
+// layout change.
 func (m Model) SetVisibleRows(count int) Model {
 	m.visibleRows = count
 	return m

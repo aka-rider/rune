@@ -18,22 +18,11 @@ func execCursorRight(ctx command.CommandContext) command.Result {
 }
 
 func execCursorUp(ctx command.CommandContext) command.Result {
-	if ctx.ReadOnly {
-		// No editable cursor to move — scroll the viewport instead.
-		return handleScrollCmd(ctx, 0, -1)
-	}
-	return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-		return moveRow(ctx, c, -1, selectMode)
-	})
+	return handleRowMoveCmd(ctx, false, -1)
 }
 
 func execCursorDown(ctx command.CommandContext) command.Result {
-	if ctx.ReadOnly {
-		return handleScrollCmd(ctx, 0, 1)
-	}
-	return handleCursorCmd(ctx, false, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-		return moveRow(ctx, c, 1, selectMode)
-	})
+	return handleRowMoveCmd(ctx, false, 1)
 }
 
 func execCursorLeftWord(ctx command.CommandContext) command.Result {
@@ -73,15 +62,11 @@ func execSelectRight(ctx command.CommandContext) command.Result {
 }
 
 func execSelectUp(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, true, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-		return moveRow(ctx, c, -1, selectMode)
-	})
+	return handleRowMoveCmd(ctx, true, -1)
 }
 
 func execSelectDown(ctx command.CommandContext) command.Result {
-	return handleCursorCmd(ctx, true, func(c cursor.Cursor, selectMode bool) cursor.Cursor {
-		return moveRow(ctx, c, 1, selectMode)
-	})
+	return handleRowMoveCmd(ctx, true, 1)
 }
 
 func execSelectLeftWord(ctx command.CommandContext) command.Result {
@@ -122,11 +107,19 @@ func pageStep(ctx command.CommandContext) int {
 }
 
 func execScrollPageUp(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, -pageStep(ctx))
+	return handleRowMoveCmd(ctx, false, -pageStep(ctx))
 }
 
 func execScrollPageDown(ctx command.CommandContext) command.Result {
-	return handleScrollCmd(ctx, 0, pageStep(ctx))
+	return handleRowMoveCmd(ctx, false, pageStep(ctx))
+}
+
+func execSelectPageUp(ctx command.CommandContext) command.Result {
+	return handleRowMoveCmd(ctx, true, -pageStep(ctx))
+}
+
+func execSelectPageDown(ctx command.CommandContext) command.Result {
+	return handleRowMoveCmd(ctx, true, pageStep(ctx))
 }
 
 func execSelectAll(ctx command.CommandContext) command.Result {
@@ -177,8 +170,8 @@ func registerNavCommands(builder command.Builder) (command.Builder, error) {
 		{"select.word-right", "editorFocused", execSelectRightWord},
 		{"select.line-start", "editorFocused", execSelectBeginLine},
 		{"select.line-end", "editorFocused", execSelectEndLine},
-		{"select.page-up", "editorFocused", execScrollPageUp},
-		{"select.page-down", "editorFocused", execScrollPageDown},
+		{"select.page-up", "editorFocused", execSelectPageUp},
+		{"select.page-down", "editorFocused", execSelectPageDown},
 		{"select.all", "editorFocused", execSelectAll},
 	}
 

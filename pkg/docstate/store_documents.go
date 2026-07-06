@@ -23,49 +23,84 @@ func (s *Store) OpenPath(path string) (DocRef, error) {
 }
 
 // openPathByName is the path-keying fallback used when inode is unavailable.
+//
+// The whole decide-then-write sequence runs inside ONE transaction, begun
+// BEFORE the initial SELECT — not just around the write that follows a miss.
+// Without this, two same-workDir instances racing OpenPath on the same
+// never-before-seen path could both miss the SELECT and both attempt the
+// INSERT, with the loser hitting idx_documents_path's UNIQUE constraint
+// instead of getting a docID. With _txlock=immediate, the second caller's
+// Begin() blocks until the first commits, then its own SELECT finds the
+// now-existing row and takes the found-row branch instead of racing the
+// INSERT — the same way SQLite already serializes every other mutating
+// method (AppendEdit, commitSave, Bind, ReserveChatDoc).
 func (s *Store) openPathByName(path, at string) (DocRef, error) {
+	tx, err := s.perm.Begin()
+	if err != nil {
+		return DocRef{}, fmt.Errorf("open path %q: begin tx: %w", path, err)
+	}
+
 	var id int64
-	err := s.perm.QueryRow(
-		`SELECT id FROM documents WHERE path=? AND (inode IS NULL OR inode=0)`,
+	err = tx.QueryRow(
+		`SELECT id FROM documents WHERE path=? AND inode IS NULL`,
 		path,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
-		res, err := s.perm.Exec(
-			`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,0,0,?,?)`,
+		// inode/device columns omitted (§1.7): "identity unknown" is NULL by
+		// omission, never the literal 0 sentinel idx_documents_inode used to
+		// have to explicitly tolerate.
+		res, execErr := tx.Exec(
+			`INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES(?,'file',?,?)`,
 			path, at, at,
 		)
-		if err != nil {
-			return DocRef{}, fmt.Errorf("open path %q: insert: %w", path, err)
+		if execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: insert: %w", path, execErr)
 		}
-		id, err = res.LastInsertId()
-		if err != nil {
-			return DocRef{}, fmt.Errorf("open path %q: last insert id: %w", path, err)
+		newID, execErr := res.LastInsertId()
+		if execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: last insert id: %w", path, execErr)
 		}
-		return DocRef{ID: id}, nil
+		if commitErr := tx.Commit(); commitErr != nil {
+			return DocRef{}, fmt.Errorf("open path %q: commit: %w", path, commitErr)
+		}
+		return DocRef{ID: newID}, nil
 	}
 	if err != nil {
+		tx.Rollback() //nolint:errcheck
 		return DocRef{}, fmt.Errorf("open path %q: query: %w", path, err)
 	}
-	if _, err := s.perm.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, id); err != nil {
-		return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, err)
+	if _, execErr := tx.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, id); execErr != nil {
+		tx.Rollback() //nolint:errcheck
+		return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, execErr)
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return DocRef{}, fmt.Errorf("open path %q: commit: %w", path, commitErr)
 	}
 	return DocRef{ID: id}, nil
 }
 
+// openPathByInode is the inode-keying path used when a real inode is
+// available. Like openPathByName above, the whole decide-then-write sequence
+// (the initial SELECT, and whichever of the "not found, insert" / "found,
+// possibly rename" branches follows) runs inside ONE transaction begun
+// before the SELECT — closing the same TOCTOU gap for the inode-keyed path.
 func (s *Store) openPathByInode(path string, inode, device uint64, at string) (DocRef, error) {
+	tx, err := s.perm.Begin()
+	if err != nil {
+		return DocRef{}, fmt.Errorf("open path %q: begin tx: %w", path, err)
+	}
+
 	var rowID int64
 	var rowPath string
-	err := s.perm.QueryRow(
+	err = tx.QueryRow(
 		`SELECT id, path FROM documents WHERE inode=? AND device=?`,
 		inode, device,
 	).Scan(&rowID, &rowPath)
 
 	if err == sql.ErrNoRows {
 		// New inode: evict any stale path holder and insert fresh row.
-		tx, txErr := s.perm.Begin()
-		if txErr != nil {
-			return DocRef{}, fmt.Errorf("open path %q: begin tx: %w", path, txErr)
-		}
 		if _, execErr := tx.Exec(
 			`UPDATE documents SET path='' WHERE path=? AND (inode IS NULL OR inode!=?)`,
 			path, inode,
@@ -74,7 +109,7 @@ func (s *Store) openPathByInode(path string, inode, device uint64, at string) (D
 			return DocRef{}, fmt.Errorf("open path %q: evict stale holder: %w", path, execErr)
 		}
 		res, execErr := tx.Exec(
-			`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,?,?,?,?)`,
+			`INSERT INTO documents(path, inode, device, kind, created_at, last_seen_at) VALUES(?,?,?,'file',?,?)`,
 			path, inode, device, at, at,
 		)
 		if execErr != nil {
@@ -92,6 +127,7 @@ func (s *Store) openPathByInode(path string, inode, device uint64, at string) (D
 		return DocRef{ID: newID}, nil
 	}
 	if err != nil {
+		tx.Rollback() //nolint:errcheck
 		return DocRef{}, fmt.Errorf("open path %q: query by inode: %w", path, err)
 	}
 
@@ -99,10 +135,6 @@ func (s *Store) openPathByInode(path string, inode, device uint64, at string) (D
 	var renamedFrom string
 	if rowPath != path {
 		renamedFrom = rowPath
-		tx, txErr := s.perm.Begin()
-		if txErr != nil {
-			return DocRef{}, fmt.Errorf("open path %q: begin rename tx: %w", path, txErr)
-		}
 		// Free any other row that claims the new path.
 		if _, execErr := tx.Exec(
 			`UPDATE documents SET path='' WHERE path=? AND id!=?`,
@@ -118,23 +150,26 @@ func (s *Store) openPathByInode(path string, inode, device uint64, at string) (D
 			tx.Rollback() //nolint:errcheck
 			return DocRef{}, fmt.Errorf("open path %q: rebind rename: %w", path, execErr)
 		}
-		if commitErr := tx.Commit(); commitErr != nil {
-			return DocRef{}, fmt.Errorf("open path %q: commit rename: %w", path, commitErr)
-		}
 	} else {
-		if _, err := s.perm.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, rowID); err != nil {
-			return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, err)
+		if _, execErr := tx.Exec(`UPDATE documents SET last_seen_at=? WHERE id=?`, at, rowID); execErr != nil {
+			tx.Rollback() //nolint:errcheck
+			return DocRef{}, fmt.Errorf("open path %q: update last_seen_at: %w", path, execErr)
 		}
+	}
+	if commitErr := tx.Commit(); commitErr != nil {
+		return DocRef{}, fmt.Errorf("open path %q: commit: %w", path, commitErr)
 	}
 	return DocRef{ID: rowID, RenamedFrom: renamedFrom}, nil
 }
 
 // CreateScratch inserts a new unbound (untitled) VFS document and returns its
-// DocRef. The display name is managed by the caller (workspace title component).
+// DocRef. The display name is managed by the caller (workspace title
+// component). inode/device columns are omitted (§1.7): a scratch doc has no
+// file identity, recorded as NULL rather than a literal 0 sentinel.
 func (s *Store) CreateScratch(_ string) (DocRef, error) {
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 	res, err := s.perm.Exec(
-		`INSERT INTO documents(path, inode, device, created_at, last_seen_at) VALUES('',0,0,?,?)`,
+		`INSERT INTO documents(path, kind, created_at, last_seen_at) VALUES('','scratch',?,?)`,
 		at, at,
 	)
 	if err != nil {
@@ -158,8 +193,10 @@ func (s *Store) ReserveChatDoc() (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("reserve chat doc: begin: %w", err)
 	}
+	// inode/device columns omitted (§1.7): the chat doc has no file identity,
+	// recorded as NULL rather than a literal 0 sentinel.
 	if _, err := tx.Exec(
-		`INSERT OR IGNORE INTO documents(path, inode, device, created_at, last_seen_at) VALUES(?,0,0,?,?)`,
+		`INSERT OR IGNORE INTO documents(path, kind, created_at, last_seen_at) VALUES(?,'chat',?,?)`,
 		sentinel, at, at,
 	); err != nil {
 		tx.Rollback() //nolint:errcheck
@@ -194,7 +231,9 @@ func (s *Store) ReserveChatDoc() (int64, error) {
 //     inode churn.
 //
 // Conflicting holders of the path or the new inode are evicted first so the
-// unique indexes hold.
+// unique indexes hold. Bind always sets kind='file': once a document is bound
+// to a real path it IS a file (whether it started 'scratch', on first
+// materialize, or was already 'file', on every subsequent save).
 func (s *Store) Bind(docID int64, path string) error {
 	at := s.clock().UTC().Format(time.RFC3339Nano)
 	inode, device, ok := s.statID(path)
@@ -210,24 +249,35 @@ func (s *Store) Bind(docID int64, path string) error {
 	}
 	if ok && inode != 0 {
 		// Evict any stale row claiming this inode (deleted+recreated, or our own
-		// prior inode reused by the filesystem).
+		// prior inode reused by the filesystem). Cleared to NULL, not 0 (§1.7) —
+		// idx_documents_inode's WHERE inode IS NOT NULL depends on NULL being
+		// the only "no identity" spelling.
 		if _, err := tx.Exec(
-			`UPDATE documents SET inode=0, device=0 WHERE inode=? AND device=? AND id!=?`,
+			`UPDATE documents SET inode=NULL, device=NULL WHERE inode=? AND device=? AND id!=?`,
 			inode, device, docID,
 		); err != nil {
 			tx.Rollback() //nolint:errcheck
 			return fmt.Errorf("bind %d: evict inode holder: %w", docID, err)
 		}
 		if _, err := tx.Exec(
-			`UPDATE documents SET path=?, inode=?, device=?, last_seen_at=? WHERE id=?`,
+			`UPDATE documents SET path=?, inode=?, device=?, kind='file', last_seen_at=? WHERE id=?`,
 			path, inode, device, at, docID,
 		); err != nil {
 			tx.Rollback() //nolint:errcheck
 			return fmt.Errorf("bind %d: rebind: %w", docID, err)
 		}
 	} else {
+		// B5/§1.4.6: the stat failed (or returned no usable identity) — the
+		// row's PREVIOUS inode/device (if any, from an earlier successful
+		// Bind) must not survive this rebind: a stale identity left in place
+		// here is exactly the corruption vector §1.4.6 forbids (a later
+		// OpenPath could match this row against a DIFFERENT file that now
+		// happens to hold the old inode). Cleared to NULL, not left alone —
+		// mirrors the ok-branch's own eviction UPDATE and commitSave's
+		// rebind (materialize.go), which likewise NULL inode/device whenever
+		// the post-write stat comes back without a usable identity.
 		if _, err := tx.Exec(
-			`UPDATE documents SET path=?, last_seen_at=? WHERE id=?`,
+			`UPDATE documents SET path=?, inode=NULL, device=NULL, kind='file', last_seen_at=? WHERE id=?`,
 			path, at, docID,
 		); err != nil {
 			tx.Rollback() //nolint:errcheck
@@ -275,16 +325,18 @@ func (s *Store) GCEmptyScratch(keepID int64) (int64, error) {
 // and the chat sentinel (non-empty path). Newest first. These rows hold unsaved
 // work the user can recover on the next launch.
 //
-// The `inode = 0` filter is load-bearing: a genuine scratch always has inode 0
-// (CreateScratch inserts inode=0), whereas an orphaned BOUND document whose path
-// was cleared by inode-change eviction RETAINS its real inode. Without this
-// filter those zombie rows surface as fake "Untitled" tabs showing real-file
-// content (a data-corruption-looking bug). Emptiness is filtered by the caller,
-// which reconstructs each candidate and drops empty/whitespace-only content.
+// The `inode IS NULL` filter is load-bearing: a genuine scratch always has a
+// NULL inode (CreateScratch omits the column, §1.7 — never the literal 0
+// sentinel this used to also have to tolerate), whereas an orphaned BOUND
+// document whose path was cleared by inode-change eviction RETAINS its real
+// inode. Without this filter those zombie rows surface as fake "Untitled"
+// tabs showing real-file content (a data-corruption-looking bug). Emptiness
+// is filtered by the caller, which reconstructs each candidate and drops
+// empty/whitespace-only content.
 func (s *Store) RecoverableScratch(excludeID int64) ([]int64, error) {
 	rows, err := s.perm.Query(`
 		SELECT id FROM documents
-		WHERE path='' AND id!=? AND (inode IS NULL OR inode = 0)
+		WHERE path='' AND id!=? AND inode IS NULL
 		  AND (id IN (SELECT DISTINCT doc_id FROM events)
 		    OR id IN (SELECT DISTINCT doc_id FROM snapshots))
 		ORDER BY id DESC`,

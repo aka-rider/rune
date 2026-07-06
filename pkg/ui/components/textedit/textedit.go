@@ -1,14 +1,6 @@
 package textedit
 
 import (
-	"fmt"
-	"sort"
-	"strings"
-	"unicode/utf8"
-
-	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/coords"
@@ -16,16 +8,8 @@ import (
 	"rune/pkg/editor/display"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/keymap"
-	"rune/pkg/ui/scroll"
 	"rune/pkg/ui/styles"
 )
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // SyncFunc produces a SyntaxMap and SyntaxSnapshot from the buffer.
 // textedit's syncDisplay handles wrapMap.Sync, BuildSnapshot, and ExpandTableRows.
@@ -46,7 +30,11 @@ func PlainSync(buf buffer.Buffer, sm display.SyntaxMap, cursors cursor.CursorSet
 // SanitizeFunc sanitizes text before insertion.
 type SanitizeFunc func(s string) string
 
-// Model is the text-editing component (no markdown rendering).
+// Model is the text-editing component (no markdown rendering). Its immediate
+// helpers are split across sibling files by concern: mouse.go (low-level
+// mouse-to-buffer helpers), viewport.go (ViewportState + scroll), edit_
+// primitives.go (ReplaceRange/ApplyInverse/Reapply), render.go
+// (syncDisplay + the renderCells/View pipeline).
 type Model struct {
 	buf                   buffer.Buffer
 	cursors               cursor.CursorSet
@@ -70,8 +58,8 @@ type Model struct {
 	offsetY               int
 	focused               bool
 	searchMatches         []SelInterval
-	searchActive          int    // -1 = no active match
-	searchQuery           string // last query set via SetSearchQuery
+	searchActive          ActiveMatch // Valid=false when no match is active (§1.7)
+	searchQuery           string      // last query set via SetSearchQuery
 	searchCaseInsensitive bool
 	searchRev             uint64 // m.rev when searchMatches was last computed
 	syncFunc              SyncFunc
@@ -79,12 +67,8 @@ type Model struct {
 	singleLine            bool
 	readOnly              bool
 	headerHeight          int
-	rev                   uint64 // monotonic buffer-mutation counter (D13)
-}
-
-type ViewportState struct {
-	TopRow    int
-	ScrollCol int
+	rev                   uint64       // monotonic buffer-mutation counter (D13)
+	bgIntervals           []BgInterval // caller-set background tints, applied in renderCells (SetBackgroundIntervals)
 }
 
 type IndentConfig struct {
@@ -162,181 +146,6 @@ func New(keys keymap.Bindings, st styles.Styles, opts ...Option) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return nil }
-
-// Update handles messages and returns accumulated commands.
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	switch msg := msg.(type) {
-	case ClipboardContentMsg:
-		if len(msg.ImageData) > 0 {
-			// Image paste is a no-op in plain textedit
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Text)
-		return m, cmd
-
-	case tea.ClipboardMsg:
-		if !m.focused {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Content)
-		return m, cmd
-
-	case tea.PasteMsg:
-		if !m.focused {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m, cmd = m.handlePasteContent(msg.Content)
-		return m, cmd
-
-	case tea.WindowSizeMsg:
-		// Window size is handled by the parent via SetRect; children do NOT
-		// handle tea.WindowSizeMsg directly (per CLAUDE.md component contracts).
-		return m, nil
-
-	case tea.KeyPressMsg:
-		return m.updateKeys(msg, &cmds)
-	}
-	return m, tea.Batch(cmds...)
-}
-
-func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd) {
-	if !m.focused {
-		return m, nil
-	}
-
-	// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
-	if msg.Code == tea.KeyEnter && msg.Mod == 0 {
-		if m.singleLine {
-			// No-op in single-line mode
-			return m, nil
-		}
-		ctx := command.CommandContext{
-			Buffer:  m.buf,
-			Cursors: m.cursors,
-		}
-		res := m.registry.Execute("edit.newline", ctx)
-		if res.Err == nil {
-			m = m.applyOperation(res, "edit.newline")
-			m = m.syncDisplay()
-			m = m.ScrollToCursor()
-			return m, tea.Batch(*cmds...)
-		}
-	}
-
-	// Cancel: Escape key routes to multicursor.escape (no resolver binding)
-	if msg.Code == tea.KeyEscape && msg.Mod == 0 {
-		ctx := command.CommandContext{
-			Buffer:  m.buf,
-			Cursors: m.cursors,
-		}
-		res := m.registry.Execute("multicursor.escape", ctx)
-		if res.Err == nil && res.Operation.Kind != command.OperationNone {
-			m = m.applyOperation(res, "multicursor.escape")
-			m = m.syncDisplay()
-			m = m.ScrollToCursor()
-			return m, tea.Batch(*cmds...)
-		}
-	}
-
-	// Resolve via keybind resolver for all other keys
-	chord := keybind.ChordFromKeyMsg(msg)
-	hasSel := false
-	for _, c := range m.cursors.All() {
-		if c.HasSelection() {
-			hasSel = true
-			break
-		}
-	}
-	resCtx := keybind.ResolverContext{
-		EditorFocused:  true,
-		HasSelection:   hasSel,
-		HasMultiCursor: m.cursors.IsMulti(),
-		ReadOnly:       m.readOnly,
-	}
-	newResolver, resResult := m.resolver.Resolve(chord, resCtx)
-	m.resolver = newResolver
-	switch resResult.Kind {
-	case keybind.ResultFound:
-		contentHeight := m.contentHeight()
-		topRow := m.viewport.TopRow
-		scrollCol := m.viewport.ScrollCol
-		totalRows := m.snapshot.TotalRows
-		res := m.registry.Execute(resResult.Command, command.CommandContext{
-			Buffer:         m.buf,
-			Cursors:        m.cursors,
-			FilePath:       "", // textedit doesn't own file path
-			NewRequestID:   func() string { return "" },
-			HashContent:    func(string) string { return "" },
-			BufferToSyntax: m.syntaxSnap.BufferToSyntax,
-			SyntaxToBuffer: m.syntaxSnap.SyntaxToBuffer,
-			SyntaxToWrap:   m.wrapSnap.SyntaxToWrap,
-			WrapToSyntax:   m.wrapSnap.WrapToSyntax,
-			WrapVisualCol:  m.wrapSnap.VisualCol,
-			WrapByteCol:    m.wrapSnap.ByteColFromVisual,
-			ViewportBounds: func() (int, int) { return topRow, topRow + contentHeight },
-			ScrollCol:      func() int { return scrollCol },
-			ViewportHeight: func() int { return contentHeight },
-			TotalRows:      func() int { return totalRows },
-			ReadOnly:       m.readOnly,
-		})
-		if res.Cmd != nil {
-			*cmds = append(*cmds, res.Cmd)
-		}
-		m = m.applyOperation(res, resResult.Command)
-		m = m.syncDisplay()
-		// A scroll operation moves the viewport intentionally; following the
-		// cursor would cancel it (critical for read-only docs whose hidden
-		// cursor sits at the top).
-		if res.Operation.Kind != command.OperationScroll {
-			m = m.ScrollToCursor()
-		}
-	case keybind.ResultMoreChordsNeeded:
-		// Chord incomplete — wait for next key
-	case keybind.ResultNoMatch:
-		text := msg.Text
-		if text == "" && msg.Mod == 0 {
-			code := msg.BaseCode
-			if code == 0 {
-				code = msg.Code
-			}
-			if isPrintableChar(code) {
-				text = string(code)
-			}
-		}
-		if text != "" {
-			// Guard: read-only blocks printable char insertion
-			if m.readOnly {
-				return m, tea.Batch(*cmds...)
-			}
-			res := m.registry.Execute("edit.insert-character", command.CommandContext{
-				Buffer:  m.buf,
-				Cursors: m.cursors,
-				Args:    map[string]any{"char": text},
-			})
-			if res.Err == nil && res.Operation.Kind != command.OperationNone {
-				m = m.applyOperation(res, "edit.insert-character")
-				m = m.syncDisplay()
-				m = m.ScrollToCursor()
-			}
-		}
-	}
-
-	return m, tea.Batch(*cmds...)
-}
-
-func (m Model) contentHeight() int {
-	h := m.height - m.headerHeight
-	if h < 1 {
-		return 1
-	}
-	return h
-}
-
 // SetRect sets position and size atomically (D8).
 func (m Model) SetRect(r Rect) Model {
 	changed := r.W != m.width || r.H != m.height
@@ -394,16 +203,20 @@ func (m Model) Selections() []SelInterval {
 // Focused returns whether this component is focused.
 func (m Model) Focused() bool { return m.focused }
 
-// WantsModalInput returns whether a modal overlay is active. Always false now
-// that the find overlay has been removed; the workspace search bar owns focus.
-func (m Model) WantsModalInput() bool { return false }
-
 // ReadOnly returns whether the editor is in read-only mode.
 func (m Model) ReadOnly() bool { return m.readOnly }
 
 // SetReadOnly sets read-only mode.
 func (m Model) SetReadOnly(ro bool) Model {
 	m.readOnly = ro
+	return m
+}
+
+// SetBackgroundIntervals sets the byte-range background tints applied in
+// renderCells (before sliceCells). A generic, merge-agnostic overlay — see
+// BgInterval / ApplyBackgroundIntervals in cell.go.
+func (m Model) SetBackgroundIntervals(ivs []BgInterval) Model {
+	m.bgIntervals = ivs
 	return m
 }
 
@@ -419,6 +232,7 @@ func (m Model) SetContent(content string) Model {
 	m.pendingEdits = nil
 	m.viewport.TopRow = 0
 	m.viewport.ScrollCol = 0
+	m.rev++ // D13: a full content swap is a buffer mutation — see recomputeIfStale.
 	m = m.syncDisplay()
 	m = m.clampScroll()
 	return m
@@ -452,133 +266,6 @@ func (m Model) SetCursors(cs []cursor.Cursor) Model {
 	return m
 }
 
-// ApplyInverse applies the inverse of the given edits (undo).
-// Does NOT accumulate into pendingEdits.
-//
-// Returns a non-nil error when the inverse edits do not fit the live buffer
-// (stale/out-of-bounds positions). Per §1.3 the failure is SURFACED, never
-// swallowed: the buffer is left unchanged so the caller can halt and keep the
-// journal position coherent with it, rather than silently dropping the undo.
-func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, error) {
-	inverse := make([]buffer.Edit, len(edits))
-	for i, ae := range edits {
-		inverse[i] = buffer.Edit{
-			Start:  ae.Start,
-			End:    ae.Start + len(ae.Insert),
-			Insert: ae.Deleted,
-		}
-	}
-	inverse = buffer.CloneAndSortEditsDescending(inverse)
-	newBuf, _, err := m.buf.ApplyEdits(inverse)
-	if err != nil {
-		return m, fmt.Errorf("apply inverse (undo): %w", err)
-	}
-	m.buf = newBuf
-	m.rev++
-	m = m.syncDisplay()
-	return m, nil
-}
-
-// Reapply applies the given edits forward (redo).
-// Does NOT accumulate into pendingEdits.
-//
-// AppliedEdit.Start values carry a baked-in cumulative shift: for coalesced
-// sequential inserts (ascending) each Start is the correct cursor position in
-// the running buffer after all prior inserts; for multi-cursor batches
-// (descending) each Start accounts for the net displacement from lower-position
-// edits in the same batch. In both cases, sorting ascending and applying
-// one-at-a-time keeps each Start valid against the running buffer — the same
-// invariant replayOneBatch in pkg/editor/buffer/replay.go relies on.
-//
-// Applies all edits to a working copy and commits only if every edit succeeds,
-// leaving the buffer unchanged on any error (all-or-nothing). Per §1.3 an
-// out-of-bounds or failed edit returns a non-nil error rather than a silent
-// no-op: the caller MUST surface it and keep the journal position coherent with
-// the (unchanged) buffer, never drop the redo silently.
-func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, error) {
-	if len(edits) == 0 {
-		return m, nil
-	}
-	sorted := append([]buffer.AppliedEdit(nil), edits...)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Start < sorted[j].Start
-	})
-	work := m.buf
-	for _, e := range sorted {
-		start := e.Start
-		end := e.Start + len(e.Deleted)
-		if start < 0 || end > work.Len() || start > end {
-			return m, fmt.Errorf("reapply edit out of bounds: start=%d end=%d bufLen=%d", start, end, work.Len())
-		}
-		newBuf, _, err := work.ApplyEdits([]buffer.Edit{{Start: start, End: end, Insert: e.Insert}})
-		if err != nil {
-			return m, fmt.Errorf("reapply edit [%d,%d): %w", start, end, err)
-		}
-		work = newBuf
-	}
-	m.buf = work
-	m.rev++
-	m = m.syncDisplay()
-	return m, nil
-}
-
-// clampScroll clamps viewport.TopRow to [0, maxTop].
-func (m Model) clampScroll() Model {
-	maxTop := m.snapshot.TotalRows - m.contentHeight()
-	if maxTop < 0 {
-		maxTop = 0
-	}
-	if m.viewport.TopRow < 0 {
-		m.viewport.TopRow = 0
-	}
-	if m.viewport.TopRow > maxTop {
-		m.viewport.TopRow = maxTop
-	}
-	return m
-}
-
-// AtBottom reports whether the viewport is at the bottom of the content.
-func (m Model) AtBottom() bool {
-	return m.viewport.TopRow >= m.snapshot.TotalRows-m.contentHeight()
-}
-
-// GotoBottom scrolls to the bottom of the content.
-func (m Model) GotoBottom() Model {
-	m.viewport.TopRow = max(0, m.snapshot.TotalRows-m.contentHeight())
-	return m
-}
-
-// ScrollOffset returns the current TopRow.
-func (m Model) ScrollOffset() int { return m.viewport.TopRow }
-
-// SetScrollOffset sets TopRow, clamped to [0, maxTop].
-func (m Model) SetScrollOffset(offset int) Model {
-	maxTop := m.snapshot.TotalRows - m.contentHeight()
-	if maxTop < 0 {
-		maxTop = 0
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > maxTop {
-		offset = maxTop
-	}
-	m.viewport.TopRow = offset
-	return m
-}
-
-// NaturalContentHeight returns the visual height of content at the given width.
-func (m Model) NaturalContentHeight(width int) int {
-	sm := display.NewSyntaxMap()
-	wm := display.NewWrapMap(0)
-	sm = sm.SetWidth(width)
-	sm, snapSnap := sm.Sync(m.buf, cursor.NewCursorSet(0))
-	wm = wm.SetWidth(width)
-	snap := display.BuildSnapshot(wm.Sync(snapSnap))
-	snap = display.ExpandTableRows(snap)
-	return snap.TotalRows
-}
-
 // ---- Exported seams for markdownedit composition (D1, D2, D3, D5, D11) ----
 
 // Snapshot returns the current display snapshot.
@@ -602,133 +289,11 @@ func (m Model) SetImageDims(dims map[string]display.ImageDims) Model {
 	return m.syncDisplay()
 }
 
-// ScrollToCursor scrolls the viewport to make the primary cursor visible.
-func (m Model) ScrollToCursor() Model {
-	if len(m.cursors.All()) == 0 {
-		return m
-	}
-	primary := m.cursors.Primary()
-	bp := m.buf.OffsetToLineCol(primary.Position)
-	sp := m.syntaxSnap.BufferToSyntax(bp)
-	wp := m.wrapSnap.SyntaxToWrap(sp)
-
-	contentH := m.contentHeight()
-
-	// Map wrap-row to display-row (accounting for image/table expansion)
-	modelLine := sp.Line
-	wrapOffsetWithinLine := wp.Row - m.wrapSnap.ModelLineToFirstRow(modelLine)
-	if wrapOffsetWithinLine < 0 {
-		wrapOffsetWithinLine = 0
-	}
-	cursorDisplayRow := m.snapshot.ModelLineToFirstRow(modelLine) + wrapOffsetWithinLine
-
-	vMargin := min(4, contentH/4)
-	m.viewport.TopRow = scroll.Follow(
-		cursorDisplayRow, m.viewport.TopRow, contentH, m.snapshot.TotalRows, vMargin, 0)
-
-	// Horizontal scroll
-	if !m.softWrap {
-		hMargin := min(4, m.width/4)
-		hJump := m.width / 4
-		// Use cursor col + viewport width as a sentinel total so the viewport
-		// never scrolls past the cursor's column (true line width unknown without
-		// iterating spans; this preserves existing end-of-line behavior).
-		lineWidth := wp.Col + m.width
-		m.viewport.ScrollCol = scroll.Follow(
-			wp.Col, m.viewport.ScrollCol, m.width, lineWidth, hMargin, hJump)
-	}
-
-	return m
-}
-
-// ContentHeight returns the allocated content height.
-func (m Model) ContentHeight() int { return m.contentHeight() }
-
-// ---- Low-level mouse helpers (D3) ----
-
-// DisplayToBuffer converts a display-point to a buffer point and offset.
-func (m Model) DisplayToBuffer(dp coords.DisplayPoint) (coords.BufferPoint, int) {
-	wrapRow := dp.Row + m.viewport.TopRow
-	wrapCol := dp.Col + m.viewport.ScrollCol
-	if wrapRow < 0 {
-		wrapRow = 0
-	}
-	if wrapRow >= m.wrapSnap.TotalRows {
-		wrapRow = m.wrapSnap.TotalRows - 1
-	}
-	if wrapRow < 0 {
-		return coords.BufferPoint{Line: 0, Col: 0}, 0
-	}
-	wp := coords.WrapPoint{Row: wrapRow, Col: wrapCol}
-	sp := m.wrapSnap.WrapToSyntax(wp)
-	bp := m.syntaxSnap.SyntaxToBuffer(sp)
-	return bp, m.buf.LineColToOffset(bp)
-}
-
-// MousePositionCursor moves the primary cursor to the given buffer offset.
-func (m Model) MousePositionCursor(offset int) Model {
-	primary := cursor.Cursor{
-		Position: offset,
-		Anchor:   offset,
-		ID:       1,
-	}
-	m.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{primary})
-	return m
-}
-
-// MouseExtendSelection extends the primary cursor's selection to the given offset.
-func (m Model) MouseExtendSelection(offset int) Model {
-	primary := m.cursors.Primary()
-	primary.Position = offset
-	m.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{primary})
-	return m
-}
-
-// MouseSelectWord selects the word at the given offset.
-func (m Model) MouseSelectWord(offset int) Model {
-	start := wordLeftOffset(m.buf, offset)
-	end := wordRightOffset(m.buf, offset)
-	primary := cursor.Cursor{
-		Position: end,
-		Anchor:   start,
-		ID:       1,
-	}
-	m.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{primary})
-	return m
-}
-
-// MouseSelectLine selects the line containing the given offset.
-func (m Model) MouseSelectLine(line int) Model {
-	lineStart := m.buf.LineStart(line)
-	var lineEnd int
-	if line >= m.buf.LineCount()-1 {
-		lineEnd = m.buf.Len()
-	} else {
-		lineEnd = m.buf.LineStart(line + 1)
-	}
-	primary := cursor.Cursor{
-		Position: lineEnd,
-		Anchor:   lineStart,
-		ID:       1,
-	}
-	m.cursors = cursor.NewCursorSetFrom([]cursor.Cursor{primary})
-	return m
-}
-
-// MouseAddCursor adds a new cursor at the given offset.
-func (m Model) MouseAddCursor(offset int) Model {
-	m.cursors = m.cursors.Add(cursor.Cursor{Position: offset, Anchor: offset})
-	return m
-}
-
 // SyntaxSnap returns the syntax snapshot.
 func (m Model) SyntaxSnap() display.SyntaxSnapshot { return m.syntaxSnap }
 
 // WrapSnap returns the wrap snapshot.
 func (m Model) WrapSnap() display.WrapSnapshot { return m.wrapSnap }
-
-// Viewport returns the viewport state.
-func (m Model) Viewport() ViewportState { return m.viewport }
 
 // CursorAtTop reports whether all cursors are on visual row 0 and viewport is at top (D11).
 func (m Model) CursorAtTop() bool {
@@ -744,42 +309,6 @@ func (m Model) CursorAtTop() bool {
 		}
 	}
 	return true
-}
-
-// ---- Generic programmatic-edit primitives (D15) ----
-
-// ReplaceRange replaces the range [start, end) with text. This is the core
-// primitive: insert = ReplaceRange(off,off,t), delete = ReplaceRange(s,e,"").
-func (m Model) ReplaceRange(start, end int, text string) Model {
-	if m.readOnly {
-		return m
-	}
-	if start > end {
-		start, end = end, start
-	}
-	edit := buffer.Edit{Start: start, End: end, Insert: text}
-	sorted := buffer.CloneAndSortEditsDescending([]buffer.Edit{edit})
-	newBuf, applied, err := m.buf.ApplyEdits(sorted)
-	if err != nil {
-		return m
-	}
-	m.buf = newBuf
-	m.pendingEdits = append(m.pendingEdits, applied...)
-	m.cursors = cursor.NewCursorSet(start + utf8.RuneCountInString(text))
-	m.rev++
-	m = m.syncDisplay()
-	m = m.ScrollToCursor()
-	return m
-}
-
-// AppendText appends text at the primary cursor position.
-func (m Model) AppendText(text string) Model {
-	if m.readOnly {
-		return m
-	}
-	primary := m.cursors.Primary()
-	offset := primary.Position
-	return m.ReplaceRange(offset, offset, text)
 }
 
 // CursorOffset returns the primary cursor's byte offset.
@@ -835,7 +364,27 @@ func (m Model) applyOperation(result command.Result, cmdName string) Model {
 	}
 
 	if result.Operation.Kind == command.OperationNone {
-		m.cursors = result.Operation.Cursors
+		// A no-op result's Cursors is EXPECTED to carry the pass-through,
+		// unchanged set (clipboardCopy/clipboardPaste do this explicitly:
+		// "Cursors: ctx.Cursors", since they still launch a Cmd). But many
+		// "nothing to do here" early returns across commands_edit.go/
+		// commands_multi.go/commands_edit_lines_*.go build a bare
+		// command.Result{Operation: command.Operation{Kind: OperationNone}}
+		// with no Cursors field at all — its zero value is an EMPTY
+		// CursorSet, not "unchanged". Assigning that unconditionally wiped
+		// the editor's real cursor out of existence on the most ordinary
+		// no-op there is (Backspace at buffer position 0) — found via
+		// FuzzHumanSession's unicodeTyping cluster (WP6 session): once
+		// cursors is empty, EVERY subsequent command also takes the
+		// len(cursors)==0 fast path, permanently locking the buffer with no
+		// caret. An editor with focus always has >= 1 cursor (M1's own
+		// invariant); a no-op can never legitimately reduce that to zero,
+		// so an empty result here is unconditionally a bug in the
+		// producing command, not a real "clear all cursors" intent —
+		// preserve the model's current cursors instead of adopting it.
+		if result.Operation.Cursors.Len() > 0 {
+			m.cursors = result.Operation.Cursors
+		}
 		return m
 	}
 
@@ -852,146 +401,6 @@ func (m Model) applyOperation(result command.Result, cmdName string) Model {
 		m.rev++
 	}
 	return m
-}
-
-func (m Model) syncDisplay() Model {
-	if m.syncFunc == nil {
-		return m
-	}
-	width := m.width
-	if width < 0 {
-		width = 0
-	}
-	if m.wrapMap == (display.WrapMap{}) {
-		m.wrapMap = display.NewWrapMap(0)
-	}
-	m.syntaxMap, m.syntaxSnap = m.syncFunc(m.buf, m.syntaxMap, m.cursors, m.focused, width)
-	m.wrapMap = m.wrapMap.SetWidth(width)
-	m.wrapSnap = m.wrapMap.Sync(m.syntaxSnap)
-	m.snapshot = display.BuildSnapshot(m.wrapSnap)
-	m.snapshot = display.ExpandTableRows(m.snapshot)
-	if len(m.imageDims) > 0 {
-		m.snapshot = display.ExpandImageRows(m.snapshot, m.imageDimsForPath)
-	}
-	return m
-}
-
-// imageDimsForPath returns the reserved cell footprint for a standalone image
-// line. Unknown paths collapse to a single row, which ExpandImageRows treats as
-// a no-op — so images that are not yet decoded/transmitted occupy one row.
-func (m Model) imageDimsForPath(path string) display.ImageDims {
-	if d, ok := m.imageDims[path]; ok {
-		return d
-	}
-	return display.ImageDims{Cols: 0, Rows: 1}
-}
-
-// ---- View ----
-
-// renderCells builds the 2D cell grid for the given content height.
-// It is called by both View() and the gated FuzzCells() accessor so the
-// fuzzer checks exactly what the terminal renders — no drift.
-func (m Model) renderCells(contentHeight int) [][]Cell {
-	lines := m.snapshot.Slice(m.viewport.TopRow, contentHeight)
-
-	cursorOffsets := make(map[int]bool)
-	if m.focused && !m.readOnly {
-		for _, c := range m.cursors.All() {
-			cursorOffsets[c.Position] = true
-		}
-	}
-	var selections []SelInterval
-	if m.focused || m.readOnly {
-		selections = m.Selections()
-	}
-
-	result := make([][]Cell, len(lines))
-	for i, l := range lines {
-		// Convert all spans to cells
-		var lineCells []Cell
-		for _, sp := range l.Spans {
-			spCells := SpanToCells(sp, lipgloss.NewStyle())
-			lineCells = append(lineCells, spCells...)
-		}
-
-		// Horizontal scrolling at cell level
-		lineCells = SliceCells(lineCells, m.viewport.ScrollCol, m.width)
-
-		// EOL cursor: append a synthetic cell when the cursor sits at the end-of-line
-		// position (lineEnd = last span's BufferEnd). Added AFTER SliceCells so it
-		// survives even when the preceding content fills the viewport exactly (e.g. a
-		// double-width CJK character at the last column pushes usedWidth to m.width and
-		// causes the loop in SliceCells to exit before processing this cell).
-		if m.focused && !m.readOnly {
-			lineEnd := 0
-			if len(l.Spans) > 0 {
-				last := l.Spans[len(l.Spans)-1]
-				lineEnd = last.BufferEnd
-			}
-			for off := range cursorOffsets {
-				if off == lineEnd {
-					isLastVisible := i+1 >= len(lines) || lines[i+1].ModelLine != l.ModelLine
-					if isLastVisible {
-						lineCells = append(lineCells, Cell{
-							Rune:      ' ',
-							Width:     1,
-							Style:     lipgloss.NewStyle(),
-							BufOffset: lineEnd,
-						})
-					}
-					break
-				}
-			}
-		}
-
-		// Apply cursor and selection overlays
-		if m.focused && (len(cursorOffsets) > 0 || len(selections) > 0) {
-			ApplyOverlays(lineCells, cursorOffsets, selections)
-		}
-
-		result[i] = lineCells
-	}
-	return result
-}
-
-func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-
-	contentHeight := m.contentHeight()
-	cells := m.renderCells(contentHeight)
-
-	cursorStyle := lipgloss.NewStyle().Reverse(true)
-	selStyle := m.styles.Selection
-	noStyle := lipgloss.NewStyle()
-
-	dim := !m.focused
-
-	var renderedLines []string
-	for _, lineCells := range cells {
-		renderedLines = append(renderedLines, CellsToString(lineCells, selStyle, cursorStyle, noStyle, noStyle, dim))
-	}
-
-	// Filler tildes carry no embedded ANSI, so a single faint render is correct.
-	tilde := "~"
-	if dim {
-		tilde = lipgloss.NewStyle().Faint(true).Render("~")
-	}
-	for len(renderedLines) < contentHeight {
-		renderedLines = append(renderedLines, tilde)
-	}
-
-	// Dimming is folded per style run inside CellsToString — no post-hoc Faint
-	// wrap, which would be cleared by inner styled runs' embedded resets.
-	content := strings.Join(renderedLines, "\n")
-
-	return lipgloss.NewStyle().
-		MaxWidth(m.width).
-		MaxHeight(m.height).
-		Width(m.width).
-		Height(m.height).
-		Render(content)
 }
 
 // ---- Rect type (D8) ----

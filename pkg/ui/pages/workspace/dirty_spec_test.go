@@ -53,14 +53,13 @@ func redoOnce(m Model) Model {
 	return m
 }
 
-// save simulates a complete ⌘S round-trip (startSave → FileSavedMsg). The ack
-// carries SavedSeq exactly as production does (the journal position captured at
-// save-start) — MarkSavedAt stamps that position, not the live head (§1.4.2).
+// save simulates a complete ⌘S round-trip: startSave issues the REAL
+// materializeStoreCmd (store.Materialize actually writes+commits, exactly as
+// production does — expect/seq captured co-atomically at save-start,
+// §1.4.2/§1.4.8), executed here and fed back through Update.
 func save(m Model) Model {
-	m, _ = m.startSave()
-	reqID := m.activeSave.RequestID
-	m, _ = m.Update(FileSavedMsg{Path: m.view.Path(), RequestID: reqID, SavedSeq: m.savedSeqFor(m.view.DocID())})
-	return m
+	m, cmd := m.startSave()
+	return drainCmd(m, cmd)
 }
 
 // dirtyWorkspace returns a workspace with a store, focused editor, and a file
@@ -277,8 +276,8 @@ func TestDirtySpec_P8_UndoToStartClearsDirty_GlobalSeq(t *testing.T) {
 		t.Fatalf("CreateScratch: %v", err)
 	}
 	for range 3 {
-		if _, err := m.store.AppendEdit(throwaway.ID, "main",
-			[]buffer.AppliedEdit{{Insert: "seed "}}, nil, nil, "main"); err != nil {
+		if _, err := m.store.AppendEdit(throwaway.ID,
+			[]buffer.AppliedEdit{{Insert: "seed "}}, nil, nil); err != nil {
 			t.Fatalf("seed AppendEdit: %v", err)
 		}
 	}

@@ -20,12 +20,28 @@ import (
 
 	"rune/internal/fuzz/invariant"
 	"rune/internal/fuzz/snapshot"
+	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/help"
 )
 
 // lipglossWidth wraps lipgloss.Width to keep the call sites readable.
 func lipglossWidth(s string) int { return lipgloss.Width(s) }
 
 func trunc(s string, n int) string { return invariant.Trunc(s, n) }
+
+// pendingKind* mirror workspace.actionKind's iota order (None=0, Close=1,
+// Quit=2, Evict=3, Trash=4), pinned by TestActionKindCasts in
+// pkg/ui/pages/workspace/workspace_fuzz_test.go — Snapshot.PendingDataLossKind
+// is that int cast, read here without importing the workspace package (this
+// checker family stays decoupled from concrete production packages besides
+// snapshot/footer/help — see the %T-name + reflect convention above).
+const (
+	pendingKindNone = iota
+	pendingKindClose
+	pendingKindQuit
+	pendingKindEvict
+	pendingKindTrash
+)
 
 // Check runs all L0 workspace invariants against s.
 // Returns the first violation, or nil.
@@ -102,6 +118,50 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 		}
 	}
 
+	// GUARD-STATE-COH: while a guard is showing, its kind must correlate with
+	// a matching pending-state fact. ONE direction only (GuardVisible ⇒
+	// correlate): footer clears its own guardKind/guardOptions synchronously
+	// the instant the response keypress is processed — BEFORE the response
+	// Cmd's DataLossGuardResponseMsg is delivered and the pending-state
+	// handler clears its own flag one message later — so the reverse
+	// direction (correlate ⇒ GuardVisible) false-positives during that gap.
+	if s.GuardVisible {
+		var correlated bool
+		switch s.GuardKind {
+		case footer.GuardMerge:
+			correlated = s.PendingConflictActive
+		case footer.GuardDeleted:
+			correlated = s.PendingDeletedActive
+		case footer.GuardRaced:
+			correlated = s.PendingRacedActive
+		case footer.GuardTrash:
+			correlated = s.PendingDataLossKind == pendingKindTrash
+		case footer.GuardDirty:
+			correlated = s.PendingDataLossKind == pendingKindClose ||
+				s.PendingDataLossKind == pendingKindQuit ||
+				s.PendingDataLossKind == pendingKindEvict
+		case footer.GuardDegraded:
+			// GuardDegraded has no dedicated pendingXxx struct of its own
+			// (startSaveDegradedConfirmed raises it straight from the
+			// m.store.Degraded() check) — StoreDegraded (mirroring
+			// m.footer.Degraded(), itself fixed from m.store.Degraded() at
+			// store-open time) is the fact that must hold for it to have
+			// been raised at all.
+			correlated = s.StoreDegraded
+		default:
+			correlated = true // unknown/future kind — don't false-positive
+		}
+		if !correlated {
+			return &invariant.Violation{
+				InvariantID: "GUARD-STATE-COH",
+				Message: fmt.Sprintf(
+					"GuardKind=%v visible with no matching pending state (PendingConflictActive=%v PendingDeletedActive=%v PendingRacedActive=%v PendingDataLossKind=%d StoreDegraded=%v)",
+					s.GuardKind, s.PendingConflictActive, s.PendingDeletedActive, s.PendingRacedActive, s.PendingDataLossKind, s.StoreDegraded,
+				),
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -130,11 +190,19 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 		}
 	}
 
-	// SAVE-NOMUT: a save message must not mutate the buffer content.
+	// SAVE-NOMUT: a save message must not mutate the buffer content — EXCEPT
+	// when the save is settling a Close/Quit/Evict guard response (kind != 0,
+	// mirroring workspace.actionKind's None=0 sentinel). That save-then-close
+	// flow legitimately swaps the displayed buffer to the next tab (or a blank
+	// Untitled) once the save durably lands — pendingDataLoss is preserved
+	// (not cleared) across the save specifically so FileSavedMsg's handler can
+	// make that decision, so prev.PendingDataLossKind still reads the pending
+	// kind at this transition. A PLAIN interactive ⌘S (kind==0) must still
+	// never mutate the buffer it just saved.
 	// (TR-dirty-clear moved to the driver-level, store-derived CheckSaveDirty,
 	// keyed to the SAVED doc. The global next.HasDirtyFile used here fired a false
 	// positive whenever any *other* tab was still dirty after saving one tab.)
-	if typeName == "workspace.FileSavedMsg" {
+	if typeName == "workspace.FileSavedMsg" && prev.PendingDataLossKind == 0 {
 		if next.Content != prev.Content {
 			add("SAVE-NOMUT", fmt.Sprintf(
 				"Content changed during save: %q → %q",
@@ -222,6 +290,68 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 				add("TRASH-TAB-GONE", fmt.Sprintf(
 					"FileDeletedMsg{Path:%q} but tab still present in next snapshot", path))
 				break
+			}
+		}
+	}
+
+	// GUARD-RESPONSE-CLEARS: after any footer.DataLossGuardResponseMsg,
+	// PendingConflictActive must not be left as a LINGERING stale flag —
+	// either it cleared, or a FRESH conflict was legitimately re-raised
+	// (visibly correlated: GuardVisible && GuardKind==GuardMerge, e.g.
+	// startSave's own §1.4.8 pre-write re-check re-detecting SyncDiverged
+	// from inside THIS same response's handler). A lingering pendingConflict
+	// with no correlated guard showing would misroute a LATER, unrelated
+	// dirty-guard [D]iscard into handleDataLossDiscardConflict ("load
+	// theirs") instead of the dirty-close discard the user actually pressed.
+	if typeName == "footer.DataLossGuardResponseMsg" && next.PendingConflictActive &&
+		!(next.GuardVisible && next.GuardKind == footer.GuardMerge) {
+		add("GUARD-RESPONSE-CLEARS", "PendingConflictActive still true after DataLossGuardResponseMsg with no correlated GuardMerge visible")
+	}
+
+	// MERGE-GUARD-RAISE / DELETED-GUARD-RAISE / QUIT-ABORT: workspace.FileSaveErrorMsg routing.
+	if typeName == "workspace.FileSaveErrorMsg" {
+		rv := reflect.ValueOf(msg)
+		docID := rv.FieldByName("DocID").Int()
+		requestID := rv.FieldByName("RequestID").String()
+		conflict := rv.FieldByName("Conflict").Bool()
+		missing := rv.FieldByName("Missing").Bool()
+
+		// Gate reproduces handleFileSaveErrorMsg's own routing condition
+		// EXACTLY: m.activeSave.InFlight && m.activeSave.RequestID==msg.RequestID
+		// && msg.DocID==m.view.DocID() && m.view.IsFile(). The RequestID
+		// correlation (critic R1) excludes a quit-batch/evict background
+		// save's ack for the SAME doc from being misread as THIS interactive
+		// save's conflict, even when both are concurrently in flight.
+		// ActiveFilePath!="" && !=help.DocPath approximates IsFile() (help's
+		// Path() is also non-empty, §1.7 — no magic-string proxy without the
+		// exclusion).
+		correlated := prev.SaveInFlight && requestID == prev.SaveRequestID &&
+			docID == prev.DocID && prev.ActiveFilePath != "" && prev.ActiveFilePath != help.DocPath
+
+		if correlated && conflict {
+			if !(next.GuardVisible && next.GuardKind == footer.GuardMerge && next.PendingConflictActive) {
+				add("MERGE-GUARD-RAISE", fmt.Sprintf(
+					"FileSaveErrorMsg{Conflict:true} for correlated interactive save (doc %d) did not raise GuardMerge (GuardVisible=%v GuardKind=%v PendingConflictActive=%v)",
+					docID, next.GuardVisible, next.GuardKind, next.PendingConflictActive))
+			}
+		}
+		if correlated && missing {
+			if !(next.GuardVisible && next.GuardKind == footer.GuardDeleted && next.PendingDeletedActive) {
+				add("DELETED-GUARD-RAISE", fmt.Sprintf(
+					"FileSaveErrorMsg{Missing:true} for correlated interactive save (doc %d) did not raise GuardDeleted (GuardVisible=%v GuardKind=%v PendingDeletedActive=%v)",
+					docID, next.GuardVisible, next.GuardKind, next.PendingDeletedActive))
+			}
+		}
+
+		// QUIT-ABORT: a FileSaveErrorMsg landing while a quit-batch save was
+		// pending aborts the WHOLE quit (handleFileSaveErrorMsg's
+		// actionQuit branch) — pending must clear and quit must not proceed.
+		if prev.PendingDataLossKind == pendingKindQuit {
+			if next.PendingDataLossKind == pendingKindQuit {
+				add("QUIT-ABORT", "PendingDataLossKind still Quit after FileSaveErrorMsg during quit batch")
+			}
+			if next.AppQuitting {
+				add("QUIT-ABORT", "AppQuitting true after FileSaveErrorMsg aborted the quit batch")
 			}
 		}
 	}

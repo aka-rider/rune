@@ -56,9 +56,9 @@ const (
 type TableLayoutKind int
 
 const (
-	TableLayoutGrid TableLayoutKind = iota // Standard grid layout (single line per row)
-	TableLayoutWrapped                      // Word-wrapped grid (cells wrap within columns)
-	TableLayoutPivoted                      // Pivoted key-value format (Header: Value)
+	TableLayoutGrid    TableLayoutKind = iota // Standard grid layout (single line per row)
+	TableLayoutWrapped                        // Word-wrapped grid (cells wrap within columns)
+	TableLayoutPivoted                        // Pivoted key-value format (Header: Value)
 )
 
 type SyntaxSpan struct {
@@ -77,9 +77,10 @@ type SyntaxSpan struct {
 	ImagePath    string // image path/URL
 	EmbedRef     string // embed reference (e.g. [[filename]])
 	CalloutKind  string // callout type (e.g. "note", "warning")
-	HeadingLevel  int    // heading level (1-6), 0 for non-headings
-	TableRole     TableRoleKind
-	TableLayout   TableLayoutKind // layout state (grid/wrapped/pivoted) for table spans
+	HeadingLevel int    // heading level (1-6), 0 for non-headings
+	TableRole    TableRoleKind
+	TableLayout  TableLayoutKind // layout state (grid/wrapped/pivoted) for table spans
+	ColWidths    []int           // per-column visual widths used to format this table row; nil for non-table spans
 	// Wiki link metadata (set for TokenWikiLink spans)
 	WikiLinkTarget  string // resolved file path for wiki links
 	WikiLinkIsImage bool   // true for embedded images ![[image.png]]
@@ -102,131 +103,8 @@ type SyntaxLine struct {
 	Spans []SyntaxSpan
 }
 
-type OffsetDelta struct {
-	BufferOffset int
-	Delta        int
-}
-
-// hiddenRange represents a non-cursor-legal buffer column range.
-type hiddenRange struct {
-	start   int // first non-legal col (inclusive)
-	end     int // first legal col after (exclusive)
-	clampTo int // buffer col to clamp to
-}
-
-// lineConversion holds per-line data for coordinate conversion.
-type lineConversion struct {
-	deltas []OffsetDelta // sorted by BufferOffset, monotonically increasing Delta
-	hidden []hiddenRange // sorted by start
-}
-
-type SyntaxSnapshot struct {
-	Lines     []SyntaxLine
-	Deltas    []OffsetDelta // global monotonic (for external consumers)
-	lineConvs []lineConversion
-}
-
-// BufferToSyntax converts a buffer-space point to syntax-space.
-// Positions inside hidden delimiters are clamped to cursor-legal positions.
-func (s SyntaxSnapshot) BufferToSyntax(bp coords.BufferPoint) coords.SyntaxPoint {
-	if bp.Line < 0 || bp.Line >= len(s.lineConvs) {
-		return coords.SyntaxPoint{Line: bp.Line, Col: bp.Col}
-	}
-
-	lc := s.lineConvs[bp.Line]
-	if len(lc.deltas) == 0 {
-		return coords.SyntaxPoint{Line: bp.Line, Col: bp.Col}
-	}
-
-	// Clamp position out of hidden ranges
-	col := clampCol(bp.Col, lc.hidden)
-
-	// Binary search for the last delta entry with BufferOffset <= col
-	idx := sort.Search(len(lc.deltas), func(i int) bool {
-		return lc.deltas[i].BufferOffset > col
-	}) - 1
-
-	delta := 0
-	if idx >= 0 {
-		delta = lc.deltas[idx].Delta
-	}
-
-	syntaxCol := col - delta
-	if syntaxCol < 0 {
-		syntaxCol = 0
-	}
-
-	return coords.SyntaxPoint{Line: bp.Line, Col: syntaxCol}
-}
-
-// SyntaxToBuffer converts a syntax-space point back to buffer-space.
-func (s SyntaxSnapshot) SyntaxToBuffer(sp coords.SyntaxPoint) coords.BufferPoint {
-	if sp.Line < 0 || sp.Line >= len(s.lineConvs) {
-		return coords.BufferPoint{Line: sp.Line, Col: sp.Col}
-	}
-
-	lc := s.lineConvs[sp.Line]
-	if len(lc.deltas) == 0 {
-		return coords.BufferPoint{Line: sp.Line, Col: sp.Col}
-	}
-
-	// Reverse mapping: find the delta region where sp.Col falls.
-	// For each delta entry at BufferOffset B with Delta D:
-	//   syntax col at B = B - D
-	// We need the last entry i where (B_i - D_i) <= sp.Col
-	idx := -1
-	for i, d := range lc.deltas {
-		syntaxAtEntry := d.BufferOffset - d.Delta
-		if syntaxAtEntry <= sp.Col {
-			idx = i
-		} else {
-			break
-		}
-	}
-
-	delta := 0
-	if idx >= 0 {
-		delta = lc.deltas[idx].Delta
-	}
-
-	return coords.BufferPoint{Line: sp.Line, Col: sp.Col + delta}
-}
-
-// clampCol adjusts a buffer column that falls inside a hidden range.
-func clampCol(col int, hidden []hiddenRange) int {
-	for _, h := range hidden {
-		if col >= h.start && col < h.end {
-			return h.clampTo
-		}
-		if h.start > col {
-			break // sorted, no more matches
-		}
-	}
-	return col
-}
-
-func (s SyntaxSnapshot) SyntaxColWidth(line int) int {
-	if line < 0 || line >= len(s.Lines) {
-		return 0
-	}
-	width := 0
-	for _, span := range s.Lines[line].Spans {
-		width += len(span.Text)
-	}
-	return width
-}
-
-// NewSyntaxSnapshotFromLines creates a SyntaxSnapshot with identity coordinate
-// mapping (no hidden ranges, no deltas). Used for testing wrap behavior in
-// isolation without markdown token folding.
-func NewSyntaxSnapshotFromLines(lines []SyntaxLine) SyntaxSnapshot {
-	convs := make([]lineConversion, len(lines))
-	// All lineConversion entries default to empty deltas/hidden = identity mapping
-	return SyntaxSnapshot{
-		Lines:     lines,
-		lineConvs: convs,
-	}
-}
+// SyntaxSnapshot and its coordinate-conversion methods (BufferToSyntax,
+// SyntaxToBuffer) live in syntax_snapshot.go.
 
 type SyntaxMap struct {
 	lastBufVer      uint64
@@ -273,12 +151,15 @@ func (m SyntaxMap) syncInternal(buf buffer.Buffer, cursors cursor.CursorSet, rev
 	blocks = append(blocks, advBlocks...)
 
 	// Parse YAML frontmatter to detect malformed content for error display.
-	var fmError string
+	// Kept as error (never downgraded to a string here) — threaded through
+	// blockSpansForLine to frontmatterRenderedSpans, the actual render
+	// boundary where its value is consulted (§1.3).
+	var fmError error
 	if m.FrontmatterMode != FrontmatterHidden {
 		docLines := strings.Split(content, "\n")
 		if fmEnd := detectFrontmatter(docLines); fmEnd >= 0 {
 			if _, err := parseFrontmatterYAML(docLines, fmEnd); err != nil {
-				fmError = err.Error()
+				fmError = err
 			}
 		}
 	}
@@ -528,88 +409,5 @@ func buildSyntaxLine(
 	return SyntaxLine{Spans: spans}, lineConversion{deltas: deltas, hidden: hidden}
 }
 
-// shouldReveal determines if raw markdown should be shown based on cursor.
-func shouldReveal(ms mdSpan, lineIdx, cursorLine, cursorCol int) bool {
-	switch ms.kind {
-	case TokenHeading, TokenBlockquote, TokenHorizontalRule, TokenTaskList, TokenCallout:
-		// Line-level reveal
-		return lineIdx == cursorLine
-	default:
-		// Per-token reveal: cursor must be within the token. For nested tokens
-		// the emitter stamps the whole outer token's range on every sub-span so
-		// they reveal as a unit.
-		if lineIdx != cursorLine {
-			return false
-		}
-		start, end := ms.start, ms.end
-		if ms.revealSet {
-			start, end = ms.revealStart, ms.revealEnd
-		}
-		return cursorCol >= start && cursorCol < end
-	}
-}
-
-// spanAltText extracts alt text metadata for image spans.
-func spanAltText(ms mdSpan) string {
-	if ms.kind == TokenImage {
-		return ms.text
-	}
-	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
-		return ms.wikiLinkLabel
-	}
-	return ""
-}
-
-// spanImagePath extracts image path metadata.
-func spanImagePath(ms mdSpan) string {
-	if ms.kind == TokenImage {
-		return ms.linkURL
-	}
-	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
-		return ms.wikiLinkTarget
-	}
-	return ""
-}
-
-// spanEmbedRef extracts embed reference metadata.
-func spanEmbedRef(ms mdSpan) string {
-	if ms.kind == TokenImage && ms.delimLeft == 3 {
-		return ms.linkURL
-	}
-	if ms.kind == TokenWikiLink && ms.wikiLinkIsImage {
-		return ms.wikiLinkTarget
-	}
-	return ""
-}
-
-// spanCalloutKind extracts callout kind metadata.
-func spanCalloutKind(ms mdSpan) string {
-	if ms.kind == TokenCallout {
-		return ms.linkURL
-	}
-	return ""
-}
-
-// spanWikiLinkTarget extracts wiki link target metadata.
-func spanWikiLinkTarget(ms mdSpan) string {
-	if ms.kind == TokenWikiLink {
-		return ms.wikiLinkTarget
-	}
-	return ""
-}
-
-// spanWikiLinkIsImage extracts wiki link image flag.
-func spanWikiLinkIsImage(ms mdSpan) bool {
-	if ms.kind == TokenWikiLink {
-		return ms.wikiLinkIsImage
-	}
-	return false
-}
-
-// spanLinkURL extracts link URL metadata for TokenLink spans.
-func spanLinkURL(ms mdSpan) string {
-	if ms.kind == TokenLink {
-		return ms.linkURL
-	}
-	return ""
-}
+// shouldReveal and the spanXxx per-token metadata extractors used above live
+// in span_metadata.go.
