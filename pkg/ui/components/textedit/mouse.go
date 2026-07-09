@@ -9,17 +9,16 @@ import (
 
 // DisplayToBuffer converts a display-point to a buffer point and offset.
 func (m Model) DisplayToBuffer(dp coords.DisplayPoint) (coords.BufferPoint, int) {
-	wrapRow := dp.Row + m.viewport.TopRow
+	displayRow := dp.Row + m.viewport.TopRow
 	wrapCol := dp.Col + m.viewport.ScrollCol
-	if wrapRow < 0 {
-		wrapRow = 0
-	}
-	if wrapRow >= m.wrapSnap.TotalRows {
-		wrapRow = m.wrapSnap.TotalRows - 1
-	}
-	if wrapRow < 0 {
-		return coords.BufferPoint{Line: 0, Col: 0}, 0
-	}
+
+	// displayRow is display-space (m.snapshot.TotalRows), NOT wrap-space
+	// (m.wrapSnap.TotalRows) — table/image row expansion can make the former
+	// larger than the latter. RowToWrapRow resolves the exact wrap-space row
+	// this display row traces back to; WrapToSyntax's own clampRow is the
+	// final defense-in-depth bound.
+	wrapRow := m.snapshot.RowToWrapRow(displayRow)
+
 	wp := coords.WrapPoint{Row: wrapRow, Col: wrapCol}
 	sp := m.wrapSnap.WrapToSyntax(wp)
 	bp := m.syntaxSnap.SyntaxToBuffer(sp)

@@ -69,7 +69,19 @@ func (s DisplaySpan) LinkRole() LinkRole { return linkRoleFor(s.Kind, s.WikiLink
 type DisplayLine struct {
 	Spans     []DisplaySpan
 	ModelLine int
-	WrapIndex int
+
+	// WrapRow is the index into the pre-expansion wrapSnap.Segments (i.e. the
+	// row in wrap-space, before ExpandTableRows/ExpandImageRows inflate row
+	// counts) that this display line traces back to. BuildSnapshot stamps it
+	// 1:1 from the wrap-segment index. Synthetic rows with no real wrap-segment
+	// backing — table borders (buildTableBorder) and image continuation rows
+	// (ExpandImageRows) — reuse an adjacent/anchor content row's WrapRow, so a
+	// click landing there still resolves (via WrapSnapshot.WrapToSyntax) to a
+	// nearby real buffer position instead of an arbitrary or out-of-range wrap
+	// row. WrapRow alone cannot distinguish "real" from "borrowed" — callers
+	// wanting different border/image click behavior must check ImagePath /
+	// table role explicitly (see IsTableSeparatorRow).
+	WrapRow int
 
 	// Image row reservation, populated only by ExpandImageRows for standalone
 	// image lines. Zero-valued for all other lines (BuildSnapshot never sets
@@ -126,7 +138,7 @@ func BuildSnapshot(ws WrapSnapshot) DisplaySnapshot {
 		dlines = append(dlines, DisplayLine{
 			Spans:     spans,
 			ModelLine: seg.ModelLine,
-			WrapIndex: seg.WrapIndex,
+			WrapRow:   i,
 		})
 		rowToModelLine[i] = seg.ModelLine
 	}
@@ -198,7 +210,7 @@ func (ds DisplaySnapshot) SliceH(lines []DisplayLine, scrollCol, width int) []Di
 	for _, l := range lines {
 		dl := DisplayLine{
 			ModelLine: l.ModelLine,
-			WrapIndex: l.WrapIndex,
+			WrapRow:   l.WrapRow,
 		}
 
 		currW := 0
@@ -240,4 +252,23 @@ func (ds DisplaySnapshot) RowToModelLine(row int) int {
 		return 0
 	}
 	return ds.rowToModelLine[row]
+}
+
+// RowToWrapRow returns the wrap-space row (pre table/image expansion) backing
+// the given display-space row, clamped to the last row rather than returning 0
+// out of range — a display row past the end of the document must still
+// resolve to the end, not silently jump to the top. See DisplayLine.WrapRow
+// doc for how synthetic rows (table borders, image continuation rows) report
+// a borrowed value.
+func (ds DisplaySnapshot) RowToWrapRow(row int) int {
+	if len(ds.Lines) == 0 {
+		return 0
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(ds.Lines) {
+		row = len(ds.Lines) - 1
+	}
+	return ds.Lines[row].WrapRow
 }

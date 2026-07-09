@@ -182,6 +182,35 @@ func TestExpandImageRows_ListItemImageExpands(t *testing.T) {
 	}
 }
 
+func TestExpandImageRows_WrapRowPropagation(t *testing.T) {
+	lines := []DisplayLine{
+		textLine(0, "before"),
+		imageLine(1, "a.png"),
+		textLine(2, "after"),
+	}
+	// Stamp distinct WrapRow values as BuildSnapshot would, pre-expansion.
+	for i := range lines {
+		lines[i].WrapRow = i
+	}
+	in := buildSnap(lines, 3)
+
+	out := ExpandImageRows(in, dimsConst(8, 5))
+
+	anchor := out.Lines[1]
+	if anchor.WrapRow != 1 {
+		t.Errorf("anchor WrapRow=%d, want 1 (unchanged from source line)", anchor.WrapRow)
+	}
+	for r := 1; r < 5; r++ {
+		cont := out.Lines[1+r]
+		if cont.WrapRow != anchor.WrapRow {
+			t.Errorf("continuation row %d WrapRow=%d, want anchor's WrapRow=%d", r, cont.WrapRow, anchor.WrapRow)
+		}
+	}
+	if out.Lines[0].WrapRow != 0 || out.Lines[6].WrapRow != 2 {
+		t.Errorf("surrounding text rows' WrapRow must be untouched, got %d and %d", out.Lines[0].WrapRow, out.Lines[6].WrapRow)
+	}
+}
+
 func TestExpandImageRows_InlineImageNotExpanded(t *testing.T) {
 	line := DisplayLine{
 		Spans: []DisplaySpan{

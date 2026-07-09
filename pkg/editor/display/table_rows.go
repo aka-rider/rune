@@ -141,6 +141,15 @@ func getTableRole(l DisplayLine) TableRoleKind {
 	return TableRoleBody
 }
 
+// IsTableSeparatorRow reports whether l is a table separator/border display
+// row — both genuine "|---|" source rows and the synthetic top/bottom/
+// inter-row borders ExpandTableRows inserts carry TableRoleSeparator. Callers
+// that skip interactive click targeting on decorative table rows check this
+// alongside ImagePath.
+func IsTableSeparatorRow(l DisplayLine) bool {
+	return getTableRole(l) == TableRoleSeparator
+}
+
 // isBodyRowBoundary checks if line at index i is the last display line of a body row
 // and the next display line starts a different body row in the same table.
 func isBodyRowBoundary(lines []DisplayLine, i int) bool {
@@ -235,7 +244,7 @@ func buildTableBorder(l DisplayLine, sepType separatorType) *DisplayLine {
 			TableLayout: layout,
 		}},
 		ModelLine: l.ModelLine,
-		WrapIndex: 0,
+		WrapRow:   l.WrapRow,
 	}
 }
 
@@ -324,7 +333,7 @@ func splitDisplayLine(l DisplayLine) []DisplayLine {
 			result = append(result, DisplayLine{
 				Spans:     currentSpans,
 				ModelLine: l.ModelLine,
-				WrapIndex: len(result),
+				WrapRow:   l.WrapRow,
 			})
 		}
 		currentSpans = nil
@@ -360,7 +369,7 @@ func splitDisplayLine(l DisplayLine) []DisplayLine {
 		result = append(result, DisplayLine{
 			Spans:     nil,
 			ModelLine: l.ModelLine,
-			WrapIndex: 0,
+			WrapRow:   l.WrapRow,
 		})
 	}
 

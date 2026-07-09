@@ -8,7 +8,7 @@ import (
 
 // ViewportState is the scroll position of the visible content window.
 type ViewportState struct {
-	TopRow    int
+	TopRow    int // display-space row (matches m.snapshot.TotalRows, post table/image expansion)
 	ScrollCol int
 }
 

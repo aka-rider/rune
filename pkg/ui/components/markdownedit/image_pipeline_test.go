@@ -143,6 +143,37 @@ func TestCursorDownStopsAtLastLineWithExpandedImage(t *testing.T) {
 	}
 }
 
+// TestClickBelowExpandedImageResolvesCorrectLine locks in the mouse-side fix
+// for the same wrap-space/display-space row confusion as
+// TestCursorDownStopsAtLastLineWithExpandedImage, but for DisplayToBuffer
+// (TODO.md): once a multi-row image has expanded the display snapshot past
+// the wrap snapshot's row count, clicking a text line below the image must
+// resolve to that line, not a neighbor. Pre-fix, clicking display row 5 ("B")
+// resolved to model line 2 ("C") instead of model line 1 ("B") — verified by
+// hand against the old clamp arithmetic (wrapRow = 5, clamped to
+// wrapSnap.TotalRows-1 = 2).
+func TestClickBelowExpandedImageResolvesCorrectLine(t *testing.T) {
+	m := newImagePipelineModel(t, terminal.TermCaps{})
+
+	const imgRows = 5
+	m = m.SetContent("![alt](a.png)\nB\nC")
+	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
+
+	// Move off the image line so it expands (imgRows + 2 text lines = 7 rows).
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if got := m.Model.Snapshot().TotalRows; got != imgRows+2 {
+		t.Fatalf("setup: TotalRows=%d, want %d (expanded)", got, imgRows+2)
+	}
+
+	// Display row 5 is "B" (model line 1): rows 0-4 are the expanded image,
+	// row 5 is "B", row 6 is "C". Not an image row, so the click guard doesn't
+	// intercept it.
+	m, _ = m.Update(tea.MouseClickMsg{X: 0, Y: 5, Button: tea.MouseLeft})
+	if line := m.Model.OffsetToLineCol(m.Model.CursorOffset()).Line; line != 1 {
+		t.Fatalf("click on display row 5 (\"B\"): cursor landed on model line %d, want 1", line)
+	}
+}
+
 // TestPendingImageReservesNoRows locks in the secondary fix for the
 // black/empty-area symptom: an image that has not yet transmitted its pixels to
 // the terminal must reserve only a single row, so the editor never emits blank

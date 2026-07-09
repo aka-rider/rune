@@ -46,10 +46,11 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	snap := m.Model.Snapshot()
 	vp := m.Model.Viewport()
 
-	// Skip clicks that land on image-reserved display rows.
+	// Skip clicks that land on image-reserved or table-border/separator rows.
 	displayRow := dp.Row + vp.TopRow
 	if displayRow >= 0 && displayRow < len(snap.Lines) {
-		if snap.Lines[displayRow].ImagePath != "" {
+		l := snap.Lines[displayRow]
+		if l.ImagePath != "" || display.IsTableSeparatorRow(l) {
 			return m, nil
 		}
 	}
@@ -177,6 +178,20 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 	}
 	if dp.Col < 0 {
 		dp.Col = 0
+	}
+
+	snap := m.Model.Snapshot()
+	vp := m.Model.Viewport()
+
+	// Skip motion events landing on image-reserved or table-border/separator
+	// rows — hold the selection at its last valid endpoint rather than
+	// extending it through a decorative row.
+	displayRow := dp.Row + vp.TopRow
+	if displayRow >= 0 && displayRow < len(snap.Lines) {
+		l := snap.Lines[displayRow]
+		if l.ImagePath != "" || display.IsTableSeparatorRow(l) {
+			return m, nil
+		}
 	}
 
 	_, offset := m.Model.DisplayToBuffer(dp)

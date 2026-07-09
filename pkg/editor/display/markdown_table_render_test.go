@@ -524,3 +524,86 @@ func TestTable_BodyRowSeparatorWidthsWithMultiByteChars(t *testing.T) {
 		}
 	}
 }
+
+// TestTable_BorderWrapRow locks in the fix for the DisplayToBuffer
+// wrap-space/display-space row confusion (TODO.md): every DisplayLine must
+// carry the wrap-space row it traces back to (DisplayLine.WrapRow), and
+// synthetic border rows — which have no real wrap-segment backing of their
+// own — must borrow the adjacent real content row's WrapRow rather than an
+// arbitrary or zero value.
+func TestTable_BorderWrapRow(t *testing.T) {
+	md := `| A | B |
+|---|---|
+| 1 | 2 |
+| 3 | 4 |
+X`
+
+	buf := buffer.New(md)
+	sMap := display.NewSyntaxMap().SetWidth(200)
+	_, snap := sMap.SyncNoReveal(buf, cursor.NewCursorSet(0))
+
+	wm := display.NewWrapMap(200)
+	ws := wm.Sync(snap)
+	ds := display.BuildSnapshot(ws)
+
+	// Pre-expansion: grid table lines aren't re-wrapped, so each model line is
+	// exactly one wrap segment/display row, and WrapRow == ModelLine here.
+	for i, dl := range ds.Lines {
+		if dl.WrapRow != i {
+			t.Fatalf("pre-expansion Lines[%d].WrapRow = %d, want %d", i, dl.WrapRow, i)
+		}
+	}
+
+	ds = display.ExpandTableRows(ds)
+
+	var roles []display.TableRoleKind
+	var texts []string
+	for _, dl := range ds.Lines {
+		var sb strings.Builder
+		for _, sp := range dl.Spans {
+			sb.WriteString(sp.Text)
+		}
+		texts = append(texts, sb.String())
+		role := display.TableRoleBody
+		for _, sp := range dl.Spans {
+			if sp.TableRole != 0 {
+				role = sp.TableRole
+				break
+			}
+		}
+		roles = append(roles, role)
+	}
+	t.Logf("rows: %q", texts)
+
+	// Expect: top border, header, separator, body1, inter-border, body2,
+	// bottom border, trailing text "X" — 8 rows.
+	if len(ds.Lines) != 8 {
+		t.Fatalf("got %d rows %q, want 8", len(ds.Lines), texts)
+	}
+
+	header, body1, body2, trailing := ds.Lines[1], ds.Lines[3], ds.Lines[5], ds.Lines[7]
+
+	topBorder, interBorder, bottomBorder := ds.Lines[0], ds.Lines[4], ds.Lines[6]
+	if !display.IsTableSeparatorRow(topBorder) || !display.IsTableSeparatorRow(interBorder) || !display.IsTableSeparatorRow(bottomBorder) {
+		t.Fatalf("border rows must report IsTableSeparatorRow, got roles %v for rows %q", roles, texts)
+	}
+	if display.IsTableSeparatorRow(header) || display.IsTableSeparatorRow(body1) || display.IsTableSeparatorRow(body2) || display.IsTableSeparatorRow(trailing) {
+		t.Fatalf("non-border rows must not report IsTableSeparatorRow, got roles %v for rows %q", roles, texts)
+	}
+
+	if topBorder.WrapRow != header.WrapRow {
+		t.Errorf("top border WrapRow=%d, want header's WrapRow=%d", topBorder.WrapRow, header.WrapRow)
+	}
+	if interBorder.WrapRow != body1.WrapRow {
+		t.Errorf("inter-body border WrapRow=%d, want body1's WrapRow=%d", interBorder.WrapRow, body1.WrapRow)
+	}
+	if bottomBorder.WrapRow != body2.WrapRow {
+		t.Errorf("bottom border WrapRow=%d, want body2's WrapRow=%d", bottomBorder.WrapRow, body2.WrapRow)
+	}
+	if trailing.WrapRow != 4 {
+		t.Errorf("trailing text row WrapRow=%d, want 4 (its own wrap segment)", trailing.WrapRow)
+	}
+	if body1.WrapRow == body2.WrapRow {
+		t.Errorf("body1 and body2 must have distinct WrapRow values, both are %d", body1.WrapRow)
+	}
+}

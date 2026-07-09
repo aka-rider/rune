@@ -33,6 +33,9 @@ func ExpandImageRows(ds DisplaySnapshot, dimsFor func(imagePath string) ImageDim
 			if dims.Rows > 1 {
 				expanded = true
 
+				// anchor is a full struct copy of l, so anchor.WrapRow already
+				// carries the source row's true wrap-space index — only the
+				// image-reservation fields below are overwritten.
 				anchor := l
 				anchor.ImagePath = path
 				anchor.ImageRowIndex = 0
@@ -44,7 +47,7 @@ func ExpandImageRows(ds DisplaySnapshot, dimsFor func(imagePath string) ImageDim
 					newLines = append(newLines, DisplayLine{
 						Spans:         nil,
 						ModelLine:     l.ModelLine,
-						WrapIndex:     l.WrapIndex + r,
+						WrapRow:       l.WrapRow,
 						ImagePath:     path,
 						ImageRowIndex: r,
 						ImageRowCount: dims.Rows,
