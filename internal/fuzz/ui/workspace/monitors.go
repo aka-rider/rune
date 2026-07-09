@@ -19,7 +19,7 @@ import (
 // The former undoRedoMonitor (DL3) and extNoClobberMonitor were hand-maintained
 // shadow state machines that re-derived production semantics and broke on N>1
 // sequences. They are replaced by store-derived / driver-authoritative checks:
-// DL3 is subsumed by SHADOW (buffer vs journal mirror via ActiveEdits, which
+// DL3 is subsumed by SHADOW (buffer vs journal mirror via EditsInRange, which
 // already honors the undo head), and EXT-NOCLOBBER is checked in the driver
 // directly against rs.externalWrites (the set the driver itself owns).
 func NewMonitors() []invariant.Monitor {

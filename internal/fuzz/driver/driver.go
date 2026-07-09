@@ -64,6 +64,11 @@ type runState struct {
 	// buffer that, unlike a single global replay-from-empty, correctly handles a
 	// non-empty loaded baseline and multiple documents.
 	baselines map[int64]string
+	// mirrorCache caches mirrorFor's incremental reconstruction per docID —
+	// see mirrorCacheEntry (driver_mirror.go) for the caching invariant.
+	// Lazily initialized by setMirrorCache so the 5 runState{...} literals in
+	// this package don't all need touching.
+	mirrorCache map[int64]mirrorCacheEntry
 	// externalWrites: set of paths for which RunHuman called mem.WriteFile but the
 	// workspace has not yet reconciled the conflict. drainMsg checks EXT-NOCLOBBER
 	// directly against this set (the driver authoritatively owns it): a FileSavedMsg

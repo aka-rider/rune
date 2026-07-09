@@ -120,9 +120,9 @@ func checkSaveVerbatim(rs *runState, msg tea.Msg, snap snapshot.Snapshot) *invar
 // slipping in on load (§1.4.5).
 //
 // Gated on loaded.Result.Sync.Kind == docstate.SyncClean, NOT on
-// rs.store.ActiveEdits(docID) being empty (the original WP2 gate): the two
-// are NOT equivalent. ActiveEdits(docID) counts edits since THIS load —
-// always zero for a just-applied load, regardless of history. But Load
+// rs.store.CurrentSeq(docID) being 0 / no active edits since this load (the
+// original WP2 gate): the two are NOT equivalent. Active edits since THIS
+// load are always zero for a just-applied load, regardless of history. But Load
 // returns Recovered (the journal-reconstructed content, §1.4.3) which
 // legitimately differs from DiskContent whenever the journal's current
 // position is behind what's on disk — e.g. type → save (writes disk) → undo

@@ -314,9 +314,11 @@ func (s *Store) MoveUndoPos(docID, pos int64) error {
 // readEditBatches runs query (a "SELECT edits FROM events WHERE ... ORDER BY
 // seq ASC"-shaped query over the events table) and unmarshals each row's
 // edits JSON into a []buffer.AppliedEdit batch, in row order. The shared
-// body behind AllEdits, RecoverDocument's forward-replay gather, and
-// ActiveEdits — each independently ran this same Query/Scan/Unmarshal loop
-// before this chokepoint, with only the WHERE clause differing.
+// body behind AllEdits and RecoverDocument's forward-replay gather — each
+// independently ran this same Query/Scan/Unmarshal loop before this
+// chokepoint, with only the WHERE clause differing. (EditsInRange needs each
+// row's seq too, so it runs its own Query/Scan/Unmarshal loop instead of
+// this one.)
 func (s *Store) readEditBatches(query string, args ...any) ([][]buffer.AppliedEdit, error) {
 	rows, err := s.perm.Query(query, args...)
 	if err != nil {

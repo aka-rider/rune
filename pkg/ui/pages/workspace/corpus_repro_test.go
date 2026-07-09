@@ -5,16 +5,31 @@
 // The corpus was rejected by the fuzzer with:
 //   "hung or terminated unexpectedly: exit status 2"
 //
-// Root cause: checkV4Properties (driver_v4_properties.go) calls
-// store.Content(docID) → RecoverDocument(docID) on every step for
-// the first 64 steps, then every 8th step. RecoverDocument replays
-// all journal edits from SQLite — O(n) per call. With n character
-// edits, total work is O(1+2+3+...+n) = O(n²).
+// The original theory — checkV4Properties's sampled store.Content(docID) →
+// RecoverDocument(docID) call replays the whole journal from scratch each
+// time, making the check O(n²) over n journal entries — does not hold:
+// RecoverDocument is snapshot-anchored (docstate/snapshot.go's recoverAt)
+// and, under the fuzz build's flushDelay=0 autosave cadence, a fresh
+// snapshot lands after nearly every keystroke, keeping each call's replay
+// window (and cost) flat regardless of journal length. A CPU profile of
+// this test showed pkg/docstate + pkg/editor/buffer + sqlite/zstd/json
+// combined account for well under 1% of total CPU — the measured wall time
+// is dominated by call-count × fixed per-call overhead (cgo/SQLite/
+// goroutine churn: every keystroke drives ~5 separate synchronous round
+// trips), amplified under fuzzer-worker contention.
 //
-// The corpus triggers this because it has 80 events, many of which
-// insert characters (a-z, punctuation, markdown metachars, emoji),
-// creating ~50+ journal entries. The quadratic reconstruction makes
-// driver.Run take ~670ms, approaching the fuzzer's per-exec timeout.
+// Chasing that call-count hazard found the real quadratic (in practice
+// cubic) risk: mirrorFor (internal/fuzz/driver/driver_mirror.go), the
+// SHADOW-invariant's independent buffer reconstruction, ran unconditionally
+// on every settled message with no snapshot anchor at all, replaying the
+// full edit history from scratch each call. Negligible at this corpus's
+// size (~50 journal entries) but unbounded for a larger mutated corpus,
+// since the fuzzer's mutator has no corpus-size cap. Fixed with an
+// incremental cache (see mirrorCacheEntry) that only ever replays the delta
+// since the last confirmed-immutable journal position.
+//
+// The corpus itself has 80 events, many of which insert characters (a-z,
+// punctuation, markdown metachars, emoji), creating ~50+ journal entries.
 //
 // Events: navigation sweep (0-7), mutated keys (8-16: TrashFile, PgDown,
 // i, ~, emoji, Escape, TabSwitch7), CreateNewFile (17), then a full

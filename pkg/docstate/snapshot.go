@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -185,29 +186,53 @@ func (s *Store) Content(docID int64) (string, error) {
 	return s.RecoverDocument(docID)
 }
 
-// ActiveEdits returns docID's edit batches that are LIVE at THIS SESSION's
-// current undo position — i.e. with seq <= this session's own current_seq,
-// honoring undo/redo (unlike AllEdits, which returns the whole log regardless
-// of the undo head OR session). Ordered by seq. Used by the fuzz mirror to
-// reconstruct the live buffer as loaded-baseline + ReplayForward(ActiveEdits);
-// a snapshot-anchored RecoverDocument cannot serve that because the loaded
-// baseline is never snapshotted at genesis. Session-scoped (v10): each
-// fuzzed Store/workspace pair is its own session, so its shadow mirror
-// reflects only its own edits, never a different session's sharing the
-// same docID.
-func (s *Store) ActiveEdits(docID int64) ([][]buffer.AppliedEdit, error) {
-	var nullableCS sql.NullInt64
-	if err := s.perm.QueryRow(`SELECT current_seq FROM session_documents WHERE session_id=? AND doc_id=?`, s.sessionID, docID).Scan(&nullableCS); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("active edits doc %d: read current_seq: %w", docID, err)
-	}
-	targetSeq := int64(math.MaxInt64)
-	if nullableCS.Valid {
-		targetSeq = nullableCS.Int64
-	}
+// EditRow pairs one journaled edit batch with the seq it was recorded at.
+type EditRow struct {
+	Seq   int64
+	Edits []buffer.AppliedEdit
+}
 
-	result, err := s.readEditBatches(`SELECT edits FROM events WHERE doc_id=? AND session_id=? AND seq <= ? ORDER BY seq ASC`, docID, s.sessionID, targetSeq)
+// EditsInRange returns docID's own edit rows with seq in (fromSeq, toSeq],
+// each tagged with its seq, ordered ascending — the same anchored-window
+// shape recoverAt uses for a snapshot anchor (step 3), generalized to a
+// caller-supplied bound instead of a snapshot's seq, and exposing per-row
+// seq so a caller can identify the CURRENT TAIL row (the one at seq ==
+// toSeq) — the only row AppendEdit's keystroke-coalescing UPDATE can still
+// mutate in place (coalescing only ever targets the doc's current max-seq
+// row) — from every row strictly before it, which stays valid to cache as
+// long as the caller re-verifies CurrentSeq every call and evicts on any
+// decrease: a strictly-older row can still be deleted later by undo-then-
+// edit truncation, but that always requires an earlier, separate settle
+// that lowers CurrentSeq below it first (undo and append never land in the
+// same Update — see the fuzz driver's mirrorFor, the caller this exists
+// for). Session-scoped (v10): each fuzzed Store/workspace pair is its own
+// session, so this only ever sees its own edits, never a different
+// session's sharing the same docID.
+func (s *Store) EditsInRange(docID, fromSeq, toSeq int64) ([]EditRow, error) {
+	rows, err := s.perm.Query(
+		`SELECT seq, edits FROM events WHERE doc_id=? AND session_id=? AND seq > ? AND seq <= ? ORDER BY seq ASC`,
+		docID, s.sessionID, fromSeq, toSeq,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("active edits doc %d: %w", docID, err)
+		return nil, fmt.Errorf("edits in range doc %d: %w", docID, err)
+	}
+	defer rows.Close()
+
+	var result []EditRow
+	for rows.Next() {
+		var seq int64
+		var editsJSON string
+		if err := rows.Scan(&seq, &editsJSON); err != nil {
+			return nil, fmt.Errorf("edits in range doc %d: scan: %w", docID, err)
+		}
+		var batch []buffer.AppliedEdit
+		if err := json.Unmarshal([]byte(editsJSON), &batch); err != nil {
+			return nil, fmt.Errorf("edits in range doc %d: unmarshal: %w", docID, err)
+		}
+		result = append(result, EditRow{Seq: seq, Edits: batch})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("edits in range doc %d: rows: %w", docID, err)
 	}
 	return result, nil
 }

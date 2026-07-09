@@ -113,8 +113,12 @@ func checkV4Properties(rs *runState, msg tea.Msg, snap snapshot.Snapshot) *invar
 	// against CORRECT new behavior. Checked against Sync(docID) directly
 	// (not IsDirty/DirtyDocs' own internals) — an independent cross-check
 	// that the two exported entry points classify the SAME document
-	// identically.
-	if rs.store != nil && snap.DocID != 0 {
+	// identically. Sampled the same as property (b) above — both bottom out
+	// in the same snapshot-anchored RecoverDocument, so a genuine disagreement
+	// is systematic and still surfaces at the always-checked load/save
+	// boundaries where dirty state actually transitions; this just removes
+	// two redundant unconditional round trips per step.
+	if rs.store != nil && snap.DocID != 0 && (alwaysCheck || rs.steps <= 64 || rs.steps%8 == 0) {
 		if sync, sErr := rs.store.Sync(snap.DocID); sErr == nil {
 			if dirtyMap, dErr := rs.store.DirtyDocs([]int64{snap.DocID}); dErr == nil {
 				groundTruthDirty := sync.Kind == docstate.SyncBufferAhead || sync.Kind == docstate.SyncDiverged
