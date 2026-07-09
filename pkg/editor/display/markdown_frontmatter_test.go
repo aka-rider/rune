@@ -82,6 +82,46 @@ func TestFrontmatterRenderedSpans_CollapsedWithError(t *testing.T) {
 	}
 }
 
+func TestParseFrontmatterYAML_MergeKeyPanicRecovery(t *testing.T) {
+	// yaml.v3 panics on malformed merge keys whose value contains
+	// unhashable slice types. safeYAMLUnmarshal must catch the panic
+	// and return an error instead of crashing (§1.3).
+	lines := []string{"---", "<<:", "? -", "---"}
+	_, err := parseFrontmatterYAML(lines, 3)
+	if err == nil {
+		t.Fatal("expected error for malformed merge key, got nil")
+	}
+	if !strings.Contains(err.Error(), "yaml parse panic") {
+		t.Errorf("expected panic-recovery error, got: %v", err)
+	}
+}
+
+func TestSafeYAMLUnmarshal_Normal(t *testing.T) {
+	var out map[string]any
+	err := safeYAMLUnmarshal([]byte("a: 1\nb: two"), &out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out["a"] != int(1) {
+		t.Errorf("expected a=1, got %v", out["a"])
+	}
+	if out["b"] != "two" {
+		t.Errorf("expected b=two, got %v", out["b"])
+	}
+}
+
+func TestSafeYAMLUnmarshal_PanicRecovery(t *testing.T) {
+	// The malformed merge key input that triggers yaml.v3's internal panic.
+	var out map[string]any
+	err := safeYAMLUnmarshal([]byte("<<:\n? -"), &out)
+	if err == nil {
+		t.Fatal("expected error for panic-inducing YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "yaml parse panic") {
+		t.Errorf("expected panic-recovery error, got: %v", err)
+	}
+}
+
 func TestFrontmatterRenderedSpans_SourceModeIgnoresError(t *testing.T) {
 	block := mdBlock{
 		kind:      TokenFrontmatter,

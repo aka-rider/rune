@@ -31,10 +31,7 @@ func prevRuneOffset(b buffer.Buffer, offset int) int {
 	if offset <= 0 {
 		return 0
 	}
-	start := offset - utf8.UTFMax
-	if start < 0 {
-		start = 0
-	}
+	start := max(offset-utf8.UTFMax, 0)
 	s := b.Slice(start, offset)
 	r, size := utf8.DecodeLastRuneInString(s)
 	if r == utf8.RuneError && size <= 1 {
@@ -187,8 +184,8 @@ func moveRow(ctx command.CommandContext, c cursor.Cursor, delta int, selectMode 
 	if wp.Row < 0 {
 		wp.Row = 0
 		wp.Col = 0
-	} else if ctx.TotalRows != nil {
-		if total := ctx.TotalRows(); total > 0 && wp.Row >= total {
+	} else if ctx.WrapRowCount != nil {
+		if total := ctx.WrapRowCount(); total > 0 && wp.Row >= total {
 			wp.Row = total - 1
 			wp.Col = 999999
 		} else {

@@ -22,10 +22,44 @@ type WrapSnapshot struct {
 	lineToFirstRow []int
 }
 
+// clampLine clamps line into [0, len(lineToFirstRow)-1]. Returns -1 only in
+// the unreachable case of an empty snapshot (a syntax snapshot always has
+// at least one line, even for an empty buffer).
+func (w WrapSnapshot) clampLine(line int) int {
+	if len(w.lineToFirstRow) == 0 {
+		return -1
+	}
+	if line < 0 {
+		return 0
+	}
+	if line >= len(w.lineToFirstRow) {
+		return len(w.lineToFirstRow) - 1
+	}
+	return line
+}
+
+// clampRow clamps row into [0, TotalRows-1]. Returns -1 only in the
+// unreachable case of an empty snapshot (WrapMap.Sync always emits at
+// least one segment per model line, and a buffer always has ≥1 line).
+func (w WrapSnapshot) clampRow(row int) int {
+	if len(w.rowToSegment) == 0 {
+		return -1
+	}
+	if row < 0 {
+		return 0
+	}
+	if row >= len(w.rowToSegment) {
+		return len(w.rowToSegment) - 1
+	}
+	return row
+}
+
 func (w WrapSnapshot) SyntaxToWrap(sp coords.SyntaxPoint) coords.WrapPoint {
-	if sp.Line < 0 || sp.Line >= len(w.lineToFirstRow) {
+	line := w.clampLine(sp.Line)
+	if line < 0 {
 		return coords.WrapPoint{Row: 0, Col: 0}
 	}
+	sp.Line = line
 	firstRow := w.lineToFirstRow[sp.Line]
 
 	// Track the last segment of this line for fallback clamping
@@ -70,30 +104,26 @@ func (w WrapSnapshot) SyntaxToWrap(sp coords.SyntaxPoint) coords.WrapPoint {
 }
 
 func (w WrapSnapshot) WrapToSyntax(wp coords.WrapPoint) coords.SyntaxPoint {
-	if wp.Row < 0 || wp.Row >= len(w.rowToSegment) {
+	row := w.clampRow(wp.Row)
+	if row < 0 {
 		return coords.SyntaxPoint{Line: 0, Col: 0}
 	}
-	seg := w.Segments[w.rowToSegment[wp.Row]]
+	seg := w.Segments[w.rowToSegment[row]]
 
 	// Clamp column to segment content length
 	segLen := 0
 	for _, span := range seg.Spans {
 		segLen += len(span.Text)
 	}
-	col := wp.Col
-	if col > segLen {
-		col = segLen
-	}
-	if col < 0 {
-		col = 0
-	}
+	col := max(min(wp.Col, segLen), 0)
 
 	return coords.SyntaxPoint{Line: seg.ModelLine, Col: seg.StartCol + col}
 }
 
 // SegmentLen returns the byte length of the content in a given display row.
 func (w WrapSnapshot) SegmentLen(row int) int {
-	if row < 0 || row >= len(w.rowToSegment) {
+	row = w.clampRow(row)
+	if row < 0 {
 		return 0
 	}
 	seg := w.Segments[w.rowToSegment[row]]
@@ -107,7 +137,8 @@ func (w WrapSnapshot) SegmentLen(row int) int {
 // VisualCol returns the visual column width (cell count) for a byte column
 // within a given display row. Accounts for double-width CJK and tabs.
 func (w WrapSnapshot) VisualCol(row, byteCol int) int {
-	if row < 0 || row >= len(w.rowToSegment) {
+	row = w.clampRow(row)
+	if row < 0 {
 		return 0
 	}
 	seg := w.Segments[w.rowToSegment[row]]
@@ -126,7 +157,8 @@ func (w WrapSnapshot) VisualCol(row, byteCol int) int {
 // corresponds to a target visual column width. If the visual column exceeds
 // the row content, returns the segment's byte length (end of row).
 func (w WrapSnapshot) ByteColFromVisual(row, visualCol int) int {
-	if row < 0 || row >= len(w.rowToSegment) {
+	row = w.clampRow(row)
+	if row < 0 {
 		return 0
 	}
 	seg := w.Segments[w.rowToSegment[row]]
@@ -164,7 +196,8 @@ func (w WrapSnapshot) ModelLineToFirstRow(line int) int {
 }
 
 func (w WrapSnapshot) RowToModelLine(row int) int {
-	if row < 0 || row >= len(w.rowToSegment) {
+	row = w.clampRow(row)
+	if row < 0 {
 		return 0
 	}
 	return w.Segments[w.rowToSegment[row]].ModelLine

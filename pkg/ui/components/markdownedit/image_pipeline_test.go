@@ -103,6 +103,46 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 	}
 }
 
+// TestCursorDownStopsAtLastLineWithExpandedImage locks in the fix for the
+// wrap-space/display-space TotalRows mismatch: once a multi-row image has
+// expanded the display snapshot past the wrap snapshot's row count
+// (m.snapshot.TotalRows > m.wrapSnap.TotalRows), pressing Down at the last
+// model line must hold the cursor there, not wrap it around to line 0.
+func TestCursorDownStopsAtLastLineWithExpandedImage(t *testing.T) {
+	m := newImagePipelineModel(t, terminal.TermCaps{})
+
+	const imgRows = 5
+	const textLines = 4 // B, C, D, E
+	const lastLine = textLines
+	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
+	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
+
+	down := tea.KeyPressMsg{Code: tea.KeyDown}
+
+	// Move off the image line and down to the last model line (E). The first
+	// Down expands the image (wantExpanded rows), confirming the snapshot is
+	// in the mismatched state this test targets.
+	for i := 0; i < textLines; i++ {
+		m, _ = m.Update(down)
+	}
+	wantExpanded := imgRows + textLines
+	if got := m.Model.Snapshot().TotalRows; got != wantExpanded {
+		t.Fatalf("setup: TotalRows=%d, want %d (expanded)", got, wantExpanded)
+	}
+	if line := m.Model.OffsetToLineCol(m.Model.CursorOffset()).Line; line != lastLine {
+		t.Fatalf("setup: cursor on line %d, want %d (last line)", line, lastLine)
+	}
+
+	// Further Down presses must hold the cursor at the last line, never
+	// wrapping it back to line 0.
+	for i := 0; i < 3; i++ {
+		m, _ = m.Update(down)
+		if line := m.Model.OffsetToLineCol(m.Model.CursorOffset()).Line; line != lastLine {
+			t.Fatalf("down #%d: cursor jumped to line %d, want %d (last line)", i+1, line, lastLine)
+		}
+	}
+}
+
 // TestPendingImageReservesNoRows locks in the secondary fix for the
 // black/empty-area symptom: an image that has not yet transmitted its pixels to
 // the terminal must reserve only a single row, so the editor never emits blank

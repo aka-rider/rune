@@ -110,7 +110,10 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		contentHeight := m.contentHeight()
 		topRow := m.viewport.TopRow
 		scrollCol := m.viewport.ScrollCol
-		totalRows := m.snapshot.TotalRows
+		// wrapRowCount is wrap-space (m.wrapSnap), matching SyntaxToWrap /
+		// WrapToSyntax / WrapByteCol below — NOT m.snapshot.TotalRows, which is
+		// display-space and can be larger once table/image row expansion runs.
+		wrapRowCount := m.wrapSnap.TotalRows
 		res := m.registry.Execute(resResult.Command, command.CommandContext{
 			Buffer:         m.buf,
 			Cursors:        m.cursors,
@@ -126,7 +129,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 			ViewportBounds: func() (int, int) { return topRow, topRow + contentHeight },
 			ScrollCol:      func() int { return scrollCol },
 			ViewportHeight: func() int { return contentHeight },
-			TotalRows:      func() int { return totalRows },
+			WrapRowCount:   func() int { return wrapRowCount },
 			ReadOnly:       m.readOnly,
 		})
 		if res.Cmd != nil {

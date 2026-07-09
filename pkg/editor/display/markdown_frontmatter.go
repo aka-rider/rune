@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -118,6 +119,20 @@ func computeLineOffsets(lines []string) []int {
 	return offsets
 }
 
+// safeYAMLUnmarshal is the single chokepoint for all YAML parsing in the
+// display package. yaml.v3 can panic on certain malformed inputs (e.g. merge
+// keys whose value contains unhashable slice types). The recover catches
+// that panic and returns it as a proper error so the editor never crashes
+// (§1.3).
+func safeYAMLUnmarshal(data []byte, target any) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("yaml parse panic: %v", v)
+		}
+	}()
+	return yaml.Unmarshal(data, target)
+}
+
 // parseFrontmatterYAML parses the YAML body between the --- delimiters.
 // lines is the full document line slice; fmEnd is the index returned by detectFrontmatter.
 // Returns (nil, nil) for an empty frontmatter body.
@@ -130,7 +145,7 @@ func parseFrontmatterYAML(lines []string, fmEnd int) (map[string]any, error) {
 		return nil, nil
 	}
 	var out map[string]any
-	if err := yaml.Unmarshal([]byte(body), &out); err != nil {
+	if err := safeYAMLUnmarshal([]byte(body), &out); err != nil {
 		return nil, err
 	}
 	return out, nil

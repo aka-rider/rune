@@ -39,7 +39,7 @@ type CommandContext struct {
 	ScrollCol      func() int
 	ViewportHeight func() int
 	SoftWrap       func() bool
-	TotalRows      func() int
+	WrapRowCount   func() int
 }
 
 type OperationKind int
