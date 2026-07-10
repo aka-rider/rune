@@ -10,6 +10,7 @@ package workspace
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -20,11 +21,38 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
+	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 	"rune/pkg/vfs"
 )
+
+// TestMain zeroes every real-time debounce/dismiss timer reachable from this
+// package's tests, for the whole test binary run:
+//
+//   - flushDelay (workspace_timers.go) is the production autosave debounce.
+//     drainCmd (workspace_saverace_test.go) recursively executes every
+//     tea.Cmd a Model.Update produces, including scheduleFlush's real
+//     time.Sleep(flushDelay) timer (workspace_journal.go) — at 2s per flush
+//     and dozens of call sites across this package's tests, that serially
+//     stalled the suite for minutes. The debounce-staleness check
+//     (msg.gen == m.flushGen, workspace_update.go) is a generation counter,
+//     not wall-clock-based, so flushDelay=0 is behaviorally identical under
+//     synchronous draining — just instant instead of slow. This mirrors the
+//     //go:build fuzzing variant of flushDelay (workspace_timers_fuzz.go),
+//     which already sets it to 0 for the session fuzzer.
+//   - footer's own errorDismissDelay/confirmDelay (ShowErrorMsg/
+//     ShowStatusMsg's auto-dismiss and the guard confirm-key timer) have the
+//     identical shape one package down: any drainCmd that recurses into a
+//     footer.Update-produced Cmd along a guard/error/status path pays the
+//     same real wall-clock cost. footer.DisableTimersForTesting is the
+//     exported cross-package seam for it (footer_testing.go).
+func TestMain(m *testing.M) {
+	flushDelay = 0
+	footer.DisableTimersForTesting()
+	os.Exit(m.Run())
+}
 
 // newTestWorkspace creates a sized workspace for testing with a file pre-loaded.
 func newTestWorkspace(t *testing.T) Model {

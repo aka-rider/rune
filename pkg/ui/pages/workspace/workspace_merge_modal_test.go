@@ -36,12 +36,18 @@ func diverge(t *testing.T, m Model, docID int64, oldContent, newContent string) 
 }
 
 // settleOneHop executes cmd's own leaves (a Fix A/B fresh-disk-read Cmd is a
-// fast, single fsys.ReadFile — never a real sleep) and feeds each resulting
-// message back into m.Update ONCE, discarding whatever second-level Cmd that
-// produces. This deliberately does NOT recurse into a full settle(): a
-// successful merge/discard/undo-resync journals a "main" edit, which schedules
-// a REAL 2-second flushDelay timer Cmd (workspace_timers.go) — recursing into
-// that would make every test using this helper sleep for real.
+// fast, single fsys.ReadFile) and feeds each resulting message back into
+// m.Update ONCE, discarding whatever second-level Cmd that produces. Unlike
+// drainCmd, this deliberately does NOT recurse into a full settle(): some
+// callers assert on the state exactly one hop past the async read/probe
+// landing — e.g. TestUndoPastEnter_ReRaisesConflictOnSave and
+// TestUndoPastEnter_DiskEqualsTheirs_NeverSilentOverwrite assert on
+// m.footer.InGuard()/GuardKind() and m.activeSave.InFlight right after that
+// single hop, before any further round trip (such as the autosave flush a
+// successful journal write schedules) has a chance to run. Callers with no
+// such intermediate-state dependency should use drainCmd instead — this
+// helper exists only for the ones that genuinely need to inspect that
+// one-hop-settled state.
 func settleOneHop(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	for _, msg := range execCmds(cmd) {
@@ -51,13 +57,16 @@ func settleOneHop(t *testing.T, m Model, cmd tea.Cmd) Model {
 }
 
 // runMergeAction drives a DataLossGuardResponseMsg for the conflict guard
-// through Fix A's two-phase fresh-disk-read (press → mergeReadCmd →
-// mergeReadMsg → apply) — exactly the async hop the real Bubble Tea runtime
-// performs — via settleOneHop.
+// through Fix A's two-phase fresh-disk-read (press → resolveProbeCmd →
+// resolveProbeMsg → apply) — exactly the async round trip the real Bubble
+// Tea runtime performs — via drainCmd. None of runMergeAction's callers
+// assert on state before a successful resolution's autosave flush lands, so
+// (unlike settleOneHop's remaining callers) there is no reason to stop short
+// of a full settle here.
 func runMergeAction(t *testing.T, m Model, response footer.DataLossGuardResponse) Model {
 	t.Helper()
 	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: response})
-	return settleOneHop(t, m, cmd)
+	return drainCmd(m, cmd)
 }
 
 // enterRealConflict wires up a workspace with a real, file-backed conflict and

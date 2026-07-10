@@ -23,9 +23,14 @@ import (
 // switchToPath drives a real tab-switch through requestOpenPath (the same
 // entry point opentabs.TabSelectedMsg and the keyboard tab-switch use) and
 // settles the resulting load with settleOneHop — NOT the fully-recursive
-// drainCmd: disableDictationForTransition's footer.ShowStatusMsg notice
-// schedules a real multi-second auto-dismiss timer Cmd, and recursing into it
-// would sleep for real (mirrors settleOneHop's own doc comment).
+// drainCmd: a full drainCmd would also recurse into whatever a landed
+// dirChangedMsg/fileChangedMsg re-arms (startWatch's real fsnotify watcher,
+// workspace_watch.go), which blocks forever with no timeout of its own
+// (mirrors execFastCmds' own doc comment on why it exists) — and, more
+// immediately, into disableDictationForTransition's footer.ShowStatusMsg
+// auto-dismiss round trip. Stopping at one hop sidesteps both regardless of
+// which one is armed in a given test's setup; none of this helper's callers
+// need to observe state past that single hop anyway.
 func switchToPath(t *testing.T, m Model, docID int64, path string) Model {
 	t.Helper()
 	m, cmd := m.requestOpenPath(docID, path)
