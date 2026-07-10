@@ -221,7 +221,7 @@ func TestMirrorFor_DocIDReuseOnDiscardClose(t *testing.T) {
 
 	st := styles.Default()
 	caps := terminal.TermCaps{}
-	model := pgworkspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
+	model := pgworkspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem).WithWatcher(pgworkspace.NoopWatcher{})
 
 	rs := &runState{store: store, monitors: session.NewMonitors(), baselines: map[int64]string{}, mem: mem}
 

@@ -255,7 +255,7 @@ func FuzzSession(f *testing.F) {
 		st := styles.Default()
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.Run(m, events, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
@@ -314,7 +314,7 @@ func FuzzSessionWithFile(f *testing.F) {
 		st := styles.Default()
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.Run(m, events, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
@@ -384,7 +384,7 @@ func FuzzLoadReorder(f *testing.F) {
 		order := data[oi:]
 
 		st := styles.Default()
-		m := workspace.New(keys, st, reg, res, terminal.TermCaps{}, "/fuzz", nil).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, terminal.TermCaps{}, "/fuzz", nil).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.RunReorder(m, settle, opens, supersede, order, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
@@ -433,7 +433,7 @@ func FuzzSaveRace(f *testing.F) {
 		st := styles.Default()
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{testFile}).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.RunReorderSaves(m, events, store, mem, []string{testFile}, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)
@@ -473,7 +473,7 @@ func FuzzDelayedViewResult(f *testing.F) {
 		st := styles.Default()
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.RunDelayedViewResult(m, testFile, useMerge, store, mem, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)

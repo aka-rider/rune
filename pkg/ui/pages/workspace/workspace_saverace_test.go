@@ -27,23 +27,6 @@ func drainCmd(m Model, cmd tea.Cmd) Model {
 	return m
 }
 
-// drainFastCmd is drainCmd built on execFastCmds instead of execCmds: for a
-// round trip whose Cmd batch mixes fast, deterministic leaves with the real
-// directory watcher Cmd (dirChangedMsg/fileChangedMsg both re-arm startWatch
-// alongside a probe) — the watcher blocks indefinitely on a live fsnotify
-// channel, so draining it with the plain recursive execCmds hangs forever.
-func drainFastCmd(m Model, cmd tea.Cmd) Model {
-	pending := execFastCmds(cmd)
-	for len(pending) > 0 {
-		msg := pending[0]
-		pending = pending[1:]
-		var next tea.Cmd
-		m, next = m.Update(msg)
-		pending = append(pending, execFastCmds(next)...)
-	}
-	return m
-}
-
 // clickTabRow computes the (x,y) screen coordinates opentabs' handleMouseClick
 // expects for the tab at idx (0-based), mirroring workspace_view.go's
 // recalcLayout/paneAtPoint layout math, and self-verifies the point actually

@@ -3,16 +3,10 @@
 package workspace
 
 import (
-	"context"
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
 )
-
-// watchDirCmd is a no-op under the fuzzing build tag. fsnotify events are
-// injected deterministically via FuzzDirChangedMsg / FuzzFileWatchReadErrorMsg
-// so the corpus is shrinkable and reproducible.
-func watchDirCmd(ctx context.Context, dir string) tea.Cmd { return nil }
 
 // FuzzDirChangedMsg returns a tea.Msg equivalent to dirChangedMsg{}, the
 // internal message produced when fsnotify detects a dir change. The driver

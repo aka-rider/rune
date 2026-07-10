@@ -118,7 +118,7 @@ func TestFileChangedMsg_SetsHintForOpenFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, cmd := m.Update(fileChangedMsg{path: path})
-	m = drainFastCmd(m, cmd)
+	m = drainCmd(m, cmd)
 	if !m.diskChangedHint {
 		t.Fatal("BUG1: fileChangedMsg for the open file must set diskChangedHint")
 	}
@@ -145,7 +145,7 @@ func TestFileChangedMsg_IgnoresOtherFileAndOwnSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, cmd := m.Update(fileChangedMsg{path: other})
-	m = drainFastCmd(m, cmd)
+	m = drainCmd(m, cmd)
 	if m.diskChangedHint {
 		t.Fatal("BUG1: a Write to a different file must not set the hint")
 	}
@@ -156,7 +156,7 @@ func TestFileChangedMsg_IgnoresOtherFileAndOwnSave(t *testing.T) {
 	// every field, not just InFlight.
 	m.activeSave = SaveIdentity{RequestID: "x", InFlight: true, Path: path, DocID: m.view.DocID()}
 	m, cmd = m.Update(fileChangedMsg{path: path})
-	m = drainFastCmd(m, cmd)
+	m = drainCmd(m, cmd)
 	if m.diskChangedHint {
 		t.Fatal("BUG1: a Write during our own in-flight save must not set the hint")
 	}
@@ -190,7 +190,7 @@ func TestDirChangedMsg_AtomicSaveDivergence_SetsPersistentHint(t *testing.T) {
 	}
 
 	m, cmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, cmd)
+	m = drainCmd(m, cmd)
 
 	if !m.diskChangedHint {
 		t.Fatal("BUG1: dirChangedMsg must detect the atomic-save divergence and set diskChangedHint")
@@ -213,7 +213,7 @@ func TestDirChangedMsg_NoDivergence_NoHint(t *testing.T) {
 	m = loadFile(m, path, "stable")
 
 	m, cmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, cmd)
+	m = drainCmd(m, cmd)
 
 	if m.diskChangedHint {
 		t.Fatal("dirChangedMsg with no real divergence must not set diskChangedHint")

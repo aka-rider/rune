@@ -108,7 +108,7 @@ func TestCorpus3448759c28354ae2(t *testing.T) {
 	st := styles.Default()
 	caps := terminal.TermCaps{}
 
-	m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem)
+	m := workspace.New(keys, st, reg, res, caps, "/fuzz", nil).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 	start := time.Now()
 	if violation, _, _ := driver.Run(m, events, store, mem, 80, 24); violation != nil {

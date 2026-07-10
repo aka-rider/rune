@@ -16,6 +16,9 @@ import (
 func (m Model) teardownAndQuit() (Model, tea.Cmd) {
 	m.pendingDataLoss = pendingDataLoss{}
 	m.dict = m.dict.Disable()
+	if m.cancelWatch != nil {
+		m.cancelWatch() // release the live directory watch before quitting
+	}
 	if m.store != nil {
 		_ = m.store.Close() // fire-and-forget: best-effort flush before quit
 	}

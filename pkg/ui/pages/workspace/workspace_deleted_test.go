@@ -92,7 +92,7 @@ func TestDeletedGuard_DirChangedRaisesGuard(t *testing.T) {
 	}
 
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDeleted {
 		t.Fatalf("GuardDeleted not raised: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
@@ -128,7 +128,7 @@ func TestDeletedGuard_SaveRecreatesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -175,7 +175,7 @@ func TestDeletedGuard_SaveRecreatesParentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -216,7 +216,7 @@ func TestDeletedGuard_SaveMkdirFailureReArmsGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -271,7 +271,7 @@ func TestDeletedGuard_DiscardPurgesDocAndClosesTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -310,7 +310,7 @@ func TestDeletedGuard_EscThenNormalSaveReRaisesGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainFastCmd(m, dcCmd)
+	m = drainCmd(m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}

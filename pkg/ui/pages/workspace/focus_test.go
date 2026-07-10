@@ -67,7 +67,7 @@ func TestStartupFocusReachesFiletree(t *testing.T) {
 	st := styles.Default()
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
-	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil).WithWatcher(NoopWatcher{})
 	if m.focus != paneTree {
 		t.Fatalf("expected initial focus paneTree, got %v", m.focus)
 	}

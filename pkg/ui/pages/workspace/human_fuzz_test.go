@@ -248,7 +248,7 @@ func FuzzHumanSession(f *testing.F) {
 		st := styles.Default()
 		caps := terminal.TermCaps{}
 
-		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{"/fuzz/a.md"}).WithFS(mem)
+		m := workspace.New(keys, st, reg, res, caps, "/fuzz", []string{"/fuzz/a.md"}).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		if violation, _, _ := driver.RunHuman(m, events, store, mem, humanPaths, 80, 24); violation != nil {
 			t.Errorf("invariant %s: %s", violation.InvariantID, violation.Message)

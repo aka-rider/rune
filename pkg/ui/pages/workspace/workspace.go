@@ -108,6 +108,13 @@ type Model struct {
 	watchedDir  string
 	cancelWatch context.CancelFunc
 
+	// dirWatcher is the directory-watch shim used by startWatch. A nil
+	// dirWatcher means the production default (FSNotifyWatcher); every test
+	// constructor in this package and the session fuzzer inject NoopWatcher
+	// via WithWatcher so no goroutine or OS watch descriptor is ever opened
+	// outside production. Access it through m.watcher(), never the raw field.
+	dirWatcher Watcher
+
 	// File ownership (D12). view is the single settled source of truth for which
 	// document is displayed (kind + path + docID) — see docview.go. The
 	// editor buffer always corresponds to it; it changes only at a settled
@@ -335,6 +342,24 @@ func (m Model) fsys() vfs.FS {
 		return vfs.Disk{}
 	}
 	return m.fs
+}
+
+// WithWatcher injects the directory-watcher implementation used by
+// startWatch, mirroring WithFS. A nil dirWatcher (the default) resolves to
+// the real FSNotifyWatcher; test constructors and the session fuzzer inject
+// NoopWatcher instead.
+func (m Model) WithWatcher(w Watcher) Model {
+	m.dirWatcher = w
+	return m
+}
+
+// watcher returns the active directory watcher, defaulting to the real
+// fsnotify-backed implementation.
+func (m Model) watcher() Watcher {
+	if m.dirWatcher == nil {
+		return FSNotifyWatcher{}
+	}
+	return m.dirWatcher
 }
 
 // Init is called once when the workspace page becomes active.

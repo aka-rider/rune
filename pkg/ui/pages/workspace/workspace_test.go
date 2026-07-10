@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -67,7 +66,7 @@ func newTestWorkspace(t *testing.T) Model {
 	reg := builder.Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil).WithWatcher(NoopWatcher{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
 }
@@ -93,7 +92,7 @@ func newScrollWorkspace(t *testing.T) Model {
 	if err != nil {
 		t.Fatalf("new resolver: %v", err)
 	}
-	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil).WithWatcher(NoopWatcher{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
 }
@@ -111,7 +110,7 @@ func newWorkspaceWithFiles(t *testing.T, files ...string) Model {
 	}
 	reg := builder.Build()
 	res, _ := keybind.NewResolver(nil)
-	m := New(keys, st, reg, res, terminal.TermCaps{}, "", files)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", files).WithWatcher(NoopWatcher{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	return m
 }
@@ -205,7 +204,7 @@ func resizeWorkspace(t *testing.T, w, h int) Model {
 	reg := command.NewBuilder().Build()
 	res, _ := keybind.NewResolver(nil)
 
-	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil)
+	m := New(keys, st, reg, res, terminal.TermCaps{}, "", nil).WithWatcher(NoopWatcher{})
 	m, _ = m.Update(tea.WindowSizeMsg{Width: w, Height: h})
 	return m
 }
@@ -228,41 +227,6 @@ func execCmds(cmd tea.Cmd) []tea.Msg {
 		return msgs
 	}
 	return []tea.Msg{msg}
-}
-
-// execFastCmds is execCmds for a Cmd batch that mixes fast, deterministic
-// leaves (a probeDocCmd's single fsys.Stat/ReadFile) with the real directory
-// watcher Cmd (workspace_watch.go's watchDirCmd) — dirChangedMsg's and
-// fileChangedMsg's handlers both re-arm startWatch alongside issuing a probe.
-// The real watcher blocks indefinitely on a live fsnotify channel with no
-// timeout of its own; execCmds (or drainCmd, which calls it) would hang a
-// test forever waiting for a filesystem event that never comes. Each leaf
-// gets a short bounded window; a leaf that doesn't return in time (the
-// watcher) is silently dropped rather than awaited — its goroutine is
-// abandoned, which is fine in a short-lived test process.
-func execFastCmds(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	type result struct{ msg tea.Msg }
-	ch := make(chan result, 1)
-	go func() { ch <- result{cmd()} }()
-	select {
-	case r := <-ch:
-		if r.msg == nil {
-			return nil
-		}
-		if batch, ok := r.msg.(tea.BatchMsg); ok {
-			var msgs []tea.Msg
-			for _, c := range batch {
-				msgs = append(msgs, execFastCmds(c)...)
-			}
-			return msgs
-		}
-		return []tea.Msg{r.msg}
-	case <-time.After(200 * time.Millisecond):
-		return nil // leaf never returned (the real fsnotify watcher) — drop it
-	}
 }
 
 var errTest = errors.New("test error")

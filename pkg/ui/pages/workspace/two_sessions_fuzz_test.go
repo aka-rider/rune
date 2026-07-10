@@ -200,8 +200,8 @@ func FuzzTwoSessionsSharedDoc(f *testing.F) {
 			t.Skip("degraded store — not the property under test")
 		}
 
-		mA := workspace.New(keys, st, reg, res, caps, dir, []string{path}).WithFS(mem)
-		mB := workspace.New(keys, st, reg, res, caps, dir, []string{path}).WithFS(mem)
+		mA := workspace.New(keys, st, reg, res, caps, dir, []string{path}).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
+		mB := workspace.New(keys, st, reg, res, caps, dir, []string{path}).WithFS(mem).WithWatcher(workspace.NoopWatcher{})
 
 		var cmd tea.Cmd
 		mA, cmd = mA.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

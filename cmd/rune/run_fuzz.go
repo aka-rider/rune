@@ -58,7 +58,7 @@ func run(_ ui.Model) error {
 	}
 	caps := terminal.TermCaps{}
 
-	m := workspace.New(keys, st, reg, res, caps, tmpDir, nil)
+	m := workspace.New(keys, st, reg, res, caps, tmpDir, nil).WithWatcher(workspace.NoopWatcher{})
 
 	const fuzzW, fuzzH = 80, 24
 	// mem=nil: this runner drives a real tmpDir through vfs.Disk (WithFS

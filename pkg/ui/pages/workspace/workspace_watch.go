@@ -1,5 +1,3 @@
-//go:build !fuzzing
-
 package workspace
 
 import (
@@ -10,6 +8,38 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// Watcher abstracts directory-change notification so tests and the session
+// fuzzer can supply a deterministic double instead of a real fsnotify watcher
+// blocking on a live OS channel with no timeout of its own. Mirrors vfs.FS:
+// a small role interface, a Disk-analogous real implementation
+// (FSNotifyWatcher), and a production-defined fake (NoopWatcher) shared by
+// tests and the fuzzer. Model stores it as a nil-defaulting field, injected
+// via WithWatcher and read only through watcher().
+type Watcher interface {
+	// WatchDir returns a tea.Cmd that watches dir for changes, yielding
+	// dirChangedMsg or fileChangedMsg on a qualifying fsnotify event, or nil
+	// once ctx is canceled.
+	WatchDir(ctx context.Context, dir string) tea.Cmd
+}
+
+// FSNotifyWatcher is the production Watcher, backed by a real fsnotify
+// watcher.
+type FSNotifyWatcher struct{}
+
+// NoopWatcher is a Watcher that never watches anything: WatchDir returns a
+// nil tea.Cmd, so startWatch's re-arm never spawns a goroutine or opens an OS
+// watch descriptor. Injected by every test constructor in this package and by
+// the session fuzzer — neither depends on a real fsnotify event ever
+// arriving, since the watch-triggered handlers are exercised by delivering
+// dirChangedMsg/fileChangedMsg directly. This makes a leaked watcher
+// goroutine structurally impossible in those paths, rather than merely
+// bounded-and-abandoned (see the formerly-TODO'd execFastCmds workaround,
+// now removed).
+type NoopWatcher struct{}
+
+// WatchDir implements Watcher.
+func (NoopWatcher) WatchDir(ctx context.Context, dir string) tea.Cmd { return nil }
+
 // isStructuralEvent reports whether ev is a Create/Remove/Rename for writePath
 // specifically — not just any structural event in the watched directory. An
 // unrelated file's churn (another app's temp file, a git operation, a new note)
@@ -17,7 +47,7 @@ import (
 // Our own atomic save still classifies structural correctly regardless: its
 // first observed event (the temp file's Create, chronologically before the
 // rename) already latches `structural` via the OUTER classification in
-// watchDirCmd, before this path-scoped check inside the drain loop is ever
+// WatchDir, before this path-scoped check inside the drain loop is ever
 // reached.
 func isStructuralEvent(ev fsnotify.Event, writePath string) bool {
 	if !(ev.Has(fsnotify.Create) || ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename)) {
@@ -26,7 +56,8 @@ func isStructuralEvent(ev fsnotify.Event, writePath string) bool {
 	return ev.Name == writePath
 }
 
-func watchDirCmd(ctx context.Context, dir string) tea.Cmd {
+// WatchDir implements Watcher.
+func (FSNotifyWatcher) WatchDir(ctx context.Context, dir string) tea.Cmd {
 	return func() tea.Msg {
 		watcher, err := fsnotify.NewWatcher()
 		if err != nil {

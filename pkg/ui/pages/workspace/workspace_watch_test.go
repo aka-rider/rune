@@ -1,10 +1,13 @@
-//go:build !fuzzing
-
 package workspace
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -37,5 +40,40 @@ func TestIsStructuralEvent(t *testing.T) {
 				t.Fatalf("isStructuralEvent(%+v, %q) = %v, want %v", c.ev, writePath, got, c.want)
 			}
 		})
+	}
+}
+
+// TestFSNotifyWatcher_WatchDir_DetectsDirChange is the only test in this
+// package allowed to exercise the real fsnotify-backed Watcher end to end —
+// every other test injects NoopWatcher (see newTestWorkspace) so the real
+// watcher's live OS channel and goroutine never appear in an ordinary test
+// run. t.Cleanup(cancel) guarantees the watcher goroutine unblocks via
+// ctx.Done() and returns even if the expected event never arrives, so this
+// test cannot itself leak on a slow or flaky CI runner.
+func TestFSNotifyWatcher_WatchDir_DetectsDirChange(t *testing.T) {
+	dir := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	cmd := (FSNotifyWatcher{}).WatchDir(ctx, dir)
+	msgCh := make(chan tea.Msg, 1)
+	go func() { msgCh <- cmd() }()
+
+	// Give fsnotify.Add(dir) a moment to arm before the write below — there's
+	// no synchronous "watch is armed" signal to wait on instead.
+	time.Sleep(50 * time.Millisecond)
+	newPath := filepath.Join(dir, "new.md")
+	if err := os.WriteFile(newPath, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case msg := <-msgCh:
+		if _, ok := msg.(dirChangedMsg); !ok {
+			t.Fatalf("WatchDir: got %#v, want dirChangedMsg", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for dirChangedMsg from the real fsnotify watcher")
 	}
 }

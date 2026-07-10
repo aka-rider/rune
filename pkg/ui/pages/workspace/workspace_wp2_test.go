@@ -24,9 +24,7 @@ import (
 // entry point opentabs.TabSelectedMsg and the keyboard tab-switch use) and
 // settles the resulting load with settleOneHop — NOT the fully-recursive
 // drainCmd: a full drainCmd would also recurse into whatever a landed
-// dirChangedMsg/fileChangedMsg re-arms (startWatch's real fsnotify watcher,
-// workspace_watch.go), which blocks forever with no timeout of its own
-// (mirrors execFastCmds' own doc comment on why it exists) — and, more
+// dirChangedMsg/fileChangedMsg re-arms (startWatch's re-armed Cmd) and, more
 // immediately, into disableDictationForTransition's footer.ShowStatusMsg
 // auto-dismiss round trip. Stopping at one hop sidesteps both regardless of
 // which one is armed in a given test's setup; none of this helper's callers

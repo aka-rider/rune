@@ -279,7 +279,7 @@ func (m Model) startWatch(dir string) (Model, tea.Cmd) {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelWatch = cancel
 	m.watchedDir = dir
-	return m, watchDirCmd(ctx, dir)
+	return m, m.watcher().WatchDir(ctx, dir)
 }
 
 const invalidFileNameChars = "/\\:*?\"<>|\x00"
