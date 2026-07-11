@@ -284,6 +284,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.pendingLoad = pendingLoad{}
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: msg.Err.Error()})
 		cmds = append(cmds, cmd)
+		// gen==1 with a non-empty initialFiles is unambiguous — see focusable's
+		// doc comment (workspace_edit.go) for the full proof. The zero-value
+		// view check alone isn't enough: executeClose's close→neighbour
+		// transitional identity produces the same m.view (T4:
+		// TestPendingLoad_FailedCloseNeighbourIsSaveSafe), so the gen==1 +
+		// initialFiles condition is needed to exclude it.
+		if msg.Gen == 1 && len(m.initialFiles) > 0 && m.view.IsUntitled() && m.view.DocID() == 0 {
+			// The startup-awaited file failed to load: nothing has focused
+			// paneCenter yet, so CreateUntitled both creates the fallback tab
+			// and focuses it in one call.
+			m, cmd = m.CreateUntitled()
+			cmds = append(cmds, cmd)
+		}
 
 	case fileWatchReadError:
 		m.err = fmt.Errorf("external change to %s: %w", msg.path, msg.err)

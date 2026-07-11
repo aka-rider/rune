@@ -293,7 +293,7 @@ func TestPendingLoad_LoadFileCmdHasTwoCallers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, line := range strings.Split(string(b), "\n") {
+		for line := range strings.SplitSeq(string(b), "\n") {
 			if strings.Contains(line, "loadFileCmd(") && !strings.Contains(line, "func loadFileCmd") {
 				callers++
 			}
@@ -391,22 +391,23 @@ func TestLoadGen_StaleSamePathSyncStateDropped(t *testing.T) {
 	}
 }
 
-// G4 — startup reads carry New-seeded generations; the last initial file is the
+// G4 — startup reads carry New-seeded generations; the FIRST initial file is the
 // displayed doc, and a later interactive switch is never clobbered by a residual
 // startup read.
 func TestLoadGen_StartupTokenAcceptedThenSuperseded(t *testing.T) {
 	m := newWorkspaceWithFiles(t, "one.md", "two.md")
 
-	// New seeded the overlay for the LAST initial file at gen == len(initialFiles).
-	lastGen := m.pendingLoad.gen
-	// The first startup read (gen 1) only opens a tab; the last (gen==lastGen) displays.
-	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
-	if m.view.Path() == "one.md" {
-		t.Error("non-last startup read should not become the displayed doc")
-	}
+	// New seeded the overlay for the FIRST initial file at gen == 1.
+	lastGen := m.loadGen
+	// The last startup read (gen==lastGen) arriving first only opens a tab; the
+	// first (gen 1) displays.
 	m, _ = m.Update(FileLoadedMsg{Path: "two.md", Result: docstate.LoadResult{DiskContent: "TWO", Recovered: "TWO"}, Gen: lastGen})
-	if m.view.Path() != "two.md" {
-		t.Fatalf("last startup file should be displayed; filePath=%q", m.view.Path())
+	if m.view.Path() == "two.md" {
+		t.Error("non-first startup read should not become the displayed doc")
+	}
+	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
+	if m.view.Path() != "one.md" {
+		t.Fatalf("first startup file should be displayed; filePath=%q", m.view.Path())
 	}
 
 	// An interactive switch gets a strictly greater gen; a residual startup read
@@ -414,5 +415,150 @@ func TestLoadGen_StartupTokenAcceptedThenSuperseded(t *testing.T) {
 	m, _ = m.requestOpenPath(0, "three.md")
 	if m.pendingLoad.gen <= lastGen {
 		t.Fatalf("interactive gen %d must exceed startup gen %d", m.pendingLoad.gen, lastGen)
+	}
+}
+
+// G5 — New(..., initialFiles: [...]) stays focus-neutral (paneTree) through the
+// async startup gap — focusable's eligibility check refuses paneCenter for the
+// awaited gen-1 file until it actually settles, closing the keystroke race a
+// synchronous setFocus(paneCenter) in New() would open. Once the gen-1
+// FileLoadedMsg arrives, handleFileLoadedMsg grants paneCenter explicitly, so
+// keystrokes immediately edit the first file from that point on.
+func TestLoadGen_StartupWithFilesFocusesEditor(t *testing.T) {
+	m := newWorkspaceWithFiles(t, "one.md", "two.md")
+
+	if m.focus == paneCenter {
+		t.Fatal("New() with initialFiles must not focus paneCenter before the gen-1 load settles")
+	}
+	if m.focus != paneTree {
+		t.Fatalf("expected default focus paneTree before settle, got %v", m.focus)
+	}
+
+	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
+
+	if m.focus != paneCenter {
+		t.Fatalf("expected focus paneCenter after gen-1 settle, got %v", m.focus)
+	}
+	if !m.editor.Focused() {
+		t.Fatal("handleFileLoadedMsg did not project focus onto the editor after settle")
+	}
+}
+
+// G5a — pins the invariant at its actual source (focusable itself), not just at
+// each caller: paneCenter is ineligible while the gen-1 startup load is pending,
+// and every other pane is always eligible.
+func TestFocusable_PaneCenterGatedDuringStartupLoad(t *testing.T) {
+	m := newWorkspaceWithFiles(t, "one.md", "two.md")
+
+	if m.focusable(paneCenter) {
+		t.Fatal("paneCenter must not be focusable before the gen-1 load settles")
+	}
+	if !m.focusable(paneTree) {
+		t.Fatal("paneTree must remain focusable during the startup load")
+	}
+
+	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
+
+	if !m.focusable(paneCenter) {
+		t.Fatal("paneCenter must become focusable once the gen-1 load settles")
+	}
+}
+
+// G5b — proves the fix generalizes across every input source without
+// per-source code: setFocus(paneCenter), a key message, and a mouse click all
+// go through the same setFocus chokepoint, so all three are no-ops during the
+// startup race window and all three succeed once it closes.
+func TestLoadGen_StartupRaceWindowBlocksAllInputSources(t *testing.T) {
+	m := newWorkspaceWithFiles(t, "one.md", "two.md")
+
+	// Direct call: no-op before settle.
+	m = m.setFocus(paneCenter)
+	if m.focus == paneCenter {
+		t.Fatal("setFocus(paneCenter) must be a no-op before the gen-1 load settles")
+	}
+
+	// Keyboard (^E / FocusEditor): no-op before settle.
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	if m.focus == paneCenter {
+		t.Fatal("^E must not focus paneCenter before the gen-1 load settles")
+	}
+
+	// Mouse click into the center pane: no-op before settle.
+	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW + 5, Y: 5, Button: tea.MouseLeft})
+	if m.focus == paneCenter {
+		t.Fatal("a center-pane click must not focus paneCenter before the gen-1 load settles")
+	}
+	if m.editor.Content() != "" {
+		t.Fatalf("no input source should have reached the buffer, got content %q", m.editor.Content())
+	}
+	if m.view.DocID() != 0 {
+		t.Fatalf("no input source should have settled a document identity, got docID=%d", m.view.DocID())
+	}
+
+	// Settle the awaited load.
+	m, _ = m.Update(FileLoadedMsg{Path: "one.md", Result: docstate.LoadResult{DiskContent: "ONE", Recovered: "ONE"}, Gen: 1})
+
+	// The same mouse click now succeeds — eligibility is scoped to the race
+	// window, not a permanent regression in click-to-focus.
+	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW + 5, Y: 5, Button: tea.MouseLeft})
+	if m.focus != paneCenter {
+		t.Fatalf("center-pane click after settle should focus paneCenter, got %v", m.focus)
+	}
+}
+
+// G6 — the FileLoadedMsg-driven paneCenter grant (handleFileLoadedMsg) opens a
+// failure surface: if the awaited (first) file fails to load instead, m.view is
+// still the pristine zero-value view (New's non-empty-initialFiles branch never
+// creates a fallback tab, unlike the empty branch's CreateUntitled), and that
+// settle point is never reached. Assert the fallback lands on a real, active,
+// focused untitled scratch tab instead.
+func TestLoadGen_StartupFirstFileLoadErrorFallsBackToUntitled(t *testing.T) {
+	m := newWorkspaceWithFiles(t, "one.md", "two.md")
+
+	m, _ = m.Update(FileLoadErrorMsg{Path: "one.md", Err: errTest, Gen: 1})
+
+	if !m.view.IsUntitled() {
+		t.Fatalf("expected fallback untitled view, got kind=%v path=%q", m.view.Kind(), m.view.Path())
+	}
+	if m.focus != paneCenter {
+		t.Fatalf("expected focus paneCenter after fallback, got %v", m.focus)
+	}
+	if !m.editor.Focused() {
+		t.Fatal("editor not focused after startup load-error fallback")
+	}
+	got := m.opentabs.ActiveHandle()
+	if got.Path != "" || got.DocID != m.view.DocID() {
+		t.Fatalf("active tab not the fallback untitled: %+v (view docID=%d)", got, m.view.DocID())
+	}
+}
+
+// G7 — the startup fallback above must NOT fire for ordinary interactive load
+// failures that merely happen to leave the SAME zero-value view shape
+// (docUntitled, docID 0) the startup case checks for. On a bare `rune` launch
+// (initialFiles empty), CreateUntitled already opened "Untitled 1" and
+// displays it; a failed interactive load must keep showing that SAME tab, not
+// spawn a redundant second one. (CreateUntitled's own supersedeLoad already
+// consumes gen 1 before any interactive load can, so this and
+// TestPendingLoad_FailedCloseNeighbourIsSaveSafe's close→neighbour case are
+// the two real pre-existing producers of the zero-value view shape that the
+// gen==1 + len(initialFiles)>0 guard in the FileLoadErrorMsg handler exists to
+// exclude.)
+func TestLoadGen_FirstInteractiveLoadErrorOnBareLaunchKeepsSameUntitled(t *testing.T) {
+	m := newTestWorkspace(t) // files=nil: initialFiles empty, "Untitled 1" already open
+	if m.opentabs.Len() != 1 {
+		t.Fatalf("precondition: expected exactly 1 tab after bare launch, got %d", m.opentabs.Len())
+	}
+	wantHandle := m.view.Handle()
+
+	m, _ = m.requestOpenPath(0, "missing.md") // arm the gate
+	gen := m.pendingLoad.gen
+
+	m, _ = m.Update(FileLoadErrorMsg{Path: "missing.md", Err: errTest, Gen: gen})
+
+	if m.opentabs.Len() != 1 {
+		t.Fatalf("failed load on bare launch spawned an extra tab: now %d tabs", m.opentabs.Len())
+	}
+	if m.view.Handle() != wantHandle {
+		t.Fatalf("failed load on bare launch replaced the original untitled: got %+v want %+v", m.view.Handle(), wantHandle)
 	}
 }

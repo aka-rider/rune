@@ -299,14 +299,18 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		m = m.setFocus(paneTree) // CreateUntitled sets paneCenter; restore startup default
 	} else {
 		// Files to open: seed the load overlay so Init's startup reads (issued with
-		// per-file generations 1..N) are gen-correlated. The last file is the
-		// awaited displayed doc (gen==N); earlier files open as tabs via the ungated
+		// per-file generations 1..N) are gen-correlated. The first file (gen==1) is
+		// the awaited displayed doc; later files open as tabs via the ungated
 		// bookkeeping path. The seed lives here, not in Init, because Init returns
-		// only a tea.Cmd and cannot retain the model.
+		// only a tea.Cmd and cannot retain the model. loadGen still tracks N (not 1)
+		// because it's the monotonic base beginLoad increments from later, and must
+		// stay >= N regardless of which gen pendingLoad awaits. Focus stays at the
+		// struct-literal default (paneTree) here; handleFileLoadedMsg grants
+		// paneCenter once the gen-1 load settles.
 		m.loadGen = uint64(len(initialFiles))
 		m.pendingLoad = pendingLoad{
-			gen:    m.loadGen,
-			path:   initialFiles[len(initialFiles)-1],
+			gen:    1,
+			path:   initialFiles[0],
 			active: true,
 		}
 	}
@@ -381,7 +385,7 @@ func (m Model) Init() tea.Cmd {
 	}
 	for i, path := range m.initialFiles {
 		// Startup reads carry per-file generations 1..N matching the overlay seeded
-		// in New; the last (gen==N) becomes the displayed doc, earlier ones open
+		// in New; the first (gen==1) becomes the displayed doc, later ones open
 		// tabs. Issued directly (not beginLoad) because Init can't retain the gen
 		// increment — so loadFileCmd has exactly two callers: beginLoad and Init.
 		cmds = append(cmds, loadFileCmd(m.store, m.fsys(), context.Background(), path, uint64(i+1)))

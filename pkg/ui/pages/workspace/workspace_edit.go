@@ -278,10 +278,26 @@ func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// focusable reports whether pane p may currently receive focus. Every pane
+// is focusable except paneCenter during the narrow startup window between
+// New() seeding the awaited first CLI file and that load settling — the
+// one moment m.editor's buffer isn't yet a real, loaded, journaled
+// document, so nothing (keyboard, mouse, or any future input source) may
+// focus it until handleFileLoadedMsg grants it explicitly (§1.4.10).
+func (m Model) focusable(p pane) bool {
+	if p != paneCenter {
+		return true
+	}
+	return !(m.pendingLoad.active && m.pendingLoad.gen == 1 && len(m.initialFiles) > 0)
+}
+
 // setFocus is the only sanctioned way to change m.focus. It atomically sets the
 // focus enum and projects it onto every child via applyFocus, so a bare
 // m.focus = x that skips the projection is impossible by construction.
 func (m Model) setFocus(p pane) Model {
+	if !m.focusable(p) {
+		return m
+	}
 	m.focus = p
 	return m.applyFocus()
 }

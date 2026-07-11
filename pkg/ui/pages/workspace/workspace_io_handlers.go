@@ -177,6 +177,12 @@ func (m Model) handleFileLoadedMsg(msg FileLoadedMsg, cmds []tea.Cmd) (Model, []
 		m = m.drainRacedQueue(docID)
 	}
 
+	// Startup should focus the first CLI file's editor once it's actually
+	// loaded; ordinary interactive opens never auto-focus paneCenter here.
+	if msg.Gen == 1 && len(m.initialFiles) > 0 {
+		m = m.setFocus(paneCenter)
+	}
+
 	return m, cmds
 }
 
