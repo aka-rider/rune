@@ -318,36 +318,3 @@ func TestMaterialize_BindNew_ConflictNoClobber(t *testing.T) {
 		t.Fatalf("concurrent creator's bytes clobbered: got %q, err %v", got, err)
 	}
 }
-
-// TestMaterialize_ExchangeUnsupportedFallback: on a platform where Exchange
-// is unsupported, Materialize falls back to probe+rename (step 7) and still
-// commits correctly when nothing raced the fallback's re-check.
-func TestMaterialize_ExchangeUnsupportedFallback(t *testing.T) {
-	s, mem := newMatTestStore(t)
-	const path = "/note.md"
-	if err := mem.WriteFile(path, []byte("original"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-	loaded, err := s.Load(path)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	expect, _, err := s.SavedObs(loaded.DocID)
-	if err != nil {
-		t.Fatalf("SavedObs: %v", err)
-	}
-
-	s.UseFS(unsupportedExchangeFS{FS: mem})
-
-	result, err := s.Materialize(loaded.DocID, path, "via fallback", expect.ID, 0, false)
-	if err != nil {
-		t.Fatalf("Materialize: %v", err)
-	}
-	if !result.Committed {
-		t.Fatal("Materialize (fallback): want Committed=true")
-	}
-	got, err := mem.ReadFile(path)
-	if err != nil || string(got) != "via fallback" {
-		t.Fatalf("disk content after fallback: got %q, err %v", got, err)
-	}
-}

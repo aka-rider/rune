@@ -67,8 +67,8 @@ func (s *Store) Load(path string) (LoadResult, error) {
 	}
 
 	// D12/D13/§1.7: inode/device/nlink are sql.NullInt64, built from
-	// vfs.FileID's/vfs.FileNLink's own out-of-band `ok` — a stat failure or
-	// unsupported platform records NULL, never a literal 0.
+	// vfs.FileID's/vfs.FileNLink's own out-of-band `ok` — a stat failure
+	// records NULL, never a literal 0.
 	size, mtime, inode, device, nlink := statIdentity(fsys, resolved)
 	// HasHistory BEFORE recording anything below — it must reflect whether
 	// this document had GENUINE prior journal/snapshot history (an earlier

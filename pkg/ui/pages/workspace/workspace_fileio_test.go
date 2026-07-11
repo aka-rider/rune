@@ -45,7 +45,7 @@ func newMaterializeTestStore(t *testing.T, path, seedContent string) (*docstate.
 
 // TestMaterialize_BindNewRefusesClobber: naming an untitled over an existing
 // file must NOT overwrite it (Catastrophic, rung 1 — CLAUDE.md §1.4.1). Uses
-// a genuinely never-bound scratch doc (documents.path=='' going in) — the
+// a genuinely never-bound scratch doc (`documents.path == ""` going in) — the
 // real production shape (workspace_update.go's RenameRequestMsg handler never
 // binds before the first materializeStoreCmd) — rather than pre-binding via
 // store.Bind, which would paper over a bind-new path-resolution bug.
@@ -299,9 +299,9 @@ func TestSwitchAwayAndBack_PreservesUnsavedEdit(t *testing.T) {
 // TestSave_RebindsAcrossChurnedInode is a deterministic sibling of docstate's
 // TestBind_StableAcrossInodeChange (which must t.Skip if the OS happens to
 // reuse an inode on real disk). Using a vfs.Mem configured to churn inode on
-// every write — matching real vfs.Disk/atomicfile semantics, unlike Mem's
-// stable-by-default behavior (§1.4.1/§1.4.6) — this drives two real save
-// cycles through Update() and asserts the docID and history survive both, the
+// every write — matching a real save's publish step (Exchange/RenameExcl),
+// unlike Mem's stable-by-default behavior (§1.4.1/§1.4.6) — this drives two
+// real save cycles through Update() and asserts the docID and history survive both, the
 // exact regression class ("a stray identity lookup sneaks in before Bind on
 // some save path") the fuzzer's default vfs.Mem can never reach, since it
 // never churns inode after a path's first write.

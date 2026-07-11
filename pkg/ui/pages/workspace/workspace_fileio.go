@@ -175,10 +175,9 @@ func fileTrashCmd(fsys vfs.FS, path string) tea.Cmd {
 // fileRenameCmd moves a file on disk. It refuses to clobber an existing
 // target (F9): vfs.RenameExcl is atomic and no-clobber (fs.ErrExist if
 // newPath already exists), closing the Stat-then-Rename TOCTOU window a
-// concurrent creator could otherwise win (G1). Where RenameExcl itself is
-// unsupported on this platform/filesystem (vfs.ErrUnsupported — no hardlink
-// support), falls back to the previous Stat-guarded Rename with the residual
-// (documented, narrow) race window.
+// concurrent creator could otherwise win (G1). Where the filesystem lacks
+// RENAME_EXCL (vfs.ErrUnsupported — e.g. some SMB/NFS/FAT mounts), falls back
+// to the Stat-guarded Rename with the residual (documented, narrow) race window.
 func fileRenameCmd(fsys vfs.FS, oldPath, newPath string) tea.Cmd {
 	return func() tea.Msg {
 		err := fsys.RenameExcl(oldPath, newPath)

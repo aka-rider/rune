@@ -3,9 +3,12 @@ package markdownedit
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -47,7 +50,7 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 	capturedBaseDir := baseDir
 	capturedExt := ext
 	capturedNow := now
-	capturedFsys := m.fsys() // §1.4.9: write through the editor's FS (Disk→atomicfile)
+	capturedFsys := m.fsys() // §1.4.9: write through the editor's FS (durable temp write + atomic RenameExcl publish)
 
 	cmd := func() tea.Msg {
 		filename := generateImageFilename(capturedData, capturedNow, capturedExt)
@@ -57,9 +60,23 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 			return ImageSaveErrorMsg{Err: fmt.Errorf("create assets dir %q: %w", targetDir, err)}
 		}
 
+		// WriteFile is durable but no longer atomic (§1.4.1): write a sibling
+		// temp, fsync'd, then publish it onto fullPath via the atomic
+		// no-clobber RenameExcl — the same publish primitive Materialize uses
+		// for the user's .md.
 		fullPath := filepath.Join(targetDir, filename)
-		if err := capturedFsys.WriteFile(fullPath, capturedData, 0o644); err != nil {
+		temp := imageTempPath(fullPath)
+		if err := capturedFsys.WriteFile(temp, capturedData, 0o644); err != nil {
 			return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
+		}
+		if err := capturedFsys.RenameExcl(temp, fullPath); err != nil {
+			_ = capturedFsys.Remove(temp) // fire-and-forget: best-effort cleanup of the throwaway temp
+			if !errors.Is(err, fs.ErrExist) {
+				return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
+			}
+			// fs.ErrExist: the filename is content-addressed (sha256[:8] of
+			// the pasted bytes), so this means an identical asset is already
+			// at fullPath — treat as success, not a conflict.
 		}
 
 		relativePath := filepath.Join(capturedAssetsDir, filename)
@@ -68,6 +85,21 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 
 	return m, cmd
 }
+
+// imageTempPath returns a same-directory temp path for target so the
+// subsequent RenameExcl publish is same-volume (mirrors
+// docstate.siblingTempPath, §1.4.1).
+func imageTempPath(target string) string {
+	dir := filepath.Dir(target)
+	base := filepath.Base(target)
+	n := imageTempCounter.Add(1)
+	return filepath.Join(dir, fmt.Sprintf(".rune-image-%s-%d-%d.tmp", base, time.Now().UnixNano(), n))
+}
+
+// imageTempCounter gives imageTempPath extra uniqueness beyond a nanosecond
+// timestamp (concurrent paste Cmds within the same process could otherwise
+// collide).
+var imageTempCounter atomic.Int64
 
 func (m Model) handleImageSaved(relativePath string, now time.Time) (Model, tea.Cmd) {
 	mdRef := fmt.Sprintf("![image](%s)", relativePath)

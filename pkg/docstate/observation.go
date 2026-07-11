@@ -221,8 +221,8 @@ func hashBytes(data []byte) string {
 //
 // inode/device/nlink are sql.NullInt64 (D13/§1.7, schema v9): the caller
 // builds them from vfs.FileID's/vfs.FileNLink's own out-of-band `ok`, so a
-// stat failure or an unsupported platform writes a genuine SQL NULL — never
-// a literal 0 sharing the column with a real identity. Every row is tagged
+// stat failure writes a genuine SQL NULL — never a literal 0 sharing the
+// column with a real identity. Every row is tagged
 // with this Store's own session_id (v10) — see the Observation.SessionID
 // doc comment.
 func (s *Store) recordObservation(docID int64, blobHash string, seq sql.NullInt64, size int64, mtime string, inode, device, nlink sql.NullInt64, origin, at string) (ObsID, error) {

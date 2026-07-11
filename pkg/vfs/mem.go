@@ -15,13 +15,18 @@ import (
 // the modification clock advances on every write so the §1.4.7 divergence guard
 // is exercisable even when content size is unchanged.
 //
-// By default a path's inode stays stable across repeat WriteFile calls — unlike
-// real Disk, whose atomicfile.Write (temp→rename) churns the inode on EVERY
-// save. Most consumers want the stable default (several fuzz harnesses use raw
-// WriteFile to mean "an external edit happened," a semantic a global churn
-// change would silently redefine); opt into real-Disk-like churn per instance
-// with WithChurnInodeOnWrite when a test specifically needs to exercise
-// save-induced inode churn (e.g. docstate.Store.Bind regression coverage).
+// By default a path's inode stays stable across repeat WriteFile calls —
+// matching real Disk.WriteFile, which writes in place (create→write→fsync,
+// no rename) and so never itself churns an existing path's inode. A real
+// save's inode churn instead comes from the PUBLISH step wrapping it —
+// Materialize writes to a sibling temp then Exchange/RenameExcl's that temp
+// onto the target, and it's the swap/rename that gives the target a fresh
+// inode (§1.4.1). Most consumers want the stable default (several fuzz
+// harnesses use raw WriteFile to mean "an external edit happened," a
+// semantic a global churn change would silently redefine); opt into that
+// swap/rename-like churn per instance with WithChurnInodeOnWrite when a test
+// specifically needs to exercise save-induced inode churn on a raw WriteFile
+// call (e.g. docstate.Store.Bind regression coverage).
 type Mem struct {
 	mu                sync.Mutex
 	files             map[string]*memFile
@@ -41,10 +46,10 @@ type memFile struct {
 type MemOption func(*Mem)
 
 // WithChurnInodeOnWrite makes every WriteFile to an EXISTING path assign a
-// fresh synthetic inode, matching vfs.Disk's atomic temp-then-rename semantics
-// (§1.4.1), where every save gets a new inode. Off by default — see the Mem
-// doc comment. Scoped to WriteFile only: Rename's inode preservation (§1.4.6)
-// is unaffected regardless of this option.
+// fresh synthetic inode, matching the inode churn a real save's publish step
+// (Exchange/RenameExcl) gives the target on every save (§1.4.1). Off by
+// default — see the Mem doc comment. Scoped to WriteFile only: Rename's
+// inode preservation (§1.4.6) is unaffected regardless of this option.
 func WithChurnInodeOnWrite() MemOption {
 	return func(m *Mem) { m.churnInodeOnWrite = true }
 }

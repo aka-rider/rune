@@ -67,10 +67,10 @@ func clickTab(t *testing.T, m Model, idx int) Model {
 }
 
 // saveRaceFixture creates a store-backed workspace over real files on disk
-// (vfs.Disk, so every save genuinely churns the inode via atomicfile.Write —
-// unlike vfs.Mem, which only assigns a new inode on a path's first write) and
-// loads the named files as tabs in order, returning the workspace and each
-// file's resolved docID.
+// (vfs.Disk, so every save genuinely churns the inode via Materialize's
+// publish step, Exchange/RenameExcl — unlike vfs.Mem, which only assigns a
+// new inode on a path's first write) and loads the named files as tabs in
+// order, returning the workspace and each file's resolved docID.
 func saveRaceFixture(t *testing.T, contents map[string]string, order []string) (Model, map[string]int64) {
 	t.Helper()
 	dir := t.TempDir()

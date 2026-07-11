@@ -1,8 +1,9 @@
 // Package vfs is the single chokepoint for real-disk file I/O of the user's
 // .md documents: read, write, rename, stat. Everything funnels through the FS
-// interface so the production build uses Disk (os.* + atomic write) while tests
-// and the session fuzzer use Mem (fully in-memory), exercising the complete
-// load→edit→save→rename→reopen machinery with no real disk touched.
+// interface so the production build uses Disk (os.* + durable write, atomic
+// publish via Exchange/RenameExcl) while tests and the session fuzzer use Mem
+// (fully in-memory), exercising the complete load→edit→save→rename→reopen
+// machinery with no real disk touched.
 //
 // The interface is intentionally go-native: method shapes mirror os.* and the
 // types are stdlib (fs.FileInfo, fs.FileMode, fs.ErrNotExist). Atomicity is an
@@ -15,16 +16,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-
-	"rune/pkg/atomicfile"
 )
 
-// ErrUnsupported is returned by Exchange where no atomic swap primitive exists
-// on the current platform (non-darwin today — linux renameat2(RENAME_EXCHANGE)
-// is a future extension, not required). Aliases the stdlib sentinel so callers
-// use the ordinary errors.Is(err, vfs.ErrUnsupported) / errors.Is(err,
-// errors.ErrUnsupported) check without a bespoke type (root CLAUDE.md
-// "Go-native interfaces").
+// ErrUnsupported is returned where the underlying filesystem lacks the atomic
+// primitive a call needs — e.g. a mount (some SMB/NFS/FAT volumes) whose
+// renamex_np rejects RENAME_SWAP/RENAME_EXCL with EOPNOTSUPP, which
+// syscall.Errno.Is maps to errors.ErrUnsupported. rune is macOS-only, so this
+// is a per-filesystem capability gap, never an OS-portability shim. Aliases the
+// stdlib sentinel so callers use the ordinary errors.Is(err, vfs.ErrUnsupported)
+// check without a bespoke type (root CLAUDE.md "Go-native interfaces").
 var ErrUnsupported = errors.ErrUnsupported
 
 // FS abstracts the filesystem operations the workspace performs on .md files.
@@ -44,17 +44,16 @@ type FS interface {
 	Trash(path string) error
 	// Exchange atomically swaps the contents of paths a and b (both must
 	// exist; same volume). Disk: darwin renamex_np(RENAME_SWAP), fsyncing the
-	// parent directory afterward (same durability guarantee as atomicfile,
-	// §1.4.1). Returns an error wrapping ErrUnsupported where impossible
-	// (non-darwin today). Mem: swaps the two entries' file objects between
+	// parent directory afterward — the durability guarantee for the publish,
+	// §1.4.1. Returns an error wrapping ErrUnsupported where the filesystem
+	// lacks RENAME_SWAP. Mem: swaps the two entries' file objects between
 	// keys (inodes travel with content, mimicking a physical swap) and
 	// advances the modification clock.
 	Exchange(a, b string) error
 	// RenameExcl atomically renames oldPath to newPath, failing with an error
 	// wrapping fs.ErrExist if newPath already exists — no clobber. Disk:
-	// darwin renamex_np(RENAME_EXCL); portable fallback elsewhere is
-	// Link-then-Remove (atomic no-clobber on POSIX). Mem: fails if newPath is
-	// already occupied.
+	// darwin renamex_np(RENAME_EXCL), wrapping ErrUnsupported where the
+	// filesystem lacks RENAME_EXCL. Mem: fails if newPath is already occupied.
 	RenameExcl(oldPath, newPath string) error
 	// Remove deletes a single file. Disk: os.Remove. Needed because
 	// Materialize must clean its swapped-out temp through the injected FS —
@@ -106,18 +105,37 @@ func FileNLink(fi fs.FileInfo) (nlink uint64, ok bool) {
 	return sysNLink(fi)
 }
 
-// Disk is the production FS: a thin wrapper over os.*. Writes are atomic
-// (temp→Sync→Rename→dir-fsync, §1.4.1) via the unchanged pkg/atomicfile.
+// Disk is the production FS: a thin wrapper over os.*. WriteFile is durable
+// (fsync'd) but not itself atomic — atomicity of a publish to a destination
+// path is provided by Exchange (overwrite) / RenameExcl (create), §1.4.1.
 type Disk struct{}
 
 var _ FS = Disk{}
 
 func (Disk) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
 
-// WriteFile writes data atomically. perm is not honored — the atomic helper
-// owns the temp file's mode; no caller depends on a specific destination perm.
-func (Disk) WriteFile(name string, data []byte, _ fs.FileMode) error {
-	return atomicfile.Write(name, data)
+// WriteFile creates (or truncates) name, writes data, and fsyncs it before
+// closing — durable, but not atomic: callers that need an atomic publish to a
+// final destination write to a sibling temp via WriteFile and then Exchange
+// or RenameExcl that temp onto the destination (§1.4.1). perm is honored as
+// the mode passed to O_CREATE.
+func (Disk) WriteFile(name string, data []byte, perm fs.FileMode) error {
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
+	if err != nil {
+		return fmt.Errorf("write %q: open: %w", name, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close() //nolint:errcheck // best-effort close after a write failure; the write error is what matters
+		return fmt.Errorf("write %q: write: %w", name, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close() //nolint:errcheck // best-effort close after a sync failure; the sync error is what matters
+		return fmt.Errorf("write %q: sync: %w", name, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write %q: close: %w", name, err)
+	}
+	return nil
 }
 
 func (Disk) Rename(oldPath, newPath string) error { return os.Rename(oldPath, newPath) }
@@ -159,8 +177,7 @@ func (Disk) Resolve(path string) (string, error) {
 }
 
 // fsyncDir best-effort fsyncs the parent directory of path so a preceding
-// rename/exchange within it survives a crash (mirrors atomicfile.Write's
-// directory fsync, §1.4.1).
+// rename/exchange within it survives a crash (§1.4.1).
 func fsyncDir(path string) error {
 	d, err := os.Open(filepath.Dir(path))
 	if err != nil {

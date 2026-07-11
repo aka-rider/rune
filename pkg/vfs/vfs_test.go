@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-// TestDisk_WriteReadRoundTrip: Disk.WriteFile is byte-faithful and atomic
-// (no .tmp residue), and Stat/FileID report a real inode (§1.4.1/§1.4.5/§1.4.6).
+// TestDisk_WriteReadRoundTrip: Disk.WriteFile is byte-faithful (in-place
+// create/write/fsync — no temp, no residue by construction, since atomicity
+// of a published destination is now Exchange/RenameExcl's job, not
+// WriteFile's), and Stat/FileID report a real inode (§1.4.1/§1.4.5/§1.4.6).
 func TestDisk_WriteReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "note.md")

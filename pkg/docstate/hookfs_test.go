@@ -40,16 +40,3 @@ func (h *hookFS) WriteFile(name string, data []byte, perm fs.FileMode) error {
 }
 
 var _ vfs.FS = (*hookFS)(nil)
-
-// unsupportedExchangeFS forces every Exchange call to fail with
-// vfs.ErrUnsupported, exercising Materialize's step-7 probe+rename fallback
-// (Mem's Exchange is otherwise always supported).
-type unsupportedExchangeFS struct {
-	vfs.FS
-}
-
-func (u unsupportedExchangeFS) Exchange(a, b string) error {
-	return vfs.ErrUnsupported
-}
-
-var _ vfs.FS = unsupportedExchangeFS{}

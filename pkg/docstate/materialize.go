@@ -66,11 +66,6 @@ func siblingTempPath(target string) string {
 //     it — atomic, no-clobber (closes G1) — instead of the read+swap dance
 //     above. With bindNew false, refuse instead with MatResult.Missing —
 //     never silently create.
-//  7. Where Exchange is unsupported (vfs.ErrUnsupported), falls back to a
-//     fresh probe+rename: the unconditional pre-write hash bounds the
-//     residual TOCTOU window to microseconds (documented, degraded path —
-//     I1's physical guarantee does not hold here, only the size of the race
-//     window is bounded).
 func (s *Store) Materialize(docID int64, path, content string, expect ObsID, seq int64, bindNew bool) (MatResult, error) {
 	fsys := s.fsys()
 	data := []byte(content)
@@ -150,8 +145,8 @@ func (s *Store) Materialize(docID int64, path, content string, expect ObsID, seq
 	return s.materializeOverwrite(fsys, docID, resolved, data, expectObs, seq)
 }
 
-// materializeOverwrite runs steps 3-5 (or the step-7 fallback) once the
-// pre-write hash has confirmed the live target still matches expect.
+// materializeOverwrite runs steps 3-5 once the pre-write hash has confirmed
+// the live target still matches expect.
 func (s *Store) materializeOverwrite(fsys vfs.FS, docID int64, resolved string, data []byte, expectObs Observation, seq int64) (MatResult, error) {
 	temp := siblingTempPath(resolved)
 	if err := fsys.WriteFile(temp, data, 0o644); err != nil {
@@ -160,9 +155,6 @@ func (s *Store) materializeOverwrite(fsys vfs.FS, docID int64, resolved string, 
 
 	if err := fsys.Exchange(temp, resolved); err != nil {
 		_ = fsys.Remove(temp) // fire-and-forget: best-effort cleanup; the temp never became the record of anything
-		if errors.Is(err, vfs.ErrUnsupported) {
-			return s.materializeFallbackRename(fsys, docID, resolved, data, expectObs, seq)
-		}
 		return MatResult{}, fmt.Errorf("materialize doc %d: exchange: %w", docID, err)
 	}
 
@@ -231,76 +223,11 @@ func (s *Store) materializeCreate(fsys vfs.FS, docID int64, resolved string, dat
 			}
 			return MatResult{Committed: false, Fresh: fresh}, nil
 		}
-		if errors.Is(err, vfs.ErrUnsupported) {
-			// No-hardlink/no-RENAME_EXCL filesystem (review, below-cap
-			// finding): degrade to check-then-write with the residual TOCTOU
-			// window documented — same acceptance as the Exchange fallback.
-			// The existence check still refuses an already-present target.
-			if _, statErr := fsys.Stat(resolved); statErr == nil {
-				liveData, readErr := fsys.ReadFile(resolved)
-				if readErr != nil {
-					return MatResult{}, fmt.Errorf("materialize doc %d: create fallback re-read: %w", docID, readErr)
-				}
-				fresh, err := s.recordFresh(fsys, docID, resolved, liveData, "probe")
-				if err != nil {
-					return MatResult{}, fmt.Errorf("materialize doc %d: record create-fallback observation: %w", docID, err)
-				}
-				return MatResult{Committed: false, Fresh: fresh}, nil
-			} else if !errors.Is(statErr, fs.ErrNotExist) {
-				return MatResult{}, fmt.Errorf("materialize doc %d: create fallback stat: %w", docID, statErr)
-			}
-			if err := fsys.WriteFile(resolved, data, 0o644); err != nil {
-				return MatResult{}, fmt.Errorf("materialize doc %d: create fallback write: %w", docID, err)
-			}
-			saved, err := s.commitSave(fsys, docID, resolved, data, seq)
-			if err != nil {
-				return MatResult{}, fmt.Errorf("materialize doc %d: create fallback commit: %w", docID, err)
-			}
-			return MatResult{Committed: true, Saved: saved}, nil
-		}
 		return MatResult{}, fmt.Errorf("materialize doc %d: renameexcl: %w", docID, err)
 	}
 	saved, err := s.commitSave(fsys, docID, resolved, data, seq)
 	if err != nil {
 		return MatResult{}, fmt.Errorf("materialize doc %d: commit save: %w", docID, err)
-	}
-	return MatResult{Committed: true, Saved: saved}, nil
-}
-
-// materializeFallbackRename is the step-7 degraded path for a platform where
-// Exchange is unsupported: a fresh probe, then an ATOMIC write of the new
-// content (F8). The pre-write hash already performed in Materialize (step 2)
-// plus this re-check right before the write bounds the residual TOCTOU
-// window to microseconds; unlike Exchange this path does NOT physically
-// preserve the displaced bytes (fsys.WriteFile's atomic swap discards
-// whatever it replaces), so I1's guarantee is honored on the happy path
-// (the re-check refuses before any discard) but not against an adversarial
-// writer racing inside this microsecond window — documented, accepted
-// degradation for platforms without an atomic swap primitive.
-//
-// fsys.WriteFile is itself already atomic and durable (Disk.WriteFile
-// delegates to atomicfile.Write: temp -> fsync -> rename -> parent-dir
-// fsync, §1.4.1) — a hand-rolled temp+Rename here (the pre-fix shape)
-// duplicated that machinery WITHOUT the parent-directory fsync, silently
-// losing the durability guarantee on every non-darwin overwrite (F8).
-func (s *Store) materializeFallbackRename(fsys vfs.FS, docID int64, resolved string, data []byte, expectObs Observation, seq int64) (MatResult, error) {
-	liveData, err := fsys.ReadFile(resolved)
-	if err != nil {
-		return MatResult{}, fmt.Errorf("materialize doc %d: fallback re-read: %w", docID, err)
-	}
-	if hashBytes(liveData) != expectObs.BlobHash {
-		fresh, err := s.recordFresh(fsys, docID, resolved, liveData, "probe")
-		if err != nil {
-			return MatResult{}, fmt.Errorf("materialize doc %d: record fallback observation: %w", docID, err)
-		}
-		return MatResult{Committed: false, Fresh: fresh}, nil
-	}
-	if err := fsys.WriteFile(resolved, data, 0o644); err != nil {
-		return MatResult{}, fmt.Errorf("materialize doc %d: fallback write: %w", docID, err)
-	}
-	saved, err := s.commitSave(fsys, docID, resolved, data, seq)
-	if err != nil {
-		return MatResult{}, fmt.Errorf("materialize doc %d: fallback commit save: %w", docID, err)
 	}
 	return MatResult{Committed: true, Saved: saved}, nil
 }
