@@ -320,9 +320,9 @@ func (m Model) nextUntitledName() string {
 func openExternalCmd(url string) tea.Cmd {
 	return func() tea.Msg {
 		name, args := externalOpener(url)
-		// runOpener spawns the OS handler; it is a no-op under the fuzzing build tag
-		// so the fuzzer exercises the LinkExternal dispatch + footer status without
-		// launching real browser/opener processes.
+		// runOpener spawns the OS handler; DisableOpenerForTesting swaps it for a
+		// no-op (workspace_open.go) so tests/fuzzing exercise the LinkExternal
+		// dispatch + footer status without launching real browser/opener processes.
 		if err := runOpener(name, args...); err != nil {
 			return footer.ShowErrorMsg{Text: fmt.Errorf("open %q: %w", url, err).Error()}
 		}

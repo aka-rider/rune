@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/docstate"
 	"rune/pkg/vfs"
 )
@@ -277,12 +278,12 @@ func TestSwitchAwayAndBack_PreservesUnsavedEdit(t *testing.T) {
 	// Switch to B (unsaved edit on A) and back to A — real navigation, so
 	// forceSnapshot fires for A on the way out. No external change, no save.
 	m, cmd := m.requestOpenPath(0, pathB)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if m.view.Path() != pathB {
 		t.Fatalf("setup: expected view=B, got %q", m.view.Path())
 	}
 	m, cmd = m.requestOpenPath(docIDA, pathA)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if got := m.editor.Content(); got != "xoriginal" {
 		t.Fatalf("switching away and back lost the unsaved edit: editor content = %q, want %q", got, "xoriginal")
@@ -312,7 +313,7 @@ func TestSave_RebindsAcrossChurnedInode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := docstate.OpenInMemory(time.Now)
+	store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +323,7 @@ func TestSave_RebindsAcrossChurnedInode(t *testing.T) {
 	m := newTestWorkspace(t).WithFS(mem)
 	var cmd tea.Cmd
 	m, cmd = m.Update(StoreReadyMsg{Store: store})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	m = loadFile(m, path, "v1")
 	docID := m.view.DocID()
@@ -334,7 +335,7 @@ func TestSave_RebindsAcrossChurnedInode(t *testing.T) {
 	for i := 1; i <= 2; i++ {
 		m, _ = m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 		m, cmd = m.startSave()
-		m = drainCmd(m, cmd)
+		m = settle(t, m, cmd)
 
 		if got := m.view.DocID(); got != docID {
 			t.Fatalf("save #%d: docID changed %d -> %d (churned inode orphaned history)", i, docID, got)

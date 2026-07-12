@@ -60,7 +60,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	m = loadFile(m, path, original)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// A real journaled edit, mirroring diverge() elsewhere in this package.
@@ -71,7 +71,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	m.editor = m.editor.SetContent(ours)
 
 	m, cmd := m.startSave()
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if !hook.fired {
 		t.Fatal("setup: race hook never fired")
@@ -105,7 +105,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	// REAL keypress ('r'), routed through the guard-priority key handling
 	// exactly as a user would trigger it.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	diskAfter, err := os.ReadFile(path)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestSaveRace_KeepMineClearsGuardWithoutFurtherWrite(t *testing.T) {
 	m = loadFile(m, path, original)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	if _, err := m.store.AppendEdit(docID,
 		[]buffer.AppliedEdit{{Start: 0, End: len(original), Deleted: original, Insert: ours}}, nil, nil); err != nil {
@@ -150,13 +150,13 @@ func TestSaveRace_KeepMineClearsGuardWithoutFurtherWrite(t *testing.T) {
 	m.editor = m.editor.SetContent(ours)
 
 	m, cmd := m.startSave()
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if !m.pendingRaced.active {
 		t.Fatal("setup: expected pendingRaced active")
 	}
 
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if m.pendingRaced.active || m.footer.InGuard() {
 		t.Fatal("expected the Raced guard cleared after keep-mine")

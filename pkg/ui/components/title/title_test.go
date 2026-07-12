@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/ui/components/textedit"
@@ -30,10 +31,15 @@ func newTestTitle() Model {
 }
 
 func typeText(m Model, s string) Model {
-	for _, r := range s {
-		m, _ = m.Update(tea.KeyPressMsg{Text: string(r)})
-	}
-	return m
+	return editortest.TypeText(m, Model.Update, s)
+}
+
+// retype focuses the title with the whole current name selected (the real
+// ^n/rename entry point) and types s over it — the behavioral replacement
+// for the old direct m.field.SetContent pokes.
+func retype(m Model, s string) Model {
+	m = m.FocusAndSelectAll()
+	return typeText(m, s)
 }
 
 // --- Basic text / state ---
@@ -43,9 +49,8 @@ func TestTitle_DefaultText(t *testing.T) {
 	if m.Text() != "Untitled 1" {
 		t.Errorf("expected 'Untitled 1', got %q", m.Text())
 	}
-	if m.Text() != m.placeholder {
-		t.Error("expected the default text to equal the placeholder")
-	}
+	// "Untitled 1" is the constructor's placeholder argument — the default
+	// text must be exactly it.
 }
 
 func TestTitle_SetText(t *testing.T) {
@@ -54,8 +59,8 @@ func TestTitle_SetText(t *testing.T) {
 	if m.Text() != "my-note" {
 		t.Errorf("expected 'my-note', got %q", m.Text())
 	}
-	if m.Text() == m.placeholder {
-		t.Error("expected the text to no longer equal the placeholder after SetText")
+	if m.Text() == "Untitled 1" {
+		t.Error("expected the text to no longer equal the constructor placeholder after SetText")
 	}
 }
 
@@ -112,9 +117,7 @@ func TestTitle_Backspace(t *testing.T) {
 func TestTitle_CommitEmitsRename(t *testing.T) {
 	m := newTestTitle()
 	m = m.SetText("original")
-	m = m.SetFocused(true)
-	m = typeText(m, "x") // changes text to "originalx" (cursor at end after SetText)
-	m.field = m.field.SetContent("new-name")
+	m = retype(m, "new-name") // real select-all + typing, not a field poke
 
 	m, cmd := m.Commit()
 	if cmd == nil {
@@ -128,8 +131,10 @@ func TestTitle_CommitEmitsRename(t *testing.T) {
 	if rename.Name != "new-name" {
 		t.Errorf("expected Name='new-name', got %q", rename.Name)
 	}
-	if m.committed != "new-name" {
-		t.Errorf("expected committed='new-name', got %q", m.committed)
+	// Behavior of a landed commit: the new name is now the baseline, so an
+	// immediate second Commit has nothing to do.
+	if _, again := m.Commit(); again != nil {
+		t.Error("expected nil Cmd from a second Commit — the first must have updated the committed baseline")
 	}
 }
 
@@ -147,19 +152,24 @@ func TestTitle_CommitNoOp(t *testing.T) {
 func TestTitle_DownReturnsFocus(t *testing.T) {
 	m := newTestTitle()
 	m = m.SetText("original")
-	m = m.SetFocused(true)
-	m.field = m.field.SetContent("changed")
+	m = retype(m, "changed")
 
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.focused {
-		t.Error("expected focused=false after Down")
+	if m.Focused() {
+		t.Error("expected Focused()=false after Down")
 	}
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd from Down")
 	}
-	// Down commits: m.committed must reflect the new text.
-	if m.committed != "changed" {
-		t.Errorf("expected committed='changed' after Down, got %q", m.committed)
+	// Down commits: the emitted messages must include the rename.
+	var rename *RenameRequestMsg
+	for _, msg := range editortest.ExecCmds(cmd) {
+		if r, ok := msg.(RenameRequestMsg); ok {
+			rename = &r
+		}
+	}
+	if rename == nil || rename.Name != "changed" {
+		t.Fatalf("expected Down to emit RenameRequestMsg{Name:\"changed\"}, got %+v", rename)
 	}
 }
 
@@ -168,12 +178,17 @@ func TestTitle_DownNoRenameWhenUnchanged(t *testing.T) {
 	m = m.SetText("same")
 	m = m.SetFocused(true)
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.focused {
-		t.Error("expected focused=false after Down")
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.Focused() {
+		t.Error("expected Focused()=false after Down")
 	}
-	if m.committed != "same" {
-		t.Errorf("expected committed='same', got %q", m.committed)
+	for _, msg := range editortest.ExecCmds(cmd) {
+		if _, ok := msg.(RenameRequestMsg); ok {
+			t.Fatal("Down with unchanged text must not emit RenameRequestMsg")
+		}
+	}
+	if m.Text() != "same" {
+		t.Errorf("expected Text()='same', got %q", m.Text())
 	}
 }
 
@@ -182,15 +197,14 @@ func TestTitle_DownNoRenameWhenUnchanged(t *testing.T) {
 func TestTitle_EscapeReverts(t *testing.T) {
 	m := newTestTitle()
 	m = m.SetText("committed-name")
-	m = m.SetFocused(true)
-	m.field = m.field.SetContent("changed")
+	m = retype(m, "changed")
 
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.Text() != "committed-name" {
 		t.Errorf("expected revert to 'committed-name', got %q", m.Text())
 	}
-	if m.focused {
-		t.Error("expected focused=false after Escape")
+	if m.Focused() {
+		t.Error("expected Focused()=false after Escape")
 	}
 	if cmd == nil {
 		t.Fatal("expected FocusReturnMsg cmd from Escape")
@@ -204,13 +218,19 @@ func TestTitle_EscapeReverts(t *testing.T) {
 func TestTitle_EscapeNoRename(t *testing.T) {
 	m := newTestTitle()
 	m = m.SetText("committed-name")
-	m = m.SetFocused(true)
-	m.field = m.field.SetContent("changed")
+	m = retype(m, "changed")
 
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	// Escape reverts: committed unchanged.
-	if m.committed != "committed-name" {
-		t.Errorf("committed changed on Escape — expected 'committed-name', got %q", m.committed)
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	// Escape reverts — no rename may be emitted, and the abandoned text
+	// must not have become the committed baseline (a later Commit at the
+	// reverted text has nothing to do).
+	for _, msg := range editortest.ExecCmds(cmd) {
+		if _, ok := msg.(RenameRequestMsg); ok {
+			t.Fatal("Escape must not emit RenameRequestMsg")
+		}
+	}
+	if _, again := m.Commit(); again != nil {
+		t.Error("expected nil Cmd from Commit after Escape — the revert must have restored the committed baseline")
 	}
 }
 

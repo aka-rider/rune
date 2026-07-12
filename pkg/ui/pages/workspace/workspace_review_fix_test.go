@@ -29,13 +29,17 @@ func TestR1Adopt_FromHelpReadOnlyEditor(t *testing.T) {
 	m = loadFile(m, pathA, originalA)
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
-	// Open Help: view switches to the virtual doc and the editor goes
-	// read-only. (The stale-adopt hazard needs exactly this state.)
-	mm, hc := m.toggleHelp()
-	m = drainCmd(mm, hc)
+	// Open Help via the REAL F1 key: view switches to the virtual doc and the
+	// editor goes read-only. (The stale-adopt hazard needs exactly this
+	// state.) A direct m.toggleHelp() call would bypass handleKeyPress's
+	// closing finalize() — the active tab would still point at a.md while the
+	// view shows help, a mid-update state settle's invariant sweep
+	// (EDITOR-TAB-COH) rightly rejects.
+	mm, hc := m.Update(tea.KeyPressMsg{Code: tea.KeyF1})
+	m = settle(t, mm, hc)
 
 	// A changes externally while Help is displayed.
 	if err := os.WriteFile(pathA, []byte(externalA), 0o644); err != nil {
@@ -44,7 +48,7 @@ func TestR1Adopt_FromHelpReadOnlyEditor(t *testing.T) {
 
 	// Re-open A from Help (filetree selection has no help gate).
 	m2, oc := m.requestOpenPath(docA, pathA)
-	m = drainCmd(m2, oc)
+	m = settle(t, m2, oc)
 
 	if got := m.editor.Content(); got != externalA {
 		t.Fatalf("editor.Content() = %q, want adopted external content %q (ReplaceAll dropped by read-only editor?)", got, externalA)
@@ -78,7 +82,7 @@ func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 	m = loadFile(m, pathA, "content\n")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// requestID stamped on pendingDataLoss mirrors what startSave() does in
@@ -118,7 +122,7 @@ func TestOrphanedQuitAck_RacedStillSurfaces(t *testing.T) {
 	docA := m.view.DocID()
 	m = loadFile(m, pathB, "b content\n") // B displayed; A in background
 	if docA == 0 || m.view.DocID() == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// Quit already aborted: pendingDataLoss is zero. A's quit-batch ack
@@ -156,7 +160,7 @@ func TestBindNewRace_ErrorAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	m := withStore(t, newTestWorkspace(t))
 	docID := m.view.DocID()
 	if docID == 0 || !m.view.IsUntitled() {
-		t.Skip("store not available / no startup untitled")
+		t.Fatal("store not available / no startup untitled")
 	}
 	m = focusEditor(m)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
@@ -211,7 +215,7 @@ func TestBindNewRace_SuccessAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	m := withStore(t, newTestWorkspace(t))
 	docID := m.view.DocID()
 	if docID == 0 || !m.view.IsUntitled() {
-		t.Skip("store not available / no startup untitled")
+		t.Fatal("store not available / no startup untitled")
 	}
 	m = focusEditor(m)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})

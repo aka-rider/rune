@@ -32,8 +32,7 @@ func TestAppendEdit_NeverCoalescesIntoSnapshottedSeq(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	if _, err := s.AppendEdit(docID, singleInsert("a"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit a: %v", err)
@@ -53,7 +52,7 @@ func TestAppendEdit_NeverCoalescesIntoSnapshottedSeq(t *testing.T) {
 	// A second single-char insert, well within the coalesce window, would
 	// normally coalesce into the SAME row (seq unchanged) — but a snapshot
 	// now anchors that exact seq, so it must NOT.
-	now = now.Add(50 * time.Millisecond)
+	advance(50 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, singleInsert("b"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit b: %v", err)
 	}
@@ -93,8 +92,7 @@ func TestAppendEdit_TruncationInvalidatesFutureSnapshots(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	// Type a multi-char insert (avoids single-char coalescing entirely, like
 	// a paste/IME commit or the fuzz workflow's own textEvent).
@@ -110,7 +108,7 @@ func TestAppendEdit_TruncationInvalidatesFutureSnapshots(t *testing.T) {
 		t.Fatalf("CreateSnapshot: %v", err)
 	}
 
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, textInsert("file-b-edit-2"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit edit-2: %v", err)
 	}
@@ -129,7 +127,7 @@ func TestAppendEdit_TruncationInvalidatesFutureSnapshots(t *testing.T) {
 		}
 	}
 
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	// A fresh edit after undoing past the snapshot's own seq — this is what
 	// must invalidate (delete) the now-unreachable snapshot, not just the
 	// events that led to it.

@@ -36,9 +36,11 @@ const (
 	docHelp                    // the read-only built-in help document
 )
 
-func fileView(path string, docID int64) docView { return docView{kind: docFile, path: path, docID: docID} }
-func untitledView(docID int64) docView           { return docView{kind: docUntitled, docID: docID} }
-func helpView() docView                          { return docView{kind: docHelp} }
+func fileView(path string, docID int64) docView {
+	return docView{kind: docFile, path: path, docID: docID}
+}
+func untitledView(docID int64) docView { return docView{kind: docUntitled, docID: docID} }
+func helpView() docView                { return docView{kind: docHelp} }
 
 func (v docView) Kind() docKind    { return v.kind }
 func (v docView) IsFile() bool     { return v.kind == docFile }

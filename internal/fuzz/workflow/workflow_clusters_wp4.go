@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // WP4 persistence clusters (11-15). See workflow.go for the shared helpers
 // (activePathSlot, paletteText, mergeGuardResponseIndex, event vars) these
 // clusters use.

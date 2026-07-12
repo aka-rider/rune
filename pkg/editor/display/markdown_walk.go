@@ -245,4 +245,3 @@ func walkTaskList(node *ast.ListItem, src []byte, lines []string, lineOffsets []
 		delimRight: 0,
 	})
 }
-

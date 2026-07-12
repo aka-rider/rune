@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"rune/internal/editortest"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -15,7 +16,7 @@ func TestSetMergeMode_RendersHint(t *testing.T) {
 	m = m.SetSize(120, 1)
 	m = m.SetMergeMode(true, 3)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	for _, want := range []string{"Merge", "O", "urs", "T", "heirs", "3", "left"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("merge hint missing %q\n  view: %q", want, plain)
@@ -31,7 +32,7 @@ func TestSetMergeMode_ClearsWhenInactive(t *testing.T) {
 	m = m.SetMergeMode(true, 1)
 	m = m.SetMergeMode(false, 0)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if strings.Contains(plain, "⚙ Merge") {
 		t.Errorf("merge hint must not render once inactive: %q", plain)
 	}
@@ -53,7 +54,7 @@ func TestSetMergeMode_YieldsToGuard(t *testing.T) {
 	}
 	m = m.SetGuard(GuardDirty, opts)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if strings.Contains(plain, "⚙ Merge") {
 		t.Errorf("guard must win over the merge hint: %q", plain)
 	}

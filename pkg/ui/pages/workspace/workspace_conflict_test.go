@@ -3,11 +3,14 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"rune/internal/editortest"
 	"rune/pkg/docstate"
 	"rune/pkg/ui/components/footer"
-	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/pages/workspace/mergemode"
 	"rune/pkg/vfs"
 )
@@ -34,7 +37,7 @@ func setupSaveConflict(t *testing.T, oursLoaded, theirsExternal string) (Model, 
 	m = loadFile(m, path, oursLoaded)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available — docID is 0")
+		t.Fatal("store not available — docID is 0")
 	}
 	m = focusEditor(m)
 
@@ -62,52 +65,61 @@ func setupSaveConflict(t *testing.T, oursLoaded, theirsExternal string) (Model, 
 // ─────────────────────────────────────────────────────────────────────────────
 
 func TestEvictSave_DivergenceRefusesWrite(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "victim.md")
-	const original = "original content"
+	// The eviction guard rises through the REAL flow — dirtyEvictSetup loads
+	// tabLimit store-backed files, journals a real edit per background tab,
+	// and opens an 11th file with no clean candidate — never a hand-built
+	// pendingDataLoss (which used to drift from what the guard actually
+	// stamps).
+	m, victim, _ := dirtyEvictSetup(t)
+	if !m.footer.InGuard() {
+		t.Fatal("setup: eviction guard not raised")
+	}
+
+	// The victim diverges on the shared FS after its load observation — the
+	// CAS expectation (saved_obs, from Load) no longer matches.
 	const external = "EXTERNAL — must not be clobbered"
-
-	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+	if err := m.fsys().WriteFile(victim, []byte(external), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	m := withStore(t, newTestWorkspace(t))
-	m = m.WithFS(vfs.Disk{})
-	m = loadFile(m, path, original)
-	docID := m.view.DocID()
-	if docID == 0 {
-		t.Skip("store not available — docID is 0")
+	// [S]ave — a REAL guard keypress routed through the footer, settled
+	// through the full evictSave → FileSaveErrorMsg{Conflict} round trip.
+	// Drained with a per-message observer: the refusal error ("save failed:
+	// %q changed on disk", workspace_io_save.go) is transient — the zeroed
+	// dismiss timer (harness.Hermetic) clears the banner within the same
+	// drain, so only a per-message hook can witness it while the tab
+	// assertions below still run on the fully settled model.
+	sawRefusal := false
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
+	m = editortest.Drain(m, cmd, Model.Update, func(m Model) {
+		if strings.Contains(editortest.StripANSI(m.footer.View()), "save failed") {
+			sawRefusal = true
+		}
+	})
+	if !sawRefusal {
+		t.Fatal("§1.4.7: the CAS refusal never surfaced in the footer — refuse silently is not refuse-or-prompt")
 	}
 
-	// Externally change the file after load — the victim's CAS expectation
-	// (saved_obs, from Load) no longer matches disk.
-	if err := os.WriteFile(path, []byte(external), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	m.opentabs = m.opentabs.MarkDirtyByID(docID)
-	m.pendingDataLoss = pendingDataLoss{
-		kind:   actionEvict,
-		victim: opentabs.TabHandle{DocID: docID, Path: path},
-	}
-
-	_, cmd := m.evictSave()
-	if cmd == nil {
-		t.Fatal("evictSave returned nil cmd — store required for this test")
-	}
-	msg := cmd()
-	saveErr, ok := msg.(FileSaveErrorMsg)
-	if !ok || !saveErr.Conflict {
-		t.Fatalf("§1.4.7: evictSave must refuse to write a diverged file; got %#v", msg)
-	}
-
-	diskBytes, err := os.ReadFile(path)
+	// §1.4.7: the diverged victim must NOT have been written.
+	diskBytes, err := m.fsys().ReadFile(victim)
 	if err != nil {
 		t.Fatalf("ReadFile victim: %v", err)
 	}
 	if string(diskBytes) != external {
 		t.Fatalf("§1.4.7 violation: evictSave clobbered an externally-changed file;\n  disk=%q\n  want=%q",
 			string(diskBytes), external)
+	}
+	// And the refusal must surface — the victim's tab survives (no silent
+	// evict of unsaved work).
+	found := false
+	for i := 0; i < m.opentabs.Len(); i++ {
+		if m.opentabs.PathAt(i) == victim {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("victim tab was evicted despite the refused save")
 	}
 }
 
@@ -197,7 +209,7 @@ func TestConflictGuard_MergeUsesLiveBuffer(t *testing.T) {
 	m = loadFile(m, path, ancestor)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// theirs (disk) == ancestor ⇒ the 3-way merge resolves entirely to ours.
@@ -228,7 +240,7 @@ func TestConflictGuard_DiscardLoadsTheirs(t *testing.T) {
 	m = loadFile(m, path, oursOriginal)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	const theirsContent = "external theirs content"
@@ -267,7 +279,7 @@ func TestConflictGuard_MergeClearsConflict(t *testing.T) {
 	m = loadFile(m, path, ancestorContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	// A REAL journaled edit diverges ours from the ancestor — without it,
 	// only theirs would have changed since Load, which resolves cleanly
@@ -345,7 +357,7 @@ func TestFileSaveErrorMsg_ConflictRaisesGuardMerge(t *testing.T) {
 	m = loadFile(m, "/fake/path.md", "ours content")
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	freshHash, err := m.store.PutBlob("theirs content\n")
@@ -376,7 +388,7 @@ func TestFileSaveErrorMsg_MissingRaisesGuardDeleted(t *testing.T) {
 	m = loadFile(m, "/fake/path.md", "ours content")
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	m.activeSave = SaveIdentity{RequestID: "r1", InFlight: true, Path: "/fake/path.md", DocID: docID}
@@ -413,7 +425,7 @@ func TestR2SaveGating_UnresolvedConflictsBlock(t *testing.T) {
 	m = loadFile(m, path, ancestorContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	// A REAL journaled edit diverges ours from the ancestor — a genuine
 	// two-way conflict.
@@ -427,11 +439,15 @@ func TestR2SaveGating_UnresolvedConflictsBlock(t *testing.T) {
 	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
+	// Deterministic: the fixture edits the SAME line on both sides (ours
+	// "ours changed" vs theirs "theirs changed" over ancestor "original"), so
+	// libgit2's diff3 MUST produce a genuine conflict — a skip here would
+	// have silently greened a real merge-detection regression.
 	if !mergemode.IsActive(m.merge) {
-		t.Skip("merge resolver not active (no conflict from libgit2)")
+		t.Fatal("merge resolver not active — libgit2 failed to conflict on a same-line both-sides edit")
 	}
 	if !mergemode.HasUnresolvedConflicts(m.merge) {
-		t.Skip("no unresolved conflicts (clean merge)")
+		t.Fatal("no unresolved conflicts — libgit2 auto-resolved a same-line both-sides edit")
 	}
 
 	beforeDisk, _ := os.ReadFile(path)

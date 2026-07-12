@@ -12,8 +12,9 @@ clean:
 	rm -f $(RUNE)
 
 test:
-	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	go test -race -timeout 10m -coverprofile=coverage.out -covermode=atomic ./...
 	go vet ./...
+	go vet -tags fuzzing ./...
 
 T ?= 1m
 
@@ -39,5 +40,5 @@ release-snapshot:
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server
 
-.PHONY: build build-fuzz run test clean test-fuzz release-snapshot whisper.cpp-restart
+.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart
 

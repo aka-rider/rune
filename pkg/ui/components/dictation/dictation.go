@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	dictengine "rune/pkg/dictation"
-	"rune/pkg/inputlang"
 	"rune/pkg/whisper"
 )
 
@@ -95,9 +94,12 @@ func (m Model) StartCmd() (Model, tea.Cmd) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+	// Language deliberately left "" — the engine resolves it from the active
+	// keyboard input source inside dictengine.StartCmd, BEHIND the test-stub
+	// seam, because that resolution is a main-thread-only TIS cgo call that
+	// must never run in a hermetic test (see dictengine.Config.Language).
 	cfg := dictengine.Config{
-		Whisper:  whisper.Client{BaseURL: "http://127.0.0.1:8080", InferencePath: "/inference"},
-		Language: inputlang.Current(),
+		Whisper: whisper.Client{BaseURL: "http://127.0.0.1:8080", InferencePath: "/inference"},
 	}
 	return m, dictengine.StartCmd(ctx, cfg)
 }

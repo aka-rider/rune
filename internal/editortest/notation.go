@@ -142,8 +142,8 @@ func FormatState(s TestState) string {
 	// Sort events:
 	// primary: pos ascending
 	// secondary: order ascending
-	// Wait, if order is same, preserve stability or something. 
-    // It's mostly unique except overlapping identical cursors.
+	// Wait, if order is same, preserve stability or something.
+	// It's mostly unique except overlapping identical cursors.
 	slices.SortFunc(evs, func(a, b event) int {
 		if a.pos != b.pos {
 			return a.pos - b.pos
@@ -153,7 +153,7 @@ func FormatState(s TestState) string {
 
 	var buf strings.Builder
 	evIdx := 0
-	
+
 	maxPos := len(s.Content)
 	if len(evs) > 0 && evs[len(evs)-1].pos > maxPos {
 		maxPos = evs[len(evs)-1].pos

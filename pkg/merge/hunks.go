@@ -66,9 +66,9 @@ func MergeHunks(ancestor, ours, theirs []byte) ([]Hunk, error) {
 
 // diff3Block holds the three sections of a single conflict block.
 type diff3Block struct {
-	oursSection    []byte // between <<<<<<< and |||||||
+	oursSection     []byte // between <<<<<<< and |||||||
 	ancestorSection []byte // between ||||||| and =======
-	theirsSection  []byte // between ======= and >>>>>>>
+	theirsSection   []byte // between ======= and >>>>>>>
 }
 
 // nextLine returns the first line (including its line ending) and the

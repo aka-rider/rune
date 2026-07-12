@@ -62,8 +62,8 @@ type Styles struct {
 	TaskChecked   lipgloss.Style
 	TaskUnchecked lipgloss.Style
 
-	Selection        lipgloss.Style
-	SearchMatch      lipgloss.Style
+	Selection         lipgloss.Style
+	SearchMatch       lipgloss.Style
 	SearchActiveMatch lipgloss.Style
 
 	ChatTitle        lipgloss.Style

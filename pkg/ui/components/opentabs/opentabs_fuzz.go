@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package opentabs
 
 // FuzzTabs returns a copy of the current tab slice for invariant checking.

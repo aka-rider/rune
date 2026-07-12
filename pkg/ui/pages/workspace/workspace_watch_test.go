@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,20 +61,31 @@ func TestFSNotifyWatcher_WatchDir_DetectsDirChange(t *testing.T) {
 	msgCh := make(chan tea.Msg, 1)
 	go func() { msgCh <- cmd() }()
 
-	// Give fsnotify.Add(dir) a moment to arm before the write below — there's
-	// no synchronous "watch is armed" signal to wait on instead.
-	time.Sleep(50 * time.Millisecond)
-	newPath := filepath.Join(dir, "new.md")
-	if err := os.WriteFile(newPath, []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	select {
-	case msg := <-msgCh:
-		if _, ok := msg.(dirChangedMsg); !ok {
-			t.Fatalf("WatchDir: got %#v, want dirChangedMsg", msg)
+	// There is no synchronous "watch is armed" signal to wait on, so instead
+	// of one blind sleep (which either wastes time or flakes when arming is
+	// slow), keep creating a fresh file until the watcher reports: the first
+	// write to land after fsnotify.Add arms is guaranteed to be seen. The
+	// retry interval must exceed WatchDir's 50ms debounce — every event
+	// RESETS its drain timer, so writes arriving faster than the debounce
+	// would postpone the report forever. 2s hard deadline.
+	tick := time.NewTicker(150 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(2 * time.Second)
+	for i := 0; ; {
+		select {
+		case msg := <-msgCh:
+			if _, ok := msg.(dirChangedMsg); !ok {
+				t.Fatalf("WatchDir: got %#v, want dirChangedMsg", msg)
+			}
+			return
+		case <-tick.C:
+			i++
+			p := filepath.Join(dir, fmt.Sprintf("new-%d.md", i))
+			if err := os.WriteFile(p, []byte("hello"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for dirChangedMsg from the real fsnotify watcher")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for dirChangedMsg from the real fsnotify watcher")
 	}
 }

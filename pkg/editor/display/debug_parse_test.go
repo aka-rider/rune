@@ -1,8 +1,8 @@
 package display_test
 
 import (
-	"testing"
 	"fmt"
+	"testing"
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"

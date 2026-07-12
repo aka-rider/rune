@@ -28,8 +28,16 @@ type ErrorMsg struct {
 
 // Config holds the runtime dependencies for a dictation session.
 type Config struct {
-	Whisper  whisper.Client
-	Language string // BCP-47 code captured at dictation start; "" means auto-detect
+	Whisper whisper.Client
+	// Language is the BCP-47 code for transcription. "" means "resolve from
+	// the active macOS keyboard input source when the real pipeline starts"
+	// (StartCmd, start_darwin.go); if that also yields "", whisper
+	// auto-detects. Resolution happens INSIDE StartCmd, behind the
+	// startStub check, because it is a main-thread-only TIS cgo call
+	// (inputlang.Current) that must never run from a test goroutine — the
+	// parallel scenario suite crashed with SIGABRT in HIToolbox when the UI
+	// component resolved it eagerly at Config construction.
+	Language string
 }
 
 // ListenCmd reads one message from the dictation channel.

@@ -67,9 +67,9 @@ func (m Model) ensureVisible() Model {
 	m.top = scroll.Follow(m.cursor, m.top, size, len(m.entries), margin, 0)
 	return m
 }
-func (m Model) Focused() bool            { return m.focused }
-func (m Model) Height() int              { return m.height }
-func (m Model) Root() string             { return m.root }
+func (m Model) Focused() bool { return m.focused }
+func (m Model) Height() int   { return m.height }
+func (m Model) Root() string  { return m.root }
 
 // RemoveEntry removes the entry at path from the visible list and clamps the
 // cursor. Called by the workspace for optimistic delete before the async trash

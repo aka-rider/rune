@@ -11,6 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"rune/internal/editortest"
 	"rune/pkg/vfs"
 )
 
@@ -254,6 +255,13 @@ func (s *Store) SetClock(clock func() time.Time) {
 // opened exactly like a real Open/OpenAt (minus the workDir/baseDir
 // indirection — tests get exact path control). The store is closed
 // automatically via t.Cleanup.
+//
+// The clock is editortest.AutoClock, NOT time.Now (§8.2): AppendEdit's 300ms
+// coalescing window on a wall clock makes the same test input coalesce or
+// not depending on machine load — observed as a fuzz-corpus replay that
+// failed only under a loaded sweep and passed solo. Every store a test
+// constructs is deterministic by default; a test that needs a specific
+// schedule installs its own via SetClock (see docstate's fixedClock helper).
 func NewTestStore(t *testing.T) *Store {
 	t.Helper()
 	permPath := filepath.Join(t.TempDir(), "rune_test.db")
@@ -262,12 +270,13 @@ func NewTestStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("NewTestStore: open perm: %v", err)
 	}
-	sessionID, err := establishSession(perm, time.Now)
+	clock := editortest.AutoClock(time.Millisecond)
+	sessionID, err := establishSession(perm, clock)
 	if err != nil {
 		t.Fatalf("NewTestStore: establish session: %v", err)
 	}
 
-	s := &Store{perm: perm, clock: time.Now, sessionID: sessionID, livenessCheck: isProcessAlive}
+	s := &Store{perm: perm, clock: clock, sessionID: sessionID, livenessCheck: isProcessAlive}
 	t.Cleanup(func() {
 		if err := s.Close(); err != nil {
 			t.Logf("NewTestStore cleanup: %v", err)

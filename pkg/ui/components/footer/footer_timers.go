@@ -1,5 +1,3 @@
-//go:build !fuzzing
-
 package footer
 
 import "time"

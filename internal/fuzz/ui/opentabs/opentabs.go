@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package opentabs contains invariant checkers for the opentabs component:
 // T1 (no duplicate tab paths), T2 (active tab index in range), TAB-SET
 // (exactly one active tab flag when non-empty).

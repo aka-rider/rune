@@ -110,10 +110,10 @@ func TestFind(t *testing.T) {
 
 		// Query longer than content
 		{
-			name:  "query longer than content",
+			name:    "query longer than content",
 			content: "hi",
-			query: "hello",
-			want:  nil,
+			query:   "hello",
+			want:    nil,
 		},
 	}
 

@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package textedit contains invariant checkers for the textedit/markdownedit
 // component: cell layout (R1–R9), cursor geometry (C1–C3), presence (M1–M2),
 // buffer line count (B1), selection coverage (S1), and the buffer-version

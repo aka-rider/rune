@@ -44,7 +44,7 @@ func TestDiskChangedHint_ClearOnTabSwitchBack_AutoAdopted(t *testing.T) {
 	m = loadFile(m, pathA, "v1")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	m = loadFile(m, pathB, "b content") // switch away from A
 
@@ -55,7 +55,7 @@ func TestDiskChangedHint_ClearOnTabSwitchBack_AutoAdopted(t *testing.T) {
 	}
 
 	m, cmd := m.requestOpenPath(docA, pathA)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if m.diskChangedHint {
 		t.Fatal("diskChangedHint: expected false after switching back — SyncDiskAhead auto-adopts theirs, reconciling the divergence")
@@ -88,13 +88,13 @@ func TestDiskChangedHint_ClearOnTabSwitchUnchanged(t *testing.T) {
 	m = loadFile(m, pathA, "stable")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	m = loadFile(m, pathB, "b content")
 	m.diskChangedHint = true // pre-set to confirm it gets cleared
 
 	m, cmd := m.requestOpenPath(docA, pathA)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if m.diskChangedHint {
 		t.Fatal("diskChangedHint: expected false after switching to an unchanged file")
@@ -111,14 +111,14 @@ func TestFileChangedMsg_SetsHintForOpenFile(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	m = loadFile(m, path, "v1")
 	if m.view.DocID() == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	if err := os.WriteFile(path, []byte("v2 external in-place edit — longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	m, cmd := m.Update(fileChangedMsg{path: path})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if !m.diskChangedHint {
 		t.Fatal("BUG1: fileChangedMsg for the open file must set diskChangedHint")
 	}
@@ -137,28 +137,39 @@ func TestFileChangedMsg_IgnoresOtherFileAndOwnSave(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	m = loadFile(m, path, "v1")
 	if m.view.DocID() == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
+	}
+
+	// A Write to the open file while OUR save is in flight is a self-write.
+	// The in-flight save is a REAL one (startSaveGetAck physically performs
+	// the atomic rewrite and holds the FileSavedMsg ack undelivered), so
+	// activeSave carries the full identity startSave populates — including
+	// SavedContent, without which SAVE-SM (settle's invariant sweep) trips.
+	// The fileChangedMsg is then exactly what fsnotify would report for our
+	// own publish: savingTarget compares the full identity (docID+path) and
+	// must swallow it.
+	m = focusEditor(m)
+	m = typeChar(m, 'X') // dirty, so there is something real to save
+	m, fsMsg := startSaveGetAck(t, m)
+	m, cmd := m.Update(fileChangedMsg{path: path})
+	m = settle(t, m, cmd)
+	if m.diskChangedHint {
+		t.Fatal("BUG1: a Write during our own in-flight save must not set the hint")
+	}
+	m, cmd = m.Update(fsMsg) // settle the save; hint must stay clear
+	m = settle(t, m, cmd)
+	if m.diskChangedHint {
+		t.Fatal("BUG1: our own save ack must not set the hint")
 	}
 
 	// The OPEN file changed on disk, but the Write event names a DIFFERENT file.
 	if err := os.WriteFile(path, []byte("v2 changed — longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m, cmd := m.Update(fileChangedMsg{path: other})
-	m = drainCmd(m, cmd)
+	m, cmd = m.Update(fileChangedMsg{path: other})
+	m = settle(t, m, cmd)
 	if m.diskChangedHint {
 		t.Fatal("BUG1: a Write to a different file must not set the hint")
-	}
-
-	// A Write to the open file while OUR save is in flight is a self-write.
-	// savingTarget compares the FULL identity (docID+path), so — matching
-	// what startSave always populates together, never InFlight alone — set
-	// every field, not just InFlight.
-	m.activeSave = SaveIdentity{RequestID: "x", InFlight: true, Path: path, DocID: m.view.DocID()}
-	m, cmd = m.Update(fileChangedMsg{path: path})
-	m = drainCmd(m, cmd)
-	if m.diskChangedHint {
-		t.Fatal("BUG1: a Write during our own in-flight save must not set the hint")
 	}
 }
 
@@ -178,7 +189,7 @@ func TestDirChangedMsg_AtomicSaveDivergence_SetsPersistentHint(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	m = loadFile(m, path, "v1")
 	if m.view.DocID() == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	tmp := path + ".tmp-atomic"
@@ -190,7 +201,7 @@ func TestDirChangedMsg_AtomicSaveDivergence_SetsPersistentHint(t *testing.T) {
 	}
 
 	m, cmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if !m.diskChangedHint {
 		t.Fatal("BUG1: dirChangedMsg must detect the atomic-save divergence and set diskChangedHint")
@@ -213,7 +224,7 @@ func TestDirChangedMsg_NoDivergence_NoHint(t *testing.T) {
 	m = loadFile(m, path, "stable")
 
 	m, cmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if m.diskChangedHint {
 		t.Fatal("dirChangedMsg with no real divergence must not set diskChangedHint")

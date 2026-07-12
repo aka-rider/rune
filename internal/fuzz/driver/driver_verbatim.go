@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package driver
 
 import (
@@ -24,7 +22,7 @@ import (
 // 500-LoC limit (§1.6/§11) — called inline from drainMsg with the exact
 // same rs/m/msg/prev/snap it already has in scope.
 func checkVerbatim(rs *runState, m pgworkspace.Model, msg tea.Msg, prev, snap snapshot.Snapshot) *invariant.Violation {
-	if v := checkSaveVerbatim(rs, msg, snap); v != nil {
+	if v := checkSaveVerbatim(rs, msg); v != nil {
 		return v
 	}
 	if v := checkLoadVerbatim(rs, msg, snap); v != nil {
@@ -84,7 +82,7 @@ func checkDictNoDestroy(msg tea.Msg, prev, next snapshot.Snapshot) *invariant.Vi
 // RunReorderSaves (msg delivery is deliberately deferred/reordered there —
 // SAVE-RACE owns that durability property) and on any store/mem read error
 // (quit teardown closes the store mid-run — same discipline as DL1).
-func checkSaveVerbatim(rs *runState, msg tea.Msg, snap snapshot.Snapshot) *invariant.Violation {
+func checkSaveVerbatim(rs *runState, msg tea.Msg) *invariant.Violation {
 	if rs.reorderSaves || rs.mem == nil || rs.store == nil {
 		return nil
 	}

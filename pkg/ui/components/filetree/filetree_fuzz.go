@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package filetree
 
 // FuzzCursor delegates to the always-available Cursor() for fuzz harness use.

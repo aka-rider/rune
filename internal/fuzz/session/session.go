@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package session is the invariant aggregator for the fuzz driver. It
 // composes all per-domain checker packages (textedit, display, opentabs,
 // footer, filetree, workspace) into single Check / CheckTransition /

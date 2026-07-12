@@ -11,6 +11,7 @@ import (
 	"rune/internal/fuzz/artifact"
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/event"
+	"rune/internal/fuzz/harness"
 	"rune/pkg/docstate"
 	"rune/pkg/terminal"
 	ui "rune/pkg/ui"
@@ -23,6 +24,11 @@ var fuzzScript string
 
 func init() {
 	flag.StringVar(&fuzzScript, "fuzz-script", "", "path to keys.jsonl seed file")
+	// harness.Hermetic arms the same seven test/fuzz hooks this binary used
+	// to get for free from the //go:build fuzzing tag pairs those hooks
+	// replaced (Phase 1 Category 3) -- no real timers, disk store open, OS
+	// opener process, network client, or microphone/whisper pipeline.
+	harness.Hermetic()
 }
 
 // run replaces the tea.Program entry point under -tags fuzzing.

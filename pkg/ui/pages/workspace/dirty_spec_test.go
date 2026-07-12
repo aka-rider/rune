@@ -57,9 +57,10 @@ func redoOnce(m Model) Model {
 // materializeStoreCmd (store.Materialize actually writes+commits, exactly as
 // production does — expect/seq captured co-atomically at save-start,
 // §1.4.2/§1.4.8), executed here and fed back through Update.
-func save(m Model) Model {
+func save(t *testing.T, m Model) Model {
+	t.Helper()
 	m, cmd := m.startSave()
-	return drainCmd(m, cmd)
+	return settle(t, m, cmd)
 }
 
 // dirtyWorkspace returns a workspace with a store, focused editor, and a file
@@ -90,7 +91,7 @@ func TestDirtySpec_P1_UndoToSaveStateClearsDirty(t *testing.T) {
 	}
 
 	// Step 3 – save: clean. cleanJournalPos = storeMaxSeq = 1.
-	m = save(m)
+	m = save(t, m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P1 step 3: should be clean after save")
 	}
@@ -114,7 +115,7 @@ func TestDirtySpec_P2_UndoPastSaveStateStaysDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
 	m = typeSeq(m, 'a')  // event seq=1
-	m = save(m)          // clean at seq=1
+	m = save(t, m)       // clean at seq=1
 	m = typeChar(m, 'b') // event seq=2, dirty
 	m = undoOnce(m)      // back at seq=1: clean
 
@@ -135,7 +136,7 @@ func TestDirtySpec_P3_RedoToSaveStateClearsDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
 	m = typeSeq(m, 'a')  // seq=1
-	m = save(m)          // clean at seq=1
+	m = save(t, m)       // clean at seq=1
 	m = typeChar(m, 'b') // seq=2, dirty
 	m = undoOnce(m)      // clean at seq=1
 	m = undoOnce(m)      // dirty (before seq=1)
@@ -157,7 +158,7 @@ func TestDirtySpec_P4_RedoPastSaveStateDirty(t *testing.T) {
 	m := dirtyWorkspace(t)
 
 	m = typeSeq(m, 'a')  // seq=1
-	m = save(m)          // clean at seq=1
+	m = save(t, m)       // clean at seq=1
 	m = typeChar(m, 'b') // seq=2, dirty
 	m = undoOnce(m)      // clean at seq=1
 	m = undoOnce(m)      // dirty (before seq=1)
@@ -192,7 +193,7 @@ func TestDirtySpec_P5_NewEditAfterUndoThenUndoBack(t *testing.T) {
 	m := dirtyWorkspace(t)
 
 	// Save the empty baseline.
-	m = save(m)
+	m = save(t, m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P5 step 0: should be clean after saving empty file")
 	}
@@ -239,7 +240,7 @@ func TestDirtySpec_P6_SaveAtMidUndoPosition(t *testing.T) {
 	m = undoOnce(m)
 
 	// Save at mid-undo: MarkSaved records the current position (seq=1) as saved.
-	m = save(m)
+	m = save(t, m)
 	if m.opentabs.HasDirty() {
 		t.Fatal("P6 step 1: should be clean after save at mid-undo position")
 	}

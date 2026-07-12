@@ -11,8 +11,7 @@ func TestEditsInRange_PlainRange(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	// Three edits, each outside the coalescing window so each gets its own row.
 	if _, err := s.AppendEdit(docID, textInsert("a"), noCursors, noCursors); err != nil {
@@ -23,7 +22,7 @@ func TestEditsInRange_PlainRange(t *testing.T) {
 		t.Fatalf("CurrentSeq after a: %v", err)
 	}
 
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, textInsert("b"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit b: %v", err)
 	}
@@ -32,7 +31,7 @@ func TestEditsInRange_PlainRange(t *testing.T) {
 		t.Fatalf("CurrentSeq after b: %v", err)
 	}
 
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, textInsert("c"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit c: %v", err)
 	}
@@ -90,8 +89,7 @@ func TestEditsInRange_ReflectsCoalesce(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	if _, err := s.AppendEdit(docID, singleInsert("h"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit h: %v", err)
@@ -110,9 +108,10 @@ func TestEditsInRange_ReflectsCoalesce(t *testing.T) {
 		t.Fatalf("EditsInRange (before coalesce): got %+v, want single insert \"h\"", rows)
 	}
 
-	// Second keystroke within the coalescing window: same seq, mutated row.
-	now = now.Add(50 * time.Millisecond)
-	if _, err := s.AppendEdit(docID, singleInsert("e"), noCursors, noCursors); err != nil {
+	// Second keystroke within the coalescing window, continuing the typing
+	// run (starts where "h" ended): same seq, mutated row.
+	advance(50 * time.Millisecond)
+	if _, err := s.AppendEdit(docID, insertAt(1, "e"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit e: %v", err)
 	}
 	seq2, err := s.CurrentSeq(docID)
@@ -136,8 +135,8 @@ func TestEditsInRange_ReflectsCoalesce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Content: %v", err)
 	}
-	if got != "eh" {
-		t.Fatalf("Content: got %q, want %q (both keystrokes must survive the coalesce)", got, "eh")
+	if got != "he" {
+		t.Fatalf("Content: got %q, want %q (both keystrokes must survive the coalesce)", got, "he")
 	}
 }
 
@@ -149,13 +148,12 @@ func TestEditsInRange_TruncationRemovesAbandonedRows(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	if _, err := s.AppendEdit(docID, textInsert("file-edit-1"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit edit-1: %v", err)
 	}
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, textInsert("file-edit-2"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit edit-2: %v", err)
 	}
@@ -178,7 +176,7 @@ func TestEditsInRange_TruncationRemovesAbandonedRows(t *testing.T) {
 		}
 	}
 
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	// A fresh edit after the undo truncates the abandoned future and lands at
 	// a brand-new (higher) seq — AUTOINCREMENT never reuses the deleted seqs.
 	if _, err := s.AppendEdit(docID, textInsert("dirty"), noCursors, noCursors); err != nil {

@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package workspace_test
 
 // FuzzTwoSessionsSharedDoc is the two-editors-session-scoped-journal plan's
@@ -33,12 +31,13 @@ package workspace_test
 import (
 	"bytes"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/command"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
@@ -51,49 +50,13 @@ import (
 	"rune/pkg/vfs"
 )
 
-// cmdSliceType/asCmdSlice/drainAll mirror internal/fuzz/driver.go's own
-// drainCmd exactly (BatchMsg + the unexported tea.Sequence "sequenceMsg"
-// reflection trick) — reimplemented locally because this file, like
-// session_fuzz_test.go/human_fuzz_test.go, is package workspace_test and
-// driver's own drainCmd is unexported. No invariant-checking here (unlike
-// driver.go's version) — this harness's OWN cross-session assertions run
-// once at the end of each fuzz iteration, below.
-var twoSessionCmdSliceType = reflect.TypeOf([]tea.Cmd(nil))
-
-func twoSessionAsCmdSlice(msg tea.Msg) ([]tea.Cmd, bool) {
-	if msg == nil {
-		return nil, false
-	}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		return []tea.Cmd(batch), true
-	}
-	rv := reflect.ValueOf(msg)
-	if rv.IsValid() && rv.Type().ConvertibleTo(twoSessionCmdSliceType) {
-		return rv.Convert(twoSessionCmdSliceType).Interface().([]tea.Cmd), true
-	}
-	return nil, false
-}
-
+// drainAll settles cmd fully via editortest.Drain (the shared BatchMsg + the
+// unexported tea.Sequence "sequenceMsg" expansion — formerly a local
+// reflection-trick copy of internal/fuzz/driver.go's drainCmd). No
+// invariant-checking here (unlike driver.go's version) — this harness's OWN
+// cross-session assertions run once at the end of each fuzz iteration, below.
 func drainAll(m workspace.Model, cmd tea.Cmd) workspace.Model {
-	if cmd == nil {
-		return m
-	}
-	msg := cmd()
-	if msg == nil {
-		return m
-	}
-	if cmds, ok := twoSessionAsCmdSlice(msg); ok {
-		for _, c := range cmds {
-			if c == nil {
-				continue
-			}
-			m = drainAll(m, c)
-		}
-		return m
-	}
-	var next tea.Cmd
-	m, next = m.Update(msg)
-	return drainAll(m, next)
+	return editortest.Drain(m, cmd, workspace.Model.Update)
 }
 
 // takeChunk reads a length-prefixed (first byte = length, capped at 12),
@@ -196,6 +159,14 @@ func FuzzTwoSessionsSharedDoc(f *testing.F) {
 		}
 		defer storeB.Close()
 		storeB.UseFS(mem)
+		// ONE deterministic clock shared by both sessions: replay must not
+		// depend on wall-clock speed (AppendEdit's 300ms coalescing window,
+		// §8.2), and a shared strictly-monotonic clock also keeps the two
+		// sessions' observation timestamps totally ordered, as real
+		// interleaved wall-clock reads would be.
+		clk := editortest.AutoClock(time.Millisecond)
+		storeA.SetClock(clk)
+		storeB.SetClock(clk)
 		if warnA != "" || warnB != "" {
 			t.Skip("degraded store — not the property under test")
 		}

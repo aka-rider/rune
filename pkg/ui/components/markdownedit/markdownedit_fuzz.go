@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package markdownedit
 
 import (

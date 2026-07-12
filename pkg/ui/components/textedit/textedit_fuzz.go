@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package textedit
 
 import (
@@ -43,4 +41,3 @@ func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.wrapSnap }
 // FuzzSyntaxSnapshot returns the current syntax-layer snapshot.
 // Used for COORD-RT, SPAN-COVER, and D5 invariants.
 func (m Model) FuzzSyntaxSnapshot() display.SyntaxSnapshot { return m.syntaxSnap }
-

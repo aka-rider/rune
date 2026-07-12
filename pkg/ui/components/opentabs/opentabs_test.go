@@ -13,7 +13,7 @@ import (
 func TestMouseClickSelectsTab(t *testing.T) {
 	m := New(keymap.Default(), styles.Default())
 	m = m.OpenFile(1, "a.md").OpenFile(2, "b.md") // tabs: a(0), b(1)
-	m = m.SetFocused(true).SetOffset(1, 5)  // header at y=5, tab0 y=6, tab1 y=7
+	m = m.SetFocused(true).SetOffset(1, 5)        // header at y=5, tab0 y=6, tab1 y=7
 
 	// Click tab 1 (b.md).
 	_, cmd := m.Update(tea.MouseClickMsg{X: 3, Y: 7, Button: tea.MouseLeft})

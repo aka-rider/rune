@@ -106,7 +106,7 @@ func (s *Store) AppendEdit(docID int64, edits []buffer.AppliedEdit, cursorsBefor
 			lastTime, parseErr := time.Parse(time.RFC3339Nano, lastAt)
 			if parseErr == nil {
 				elapsed := s.clock().UTC().Sub(lastTime)
-				if elapsed <= 300*time.Millisecond && !lastInsertIsWhitespace(lastEditsJSON) {
+				if elapsed <= 300*time.Millisecond && canCoalesceInto(lastEditsJSON, edits[0]) {
 					// Never mutate a row a snapshot has already anchored to
 					// (RecoverDocument correctness): a snapshot at seq=lastSeq
 					// freezes "content up to and including lastSeq" as of the
@@ -364,21 +364,41 @@ func isInsertChar(edits []buffer.AppliedEdit) bool {
 	return e.Deleted == "" && utf8.RuneCountInString(e.Insert) == 1
 }
 
-// lastInsertIsWhitespace reports whether the last edit in editsJSON is a
-// whitespace character (space, tab, newline, CR).
-func lastInsertIsWhitespace(editsJSON string) bool {
+// canCoalesceInto reports whether a new single-char insert may coalesce into
+// the previous event (stored as editsJSON): the previous event's LAST edit
+// must itself be a pure insert ending exactly where the new insert begins —
+// i.e. the two form a genuine typing run — and must not end in whitespace
+// (the word-boundary undo-stop rule).
+//
+// The typing-run shape is load-bearing for undo correctness, not a
+// preference: coalescing appends SEQUENTIAL edits to one event, while
+// ApplyInverse/Reapply treat an event's edits as a SIMULTANEOUS batch
+// (non-overlapping once sorted descending). A typing run is exactly the
+// shape where both readings agree. Coalescing into anything else — a
+// ReplaceAll install (crash-recovery/adopt journaling), a deletion, or an
+// insert at a non-adjacent position — manufactures an event whose inverse
+// spans overlap, wedging ⌘Z with a §1.3 "apply inverse" error (caught by
+// TestRecoverUnsavedEdits_AcrossStoreRestart: the first keystroke within
+// 300ms of a recovery install used to coalesce into it).
+func canCoalesceInto(editsJSON string, next buffer.AppliedEdit) bool {
 	var edits []buffer.AppliedEdit
 	if err := json.Unmarshal([]byte(editsJSON), &edits); err != nil || len(edits) == 0 {
 		return false
 	}
-	last := edits[len(edits)-1].Insert
-	for _, r := range last {
+	last := edits[len(edits)-1]
+	if last.Deleted != "" {
+		return false // a replace/delete is never part of a typing run
+	}
+	if next.Start != last.Start+len(last.Insert) {
+		return false // not adjacent — a fresh undo stop at the new location
+	}
+	for _, r := range last.Insert {
 		switch r {
 		case ' ', '\t', '\n', '\r':
-			return true
+			return false // whitespace ends the word — next char starts a new stop
 		}
 	}
-	return false
+	return true
 }
 
 // mergeEditsJSON appends newEdits to the edits stored in existingJSON.

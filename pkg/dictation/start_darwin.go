@@ -1,4 +1,4 @@
-//go:build darwin && !fuzzing
+//go:build darwin
 
 package dictation
 
@@ -9,13 +9,27 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/pkg/inputlang"
 	"rune/pkg/microphone"
 )
 
 // StartCmd starts the microphone capture goroutine.
 // On success it returns ReadyMsg{Ch}; on mic init failure it returns ErrorMsg{Fatal:true}.
 // Workspace must cancel ctx to stop the session (which triggers FinalTranscriptionMsg).
+// When startStub is installed (UseStubForTesting, dictation_testing.go), it
+// is consulted instead of touching the real microphone/whisper pipeline.
 func StartCmd(ctx context.Context, cfg Config) tea.Cmd {
+	if startStub != nil {
+		return startStub(ctx, cfg)
+	}
+	if cfg.Language == "" {
+		// Resolve the keyboard language only on the REAL pipeline path:
+		// inputlang.Current() is a main-thread-only TIS cgo call
+		// (TISCopyCurrentKeyboardInputSource aborts the process when HIToolbox
+		// is exercised from arbitrary threads, e.g. parallel test goroutines),
+		// so it must stay behind the startStub seam — see Config.Language.
+		cfg.Language = inputlang.Current()
+	}
 	return func() tea.Msg {
 		micCh, err := microphone.Start(ctx)
 		if err != nil {

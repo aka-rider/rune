@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package workflow
 
 import "rune/internal/fuzz/event"

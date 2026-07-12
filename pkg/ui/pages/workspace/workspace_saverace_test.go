@@ -8,45 +8,19 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/docstate"
-	"rune/pkg/vfs"
 )
 
-// drainCmd delivers cmd's message (and any message a resulting Cmd yields,
-// recursively) through m.Update, fully settling an async round trip within a
-// single deterministic test step — no time.Sleep, no reliance on runtime
-// scheduling.
-func drainCmd(m Model, cmd tea.Cmd) Model {
-	pending := execCmds(cmd)
-	for len(pending) > 0 {
-		msg := pending[0]
-		pending = pending[1:]
-		var next tea.Cmd
-		m, next = m.Update(msg)
-		pending = append(pending, execCmds(next)...)
-	}
-	return m
-}
-
 // clickTabRow computes the (x,y) screen coordinates opentabs' handleMouseClick
-// expects for the tab at idx (0-based), mirroring workspace_view.go's
-// recalcLayout/paneAtPoint layout math, and self-verifies the point actually
-// resolves to paneTabs before returning — so a future layout change fails this
-// helper loudly instead of silently clicking the wrong pane.
+// expects for the tab at idx (0-based), reading the SAME paneGeometry
+// chokepoint recalcLayout/paneAtPoint use (no re-derived pixel math), and
+// self-verifies the point actually resolves to paneTabs before returning — so
+// a future layout change fails this helper loudly instead of silently
+// clicking the wrong pane.
 func clickTabRow(t *testing.T, m Model, idx int) (x, y int) {
 	t.Helper()
-	contentH := m.totalHeight - m.footer.Height()
-	innerH := contentH - 2
-	otH := m.opentabs.Height()
-	avail := innerH - otH
-	ftH := avail
-	if ftH < 4 {
-		ftH = 4
-	}
-	if ftH > avail {
-		ftH = avail
-	}
+	g := m.paneGeometry()
 	x = m.leftPaneW / 2
-	y = ftH + 2 + idx // SetOffset(1, ftH+1); opentabs.handleMouseClick: idx = y - offsetY - 1
+	y = g.FiletreeH + 2 + idx // SetOffset(1, FiletreeH+1); opentabs.handleMouseClick: idx = y - offsetY - 1
 	if pane, ok := m.paneAtPoint(x, y); !ok || pane != paneTabs {
 		t.Fatalf("clickTabRow(%d): (%d,%d) resolves to pane=%v ok=%v, want paneTabs", idx, x, y, pane, ok)
 	}
@@ -63,39 +37,7 @@ func clickTab(t *testing.T, m Model, idx int) Model {
 	t.Helper()
 	x, y := clickTabRow(t, m, idx)
 	m, cmd := m.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
-	return drainCmd(m, cmd)
-}
-
-// saveRaceFixture creates a store-backed workspace over real files on disk
-// (vfs.Disk, so every save genuinely churns the inode via Materialize's
-// publish step, Exchange/RenameExcl — unlike vfs.Mem, which only assigns a
-// new inode on a path's first write) and loads the named files as tabs in
-// order, returning the workspace and each file's resolved docID.
-func saveRaceFixture(t *testing.T, contents map[string]string, order []string) (Model, map[string]int64) {
-	t.Helper()
-	dir := t.TempDir()
-	paths := make(map[string]string, len(order))
-	for _, name := range order {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(contents[name]), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		paths[name] = p
-	}
-
-	m := withStore(t, newTestWorkspace(t))
-	m = m.WithFS(vfs.Disk{})
-
-	docIDs := make(map[string]int64, len(order))
-	for _, name := range order {
-		m = loadFile(m, paths[name], contents[name])
-		docID := m.view.DocID()
-		if docID == 0 {
-			t.Fatalf("expected a real docID for %s", name)
-		}
-		docIDs[name] = docID
-	}
-	return m, docIDs
+	return settle(t, m, cmd)
 }
 
 // startSaveGetAck starts an interactive save on the currently displayed
@@ -131,7 +73,7 @@ func startSaveGetAck(t *testing.T, m Model) (Model, FileSavedMsg) {
 // immediately instead of deferring, and — because vfs.Disk churns the inode
 // on every save — the premature OpenPath forks A onto a new docID.
 func TestMouseClickRace_ReopenDefersUntilSaveSettles(t *testing.T) {
-	m, docIDs := saveRaceFixture(t, map[string]string{
+	m, docIDs := diskFixture(t, map[string]string{
 		"a.md": "a-v1",
 		"b.md": "b-v1",
 	}, []string{"a.md", "b.md"})
@@ -163,7 +105,7 @@ func TestMouseClickRace_ReopenDefersUntilSaveSettles(t *testing.T) {
 	// Settle A's save. handleFileSavedMsg must Bind A's real identity (msg.DocID,
 	// not m.view's — currently B) and then flush the deferred reopen.
 	m, cmd := m.Update(fsMsg)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	// No fork: A's path must still resolve to the SAME docID it started with.
 	ref, err := m.store.OpenPath(m.opentabs.PathAt(0))
@@ -191,7 +133,7 @@ func TestMouseClickRace_ReopenDefersUntilSaveSettles(t *testing.T) {
 // FileSavedMsg stamps its baseline onto B (the doc the user switched to) and
 // rebinds B's docstate row to A's path.
 func TestFileSavedMsg_DoesNotCorruptUnrelatedDisplayedDoc(t *testing.T) {
-	m, docIDs := saveRaceFixture(t, map[string]string{
+	m, docIDs := diskFixture(t, map[string]string{
 		"a.md": "a-v1",
 		"b.md": "b-v1",
 	}, []string{"a.md", "b.md"})
@@ -213,7 +155,7 @@ func TestFileSavedMsg_DoesNotCorruptUnrelatedDisplayedDoc(t *testing.T) {
 
 	// Deliver A's save ack while B is displayed.
 	m, cmd := m.Update(fsMsg)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	// B must be completely unaffected: identity unchanged.
 	if m.view.DocID() != docIDB || m.view.Path() != pathBBefore {
@@ -235,7 +177,7 @@ func TestFileSavedMsg_DoesNotCorruptUnrelatedDisplayedDoc(t *testing.T) {
 // the original save would yank the user back to a document they've since
 // navigated away from a second time.
 func TestRequestOpenPath_DeferredReopenSupersededByNewNavigation(t *testing.T) {
-	m, docIDs := saveRaceFixture(t, map[string]string{
+	m, docIDs := diskFixture(t, map[string]string{
 		"a.md": "a-v1",
 		"c.md": "c-v1",
 	}, []string{"a.md", "c.md"})
@@ -255,7 +197,7 @@ func TestRequestOpenPath_DeferredReopenSupersededByNewNavigation(t *testing.T) {
 
 	// Request A again — arms the deferral (A is still the saving target).
 	m, cmd := m.requestOpenPath(docIDA, m.opentabs.PathAt(0))
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if !m.pendingReopen.active || m.pendingReopen.docID != docIDA {
 		t.Fatalf("expected a deferred reopen for A, got %+v", m.pendingReopen)
 	}
@@ -268,7 +210,7 @@ func TestRequestOpenPath_DeferredReopenSupersededByNewNavigation(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, cmd = m.requestOpenPath(0, pathD)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if m.pendingReopen.active {
 		t.Fatalf("a new navigation request must supersede (clear) the stale deferral, got %+v", m.pendingReopen)
 	}
@@ -276,7 +218,7 @@ func TestRequestOpenPath_DeferredReopenSupersededByNewNavigation(t *testing.T) {
 	// Settle A's save. The superseded deferral must NOT replay — the user
 	// stays on D, not yanked back to A.
 	m, cmd = m.Update(fsMsg)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if m.view.Path() != pathD {
 		t.Fatalf("superseded deferral replayed anyway: view=%q, want %q (D)", m.view.Path(), pathD)
 	}
@@ -289,18 +231,33 @@ func TestRequestOpenPath_DeferredReopenSupersededByNewNavigation(t *testing.T) {
 // a probe result for the exact document our own interactive save is writing
 // must not raise a false "changed on disk" hint.
 func TestProbeResult_SuppressedWhileSavingSameTarget(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "note.md", "hello")
-	docID := m.view.DocID()
+	// The in-flight save is a REAL one (startSaveGetAck physically performs
+	// the atomic rewrite and holds the ack undelivered) — not a hand-built
+	// SaveIdentity, which could drift from what startSave actually populates
+	// (and did: it used to omit SavedContent, an illegal state SAVE-SM
+	// rejects).
+	m, docIDs := diskFixture(t, map[string]string{"note.md": "hello"}, []string{"note.md"})
+	docID := docIDs["note.md"]
+	path := m.view.Path()
+	m = focusEditor(m)
+	m = typeChar(m, 'X')
+	m, fsMsg := startSaveGetAck(t, m)
 
-	m.activeSave = SaveIdentity{RequestID: "x", InFlight: true, Path: "note.md", DocID: docID}
-
-	m, _ = m.handleProbeResult(probeResultMsg{
-		docID: docID, path: "note.md",
+	// A probe classifying THIS doc as DiskAhead lands mid-save: that is our
+	// own atomic rewrite in progress, not an external change (§1.4.7).
+	m, cmd := m.Update(probeResultMsg{
+		docID: docID, path: path,
 		state: docstate.SyncState{Kind: docstate.SyncDiskAhead},
 	})
+	m = settle(t, m, cmd)
 	if m.diskChangedHint {
 		t.Fatal("expected diskChangedHint suppressed for our own in-flight save target")
+	}
+
+	m, cmd = m.Update(fsMsg) // settle the save; hint must stay clear
+	m = settle(t, m, cmd)
+	if m.diskChangedHint {
+		t.Fatal("expected diskChangedHint to stay clear once our own save settles")
 	}
 }
 
@@ -309,18 +266,37 @@ func TestProbeResult_SuppressedWhileSavingSameTarget(t *testing.T) {
 // result for the CURRENTLY DISPLAYED doc while a DIFFERENT tab's save is in
 // flight must still fire.
 func TestProbeResult_StillFiresForUnrelatedTabDuringOtherSave(t *testing.T) {
-	m := newTestWorkspace(t)
-	m = loadFile(m, "note.md", "hello")
-	docID := m.view.DocID()
+	// A REAL save of A is in flight (ack held) while the user displays B —
+	// the exact state the mouse-click race tests above construct, built the
+	// same way: startSaveGetAck on A, then a real click to B.
+	m, docIDs := diskFixture(t, map[string]string{
+		"a.md": "a-v1",
+		"b.md": "b-v1",
+	}, []string{"a.md", "b.md"})
 
-	// A DIFFERENT file/doc is the one being saved.
-	m.activeSave = SaveIdentity{RequestID: "x", InFlight: true, Path: "other.md", DocID: docID + 1}
+	m = clickTab(t, m, 0) // display A
+	m = focusEditor(m)
+	m = typeChar(m, 'X')
+	m, fsMsg := startSaveGetAck(t, m) // A's save in flight
 
-	m, _ = m.handleProbeResult(probeResultMsg{
-		docID: docID, path: "note.md",
+	m = clickTab(t, m, 1) // display B (not the saving target)
+	pathB := m.view.Path()
+	if m.view.DocID() != docIDs["b.md"] {
+		t.Fatalf("setup: expected B displayed, got docID %d", m.view.DocID())
+	}
+
+	// A probe classifying the DISPLAYED doc (B) as DiskAhead must still fire
+	// the hint: the suppression is targeted (savingTarget), never a blanket
+	// activeSave.InFlight check.
+	m, cmd := m.Update(probeResultMsg{
+		docID: docIDs["b.md"], path: pathB,
 		state: docstate.SyncState{Kind: docstate.SyncDiskAhead},
 	})
+	m = settle(t, m, cmd)
 	if !m.diskChangedHint {
 		t.Fatal("expected diskChangedHint to fire for an unrelated tab while a different save is in flight")
 	}
+
+	m, cmd = m.Update(fsMsg) // let A's save settle cleanly
+	m = settle(t, m, cmd)
 }

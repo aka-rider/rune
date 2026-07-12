@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package footer contains invariant checkers for the footer component:
 // GUARD-SYNC (GuardVisible ⟺ GuardOptionCount > 0) and the G2 transition
 // (DataLossGuardResponseMsg must clear the guard).

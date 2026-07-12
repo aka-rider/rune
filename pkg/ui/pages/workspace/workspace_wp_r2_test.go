@@ -36,7 +36,7 @@ func TestR1Adopt_JournaledAndClean(t *testing.T) {
 	m = loadFile(m, pathA, originalA)
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	m = loadFile(m, pathB, "b content\n") // switch away from A
 
@@ -47,7 +47,7 @@ func TestR1Adopt_JournaledAndClean(t *testing.T) {
 
 	// Re-open A: SyncDiskAhead must auto-adopt as a REAL journaled transition.
 	m, cmd := m.requestOpenPath(docA, pathA)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if got := m.editor.Content(); got != externalA {
 		t.Fatalf("editor.Content() = %q, want the adopted external content %q", got, externalA)
@@ -73,7 +73,7 @@ func TestR1Adopt_JournaledAndClean(t *testing.T) {
 	// second reload finds nothing left to reconcile.
 	m = loadFile(m, pathB, "b content\n")
 	m, cmd2 := m.requestOpenPath(docA, pathA)
-	m = drainCmd(m, cmd2)
+	m = settle(t, m, cmd2)
 	if got := m.editor.Content(); got != externalA {
 		t.Fatalf("second revisit: editor.Content() = %q, want still the adopted content %q (silent revert)", got, externalA)
 	}
@@ -87,7 +87,7 @@ func TestR1Adopt_JournaledAndClean(t *testing.T) {
 	// adopted.
 	_, batchCmd := m.saveAllDirtyForQuit()
 	if batchCmd != nil {
-		m = drainCmd(m, batchCmd)
+		m = settle(t, m, batchCmd)
 	}
 	diskContent, err := os.ReadFile(pathA)
 	if err != nil {
@@ -112,7 +112,7 @@ func TestMergeAbort_ReraisesDiverged(t *testing.T) {
 
 	m = m.setFocus(paneCenter)
 	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if mergemode.IsActive(m.merge) {
 		t.Fatal("Esc must abort and deactivate the merge")

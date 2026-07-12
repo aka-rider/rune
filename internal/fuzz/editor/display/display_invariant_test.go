@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package display
 
 import (
@@ -32,21 +30,21 @@ func TestLinkInvariants_NoFalsePositives(t *testing.T) {
 	cases := []string{
 		"[Ghostty](https://ghostty.org/)",
 		"[[label]]",
-		"[[a (b).md|c]]",                       // BUG1 — fixed
-		"**[Ghostty](https://ghostty.org/)**",  // BUG3 — fixed
+		"[[a (b).md|c]]",                      // BUG1 — fixed
+		"**[Ghostty](https://ghostty.org/)**", // BUG3 — fixed
 		"**a [x](y) b**",
 		"![alt](img.png)",
-		"![](assets/rune-intro.gif)",           // BUG4 — fixed
+		"![](assets/rune-intro.gif)", // BUG4 — fixed
 		"![[image.png]]",
 		"see [[page|here]] now",
 		"plain text with no links",
 		"a *italic* and **bold** and ~~strike~~",
 		"[ref][id]\n\n[id]: https://example.com",
-		"[](https://x.com)",                    // empty-text link (URL as label)
-		"[`code`](https://x.com)",              // code inside link
-		"***both***",                           // bold+italic
-		"a [x](y)* not emphasis",               // lone trailing * must not trip LINK-CLEAN
-		"[*00000](b.md)",                       // BUG5 (unmatched delim in link label) — fixed
+		"[](https://x.com)",       // empty-text link (URL as label)
+		"[`code`](https://x.com)", // code inside link
+		"***both***",              // bold+italic
+		"a [x](y)* not emphasis",  // lone trailing * must not trip LINK-CLEAN
+		"[*00000](b.md)",          // BUG5 (unmatched delim in link label) — fixed
 	}
 	for _, c := range cases {
 		for _, w := range []int{0, 8} {

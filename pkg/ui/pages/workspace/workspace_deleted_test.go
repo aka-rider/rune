@@ -39,20 +39,6 @@ func deletedGuardFixture(t *testing.T, path string) Model {
 	return m
 }
 
-// settle recursively executes cmd and every message it (and its children)
-// produce, feeding each back into m.Update — draining an async round-trip
-// (e.g. keypress → footer response msg → materializeCmd → FileSavedMsg)
-// exactly as the real Bubble Tea runtime would.
-func settle(t *testing.T, m Model, cmd tea.Cmd) Model {
-	t.Helper()
-	for _, msg := range execCmds(cmd) {
-		var next tea.Cmd
-		m, next = m.Update(msg)
-		m = settle(t, m, next)
-	}
-	return m
-}
-
 // pressGuardKey sends a real tea.KeyPressMsg for ch through the full Update
 // cycle (handleKeyPress → footer.Update, exactly like the real key routing —
 // see workspace_update_keys.go Priority 2.1) and drains every resulting
@@ -92,7 +78,7 @@ func TestDeletedGuard_DirChangedRaisesGuard(t *testing.T) {
 	}
 
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDeleted {
 		t.Fatalf("GuardDeleted not raised: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
@@ -128,7 +114,7 @@ func TestDeletedGuard_SaveRecreatesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -175,7 +161,7 @@ func TestDeletedGuard_SaveRecreatesParentDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -216,7 +202,7 @@ func TestDeletedGuard_SaveMkdirFailureReArmsGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -271,7 +257,7 @@ func TestDeletedGuard_DiscardPurgesDocAndClosesTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -310,7 +296,7 @@ func TestDeletedGuard_EscThenNormalSaveReRaisesGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
-	m = drainCmd(m, dcCmd)
+	m = settle(t, m, dcCmd)
 	if !m.pendingDeleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
@@ -384,7 +370,7 @@ func TestErrDeStick_OnFileSavedMsg(t *testing.T) {
 		t.Fatal("prerequisite: m.err not set")
 	}
 
-	m = save(m)
+	m = save(t, m)
 
 	if m.err != nil {
 		t.Fatalf("m.err not cleared after successful FileSavedMsg: %v", m.err)

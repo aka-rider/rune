@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -36,7 +37,7 @@ func TestGuardMerge_ViewContainsAllKeyHints(t *testing.T) {
 	view := m.View()
 
 	// Strip ANSI escape sequences for plain-text assertion.
-	plain := stripAnsi(view)
+	plain := editortest.StripANSI(view)
 
 	wants := []string{"S", "ave anyway", "D", "iscard", "M", "erge", "Esc"}
 	for _, want := range wants {
@@ -51,7 +52,7 @@ func TestGuardMerge_ViewContainsAllKeyHints(t *testing.T) {
 // they are being prompted.
 func TestGuardMerge_ViewContainsChangedOnDisk(t *testing.T) {
 	m := newGuardMergeFooter()
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if !strings.Contains(plain, "changed on disk") {
 		t.Errorf("GuardMerge view must mention 'changed on disk'; got: %q", plain)
 	}
@@ -199,26 +200,4 @@ func TestDataLossGuardResponse_ValuesUnique(t *testing.T) {
 		}
 		seen[p.val] = p.name
 	}
-}
-
-// stripAnsi removes ANSI/CSI escape sequences from a string for plain-text
-// comparison in view assertions. This is a minimal implementation sufficient
-// for footer view tests.
-func stripAnsi(s string) string {
-	var b strings.Builder
-	i := 0
-	for i < len(s) {
-		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
-			// Skip until final byte (0x40–0x7E)
-			i += 2
-			for i < len(s) && (s[i] < 0x40 || s[i] > 0x7E) {
-				i++
-			}
-			i++ // skip the final byte
-			continue
-		}
-		b.WriteByte(s[i])
-		i++
-	}
-	return b.String()
 }

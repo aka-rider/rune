@@ -277,7 +277,7 @@ func parseMarkdownImagesWithSpaces(line string, lineIdx int, pl *parsedLine) {
 			start:      spanStart,
 			end:        spanEnd,
 			text:       displayText,
-			delimLeft:  2,                                          // ![
+			delimLeft:  2,                                             // ![
 			delimRight: spanEnd - spanStart - 2 - (altEnd - altStart), // ](dest)
 			linkURL:    dest,
 		})

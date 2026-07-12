@@ -16,42 +16,26 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
+	"rune/internal/fuzz/session"
 	"rune/pkg/command"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
-	"rune/pkg/ui/components/footer"
 	"rune/pkg/ui/components/markdownedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 	"rune/pkg/vfs"
 )
 
-// TestMain zeroes every real-time debounce/dismiss timer reachable from this
-// package's tests, for the whole test binary run:
-//
-//   - flushDelay (workspace_timers.go) is the production autosave debounce.
-//     drainCmd (workspace_saverace_test.go) recursively executes every
-//     tea.Cmd a Model.Update produces, including scheduleFlush's real
-//     time.Sleep(flushDelay) timer (workspace_journal.go) — at 2s per flush
-//     and dozens of call sites across this package's tests, that serially
-//     stalled the suite for minutes. The debounce-staleness check
-//     (msg.gen == m.flushGen, workspace_update.go) is a generation counter,
-//     not wall-clock-based, so flushDelay=0 is behaviorally identical under
-//     synchronous draining — just instant instead of slow. This mirrors the
-//     //go:build fuzzing variant of flushDelay (workspace_timers_fuzz.go),
-//     which already sets it to 0 for the session fuzzer.
-//   - footer's own errorDismissDelay/confirmDelay (ShowErrorMsg/
-//     ShowStatusMsg's auto-dismiss and the guard confirm-key timer) have the
-//     identical shape one package down: any drainCmd that recurses into a
-//     footer.Update-produced Cmd along a guard/error/status path pays the
-//     same real wall-clock cost. footer.DisableTimersForTesting is the
-//     exported cross-package seam for it (footer_testing.go).
-func TestMain(m *testing.M) {
-	flushDelay = 0
-	footer.DisableTimersForTesting()
-	os.Exit(m.Run())
-}
+// TestMain lives in main_test.go (package workspace_test, external), not
+// here: it calls internal/fuzz/harness.Hermetic(), which imports this
+// package — a package-internal test file (package workspace, this one)
+// importing anything that imports its own package is an import cycle Go
+// rejects outright ("import cycle not allowed in test"). A package's test
+// binary has exactly one TestMain regardless of how many internal/external
+// test files it mixes, so main_test.go's TestMain governs every test in
+// this package, internal or external.
 
 // newTestWorkspace creates a sized workspace for testing with a file pre-loaded.
 func newTestWorkspace(t *testing.T) Model {
@@ -210,23 +194,90 @@ func resizeWorkspace(t *testing.T, w, h int) Model {
 }
 
 // execCmds executes a tea.Cmd and collects all resulting messages.
-// Handles nil cmds and tea.BatchMsg.
+// Thin package-local alias for editortest.ExecCmds (the single home of the
+// expansion logic — handles nil cmds, tea.BatchMsg, AND tea.Sequence's
+// unexported container), kept so the ~40 existing call sites in this package
+// read unchanged.
 func execCmds(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
+	return editortest.ExecCmds(cmd)
+}
+
+// settle delivers cmd's message (and any message a resulting Cmd yields,
+// recursively, breadth-first) through m.Update, fully settling an async round
+// trip (e.g. keypress → footer response msg → materializeCmd → FileSavedMsg)
+// within a single deterministic test step — no time.Sleep, no reliance on
+// runtime scheduling. THE drain helper for this package: consolidates the
+// five per-file variants that predated it (drainCmd, workspace_deleted's
+// recursive settle, drainAll, drainUntilMarker → editortest.DrainUntil,
+// settleOneHop → its documented one-hop loop in workspace_merge_modal_test.go).
+//
+// After the round trip settles, settle runs the fuzzer's full L0 invariant
+// sweep (session.Check over m.FuzzInspect() — the SAME checkers
+// internal/fuzz/driver runs after every fuzzed step), so every workspace test
+// that settles a round trip is invariant-checked for free. Once per settle,
+// not per delivered message: FuzzInspect snapshots the full cell grid, and
+// per-message sweeping measured ~5x on this package's untagged suite (the
+// plan's anticipated sampling valve; the fuzzing pillar still checks every
+// single step). Calls session directly rather than invarianttest: this is a
+// package-INTERNAL test file, and invarianttest imports workspace (import
+// cycle); session/snapshot do not.
+func settle(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	m = editortest.Drain(m, cmd, Model.Update)
+	if v := session.Check(m.FuzzInspect()); v != nil {
+		t.Fatalf("invariant %s violated after settle: %s", v.InvariantID, v.Message)
 	}
-	msg := cmd()
-	if msg == nil {
-		return nil
+	return m
+}
+
+// withStoreAt is withStore over a REAL on-disk recovery store
+// (docstate.OpenAt under dir) and real vfs.Disk — for tests that need
+// persistence to survive a store close/reopen (e.g. §1.4.3 recovery across a
+// process restart). The store is NOT auto-closed on cleanup: restart tests
+// close it explicitly mid-test and reopen; OpenAt's session files live under
+// the test's TempDir and vanish with it.
+func withStoreAt(t *testing.T, m Model, dir string) Model {
+	t.Helper()
+	m = m.WithFS(vfs.Disk{})
+	store, _, err := docstate.OpenAt(dir)
+	if err != nil {
+		t.Fatalf("docstate.OpenAt(%s): %v", dir, err)
 	}
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		var msgs []tea.Msg
-		for _, c := range batch {
-			msgs = append(msgs, execCmds(c)...)
+	store.UseFS(m.fsys())
+	m, cmd := m.Update(StoreReadyMsg{Store: store})
+	return settle(t, m, cmd)
+}
+
+// diskFixture creates a store-backed workspace over real files on disk
+// (vfs.Disk, so every save genuinely churns the inode via Materialize's
+// publish step, Exchange/RenameExcl — unlike vfs.Mem, which only assigns a
+// new inode on a path's first write) and loads the named files as tabs in
+// order, returning the workspace and each file's resolved docID.
+func diskFixture(t *testing.T, contents map[string]string, order []string) (Model, map[string]int64) {
+	t.Helper()
+	dir := t.TempDir()
+	paths := make(map[string]string, len(order))
+	for _, name := range order {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(contents[name]), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		return msgs
+		paths[name] = p
 	}
-	return []tea.Msg{msg}
+
+	m := withStore(t, newTestWorkspace(t))
+	m = m.WithFS(vfs.Disk{})
+
+	docIDs := make(map[string]int64, len(order))
+	for _, name := range order {
+		m = loadFile(m, paths[name], contents[name])
+		docID := m.view.DocID()
+		if docID == 0 {
+			t.Fatalf("expected a real docID for %s", name)
+		}
+		docIDs[name] = docID
+	}
+	return m, docIDs
 }
 
 var errTest = errors.New("test error")

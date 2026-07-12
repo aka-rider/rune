@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package workspace contains invariant checkers for the workspace page:
 // SHADOW (buffer vs journal mirror), L1/L2 (layout bounds), EDITOR-TAB-COH
 // (editor path matches active tab), TR-focus-valid, SAVE-SM, and the
@@ -88,7 +86,13 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 	// the save-safe transitional untitled while the active tab already points at
 	// the incoming doc (finalize, from pendingLoad). Coherence is restored when
 	// the read settles; ⌘S is inert meanwhile, so the gap is safe (§1.4).
-	if !s.Loading && len(s.Tabs) > 0 && s.ActiveTabIdx >= 0 && s.ActiveTabIdx < len(s.Tabs) {
+	// Equally exempt while a deferred reopen is pending (PendingReopenActive,
+	// requestOpenPath's savingTarget gate): clicking back to a tab whose save
+	// is still in flight moves the active tab immediately but deliberately
+	// defers the view swap until the FileSavedMsg lands — the symmetric
+	// window where the active handle leads the view, and equally save-safe
+	// (startSave is inert while activeSave.InFlight).
+	if !s.Loading && !s.PendingReopenActive && len(s.Tabs) > 0 && s.ActiveTabIdx >= 0 && s.ActiveTabIdx < len(s.Tabs) {
 		activeTabPath := s.Tabs[s.ActiveTabIdx].Path
 		if s.EditorPath != activeTabPath {
 			return &invariant.Violation{

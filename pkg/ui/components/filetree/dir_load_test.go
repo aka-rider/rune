@@ -112,7 +112,7 @@ func TestDirReloadedEmptyDirectory(t *testing.T) {
 
 	// All files deleted — cursor should be 0.
 	m, _ = m.Update(DirReloadedMsg{
-		Root: ".",
+		Root:    ".",
 		Entries: []Entry{},
 	})
 

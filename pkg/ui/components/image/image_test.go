@@ -66,7 +66,7 @@ func TestImageLifecycle(t *testing.T) {
 
 	// Step 3: Feed transmittedMsg
 	m, cmd = m.Update(UpdateMsg{Path: path, inner: transmittedMsg{path: path}})
-	
+
 	if !m.IsLive() {
 		t.Errorf("expected image to be live")
 	}
@@ -75,44 +75,44 @@ func TestImageLifecycle(t *testing.T) {
 func TestAnimatedFrames(t *testing.T) {
 	caps := terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true}
 	m := New("anim.gif", "anim.gif", 2, 0, caps, imagekit.CellSize{}, 80, 24, nil)
-	
+
 	m, _ = m.Update(UpdateMsg{
 		Path: "anim.gif",
 		inner: decodedMsg{
-			path: "anim.gif",
-			animated: true,
+			path:       "anim.gif",
+			animated:   true,
 			frameCount: 2,
-			delays: []time.Duration{time.Millisecond*50, time.Millisecond*50},
-			loopCount: 1, // loops once
+			delays:     []time.Duration{time.Millisecond * 50, time.Millisecond * 50},
+			loopCount:  1, // loops once
 		},
 	})
-	
+
 	m, _ = m.SetFrameIDs([]uint32{201, 202})
-	
+
 	m, _ = m.Update(UpdateMsg{Path: "anim.gif", inner: transmittedMsg{path: "anim.gif"}})
-	
+
 	if m.CurrentID() != 201 {
 		t.Errorf("expected frame 0 to be active ID, got %d", m.CurrentID())
 	}
-	
+
 	m = m.SetVisibleRows(10) // will arm ticks
-	
-	m, cmd := m.ArmTick() 
+
+	m, cmd := m.ArmTick()
 	if cmd == nil {
 		t.Fatalf("expected tick armed")
 	}
-	
+
 	msgs := runCmd(t, cmd)
 	tickMsg, ok := firstMsg[UpdateMsg](msgs)
 	if !ok {
 		t.Fatalf("expected UpdateMsg tick")
 	}
-	
+
 	inner, ok := tickMsg.inner.(frameTickMsg)
 	if !ok || inner.next != 1 {
 		t.Fatalf("expected tick to next frame: %v", tickMsg)
 	}
-	
+
 	// Apply tick
 	m, _ = m.Update(tickMsg)
 	if m.CurrentID() != 202 {

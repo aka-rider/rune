@@ -37,7 +37,7 @@ func setupLoadConflict(t *testing.T, ancestor, ours, theirs string) (Model, int6
 	m = loadFile(m, path, ancestor)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available — docID is 0")
+		t.Fatal("store not available — docID is 0")
 	}
 
 	// Simulate a crash-recovered local edit: journal the whole-buffer
@@ -158,7 +158,7 @@ func TestLoadTimeNoConflict_DiskEqualsAncestor(t *testing.T) {
 	m = loadFile(m, path, content)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	m = loadFile(m, path, content) // reload, unchanged
@@ -189,7 +189,7 @@ func TestLoadTimeNoConflict_OursEqualsAncestor(t *testing.T) {
 	m = loadFile(m, path, ancestor)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	if err := os.WriteFile(path, []byte(theirs), 0o644); err != nil {
@@ -226,7 +226,7 @@ func TestMerge_ResolveAdvancesSavedObs(t *testing.T) {
 	m = loadFile(m, path, theirsContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// ancestor == theirs → the 3-way merge auto-resolves cleanly (no true
@@ -247,8 +247,11 @@ func TestMerge_ResolveAdvancesSavedObs(t *testing.T) {
 		t.Fatal("[M]: sync must not remain Diverged after ResolveAdopt (Claim B)")
 	}
 
+	// Deterministic: ancestor == theirs, so ours is the ONLY changed side and
+	// diff3 MUST auto-resolve cleanly — unresolved conflicts here mean the
+	// merge engine regressed, not an environment quirk.
 	if mergemode.IsActive(m.merge) && mergemode.HasUnresolvedConflicts(m.merge) {
-		t.Skip("[M]: merge has unresolved conflicts — need clean merge for this path")
+		t.Fatal("[M]: merge has unresolved conflicts — diff3 must auto-resolve when ancestor == theirs")
 	}
 
 	m = focusEditor(m)

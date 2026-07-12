@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package invariant
 
 import (

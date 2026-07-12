@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // WP6 input-surface clusters (16-19): selection/clipboard, unicode typing,
 // dictation, and workspace chrome. See workflow.go for the shared helpers
 // (paletteText, event vars) these clusters use.

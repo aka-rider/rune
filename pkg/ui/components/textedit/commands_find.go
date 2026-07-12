@@ -21,8 +21,8 @@ func registerFindCommands(builder command.Builder) (command.Builder, error) {
 	}
 	for _, name := range stubs {
 		builder, err = builder.Register(command.Command{
-			Name:    name,
-			When:    "editorFocused",
+			Name: name,
+			When: "editorFocused",
 			Execute: func(ctx command.CommandContext) command.Result {
 				return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 			},

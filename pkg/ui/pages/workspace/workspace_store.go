@@ -1,5 +1,3 @@
-//go:build !fuzzing
-
 package workspace
 
 import (
@@ -10,6 +8,23 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/vfs"
 )
+
+// openStore is a function-var indirection over openStoreCmd (called at the
+// workspace.go Init call site) so DisableStoreOpenForTesting can swap it for
+// a no-op — no unit test calls Init() directly (all inject StoreReadyMsg),
+// so the swapped-out real disk open never runs a test into a real SQLite
+// file at whatever path happens to be current.
+var openStore = openStoreCmd
+
+// DisableStoreOpenForTesting replaces openStore with a no-op (returns a nil
+// Cmd) for the remainder of the process. Exported from a regular
+// (non-_test.go) file — mirrors footer.DisableTimersForTesting
+// (footer_testing.go) — so an importing package's test suite (e.g.
+// internal/fuzz/harness) can silence it too; production code never calls
+// this.
+func DisableStoreOpenForTesting() {
+	openStore = func(vfs.FS, string) tea.Cmd { return nil }
+}
 
 // openStoreCmd opens the durable store at workDir/.rune/rune.db and wires it
 // to fsys — the SAME vfs.FS value the workspace itself uses (§1.4.9 / S6:

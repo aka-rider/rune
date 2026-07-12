@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"rune/internal/editortest"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 )
@@ -62,10 +63,61 @@ func latestSnapshotContent(t *testing.T, s *Store, docID int64) string {
 	return content
 }
 
+// fixedClock replaces s's wall clock with a deterministic one (through
+// SetClock, the exported seam — never a direct s.clock poke) and returns an
+// advance function. The single home for the fixed-clock pattern the
+// coalescing/snapshot/edit-range tests all repeat.
+func fixedClock(s *Store) func(time.Duration) {
+	c := editortest.NewClock()
+	s.SetClock(func() time.Time { return c.Now() })
+	return func(d time.Duration) { c = c.Advance(d) }
+}
+
+// seedCorruptEvent inserts a raw event row whose edits payload is
+// deliberately unparseable — the single schema-coupled home for the
+// corruption INSERT the §1.3 surfacing tests need (a corrupt row cannot be
+// produced through the public API by definition).
+func seedCorruptEvent(t *testing.T, s *Store, docID int64, payload string) {
+	t.Helper()
+	if _, err := s.perm.Exec(
+		`INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, at) VALUES(?,?,?,?,?,?)`,
+		docID, s.sessionID, payload, `[]`, `[]`, "2026-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("seed corrupt event: %v", err)
+	}
+}
+
+// corruptBlob flips one byte of the stored (compressed) blob content behind
+// hash — the single schema-coupled home for the blob-rot UPDATE (GetBlob
+// re-verifies SHA-256 on every read; bit rot cannot be simulated through the
+// public API).
+func corruptBlob(t *testing.T, s *Store, hash string) {
+	t.Helper()
+	var compressed []byte
+	if err := s.perm.QueryRow(`SELECT content FROM blobs WHERE hash=?`, hash).Scan(&compressed); err != nil {
+		t.Fatalf("corruptBlob: read compressed blob: %v", err)
+	}
+	if len(compressed) == 0 {
+		t.Fatal("corruptBlob: precondition: expected non-empty compressed blob")
+	}
+	corrupted := append([]byte(nil), compressed...)
+	corrupted[len(corrupted)-1] ^= 0xFF
+	if _, err := s.perm.Exec(`UPDATE blobs SET content=? WHERE hash=?`, corrupted, hash); err != nil {
+		t.Fatalf("corruptBlob: %v", err)
+	}
+}
+
 // singleInsert returns a one-element AppliedEdit slice that looks like a
-// single character insertion with no deleted text.
+// single character insertion at offset 0 with no deleted text.
 func singleInsert(ch string) []buffer.AppliedEdit {
 	return []buffer.AppliedEdit{{Start: 0, End: 0, Deleted: "", Insert: ch}}
+}
+
+// insertAt is singleInsert at an explicit byte offset — what a real typing
+// run journals (each keystroke starts where the previous insert ended, which
+// is also what the coalescing gate now requires; see canCoalesceInto).
+func insertAt(pos int, ch string) []buffer.AppliedEdit {
+	return []buffer.AppliedEdit{{Start: pos, End: pos, Deleted: "", Insert: ch}}
 }
 
 // undoStep / redoStep exercise the production undo/redo primitives: peek the

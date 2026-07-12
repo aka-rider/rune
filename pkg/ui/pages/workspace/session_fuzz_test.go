@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package workspace_test
 
 import (
@@ -7,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"rune/internal/editortest"
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/event"
 	"rune/pkg/docstate"
@@ -142,8 +141,8 @@ func FuzzSession(f *testing.F) {
 	// Seed: link folding edge cases (LINK-FOLD / LINK-CLEAN invariants). The
 	// trailing "\nz" puts the cursor off the link's line so each link folds.
 	f.Add(paste("[[Authentication (sorry).md|Original]]\nz")) // wiki alias
-	f.Add(paste("**[Ghostty](https://ghostty.org/)**\nz"))   // bold-wrapped link
-	f.Add(paste("![](assets/rune-intro.gif)\nz"))            // empty-alt image
+	f.Add(paste("**[Ghostty](https://ghostty.org/)**\nz"))    // bold-wrapped link
+	f.Add(paste("![](assets/rune-intro.gif)\nz"))             // empty-alt image
 
 	// Seed: wrap-stress — paste a 100-char line then squeeze the terminal to force
 	// soft-wrap (exercises sliceOriginalSpans + CellMap slicing), then restore.
@@ -242,7 +241,7 @@ func FuzzSession(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		events := event.Decode(data)
 
-		store, err := docstate.OpenInMemory(time.Now)
+		store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +303,7 @@ func FuzzSessionWithFile(f *testing.F) {
 		const testFile = "/fuzz/test.md"
 		_ = mem.WriteFile(testFile, []byte("# Test\n\nInitial content.\n"), 0o644)
 
-		store, err := docstate.OpenInMemory(time.Now)
+		store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -357,10 +356,10 @@ func FuzzLoadReorder(f *testing.F) {
 		mem := vfs.NewMem()
 		for i := range pool {
 			pool[i] = fmt.Sprintf("/fuzz/r%d.md", i)
-			_ = mem.WriteFile(pool[i], []byte(fmt.Sprintf("content %d", i)), 0o644)
+			_ = mem.WriteFile(pool[i], fmt.Appendf(nil, "content %d", i), 0o644)
 		}
 
-		store, err := docstate.OpenInMemory(time.Now)
+		store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -423,7 +422,7 @@ func FuzzSaveRace(f *testing.F) {
 		const testFile = "/fuzz/test.md"
 		_ = mem.WriteFile(testFile, []byte("# Test\n\nInitial content.\n"), 0o644)
 
-		store, err := docstate.OpenInMemory(time.Now)
+		store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -463,7 +462,7 @@ func FuzzDelayedViewResult(f *testing.F) {
 		mem := vfs.NewMem()
 		const testFile = "/fuzz/conflict.md"
 
-		store, err := docstate.OpenInMemory(time.Now)
+		store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 		if err != nil {
 			t.Fatal(err)
 		}

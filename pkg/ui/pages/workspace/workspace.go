@@ -377,7 +377,7 @@ func (m Model) Init() tea.Cmd {
 		m.search.Init(),
 		m.dict.Init(),
 		loadDirCmd(m.fsys(), m.workDir),
-		openStoreCmd(m.fsys(), m.workDir),
+		openStore(m.fsys(), m.workDir),
 	}
 	if m.initErr != nil {
 		err := m.initErr

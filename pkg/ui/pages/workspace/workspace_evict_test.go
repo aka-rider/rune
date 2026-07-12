@@ -106,7 +106,9 @@ func TestEvict_RefuseWhenNoEligibleVictim(t *testing.T) {
 	// Open one more to fill the last slot with an untitled.
 	m, _ = m.CreateUntitled()
 	if m.opentabs.Len() != tabLimit {
-		t.Skipf("prerequisite: bar must be at %d; got %d", tabLimit, m.opentabs.Len())
+		// CreateUntitled filling the last slot is fully deterministic — a
+		// miss here is a regression, not an environment condition.
+		t.Fatalf("prerequisite: bar must be at %d; got %d", tabLimit, m.opentabs.Len())
 	}
 
 	// Try to open a brand-new file — should be refused.
@@ -142,7 +144,7 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 	var docIDs []int64
 	for i := 1; i <= tabLimit; i++ {
 		path := filepath.Join(dir, fmt.Sprintf("dirty%02d.md", i))
-		if err := os.WriteFile(path, []byte(fmt.Sprintf("content %d", i)), 0o644); err != nil {
+		if err := os.WriteFile(path, fmt.Appendf(nil, "content %d", i), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		paths = append(paths, path)
@@ -360,7 +362,7 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 		pool := make([]string, poolSize)
 		for i := range pool {
 			pool[i] = filepath.Join(tmpDir, fmt.Sprintf("f%02d.md", i))
-			if err := os.WriteFile(pool[i], []byte(fmt.Sprintf("c%d", i)), 0o644); err != nil {
+			if err := os.WriteFile(pool[i], fmt.Appendf(nil, "c%d", i), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -462,7 +464,7 @@ func TestStartSave_DoesNotClobberInFlightEvictRequestID(t *testing.T) {
 	m = loadFile(m, pathA, "a content\n") // A displayed; B in background
 	docA := m.view.DocID()
 	if docA == 0 || docB == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// Simulate evictSave() already having run for background victim B: its
@@ -490,4 +492,3 @@ func TestStartSave_DoesNotClobberInFlightEvictRequestID(t *testing.T) {
 		t.Fatalf("unrelated ⌘S clobbered the in-flight eviction's requestID: got %q, want unchanged %q — isEvictSaveAck will now silently drop the eviction's own ack", m.pendingDataLoss.requestID, "evict-1")
 	}
 }
-

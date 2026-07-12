@@ -1,11 +1,11 @@
 package textedit
 
 import (
-	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/editor/display"
 )
 
@@ -51,17 +51,27 @@ func TestCellsToString_DimPerRun(t *testing.T) {
 	}
 	no := lipgloss.NewStyle()
 
-	const faint = "\x1b[2m"
 	dimOut := cellsToString(cells, no, no, no, no, true)
 	plainOut := cellsToString(cells, no, no, no, no, false)
 
-	// Both plain runs ("se" before the link, "ed" after it) must carry faint —
-	// proving faint survives past the link run's reset.
-	if got := strings.Count(dimOut, faint); got < 2 {
-		t.Errorf("dim output has %d faint markers, want >=2 (faint must apply to every run): %q", got, dimOut)
+	// Rendered oracle instead of counting raw "\x1b[2m" escapes: dim=true
+	// must be byte-identical to pre-fainting EVERY cell's own style and
+	// rendering normally — which is exactly what BUG2's fix guarantees and
+	// what the old post-hoc Faint(true).Render(assembledANSI) could not
+	// (the link run's inner reset cleared faint for the "ed" run after it).
+	wantCells := make([]Cell, len(cells))
+	for i, c := range cells {
+		c.Style = c.Style.Faint(true)
+		wantCells[i] = c
 	}
-	if strings.Contains(plainOut, faint) {
-		t.Errorf("non-dim output must not contain faint: %q", plainOut)
+	wantDim := cellsToString(wantCells, no, no, no, no, false)
+	if dimOut != wantDim {
+		t.Errorf("dim output != every-run-fainted oracle:\n got %q\nwant %q", dimOut, wantDim)
+	}
+
+	// Dimming must never alter the visible text itself.
+	if got := editortest.StripANSI(dimOut); got != "seLKed" {
+		t.Errorf("dim output text = %q, want %q", got, "seLKed")
 	}
 	if dimOut == plainOut {
 		t.Error("dim and non-dim output are identical; dimming had no effect")

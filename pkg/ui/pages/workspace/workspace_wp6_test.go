@@ -40,7 +40,7 @@ func TestH3_StoreDirtyBackgroundTabIncludedInQuitSave(t *testing.T) {
 	m = loadFile(m, pathA, "A content\n")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// Switch to B — A becomes a background tab, clean (nothing edited yet).
@@ -112,7 +112,7 @@ func TestDelayed_ResolveProbeAcrossTabSwitch_RefusedWithNotice(t *testing.T) {
 	m = loadFile(m, pathA, "A ours\n")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	m.pendingConflict = pendingConflict{active: true, path: pathA, docID: docA}
@@ -235,7 +235,7 @@ func TestApplyViewResult_SaveAckCommitsAfterTabSwitch(t *testing.T) {
 	m = loadFile(m, pathA, "A content\n")
 	docA := m.view.DocID()
 	if docA == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	m = focusEditor(m)
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})

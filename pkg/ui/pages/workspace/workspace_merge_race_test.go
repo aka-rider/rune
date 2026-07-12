@@ -42,7 +42,7 @@ func TestMergeAction_UsesFreshTheirs_NotDetectionTimeCache(t *testing.T) {
 	m = loadFile(m, path, ancestorContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	// A REAL journaled edit diverges ours from the ancestor — a genuine
 	// two-way conflict.
@@ -109,7 +109,7 @@ func TestMergeAction_FileDeletedMidFlight_RoutesToDeletedGuard_NoMergeNoWrite(t 
 	m = loadFile(m, path, oursContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
@@ -161,7 +161,7 @@ func TestDiscardAction_FileDeletedMidFlight_RoutesToDeletedGuard(t *testing.T) {
 	m = loadFile(m, path, oursContent)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}

@@ -69,6 +69,15 @@ type Snapshot struct {
 	SaveSnapshot []byte // activeSave.SavedContent — content captured at save-start
 	SaveInFlight bool
 
+	// PendingReopenActive is true while a navigation request sits deferred
+	// behind an in-flight save of the SAME doc (m.pendingReopen.active,
+	// requestOpenPath's savingTarget gate): the active tab already points at
+	// the deferred target while the view deliberately stays on the current
+	// doc until the save's FileSavedMsg lands and replays the navigation.
+	// Like Loading, this is a legitimate window where the active handle leads
+	// (here: trails) the view — EDITOR-TAB-COH is exempt while it is set.
+	PendingReopenActive bool
+
 	// PendingDataLossKind mirrors workspace.actionKind's iota order (None=0,
 	// Close=1, Quit=2, Evict=3, Trash=4) — WHY the dirty-buffer guard was
 	// raised, if it was. A save whose response resolves a Close/Quit/Evict

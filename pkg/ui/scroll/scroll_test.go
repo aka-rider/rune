@@ -81,12 +81,12 @@ func TestFollow(t *testing.T) {
 
 		// --- tiny pane: margin degrades without panic ---
 		{
-			name: "size=1 — margin degrades to 0",
+			name:   "size=1 — margin degrades to 0",
 			cursor: 5, offset: 4, size: 1, total: 20, margin: 4, jump: 0,
 			want: 5,
 		},
 		{
-			name: "size=2, margin=1 — 2*margin==size, no degradation, cursor at boundary scrolls",
+			name:   "size=2, margin=1 — 2*margin==size, no degradation, cursor at boundary scrolls",
 			cursor: 5, offset: 4, size: 2, total: 20, margin: 1, jump: 0,
 			want: 5,
 		},
@@ -101,12 +101,12 @@ func TestFollow(t *testing.T) {
 		{
 			name:   "size=0 returns 0",
 			cursor: 10, offset: 5, size: 0, total: 20, margin: 4, jump: 0,
-			want:   0,
+			want: 0,
 		},
 		{
 			name:   "size negative returns 0",
 			cursor: 10, offset: 5, size: -1, total: 20, margin: 4, jump: 0,
-			want:   0,
+			want: 0,
 		},
 
 		// --- downward/upward moves stay within margin mid-document ---
@@ -123,7 +123,7 @@ func TestFollow(t *testing.T) {
 			want: 4,
 		},
 		{
-			name: "scrolling up keeps cursor inside top margin",
+			name:   "scrolling up keeps cursor inside top margin",
 			cursor: 5, offset: 3, size: 10, total: 30, margin: 2, jump: 0,
 			// top threshold = offset+margin = 5; cursor==5 (not <) — no scroll
 			want: 3,

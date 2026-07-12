@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package filetree contains invariant checkers for the filetree component:
 // FT-BOUNDS (cursor is in [0, FiletreeLen) when the tree is non-empty).
 package filetree

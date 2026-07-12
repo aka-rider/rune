@@ -107,9 +107,13 @@ func TestRecoverDocument_CorrectAfterStoreReadyRace(t *testing.T) {
 		t.Fatalf("setup: editor content = %q, want %q", got, "xoriginal")
 	}
 
-	// Switch away without saving.
-	m, cmd := m.requestOpenPath(0, "")
-	m = drainCmd(m, cmd)
+	// Switch away without saving — via the REAL ^n (new untitled) key. A
+	// direct m.requestOpenPath(0, "") would bypass handleKeyPress's closing
+	// finalize(): the active tab would still point at a.md while the view
+	// shows the untitled, a mid-update state settle's invariant sweep
+	// (EDITOR-TAB-COH) rightly rejects.
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	m = settle(t, m, cmd)
 
 	// The file changes externally while backgrounded.
 	if err := os.WriteFile(path, []byte("external-change"), 0o644); err != nil {
@@ -118,7 +122,7 @@ func TestRecoverDocument_CorrectAfterStoreReadyRace(t *testing.T) {
 
 	// Switch back.
 	m, cmd = m.requestOpenPath(docID, path)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	got, err := m.store.RecoverDocument(docID)
 	if err != nil {

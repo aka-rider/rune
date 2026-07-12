@@ -268,7 +268,7 @@ func TestDoubleClickFollowsLink(t *testing.T) {
 // lands in the link and reveals it.
 func TestClickOnConcealedLinkLandsInSpan(t *testing.T) {
 	m := newLinkModel(t, "[click](http://e.com)\nsecond line")
-	m = m.SetCursors([]cursor.Cursor{{Position: 25, Anchor: 25, ID: 1}}) // within "second line"
+	m = m.SetCursors([]cursor.Cursor{{Position: 25, Anchor: 25, ID: 1}})  // within "second line"
 	m, _ = m.Update(tea.MouseClickMsg{X: 3, Y: 0, Button: tea.MouseLeft}) // over "click" on line 1
 	if _, ok := m.linkAt(m.CursorOffset()); !ok {
 		t.Fatalf("click on concealed link text landed at offset %d, outside the link span", m.CursorOffset())

@@ -97,7 +97,7 @@ func (m Model) handleResolveProbe(msg resolveProbeMsg) (Model, tea.Cmd) {
 		}
 		switch msg.intent {
 		case mergeIntentDiscard:
-			return m.applyDiscardConflict(msg.ticket.docID, msg.path, theirsContent, msg.state)
+			return m.applyDiscardConflict(msg.ticket.docID, theirsContent, msg.state)
 		default:
 			ancestorContent, err := m.blobFor(msg.state.Ancestor)
 			if err != nil {
@@ -135,7 +135,7 @@ func (m Model) blobFor(v docstate.Version) (string, error) {
 // user sees), and commits the resolution via ResolveAdopt so the CAS
 // baseline advances to theirs and undoing past this point re-exposes the
 // divergence (Part III conflict lifecycle).
-func (m Model) applyDiscardConflict(docID int64, path, theirs string, sync docstate.SyncState) (Model, tea.Cmd) {
+func (m Model) applyDiscardConflict(docID int64, theirs string, sync docstate.SyncState) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	// H1: dictation must not survive a discard — its anchor targeted the
 	// pre-discard buffer.
@@ -361,7 +361,7 @@ func (m Model) installDiskAhead(docID int64, ours, theirs string, sync docstate.
 // derived from journal position (Part III), so undoing past a ResolveAdopt's
 // correlated seq makes Sync report Diverged again structurally, with no
 // special-cased re-detection needed here at all.
-func (m Model) resyncMergeIfMain(target string, docID int64) (Model, tea.Cmd) {
+func (m Model) resyncMergeIfMain(target string) (Model, tea.Cmd) {
 	if target != "main" {
 		return m, nil
 	}

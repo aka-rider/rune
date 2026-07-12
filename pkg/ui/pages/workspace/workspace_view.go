@@ -47,6 +47,36 @@ func (m Model) paneGeometry() paneGeometry {
 	if m.rightVisible {
 		rightW = m.rightPaneW
 	}
+	// Starvation guard: a terminal resize must never squeeze the center pane
+	// below minCenterW while a side pane could yield the space — the mouse
+	// divider-drag path enforces these minimums (workspace_mouse.go), but a
+	// WindowSizeMsg used to bypass them entirely, allocating the editor as
+	// little as 1 inner column; a wrap-forced width-2 rune then renders no
+	// cell for the cursor to land on (fuzz invariant R1, corpus entry
+	// FuzzSession/45de48a20890bdb3). Effective widths are a pure function of
+	// totalWidth — the STORED leftPaneW/rightPaneW are untouched, so growing
+	// the terminal restores the panes exactly as they were. Shrink order:
+	// right toward its minimum, right collapsed, left toward its minimum,
+	// left collapsed.
+	if deficit := leftW + rightW + minCenterW - m.totalWidth; deficit > 0 {
+		if give := rightW - minRightPaneW; give > 0 {
+			d := min(give, deficit)
+			rightW -= d
+			deficit -= d
+		}
+		if deficit > 0 && rightW > 0 {
+			deficit -= rightW
+			rightW = 0
+		}
+		if give := leftW - minLeftPaneW; deficit > 0 && give > 0 {
+			d := min(give, deficit)
+			leftW -= d
+			deficit -= d
+		}
+		if deficit > 0 && leftW > 0 {
+			leftW = 0
+		}
+	}
 	centerW := m.totalWidth - leftW - rightW
 	if centerW < 0 {
 		centerW = 0
@@ -148,13 +178,16 @@ func (m Model) paneAtPoint(x, y int) (pane, bool) {
 		return 0, false
 	}
 
-	if m.leftVisible && x < m.leftPaneW {
+	// Key on the EFFECTIVE geometry (g.LeftW/g.RightW), not the visibility
+	// flags: paneGeometry's starvation guard can collapse a pane the flags
+	// still call visible, and hit-testing must agree with what is rendered.
+	if g.LeftW > 0 && x < g.LeftW {
 		if y > g.FiletreeH {
 			return paneTabs, true
 		}
 		return paneTree, true
 	}
-	if m.rightVisible && x >= g.RightStart {
+	if g.RightW > 0 && x >= g.RightStart {
 		return paneChat, true
 	}
 
@@ -177,8 +210,11 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 		return dragNone, false
 	}
 
-	if m.leftVisible {
-		if x == m.leftPaneW-1 || x == m.leftPaneW {
+	// Effective geometry, same reason as paneAtPoint: a starvation-collapsed
+	// pane behaves like a hidden one — its edge column is the drag-to-reveal
+	// restore zone.
+	if g.LeftW > 0 {
+		if x == g.LeftW-1 || x == g.LeftW {
 			return dragLeft, true
 		}
 	} else {
@@ -187,7 +223,7 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 		}
 	}
 
-	if m.rightVisible {
+	if g.RightW > 0 {
 		if x == g.RightStart-1 || x == g.RightStart {
 			return dragRight, true
 		}
@@ -245,15 +281,17 @@ func (m Model) View() tea.View {
 	centerBlock = overlayBreadcrumb(centerBlock, m.breadcrumb.View(), m.focus.isCenter(), m.styles)
 
 	var chatBlock string
-	if m.rightVisible {
+	if rightW > 0 {
 		chatBlock = borderStyle(m.focus == paneChat, m.styles).
 			Width(rightW).Height(contentH).
 			Render(m.chat.View())
 	}
 
+	// Render by EFFECTIVE widths, not the visibility flags: a pane the
+	// starvation guard collapsed must not render its block (paneGeometry).
 	var body string
 	switch {
-	case m.leftVisible && m.rightVisible:
+	case leftW > 0 && rightW > 0:
 		leftContent := lipgloss.JoinVertical(lipgloss.Left,
 			m.filetree.View(),
 			m.opentabs.View(),
@@ -263,7 +301,7 @@ func (m Model) View() tea.View {
 			Render(leftContent)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, centerBlock, chatBlock)
 
-	case m.leftVisible && !m.rightVisible:
+	case leftW > 0 && rightW == 0:
 		leftContent := lipgloss.JoinVertical(lipgloss.Left,
 			m.filetree.View(),
 			m.opentabs.View(),
@@ -273,10 +311,10 @@ func (m Model) View() tea.View {
 			Render(leftContent)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, centerBlock)
 
-	case !m.leftVisible && m.rightVisible:
+	case leftW == 0 && rightW > 0:
 		body = lipgloss.JoinHorizontal(lipgloss.Top, centerBlock, chatBlock)
 
-	default: // zen mode
+	default: // zen mode, or every side pane starvation-collapsed
 		body = centerBlock
 	}
 

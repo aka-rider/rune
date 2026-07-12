@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package workspace
 
 import (
@@ -7,102 +5,72 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/internal/fuzz/snapshot"
-	"rune/pkg/ui/components/footer"
-	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
 // FuzzInspect returns a read-only snapshot of model state for invariant checking.
 // Called by the driver after every settled message.
 // Value receiver — pure read, no side effects on m.
+//
+// The editor/tabs/footer-derived fields come from snapshot.FromTextedit
+// (via markdownedit's embedded textedit.Model)/FromOpenTabs/FromFooter — the
+// SAME builder functions internal/fuzz/invarianttest's CheckTextedit/
+// CheckOpenTabs/CheckFooter use for a standalone component under test.
+// Exactly one field mapping; the workspace-only fields (file/persistence,
+// merge, layout, filetree, ...) are layered on top here, since only the
+// full workspace has that context.
 func (m Model) FuzzInspect() snapshot.Snapshot {
-	tabs, tabActive, hasDirty, activeTabDirty := tabsInfo(m)
+	s := snapshot.FromMarkdownedit(m.editor)
+	tabs := snapshot.FromOpenTabs(m.opentabs)
+	guard := snapshot.FromFooter(m.footer)
 
-	return snapshot.Snapshot{
-		// Editor content / cells
-		Content:       m.editor.Content(),
-		Cells:         m.editor.FuzzCells(),
-		CursorOffsets: m.editor.CursorOffsets(),
-		Focused:       m.editor.Focused(),
-		ReadOnly:      m.editor.ReadOnly(),
+	s.Tabs = tabs.Tabs
+	s.ActiveTabIdx = tabs.ActiveTabIdx // same source (opentabs.Cursor) — keep ONE mapping, the builder.
+	s.TabActive = tabs.TabActive
+	s.TabCount = tabs.TabCount
+	s.TabLimit = tabLimit
+	s.HasDirtyFile = tabs.HasDirtyFile
+	s.ActiveTabDirty = tabs.ActiveTabDirty
 
-		// Editor structural
-		Cursors:       m.editor.FuzzCursors(),
-		BufferVersion: m.editor.FuzzBufferVersion(),
-		LineCount:     m.editor.FuzzLineCount(),
+	s.GuardVisible = guard.GuardVisible
+	s.GuardKind = guard.GuardKind
+	s.GuardOptionCount = guard.GuardOptionCount
+	s.ChordPending = guard.ChordPending
+	// StoreDegraded is guard.StoreDegraded (m.footer.Degraded()) — assigned
+	// below alongside the other file/persistence fields for readability.
 
-		// Display pipeline
-		Display: m.editor.FuzzSnapshot(),
-		Wrap:    m.editor.FuzzWrapSnapshot(),
-		Syntax:  m.editor.FuzzSyntaxSnapshot(),
+	// File / persistence
+	s.ActiveFilePath = m.view.Path()
+	s.EditorPath = m.view.Path()
+	s.DocID = m.view.DocID()
+	s.Loading = m.pendingLoad.active
+	s.FlushGen = m.flushGen
+	s.SaveSnapshot = m.activeSave.SavedContent
+	s.SaveInFlight = m.activeSave.InFlight
+	s.PendingDataLossKind = int(m.pendingDataLoss.kind) // mirrors actionKind iota order
+	s.SaveRequestID = m.activeSave.RequestID
 
-		// Tabs
-		Tabs:         tabs,
-		ActiveTabIdx: m.opentabs.Cursor(),
-		TabActive:    tabActive,
-		TabCount:     m.opentabs.Len(),
-		TabLimit:     tabLimit,
+	s.PendingReopenActive = m.pendingReopen.active
+	s.PendingConflictActive = m.pendingConflict.active
+	s.PendingDeletedActive = m.pendingDeleted.active
+	s.PendingRacedActive = m.pendingRaced.active
+	s.StoreDegraded = guard.StoreDegraded
 
-		// File / persistence
-		ActiveFilePath:      m.view.Path(),
-		EditorPath:          m.view.Path(),
-		DocID:               m.view.DocID(),
-		Loading:             m.pendingLoad.active,
-		FlushGen:            m.flushGen,
-		SaveSnapshot:        m.activeSave.SavedContent,
-		SaveInFlight:        m.activeSave.InFlight,
-		PendingDataLossKind: int(m.pendingDataLoss.kind), // mirrors actionKind iota order
-		SaveRequestID:       m.activeSave.RequestID,
+	s.MergeActive = mergemode.IsActive(m.merge)
+	s.MergeUnresolved = mergemode.HasUnresolvedConflicts(m.merge)
 
-		PendingConflictActive: m.pendingConflict.active,
-		PendingDeletedActive:  m.pendingDeleted.active,
-		PendingRacedActive:    m.pendingRaced.active,
-		StoreDegraded:         m.footer.Degraded(),
+	// Layout — Frame is set by driver; driver also sets Width/Height
+	s.Width = m.totalWidth
+	s.Height = m.totalHeight
 
-		MergeActive:     mergemode.IsActive(m.merge),
-		MergeUnresolved: mergemode.HasUnresolvedConflicts(m.merge),
+	// Guard / chord / focus
+	s.FocusPane = int(m.focus)
 
-		// Layout — Frame is set by driver; driver also sets Width/Height
-		Width:       m.totalWidth,
-		Height:      m.totalHeight,
-		EditorWidth: m.editor.FuzzEditorWidth(),
+	// Filetree
+	s.FiletreeCursor = m.filetree.FuzzCursor()
+	s.FiletreeLen = m.filetree.FuzzLen()
 
-		// Guard / chord / focus
-		HasDirtyFile:     hasDirty,
-		ActiveTabDirty:   activeTabDirty,
-		GuardVisible:     m.footer.InGuard(),
-		GuardKind:        footer.GuardKind(m.footer.GuardKind()),
-		GuardOptionCount: m.footer.GuardOptionCount(),
-		ChordPending:     m.footer.PendingKey() != "",
-		FocusPane:        int(m.focus),
-
-		// Filetree
-		FiletreeCursor: m.filetree.FuzzCursor(),
-		FiletreeLen:    m.filetree.FuzzLen(),
-	}
-}
-
-// tabsInfo builds the Tabs/TabActive/HasDirtyFile/ActiveTabDirty tuple from opentabs.
-func tabsInfo(m Model) ([]snapshot.TabInfo, []bool, bool, bool) {
-	raw := m.opentabs.FuzzTabs()
-	activeHandle := m.opentabs.ActiveHandle()
-	tabs := make([]snapshot.TabInfo, len(raw))
-	active := make([]bool, len(raw))
-	hasDirty := false
-	activeTabDirty := false
-	for i, t := range raw {
-		tabs[i] = snapshot.TabInfo{Path: t.Path, Name: t.Name, DocID: t.DocID}
-		th := opentabs.TabHandle{DocID: t.DocID, Path: t.Path}
-		isActive := th.Equal(activeHandle)
-		active[i] = isActive
-		if t.Dirty {
-			hasDirty = true
-			if isActive {
-				activeTabDirty = true
-			}
-		}
-	}
-	return tabs, active, hasDirty, activeTabDirty
+	return s
 }
 
 // IsCloseFileMsg reports whether msg is a CloseFile (^w) key press.

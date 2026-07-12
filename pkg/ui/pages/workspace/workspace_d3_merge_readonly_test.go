@@ -49,7 +49,7 @@ func TestDiscardConflictReadOnlyEditorRefusesAdoption(t *testing.T) {
 	// returns early before ever journaling an edit — there is no autosave
 	// flush (or anything else) for a full drainCmd to run into here, so this
 	// doesn't need settleOneHop's one-hop stop.
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if got := m.editor.Content(); got != "ours\n" {
 		t.Fatalf("buffer changed despite a read-only editor: got %q, want %q", got, "ours\n")
@@ -99,7 +99,7 @@ func TestMergeConflictReadOnlyEditorRefusesAdoption(t *testing.T) {
 	// Same reasoning as the discard case above: the read-only editor refuses
 	// the marker-buffer install, so applyMergeConflict returns early before
 	// journaling anything — a full drainCmd has nothing extra to settle.
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if got := m.editor.Content(); got != oursContent {
 		t.Fatalf("buffer changed despite a read-only editor: got %q, want %q", got, oursContent)

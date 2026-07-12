@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package footer
 
 // PendingKey returns the current chord-pending key ("c", "d", or "").

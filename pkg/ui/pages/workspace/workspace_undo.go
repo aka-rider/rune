@@ -73,7 +73,7 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 		m = m.bumpEpoch() // Part IV: an undo buffer install invalidates every outstanding view ticket
 	}
 	var resyncCmd tea.Cmd
-	m, resyncCmd = m.resyncMergeIfMain(target, docID)
+	m, resyncCmd = m.resyncMergeIfMain(target)
 	switch target {
 	case "main":
 		m = m.setFocus(paneCenter)
@@ -131,7 +131,7 @@ func (m Model) handleRedo() (Model, tea.Cmd) {
 		m = m.bumpEpoch() // Part IV: a redo buffer install invalidates every outstanding view ticket
 	}
 	var resyncCmd tea.Cmd
-	m, resyncCmd = m.resyncMergeIfMain(target, docID)
+	m, resyncCmd = m.resyncMergeIfMain(target)
 	switch target {
 	case "main":
 		m = m.setFocus(paneCenter)

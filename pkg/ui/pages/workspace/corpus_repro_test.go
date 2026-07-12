@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Minimal reproduction of fuzz corpus 3448759c28354ae2.
 //
 // The corpus was rejected by the fuzzer with:
@@ -42,6 +40,7 @@ import (
 	"testing"
 	"time"
 
+	"rune/internal/editortest"
 	"rune/internal/fuzz/driver"
 	"rune/internal/fuzz/event"
 	"rune/pkg/docstate"
@@ -96,7 +95,7 @@ func TestCorpus3448759c28354ae2(t *testing.T) {
 
 	events := event.Decode(data)
 
-	store, err := docstate.OpenInMemory(time.Now)
+	store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}

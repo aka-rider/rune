@@ -6,7 +6,12 @@ import (
 )
 
 func TestSearchHistory_AppendAndRetrieve(t *testing.T) {
-	s, err := OpenInMemory(func() time.Time { return time.Now() })
+	// A strictly ticking clock, not time.Now: SearchHistory orders by
+	// last_used_at DESC, and two appends inside the same clock tick would
+	// tie — a pre-existing flake this ordering assertion tripped on.
+	var tick int64
+	clock := func() time.Time { tick++; return time.Unix(tick, 0) }
+	s, err := OpenInMemory(clock)
 	if err != nil {
 		t.Fatalf("OpenInMemory: %v", err)
 	}

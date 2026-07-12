@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package display contains invariant checkers for the display pipeline:
 // D1–D3, D5–D6 (span properties; D4 retired — ID reserved, never
 // implemented, never reused per the corpus-artifact ID-stability rule),

@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -31,7 +32,7 @@ func newGuardDeletedFooter() Model {
 // "File deleted on disk. [S]ave [D]iscard [Esc]" prompt (plan §ACTIVE(2)).
 func TestGuardDeleted_ViewExactText(t *testing.T) {
 	m := newGuardDeletedFooter()
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	const want = "File deleted on disk. [S]ave [D]iscard [Esc]"
 	if !strings.Contains(plain, want) {
 		t.Errorf("GuardDeleted view = %q, want it to contain %q", plain, want)

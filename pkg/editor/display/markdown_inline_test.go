@@ -104,12 +104,15 @@ func TestSyntaxMap_BoldSourceRange(t *testing.T) {
 	if boldSpan.State != display.Rendered {
 		t.Errorf("bold state: got %v, want Rendered", boldSpan.State)
 	}
-	// **bold** starts at byte 6, ends at byte 14
-	if boldSpan.BufferStart != 6 {
-		t.Errorf("bold BufferStart: got %d, want 6", boldSpan.BufferStart)
+	// The span covers the whole **bold** source run, delimiters included —
+	// computed from the fixture, not hardcoded byte literals.
+	wantStart := strings.Index(text, "**bold**")
+	wantEnd := wantStart + len("**bold**")
+	if boldSpan.BufferStart != wantStart {
+		t.Errorf("bold BufferStart: got %d, want %d", boldSpan.BufferStart, wantStart)
 	}
-	if boldSpan.BufferEnd != 14 {
-		t.Errorf("bold BufferEnd: got %d, want 14", boldSpan.BufferEnd)
+	if boldSpan.BufferEnd != wantEnd {
+		t.Errorf("bold BufferEnd: got %d, want %d", boldSpan.BufferEnd, wantEnd)
 	}
 }
 
@@ -136,12 +139,13 @@ func TestSyntaxMap_ItalicSourceRange(t *testing.T) {
 	if italicSpan.State != display.Rendered {
 		t.Errorf("italic state: got %v, want Rendered", italicSpan.State)
 	}
-	// *italic* starts at byte 6, ends at byte 14
-	if italicSpan.BufferStart != 6 {
-		t.Errorf("italic BufferStart: got %d, want 6", italicSpan.BufferStart)
+	wantStart := strings.Index(text, "*italic*")
+	wantEnd := wantStart + len("*italic*")
+	if italicSpan.BufferStart != wantStart {
+		t.Errorf("italic BufferStart: got %d, want %d", italicSpan.BufferStart, wantStart)
 	}
-	if italicSpan.BufferEnd != 14 {
-		t.Errorf("italic BufferEnd: got %d, want 14", italicSpan.BufferEnd)
+	if italicSpan.BufferEnd != wantEnd {
+		t.Errorf("italic BufferEnd: got %d, want %d", italicSpan.BufferEnd, wantEnd)
 	}
 }
 
@@ -168,12 +172,13 @@ func TestSyntaxMap_StrikethroughSourceRange(t *testing.T) {
 	if span.State != display.Rendered {
 		t.Errorf("state: got %v, want Rendered", span.State)
 	}
-	// ~~strike~~ starts at byte 6, ends at byte 16
-	if span.BufferStart != 6 {
-		t.Errorf("BufferStart: got %d, want 6", span.BufferStart)
+	wantStart := strings.Index(text, "~~strike~~")
+	wantEnd := wantStart + len("~~strike~~")
+	if span.BufferStart != wantStart {
+		t.Errorf("BufferStart: got %d, want %d", span.BufferStart, wantStart)
 	}
-	if span.BufferEnd != 16 {
-		t.Errorf("BufferEnd: got %d, want 16", span.BufferEnd)
+	if span.BufferEnd != wantEnd {
+		t.Errorf("BufferEnd: got %d, want %d", span.BufferEnd, wantEnd)
 	}
 }
 
@@ -200,12 +205,13 @@ func TestSyntaxMap_InlineCodeSourceRange(t *testing.T) {
 	if span.State != display.Rendered {
 		t.Errorf("state: got %v, want Rendered", span.State)
 	}
-	// `code` starts at byte 6, ends at byte 12
-	if span.BufferStart != 6 {
-		t.Errorf("BufferStart: got %d, want 6", span.BufferStart)
+	wantStart := strings.Index(text, "`code`")
+	wantEnd := wantStart + len("`code`")
+	if span.BufferStart != wantStart {
+		t.Errorf("BufferStart: got %d, want %d", span.BufferStart, wantStart)
 	}
-	if span.BufferEnd != 12 {
-		t.Errorf("BufferEnd: got %d, want 12", span.BufferEnd)
+	if span.BufferEnd != wantEnd {
+		t.Errorf("BufferEnd: got %d, want %d", span.BufferEnd, wantEnd)
 	}
 }
 
@@ -232,12 +238,13 @@ func TestSyntaxMap_LinkSourceRange(t *testing.T) {
 	if span.State != display.Rendered {
 		t.Errorf("state: got %v, want Rendered", span.State)
 	}
-	// [link](http://x.com) starts at byte 4, ends at byte 24
-	if span.BufferStart != 4 {
-		t.Errorf("BufferStart: got %d, want 4", span.BufferStart)
+	wantStart := strings.Index(text, "[link](http://x.com)")
+	wantEnd := wantStart + len("[link](http://x.com)")
+	if span.BufferStart != wantStart {
+		t.Errorf("BufferStart: got %d, want %d", span.BufferStart, wantStart)
 	}
-	if span.BufferEnd != 24 {
-		t.Errorf("BufferEnd: got %d, want 24", span.BufferEnd)
+	if span.BufferEnd != wantEnd {
+		t.Errorf("BufferEnd: got %d, want %d", span.BufferEnd, wantEnd)
 	}
 }
 
@@ -362,8 +369,8 @@ func TestSyntaxMap_HorizontalRuleSourceRange(t *testing.T) {
 			if sp.BufferStart != 0 {
 				t.Errorf("BufferStart: got %d, want 0", sp.BufferStart)
 			}
-			if sp.BufferEnd != 3 {
-				t.Errorf("BufferEnd: got %d, want 3", sp.BufferEnd)
+			if sp.BufferEnd != len(text) {
+				t.Errorf("BufferEnd: got %d, want %d", sp.BufferEnd, len(text))
 			}
 		}
 	}

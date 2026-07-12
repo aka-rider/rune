@@ -11,41 +11,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/footer"
 	"rune/pkg/vfs"
 )
-
-// drainUntilMarker delivers cmd's message (and any resulting Cmd,
-// recursively — mirrors drainCmd) but stops as soon as m.footer.View()
-// contains marker, WITHOUT processing any further pending message. Needed
-// where the awaited result's own footer.ShowErrorMsg/ShowStatusMsg schedules
-// a REAL-TIME auto-dismiss timer as its returned Cmd: a full drainCmd would
-// recurse into that timer too (execCmds runs it synchronously) and clear
-// the message again before any assertion ever observes it.
-func drainUntilMarker(m Model, cmd tea.Cmd, marker string) Model {
-	if strings.Contains(m.footer.View(), marker) {
-		return m
-	}
-	pending := execCmds(cmd)
-	for len(pending) > 0 {
-		msg := pending[0]
-		pending = pending[1:]
-		var next tea.Cmd
-		m, next = m.Update(msg)
-		if strings.Contains(m.footer.View(), marker) {
-			// Stop BEFORE computing execCmds(next) — next may be a
-			// real-time timer (e.g. the error's own auto-dismiss) that
-			// execCmds would execute synchronously (blocking on
-			// time.Sleep) and whose resulting message would clear the very
-			// state this helper exists to let a caller observe.
-			return m
-		}
-		pending = append(pending, execCmds(next)...)
-	}
-	return m
-}
 
 // TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped is the F7 regression:
 // quit "Save all" with a diverged tab must abort the WHOLE quit (never
@@ -74,10 +45,10 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, cmd := m.requestOpenPath(0, pathB)
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	docB := m.view.DocID()
 	if docB == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	if _, err := m.store.AppendEdit(docB,
 		[]buffer.AppliedEdit{{Start: 0, End: len("b-v1"), Deleted: "b-v1", Insert: "b-v2 unsaved"}}, nil, nil); err != nil {
@@ -88,7 +59,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 
 	// Quit "Save all".
 	m, cmd = m.saveAllDirtyForQuit()
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	// Quit must be ABORTED — no teardown, store still open.
 	if m.store == nil {
@@ -124,7 +95,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	// would leave the footer's guard flag stale even though pendingConflict
 	// itself is cleared, which is not what a real user interaction does.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if m.pendingConflict.active {
 		t.Fatal("expected A's conflict resolved")
 	}
@@ -133,7 +104,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	}
 	m.opentabs = m.opentabs.MarkDirtyByID(docB) // B is still independently dirty
 	m, cmd = m.saveAllDirtyForQuit()
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if m.footer.InGuard() {
 		t.Fatalf("expected quit to complete once the divergence is resolved; still guarded: kind=%v", m.footer.GuardKind())
 	}
@@ -154,7 +125,7 @@ func TestDiskChangedHint_OrdinaryEditDoesNotTrigger(t *testing.T) {
 	m = loadFile(m, path, "hello")
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	// Type one char — a REAL journaled edit (BufferAhead: ordinary unsaved
@@ -207,7 +178,7 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	store.UseFS(m.fsys())
 	m, cmd := m.Update(StoreReadyMsg{Store: store})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	path := filepath.Join(dir, "note.md")
 	const ours = "ours original"
@@ -218,7 +189,7 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 	m = loadFile(m, path, ours)
 	docID := m.view.DocID()
 	if docID == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 	m = focusEditor(m)
 
@@ -230,7 +201,7 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 		t.Fatal("setup: startSave returned nil cmd")
 	}
 	m, cmd = m.Update(saveCmd())
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	if !m.pendingConflict.active {
 		t.Fatal("setup: expected conflict guard raised")
 	}
@@ -263,16 +234,19 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 	}
 
 	// Press [D]iscard — a REAL key, routed through the active guard. Drains
-	// only until the error appears in the footer (NOT a full drainCmd): the
+	// only until the error appears in the footer (NOT a full settle): the
 	// error's own real-time auto-dismiss timer is itself a further Cmd this
 	// async chain would otherwise recurse into and execute synchronously,
-	// clearing the message again before this assertion ever sees it. The
-	// marker is "resolve" (the error's own fixed prefix, "resolve %q: ..."),
-	// not the tempdir-rooted path itself — the footer truncates at its
-	// render width, and a t.TempDir() path is long enough to truncate
-	// before its own basename ever appears.
+	// clearing the message again before this assertion ever sees it —
+	// exactly the stop-before-next-Cmd contract editortest.DrainUntil
+	// implements. The marker is "resolve" (the error's own fixed prefix,
+	// "resolve %q: ..."), not the tempdir-rooted path itself — the footer
+	// truncates at its render width, and a t.TempDir() path is long enough
+	// to truncate before its own basename ever appears.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	m = drainUntilMarker(m, cmd, "resolve")
+	m = editortest.DrainUntil(m, cmd, Model.Update, func(m Model, _ tea.Msg) bool {
+		return strings.Contains(m.footer.View(), "resolve")
+	})
 
 	if m.editor.Content() != preContent {
 		t.Fatalf("buffer changed despite corrupt blob: got %q, want unchanged %q", m.editor.Content(), preContent)
@@ -315,7 +289,7 @@ func TestDegradedStore_PersistentBannerAndSaveConfirms(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	store.UseFS(m.fsys())
 	m, cmd := m.Update(StoreReadyMsg{Store: store, Warning: warn})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 
 	if !strings.Contains(m.footer.View(), "Storage degraded") {
 		t.Fatal("expected the persistent degraded banner set")
@@ -327,7 +301,7 @@ func TestDegradedStore_PersistentBannerAndSaveConfirms(t *testing.T) {
 	}
 	m = loadFile(m, path, "hello")
 	if m.view.DocID() == 0 {
-		t.Skip("docID unavailable")
+		t.Fatal("docID unavailable")
 	}
 	m.editor = m.editor.SetContent("hello!")
 
@@ -348,7 +322,7 @@ func TestDegradedStore_PersistentBannerAndSaveConfirms(t *testing.T) {
 
 	// Confirm — the save now proceeds.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
-	m = drainCmd(m, cmd)
+	m = settle(t, m, cmd)
 	diskAfter, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +350,7 @@ func TestHardlinkedFile_WarnsOnOpen(t *testing.T) {
 	m = m.WithFS(vfs.Disk{})
 	m = loadFile(m, path, "hello")
 	if m.view.DocID() == 0 {
-		t.Skip("store not available")
+		t.Fatal("store not available")
 	}
 
 	body := m.footer.View()

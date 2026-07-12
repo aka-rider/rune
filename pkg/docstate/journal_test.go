@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 )
 
@@ -81,15 +82,14 @@ func TestUndoUndoRedo(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	// Event A.
 	if _, err := s.AppendEdit(docID, singleInsert("a"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit A: %v", err)
 	}
 	// Event B (outside 300ms window → separate undo-stop).
-	now = now.Add(400 * time.Millisecond)
+	advance(400 * time.Millisecond)
 	if _, err := s.AppendEdit(docID, singleInsert("b"), noCursors, noCursors); err != nil {
 		t.Fatalf("AppendEdit B: %v", err)
 	}
@@ -120,77 +120,98 @@ func TestUndoUndoRedo(t *testing.T) {
 func TestCoalescingWithinWindow(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
+	advance := fixedClock(s)
 
-	// Fix the clock at t=0.
-	now := time.Now()
-	s.clock = func() time.Time { return now }
-
-	if _, err := s.AppendEdit(docID, singleInsert("a"), noCursors, noCursors); err != nil {
+	seq1, err := s.AppendEdit(docID, insertAt(0, "a"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
-	// Advance clock by 100ms (within 300ms window).
-	now = now.Add(100 * time.Millisecond)
-	if _, err := s.AppendEdit(docID, singleInsert("b"), noCursors, noCursors); err != nil {
+	// Advance clock by 100ms (within 300ms window); 'b' continues the typing
+	// run (starts where 'a' ended).
+	advance(100 * time.Millisecond)
+	seq2, err := s.AppendEdit(docID, insertAt(1, "b"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 2: %v", err)
 	}
 
-	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
-	if n != 1 {
-		t.Errorf("expected 1 coalesced event row, got %d", n)
+	// Behavior, not row counts: a coalesced append lands on the SAME journal
+	// seq, and one undo step covers both inserts (one \u2318Z stop).
+	if seq2 != seq1 {
+		t.Errorf("expected coalesce into the same journal stop: seq1=%d seq2=%d", seq1, seq2)
+	}
+	step, ok := undoStep(t, s, docID)
+	if !ok {
+		t.Fatal("UndoPeek returned ok=false")
+	}
+	if len(step.Edits) != 2 {
+		t.Errorf("one undo stop must cover both coalesced inserts: got %d edits", len(step.Edits))
+	}
+	if _, ok := undoStep(t, s, docID); ok {
+		t.Error("expected exactly one undo stop after coalescing")
 	}
 }
 
 func TestCoalescingOutsideWindow(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
+	advance := fixedClock(s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
-
-	if _, err := s.AppendEdit(docID, singleInsert("a"), noCursors, noCursors); err != nil {
+	seq1, err := s.AppendEdit(docID, insertAt(0, "a"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
-	// Advance clock by 400ms (outside 300ms window).
-	now = now.Add(400 * time.Millisecond)
-	if _, err := s.AppendEdit(docID, singleInsert("b"), noCursors, noCursors); err != nil {
+	// Advance clock by 400ms (outside 300ms window) — adjacency alone must
+	// not coalesce.
+	advance(400 * time.Millisecond)
+	seq2, err := s.AppendEdit(docID, insertAt(1, "b"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 2: %v", err)
 	}
 
-	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
-	if n != 2 {
-		t.Errorf("expected 2 event rows (no coalesce), got %d", n)
+	// Behavior: a fresh journal stop — the next seq, two separate undo stops.
+	if seq2 != seq1+1 {
+		t.Errorf("expected a fresh journal stop: seq1=%d seq2=%d, want seq2=seq1+1", seq1, seq2)
+	}
+	for i, want := range []string{"b", "a"} {
+		step, ok := undoStep(t, s, docID)
+		if !ok {
+			t.Fatalf("undo %d: ok=false", i+1)
+		}
+		if len(step.Edits) != 1 || step.Edits[0].Insert != want {
+			t.Errorf("undo %d: got %+v, want single insert %q", i+1, step.Edits, want)
+		}
 	}
 }
 
 func TestCoalescingWhitespaceBreaks(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
-
-	now := time.Now()
-	s.clock = func() time.Time { return now }
+	advance := fixedClock(s)
 
 	// First insert: non-whitespace.
-	if _, err := s.AppendEdit(docID, singleInsert("a"), noCursors, noCursors); err != nil {
+	seqA, err := s.AppendEdit(docID, insertAt(0, "a"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 1: %v", err)
 	}
-	// Second insert: space — must break coalesce.
-	now = now.Add(50 * time.Millisecond)
-	if _, err := s.AppendEdit(docID, singleInsert(" "), noCursors, noCursors); err != nil {
+	// Second insert: space. 'a' event's last insert is 'a' (non-whitespace),
+	// so the space still coalesces INTO it — same seq.
+	advance(50 * time.Millisecond)
+	seqSpace, err := s.AppendEdit(docID, insertAt(1, " "), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit space: %v", err)
 	}
-	// Third insert after whitespace — new stop.
-	now = now.Add(50 * time.Millisecond)
-	if _, err := s.AppendEdit(docID, singleInsert("b"), noCursors, noCursors); err != nil {
+	if seqSpace != seqA {
+		t.Errorf("space must coalesce into the preceding non-whitespace stop: seqA=%d seqSpace=%d", seqA, seqSpace)
+	}
+	// Third insert after whitespace — the previous event now ENDS in
+	// whitespace, which breaks the next coalesce: a fresh stop.
+	advance(50 * time.Millisecond)
+	seqB, err := s.AppendEdit(docID, insertAt(2, "b"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit 3: %v", err)
 	}
-
-	n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
-	// Sequence: [a] + [space] (space coalesces into 'a' event? No — space is inserted
-	// AFTER 'a', so 'a' event's last insert is 'a' (non-whitespace), space coalesces into it.
-	// Then 'b' tries to coalesce: last event's last insert is ' ' (whitespace) → no coalesce.
-	// Result: 2 events: [a+space] and [b].
-	if n != 2 {
-		t.Errorf("expected 2 events (whitespace breaks next coalesce), got %d", n)
+	if seqB != seqA+1 {
+		t.Errorf("whitespace must break the next coalesce: seqA=%d seqB=%d, want seqB=seqA+1", seqA, seqB)
 	}
 }
 
@@ -204,24 +225,32 @@ func TestCoalescingDocBreak(t *testing.T) {
 	s := NewTestStore(t)
 	docA := testDoc(t, s)
 	docB := testDoc(t, s)
+	advance := fixedClock(s)
 
-	now := time.Now()
-	s.clock = func() time.Time { return now }
-
-	if _, err := s.AppendEdit(docA, singleInsert("a"), noCursors, noCursors); err != nil {
+	seqA, err := s.AppendEdit(docA, singleInsert("a"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit docA: %v", err)
 	}
 	// Different document, well within the coalesce window — must not coalesce.
-	now = now.Add(50 * time.Millisecond)
-	if _, err := s.AppendEdit(docB, singleInsert("b"), noCursors, noCursors); err != nil {
+	advance(50 * time.Millisecond)
+	seqB, err := s.AppendEdit(docB, singleInsert("b"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit docB: %v", err)
 	}
 
-	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docA); n != 1 {
-		t.Errorf("docA: expected 1 event, got %d", n)
+	// Behavior: docB's insert landed as its OWN fresh journal stop (a
+	// cross-doc coalesce would have returned docA's seq), and each stream
+	// undoes exactly its own insert — nothing leaked across doc_id.
+	if seqB == seqA {
+		t.Errorf("cross-document coalesce: docB's append returned docA's stop (seq %d)", seqA)
 	}
-	if n := countRows(t, s.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docB); n != 1 {
-		t.Errorf("docB: expected 1 event, got %d", n)
+	stepA, ok := undoStep(t, s, docA)
+	if !ok || len(stepA.Edits) != 1 || stepA.Edits[0].Insert != "a" {
+		t.Errorf("docA undo: got ok=%v %+v, want single insert \"a\"", ok, stepA.Edits)
+	}
+	stepB, ok := undoStep(t, s, docB)
+	if !ok || len(stepB.Edits) != 1 || stepB.Edits[0].Insert != "b" {
+		t.Errorf("docB undo: got ok=%v %+v, want single insert \"b\"", ok, stepB.Edits)
 	}
 }
 
@@ -234,49 +263,53 @@ func TestCoalescingDocBreak(t *testing.T) {
 func TestTruncateOnNewEdit(t *testing.T) {
 	s3 := NewTestStore(t)
 	docID := testDoc(t, s3)
-
-	nowT := time.Now()
-	s3.clock = func() time.Time { return nowT }
+	advance := fixedClock(s3)
 
 	for _, ch := range []string{"x", "y", "z"} {
 		if _, err := s3.AppendEdit(docID, singleInsert(ch), noCursors, noCursors); err != nil {
 			t.Fatalf("AppendEdit %q: %v", ch, err)
 		}
-		nowT = nowT.Add(400 * time.Millisecond) // ensure separate stops
+		advance(400 * time.Millisecond) // ensure separate stops
 	}
 
-	before := countRows(t, s3.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
-	if before != 3 {
-		t.Fatalf("expected 3 events before undo, got %d", before)
-	}
-
-	// Undo once to step back.
+	// Undo twice — current position moves back to seq 1.
 	if _, ok := undoStep(t, s3, docID); !ok {
 		t.Fatal("UndoTarget returned ok=false")
 	}
-	// Undo again.
 	if _, ok := undoStep(t, s3, docID); !ok {
 		t.Fatal("second UndoTarget returned ok=false")
 	}
+	cur, err := s3.CurrentSeq(docID)
+	if err != nil {
+		t.Fatalf("CurrentSeq: %v", err)
+	}
+	if cur != 1 {
+		t.Fatalf("expected CurrentSeq 1 after two undos, got %d", cur)
+	}
 
-	// New edit after undo — must truncate the two future events.
-	nowT = nowT.Add(400 * time.Millisecond)
-	if _, err := s3.AppendEdit(docID, singleInsert("w"), noCursors, noCursors); err != nil {
+	// New edit after undo — must truncate the two abandoned future stops
+	// ("y", "z"). Behavior: undoing from the new head yields "w" then "x",
+	// never the truncated events.
+	advance(400 * time.Millisecond)
+	seqW, err := s3.AppendEdit(docID, singleInsert("w"), noCursors, noCursors)
+	if err != nil {
 		t.Fatalf("AppendEdit after undo: %v", err)
 	}
-
-	after := countRows(t, s3.perm, `SELECT COUNT(*) FROM events WHERE doc_id=?`, docID)
-	// Before undo we were at seq 3. After two undos current_seq = 1 (at or before seq 1).
-	// New edit truncates seq > current_seq (seq 2 and 3), then inserts new event.
-	// Remaining: seq 1 + new event = 2 events.
-	if after != 2 {
-		t.Errorf("expected 2 events after truncate-on-new-edit, got %d", after)
+	if curW, err := s3.CurrentSeq(docID); err != nil || curW != seqW {
+		t.Fatalf("expected CurrentSeq at the new head %d, got %d (err=%v)", seqW, curW, err)
+	}
+	// Redo must be unavailable at the new head (the future was truncated).
+	if _, ok := redoStep(t, s3, docID); ok {
+		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
 	}
 
-	// Redo should now return false (future was truncated).
-	_, ok := redoStep(t, s3, docID)
-	if ok {
-		t.Error("RedoTarget should return ok=false after truncate-on-new-edit")
+	stepW, ok := undoStep(t, s3, docID)
+	if !ok || len(stepW.Edits) != 1 || stepW.Edits[0].Insert != "w" {
+		t.Fatalf("first undo after truncation: got ok=%v %+v, want insert \"w\"", ok, stepW.Edits)
+	}
+	stepX, ok := undoStep(t, s3, docID)
+	if !ok || len(stepX.Edits) != 1 || stepX.Edits[0].Insert != "x" {
+		t.Fatalf("second undo after truncation: got ok=%v %+v, want insert \"x\" (\"y\"/\"z\" must be gone)", ok, stepX.Edits)
 	}
 }
 
@@ -288,13 +321,7 @@ func TestUndoPeek_CorruptEditsSurfacesError(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	now := "2026-01-01T00:00:00Z"
-	if _, err := s.perm.Exec(
-		`INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, at) VALUES(?,?,?,?,?,?)`,
-		docID, s.sessionID, `not valid json`, `[]`, `[]`, now,
-	); err != nil {
-		t.Fatalf("seed corrupt event: %v", err)
-	}
+	seedCorruptEvent(t, s, docID, `not valid json`)
 
 	_, ok, err := s.UndoPeek(docID)
 	if err == nil {
@@ -324,12 +351,7 @@ func TestRedoPeek_CorruptEditsSurfacesError(t *testing.T) {
 	s := NewTestStore(t)
 	docID := testDoc(t, s)
 
-	if _, err := s.perm.Exec(
-		`INSERT INTO events(doc_id, session_id, edits, cursors_before, cursors_after, at) VALUES(?,?,?,?,?,?)`,
-		docID, s.sessionID, `garbage`, `[]`, `[]`, "2026-01-01T00:00:00Z",
-	); err != nil {
-		t.Fatalf("seed corrupt event: %v", err)
-	}
+	seedCorruptEvent(t, s, docID, `garbage`)
 	if _, err := s.perm.Exec(
 		`INSERT INTO session_documents(session_id, doc_id, current_seq) VALUES(?,?,0)
 		 ON CONFLICT(session_id, doc_id) DO UPDATE SET current_seq=excluded.current_seq`,
@@ -358,21 +380,93 @@ func TestGetBlob_CorruptContentSurfacesError(t *testing.T) {
 		t.Fatalf("PutBlob: %v", err)
 	}
 
-	var compressed []byte
-	if err := s.perm.QueryRow(`SELECT content FROM blobs WHERE hash=?`, hash).Scan(&compressed); err != nil {
-		t.Fatalf("read compressed blob: %v", err)
-	}
-	if len(compressed) == 0 {
-		t.Fatal("precondition: expected non-empty compressed blob")
-	}
-	corrupted := append([]byte(nil), compressed...)
-	corrupted[len(corrupted)-1] ^= 0xFF // flip a byte
-
-	if _, err := s.perm.Exec(`UPDATE blobs SET content=? WHERE hash=?`, corrupted, hash); err != nil {
-		t.Fatalf("corrupt blob: %v", err)
-	}
+	corruptBlob(t, s, hash)
 
 	if _, err := s.GetBlob(hash); err == nil {
 		t.Fatal("GetBlob: want a non-nil error for a corrupted blob, got nil (blob rot went undetected)")
+	}
+}
+
+// TestCoalescingNonAdjacentBreaks pins canCoalesceInto's adjacency clause: a
+// single-char insert within the 300ms window that does NOT start where the
+// previous insert ended (a cursor jump) must open a fresh journal stop.
+// Coalescing it would manufacture an event whose edits are sequential while
+// ApplyInverse treats them as a simultaneous batch — the §1.3 overlap wedge
+// canCoalesceInto exists to prevent (journal.go).
+func TestCoalescingNonAdjacentBreaks(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+	advance := fixedClock(s)
+
+	seq1, err := s.AppendEdit(docID, insertAt(0, "a"), noCursors, noCursors)
+	if err != nil {
+		t.Fatalf("AppendEdit 1: %v", err)
+	}
+	// 50ms later (well within the window) — but at offset 0 again, not at
+	// offset 1 where the 'a' insert ended.
+	advance(50 * time.Millisecond)
+	seq2, err := s.AppendEdit(docID, insertAt(0, "b"), noCursors, noCursors)
+	if err != nil {
+		t.Fatalf("AppendEdit 2: %v", err)
+	}
+
+	if seq2 != seq1+1 {
+		t.Errorf("non-adjacent insert must be a fresh journal stop: seq1=%d seq2=%d", seq1, seq2)
+	}
+	// Both stops undo cleanly, one edit each, newest first.
+	for i, want := range []string{"b", "a"} {
+		step, ok := undoStep(t, s, docID)
+		if !ok {
+			t.Fatalf("undo %d: ok=false", i+1)
+		}
+		if len(step.Edits) != 1 || step.Edits[0].Insert != want {
+			t.Errorf("undo %d: got %+v, want single insert %q", i+1, step.Edits, want)
+		}
+	}
+}
+
+// TestCoalescingNeverIntoReplaceEvent pins canCoalesceInto's typing-run
+// clause: a keystroke landing within the window right after an event whose
+// last edit REPLACED text (Deleted != "" — the shape a crash-recovery or
+// adopt install journals) must never coalesce into it. This is the exact
+// regression behind the post-recovery ⌘Z wedge fixed in journal.go's
+// canCoalesceInto: TestRecoverUnsavedEdits_AcrossStoreRestart covers it
+// end-to-end but on a real clock; this is the deterministic store-level pin.
+func TestCoalescingNeverIntoReplaceEvent(t *testing.T) {
+	s := NewTestStore(t)
+	docID := testDoc(t, s)
+	advance := fixedClock(s)
+
+	replaceAll := []buffer.AppliedEdit{{Start: 0, End: 8, Deleted: "baseline", Insert: "recovered"}}
+	seq1, err := s.AppendEdit(docID, replaceAll, noCursors, noCursors)
+	if err != nil {
+		t.Fatalf("AppendEdit install: %v", err)
+	}
+	// The very next keystroke, 50ms later, typed exactly where the replace
+	// ended — adjacency alone must not rescue it: the predecessor is not a
+	// typing run.
+	advance(50 * time.Millisecond)
+	seq2, err := s.AppendEdit(docID, insertAt(len("recovered"), "x"), noCursors, noCursors)
+	if err != nil {
+		t.Fatalf("AppendEdit keystroke: %v", err)
+	}
+
+	if seq2 != seq1+1 {
+		t.Errorf("keystroke after a replace event must be a fresh journal stop: seq1=%d seq2=%d", seq1, seq2)
+	}
+	// Undo the keystroke alone, then the install alone — no overlap error.
+	step, ok := undoStep(t, s, docID)
+	if !ok {
+		t.Fatal("undo 1: ok=false")
+	}
+	if len(step.Edits) != 1 || step.Edits[0].Insert != "x" {
+		t.Errorf("undo 1: got %+v, want the single 'x' keystroke", step.Edits)
+	}
+	step, ok = undoStep(t, s, docID)
+	if !ok {
+		t.Fatal("undo 2: ok=false")
+	}
+	if len(step.Edits) != 1 || step.Edits[0].Deleted != "baseline" {
+		t.Errorf("undo 2: got %+v, want the install replace", step.Edits)
 	}
 }

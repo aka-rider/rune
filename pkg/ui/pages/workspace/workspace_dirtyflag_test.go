@@ -46,7 +46,7 @@ func TestDirtyFlagClearedOnSave(t *testing.T) {
 	// as production does.
 	var saveCmd tea.Cmd
 	m, saveCmd = m.startSave()
-	m = drainCmd(m, saveCmd)
+	m = settle(t, m, saveCmd)
 
 	if m.opentabs.HasDirty() {
 		t.Fatal("tab must be clean after save")

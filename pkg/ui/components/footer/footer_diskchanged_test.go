@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"rune/internal/editortest"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
 )
@@ -16,7 +17,7 @@ func TestSetDiskChanged_RendersPersistentHint(t *testing.T) {
 	m = m.SetSize(120, 1)
 	m = m.SetDiskChanged(true)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if !strings.Contains(plain, "File changed on disk") {
 		t.Errorf("disk-changed hint missing from footer view: %q", plain)
 	}
@@ -30,7 +31,7 @@ func TestSetDiskChanged_ClearsWhenFalse(t *testing.T) {
 	m = m.SetDiskChanged(true)
 	m = m.SetDiskChanged(false)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if strings.Contains(plain, "File changed on disk") {
 		t.Errorf("disk-changed hint must not render once cleared: %q", plain)
 	}
@@ -51,7 +52,7 @@ func TestSetDiskChanged_YieldsToGuard(t *testing.T) {
 	}
 	m = m.SetGuard(GuardDirty, opts)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if strings.Contains(plain, "File changed on disk") {
 		t.Errorf("guard must win over the disk-changed hint: %q", plain)
 	}
@@ -70,7 +71,7 @@ func TestSetDiskChanged_YieldsToMergeHint(t *testing.T) {
 	m = m.SetDiskChanged(true)
 	m = m.SetMergeMode(true, 1)
 
-	plain := stripAnsi(m.View())
+	plain := editortest.StripANSI(m.View())
 	if !strings.Contains(plain, "⚙ Merge") {
 		t.Errorf("merge hint must win over the disk-changed hint: %q", plain)
 	}

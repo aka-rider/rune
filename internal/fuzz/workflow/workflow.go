@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 // Package workflow provides DecodeWorkflow, a byte-driven cluster grammar
 // that maps fuzz corpus bytes to coherent sequences of user-level events.
 // Unlike event.Decode (which maps every byte to a single keystroke),

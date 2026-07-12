@@ -1,5 +1,3 @@
-//go:build fuzzing
-
 package driver
 
 import (
@@ -8,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/internal/editortest"
 	"rune/internal/fuzz/invariant"
 	"rune/internal/fuzz/session"
 	"rune/pkg/docstate"
@@ -135,7 +134,7 @@ func TestMirrorFor_CoalesceThenTruncate(t *testing.T) {
 // the invariant itself so a future refactor that weakens the gate is caught
 // even if no currently-known reachable trace depends on it.
 func TestMirrorFor_NeverTrustsZeroFrozenSeq(t *testing.T) {
-	store, err := docstate.OpenInMemory(time.Now)
+	store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 	if err != nil {
 		t.Fatalf("OpenInMemory: %v", err)
 	}
@@ -210,7 +209,7 @@ func TestMirrorFor_DocIDReuseOnDiscardClose(t *testing.T) {
 		t.Fatalf("BuildFuzzApp: %v", err)
 	}
 
-	store, err := docstate.OpenInMemory(time.Now)
+	store, err := docstate.OpenInMemory(editortest.AutoClock(time.Millisecond))
 	if err != nil {
 		t.Fatalf("OpenInMemory: %v", err)
 	}
