@@ -1,8 +1,10 @@
 package filetree
 
-import tea "charm.land/bubbletea/v2"
+import (
+	tea "charm.land/bubbletea/v2"
 
-const mouseScrollLines = 3
+	"rune/pkg/ui/listnav"
+)
 
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if !m.focused {
@@ -12,30 +14,25 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	relY := msg.Y - m.offsetY
-	if relY <= 0 {
-		return m, nil // title row or above
-	}
-
 	maxVisible := m.height - 1
 	if maxVisible <= 0 {
 		return m, nil
 	}
 
-	idx := m.top + (relY - 1) // relY=1 → first visible entry
-	if idx < 0 || idx >= len(m.entries) {
+	idx, ok := listnav.ClickIndex(msg.Y, m.offsetY, 1, m.nav.Top, len(m.entries))
+	if !ok {
 		return m, nil
 	}
 
-	if m.cursor == idx {
-		e := m.entries[m.cursor]
+	if m.nav.Cursor == idx {
+		e := m.entries[m.nav.Cursor]
 		if e.IsDir {
 			return m, func() tea.Msg { return DirSelectedMsg{Path: e.Path} }
 		}
 		return m, func() tea.Msg { return FileSelectedMsg{Path: e.Path} }
 	}
 
-	m.cursor = idx
+	m.nav.Cursor = idx
 	return m.ensureVisible(), nil
 }
 
@@ -45,17 +42,9 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 	}
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		for i := 0; i < mouseScrollLines; i++ {
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		}
+		m.nav = m.nav.Wheel(true, len(m.entries))
 	case tea.MouseWheelDown:
-		for i := 0; i < mouseScrollLines; i++ {
-			if m.cursor < len(m.entries)-1 {
-				m.cursor++
-			}
-		}
+		m.nav = m.nav.Wheel(false, len(m.entries))
 	}
 	return m.ensureVisible(), nil
 }

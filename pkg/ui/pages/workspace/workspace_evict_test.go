@@ -162,7 +162,7 @@ func dirtyEvictSetup(t *testing.T) (m Model, victim, pending string) {
 		if _, err := m.store.AppendEdit(docIDs[i], []buffer.AppliedEdit{{Insert: "X"}}, nil, nil); err != nil {
 			t.Fatalf("AppendEdit: %v", err)
 		}
-		m.opentabs = m.opentabs.MarkDirtyByID(docIDs[i])
+		m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: docIDs[i]}, true)
 	}
 	victim = paths[0]
 
@@ -418,7 +418,7 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 				// non-active dirty when we switch away on the next open. This is
 				// how the fuzzer reaches the dirty-eviction guard path.
 				if m.view.DocID() != 0 {
-					m.opentabs = m.opentabs.MarkDirtyByID(m.view.DocID())
+					m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: m.view.DocID()}, true)
 				}
 			case 3:
 				if m.footer.InGuard() {
@@ -440,15 +440,15 @@ func FuzzWorkspaceTabOps(f *testing.F) {
 }
 
 // TestStartSave_DoesNotClobberInFlightEvictRequestID is a regression for a
-// review finding: startSave's pendingDataLoss.requestID stamp (workspace_edit.go)
-// must be gated on kind==actionClose EXACTLY, not merely !=actionNone. An
+// review finding: startSave's guard.close.requestID stamp (workspace_edit.go)
+// must be gated on guard.close.active EXACTLY, not any other live intent. An
 // eviction victim's background save (evictSave) never touches
 // activeSave/InFlight and resolves its OWN footer guard synchronously before
 // dispatching (footer.resolveGuard, called from the [S] keypress itself) — so
 // nothing blocks a completely ordinary, unrelated ⌘S on the currently
 // displayed file while that eviction save is still in flight with
-// pendingDataLoss.kind==actionEvict. A broader `!= actionNone` guard would
-// clobber pendingDataLoss.requestID with the unrelated ⌘S's own ID, breaking
+// guard.evict.active. A broader guard here would clobber
+// guard.evict.requestID with the unrelated ⌘S's own ID, breaking
 // isEvictSaveAck's correlation and silently dropping the eviction's own ack
 // (the victim never gets marked clean/closed, and the file the user
 // originally tried to open never opens, with no error surfaced).
@@ -469,10 +469,10 @@ func TestStartSave_DoesNotClobberInFlightEvictRequestID(t *testing.T) {
 
 	// Simulate evictSave() already having run for background victim B: its
 	// own background save is in flight, tracked purely via
-	// pendingDataLoss.requestID (never activeSave) — exactly as
+	// guard.evict.requestID (never activeSave) — exactly as
 	// workspace_evict.go's evictSave does.
-	m.pendingDataLoss = pendingDataLoss{
-		kind:            actionEvict,
+	m.guard.evict = evictIntent{
+		active:          true,
 		victim:          opentabs.TabHandle{DocID: docB, Path: pathB},
 		pendingOpenPath: filepath.Join(dir, "c.md"),
 		requestID:       "evict-1",
@@ -485,10 +485,10 @@ func TestStartSave_DoesNotClobberInFlightEvictRequestID(t *testing.T) {
 	m, cmd := m.startSave()
 	_ = cmd
 
-	if m.pendingDataLoss.kind != actionEvict {
-		t.Fatalf("unrelated ⌘S changed pendingDataLoss.kind to %v, want actionEvict unchanged", m.pendingDataLoss.kind)
+	if !m.guard.evict.active {
+		t.Fatal("unrelated ⌘S cleared guard.evict.active, want unchanged")
 	}
-	if m.pendingDataLoss.requestID != "evict-1" {
-		t.Fatalf("unrelated ⌘S clobbered the in-flight eviction's requestID: got %q, want unchanged %q — isEvictSaveAck will now silently drop the eviction's own ack", m.pendingDataLoss.requestID, "evict-1")
+	if m.guard.evict.requestID != "evict-1" {
+		t.Fatalf("unrelated ⌘S clobbered the in-flight eviction's requestID: got %q, want unchanged %q — isEvictSaveAck will now silently drop the eviction's own ack", m.guard.evict.requestID, "evict-1")
 	}
 }

@@ -1,8 +1,27 @@
 package styles
 
-import "charm.land/lipgloss/v2"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
+
+// Palette is the base color set every derived Style in Default() composes
+// from — the single source for the app's core hues (subtle/highlight/
+// special/error text colors, plus the two surface backgrounds used across
+// footer, code blocks, and inline code).
+type Palette struct {
+	Subtle    color.Color
+	Highlight color.Color
+	Special   color.Color
+	Error     color.Color
+	Surface   color.Color
+	CodeBg    color.Color
+}
 
 type Styles struct {
+	Palette Palette
+
 	ActiveBorder   lipgloss.Style
 	InactiveBorder lipgloss.Style
 
@@ -66,25 +85,40 @@ type Styles struct {
 	SearchMatch       lipgloss.Style
 	SearchActiveMatch lipgloss.Style
 
-	ChatTitle        lipgloss.Style
-	ChatUserMsg      lipgloss.Style
-	ChatAssistantMsg lipgloss.Style
-	ChatDivider      lipgloss.Style
-	ChatLoading      lipgloss.Style
-	ChatInput        lipgloss.Style
+	ChatTitle   lipgloss.Style
+	ChatDivider lipgloss.Style
+
+	// TitleText is the title bar's text color (the doc-name field at the top
+	// of the editor pane).
+	TitleText color.Color
+
+	// MergeOursBg, MergeTheirsBg, and MergeMarkerBg are colors used ONLY by
+	// the merge diff view (pkg/ui/pages/workspace/mergemode): ours green bg,
+	// theirs red bg (formerly markdownedit's conflictBg), marker lines a dim
+	// gray bg.
+	MergeOursBg   color.Color
+	MergeTheirsBg color.Color
+	MergeMarkerBg color.Color
 }
 
 func Default() Styles {
-	subtle := lipgloss.Color("241")
-	highlight := lipgloss.Color("111")
-	special := lipgloss.Color("153")
-	errColor := lipgloss.Color("196")
+	p := Palette{
+		Subtle:    lipgloss.Color("241"),
+		Highlight: lipgloss.Color("111"),
+		Special:   lipgloss.Color("153"),
+		Error:     lipgloss.Color("196"),
+		Surface:   lipgloss.Color("236"),
+		CodeBg:    lipgloss.Color("235"),
+	}
+	subtle, highlight, special, errColor := p.Subtle, p.Highlight, p.Special, p.Error
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(subtle)
 
 	return Styles{
+		Palette: p,
+
 		ActiveBorder:   border.BorderForeground(highlight),
 		InactiveBorder: border,
 
@@ -102,14 +136,14 @@ func Default() Styles {
 		Breadcrumb:    lipgloss.NewStyle().Foreground(special).Padding(0, 1),
 		BreadcrumbSep: lipgloss.NewStyle().Foreground(subtle),
 
-		Footer:     lipgloss.NewStyle().Background(lipgloss.Color("236")).Padding(0, 1),
-		FooterKey:  lipgloss.NewStyle().Foreground(highlight).Background(lipgloss.Color("236")).Bold(true),
-		FooterHint: lipgloss.NewStyle().Foreground(subtle).Background(lipgloss.Color("236")),
-		FooterMeta: lipgloss.NewStyle().Foreground(special).Background(lipgloss.Color("236")),
+		Footer:     lipgloss.NewStyle().Background(p.Surface).Padding(0, 1),
+		FooterKey:  lipgloss.NewStyle().Foreground(highlight).Background(p.Surface).Bold(true),
+		FooterHint: lipgloss.NewStyle().Foreground(subtle).Background(p.Surface),
+		FooterMeta: lipgloss.NewStyle().Foreground(special).Background(p.Surface),
 
 		Error: lipgloss.NewStyle().Foreground(errColor).Bold(true),
 
-		CodeBlockBg:    lipgloss.NewStyle().Background(lipgloss.Color("235")),
+		CodeBlockBg:    lipgloss.NewStyle().Background(p.CodeBg),
 		CodeBlockLabel: lipgloss.NewStyle().Foreground(subtle).Italic(true),
 		CodeKeyword:    lipgloss.NewStyle().Foreground(highlight),
 		CodeString:     lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
@@ -126,7 +160,7 @@ func Default() Styles {
 		HeadingH4:       lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
 		HeadingH5:       lipgloss.NewStyle().Foreground(special),
 		HeadingH6:       lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		InlineCode:      lipgloss.NewStyle().Foreground(highlight).Background(lipgloss.Color("236")),
+		InlineCode:      lipgloss.NewStyle().Foreground(highlight).Background(p.Surface),
 		MdBold:          lipgloss.NewStyle().Bold(true),
 		MdItalic:        lipgloss.NewStyle().Italic(true),
 		MdStrikethrough: lipgloss.NewStyle().Strikethrough(true),
@@ -138,7 +172,7 @@ func Default() Styles {
 		TableBorder:    lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		TableSeparator: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		HorizontalRule: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Tag:            lipgloss.NewStyle().Foreground(lipgloss.Color("108")).Background(lipgloss.Color("236")),
+		Tag:            lipgloss.NewStyle().Foreground(lipgloss.Color("108")).Background(p.Surface),
 		ListMarker:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
 
 		TaskChecked:   lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
@@ -148,11 +182,21 @@ func Default() Styles {
 		SearchMatch:       lipgloss.NewStyle().Background(lipgloss.Color("58")),
 		SearchActiveMatch: lipgloss.NewStyle().Background(lipgloss.Color("130")),
 
-		ChatTitle:        lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
-		ChatUserMsg:      lipgloss.NewStyle().Foreground(subtle).Background(lipgloss.Color("236")),
-		ChatAssistantMsg: lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-		ChatDivider:      lipgloss.NewStyle().Foreground(subtle),
-		ChatLoading:      lipgloss.NewStyle().Foreground(subtle).Italic(true),
-		ChatInput:        lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
+		ChatTitle:   lipgloss.NewStyle().Bold(true).Foreground(special).Padding(0, 1),
+		ChatDivider: lipgloss.NewStyle().Foreground(subtle),
+
+		TitleText: lipgloss.Color("216"),
+
+		MergeOursBg:   lipgloss.Color("22"),
+		MergeTheirsBg: lipgloss.Color("52"),
+		MergeMarkerBg: lipgloss.Color("240"),
 	}
+}
+
+// Clip is the standard outermost View() wrapper (§4.4 Single-Owner
+// Clamping): a component that received SetSize(w,h) fits its own View()
+// with MaxWidth(w).MaxHeight(h) as the outermost style, rather than letting
+// a parent re-clamp it.
+func Clip(w, h int) lipgloss.Style {
+	return lipgloss.NewStyle().MaxWidth(w).MaxHeight(h)
 }

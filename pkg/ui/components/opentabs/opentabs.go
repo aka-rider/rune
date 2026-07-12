@@ -6,9 +6,9 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"rune/pkg/ui/keymap"
+	"rune/pkg/ui/listnav"
 	"rune/pkg/ui/styles"
 )
 
@@ -35,6 +35,44 @@ func (h TabHandle) Equal(other TabHandle) bool {
 	return h.Path == other.Path
 }
 
+// findTab returns the index of the tab identified by h, or -1 if none
+// matches. This is NOT the same predicate as TabHandle.Equal (critic R4):
+// Equal treats DocID==0 on EITHER side as "fall back to comparing paths",
+// symmetrically. findTab is asymmetric on PURPOSE, keyed only on h (the
+// handle the CALLER supplied), because every pre-B2 by-path method
+// (MarkClean/SetTabName/CloseFile) matched unconditionally on Path alone,
+// DocID of the STORED tab notwithstanding — a background tab this session
+// has since bound to a real DocID must still be found by a caller that only
+// has its path in hand (e.g. FileDeletedMsg for a non-active tab). So:
+//   - h.DocID != 0: match the stored tab's DocID (rename-safe; Path ignored).
+//   - h.DocID == 0: match the stored tab's Path UNCONDITIONALLY, even if that
+//     tab's own DocID is non-zero.
+func (m Model) findTab(h TabHandle) int {
+	if h.DocID != 0 {
+		for i, t := range m.tabs {
+			if t.DocID == h.DocID {
+				return i
+			}
+		}
+		return -1
+	}
+	for i, t := range m.tabs {
+		if t.Path == h.Path {
+			return i
+		}
+	}
+	return -1
+}
+
+// updateTab applies fn to the tab identified by h, if one is found (see
+// findTab). No-op otherwise.
+func (m Model) updateTab(h TabHandle, fn func(Tab) Tab) Model {
+	if i := m.findTab(h); i >= 0 {
+		m.tabs[i] = fn(m.tabs[i])
+	}
+	return m
+}
+
 type Tab struct {
 	DocID         int64
 	Path          string
@@ -46,7 +84,7 @@ type Tab struct {
 
 type Model struct {
 	tabs         []Tab
-	cursor       int
+	nav          listnav.List
 	activeHandle TabHandle
 	activitySeq  int64 // bumped each time a tab is switched away from
 	width        int
@@ -62,12 +100,25 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 	return Model{keys: keys, styles: st}
 }
 
-func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m }
+func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m.ensureVisible() }
 func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
 func (m Model) SetFocused(f bool) Model  { m.focused = f; return m }
 func (m Model) Focused() bool            { return m.focused }
-func (m Model) Cursor() int              { return m.cursor }
+func (m Model) Cursor() int              { return m.nav.Cursor }
 func (m Model) Len() int                 { return len(m.tabs) }
+
+// ensureVisible adjusts nav.Top so the cursor stays inside the tab list's
+// rendered window (View's rows below the "── Open ──" header) — the B4 fix
+// for a cursor that could walk below the pane's height clip and vanish
+// (F33: opentabs used to render every tab unconditionally, relying on the
+// caller to always size it tall enough; that held for workspace's current
+// layout but was never a component-level guarantee). jump=0/margin=0: a
+// short tab list doesn't need scroll hysteresis, just "keep it visible".
+func (m Model) ensureVisible() Model {
+	viewRows := m.height - 1 // row 0 is the "── Open ──" header
+	m.nav = m.nav.Follow(viewRows, len(m.tabs), 0)
+	return m
+}
 
 func (m Model) Height() int {
 	if len(m.tabs) == 0 {
@@ -113,8 +164,8 @@ func (m Model) SelectIndex(index int) Model {
 	if index < 0 || index >= len(m.tabs) {
 		return m
 	}
-	m.cursor = index
-	return m
+	m.nav.Cursor = index
+	return m.ensureVisible()
 }
 
 // SetActive marks the tab identified by h as the active document and syncs the
@@ -139,8 +190,8 @@ func (m Model) SetActive(h TabHandle) Model {
 	for i, t := range m.tabs {
 		th := TabHandle{DocID: t.DocID, Path: t.Path}
 		if th.Equal(h) {
-			m.cursor = i
-			return m
+			m.nav.Cursor = i
+			return m.ensureVisible()
 		}
 	}
 	return m
@@ -232,12 +283,11 @@ func (m Model) AssignDocID(path string, docID int64) Model {
 	return m
 }
 
-// NameByID returns the display name of the tab with the given docID, or "".
-func (m Model) NameByID(docID int64) string {
-	for _, t := range m.tabs {
-		if t.DocID == docID {
-			return t.Name
-		}
+// NameOf returns the display name of the tab identified by h, or "" if none
+// matches. See findTab for lookup semantics.
+func (m Model) NameOf(h TabHandle) string {
+	if i := m.findTab(h); i >= 0 {
+		return m.tabs[i].Name
 	}
 	return ""
 }
@@ -265,61 +315,16 @@ func (m Model) HasTabNamed(name string) bool {
 	return false
 }
 
-// SetTabNameByID overrides the display name of the tab with the given docID.
-func (m Model) SetTabNameByID(docID int64, name string) Model {
-	for i := range m.tabs {
-		if m.tabs[i].DocID == docID {
-			m.tabs[i].Name = name
-			return m
-		}
-	}
-	return m
+// SetName overrides the display name of the tab identified by h. See findTab
+// for lookup semantics; no-op if no tab matches.
+func (m Model) SetName(h TabHandle, name string) Model {
+	return m.updateTab(h, func(t Tab) Tab { t.Name = name; return t })
 }
 
-// SetTabName overrides the display name of the tab matching path.
-// Prefer SetTabNameByID when the docID is known.
-func (m Model) SetTabName(path, name string) Model {
-	for i := range m.tabs {
-		if m.tabs[i].Path == path {
-			m.tabs[i].Name = name
-			return m
-		}
-	}
-	return m
-}
-
-// MarkDirtyByID sets the dirty indicator on the tab with the given docID.
-func (m Model) MarkDirtyByID(docID int64) Model {
-	for i := range m.tabs {
-		if m.tabs[i].DocID == docID {
-			m.tabs[i].Dirty = true
-			break
-		}
-	}
-	return m
-}
-
-// MarkCleanByID clears the dirty indicator on the tab with the given docID.
-func (m Model) MarkCleanByID(docID int64) Model {
-	for i := range m.tabs {
-		if m.tabs[i].DocID == docID {
-			m.tabs[i].Dirty = false
-			break
-		}
-	}
-	return m
-}
-
-// MarkClean clears the dirty indicator on the tab matching path.
-// Prefer MarkCleanByID when the docID is known.
-func (m Model) MarkClean(path string) Model {
-	for i := range m.tabs {
-		if m.tabs[i].Path == path {
-			m.tabs[i].Dirty = false
-			break
-		}
-	}
-	return m
+// SetDirty sets or clears the dirty indicator on the tab identified by h. See
+// findTab for lookup semantics; no-op if no tab matches.
+func (m Model) SetDirty(h TabHandle, dirty bool) Model {
+	return m.updateTab(h, func(t Tab) Tab { t.Dirty = dirty; return t })
 }
 
 // HasDirty reports whether any open tab has unsaved changes.
@@ -343,14 +348,17 @@ func (m Model) DirtyTabs() []TabHandle {
 	return out
 }
 
-// NeighborOf returns the tab that should become active after the identified tab
-// is closed, with ok=false if it would be the last tab. The tab is located by
-// docID when non-zero (rename/untitled-safe, so multiple path="" untitled tabs
-// resolve distinctly), else by path.
-func (m Model) NeighborOf(docID int64, path string) (TabHandle, bool) {
+// NeighborOf returns the tab that should become active after the tab
+// identified by h is closed, with ok=false if it would be the last tab. The
+// tab is located by TabHandle.Equal (rename/untitled-safe, so multiple
+// path="" untitled tabs resolve distinctly by DocID) — unlike findTab, h here
+// always names a tab the caller already knows the full, current identity of
+// (its own docID+path pair), so the symmetric Equal semantics are correct.
+func (m Model) NeighborOf(h TabHandle) (TabHandle, bool) {
 	idx := -1
 	for i, t := range m.tabs {
-		if (docID != 0 && t.DocID == docID) || (docID == 0 && t.DocID == 0 && t.Path == path) {
+		th := TabHandle{DocID: t.DocID, Path: t.Path}
+		if th.Equal(h) {
 			idx = i
 			break
 		}
@@ -377,15 +385,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(msg, m.keys.Up):
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m.nav = m.nav.Move(-1, len(m.tabs))
+			m = m.ensureVisible()
 		case key.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.tabs)-1 {
-				m.cursor++
-			}
+			m.nav = m.nav.Move(1, len(m.tabs))
+			m = m.ensureVisible()
 		case key.Matches(msg, m.keys.PrimaryAction):
-			t := m.tabs[m.cursor]
+			t := m.tabs[m.nav.Cursor]
 			return m, func() tea.Msg { return TabSelectedMsg{DocID: t.DocID, Path: t.Path} }
 		}
 	case tea.MouseClickMsg:
@@ -400,8 +406,8 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	if !m.focused || msg.Button != tea.MouseLeft {
 		return m, nil
 	}
-	idx := msg.Y - m.offsetY - 1
-	if idx < 0 || idx >= len(m.tabs) {
+	idx, ok := listnav.ClickIndex(msg.Y, m.offsetY, 1, m.nav.Top, len(m.tabs))
+	if !ok {
 		return m, nil
 	}
 	m = m.SelectIndex(idx)
@@ -409,16 +415,22 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (Model, tea.Cmd) {
 	return m, func() tea.Msg { return TabSelectedMsg{DocID: t.DocID, Path: t.Path} }
 }
 
+// View renders the "── Open ──" header followed by a WINDOW of tabs
+// (nav.Window, kept in sync with the cursor by ensureVisible) rather than
+// every tab unconditionally — see ensureVisible's doc comment for why.
 func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString(m.styles.TabsDivider.Render("── Open ──────"))
 
-	for i, t := range m.tabs {
+	viewRows := m.height - 1
+	start, end := m.nav.Window(viewRows, len(m.tabs))
+	for i := start; i < end; i++ {
+		t := m.tabs[i]
 		b.WriteByte('\n')
 
 		prefix := "  "
-		if i == m.cursor && m.focused {
+		if i == m.nav.Cursor && m.focused {
 			prefix = "> "
 		}
 		b.WriteString(prefix)
@@ -444,10 +456,7 @@ func (m Model) View() string {
 		}
 	}
 
-	return lipgloss.NewStyle().
-		MaxWidth(m.width).
-		MaxHeight(m.height).
-		Render(b.String())
+	return styles.Clip(m.width, m.height).Render(b.String())
 }
 
 func tabName(path string) string {

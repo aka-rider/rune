@@ -36,6 +36,7 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 	s.GuardKind = guard.GuardKind
 	s.GuardOptionCount = guard.GuardOptionCount
 	s.ChordPending = guard.ChordPending
+	s.GuardPrompting = m.guard.prompting()
 	// StoreDegraded is guard.StoreDegraded (m.footer.Degraded()) — assigned
 	// below alongside the other file/persistence fields for readability.
 
@@ -47,13 +48,13 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 	s.FlushGen = m.flushGen
 	s.SaveSnapshot = m.activeSave.SavedContent
 	s.SaveInFlight = m.activeSave.InFlight
-	s.PendingDataLossKind = int(m.pendingDataLoss.kind) // mirrors actionKind iota order
+	s.PendingDataLossKind = m.fuzzLegacyPendingKind()
 	s.SaveRequestID = m.activeSave.RequestID
 
 	s.PendingReopenActive = m.pendingReopen.active
-	s.PendingConflictActive = m.pendingConflict.active
-	s.PendingDeletedActive = m.pendingDeleted.active
-	s.PendingRacedActive = m.pendingRaced.active
+	s.PendingConflictActive = m.guard.conflict.active
+	s.PendingDeletedActive = m.guard.deleted.active
+	s.PendingRacedActive = m.guard.raced.active
 	s.StoreDegraded = guard.StoreDegraded
 
 	s.MergeActive = mergemode.IsActive(m.merge)
@@ -71,6 +72,35 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 	s.FiletreeLen = m.filetree.FuzzLen()
 
 	return s
+}
+
+// fuzzLegacyPendingKind maps current guard/intent state onto the legacy
+// actionKind iota values snapshot.Snapshot.PendingDataLossKind has always
+// reported (None=0, Close=1, Quit=2, Evict=3, Trash=4) — pinned by
+// TestFuzzLegacyPendingKind_LegacyIotaOrder and
+// TestFuzzLegacyPendingKind_Trash (workspace_fuzz_test.go) and consumed by
+// internal/fuzz/ui/workspace's pendingKind* constants and historical fuzz
+// corpora. Trash is tied to guard.kind directly (A3 — trash never survives an
+// async Save round-trip, so it carries no separate intent struct); Close/
+// Quit/Evict are tied to their OWN intent's .active bit (A4), independently
+// of guard.kind — critic R1's coexistence window means guard.kind can read
+// guardConflict while guard.close/evict/quit.active is still true (a
+// conflict guard raised mid-close/evict/quit-save), and the legacy snapshot
+// must keep reporting the close/evict/quit intent in that window exactly as
+// the pre-A4 pendingDataLoss.kind (independent of guard.kind by
+// construction) always did.
+func (m Model) fuzzLegacyPendingKind() int {
+	switch {
+	case m.guard.kind == guardTrash:
+		return 4
+	case m.guard.close.active:
+		return 1
+	case m.guard.quit.active:
+		return 2
+	case m.guard.evict.active:
+		return 3
+	}
+	return 0
 }
 
 // IsCloseFileMsg reports whether msg is a CloseFile (^w) key press.

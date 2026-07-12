@@ -53,7 +53,7 @@ func setupSaveConflict(t *testing.T, oursLoaded, theirsExternal string) (Model, 
 	}
 	msg := saveCmd()
 	m, _ = m.Update(msg)
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatalf("setup: expected conflict guard raised from save; got msg=%#v", msg)
 	}
 	return m, path, docID
@@ -135,7 +135,7 @@ func TestConflictGuard_SaveAnywayClears(t *testing.T) {
 
 	m2, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossSaveAnyway})
 
-	if m2.pendingConflict.active {
+	if m2.guard.conflict.active {
 		t.Fatal("DataLossSaveAnyway: pendingConflict still active after response")
 	}
 	if cmd == nil {
@@ -216,7 +216,8 @@ func TestConflictGuard_MergeUsesLiveBuffer(t *testing.T) {
 	const liveEdit = "shared line\nLIVE post-detection edit\n"
 	m.editor = m.editor.SetContent(liveEdit)
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
 	if got := m.editor.Content(); got != liveEdit {
@@ -248,10 +249,11 @@ func TestConflictGuard_DiscardLoadsTheirs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossDiscard)
 
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("DataLossDiscard: pendingConflict still active")
 	}
 	if got := m.editor.Content(); got != theirsContent {
@@ -290,10 +292,11 @@ func TestConflictGuard_MergeClearsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("DataLossMerge: pendingConflict still active")
 	}
 	if !mergemode.IsActive(m.merge) {
@@ -372,7 +375,7 @@ func TestFileSaveErrorMsg_ConflictRaisesGuardMerge(t *testing.T) {
 		Fresh:    docstate.Observation{BlobHash: freshHash},
 	})
 
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("FileSaveErrorMsg{Conflict}: pendingConflict should be active after a conflicting save")
 	}
 	if !m.footer.InGuard() {
@@ -397,7 +400,7 @@ func TestFileSaveErrorMsg_MissingRaisesGuardDeleted(t *testing.T) {
 		Missing: true,
 	})
 
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("FileSaveErrorMsg{Missing}: GuardDeleted should be raised, not GuardMerge")
 	}
 	if m.footer.GuardKind() != footer.GuardDeleted {
@@ -436,7 +439,8 @@ func TestR2SaveGating_UnresolvedConflictsBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
 	// Deterministic: the fixture edits the SAME line on both sides (ours
@@ -482,23 +486,26 @@ func TestR2_ConflictEscThenDirtyDiscardRoutes(t *testing.T) {
 	m := withStore(t, newTestWorkspace(t))
 	m = loadFile(m, "/fake/path.md", "ours content")
 
-	m.pendingConflict = pendingConflict{active: true, path: "/fake/path.md", docID: m.view.DocID()}
+	m.guard.conflict = conflictIntent{active: true, path: "/fake/path.md", docID: m.view.DocID()}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m.footer = m.footer.SetGuard(footer.GuardMerge, guardMergeOptions)
 
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("R2: Esc must clear pendingConflict")
 	}
 
-	m.pendingDataLoss = pendingDataLoss{kind: actionClose}
-	m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+	// A4: keep guard.kind/phase coherent with the hand-set intent (kind-first
+	// dispatch reads guard.kind now) — mirrors the guardConflict setup above.
+	m.guard.close = closeIntent{active: true}
+	m = m.raiseGuardPrompt(guardDirtyClose)
 
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossDiscard})
 
 	if m.editor.Content() == "theirs content" {
 		t.Fatal("R2: [D]iscard after Esc routed to conflict discard (loaded theirs) instead of dirty discard")
 	}
-	if m.pendingDataLoss.kind != actionNone {
-		t.Fatalf("R2: pendingDataLoss.kind=%v after discard, want actionNone", m.pendingDataLoss.kind)
+	if m.guard.close.active {
+		t.Fatalf("R2: guard.close.active=%v after discard, want false", m.guard.close.active)
 	}
 }

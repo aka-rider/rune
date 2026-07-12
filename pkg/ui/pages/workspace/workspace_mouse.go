@@ -49,7 +49,6 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, cmds []tea.Cmd) (Model, t
 			// m.focus == paneCenter internally, so this is safe to call always.
 			m = m.syncCursorToFooter()
 		}
-		m = m.syncDictationAllowed()
 		m = m.syncMergeHint()
 	}
 	return m.finalize(cmds)
@@ -81,7 +80,6 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 			m.drag = dragNone
 			if m.focus.isLeft() {
 				m = m.setFocus(paneCenter)
-				m = m.syncDictationAllowed()
 			}
 		} else {
 			rightW := 0
@@ -102,7 +100,6 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg, cmds []tea.Cmd) (Model,
 			m.drag = dragNone
 			if m.focus == paneChat {
 				m = m.setFocus(paneCenter)
-				m = m.syncDictationAllowed()
 			}
 		} else {
 			leftW := 0

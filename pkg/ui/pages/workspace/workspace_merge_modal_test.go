@@ -103,7 +103,8 @@ func enterRealConflict(t *testing.T) (Model, string, int64) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 	if !mergemode.IsActive(m.merge) {
 		t.Fatal("enterRealConflict: expected merge active after [M]")
@@ -409,7 +410,8 @@ func TestUndoPastEnter_DiskEqualsTheirs_NeverSilentOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 	if !mergemode.IsActive(m.merge) || !mergemode.HasUnresolvedConflicts(m.merge) {
 		t.Fatal("setup: expected merge active with one unresolved conflict after [M]")

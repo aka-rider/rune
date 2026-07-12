@@ -7,10 +7,9 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"rune/pkg/ui/keymap"
-	"rune/pkg/ui/scroll"
+	"rune/pkg/ui/listnav"
 	"rune/pkg/ui/styles"
 	"rune/pkg/vfs"
 )
@@ -37,8 +36,7 @@ type DirReloadedMsg struct {
 
 type Model struct {
 	entries      []Entry
-	cursor       int
-	top          int
+	nav          listnav.List
 	root         string
 	width        int
 	height       int
@@ -58,13 +56,13 @@ func New(keys keymap.Bindings, st styles.Styles) Model {
 func (m Model) SetSize(w, h int) Model   { m.width = w; m.height = h; return m.ensureVisible() }
 func (m Model) SetOffset(x, y int) Model { m.offsetX = x; m.offsetY = y; return m }
 func (m Model) SetFocused(f bool) Model  { m.focused = f; return m }
-func (m Model) Cursor() int              { return m.cursor }
+func (m Model) Cursor() int              { return m.nav.Cursor }
 func (m Model) Len() int                 { return len(m.entries) }
 
 func (m Model) ensureVisible() Model {
 	size := m.height - 1 // first row is the pane title
 	margin := min(4, size/4)
-	m.top = scroll.Follow(m.cursor, m.top, size, len(m.entries), margin, 0)
+	m.nav = m.nav.Follow(size, len(m.entries), margin)
 	return m
 }
 func (m Model) Focused() bool { return m.focused }
@@ -82,8 +80,8 @@ func (m Model) RemoveEntry(path string) Model {
 		}
 	}
 	m.entries = filtered
-	if len(m.entries) > 0 && m.cursor >= len(m.entries) {
-		m.cursor = len(m.entries) - 1
+	if len(m.entries) > 0 && m.nav.Cursor >= len(m.entries) {
+		m.nav.Cursor = len(m.entries) - 1
 	}
 	return m.ensureVisible()
 }
@@ -110,26 +108,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, m.keys.Up):
-			if m.cursor > 0 {
-				m.cursor--
-			}
+			m.nav = m.nav.Move(-1, len(m.entries))
 			return m.ensureVisible(), nil
 		case key.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.entries)-1 {
-				m.cursor++
-			}
+			m.nav = m.nav.Move(1, len(m.entries))
 			return m.ensureVisible(), nil
 		case key.Matches(msg, m.keys.GotoTop):
-			m.cursor = 0
+			m.nav = m.nav.First()
 			return m.ensureVisible(), nil
 		case key.Matches(msg, m.keys.GotoBottom):
-			if len(m.entries) > 0 {
-				m.cursor = len(m.entries) - 1
-			}
+			m.nav = m.nav.Last(len(m.entries))
 			return m.ensureVisible(), nil
 		case key.Matches(msg, m.keys.PrimaryAction):
 			if len(m.entries) > 0 {
-				e := m.entries[m.cursor]
+				e := m.entries[m.nav.Cursor]
 				if e.IsDir {
 					return m, func() tea.Msg { return DirSelectedMsg{Path: e.Path} }
 				}
@@ -138,8 +130,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keys.TrashFile):
-			if len(m.entries) > 0 && m.entries[m.cursor].Name != ".." {
-				e := m.entries[m.cursor]
+			if len(m.entries) > 0 && m.entries[m.nav.Cursor].Name != ".." {
+				e := m.entries[m.nav.Cursor]
 				return m, func() tea.Msg { return FileDeleteRequestedMsg{Path: e.Path} }
 			}
 			return m, nil
@@ -155,7 +147,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			lowerQuery := strings.ToLower(m.searchQuery)
 			for i, e := range m.entries {
 				if strings.HasPrefix(strings.ToLower(e.Name), lowerQuery) {
-					m.cursor = i
+					m.nav.Cursor = i
 					break
 				}
 			}
@@ -169,32 +161,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // and either resetting the cursor to 0 (navigation) or preserving it (reload).
 func (m Model) handleDirLoad(entries []Entry, root string, resetCursor bool) Model {
 	var prevName string
-	if len(m.entries) > 0 && m.cursor < len(m.entries) {
-		prevName = m.entries[m.cursor].Name
+	if len(m.entries) > 0 && m.nav.Cursor < len(m.entries) {
+		prevName = m.entries[m.nav.Cursor].Name
 	}
-	oldCursor := m.cursor
+	oldCursor := m.nav.Cursor
 	m.entries = entries
 	m.root = root
 
 	switch {
 	case resetCursor || len(entries) == 0:
-		m.cursor = 0
+		m.nav.Cursor = 0
 	case prevName != "":
-		m.cursor = oldCursor // fallback; overwritten if name found
+		m.nav.Cursor = oldCursor // fallback; overwritten if name found
 		for i, e := range entries {
 			if e.Name == prevName {
-				m.cursor = i
+				m.nav.Cursor = i
 				break
 			}
 		}
-		if m.cursor >= len(entries) {
-			m.cursor = len(entries) - 1
+		if m.nav.Cursor >= len(entries) {
+			m.nav.Cursor = len(entries) - 1
 		}
 	default:
 		if oldCursor < len(entries) {
-			m.cursor = oldCursor
+			m.nav.Cursor = oldCursor
 		} else {
-			m.cursor = len(entries) - 1
+			m.nav.Cursor = len(entries) - 1
 		}
 	}
 	return m.ensureVisible()
@@ -202,10 +194,7 @@ func (m Model) handleDirLoad(entries []Entry, root string, resetCursor bool) Mod
 
 func (m Model) View() string {
 	content := renderFileList(m)
-	return lipgloss.NewStyle().
-		MaxWidth(m.width).
-		MaxHeight(m.height).
-		Render(content)
+	return styles.Clip(m.width, m.height).Render(content)
 }
 
 func truncatePath(path string, maxWidth int) string {
@@ -239,8 +228,7 @@ func renderFileList(m Model) string {
 		return b.String()
 	}
 
-	start := m.top
-	end := min(start+maxVisible, len(m.entries))
+	start, end := m.nav.Window(maxVisible, len(m.entries))
 
 	for i := start; i < end; i++ {
 		e := m.entries[i]
@@ -250,7 +238,7 @@ func renderFileList(m Model) string {
 		}
 
 		b.WriteByte('\n')
-		if i == m.cursor && m.focused {
+		if i == m.nav.Cursor && m.focused {
 			b.WriteString(">")
 			b.WriteString(m.styles.FileSelected.Render(name))
 		} else {

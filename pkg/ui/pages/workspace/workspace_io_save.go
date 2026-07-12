@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
@@ -71,25 +72,21 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 			// genuinely committed) and raise the Raced guard instead of the
 			// ordinary bindNew/close bookkeeping below, which assumes no
 			// further decision is pending.
-			if msg.DocID != 0 {
-				m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
-			} else {
-				m.opentabs = m.opentabs.MarkClean(msg.Path)
-			}
+			m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: msg.DocID, Path: msg.Path}, false)
 			// The raced guard supersedes any pending destructive intent: a
-			// close-save that raced must NOT leave pendingDataLoss{actionClose}
-			// dangling — a LATER unrelated save ack would match the
-			// "stillDisplayed && actionClose" bookkeeping below and close the
-			// tab out from under the user, minutes after they chose
-			// [K]eep-mine and kept working (review finding). The close intent
-			// is cancelled; the user re-issues ^W once the race is resolved.
-			// Gated on isCloseSaveAck (GUARD-STATE-COH): only clear/dismiss
-			// when THIS save is the one the actionClose guard is waiting on —
-			// an unrelated save (bind-new, restore-theirs) racing must never
-			// touch a guard it has no idea exists.
-			if m.isCloseSaveAck(msg.RequestID) {
-				m.pendingDataLoss = pendingDataLoss{}
-				m.footer = m.footer.SetGuard(footer.GuardDirty, nil)
+			// close-save that raced must NOT leave guard.close dangling — a
+			// LATER unrelated save ack would match the "stillDisplayed &&
+			// isCloseSaveAck" bookkeeping below and close the tab out from
+			// under the user, minutes after they chose [K]eep-mine and kept
+			// working (review finding). The close intent is cancelled; the
+			// user re-issues ^W once the race is resolved. Gated on
+			// isCloseSaveAck (GUARD-STATE-COH): only clear/dismiss when THIS
+			// save is the one guard.close is waiting on — an unrelated save
+			// (bind-new, restore-theirs) racing must never touch a guard it
+			// has no idea exists.
+			if m.guard.isCloseSaveAck(msg.RequestID) {
+				m.guard.close = closeIntent{}
+				m = m.clearGuardPrompt()
 			}
 			if stillDisplayed {
 				m = m.raiseRacedGuard(msg.DocID, msg.Path, msg.Result.Saved, msg.Result.Fresh)
@@ -112,20 +109,16 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 				cmds = append(cmds, reloadDirCmd(m.fsys(), root))
 			}
 		}
-		if msg.DocID != 0 {
-			m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
-		} else {
-			m.opentabs = m.opentabs.MarkClean(msg.Path)
-		}
-		// Gated on isCloseSaveAck, not just kind==actionClose (GUARD-STATE-COH):
+		m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: msg.DocID, Path: msg.Path}, false)
+		// Gated on isCloseSaveAck, not just guard.close.active (GUARD-STATE-COH):
 		// an unrelated save (e.g. a bind-new triggered by finalizing the title
-		// in the same keypress that also raised an actionClose guard for a
+		// in the same keypress that also raised a close guard for a
 		// completely different reason) must never execute someone else's
-		// still-pending close decision just because pendingDataLoss happens to
-		// coincidentally read actionClose right now.
-		if stillDisplayed && m.isCloseSaveAck(msg.RequestID) {
-			m.pendingDataLoss = pendingDataLoss{}
-			m.footer = m.footer.SetGuard(footer.GuardDirty, nil)
+		// still-pending close decision just because guard.close happens to
+		// coincidentally be active right now.
+		if stillDisplayed && m.guard.isCloseSaveAck(msg.RequestID) {
+			m.guard.close = closeIntent{}
+			m = m.clearGuardPrompt()
 			var closeCmd tea.Cmd
 			m, closeCmd = m.executeClose(m.view.DocID(), m.view.Path())
 			cmds = append(cmds, closeCmd)
@@ -136,7 +129,7 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 		return m, cmds, false
 	}
 	// Eviction background save ack: victim is clean, close it, open pending file.
-	if m.isEvictSaveAck(msg.RequestID) {
+	if m.guard.isEvictSaveAck(msg.RequestID) {
 		if msg.Result.Raced {
 			// A swap-race during an LRU evict save must never close the
 			// victim tab and move on as if nothing happened (review finding:
@@ -145,9 +138,10 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 			// clean — but the eviction is ABORTED: the victim tab stays, the
 			// pending open is dropped (surfaced), and the raced guard is
 			// queued to raise when the victim is next displayed.
-			victim := m.pendingDataLoss.victim
-			m.pendingDataLoss = pendingDataLoss{}
-			m.opentabs = m.opentabs.MarkCleanByID(victim.DocID)
+			victim := m.guard.evict.victim
+			m.guard.evict = evictIntent{}
+			m = m.clearGuardPrompt()
+			m.opentabs = m.opentabs.SetDirty(victim, false)
 			m = m.queueRacedGuard(victim.DocID, msg.Path, msg.Result.Saved, msg.Result.Fresh, &cmds)
 			var noticeCmd tea.Cmd
 			m.footer, noticeCmd = m.footer.Update(footer.ShowStatusMsg{
@@ -162,16 +156,17 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 		return m, cmds, false
 	}
 	// A materialize from the multi-tab quit "Save all" batch.
-	if m.pendingDataLoss.kind == actionQuit && m.pendingDataLoss.saveLeft > 0 {
+	if m.guard.quit.active && m.guard.quit.saveLeft > 0 {
 		if msg.Result.Raced {
 			// Critic R2: a swap-race during a quit-batch save must abort the
-			// quit and surface it — never silently MarkCleanByID +
+			// quit and surface it — never silently SetDirty(...,false) +
 			// saveLeft-- straight through to teardownAndQuit while a
 			// captured-but-unreconciled displaced write sits unseen. The
 			// bytes are captured (I1), but the user must hear about the
 			// race before the app exits.
-			m.pendingDataLoss = pendingDataLoss{}
-			m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
+			m.guard.quit = quitIntent{}
+			m = m.clearGuardPrompt()
+			m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: msg.DocID}, false)
 			var noticeCmd tea.Cmd
 			m.footer, noticeCmd = m.footer.Update(footer.ShowStatusMsg{
 				Text: fmt.Sprintf("Quit aborted — %q raced with a concurrent write and needs resolving first", filepath.Base(msg.Path)),
@@ -193,22 +188,22 @@ func (m Model) handleFileSavedMsg(msg FileSavedMsg, cmds []tea.Cmd) (Model, []te
 			}
 			return m, cmds, false
 		}
-		m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
-		m.pendingDataLoss.saveLeft--
-		if m.pendingDataLoss.saveLeft == 0 {
+		m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: msg.DocID}, false)
+		m.guard.quit.saveLeft--
+		if m.guard.quit.saveLeft == 0 {
 			quitM, quitCmd := m.teardownAndQuit()
 			return quitM, append(cmds, quitCmd), true
 		}
 		return m, cmds, false
 	}
 	// Orphaned quit-batch ack: the quit was already aborted (a Raced/diverged
-	// sibling cleared pendingDataLoss) but the OTHER batch saves were still
+	// sibling cleared guard.quit) but the OTHER batch saves were still
 	// in flight — their acks land here with no matching branch above (review
 	// finding: a SECOND race in the same batch fell through every handler
 	// and vanished silently). The store side already committed in
 	// Materialize's own tx; do the UI bookkeeping and surface any race.
 	if strings.HasPrefix(msg.RequestID, "quitsave-") {
-		m.opentabs = m.opentabs.MarkCleanByID(msg.DocID)
+		m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: msg.DocID}, false)
 		if msg.Result.Raced {
 			if msg.DocID == m.view.DocID() {
 				m = m.raiseRacedGuard(msg.DocID, msg.Path, msg.Result.Saved, msg.Result.Fresh)
@@ -231,16 +226,16 @@ func (m Model) handleFileSaveErrorMsg(msg FileSaveErrorMsg, cmds []tea.Cmd) (Mod
 	// conflict, and abort any pending close so nothing is discarded — but
 	// ONLY when the pending close is this save's own (GUARD-STATE-COH): a
 	// bind-new triggered by finalizing the title can fail well after an
-	// unrelated, later ^W has raised its own actionClose guard for the SAME
+	// unrelated, later ^W has raised its own close guard for the SAME
 	// keypress's synchronous continuation (title.Commit()'s RenameRequestMsg
 	// is async — requestCloseCurrent runs before it lands). Clearing that
 	// unrelated guard here would leave the footer showing a prompt with
 	// nothing behind it.
 	if m.activeSave.InFlight && m.activeSave.RequestID == msg.RequestID {
 		m.activeSave.InFlight = false
-		if m.isCloseSaveAck(msg.RequestID) {
-			m.pendingDataLoss = pendingDataLoss{}
-			m.footer = m.footer.SetGuard(footer.GuardDirty, nil)
+		if m.guard.isCloseSaveAck(msg.RequestID) {
+			m.guard.close = closeIntent{}
+			m = m.clearGuardPrompt()
 		}
 		var reopenCmd tea.Cmd
 		m, reopenCmd = m.flushPendingReopen()
@@ -280,15 +275,17 @@ func (m Model) handleFileSaveErrorMsg(msg FileSaveErrorMsg, cmds []tea.Cmd) (Mod
 	// first failure; every buffer is kept (durable in the VFS) and the
 	// conflict is surfaced. Other in-flight saves still complete (their writes
 	// succeeded); their acks are ignored now that the action is cleared.
-	if m.pendingDataLoss.kind == actionQuit {
-		m.pendingDataLoss = pendingDataLoss{}
+	if m.guard.quit.active {
+		m.guard.quit = quitIntent{}
+		m = m.clearGuardPrompt()
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: saveErrorText(msg)})
 		cmds = append(cmds, cmd)
 	}
 	// Eviction background save failed — the pending file does not open;
 	// the victim tab stays open, the user can act on it manually.
-	if m.isEvictSaveAck(msg.RequestID) {
-		m.pendingDataLoss = pendingDataLoss{}
+	if m.guard.isEvictSaveAck(msg.RequestID) {
+		m.guard.evict = evictIntent{}
+		m = m.clearGuardPrompt()
 		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: saveErrorText(msg)})
 		cmds = append(cmds, cmd)
 	}

@@ -50,7 +50,7 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 	capturedBaseDir := baseDir
 	capturedExt := ext
 	capturedNow := now
-	capturedFsys := m.fsys() // §1.4.9: write through the editor's FS (durable temp write + atomic RenameExcl publish)
+	capturedFsys := m.fs // §1.4.9: write through the editor's FS (durable temp write + atomic RenameExcl publish)
 
 	cmd := func() tea.Msg {
 		filename := generateImageFilename(capturedData, capturedNow, capturedExt)

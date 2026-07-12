@@ -31,15 +31,25 @@ type Model struct {
 	pxH      int
 	mtime    int64
 	cellSize imagekit.CellSize
-	fs       vfs.FS // filesystem for reading image bytes; nil → vfs.Disk (§1.4.9)
+	fs       vfs.FS // filesystem for reading image bytes; always non-nil — New normalizes nil to vfs.Disk{} (§1.4.9)
 
 	visibleRows int
 
 	iterm2Slices []string
 
-	expanded    bool
-	wasExpanded bool
+	expanded bool
 
+	anim anim
+
+	maxCols int
+	maxRows int
+}
+
+// anim groups an animated (GIF) image's frame-playback state. Grouping it
+// lets canTick() reason about "is this image eligible to tick" as one
+// value instead of scattering the same conjunction across ArmTick and the
+// frameTickMsg handler (§1.7).
+type anim struct {
 	animated   bool
 	frameIDs   []uint32
 	frameIdx   int
@@ -49,11 +59,15 @@ type Model struct {
 	loopsDone  int
 	tickGen    int
 	ticking    bool
-	maxCols    int
-	maxRows    int
 }
 
+// New constructs an image Model. fsys is normalized to vfs.Disk{} when nil so
+// every image-byte read goes through a non-nil filesystem — an in-memory VFS
+// (tests/fuzz) resolves the same files the workspace serves (§1.4.9).
 func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, cs imagekit.CellSize, maxCols, maxRows int, fsys vfs.FS) Model {
+	if fsys == nil {
+		fsys = vfs.Disk{}
+	}
 	return Model{
 		path:     path,
 		absPath:  absPath,
@@ -67,16 +81,6 @@ func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, c
 		fs:       fsys,
 		state:    PendingDecode,
 	}
-}
-
-// fsys returns the image's filesystem, defaulting to real disk (§1.4.9). All
-// image-byte reads go through it so an in-memory VFS (tests/fuzz) resolves the
-// same files the workspace serves.
-func (m Model) fsys() vfs.FS {
-	if m.fs == nil {
-		return vfs.Disk{}
-	}
-	return m.fs
 }
 
 func (m Model) Init() tea.Cmd {
@@ -108,12 +112,12 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 		kitty := m.termCaps.SupportsKittyGraphics()
 
 		if msg.animated && msg.frameCount > 1 && kitty {
-			m.animated = true
-			m.frameCount = msg.frameCount
-			m.delays = msg.delays
-			m.loopCount = msg.loopCount
-			m.frameIdx = 0
-			m.loopsDone = 0
+			m.anim.animated = true
+			m.anim.frameCount = msg.frameCount
+			m.anim.delays = msg.delays
+			m.anim.loopCount = msg.loopCount
+			m.anim.frameIdx = 0
+			m.anim.loopsDone = 0
 			// frameIDs will be populated via SetFrameIDs; transmit is NOT
 			// triggered here for animated images — the editor allocates frame
 			// IDs first (SetFrameIDs) and drives the transmit from there.
@@ -128,7 +132,7 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 	case transmittedMsg:
 		m.state = Live
 		var cmd tea.Cmd
-		if m.animated && m.frameCount > 1 {
+		if m.anim.animated && m.anim.frameCount > 1 {
 			m, cmd = m.ArmTick()
 		}
 		return m, tea.Batch(cmd, func() tea.Msg { return ReadyMsg{Path: m.path} })
@@ -139,53 +143,56 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 		return m, func() tea.Msg { return ReadyMsg{Path: m.path} }
 
 	case frameTickMsg:
-		if msg.gen != m.tickGen || m.state != Live || !m.animated {
+		if msg.gen != m.anim.tickGen || m.state != Live || !m.anim.animated {
 			return m, nil
 		}
 		next := msg.next
-		if next >= m.frameCount {
-			m.loopsDone++
+		if next >= m.anim.frameCount {
+			m.anim.loopsDone++
 			next = 0
 			if m.animationShouldStop() {
-				m.frameIdx = m.frameCount - 1
-				m.ticking = false
+				m.anim.frameIdx = m.anim.frameCount - 1
+				m.anim.ticking = false
 				return m, nil
 			}
 		}
-		m.frameIdx = next
+		m.anim.frameIdx = next
 
-		if m.visibleRows == 0 || !m.expanded {
-			m.ticking = false // arm tick on scroll in
+		if !m.canTick() {
+			m.anim.ticking = false // arm tick on scroll in
 			return m, nil
 		}
-		return m, m.scheduleFrame(m.tickGen, m.frameIdx+1, m.frameDelay())
+		return m, m.scheduleFrame(m.anim.tickGen, m.anim.frameIdx+1, m.frameDelay())
 	}
 	return m, nil
 }
 
 // SetVisibleRows records how many of the image's rows are currently within the
-// viewport. It gates animation ticking (ArmTick / frameTickMsg) so offscreen
-// animated images don't schedule frames. Called from markdownedit's
-// updateImages/armImageTicks (image_integration.go) on every image message and
-// layout change.
+// viewport. It gates animation ticking (ArmTick / frameTickMsg, via canTick)
+// so offscreen animated images don't schedule frames. Called from
+// markdownedit's updateImages/armImageTicks (image_integration.go) on every
+// image message and layout change.
 func (m Model) SetVisibleRows(count int) Model {
 	m.visibleRows = count
 	return m
 }
 
-func (m Model) SetExpanded(expanded bool) Model {
-	m.wasExpanded = m.expanded
+// SetExpanded updates the image's expanded/collapsed display state and
+// reports whether this call is the transition FROM expanded TO collapsed —
+// the one edge markdownedit needs (it must clear the terminal to erase the
+// now-stale expanded rows). Replaces the old expanded/wasExpanded field pair
+// plus a separate WasCollapsed() query (§1.7): the transition is computed
+// once, here, from the pre-call value, instead of the caller reconstructing
+// it by comparing WasCollapsed() before and after the call.
+func (m Model) SetExpanded(expanded bool) (Model, bool) {
+	collapsed := m.expanded && !expanded
 	m.expanded = expanded
-	return m
-}
-
-func (m Model) WasCollapsed() bool {
-	return m.wasExpanded && !m.expanded
+	return m, collapsed
 }
 
 func (m Model) SetFrameIDs(ids []uint32) (Model, tea.Cmd) {
-	m.frameIDs = ids
-	if m.animated && len(ids) > 0 {
+	m.anim.frameIDs = ids
+	if m.anim.animated && len(ids) > 0 {
 		return m, TransmitAnimationCmd(m)
 	}
 	return m, nil
@@ -219,32 +226,41 @@ func (m Model) Path() string {
 }
 
 // Animation helpers
+
+// canTick reports whether this image is currently eligible to have an
+// animation frame scheduled: it must be an animated, live image with more
+// than one frame, and on screen (expanded, with rows in the viewport). This
+// is the single gate ArmTick and the frameTickMsg continuation both consult
+// (§1.7) — previously the same conjunction was hand-duplicated at both
+// sites and could drift.
+func (m Model) canTick() bool {
+	return m.anim.animated && m.state == Live && m.anim.frameCount > 1 &&
+		m.visibleRows > 0 && m.expanded
+}
+
 func (m Model) ArmTick() (Model, tea.Cmd) {
-	if !m.animated || m.state != Live || m.frameCount <= 1 {
+	if !m.canTick() || m.anim.ticking || m.animationShouldStop() {
 		return m, nil
 	}
-	if m.ticking || m.animationShouldStop() || m.visibleRows == 0 || !m.expanded {
-		return m, nil
-	}
-	m.ticking = true
-	m.tickGen++
-	return m, m.scheduleFrame(m.tickGen, m.frameIdx+1, m.frameDelay())
+	m.anim.ticking = true
+	m.anim.tickGen++
+	return m, m.scheduleFrame(m.anim.tickGen, m.anim.frameIdx+1, m.frameDelay())
 }
 
 func (m Model) animationShouldStop() bool {
 	switch {
-	case m.loopCount == 0:
+	case m.anim.loopCount == 0:
 		return false
-	case m.loopCount < 0:
-		return m.loopsDone >= 1
+	case m.anim.loopCount < 0:
+		return m.anim.loopsDone >= 1
 	default:
-		return m.loopsDone >= m.loopCount
+		return m.anim.loopsDone >= m.anim.loopCount
 	}
 }
 
 func (m Model) frameDelay() time.Duration {
-	if m.frameIdx >= 0 && m.frameIdx < len(m.delays) {
-		return m.delays[m.frameIdx]
+	if m.anim.frameIdx >= 0 && m.anim.frameIdx < len(m.anim.delays) {
+		return m.anim.delays[m.anim.frameIdx]
 	}
 	return 100 * time.Millisecond
 }
@@ -256,7 +272,7 @@ func (m Model) MarkFailed() Model {
 }
 
 func (m Model) NeedsFrameIDs() bool {
-	return m.state == PendingTransmit && m.animated && len(m.frameIDs) == 0
+	return m.state == PendingTransmit && m.anim.animated && len(m.anim.frameIDs) == 0
 }
 
 func (m Model) ID() uint32 {
@@ -272,18 +288,7 @@ func (m Model) ITerm2Slices() []string {
 }
 
 func (m Model) FrameCount() int {
-	return m.frameCount
-}
-
-func (m Model) LiveIDs() []uint32 {
-	if m.state != Live {
-		return nil
-	}
-	ids := []uint32{m.id}
-	if len(m.frameIDs) > 0 {
-		ids = append(ids, m.frameIDs...)
-	}
-	return ids
+	return m.anim.frameCount
 }
 
 func (m Model) Resize(maxCols, maxRows int) (Model, bool) {
@@ -304,8 +309,8 @@ func (m Model) Resize(maxCols, maxRows int) (Model, bool) {
 }
 
 func (m Model) CurrentID() uint32 {
-	if m.animated && len(m.frameIDs) > m.frameIdx {
-		return m.frameIDs[m.frameIdx]
+	if m.anim.animated && len(m.anim.frameIDs) > m.anim.frameIdx {
+		return m.anim.frameIDs[m.anim.frameIdx]
 	}
 	return m.id
 }

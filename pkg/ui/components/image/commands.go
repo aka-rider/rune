@@ -3,6 +3,7 @@ package image
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	tea "charm.land/bubbletea/v2"
@@ -40,7 +41,7 @@ func writeTTY(seq string) error {
 }
 
 func DecodeCmd(m Model) tea.Cmd {
-	p, ap, mt, mc, mr, c, fsys := m.path, m.absPath, m.mtime, m.maxCols, m.maxRows, m.cellSize, m.fsys()
+	p, ap, mt, mc, mr, c, fsys := m.path, m.absPath, m.mtime, m.maxCols, m.maxRows, m.cellSize, m.fs
 	return func() tea.Msg {
 		data, err := fsys.ReadFile(ap)
 		if err != nil {
@@ -48,13 +49,13 @@ func DecodeCmd(m Model) tea.Cmd {
 		}
 
 		if imagekit.SniffFormat(data) == "gif" {
-			if anim, aerr := imagekit.DecodeGIF(data); aerr == nil {
-				cols, rows := imagekit.FitCells(anim.Width, anim.Height, mc, mr, c)
+			if gif, aerr := imagekit.DecodeGIF(data); aerr == nil {
+				cols, rows := imagekit.FitCells(gif.Width, gif.Height, mc, mr, c)
 				return UpdateMsg{Path: p, inner: decodedMsg{
 					path: p, cols: cols, rows: rows,
-					pxW: anim.Width, pxH: anim.Height, mtime: mt,
-					animated: true, frameCount: len(anim.Frames),
-					delays: anim.Delays, loopCount: anim.LoopCount,
+					pxW: gif.Width, pxH: gif.Height, mtime: mt,
+					animated: true, frameCount: len(gif.Frames),
+					delays: gif.Delays, loopCount: gif.LoopCount,
 				}}
 			} else if !errors.Is(aerr, imagekit.ErrNotAnimated) {
 				return ErrorMsg{Path: p, Err: aerr}
@@ -73,7 +74,7 @@ func DecodeCmd(m Model) tea.Cmd {
 }
 
 func TransmitCmd(m Model) tea.Cmd {
-	p, ap, theID, c, r, sz, fsys := m.path, m.absPath, m.id, m.cols, m.rows, m.cellSize, m.fsys()
+	p, ap, theID, c, r, sz, fsys := m.path, m.absPath, m.id, m.cols, m.rows, m.cellSize, m.fs
 	return func() tea.Msg {
 		data, err := fsys.ReadFile(ap)
 		if err != nil {
@@ -97,19 +98,19 @@ func TransmitCmd(m Model) tea.Cmd {
 }
 
 func TransmitAnimationCmd(m Model) tea.Cmd {
-	p, ap, ids, c, r, sz, fsys := m.path, m.absPath, append([]uint32(nil), m.frameIDs...), m.cols, m.rows, m.cellSize, m.fsys()
+	p, ap, ids, c, r, sz, fsys := m.path, m.absPath, append([]uint32(nil), m.anim.frameIDs...), m.cols, m.rows, m.cellSize, m.fs
 	return func() tea.Msg {
 		data, err := fsys.ReadFile(ap)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("read image %q: %w", ap, err)}
 		}
-		anim, err := imagekit.DecodeGIF(data)
+		gif, err := imagekit.DecodeGIF(data)
 		if err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("decode gif %q: %w", ap, err)}
 		}
-		tw, th := imagekit.FitBox(anim.Width, anim.Height, c*sz.W, r*sz.H)
-		var seq string
-		for i, frame := range anim.Frames {
+		tw, th := imagekit.FitBox(gif.Width, gif.Height, c*sz.W, r*sz.H)
+		var seq strings.Builder
+		for i, frame := range gif.Frames {
 			if i >= len(ids) {
 				break
 			}
@@ -118,9 +119,9 @@ func TransmitAnimationCmd(m Model) tea.Cmd {
 			if encErr != nil {
 				return ErrorMsg{Path: p, Err: fmt.Errorf("encode frame %d of %q: %w", i, ap, encErr)}
 			}
-			seq += s
+			seq.WriteString(s)
 		}
-		if err := writeTTY(seq); err != nil {
+		if err := writeTTY(seq.String()); err != nil {
 			return ErrorMsg{Path: p, Err: fmt.Errorf("transmit animation %q: %w", ap, err)}
 		}
 		return UpdateMsg{Path: p, inner: transmittedMsg{path: p}}
@@ -128,7 +129,7 @@ func TransmitAnimationCmd(m Model) tea.Cmd {
 }
 
 func EncodeITerm2Cmd(m Model) tea.Cmd {
-	p, ap, c, r, sz, fsys := m.path, m.absPath, m.cols, m.rows, m.cellSize, m.fsys()
+	p, ap, c, r, sz, fsys := m.path, m.absPath, m.cols, m.rows, m.cellSize, m.fs
 	return func() tea.Msg {
 		data, err := fsys.ReadFile(ap)
 		if err != nil {
@@ -148,26 +149,11 @@ func EncodeITerm2Cmd(m Model) tea.Cmd {
 	}
 }
 
-// DeleteCmd deletes the given image IDs from the terminal. Fire-and-forget.
+// DeleteAllCmd deletes every image the terminal is currently displaying.
+// Fire-and-forget.
 func DeleteAllCmd() tea.Cmd {
 	return func() tea.Msg {
 		_ = writeTTY(imagekit.EncodeDeleteAll())
-		return nil
-	}
-}
-
-// DeleteCmd deletes the given image IDs from the terminal. Fire-and-forget.
-func DeleteCmd(ids []uint32) tea.Cmd {
-	captured := append([]uint32(nil), ids...)
-	return func() tea.Msg {
-		if len(captured) == 0 {
-			return nil
-		}
-		var seq string
-		for _, id := range captured {
-			seq += imagekit.EncodeDelete(id)
-		}
-		_ = writeTTY(seq)
 		return nil
 	}
 }
@@ -181,7 +167,7 @@ func (m Model) RetransmitCmd() tea.Cmd {
 		return nil
 	}
 	if m.termCaps.SupportsKittyGraphics() {
-		if m.animated && len(m.frameIDs) > 0 {
+		if m.anim.animated && len(m.anim.frameIDs) > 0 {
 			return TransmitAnimationCmd(m)
 		}
 		return TransmitCmd(m)

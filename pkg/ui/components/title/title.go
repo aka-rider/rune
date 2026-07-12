@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
@@ -256,19 +255,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // --- View ---
 
 func (m Model) View() string {
-	titleStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("216")).
-		Bold(true).
-		Padding(0, 1)
-
 	if !m.focused {
-		content := titleStyle.MaxWidth(m.width).Render(m.Text())
+		content := styles.Clip(m.width, m.Height()).
+			Foreground(m.styles.TitleText).
+			Bold(true).
+			Padding(0, 1).
+			Render(m.Text())
 		return content
 	}
 
 	// Focused: textedit renders cursor and selection natively.
-	return lipgloss.NewStyle().
-		MaxWidth(m.width).
+	return styles.Clip(m.width, m.Height()).
 		Padding(0, 1).
 		Render(m.field.View())
 }

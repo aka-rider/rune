@@ -38,25 +38,52 @@ func snapshotCmd(store *docstate.Store, docID int64, content string, seq, gen ui
 	}
 }
 
+// journalTarget selects both the journalEdit routing rule and (for
+// targetMain/targetChat) which document's event stream to append to — a
+// typed enum rather than a string (A1/§1.7): a typo in a string literal was
+// a silent bug (an edit journaled nowhere, or against the wrong document),
+// where an unknown journalTarget value is a compile error.
+type journalTarget uint8
+
+const (
+	targetMain journalTarget = iota
+	targetChat
+	targetTitle
+)
+
+// String renders the target for error messages (fmt.Stringer).
+func (t journalTarget) String() string {
+	switch t {
+	case targetMain:
+		return "main"
+	case targetChat:
+		return "chat"
+	case targetTitle:
+		return "title"
+	default:
+		return "unknown"
+	}
+}
+
 // journalEdit routes a drained buffer edit to the durable journal and
 // schedules VFS autosave. Call after DrainEdits returns non-empty edits.
 //
 // target selects BOTH the routing rule and (for main/chat) which document's
 // event stream to append to — I2: one document = one event stream, so there
 // is no more surface column to tag the row with:
-//   - "main" → m.view.DocID() — the currently displayed document.
-//   - "chat" → m.chatDocID — chat's own reserved document (previously
+//   - targetMain → m.view.DocID() — the currently displayed document.
+//   - targetChat → m.chatDocID — chat's own reserved document (previously
 //     journaled against m.view.DocID() by mistake — S1/H4: chat keystrokes
 //     spliced into whatever file happened to be open, and AppendEdit's
 //     redo-truncation could delete chat history as "abandoned future").
-//   - "title" → never journaled at all. Title is ephemeral rename input,
+//   - targetTitle → never journaled at all. Title is ephemeral rename input,
 //     finalized by maybeFinalizeTitle (RenameRequestMsg) on commit — not
 //     undo/redo history. This is the other half of closing S1: title
 //     keystrokes can no longer splice into the file's recovered content
 //     because they never reach any document's event stream. The caller
 //     still drains title's own pending-edit buffer (so it doesn't grow
 //     unboundedly); journalEdit just discards what it drained.
-func (m Model) journalEdit(target string, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) Model {
+func (m Model) journalEdit(target journalTarget, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) Model {
 	m, _ = m.journalEditOK(target, edits, cursorsBefore, cursorsAfter, cmds)
 	return m
 }
@@ -69,15 +96,15 @@ func (m Model) journalEdit(target string, edits []buffer.AppliedEdit, cursorsBef
 // finding). ok is false when nothing was appended: empty/title drains, no
 // store, no doc, or an AppendEdit failure (buffer rolled back, error
 // surfaced).
-func (m Model) journalEditOK(target string, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) (Model, bool) {
-	if len(edits) == 0 || target == "title" {
+func (m Model) journalEditOK(target journalTarget, edits []buffer.AppliedEdit, cursorsBefore, cursorsAfter []cursor.Cursor, cmds *[]tea.Cmd) (Model, bool) {
+	if len(edits) == 0 || target == targetTitle {
 		return m, false
 	}
 	var docID int64
 	switch target {
-	case "chat":
+	case targetChat:
 		docID = m.chatDocID
-	default: // "main"
+	default: // targetMain
 		docID = m.view.DocID()
 	}
 	if m.store == nil || docID == 0 {
@@ -98,7 +125,7 @@ func (m Model) journalEditOK(target string, edits []buffer.AppliedEdit, cursorsB
 		})
 		return m, false
 	}
-	if target == "main" {
+	if target == targetMain {
 		m = m.scheduleFlush(cmds)
 	}
 	return m, true
@@ -112,19 +139,19 @@ func (m Model) journalEditOK(target string, edits []buffer.AppliedEdit, cursorsB
 // itself doesn't fit the live buffer — should not happen since these edits
 // were JUST applied) is surfaced loudly rather than panicking (§1.3): the
 // buffer is left as-is, ahead of the journal, which is a Tolerable halt next
-// to losing the unsaved buffer outright. target is never "title" here —
+// to losing the unsaved buffer outright. target is never targetTitle here —
 // journalEdit already short-circuits before ever reaching AppendEdit for it.
-func (m Model) rollbackFailedJournal(target string, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, cmds *[]tea.Cmd) Model {
+func (m Model) rollbackFailedJournal(target journalTarget, edits []buffer.AppliedEdit, cursorsBefore []cursor.Cursor, cmds *[]tea.Cmd) Model {
 	var invErr error
 	var cmd tea.Cmd
 	switch target {
-	case "main":
+	case targetMain:
 		m.editor, cmd, invErr = m.editor.ApplyInverse(edits)
 		*cmds = append(*cmds, cmd)
 		if invErr == nil {
 			m.editor = m.editor.SetCursors(cursorsBefore)
 		}
-	case "chat":
+	case targetChat:
 		m.chat, invErr = m.chat.ApplyInverse(edits)
 		if invErr == nil {
 			m.chat = m.chat.SetCursors(cursorsBefore)

@@ -80,7 +80,6 @@ func (m Model) handleUndo() (Model, tea.Cmd) {
 	case "chat":
 		m = m.setFocus(paneChat)
 	}
-	m = m.syncDictationAllowed()
 	m = m.syncMergeHint()
 	return m, tea.Batch(append(dictCmds, cmd, resyncCmd)...)
 }
@@ -138,7 +137,6 @@ func (m Model) handleRedo() (Model, tea.Cmd) {
 	case "chat":
 		m = m.setFocus(paneChat)
 	}
-	m = m.syncDictationAllowed()
 	m = m.syncMergeHint()
 	return m, tea.Batch(append(dictCmds, cmd, resyncCmd)...)
 }

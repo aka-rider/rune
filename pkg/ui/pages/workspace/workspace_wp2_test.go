@@ -63,7 +63,8 @@ func TestH2_StaleMergeReadDroppedAfterTabSwitch(t *testing.T) {
 	// handleDataLossGuardResponse's DataLossCancel comment), but the fresh
 	// disk-read Cmd this launches has not landed yet — this is the race
 	// window.
-	m.pendingConflict = pendingConflict{active: true, path: pathA, docID: docA}
+	m.guard.conflict = conflictIntent{active: true, path: pathA, docID: docA}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	var discardCmd tea.Cmd
 	m, discardCmd = m.handleDataLossDiscardConflict()
 	if discardCmd == nil {
@@ -212,7 +213,8 @@ func TestS7_DiscardConflictJournalsReplaceAll(t *testing.T) {
 	if err := os.WriteFile(path, []byte("theirs on disk\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossDiscard)
 
 	if got := m.editor.Content(); got != "theirs on disk\n" {
@@ -252,7 +254,8 @@ func TestDiscardConflictMultibyteCursorAtByteOffset(t *testing.T) {
 	if err := os.WriteFile(path, []byte(theirs), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossDiscard)
 
 	if got := m.editor.Content(); got != theirs {

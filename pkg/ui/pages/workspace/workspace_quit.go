@@ -11,10 +11,26 @@ import (
 	"rune/pkg/ui/components/footer"
 )
 
+// quitIntent carries the state a raised dirty-quit guard must survive across
+// the async multi-tab "Save all" batch (§5.5): saveLeft counts the
+// outstanding per-tab materialize acks before teardown; the first failure
+// clears the whole intent so every buffer is kept. Zero value = no pending
+// quit. Lives at guardState.quit (A4: migrated from the former
+// Model.pendingDataLoss{kind:actionQuit}).
+type quitIntent struct {
+	active   bool
+	saveLeft int
+}
+
 // teardownAndQuit runs the shared quit sequence: clear pending state, disable
 // dictation, close the store, delete pasted images, and quit.
 func (m Model) teardownAndQuit() (Model, tea.Cmd) {
-	m.pendingDataLoss = pendingDataLoss{}
+	// Wholesale-clear every close/evict/quit intent (mirrors the pre-A4
+	// `pendingDataLoss = pendingDataLoss{}` single-field reset exactly — the
+	// app is quitting, so any stray intent is moot regardless of which one it
+	// was — see abandonDirtyContinuation's own doc comment).
+	m = m.abandonDirtyContinuation()
+	m = m.clearGuardPrompt()
 	m.dict = m.dict.Disable()
 	if m.cancelWatch != nil {
 		m.cancelWatch() // release the live directory watch before quitting
@@ -62,7 +78,8 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 			// like a detected divergence — quitting on an unvetted write is
 			// the same silent-clobber risk (review finding). The doc stays
 			// dirty and durable in the VFS.
-			m.pendingDataLoss = pendingDataLoss{}
+			m.guard.quit = quitIntent{}
+			m = m.clearGuardPrompt()
 			var cmd tea.Cmd
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — divergence check failed for %q: %v", filepath.Base(h.Path), v.SyncErr)})
 			return m, cmd
@@ -84,7 +101,8 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 			// all" — the user walks away believing everything was written.
 			// The work is durable in the VFS, but the quit must abort and
 			// say so (same refuse-and-surface as the Sync gates above).
-			m.pendingDataLoss = pendingDataLoss{}
+			m.guard.quit = quitIntent{}
+			m = m.clearGuardPrompt()
 			var cmd tea.Cmd
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — %q has no disk baseline to save against; open it to save explicitly", filepath.Base(h.Path))})
 			return m, cmd
@@ -104,7 +122,8 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		// in the VFS.
 		content, err := m.store.Content(h.DocID)
 		if err != nil {
-			m.pendingDataLoss = pendingDataLoss{}
+			m.guard.quit = quitIntent{}
+			m = m.clearGuardPrompt()
 			var cmd tea.Cmd
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — cannot reconstruct %q: %v", filepath.Base(h.Path), err)})
 			return m, cmd
@@ -114,13 +133,19 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 	if len(batch) == 0 {
 		return m.teardownAndQuit() // only untitled docs are dirty — quit now
 	}
-	m.pendingDataLoss = pendingDataLoss{kind: actionQuit, saveLeft: len(batch)}
+	// guard.kind/phase were already set to guardDirtyQuit/guardAwaitingSave by
+	// confirmGuardSave (the dispatcher's [S]ave case) before this ran — only
+	// the intent's own saveLeft countdown is stamped here.
+	m.guard.quit = quitIntent{active: true, saveLeft: len(batch)}
 	return m, tea.Batch(batch...)
 }
 
 // abortQuitForDivergence aborts a "Save all" quit at the first diverged doc
-// it finds (F7): cancels the quit teardown (pendingDataLoss already cleared
-// by the caller not having set it), focuses that doc, and raises its
+// it finds (F7): cancels the quit teardown (guard.quit deliberately left
+// untouched — see guardState's own doc comment on the critic-R1 coexistence
+// window: a conflict guard raised here rides on top of the still-live quit
+// intent, and resolving it later abandons the quit rather than resuming it),
+// focuses that doc, and raises its
 // conflict guard so the user can resolve it before quitting again — v3's
 // refuse-and-surface. isCurrent means the doc is ALREADY displayed (the
 // guard raises directly from the live buffer, synchronously); otherwise a

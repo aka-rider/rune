@@ -30,6 +30,10 @@ func imagePlaceholderCells(id uint32, rowIndex, cols int) []textedit.Cell {
 }
 
 // idToColor maps a 24-bit image ID to a truecolor value.
+//
+// This is Kitty image-ID ENCODING (the placeholder cell's foreground color
+// carries the protocol's image ID), not theming — it must not be routed
+// through styles.Palette/Styles tokens.
 func idToColor(id uint32) color.Color {
 	return lipgloss.Color(fmt.Sprintf("#%06X", id&0xFFFFFF))
 }

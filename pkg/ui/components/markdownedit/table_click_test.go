@@ -40,7 +40,7 @@ func newTableClickModel(t *testing.T) Model {
 func TestClickAfterTableResolvesCorrectLine(t *testing.T) {
 	m := newTableClickModel(t)
 
-	snap := m.Model.Snapshot()
+	snap := m.Model.Geom().Snap
 	if snap.TotalRows != 9 {
 		t.Fatalf("setup: TotalRows=%d, want 9 (top border, header, sep, body1, inter-border, body2, bottom border, X, Y)", snap.TotalRows)
 	}

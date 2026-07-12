@@ -115,7 +115,7 @@ func TestBindNewConflict_KeepsBufferUntitled(t *testing.T) {
 	if m.activeSave.InFlight {
 		t.Fatal("expected activeSave cleared after bind conflict")
 	}
-	if m.pendingDataLoss.kind != actionNone {
+	if m.guard.close.active || m.guard.evict.active || m.guard.quit.active {
 		t.Fatal("expected pending data-loss action cleared after a failed guard save")
 	}
 }

@@ -114,7 +114,7 @@ func TestEvictionCandidate_PrefersCleanOverDirty(t *testing.T) {
 	m = m.SetActive(th(1, "dirty.md"))
 	m = m.SetActive(th(2, "clean.md"))
 	m = m.SetActive(th(3, "active.md")) // 3 is now active
-	m = m.MarkDirtyByID(1)
+	m = m.SetDirty(TabHandle{DocID: 1}, true)
 
 	victim, dirty, ok := m.EvictionCandidate()
 	if !ok {
@@ -165,7 +165,7 @@ func TestEvictionCandidate_FallsThroughToDirty(t *testing.T) {
 	m = m.OpenFile(2, "active.md")
 	m = m.SetActive(th(1, "dirty.md"))
 	m = m.SetActive(th(2, "active.md")) // 2 is active
-	m = m.MarkDirtyByID(1)
+	m = m.SetDirty(TabHandle{DocID: 1}, true)
 
 	victim, dirty, ok := m.EvictionCandidate()
 	if !ok {
@@ -321,12 +321,12 @@ func FuzzEvictionModel(f *testing.F) {
 				m = m.OpenFile(docCounter, fmt.Sprintf("f%d.md", docCounter))
 				docCounter++
 			case 1: // close tab at index
-				m = m.CloseByID(tabs[int(arg)%len(tabs)].DocID)
+				m = m.Close(TabHandle{DocID: tabs[int(arg)%len(tabs)].DocID})
 			case 2: // set active to tab at index
 				tab := tabs[int(arg)%len(tabs)]
 				m = m.SetActive(TabHandle{DocID: tab.DocID, Path: tab.Path})
 			case 3: // mark dirty by index
-				m = m.MarkDirtyByID(tabs[int(arg)%len(tabs)].DocID)
+				m = m.SetDirty(TabHandle{DocID: tabs[int(arg)%len(tabs)].DocID}, true)
 			case 4: // toggle pin at index
 				m = m.PinIndex(int(arg) % len(tabs))
 			}

@@ -55,7 +55,7 @@ func (m Model) savedObsFor(docID int64) (docstate.ObsID, bool) {
 // SyncErr, then Sync.Kind == docstate.SyncDiverged, then !HasExpect — with
 // their OWN site-specific error text, guard-raising, and abort/skip
 // semantics (startSave surfaces a footer error; evictSave also clears
-// pendingDataLoss; saveAllDirtyForQuit aborts the whole quit and names the
+// guard.evict; saveAllDirtyForQuit aborts the whole quit and names the
 // path); vetSave itself never decides what a caller does with a refusal.
 type vetSaveOutcome struct {
 	Sync      docstate.SyncState // valid when SyncErr == nil
@@ -149,7 +149,7 @@ func (m Model) startSaveDegradedConfirmed(degradedConfirmed bool) (Model, tea.Cm
 	// every Materialize the interactive ⌘S path reaches, never bypassed by
 	// an earlier confirmation in the same session.
 	if m.store.Degraded() && !degradedConfirmed {
-		m.footer = m.footer.SetGuard(footer.GuardDegraded, guardDegradedOptions)
+		m = m.raiseGuardPrompt(guardDegraded)
 		return m, nil
 	}
 	// §1.4.8: vetSave re-derives divergence + CAS baseline fresh at save-time
@@ -190,26 +190,27 @@ func (m Model) startSaveDegradedConfirmed(degradedConfirmed bool) (Model, tea.Cm
 	expect := v.Expect
 	content := m.editor.Content()
 	requestID := fmt.Sprintf("save-%v", time.Now().UnixNano())
-	// Stamp pendingDataLoss with THIS save's requestID only when it's the
-	// continuation of an existing pending actionClose (the confirmed
-	// close-save flow, footer.DataLossSave -> startSave, reached with
-	// pendingDataLoss still actionClose) — never when it's actionNone (plain
-	// ⌘S; Priority 2.1's guard-in-progress gate already guarantees no other
-	// key can raise a guard while this is reached with kind==actionNone).
-	// MUST be an exact actionClose match, not merely != actionNone: an
-	// eviction victim's background save (evictSave) never touches
-	// activeSave/InFlight and resolves its OWN guard synchronously before
-	// dispatching, so nothing blocks a totally ordinary, unrelated ⌘S on the
-	// currently-displayed file while that eviction save is still in flight
-	// with pendingDataLoss.kind==actionEvict — a broader `!= actionNone`
-	// guard here would clobber pendingDataLoss.requestID with THIS save's ID,
-	// breaking isEvictSaveAck's correlation and silently dropping the
-	// eviction's own ack (review finding). This correlation is what lets
-	// handleFileSaveErrorMsg/handleFileSavedMsg's ack handlers tell "this
-	// save owns the pending guard" apart from "an unrelated guard happens to
-	// be up right now" (GUARD-STATE-COH).
-	if m.pendingDataLoss.kind == actionClose {
-		m.pendingDataLoss.requestID = requestID
+	// Stamp guard.close with THIS save's requestID only when it's the
+	// continuation of an existing live close intent (the confirmed
+	// close-save flow, footer.DataLossSave -> confirmGuardSave -> startSave,
+	// reached with guard.close.active still true) — never when no close is
+	// pending (plain ⌘S; Priority 2.1's guard-in-progress gate already
+	// guarantees no other key can raise a guard while this is reached with
+	// guard.close.active==false). MUST be gated on guard.close.active
+	// specifically, not any other live intent: an eviction victim's
+	// background save (evictSave) never touches activeSave/InFlight and
+	// resolves its OWN guard synchronously before dispatching, so nothing
+	// blocks a totally ordinary, unrelated ⌘S on the currently-displayed file
+	// while that eviction save is still in flight with guard.evict.active —
+	// a guard here that fired on ANY live intent would clobber
+	// guard.evict.requestID with THIS save's ID, breaking isEvictSaveAck's
+	// correlation and silently dropping the eviction's own ack (review
+	// finding). This correlation is what lets handleFileSaveErrorMsg/
+	// handleFileSavedMsg's ack handlers tell "this save owns the pending
+	// guard" apart from "an unrelated guard happens to be up right now"
+	// (GUARD-STATE-COH).
+	if m.guard.close.active {
+		m.guard.close.requestID = requestID
 	}
 	m.activeSave = SaveIdentity{
 		RequestID:    requestID,
@@ -231,11 +232,7 @@ func (m Model) syncDirty() Model {
 		// fire-and-forget: dirty is a rung-3 display indicator; the journal is the durable truth
 		return m
 	}
-	if dirty {
-		m.opentabs = m.opentabs.MarkDirtyByID(m.view.DocID())
-	} else {
-		m.opentabs = m.opentabs.MarkCleanByID(m.view.DocID())
-	}
+	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: m.view.DocID()}, dirty)
 	return m
 }
 
@@ -304,6 +301,11 @@ func (m Model) setFocus(p pane) Model {
 
 // applyFocus projects the single focus authority (m.focus) onto every child's
 // focus state. Called by setFocus and as a safety-net at every Update exit.
+// Also syncs the footer's dictation-allowed flag (A1: folded in from the
+// former standalone syncDictationAllowed, which depended on nothing but
+// m.focus — every call site paired it with a setFocus/applyFocus anyway, so
+// a bare focus projection that forgot the pairing was a standing silent-bug
+// risk; folding it here makes that pairing impossible to miss).
 func (m Model) applyFocus() Model {
 	m.title = m.title.SetFocused(m.focus == paneTitle)
 	m.filetree = m.filetree.SetFocused(m.focus == paneTree)
@@ -311,6 +313,7 @@ func (m Model) applyFocus() Model {
 	m.editor = m.editor.SetFocused(m.focus == paneCenter)
 	m.chat = m.chat.SetFocused(m.focus == paneChat)
 	m.search = m.search.SetFocused(m.focus == paneSearch)
+	m.footer = m.footer.SetDictationAllowed(m.focus == paneCenter || m.focus == paneChat)
 	return m
 }
 
@@ -322,11 +325,6 @@ func (m Model) syncCursorToFooter() Model {
 		linkTarget, _ = m.editor.LinkAtCursor()
 	}
 	m.footer, _ = m.footer.Update(footer.UpdateCursorMsg{LinkTarget: linkTarget})
-	return m
-}
-
-func (m Model) syncDictationAllowed() Model {
-	m.footer = m.footer.SetDictationAllowed(m.focus == paneCenter || m.focus == paneChat)
 	return m
 }
 

@@ -8,12 +8,10 @@ import (
 
 	"rune/pkg/editor/coords"
 	"rune/pkg/editor/display"
+	"rune/pkg/ui/listnav"
 )
 
-const (
-	mouseScrollLines    = 3
-	multiClickThreshold = 500 * time.Millisecond
-)
+const multiClickThreshold = 500 * time.Millisecond
 
 type mouseState struct {
 	lastClickTime time.Time
@@ -32,9 +30,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 		return m, nil
 	}
 
+	g := m.Model.Geom()
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.Model.OffsetY(),
-		Col: msg.X - m.Model.OffsetX(),
+		Row: msg.Y - g.OffsetY,
+		Col: msg.X - g.OffsetX,
 	}
 	if dp.Row < 0 {
 		return m, nil
@@ -43,13 +42,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 		dp.Col = 0
 	}
 
-	snap := m.Model.Snapshot()
-	vp := m.Model.Viewport()
-
 	// Skip clicks that land on image-reserved or table-border/separator rows.
-	displayRow := dp.Row + vp.TopRow
-	if displayRow >= 0 && displayRow < len(snap.Lines) {
-		l := snap.Lines[displayRow]
+	displayRow := dp.Row + g.Viewport.TopRow
+	if displayRow >= 0 && displayRow < len(g.Snap.Lines) {
+		l := g.Snap.Lines[displayRow]
 		if l.ImagePath != "" || display.IsTableSeparatorRow(l) {
 			return m, nil
 		}
@@ -110,7 +106,8 @@ func (m Model) LinkAtCursor() (string, bool) {
 // contains offset on the given line — no resolution, no I/O. appendMD is true for
 // wiki links. Images, non-links, and empty/data: targets yield no hit.
 func (m Model) rawLinkAtLine(bp coords.BufferPoint, offset int) (raw string, appendMD bool, ok bool) {
-	ss := m.Model.SyntaxSnap()
+	g := m.Model.Geom()
+	ss := g.Syntax
 	if bp.Line < 0 || bp.Line >= len(ss.Lines) {
 		return "", false, false
 	}
@@ -155,7 +152,7 @@ func (m Model) linkAtLine(bp coords.BufferPoint, offset int) (LinkActivatedMsg, 
 	if isExternalURL(raw) {
 		return LinkActivatedMsg{Raw: raw, Kind: LinkExternal, Dest: raw}, true
 	}
-	if abs, found := resolveRef(m.fsys(), raw, m.docDir(), m.root, appendMD); found {
+	if abs, found := resolveRef(m.fs, raw, m.docDir(), m.root, appendMD); found {
 		return LinkActivatedMsg{Raw: raw, Kind: LinkInternal, Dest: abs}, true
 	}
 	return LinkActivatedMsg{Raw: raw, Kind: LinkMissing}, true
@@ -169,9 +166,10 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	g := m.Model.Geom()
 	dp := coords.DisplayPoint{
-		Row: msg.Y - m.Model.OffsetY(),
-		Col: msg.X - m.Model.OffsetX(),
+		Row: msg.Y - g.OffsetY,
+		Col: msg.X - g.OffsetX,
 	}
 	if dp.Row < 0 {
 		dp.Row = 0
@@ -180,15 +178,12 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 		dp.Col = 0
 	}
 
-	snap := m.Model.Snapshot()
-	vp := m.Model.Viewport()
-
 	// Skip motion events landing on image-reserved or table-border/separator
 	// rows — hold the selection at its last valid endpoint rather than
 	// extending it through a decorative row.
-	displayRow := dp.Row + vp.TopRow
-	if displayRow >= 0 && displayRow < len(snap.Lines) {
-		l := snap.Lines[displayRow]
+	displayRow := dp.Row + g.Viewport.TopRow
+	if displayRow >= 0 && displayRow < len(g.Snap.Lines) {
+		l := g.Snap.Lines[displayRow]
 		if l.ImagePath != "" || display.IsTableSeparatorRow(l) {
 			return m, nil
 		}
@@ -210,18 +205,18 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	vp := m.Model.Viewport()
-	snap := m.Model.Snapshot()
+	g := m.Model.Geom()
+	vp := g.Viewport
 
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		vp.TopRow -= mouseScrollLines
+		vp.TopRow -= listnav.WheelLines
 		if vp.TopRow < 0 {
 			vp.TopRow = 0
 		}
 	case tea.MouseWheelDown:
-		vp.TopRow += mouseScrollLines
-		maxTop := snap.TotalRows - m.Model.ContentHeight()
+		vp.TopRow += listnav.WheelLines
+		maxTop := g.Snap.TotalRows - g.ContentHeight
 		if maxTop < 0 {
 			maxTop = 0
 		}

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/pkg/ai"
 	"rune/pkg/command"
 	"rune/pkg/docstate"
 	"rune/pkg/editor/keybind"
@@ -69,9 +70,11 @@ const tabLimit = 10
 
 // Message types (ErrMsg, dirChangedMsg, fileChangedMsg, fileWatchReadError,
 // StoreReadyMsg, AutosaveSettledMsg, pendingFlushMsg) live in
-// workspace_msgs.go. Data-loss action disambiguation (actionKind,
-// pendingDataLoss, pendingDeleted) and the guard option var declarations
-// live in workspace_guardopts.go.
+// workspace_msgs.go. The guard sum type (guardState/guardKind/guardPhase),
+// its option var declarations, and raiseGuardPrompt/clearGuardPrompt live in
+// workspace_guard.go (A4 absorbed the former workspace_guardopts.go's
+// actionKind/pendingDataLoss — deleted, folded into guardState — and
+// deletedIntent, moved to workspace_deleted.go).
 
 // ---- Model ----
 
@@ -125,6 +128,17 @@ type Model struct {
 	view       docView
 	activeSave SaveIdentity
 
+	// guard is workspace's semantic guard state machine (A3/A4) — kind/phase
+	// track ONLY which guard, if any, currently owns the footer's modal
+	// prompt (see guardState's doc comment, workspace_guard.go, for the
+	// multi-field/critic-R1 design). Populated exclusively by
+	// raiseGuardPrompt/clearGuardPrompt, the same chokepoint that owns every
+	// footer.SetGuard call (A2). The intent payloads for each guard kind
+	// (conflict/deleted/raced/trash/close/evict/quit) migrate into
+	// dedicated guardState sub-fields one guard kind per commit; until a
+	// kind migrates, its intent still lives in the pending* fields below.
+	guard guardState
+
 	// diskChangedHint is true when a cheap stat-on-focus (G) detects that the
 	// current file changed on disk relative to its view baseline. The footer shows
 	// a passive hint; no modal is raised.
@@ -139,10 +153,11 @@ type Model struct {
 	// out-of-band validity bit (§1.7), never a sentinel on docID/path.
 	pendingLoad pendingLoad
 
-	// Pending data-loss action — set when a dirty guard is raised so that the
-	// guard response handler knows to close a tab (^w) or quit (^C^C) after
-	// saving/discarding. Never persisted across guard sessions.
-	pendingDataLoss pendingDataLoss
+	// guard.close/guard.evict/guard.quit (A4: migrated from the former
+	// Model.pendingDataLoss) — set when a dirty guard is raised so that the
+	// guard response handler knows to close a tab (^w), evict a background
+	// victim, or quit (^C^C) after saving/discarding. Never persisted across
+	// guard sessions.
 
 	// pendingReopen holds a navigation request requestOpenPath deferred because
 	// it targeted the exact file an in-flight interactive save is writing
@@ -153,35 +168,34 @@ type Model struct {
 	// validity bit (§1.7), never a sentinel on docID/path.
 	pendingReopen pendingReopen
 
-	// pendingConflict holds the identity (docID/path) and the conflicting
+	// guard.conflict (conflictIntent, workspace_conflict.go — migrated to
+	// guardState by A3) holds the identity (docID/path) and the conflicting
 	// disk observation (freshObs) captured when a FileSaveErrorMsg{Conflict:
 	// true} or a load-time/undo-unwind divergence is detected for the current
 	// document — never the theirs/ancestor bytes themselves, which are
 	// derived fresh at guard-raise or resolution time via GetBlob/Probe.
 	// Consumed by DataLossSaveAnyway / DataLossDiscard / DataLossMerge guard
 	// responses. Zero value = no pending conflict. Cleared on every guard
-	// resolution. (workspace_conflict.go)
-	pendingConflict pendingConflict
+	// resolution.
 
-	// pendingDeleted holds the docID/path of the current document when its file
-	// is detected missing on disk (deletion, or parent-dir removal). Raised by
-	// handleProbeResult (workspace_probe.go — probeDocCmd's callers: dirChangedMsg
-	// / the flush tick) and handleFileSaveErrorMsg (a save-time Missing outcome);
-	// consumed by DataLossSaveAnyway (recreate) / DataLossDiscard (purge) guard
-	// responses. Zero value = no pending deletion. (workspace_probe.go /
-	// workspace_deleted.go)
-	pendingDeleted pendingDeleted
+	// guard.deleted (deletedIntent, migrated to guardState by A3) holds the
+	// docID/path of the current document when its file is detected missing
+	// on disk (deletion, or parent-dir removal). Raised by handleProbeResult
+	// (workspace_probe.go — probeDocCmd's callers: dirChangedMsg / the flush
+	// tick) and handleFileSaveErrorMsg (a save-time Missing outcome);
+	// consumed by DataLossSaveAnyway (recreate) / DataLossDiscard (purge)
+	// guard responses. Zero value = no pending deletion. (workspace_probe.go
+	// / workspace_deleted.go)
 
-	// pendingRaced holds the two competing observations (Saved/Fresh) when a
-	// Materialize commits via the F5 swap-race path (MatResult{Committed:
-	// true, Raced: true}): our write landed for real, but a concurrent
-	// writer's displaced bytes were captured too. A DISTINCT guard from
-	// pendingConflict (critic R1) — never routed through the fresh-probe
-	// [D]/[M] handlers, which would re-read disk, find OUR already-committed
-	// bytes, and read Clean, silently dissolving the guard. Consumed by
-	// DataLossKeepMine / DataLossRestoreTheirs. Zero value = no pending race.
-	// (workspace_raced.go)
-	pendingRaced pendingRaced
+	// guard.raced (racedIntent, migrated to guardState by A3) holds the two
+	// competing observations (Saved/Fresh) when a Materialize commits via the
+	// F5 swap-race path (MatResult{Committed: true, Raced: true}): our write
+	// landed for real, but a concurrent writer's displaced bytes were
+	// captured too. A DISTINCT guard from guard.conflict (critic R1) — never
+	// routed through the fresh-probe [D]/[M] handlers, which would re-read
+	// disk, find OUR already-committed bytes, and read Clean, silently
+	// dissolving the guard. Consumed by DataLossKeepMine /
+	// DataLossRestoreTheirs. Zero value = no pending race. (workspace_raced.go)
 
 	// racedQueue holds raced-save outcomes for documents that were NOT
 	// displayed when their Materialize ack arrived (evict/quit-batch saves, a
@@ -189,7 +203,7 @@ type Model struct {
 	// next displayed (drainRacedQueue at load-settle). A race must never
 	// resolve silently just because its tab was in the background (review
 	// finding). Lazily allocated; nil means empty. (workspace_raced.go)
-	racedQueue map[int64]pendingRaced
+	racedQueue map[int64]racedIntent
 
 	// Persistence (docstate). The active doc's VFS id lives in m.view.DocID().
 	store     *docstate.Store
@@ -259,6 +273,9 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 			workDir = "."
 		}
 	}
+	// Constructed here, not inside chat.New (§2.5 — components don't read
+	// env): the page is the injection point, chat just receives the result.
+	aiClient, aiClientErr := ai.NewClient()
 	m := Model{
 		title: title.New("Untitled", keys, st,
 			textedit.WithRegistry(reg),
@@ -273,7 +290,7 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 		).SetRoot(workDir), // static base #2 for relative-ref resolution (launch CWD)
 		merge:  mergemode.New(keys, st),
 		footer: footer.New(keys, st),
-		chat:   chat.New(keys, st, reg, resolver, caps),
+		chat:   chat.New(keys, st, reg, resolver, caps, aiClient, aiClientErr),
 		search: searchcomp.New(keys, st,
 			textedit.WithRegistry(reg),
 			textedit.WithResolver(resolver),
@@ -314,7 +331,6 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 			active: true,
 		}
 	}
-	m = m.syncDictationAllowed()
 	m = m.applyFocus()
 	return m
 }
@@ -323,15 +339,18 @@ func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver 
 // calls it once at construction with vfs.Disk{} (S6: one shared value, rather
 // than workspace and store each independently nil-defaulting); the session
 // fuzzer injects a shared vfs.Mem so load/save/rename/readdir run fully in
-// memory. The same shim is pushed to the editor (link/embed resolution + image
-// reads) and, if the store is already wired, to the store too — otherwise a
-// test or a future re-injection after StoreReadyMsg could strand the store on
-// a stale/disconnected FS while the workspace serves a different one, and
-// in-memory cross-links would all resolve as missing against real disk
-// (§1.4.9).
+// memory. The same shim is pushed to the editor (link/embed resolution +
+// image reads), the chat pane's display (its rendered replies can embed
+// images too — without this it silently bypassed the injected FS and always
+// hit real disk, even under the fuzzer's Mem FS) and, if the store is already
+// wired, to the store too — otherwise a test or a future re-injection after
+// StoreReadyMsg could strand the store on a stale/disconnected FS while the
+// workspace serves a different one, and in-memory cross-links would all
+// resolve as missing against real disk (§1.4.9).
 func (m Model) WithFS(fs vfs.FS) Model {
 	m.fs = fs
 	m.editor = m.editor.SetFS(fs)
+	m.chat = m.chat.SetFS(fs)
 	if m.store != nil {
 		m.store.UseFS(fs)
 	}

@@ -70,9 +70,9 @@ func TestR1Adopt_FromHelpReadOnlyEditor(t *testing.T) {
 }
 
 // Review finding 9: a close-save that returns Raced raises the raced guard
-// and must CANCEL the pending close intent — pre-fix pendingDataLoss{
-// actionClose} stayed dangling, so a later unrelated save ack executed the
-// close out from under the user minutes after they chose [K]eep-mine.
+// and must CANCEL the pending close intent — pre-fix guard.close{active:true}
+// stayed dangling, so a later unrelated save ack executed the close out from
+// under the user minutes after they chose [K]eep-mine.
 func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 	dir := t.TempDir()
 	pathA := filepath.Join(dir, "a.md")
@@ -85,11 +85,11 @@ func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	// requestID stamped on pendingDataLoss mirrors what startSave() does in
-	// production when it launches a save as the confirmed continuation of an
-	// actionClose guard (workspace_edit.go) — the correlation isCloseSaveAck
+	// requestID stamped on guard.close mirrors what startSave() does in
+	// production when it launches a save as the confirmed continuation of a
+	// close guard (workspace_edit.go) — the correlation isCloseSaveAck
 	// checks (GUARD-STATE-COH) before letting an ack clear a pending guard.
-	m.pendingDataLoss = pendingDataLoss{kind: actionClose, requestID: "close-save-1"}
+	m.guard.close = closeIntent{active: true, requestID: "close-save-1"}
 	m.activeSave = SaveIdentity{RequestID: "close-save-1", InFlight: true, Path: pathA, DocID: docA}
 
 	msg := FileSavedMsg{
@@ -99,10 +99,10 @@ func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 	m2, _ := m.Update(msg)
 	m = m2
 
-	if m.pendingDataLoss.kind == actionClose {
-		t.Fatal("pendingDataLoss{actionClose} must be cancelled by a Raced save ack — a later unrelated ack would close the tab without a prompt")
+	if m.guard.close.active {
+		t.Fatal("guard.close must be cancelled by a Raced save ack — a later unrelated ack would close the tab without a prompt")
 	}
-	if !m.pendingRaced.active {
+	if !m.guard.raced.active {
 		t.Fatal("raced guard must be armed for the displayed doc")
 	}
 }
@@ -125,9 +125,8 @@ func TestOrphanedQuitAck_RacedStillSurfaces(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	// Quit already aborted: pendingDataLoss is zero. A's quit-batch ack
-	// arrives late, carrying a race.
-	m.pendingDataLoss = pendingDataLoss{}
+	// Quit already aborted: guard.quit is zero. A's quit-batch ack arrives
+	// late, carrying a race.
 	msg := FileSavedMsg{
 		Path: pathA, DocID: docA, RequestID: "quitsave-1-0-99999",
 		Result: docstate.MatResult{Committed: true, Raced: true},
@@ -169,37 +168,39 @@ func TestBindNewRace_ErrorAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	}
 
 	// The bind-new save is already in flight (its RenameRequestMsg handler
-	// ran); THEN — before its ack — an unrelated Ctrl+W raised its own
-	// actionClose guard on the SAME dirty doc, with no requestID correlating
-	// it to this save.
+	// ran); THEN — before its ack — an unrelated Ctrl+W raised its own close
+	// guard on the SAME dirty doc, with no requestID correlating it to this
+	// save. Set guard.kind/phase directly (mirrors raiseGuardPrompt's own
+	// effect) so the kind-first dispatcher reads this as a real dirty-close
+	// guard, exactly like requestCloseCurrent would have left it.
 	const bindReqID = "bind-12345"
 	newPath := filepath.Join(t.TempDir(), "Untitled 1.md")
 	m.activeSave = SaveIdentity{RequestID: bindReqID, InFlight: true, Path: newPath, DocID: docID}
-	m.pendingDataLoss = pendingDataLoss{kind: actionClose}
-	m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+	m.guard.close = closeIntent{active: true}
+	m = m.raiseGuardPrompt(guardDirtyClose)
 
 	msg := FileSaveErrorMsg{Path: newPath, DocID: docID, RequestID: bindReqID, Err: errTest}
 	m, _ = m.Update(msg)
 
-	if m.pendingDataLoss.kind != actionClose {
-		t.Fatalf("GUARD-STATE-COH: an unrelated bind-new save's error ack cleared the close guard's pendingDataLoss (kind=%v)", m.pendingDataLoss.kind)
+	if !m.guard.close.active {
+		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's error ack cleared the close guard's guard.close")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDirty {
 		t.Fatalf("GUARD-STATE-COH: close guard no longer showing after the unrelated ack: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
 
-	// A subsequent Discard must resolve the close, never quit the app —
-	// pre-fix, pendingDataLoss.kind==actionNone would fall through
-	// DataLossDiscard's switch to its default (actionQuit) case, which tears
-	// down the store and quits instead of just closing this one tab.
+	// A subsequent Discard must resolve the close, never quit the app — the
+	// kind-first dispatcher routes DataLossDiscard via guard.kind==
+	// guardDirtyClose specifically (A4), so there is no "unrecognized intent
+	// falls through to quit" default catch-all left to regress into.
 	// executeClose's CreateUntitled resets the editor to blank (§ its own
 	// SetContent("")) — checking the typed content is gone is robust even
 	// when the replacement untitled doc happens to reuse the same rowid
 	// (SQLite's plain INTEGER PRIMARY KEY reuses max(rowid)+1 once the table
 	// is emptied by DeleteDoc, so comparing DocIDs isn't a reliable signal).
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossDiscard})
-	if m.pendingDataLoss.kind != actionNone {
-		t.Fatalf("Discard did not resolve pendingDataLoss: kind=%v", m.pendingDataLoss.kind)
+	if m.guard.close.active {
+		t.Fatal("Discard did not resolve guard.close")
 	}
 	if m.editor.Content() == "j" {
 		t.Fatal("Discard did not close/discard the dirty buffer (editor still shows the typed content) — did it quit instead?")
@@ -226,8 +227,8 @@ func TestBindNewRace_SuccessAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	const bindReqID = "bind-67890"
 	newPath := filepath.Join(t.TempDir(), "Untitled 1.md")
 	m.activeSave = SaveIdentity{RequestID: bindReqID, InFlight: true, Path: newPath, DocID: docID}
-	m.pendingDataLoss = pendingDataLoss{kind: actionClose}
-	m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+	m.guard.close = closeIntent{active: true}
+	m = m.raiseGuardPrompt(guardDirtyClose)
 
 	msg := FileSavedMsg{
 		Path: newPath, DocID: docID, RequestID: bindReqID, BindNew: true,
@@ -238,8 +239,8 @@ func TestBindNewRace_SuccessAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	// The unrelated close guard must be untouched: the bind-new save has no
 	// idea a close was requested and must not silently execute someone else's
 	// still-pending decision.
-	if m.pendingDataLoss.kind != actionClose {
-		t.Fatalf("GUARD-STATE-COH: an unrelated bind-new save's success ack cleared the close guard's pendingDataLoss (kind=%v)", m.pendingDataLoss.kind)
+	if !m.guard.close.active {
+		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's success ack cleared the close guard's guard.close")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDirty {
 		t.Fatalf("GUARD-STATE-COH: close guard no longer showing after the unrelated ack: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())

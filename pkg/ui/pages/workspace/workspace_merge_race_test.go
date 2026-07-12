@@ -53,7 +53,8 @@ func TestMergeAction_UsesFreshTheirs_NotDetectionTimeCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	// ...but disk changes AGAIN for real before the user presses [M].
 	if err := os.WriteFile(path, []byte(freshTheirs), 0o644); err != nil {
@@ -112,7 +113,8 @@ func TestMergeAction_FileDeletedMidFlight_RoutesToDeletedGuard_NoMergeNoWrite(t 
 		t.Fatal("store not available")
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	// The file is deleted for real between the guard raise and the [M] press.
 	if err := os.Remove(path); err != nil {
@@ -128,10 +130,10 @@ func TestMergeAction_FileDeletedMidFlight_RoutesToDeletedGuard_NoMergeNoWrite(t 
 		t.Fatalf("race: expected GuardDeleted raised (early detection); InGuard=%v kind=%v",
 			m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("race: pendingDeleted must be armed")
 	}
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("race: pendingConflict must be cleared")
 	}
 	// The buffer must be untouched — no merge ran against stale bytes, and
@@ -164,7 +166,8 @@ func TestDiscardAction_FileDeletedMidFlight_RoutesToDeletedGuard(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

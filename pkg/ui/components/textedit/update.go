@@ -66,7 +66,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		}
 		res := m.registry.Execute("edit.newline", ctx)
 		if res.Err == nil {
-			m = m.applyOperation(res, "edit.newline")
+			m = m.applyOperation(res)
 			m = m.syncDisplay()
 			m = m.ScrollToCursor()
 			return m, tea.Batch(*cmds...)
@@ -81,7 +81,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		}
 		res := m.registry.Execute("multicursor.escape", ctx)
 		if res.Err == nil && res.Operation.Kind != command.OperationNone {
-			m = m.applyOperation(res, "multicursor.escape")
+			m = m.applyOperation(res)
 			m = m.syncDisplay()
 			m = m.ScrollToCursor()
 			return m, tea.Batch(*cmds...)
@@ -135,7 +135,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		if res.Cmd != nil {
 			*cmds = append(*cmds, res.Cmd)
 		}
-		m = m.applyOperation(res, resResult.Command)
+		m = m.applyOperation(res)
 		m = m.syncDisplay()
 		// A scroll operation moves the viewport intentionally; following the
 		// cursor would cancel it (critical for read-only docs whose hidden
@@ -167,7 +167,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 				Args:    map[string]any{"char": text},
 			})
 			if res.Err == nil && res.Operation.Kind != command.OperationNone {
-				m = m.applyOperation(res, "edit.insert-character")
+				m = m.applyOperation(res)
 				m = m.syncDisplay()
 				m = m.ScrollToCursor()
 			}

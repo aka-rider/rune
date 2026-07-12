@@ -13,7 +13,7 @@ func newDirLoadTest(entries []Entry, cursor int) Model {
 	m := New(keys, st)
 	m = m.SetSize(20, 10)
 	m.entries = entries
-	m.cursor = cursor
+	m.nav.Cursor = cursor
 	return m
 }
 
@@ -33,8 +33,8 @@ func TestDirLoadedResetsCursor(t *testing.T) {
 		},
 	})
 
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (navigation should reset)", m.cursor)
+	if m.nav.Cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (navigation should reset)", m.nav.Cursor)
 	}
 	if m.root != "/new/dir" {
 		t.Errorf("root = %q, want %q", m.root, "/new/dir")
@@ -59,8 +59,8 @@ func TestDirReloadedPreservesCursorByName(t *testing.T) {
 		},
 	})
 
-	if m.cursor != 1 {
-		t.Errorf("cursor = %d, want 1 (name 'b.txt' should be preserved)", m.cursor)
+	if m.nav.Cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (name 'b.txt' should be preserved)", m.nav.Cursor)
 	}
 }
 
@@ -80,8 +80,8 @@ func TestDirReloadedPreservesCursorByIndexFallback(t *testing.T) {
 		},
 	})
 
-	if m.cursor != 1 {
-		t.Errorf("cursor = %d, want 1 (index fallback)", m.cursor)
+	if m.nav.Cursor != 1 {
+		t.Errorf("cursor = %d, want 1 (index fallback)", m.nav.Cursor)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestDirReloadedClampsCursorWhenEntriesShrink(t *testing.T) {
 		},
 	})
 
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (clamped to last entry)", m.cursor)
+	if m.nav.Cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (clamped to last entry)", m.nav.Cursor)
 	}
 }
 
@@ -116,7 +116,7 @@ func TestDirReloadedEmptyDirectory(t *testing.T) {
 		Entries: []Entry{},
 	})
 
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (empty directory)", m.cursor)
+	if m.nav.Cursor != 0 {
+		t.Errorf("cursor = %d, want 0 (empty directory)", m.nav.Cursor)
 	}
 }

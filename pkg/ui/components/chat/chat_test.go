@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"rune/pkg/ai"
 	"rune/pkg/command"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/terminal"
@@ -20,7 +21,10 @@ func newTestModel(t *testing.T) Model {
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
 	}
-	return New(keymap.Default(), styles.Default(), reg, resolver, terminal.TermCaps{})
+	// New no longer constructs the client itself (§2.5): mirror workspace.New's
+	// call-site construction so this test keeps New's original behavior.
+	client, clientErr := ai.NewClient()
+	return New(keymap.Default(), styles.Default(), reg, resolver, terminal.TermCaps{}, client, clientErr)
 }
 
 // A failed ai.NewClient leaves a zero-value Client on the model; submit must

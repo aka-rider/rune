@@ -125,8 +125,22 @@ type Snapshot struct {
 	GuardKind        footer.GuardKind
 	GuardOptionCount int
 	ChordPending     bool
-	FocusPane        int // 0=tree,1=tabs,2=center,3=title,4=chat,5=search
-	AppQuitting      bool
+
+	// GuardPrompting mirrors workspace's own guardState.prompting()
+	// (m.guard.phase == guardPrompting) — workspace's SEMANTIC record of
+	// "a guard I raised currently owns the footer prompt", kept in lockstep
+	// with GuardVisible (footer.InGuard()) by workspace's own chokepoints
+	// (raiseGuardPrompt / the guard-owns-keyboard gate). GUARD-PHASE-SYNC
+	// (internal/fuzz/ui/workspace) asserts GuardVisible == GuardPrompting
+	// after every settled message — the two-sided equality the older,
+	// one-directional GUARD-STATE-COH correlation could not safely make
+	// (see that invariant's own doc comment for the message-delay gap it
+	// tolerates for the pending-state payload, which GuardPrompting does not
+	// share: phase closes synchronously with the footer, one message earlier
+	// than the payload does).
+	GuardPrompting bool
+	FocusPane      int // 0=tree,1=tabs,2=center,3=title,4=chat,5=search
+	AppQuitting    bool
 
 	// Filetree (for FT-BOUNDS)
 	FiletreeCursor int

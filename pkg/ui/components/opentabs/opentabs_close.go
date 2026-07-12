@@ -12,49 +12,32 @@ package opentabs
 // whatever tab happens to now occupy the old index (EDITOR-TAB-COH:
 // found via FuzzHumanSession's eviction-pressure cluster, WP6 session).
 // If the active tab itself was the one just removed, activeHandle matches
-// nothing and this is a no-op — CloseByID/CloseFile's own bounds-clamp
-// below still applies for that case (a caller-selected neighbor takes
-// over via a subsequent SetActive).
+// nothing and this is a no-op — Close's own bounds-clamp still applies for
+// that case (a caller-selected neighbor takes over via a subsequent
+// SetActive).
 func (m Model) resyncCursorAfterRemoval() Model {
 	for i, t := range m.tabs {
 		th := TabHandle{DocID: t.DocID, Path: t.Path}
 		if th.Equal(m.activeHandle) {
-			m.cursor = i
+			m.nav.Cursor = i
 			return m
 		}
 	}
 	return m
 }
 
-// CloseByID removes the tab with the given docID.
-func (m Model) CloseByID(docID int64) Model {
-	for i, t := range m.tabs {
-		if t.DocID == docID {
-			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
-			if m.cursor >= len(m.tabs) && m.cursor > 0 {
-				m.cursor = len(m.tabs) - 1
-			}
-			m = m.resyncCursorAfterRemoval()
-			break
-		}
+// Close removes the tab identified by h. See findTab for lookup semantics;
+// no-op if no tab matches.
+func (m Model) Close(h TabHandle) Model {
+	i := m.findTab(h)
+	if i < 0 {
+		return m
 	}
-	return m
-}
-
-// CloseFile removes the tab for the given path. Prefer CloseByID when the
-// docID is known.
-func (m Model) CloseFile(path string) Model {
-	for i, t := range m.tabs {
-		if t.Path == path {
-			m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
-			if m.cursor >= len(m.tabs) && m.cursor > 0 {
-				m.cursor = len(m.tabs) - 1
-			}
-			m = m.resyncCursorAfterRemoval()
-			break
-		}
+	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+	if m.nav.Cursor >= len(m.tabs) && m.nav.Cursor > 0 {
+		m.nav.Cursor = len(m.tabs) - 1
 	}
-	return m
+	return m.resyncCursorAfterRemoval().ensureVisible()
 }
 
 // RenameFile updates path and display name for the tab matching oldPath. If

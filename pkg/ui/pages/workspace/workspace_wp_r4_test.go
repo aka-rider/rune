@@ -15,6 +15,7 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/vfs"
 )
 
@@ -34,7 +35,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	// Dismiss the load-time guard (Esc) — Sync stays Diverged (mirrors
 	// TestB1_EscThenQuitSaveRefused's setup).
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("setup: expected pendingConflict cleared by Esc")
 	}
 
@@ -55,7 +56,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 		t.Fatalf("AppendEdit: %v", err)
 	}
 	m.editor = m.editor.SetContent("b-v2 unsaved")
-	m.opentabs = m.opentabs.MarkDirtyByID(docB)
+	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: docB}, true)
 
 	// Quit "Save all".
 	m, cmd = m.saveAllDirtyForQuit()
@@ -68,7 +69,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
 		t.Fatalf("expected the conflict guard visible after quit-abort; inGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("expected pendingConflict re-raised")
 	}
 
@@ -96,13 +97,13 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	// itself is cleared, which is not what a real user interaction does.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = settle(t, m, cmd)
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("expected A's conflict resolved")
 	}
 	if m.footer.InGuard() {
 		t.Fatal("expected the footer guard cleared after resolving A's conflict")
 	}
-	m.opentabs = m.opentabs.MarkDirtyByID(docB) // B is still independently dirty
+	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: docB}, true) // B is still independently dirty
 	m, cmd = m.saveAllDirtyForQuit()
 	m = settle(t, m, cmd)
 	if m.footer.InGuard() {
@@ -202,7 +203,7 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 	}
 	m, cmd = m.Update(saveCmd())
 	m = settle(t, m, cmd)
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("setup: expected conflict guard raised")
 	}
 

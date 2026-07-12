@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/ui/keymap"
+	"rune/pkg/ui/listnav"
 	"rune/pkg/ui/styles"
 )
 
@@ -27,31 +28,31 @@ func makeEntries(n int) []Entry {
 	return entries
 }
 
-// TestMouseWheelDown verifies scroll down moves cursor by mouseScrollLines.
+// TestMouseWheelDown verifies scroll down moves cursor by listnav.WheelLines.
 func TestMouseWheelDown(t *testing.T) {
 	m := newMouseTestTree(makeEntries(20))
-	m.cursor = 5
+	m.nav.Cursor = 5
 
 	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
 	result, _ := m.handleMouseWheel(msg)
 
-	want := 5 + mouseScrollLines
-	if result.cursor != want {
-		t.Errorf("wheel down: cursor=%d, want %d", result.cursor, want)
+	want := 5 + listnav.WheelLines
+	if result.nav.Cursor != want {
+		t.Errorf("wheel down: cursor=%d, want %d", result.nav.Cursor, want)
 	}
 }
 
-// TestMouseWheelUp verifies scroll up moves cursor by mouseScrollLines.
+// TestMouseWheelUp verifies scroll up moves cursor by listnav.WheelLines.
 func TestMouseWheelUp(t *testing.T) {
 	m := newMouseTestTree(makeEntries(20))
-	m.cursor = 10
+	m.nav.Cursor = 10
 
 	msg := tea.MouseWheelMsg{Button: tea.MouseWheelUp}
 	result, _ := m.handleMouseWheel(msg)
 
-	want := 10 - mouseScrollLines
-	if result.cursor != want {
-		t.Errorf("wheel up: cursor=%d, want %d", result.cursor, want)
+	want := 10 - listnav.WheelLines
+	if result.nav.Cursor != want {
+		t.Errorf("wheel up: cursor=%d, want %d", result.nav.Cursor, want)
 	}
 }
 
@@ -59,32 +60,32 @@ func TestMouseWheelUp(t *testing.T) {
 func TestMouseWheelDownClampedAtBottom(t *testing.T) {
 	entries := makeEntries(5)
 	m := newMouseTestTree(entries)
-	m.cursor = 4 // already at last entry
+	m.nav.Cursor = 4 // already at last entry
 
 	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
 	result, _ := m.handleMouseWheel(msg)
 
-	if result.cursor >= len(entries) {
-		t.Errorf("wheel down past end: cursor=%d, len=%d", result.cursor, len(entries))
+	if result.nav.Cursor >= len(entries) {
+		t.Errorf("wheel down past end: cursor=%d, len=%d", result.nav.Cursor, len(entries))
 	}
-	if result.cursor != 4 {
-		t.Errorf("wheel down at bottom: cursor=%d, want 4", result.cursor)
+	if result.nav.Cursor != 4 {
+		t.Errorf("wheel down at bottom: cursor=%d, want 4", result.nav.Cursor)
 	}
 }
 
 // TestMouseWheelUpClampedAtTop verifies scroll up doesn't go below 0.
 func TestMouseWheelUpClampedAtTop(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
-	m.cursor = 0
+	m.nav.Cursor = 0
 
 	msg := tea.MouseWheelMsg{Button: tea.MouseWheelUp}
 	result, _ := m.handleMouseWheel(msg)
 
-	if result.cursor < 0 {
-		t.Errorf("wheel up went negative: cursor=%d", result.cursor)
+	if result.nav.Cursor < 0 {
+		t.Errorf("wheel up went negative: cursor=%d", result.nav.Cursor)
 	}
-	if result.cursor != 0 {
-		t.Errorf("wheel up at top: cursor=%d, want 0", result.cursor)
+	if result.nav.Cursor != 0 {
+		t.Errorf("wheel up at top: cursor=%d, want 0", result.nav.Cursor)
 	}
 }
 
@@ -92,14 +93,14 @@ func TestMouseWheelUpClampedAtTop(t *testing.T) {
 func TestMouseClickMovesCursor(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
 	m = m.SetOffset(0, 1) // border at y=0, content from y=1
-	m.cursor = 0
+	m.nav.Cursor = 0
 
 	// relY = msg.Y - offsetY = 3 - 1 = 2 → entry index = start + (relY-1) = 0 + 1 = 1
 	msg := tea.MouseClickMsg{Button: tea.MouseLeft, Y: 3}
 	result, _ := m.handleMouseClick(msg)
 
-	if result.cursor != 1 {
-		t.Errorf("click at Y=3: cursor=%d, want 1", result.cursor)
+	if result.nav.Cursor != 1 {
+		t.Errorf("click at Y=3: cursor=%d, want 1", result.nav.Cursor)
 	}
 }
 
@@ -107,14 +108,14 @@ func TestMouseClickMovesCursor(t *testing.T) {
 func TestMouseClickFirstEntry(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
 	m = m.SetOffset(0, 1)
-	m.cursor = 0
+	m.nav.Cursor = 0
 
 	// relY = 2 - 1 = 1 → entry index = 0 + (1-1) = 0
 	msg := tea.MouseClickMsg{Button: tea.MouseLeft, Y: 2}
 	result, _ := m.handleMouseClick(msg)
 
-	if result.cursor != 0 {
-		t.Errorf("click at Y=2: cursor=%d, want 0", result.cursor)
+	if result.nav.Cursor != 0 {
+		t.Errorf("click at Y=2: cursor=%d, want 0", result.nav.Cursor)
 	}
 }
 
@@ -122,14 +123,14 @@ func TestMouseClickFirstEntry(t *testing.T) {
 func TestMouseClickTitleRowIgnored(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
 	m = m.SetOffset(0, 1)
-	m.cursor = 3
+	m.nav.Cursor = 3
 
 	// relY = 1 - 1 = 0 → title row, ignored
 	msg := tea.MouseClickMsg{Button: tea.MouseLeft, Y: 1}
 	result, _ := m.handleMouseClick(msg)
 
-	if result.cursor != 3 {
-		t.Errorf("click on title row moved cursor: cursor=%d, want 3", result.cursor)
+	if result.nav.Cursor != 3 {
+		t.Errorf("click on title row moved cursor: cursor=%d, want 3", result.nav.Cursor)
 	}
 }
 
@@ -137,14 +138,14 @@ func TestMouseClickTitleRowIgnored(t *testing.T) {
 func TestMouseClickOutOfRangeIgnored(t *testing.T) {
 	m := newMouseTestTree(makeEntries(3))
 	m = m.SetOffset(0, 1)
-	m.cursor = 0
+	m.nav.Cursor = 0
 
 	// relY = 10 - 1 = 9 → idx = 8, beyond len(entries)=3 → ignored
 	msg := tea.MouseClickMsg{Button: tea.MouseLeft, Y: 10}
 	result, _ := m.handleMouseClick(msg)
 
-	if result.cursor != 0 {
-		t.Errorf("out-of-range click moved cursor: cursor=%d, want 0", result.cursor)
+	if result.nav.Cursor != 0 {
+		t.Errorf("out-of-range click moved cursor: cursor=%d, want 0", result.nav.Cursor)
 	}
 }
 
@@ -153,13 +154,13 @@ func TestMouseUnfocusedIgnoresClick(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
 	m = m.SetOffset(0, 1)
 	m = m.SetFocused(false)
-	m.cursor = 5
+	m.nav.Cursor = 5
 
 	msg := tea.MouseClickMsg{Button: tea.MouseLeft, Y: 2}
 	result, _ := m.handleMouseClick(msg)
 
-	if result.cursor != 5 {
-		t.Errorf("unfocused click moved cursor: cursor=%d, want 5", result.cursor)
+	if result.nav.Cursor != 5 {
+		t.Errorf("unfocused click moved cursor: cursor=%d, want 5", result.nav.Cursor)
 	}
 }
 
@@ -167,12 +168,12 @@ func TestMouseUnfocusedIgnoresClick(t *testing.T) {
 func TestMouseUnfocusedIgnoresWheel(t *testing.T) {
 	m := newMouseTestTree(makeEntries(10))
 	m = m.SetFocused(false)
-	m.cursor = 5
+	m.nav.Cursor = 5
 
 	msg := tea.MouseWheelMsg{Button: tea.MouseWheelDown}
 	result, _ := m.handleMouseWheel(msg)
 
-	if result.cursor != 5 {
-		t.Errorf("unfocused wheel moved cursor: cursor=%d, want 5", result.cursor)
+	if result.nav.Cursor != 5 {
+		t.Errorf("unfocused wheel moved cursor: cursor=%d, want 5", result.nav.Cursor)
 	}
 }

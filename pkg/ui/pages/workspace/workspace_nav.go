@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/help"
 	"rune/pkg/ui/pages/workspace/mergemode"
 )
@@ -54,9 +55,7 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	// reading false for a NON-active doc. Refuse the switch; Esc-abort is the
 	// escape hatch.
 	if m.HasUnresolvedConflicts() {
-		var cmd tea.Cmd
-		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before switching files"})
-		return m, cmd
+		return m.refuseMergeTransition("switching files")
 	}
 	// The switch is proceeding — m.merge is single, workspace-wide state that
 	// pertains only to the doc being left (a FULLY-RESOLVED merge deactivates
@@ -163,7 +162,7 @@ func (m Model) toggleHelp() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
-	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
+	m.opentabs = m.opentabs.SetName(opentabs.TabHandle{Path: help.DocPath}, "(Help)")
 	return m.requestOpenPath(0, help.DocPath)
 }
 
@@ -209,14 +208,21 @@ func (m Model) isViewDirty() bool {
 	return d
 }
 
+// closeIntent carries the state a raised dirty-close guard must survive
+// across the async Save→FileSavedMsg round-trip (§5.5). Zero value = no
+// pending close. Lives at guardState.close (A4: migrated from the former
+// Model.pendingDataLoss{kind:actionClose}).
+type closeIntent struct {
+	active    bool
+	requestID string // stamped by startSave when this IS the confirmed close-save continuation
+}
+
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 	// Modal merge (§4): refuse closing the active doc while unresolved —
 	// Esc-abort is the escape hatch.
 	if m.HasUnresolvedConflicts() {
-		var cmd tea.Cmd
-		m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before closing"})
-		return m, cmd
+		return m.refuseMergeTransition("closing")
 	}
 	if !m.viewingHelp() {
 		isDirty := false
@@ -228,13 +234,18 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 			}
 		}
 		if isDirty {
-			m.pendingDataLoss = pendingDataLoss{kind: actionClose}
-			m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+			// Wholesale-replace every close/evict/quit intent (mirrors the
+			// pre-A4 `pendingDataLoss = pendingDataLoss{kind: actionClose}`
+			// single-field overwrite exactly — see abandonDirtyContinuation's
+			// own doc comment) before raising THIS guard.
+			m = m.abandonDirtyContinuation()
+			m.guard.close = closeIntent{active: true}
+			m = m.raiseGuardPrompt(guardDirtyClose)
 			return m, nil
 		}
 	}
 
-	_, hasNext := m.opentabs.NeighborOf(m.view.DocID(), m.view.Path())
+	_, hasNext := m.opentabs.NeighborOf(m.view.Handle())
 	if m.view.IsUntitled() && !hasNext {
 		return m, nil // sole untitled tab — keep it
 	}
@@ -245,13 +256,9 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 // fresh untitled if none remains). The closed doc is detached first so the
 // switch does not re-snapshot it.
 func (m Model) executeClose(closeDocID int64, closePath string) (Model, tea.Cmd) {
-	next, hasNext := m.opentabs.NeighborOf(closeDocID, closePath)
-
-	if closeDocID != 0 {
-		m.opentabs = m.opentabs.CloseByID(closeDocID)
-	} else {
-		m.opentabs = m.opentabs.CloseFile(closePath)
-	}
+	h := opentabs.TabHandle{DocID: closeDocID, Path: closePath}
+	next, hasNext := m.opentabs.NeighborOf(h)
+	m.opentabs = m.opentabs.Close(h)
 
 	m.view = untitledView(0)
 
@@ -365,11 +372,7 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	m.title = m.title.SetText(name)
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(newDocID, "")
-	if newDocID != 0 {
-		m.opentabs = m.opentabs.SetTabNameByID(newDocID, name)
-	} else {
-		m.opentabs = m.opentabs.SetTabName("", name)
-	}
+	m.opentabs = m.opentabs.SetName(opentabs.TabHandle{DocID: newDocID, Path: ""}, name)
 	m = m.setFocus(paneCenter)
 
 	return m, nil

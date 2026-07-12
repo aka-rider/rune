@@ -179,3 +179,37 @@ func TestMouseClickOnUnfocusedFiletreeMovesAndSelects(t *testing.T) {
 		t.Fatalf("second click: FileSelectedMsg.Path=%q, want /test/beta.md", selectedPath)
 	}
 }
+
+// TestPaneGeometry_RightStartTracksEffectiveWidthUnderStarvation pins the
+// PP-1 review fix: with the right pane open at a stored width larger than
+// its minimum, shrinking the terminal into the partial-starvation window
+// (0 < deficit <= rightPaneW-minRightPaneW) reduces the EFFECTIVE right
+// width without collapsing it — RightStart must follow the effective width
+// so paneAtPoint/dividerAtPoint agree with what is rendered, not with the
+// stored width the user will get back when the terminal grows again.
+func TestPaneGeometry_RightStartTracksEffectiveWidthUnderStarvation(t *testing.T) {
+	m := newTestWorkspace(t)
+	m.rightVisible = true
+	m.rightPaneW = defaultRightPaneW // 38, stored — stays untouched by starvation
+
+	// Width chosen so deficit = left(22) + right(38) + minCenter(24) - total > 0
+	// while right still has room above minRightPaneW(20): total 70 gives
+	// deficit 14, effective rightW 24.
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 70, Height: 24})
+
+	g := m.paneGeometry()
+	if g.RightW >= m.rightPaneW || g.RightW <= 0 {
+		t.Fatalf("setup: expected partially starved right pane, got RightW=%d (stored %d)", g.RightW, m.rightPaneW)
+	}
+	if want := m.totalWidth - g.RightW; g.RightStart != want {
+		t.Fatalf("RightStart must track EFFECTIVE width under starvation: got %d, want %d (stored width would give %d)",
+			g.RightStart, want, m.totalWidth-m.rightPaneW)
+	}
+	// Growing back restores the stored width exactly (the guard's contract).
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	g = m.paneGeometry()
+	if g.RightW != m.rightPaneW || g.RightStart != m.totalWidth-m.rightPaneW {
+		t.Fatalf("after regrow: RightW=%d RightStart=%d, want stored %d / %d",
+			g.RightW, g.RightStart, m.rightPaneW, m.totalWidth-m.rightPaneW)
+	}
+}

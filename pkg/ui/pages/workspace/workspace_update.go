@@ -48,7 +48,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case title.FocusReturnMsg:
 		m = m.setFocus(paneCenter)
-		m = m.syncDictationAllowed()
 
 	case title.RenameRequestMsg:
 		if m.viewingHelp() {
@@ -57,7 +56,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Modal merge (§4): refuse renaming/bind-new-materializing the active
 		// doc while unresolved — Esc-abort is the escape hatch.
 		if m.HasUnresolvedConflicts() {
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before renaming"})
+			m, cmd = m.refuseMergeTransition("renaming")
 			cmds = append(cmds, cmd)
 			break
 		}
@@ -99,8 +98,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break
 		}
 		// Raise a confirmation guard before acting — §1.4.4.
-		m.pendingDataLoss = pendingDataLoss{kind: actionTrash, pendingTrashPath: msg.Path}
-		m.footer = m.footer.SetGuard(footer.GuardTrash, trashGuardOptions)
+		m.guard.trashPath = msg.Path
+		m = m.raiseGuardPrompt(guardTrash)
 
 	case FileDeletedMsg:
 		// Trash succeeded — optimistic removal was correct.
@@ -109,8 +108,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m, cmd = m.executeClose(m.view.DocID(), m.view.Path())
 			cmds = append(cmds, cmd)
 		} else {
-			// Background tab — remove without touching the active view.
-			m.opentabs = m.opentabs.CloseFile(msg.Path)
+			// Background tab — remove without touching the active view. Path-only
+			// handle (DocID unknown here): findTab matches unconditionally by
+			// path, finding this tab even if it has since bound to a real DocID
+			// (critic R4).
+			m.opentabs = m.opentabs.Close(opentabs.TabHandle{Path: msg.Path})
 		}
 
 	case FileDeleteErrorMsg:
@@ -361,12 +363,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// saveAllDirtyForQuit would otherwise materialize its marker buffer to
 		// disk (it is dirty by construction). Esc-abort is the escape hatch.
 		if m.HasUnresolvedConflicts() {
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Resolve or Esc-cancel the merge before quitting"})
-			return m, cmd
+			return m.refuseMergeTransition("quitting")
 		}
 		if m.anyDirty() { // ground-truth (H3, §1.4.8) — never the cached opentabs flag alone
-			m.pendingDataLoss = pendingDataLoss{kind: actionQuit}
-			m.footer = m.footer.SetGuard(footer.GuardDirty, dataLossGuardOptions)
+			// Wholesale-replace every close/evict/quit intent (mirrors the
+			// pre-A4 `pendingDataLoss = pendingDataLoss{kind: actionQuit}`
+			// single-field overwrite exactly — see abandonDirtyContinuation's
+			// own doc comment) before raising THIS guard.
+			m = m.abandonDirtyContinuation()
+			m.guard.quit = quitIntent{active: true}
+			m = m.raiseGuardPrompt(guardDirtyQuit)
 			return m, nil
 		}
 		return m.teardownAndQuit()
@@ -426,7 +432,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.search = m.search.Close()
 		m.editor = m.editor.ClearSearch()
 		m = m.setFocus(paneCenter)
-		m = m.syncDictationAllowed()
 
 	}
 
@@ -463,7 +468,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.focus == paneCenter {
 			var editorEdits []buffer.AppliedEdit
 			m.editor, editorEdits = m.editor.DrainEdits()
-			m = m.journalEdit("main", editorEdits, prevEditorCursors, m.editor.Cursors(), &cmds)
+			m = m.journalEdit(targetMain, editorEdits, prevEditorCursors, m.editor.Cursors(), &cmds)
 		}
 
 		prevSearchQuery := m.search.Query()

@@ -61,16 +61,16 @@ func (m Model) handlePlacementTick() (Model, tea.Cmd) {
 // clobbers another image's freshly-drawn pixels), and the whole batch is wrapped
 // once in DECSC/DECRC (save/restore cursor).
 func (m Model) buildInlineImagePlacements() (string, map[string]placedRegion) {
-	snap := m.Model.Snapshot()
-	vp := m.Model.Viewport()
-	contentH := m.Model.ContentHeight()
-	screenBase := m.Model.OffsetY()
-	col := m.Model.OffsetX() + 2 // 1-based terminal column + 1 left margin
+	g := m.Model.Geom()
+	vp := g.Viewport
+	contentH := g.ContentHeight
+	screenBase := g.OffsetY
+	col := g.OffsetX + 2 // 1-based terminal column + 1 left margin
 
 	var place strings.Builder
 	regions := map[string]placedRegion{}
 
-	for lineIdx, l := range snap.Lines {
+	for lineIdx, l := range g.Snap.Lines {
 		if l.ImagePath == "" {
 			continue
 		}
@@ -126,14 +126,14 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 	if !m.imageCapable() {
 		return m, nil
 	}
-	maxCols := m.Model.ImageMaxCols()
-	maxRows := m.Model.ContentHeight()
+	g := m.Model.Geom()
+	maxCols := g.ImageMaxCols()
+	maxRows := g.ContentHeight
 	cs := m.cellSize
 
-	snap := m.Model.Snapshot()
 	seen := map[string]bool{}
 	var cmds []tea.Cmd
-	for _, l := range snap.Lines {
+	for _, l := range g.Snap.Lines {
 		path, ok := display.StandaloneImagePath(l)
 		if !ok || seen[path] {
 			continue
@@ -144,14 +144,14 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		if absPath == "" {
 			continue
 		}
-		mtime := fileMtime(m.fsys(), absPath)
+		mtime := fileMtime(m.fs, absPath)
 
 		if existing, ok := m.images[path]; ok {
 			if existing.Mtime() == mtime || existing.State() == image.PendingDecode || existing.State() == image.Failed {
 				continue
 			}
 			id := existing.ID()
-			newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fsys())
+			newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fs)
 			m.images[path] = newImg
 			cmds = append(cmds, newImg.Init())
 			continue
@@ -159,7 +159,7 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 
 		id, na := m.idAlloc.AllocFreeID(absPath)
 		m.idAlloc = na
-		newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fsys())
+		newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fs)
 		m.images[path] = newImg
 		cmds = append(cmds, newImg.Init())
 	}
@@ -241,11 +241,11 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 // Drives animation gating: an off-screen (or cursor-revealed-to-source) image
 // reports 0 and pauses its ticks.
 func (m Model) visibleRowsFor(path string) int {
-	snap := m.Model.Snapshot()
-	vp := m.Model.Viewport()
-	contentH := m.Model.ContentHeight()
+	g := m.Model.Geom()
+	vp := g.Viewport
+	contentH := g.ContentHeight
 	count := 0
-	for lineIdx, l := range snap.Lines {
+	for lineIdx, l := range g.Snap.Lines {
 		if l.ImagePath != path {
 			continue
 		}
@@ -309,14 +309,22 @@ func (m Model) armImageTicks() (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// detectImageCollapse reconciles each tracked image's expanded state with the
+// current snapshot and reports whether any image just collapsed (its rendered
+// rows left the screen). The callers (afterContentChange / afterCursorMove)
+// emit tea.ClearScreen on that edge to erase the now-stale pixels. The old
+// version computed `collapsed` but returned a hardcoded false — the
+// ClearScreen path was dead and only the placement-seq reset ran; the
+// SetExpanded rewrite (which now returns the collapse edge directly instead
+// of the caller diffing WasCollapsed() around the call) fixes that.
 func (m Model) detectImageCollapse() (Model, bool) {
 	if !m.imageCapable() || len(m.images) == 0 {
 		return m, false
 	}
 
-	snap := m.Model.Snapshot()
+	g := m.Model.Geom()
 	expanded := make(map[string]bool)
-	for _, l := range snap.Lines {
+	for _, l := range g.Snap.Lines {
 		if l.ImagePath != "" && l.ImageRowIndex == 0 && l.ImageRowCount > 1 {
 			expanded[l.ImagePath] = true
 		}
@@ -324,9 +332,9 @@ func (m Model) detectImageCollapse() (Model, bool) {
 
 	collapsed := false
 	for path, img := range m.images {
-		wasCollapsed := img.WasCollapsed()
-		img = img.SetExpanded(expanded[path])
-		if img.WasCollapsed() && !wasCollapsed {
+		var justCollapsed bool
+		img, justCollapsed = img.SetExpanded(expanded[path])
+		if justCollapsed {
 			collapsed = true
 		}
 		m.images[path] = img
@@ -334,7 +342,7 @@ func (m Model) detectImageCollapse() (Model, bool) {
 	if collapsed {
 		m.lastPlacementSeq = ""
 	}
-	return m, false
+	return m, collapsed
 }
 
 // DeleteAllImagesCmd returns a command that deletes all images from the terminal.
@@ -402,8 +410,8 @@ func (m Model) currentImageDims() map[string]display.ImageDims {
 // standalone-image path not yet tracked in m.images. Used to guard the
 // per-cursor-move discovery call so steady-state navigation costs nothing.
 func (m Model) hasUndiscoveredImages() bool {
-	snap := m.Model.Snapshot()
-	for _, l := range snap.Lines {
+	g := m.Model.Geom()
+	for _, l := range g.Snap.Lines {
 		path, ok := display.StandaloneImagePath(l)
 		if !ok {
 			continue

@@ -81,11 +81,7 @@ func (m Model) handleFileLoadedMsg(msg FileLoadedMsg, cmds []tea.Cmd) (Model, []
 	// Discard the empty untitled placeholder when transitioning to a real file.
 	// Uses the OLD m.view (reassigned below) — must run before identity settles.
 	if m.view.IsUntitled() && m.editor.Content() == "" {
-		if m.view.DocID() != 0 {
-			m.opentabs = m.opentabs.CloseByID(m.view.DocID())
-		} else {
-			m.opentabs = m.opentabs.CloseFile("")
-		}
+		m.opentabs = m.opentabs.Close(m.view.Handle())
 	}
 
 	// Identity settles BEFORE any buffer install below (Part IV): journalEdit's

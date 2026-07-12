@@ -20,14 +20,14 @@ func TestGuardStateCoh_NoFalsePositive_Hidden(t *testing.T) {
 
 func TestGuardStateCoh_NoFalsePositive_EachKindCorrelated(t *testing.T) {
 	cases := []snapshot.Snapshot{
-		{GuardVisible: true, GuardKind: footer.GuardMerge, PendingConflictActive: true},
-		{GuardVisible: true, GuardKind: footer.GuardDeleted, PendingDeletedActive: true},
-		{GuardVisible: true, GuardKind: footer.GuardRaced, PendingRacedActive: true},
-		{GuardVisible: true, GuardKind: footer.GuardTrash, PendingDataLossKind: pendingKindTrash},
-		{GuardVisible: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindClose},
-		{GuardVisible: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindQuit},
-		{GuardVisible: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindEvict},
-		{GuardVisible: true, GuardKind: footer.GuardDegraded, StoreDegraded: true},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardMerge, PendingConflictActive: true},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDeleted, PendingDeletedActive: true},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardRaced, PendingRacedActive: true},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardTrash, PendingDataLossKind: pendingKindTrash},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindClose},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindQuit},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindEvict},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDegraded, StoreDegraded: true},
 	}
 	for i, s := range cases {
 		if v := Check(s); v != nil {
@@ -38,13 +38,13 @@ func TestGuardStateCoh_NoFalsePositive_EachKindCorrelated(t *testing.T) {
 
 func TestGuardStateCoh_DetectsCorruption(t *testing.T) {
 	cases := []snapshot.Snapshot{
-		{GuardVisible: true, GuardKind: footer.GuardMerge, PendingConflictActive: false},
-		{GuardVisible: true, GuardKind: footer.GuardDeleted, PendingDeletedActive: false},
-		{GuardVisible: true, GuardKind: footer.GuardRaced, PendingRacedActive: false},
-		{GuardVisible: true, GuardKind: footer.GuardTrash, PendingDataLossKind: pendingKindNone},
-		{GuardVisible: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindNone},
-		{GuardVisible: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindTrash},
-		{GuardVisible: true, GuardKind: footer.GuardDegraded, StoreDegraded: false},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardMerge, PendingConflictActive: false},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDeleted, PendingDeletedActive: false},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardRaced, PendingRacedActive: false},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardTrash, PendingDataLossKind: pendingKindNone},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindNone},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDirty, PendingDataLossKind: pendingKindTrash},
+		{GuardVisible: true, GuardPrompting: true, GuardKind: footer.GuardDegraded, StoreDegraded: false},
 	}
 	for i, s := range cases {
 		v := Check(s)

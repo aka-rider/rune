@@ -8,7 +8,6 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
-	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
@@ -39,7 +38,7 @@ type Model struct {
 
 	docPath string        // the open document's path (golden source; set with content). "" = untitled
 	root    string        // workspace root (launch CWD); static fallback base for resolution
-	fs      vfs.FS        // filesystem for link/embed resolution + image reads; nil → vfs.Disk (§1.4.9)
+	fs      vfs.FS        // filesystem for link/embed resolution + image reads; always non-nil (§1.4.9) — New defaults it to vfs.Disk{}, SetFS overrides it
 	styles  styles.Styles // cached for cell rendering
 }
 
@@ -57,10 +56,16 @@ func WithResolver(resolver keybind.Resolver) Option {
 	return textedit.WithResolver(resolver)
 }
 
-// New creates a new markdownedit Model.
+// New creates a new markdownedit Model. It does not set a SyncFunc: markdown
+// parsing/concealment already runs inside textedit.PlainSync (the default,
+// via display.SyntaxMap.Sync — §12); markdownedit's own contribution is
+// render-time styling via CellBuilderFunc/ImageRowFunc (spanToCellsStyled),
+// passed to RenderView, not through the SyncFunc seam. fs defaults to
+// vfs.Disk{} so link/embed resolution + image reads see real disk until
+// SetFS injects the workspace's own filesystem (§1.4.9); production, which
+// never re-injects a different one, is byte-identical to direct os calls.
 func New(keys keymap.Bindings, st styles.Styles, caps terminal.TermCaps, opts ...Option) Model {
-	allOpts := append([]textedit.Option{textedit.WithSyncFunc(textedit.PlainSync)}, opts...)
-	base := textedit.New(keys, st, allOpts...)
+	base := textedit.New(keys, st, opts...)
 	return Model{
 		Model:         base,
 		highlighter:   ChromaHighlighter(),
@@ -70,42 +75,12 @@ func New(keys keymap.Bindings, st styles.Styles, caps terminal.TermCaps, opts ..
 		placedRegions: map[string]placedRegion{},
 		idAlloc:       newImageIDAllocator(),
 		cellSize:      imagekit.DefaultCellSize(),
+		fs:            vfs.Disk{},
 		styles:        st,
 	}
 }
 
 func (m Model) Init() tea.Cmd { return m.Model.Init() }
-
-// SetFocused shadows textedit.Model.SetFocused to return markdownedit.Model.
-func (m Model) SetFocused(f bool) Model {
-	m.Model = m.Model.SetFocused(f)
-	return m
-}
-
-// SetReadOnly shadows textedit.Model.SetReadOnly to return markdownedit.Model.
-func (m Model) SetReadOnly(ro bool) Model {
-	m.Model = m.Model.SetReadOnly(ro)
-	return m
-}
-
-// GotoBottom shadows textedit.Model.GotoBottom to return markdownedit.Model.
-func (m Model) GotoBottom() Model {
-	m.Model = m.Model.GotoBottom()
-	return m
-}
-
-// DrainEdits shadows textedit.Model.DrainEdits to return markdownedit.Model.
-func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
-	var edits []buffer.AppliedEdit
-	m.Model, edits = m.Model.DrainEdits()
-	return m, edits
-}
-
-// SetCursors shadows textedit.Model.SetCursors to return markdownedit.Model.
-func (m Model) SetCursors(cs []cursor.Cursor) Model {
-	m.Model = m.Model.SetCursors(cs)
-	return m
-}
 
 // ApplyInverse shadows textedit.Model.ApplyInverse, also running afterContentChange.
 // A non-nil error means the inverse edits did not fit the buffer (§1.3): the buffer
@@ -198,23 +173,31 @@ func (m Model) routeUpdate(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 // delegateToModel forwards a message to the embedded textedit and reconciles
-// image state afterward. textedit's syncDisplay has already re-applied image-row
-// expansion from the pushed dims, so the snapshot footprint is correct either
-// way; here we reconcile discovery + collapse on a content change, collapse only
-// on a cursor-only move.
+// image state afterward via reconcile.
 func (m Model) delegateToModel(msg tea.Msg) (Model, tea.Cmd) {
-	var cmd tea.Cmd
 	prevRev := m.Model.Revision()
+	var cmd tea.Cmd
 	m.Model, cmd = m.Model.Update(msg)
+	m, rCmd := m.reconcile(prevRev)
+	return m, tea.Batch(cmd, rCmd)
+}
 
+// reconcile is the shared content-changed funnel: it diffs prevRev (captured
+// before the embedded textedit's Update ran) against the CURRENT
+// textedit.Model.Revision() — the sanctioned change signal (D13, see
+// textedit.Model.Revision's doc comment) — and reconciles image state
+// accordingly. textedit's syncDisplay has already re-applied image-row
+// expansion from the pushed dims, so the snapshot footprint is correct
+// either way; here we reconcile discovery + collapse on a content change,
+// collapse only on a cursor-only move. Every entry point that mutates the
+// embedded textedit.Model (today: delegateToModel; any future one) funnels
+// through this one comparison so the two reconciliation paths can never
+// drift apart.
+func (m Model) reconcile(prevRev uint64) (Model, tea.Cmd) {
 	if m.Model.Revision() != prevRev {
-		var aCmd tea.Cmd
-		m, aCmd = m.afterContentChange()
-		return m, tea.Batch(cmd, aCmd)
+		return m.afterContentChange()
 	}
-	var cCmd tea.Cmd
-	m, cCmd = m.afterCursorMove()
-	return m, tea.Batch(cmd, cCmd)
+	return m.afterCursorMove()
 }
 
 // afterContentChange re-discovers embedded images and reconciles collapse state
@@ -285,9 +268,8 @@ func (m Model) SetRect(r textedit.Rect) Model {
 	if !changed {
 		return m
 	}
-	maxCols := m.Model.ImageMaxCols()
-	maxRows := m.Model.ContentHeight()
-	m = m.resizeImages(maxCols, maxRows)
+	g := m.Model.Geom()
+	m = m.resizeImages(g.ImageMaxCols(), g.ContentHeight)
 	m.Model = m.Model.SetImageDims(m.currentImageDims())
 	m.Model = m.Model.ScrollToCursor()
 	return m
@@ -325,19 +307,10 @@ func (m Model) DocPath() string { return m.docPath }
 
 // SetFS injects the filesystem used for link/embed resolution and image-byte
 // reads. The workspace propagates its own vfs.FS here so the editor's existence
-// checks see the SAME files it loads from (§1.4.9). Nil → vfs.Disk (real disk),
-// so production — which never injects — is byte-identical to direct os calls.
+// checks see the SAME files it loads from (§1.4.9).
 func (m Model) SetFS(fsys vfs.FS) Model {
 	m.fs = fsys
 	return m
-}
-
-// fsys returns the resolution/read filesystem, defaulting to real disk (§1.4.9).
-func (m Model) fsys() vfs.FS {
-	if m.fs == nil {
-		return vfs.Disk{}
-	}
-	return m.fs
 }
 
 // docDir is the directory the open document lives in — the base for resolving its
@@ -370,28 +343,4 @@ func (m Model) ReplaceRange(start, end int, text string) (Model, tea.Cmd, error)
 // in the mergemode package (§10); this is a plain whole-buffer replace.
 func (m Model) ReplaceAll(content string) (Model, tea.Cmd, error) {
 	return m.ReplaceRange(0, len(m.Model.Content()), content)
-}
-
-// SetSearchQuery shadows textedit.Model.SetSearchQuery to return markdownedit.Model.
-func (m Model) SetSearchQuery(query string, caseInsensitive bool) Model {
-	m.Model = m.Model.SetSearchQuery(query, caseInsensitive)
-	return m
-}
-
-// FindNext shadows textedit.Model.FindNext to return markdownedit.Model.
-func (m Model) FindNext() Model {
-	m.Model = m.Model.FindNext()
-	return m
-}
-
-// FindPrev shadows textedit.Model.FindPrev to return markdownedit.Model.
-func (m Model) FindPrev() Model {
-	m.Model = m.Model.FindPrev()
-	return m
-}
-
-// ClearSearch shadows textedit.Model.ClearSearch to return markdownedit.Model.
-func (m Model) ClearSearch() Model {
-	m.Model = m.Model.ClearSearch()
-	return m
 }

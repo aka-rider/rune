@@ -23,9 +23,6 @@ func (m Model) contentHeight() int {
 // ContentHeight returns the allocated content height.
 func (m Model) ContentHeight() int { return m.contentHeight() }
 
-// Viewport returns the viewport state.
-func (m Model) Viewport() ViewportState { return m.viewport }
-
 // clampScroll clamps viewport.TopRow to [0, maxTop].
 func (m Model) clampScroll() Model {
 	maxTop := m.snapshot.TotalRows - m.contentHeight()

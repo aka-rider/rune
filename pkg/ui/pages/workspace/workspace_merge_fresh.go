@@ -166,7 +166,7 @@ func (m Model) applyDiscardConflict(docID int64, theirs string, sync docstate.Sy
 		return m, tea.Batch(cmds...)
 	}
 	var journaled bool
-	m, journaled = m.journalEditOK("main", editorEdits, prevCursors, m.editor.Cursors(), &cmds)
+	m, journaled = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
 	if !journaled {
 		// journalEditOK already rolled the buffer back and surfaced the
 		// error — the adoption below must not proceed on a journal write
@@ -223,7 +223,7 @@ func (m Model) applyMergeConflict(docID int64, path, ours, ancestor, theirs stri
 		return m, tea.Batch(cmds...)
 	}
 	var journaled bool
-	m, journaled = m.journalEditOK("main", editorEdits, prevCursors, m.editor.Cursors(), &cmds)
+	m, journaled = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
 	if !journaled {
 		// journalEditOK already rolled the buffer back and surfaced the
 		// error — the adoption below must not proceed on a journal write
@@ -329,7 +329,7 @@ func (m Model) installDiskAhead(docID int64, ours, theirs string, sync docstate.
 		return m
 	}
 	var ok bool
-	m, ok = m.journalEditOK("main", editorEdits, prevCursors, m.editor.Cursors(), cmds)
+	m, ok = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), cmds)
 	if !ok {
 		// AppendEdit failed: journalEditOK already rolled the buffer back to
 		// ours and surfaced the error. The adoption MUST not proceed — the
@@ -482,7 +482,7 @@ func (m Model) routeDictationEdit(s, e int, t string, cmds *[]tea.Cmd) Model {
 		*cmds = append(*cmds, cmd)
 		var dictEdits []buffer.AppliedEdit
 		m.editor, dictEdits = m.editor.DrainEdits()
-		m = m.journalEdit("main", dictEdits, prevCursors, m.editor.Cursors(), cmds)
+		m = m.journalEdit(targetMain, dictEdits, prevCursors, m.editor.Cursors(), cmds)
 	case paneChat:
 		if ticketDocID != m.chatDocID {
 			m.dict = m.dict.Disable()

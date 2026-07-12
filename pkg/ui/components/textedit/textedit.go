@@ -15,7 +15,13 @@ import (
 // textedit's syncDisplay handles wrapMap.Sync, BuildSnapshot, and ExpandTableRows.
 type SyncFunc func(buf buffer.Buffer, sm display.SyntaxMap, cursors cursor.CursorSet, focused bool, width int) (display.SyntaxMap, display.SyntaxSnapshot)
 
-// PlainSync is the default SyncFunc: no markdown rendering, just text.
+// PlainSync is the default SyncFunc. It does not skip markdown parsing —
+// display.SyntaxMap.Sync/SyncNoReveal parse and conceal markdown syntax for
+// every textedit, PlainSync included (§12); the difference between plain
+// textedit and markdownedit is entirely at render time, via the separate
+// CellBuilderFunc/ImageRowFunc seam (markdownedit.spanToCellsStyled is what
+// markdown syntax highlighting actually is — §12). PlainSync itself only
+// picks Sync vs SyncNoReveal by focus.
 func PlainSync(buf buffer.Buffer, sm display.SyntaxMap, cursors cursor.CursorSet, focused bool, width int) (display.SyntaxMap, display.SyntaxSnapshot) {
 	if sm == (display.SyntaxMap{}) {
 		sm = display.NewSyntaxMap()
@@ -174,7 +180,12 @@ func (m Model) SetFocused(f bool) Model {
 
 func (m Model) Content() string { return m.buf.Content() }
 
-// Revision returns a monotonic buffer-mutation counter (D13).
+// Revision returns a monotonic buffer-mutation counter (D13). This is the
+// SANCTIONED content-changed signal: a caller that needs to know whether an
+// Update call actually mutated the buffer diffs Revision() before/after
+// (markdownedit.reconcile does exactly this) rather than being told via an
+// async message or callback — Update is already synchronous and Model is a
+// value, so a before/after diff is sufficient and simpler.
 func (m Model) Revision() uint64 { return m.rev }
 
 // CursorOffsets returns cursor byte offsets for overlay rendering.
@@ -268,15 +279,6 @@ func (m Model) SetCursors(cs []cursor.Cursor) Model {
 
 // ---- Exported seams for markdownedit composition (D1, D2, D3, D5, D11) ----
 
-// Snapshot returns the current display snapshot.
-func (m Model) Snapshot() display.DisplaySnapshot { return m.snapshot }
-
-// SetSnapshot replaces the current display snapshot.
-func (m Model) SetSnapshot(snap display.DisplaySnapshot) Model {
-	m.snapshot = snap
-	return m
-}
-
 // SetImageDims sets the per-image cell footprints that drive standalone-image
 // row expansion, then rebuilds the display so the snapshot reflects them
 // immediately. markdownedit pushes this whenever image state changes (decode,
@@ -288,12 +290,6 @@ func (m Model) SetImageDims(dims map[string]display.ImageDims) Model {
 	m.imageDims = dims
 	return m.syncDisplay()
 }
-
-// SyntaxSnap returns the syntax snapshot.
-func (m Model) SyntaxSnap() display.SyntaxSnapshot { return m.syntaxSnap }
-
-// WrapSnap returns the wrap snapshot.
-func (m Model) WrapSnap() display.WrapSnapshot { return m.wrapSnap }
 
 // CursorAtTop reports whether all cursors are on visual row 0 and viewport is at top (D11).
 func (m Model) CursorAtTop() bool {
@@ -333,26 +329,9 @@ func (m Model) SingleCaretNoSelection() bool {
 // Width returns the allocated width.
 func (m Model) Width() int { return m.width }
 
-// OffsetX returns the component's screen X position.
-func (m Model) OffsetX() int { return m.offsetX }
-
-// OffsetY returns the component's screen Y position.
-func (m Model) OffsetY() int { return m.offsetY }
-
-// ImageMaxCols returns the maximum column width for rendered images.
-func (m Model) ImageMaxCols() int {
-	w := m.width - 2
-	if w < 1 {
-		return 1
-	}
-	return w
-}
-
 // ---- applyOperation (generic, no image/save handling) ----
 
-func (m Model) applyOperation(result command.Result, cmdName string) Model {
-	_ = cmdName // retained for future use (e.g., logging, metrics)
-
+func (m Model) applyOperation(result command.Result) Model {
 	if result.Operation.Kind == command.OperationScroll {
 		m.viewport.TopRow += result.Operation.ScrollDY
 		m.viewport.ScrollCol += result.Operation.ScrollDX

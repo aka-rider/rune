@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/help"
 )
 
@@ -17,8 +18,8 @@ func (m Model) showHelp() Model {
 	m.title = m.title.SetText("(Help)")
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(0, help.DocPath)
-	m.opentabs = m.opentabs.SetTabName(help.DocPath, "(Help)")
-	m.opentabs = m.opentabs.MarkClean(help.DocPath)
+	m.opentabs = m.opentabs.SetName(opentabs.TabHandle{Path: help.DocPath}, "(Help)")
+	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{Path: help.DocPath}, false)
 	m = m.setFocus(paneCenter)
 	return m
 }
@@ -42,7 +43,7 @@ func (m Model) showUntitled(docID int64) Model {
 	m.editor = m.editor.SetContent(content).SetReadOnly(false)
 	m = m.bumpEpoch() // Part IV: an untitled/recovery buffer install invalidates every outstanding view ticket
 	m.view = untitledView(docID)
-	if name := m.opentabs.NameByID(docID); name != "" {
+	if name := m.opentabs.NameOf(opentabs.TabHandle{DocID: docID}); name != "" {
 		m.title = m.title.SetText(name)
 	}
 	m.breadcrumb = m.breadcrumb.SetPath("")
@@ -152,7 +153,7 @@ func (m Model) restoreScratch() Model {
 			}
 			name := m.nextUntitledName()
 			m.opentabs = m.opentabs.OpenFile(id, "")
-			m.opentabs = m.opentabs.SetTabNameByID(id, name)
+			m.opentabs = m.opentabs.SetName(opentabs.TabHandle{DocID: id}, name)
 		}
 		// Active state is restored by finalize() → SetActive(m.docID) after this returns.
 	}

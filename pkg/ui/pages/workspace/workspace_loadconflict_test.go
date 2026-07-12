@@ -8,6 +8,7 @@ import (
 	"rune/pkg/docstate"
 	"rune/pkg/editor/buffer"
 	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/pages/workspace/mergemode"
 	"rune/pkg/vfs"
 )
@@ -65,7 +66,7 @@ func TestLoadTimeConflict_RaisesGuard(t *testing.T) {
 
 	m, _, _ := setupLoadConflict(t, ancestor, ours, theirs)
 
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("load-time conflict: pendingConflict should be active")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
@@ -90,16 +91,16 @@ func TestB1_EscThenQuitSaveRefused(t *testing.T) {
 
 	m, docID, path := setupLoadConflict(t, ancestor, ours, theirs)
 
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("B1: expected conflict guard raised on load")
 	}
 
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("B1: Esc must clear pendingConflict (step 5)")
 	}
 
-	m.opentabs = m.opentabs.MarkDirtyByID(docID)
+	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: docID}, true)
 
 	_, batchCmd := m.saveAllDirtyForQuit()
 	if batchCmd != nil {
@@ -128,13 +129,13 @@ func TestEscThenSave_ReRaisesConflict(t *testing.T) {
 	m = focusEditor(m)
 
 	m, saveCmd := m.startSave()
-	if m.pendingConflict.active == false && saveCmd != nil {
+	if m.guard.conflict.active == false && saveCmd != nil {
 		result := saveCmd()
 		if _, ok := result.(FileSavedMsg); ok {
 			t.Fatal("Esc-then-⌘S: must not silently write over an unresolved conflict")
 		}
 	}
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("Esc-then-⌘S: expected the conflict guard to be re-raised")
 	}
 
@@ -163,7 +164,7 @@ func TestLoadTimeNoConflict_DiskEqualsAncestor(t *testing.T) {
 
 	m = loadFile(m, path, content) // reload, unchanged
 
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("no-change reload: pendingConflict must not be raised (false positive)")
 	}
 	if m.footer.InGuard() {
@@ -197,7 +198,7 @@ func TestLoadTimeNoConflict_OursEqualsAncestor(t *testing.T) {
 	}
 	m = loadFile(m, path, theirs)
 
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("R1: pendingConflict must not be raised when ours==ancestor (no unsaved edits)")
 	}
 	if m.footer.InGuard() {
@@ -233,10 +234,11 @@ func TestMerge_ResolveAdvancesSavedObs(t *testing.T) {
 	// conflicts): ours is the only changed side.
 	const oursContent = "shared line\nours version\n"
 	m.editor = m.editor.SetContent(oursContent)
-	m.pendingConflict = pendingConflict{active: true, path: path, docID: docID}
+	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
-	if m.pendingConflict.active {
+	if m.guard.conflict.active {
 		t.Fatal("[M]: pendingConflict still active after DataLossMerge")
 	}
 	sync, err := m.store.Sync(docID)

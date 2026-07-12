@@ -26,11 +26,25 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	// While the guard is showing, NO global key (save/close/new/undo/redo) may act
 	// behind it — route the key only to the footer, which resolves on s/d/Esc and
 	// ignores everything else. Without this, ⌘S behind an open dirty-close guard
-	// issues a real save whose ack (pendingDataLoss still actionClose) then closes
-	// and blanks the buffer — a destructive transition the user never confirmed.
+	// issues a real save whose ack (guard.close still active) then closes and
+	// blanks the buffer — a destructive transition the user never confirmed.
 	if m.footer.InGuard() {
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
+		if !m.footer.InGuard() {
+			// footer.resolveGuard just cleared itself SYNCHRONOUSLY, in this
+			// same keypress — before the async footer.DataLossGuardResponseMsg
+			// its own returned Cmd carries is ever delivered (one message
+			// later, to handleDataLossGuardResponse). Mirror the transition
+			// onto guard.phase immediately so footer.InGuard() ==
+			// m.guard.prompting() never has a stale-true window (the fuzz
+			// invariant checks this after EVERY settled message, not just
+			// after the continuation lands). guard.kind is deliberately left
+			// set — handleDataLossGuardResponse still needs it, one message
+			// later, to route the dispatch; it clears guard.kind itself via
+			// clearGuardPrompt once the intent is fully consumed.
+			m.guard.phase = guardIdle
+		}
 		return m.finalize(cmds)
 	}
 
@@ -104,7 +118,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		m = m.setFocus(paneTree)
 		m.leftVisible = true
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.FocusEditor):
 		var ok bool
@@ -113,7 +126,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			return m.finalize(cmds)
 		}
 		m = m.setFocus(paneCenter)
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.FocusChat):
 		var ok bool
@@ -128,7 +140,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			m.rightVisible = true
 			m = m.setFocus(paneChat)
 		}
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.CreateNewFile):
 		// Modal merge (§4): ⌘N → CreateUntitled SetContent("")s over the hidden
@@ -153,7 +164,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 		m.title = m.title.FocusAndSelectAll()
 		m = m.setFocus(paneTitle)
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.CloseFile):
 		var ok bool
@@ -183,7 +193,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		if !m.leftVisible && m.focus.isLeft() {
 			m = m.setFocus(paneCenter)
 		}
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.FindOpen):
 		// Cmd+Shift+F / ^F — open (or toggle) the search bar.
@@ -197,7 +206,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			m = m.setFocus(paneSearch)
 			m = m.recalcLayout()
 		}
-		m = m.syncDictationAllowed()
 
 	case key.Matches(msg, m.keys.FindNext):
 		// ⌘G — navigate to the next match (works with bar closed).
@@ -244,7 +252,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		cmds = append(cmds, cmd)
 		var titleEdits []buffer.AppliedEdit
 		m.title, titleEdits = m.title.DrainEdits()
-		m = m.journalEdit("title", titleEdits, prevCursors, m.title.Cursors(), &cmds)
+		m = m.journalEdit(targetTitle, titleEdits, prevCursors, m.title.Cursors(), &cmds)
 	case paneCenter:
 		if !m.dict.Enabled() {
 			prevCursors := m.editor.Cursors()
@@ -304,7 +312,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			}
 			var editorEdits []buffer.AppliedEdit
 			m.editor, editorEdits = m.editor.DrainEdits()
-			m = m.journalEdit("main", editorEdits, prevCursors, m.editor.Cursors(), &cmds)
+			m = m.journalEdit(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
 		}
 	case paneChat:
 		prevCursors := m.chat.Cursors()
@@ -312,7 +320,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		cmds = append(cmds, cmd)
 		var chatEdits []buffer.AppliedEdit
 		m.chat, chatEdits = m.chat.DrainEdits()
-		m = m.journalEdit("chat", chatEdits, prevCursors, m.chat.Cursors(), &cmds)
+		m = m.journalEdit(targetChat, chatEdits, prevCursors, m.chat.Cursors(), &cmds)
 	case paneSearch:
 		prevQuery := m.search.Query()
 		m.search, cmd = m.search.Update(msg)

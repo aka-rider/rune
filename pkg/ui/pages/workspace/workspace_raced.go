@@ -11,14 +11,14 @@ import (
 	"rune/pkg/ui/components/footer"
 )
 
-// pendingRaced holds the two competing observations a Materialize swap-race
+// racedIntent holds the two competing observations a Materialize swap-race
 // (F5, MatResult{Committed:true, Raced:true}) produced: saved is OUR write,
 // already physically on disk and already the CAS baseline (commitSave ran
 // for it); fresh is the concurrent writer's displaced bytes, captured
 // per I1 but not (yet) written anywhere. active is the out-of-band validity
-// bit (§1.7). See workspace.go's Model.pendingRaced doc comment for why this
-// is a guard distinct from pendingConflict.
-type pendingRaced struct {
+// bit (§1.7). Lives at guardState.raced (A3) — see workspace.go's Model.guard
+// doc comment for why this is a guard distinct from guard.conflict.
+type racedIntent struct {
 	active bool
 	path   string
 	docID  int64
@@ -26,15 +26,15 @@ type pendingRaced struct {
 	fresh  docstate.Observation
 }
 
-// raiseRacedGuard stores pendingRaced and raises the GuardRaced footer
+// raiseRacedGuard stores guard.raced and raises the GuardRaced footer
 // prompt. Pure bookkeeping — both observations (and their blobs) are ALREADY
 // captured and committed by the time Materialize returns Raced:true (I1), so
 // there is no async read needed to raise this guard, mirroring
 // raiseConflictGuard's synchronicity.
 func (m Model) raiseRacedGuard(docID int64, path string, saved, fresh docstate.Observation) Model {
-	m.pendingRaced = pendingRaced{active: true, path: path, docID: docID, saved: saved, fresh: fresh}
+	m.guard.raced = racedIntent{active: true, path: path, docID: docID, saved: saved, fresh: fresh}
 	m.err = nil
-	m.footer = m.footer.SetGuard(footer.GuardRaced, guardRacedOptions)
+	m = m.raiseGuardPrompt(guardRaced)
 	return m
 }
 
@@ -51,9 +51,9 @@ func (m Model) queueRacedGuard(docID int64, path string, saved, fresh docstate.O
 		return m
 	}
 	if m.racedQueue == nil {
-		m.racedQueue = make(map[int64]pendingRaced, 1)
+		m.racedQueue = make(map[int64]racedIntent, 1)
 	}
-	m.racedQueue[docID] = pendingRaced{active: true, path: path, docID: docID, saved: saved, fresh: fresh}
+	m.racedQueue[docID] = racedIntent{active: true, path: path, docID: docID, saved: saved, fresh: fresh}
 	var cmd tea.Cmd
 	m.footer, cmd = m.footer.Update(footer.ShowStatusMsg{
 		Text: fmt.Sprintf("⚠ save of %q raced with a concurrent write — open it to resolve", filepath.Base(path)),
@@ -84,7 +84,7 @@ func (m Model) drainRacedQueue(docID int64) Model {
 // guard; the displaced bytes remain reachable as history (never deleted)
 // for the user to recover by hand later if they change their mind.
 func (m Model) handleDataLossKeepMine() Model {
-	m.pendingRaced = pendingRaced{}
+	m.guard.raced = racedIntent{}
 	return m
 }
 
@@ -98,16 +98,16 @@ func (m Model) handleDataLossKeepMine() Model {
 // the CURRENT SavedObs (pc.saved, since nothing else has moved it) — no
 // special CAS handling needed, exactly as the plan specifies.
 func (m Model) handleDataLossRestoreTheirs() (Model, tea.Cmd) {
-	if !m.pendingRaced.active || m.store == nil {
-		m.pendingRaced = pendingRaced{}
+	if !m.guard.raced.active || m.store == nil {
+		m.guard.raced = racedIntent{}
 		return m, nil
 	}
 	// Validate BEFORE consuming the guard (review finding): clearing
-	// pendingRaced on a refused precondition made [R] a one-shot that could
+	// guard.raced on a refused precondition made [R] a one-shot that could
 	// be permanently lost to a transient state (e.g. the raced doc's reload
 	// still in flight) — after which no UI path to the displaced bytes
 	// remained. On refusal the guard stays armed for a retry.
-	pr := m.pendingRaced
+	pr := m.guard.raced
 
 	if pr.docID == 0 || pr.docID != m.view.DocID() {
 		// The raced document is no longer displayed — restoring theirs would
@@ -115,7 +115,7 @@ func (m Model) handleDataLossRestoreTheirs() (Model, tea.Cmd) {
 		// attributing it. Refuse safely and MOVE the guard to the queue: it
 		// re-raises when the doc is next displayed. §1.3: surfaced, never
 		// silent, never lost.
-		m.pendingRaced = pendingRaced{}
+		m.guard.raced = racedIntent{}
 		var cmds []tea.Cmd
 		m = m.queueRacedGuard(pr.docID, pr.path, pr.saved, pr.fresh, &cmds)
 		var cmd tea.Cmd
@@ -130,7 +130,7 @@ func (m Model) handleDataLossRestoreTheirs() (Model, tea.Cmd) {
 	// readable (I1 captured it durably at swap-race time) — a read failure
 	// means real corruption, never a legitimate absence. Refuse rather than
 	// restoring substituted-empty content over the buffer; the guard stays
-	// armed (pendingRaced NOT cleared) so [R] can be retried or [K] chosen.
+	// armed (guard.raced NOT cleared) so [R] can be retried or [K] chosen.
 	displaced, err := m.blobFor(docstate.Version{Hash: pr.fresh.BlobHash, Obs: pr.fresh.ID, Valid: true})
 	if err != nil {
 		// Re-raise: the keypress consumed the footer guard, so re-arm it
@@ -142,7 +142,7 @@ func (m Model) handleDataLossRestoreTheirs() (Model, tea.Cmd) {
 		})
 		return m, cmd
 	}
-	m.pendingRaced = pendingRaced{}
+	m.guard.raced = racedIntent{}
 
 	var cmds []tea.Cmd
 	prevCursors := m.editor.Cursors()
@@ -164,7 +164,7 @@ func (m Model) handleDataLossRestoreTheirs() (Model, tea.Cmd) {
 	var editorEdits []buffer.AppliedEdit
 	m.editor, editorEdits = m.editor.DrainEdits()
 	var ok bool
-	m, ok = m.journalEditOK("main", editorEdits, prevCursors, m.editor.Cursors(), &cmds)
+	m, ok = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
 	if !ok {
 		// Journal append failed → buffer rolled back to our committed bytes;
 		// proceeding to Materialize would stamp a save at a position that

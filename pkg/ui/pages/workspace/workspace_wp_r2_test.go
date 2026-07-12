@@ -120,7 +120,7 @@ func TestMergeAbort_ReraisesDiverged(t *testing.T) {
 	if !m.footer.InGuard() {
 		t.Fatal("F3: Esc-abort must re-raise the conflict guard immediately — the merge-entry CAS adoption must be abandoned and re-probed")
 	}
-	if !m.pendingConflict.active {
+	if !m.guard.conflict.active {
 		t.Fatal("F3: Esc-abort must re-raise pendingConflict (GuardMerge), not some other guard")
 	}
 

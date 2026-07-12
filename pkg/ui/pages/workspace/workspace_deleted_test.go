@@ -83,7 +83,7 @@ func TestDeletedGuard_DirChangedRaisesGuard(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDeleted {
 		t.Fatalf("GuardDeleted not raised: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("pendingDeleted.active not set")
 	}
 	// RELOAD-NOMUT (internal/fuzz/ui/workspace/workspace.go:171-186): a
@@ -115,7 +115,7 @@ func TestDeletedGuard_SaveRecreatesFile(t *testing.T) {
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
 	m = settle(t, m, dcCmd)
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
 
@@ -134,7 +134,7 @@ func TestDeletedGuard_SaveRecreatesFile(t *testing.T) {
 	if m.footer.InGuard() {
 		t.Fatal("guard should be cleared after save")
 	}
-	if m.pendingDeleted.active {
+	if m.guard.deleted.active {
 		t.Fatal("pendingDeleted should be cleared after save")
 	}
 }
@@ -162,7 +162,7 @@ func TestDeletedGuard_SaveRecreatesParentDir(t *testing.T) {
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
 	m = settle(t, m, dcCmd)
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
 
@@ -203,7 +203,7 @@ func TestDeletedGuard_SaveMkdirFailureReArmsGuard(t *testing.T) {
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
 	m = settle(t, m, dcCmd)
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
 
@@ -227,7 +227,7 @@ func TestDeletedGuard_SaveMkdirFailureReArmsGuard(t *testing.T) {
 	}
 	m, _ = m.Update(msgs[0])
 
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("mkdir failure must restore pendingDeleted so the user can retry")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDeleted {
@@ -258,7 +258,7 @@ func TestDeletedGuard_DiscardPurgesDocAndClosesTab(t *testing.T) {
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
 	m = settle(t, m, dcCmd)
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
 
@@ -273,7 +273,7 @@ func TestDeletedGuard_DiscardPurgesDocAndClosesTab(t *testing.T) {
 	if m.footer.InGuard() {
 		t.Fatal("guard should be cleared after discard")
 	}
-	if m.pendingDeleted.active {
+	if m.guard.deleted.active {
 		t.Fatal("pendingDeleted should be cleared after discard")
 	}
 }
@@ -297,7 +297,7 @@ func TestDeletedGuard_EscThenNormalSaveReRaisesGuard(t *testing.T) {
 	}
 	m, dcCmd := m.Update(dirChangedMsg{})
 	m = settle(t, m, dcCmd)
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("prerequisite: guard not raised")
 	}
 
@@ -309,7 +309,7 @@ func TestDeletedGuard_EscThenNormalSaveReRaisesGuard(t *testing.T) {
 	if m.footer.InGuard() {
 		t.Fatal("guard must be cleared on Esc")
 	}
-	if m.pendingDeleted.active {
+	if m.guard.deleted.active {
 		t.Fatal("pendingDeleted must be cleared on Esc")
 	}
 	if !m.opentabs.HasDirty() {
@@ -325,7 +325,7 @@ func TestDeletedGuard_EscThenNormalSaveReRaisesGuard(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDeleted {
 		t.Fatalf("normal ⌘S on a vanished file must re-raise GuardDeleted, got InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.pendingDeleted.active {
+	if !m.guard.deleted.active {
 		t.Fatal("pendingDeleted must be re-armed by the save-time targetVanished detection")
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -432,7 +432,7 @@ func TestDeletedGuard_TabFocusDoesNotRaiseGuard(t *testing.T) {
 	if m.footer.InGuard() {
 		t.Fatalf("tab focus raised a guard (kind=%v) — focus must never raise a guard", m.footer.GuardKind())
 	}
-	if m.pendingDeleted.active {
+	if m.guard.deleted.active {
 		t.Fatal("tab focus set pendingDeleted — focus must never trigger deletion detection")
 	}
 }
@@ -457,7 +457,7 @@ func TestDeletedGuard_FlushTickDoesNotRaiseGuard(t *testing.T) {
 	if m.footer.InGuard() {
 		t.Fatalf("flush tick raised a guard (kind=%v) — the snapshot tick must never raise a guard", m.footer.GuardKind())
 	}
-	if m.pendingDeleted.active {
+	if m.guard.deleted.active {
 		t.Fatal("flush tick set pendingDeleted — persistence ticks must never trigger deletion detection")
 	}
 }

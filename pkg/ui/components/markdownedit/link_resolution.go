@@ -62,11 +62,11 @@ func fileExistsForLink(fsys vfs.FS, path string) bool {
 // fsys), against the open document's folder then the workspace root — the SAME bases
 // (and the same resolver) as link following.
 func (m Model) resolveEmbed(target string) string {
-	if abs, ok := resolveRef(m.fsys(), target, m.docDir(), m.root, false); ok {
+	if abs, ok := resolveRef(m.fs, target, m.docDir(), m.root, false); ok {
 		return abs
 	}
 	if filepath.Ext(strings.TrimSpace(target)) == "" {
-		if abs, ok := resolveRef(m.fsys(), target, m.docDir(), m.root, true); ok {
+		if abs, ok := resolveRef(m.fs, target, m.docDir(), m.root, true); ok {
 			return abs
 		}
 	}

@@ -66,7 +66,7 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 
 	// Cursor starts on the image line (offset 0): the embed is revealed as
 	// source and occupies a single row. 5 model lines => 5 display rows.
-	if got := m.Model.Snapshot().TotalRows; got != 1+textLines {
+	if got := m.Model.Geom().Snap.TotalRows; got != 1+textLines {
 		t.Fatalf("cursor on image line: TotalRows=%d, want %d (collapsed source)", got, 1+textLines)
 	}
 
@@ -76,7 +76,7 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 
 	// Move off the image line: it renders as an image and expands to imgRows.
 	m, _ = m.Update(down)
-	if got := m.Model.Snapshot().TotalRows; got != wantExpanded {
+	if got := m.Model.Geom().Snap.TotalRows; got != wantExpanded {
 		t.Fatalf("after moving off image line: TotalRows=%d, want %d", got, wantExpanded)
 	}
 
@@ -84,7 +84,7 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 	// (the original bug) and never doubling (re-expanding an expanded snapshot).
 	for i := 0; i < 3; i++ {
 		m, _ = m.Update(down)
-		if got := m.Model.Snapshot().TotalRows; got != wantExpanded {
+		if got := m.Model.Geom().Snap.TotalRows; got != wantExpanded {
 			t.Fatalf("cursor-down #%d: TotalRows=%d, want stable %d", i+1, got, wantExpanded)
 		}
 	}
@@ -94,11 +94,11 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 	for i := 0; i < textLines; i++ {
 		m, _ = m.Update(up)
 	}
-	if got := m.Model.Snapshot().TotalRows; got != 1+textLines {
+	if got := m.Model.Geom().Snap.TotalRows; got != 1+textLines {
 		t.Fatalf("back on image line: TotalRows=%d, want %d (collapsed)", got, 1+textLines)
 	}
 	m, _ = m.Update(down)
-	if got := m.Model.Snapshot().TotalRows; got != wantExpanded {
+	if got := m.Model.Geom().Snap.TotalRows; got != wantExpanded {
 		t.Fatalf("re-expansion after collapse: TotalRows=%d, want %d", got, wantExpanded)
 	}
 }
@@ -126,7 +126,7 @@ func TestCursorDownStopsAtLastLineWithExpandedImage(t *testing.T) {
 		m, _ = m.Update(down)
 	}
 	wantExpanded := imgRows + textLines
-	if got := m.Model.Snapshot().TotalRows; got != wantExpanded {
+	if got := m.Model.Geom().Snap.TotalRows; got != wantExpanded {
 		t.Fatalf("setup: TotalRows=%d, want %d (expanded)", got, wantExpanded)
 	}
 	if line := m.Model.OffsetToLineCol(m.Model.CursorOffset()).Line; line != lastLine {
@@ -161,7 +161,7 @@ func TestClickBelowExpandedImageResolvesCorrectLine(t *testing.T) {
 
 	// Move off the image line so it expands (imgRows + 2 text lines = 7 rows).
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := m.Model.Snapshot().TotalRows; got != imgRows+2 {
+	if got := m.Model.Geom().Snap.TotalRows; got != imgRows+2 {
 		t.Fatalf("setup: TotalRows=%d, want %d (expanded)", got, imgRows+2)
 	}
 

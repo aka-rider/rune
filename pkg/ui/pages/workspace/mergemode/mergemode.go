@@ -13,7 +13,6 @@ package mergemode
 import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"rune/pkg/editor/cursor"
 	"rune/pkg/merge"
@@ -21,14 +20,6 @@ import (
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
-)
-
-// Colors used ONLY by the merge diff view — ours green bg, theirs red bg
-// (today's markdownedit conflictBg), marker lines a dim gray bg.
-var (
-	oursColor   = lipgloss.Color("22")
-	theirsColor = lipgloss.Color("52")
-	markerColor = lipgloss.Color("240")
 )
 
 // Marker framing bytes — authored ONLY by mergemode. Enter builds the working
@@ -68,6 +59,7 @@ type State struct {
 	view         textedit.Model
 	preMergeOurs string          // ed.Content() just before Enter's marker ReplaceAll; Abort restores this
 	keys         keymap.Bindings // §3.1: named bindings for [O]/[T]/[n]/[p] — visible to ValidateNoPhysicalKeyCollisions, unlike a raw msg.Code comparison
+	styles       styles.Styles   // for the MergeOursBg/MergeTheirsBg/MergeMarkerBg diff-view tokens (colorIntervals)
 }
 
 // New constructs the read-only merge-view instance (call once at workspace
@@ -78,7 +70,7 @@ type State struct {
 // internally to render un-dimmed and keep selections live for copy.
 func New(keys keymap.Bindings, st styles.Styles) State {
 	view := textedit.New(keys, st).SetReadOnly(true).SetFocused(true)
-	return State{view: view, cur: -1, keys: keys}
+	return State{view: view, cur: -1, keys: keys, styles: st}
 }
 
 // SetSize sizes the merge-view instance to the workspace's center pane.
@@ -189,7 +181,7 @@ func Enter(hunks []merge.Hunk, st State, ed markdownedit.Model) (State, markdown
 // exactly as st carried it in (never flipped true here), so the R2 save-gate
 // (HasUnresolvedConflicts), the paneCenter merge key-intercept, and
 // syncMergeHint all stay inert (critic-verified). The caller renders
-// st.View() in place of the main editor while m.pendingConflict.active (see
+// st.View() in place of the main editor while m.guard.conflict.active (see
 // workspace_view.go) and clears the preview on every guard response. Uses the
 // SAME buildMarkerBuffer as Enter so the preview is byte-identical to what
 // Enter would show once the resolver actually activates.
@@ -398,11 +390,11 @@ func (st State) colorIntervals() []textedit.BgInterval {
 		theirsEnd := theirsStart + len(c.theirs)
 
 		ivs = append(ivs,
-			textedit.BgInterval{Start: b.start, End: oursStart, Color: markerColor},
-			textedit.BgInterval{Start: oursStart, End: oursEnd, Color: oursColor},
-			textedit.BgInterval{Start: oursEnd, End: theirsStart, Color: markerColor},
-			textedit.BgInterval{Start: theirsStart, End: theirsEnd, Color: theirsColor},
-			textedit.BgInterval{Start: theirsEnd, End: b.end, Color: markerColor},
+			textedit.BgInterval{Start: b.start, End: oursStart, Color: st.styles.MergeMarkerBg},
+			textedit.BgInterval{Start: oursStart, End: oursEnd, Color: st.styles.MergeOursBg},
+			textedit.BgInterval{Start: oursEnd, End: theirsStart, Color: st.styles.MergeMarkerBg},
+			textedit.BgInterval{Start: theirsStart, End: theirsEnd, Color: st.styles.MergeTheirsBg},
+			textedit.BgInterval{Start: theirsEnd, End: b.end, Color: st.styles.MergeMarkerBg},
 		)
 	}
 	return ivs

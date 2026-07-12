@@ -18,6 +18,7 @@ import (
 	"rune/pkg/ui/components/textedit"
 	"rune/pkg/ui/keymap"
 	"rune/pkg/ui/styles"
+	"rune/pkg/vfs"
 )
 
 // chatFocus tracks which sub-component (prompt or display) has keyboard focus.
@@ -56,27 +57,27 @@ type Model struct {
 	styles      styles.Styles
 }
 
-// New constructs a Model. It attempts to initialise the AI client from
-// environment variables; if that fails the error is stored and displayed
-// inside the pane rather than crashing the application.
-func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps) Model {
+// New constructs a Model. The AI client is constructed by the caller (§2.5 —
+// components don't read env) and passed in already resolved; a non-nil
+// clientErr is stored and displayed inside the pane rather than crashing the
+// application.
+func New(keys keymap.Bindings, st styles.Styles, reg command.Registry, resolver keybind.Resolver, caps terminal.TermCaps, client ai.Client, clientErr error) Model {
 	m := Model{keys: keys, styles: st}
 	// Conversation display: read-only markdownedit for full markdown rendering (D9).
 	m.display = markdownedit.New(keys, st, caps,
 		markdownedit.WithRegistry(reg),
 		markdownedit.WithResolver(resolver),
 	).SetReadOnly(true)
-	// Prompt: plain textedit for multi-line input (D15).
+	// Prompt: plain textedit for multi-line input (D15). No WithSyncFunc: New's
+	// default (PlainSync) is already correct here.
 	m.prompt = textedit.New(keys, st,
-		textedit.WithSyncFunc(textedit.PlainSync),
 		textedit.WithRegistry(reg),
 		textedit.WithResolver(resolver),
 	)
-	c, err := ai.NewClient()
-	if err != nil {
-		m.initErr = err.Error()
+	if clientErr != nil {
+		m.initErr = clientErr.Error()
 	} else {
-		m.client = c
+		m.client = client
 	}
 	return m
 }
@@ -103,6 +104,15 @@ func (m Model) SetFocused(f bool) Model {
 }
 
 func (m Model) Focused() bool { return m.focused }
+
+// SetFS forwards the injected filesystem to the display markdownedit, so
+// image reads inside rendered chat replies resolve against the SAME vfs.FS
+// the workspace serves everything else through (§1.4.9) instead of always
+// hitting real disk.
+func (m Model) SetFS(fs vfs.FS) Model {
+	m.display = m.display.SetFS(fs)
+	return m
+}
 
 // DrainEdits forwards to the prompt, returning chat.Model (only prompt is journaled).
 func (m Model) DrainEdits() (Model, []buffer.AppliedEdit) {
@@ -357,7 +367,7 @@ func (m Model) View() string {
 	if m.initErr != "" {
 		errBlock := m.styles.Error.Width(m.width).Render("Config error: " + m.initErr)
 		full := lipgloss.JoinVertical(lipgloss.Left, titleLine, errBlock, divider, "")
-		return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(full)
+		return styles.Clip(m.width, m.height).Render(full)
 	}
 
 	full := lipgloss.JoinVertical(lipgloss.Left,
@@ -366,5 +376,5 @@ func (m Model) View() string {
 		divider,
 		m.prompt.View(),
 	)
-	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(full)
+	return styles.Clip(m.width, m.height).Render(full)
 }

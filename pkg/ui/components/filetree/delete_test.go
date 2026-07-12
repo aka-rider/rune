@@ -16,7 +16,7 @@ func newFocusedModel(entries []Entry, cursor int) Model {
 	m = m.SetSize(20, 10)
 	m = m.SetFocused(true)
 	m.entries = entries
-	m.cursor = cursor
+	m.nav.Cursor = cursor
 	return m
 }
 
@@ -49,8 +49,8 @@ func TestRemoveEntryClampsOOBCursor(t *testing.T) {
 
 	m = m.RemoveEntry("/w/b.md")
 
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 after removing the last entry", m.cursor)
+	if m.nav.Cursor != 0 {
+		t.Errorf("cursor = %d, want 0 after removing the last entry", m.nav.Cursor)
 	}
 }
 

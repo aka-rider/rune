@@ -100,12 +100,19 @@ func (m Model) paneGeometry() paneGeometry {
 	}
 
 	return paneGeometry{
-		ContentH:   contentH,
-		InnerH:     innerH,
-		LeftW:      leftW,
-		CenterW:    centerW,
-		RightW:     rightW,
-		RightStart: m.totalWidth - m.rightPaneW,
+		ContentH: contentH,
+		InnerH:   innerH,
+		LeftW:    leftW,
+		CenterW:  centerW,
+		RightW:   rightW,
+		// EFFECTIVE rightW, never the stored m.rightPaneW: the starvation
+		// guard above can shrink rightW below the stored width without
+		// collapsing it, and every hit-test consumer (paneAtPoint,
+		// dividerAtPoint) must agree with what is actually RENDERED — a
+		// RightStart derived from the stored width put the chat click zone
+		// and the divider grab handle inside the editor for the whole
+		// partial-starvation window.
+		RightStart: m.totalWidth - rightW,
 		FiletreeH:  ftH,
 		OpentabsH:  otH,
 	}
@@ -259,11 +266,11 @@ func (m Model) View() tea.View {
 		// the main editor (which is hidden — it holds the marker working
 		// buffer, §3/§4). Title/breadcrumb stay so the doc identity is clear.
 		editorView = m.merge.View()
-	case m.pendingConflict.active:
+	case m.guard.conflict.active:
 		// Fix D (BUG2): the [S]/[D]/[M] guard is up — render the read-only
 		// ours-vs-theirs PREVIEW (built by raiseConflictGuard) in place of the
 		// main editor, so the diff is visible before the user chooses. Mutually
-		// exclusive with the IsActive case above: pendingConflict is always
+		// exclusive with the IsActive case above: guard.conflict is always
 		// cleared before mergemode.Enter activates the resolver.
 		editorView = m.merge.View()
 	case m.pendingLoad.active:

@@ -18,6 +18,32 @@ type pendingEdit struct {
 	text       string
 }
 
+// engine groups the running dictation engine's handles: the context cancel
+// that stops it and the message channel it delivers on (§6.3 cancellation
+// pattern). Grouping them replaces the three scattered "cancel != nil →
+// cancel() → cancel = nil" dances with one stop() chokepoint, and makes
+// "is the engine delivering messages" a single named query (active()).
+type engine struct {
+	cancel context.CancelFunc
+	ch     <-chan tea.Msg
+}
+
+// active reports whether the engine is delivering messages (a listen can be
+// scheduled on ch).
+func (e engine) active() bool { return e.ch != nil }
+
+// stop cancels the engine's context, idempotently. The channel is
+// deliberately NOT cleared here: a canceled engine may still deliver a
+// FinalTranscriptionMsg (see Disable) — callers that also want to stop
+// listening clear ch themselves.
+func (e engine) stop() engine {
+	if e.cancel != nil {
+		e.cancel()
+		e.cancel = nil
+	}
+	return e
+}
+
 // Model manages the dictation engine and the current session anchor.
 // Non-rendering: no View method.
 type Model struct {
@@ -40,8 +66,7 @@ type Model struct {
 	ticketEpoch uint64
 
 	// Engine state (§6.3 cancellation pattern)
-	cancel context.CancelFunc
-	dictCh <-chan tea.Msg
+	eng engine
 
 	// Pending buffer edit (drained by TakePendingEdit)
 	hasPending bool
@@ -75,12 +100,10 @@ func (m Model) Enable(startOff int, ticketDocID int64, ticketEpoch uint64) Model
 }
 
 // Disable cancels the engine and clears the session.
-// The dictCh may still deliver a FinalTranscriptionMsg — do NOT close it here.
+// The engine channel may still deliver a FinalTranscriptionMsg — do NOT
+// close or clear it here.
 func (m Model) Disable() Model {
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
-	}
+	m.eng = m.eng.stop()
 	m.enabled = false
 	m.hasPending = false
 	return m
@@ -89,11 +112,9 @@ func (m Model) Disable() Model {
 // StartCmd starts the dictation engine using the default whisper config.
 // Returns an updated Model (stores cancel func) and the start command.
 func (m Model) StartCmd() (Model, tea.Cmd) {
-	if m.cancel != nil {
-		m.cancel()
-	}
+	m.eng = m.eng.stop()
 	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
+	m.eng.cancel = cancel
 	// Language deliberately left "" — the engine resolves it from the active
 	// keyboard input source inside dictengine.StartCmd, BEHIND the test-stub
 	// seam, because that resolution is a main-thread-only TIS cgo call that
@@ -109,8 +130,8 @@ func (m Model) StartCmd() (Model, tea.Cmd) {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case dictengine.ReadyMsg:
-		m.dictCh = msg.Ch
-		return m, dictengine.ListenCmd(m.dictCh)
+		m.eng.ch = msg.Ch
+		return m, dictengine.ListenCmd(m.eng.ch)
 
 	case dictengine.PartialTranscriptionMsg:
 		if m.enabled {
@@ -119,8 +140,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// it would erase committed text. Drop the update and keep the current
 			// pending range so the next non-empty result lands correctly.
 			if strings.TrimSpace(msg.Accumulated) == "" {
-				if m.dictCh != nil {
-					return m, dictengine.ListenCmd(m.dictCh)
+				if m.eng.active() {
+					return m, dictengine.ListenCmd(m.eng.ch)
 				}
 				return m, nil
 			}
@@ -131,8 +152,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.hasPending = true
 			m.appliedLen = len(text)
 		}
-		if m.dictCh != nil {
-			return m, dictengine.ListenCmd(m.dictCh)
+		if m.eng.active() {
+			return m, dictengine.ListenCmd(m.eng.ch)
 		}
 		return m, nil
 
@@ -157,22 +178,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.hasPending = true
 		}
 		m.enabled = false
-		m.dictCh = nil
+		m.eng.ch = nil
 		capturedText := finalText
 		return m, func() tea.Msg { return DoneMsg{Text: capturedText} }
 
 	case dictengine.ErrorMsg:
 		if msg.Fatal {
-			if m.cancel != nil {
-				m.cancel()
-				m.cancel = nil
-			}
-			m.dictCh = nil
+			m.eng = m.eng.stop()
+			m.eng.ch = nil
 			m.enabled = false
 			return m, func() tea.Msg { return DoneMsg{} }
 		}
-		if m.dictCh != nil {
-			return m, dictengine.ListenCmd(m.dictCh)
+		if m.eng.active() {
+			return m, dictengine.ListenCmd(m.eng.ch)
 		}
 		return m, nil
 	}

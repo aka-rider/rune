@@ -13,7 +13,7 @@ cmd/rune                        Entry point; bootstraps ONE vfs.FS + the workspa
 pkg/ui                          Bubble Tea app: router (app.go), pages/, components/, help/
 pkg/ui/pages/workspace          Main 3-pane page; owns file I/O, journal, undo/redo, layout
 pkg/ui/components/textedit      Base editing component (buffer, cursors, viewport, cell render)
-pkg/ui/components/markdownedit  textedit + markdown SyncFunc (parse, reveal, highlight, images, links)
+pkg/ui/components/markdownedit  textedit + markdown cell builder (parse, reveal, highlight, images, links)
 pkg/ui/components/…             filetree, opentabs, footer, title, search, chat, dictation, …
 pkg/ui/keymap, pkg/ui/styles    Leaf packages: all keybindings / shared styles
 pkg/editor                      Domain primitives: buffer, cursor, coords, display, keybind
@@ -30,8 +30,9 @@ internal/fuzz                   Session fuzzer + property driver (make test-fuzz
 Say the left-hand term; the aliases in parentheses are ambiguous.
 
 - **textedit** — the base editing component; no undo of its own (not "editor", "textarea").
-- **markdownedit** — textedit + MarkdownSync (not "rich editor", "markdown editor").
-- **SyncFunc / SyncResult** — the single extension seam: pure `func(buf, cursors, focused, width)` → full display output. `PlainSync` default; `MarkdownSync` for markdown.
+- **markdownedit** — textedit + a markdown cell builder (`spanToCellsStyled`) + image/link integration (not "rich editor", "markdown editor", "MarkdownSync" — that name never existed in code).
+- **SyncFunc** — the buffer→syntax/display-snapshot seam: pure `func(buf, sm, cursors, focused, width)`. `PlainSync` is the only implementation and the default for every textedit, markdownedit included — it already parses and conceals markdown (that lives in `display.SyntaxMap.Sync`, shared by all textedits, §12), it just doesn't style it.
+- **CellBuilderFunc / ImageRowFunc** — the render-time seam markdownedit actually uses for markdown styling and image rows (`textedit.Model.RenderView`); `markdownedit.spanToCellsStyled` is what markdown syntax highlighting is (§12).
 - **workspace** — the main page; owns file I/O, docstate persistence, and undo/redo routing.
 - **journal / snapshot** — durable per-document edit stream / content-addressed full-content version (not "undo stack", "backup").
 - **observation / probe** — a recorded disk fact (hash, size, mtime, inode) / the async re-read that classifies sync state `Clean | BufferAhead | DiskAhead | Diverged` (not "stat cache", "poll").

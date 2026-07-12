@@ -81,10 +81,10 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardRaced {
 		t.Fatalf("expected GuardRaced raised; inGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.pendingRaced.active {
+	if !m.guard.raced.active {
 		t.Fatal("expected pendingRaced active")
 	}
-	theirsContent, err := m.store.GetBlob(m.pendingRaced.fresh.BlobHash)
+	theirsContent, err := m.store.GetBlob(m.guard.raced.fresh.BlobHash)
 	if err != nil {
 		t.Fatalf("GetBlob(displaced): %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	if string(diskAfter) != raced {
 		t.Fatalf("disk after restore-theirs = %q, want the restored displaced content %q", diskAfter, raced)
 	}
-	if m.pendingRaced.active {
+	if m.guard.raced.active {
 		t.Fatal("expected pendingRaced cleared after restore-theirs")
 	}
 	if m.footer.InGuard() {
@@ -151,14 +151,14 @@ func TestSaveRace_KeepMineClearsGuardWithoutFurtherWrite(t *testing.T) {
 
 	m, cmd := m.startSave()
 	m = settle(t, m, cmd)
-	if !m.pendingRaced.active {
+	if !m.guard.raced.active {
 		t.Fatal("setup: expected pendingRaced active")
 	}
 
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	m = settle(t, m, cmd)
 
-	if m.pendingRaced.active || m.footer.InGuard() {
+	if m.guard.raced.active || m.footer.InGuard() {
 		t.Fatal("expected the Raced guard cleared after keep-mine")
 	}
 	diskAfter, err := os.ReadFile(path)

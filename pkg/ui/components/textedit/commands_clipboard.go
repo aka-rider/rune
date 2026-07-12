@@ -297,7 +297,7 @@ func (m Model) handlePasteContent(text string) (Model, tea.Cmd) {
 		Cursors: cursor.NewCursorSetFrom(newCursors),
 	}
 
-	m = m.applyOperation(command.Result{Operation: op}, "clipboard.paste")
+	m = m.applyOperation(command.Result{Operation: op})
 	m = m.syncDisplay()
 	m = m.ScrollToCursor()
 	return m, nil

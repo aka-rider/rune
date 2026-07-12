@@ -9,6 +9,19 @@ import (
 	"rune/pkg/ui/components/footer"
 )
 
+// deletedIntent carries the docID/path of the current document whose file
+// went missing on disk (deleted, or its parent dir removed), for the
+// GuardDeleted footer prompt's [S]ave/[D]iscard responses. active is the
+// out-of-band validity bit (§1.7) — docID/path are meaningful only while it is
+// true. Cleared on every guard resolution (Save/Discard/Cancel). Lives at
+// guardState.deleted (A3; absorbed here from the former
+// workspace_guardopts.go by A4).
+type deletedIntent struct {
+	active bool
+	path   string
+	docID  int64
+}
+
 // handleDeletedSave handles the [S]ave response for the GuardDeleted prompt —
 // the open file went missing on disk and the user chose to recreate it.
 // Recreates the parent directory first (Materialize's overwrite branch does
@@ -19,25 +32,25 @@ import (
 // gone; expect=0 is safe because Materialize's create path never consults
 // it). The existing FileSavedMsg active-save path marks the tab clean.
 func (m Model) handleDeletedSave() (Model, tea.Cmd) {
-	if !m.pendingDeleted.active || m.store == nil {
-		m.pendingDataLoss = pendingDataLoss{}
-		m.pendingDeleted = pendingDeleted{}
+	if !m.guard.deleted.active || m.store == nil {
+		m = m.abandonDirtyContinuation()
+		m.guard.deleted = deletedIntent{}
 		return m, nil
 	}
-	pd := m.pendingDeleted
-	m.pendingDeleted = pendingDeleted{}
-	m.pendingDataLoss = pendingDataLoss{}
+	pd := m.guard.deleted
+	m.guard.deleted = deletedIntent{}
+	m = m.abandonDirtyContinuation()
 
 	if dir := filepath.Dir(pd.path); dir != "" {
 		if err := m.fsys().MkdirAll(dir, 0o755); err != nil {
 			// Can't recreate the parent dir — surface the error, restore
-			// pendingDeleted, and re-arm the guard so the user can retry
+			// guard.deleted, and re-arm the guard so the user can retry
 			// (§1.3; the buffer is untouched). Re-arming (not just restoring
-			// the pending state) keeps InGuard() and pendingDeleted.active in
+			// the pending state) keeps InGuard() and guard.deleted.active in
 			// sync — an error banner alone would leave the guard invisible
 			// while still silently blocking re-detection.
-			m.pendingDeleted = pd
-			m.footer = m.footer.SetGuard(footer.GuardDeleted, guardDeletedOptions)
+			m.guard.deleted = pd
+			m = m.raiseGuardPrompt(guardDeleted)
 			var cmd tea.Cmd
 			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{
 				Text: fmt.Errorf("recreate %q: mkdir %q: %w", pd.path, dir, err).Error(),
@@ -66,13 +79,13 @@ func (m Model) handleDeletedSave() (Model, tea.Cmd) {
 // which loads theirs) and the dirty-guard discard (which keeps history) — here
 // there is nothing to fall back to, so the doc is fully purged.
 func (m Model) handleDeletedDiscard() (Model, tea.Cmd) {
-	if !m.pendingDeleted.active {
-		m.pendingDataLoss = pendingDataLoss{}
+	if !m.guard.deleted.active {
+		m = m.abandonDirtyContinuation()
 		return m, nil
 	}
-	pd := m.pendingDeleted
-	m.pendingDeleted = pendingDeleted{}
-	m.pendingDataLoss = pendingDataLoss{}
+	pd := m.guard.deleted
+	m.guard.deleted = deletedIntent{}
+	m = m.abandonDirtyContinuation()
 
 	if m.store != nil && pd.docID != 0 {
 		if err := m.store.DeleteDoc(pd.docID); err != nil {

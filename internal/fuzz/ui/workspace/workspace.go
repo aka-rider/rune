@@ -122,6 +122,25 @@ func Check(s snapshot.Snapshot) *invariant.Violation {
 		}
 	}
 
+	// GUARD-PHASE-SYNC: footer.InGuard() (GuardVisible) and workspace's own
+	// guardState.prompting() (GuardPrompting) must agree after EVERY settled
+	// message — a strict two-sided equality, unlike GUARD-STATE-COH below
+	// (which only correlates GuardVisible ⇒ a matching pending-state fact,
+	// one direction, because that payload trails the footer by one message
+	// on resolution). GuardPrompting is deliberately kept in lockstep with
+	// the footer a message EARLIER than the payload — see
+	// workspace_update_keys.go's guard-owns-keyboard gate — precisely so
+	// this equality can be strict.
+	if s.GuardVisible != s.GuardPrompting {
+		return &invariant.Violation{
+			InvariantID: "GUARD-PHASE-SYNC",
+			Message: fmt.Sprintf(
+				"GuardVisible=%v != GuardPrompting=%v (GuardKind=%v)",
+				s.GuardVisible, s.GuardPrompting, s.GuardKind,
+			),
+		}
+	}
+
 	// GUARD-STATE-COH: while a guard is showing, its kind must correlate with
 	// a matching pending-state fact. ONE direction only (GuardVisible ⇒
 	// correlate): footer clears its own guardKind/guardOptions synchronously
