@@ -6,6 +6,7 @@
 package snapshot
 
 import (
+	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
 	"rune/pkg/ui/components/footer"
@@ -35,6 +36,12 @@ type Snapshot struct {
 	Cursors       []cursor.Cursor
 	BufferVersion uint64
 	LineCount     int
+
+	// LastEdits are the CursorID-tagged, pre-edit-coordinate edits applied by
+	// the message just processed (nil if none) — see textedit.Model.FuzzLastEdits.
+	// Used by SEL-EDIT to attribute a buffer change to the cursor that made
+	// it, instead of inferring attribution from a whole-buffer content diff.
+	LastEdits []buffer.Edit
 
 	// Display pipeline snapshots (for D-family and WRAP-RT/SPAN-COVER)
 	Display display.DisplaySnapshot

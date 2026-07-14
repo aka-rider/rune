@@ -2,277 +2,84 @@ package textedit
 
 import (
 	"rune/pkg/command"
-	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/cursor"
 )
 
 func execInsertChar(ctx command.CommandContext) command.Result {
 	char, _ := ctx.Args["char"].(string)
 	if char == "" {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
+		return noneResult()
 	}
-
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: char}
-		} else {
-			e = buffer.Edit{Start: c.Position, End: c.Position, Insert: char}
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, len(char))
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string { return char },
+		func(c cursor.Cursor) (int, int, bool) { return c.Position, c.Position, true })
 }
 
 func execNewline(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		pos := c.Position
-		if c.HasSelection() {
-			pos = c.SelectionStart()
-		}
-		bp := ctx.Buffer.OffsetToLineCol(pos)
-		line := ctx.Buffer.Line(bp.Line)
-		indent := leadingWhitespaceRe.FindString(line)
-		insertText := "\n" + indent
-
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: insertText}
-		} else {
-			e = buffer.Edit{Start: c.Position, End: c.Position, Insert: insertText}
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfosVar(infos)
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string {
+			pos := c.Position
+			if c.HasSelection() {
+				pos = c.SelectionStart()
+			}
+			bp := ctx.Buffer.OffsetToLineCol(pos)
+			line := ctx.Buffer.Line(bp.Line)
+			indent := leadingWhitespaceRe.FindString(line)
+			return "\n" + indent
+		},
+		func(c cursor.Cursor) (int, int, bool) { return c.Position, c.Position, true })
 }
 
 func execDeleteLeft(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
-		} else if c.Position > 0 {
-			prev := prevRuneOffset(ctx.Buffer, c.Position)
-			e = buffer.Edit{Start: prev, End: c.Position, Insert: ""}
-		} else {
-			continue
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	if len(infos) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, 0)
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string { return "" },
+		func(c cursor.Cursor) (int, int, bool) {
+			if c.Position <= 0 {
+				return 0, 0, false
+			}
+			return prevRuneOffset(ctx.Buffer, c.Position), c.Position, true
+		})
 }
 
 func execDeleteRight(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
-		} else if c.Position < ctx.Buffer.Len() {
-			next := nextRuneOffset(ctx.Buffer, c.Position)
-			e = buffer.Edit{Start: c.Position, End: next, Insert: ""}
-		} else {
-			continue
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	if len(infos) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, 0)
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string { return "" },
+		func(c cursor.Cursor) (int, int, bool) {
+			if c.Position >= ctx.Buffer.Len() {
+				return 0, 0, false
+			}
+			return c.Position, nextRuneOffset(ctx.Buffer, c.Position), true
+		})
 }
 
 func execDeleteWordLeft(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
-		} else if c.Position > 0 {
-			wl := wordLeftOffset(ctx.Buffer, c.Position)
-			e = buffer.Edit{Start: wl, End: c.Position, Insert: ""}
-		} else {
-			continue
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	if len(infos) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, 0)
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string { return "" },
+		func(c cursor.Cursor) (int, int, bool) {
+			if c.Position <= 0 {
+				return 0, 0, false
+			}
+			return wordLeftOffset(ctx.Buffer, c.Position), c.Position, true
+		})
 }
 
 func execDeleteWordRight(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	var infos []editInfoItem
-	for _, c := range all {
-		var e buffer.Edit
-		if c.HasSelection() {
-			e = buffer.Edit{Start: c.SelectionStart(), End: selectionEndInclusive(c, ctx.Buffer), Insert: ""}
-		} else if c.Position < ctx.Buffer.Len() {
-			wr := wordRightOffset(ctx.Buffer, c.Position)
-			e = buffer.Edit{Start: c.Position, End: wr, Insert: ""}
-		} else {
-			continue
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	if len(infos) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, 0)
+	return perCursorSelectionEdits(ctx,
+		func(i int, c cursor.Cursor) string { return "" },
+		func(c cursor.Cursor) (int, int, bool) {
+			if c.Position >= ctx.Buffer.Len() {
+				return 0, 0, false
+			}
+			return c.Position, wordRightOffset(ctx.Buffer, c.Position), true
+		})
 }
 
-func execDeleteLine(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-	if len(all) > 1 {
-		return execDeleteLineMulti(ctx)
-	}
-
-	lineCount := ctx.Buffer.LineCount()
-	var infos []editInfoItem
-
-	deletedLines := map[int]bool{}
-	for _, c := range all {
-		bp := ctx.Buffer.OffsetToLineCol(c.Position)
-		if deletedLines[bp.Line] {
-			continue
-		}
-		deletedLines[bp.Line] = true
-
-		var e buffer.Edit
-		if lineCount == 1 {
-			e = buffer.Edit{Start: 0, End: ctx.Buffer.Len(), Insert: ""}
-		} else if bp.Line < lineCount-1 {
-			e = buffer.Edit{Start: ctx.Buffer.LineStart(bp.Line), End: ctx.Buffer.LineStart(bp.Line + 1), Insert: ""}
-		} else {
-			e = buffer.Edit{Start: ctx.Buffer.LineEnd(bp.Line - 1), End: ctx.Buffer.LineEnd(bp.Line), Insert: ""}
-		}
-		infos = append(infos, editInfoItem{edit: e, cID: c.ID})
-	}
-
-	sortInfosDescending(infos)
-	return buildEditResultFromInfos(infos, 0)
-}
-
-func registerEditCommands(builder command.Builder) (command.Builder, error) {
-	var err error
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.insert-character",
-		When:    "editorFocused && !readOnly",
-		Execute: execInsertChar,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.newline",
-		When:    "editorFocused && !readOnly",
-		Execute: execNewline,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.delete-left",
-		When:    "editorFocused && !readOnly",
-		Execute: execDeleteLeft,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.delete-right",
-		When:    "editorFocused && !readOnly",
-		Execute: execDeleteRight,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.delete-word-left",
-		When:    "editorFocused && !readOnly",
-		Execute: execDeleteWordLeft,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.delete-word-right",
-		When:    "editorFocused && !readOnly",
-		Execute: execDeleteWordRight,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "edit.delete-line",
-		When:    "editorFocused && !readOnly",
-		Execute: execDeleteLine,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	return builder, nil
+var editSpecs = []cmdSpec{
+	{name: "edit.insert-character", when: "editorFocused && !readOnly", exec: execInsertChar},
+	{name: "edit.newline", when: "editorFocused && !readOnly", exec: execNewline},
+	{name: "edit.delete-left", when: "editorFocused && !readOnly", exec: execDeleteLeft},
+	{name: "edit.delete-right", when: "editorFocused && !readOnly", exec: execDeleteRight},
+	{name: "edit.delete-word-left", when: "editorFocused && !readOnly", exec: execDeleteWordLeft},
+	{name: "edit.delete-word-right", when: "editorFocused && !readOnly", exec: execDeleteWordRight},
+	{name: "edit.delete-line", when: "editorFocused && !readOnly", exec: execDeleteLineMulti},
 }

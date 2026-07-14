@@ -27,7 +27,7 @@ func TestFinalizeProjectsDocPathToEditor(t *testing.T) {
 // can't overwrite it with "". The dead link is reported in the footer instead.
 func TestFollowMissingInternalLinkKeepsContent(t *testing.T) {
 	m := newTestWorkspace(t)
-	m.editor = m.editor.SetContent("# Real content\nstays put\n")
+	m.editor, _ = m.editor.SetContent("# Real content\nstays put\n")
 	m.view = fileView("/some/note.md", 0)
 	before := m.editor.Content()
 

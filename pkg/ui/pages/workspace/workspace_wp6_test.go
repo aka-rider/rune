@@ -115,10 +115,10 @@ func TestDelayed_ResolveProbeAcrossTabSwitch_RefusedWithNotice(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: pathA, docID: docA}
+	m.guard.prompt = promptPayload{path: pathA, docID: docA}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	var discardCmd tea.Cmd
-	m, discardCmd = m.handleDataLossDiscardConflict()
+	m, discardCmd = m.handleDataLossDiscardConflict(m.guard.prompt) // W2: dispatcher normally captures this payload before clearing guard.prompt
 	if discardCmd == nil {
 		t.Fatal("setup: expected a resolveProbeCmd from discard")
 	}

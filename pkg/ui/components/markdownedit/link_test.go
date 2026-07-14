@@ -38,8 +38,8 @@ func newLinkModel(t *testing.T, content string) Model {
 		t.Fatalf("new resolver: %v", err)
 	}
 	m := New(keys, st, terminal.TermCaps{}, WithRegistry(builder.Build()), WithResolver(res))
-	m = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 80, H: 24})
-	m = m.SetContent(content)
+	m, _ = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 80, H: 24})
+	m, _ = m.SetContent(content)
 	m = m.SetFocused(true)
 	return m
 }
@@ -258,6 +258,44 @@ func TestDoubleClickFollowsLink(t *testing.T) {
 	}
 	if got.Kind != LinkExternal || got.Dest != "https://example.com" {
 		t.Errorf("got %+v, want LinkExternal https://example.com", got)
+	}
+}
+
+// TestDoubleClickToleratesOneCellDrift locks in M7's mouse tolerance: a
+// second click one cell away (Chebyshev distance 1 — a routine hand tremor
+// between clicks) still counts as a double-click, not a fresh single click.
+func TestDoubleClickToleratesOneCellDrift(t *testing.T) {
+	m := newLinkModel(t, "[a](https://example.com)")
+
+	m, cmd := m.Update(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	if _, ok := collectLinkActivated(cmd); ok {
+		t.Fatal("single click must not follow")
+	}
+	// Second click diagonally one cell away, within the time window.
+	_, cmd = m.Update(tea.MouseClickMsg{X: 1, Y: 0, Button: tea.MouseLeft})
+	got, ok := collectLinkActivated(cmd)
+	if !ok {
+		t.Fatal("a one-cell-drift second click did not register as a double-click")
+	}
+	if got.Kind != LinkExternal || got.Dest != "https://example.com" {
+		t.Errorf("got %+v, want LinkExternal https://example.com", got)
+	}
+}
+
+// TestClickTwoCellsAwayBreaksDoubleClick locks in the tolerance's boundary: a
+// second click MORE than one cell away is a fresh single click, not a
+// double-click — the tolerance forgives hand tremor, not a deliberate new
+// click elsewhere.
+func TestClickTwoCellsAwayBreaksDoubleClick(t *testing.T) {
+	m := newLinkModel(t, "[a](https://example.com)")
+
+	m, cmd := m.Update(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	if _, ok := collectLinkActivated(cmd); ok {
+		t.Fatal("single click must not follow")
+	}
+	_, cmd = m.Update(tea.MouseClickMsg{X: 2, Y: 0, Button: tea.MouseLeft})
+	if _, ok := collectLinkActivated(cmd); ok {
+		t.Fatal("a two-cell-away second click must NOT register as a double-click")
 	}
 }
 

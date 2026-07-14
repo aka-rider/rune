@@ -2,7 +2,6 @@ package keybind
 
 import (
 	"fmt"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -90,7 +89,6 @@ type ResultKind int
 
 const (
 	ResultNoMatch ResultKind = iota
-	ResultMoreChordsNeeded
 	ResultFound
 )
 
@@ -103,35 +101,55 @@ type ResolverContext struct {
 	EditorFocused  bool
 	HasSelection   bool
 	HasMultiCursor bool
-	InCodeFence    bool
 	ReadOnly       bool
 }
 
 type compiledBinding struct {
-	chords  []Chord
+	chord   Chord
 	command string
 	when    exprNode
 	whenStr string
 }
 
+// Resolver is a stateless, config-only chord matcher: built once from a
+// binding table (NewResolver) and consulted per keystroke via Resolve, which
+// takes no receiver state and returns no updated Resolver — every keypress
+// resolves independently of the last (§2.1's "no machine" verdict). This
+// replaces a prior multi-chord "pending" state machine that was unreachable
+// in production: keymap.CommandBindings (the only production binding
+// producer) always emits single-chord bindings, so a chord sequence like
+// Ctrl+K Ctrl+V never actually matched anything — NewResolver below rejects
+// multi-chord bindings outright instead of silently accepting dead config.
+//
+// Reintroduction recipe, if chord sequences are ever wanted: give
+// textedit.Model its own `pendingChords []Chord` (cleared on blur — the old
+// resolver-owned pending survived blur/refocus by accident, which was itself
+// a bug), and have Resolve accept/return that slice explicitly rather than
+// hiding it in Resolver's receiver.
 type Resolver struct {
-	bindings       []compiledBinding
-	pending        []Chord
-	timeoutCommand string
+	bindings []compiledBinding
 }
 
+// NewResolver compiles bindings into a Resolver. It errors on a malformed
+// `when` expression, an exact duplicate (same chord + same when scope) across
+// two bindings, or any binding with more than one chord — chord sequences
+// are not supported (see the Resolver doc comment); rejecting them here keeps
+// a config mistake honest instead of letting it silently never match.
 func NewResolver(bindings []Binding) (Resolver, error) {
 	var compiled []compiledBinding
 	for i, b := range bindings {
 		if len(b.Chords) == 0 {
 			return Resolver{}, fmt.Errorf("binding %d has no chords", i)
 		}
+		if len(b.Chords) > 1 {
+			return Resolver{}, fmt.Errorf("binding %d (%s): chord sequences are not supported", i, b.Command)
+		}
 		expr, err := parseWhen(b.When)
 		if err != nil {
 			return Resolver{}, fmt.Errorf("parsing 'when' for binding %d: %w", i, err)
 		}
 		compiled = append(compiled, compiledBinding{
-			chords:  b.Chords,
+			chord:   b.Chords[0],
 			command: b.Command,
 			when:    expr,
 			whenStr: b.When,
@@ -141,119 +159,27 @@ func NewResolver(bindings []Binding) (Resolver, error) {
 	for i, a := range compiled {
 		for j := i + 1; j < len(compiled); j++ {
 			b := compiled[j]
-			if len(a.chords) == len(b.chords) && a.whenStr == b.whenStr {
-				match := true
-				for k := range a.chords {
-					if a.chords[k] != b.chords[k] {
-						match = false
-						break
-					}
-				}
-				if match {
-					return Resolver{}, fmt.Errorf("duplicate bindings for identical chords and context: %s vs %s", a.command, b.command)
-				}
+			if a.whenStr == b.whenStr && a.chord == b.chord {
+				return Resolver{}, fmt.Errorf("duplicate bindings for identical chords and context: %s vs %s", a.command, b.command)
 			}
 		}
 	}
 
-	return Resolver{bindings: compiled, pending: nil}, nil
+	return Resolver{bindings: compiled}, nil
 }
 
-func (r Resolver) Resolve(chord Chord, ctx ResolverContext) (Resolver, ResolutionResult) {
-	newPending := append(append([]Chord(nil), r.pending...), chord)
-	var exact []compiledBinding
-	var longer []compiledBinding
-
+// Resolve is a pure read-only lookup: chord × context → command. No pending
+// state, no reassignment — call it fresh on every keypress.
+func (r Resolver) Resolve(chord Chord, ctx ResolverContext) ResolutionResult {
 	for _, b := range r.bindings {
-		if len(b.chords) < len(newPending) {
-			continue
-		}
-		match := true
-		for i := range newPending {
-			if b.chords[i] != newPending[i] {
-				match = false
-				break
-			}
-		}
-		if !match {
+		if b.chord != chord {
 			continue
 		}
 		if b.when != nil && !b.when.Eval(ctx) {
 			// context predicate filtering (unfocused -> no-match)
 			continue
 		}
-
-		if len(b.chords) == len(newPending) {
-			exact = append(exact, b)
-		} else {
-			longer = append(longer, b)
-		}
+		return ResolutionResult{Kind: ResultFound, Command: b.command}
 	}
-
-	if len(exact) == 0 && len(longer) == 0 {
-		return Resolver{bindings: r.bindings}, ResolutionResult{Kind: ResultNoMatch}
-	}
-
-	if len(exact) > 0 && len(longer) == 0 {
-		// "Exact full match AND no longer candidate -> ResultFound"
-		return Resolver{bindings: r.bindings}, ResolutionResult{Kind: ResultFound, Command: exact[0].command}
-	}
-
-	if len(exact) == 0 && len(longer) > 0 {
-		// "All remaining have longer Chords -> ResultMoreChordsNeeded"
-		return Resolver{bindings: r.bindings, pending: newPending}, ResolutionResult{Kind: ResultMoreChordsNeeded}
-	}
-
-	// Mixed
-	return Resolver{
-		bindings:       r.bindings,
-		pending:        newPending,
-		timeoutCommand: exact[0].command, // Shortest full match
-	}, ResolutionResult{Kind: ResultMoreChordsNeeded}
-}
-
-func (r Resolver) ResolveTimeout() (Resolver, ResolutionResult) {
-	if r.timeoutCommand != "" {
-		return Resolver{bindings: r.bindings}, ResolutionResult{Kind: ResultFound, Command: r.timeoutCommand}
-	}
-	return Resolver{bindings: r.bindings}, ResolutionResult{Kind: ResultNoMatch}
-}
-
-func (r Resolver) Reset() Resolver {
-	return Resolver{bindings: r.bindings, pending: nil, timeoutCommand: ""}
-}
-
-func (r Resolver) InChordMode() bool {
-	return len(r.pending) > 0
-}
-
-func (r Resolver) PendingDisplay() string {
-	if len(r.pending) == 0 {
-		return ""
-	}
-	var parts []string
-	for _, c := range r.pending {
-		parts = append(parts, formatChord(c))
-	}
-	return strings.Join(parts, " ") + " ..."
-}
-
-func formatChord(c Chord) string {
-	var p []string
-	if c.Ctrl {
-		p = append(p, "Ctrl")
-	}
-	if c.Alt {
-		p = append(p, "Alt")
-	}
-	if c.Shift {
-		p = append(p, "Shift")
-	}
-	if c.Cmd {
-		p = append(p, "Cmd")
-	}
-	if len(c.Key) > 0 {
-		p = append(p, strings.ToUpper(c.Key[:1])+c.Key[1:])
-	}
-	return strings.Join(p, "+")
+	return ResolutionResult{Kind: ResultNoMatch}
 }

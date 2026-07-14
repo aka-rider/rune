@@ -24,7 +24,7 @@ const yLineOffset = 42
 func newTableClickModel(t *testing.T) Model {
 	t.Helper()
 	m := newImagePipelineModel(t, terminal.TermCaps{})
-	m = m.SetContent(tableDoc)
+	m, _ = m.SetContent(tableDoc)
 	m = m.SetCursors([]cursor.Cursor{{Position: yLineOffset, Anchor: yLineOffset, ID: 1}})
 	return m
 }

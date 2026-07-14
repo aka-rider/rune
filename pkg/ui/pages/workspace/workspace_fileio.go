@@ -299,3 +299,12 @@ func validateFileName(name string) error {
 	}
 	return nil
 }
+
+// persistSearchQueryCmd writes a query to the search_history table asynchronously.
+// Errors are silently swallowed — history persistence is best-effort.
+func persistSearchQueryCmd(store *docstate.Store, query string) tea.Cmd {
+	return func() tea.Msg {
+		_ = store.AppendSearchQuery(query) // fire-and-forget: search history loss is tolerable
+		return nil
+	}
+}

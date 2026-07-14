@@ -70,7 +70,7 @@ func TestR1Adopt_FromHelpReadOnlyEditor(t *testing.T) {
 }
 
 // Review finding 9: a close-save that returns Raced raises the raced guard
-// and must CANCEL the pending close intent — pre-fix guard.close{active:true}
+// and must CANCEL the pending close continuation — pre-fix guard.cont{kind:contClose}
 // stayed dangling, so a later unrelated save ack executed the close out from
 // under the user minutes after they chose [K]eep-mine.
 func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
@@ -85,11 +85,11 @@ func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	// requestID stamped on guard.close mirrors what startSave() does in
+	// requestID stamped on guard.cont mirrors what startSave() does in
 	// production when it launches a save as the confirmed continuation of a
-	// close guard (workspace_edit.go) — the correlation isCloseSaveAck
-	// checks (GUARD-STATE-COH) before letting an ack clear a pending guard.
-	m.guard.close = closeIntent{active: true, requestID: "close-save-1"}
+	// close guard (workspace_edit.go) — the correlation cont.owns(contClose,
+	// ...) checks (GUARD-STATE-COH) before letting an ack clear a pending guard.
+	m.guard.cont = continuation{kind: contClose, requestID: "close-save-1"}
 	m.activeSave = SaveIdentity{RequestID: "close-save-1", InFlight: true, Path: pathA, DocID: docA}
 
 	msg := FileSavedMsg{
@@ -99,10 +99,10 @@ func TestRacedCloseSave_ClearsPendingClose(t *testing.T) {
 	m2, _ := m.Update(msg)
 	m = m2
 
-	if m.guard.close.active {
-		t.Fatal("guard.close must be cancelled by a Raced save ack — a later unrelated ack would close the tab without a prompt")
+	if m.guard.cont.kind == contClose {
+		t.Fatal("guard.cont must be cancelled by a Raced save ack — a later unrelated ack would close the tab without a prompt")
 	}
-	if !m.guard.raced.active {
+	if m.guard.kind != guardRaced {
 		t.Fatal("raced guard must be armed for the displayed doc")
 	}
 }
@@ -125,7 +125,7 @@ func TestOrphanedQuitAck_RacedStillSurfaces(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	// Quit already aborted: guard.quit is zero. A's quit-batch ack arrives
+	// Quit already aborted: guard.cont is zero. A's quit-batch ack arrives
 	// late, carrying a race.
 	msg := FileSavedMsg{
 		Path: pathA, DocID: docA, RequestID: "quitsave-1-0-99999",
@@ -147,9 +147,9 @@ func TestOrphanedQuitAck_RacedStillSurfaces(t *testing.T) {
 // lands, races an unrelated pendingDataLoss{actionClose}+GuardDirty against
 // the bind-new save's own activeSave/RequestID. Neither handler stamps
 // pendingDataLoss.requestID with the bind-new save's ID (only startSave does,
-// and only for the confirmed close-save continuation), so isCloseSaveAck must
-// report false and the close guard must survive untouched — whichever way the
-// bind-new save resolves.
+// and only for the confirmed close-save continuation), so cont.owns(contClose,
+// ...) must report false and the close guard must survive untouched —
+// whichever way the bind-new save resolves.
 
 // TestBindNewRace_ErrorAck_PreservesUnrelatedCloseGuard covers the ack shape
 // still reachable after the Fix-1 Materialize path fix (real disk errors:
@@ -176,14 +176,14 @@ func TestBindNewRace_ErrorAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	const bindReqID = "bind-12345"
 	newPath := filepath.Join(t.TempDir(), "Untitled 1.md")
 	m.activeSave = SaveIdentity{RequestID: bindReqID, InFlight: true, Path: newPath, DocID: docID}
-	m.guard.close = closeIntent{active: true}
+	m.guard.cont = continuation{kind: contClose}
 	m = m.raiseGuardPrompt(guardDirtyClose)
 
 	msg := FileSaveErrorMsg{Path: newPath, DocID: docID, RequestID: bindReqID, Err: errTest}
 	m, _ = m.Update(msg)
 
-	if !m.guard.close.active {
-		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's error ack cleared the close guard's guard.close")
+	if m.guard.cont.kind != contClose {
+		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's error ack cleared the close guard's guard.cont")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDirty {
 		t.Fatalf("GUARD-STATE-COH: close guard no longer showing after the unrelated ack: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
@@ -199,8 +199,8 @@ func TestBindNewRace_ErrorAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	// (SQLite's plain INTEGER PRIMARY KEY reuses max(rowid)+1 once the table
 	// is emptied by DeleteDoc, so comparing DocIDs isn't a reliable signal).
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossDiscard})
-	if m.guard.close.active {
-		t.Fatal("Discard did not resolve guard.close")
+	if m.guard.cont.kind == contClose {
+		t.Fatal("Discard did not resolve guard.cont")
 	}
 	if m.editor.Content() == "j" {
 		t.Fatal("Discard did not close/discard the dirty buffer (editor still shows the typed content) — did it quit instead?")
@@ -227,7 +227,7 @@ func TestBindNewRace_SuccessAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	const bindReqID = "bind-67890"
 	newPath := filepath.Join(t.TempDir(), "Untitled 1.md")
 	m.activeSave = SaveIdentity{RequestID: bindReqID, InFlight: true, Path: newPath, DocID: docID}
-	m.guard.close = closeIntent{active: true}
+	m.guard.cont = continuation{kind: contClose}
 	m = m.raiseGuardPrompt(guardDirtyClose)
 
 	msg := FileSavedMsg{
@@ -239,8 +239,8 @@ func TestBindNewRace_SuccessAck_PreservesUnrelatedCloseGuard(t *testing.T) {
 	// The unrelated close guard must be untouched: the bind-new save has no
 	// idea a close was requested and must not silently execute someone else's
 	// still-pending decision.
-	if !m.guard.close.active {
-		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's success ack cleared the close guard's guard.close")
+	if m.guard.cont.kind != contClose {
+		t.Fatal("GUARD-STATE-COH: an unrelated bind-new save's success ack cleared the close guard's guard.cont")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardDirty {
 		t.Fatalf("GUARD-STATE-COH: close guard no longer showing after the unrelated ack: InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())

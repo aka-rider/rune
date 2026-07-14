@@ -18,7 +18,7 @@ import (
 func newEditor(t *testing.T) markdownedit.Model {
 	t.Helper()
 	m := markdownedit.New(keymap.Default(), styles.Default(), terminal.TermCaps{})
-	m = m.SetRect(textedit.Rect{W: 80, H: 20})
+	m, _ = m.SetRect(textedit.Rect{W: 80, H: 20})
 	return m
 }
 

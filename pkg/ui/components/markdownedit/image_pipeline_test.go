@@ -38,7 +38,7 @@ func newImagePipelineModel(t *testing.T, caps terminal.TermCaps) Model {
 		t.Fatalf("new resolver: %v", err)
 	}
 	m := New(keys, st, caps, WithRegistry(reg), WithResolver(res))
-	m = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
+	m, _ = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
 	m = m.SetFocused(true)
 	return m
 }
@@ -59,7 +59,7 @@ func TestImageRowExpansionStableAcrossCursorMoves(t *testing.T) {
 	// 1-char image span plus a leftover "[](a.png)" text span, so the line is
 	// not a standalone image line and never expands. Production embeds carry a
 	// label (alt text or the "![[name]]" wikilink form), so this matches reality.
-	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
+	m, _ = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
 	// Publish the (live) image footprint straight into the display pipeline.
 	// Decode/transmit I/O is irrelevant to row expansion, so we bypass it.
 	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
@@ -114,7 +114,7 @@ func TestCursorDownStopsAtLastLineWithExpandedImage(t *testing.T) {
 	const imgRows = 5
 	const textLines = 4 // B, C, D, E
 	const lastLine = textLines
-	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
+	m, _ = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
 	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
 
 	down := tea.KeyPressMsg{Code: tea.KeyDown}
@@ -156,7 +156,7 @@ func TestClickBelowExpandedImageResolvesCorrectLine(t *testing.T) {
 	m := newImagePipelineModel(t, terminal.TermCaps{})
 
 	const imgRows = 5
-	m = m.SetContent("![alt](a.png)\nB\nC")
+	m, _ = m.SetContent("![alt](a.png)\nB\nC")
 	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
 
 	// Move off the image line so it expands (imgRows + 2 text lines = 7 rows).
@@ -199,40 +199,40 @@ func TestPendingImageReservesNoRows(t *testing.T) {
 	}
 }
 
-// TestVisibleRowsForCountsOnscreenRows guards the animation-gating fix: an
-// animated image only ticks while on-screen, and visibleRowsFor is what feeds
-// image.SetVisibleRows in updateImages. With the image expanded and fully in
-// view it must report all its rows; with the cursor on the embed (revealed to
-// source) it collapses to a single non-image line and must report 0, pausing
-// the animation while the user edits the source.
-func TestVisibleRowsForCountsOnscreenRows(t *testing.T) {
+// TestVisibleRowsByPathCountsOnscreenRows guards the animation-gating fix: an
+// animated image only ticks while on-screen, and visibleRowsByPath is what
+// feeds image.SetVisibleRows in syncImageViewState (M4). With the image
+// expanded and fully in view it must report all its rows; with the cursor on
+// the embed (revealed to source) it collapses to a single non-image line and
+// must report 0, pausing the animation while the user edits the source.
+func TestVisibleRowsByPathCountsOnscreenRows(t *testing.T) {
 	const imgRows = 5
 	m := newImagePipelineModel(t, terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true})
-	m = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
+	m, _ = m.SetContent("![alt](a.png)\nB\nC\nD\nE")
 	m.Model = m.Model.SetImageDims(map[string]display.ImageDims{"a.png": {Cols: 8, Rows: imgRows}})
 
 	// Cursor on the image line → revealed source, no expanded image rows.
-	if got := m.visibleRowsFor("a.png"); got != 0 {
-		t.Fatalf("cursor on embed: visibleRowsFor=%d, want 0 (revealed source)", got)
+	if got := m.visibleRowsByPath()["a.png"]; got != 0 {
+		t.Fatalf("cursor on embed: visibleRowsByPath[a.png]=%d, want 0 (revealed source)", got)
 	}
 
 	// Move off the embed → it expands to imgRows, all within the 10-row viewport.
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := m.visibleRowsFor("a.png"); got != imgRows {
-		t.Fatalf("image expanded in view: visibleRowsFor=%d, want %d", got, imgRows)
+	if got := m.visibleRowsByPath()["a.png"]; got != imgRows {
+		t.Fatalf("image expanded in view: visibleRowsByPath[a.png]=%d, want %d", got, imgRows)
 	}
-	// An untracked path reports nothing.
-	if got := m.visibleRowsFor("missing.png"); got != 0 {
-		t.Fatalf("unknown image: visibleRowsFor=%d, want 0", got)
+	// An untracked path reports nothing (map lookup zero value).
+	if got := m.visibleRowsByPath()["missing.png"]; got != 0 {
+		t.Fatalf("unknown image: visibleRowsByPath[missing.png]=%d, want 0", got)
 	}
 }
 
-// TestDiscoverImagesOnLoad guards the file-load discovery path: calling
-// DiscoverImages on a freshly-SetContent editor (no buffer edit ever made)
-// must track standalone image embeds and return a decode Cmd. This is the
-// primary regression from the first fix — discovery was gated on
-// afterContentChange which required a buffer revision bump, so a file opened
-// without an edit never discovered its images.
+// TestDiscoverImagesOnLoad guards the file-load discovery path: SetContent
+// itself (afterMutation(true), M5) must track standalone image embeds and
+// return a decode Cmd — no buffer edit, and no separate DiscoverImages call
+// (deleted, M5), is needed. This is the primary regression the original fix
+// guarded — discovery used to be gated on a buffer revision bump, so a file
+// opened without an edit never discovered its images.
 func TestDiscoverImagesOnLoad(t *testing.T) {
 	// Create a temp directory with a stub image file so resolveEmbed succeeds.
 	tmpDir := t.TempDir()
@@ -246,19 +246,20 @@ func TestDiscoverImagesOnLoad(t *testing.T) {
 	// Build an unfocused model — the state at file-load time (focus is on the
 	// file tree, not the editor). All image spans are Rendered in this state,
 	// so StandaloneImagePath returns them. Real graphics caps are required:
-	// discoverNewImages is gated on imageCapable(), and a file is only ever
+	// syncImageSet is gated on imageCapable(), and a file is only ever
 	// loaded into an editor running in a real (graphics-capable) terminal.
 	m := New(keys, st, terminal.TermCaps{GraphicsProtocol: terminal.GraphicsKitty, TrueColor: true})
-	m = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
-	// The doc lives in tmpDir, so embeds resolve there (docDir = filepath.Dir(docPath)).
-	m = m.SetContent("![[photo.webp]]").SetDocPath(filepath.Join(tmpDir, "note.md"))
+	m, _ = m.SetRect(textedit.Rect{X: 0, Y: 0, W: 40, H: 10})
+	// docPath must be set BEFORE SetContent: discovery now runs inside
+	// SetContent itself, so resolveEmbed needs the doc's directory already
+	// pinned to resolve "photo.webp" in tmpDir.
+	m = m.SetDocPath(filepath.Join(tmpDir, "note.md"))
 
-	// No buffer edit has been made — images must still be discovered.
-	m2, cmd := m.DiscoverImages()
+	m2, cmd := m.SetContent("![[photo.webp]]")
 	if _, tracked := m2.images["photo.webp"]; !tracked {
-		t.Fatal("DiscoverImages: image not tracked in m.images after SetContent; discovery requires a buffer edit (regression)")
+		t.Fatal("SetContent: image not tracked in m.images (discovery regression)")
 	}
 	if cmd == nil {
-		t.Fatal("DiscoverImages: expected non-nil decode Cmd, got nil")
+		t.Fatal("SetContent: expected non-nil decode Cmd, got nil")
 	}
 }

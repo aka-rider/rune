@@ -31,7 +31,7 @@ func diverge(t *testing.T, m Model, docID int64, oldContent, newContent string) 
 		[]buffer.AppliedEdit{{Start: 0, End: len(oldContent), Deleted: oldContent, Insert: newContent}}, nil, nil); err != nil {
 		t.Fatalf("diverge: AppendEdit: %v", err)
 	}
-	m.editor = m.editor.SetContent(newContent)
+	m.editor, _ = m.editor.SetContent(newContent)
 	return m
 }
 
@@ -103,7 +103,7 @@ func enterRealConflict(t *testing.T) (Model, string, int64) {
 		t.Fatal(err)
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 	if !mergemode.IsActive(m.merge) {
@@ -410,7 +410,7 @@ func TestUndoPastEnter_DiskEqualsTheirs_NeverSilentOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 	if !mergemode.IsActive(m.merge) || !mergemode.HasUnresolvedConflicts(m.merge) {

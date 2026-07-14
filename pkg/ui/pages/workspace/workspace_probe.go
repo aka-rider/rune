@@ -40,13 +40,13 @@ func (m Model) flushPendingReopen() (Model, tea.Cmd) {
 	return m.requestOpenPath(reopen.docID, reopen.path)
 }
 
-// raiseDeletedGuard arms guard.deleted and raises the GuardDeleted footer
+// raiseDeletedGuard arms guard.prompt and raises the GuardDeleted footer
 // prompt for the current document, whose file went missing on disk. Clears any
 // stale top-banner m.err — the deletion flow uses the footer guard exclusively,
 // never the sticky top error banner (the focus-trap root cause this guard
 // replaces).
 func (m Model) raiseDeletedGuard(docID int64, path string) Model {
-	m.guard.deleted = deletedIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{docID: docID, path: path}
 	m.err = nil
 	m = m.raiseGuardPrompt(guardDeleted)
 	return m
@@ -133,7 +133,7 @@ func (m Model) handleProbeResult(msg probeResultMsg) (Model, tea.Cmd) {
 		return m, nil // fire-and-forget: transient probe error, rung-3 only
 	}
 	if msg.missing {
-		if !m.footer.InGuard() && !m.guard.deleted.active {
+		if !m.footer.InGuard() && m.guard.kind != guardDeleted {
 			m = m.raiseDeletedGuard(msg.docID, msg.path)
 		}
 		return m, nil

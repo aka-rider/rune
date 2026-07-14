@@ -13,7 +13,7 @@ import (
 func TestAbort_RevertsToExactPreMergeOurs(t *testing.T) {
 	preMergeOurs := "line one\nline two\n"
 	ed := newEditor(t)
-	ed = ed.SetContent(preMergeOurs)
+	ed, _ = ed.SetContent(preMergeOurs)
 	st := newState(t)
 
 	hunkSet := []merge.Hunk{
@@ -39,7 +39,7 @@ func TestAbort_RevertsToExactPreMergeOurs(t *testing.T) {
 func TestAbort_AfterPartialResolution_StillRevertsToPreMergeOurs(t *testing.T) {
 	preMergeOurs := "A\nB\nC\n"
 	ed := newEditor(t)
-	ed = ed.SetContent(preMergeOurs)
+	ed, _ = ed.SetContent(preMergeOurs)
 	st := newState(t)
 
 	hunkSet := []merge.Hunk{
@@ -230,7 +230,7 @@ func TestResync_TwoIdenticalConflicts_OneResolved(t *testing.T) {
 func TestResync_UndoPastEnter_NoBlocksFound(t *testing.T) {
 	preMergeOurs := "only ours, never merged\n"
 	ed := newEditor(t)
-	ed = ed.SetContent(preMergeOurs)
+	ed, _ = ed.SetContent(preMergeOurs)
 	st := newState(t)
 
 	st, ed, _, _ = Enter(hunks(merge.HunkConflict, preMergeOurs, "theirs\n"), st, ed)
@@ -240,7 +240,7 @@ func TestResync_UndoPastEnter_NoBlocksFound(t *testing.T) {
 
 	// Simulate "undo past Enter": restore the buffer to the exact pre-merge
 	// content (as ApplyInverse of the marker-load edit would).
-	ed = ed.SetContent(preMergeOurs)
+	ed, _ = ed.SetContent(preMergeOurs)
 
 	resynced := Resync(st, ed)
 	if IsActive(resynced) {

@@ -20,8 +20,6 @@ func (n identNode) Eval(ctx ResolverContext) bool {
 		return ctx.HasSelection
 	case "hasMultiCursor":
 		return ctx.HasMultiCursor
-	case "inCodeFence":
-		return ctx.InCodeFence
 	case "readOnly":
 		return ctx.ReadOnly
 	}
@@ -168,7 +166,7 @@ func (p *parser) parsePrimary() (exprNode, error) {
 	}
 	p.pos++
 	switch tok {
-	case "editorFocused", "hasSelection", "hasMultiCursor", "inCodeFence", "readOnly":
+	case "editorFocused", "hasSelection", "hasMultiCursor", "readOnly":
 		return identNode(tok), nil
 	default:
 		return nil, fmt.Errorf("unknown identifier: %s", tok)

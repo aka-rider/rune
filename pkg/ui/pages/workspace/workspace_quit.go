@@ -3,24 +3,12 @@ package workspace
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/docstate"
 	"rune/pkg/ui/components/footer"
 )
-
-// quitIntent carries the state a raised dirty-quit guard must survive across
-// the async multi-tab "Save all" batch (§5.5): saveLeft counts the
-// outstanding per-tab materialize acks before teardown; the first failure
-// clears the whole intent so every buffer is kept. Zero value = no pending
-// quit. Lives at guardState.quit (A4: migrated from the former
-// Model.pendingDataLoss{kind:actionQuit}).
-type quitIntent struct {
-	active   bool
-	saveLeft int
-}
 
 // teardownAndQuit runs the shared quit sequence: clear pending state, disable
 // dictation, close the store, delete pasted images, and quit.
@@ -31,7 +19,7 @@ func (m Model) teardownAndQuit() (Model, tea.Cmd) {
 	// was — see abandonDirtyContinuation's own doc comment).
 	m = m.abandonDirtyContinuation()
 	m = m.clearGuardPrompt()
-	m.dict = m.dict.Disable()
+	m = m.stopDictation()
 	if m.cancelWatch != nil {
 		m.cancelWatch() // release the live directory watch before quitting
 	}
@@ -54,7 +42,7 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		return m.teardownAndQuit()
 	}
 	var batch []tea.Cmd
-	for i, h := range m.dirtyHandles() { // ground-truth (H3, §1.4.8) — never the cached opentabs flag alone
+	for _, h := range m.dirtyHandles() { // ground-truth (H3, §1.4.8) — never the cached opentabs flag alone
 		if h.Path == "" {
 			continue // untitled — nothing to write
 		}
@@ -71,18 +59,18 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 		// otherwise CAS's own expect (Load already advanced saved_obs to the
 		// very sighting that revealed the divergence) would let this quit
 		// silently clobber theirs with a stale/never-reconciled ours, exactly
-		// the clobber the guard exists to prevent (§0/§1.4.7).
+		// the clobber the guard exists to prevent (§0/§1.4.7). Every refusal
+		// below exits through failContinuation (W3) — same abandon-guard-and-
+		// surface shape, texts verbatim; the SyncDiverged branch is NOT one of
+		// these (it calls abortQuitForDivergence, a genuinely different
+		// action, so it stays separate).
 		v := m.vetSave(h.DocID)
 		if v.SyncErr != nil {
 			// §1.3/WP-R4: a failed divergence check aborts the quit exactly
 			// like a detected divergence — quitting on an unvetted write is
 			// the same silent-clobber risk (review finding). The doc stays
 			// dirty and durable in the VFS.
-			m.guard.quit = quitIntent{}
-			m = m.clearGuardPrompt()
-			var cmd tea.Cmd
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — divergence check failed for %q: %v", filepath.Base(h.Path), v.SyncErr)})
-			return m, cmd
+			return m.failContinuation(fmt.Sprintf("quit aborted — divergence check failed for %q: %v", filepath.Base(h.Path), v.SyncErr))
 		}
 		if v.Sync.Kind == docstate.SyncDiverged {
 			// F7: abort the WHOLE quit at the first diverged doc found — a
@@ -101,50 +89,42 @@ func (m Model) saveAllDirtyForQuit() (Model, tea.Cmd) {
 			// all" — the user walks away believing everything was written.
 			// The work is durable in the VFS, but the quit must abort and
 			// say so (same refuse-and-surface as the Sync gates above).
-			m.guard.quit = quitIntent{}
-			m = m.clearGuardPrompt()
-			var cmd tea.Cmd
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — %q has no disk baseline to save against; open it to save explicitly", filepath.Base(h.Path))})
-			return m, cmd
+			return m.failContinuation(fmt.Sprintf("quit aborted — %q has no disk baseline to save against; open it to save explicitly", filepath.Base(h.Path)))
 		}
-		expect := v.Expect
-		requestID := fmt.Sprintf("quitsave-%d-%d-%v", h.DocID, i, time.Now().UnixNano())
-		seq := m.currentSeqFor(h.DocID)
-		if isCurrent {
-			// Current doc: use the live editor buffer.
-			batch = append(batch, materializeStoreCmd(m.store, h.DocID, h.Path, m.editor.Content(), expect, seq, requestID, false))
-			continue
+		// Current doc: use the live editor buffer. Non-current tab:
+		// reconstruct its bytes from the VFS — never write empty/stale over a
+		// real file if reconstruction fails, and never silently drop the doc
+		// from an explicit "Save all" either (§1.3/§1.4.4): abort the quit and
+		// surface it. The work stays safe in the VFS either way.
+		content := m.editor.Content()
+		if !isCurrent {
+			var err error
+			content, err = m.store.Content(h.DocID)
+			if err != nil {
+				return m.failContinuation(fmt.Sprintf("quit aborted — cannot reconstruct %q: %v", filepath.Base(h.Path), err))
+			}
 		}
-		// Non-current tab: reconstruct its bytes from the VFS. Never write
-		// empty/stale over a real file if reconstruction fails — and never
-		// silently drop the doc from an explicit "Save all" either
-		// (§1.3/§1.4.4): abort the quit and surface it. The work stays safe
-		// in the VFS.
-		content, err := m.store.Content(h.DocID)
-		if err != nil {
-			m.guard.quit = quitIntent{}
-			m = m.clearGuardPrompt()
-			var cmd tea.Cmd
-			m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: fmt.Sprintf("quit aborted — cannot reconstruct %q: %v", filepath.Base(h.Path), err)})
-			return m, cmd
-		}
-		batch = append(batch, materializeStoreCmd(m.store, h.DocID, h.Path, content, expect, seq, requestID, false))
+		var cmd tea.Cmd
+		m, _, cmd = m.issueSave(saveReq{prefix: "quitsave", docID: h.DocID, path: h.Path, content: content, expect: v.Expect})
+		batch = append(batch, cmd)
 	}
 	if len(batch) == 0 {
 		return m.teardownAndQuit() // only untitled docs are dirty — quit now
 	}
 	// guard.kind/phase were already set to guardDirtyQuit/guardAwaitingSave by
-	// confirmGuardSave (the dispatcher's [S]ave case) before this ran — only
-	// the intent's own saveLeft countdown is stamped here.
-	m.guard.quit = quitIntent{active: true, saveLeft: len(batch)}
+	// confirmGuardSave (the dispatcher's [S]ave case) before this ran, and
+	// guard.cont.kind is already contQuit (raiseDirtyGuard, W1/ConfirmQuitMsg)
+	// — only the continuation's own saveLeft countdown is stamped here.
+	m.guard.cont.saveLeft = len(batch)
 	return m, tea.Batch(batch...)
 }
 
 // abortQuitForDivergence aborts a "Save all" quit at the first diverged doc
-// it finds (F7): cancels the quit teardown (guard.quit deliberately left
+// it finds (F7): cancels the quit teardown (guard.cont deliberately left
 // untouched — see guardState's own doc comment on the critic-R1 coexistence
 // window: a conflict guard raised here rides on top of the still-live quit
-// intent, and resolving it later abandons the quit rather than resuming it),
+// continuation, and resolving it later abandons the quit rather than
+// resuming it),
 // focuses that doc, and raises its
 // conflict guard so the user can resolve it before quitting again — v3's
 // refuse-and-surface. isCurrent means the doc is ALREADY displayed (the

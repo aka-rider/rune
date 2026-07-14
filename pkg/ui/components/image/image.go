@@ -1,6 +1,7 @@
 package image
 
 import (
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,10 +20,24 @@ const (
 	Failed
 )
 
+// genCounter mints a process-wide unique spawn generation for every image.Model
+// (New stamps m.gen from it). UpdateMsg/ErrorMsg carry the spawning instance's
+// Gen; the envelope guard in Update drops any result whose Gen no longer
+// matches — so a same-path async result from a despawned-then-respawned
+// instance (mtime replacement, §3 discoverNewImages) can never be applied to
+// the new instance by mistake, even though Path alone would match.
+var genCounter atomic.Uint64
+
+func nextGen() uint64 {
+	return genCounter.Add(1)
+}
+
 type Model struct {
 	path     string
 	absPath  string
 	state    State
+	err      error // set on transition to Failed; see Err()
+	gen      uint64
 	termCaps terminal.TermCaps
 	id       uint32
 	cols     int
@@ -80,6 +95,7 @@ func New(path, absPath string, id uint32, mtime int64, caps terminal.TermCaps, c
 		maxRows:  maxRows,
 		fs:       fsys,
 		state:    PendingDecode,
+		gen:      nextGen(),
 	}
 }
 
@@ -90,57 +106,74 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case UpdateMsg:
-		if msg.Path != m.path {
+		if msg.Path != m.path || msg.Gen != m.gen {
+			return m, nil // stale-async by construction: despawned/respawned instance, or a different path
+		}
+		return m.handleInner(msg.inner)
+
+	case ErrorMsg:
+		if msg.Path != m.path || msg.Gen != m.gen {
 			return m, nil
 		}
-		// Unwrap
-		return m.handleInner(msg.inner)
+		m.err = msg.Err
+		return m.transition(Failed)
 	}
 	return m, nil
 }
 
+// handleInner applies one unwrapped lifecycle message. Every case is guarded
+// by the CURRENT state — an illegal (state, message) pair is a silent drop,
+// safe by construction once the envelope's Gen has already matched: no other
+// async result for this exact spawn can be in flight for a state the message
+// doesn't belong to. Two pairs are deliberately accepted outside the normal
+// "one message advances one edge" shape: Live+transmittedMsg is an idempotent
+// ack (a duplicate in-flight transmit completing after the model already
+// reached Live via another), and Live+encodedMsg stores refreshed iTerm2
+// slices (an overlapping Resize retransmit landing after an earlier one
+// already closed the PendingTransmit->Live edge) — both leave state alone.
 func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case decodedMsg:
+		if m.state != PendingDecode {
+			return m, nil
+		}
 		m.cols = msg.cols
 		m.rows = msg.rows
 		m.pxW = msg.pxW
 		m.pxH = msg.pxH
 		m.mtime = msg.mtime
-		m.state = PendingTransmit
 
-		kitty := m.termCaps.SupportsKittyGraphics()
-
-		if msg.animated && msg.frameCount > 1 && kitty {
+		if msg.animated && msg.frameCount > 1 && m.termCaps.SupportsKittyGraphics() {
 			m.anim.animated = true
 			m.anim.frameCount = msg.frameCount
 			m.anim.delays = msg.delays
 			m.anim.loopCount = msg.loopCount
 			m.anim.frameIdx = 0
 			m.anim.loopsDone = 0
-			// frameIDs will be populated via SetFrameIDs; transmit is NOT
-			// triggered here for animated images — the editor allocates frame
-			// IDs first (SetFrameIDs) and drives the transmit from there.
-			return m, nil
 		}
-
-		if kitty {
-			return m, TransmitCmd(m)
-		}
-		return m, EncodeITerm2Cmd(m)
+		return m.transition(PendingTransmit)
 
 	case transmittedMsg:
-		m.state = Live
-		var cmd tea.Cmd
-		if m.anim.animated && m.anim.frameCount > 1 {
-			m, cmd = m.ArmTick()
+		switch m.state {
+		case PendingTransmit:
+			return m.transition(Live)
+		case Live:
+			return m, nil // idempotent ack
+		default:
+			return m, nil // illegal: PendingDecode/Failed never dispatch a transmit
 		}
-		return m, tea.Batch(cmd, func() tea.Msg { return ReadyMsg{Path: m.path} })
 
 	case encodedMsg:
-		m.iterm2Slices = msg.slices
-		m.state = Live
-		return m, func() tea.Msg { return ReadyMsg{Path: m.path} }
+		switch m.state {
+		case PendingTransmit:
+			m.iterm2Slices = msg.slices
+			return m.transition(Live)
+		case Live:
+			m.iterm2Slices = msg.slices // refreshed retransmit slices
+			return m, nil
+		default:
+			return m, nil
+		}
 
 	case frameTickMsg:
 		if msg.gen != m.anim.tickGen || m.state != Live || !m.anim.animated {
@@ -163,6 +196,50 @@ func (m Model) handleInner(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.scheduleFrame(m.anim.tickGen, m.anim.frameIdx+1, m.frameDelay())
+	}
+	return m, nil
+}
+
+// transition is the ONLY writer of m.state; enterState receives prev because
+// the two edges into PendingTransmit differ (initial transmit dispatch from
+// PendingDecode vs a Resize retransmit from Live, whose Cmd the caller sends
+// separately via RetransmitCmd).
+func (m Model) transition(next State) (Model, tea.Cmd) {
+	prev := m.state
+	m.state = next
+	return m.enterState(prev)
+}
+
+// enterState runs the entry action for the state m.state was just set to.
+func (m Model) enterState(prev State) (Model, tea.Cmd) {
+	switch m.state {
+	case PendingTransmit:
+		if prev == Live {
+			return m, nil // Resize retransmit — parent dispatches RetransmitCmd
+		}
+		if m.anim.animated && m.anim.frameCount > 1 {
+			// frameIDs will be populated via SetFrameIDs; transmit is NOT
+			// triggered here for animated images — the editor allocates frame
+			// IDs first (SetFrameIDs) and drives the transmit from there.
+			return m, nil
+		}
+		if m.termCaps.SupportsKittyGraphics() {
+			return m, TransmitCmd(m)
+		}
+		return m, EncodeITerm2Cmd(m)
+
+	case Live:
+		// No animation self-arm here: when the async Live ack lands,
+		// visibleRows still holds the projection from BEFORE this instance
+		// decoded (usually 0 — pre-decode embeds reserve no rows), so an arm
+		// from inside the instance would consult stale visibility and no-op.
+		// The parent's updateImages funnels through syncImageViewState — the
+		// single re-arm chokepoint — right after applying this message, with
+		// visibility freshly projected from the row-expanded snapshot.
+		return m, func() tea.Msg { return ReadyMsg{Path: m.path} }
+
+	case Failed:
+		m.anim.ticking = false // stop ticking; Height()/IsLive() already reflect Failed
 	}
 	return m, nil
 }
@@ -217,12 +294,14 @@ func (m Model) State() State {
 	return m.state
 }
 
-func (m Model) Mtime() int64 {
-	return m.mtime
+// Err returns the error that drove the transition to Failed, or nil if the
+// image never failed (or hasn't yet).
+func (m Model) Err() error {
+	return m.err
 }
 
-func (m Model) Path() string {
-	return m.path
+func (m Model) Mtime() int64 {
+	return m.mtime
 }
 
 // Animation helpers
@@ -265,12 +344,6 @@ func (m Model) frameDelay() time.Duration {
 	return 100 * time.Millisecond
 }
 
-// MarkFailed manually sets the model to failed state, e.g. on error msg
-func (m Model) MarkFailed() Model {
-	m.state = Failed
-	return m
-}
-
 func (m Model) NeedsFrameIDs() bool {
 	return m.state == PendingTransmit && m.anim.animated && len(m.anim.frameIDs) == 0
 }
@@ -292,6 +365,12 @@ func (m Model) FrameCount() int {
 }
 
 func (m Model) Resize(maxCols, maxRows int) (Model, bool) {
+	// Write back unconditionally, even for a not-yet-decoded image: without
+	// this, a resize that lands before decode completes was silently dropped
+	// (the early return below), leaving maxCols/maxRows stuck at whatever
+	// New() captured — a latent config/runtime split.
+	m.maxCols = maxCols
+	m.maxRows = maxRows
 	if m.pxW <= 0 || m.pxH <= 0 {
 		return m, false
 	}
@@ -303,7 +382,7 @@ func (m Model) Resize(maxCols, maxRows int) (Model, bool) {
 	m.rows = rows
 	m.iterm2Slices = nil
 	if m.state == Live {
-		m.state = PendingTransmit
+		m, _ = m.transition(PendingTransmit)
 	}
 	return m, true
 }

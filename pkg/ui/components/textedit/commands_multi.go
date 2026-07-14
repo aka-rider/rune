@@ -5,27 +5,34 @@ import (
 	"rune/pkg/editor/cursor"
 )
 
-func execMulticursorAddAbove(ctx command.CommandContext) command.Result {
+// execMulticursorAdd adds one cursor on the line adjacent (dir=-1 above,
+// dir=+1 below) to the extreme (topmost for dir=-1, bottommost for dir=+1)
+// existing cursor, preserving its desired column. execMulticursorAddAbove/
+// Below are thin direction wrappers below.
+func execMulticursorAdd(ctx command.CommandContext, dir int) command.Result {
 	all := ctx.Cursors.All()
 	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
+		return noneResult()
 	}
 
-	// Find the topmost cursor to add above
-	topmost := all[0]
+	// Find the extreme cursor to add adjacent to: topmost for dir<0, bottommost for dir>0.
+	extreme := all[0]
 	for _, c := range all[1:] {
-		if c.Position < topmost.Position {
-			topmost = c
+		if (dir < 0 && c.Position < extreme.Position) || (dir > 0 && c.Position > extreme.Position) {
+			extreme = c
 		}
 	}
 
-	bp := ctx.Buffer.OffsetToLineCol(topmost.Position)
-	if bp.Line == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
+	bp := ctx.Buffer.OffsetToLineCol(extreme.Position)
+	if dir < 0 && bp.Line == 0 {
+		return noneResult()
+	}
+	if dir > 0 && bp.Line >= ctx.Buffer.LineCount()-1 {
+		return noneResult()
 	}
 
-	targetLine := bp.Line - 1
-	desiredCol := topmost.DesiredCol
+	targetLine := bp.Line + dir
+	desiredCol := extreme.DesiredCol
 	if desiredCol == 0 {
 		desiredCol = bp.Col
 	}
@@ -52,51 +59,12 @@ func execMulticursorAddAbove(ctx command.CommandContext) command.Result {
 	}
 }
 
+func execMulticursorAddAbove(ctx command.CommandContext) command.Result {
+	return execMulticursorAdd(ctx, -1)
+}
+
 func execMulticursorAddBelow(ctx command.CommandContext) command.Result {
-	all := ctx.Cursors.All()
-	if len(all) == 0 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	// Find the bottommost cursor to add below
-	bottommost := all[0]
-	for _, c := range all[1:] {
-		if c.Position > bottommost.Position {
-			bottommost = c
-		}
-	}
-
-	bp := ctx.Buffer.OffsetToLineCol(bottommost.Position)
-	if bp.Line >= ctx.Buffer.LineCount()-1 {
-		return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
-	}
-
-	targetLine := bp.Line + 1
-	desiredCol := bottommost.DesiredCol
-	if desiredCol == 0 {
-		desiredCol = bp.Col
-	}
-
-	lineLen := ctx.Buffer.LineEnd(targetLine) - ctx.Buffer.LineStart(targetLine)
-	col := desiredCol
-	if col > lineLen {
-		col = lineLen
-	}
-
-	newOffset := ctx.Buffer.LineStart(targetLine) + col
-	newCursor := cursor.Cursor{
-		Position:   newOffset,
-		Anchor:     newOffset,
-		DesiredCol: desiredCol,
-	}
-
-	newSet := ctx.Cursors.Add(newCursor)
-	return command.Result{
-		Operation: command.Operation{
-			Kind:    command.OperationMoveCursors,
-			Cursors: newSet,
-		},
-	}
+	return execMulticursorAdd(ctx, 1)
 }
 
 func execMulticursorEscape(ctx command.CommandContext) command.Result {
@@ -132,35 +100,8 @@ func execMulticursorEscape(ctx command.CommandContext) command.Result {
 	return command.Result{Operation: command.Operation{Kind: command.OperationNone}}
 }
 
-func registerMultiCommands(builder command.Builder) (command.Builder, error) {
-	var err error
-
-	builder, err = builder.Register(command.Command{
-		Name:    "multicursor.add-above",
-		When:    "editorFocused",
-		Execute: execMulticursorAddAbove,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "multicursor.add-below",
-		When:    "editorFocused",
-		Execute: execMulticursorAddBelow,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:    "multicursor.escape",
-		When:    "editorFocused",
-		Execute: execMulticursorEscape,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	return builder, nil
+var multiSpecs = []cmdSpec{
+	{name: "multicursor.add-above", when: "editorFocused", exec: execMulticursorAddAbove},
+	{name: "multicursor.add-below", when: "editorFocused", exec: execMulticursorAddBelow},
+	{name: "multicursor.escape", when: "editorFocused", exec: execMulticursorEscape},
 }

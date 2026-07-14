@@ -286,7 +286,7 @@ func TestConflictGuard_PreviewRendersDiffAtGuardTime(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
 		t.Fatal("setup: expected GuardMerge raised")
 	}
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("setup: expected pendingConflict active")
 	}
 	if mergemode.IsActive(m.merge) {
@@ -318,13 +318,13 @@ func TestConflictGuard_PreviewClearedOnEsc(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, _ = m.raiseConflictGuard(docID, path, oursContent, theirsHash, 0)
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("setup: expected pendingConflict active")
 	}
 
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
 
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("Esc must clear pendingConflict")
 	}
 	body := m.View().Content

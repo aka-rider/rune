@@ -15,6 +15,18 @@ import (
 // image-row hook closing over its own image/terminal-capability state.
 // Everything else (cursor/selection/match overlays, dim-when-unfocused,
 // tilde fill, the outer wrap) is textedit's shared pipeline, unchanged.
+// blankCells returns n+1 blank (space, unstyled, BufOffset -1) cells — the
+// +1 is the left-margin cell every image row reserves. Used to reserve
+// screen real estate for a not-yet-live Kitty image and for every iTerm2
+// inline image row (which never emits Kitty placeholder cells at all).
+func blankCells(n int) []textedit.Cell {
+	cells := make([]textedit.Cell, n+1)
+	for i := range cells {
+		cells[i] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
+	}
+	return cells
+}
+
 func (m Model) View() string {
 	imageKitty := m.imageKittyCapable()
 	imageInline := m.imageInlineCapable()
@@ -30,11 +42,7 @@ func (m Model) View() string {
 				live = img.IsLive()
 			}
 			if !live {
-				spaceCells := make([]textedit.Cell, l.ImageCols+1)
-				for j := range spaceCells {
-					spaceCells[j] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
-				}
-				return spaceCells, true
+				return blankCells(l.ImageCols), true
 			}
 			id := m.imageIDFor(l.ImagePath)
 			lineCells := imagePlaceholderCells(id, l.ImageRowIndex, l.ImageCols)
@@ -44,11 +52,7 @@ func (m Model) View() string {
 
 		// iTerm2 inline image row: emit spaces to reserve screen real estate.
 		if imageInline {
-			spaceCells := make([]textedit.Cell, l.ImageCols+1)
-			for j := range spaceCells {
-				spaceCells[j] = textedit.Cell{Rune: ' ', Width: 1, Style: lipgloss.NewStyle(), BufOffset: -1}
-			}
-			return spaceCells, true
+			return blankCells(l.ImageCols), true
 		}
 
 		return nil, false

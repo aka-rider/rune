@@ -26,7 +26,11 @@ type ImageSavedMsg struct {
 	RelativePath string
 }
 
-// ImageSaveErrorMsg is produced when image saving fails.
-type ImageSaveErrorMsg struct {
+// ImageErrorMsg is produced when an image paste-save fails, or when a
+// tracked embed's decode/transmit/encode fails (the ¬Failed->Failed edge of
+// the image lifecycle, image.Model.Err()) — one name for both since either
+// is "something went wrong with an image", surfaced identically on the
+// footer (E5; renamed from ImageSaveErrorMsg, which only covered the first).
+type ImageErrorMsg struct {
 	Err error
 }

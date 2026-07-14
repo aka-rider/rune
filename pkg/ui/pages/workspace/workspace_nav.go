@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"rune/pkg/ui/components/footer"
@@ -97,9 +98,9 @@ func (m Model) requestOpenPath(docID int64, path string) (Model, tea.Cmd) {
 	var switchCmd tea.Cmd
 	switch path {
 	case help.DocPath:
-		m = m.showHelp()
+		m, switchCmd = m.showHelp()
 	case "":
-		m = m.showUntitled(docID)
+		m, switchCmd = m.showUntitled(docID)
 	default:
 		m, switchCmd = m.beginLoad(docID, path)
 	}
@@ -208,15 +209,6 @@ func (m Model) isViewDirty() bool {
 	return d
 }
 
-// closeIntent carries the state a raised dirty-close guard must survive
-// across the async Save→FileSavedMsg round-trip (§5.5). Zero value = no
-// pending close. Lives at guardState.close (A4: migrated from the former
-// Model.pendingDataLoss{kind:actionClose}).
-type closeIntent struct {
-	active    bool
-	requestID string // stamped by startSave when this IS the confirmed close-save continuation
-}
-
 // requestCloseCurrent guards against silently discarding a dirty buffer (§1.4.4).
 func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 	// Modal merge (§4): refuse closing the active doc while unresolved —
@@ -234,13 +226,11 @@ func (m Model) requestCloseCurrent() (Model, tea.Cmd) {
 			}
 		}
 		if isDirty {
-			// Wholesale-replace every close/evict/quit intent (mirrors the
-			// pre-A4 `pendingDataLoss = pendingDataLoss{kind: actionClose}`
-			// single-field overwrite exactly — see abandonDirtyContinuation's
-			// own doc comment) before raising THIS guard.
-			m = m.abandonDirtyContinuation()
-			m.guard.close = closeIntent{active: true}
-			m = m.raiseGuardPrompt(guardDirtyClose)
+			// raiseDirtyGuard wholesale-replaces the continuation slot
+			// (mirrors the pre-A4 `pendingDataLoss = pendingDataLoss{kind:
+			// actionClose}` single-field overwrite exactly — see its own doc
+			// comment) before raising THIS guard.
+			m = m.raiseDirtyGuard(guardDirtyClose, continuation{kind: contClose})
 			return m, nil
 		}
 	}
@@ -291,20 +281,41 @@ func (m Model) maybeFinalizeTitle() (Model, tea.Cmd, bool) {
 	return m, renameCmd, true
 }
 
-// withFinalizedTitle is the chokepoint every global-key handler in
-// handleKeyPress guards on before acting: run maybeFinalizeTitle and append
-// its cmd to cmds in one call, instead of the four-line
-// "var ok bool; m, cmd, ok = m.maybeFinalizeTitle(); cmds = append(cmds, cmd)"
-// repeated at every one of the ×9 call sites. ok=false still means "focus
-// change blocked" — the caller's own `if !ok { return m.finalize(cmds) }`
-// stays inline (each case's subsequent body differs, so the early return
-// itself can't be centralized without a callback-shaped rewrite).
+// withFinalizedTitle runs maybeFinalizeTitle and appends its cmd to cmds in
+// one call, instead of the four-line "var ok bool; m, cmd, ok =
+// m.maybeFinalizeTitle(); cmds = append(cmds, cmd)" idiom. W5: called from
+// exactly ONE site now — the hoisted title-finalize gate in handleKeyPress
+// (finalizesTitle's doc comment) — rather than the ×9 near-identical
+// call-site copies this used to collapse (pre-W5, one per global key that
+// needs the title finalized before it acts). ok=false still means "focus
+// change blocked"; the gate's own `if !ok { return m.finalize(cmds) }` stays
+// inline there.
 func (m Model) withFinalizedTitle(cmds []tea.Cmd) (Model, []tea.Cmd, bool) {
 	var cmd tea.Cmd
 	var ok bool
 	m, cmd, ok = m.maybeFinalizeTitle()
 	cmds = append(cmds, cmd)
 	return m, cmds, ok
+}
+
+// finalizesTitle reports whether msg is one of the ×9 global keys whose
+// handleKeyPress case body used to open with its own withFinalizedTitle call
+// (W5: hoisted into one gate between undo/redo and the global switch —
+// TabSwitch/PinTab/FocusExplorer/FocusEditor/FocusChat/CreateNewFile/
+// CloseFile/Help/ZenMode). ⌘N's own merge-refusal runs as a SEPARATE, earlier
+// check in handleKeyPress (order preserved from the pre-hoist code — Esc-
+// abort must win before any title-finalize attempt); Help's merge-refusal
+// stays inside toggleHelp, which this predicate has no effect on either way.
+func (m Model) finalizesTitle(msg tea.KeyPressMsg) bool {
+	return key.Matches(msg, m.keys.TabSwitch) ||
+		key.Matches(msg, m.keys.PinTab) ||
+		key.Matches(msg, m.keys.FocusExplorer) ||
+		key.Matches(msg, m.keys.FocusEditor) ||
+		key.Matches(msg, m.keys.FocusChat) ||
+		key.Matches(msg, m.keys.CreateNewFile) ||
+		key.Matches(msg, m.keys.CloseFile) ||
+		key.Matches(msg, m.keys.Help) ||
+		key.Matches(msg, m.keys.ZenMode)
 }
 
 // nextUntitledName returns the first "Untitled N" label not already shown by an
@@ -357,7 +368,9 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	m = m.forceSnapshot()
 	m = m.supersedeLoad() // synchronous: drop any in-flight read so it can't display over this buffer
 
-	m.editor = m.editor.SetContent("").SetReadOnly(false)
+	var scmd tea.Cmd
+	m.editor, scmd = m.editor.SetContent("")
+	m.editor = m.editor.SetReadOnly(false)
 	m = m.bumpEpoch() // Part IV: a fresh-untitled buffer install invalidates every outstanding view ticket
 
 	name := m.nextUntitledName()
@@ -375,5 +388,5 @@ func (m Model) CreateUntitled() (Model, tea.Cmd) {
 	m.opentabs = m.opentabs.SetName(opentabs.TabHandle{DocID: newDocID, Path: ""}, name)
 	m = m.setFocus(paneCenter)
 
-	return m, nil
+	return m, scmd
 }

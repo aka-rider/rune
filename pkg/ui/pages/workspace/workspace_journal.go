@@ -162,3 +162,62 @@ func (m Model) rollbackFailedJournal(target journalTarget, edits []buffer.Applie
 	}
 	return m
 }
+
+// ---- Generic drain+journal chokepoint (A6/F7) ------------------------------
+
+// editSurface is a CALL-SITE GENERIC CONSTRAINT, not a stored abstraction
+// (§2.2: workspace still owns title/editor/chat as concrete fields, by
+// value, and every non-generic call site still names its concrete type
+// directly). It names the Update/DrainEdits/Cursors shape title.Model,
+// chat.Model, and markdownedit.Model already share, so
+// updateAndJournal/drainAndJournal below are written once instead of
+// duplicated per component.
+type editSurface[T any] interface {
+	Update(tea.Msg) (T, tea.Cmd)
+	DrainEdits() (T, []buffer.AppliedEdit)
+	Cursors() []cursor.Cursor
+}
+
+// drainAndJournal is the drain+journal ritual shared by every editable
+// surface's key/broadcast routing (A6/F7: duplicated ×4 pre-refactor) —
+// drain whatever pending edits *field accumulated since prevCursors was
+// captured, and journal them against target.
+//
+// field MUST be a pointer to m's OWN corresponding struct field (&m.title,
+// &m.editor, &m.chat) — never a disconnected local copy. journalEdit's
+// failure path (rollbackFailedJournal, on a failed AppendEdit) mutates that
+// field DIRECTLY, by target-specific hardcoded switch, through m's own
+// value-receiver methods; an early version of this helper tracked the drained
+// surface as a separate return value instead, and the LAST assignment at
+// each call site (`m, m.editor = drainAndJournal(...)`) clobbered the
+// correctly-rolled-back m.editor with that stale, never-rolled-back copy —
+// S2's own rollback guarantee silently defeated (caught by
+// TestS2_JournalFailureRollsBackBuffer). Taking m by pointer too means
+// `*m = m.journalEdit(...)`'s in-place struct copy leaves *field already
+// pointing at whatever m.journalEdit produced — post-rollback content on
+// failure, the drained content unchanged on success — with no second value
+// to separately propagate back.
+//
+// prevCursors is passed in, not captured here, because a caller whose
+// pre-intercept may consume the message without ever calling
+// (*field).Update (paneCenter's merge routing) must capture it BEFORE that
+// gate runs, not after.
+func drainAndJournal[T editSurface[T]](m *Model, field *T, target journalTarget, prevCursors []cursor.Cursor, cmds *[]tea.Cmd) {
+	var edits []buffer.AppliedEdit
+	*field, edits = (*field).DrainEdits()
+	*m = m.journalEdit(target, edits, prevCursors, (*field).Cursors(), cmds)
+}
+
+// updateAndJournal is drainAndJournal plus the Update call itself, for sites
+// that always call (*field).Update(msg) unconditionally (title/chat's key
+// routing) — the drain+journal ritual's other half. A site where a
+// pre-intercept may consume the message without ever calling
+// (*field).Update (paneCenter's merge routing) calls drainAndJournal
+// directly instead.
+func updateAndJournal[T editSurface[T]](m *Model, field *T, msg tea.Msg, target journalTarget, cmds *[]tea.Cmd) {
+	prevCursors := (*field).Cursors()
+	var cmd tea.Cmd
+	*field, cmd = (*field).Update(msg)
+	*cmds = append(*cmds, cmd)
+	drainAndJournal(m, field, target, prevCursors, cmds)
+}

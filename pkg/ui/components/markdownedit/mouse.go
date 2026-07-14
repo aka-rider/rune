@@ -13,13 +13,38 @@ import (
 
 const multiClickThreshold = 500 * time.Millisecond
 
+// chebyshevDistance is the Chebyshev (king-move) distance between two cells —
+// the max of the per-axis deltas, so it treats a diagonal move the same as
+// an orthogonal one of the same reach. Used by handleMouseClick's multi-click
+// tolerance.
+func chebyshevDistance(x1, y1, x2, y2 int) int {
+	dx := x1 - x2
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := y1 - y2
+	if dy < 0 {
+		dy = -dy
+	}
+	if dx > dy {
+		return dx
+	}
+	return dy
+}
+
+// mouseState holds the click-run/multi-click bookkeeping only. There is no
+// drag state to reset on release: Bubble Tea v2.0.6 delivers
+// tea.MouseReleaseMsg, but a drag is entirely derivable per-motion-event from
+// the held button (handleMouseMotion checks msg.Button), so nothing needs to
+// persist across events. A prior dragAnchor field was write-only (the real
+// selection anchor lives in textedit) and a prior dragging bool was written
+// but never read for behavior — both deleted (M1; the workspace divider drag
+// is a natural future consumer of MouseReleaseMsg, not this component).
 type mouseState struct {
 	lastClickTime time.Time
 	lastClickX    int
 	lastClickY    int
 	clickCount    int
-	dragging      bool
-	dragAnchor    int
 }
 
 func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, tea.Cmd) {
@@ -54,17 +79,20 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 	bp, offset := m.Model.DisplayToBuffer(dp)
 
 	// Detect multi-click (link clicks participate too: a single click positions
-	// the caret and reveals the link; a second click on it follows).
+	// the caret and reveals the link; a second click on it follows). Tolerance
+	// is Chebyshev distance <= 1 cell, not pixel-exact — a human double-click
+	// routinely lands a cell off between clicks (hand tremor, terminal cell
+	// rounding), and demanding the exact same cell silently downgraded it to
+	// two single clicks.
 	clickCount := 1
 	if now.Sub(m.mouse.lastClickTime) < multiClickThreshold &&
-		msg.X == m.mouse.lastClickX && msg.Y == m.mouse.lastClickY {
+		chebyshevDistance(msg.X, msg.Y, m.mouse.lastClickX, m.mouse.lastClickY) <= 1 {
 		clickCount = m.mouse.clickCount + 1
 	}
 	m.mouse.lastClickTime = now
 	m.mouse.lastClickX = msg.X
 	m.mouse.lastClickY = msg.Y
 	m.mouse.clickCount = clickCount
-	m.mouse.dragging = false
 
 	switch {
 	case msg.Mod&tea.ModAlt != 0:
@@ -79,13 +107,11 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg, now time.Time) (Model, te
 		// read-only doc (it doesn't edit).
 		if la, ok := m.linkAtLine(bp, offset); ok {
 			m.Model = m.Model.MousePositionCursor(offset)
-			m.mouse.dragAnchor = offset
 			return m, func() tea.Msg { return la }
 		}
 		m.Model = m.Model.MouseSelectWord(offset)
 	default:
 		m.Model = m.Model.MousePositionCursor(offset)
-		m.mouse.dragAnchor = offset
 	}
 
 	return m, nil
@@ -191,10 +217,6 @@ func (m Model) handleMouseMotion(msg tea.MouseMotionMsg) (Model, tea.Cmd) {
 
 	_, offset := m.Model.DisplayToBuffer(dp)
 
-	if !m.mouse.dragging {
-		m.mouse.dragging = true
-	}
-
 	// Extend selection from the click anchor to the current drag position.
 	m.Model = m.Model.MouseExtendSelection(offset)
 	return m, nil
@@ -229,6 +251,6 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (Model, tea.Cmd) {
 
 	// Re-arm animation ticks for images scrolled into view.
 	var cmd tea.Cmd
-	m, cmd = m.armImageTicks()
+	m, cmd = m.syncImageViewState()
 	return m, cmd
 }

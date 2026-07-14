@@ -68,7 +68,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 		[]buffer.AppliedEdit{{Start: 0, End: len(original), Deleted: original, Insert: ours}}, nil, nil); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
-	m.editor = m.editor.SetContent(ours)
+	m.editor, _ = m.editor.SetContent(ours)
 
 	m, cmd := m.startSave()
 	m = settle(t, m, cmd)
@@ -81,10 +81,10 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardRaced {
 		t.Fatalf("expected GuardRaced raised; inGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.guard.raced.active {
+	if m.guard.kind != guardRaced {
 		t.Fatal("expected pendingRaced active")
 	}
-	theirsContent, err := m.store.GetBlob(m.guard.raced.fresh.BlobHash)
+	theirsContent, err := m.store.GetBlob(m.guard.prompt.fresh.BlobHash)
 	if err != nil {
 		t.Fatalf("GetBlob(displaced): %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSaveRace_RaisesRacedGuardAndRestoreTheirsRoundTrips(t *testing.T) {
 	if string(diskAfter) != raced {
 		t.Fatalf("disk after restore-theirs = %q, want the restored displaced content %q", diskAfter, raced)
 	}
-	if m.guard.raced.active {
+	if m.guard.kind == guardRaced {
 		t.Fatal("expected pendingRaced cleared after restore-theirs")
 	}
 	if m.footer.InGuard() {
@@ -147,18 +147,18 @@ func TestSaveRace_KeepMineClearsGuardWithoutFurtherWrite(t *testing.T) {
 		[]buffer.AppliedEdit{{Start: 0, End: len(original), Deleted: original, Insert: ours}}, nil, nil); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
-	m.editor = m.editor.SetContent(ours)
+	m.editor, _ = m.editor.SetContent(ours)
 
 	m, cmd := m.startSave()
 	m = settle(t, m, cmd)
-	if !m.guard.raced.active {
+	if m.guard.kind != guardRaced {
 		t.Fatal("setup: expected pendingRaced active")
 	}
 
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 'k', Text: "k"})
 	m = settle(t, m, cmd)
 
-	if m.guard.raced.active || m.footer.InGuard() {
+	if m.guard.kind == guardRaced || m.footer.InGuard() {
 		t.Fatal("expected the Raced guard cleared after keep-mine")
 	}
 	diskAfter, err := os.ReadFile(path)

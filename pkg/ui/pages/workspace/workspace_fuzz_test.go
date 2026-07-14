@@ -4,15 +4,17 @@ import "testing"
 
 // TestFuzzLegacyPendingKind_LegacyIotaOrder pins fuzzLegacyPendingKind's
 // legacy iota mapping (None=0, Close=1, Quit=2, Evict=3 — Trash=4 is covered
-// separately below, tied to guard.kind rather than an intent's .active bit)
-// that the fuzz snapshot's PendingDataLossKind field (and the plan's
-// SAVE-NOMUT/GUARD-* invariants) assume. Pre-A4 this pinned actionKind's own
-// iota order directly; A4 deleted actionKind (folded into guardState), so
-// this now drives fuzzLegacyPendingKind through the guard.close/quit/evict
-// intents themselves — each independently of guard.kind (critic R1: a
-// conflict guard raised mid-close/evict/quit-save leaves guard.kind reading
-// guardConflict while the intent's own .active bit stays true), exactly
-// mirroring how pendingDataLoss.kind was independent of guard.kind pre-A4.
+// separately below, tied to guard.kind rather than guard.cont.kind) that the
+// fuzz snapshot's PendingDataLossKind field (and the plan's SAVE-NOMUT/
+// GUARD-* invariants) assume. Pre-A4 this pinned actionKind's own iota order
+// directly; A4 deleted actionKind (folded into guardState), and W1 collapsed
+// the three independent close/evict/quit intents onto the one guard.cont
+// continuation slot, so this now drives fuzzLegacyPendingKind through
+// guard.cont.kind itself — independently of guard.kind (critic R1: a
+// conflict guard raised mid-close/evict/quit-continuation leaves guard.kind
+// reading guardConflict while guard.cont.kind stays contClose/contEvict/
+// contQuit), exactly mirroring how pendingDataLoss.kind was independent of
+// guard.kind pre-A4.
 func TestFuzzLegacyPendingKind_LegacyIotaOrder(t *testing.T) {
 	cases := []struct {
 		name string
@@ -20,9 +22,9 @@ func TestFuzzLegacyPendingKind_LegacyIotaOrder(t *testing.T) {
 		want int
 	}{
 		{"None", func(m *Model) {}, 0},
-		{"Close", func(m *Model) { m.guard.close = closeIntent{active: true} }, 1},
-		{"Quit", func(m *Model) { m.guard.quit = quitIntent{active: true} }, 2},
-		{"Evict", func(m *Model) { m.guard.evict = evictIntent{active: true} }, 3},
+		{"Close", func(m *Model) { m.guard.cont = continuation{kind: contClose} }, 1},
+		{"Quit", func(m *Model) { m.guard.cont = continuation{kind: contQuit} }, 2},
+		{"Evict", func(m *Model) { m.guard.cont = continuation{kind: contEvict} }, 3},
 	}
 	for _, c := range cases {
 		var m Model
@@ -49,7 +51,7 @@ func TestFuzzLegacyPendingKind_Trash(t *testing.T) {
 // TestFuzzLegacyPendingKind_ConflictCoexistence pins critic R1's coexistence
 // window directly on the adapter: a conflict guard raised mid-close-save
 // leaves guard.kind reading guardConflict (raiseConflictGuard overwrote it)
-// while guard.close.active stays true — fuzzLegacyPendingKind must keep
+// while guard.cont.kind stays contClose — fuzzLegacyPendingKind must keep
 // reporting Close=1 in that window, not fall through to None=0, exactly
 // mirroring pendingDataLoss.kind's pre-A4 independence from guard.kind (see
 // TestConflictDuringCloseSave_CoexistsThenAbandonsClose for the full
@@ -57,9 +59,9 @@ func TestFuzzLegacyPendingKind_Trash(t *testing.T) {
 func TestFuzzLegacyPendingKind_ConflictCoexistence(t *testing.T) {
 	var m Model
 	m.guard.kind = guardConflict
-	m.guard.close = closeIntent{active: true}
+	m.guard.cont = continuation{kind: contClose}
 	if got := m.fuzzLegacyPendingKind(); got != 1 {
-		t.Errorf("fuzzLegacyPendingKind() with guard.kind=guardConflict and guard.close.active=true = %d, want 1 (Close)", got)
+		t.Errorf("fuzzLegacyPendingKind() with guard.kind=guardConflict and guard.cont.kind=contClose = %d, want 1 (Close)", got)
 	}
 }
 

@@ -11,27 +11,9 @@ import (
 	"rune/pkg/ui/pages/workspace/mergemode"
 )
 
-// ---- Pending-conflict state (guardState.conflict, A3) -----------------------
-
-// conflictIntent holds the data collected when a FileSaveErrorMsg{Conflict:true}
-// (or a load-time / undo-unwind divergence) is detected for the current
-// document. freshObs is the conflicting disk observation Materialize (or
-// Probe) already captured via I1 (capture-before-discard) — [S]ave-anyway
-// passes it straight back as the NEW CAS `expect`, and [D]/[M] re-probe fresh
-// before acting (Fix A: the file may have moved again since detection).
-// Zero value = no active conflict. Lives at guardState.conflict (critic R1 —
-// independently populated from guardState.kind: a conflict guard raised
-// mid-close/evict/quit-save does not erase that continuation's own intent).
-type conflictIntent struct {
-	active   bool
-	path     string
-	docID    int64
-	freshObs docstate.ObsID
-}
-
 // ---- Guard raising -----------------------------------------------------------
 
-// raiseConflictGuard stores guard.conflict and raises the GuardMerge footer
+// raiseConflictGuard stores guard.prompt and raises the GuardMerge footer
 // prompt. Pure SQLite (GetBlob + Sync for the ancestor) — no disk I/O, so this
 // is always synchronous, unlike the pre-v4 theirsReadCmd round trip: the
 // conflicting bytes are ALREADY captured (I1) by whatever produced theirsHash
@@ -65,7 +47,7 @@ func (m Model) raiseConflictGuard(docID int64, path, oursContent, theirsHash str
 			}
 		}
 	}
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID, freshObs: theirsObs}
+	m.guard.prompt = promptPayload{docID: docID, path: path, freshObs: theirsObs}
 	// Fix D (BUG2): build the read-only ours-vs-theirs preview NOW, from the
 	// SAME 3-way merge [M] will (re)run, so the guard is reviewable BEFORE the
 	// user picks [S]/[D]/[M] — including for a clean (zero-conflict) auto-merge,
@@ -84,65 +66,59 @@ func (m Model) raiseConflictGuard(docID int64, path, oursContent, theirsHash str
 }
 
 // ---- Guard response handlers ------------------------------------------------
+//
+// W2: handleDataLossSaveAnyway/handleDataLossDiscardConflict/
+// handleDataLossMerge are now pure consumers of the promptPayload the
+// dispatcher (handleDataLossGuardResponse) already captured from guard.prompt
+// and cleared — no more "if !active" defensive prologue (the dispatcher only
+// calls these from the guardConflict case, so a mismatched guard.kind is
+// unreachable here) and no more per-handler abandonDirtyContinuation call
+// (hoisted once into the dispatcher's guardConflict case, since all three
+// handlers called it identically — critic R1's coexistence-then-abandon
+// semantics, unconditional here, unchanged in behavior).
 
 // handleDataLossSaveAnyway handles the [S]ave-anyway response for the
 // conflict guard: force-writes the LIVE editor buffer (not the snapshot
 // captured at conflict-detection time — dictation/other async edits can
 // reach the buffer between conflict detection and the [S] press; writing
 // anything else would silently discard those keystrokes, rung 1) via
-// store.Materialize with expect=pc.freshObs — the CAS check accepts the
+// store.Materialize with expect=p.freshObs — the CAS check accepts the
 // write IFF disk still matches the conflicting bytes we already saw; if it
 // changed AGAIN, Materialize raises a fresh conflict rather than blindly
 // overwriting (strictly safer than the pre-v4 empty-baseline bypass, which
 // skipped the CAS check entirely).
-func (m Model) handleDataLossSaveAnyway() (Model, tea.Cmd) {
-	if !m.guard.conflict.active || m.store == nil {
-		m.guard.conflict = conflictIntent{}
-		m = m.abandonDirtyContinuation()
+func (m Model) handleDataLossSaveAnyway(p promptPayload) (Model, tea.Cmd) {
+	if m.store == nil {
 		return m, nil
 	}
-	pc := m.guard.conflict
-	m.guard.conflict = conflictIntent{}
-	// Critic R1/abandon semantics: a close/evict/quit continuation riding
-	// under this conflict guard (guardState's own doc comment) is abandoned
-	// here, unconditionally — [S]ave-anyway never resumes it, it just goes
-	// away. See TestConflictDuringCloseSave_CoexistsThenAbandonsClose.
-	m = m.abandonDirtyContinuation()
 	// Fix D: clear the guard-time preview — [S]ave anyway never enters the
 	// resolver, so nothing should linger in the merge-view instance.
 	m.merge = mergemode.Reset(m.merge)
 
 	liveContent := m.editor.Content()
-	seq := m.currentSeqFor(pc.docID)
-	requestID := fmt.Sprintf("force-save-%d", pc.docID)
-	m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(liveContent), InFlight: true, Path: pc.path, DocID: pc.docID}
-	return m, materializeStoreCmd(m.store, pc.docID, pc.path, liveContent, pc.freshObs, seq, requestID, false)
+	var cmd tea.Cmd
+	m, _, cmd = m.issueSave(saveReq{prefix: "force-save", docID: p.docID, path: p.path, content: liveContent, expect: p.freshObs, track: true})
+	return m, cmd
 }
 
 // handleDataLossDiscardConflict handles the [D]iscard response for the
 // conflict guard. Fix A (two-phase): rather than discarding onto bytes
 // cached at detection time (possibly stale or now deleted — the merge
-// data-race), it clears guard.conflict and launches an async FRESH Probe;
-// the actual buffer replacement happens in applyDiscardConflict once that
-// read lands (workspace_merge_fresh.go). The VFS journal is NOT touched by
-// this call; ours edits survive in the store and can be recovered manually.
-func (m Model) handleDataLossDiscardConflict() (Model, tea.Cmd) {
-	if !m.guard.conflict.active || m.store == nil {
-		m.guard.conflict = conflictIntent{}
-		m = m.abandonDirtyContinuation()
+// data-race), it launches an async FRESH Probe; the actual buffer
+// replacement happens in applyDiscardConflict once that read lands
+// (workspace_merge_fresh.go). The VFS journal is NOT touched by this call;
+// ours edits survive in the store and can be recovered manually.
+func (m Model) handleDataLossDiscardConflict(p promptPayload) (Model, tea.Cmd) {
+	if m.store == nil {
 		return m, nil
 	}
-	pc := m.guard.conflict
-	m.guard.conflict = conflictIntent{}
-	// Critic R1/abandon semantics — see handleDataLossSaveAnyway's comment.
-	m = m.abandonDirtyContinuation()
-	// Ticket captured NOW, at the key press (Part IV) — pc.docID (the
+	// Ticket captured NOW, at the key press (Part IV) — p.docID (the
 	// conflict's own target) paired with the CURRENT epoch, not
-	// m.currentTicket()'s m.view.DocID(): guard.conflict always targets what
-	// was displayed when it was raised, but pairing explicitly (rather than
-	// re-deriving docID from m.view) keeps this correct even in the
+	// m.currentTicket()'s m.view.DocID(): the conflict guard always targets
+	// what was displayed when it was raised, but pairing explicitly (rather
+	// than re-deriving docID from m.view) keeps this correct even in the
 	// vanishingly unlikely case they've since diverged.
-	return m, resolveProbeCmd(m.store, viewTicket{docID: pc.docID, epoch: m.epoch}, pc.path, "", mergeIntentDiscard)
+	return m, resolveProbeCmd(m.store, viewTicket{docID: p.docID, epoch: m.epoch}, p.path, "", mergeIntentDiscard)
 }
 
 // handleDataLossMerge handles the [M]erge response for the conflict guard.
@@ -152,21 +128,15 @@ func (m Model) handleDataLossDiscardConflict() (Model, tea.Cmd) {
 // that read lands (workspace_merge_fresh.go). A vanished target is caught
 // there too, routing to the deleted guard instead of merging against bytes
 // that no longer exist.
-func (m Model) handleDataLossMerge() (Model, tea.Cmd) {
-	if !m.guard.conflict.active || m.store == nil {
-		m.guard.conflict = conflictIntent{}
-		m = m.abandonDirtyContinuation()
+func (m Model) handleDataLossMerge(p promptPayload) (Model, tea.Cmd) {
+	if m.store == nil {
 		return m, nil
 	}
-	pc := m.guard.conflict
-	m.guard.conflict = conflictIntent{}
-	// Critic R1/abandon semantics — see handleDataLossSaveAnyway's comment.
-	m = m.abandonDirtyContinuation()
 	ours := m.editor.Content()
 	// Ticket captured NOW, at the key press (Part IV) — see the [D]iscard
-	// handler's comment above for why pc.docID is paired explicitly rather
+	// handler's comment above for why p.docID is paired explicitly rather
 	// than re-derived via m.currentTicket().
-	return m, resolveProbeCmd(m.store, viewTicket{docID: pc.docID, epoch: m.epoch}, pc.path, ours, mergeIntentMerge)
+	return m, resolveProbeCmd(m.store, viewTicket{docID: p.docID, epoch: m.epoch}, p.path, ours, mergeIntentMerge)
 }
 
 // ---- Guard response dispatch ------------------------------------------------
@@ -188,64 +158,64 @@ func (m Model) handleDataLossMerge() (Model, tea.Cmd) {
 // options table (workspace_guard.go), so there is no "illegal pair" to
 // surface an error for (§1.3 is satisfied by construction, not a runtime
 // check). A4 extends the SAME kind-first switch to
-// guardDirtyClose/guardDirtyEvict/guardDirtyQuit (closeIntent/evictIntent/
-// quitIntent) — the former free-standing "switch msg.Response{}" tail keyed
-// on pendingDataLoss.kind, including its dangerous unguarded
-// `default: // actionQuit` catch-all (reachable for ANY kind that fell
-// through, not just a genuine quit), is gone: each of the three now has its
-// own explicit case, so a DataLossDiscard can never be misrouted to
-// teardownAndQuit just because guard.kind read something unexpected.
+// guardDirtyClose/guardDirtyEvict/guardDirtyQuit (W1: the one continuation
+// slot, guard.cont, discriminated by contKind) — the former free-standing
+// "switch msg.Response{}" tail keyed on pendingDataLoss.kind, including its
+// dangerous unguarded `default: // actionQuit` catch-all (reachable for ANY
+// kind that fell through, not just a genuine quit), is gone: each of the
+// three now has its own explicit case, so a DataLossDiscard can never be
+// misrouted to teardownAndQuit just because guard.kind read something
+// unexpected.
+//
+// W2 further collapses the trash/conflict/deleted/raced payload structs into
+// guard.prompt (one slot, promptPayload) — each kind case that consumes it
+// now does `p := m.guard.prompt; m = m.clearGuardPrompt()` exactly once
+// (conflict/deleted also hoist the shared abandonDirtyContinuation call
+// there, since all their sub-handlers used to call it identically), THEN
+// dispatches to a pure `handleX(p)` consumer. guardDegraded is the one
+// exception (deliberately, unchanged from A4): its [Y]es resumes the SAME
+// close/evict/quit-save continuation the degraded-store check interrupted,
+// so it must NOT abandon.
+//
 // Critic R1: a conflict guard raised DURING a live close/evict/quit save
 // continuation is a legal, exercised state
 // (TestConflictDuringCloseSave_CoexistsThenAbandonsClose) — guard.kind reads
 // guardConflict in that window (raiseConflictGuard overwrote it), so this
 // dispatcher correctly routes [S]/[D]/[M] to the conflict handlers, never
-// back into the close/evict/quit cases below; those handlers then abandon
-// the close/evict/quit intent via abandonDirtyContinuation exactly as they
-// did before this rewrite (byte-identical — see workspace_conflict.go's
-// handleDataLoss* bodies).
+// back into the close/evict/quit cases below; those handlers rely on the
+// hoisted abandonDirtyContinuation call in the guardConflict case to abandon
+// the close/evict/quit continuation exactly as they did before this rewrite.
 func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, cmds []tea.Cmd) (Model, []tea.Cmd, bool) {
 	var cmd tea.Cmd
 
 	// Cancel is shared, uniform, and kind-agnostic — its blanket-clear body
 	// never varies by which guard was showing (dirty/merge/deleted/trash/
 	// raced/degraded), so it is checked FIRST, before the kind-first switch
-	// below ever needs to reason about it.
+	// below ever needs to reason about it. W2: clearGuardPrompt's single
+	// guard.prompt wholesale-clear now covers what used to be four separate
+	// per-kind clears (trashPath/conflict/deleted/raced) here.
 	if msg.Response == footer.DataLossCancel {
-		// Wholesale-clear every close/evict/quit intent — mirrors the pre-A4
-		// `pendingDataLoss = pendingDataLoss{}` single-field reset exactly
-		// (see abandonDirtyContinuation's own doc comment).
+		// Wholesale-clear the close/evict/quit continuation slot — mirrors
+		// the pre-A4 `pendingDataLoss = pendingDataLoss{}` single-field reset
+		// exactly (see abandonDirtyContinuation's own doc comment).
 		m = m.abandonDirtyContinuation()
-		// Clear guard.trashPath on Esc — mirrors pendingDataLoss{} clearing
-		// pendingTrashPath before A3 folded trash into guardState.
-		m.guard.trashPath = ""
-		// Clear guard.conflict on Esc (R2): a later dirty-guard [D]iscard must
-		// route to discard-and-close, not to handleDataLossDiscardConflict (which
-		// loads theirs). Save-gating after Esc lives in the Probe-driven SyncState
-		// re-check on the next save attempt, not in guard.conflict.
-		m.guard.conflict = conflictIntent{}
-		// Fix D: clear the guard-time preview along with guard.conflict — Esc
-		// never enters the resolver, so nothing should linger in the merge-view.
-		// GUARDED on !IsActive: this DataLossCancel case is shared by EVERY guard
-		// kind's Esc (dirty/merge/deleted/trash), not just GuardMerge — e.g. the
-		// user can switch to the file tree and Cancel an UNRELATED GuardTrash
-		// prompt while a real merge is active elsewhere (neither FocusExplorer
-		// nor FileDeleteRequestedMsg is gated on HasUnresolvedConflicts). Preview
-		// never sets active=true, so Reset is safe whenever mergemode is NOT
-		// actively resolving; skipping it while active protects a genuine
-		// resolver session from being wiped by an unrelated guard's Cancel.
+		// Clear the guard-time preview along with guard.prompt (Fix D) — Esc
+		// never enters the resolver, so nothing should linger in the
+		// merge-view. GUARDED on !IsActive: this DataLossCancel case is
+		// shared by EVERY guard kind's Esc (dirty/merge/deleted/trash/raced),
+		// not just GuardMerge — e.g. the user can switch to the file tree and
+		// Cancel an UNRELATED GuardTrash prompt while a real merge is active
+		// elsewhere (neither FocusExplorer nor FileDeleteRequestedMsg is
+		// gated on HasUnresolvedConflicts). Preview never sets active=true,
+		// so Reset is safe whenever mergemode is NOT actively resolving;
+		// skipping it while active protects a genuine resolver session from
+		// being wiped by an unrelated guard's Cancel. (A raced guard's Esc
+		// keeps our already-committed write — F5 — nothing is undone by
+		// dismissing; the displaced bytes stay reachable as history
+		// regardless, equivalent to keep-mine.)
 		if !mergemode.IsActive(m.merge) {
 			m.merge = mergemode.Reset(m.merge)
 		}
-		// Clear guard.deleted on Esc: keep editing with the buffer intact; the
-		// guard re-raises only on a fresh deletion signal (dirChangedMsg / stat
-		// check), never on every save (the doc stays dirty and a later ⌘S
-		// recreates the file via the normal overwrite path).
-		m.guard.deleted = deletedIntent{}
-		// Clear guard.raced on Esc: our write already committed physically
-		// (F5) — nothing is undone by dismissing; the displaced bytes stay
-		// reachable as history regardless (equivalent to keep-mine).
-		m = m.handleDataLossKeepMine()
 		// Explicitly clear the guard: in production the footer already cleared
 		// it before emitting this message; in tests that inject the response
 		// directly the footer may not have, so clear it here unconditionally.
@@ -256,7 +226,7 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 	switch m.guard.kind {
 	case guardTrash:
 		if msg.Response == footer.DataLossTrash {
-			path := m.guard.trashPath
+			path := m.guard.prompt.path
 			m = m.clearGuardPrompt()
 			m.filetree = m.filetree.RemoveEntry(path)
 			cmds = append(cmds, fileTrashCmd(m.fsys(), path))
@@ -264,50 +234,59 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 		return m, cmds, false
 
 	case guardDeleted:
+		p := m.guard.prompt
+		// Hoisted R1 abandon (see this function's doc comment) — was
+		// duplicated identically inside handleDeletedSave/handleDeletedDiscard.
+		m = m.abandonDirtyContinuation()
 		m = m.clearGuardPrompt()
 		switch msg.Response {
 		case footer.DataLossSaveAnyway:
 			// GuardDeleted [S]ave = recreate the missing file from the live buffer.
-			m, cmd = m.handleDeletedSave()
+			m, cmd = m.handleDeletedSave(p)
 			cmds = append(cmds, cmd)
 		case footer.DataLossDiscard:
 			// GuardDeleted [D]iscard = purge doc history + close tab (§1.4.4
 			// explicit choice).
-			m, cmd = m.handleDeletedDiscard()
+			m, cmd = m.handleDeletedDiscard(p)
 			cmds = append(cmds, cmd)
 		}
 		return m, cmds, false
 
 	case guardConflict:
+		p := m.guard.prompt
+		// Hoisted R1 abandon (see this function's doc comment) — was
+		// duplicated identically inside handleDataLossSaveAnyway/
+		// handleDataLossDiscardConflict/handleDataLossMerge.
+		m = m.abandonDirtyContinuation()
 		m = m.clearGuardPrompt()
 		switch msg.Response {
 		case footer.DataLossSaveAnyway:
 			// [S]ave anyway: clobber the external version with our buffer via a
 			// CAS write against the captured conflict observation.
-			m, cmd = m.handleDataLossSaveAnyway()
+			m, cmd = m.handleDataLossSaveAnyway(p)
 			cmds = append(cmds, cmd)
 		case footer.DataLossDiscard:
 			// DataLossDiscard for the conflict guard ([D]iscard = load theirs).
-			m, cmd = m.handleDataLossDiscardConflict()
+			m, cmd = m.handleDataLossDiscardConflict(p)
 			cmds = append(cmds, cmd)
 		case footer.DataLossMerge:
 			// [M]erge: run 3-way merge (libgit2), enter the resolver UI.
-			m, cmd = m.handleDataLossMerge()
+			m, cmd = m.handleDataLossMerge(p)
 			cmds = append(cmds, cmd)
 		}
 		return m, cmds, false
 
 	case guardRaced:
+		p := m.guard.prompt
 		m = m.clearGuardPrompt()
 		switch msg.Response {
 		case footer.DataLossKeepMine:
-			// F5: our write already committed for real — nothing to do at the
-			// store level, just clear the guard (already done above).
-			m = m.handleDataLossKeepMine()
+			// F5: our write already committed for real — nothing left to do
+			// at the store level, the guard is already cleared above.
 		case footer.DataLossRestoreTheirs:
 			// F5: write the captured displaced bytes back to disk, on top of
 			// our already-committed write.
-			m, cmd = m.handleDataLossRestoreTheirs()
+			m, cmd = m.handleDataLossRestoreTheirs(p)
 			cmds = append(cmds, cmd)
 		}
 		return m, cmds, false
@@ -317,7 +296,9 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 			m = m.clearGuardPrompt()
 			// Degraded-store guard (WP-R4 item 5): re-enter startSave bypassing
 			// ONLY this one check — every other gate (unresolved conflicts,
-			// pending load, divergence) still re-evaluates fresh.
+			// pending load, divergence) still re-evaluates fresh. Deliberately
+			// does NOT call abandonDirtyContinuation — its [Y]es RESUMES the
+			// close/evict/quit-save continuation this guard interrupted.
 			m, cmd = m.startSaveDegradedConfirmed(true)
 			cmds = append(cmds, cmd)
 		}
@@ -329,20 +310,20 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 			// Untitled has no path to save to. Its work is durable in the VFS,
 			// so keep the buffer and abort the close rather than lose anything.
 			if !m.view.IsFile() {
-				m.guard.close = closeIntent{}
+				m.guard.cont = continuation{}
 				m = m.clearGuardPrompt()
 				m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: "Untitled — name it to save (its text is safe in history)"})
 				cmds = append(cmds, cmd)
 				return m, cmds, false
 			}
-			// Prompt clears (guardAwaitingSave), guard.close stays active —
-			// startSave stamps its requestID and FileSavedMsg's isCloseSaveAck
+			// Prompt clears (guardAwaitingSave), guard.cont stays active —
+			// startSave stamps its requestID and cont.owns(contClose, ...)
 			// correlation checks it to decide close (§5.5).
 			m = m.confirmGuardSave()
 			m, cmd = m.startSave()
 			cmds = append(cmds, cmd)
 		case footer.DataLossDiscard:
-			m.guard.close = closeIntent{}
+			m.guard.cont = continuation{}
 			m = m.clearGuardPrompt()
 			// Discarding an untitled removes its VFS doc so it is not offered
 			// for recovery later (Fix 7 §6); a bound doc keeps its history.
@@ -361,14 +342,14 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 		switch msg.Response {
 		case footer.DataLossSave:
 			// Evict: save the dirty background victim; FileSavedMsg closes it
-			// + opens pending. Prompt clears, guard.evict stays active.
+			// + opens pending. Prompt clears, guard.cont stays active.
 			m = m.confirmGuardSave()
 			m, cmd = m.evictSave()
 			cmds = append(cmds, cmd)
 		case footer.DataLossDiscard:
 			// Discard: close the victim (history stays in VFS; recoverable on reopen).
-			action := m.guard.evict
-			m.guard.evict = evictIntent{}
+			action := m.guard.cont
+			m.guard.cont = continuation{}
 			m = m.clearGuardPrompt()
 			var discardCmd tea.Cmd
 			m, discardCmd = m.evictDiscard(action)
@@ -380,13 +361,13 @@ func (m Model) handleDataLossGuardResponse(msg footer.DataLossGuardResponseMsg, 
 		switch msg.Response {
 		case footer.DataLossSave:
 			// Quit: materialize every dirty bound tab, then tear down. Prompt
-			// clears, guard.quit stays active for the saveLeft countdown.
+			// clears, guard.cont stays active for the saveLeft countdown.
 			m = m.confirmGuardSave()
 			m, cmd = m.saveAllDirtyForQuit()
 			cmds = append(cmds, cmd)
 		case footer.DataLossDiscard:
 			// Discard all — journaled work survives in the VFS.
-			m.guard.quit = quitIntent{}
+			m.guard.cont = continuation{}
 			m = m.clearGuardPrompt()
 			quitM, quitCmd := m.teardownAndQuit()
 			return quitM, append(cmds, quitCmd), true

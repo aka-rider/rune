@@ -63,8 +63,16 @@ func (a imageIDAllocator) AllocFrameIDs(absPath string, n int) ([]uint32, imageI
 	return ids, na
 }
 
-func (a imageIDAllocator) FreeID(id uint32) imageIDAllocator {
+// FreeAllForPath releases every ID allocated for absPath — the base ID and
+// any animation frame IDs — so a despawn (M6, syncImageSet) lets a later
+// respawn or an unrelated image reuse them instead of leaking them for the
+// rest of the session.
+func (a imageIDAllocator) FreeAllForPath(absPath string) imageIDAllocator {
 	na := a.clone()
-	delete(na.byID, id)
+	for id, p := range na.byID {
+		if p == absPath {
+			delete(na.byID, id)
+		}
+	}
 	return na
 }

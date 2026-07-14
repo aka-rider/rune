@@ -1,6 +1,7 @@
 package textedit
 
 import (
+	"rune/pkg/editor/buffer"
 	"rune/pkg/editor/cursor"
 	"rune/pkg/editor/display"
 )
@@ -41,3 +42,9 @@ func (m Model) FuzzWrapSnapshot() display.WrapSnapshot { return m.wrapSnap }
 // FuzzSyntaxSnapshot returns the current syntax-layer snapshot.
 // Used for COORD-RT, SPAN-COVER, and D5 invariants.
 func (m Model) FuzzSyntaxSnapshot() display.SyntaxSnapshot { return m.syntaxSnap }
+
+// FuzzLastEdits returns the CursorID-tagged, pre-edit-coordinate edits
+// applied by the message just processed (nil if that message produced no
+// cursor-driven edit — see Model.lastEdits). Used by SEL-EDIT to verify a
+// selecting cursor's actual edit range matched its own selection.
+func (m Model) FuzzLastEdits() []buffer.Edit { return m.lastEdits }

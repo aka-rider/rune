@@ -163,20 +163,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		switch {
 		case key.Matches(msg, m.keys.ConfirmExitC):
-			if m.pendingKey == "c" {
-				m.pendingKey = ""
-				return m, func() tea.Msg { return ConfirmQuitMsg{} }
-			}
-			m.pendingKey = "c"
-			return m, startConfirmTimer()
+			return m.confirmChord("c")
 
 		case key.Matches(msg, m.keys.ConfirmExitD):
-			if m.pendingKey == "d" {
-				m.pendingKey = ""
-				return m, func() tea.Msg { return ConfirmQuitMsg{} }
-			}
-			m.pendingKey = "d"
-			return m, startConfirmTimer()
+			return m.confirmChord("d")
 
 		case key.Matches(msg, m.keys.VoiceDictation):
 			if !m.dictationAllowed {
@@ -228,6 +218,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// confirmChord handles a two-press quit-confirmation chord (^C^C / ^D^D): the
+// first press arms pendingKey and starts the timeout, a repeat of the same
+// key within the window emits ConfirmQuitMsg, and (per the switch above) a
+// press of the OTHER confirm key re-arms rather than confirms. pendingKey is
+// the app's only cross-key chord state left after the keybind resolver
+// became stateless (§2.1) — its timeout is live UX, unlike the resolver's
+// former dead timeout fallback.
+func (m Model) confirmChord(k string) (Model, tea.Cmd) {
+	if m.pendingKey == k {
+		m.pendingKey = ""
+		return m, func() tea.Msg { return ConfirmQuitMsg{} }
+	}
+	m.pendingKey = k
+	return m, startConfirmTimer()
 }
 
 func startConfirmTimer() tea.Cmd {

@@ -8,6 +8,7 @@ import (
 
 	"rune/pkg/command"
 	"rune/pkg/editor/buffer"
+	"rune/pkg/editor/display"
 	"rune/pkg/editor/keybind"
 	"rune/pkg/imagekit"
 	"rune/pkg/terminal"
@@ -35,6 +36,8 @@ type Model struct {
 	lastPlacementSeq    string
 	pendingPlacementSeq string
 	placedRegions       map[string]placedRegion // iTerm2: last on-screen region per image, for erase-on-change
+
+	publishedDims map[string]display.ImageDims // last dims pushed via SetImageDims; gates re-publishing (afterMutation)
 
 	docPath string        // the open document's path (golden source; set with content). "" = untitled
 	root    string        // workspace root (launch CWD); static fallback base for resolution
@@ -82,32 +85,36 @@ func New(keys keymap.Bindings, st styles.Styles, caps terminal.TermCaps, opts ..
 
 func (m Model) Init() tea.Cmd { return m.Model.Init() }
 
-// ApplyInverse shadows textedit.Model.ApplyInverse, also running afterContentChange.
+// applyChecked runs a §1.3 fallible embedded-textedit mutation and, on
+// success, funnels the result through afterMutation(true) — the shared shape
+// ApplyInverse/Reapply/ReplaceRange all need. On error the buffer is left
+// unchanged (op's own guarantee) and the caller must surface the failure.
+func (m Model) applyChecked(op func(textedit.Model) (textedit.Model, error)) (Model, tea.Cmd, error) {
+	tm, err := op(m.Model)
+	if err != nil {
+		return m, nil, err
+	}
+	m.Model = tm
+	rm, cmd := m.afterMutation(true)
+	return rm, cmd, nil
+}
+
+// ApplyInverse shadows textedit.Model.ApplyInverse, also running afterMutation.
 // A non-nil error means the inverse edits did not fit the buffer (§1.3): the buffer
 // is left unchanged and the caller surfaces the failure instead of advancing undo.
 func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, tea.Cmd, error) {
-	var err error
-	m.Model, err = m.Model.ApplyInverse(edits)
-	if err != nil {
-		return m, nil, err
-	}
-	var cmd tea.Cmd
-	m, cmd = m.afterContentChange()
-	return m, cmd, nil
+	return m.applyChecked(func(tm textedit.Model) (textedit.Model, error) {
+		return tm.ApplyInverse(edits)
+	})
 }
 
-// Reapply shadows textedit.Model.Reapply, also running afterContentChange.
+// Reapply shadows textedit.Model.Reapply, also running afterMutation.
 // A non-nil error means a redo edit was out of bounds (§1.3); the buffer is left
 // unchanged so the caller can keep the journal position coherent with it.
 func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, tea.Cmd, error) {
-	var err error
-	m.Model, err = m.Model.Reapply(edits)
-	if err != nil {
-		return m, nil, err
-	}
-	var cmd tea.Cmd
-	m, cmd = m.afterContentChange()
-	return m, cmd, nil
+	return m.applyChecked(func(tm textedit.Model) (textedit.Model, error) {
+		return tm.Reapply(edits)
+	})
 }
 
 // Update is the outermost wrapper: routes the message, then emits inline
@@ -125,16 +132,14 @@ func (m Model) routeUpdate(msg tea.Msg) (Model, tea.Cmd) {
 		if len(msg.ImageData) > 0 {
 			return m.handleImagePaste(msg.ImageData, msg.MIMEType, time.Now())
 		}
-		// Text paste: delegate to textedit, then afterContentChange
-		var cmd tea.Cmd
-		m.Model, cmd = m.Model.Update(msg)
-		m, aCmd := m.afterContentChange()
-		return m, tea.Batch(cmd, aCmd)
+		// Text paste: ordinary delegation — it bumps rev, so reconcile's
+		// contentChanged branch already does the right thing.
+		return m.delegateToModel(msg)
 
 	case ImageSavedMsg:
 		return m.handleImageSaved(msg.RelativePath, time.Now())
 
-	case ImageSaveErrorMsg:
+	case ImageErrorMsg:
 		return m, nil
 
 	case image.UpdateMsg, image.ReadyMsg, image.ErrorMsg:
@@ -182,81 +187,24 @@ func (m Model) delegateToModel(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tea.Batch(cmd, rCmd)
 }
 
-// reconcile is the shared content-changed funnel: it diffs prevRev (captured
-// before the embedded textedit's Update ran) against the CURRENT
-// textedit.Model.Revision() — the sanctioned change signal (D13, see
-// textedit.Model.Revision's doc comment) — and reconciles image state
-// accordingly. textedit's syncDisplay has already re-applied image-row
-// expansion from the pushed dims, so the snapshot footprint is correct
-// either way; here we reconcile discovery + collapse on a content change,
-// collapse only on a cursor-only move. Every entry point that mutates the
-// embedded textedit.Model (today: delegateToModel; any future one) funnels
-// through this one comparison so the two reconciliation paths can never
-// drift apart.
+// reconcile is the shared funnel: it diffs prevRev (captured before the
+// embedded textedit's Update ran) against the CURRENT textedit.Model.Revision()
+// — the sanctioned change signal (D13, see textedit.Model.Revision's doc
+// comment) — and hands the verdict to afterMutation, markdownedit's single
+// post-mutation funnel. Every entry point that mutates the embedded
+// textedit.Model (today: delegateToModel; any future one) funnels through
+// this one comparison so no caller can drift from it.
 func (m Model) reconcile(prevRev uint64) (Model, tea.Cmd) {
-	if m.Model.Revision() != prevRev {
-		return m.afterContentChange()
-	}
-	return m.afterCursorMove()
-}
-
-// afterContentChange re-discovers embedded images and reconciles collapse state
-// after the buffer was mutated. Image-row expansion itself is handled by the
-// display pipeline (textedit.syncDisplay), not here.
-func (m Model) afterContentChange() (Model, tea.Cmd) {
-	var cmds []tea.Cmd
-
-	m, collapsed := m.detectImageCollapse()
-	if collapsed {
-		cmds = append(cmds, tea.ClearScreen)
-	}
-
-	var dcmd tea.Cmd
-	m, dcmd = m.discoverNewImages()
-	if dcmd != nil {
-		cmds = append(cmds, dcmd)
-	}
-
-	return m, tea.Batch(cmds...)
-}
-
-// afterCursorMove reconciles image collapse state after a cursor-only change
-// (no buffer mutation). Moving the caret on/off a standalone image line toggles
-// the embed between revealed source (one row) and rendered image (N rows) via
-// the markdown sync — a change that never bumps the buffer revision — so the
-// collapse must be detected here, not only on content changes.
-//
-// Discovery is also guarded here: when the cursor moves off an embed line it
-// becomes standalone/Rendered for the first time, so we kick off decode if the
-// path has not been tracked yet. The guard (hasUndiscoveredImages) makes this
-// a no-op on steady-state navigation.
-func (m Model) afterCursorMove() (Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	m, collapsed := m.detectImageCollapse()
-	if collapsed {
-		cmds = append(cmds, tea.ClearScreen)
-	}
-	if m.hasUndiscoveredImages() {
-		var dcmd tea.Cmd
-		m, dcmd = m.discoverNewImages()
-		if dcmd != nil {
-			cmds = append(cmds, dcmd)
-		}
-	}
-	return m, tea.Batch(cmds...)
-}
-
-// DiscoverImages scans the current snapshot for standalone image embeds and
-// queues decode commands for any not yet tracked. Call this after SetContent
-// (e.g. on file load) to start rendering images without requiring a buffer edit.
-func (m Model) DiscoverImages() (Model, tea.Cmd) {
-	return m.discoverNewImages()
+	return m.afterMutation(m.Model.Revision() != prevRev)
 }
 
 // SetRect sets position and size. Overrides textedit.SetRect to also resize
-// images and re-publish their (possibly changed) footprints to the display
-// pipeline.
-func (m Model) SetRect(r textedit.Rect) Model {
+// images and run afterMutation(false) — folding in what
+// RefreshImagesAfterLayoutChange used to do separately (retransmit + the
+// dims/collapse/view-state funnel), since SetRect never touches the buffer.
+// Edge E2: signature is (Model, tea.Cmd); the workspace's one caller
+// (recalcLayout) must not drop the returned Cmd.
+func (m Model) SetRect(r textedit.Rect) (Model, tea.Cmd) {
 	// The workspace re-runs recalcLayout (→ SetRect) on every keypress, almost
 	// always with unchanged dimensions. Re-publishing image dims and following
 	// the cursor on those no-op passes would re-pin the viewport to the cursor
@@ -266,22 +214,31 @@ func (m Model) SetRect(r textedit.Rect) Model {
 	changed := r.W != m.Model.Width() || r.H != m.Model.Height()
 	m.Model = m.Model.SetRect(r)
 	if !changed {
-		return m
+		return m, nil
 	}
 	g := m.Model.Geom()
 	m = m.resizeImages(g.ImageMaxCols(), g.ContentHeight)
-	m.Model = m.Model.SetImageDims(m.currentImageDims())
-	m.Model = m.Model.ScrollToCursor()
-	return m
+
+	var cmds []tea.Cmd
+	if cmd := m.retransmitImagesCmd(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	var cmd tea.Cmd
+	m, cmd = m.afterMutation(false)
+	if cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return m, tea.Batch(cmds...)
 }
 
-// SetContent replaces buffer content and publishes current image footprints so
-// the display pipeline expands any already-live embeds.
-func (m Model) SetContent(content string) Model {
+// SetContent replaces buffer content and runs afterMutation(true) — discovery,
+// dims republish, collapse detect, and view-state re-arm for the freshly-set
+// document. Edge E1: signature is (Model, tea.Cmd); this Cmd IS the image
+// discovery for the new content — every non-test caller must unchain and
+// append it (never drop it), or embeds stay unspawned until the next mutation.
+func (m Model) SetContent(content string) (Model, tea.Cmd) {
 	m.Model = m.Model.SetContent(content)
-	m.Model = m.Model.SetImageDims(m.currentImageDims())
-	m.Model = m.Model.ScrollToCursor()
-	return m
+	return m.afterMutation(true)
 }
 
 // SetDocPath pins the open document's path — the golden source for resolving its
@@ -324,17 +281,13 @@ func (m Model) docDir() string {
 }
 
 // ReplaceRange replaces the range [start, end) with text and runs
-// afterContentChange. Propagates textedit.ReplaceRange's §1.3 bounds error
+// afterMutation(true). Propagates textedit.ReplaceRange's §1.3 bounds error
 // unchanged — the buffer is left untouched on error, so the caller MUST
 // surface it (e.g. via the workspace's errorCmd) rather than drop it.
 func (m Model) ReplaceRange(start, end int, text string) (Model, tea.Cmd, error) {
-	var err error
-	m.Model, err = m.Model.ReplaceRange(start, end, text)
-	if err != nil {
-		return m, nil, err
-	}
-	rm, cmd := m.afterContentChange()
-	return rm, cmd, nil
+	return m.applyChecked(func(tm textedit.Model) (textedit.Model, error) {
+		return tm.ReplaceRange(start, end, text)
+	})
 }
 
 // ReplaceAll replaces the entire buffer content in one journaled edit. Used by

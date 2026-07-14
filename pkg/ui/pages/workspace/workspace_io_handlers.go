@@ -127,12 +127,13 @@ func (m Model) handleFileLoadedMsg(msg FileLoadedMsg, cmds []tea.Cmd) (Model, []
 		// (identical to DiskContent when the doc has no history yet).
 		// Diverged's guard is raised below, after this install (mirrors the
 		// pre-v4 ordering) — a genuine conflict is never silently adopted.
-		m.editor = m.editor.SetContent(content)
+		// SetContent's Cmd IS the image discovery for this content (E1) —
+		// dropping it would leave embeds unspawned until the next mutation.
+		var scmd tea.Cmd
+		m.editor, scmd = m.editor.SetContent(content)
+		cmds = append(cmds, scmd)
 	}
 
-	var dimg tea.Cmd
-	m.editor, dimg = m.editor.DiscoverImages()
-	cmds = append(cmds, dimg)
 	m.editor = m.editor.SetReadOnly(false)
 
 	// Passive "changed on disk" hint derives directly from Load's own

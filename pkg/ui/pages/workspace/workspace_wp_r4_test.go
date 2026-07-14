@@ -35,7 +35,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	// Dismiss the load-time guard (Esc) — Sync stays Diverged (mirrors
 	// TestB1_EscThenQuitSaveRefused's setup).
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("setup: expected pendingConflict cleared by Esc")
 	}
 
@@ -55,7 +55,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 		[]buffer.AppliedEdit{{Start: 0, End: len("b-v1"), Deleted: "b-v1", Insert: "b-v2 unsaved"}}, nil, nil); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
-	m.editor = m.editor.SetContent("b-v2 unsaved")
+	m.editor, _ = m.editor.SetContent("b-v2 unsaved")
 	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{DocID: docB}, true)
 
 	// Quit "Save all".
@@ -69,7 +69,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
 		t.Fatalf("expected the conflict guard visible after quit-abort; inGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("expected pendingConflict re-raised")
 	}
 
@@ -97,7 +97,7 @@ func TestQuit_AbortsOnDivergedTab_NothingSilentlySkipped(t *testing.T) {
 	// itself is cleared, which is not what a real user interaction does.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: 's', Text: "s"})
 	m = settle(t, m, cmd)
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("expected A's conflict resolved")
 	}
 	if m.footer.InGuard() {
@@ -135,7 +135,7 @@ func TestDiskChangedHint_OrdinaryEditDoesNotTrigger(t *testing.T) {
 		[]buffer.AppliedEdit{{Start: 5, End: 5, Insert: "!"}}, nil, nil); err != nil {
 		t.Fatalf("AppendEdit: %v", err)
 	}
-	m.editor = m.editor.SetContent("hello!")
+	m.editor, _ = m.editor.SetContent("hello!")
 
 	msg1, ok := probeDocCmd(m.store, docID, path)().(probeResultMsg)
 	if !ok {
@@ -203,7 +203,7 @@ func TestConflictDiscard_CorruptBlobRefusesAndSurfaces(t *testing.T) {
 	}
 	m, cmd = m.Update(saveCmd())
 	m = settle(t, m, cmd)
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("setup: expected conflict guard raised")
 	}
 
@@ -304,7 +304,7 @@ func TestDegradedStore_PersistentBannerAndSaveConfirms(t *testing.T) {
 	if m.view.DocID() == 0 {
 		t.Fatal("docID unavailable")
 	}
-	m.editor = m.editor.SetContent("hello!")
+	m.editor, _ = m.editor.SetContent("hello!")
 
 	m, _ = m.startSave()
 	if m.activeSave.InFlight {

@@ -2,6 +2,7 @@ package markdownedit
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -122,24 +123,54 @@ func (m Model) buildInlineImagePlacements() (string, map[string]placedRegion) {
 	return "\0337" + body + "\0338", regions // DECSC … DECRC
 }
 
-func (m Model) discoverNewImages() (Model, tea.Cmd) {
+// spawnImage constructs a fresh image.Model for path/absPath/id/mtime and
+// tracks it, returning its Init() decode Cmd — the one New+store+Init triple
+// both the fresh-spawn and the mtime-respawn branch of syncImageSet need.
+func (m Model) spawnImage(path, absPath string, id uint32, mtime int64, maxCols, maxRows int) (Model, tea.Cmd) {
+	newImg := image.New(path, absPath, id, mtime, m.termCaps, m.cellSize, maxCols, maxRows, m.fs)
+	m.images[path] = newImg
+	return m, newImg.Init()
+}
+
+// syncImageSet reconciles the tracked image-instance set against the current
+// snapshot in one pass: standalone (spawn source — isStandaloneImageLine,
+// Rendered-only, unchanged from the pre-M6 discoverNewImages) drives
+// spawn/respawn; present (any image-role span, Rendered OR Revealed — reveal-
+// stable, so a caret pass over an embed line can never despawn a live image)
+// drives despawn of any tracked path no longer referenced anywhere in the
+// document (deleted embed line, undo/redo, ReplaceAll). A despawn frees the
+// path's allocator IDs and its Kitty terminal-side pixel memory (iTerm2 needs
+// nothing — its footprint is erased by the placement pipeline, §3.1).
+func (m Model) syncImageSet() (Model, tea.Cmd) {
 	if !m.imageCapable() {
 		return m, nil
 	}
 	g := m.Model.Geom()
 	maxCols := g.ImageMaxCols()
 	maxRows := g.ContentHeight
-	cs := m.cellSize
 
+	var standalone []string
 	seen := map[string]bool{}
-	var cmds []tea.Cmd
 	for _, l := range g.Snap.Lines {
 		path, ok := display.StandaloneImagePath(l)
 		if !ok || seen[path] {
 			continue
 		}
 		seen[path] = true
+		standalone = append(standalone, path)
+	}
 
+	present := map[string]bool{}
+	for _, l := range g.Syntax.Lines {
+		for _, sp := range l.Spans {
+			if sp.ImagePath != "" {
+				present[sp.ImagePath] = true
+			}
+		}
+	}
+
+	var cmds []tea.Cmd
+	for _, path := range standalone {
 		absPath := m.resolveEmbed(path)
 		if absPath == "" {
 			continue
@@ -147,21 +178,50 @@ func (m Model) discoverNewImages() (Model, tea.Cmd) {
 		mtime := fileMtime(m.fs, absPath)
 
 		if existing, ok := m.images[path]; ok {
-			if existing.Mtime() == mtime || existing.State() == image.PendingDecode || existing.State() == image.Failed {
+			// Retry rule: Failed is sticky per (path, mtime) — an unchanged
+			// mtime never respawns a failed instance (that would retry-storm
+			// a permanently-broken file every discovery pass); a genuine
+			// mtime change (e.g. `touch`, or a rewrite) always respawns and
+			// retries, regardless of the prior state, including Failed.
+			// PendingDecode also never respawns — a decode already in flight
+			// for this path must run to completion before anything replaces it.
+			if existing.Mtime() == mtime || existing.State() == image.PendingDecode {
 				continue
 			}
-			id := existing.ID()
-			newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fs)
-			m.images[path] = newImg
-			cmds = append(cmds, newImg.Init())
+			// Free the outgoing generation's animation-frame pixel memory
+			// NOW — the respawn reuses the base ID (its retransmit overwrites
+			// that ID's terminal-side data in place) but never the frame IDs,
+			// which otherwise leak in the terminal until despawn's DeleteCmd,
+			// and that only covers the CURRENT instance's IDs. Frames only:
+			// deleting the shared base ID here would race the new transmit
+			// (see image.Model.DeleteFramesCmd). The allocator entries stay
+			// until despawn's FreeAllForPath — conservative (no reuse, no
+			// collision), and path-keyed so despawn frees every generation.
+			if dcmd := existing.DeleteFramesCmd(); dcmd != nil {
+				cmds = append(cmds, dcmd)
+			}
+			var cmd tea.Cmd
+			m, cmd = m.spawnImage(path, absPath, existing.ID(), mtime, maxCols, maxRows)
+			cmds = append(cmds, cmd)
 			continue
 		}
 
 		id, na := m.idAlloc.AllocFreeID(absPath)
 		m.idAlloc = na
-		newImg := image.New(path, absPath, id, mtime, m.termCaps, cs, maxCols, maxRows, m.fs)
-		m.images[path] = newImg
-		cmds = append(cmds, newImg.Init())
+		var cmd tea.Cmd
+		m, cmd = m.spawnImage(path, absPath, id, mtime, maxCols, maxRows)
+		cmds = append(cmds, cmd)
+	}
+
+	for path, img := range m.images {
+		if present[path] {
+			continue
+		}
+		delete(m.images, path)
+		m.idAlloc = m.idAlloc.FreeAllForPath(img.AbsPath())
+		if cmd := img.DeleteCmd(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 
 	if len(cmds) == 0 {
@@ -188,13 +248,20 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	oldHeight := img.Height()
-	oldLive := img.IsLive()
+	oldFailed := img.State() == image.Failed
 
 	var cmd tea.Cmd
 	img, cmd = img.Update(msg)
 	if cmd != nil {
 		cmds = append(cmds, cmd)
+	}
+
+	// The ¬Failed->Failed edge: surface the error once, on the existing
+	// ImageErrorMsg channel the workspace already intercepts (E5) — otherwise
+	// a decode/transmit/encode failure is invisible (pressure point #1).
+	if !oldFailed && img.State() == image.Failed {
+		err := img.Err()
+		cmds = append(cmds, func() tea.Msg { return ImageErrorMsg{Err: err} })
 	}
 
 	if img.NeedsFrameIDs() {
@@ -208,96 +275,42 @@ func (m Model) updateImages(msg tea.Msg) (Model, tea.Cmd) {
 
 	m.images[path] = img
 
-	// The image's layout footprint changes when its row count changes or when
-	// it transitions to/from Live (only Live images reserve expanded rows).
-	// Push the new footprints into the display pipeline so the snapshot — and
-	// the scroll math that depends on it — stay consistent.
-	if img.Height() != oldHeight || img.IsLive() != oldLive {
-		m.Model = m.Model.SetImageDims(m.currentImageDims())
-		m.Model = m.Model.ScrollToCursor()
+	// The image's layout footprint changes whenever its row count changes —
+	// currentImageDims reserves rows for any decoded image (Height() > 1),
+	// not just Live ones (fixed comment drift, pressure point #12: an older
+	// version of this comment claimed "only Live images reserve expanded
+	// rows", which currentImageDims's own doc comment already contradicts).
+	// publishImageDimsIfChanged's dims-map comparison covers the change
+	// exactly, and keeps m.publishedDims in sync so the next afterMutation
+	// pass doesn't redundantly republish.
+	m = m.publishImageDimsIfChanged()
+
+	// Visibility + animation re-arm funnel through syncImageViewState (the
+	// single re-arm chokepoint) here too: a lifecycle message is itself a
+	// viewport-affecting change — decode expands the embed's reserved rows,
+	// and the async ¬Live→Live ack is what makes an animated image eligible
+	// to tick at all. Skipping this here left a freshly-decoded animated
+	// image frozen at frame 0 until the next keypress/wheel/resize, because
+	// its visibleRows still held the pre-decode projection (0) and nothing
+	// else on the async path re-projected it (review finding).
+	var vcmd tea.Cmd
+	m, vcmd = m.syncImageViewState()
+	if vcmd != nil {
+		cmds = append(cmds, vcmd)
 	}
-
-	// Tell the image how many of its rows are on-screen (computed against the
-	// now-expanded snapshot). Animation ticking is gated on visibleRows > 0, so
-	// without this an animated image never advances past frame 0. Must run
-	// before ArmTick below.
-	img = img.SetVisibleRows(m.visibleRowsFor(path))
-	m.images[path] = img
-
-	if !oldLive && img.IsLive() {
-		var armCmd tea.Cmd
-		img, armCmd = img.ArmTick()
-		m.images[path] = img
-		if armCmd != nil {
-			cmds = append(cmds, armCmd)
-		}
-	}
-
 	return m, tea.Batch(cmds...)
 }
 
-// visibleRowsFor reports how many display rows of the given image are currently
-// within the viewport, using the same geometry as buildInlineImagePlacements.
-// Drives animation gating: an off-screen (or cursor-revealed-to-source) image
-// reports 0 and pauses its ticks.
-func (m Model) visibleRowsFor(path string) int {
-	g := m.Model.Geom()
-	vp := g.Viewport
-	contentH := g.ContentHeight
-	count := 0
-	for lineIdx, l := range g.Snap.Lines {
-		if l.ImagePath != path {
-			continue
-		}
-		displayRow := lineIdx - vp.TopRow
-		if displayRow >= 0 && displayRow < contentH {
-			count++
-		}
-	}
-	return count
-}
-
-// RefreshImagesAfterLayoutChange retransmits and re-arms image ticks.
-// Called by workspace after SetRect.
-func (m Model) RefreshImagesAfterLayoutChange() (Model, tea.Cmd) {
-	var cmds []tea.Cmd
-	if cmd := m.retransmitImagesCmd(); cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	var cmd tea.Cmd
-	m, cmd = m.armImageTicks()
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-	if len(cmds) > 0 {
-		return m, tea.Batch(cmds...)
-	}
-	return m, nil
-}
-
-func (m Model) retransmitImagesCmd() tea.Cmd {
-	if !m.imageCapable() {
-		return nil
-	}
-	var cmds []tea.Cmd
-	for _, img := range m.images {
-		if cmd := img.RetransmitCmd(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-	if len(cmds) == 0 {
-		return nil
-	}
-	return tea.Batch(cmds...)
-}
-
-func (m Model) armImageTicks() (Model, tea.Cmd) {
-	if !m.imageCapable() {
+// mapImages applies fn to every tracked image, writing the result back and
+// batching every non-nil Cmd. The one iteration site resizeImages,
+// retransmitImagesCmd, detectImageCollapse, and syncImageViewState all share.
+func (m Model) mapImages(fn func(path string, img image.Model) (image.Model, tea.Cmd)) (Model, tea.Cmd) {
+	if len(m.images) == 0 {
 		return m, nil
 	}
 	var cmds []tea.Cmd
 	for path, img := range m.images {
-		newImg, cmd := img.ArmTick()
+		newImg, cmd := fn(path, img)
 		m.images[path] = newImg
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -307,6 +320,61 @@ func (m Model) armImageTicks() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// visibleRowsByPath reports, for every image path with at least one row in
+// the current snapshot, how many of its display rows are currently within
+// the viewport — one pass over the snapshot rather than one full-snapshot
+// scan per image (the old visibleRowsFor, called once per image message).
+func (m Model) visibleRowsByPath() map[string]int {
+	g := m.Model.Geom()
+	vp := g.Viewport
+	contentH := g.ContentHeight
+	counts := map[string]int{}
+	for lineIdx, l := range g.Snap.Lines {
+		if l.ImagePath == "" {
+			continue
+		}
+		displayRow := lineIdx - vp.TopRow
+		if displayRow >= 0 && displayRow < contentH {
+			counts[l.ImagePath]++
+		}
+	}
+	return counts
+}
+
+// syncImageViewState is THE single animation re-arm chokepoint: project
+// visibility (one pass, visibleRowsByPath), then re-arm every image against
+// the fresh count. Every path that can change what's on screen — keyboard
+// scroll (via the reconcile funnel), mouse wheel, layout refresh, and the
+// async image lifecycle messages themselves (updateImages: decode expands
+// rows, the Live ack enables ticking) — routes through this one function, so
+// none of them can forget the re-arm (the old scattered call sites: an
+// inline arm in updateImages that missed keyboard scrolling entirely, and a
+// since-deleted self-arm inside image.Model on the Kitty Live edge that
+// consulted stale visibility).
+func (m Model) syncImageViewState() (Model, tea.Cmd) {
+	if !m.imageCapable() || len(m.images) == 0 {
+		return m, nil
+	}
+	vis := m.visibleRowsByPath()
+	return m.mapImages(func(path string, img image.Model) (image.Model, tea.Cmd) {
+		img = img.SetVisibleRows(vis[path])
+		return img.ArmTick()
+	})
+}
+
+// retransmitImagesCmd re-transmits every image Resize just bumped back to
+// PendingTransmit. Called from SetRect (folding what
+// RefreshImagesAfterLayoutChange used to do as a separate workspace call).
+func (m Model) retransmitImagesCmd() tea.Cmd {
+	if !m.imageCapable() {
+		return nil
+	}
+	_, cmd := m.mapImages(func(_ string, img image.Model) (image.Model, tea.Cmd) {
+		return img, img.RetransmitCmd()
+	})
+	return cmd
 }
 
 // detectImageCollapse reconciles each tracked image's expanded state with the
@@ -331,14 +399,13 @@ func (m Model) detectImageCollapse() (Model, bool) {
 	}
 
 	collapsed := false
-	for path, img := range m.images {
-		var justCollapsed bool
-		img, justCollapsed = img.SetExpanded(expanded[path])
+	m, _ = m.mapImages(func(path string, img image.Model) (image.Model, tea.Cmd) {
+		newImg, justCollapsed := img.SetExpanded(expanded[path])
 		if justCollapsed {
 			collapsed = true
 		}
-		m.images[path] = img
-	}
+		return newImg, nil
+	})
 	if collapsed {
 		m.lastPlacementSeq = ""
 	}
@@ -374,12 +441,13 @@ func (m Model) resizeImages(maxCols, maxRows int) Model {
 	if !m.imageCapable() || len(m.images) == 0 {
 		return m
 	}
-	for path, img := range m.images {
+	m, _ = m.mapImages(func(_ string, img image.Model) (image.Model, tea.Cmd) {
 		newImg, changed := img.Resize(maxCols, maxRows)
-		if changed {
-			m.images[path] = newImg
+		if !changed {
+			return img, nil
 		}
-	}
+		return newImg, nil
+	})
 	return m
 }
 
@@ -404,6 +472,59 @@ func (m Model) currentImageDims() map[string]display.ImageDims {
 		return nil
 	}
 	return dims
+}
+
+// publishImageDimsIfChanged pushes currentImageDims into the display pipeline
+// only when it actually differs from the last-published set (m.publishedDims),
+// then follows with ScrollToCursor. SetImageDims runs a full display resync —
+// gating it is what lets afterMutation call this on every cursor-only move
+// without doing that work on every keypress (only genuine dims changes pay
+// for it).
+func (m Model) publishImageDimsIfChanged() Model {
+	dims := m.currentImageDims()
+	if maps.Equal(dims, m.publishedDims) {
+		return m
+	}
+	m.publishedDims = dims
+	m.Model = m.Model.SetImageDims(dims)
+	m.Model = m.Model.ScrollToCursor()
+	return m
+}
+
+// afterMutation is markdownedit's single post-mutation funnel (reconcile's
+// doc comment promises this): every entry point that can change what's
+// displayed — a buffer edit, a cursor-only move that flips reveal state, a
+// layout change — ends here with contentChanged reporting which kind. Order
+// matters: discovery must run before dims are republished (a freshly
+// discovered image has no footprint yet), collapse detection reads the
+// snapshot dims already reflect, and the animation re-arm must see the
+// final, settled visibility.
+func (m Model) afterMutation(contentChanged bool) (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	if contentChanged || m.hasUndiscoveredImages() {
+		var dcmd tea.Cmd
+		m, dcmd = m.syncImageSet()
+		if dcmd != nil {
+			cmds = append(cmds, dcmd)
+		}
+	}
+
+	m = m.publishImageDimsIfChanged()
+
+	var collapsed bool
+	m, collapsed = m.detectImageCollapse()
+	if collapsed {
+		cmds = append(cmds, tea.ClearScreen)
+	}
+
+	var vcmd tea.Cmd
+	m, vcmd = m.syncImageViewState()
+	if vcmd != nil {
+		cmds = append(cmds, vcmd)
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 // hasUndiscoveredImages reports whether the current snapshot contains any

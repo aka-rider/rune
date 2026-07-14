@@ -52,9 +52,9 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 	s.SaveRequestID = m.activeSave.RequestID
 
 	s.PendingReopenActive = m.pendingReopen.active
-	s.PendingConflictActive = m.guard.conflict.active
-	s.PendingDeletedActive = m.guard.deleted.active
-	s.PendingRacedActive = m.guard.raced.active
+	s.PendingConflictActive = m.guard.kind == guardConflict
+	s.PendingDeletedActive = m.guard.kind == guardDeleted
+	s.PendingRacedActive = m.guard.kind == guardRaced
 	s.StoreDegraded = guard.StoreDegraded
 
 	s.MergeActive = mergemode.IsActive(m.merge)
@@ -82,22 +82,22 @@ func (m Model) FuzzInspect() snapshot.Snapshot {
 // internal/fuzz/ui/workspace's pendingKind* constants and historical fuzz
 // corpora. Trash is tied to guard.kind directly (A3 — trash never survives an
 // async Save round-trip, so it carries no separate intent struct); Close/
-// Quit/Evict are tied to their OWN intent's .active bit (A4), independently
-// of guard.kind — critic R1's coexistence window means guard.kind can read
-// guardConflict while guard.close/evict/quit.active is still true (a
-// conflict guard raised mid-close/evict/quit-save), and the legacy snapshot
-// must keep reporting the close/evict/quit intent in that window exactly as
-// the pre-A4 pendingDataLoss.kind (independent of guard.kind by
-// construction) always did.
+// Quit/Evict are tied to guard.cont.kind (W1: the one continuation slot),
+// independently of guard.kind — critic R1's coexistence window means
+// guard.kind can read guardConflict while guard.cont.kind is still
+// contClose/contEvict/contQuit (a conflict guard raised mid-close/evict/
+// quit-continuation), and the legacy snapshot must keep reporting the
+// continuation in that window exactly as the pre-A4 pendingDataLoss.kind
+// (independent of guard.kind by construction) always did.
 func (m Model) fuzzLegacyPendingKind() int {
 	switch {
 	case m.guard.kind == guardTrash:
 		return 4
-	case m.guard.close.active:
+	case m.guard.cont.kind == contClose:
 		return 1
-	case m.guard.quit.active:
+	case m.guard.cont.kind == contQuit:
 		return 2
-	case m.guard.evict.active:
+	case m.guard.cont.kind == contEvict:
 		return 3
 	}
 	return 0

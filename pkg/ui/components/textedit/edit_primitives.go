@@ -34,10 +34,8 @@ func (m Model) ReplaceRange(start, end int, text string) (Model, error) {
 	if err != nil {
 		return m, fmt.Errorf("replace range [%d,%d): %w", start, end, err)
 	}
-	m.buf = newBuf
-	m.pendingEdits = append(m.pendingEdits, applied...)
+	m = m.commitEdits(newBuf, applied, true, nil)
 	m.cursors = cursor.NewCursorSet(start + len(text))
-	m.rev++
 	m = m.syncDisplay()
 	m = m.ScrollToCursor()
 	return m, nil
@@ -64,8 +62,7 @@ func (m Model) ApplyInverse(edits []buffer.AppliedEdit) (Model, error) {
 	if err != nil {
 		return m, fmt.Errorf("apply inverse (undo): %w", err)
 	}
-	m.buf = newBuf
-	m.rev++
+	m = m.commitEdits(newBuf, nil, false, nil)
 	m = m.syncDisplay()
 	return m, nil
 }
@@ -107,8 +104,7 @@ func (m Model) Reapply(edits []buffer.AppliedEdit) (Model, error) {
 		}
 		work = newBuf
 	}
-	m.buf = work
-	m.rev++
+	m = m.commitEdits(work, nil, false, nil)
 	m = m.syncDisplay()
 	return m, nil
 }

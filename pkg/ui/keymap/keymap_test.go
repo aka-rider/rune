@@ -411,9 +411,9 @@ func TestShiftNavigationResolvesToSelectCommands(t *testing.T) {
 			name = tc.chord.Key
 		}
 		t.Run(name, func(t *testing.T) {
-			r, res := resolver.Resolve(tc.chord, ctx)
+			res := resolver.Resolve(tc.chord, ctx)
 			if res.Kind != keybind.ResultFound {
-				t.Fatalf("expected ResultFound, got %v (resolver=%+v)", res.Kind, r)
+				t.Fatalf("expected ResultFound, got %v", res.Kind)
 			}
 			if res.Command != tc.expected {
 				t.Fatalf("expected command %q, got %q", tc.expected, res.Command)

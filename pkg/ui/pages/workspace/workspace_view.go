@@ -118,7 +118,11 @@ func (m Model) paneGeometry() paneGeometry {
 	}
 }
 
-func (m Model) recalcLayout() Model {
+// recalcLayout re-derives every pane's geometry from the current terminal
+// size. Its returned Cmd is markdownedit.SetRect's (E2) — the editor's
+// retransmit/view-state funnel after a layout change; callers must not drop
+// it (tea.Batch/append tolerates a nil).
+func (m Model) recalcLayout() (Model, tea.Cmd) {
 	g := m.paneGeometry()
 	leftW := g.LeftW
 	rightW := g.RightW
@@ -161,7 +165,8 @@ func (m Model) recalcLayout() Model {
 	// geometry here shifts when m.err is set — topOffset is always 1.
 	topOffset := 1
 
-	m.editor = m.editor.SetRect(textedit.Rect{
+	var cmd tea.Cmd
+	m.editor, cmd = m.editor.SetRect(textedit.Rect{
 		X: leftW + 1,
 		Y: topOffset + titleH + searchH,
 		W: innerCenterW,
@@ -176,7 +181,7 @@ func (m Model) recalcLayout() Model {
 
 	m.filetree = m.filetree.SetOffset(1, 1)
 
-	return m
+	return m, cmd
 }
 
 func (m Model) paneAtPoint(x, y int) (pane, bool) {
@@ -243,6 +248,43 @@ func (m Model) dividerAtPoint(x, y int) (dragState, bool) {
 	return dragNone, false
 }
 
+// centerDisplayKind is what the center pane currently substitutes for the
+// main editor, derived fresh on every read rather than stored (A6/F16): the
+// pre-A6 code had View()'s center-pane switch and handleKeyPress's paneCenter
+// merge pre-intercept each independently re-check mergemode.IsActive(m.merge)
+// — exactly the "key ladder and render switch can silently disagree" risk
+// F16 named. Precedence mirrors the switch this replaces EXACTLY: an active
+// merge resolver wins over a conflict-guard preview (the conflict guard is
+// always cleared before mergemode.Enter activates the resolver — mutually
+// exclusive in practice, but ordered here regardless), which wins over a
+// pending-load blank.
+type centerDisplayKind int
+
+const (
+	displayNormal centerDisplayKind = iota
+	displayMergeResolver
+	displayConflictPreview
+	displayLoading
+)
+
+// centerDisplay derives the current center-pane substitution. Never stored —
+// every caller (View's substitution switch, handleKeyPress's paneCenter merge
+// gate) re-derives it fresh, exactly like the two independent checks it
+// replaces did, so consulting it from two call sites can never let them drift
+// apart the way two independently-maintained conditions could.
+func (m Model) centerDisplay() centerDisplayKind {
+	switch {
+	case mergemode.IsActive(m.merge):
+		return displayMergeResolver
+	case m.guard.kind == guardConflict:
+		return displayConflictPreview
+	case m.pendingLoad.active:
+		return displayLoading
+	default:
+		return displayNormal
+	}
+}
+
 func (m Model) View() tea.View {
 	if m.totalWidth == 0 {
 		return tea.NewView("")
@@ -260,20 +302,20 @@ func (m Model) View() tea.View {
 		centerParts = append(centerParts, m.search.View())
 	}
 	editorView := m.editor.View()
-	switch {
-	case mergemode.IsActive(m.merge):
+	switch m.centerDisplay() {
+	case displayMergeResolver:
 		// The merge resolver is active: substitute the read-only diff view for
 		// the main editor (which is hidden — it holds the marker working
 		// buffer, §3/§4). Title/breadcrumb stay so the doc identity is clear.
 		editorView = m.merge.View()
-	case m.guard.conflict.active:
+	case displayConflictPreview:
 		// Fix D (BUG2): the [S]/[D]/[M] guard is up — render the read-only
 		// ours-vs-theirs PREVIEW (built by raiseConflictGuard) in place of the
 		// main editor, so the diff is visible before the user chooses. Mutually
-		// exclusive with the IsActive case above: guard.conflict is always
-		// cleared before mergemode.Enter activates the resolver.
+		// exclusive with displayMergeResolver above: the conflict guard is
+		// always cleared before mergemode.Enter activates the resolver.
 		editorView = m.merge.View()
-	case m.pendingLoad.active:
+	case displayLoading:
 		// Non-destructive anti-flash: render the editor's empty frame while a
 		// load is in flight, leaving the real buffer intact (preserves 16138bd
 		// without the SetContent("") stranding). RenderEmpty matches View()'s

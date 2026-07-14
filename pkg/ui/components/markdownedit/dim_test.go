@@ -15,8 +15,8 @@ const faintSGR = "\x1b[2m"
 func dimTestModel(t *testing.T, content string, focused bool) Model {
 	t.Helper()
 	m := New(keymap.Default(), styles.Default(), terminal.TermCaps{})
-	m = m.SetRect(textedit.Rect{W: 80, H: 6})
-	m = m.SetContent(content)
+	m, _ = m.SetRect(textedit.Rect{W: 80, H: 6})
+	m, _ = m.SetContent(content)
 	m = m.SetFocused(focused)
 	return m
 }

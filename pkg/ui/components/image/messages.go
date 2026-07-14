@@ -8,8 +8,13 @@ import (
 
 // UpdateMsg is an envelope that routes internal image lifecycle messages
 // to the correct image model without exporting the internal message types.
+// Gen is the spawning instance's spawn generation (Model.gen) — Update drops
+// the message if it no longer matches, so a same-path result from a
+// despawned/respawned instance (mtime replacement) can never land on the
+// wrong instance even though Path alone would match.
 type UpdateMsg struct {
 	Path  string
+	Gen   uint64
 	inner tea.Msg
 }
 
@@ -20,8 +25,10 @@ type ReadyMsg struct {
 }
 
 // ErrorMsg is emitted when an image fails to decode, transmit, or encode.
+// Gen guards it exactly like UpdateMsg (see its doc comment).
 type ErrorMsg struct {
 	Path string
+	Gen  uint64
 	Err  error
 }
 

@@ -55,7 +55,7 @@ func (m Model) savedObsFor(docID int64) (docstate.ObsID, bool) {
 // SyncErr, then Sync.Kind == docstate.SyncDiverged, then !HasExpect — with
 // their OWN site-specific error text, guard-raising, and abort/skip
 // semantics (startSave surfaces a footer error; evictSave also clears
-// guard.evict; saveAllDirtyForQuit aborts the whole quit and names the
+// guard.cont; saveAllDirtyForQuit aborts the whole quit and names the
 // path); vetSave itself never decides what a caller does with a refusal.
 type vetSaveOutcome struct {
 	Sync      docstate.SyncState // valid when SyncErr == nil
@@ -189,38 +189,78 @@ func (m Model) startSaveDegradedConfirmed(degradedConfirmed bool) (Model, tea.Cm
 	}
 	expect := v.Expect
 	content := m.editor.Content()
-	requestID := fmt.Sprintf("save-%v", time.Now().UnixNano())
-	// Stamp guard.close with THIS save's requestID only when it's the
-	// continuation of an existing live close intent (the confirmed
+	var requestID string
+	var cmd tea.Cmd
+	m, requestID, cmd = m.issueSave(saveReq{prefix: "save", docID: m.view.DocID(), path: m.view.Path(), content: content, expect: expect, track: true})
+	// Stamp guard.cont with THIS save's requestID only when it's the
+	// continuation of an existing live close continuation (the confirmed
 	// close-save flow, footer.DataLossSave -> confirmGuardSave -> startSave,
-	// reached with guard.close.active still true) — never when no close is
+	// reached with guard.cont.kind still contClose) — never when no close is
 	// pending (plain ⌘S; Priority 2.1's guard-in-progress gate already
 	// guarantees no other key can raise a guard while this is reached with
-	// guard.close.active==false). MUST be gated on guard.close.active
-	// specifically, not any other live intent: an eviction victim's
-	// background save (evictSave) never touches activeSave/InFlight and
-	// resolves its OWN guard synchronously before dispatching, so nothing
-	// blocks a totally ordinary, unrelated ⌘S on the currently-displayed file
-	// while that eviction save is still in flight with guard.evict.active —
-	// a guard here that fired on ANY live intent would clobber
-	// guard.evict.requestID with THIS save's ID, breaking isEvictSaveAck's
-	// correlation and silently dropping the eviction's own ack (review
+	// guard.cont.kind != contClose). MUST be gated on contClose specifically,
+	// not any other live continuation kind: an eviction victim's background
+	// save (evictSave) never touches activeSave/InFlight and resolves its OWN
+	// guard synchronously before dispatching, so nothing blocks a totally
+	// ordinary, unrelated ⌘S on the currently-displayed file while that
+	// eviction save is still in flight with guard.cont.kind==contEvict — a
+	// guard here that fired on ANY live continuation would clobber
+	// guard.cont.requestID with THIS save's ID, breaking cont.owns(contEvict,
+	// ...)'s correlation and silently dropping the eviction's own ack (review
 	// finding). This correlation is what lets handleFileSaveErrorMsg/
 	// handleFileSavedMsg's ack handlers tell "this save owns the pending
 	// guard" apart from "an unrelated guard happens to be up right now"
 	// (GUARD-STATE-COH).
-	if m.guard.close.active {
-		m.guard.close.requestID = requestID
+	if m.guard.cont.kind == contClose {
+		m.guard.cont.requestID = requestID
 	}
-	m.activeSave = SaveIdentity{
-		RequestID:    requestID,
-		SavedContent: []byte(content),
-		InFlight:     true,
-		Path:         m.view.Path(),
-		DocID:        m.view.DocID(),
+	return m, cmd
+}
+
+// saveReq is the uniform input to issueSave (W3): requestID stamping, the
+// co-atomic seq capture (§1.4.2/§1.4.8), and activeSave arming can never
+// diverge per-site.
+type saveReq struct {
+	prefix  string // requestID prefix; the "quitsave-" prefix match at workspace_io_save.go depends on this string staying "quitsave"
+	docID   int64
+	path    string
+	content string
+	expect  docstate.ObsID // CAS baseline; zero value is fine for bindNew=true
+	bindNew bool
+	track   bool // arm m.activeSave — foreground saves only; evict/quitsave track guard.cont instead
+}
+
+// issueSave is the ONLY materializeStoreCmd wrapper (W3), collapsing the 7
+// save call sites (⌘S / force-save / force-save-deleted / restore-theirs /
+// bind / evict / quitsave) onto one requestID shape (`prefix-docID-nano` —
+// several pre-W3 formats omitted the nanosecond suffix, e.g. `force-save-%d`,
+// which could have collided on a same-doc double-issue). Returns the
+// requestID for callers that must correlate it further (startSave's
+// guard.cont stamp, evictSave's).
+func (m Model) issueSave(r saveReq) (Model, string, tea.Cmd) {
+	seq := m.currentSeqFor(r.docID)
+	requestID := fmt.Sprintf("%s-%d-%v", r.prefix, r.docID, time.Now().UnixNano())
+	if r.track {
+		m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(r.content), InFlight: true, Path: r.path, DocID: r.docID}
 	}
-	seq := m.currentSeqFor(m.view.DocID())
-	return m, materializeStoreCmd(m.store, m.view.DocID(), m.view.Path(), content, expect, seq, requestID, false)
+	return m, requestID, materializeStoreCmd(m.store, r.docID, r.path, r.content, r.expect, seq, requestID, r.bindNew)
+}
+
+// failContinuation is the shared refusal exit for every vet failure on a
+// confirmed continuation save (W3): abandon the continuation, clear the
+// guard prompt, surface text on the footer — collapses evictSave's 5
+// refusal blocks and saveAllDirtyForQuit's 3 (SyncErr/!HasExpect/content-
+// reconstruction; SyncDiverged calls abortQuitForDivergence instead, a
+// different action, so it's not one of these). startSave's own ladder does
+// NOT use this (a plain ⌘S has no continuation to abandon); the three
+// vetSave verdict-ladders stay separate since each site's verdict maps to a
+// different action.
+func (m Model) failContinuation(text string) (Model, tea.Cmd) {
+	m.guard.cont = continuation{}
+	m = m.clearGuardPrompt()
+	var cmd tea.Cmd
+	m.footer, cmd = m.footer.Update(footer.ShowErrorMsg{Text: text})
+	return m, cmd
 }
 
 func (m Model) syncDirty() Model {
@@ -257,7 +297,9 @@ func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 	m.editor = m.editor.SetDocPath(m.view.Path())
 	m = m.applyFocus()
 	if m.totalWidth > 0 {
-		m = m.recalcLayout()
+		var layoutCmd tea.Cmd
+		m, layoutCmd = m.recalcLayout()
+		cmds = append(cmds, layoutCmd)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -265,12 +307,11 @@ func (m Model) finalize(cmds []tea.Cmd) (Model, tea.Cmd) {
 func (m Model) finalizeLayoutChange(cmds []tea.Cmd) (Model, tea.Cmd) {
 	m = m.applyFocus()
 	if m.totalWidth > 0 {
-		m = m.recalcLayout()
-		var refreshCmd tea.Cmd
-		m.editor, refreshCmd = m.editor.RefreshImagesAfterLayoutChange()
-		if refreshCmd != nil {
-			cmds = append(cmds, refreshCmd)
-		}
+		// recalcLayout's own Cmd now carries what RefreshImagesAfterLayoutChange
+		// used to add separately — SetRect folds it in (E2, M5).
+		var layoutCmd tea.Cmd
+		m, layoutCmd = m.recalcLayout()
+		cmds = append(cmds, layoutCmd)
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -328,6 +369,18 @@ func (m Model) syncCursorToFooter() Model {
 	return m
 }
 
+// stopDictation is the 2-line core every dict.Disable() call site pairs with
+// (W5): disable the engine, sync the footer's dictating indicator in the
+// SAME step, so the two can never drift apart (one updated, the other
+// forgotten) — the exact gap footer.DictationStopMsg's handler used to leave
+// open (dict disabled immediately on the user's own ^v-stop, but the footer
+// indicator only cleared later, on dictcomp.DoneMsg's async confirmation).
+func (m Model) stopDictation() Model {
+	m.dict = m.dict.Disable()
+	m.footer = m.footer.SetDictating(false)
+	return m
+}
+
 // disableDictationForTransition stops any active dictation session before a
 // buffer-identity transition (tab switch/load, undo/redo, conflict
 // resolution) that a stale dictation anchor could otherwise corrupt. H1: the
@@ -341,8 +394,7 @@ func (m Model) disableDictationForTransition(cmds *[]tea.Cmd) Model {
 	if !m.dict.Enabled() {
 		return m
 	}
-	m.dict = m.dict.Disable()
-	m.footer = m.footer.SetDictating(false)
+	m = m.stopDictation()
 	*cmds = append(*cmds, func() tea.Msg {
 		return footer.ShowStatusMsg{Text: "Dictation stopped — document changed"}
 	})

@@ -1,18 +1,23 @@
 package workspace
 
-import "rune/pkg/ui/components/footer"
+import (
+	"rune/pkg/docstate"
+	"rune/pkg/ui/components/footer"
+	"rune/pkg/ui/components/opentabs"
+)
 
 // guardKind is workspace's own semantic classification of which guard is
 // showing — finer-grained than footer.GuardKind, which selects only what
 // PROMPTS (F12/critic R5): guardDirtyClose/guardDirtyEvict/guardDirtyQuit all
 // render as the identical GuardDirty prompt (same footer.GuardKind, same
 // options), but are three semantically distinct reasons the guard was raised
-// — guard.close/guard.evict/guard.quit (A4) track which one, independently
-// of kind (critic R1: kind can flip to guardConflict on top of a live
-// close/evict/quit intent, see guardState's own doc comment) — and every
-// SetGuard call site already knows WHY it's raising a guard, so naming that
-// reason here (rather than only picking a footer.GuardKind) keeps workspace's
-// and footer's taxonomies aligned rather than introducing a second one.
+// — guard.cont.kind (W1, formerly A4's separate close/evict/quit intents)
+// tracks which one, independently of guardState.kind (critic R1: kind can
+// flip to guardConflict on top of a live close/evict/quit continuation, see
+// guardState's own doc comment) — and every SetGuard call site already knows
+// WHY it's raising a guard, so naming that reason here (rather than only
+// picking a footer.GuardKind) keeps workspace's and footer's taxonomies
+// aligned rather than introducing a second one.
 type guardKind int
 
 const (
@@ -49,71 +54,137 @@ const (
 
 // guardState is workspace's semantic guard machine — a MULTI-FIELD struct,
 // NOT a single-payload union (critic R1): kind/phase track ONLY what is
-// currently prompting on the footer; the intent sub-structs (conflict/
-// deleted/raced/close/evict/quit) are independently populated and may
-// outlive kind switching to a DIFFERENT guard (e.g. a conflict guard raised
-// mid-close/evict/quit-save does not erase that continuation's own intent —
-// see raiseConflictGuard's callers). kind's zero value (guardNone) is
-// meaningful — no raise call site ever sets it — so an "unrepresentable no
-// guard" state never has to be faked with a sentinel.
+// currently prompting on the footer; prompt (the trash/conflict/deleted/
+// raced payload) and cont (the close/evict/quit continuation slot) are
+// independently populated and may outlive kind switching to a DIFFERENT guard
+// (e.g. a conflict guard raised mid-close/evict/quit-continuation does not
+// erase that continuation's own state — see raiseConflictGuard's callers).
+// kind's zero value (guardNone) is meaningful — no raise call site ever sets
+// it — so an "unrepresentable no guard" state never has to be faked with a
+// sentinel.
 //
 // A4 note: resolving a conflict/deleted/trash/raced/degraded guard that was
 // raised ON TOP OF a live close/evict/quit continuation UNCONDITIONALLY
-// clears close/evict/quit too (handleDataLossSaveAnyway/
-// handleDataLossDiscardConflict/handleDataLossMerge, handleDeletedSave/
-// handleDeletedDiscard, the shared Cancel branch) — this ABANDONS the
+// clears the continuation too (the dispatcher's hoisted abandon for
+// conflict/deleted, the shared Cancel branch) — this ABANDONS the
 // continuation rather than resuming it once the OTHER guard is dealt with;
 // there is no re-arm anywhere in the codebase. Pinned by
 // TestConflictDuringCloseSave_CoexistsThenAbandonsClose
 // (workspace_guard_test.go).
 type guardState struct {
-	kind      guardKind
-	phase     guardPhase
-	trashPath string         // A3: migrated from the former pendingDataLoss.pendingTrashPath field (actionTrash removed) — the file to trash, valid while kind==guardTrash
-	conflict  conflictIntent // A3: migrated from the former Model.pendingConflict field
-	deleted   deletedIntent  // A3: migrated from the former Model.pendingDeleted field
-	raced     racedIntent    // A3: migrated from the former Model.pendingRaced field; racedQueue (workspace.go) stays a separate map[int64]racedIntent — a deferred intent, not active guard state
-	close     closeIntent    // A4: migrated from the former Model.pendingDataLoss{kind:actionClose} (workspace_nav.go)
-	evict     evictIntent    // A4: migrated from the former Model.pendingDataLoss{kind:actionEvict} (workspace_evict.go)
-	quit      quitIntent     // A4: migrated from the former Model.pendingDataLoss{kind:actionQuit} (workspace_quit.go)
+	kind   guardKind
+	phase  guardPhase
+	prompt promptPayload // W2: collapses the former trashPath/conflictIntent/deletedIntent/racedIntent fields (A3) into the one slot at most one of them is ever live in — see promptPayload's own doc comment
+	cont   continuation  // W1: collapses the former close/evict/quit intent fields (A4) into the one slot at most one of them is ever live in — see continuation's own doc comment
 }
 
-// isCloseSaveAck reports whether requestID is the ack for the save startSave
-// launched as the confirmed continuation of a live close intent
-// (footer.DataLossSave -> startSave, which stamps guard.close.requestID —
-// workspace_edit.go). An UNSTAMPED close intent (requestID=="") is a guard
+// promptPayload is the ONE payload slot for whichever of the
+// trash/conflict/deleted/raced guards is CURRENTLY prompting (W2, collapsing
+// the four former independently-typed intents — trashPath/conflictIntent/
+// deletedIntent/racedIntent, A3) — guard.kind is the discriminant (there is
+// no separate "active" bit here, unlike guard.cont): which fields are
+// meaningful depends on guard.kind:
+//   - guardTrash:    path only.
+//   - guardConflict: docID, path, freshObs.
+//   - guardDeleted:  docID, path.
+//   - guardRaced:    docID, path, saved, fresh.
+//
+// Safe to collapse into one slot because every raise site (raiseConflictGuard/
+// raiseDeletedGuard/raiseRacedGuard/the trash raise in workspace_update.go)
+// pairs its OWN payload write with raiseGuardPrompt(kind) in the same
+// function — kind and the payload always change together, so a payload left
+// over from a DIFFERENT, already-resolved kind was already unreachable dead
+// state before W2 (nothing reads guard.prompt without first checking
+// guard.kind). clearGuardPrompt zeroes this alongside kind/phase. racedQueue
+// (workspace.go) reuses this same type for its per-docID backlog — a
+// deferred, not-currently-prompting payload, always shaped like the raced
+// case.
+type promptPayload struct {
+	docID    int64
+	path     string
+	freshObs docstate.ObsID       // conflict
+	saved    docstate.Observation // raced
+	fresh    docstate.Observation // raced
+}
+
+// contKind discriminates which close/evict/quit continuation guard.cont
+// currently holds. contNone (the zero value) means no continuation is
+// pending — no raise site ever leaves cont non-zero without also raising a
+// non-guardNone guard.kind, so "no continuation" never needs a second
+// sentinel.
+type contKind int
+
+const (
+	contNone contKind = iota
+	contClose
+	contEvict
+	contQuit
+)
+
+// continuation carries the state a raised dirty close/evict/quit guard must
+// survive across the async Save→FileSavedMsg round-trip (§5.5) — ONE slot
+// (W1) replacing the three independently-typed closeIntent/evictIntent/
+// quitIntent structs (A4), justified by the verified coexistence rule that
+// close/evict/quit never coexist with EACH OTHER (they may each coexist with
+// a conflict/deleted/raced/trash/degraded guard raised on top — critic R1 —
+// but never with one another: raising any one of them always goes through
+// raiseDirtyGuard, which abandons whatever the other two held first). kind
+// discriminates which payload fields are meaningful:
+//   - contClose: requestID only.
+//   - contEvict: victim, pendingOpenPath, requestID.
+//   - contQuit:  saveLeft (the multi-tab "Save all" batch countdown).
+//
+// Zero value (kind==contNone) = no pending continuation. Lives at
+// guardState.cont (A4: migrated from the former Model.pendingDataLoss).
+type continuation struct {
+	kind            contKind
+	requestID       string             // close/evict: correlates the background save ack
+	victim          opentabs.TabHandle // evict: eviction target
+	pendingOpenPath string             // evict: file to open once the victim is dealt with
+	saveLeft        int                // quit: outstanding per-tab materialize acks before teardown
+}
+
+// owns reports whether requestID is the ack for THIS continuation's own
+// in-flight background save of kind k (footer.DataLossSave -> startSave/
+// evictSave, which stamps cont.requestID — workspace_edit.go/
+// workspace_evict.go). An UNSTAMPED continuation (requestID=="") is a guard
 // that some OTHER, unrelated save's ack must never clear — GUARD-STATE-COH: a
-// save with no idea a close intent exists (bind-new, restore-theirs) can
-// never accidentally "own" and clear someone else's still-pending guard.
-// A4: moved onto guardState from Model (was isCloseSaveAck(requestID string)).
-func (g guardState) isCloseSaveAck(requestID string) bool {
-	return g.close.active && g.close.requestID != "" && requestID == g.close.requestID
+// save with no idea a close/evict continuation exists (bind-new,
+// restore-theirs) can never accidentally "own" and clear someone else's
+// still-pending guard.
+func (c continuation) owns(k contKind, requestID string) bool {
+	return c.kind == k && c.requestID != "" && requestID == c.requestID
 }
 
-// isEvictSaveAck reports whether requestID is the ack for the pending
-// eviction background save. A4: moved onto guardState from Model.
-func (g guardState) isEvictSaveAck(requestID string) bool {
-	return g.evict.active && g.evict.requestID != "" && requestID == g.evict.requestID
-}
-
-// abandonDirtyContinuation wholesale-clears every close/evict/quit intent —
-// the A4 equivalent of the pre-A4 `m.pendingDataLoss = pendingDataLoss{}`
-// reset, which zeroed a SINGLE shared field regardless of which of
-// close/evict/quit it currently held. Because that single field is now three
-// independent guardState fields, every site that used to reach for the old
+// abandonDirtyContinuation wholesale-clears the close/evict/quit
+// continuation slot — the A4 equivalent of the pre-A4
+// `m.pendingDataLoss = pendingDataLoss{}` reset, which zeroed a SINGLE shared
+// field regardless of which of close/evict/quit it currently held; W1
+// collapsed the three independent guardState fields this used to clear back
+// onto that one shared slot, so every site that used to reach for the old
 // wholesale reset (the shared Cancel branch, the conflict/deleted guard
 // resolution handlers abandoning a coexisting close/evict/quit continuation
-// per critic R1, teardownAndQuit) clears all three here instead — reproducing
-// the exact same "whatever was pending is gone now" semantics without having
-// to first ask which one it was. Does NOT touch guard.kind/phase — callers
-// that also need the prompt/kind reset call clearGuardPrompt separately
-// (mirrors the old code, where the single pendingDataLoss reset never touched
-// guard.kind either).
+// per critic R1, teardownAndQuit) still gets the exact same "whatever was
+// pending is gone now" semantics without having to first ask which one it
+// was. Does NOT touch guard.kind/phase — callers that also need the
+// prompt/kind reset call clearGuardPrompt separately (mirrors the old code,
+// where the single pendingDataLoss reset never touched guard.kind either).
 func (m Model) abandonDirtyContinuation() Model {
-	m.guard.close = closeIntent{}
-	m.guard.evict = evictIntent{}
-	m.guard.quit = quitIntent{}
+	m.guard.cont = continuation{}
 	return m
+}
+
+// raiseDirtyGuard wholesale-replaces the continuation slot with c and raises
+// kind's guard prompt — absorbs the abandon-then-set-then-raise prologue the
+// three dirty-guard raise sites (requestCloseCurrent, enforceTabLimit,
+// ConfirmQuitMsg) used to repeat inline: c must NEVER coexist with whatever
+// the slot held before (close/evict/quit never coexist with each other), so
+// every raise site abandons first, unconditionally, exactly like the pre-W1
+// abandon+overwrite-single-field idiom.
+func (m Model) raiseDirtyGuard(kind guardKind, c continuation) Model {
+	m = m.abandonDirtyContinuation()
+	m.guard.cont = c
+	return m.raiseGuardPrompt(kind)
 }
 
 // confirmGuardSave transitions the CURRENT guard prompt from guardPrompting
@@ -253,20 +324,35 @@ func (m Model) raiseGuardPrompt(kind guardKind) Model {
 	return m
 }
 
+// guardOwnsInput reports whether a raised guard prompt currently owns all
+// input — the §1.4.4 policy point behind the 3 input gates (A6/F15):
+// handleKeyPress's Priority 2.1 gate, TabSelectedMsg's early-return, and
+// MouseClickMsg's early-return each used to re-implement
+// "m.footer.InGuard()" independently. Naming the question here doesn't
+// change any of the three gates' own RESPONSE — they stay separate returns
+// (key path still forwards the keypress to the footer's chord/resolve state
+// machine; mouse/tab paths still drop the message outright) — that asymmetry
+// is intentional; this only collapses the three-way re-implementation of
+// WHAT the shared question is.
+func (m Model) guardOwnsInput() bool {
+	return m.footer.InGuard()
+}
+
 // clearGuardPrompt dismisses whatever guard prompt is currently showing.
 // footer.InGuard() is len(guardOptions) > 0 (footer.go), so SetGuard with a
 // nil options slice is the sanctioned clear idiom — the guardKind argument
 // is irrelevant once options is nil (SetGuard also resets guardLabel).
-// Resets guard.kind to guardNone alongside phase=guardIdle — every guard
-// RESOLUTION handler (handleDataLoss*/handleDeleted*) calls this once its
-// own intent is fully consumed, so a stale kind can never survive to
-// misroute a later, unrelated guard's response (the kind-first dispatcher
-// A3's final commit introduces depends on this). Idempotent — safe to call
-// when phase is already guardIdle (handleKeyPress's guard-owns-keyboard gate
-// already raced it there for the SAME resolution, one message earlier).
+// Resets guard.kind to guardNone alongside phase=guardIdle and wholesale-
+// clears guard.prompt (W2 — the dispatcher, handleDataLossGuardResponse,
+// calls this once per kind case after capturing whatever payload it needs),
+// so a stale kind/payload can never survive to misroute a later, unrelated
+// guard's response. Idempotent — safe to call when phase is already
+// guardIdle (handleKeyPress's guard-owns-keyboard gate already raced it
+// there for the SAME resolution, one message earlier).
 func (m Model) clearGuardPrompt() Model {
 	m.footer = m.footer.SetGuard(footer.GuardDirty, nil)
 	m.guard.kind = guardNone
 	m.guard.phase = guardIdle
+	m.guard.prompt = promptPayload{}
 	return m
 }

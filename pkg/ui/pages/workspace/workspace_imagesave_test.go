@@ -10,7 +10,7 @@ import (
 )
 
 // TestImageSaveErrorSurfacesOnFooter is B2's regression test:
-// markdownedit.ImageSaveErrorMsg's own Update handler is a no-op (the only
+// markdownedit.ImageErrorMsg's own Update handler is a no-op (the only
 // handler tree-wide before this fix), so an image-write failure
 // (commands_image.go) or a ReplaceRange failure routed there surfaced
 // nowhere. The workspace's Update must intercept the message and surface it
@@ -19,7 +19,7 @@ func TestImageSaveErrorSurfacesOnFooter(t *testing.T) {
 	m := newTestWorkspace(t)
 
 	wantErr := errors.New("write image \"assets/pasted.png\": permission denied")
-	_, cmd := m.Update(markdownedit.ImageSaveErrorMsg{Err: wantErr})
+	_, cmd := m.Update(markdownedit.ImageErrorMsg{Err: wantErr})
 	if cmd == nil {
 		t.Fatal("expected a non-nil Cmd surfacing the image save error")
 	}

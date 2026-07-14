@@ -15,14 +15,14 @@ import (
 // actually verify against live code (workspace_edit.go's diverged branch,
 // workspace_conflict.go's handleDataLoss* bodies) — the COEXISTENCE window
 // is legal and exercised (guard.kind reads guardConflict while
-// guard.close.active is still true underneath, proving the kind-first
+// guard.cont.kind is still contClose underneath, proving the kind-first
 // dispatcher does not treat that combination as illegal), but resolving the
 // conflict guard ABANDONS the close continuation rather than resuming it:
 // handleDataLossSaveAnyway/handleDataLossDiscardConflict/handleDataLossMerge
 // all unconditionally call abandonDirtyContinuation (see their bodies) —
-// there is no re-arm anywhere in the codebase, and isCloseSaveAck can never
-// correlate a conflict-guard resolution's own save (different RequestID) to
-// the original close. This test pins that ACTUAL, preserved behavior
+// there is no re-arm anywhere in the codebase, and cont.owns(contClose, ...)
+// can never correlate a conflict-guard resolution's own save (different
+// RequestID) to the original close. This test pins that ACTUAL, preserved behavior
 // precisely so a future change to either direction (illegal-coexistence
 // panic, OR a silent switch to resume-semantics) is caught.
 func TestConflictDuringCloseSave_CoexistsThenAbandonsClose(t *testing.T) {
@@ -56,8 +56,8 @@ func TestConflictDuringCloseSave_CoexistsThenAbandonsClose(t *testing.T) {
 	if !m.footer.InGuard() || m.guard.kind != guardDirtyClose {
 		t.Fatalf("setup: expected guardDirtyClose prompting, got InGuard=%v kind=%v", m.footer.InGuard(), m.guard.kind)
 	}
-	if !m.guard.close.active {
-		t.Fatal("setup: expected guard.close.active")
+	if m.guard.cont.kind != contClose {
+		t.Fatal("setup: expected guard.cont.kind == contClose")
 	}
 
 	// The external writer lands FOR REAL, after the guard is already up —
@@ -84,7 +84,7 @@ func TestConflictDuringCloseSave_CoexistsThenAbandonsClose(t *testing.T) {
 	// runMergeAction's own idiom) — confirmGuardSave moves guard.phase to
 	// guardAwaitingSave, then startSave's vetSave discovers SyncDiverged and
 	// calls raiseConflictGuard INSTEAD of writing, WITHOUT clearing
-	// guard.close (workspace_edit.go's diverged branch returns before the
+	// guard.cont (workspace_edit.go's diverged branch returns before the
 	// requestID-stamping code below it runs).
 	m, cmd = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossSave})
 	m = settle(t, m, cmd)
@@ -99,14 +99,11 @@ func TestConflictDuringCloseSave_CoexistsThenAbandonsClose(t *testing.T) {
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
 		t.Fatalf("expected GuardMerge prompting, got InGuard=%v kind=%v", m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.guard.conflict.active {
-		t.Fatal("expected guard.conflict.active after raiseConflictGuard")
+	if m.guard.cont.kind != contClose {
+		t.Fatal("R1: the close continuation must survive a conflict guard raised on top of it — guard.cont was cleared")
 	}
-	if !m.guard.close.active {
-		t.Fatal("R1: the close intent must survive a conflict guard raised on top of it — guard.close was cleared")
-	}
-	if m.guard.close.requestID != "" {
-		t.Fatal("R1: the close intent's requestID must stay unstamped — the diverged branch returns before startSave's requestID-stamping code runs")
+	if m.guard.cont.requestID != "" {
+		t.Fatal("R1: the close continuation's requestID must stay unstamped — the diverged branch returns before startSave's requestID-stamping code runs")
 	}
 	// The tab must NOT have closed — the guard, not the close, currently owns the view.
 	if m.view.DocID() != docID {
@@ -126,8 +123,8 @@ func TestConflictDuringCloseSave_CoexistsThenAbandonsClose(t *testing.T) {
 	if m.guard.kind != guardNone || m.footer.InGuard() {
 		t.Fatalf("expected both guards idle after the conflict resolved, got guard.kind=%v InGuard=%v", m.guard.kind, m.footer.InGuard())
 	}
-	if m.guard.close.active {
-		t.Fatal("expected the abandoned close intent to have cleared, got guard.close.active=true")
+	if m.guard.cont.kind == contClose {
+		t.Fatal("expected the abandoned close continuation to have cleared, got guard.cont.kind still contClose")
 	}
 	if m.view.DocID() != docID {
 		t.Fatalf("close must not have executed after the conflict resolved (abandon semantics, not resume): view.DocID()=%d, want %d", m.view.DocID(), docID)

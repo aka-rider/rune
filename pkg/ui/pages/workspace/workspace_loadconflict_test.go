@@ -66,7 +66,7 @@ func TestLoadTimeConflict_RaisesGuard(t *testing.T) {
 
 	m, _, _ := setupLoadConflict(t, ancestor, ours, theirs)
 
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("load-time conflict: pendingConflict should be active")
 	}
 	if !m.footer.InGuard() || m.footer.GuardKind() != footer.GuardMerge {
@@ -91,12 +91,12 @@ func TestB1_EscThenQuitSaveRefused(t *testing.T) {
 
 	m, docID, path := setupLoadConflict(t, ancestor, ours, theirs)
 
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("B1: expected conflict guard raised on load")
 	}
 
 	m, _ = m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossCancel})
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("B1: Esc must clear pendingConflict (step 5)")
 	}
 
@@ -129,13 +129,13 @@ func TestEscThenSave_ReRaisesConflict(t *testing.T) {
 	m = focusEditor(m)
 
 	m, saveCmd := m.startSave()
-	if m.guard.conflict.active == false && saveCmd != nil {
+	if m.guard.kind == guardConflict == false && saveCmd != nil {
 		result := saveCmd()
 		if _, ok := result.(FileSavedMsg); ok {
 			t.Fatal("Esc-then-⌘S: must not silently write over an unresolved conflict")
 		}
 	}
-	if !m.guard.conflict.active {
+	if m.guard.kind != guardConflict {
 		t.Fatal("Esc-then-⌘S: expected the conflict guard to be re-raised")
 	}
 
@@ -164,7 +164,7 @@ func TestLoadTimeNoConflict_DiskEqualsAncestor(t *testing.T) {
 
 	m = loadFile(m, path, content) // reload, unchanged
 
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("no-change reload: pendingConflict must not be raised (false positive)")
 	}
 	if m.footer.InGuard() {
@@ -198,7 +198,7 @@ func TestLoadTimeNoConflict_OursEqualsAncestor(t *testing.T) {
 	}
 	m = loadFile(m, path, theirs)
 
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("R1: pendingConflict must not be raised when ours==ancestor (no unsaved edits)")
 	}
 	if m.footer.InGuard() {
@@ -233,12 +233,12 @@ func TestMerge_ResolveAdvancesSavedObs(t *testing.T) {
 	// ancestor == theirs → the 3-way merge auto-resolves cleanly (no true
 	// conflicts): ours is the only changed side.
 	const oursContent = "shared line\nours version\n"
-	m.editor = m.editor.SetContent(oursContent)
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.editor, _ = m.editor.SetContent(oursContent)
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m = runMergeAction(t, m, footer.DataLossMerge)
 
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("[M]: pendingConflict still active after DataLossMerge")
 	}
 	sync, err := m.store.Sync(docID)

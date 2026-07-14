@@ -140,51 +140,28 @@ func execSelectAll(ctx command.CommandContext) command.Result {
 	}
 }
 
-func registerNavCommands(builder command.Builder) (command.Builder, error) {
-	var err error
-
-	type entry struct {
-		name string
-		when string
-		exec func(command.CommandContext) command.Result
-	}
-
-	cmds := []entry{
-		// Cursor movement (no selection)
-		{"cursor.character-left", "editorFocused", execCursorLeft},
-		{"cursor.character-right", "editorFocused", execCursorRight},
-		{"cursor.line-up", "editorFocused", execCursorUp},
-		{"cursor.line-down", "editorFocused", execCursorDown},
-		{"cursor.word-left", "editorFocused", execCursorLeftWord},
-		{"cursor.word-right", "editorFocused", execCursorRightWord},
-		{"cursor.line-start", "editorFocused", execCursorBeginLine},
-		{"cursor.line-end", "editorFocused", execCursorEndLine},
-		{"cursor.page-up", "editorFocused", execScrollPageUp},
-		{"cursor.page-down", "editorFocused", execScrollPageDown},
-		// Selection (extend cursor with anchor)
-		{"select.character-left", "editorFocused", execSelectLeft},
-		{"select.character-right", "editorFocused", execSelectRight},
-		{"select.line-up", "editorFocused", execSelectUp},
-		{"select.line-down", "editorFocused", execSelectDown},
-		{"select.word-left", "editorFocused", execSelectLeftWord},
-		{"select.word-right", "editorFocused", execSelectRightWord},
-		{"select.line-start", "editorFocused", execSelectBeginLine},
-		{"select.line-end", "editorFocused", execSelectEndLine},
-		{"select.page-up", "editorFocused", execSelectPageUp},
-		{"select.page-down", "editorFocused", execSelectPageDown},
-		{"select.all", "editorFocused", execSelectAll},
-	}
-
-	for _, c := range cmds {
-		builder, err = builder.Register(command.Command{
-			Name:    c.name,
-			When:    c.when,
-			Execute: c.exec,
-		})
-		if err != nil {
-			return builder, err
-		}
-	}
-
-	return builder, nil
+var navSpecs = []cmdSpec{
+	// Cursor movement (no selection)
+	{name: "cursor.character-left", when: "editorFocused", exec: execCursorLeft},
+	{name: "cursor.character-right", when: "editorFocused", exec: execCursorRight},
+	{name: "cursor.line-up", when: "editorFocused", exec: execCursorUp},
+	{name: "cursor.line-down", when: "editorFocused", exec: execCursorDown},
+	{name: "cursor.word-left", when: "editorFocused", exec: execCursorLeftWord},
+	{name: "cursor.word-right", when: "editorFocused", exec: execCursorRightWord},
+	{name: "cursor.line-start", when: "editorFocused", exec: execCursorBeginLine},
+	{name: "cursor.line-end", when: "editorFocused", exec: execCursorEndLine},
+	{name: "cursor.page-up", when: "editorFocused", exec: execScrollPageUp},
+	{name: "cursor.page-down", when: "editorFocused", exec: execScrollPageDown},
+	// Selection (extend cursor with anchor)
+	{name: "select.character-left", when: "editorFocused", exec: execSelectLeft},
+	{name: "select.character-right", when: "editorFocused", exec: execSelectRight},
+	{name: "select.line-up", when: "editorFocused", exec: execSelectUp},
+	{name: "select.line-down", when: "editorFocused", exec: execSelectDown},
+	{name: "select.word-left", when: "editorFocused", exec: execSelectLeftWord},
+	{name: "select.word-right", when: "editorFocused", exec: execSelectRightWord},
+	{name: "select.line-start", when: "editorFocused", exec: execSelectBeginLine},
+	{name: "select.line-end", when: "editorFocused", exec: execSelectEndLine},
+	{name: "select.page-up", when: "editorFocused", exec: execSelectPageUp},
+	{name: "select.page-down", when: "editorFocused", exec: execSelectPageDown},
+	{name: "select.all", when: "editorFocused", exec: execSelectAll},
 }

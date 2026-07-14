@@ -141,40 +141,22 @@ func (m Model) applyDiscardConflict(docID int64, theirs string, sync docstate.Sy
 	// pre-discard buffer.
 	m = m.disableDictationForTransition(&cmds)
 
-	prevCursors := m.editor.Cursors()
-	var cmd tea.Cmd
-	var err error
-	m.editor, cmd, err = m.editor.ReplaceAll(theirs)
-	if err != nil {
-		cmds = append(cmds, errorCmd(fmt.Errorf("discard: %w", err)))
-		return m, tea.Batch(cmds...)
+	install := func(m Model) (Model, tea.Cmd, error) {
+		var cmd tea.Cmd
+		var err error
+		m.editor, cmd, err = m.editor.ReplaceAll(theirs)
+		return m, cmd, err
 	}
-	cmds = append(cmds, cmd)
-	m = m.bumpEpoch() // Part IV: a discard resolve ReplaceAll invalidates every outstanding view ticket
+	var ok bool
+	m, ok = m.installJournaled(docID, "discard", sync, true, install, &cmds)
+	// mergemode.Reset only touches m.merge — order-independent relative to
+	// the install/journal/adopt sequence above (installJournaled's own doc
+	// comment), so it can land here, after, regardless of ok.
 	m.merge = mergemode.Reset(m.merge)
-
-	var editorEdits []buffer.AppliedEdit
-	m.editor, editorEdits = m.editor.DrainEdits()
-	if len(editorEdits) == 0 {
-		// D3: mirrors installDiskAhead's own gate — a read-only editor drops
-		// ReplaceAll silently (textedit.ReplaceRange's readOnly guard), so the
-		// buffer still holds pre-discard ours even though ReplaceAll above
-		// returned no error. Advancing the CAS baseline to theirs via
-		// resolveAdoptAt below would then bless a later ⌘S that writes ours
-		// over theirs while claiming the discard already reconciled it.
-		cmds = append(cmds, errorCmd(fmt.Errorf("discard refused for doc %d: editor rejected the install (read-only?)", docID)))
-		return m, tea.Batch(cmds...)
-	}
-	var journaled bool
-	m, journaled = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
-	if !journaled {
-		// journalEditOK already rolled the buffer back and surfaced the
-		// error — the adoption below must not proceed on a journal write
-		// that never landed (same reasoning as installDiskAhead).
+	if !ok {
 		return m, tea.Batch(cmds...)
 	}
 
-	m = m.resolveAdoptAt(docID, sync, &cmds)
 	m = m.setDiskChangedHint(false)
 	return m, tea.Batch(cmds...)
 }
@@ -199,44 +181,92 @@ func (m Model) applyMergeConflict(docID int64, path, ours, ancestor, theirs stri
 	// mergemode's hidden marker working form (routeDictationEdit's gate covers
 	// the STEADY-state merge; this covers the transition INTO it).
 	m = m.disableDictationForTransition(&cmds)
-	var cmd tea.Cmd
-	prevCursors := m.editor.Cursors()
-	m.merge, m.editor, cmd, err = mergemode.Enter(hunks, m.merge, m.editor)
-	if err != nil {
-		cmds = append(cmds, errorCmd(fmt.Errorf("merge: %w", err)))
-		return m, tea.Batch(cmds...)
+
+	install := func(m Model) (Model, tea.Cmd, error) {
+		var cmd tea.Cmd
+		var err error
+		m.merge, m.editor, cmd, err = mergemode.Enter(hunks, m.merge, m.editor)
+		return m, cmd, err
 	}
-	cmds = append(cmds, cmd)
-	m = m.bumpEpoch() // Part IV: entering the merge resolver installs the marker buffer, invalidating every outstanding view ticket
-	var editorEdits []buffer.AppliedEdit
-	m.editor, editorEdits = m.editor.DrainEdits()
+	var ok bool
+	m, ok = m.installJournaled(docID, "merge", sync, true, install, &cmds)
+	// syncMergeHint must run regardless of ok — mergemode.Enter above already
+	// mutated m.merge (activated the resolver) even when the SUBSEQUENT
+	// journal step refuses, so the footer's merge hint always reflects the
+	// resolver's actual state (mirrors the original ordering: DrainEdits then
+	// syncMergeHint then the D3 check, all unconditional relative to it).
 	m = m.syncMergeHint()
-	if len(editorEdits) == 0 {
-		// D3: mirrors installDiskAhead's own gate — a read-only editor drops
-		// mergemode.Enter's marker-buffer install silently (it routes through
-		// the same textedit.ReplaceRange readOnly guard), so the buffer still
-		// holds pre-merge ours even though Enter above returned no error.
-		// Advancing the CAS baseline to theirs via resolveAdoptAt below would
-		// then bless a later ⌘S that writes ours over theirs while claiming
-		// the merge already reconciled it.
-		cmds = append(cmds, errorCmd(fmt.Errorf("merge refused for doc %d: editor rejected the install (read-only?)", docID)))
-		return m, tea.Batch(cmds...)
-	}
-	var journaled bool
-	m, journaled = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
-	if !journaled {
-		// journalEditOK already rolled the buffer back and surfaced the
-		// error — the adoption below must not proceed on a journal write
-		// that never landed (same reasoning as installDiskAhead).
+	if !ok {
 		return m, tea.Batch(cmds...)
 	}
 
 	// Re-stamp the CAS baseline to theirs so a resolved-merge ⌘S sees a clean
-	// expect and writes cleanly — mirrors [D] (applyDiscardConflict).
-	m = m.resolveAdoptAt(docID, sync, &cmds)
+	// expect and writes cleanly — mirrors [D] (applyDiscardConflict); already
+	// done inside installJournaled above via resolveAdoptAt.
 	m = m.setDiskChangedHint(false)
-
 	return m, tea.Batch(cmds...)
+}
+
+// installJournaled is the single journaled buffer-install transition (W4):
+// install closure -> bumpEpoch (if bump) -> DrainEdits -> D3 empty-drain
+// refusal (single-sourced error text) -> journalEditOK (rolls back on
+// failure) -> resolveAdoptAt. Collapses the four copy-pasted teardowns this
+// package (and workspace_raced.go) used to repeat: applyDiscardConflict,
+// applyMergeConflict (install wraps mergemode.Enter — it legitimately
+// mutates both m.merge and m.editor), installDiskAhead (bump=false — the
+// load path already bumped epoch before calling this; its own preceding
+// SetContent(ours) runs in the CALLER, before this is invoked, so the
+// prevCursors captured here — first thing, from the incoming m — already
+// reflects that post-SetContent state), and handleDataLossRestoreTheirs
+// (bump=true, sync passed as the zero value so resolveAdoptAt below is a
+// deliberate no-op — restore-theirs adopts via its own
+// Materialize/issueSave, not ResolveAdopt; its 3 failure re-arms
+// (raiseRacedGuard) unify onto this function's single ok=false signal).
+//
+// install runs against whatever Model the caller passed in — any
+// SITE-SPECIFIC pre-install mutation (installDiskAhead's SetContent) must
+// happen in the caller first. verb names the transition for error text
+// ("discard"/"merge"/"disk-ahead adopt"/"restore theirs") — every site's
+// install-closure-error and D3 empty-drain refusal text share the exact same
+// shape, single-sourced here instead of copy-pasted per site (texts stay
+// byte-identical for the three pre-existing sites; restore-theirs's error
+// path is an accepted, documented change — going async via errorCmd like the
+// other three, replacing its former synchronous, path-specific footer text).
+func (m Model) installJournaled(docID int64, verb string, sync docstate.SyncState, bump bool, install func(Model) (Model, tea.Cmd, error), cmds *[]tea.Cmd) (Model, bool) {
+	if bump {
+		m = m.bumpEpoch() // Part IV: a wholesale buffer install invalidates every outstanding view ticket
+	}
+	prevCursors := m.editor.Cursors()
+	var cmd tea.Cmd
+	var err error
+	m, cmd, err = install(m)
+	if err != nil {
+		*cmds = append(*cmds, errorCmd(fmt.Errorf("%s: %w", verb, err)))
+		return m, false
+	}
+	*cmds = append(*cmds, cmd)
+	var editorEdits []buffer.AppliedEdit
+	m.editor, editorEdits = m.editor.DrainEdits()
+	if len(editorEdits) == 0 {
+		// D3: a read-only editor drops the install silently (textedit.
+		// ReplaceRange's readOnly guard), so the buffer still holds the
+		// PRE-install content even though install() above returned no error.
+		// Advancing the CAS baseline via resolveAdoptAt below would then
+		// bless a later ⌘S that clobbers theirs while claiming this
+		// transition already reconciled it.
+		*cmds = append(*cmds, errorCmd(fmt.Errorf("%s refused for doc %d: editor rejected the install (read-only?)", verb, docID)))
+		return m, false
+	}
+	var ok bool
+	m, ok = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), cmds)
+	if !ok {
+		// journalEditOK already rolled the buffer back and surfaced the
+		// error — the adoption below must not proceed on a journal write
+		// that never landed.
+		return m, false
+	}
+	m = m.resolveAdoptAt(docID, sync, cmds)
+	return m, true
 }
 
 // resolveAdoptAt commits the just-journaled resolution edit (the caller's
@@ -245,7 +275,9 @@ func (m Model) applyMergeConflict(docID int64, path, ours, ancestor, theirs stri
 // reconciles against; the edit's own seq (read back synchronously — the
 // journal write above just committed it, single-threaded within Update) is
 // what the resolve observation correlates to, so undoing past it re-exposes
-// the divergence (Part III).
+// the divergence (Part III). A zero-valued sync (sync.Theirs.Valid == false)
+// makes this a deliberate no-op — installJournaled's restore-theirs caller
+// passes one, since restore-theirs adopts via Materialize/issueSave instead.
 func (m Model) resolveAdoptAt(docID int64, sync docstate.SyncState, cmds *[]tea.Cmd) Model {
 	if m.store == nil || !sync.Theirs.Valid {
 		return m
@@ -304,41 +336,22 @@ func (m Model) abandonMergeResolve(cmds *[]tea.Cmd) Model {
 // later quit/evict/second revisit can never write the stale pre-adopt
 // reconstruction back over newer disk.
 func (m Model) installDiskAhead(docID int64, ours, theirs string, sync docstate.SyncState, cmds *[]tea.Cmd) Model {
-	m.editor = m.editor.SetContent(ours)
-	prevCursors := m.editor.Cursors()
-	var cmd tea.Cmd
-	var err error
-	m.editor, cmd, err = m.editor.ReplaceAll(theirs)
-	if err != nil {
-		*cmds = append(*cmds, errorCmd(fmt.Errorf("disk-ahead adopt: %w", err)))
-		return m
+	// DiskAhead guarantees ours != theirs, so a legitimate install-produced
+	// no-op is impossible — installJournaled's D3 refusal below only ever
+	// fires here on a genuine read-only-drop (review finding, preserved).
+	var dcmd tea.Cmd
+	m.editor, dcmd = m.editor.SetContent(ours)
+	*cmds = append(*cmds, dcmd)
+	install := func(m Model) (Model, tea.Cmd, error) {
+		var cmd tea.Cmd
+		var err error
+		m.editor, cmd, err = m.editor.ReplaceAll(theirs)
+		return m, cmd, err
 	}
-	*cmds = append(*cmds, cmd)
-	var editorEdits []buffer.AppliedEdit
-	m.editor, editorEdits = m.editor.DrainEdits()
-	if len(editorEdits) == 0 {
-		// The ReplaceAll never applied — a read-only editor drops it
-		// silently (textedit.ReplaceRange's readOnly guard), and DiskAhead
-		// guarantees ours != theirs so a legitimate no-op is impossible.
-		// Adopting anyway would move the CAS baseline to theirs while
-		// buffer and journal still hold ours — the exact F1 clobber this
-		// function exists to close, reintroduced on this path (review
-		// finding). Refuse + surface; Sync keeps reporting DiskAhead, so
-		// the divergence stays visible instead of being memory-holed.
-		*cmds = append(*cmds, errorCmd(fmt.Errorf("disk-ahead adopt refused for doc %d: editor rejected the install (read-only?)", docID)))
-		return m
-	}
-	var ok bool
-	m, ok = m.journalEditOK(targetMain, editorEdits, prevCursors, m.editor.Cursors(), cmds)
-	if !ok {
-		// AppendEdit failed: journalEditOK already rolled the buffer back to
-		// ours and surfaced the error. The adoption MUST not proceed — the
-		// journal cannot reproduce theirs at any seq (Adoption Contract),
-		// so a resolve observation would bless a ⌘S that writes the stale
-		// reconstruction over the newer external content (review finding).
-		return m
-	}
-	m = m.resolveAdoptAt(docID, sync, cmds)
+	// bump=false: the load path (handleFileLoadedMsg) already bumped epoch
+	// before calling this. sync keeps reporting DiskAhead on refusal (never
+	// memory-holed) since resolveAdoptAt is only reached on success.
+	m, _ = m.installJournaled(docID, "disk-ahead adopt", sync, false, install, cmds)
 	return m
 }
 
@@ -459,17 +472,13 @@ func (m Model) handleUnwindProbe(msg unwindProbeMsg) (Model, tea.Cmd) {
 // future transition forgets to call Disable() explicitly.
 func (m Model) routeDictationEdit(s, e int, t string, cmds *[]tea.Cmd) Model {
 	if m.focus == paneCenter && mergemode.IsActive(m.merge) {
-		m.dict = m.dict.Disable()
-		m.footer = m.footer.SetDictating(false)
-		return m
+		return m.stopDictation()
 	}
 	ticketDocID, ticketEpoch := m.dict.Ticket()
 	switch m.focus {
 	case paneCenter:
 		if ticketDocID != m.view.DocID() || ticketEpoch != m.epoch {
-			m.dict = m.dict.Disable()
-			m.footer = m.footer.SetDictating(false)
-			return m
+			return m.stopDictation()
 		}
 		prevCursors := m.editor.Cursors()
 		var cmd tea.Cmd
@@ -485,9 +494,7 @@ func (m Model) routeDictationEdit(s, e int, t string, cmds *[]tea.Cmd) Model {
 		m = m.journalEdit(targetMain, dictEdits, prevCursors, m.editor.Cursors(), cmds)
 	case paneChat:
 		if ticketDocID != m.chatDocID {
-			m.dict = m.dict.Disable()
-			m.footer = m.footer.SetDictating(false)
-			return m
+			return m.stopDictation()
 		}
 		var err error
 		m.chat, err = m.chat.ApplyToPrompt(s, e, t)

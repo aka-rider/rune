@@ -73,8 +73,9 @@ const tabLimit = 10
 // workspace_msgs.go. The guard sum type (guardState/guardKind/guardPhase),
 // its option var declarations, and raiseGuardPrompt/clearGuardPrompt live in
 // workspace_guard.go (A4 absorbed the former workspace_guardopts.go's
-// actionKind/pendingDataLoss — deleted, folded into guardState — and
-// deletedIntent, moved to workspace_deleted.go).
+// actionKind/pendingDataLoss — deleted, folded into guardState; W2 folded
+// the former trashPath/conflictIntent/deletedIntent/racedIntent fields into
+// the one promptPayload slot, also in workspace_guard.go).
 
 // ---- Model ----
 
@@ -161,11 +162,11 @@ type Model struct {
 	// out-of-band validity bit (§1.7), never a sentinel on docID/path.
 	pendingLoad pendingLoad
 
-	// guard.close/guard.evict/guard.quit (A4: migrated from the former
-	// Model.pendingDataLoss) — set when a dirty guard is raised so that the
-	// guard response handler knows to close a tab (^w), evict a background
-	// victim, or quit (^C^C) after saving/discarding. Never persisted across
-	// guard sessions.
+	// guard.cont (W1: the single close/evict/quit continuation slot,
+	// collapsing A4's former guard.close/guard.evict/guard.quit fields) — set
+	// when a dirty guard is raised so that the guard response handler knows
+	// to close a tab (^w), evict a background victim, or quit (^C^C) after
+	// saving/discarding. Never persisted across guard sessions.
 
 	// pendingReopen holds a navigation request requestOpenPath deferred because
 	// it targeted the exact file an in-flight interactive save is writing
@@ -176,42 +177,41 @@ type Model struct {
 	// validity bit (§1.7), never a sentinel on docID/path.
 	pendingReopen pendingReopen
 
-	// guard.conflict (conflictIntent, workspace_conflict.go — migrated to
-	// guardState by A3) holds the identity (docID/path) and the conflicting
-	// disk observation (freshObs) captured when a FileSaveErrorMsg{Conflict:
-	// true} or a load-time/undo-unwind divergence is detected for the current
-	// document — never the theirs/ancestor bytes themselves, which are
-	// derived fresh at guard-raise or resolution time via GetBlob/Probe.
-	// Consumed by DataLossSaveAnyway / DataLossDiscard / DataLossMerge guard
-	// responses. Zero value = no pending conflict. Cleared on every guard
-	// resolution.
+	// guard.prompt (W2: collapses the former trashPath/conflictIntent/
+	// deletedIntent/racedIntent fields, A3) carries whichever of the four
+	// payload shapes the CURRENTLY prompting trash/conflict/deleted/raced
+	// guard needs, discriminated by guard.kind:
+	//   - conflict: identity (docID/path) + the conflicting disk observation
+	//     (freshObs) captured when a FileSaveErrorMsg{Conflict: true} or a
+	//     load-time/undo-unwind divergence is detected — never the
+	//     theirs/ancestor bytes themselves, which are derived fresh at
+	//     guard-raise or resolution time via GetBlob/Probe. Consumed by
+	//     DataLossSaveAnyway / DataLossDiscard / DataLossMerge.
+	//   - deleted: docID/path of the current document when its file is
+	//     detected missing on disk (deletion, or parent-dir removal). Raised
+	//     by handleProbeResult (workspace_probe.go — probeDocCmd's callers:
+	//     dirChangedMsg / the flush tick) and handleFileSaveErrorMsg (a
+	//     save-time Missing outcome); consumed by DataLossSaveAnyway
+	//     (recreate) / DataLossDiscard (purge).
+	//   - raced: the two competing observations (saved/fresh) when a
+	//     Materialize commits via the F5 swap-race path (MatResult{Committed:
+	//     true, Raced: true}): our write landed for real, but a concurrent
+	//     writer's displaced bytes were captured too. A DISTINCT guard from
+	//     conflict (critic R1) — never routed through the fresh-probe [D]/[M]
+	//     handlers, which would re-read disk, find OUR already-committed
+	//     bytes, and read Clean, silently dissolving the guard. Consumed by
+	//     DataLossKeepMine / DataLossRestoreTheirs.
+	// Zero value = no pending prompt of these four kinds. Cleared on every
+	// guard resolution (clearGuardPrompt).
 
-	// guard.deleted (deletedIntent, migrated to guardState by A3) holds the
-	// docID/path of the current document when its file is detected missing
-	// on disk (deletion, or parent-dir removal). Raised by handleProbeResult
-	// (workspace_probe.go — probeDocCmd's callers: dirChangedMsg / the flush
-	// tick) and handleFileSaveErrorMsg (a save-time Missing outcome);
-	// consumed by DataLossSaveAnyway (recreate) / DataLossDiscard (purge)
-	// guard responses. Zero value = no pending deletion. (workspace_probe.go
-	// / workspace_deleted.go)
-
-	// guard.raced (racedIntent, migrated to guardState by A3) holds the two
-	// competing observations (Saved/Fresh) when a Materialize commits via the
-	// F5 swap-race path (MatResult{Committed: true, Raced: true}): our write
-	// landed for real, but a concurrent writer's displaced bytes were
-	// captured too. A DISTINCT guard from guard.conflict (critic R1) — never
-	// routed through the fresh-probe [D]/[M] handlers, which would re-read
-	// disk, find OUR already-committed bytes, and read Clean, silently
-	// dissolving the guard. Consumed by DataLossKeepMine /
-	// DataLossRestoreTheirs. Zero value = no pending race. (workspace_raced.go)
-
-	// racedQueue holds raced-save outcomes for documents that were NOT
-	// displayed when their Materialize ack arrived (evict/quit-batch saves, a
-	// tab switched away mid-save): the guard raises the moment the doc is
-	// next displayed (drainRacedQueue at load-settle). A race must never
-	// resolve silently just because its tab was in the background (review
-	// finding). Lazily allocated; nil means empty. (workspace_raced.go)
-	racedQueue map[int64]racedIntent
+	// racedQueue holds raced-save outcomes (as promptPayload, W2) for
+	// documents that were NOT displayed when their Materialize ack arrived
+	// (evict/quit-batch saves, a tab switched away mid-save): the guard
+	// raises the moment the doc is next displayed (drainRacedQueue at
+	// load-settle). A race must never resolve silently just because its tab
+	// was in the background (review finding). Lazily allocated; nil means
+	// empty. (workspace_raced.go)
+	racedQueue map[int64]promptPayload
 
 	// Persistence (docstate). The active doc's VFS id lives in m.view.DocID().
 	store     *docstate.Store

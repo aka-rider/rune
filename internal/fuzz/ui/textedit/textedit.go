@@ -1,7 +1,8 @@
 // Package textedit contains invariant checkers for the textedit/markdownedit
 // component: cell layout (R1–R9), cursor geometry (C1–C3), presence (M1–M2),
-// buffer line count (B1), selection coverage (S1), and the buffer-version
-// monotonicity transition (B2).
+// buffer line count (B1), selection coverage (S1), the buffer-version
+// monotonicity transition (B2), and per-cursor edit-range attribution
+// (SEL-EDIT).
 package textedit
 
 import (
@@ -390,41 +391,61 @@ func CheckTransition(prev snapshot.Snapshot, msg any, next snapshot.Snapshot) []
 		}
 	}
 
-	// NL-SEL: a selection whose boundary lands on '\n' must not consume it.
-	// If cursor[i]'s SelectionEnd() pointed to '\n' in prev, next.Content must
-	// retain at least as many '\n' starting from SelectionStart() as prev had
-	// starting from SelectionEnd(). Covers all selection-consuming commands
-	// (delete-left/right, insert-char, newline, cut, paste) via the shared
-	// selectionEndInclusive chokepoint — same-document edits only; a whole-buffer
-	// swap (opening a different file) is not a selection-consuming edit, and prev/next
-	// byte offsets then refer to unrelated documents (see sameDocument).
+	// SEL-EDIT: a selecting cursor's actual edit must exactly match its own
+	// selection range — no more, no less. Attributed via LastEdits' CursorID,
+	// NOT inferred from a whole-buffer content diff. That distinction matters
+	// under multi-cursor batches: e.g. AddCursorBelow can drop a second,
+	// unselected cursor at the start of an empty line; Delete then
+	// legitimately does its own single-byte forward-delete (eating that
+	// line's own '\n') independently of any OTHER cursor's selection-delete
+	// in the same batched edit. A prior version of this check (formerly
+	// NL-SEL) inferred "did this cursor's edit overreach" from
+	// strings.Count of '\n' in a whole-buffer suffix — which implicitly
+	// assumed only one cursor edited the buffer per transition, and mistook
+	// that sibling cursor's legitimate edit for THIS cursor's selection
+	// consuming its boundary newline (see FuzzSessionWithFile crasher
+	// 9451514fbc8b3b68). Comparing this cursor's OWN attributed edit range
+	// against its OWN selection is immune to what sibling cursors did, and
+	// catches any deviation, not just newline-adjacent ones.
+	//
+	// CursorID is tagged directly on the buffer.Edit literal only at command
+	// call sites whose contract is "this edit exactly replaces the
+	// selection" (pkg/ui/components/textedit: insert-char, newline,
+	// delete-left/right/word-left/word-right, cut, paste) — NOT by the
+	// shared editInfoItem/infosToEdits chokepoint those same call sites also
+	// route through, since that chokepoint is equally shared by line-oriented
+	// commands (delete-line, indent/dedent, clone/move-line) whose edit range
+	// is a whole line regardless of any selection, and tagging those would
+	// misattribute a legitimate line-wide edit as a selection violation.
+	//
+	// Coverage gap: a selecting cursor whose command doesn't tag CursorID
+	// (line-oriented commands above, find/replace-all, format-on-save, ...)
+	// has no matching LastEdits entry and is skipped — nothing to attribute,
+	// not asserted clean.
 	if sameDoc && next.Content != prev.Content {
 		for i, c := range prev.Cursors {
 			if !c.HasSelection() {
 				continue
 			}
-			end := c.SelectionEnd()
-			if end >= len(prev.Content) || prev.Content[end] != '\n' {
-				continue
-			}
-			want := strings.Count(prev.Content[end:], "\n")
-			start := c.SelectionStart()
-			got := 0
-			if start <= len(next.Content) {
-				got = strings.Count(next.Content[start:], "\n")
-			}
-			if got < want {
-				vs = append(vs, invariant.Violation{
-					InvariantID: "NL-SEL",
-					Message: fmt.Sprintf(
-						"cursor[%d] selection [%d,%d) ended at '\\n': "+
-							"'\\n' count from SelectionStart dropped (%d → %d); "+
-							"prev=%q next=%q",
-						i, start, end, want, got,
-						invariant.Trunc(prev.Content, 60),
-						invariant.Trunc(next.Content, 60),
-					),
-				})
+			wantStart := c.SelectionStart()
+			wantEnd := selectionEndRuneInclusive(c, prev.Content, c.SelectionEnd())
+			for _, e := range next.LastEdits {
+				if e.CursorID != c.ID {
+					continue
+				}
+				if e.Start != wantStart || e.End != wantEnd {
+					vs = append(vs, invariant.Violation{
+						InvariantID: "SEL-EDIT",
+						Message: fmt.Sprintf(
+							"cursor[%d] selection [%d,%d) but its attributed edit was [%d,%d); "+
+								"prev=%q next=%q",
+							i, wantStart, wantEnd, e.Start, e.End,
+							invariant.Trunc(prev.Content, 60),
+							invariant.Trunc(next.Content, 60),
+						),
+					})
+				}
+				break
 			}
 		}
 	}

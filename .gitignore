@@ -1,13 +1,6 @@
-.orqestra/
 /dbg_keyboard
 /rune
 coverage.out
-.docs/
+.scratch/
 .DS_Store
-.claude/
-**/testdata/**
-# Go fuzz corpora are regression pins — every file is a historical catch that
-# make test replays deterministically (native seed-corpus semantics). They
-# must travel with the repo, so carve them out of the testdata ignore.
-!**/testdata/fuzz/
-!**/testdata/fuzz/**
+.claude/worktrees

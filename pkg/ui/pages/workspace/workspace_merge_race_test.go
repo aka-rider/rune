@@ -53,7 +53,7 @@ func TestMergeAction_UsesFreshTheirs_NotDetectionTimeCache(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	// ...but disk changes AGAIN for real before the user presses [M].
@@ -113,7 +113,7 @@ func TestMergeAction_FileDeletedMidFlight_RoutesToDeletedGuard_NoMergeNoWrite(t 
 		t.Fatal("store not available")
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	// The file is deleted for real between the guard raise and the [M] press.
@@ -130,10 +130,10 @@ func TestMergeAction_FileDeletedMidFlight_RoutesToDeletedGuard_NoMergeNoWrite(t 
 		t.Fatalf("race: expected GuardDeleted raised (early detection); InGuard=%v kind=%v",
 			m.footer.InGuard(), m.footer.GuardKind())
 	}
-	if !m.guard.deleted.active {
+	if m.guard.kind != guardDeleted {
 		t.Fatal("race: pendingDeleted must be armed")
 	}
-	if m.guard.conflict.active {
+	if m.guard.kind == guardConflict {
 		t.Fatal("race: pendingConflict must be cleared")
 	}
 	// The buffer must be untouched — no merge ran against stale bytes, and
@@ -166,7 +166,7 @@ func TestDiscardAction_FileDeletedMidFlight_RoutesToDeletedGuard(t *testing.T) {
 		t.Fatal("store not available")
 	}
 
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 
 	if err := os.Remove(path); err != nil {

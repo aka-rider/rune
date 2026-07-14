@@ -25,43 +25,10 @@ func clipboardReadCmd() tea.Cmd {
 	return func() tea.Msg { return tea.ReadClipboard() }
 }
 
-func registerClipboardCommands(builder command.Builder) (command.Builder, error) {
-	var err error
-
-	builder, err = builder.Register(command.Command{
-		Name:     "clipboard.copy",
-		Category: "clipboard",
-		Title:    "Copy",
-		When:     "editorFocused",
-		Execute:  clipboardCopy,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:     "clipboard.cut",
-		Category: "clipboard",
-		Title:    "Cut",
-		When:     "editorFocused && !readOnly",
-		Execute:  clipboardCut,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	builder, err = builder.Register(command.Command{
-		Name:     "clipboard.paste",
-		Category: "clipboard",
-		Title:    "Paste",
-		When:     "editorFocused && !readOnly",
-		Execute:  clipboardPaste,
-	})
-	if err != nil {
-		return builder, err
-	}
-
-	return builder, nil
+var clipboardSpecs = []cmdSpec{
+	{name: "clipboard.copy", category: "clipboard", title: "Copy", when: "editorFocused", exec: clipboardCopy},
+	{name: "clipboard.cut", category: "clipboard", title: "Cut", when: "editorFocused && !readOnly", exec: clipboardCut},
+	{name: "clipboard.paste", category: "clipboard", title: "Paste", when: "editorFocused && !readOnly", exec: clipboardPaste},
 }
 
 func clipboardCopy(ctx command.CommandContext) command.Result {
@@ -147,61 +114,27 @@ func copyEntireLine(buf buffer.Buffer, offset int) string {
 func buildDeleteEdits(buf buffer.Buffer, cursors cursor.CursorSet) ([]buffer.Edit, []cursor.Cursor) {
 	all := cursors.All()
 
-	type cutEditInfo struct {
-		edit buffer.Edit
-		cID  int
-	}
-
-	var infos []cutEditInfo
+	var infos []editInfoItem
 	for _, c := range all {
 		if c.HasSelection() {
 			start, end := c.SelectionStart(), selectionEndInclusive(c, buf)
-			infos = append(infos, cutEditInfo{
-				edit: buffer.Edit{Start: start, End: end, Insert: ""},
-				cID:  c.ID,
-			})
+			infos = append(infos, editInfoItem{edit: buffer.Edit{Start: start, End: end, Insert: "", CursorID: c.ID}, cID: c.ID})
 		} else {
-			// Delete entire line
+			// Delete entire line — line-oriented, not selection-exact, so left
+			// untagged (CursorID 0); SEL-EDIT only checks selecting cursors anyway.
 			bp := buf.OffsetToLineCol(c.Position)
 			lineStart := buf.LineStart(bp.Line)
 			lineEnd := buf.LineEnd(bp.Line)
 			if lineEnd < buf.Len() {
 				lineEnd++ // include the \n
 			}
-			infos = append(infos, cutEditInfo{
-				edit: buffer.Edit{Start: lineStart, End: lineEnd, Insert: ""},
-				cID:  c.ID,
-			})
+			infos = append(infos, editInfoItem{edit: buffer.Edit{Start: lineStart, End: lineEnd, Insert: ""}, cID: c.ID})
 		}
 	}
 
-	// Sort descending by start
-	for i := 0; i < len(infos)-1; i++ {
-		for j := i + 1; j < len(infos); j++ {
-			if infos[i].edit.Start < infos[j].edit.Start {
-				infos[i], infos[j] = infos[j], infos[i]
-			}
-		}
-	}
-
-	edits := make([]buffer.Edit, len(infos))
-	for i, info := range infos {
-		edits[i] = info.edit
-	}
-
-	// Compute post-edit cursor positions
-	var newCursors []cursor.Cursor
-	shift := 0
-	for i := len(infos) - 1; i >= 0; i-- {
-		info := infos[i]
-		newPos := info.edit.Start + shift
-		newCursors = append(newCursors, cursor.Cursor{
-			Position: newPos,
-			Anchor:   newPos,
-			ID:       info.cID,
-		})
-		shift += len(info.edit.Insert) - (info.edit.End - info.edit.Start)
-	}
+	sortInfosDescending(infos)
+	edits := infosToEdits(infos)
+	newCursors := computePostEditCursors(infos)
 
 	return edits, newCursors
 }
@@ -234,71 +167,15 @@ func (m Model) handlePasteContent(text string) (Model, tea.Cmd) {
 	}
 	distribute := len(lines) == len(all) && len(all) > 1
 
-	type editInfo struct {
-		edit buffer.Edit
-		cID  int
-	}
-
-	var infos []editInfo
-	for i, c := range all {
-		var insertText string
-		if distribute {
-			insertText = lines[i]
-		} else {
-			insertText = text
-		}
-
-		if c.HasSelection() {
-			start, end := c.SelectionStart(), selectionEndInclusive(c, m.buf)
-			infos = append(infos, editInfo{
-				edit: buffer.Edit{Start: start, End: end, Insert: insertText},
-				cID:  c.ID,
-			})
-		} else {
-			infos = append(infos, editInfo{
-				edit: buffer.Edit{Start: c.Position, End: c.Position, Insert: insertText},
-				cID:  c.ID,
-			})
-		}
-	}
-
-	// Sort descending
-	for i := 0; i < len(infos)-1; i++ {
-		for j := i + 1; j < len(infos); j++ {
-			if infos[i].edit.Start < infos[j].edit.Start {
-				infos[i], infos[j] = infos[j], infos[i]
+	res := perCursorSelectionEdits(command.CommandContext{Buffer: m.buf, Cursors: m.cursors},
+		func(i int, c cursor.Cursor) string {
+			if distribute {
+				return lines[i]
 			}
-		}
-	}
+			return text
+		},
+		func(c cursor.Cursor) (int, int, bool) { return c.Position, c.Position, true })
 
-	edits := make([]buffer.Edit, len(infos))
-	for i, info := range infos {
-		edits[i] = info.edit
-	}
-
-	// Compute post-edit cursors (cursor at end of inserted text)
-	var newCursors []cursor.Cursor
-	shift := 0
-	for i := len(infos) - 1; i >= 0; i-- {
-		info := infos[i]
-		insLen := len(info.edit.Insert)
-		newPos := info.edit.Start + shift + insLen
-		newCursors = append(newCursors, cursor.Cursor{
-			Position: newPos,
-			Anchor:   newPos,
-			ID:       info.cID,
-		})
-		shift += insLen - (info.edit.End - info.edit.Start)
-	}
-
-	op := command.Operation{
-		Kind:    command.OperationEditBuffer,
-		Edits:   edits,
-		Cursors: cursor.NewCursorSetFrom(newCursors),
-	}
-
-	m = m.applyOperation(command.Result{Operation: op})
-	m = m.syncDisplay()
-	m = m.ScrollToCursor()
+	m = m.applyResult(res)
 	return m, nil
 }

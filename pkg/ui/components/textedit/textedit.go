@@ -45,6 +45,7 @@ type Model struct {
 	buf                   buffer.Buffer
 	cursors               cursor.CursorSet
 	pendingEdits          []buffer.AppliedEdit
+	lastEdits             []buffer.Edit // pre-edit-coordinate, CursorID-tagged edits from the message just processed — see FuzzLastEdits
 	softWrap              bool
 	indent                IndentConfig
 	syntaxMap             display.SyntaxMap
@@ -56,7 +57,6 @@ type Model struct {
 	resolver              keybind.Resolver
 	registry              command.Registry
 	viewport              ViewportState
-	keys                  keymap.Bindings
 	styles                styles.Styles
 	width                 int
 	height                int
@@ -130,7 +130,11 @@ func WithResolver(resolver keybind.Resolver) Option {
 	return func(m *Model) { m.resolver = resolver }
 }
 
-// New creates a new textedit Model.
+// New creates a new textedit Model. keys is accepted for construction-site
+// symmetry with sibling components (chat/title/search/markdownedit all take
+// the same keymap.Bindings) but is not itself retained on Model — textedit
+// only ever consults it indirectly, through the resolver/registry built from
+// it by the caller.
 func New(keys keymap.Bindings, st styles.Styles, opts ...Option) Model {
 	resolver, _ := keybind.NewResolver(nil)
 	m := Model{
@@ -141,7 +145,6 @@ func New(keys keymap.Bindings, st styles.Styles, opts ...Option) Model {
 		resolver:     resolver,
 		registry:     command.NewBuilder().Build(),
 		viewport:     ViewportState{},
-		keys:         keys,
 		styles:       st,
 		syncFunc:     PlainSync,
 		sanitizeFunc: func(s string) string { return s },
@@ -241,6 +244,7 @@ func (m Model) SetContent(content string) Model {
 	m.buf = b
 	m.cursors = cursor.NewCursorSet(0)
 	m.pendingEdits = nil
+	m.lastEdits = nil
 	m.viewport.TopRow = 0
 	m.viewport.ScrollCol = 0
 	m.rev++ // D13: a full content swap is a buffer mutation — see recomputeIfStale.
@@ -368,18 +372,61 @@ func (m Model) applyOperation(result command.Result) Model {
 	}
 
 	if len(result.Operation.Edits) > 0 {
-		newBuf, applied, err := m.buf.ApplyEdits(result.Operation.Edits)
-		if err == nil {
-			m.buf = newBuf
-			m.pendingEdits = append(m.pendingEdits, applied...)
+		// A failed ApplyEdits (stale/out-of-bounds positions) leaves buf/
+		// pendingEdits/rev/lastEdits untouched — D13 tightening (T3): rev is
+		// the ONLY sanctioned content-changed signal, and nothing actually
+		// changed. Cursors are still adopted below either way, matching
+		// prior behavior; markdownedit's reconcile funnel then sees rev
+		// unchanged and correctly takes its cursor-move branch, not a
+		// content-change one.
+		if newBuf, applied, err := m.buf.ApplyEdits(result.Operation.Edits); err == nil {
+			m = m.commitEdits(newBuf, applied, true, result.Operation.Edits)
 		}
 	}
 
 	m.cursors = result.Operation.Cursors
-	if result.Operation.Kind != command.OperationMoveCursors {
-		m.rev++
+	return m
+}
+
+// commitEdits is the single buf-swap / pendingEdits / lastEdits / rev++ site
+// (D13): every content mutation funnels through here so "did the buffer
+// change" has exactly one answer. journal=false for undo/redo (ApplyInverse/
+// Reapply) — the journal already recorded the edit being undone/redone, so
+// re-appending it to pendingEdits would double-journal it. provenance is the
+// pre-edit-coordinate, CursorID-tagged edits behind this commit (nil for
+// programmatic/undo/redo commits, which aren't attributable to a single
+// cursor) — see FuzzLastEdits.
+func (m Model) commitEdits(newBuf buffer.Buffer, applied []buffer.AppliedEdit, journal bool, provenance []buffer.Edit) Model {
+	m.buf = newBuf
+	if journal {
+		m.pendingEdits = append(m.pendingEdits, applied...)
+	}
+	m.lastEdits = provenance
+	m.rev++
+	return m
+}
+
+// applyResult is the per-keypress dispatch epilogue: apply the operation,
+// resync display, then follow the cursor into view — unless the operation
+// IS an intentional scroll, in which case following the cursor would cancel
+// it (critical for read-only docs whose hidden cursor sits at the top). This
+// one function replaces what used to be five near-identical
+// applyOperation+syncDisplay+ScrollToCursor trios (update.go's Enter/Escape
+// fast paths and resolver dispatch, commands_clipboard.go's paste).
+func (m Model) applyResult(res command.Result) Model {
+	m = m.applyOperation(res)
+	m = m.syncDisplay()
+	if res.Operation.Kind != command.OperationScroll {
+		m = m.ScrollToCursor()
 	}
 	return m
+}
+
+// basicCtx builds the minimal CommandContext used by the hardcoded
+// Enter/Escape fast paths (edit.newline, multicursor.escape) — neither
+// command needs the resolver dispatch's navigation/viewport capabilities.
+func (m Model) basicCtx() command.CommandContext {
+	return command.CommandContext{Buffer: m.buf, Cursors: m.cursors}
 }
 
 // ---- Rect type (D8) ----

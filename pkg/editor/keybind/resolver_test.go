@@ -58,6 +58,17 @@ func TestResolverConstruction(t *testing.T) {
 			},
 			wantError: true, // Unknown identifier
 		},
+		{
+			// Chord sequences are not supported (§2.1: the resolver is a
+			// stateless matcher, not a machine) — a multi-chord binding is a
+			// config mistake that must fail loudly at construction rather
+			// than silently never match.
+			name: "Multi-chord binding errors",
+			bindings: []Binding{
+				{Chords: []Chord{{Ctrl: true, Key: "k"}, {Ctrl: true, Key: "v"}}, Command: "markdown.preview"},
+			},
+			wantError: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -73,10 +84,7 @@ func TestResolverConstruction(t *testing.T) {
 func TestResolverMatch(t *testing.T) {
 	bindings := []Binding{
 		{Chords: []Chord{{Alt: true, Key: "right"}}, Command: "cursor.word-right"},
-		{Chords: []Chord{{Ctrl: true, Key: "k"}, {Ctrl: true, Key: "v"}}, Command: "markdown.preview"},
 		{Chords: []Chord{{Ctrl: true, Key: "k"}}, Command: "kill-line"},
-		{Chords: []Chord{{Ctrl: true, Key: "k"}, {Ctrl: true, Key: "s"}}, Command: "save-all"},
-		{Chords: []Chord{{Ctrl: true, Key: "c"}, {Key: "a"}}, Command: "context.a"},
 		{Chords: []Chord{{Key: "enter"}}, Command: "insert.enter", When: "editorFocused"},
 	}
 
@@ -87,40 +95,20 @@ func TestResolverMatch(t *testing.T) {
 
 	t.Run("Modifier exactness", func(t *testing.T) {
 		// Gate 2: Alt+Right -> cursor.word-right
-		res2, result := res.Resolve(Chord{Alt: true, Key: "right"}, ResolverContext{})
+		result := res.Resolve(Chord{Alt: true, Key: "right"}, ResolverContext{})
 		if result.Kind != ResultFound || result.Command != "cursor.word-right" {
 			t.Errorf("Expected ResultFound with cursor.word-right, got %v: %v", result.Kind, result.Command)
 		}
-		_ = res2
 
 		// Gate 2: Ctrl+Alt+Right -> no match
-		_, result = res.Resolve(Chord{Ctrl: true, Alt: true, Key: "right"}, ResolverContext{})
+		result = res.Resolve(Chord{Ctrl: true, Alt: true, Key: "right"}, ResolverContext{})
 		if result.Kind != ResultNoMatch {
 			t.Errorf("Expected ResultNoMatch, got %v", result.Kind)
 		}
 	})
 
-	t.Run("Multi-step chord", func(t *testing.T) {
-		// Gate 3: Ctrl+K, Ctrl+V
-		res2, result := res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
-		if result.Kind != ResultMoreChordsNeeded {
-			t.Errorf("Expected ResultMoreChordsNeeded, got %v: %v", result.Kind, result.Command)
-		}
-
-		_, result = res2.Resolve(Chord{Ctrl: true, Key: "v"}, ResolverContext{})
-		if result.Kind != ResultFound || result.Command != "markdown.preview" {
-			t.Errorf("Expected ResultFound with markdown.preview, got %v: %v", result.Kind, result.Command)
-		}
-	})
-
-	t.Run("Timeout resolution", func(t *testing.T) {
-		// Gate 4: Timeout fires shortest match
-		res2, result := res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
-		if result.Kind != ResultMoreChordsNeeded {
-			t.Errorf("Expected ResultMoreChordsNeeded, got %v", result.Kind)
-		}
-
-		_, result = res2.ResolveTimeout()
+	t.Run("Single chord match", func(t *testing.T) {
+		result := res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
 		if result.Kind != ResultFound || result.Command != "kill-line" {
 			t.Errorf("Expected ResultFound with kill-line, got %v: %v", result.Kind, result.Command)
 		}
@@ -128,32 +116,21 @@ func TestResolverMatch(t *testing.T) {
 
 	t.Run("Context predicate", func(t *testing.T) {
 		// Gate 5: when: editorFocused
-		_, result := res.Resolve(Chord{Key: "enter"}, ResolverContext{EditorFocused: false})
+		result := res.Resolve(Chord{Key: "enter"}, ResolverContext{EditorFocused: false})
 		if result.Kind != ResultNoMatch {
 			t.Errorf("Expected ResultNoMatch from unfocused, got %v", result.Kind)
 		}
 
-		_, result = res.Resolve(Chord{Key: "enter"}, ResolverContext{EditorFocused: true})
+		result = res.Resolve(Chord{Key: "enter"}, ResolverContext{EditorFocused: true})
 		if result.Kind != ResultFound || result.Command != "insert.enter" {
 			t.Errorf("Expected ResultFound with insert.enter, got %v: %v", result.Kind, result.Command)
 		}
 	})
 
-	t.Run("No match resets pending", func(t *testing.T) {
-		res2, result := res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
-		if result.Kind != ResultMoreChordsNeeded {
-			t.Errorf("Expected ResultMoreChordsNeeded, got %v", result.Kind)
-		}
-		if !res2.InChordMode() {
-			t.Errorf("Expected InChordMode to be true")
-		}
-
-		res3, result := res2.Resolve(Chord{Key: "x"}, ResolverContext{})
+	t.Run("No match for unbound key", func(t *testing.T) {
+		result := res.Resolve(Chord{Key: "x"}, ResolverContext{})
 		if result.Kind != ResultNoMatch {
 			t.Errorf("Expected ResultNoMatch, got %v", result.Kind)
-		}
-		if res3.InChordMode() {
-			t.Errorf("Expected InChordMode to be false after no match")
 		}
 	})
 }
@@ -184,7 +161,7 @@ func TestPredicateEvaluation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create resolver: %v", err)
 			}
-			_, result := res.Resolve(Chord{Key: "a"}, tt.ctx)
+			result := res.Resolve(Chord{Key: "a"}, tt.ctx)
 			if tt.expected {
 				if result.Kind != ResultFound {
 					t.Errorf("Expected ResultFound, got %v", result.Kind)
@@ -195,20 +172,6 @@ func TestPredicateEvaluation(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestPendingDisplay(t *testing.T) {
-	b := []Binding{{Chords: []Chord{{Ctrl: true, Key: "k"}, {Key: "a"}}, Command: "cmd"}}
-	res, _ := NewResolver(b)
-	if res.PendingDisplay() != "" {
-		t.Errorf("Expected empty PendingDisplay, got %v", res.PendingDisplay())
-	}
-
-	res, _ = res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
-	expected := "Ctrl+K ..."
-	if res.PendingDisplay() != expected {
-		t.Errorf("Expected PendingDisplay %q, got %q", expected, res.PendingDisplay())
 	}
 }
 
@@ -290,19 +253,5 @@ func TestChordFromKeyMsg(t *testing.T) {
 				t.Errorf("ChordFromKeyMsg() = %+v, want %+v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestReset(t *testing.T) {
-	b := []Binding{{Chords: []Chord{{Ctrl: true, Key: "k"}, {Key: "a"}}, Command: "cmd"}}
-	res, _ := NewResolver(b)
-	res, _ = res.Resolve(Chord{Ctrl: true, Key: "k"}, ResolverContext{})
-	if !res.InChordMode() {
-		t.Errorf("Expected InChordMode to be true")
-	}
-
-	res = res.Reset()
-	if res.InChordMode() {
-		t.Errorf("Expected InChordMode to be false after Reset()")
 	}
 }

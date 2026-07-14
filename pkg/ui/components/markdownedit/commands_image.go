@@ -57,7 +57,7 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 		targetDir := filepath.Join(capturedBaseDir, capturedAssetsDir)
 
 		if err := capturedFsys.MkdirAll(targetDir, 0o755); err != nil {
-			return ImageSaveErrorMsg{Err: fmt.Errorf("create assets dir %q: %w", targetDir, err)}
+			return ImageErrorMsg{Err: fmt.Errorf("create assets dir %q: %w", targetDir, err)}
 		}
 
 		// WriteFile is durable but no longer atomic (§1.4.1): write a sibling
@@ -67,12 +67,12 @@ func (m Model) handleImagePaste(imgData []byte, mimeType string, now time.Time) 
 		fullPath := filepath.Join(targetDir, filename)
 		temp := imageTempPath(fullPath)
 		if err := capturedFsys.WriteFile(temp, capturedData, 0o644); err != nil {
-			return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
+			return ImageErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
 		}
 		if err := capturedFsys.RenameExcl(temp, fullPath); err != nil {
 			_ = capturedFsys.Remove(temp) // fire-and-forget: best-effort cleanup of the throwaway temp
 			if !errors.Is(err, fs.ErrExist) {
-				return ImageSaveErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
+				return ImageErrorMsg{Err: fmt.Errorf("write image %q: %w", fullPath, err)}
 			}
 			// fs.ErrExist: the filename is content-addressed (sha256[:8] of
 			// the pasted bytes), so this means an identical asset is already
@@ -124,10 +124,10 @@ func (m Model) insertTextAtCursors(text string, now time.Time) (Model, tea.Cmd) 
 		// §1.3: the buffer is left unchanged (ReplaceRange's guarantee) — surface
 		// on the existing image-error channel rather than silently proceed as if
 		// the image reference had been inserted.
-		return m, func() tea.Msg { return ImageSaveErrorMsg{Err: err} }
+		return m, func() tea.Msg { return ImageErrorMsg{Err: err} }
 	}
 
-	return m.afterContentChange()
+	return m.afterMutation(true)
 }
 
 func generateImageFilename(data []byte, now time.Time, ext string) string {

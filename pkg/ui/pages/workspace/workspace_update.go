@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	dictengine "rune/pkg/dictation"
-	"rune/pkg/docstate"
-	"rune/pkg/editor/buffer"
 	dictcomp "rune/pkg/ui/components/dictation"
 	"rune/pkg/ui/components/filetree"
 	"rune/pkg/ui/components/footer"
@@ -41,7 +38,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.totalWidth, m.totalHeight = msg.Width, msg.Height
-		m = m.recalcLayout()
+		m, cmd = m.recalcLayout()
+		cmds = append(cmds, cmd)
 
 	case tea.KeyPressMsg:
 		return m.handleKeyPress(msg, cmds)
@@ -73,12 +71,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				break
 			}
 			newPath := filepath.Join(m.currentDir(), msg.Name+".md")
-			requestID := fmt.Sprintf("bind-%v", time.Now().UnixNano())
-			m.activeSave = SaveIdentity{RequestID: requestID, SavedContent: []byte(m.editor.Content()), InFlight: true, Path: newPath, DocID: m.view.DocID()}
 			// bind-new: RenameExcl's target-existence check is the guard; expect=0
-			// is safe (Materialize's create path never consults it).
-			seq := m.currentSeqFor(m.view.DocID())
-			cmds = append(cmds, materializeStoreCmd(m.store, m.view.DocID(), newPath, m.editor.Content(), 0, seq, requestID, true))
+			// (saveReq's zero value) is safe (Materialize's create path never
+			// consults it).
+			var bindCmd tea.Cmd
+			m, _, bindCmd = m.issueSave(saveReq{prefix: "bind", docID: m.view.DocID(), path: newPath, content: m.editor.Content(), bindNew: true, track: true})
+			cmds = append(cmds, bindCmd)
 		} else {
 			dir := filepath.Dir(m.view.Path())
 			newPath := filepath.Join(dir, msg.Name+".md")
@@ -98,7 +96,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			break
 		}
 		// Raise a confirmation guard before acting — §1.4.4.
-		m.guard.trashPath = msg.Path
+		m.guard.prompt = promptPayload{path: msg.Path}
 		m = m.raiseGuardPrompt(guardTrash)
 
 	case FileDeletedMsg:
@@ -171,7 +169,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// select delivered while e.g. GuardMerge is up (raised via mouse click
 		// on the tab bar, or a stray Enter) could switch the view out from
 		// under an in-flight conflict resolution.
-		if m.footer.InGuard() {
+		if m.guardOwnsInput() {
 			break
 		}
 		// G: stat-on-focus is now free — requestOpenPath always routes a file
@@ -182,8 +180,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m, cmd = m.requestOpenPath(msg.DocID, msg.Path)
 		cmds = append(cmds, cmd)
 
-	case markdownedit.ImageSaveErrorMsg:
-		// B2: markdownedit.ImageSaveErrorMsg's own Update handler is a no-op
+	case markdownedit.ImageErrorMsg:
+		// B2: markdownedit.ImageErrorMsg's own Update handler is a no-op
 		// (there is no other handler tree-wide) — an image-write failure
 		// (commands_image.go) or a ReplaceRange failure routed there would
 		// otherwise surface nowhere. The workspace, as the message's single
@@ -350,7 +348,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// WP2 item 1: mirror handleKeyPress's InGuard early-return (§1.4.4) — a
 		// guard prompt owns the mouse too, so a click can never switch panes/
 		// tabs out from under an in-flight conflict resolution.
-		if m.footer.InGuard() {
+		if m.guardOwnsInput() {
 			return m.finalize(cmds)
 		}
 		return m.handleMouseClick(msg, cmds)
@@ -366,13 +364,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m.refuseMergeTransition("quitting")
 		}
 		if m.anyDirty() { // ground-truth (H3, §1.4.8) — never the cached opentabs flag alone
-			// Wholesale-replace every close/evict/quit intent (mirrors the
-			// pre-A4 `pendingDataLoss = pendingDataLoss{kind: actionQuit}`
-			// single-field overwrite exactly — see abandonDirtyContinuation's
-			// own doc comment) before raising THIS guard.
-			m = m.abandonDirtyContinuation()
-			m.guard.quit = quitIntent{active: true}
-			m = m.raiseGuardPrompt(guardDirtyQuit)
+			// raiseDirtyGuard wholesale-replaces the continuation slot
+			// (mirrors the pre-A4 `pendingDataLoss = pendingDataLoss{kind:
+			// actionQuit}` single-field overwrite exactly — see its own doc
+			// comment) before raising THIS guard.
+			m = m.raiseDirtyGuard(guardDirtyQuit, continuation{kind: contQuit})
 			return m, nil
 		}
 		return m.teardownAndQuit()
@@ -404,7 +400,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 	case footer.DictationStopMsg:
-		m.dict = m.dict.Disable()
+		// W5: stopDictation clears the footer's dictating indicator HERE too
+		// (previously only dictcomp.DoneMsg's later async confirmation did) —
+		// closes the gap where the indicator lagged the engine's own disable
+		// by one round trip on the user's own ^v-stop.
+		m = m.stopDictation()
 
 	case dictcomp.DoneMsg:
 		m.footer = m.footer.SetDictating(false)
@@ -466,9 +466,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.editor, cmd = m.editor.Update(msg)
 		cmds = append(cmds, cmd)
 		if m.focus == paneCenter {
-			var editorEdits []buffer.AppliedEdit
-			m.editor, editorEdits = m.editor.DrainEdits()
-			m = m.journalEdit(targetMain, editorEdits, prevEditorCursors, m.editor.Cursors(), &cmds)
+			// A6/F7: shared drain+journal tail (drainAndJournal, not the full
+			// updateAndJournal) — Update above must run unconditionally
+			// regardless of focus, only the journal is focus-gated.
+			drainAndJournal(&m, &m.editor, targetMain, prevEditorCursors, &cmds)
 		}
 
 		prevSearchQuery := m.search.Query()
@@ -490,13 +491,4 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	return m.finalize(cmds)
-}
-
-// persistSearchQueryCmd writes a query to the search_history table asynchronously.
-// Errors are silently swallowed — history persistence is best-effort.
-func persistSearchQueryCmd(store *docstate.Store, query string) tea.Cmd {
-	return func() tea.Msg {
-		_ = store.AppendSearchQuery(query) // fire-and-forget: search history loss is tolerable
-		return nil
-	}
 }

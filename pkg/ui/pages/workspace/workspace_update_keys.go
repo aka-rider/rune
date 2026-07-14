@@ -6,7 +6,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"rune/pkg/editor/buffer"
 	searchcomp "rune/pkg/ui/components/search"
 	"rune/pkg/ui/pages/workspace/mergemode"
 )
@@ -26,9 +25,10 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	// While the guard is showing, NO global key (save/close/new/undo/redo) may act
 	// behind it — route the key only to the footer, which resolves on s/d/Esc and
 	// ignores everything else. Without this, ⌘S behind an open dirty-close guard
-	// issues a real save whose ack (guard.close still active) then closes and
-	// blanks the buffer — a destructive transition the user never confirmed.
-	if m.footer.InGuard() {
+	// issues a real save whose ack (guard.cont.kind still contClose) then
+	// closes and blanks the buffer — a destructive transition the user never
+	// confirmed.
+	if m.guardOwnsInput() {
 		m.footer, cmd = m.footer.Update(msg)
 		cmds = append(cmds, cmd)
 		if !m.footer.InGuard() {
@@ -69,6 +69,33 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		return m.finalize(cmds)
 	}
 
+	// Priority 2.6: ⌘N's merge-refusal must run BEFORE any title-finalize
+	// attempt (order preserved from the pre-hoist CreateNewFile case — Esc-
+	// abort first, before maybeFinalizeTitle or setFocus(paneTitle) ever
+	// run). Modal merge (§4): ⌘N → CreateUntitled SetContent("")s over the
+	// hidden marker buffer, backgrounding the mid-merge doc (its markers
+	// then sit in the store and a later quit-save could reach disk).
+	if key.Matches(msg, m.keys.CreateNewFile) && m.HasUnresolvedConflicts() {
+		m, cmd = m.refuseMergeTransition("creating a new file")
+		cmds = append(cmds, cmd)
+		return m.finalize(cmds)
+	}
+
+	// Priority 2.7: hoisted title-finalize gate — finalizesTitle names every
+	// key whose case body used to open with its own identical
+	// withFinalizedTitle prologue (9 copies); now it runs once, here, before
+	// the global switch even starts. Help's own merge-refusal deliberately
+	// stays inside toggleHelp (it never routed through withFinalizedTitle in
+	// the pre-hoist code either — unlike ⌘N, which needed the early return
+	// above to run BEFORE title-finalize).
+	if m.finalizesTitle(msg) {
+		var ok bool
+		m, cmds, ok = m.withFinalizedTitle(cmds)
+		if !ok {
+			return m.finalize(cmds)
+		}
+	}
+
 	// Priority 3: Global workspace keys.
 	consumed := true
 	switch {
@@ -79,11 +106,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 
 	case key.Matches(msg, m.keys.TabSwitch):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		digit := msg.BaseCode
 		if digit == 0 {
 			digit = msg.Code
@@ -103,36 +125,16 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 
 	case key.Matches(msg, m.keys.PinTab):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m.opentabs = m.opentabs.PinIndex(m.opentabs.Cursor())
 
 	case key.Matches(msg, m.keys.FocusExplorer):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m = m.setFocus(paneTree)
 		m.leftVisible = true
 
 	case key.Matches(msg, m.keys.FocusEditor):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m = m.setFocus(paneCenter)
 
 	case key.Matches(msg, m.keys.FocusChat):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		if m.rightVisible && m.focus == paneChat {
 			m.rightVisible = false
 			m = m.setFocus(paneCenter)
@@ -142,20 +144,6 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		}
 
 	case key.Matches(msg, m.keys.CreateNewFile):
-		// Modal merge (§4): ⌘N → CreateUntitled SetContent("")s over the hidden
-		// marker buffer, backgrounding the mid-merge doc (its markers then sit in
-		// the store and a later quit-save could reach disk). Refuse early — before
-		// maybeFinalizeTitle and the setFocus(paneTitle) below — Esc-abort first.
-		if m.HasUnresolvedConflicts() {
-			m, cmd = m.refuseMergeTransition("creating a new file")
-			cmds = append(cmds, cmd)
-			return m.finalize(cmds)
-		}
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		// The outgoing untitled (if any) stays as its own durable VFS doc/tab —
 		// nothing is written to disk and nothing is lost (Fix 2 §5).
 		if !m.view.IsUntitled() || m.editor.Content() != "" {
@@ -166,29 +154,14 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		m = m.setFocus(paneTitle)
 
 	case key.Matches(msg, m.keys.CloseFile):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m, cmd = m.requestCloseCurrent()
 		cmds = append(cmds, cmd)
 
 	case key.Matches(msg, m.keys.Help):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m, cmd = m.toggleHelp()
 		cmds = append(cmds, cmd)
 
 	case key.Matches(msg, m.keys.ZenMode):
-		var ok bool
-		m, cmds, ok = m.withFinalizedTitle(cmds)
-		if !ok {
-			return m.finalize(cmds)
-		}
 		m.leftVisible = !m.leftVisible
 		if !m.leftVisible && m.focus.isLeft() {
 			m = m.setFocus(paneCenter)
@@ -204,7 +177,9 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 		} else {
 			m.search = m.search.Open()
 			m = m.setFocus(paneSearch)
-			m = m.recalcLayout()
+			var layoutCmd tea.Cmd
+			m, layoutCmd = m.recalcLayout()
+			cmds = append(cmds, layoutCmd)
 		}
 
 	case key.Matches(msg, m.keys.FindNext):
@@ -247,12 +222,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 	// Singular key routing — exactly one child receives the KeyPressMsg (§3.3).
 	switch m.focus {
 	case paneTitle:
-		prevCursors := m.title.Cursors()
-		m.title, cmd = m.title.Update(msg)
-		cmds = append(cmds, cmd)
-		var titleEdits []buffer.AppliedEdit
-		m.title, titleEdits = m.title.DrainEdits()
-		m = m.journalEdit(targetTitle, titleEdits, prevCursors, m.title.Cursors(), &cmds)
+		updateAndJournal(&m, &m.title, msg, targetTitle, &cmds)
 	case paneCenter:
 		if !m.dict.Enabled() {
 			prevCursors := m.editor.Cursors()
@@ -263,7 +233,7 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 			// key is consumed by mergemode so no free-text edit reaches the
 			// (hidden) buffer mid-merge.
 			var consumed bool
-			if mergemode.IsActive(m.merge) {
+			if m.centerDisplay() == displayMergeResolver {
 				if key.Matches(msg, m.keys.Cancel) {
 					var abortErr error
 					m.merge, m.editor, cmd, abortErr = mergemode.Abort(m.merge, m.editor)
@@ -310,17 +280,13 @@ func (m Model) handleKeyPress(msg tea.KeyPressMsg, cmds []tea.Cmd) (Model, tea.C
 				m.editor, cmd = m.editor.Update(msg)
 				cmds = append(cmds, cmd)
 			}
-			var editorEdits []buffer.AppliedEdit
-			m.editor, editorEdits = m.editor.DrainEdits()
-			m = m.journalEdit(targetMain, editorEdits, prevCursors, m.editor.Cursors(), &cmds)
+			// A6/F7: the shared drain+journal tail — paneCenter keeps its own
+			// merge/dictation pre-intercepts above (they decide WHETHER
+			// editor.Update ever runs), then calls only this.
+			drainAndJournal(&m, &m.editor, targetMain, prevCursors, &cmds)
 		}
 	case paneChat:
-		prevCursors := m.chat.Cursors()
-		m.chat, cmd = m.chat.Update(msg)
-		cmds = append(cmds, cmd)
-		var chatEdits []buffer.AppliedEdit
-		m.chat, chatEdits = m.chat.DrainEdits()
-		m = m.journalEdit(targetChat, chatEdits, prevCursors, m.chat.Cursors(), &cmds)
+		updateAndJournal(&m, &m.chat, msg, targetChat, &cmds)
 	case paneSearch:
 		prevQuery := m.search.Query()
 		m.search, cmd = m.search.Update(msg)

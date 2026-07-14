@@ -9,10 +9,17 @@ import (
 	"rune/pkg/editor/coords"
 )
 
+// CursorID, when non-zero, is the ID of the cursor.Cursor whose command
+// produced this edit (cursor.Cursor.ID is never 0 for a real cursor — see
+// cursor.CursorSet.nextID). Zero means the edit has no single owning cursor
+// (e.g. a programmatic ReplaceRange). Embedded directly on Edit rather than
+// tracked in a parallel slice so the association survives independent
+// re-sorts of an edit batch (CloneAndSortEditsDescending et al.) intact.
 type Edit struct {
-	Start  int
-	End    int
-	Insert string
+	Start    int
+	End      int
+	Insert   string
+	CursorID int
 }
 
 type AppliedEdit struct {

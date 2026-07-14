@@ -26,6 +26,7 @@ func FromTextedit(m textedit.Model) Snapshot {
 		Cursors:       m.FuzzCursors(),
 		BufferVersion: m.FuzzBufferVersion(),
 		LineCount:     m.FuzzLineCount(),
+		LastEdits:     m.FuzzLastEdits(),
 
 		Display: m.FuzzSnapshot(),
 		Wrap:    m.FuzzWrapSnapshot(),

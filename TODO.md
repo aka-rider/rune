@@ -1,5 +1,17 @@
 # TODO
 
+## FuzzWorkspaceTabOps: intermittent "fuzzing process hung or terminated unexpectedly: exit status 2" (pre-existing, environment/resource flake)
+
+**Status:** open; confirmed pre-existing independently by all three statechart-refactor tracks (T, W, M) — NOT caused by any of them.
+
+- **Symptom:** `make test-fuzz` (or `go test -tags fuzzing -fuzz='^FuzzWorkspaceTabOps$' ./pkg/ui/pages/workspace`) occasionally reports a worker crash with no invariant name or panic trace — just "fuzzing process hung or terminated unexpectedly: exit status 2" — and writes a "failing" corpus entry under `pkg/ui/pages/workspace/testdata/fuzz/FuzzWorkspaceTabOps/<hash>`.
+- **Not reproducible standalone:** every entry captured this way (e.g. `666b114d7066f71e` from the rebased T-branch run, `7e4aa989fadca355` from a control run against unmodified `a7bbc62`) PASSES cleanly when re-run in isolation via `go test -run=FuzzWorkspaceTabOps/<hash>` — the input itself is not a real invariant violation, the parallel fuzz run just loses a worker (resource contention under N=14 workers, not a deterministic bug in the input).
+- **Confirmed pre-existing:** reproduced against the untouched `a7bbc62` baseline in a throwaway `git worktree add <tmp> a7bbc62` — same signature, same standalone-pass behavior. T3's commit message independently documented the same flake during the original (pre-rebase) T-track run, with a different corpus hash (`3a0021192dd9736f`), also root-caused as environment/resource, not a Track T regression.
+- **Action:** none required for the statechart refactor landing. The generated `testdata/fuzz/FuzzWorkspaceTabOps/*` "failing" entries are harmless (they pass when re-run) but are left untracked/uncommitted deliberately — committing a flake-only entry would make `make test-fuzz` look red for the wrong reason. If this becomes disruptive, the real fix is investigating why a fuzz worker process can die under this target specifically (fd/goroutine/sqlite-temp-file exhaustion under 14 parallel workers are the leading suspects, unconfirmed).
+- **Reconfirmed during the T1–T6 rebase-onto-main landing:** hit again on a completely fresh corpus directory (no prior seed entries at all) at `make test-fuzz`'s default 1-minute budget, ~12s in, hash `06b04289206359b8` — same signature, same standalone pass. Three independent hashes now observed (`3a0021192dd9736f` at T3's original commit, `666b114d7066f71e`/`7e4aa989fadca355` from the T=20s gate on the rebased branch and the `a7bbc62` control respectively, `06b04289206359b8` from this full-budget rerun), always ~10-20s into the run regardless of which input is "blamed" — consistent with a timing/resource-window flake, not a specific bad input. The generated corpus files were deleted after standalone-verifying each one (not committed) to keep `make test-fuzz` reproducible for the next runner; this note plus the git history of this file is the retained evidence.
+- **Track W independently bisected the same flake** (`git stash -u` back to clean `a7bbc62`, identical invocation, identical signature and hash `06b04289206359b8`) and observed the misattribution mechanism: under Go's parallel fuzzing, the "failing input" written is often just whatever was in flight when a worker died, not the actual trigger — the captured seed passes standalone on every commit. Track W's final full `make test-fuzz` run (14 targets, default budget) passed cleanly INCLUDING this target, confirming intermittency. Track M reproduced it on clean `a7bbc62` as well, with a CPU profile showing >85% of time in `runtime.kevent/madvise/pthread_cond_*` — no product hot path — pointing at a worker-liveness watchdog under CPU contention.
+- **Next step if it becomes disruptive:** dedicated investigation with a single fuzz worker (`GOMAXPROCS=1` or explicit worker count) to isolate the real culprit input, per the project's "reproduce hangs with polled evidence" convention; leading suspects are fd/goroutine/sqlite-temp-file exhaustion under 14 parallel workers. Alternatives: a lower `-parallel` for this target in `make test-fuzz`, or checking whether an unusually heavy input among the ~417 committed corpus entries exercises a genuinely slow path (many synchronous SQLite commits) worth speeding up in its own right.
+
 ## Fuzz catch: RESIZE-INV — HasDirtyFile flips true→false on resize (pre-existing)
 
 **Status:** open; investigation started 2026-07-12 and stopped by user before root cause landed.
@@ -21,3 +33,29 @@
 ## Layering: pkg/docstate/store.go ships test support in the production binary (pre-push review PP-2)
 
 `store.go` imports `testing` + `internal/editortest` to host `NewTestStore`/`AutoClock` (QA-rehaul convention; footer_testing.go documents the same cross-package test-seam pattern without the import). Not a runtime bug — but the shipped binary links the testing package. Proper fix per CONSTITUTION §50 spirit: move `NewTestStore` behind `//go:build testing` (requires adding `-tags testing` to Makefile `test:` targets + CI + developer habit) or into a `docstatetest` subpackage (requires migrating ~12 test files' imports). Both are convention decisions — pick one deliberately. Related fragility notes from the same review: two_sessions_fuzz_test.go shares one non-thread-safe AutoClock across two stores (mutex or comment); editortest.Drain has no iteration cap (a steps-cap panic-guard would fail loudly instead of hanging on a future undisabled timer); invarianttest.CheckWorkspace silently skips L1/L2 (Frame never set on the unit path — fix the doc claim or plumb a frame).
+
+## Statechart refactor — deferred edges (plan-statechart-refactor.md, deliberate scope cuts)
+
+- **E3 — `DisplaySeq` reveal signal (statechart pressure point #8):** textedit could expose `DisplaySeq() uint64`, bumped whenever `syncDisplay` installs a display snapshot that differs from the previous one (content, reveal, wrap, or image-expansion). markdownedit's `reconcile` could then skip the whole `afterMutation` funnel when both `rev` and `DisplaySeq` are unchanged, and `hasUndiscoveredImages` could be deleted (≈ −12). Not needed for correctness — the funnel is change-gated internally — pure efficiency/clarity follow-up.
+- **E4 — workspace divider `drag` outlives the mouse button:** the workspace's own divider-drag field persists until the next click. `tea.MouseReleaseMsg` exists in Bubble Tea v2.0.6 and reaches children via the workspace's default broadcast; the divider is its natural first consumer. (markdownedit deliberately has no release handler — after the refactor it keeps no drag state at all.)
+- **Statechart pressure point #10 — placement double-tick:** the iTerm2 placement pipeline's "pending ⇔ one tick" invariant is only *mostly* exact (an overwrite edge emits a second tick that safely no-ops). A sequence number would make it exact. Harmless today.
+
+## Fuzz catches: FuzzHumanSession tab-coherence invariants — EDITOR-TAB-COH and TAB-SET (both pre-existing)
+
+**Status:** open; found 2026-07-16 while fuzzing the integrated statechart-refactor tree. BOTH bisected to PRE-EXISTING — each reproducer fails identically on `a7bbc62` (pre-refactor base), on T+M (`53b3d08`), and on W's tip (`6e02700`), so no refactor track introduced them. FuzzHumanSession surfaced two distinct violations in back-to-back 1-minute runs — its latent bug surface in tab management is evidently not yet drained; expect more catches until the underlying coherence flaw(s) are fixed.
+
+- **Catch 1 — EDITOR-TAB-COH:** corpus entry `FuzzHumanSession/42335ab630528b99`, content:
+  ```
+  go test fuzz v1
+  []byte("y0 0c")
+  ```
+  → `human_fuzz_test.go:117: invariant EDITOR-TAB-COH: EditorPath "/fuzz/notes/e.md" != Tabs[0].Path "/fuzz/a.md"` (deterministic, 0.09s). The editor ends bound to one doc while the active tab points at another.
+- **Catch 2 — TAB-SET:** corpus entry `FuzzHumanSession/d9abe6755ff8bd82`, content:
+  ```
+  go test fuzz v1
+  []byte("11A920\xaf{\xed\xf9C5'\xdf\xd8\xf6\xdb\x106\x1b\x84\xc3\xf3H&\xbb\x9f\x99G\x86ni\xc5.2")
+  ```
+  → `human_fuzz_test.go:117: invariant TAB-SET: expected exactly 1 active tab, got 0` (deterministic, 0.23s). A session ends with no active tab at all.
+- **Repro:** write the entry file under `pkg/ui/pages/workspace/testdata/fuzz/FuzzHumanSession/` then `go test -tags fuzzing -run 'FuzzHumanSession/<hash>' ./pkg/ui/pages/workspace`.
+- **Not committed while red** (same convention as RESIZE-INV above): re-add each corpus entry in the SAME commit as its fix. Copies of both inputs are quoted verbatim here.
+- **Next step:** root-cause with the read-only fuzz investigator (`/rune-fuzzer` catch flow); suspect area is the tab-switch/load-settle/close path that updates `view` and `opentabs.SetActive` asymmetrically. Both invariants smell like one underlying coherence flaw around doc transitions.

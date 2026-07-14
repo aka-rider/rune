@@ -16,8 +16,8 @@ func newSearchModel(t *testing.T, content string) Model {
 	keys := keymap.Default()
 	st := styles.Default()
 	m := New(keys, st, terminal.TermCaps{})
-	m = m.SetRect(textedit.Rect{W: 80, H: 24})
-	m = m.SetContent(content)
+	m, _ = m.SetRect(textedit.Rect{W: 80, H: 24})
+	m, _ = m.SetContent(content)
 	// Editor is unfocused while the search bar holds focus (SyncNoReveal).
 	m = m.SetFocused(false)
 	return m

@@ -180,11 +180,12 @@ func (m Model) selectActiveMatch() Model {
 
 // ClearSearch removes all search match state, leaving any current selection
 // intact so the user ends up with the last navigated match selected on close.
+// Delegates to SetSearchQuery("", ...) — its query=="" branch does exactly
+// this (plus searchRev = m.rev, which ClearSearch used to skip, leaving
+// searchRev stale; harmless while the query stays empty, but stale-by-
+// construction is worse than symmetric-by-construction for no benefit).
 func (m Model) ClearSearch() Model {
-	m.searchMatches = nil
-	m.searchActive = ActiveMatch{}
-	m.searchQuery = ""
-	return m
+	return m.SetSearchQuery("", m.searchCaseInsensitive)
 }
 
 // D5: the SearchMatches()/SearchActive() accessor methods that used to live

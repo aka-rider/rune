@@ -37,7 +37,7 @@ func TestCheckTextedit_FreshAndEdited(t *testing.T) {
 
 func TestCheckMarkdownedit_FreshAndEdited(t *testing.T) {
 	m := markdownedit.New(keymap.Default(), styles.Default(), terminal.TermCaps{})
-	m = m.SetRect(textedit.Rect{W: 40, H: 10})
+	m, _ = m.SetRect(textedit.Rect{W: 40, H: 10})
 	invarianttest.CheckMarkdownedit(t, m)
 
 	m = m.SetFocused(true)

@@ -50,6 +50,7 @@ func TestImageLifecycle(t *testing.T) {
 	// Step 2: Feed decodedMsg
 	m, cmd := m.Update(UpdateMsg{
 		Path: path,
+		Gen:  m.gen,
 		inner: decodedMsg{
 			path: path, cols: 6, rows: 4, pxW: 48, pxH: 32,
 		},
@@ -65,7 +66,7 @@ func TestImageLifecycle(t *testing.T) {
 	}
 
 	// Step 3: Feed transmittedMsg
-	m, cmd = m.Update(UpdateMsg{Path: path, inner: transmittedMsg{path: path}})
+	m, cmd = m.Update(UpdateMsg{Path: path, Gen: m.gen, inner: transmittedMsg{path: path}})
 
 	if !m.IsLive() {
 		t.Errorf("expected image to be live")
@@ -78,6 +79,7 @@ func TestAnimatedFrames(t *testing.T) {
 
 	m, _ = m.Update(UpdateMsg{
 		Path: "anim.gif",
+		Gen:  m.gen,
 		inner: decodedMsg{
 			path:       "anim.gif",
 			animated:   true,
@@ -89,7 +91,7 @@ func TestAnimatedFrames(t *testing.T) {
 
 	m, _ = m.SetFrameIDs([]uint32{201, 202})
 
-	m, _ = m.Update(UpdateMsg{Path: "anim.gif", inner: transmittedMsg{path: "anim.gif"}})
+	m, _ = m.Update(UpdateMsg{Path: "anim.gif", Gen: m.gen, inner: transmittedMsg{path: "anim.gif"}})
 
 	if m.CurrentID() != 201 {
 		t.Errorf("expected frame 0 to be active ID, got %d", m.CurrentID())

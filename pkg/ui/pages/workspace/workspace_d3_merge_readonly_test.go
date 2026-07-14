@@ -43,7 +43,7 @@ func TestDiscardConflictReadOnlyEditorRefusesAdoption(t *testing.T) {
 	if err := os.WriteFile(path, []byte("theirs on disk\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossDiscard})
 	// The read-only editor refuses the buffer install, so applyDiscardConflict
@@ -95,7 +95,7 @@ func TestMergeConflictReadOnlyEditorRefusesAdoption(t *testing.T) {
 	if err := os.WriteFile(path, []byte(theirsContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m.guard.conflict = conflictIntent{active: true, path: path, docID: docID}
+	m.guard.prompt = promptPayload{path: path, docID: docID}
 	m = m.raiseGuardPrompt(guardConflict) // A3: keep guard.kind/phase coherent with the hand-set intent (kind-first dispatch reads guard.kind now)
 	m, cmd := m.Update(footer.DataLossGuardResponseMsg{Response: footer.DataLossMerge})
 	// Same reasoning as the discard case above: the read-only editor refuses

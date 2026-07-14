@@ -12,6 +12,11 @@ func (m Model) Init() tea.Cmd { return nil }
 // Update handles messages and returns accumulated commands.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	// Reset per-message edit provenance (FuzzLastEdits) unconditionally: only
+	// applyOperation repopulates it (below), so any branch that returns
+	// without an edit — or without calling applyOperation at all — must not
+	// leak a stale prior message's edits into this message's snapshot.
+	m.lastEdits = nil
 	switch msg := msg.(type) {
 	case ClipboardContentMsg:
 		if len(msg.ImageData) > 0 {
@@ -54,38 +59,29 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		return m, nil
 	}
 
-	// PrimaryAction: Enter key routes directly to edit.newline (no resolver binding)
+	// PrimaryAction: Enter key routes directly to edit.newline (no resolver
+	// binding). "enter" is filtered out of keymap.CommandBindings (the only
+	// production binding producer), so a registered edit.newline's Result.Err
+	// is always nil here — the resolver fallthrough this used to gate on
+	// res.Err was already dead; this is now an unconditional return.
 	if msg.Code == tea.KeyEnter && msg.Mod == 0 {
 		if m.singleLine {
 			// No-op in single-line mode
 			return m, nil
 		}
-		ctx := command.CommandContext{
-			Buffer:  m.buf,
-			Cursors: m.cursors,
-		}
-		res := m.registry.Execute("edit.newline", ctx)
-		if res.Err == nil {
-			m = m.applyOperation(res)
-			m = m.syncDisplay()
-			m = m.ScrollToCursor()
-			return m, tea.Batch(*cmds...)
-		}
+		res := m.registry.Execute("edit.newline", m.basicCtx())
+		m = m.applyResult(res)
+		return m, tea.Batch(*cmds...)
 	}
 
-	// Cancel: Escape key routes to multicursor.escape (no resolver binding)
+	// Cancel: Escape key routes to multicursor.escape (no resolver binding).
+	// "esc" is filtered out of keymap.CommandBindings the same way "enter" is
+	// (see above), so falling through to the resolver on a no-op escape can
+	// never match any chord — provably inert, hence the unconditional return.
 	if msg.Code == tea.KeyEscape && msg.Mod == 0 {
-		ctx := command.CommandContext{
-			Buffer:  m.buf,
-			Cursors: m.cursors,
-		}
-		res := m.registry.Execute("multicursor.escape", ctx)
-		if res.Err == nil && res.Operation.Kind != command.OperationNone {
-			m = m.applyOperation(res)
-			m = m.syncDisplay()
-			m = m.ScrollToCursor()
-			return m, tea.Batch(*cmds...)
-		}
+		res := m.registry.Execute("multicursor.escape", m.basicCtx())
+		m = m.applyResult(res)
+		return m, tea.Batch(*cmds...)
 	}
 
 	// Resolve via keybind resolver for all other keys
@@ -103,8 +99,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		HasMultiCursor: m.cursors.IsMulti(),
 		ReadOnly:       m.readOnly,
 	}
-	newResolver, resResult := m.resolver.Resolve(chord, resCtx)
-	m.resolver = newResolver
+	resResult := m.resolver.Resolve(chord, resCtx)
 	switch resResult.Kind {
 	case keybind.ResultFound:
 		contentHeight := m.contentHeight()
@@ -135,16 +130,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 		if res.Cmd != nil {
 			*cmds = append(*cmds, res.Cmd)
 		}
-		m = m.applyOperation(res)
-		m = m.syncDisplay()
-		// A scroll operation moves the viewport intentionally; following the
-		// cursor would cancel it (critical for read-only docs whose hidden
-		// cursor sits at the top).
-		if res.Operation.Kind != command.OperationScroll {
-			m = m.ScrollToCursor()
-		}
-	case keybind.ResultMoreChordsNeeded:
-		// Chord incomplete — wait for next key
+		m = m.applyResult(res)
 	case keybind.ResultNoMatch:
 		text := msg.Text
 		if text == "" && msg.Mod == 0 {
@@ -166,10 +152,8 @@ func (m Model) updateKeys(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (Model, tea.Cmd)
 				Cursors: m.cursors,
 				Args:    map[string]any{"char": text},
 			})
-			if res.Err == nil && res.Operation.Kind != command.OperationNone {
-				m = m.applyOperation(res)
-				m = m.syncDisplay()
-				m = m.ScrollToCursor()
+			if res.Operation.Kind != command.OperationNone {
+				m = m.applyResult(res)
 			}
 		}
 	}

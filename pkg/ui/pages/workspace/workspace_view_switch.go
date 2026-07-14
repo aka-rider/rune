@@ -5,14 +5,18 @@ import (
 	"path/filepath"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"rune/pkg/ui/components/opentabs"
 	"rune/pkg/ui/help"
 )
 
 // showHelp loads the read-only help document into the shared editor.
 // Synchronous: the content is generated in memory, no I/O deferred.
-func (m Model) showHelp() Model {
-	m.editor = m.editor.SetContent(m.helpContent).SetReadOnly(true)
+func (m Model) showHelp() (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.editor, cmd = m.editor.SetContent(m.helpContent)
+	m.editor = m.editor.SetReadOnly(true)
 	m = m.bumpEpoch() // Part IV: a help-switch buffer install invalidates every outstanding view ticket
 	m.view = helpView()
 	m.title = m.title.SetText("(Help)")
@@ -21,7 +25,7 @@ func (m Model) showHelp() Model {
 	m.opentabs = m.opentabs.SetName(opentabs.TabHandle{Path: help.DocPath}, "(Help)")
 	m.opentabs = m.opentabs.SetDirty(opentabs.TabHandle{Path: help.DocPath}, false)
 	m = m.setFocus(paneCenter)
-	return m
+	return m, cmd
 }
 
 // showUntitled switches to the untitled document with the given docID,
@@ -33,14 +37,16 @@ func (m Model) showHelp() Model {
 // tab restoreScratch surfaced this launch — recovering a DIFFERENT, now-
 // confirmed-dead session's draft in that case rather than silently reading
 // this brand-new session's own (trivially empty) reconstruction.
-func (m Model) showUntitled(docID int64) Model {
+func (m Model) showUntitled(docID int64) (Model, tea.Cmd) {
 	content := ""
 	if docID > 0 && m.store != nil {
 		if c, found, err := m.store.RecoverAcrossSessions(docID); err == nil && found {
 			content = c
 		}
 	}
-	m.editor = m.editor.SetContent(content).SetReadOnly(false)
+	var cmd tea.Cmd
+	m.editor, cmd = m.editor.SetContent(content)
+	m.editor = m.editor.SetReadOnly(false)
 	m = m.bumpEpoch() // Part IV: an untitled/recovery buffer install invalidates every outstanding view ticket
 	m.view = untitledView(docID)
 	if name := m.opentabs.NameOf(opentabs.TabHandle{DocID: docID}); name != "" {
@@ -49,7 +55,7 @@ func (m Model) showUntitled(docID int64) Model {
 	m.breadcrumb = m.breadcrumb.SetPath("")
 	m.opentabs = m.opentabs.OpenFile(docID, "")
 	m = m.setFocus(paneCenter)
-	return m
+	return m, cmd
 }
 
 // ensureScratchDoc gives the current store-less untitled buffer a durable VFS

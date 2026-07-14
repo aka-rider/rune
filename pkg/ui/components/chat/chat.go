@@ -298,7 +298,12 @@ func (m Model) rebuildDisplay() Model {
 
 	content := strings.Join(parts, "\n")
 	wasAtBottom := m.display.AtBottom()
-	m.display = m.display.SetContent(content)
+	// SetContent's Cmd is the image-discovery kickoff (E1); chat's read-only
+	// transcript never discovered embeds before this signature change either
+	// (nothing ever called DiscoverImages on it), so dropping it here
+	// preserves that existing behavior rather than adding a new Cmd-plumbing
+	// path through chat.Model for a component that isn't in this track's scope.
+	m.display, _ = m.display.SetContent(content)
 	if wasAtBottom {
 		m.display = m.display.GotoBottom()
 	}
@@ -342,7 +347,9 @@ func (m Model) recalcLayout() Model {
 	// Inline images will use Y=0 as base, which is acceptable since the chat
 	// display renders as a string composed into the workspace border (no iTerm2
 	// absolute-position escapes expected in read-only conversation display).
-	m.display = m.display.SetRect(textedit.Rect{X: 0, Y: titleH, W: m.width, H: displayH})
+	// SetRect's Cmd is the retransmit/view-state funnel (E2) — dropped for the
+	// same reason as rebuildDisplay's SetContent above.
+	m.display, _ = m.display.SetRect(textedit.Rect{X: 0, Y: titleH, W: m.width, H: displayH})
 	m.prompt = m.prompt.SetRect(textedit.Rect{X: 0, Y: titleH + displayH + dividerH, W: m.width, H: promptH})
 	return m
 }

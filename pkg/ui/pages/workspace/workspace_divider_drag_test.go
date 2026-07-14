@@ -31,7 +31,7 @@ func TestDividerDrag_EveryEdgeColumn(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := resizeWorkspace(t, W, H)
 			m.rightVisible = true
-			m = m.recalcLayout()
+			m, _ = m.recalcLayout()
 
 			m, _ = m.Update(tea.MouseClickMsg{X: c.x(m), Y: 5, Button: tea.MouseLeft})
 			if c.wantL {
@@ -68,7 +68,7 @@ func TestDividerDrag_InteriorClicksNeverDrag(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := resizeWorkspace(t, W, H)
 			m.rightVisible = true
-			m = m.recalcLayout()
+			m, _ = m.recalcLayout()
 			beforeLeft, beforeRight := m.leftPaneW, m.rightPaneW
 			x := c.x(m)
 
@@ -95,7 +95,7 @@ func TestHiddenPaneEdge_OnlyOutermostColumnRestores(t *testing.T) {
 	t.Run("left hidden: x=1 is editor content", func(t *testing.T) {
 		m := resizeWorkspace(t, W, H)
 		m.leftVisible = false
-		m = m.recalcLayout()
+		m, _ = m.recalcLayout()
 
 		m, _ = m.Update(tea.MouseClickMsg{X: 1, Y: 5, Button: tea.MouseLeft})
 		if m.leftVisible {
@@ -106,7 +106,7 @@ func TestHiddenPaneEdge_OnlyOutermostColumnRestores(t *testing.T) {
 	t.Run("right hidden: x=W-2 is editor content", func(t *testing.T) {
 		m := resizeWorkspace(t, W, H)
 		m.rightVisible = false
-		m = m.recalcLayout()
+		m, _ = m.recalcLayout()
 
 		m, _ = m.Update(tea.MouseClickMsg{X: W - 2, Y: 5, Button: tea.MouseLeft})
 		if m.rightVisible {
@@ -118,7 +118,7 @@ func TestHiddenPaneEdge_OnlyOutermostColumnRestores(t *testing.T) {
 		m := resizeWorkspace(t, W, H)
 		m.leftVisible = false
 		m.rightVisible = false
-		m = m.recalcLayout()
+		m, _ = m.recalcLayout()
 
 		m, _ = m.Update(tea.MouseClickMsg{X: W / 2, Y: 5, Button: tea.MouseLeft})
 		if m.leftVisible || m.rightVisible {
@@ -139,7 +139,7 @@ func TestDragLeftResizeAndHide(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	// Click on the left divider to start drag.
 	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
@@ -188,7 +188,7 @@ func TestDragLeftCenterFloor(t *testing.T) {
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
 	m.rightPaneW = defaultRightPaneW
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	m, _ = m.Update(tea.MouseClickMsg{X: m.leftPaneW - 1, Y: 5, Button: tea.MouseLeft})
 
@@ -205,7 +205,7 @@ func TestDragRightResizeAndHide(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	rightStart := W - m.rightPaneW
 	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
@@ -237,7 +237,7 @@ func TestDragRightFocusFollowsHide(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 	m.focus = paneChat
 
 	rightStart := W - m.rightPaneW
@@ -256,7 +256,7 @@ func TestDragRightCenterFloor(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	rightStart := W - m.rightPaneW
 	m, _ = m.Update(tea.MouseClickMsg{X: rightStart, Y: 5, Button: tea.MouseLeft})
@@ -273,7 +273,7 @@ func TestRestoreHiddenLeftOnEdgeClick(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.leftVisible = false
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	m, _ = m.Update(tea.MouseClickMsg{X: 0, Y: 5, Button: tea.MouseLeft})
 
@@ -289,7 +289,7 @@ func TestRestoreHiddenRightOnEdgeClick(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = false
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	m, _ = m.Update(tea.MouseClickMsg{X: W - 1, Y: 5, Button: tea.MouseLeft})
 
@@ -305,7 +305,7 @@ func TestMotionWithoutDragDoesNotResize(t *testing.T) {
 	const W, H = 100, 30
 	m := resizeWorkspace(t, W, H)
 	m.rightVisible = true
-	m = m.recalcLayout()
+	m, _ = m.recalcLayout()
 
 	beforeLeft := m.leftPaneW
 	beforeRight := m.rightPaneW
