@@ -41,6 +41,12 @@ const (
 	// KindGlobal is the user's home directory — the "absolute root" that,
 	// once claimed, silently roots every future rootless launch under it.
 	KindGlobal
+	// KindMemory is not a disk location at all: choosing it opens docstate's
+	// recovery store as :memory: instead of workDir/.rune/rune.db — no .rune
+	// directory is ever created. Dir still carries cwd (the file-tree root
+	// stays real), only Kind changes what the chooser and its caller do with
+	// the candidate.
+	KindMemory
 )
 
 // String returns the lowercase hint word for the candidate's kind.
@@ -52,6 +58,8 @@ func (k Kind) String() string {
 		return "here"
 	case KindGlobal:
 		return "global"
+	case KindMemory:
+		return "memory"
 	default:
 		return ""
 	}
@@ -174,6 +182,12 @@ func buildPrompt(cwd, home, projectRoot string) *Prompt {
 			}
 		}
 	}
+
+	// KindMemory is appended directly, bypassing add/seen: it never creates
+	// anything at cwd, so it must never be treated as a duplicate of the
+	// KindHere candidate that shares the same Dir — deduping it away would
+	// silently remove the option from the menu.
+	candidates = append(candidates, Candidate{Dir: cwd, Kind: KindMemory})
 
 	return &Prompt{Candidates: candidates, Default: defaultIdx}
 }

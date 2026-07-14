@@ -44,6 +44,7 @@ func main() {
 	}
 
 	var absWorkDir string
+	var memory bool
 	if workDir != "" {
 		abs, err := filepath.Abs(workDir)
 		if err != nil {
@@ -56,10 +57,10 @@ func main() {
 		}
 		absWorkDir = abs
 	} else {
-		absWorkDir = resolveWorkDir()
+		absWorkDir, memory = resolveWorkDir()
 	}
 
-	app, err := ui.NewApp(absWorkDir, initialFiles)
+	app, err := ui.NewApp(absWorkDir, initialFiles, memory)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start: %v\n", err)
 		os.Exit(1)
@@ -81,7 +82,11 @@ func main() {
 // (rootChooser) — a Quit exits the process cleanly. Non-interactively (e.g.
 // `echo | rune`, or the session fuzzer's always-non-TTY/-w-driven harness)
 // this falls back to cwd, matching prior behavior.
-func resolveWorkDir() string {
+//
+// The second return reports whether the user picked the chooser's in-memory
+// "None" option (workspaceroot.KindMemory) — true only along the chosen-
+// candidate path; every silent/fallback path means a real disk workspace.
+func resolveWorkDir() (string, bool) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to get working directory: %v\n", err)
@@ -94,37 +99,37 @@ func resolveWorkDir() string {
 
 	res := workspaceroot.Resolve(vfs.Disk{}, cwd, home)
 	if res.WorkDir != "" {
-		return res.WorkDir
+		return res.WorkDir, false
 	}
 
 	if !term.IsTerminal(os.Stdin.Fd()) {
-		return cwd
+		return cwd, false
 	}
 
-	dir, ok, err := runRootChooser(res.Prompt)
+	candidate, ok, err := runRootChooser(res.Prompt)
 	if err != nil {
 		// The chooser could not run (e.g. a terminal error) — this is a
 		// failure, not a user quit, so fall back to cwd and keep launching
 		// (matching the non-interactive path) rather than exiting.
 		fmt.Fprintf(os.Stderr, "warning: workspace chooser failed: %v; using %s\n", err, cwd)
-		return cwd
+		return cwd, false
 	}
 	if !ok {
 		os.Exit(0) // the user deliberately quit the chooser (Esc/Ctrl+C)
 	}
-	return dir
+	return candidate.Dir, candidate.Kind == workspaceroot.KindMemory
 }
 
 // runRootChooser runs the chooser to completion as its own tea.Program. It
 // returns the user's pick (ok=true), ok=false if they quit (Esc/Ctrl+C), or a
 // non-nil err if the program itself failed to run — the caller distinguishes a
 // quit (exit cleanly) from a failure (fall back and keep launching).
-func runRootChooser(prompt *workspaceroot.Prompt) (dir string, ok bool, err error) {
+func runRootChooser(prompt *workspaceroot.Prompt) (candidate workspaceroot.Candidate, ok bool, err error) {
 	m := newRootChooser(prompt, styles.Default())
 	final, err := tea.NewProgram(m).Run()
 	if err != nil {
-		return "", false, err
+		return workspaceroot.Candidate{}, false, err
 	}
-	dir, ok = final.(rootChooser).Chosen()
-	return dir, ok, nil
+	candidate, ok = final.(rootChooser).Chosen()
+	return candidate, ok, nil
 }

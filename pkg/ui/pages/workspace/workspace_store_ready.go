@@ -25,6 +25,10 @@ func (m Model) handleStoreReadyMsg(msg StoreReadyMsg, cmds []tea.Cmd) (Model, []
 		// which auto-dismisses) for the whole session — capture-into-RAM
 		// must never quietly masquerade as durability.
 		m.footer = m.footer.SetDegraded(m.store.Degraded())
+		// Separate persistent banner for a deliberately chosen in-memory
+		// session (rootChooser's "None") — never true alongside SetDegraded
+		// above, since OpenInMemory always leaves Degraded() false.
+		m.footer = m.footer.SetEphemeral(m.memoryStore)
 		// Reserve the stable chat sentinel doc (N7).
 		if chatID, err := m.store.ReserveChatDoc(); err == nil {
 			m.chatDocID = chatID

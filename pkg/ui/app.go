@@ -19,7 +19,10 @@ import (
 type Model struct{ ws workspace.Model }
 
 // NewApp initializes the application state, commands, and keybindings.
-func NewApp(workDir string, initialFiles []string) (Model, error) {
+// memoryStore, when true, opens the docstate recovery store as :memory:
+// instead of workDir/.rune/rune.db (the rootChooser's "None" option) — the
+// file tree and everything else still resolves against the real workDir.
+func NewApp(workDir string, initialFiles []string, memoryStore bool) (Model, error) {
 	keys := keymap.Default()
 	st := styles.Default()
 
@@ -74,6 +77,9 @@ func NewApp(workDir string, initialFiles []string) (Model, error) {
 	// already shared one vfs.Mem this way).
 	fsys := vfs.Disk{}
 	ws := workspace.New(keys, st, registry, resolver, caps, workDir, initialFiles).WithFS(fsys)
+	if memoryStore {
+		ws = ws.WithMemoryStore()
+	}
 	return Model{ws: ws}, nil
 }
 

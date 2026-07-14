@@ -118,6 +118,14 @@ type Model struct {
 	// outside production. Access it through m.watcher(), never the raw field.
 	dirWatcher Watcher
 
+	// memoryStore is true when the rootChooser's "None" option was picked:
+	// Init opens the docstate recovery store as :memory: (openStoreMemory)
+	// instead of workDir/.rune/rune.db (openStore) — no .rune directory is
+	// ever created. The file tree/breadcrumb/link-resolution root is
+	// unaffected; only the store-open call in Init branches on this. Set via
+	// WithMemoryStore, defaults false (disk-backed, today's behavior).
+	memoryStore bool
+
 	// File ownership (D12). view is the single settled source of truth for which
 	// document is displayed (kind + path + docID) — see docview.go. The
 	// editor buffer always corresponds to it; it changes only at a settled
@@ -385,8 +393,20 @@ func (m Model) watcher() Watcher {
 	return m.dirWatcher
 }
 
+// WithMemoryStore switches Init's store-open call to docstate.OpenInMemory
+// instead of docstate.Open(workDir) — the rootChooser's "None" option. No
+// .rune directory is ever created; nothing survives past this process.
+func (m Model) WithMemoryStore() Model {
+	m.memoryStore = true
+	return m
+}
+
 // Init is called once when the workspace page becomes active.
 func (m Model) Init() tea.Cmd {
+	storeCmd := openStore(m.fsys(), m.workDir)
+	if m.memoryStore {
+		storeCmd = openStoreMemory(m.fsys())
+	}
 	cmds := []tea.Cmd{
 		m.filetree.Init(),
 		m.opentabs.Init(),
@@ -396,7 +416,7 @@ func (m Model) Init() tea.Cmd {
 		m.search.Init(),
 		m.dict.Init(),
 		loadDirCmd(m.fsys(), m.workDir),
-		openStore(m.fsys(), m.workDir),
+		storeCmd,
 	}
 	if m.initErr != nil {
 		err := m.initErr

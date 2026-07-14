@@ -29,10 +29,13 @@ type rootChooser struct {
 	styles     styles.Styles
 
 	// Terminal state after the program exits: exactly one of quit/decided is
-	// true (§1.7 — no sentinel abuse via an empty-string convention).
-	quit    bool
-	decided bool
-	dir     string
+	// true (§1.7 — no sentinel abuse via an empty-string convention). The
+	// full Candidate is kept (not just Dir) so a KindMemory pick — which has
+	// no real disk location to speak of — doesn't need an empty-string or
+	// ":memory:" sentinel to signal itself.
+	quit      bool
+	decided   bool
+	candidate workspaceroot.Candidate
 }
 
 // newRootChooser builds the chooser from an undecided Resolve prompt. The
@@ -81,7 +84,7 @@ func (m rootChooser) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case msg.Code == tea.KeyEnter && msg.Mod == 0:
 		m.decided = true
-		m.dir = m.candidates[m.cursor].Dir
+		m.candidate = m.candidates[m.cursor]
 		return m, tea.Quit
 
 	case msg.Code == tea.KeyEscape && msg.Mod == 0:
@@ -95,10 +98,10 @@ func (m rootChooser) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// Chosen reports the picked directory. ok is false if the user quit
+// Chosen reports the picked candidate. ok is false if the user quit
 // (Esc/Ctrl+C) without picking anything.
-func (m rootChooser) Chosen() (dir string, ok bool) {
-	return m.dir, m.decided
+func (m rootChooser) Chosen() (candidate workspaceroot.Candidate, ok bool) {
+	return m.candidate, m.decided
 }
 
 func (m rootChooser) View() tea.View {
@@ -131,12 +134,19 @@ func (m rootChooser) render() string {
 
 // renderCandidate renders one candidate line: cursor indicator, the
 // directory path prominent, then a dimmed "/.rune" suffix and kind hint.
+// KindMemory has no disk location to show, so it renders as a plain "None"
+// label with a suffix explaining the consequence instead.
 func (m rootChooser) renderCandidate(c workspaceroot.Candidate, selected bool) string {
 	pointer := "  "
 	dirStyle := m.styles.FileNormal
 	if selected {
 		pointer = "> "
 		dirStyle = m.styles.FileSelected
+	}
+	if c.Kind == workspaceroot.KindMemory {
+		label := dirStyle.Render("None")
+		suffix := m.styles.DirSuffix.Render(" (in-memory, nothing saved)")
+		return pointer + label + suffix
 	}
 	dir := dirStyle.Render(c.Dir)
 	suffix := m.styles.DirSuffix.Render(fmt.Sprintf("/.rune (%s)", c.Kind))

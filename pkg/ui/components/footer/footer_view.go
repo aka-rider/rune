@@ -12,8 +12,8 @@ import (
 // footer makes each render — replacing the old 9-branch if/else priority
 // ladder with one ordered table (F11). Declaration order IS priority order,
 // highest first: modeError > modeDictating > modeGuard > modeChordPending >
-// modeMergeHint > modeDiskChanged > modeDegraded > modeStatus > modeLinkHint
-// > modeDefault.
+// modeMergeHint > modeDiskChanged > modeDegraded > modeEphemeral > modeStatus
+// > modeLinkHint > modeDefault.
 type displayMode int
 
 const (
@@ -24,6 +24,13 @@ const (
 	modeMergeHint
 	modeDiskChanged
 	modeDegraded
+	// modeEphemeral sits right after modeDegraded: both are persistent,
+	// non-transient storage-state banners, and the two are mutually
+	// exclusive BY CONSTRUCTION (not just in practice) — OpenInMemory never
+	// sets degraded, so SetDegraded(true) and SetEphemeral(true) can never
+	// both be live at once. Their relative order here is otherwise
+	// arbitrary.
+	modeEphemeral
 	modeStatus
 	modeLinkHint
 	modeDefault
@@ -58,6 +65,8 @@ func (m Model) displayMode() displayMode {
 		return modeDiskChanged
 	case m.degraded:
 		return modeDegraded
+	case m.ephemeral:
+		return modeEphemeral
 	case m.statusMsg != "":
 		return modeStatus
 	case m.linkHint != "":
@@ -116,6 +125,12 @@ func (m Model) renderLeft(mode displayMode) string {
 		// masquerade as durability; visible for the whole session (the
 		// underlying Store.degraded bit is fixed at open time).
 		return m.styles.FooterKey.Render("⚠") + m.styles.FooterHint.Render(" Storage degraded — history will not survive a crash")
+
+	case modeEphemeral:
+		// Persistent in-memory-session banner — the user deliberately picked
+		// "None" in the workspace chooser. A distinct glyph from modeDegraded
+		// on purpose: this isn't a failure, it's the outcome the user chose.
+		return m.styles.FooterKey.Render("◌") + m.styles.FooterHint.Render(" In-memory session — nothing recorded; explicit saves still write to disk")
 
 	case modeStatus:
 		// A transient status replaces the default hints but yields to

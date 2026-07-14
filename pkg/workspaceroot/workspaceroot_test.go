@@ -55,7 +55,7 @@ func TestResolve_RuneSeveralLevelsUp_BeatsNearerGit(t *testing.T) {
 	}
 }
 
-func TestResolve_GitSubdirNoRune_PromptsWithThreeCandidates(t *testing.T) {
+func TestResolve_GitSubdirNoRune_PromptsWithCandidates(t *testing.T) {
 	m := vfs.NewMem()
 	mustWrite(t, m, "/home/alice/repo/.git", "gitfile")
 	mustWrite(t, m, "/home/alice/repo/src/main.go", "package main")
@@ -68,7 +68,9 @@ func TestResolve_GitSubdirNoRune_PromptsWithThreeCandidates(t *testing.T) {
 	if res.Prompt == nil {
 		t.Fatal("expected a Prompt, got nil")
 	}
-	wantDirs := []string{"/home/alice/repo", "/home/alice/repo/src", "/home/alice"}
+	// project, here, global, then the always-appended trailing memory
+	// candidate (Dir == cwd).
+	wantDirs := []string{"/home/alice/repo", "/home/alice/repo/src", "/home/alice", "/home/alice/repo/src"}
 	if len(res.Prompt.Candidates) != len(wantDirs) {
 		t.Fatalf("candidates = %+v, want dirs %v", res.Prompt.Candidates, wantDirs)
 	}
@@ -85,6 +87,9 @@ func TestResolve_GitSubdirNoRune_PromptsWithThreeCandidates(t *testing.T) {
 	}
 	if res.Prompt.Candidates[2].Kind != KindGlobal {
 		t.Fatalf("candidate[2].Kind = %v, want KindGlobal", res.Prompt.Candidates[2].Kind)
+	}
+	if res.Prompt.Candidates[3].Kind != KindMemory {
+		t.Fatalf("candidate[3].Kind = %v, want KindMemory", res.Prompt.Candidates[3].Kind)
 	}
 	if res.Prompt.Default != 0 {
 		t.Fatalf("Default = %d, want 0 (project root)", res.Prompt.Default)
@@ -121,6 +126,7 @@ func TestResolve_BareTree_PromptsCwdAndHome(t *testing.T) {
 	want := []Candidate{
 		{Dir: "/home/alice/scratch", Kind: KindHere},
 		{Dir: "/home/alice", Kind: KindGlobal},
+		{Dir: "/home/alice/scratch", Kind: KindMemory},
 	}
 	if len(res.Prompt.Candidates) != len(want) {
 		t.Fatalf("candidates = %+v, want %+v", res.Prompt.Candidates, want)
@@ -144,11 +150,17 @@ func TestResolve_BareTree_CwdEqualsHome_Deduped(t *testing.T) {
 	if res.Prompt == nil {
 		t.Fatal("expected a Prompt")
 	}
-	if len(res.Prompt.Candidates) != 1 {
-		t.Fatalf("expected cwd==home to dedup to 1 candidate, got %+v", res.Prompt.Candidates)
+	// cwd==home dedupes to 1 disk candidate, plus the always-appended
+	// trailing memory candidate — which must NOT be swallowed by the same
+	// dedup, even though it shares Dir with the disk candidate.
+	if len(res.Prompt.Candidates) != 2 {
+		t.Fatalf("expected cwd==home to dedup to 1 disk candidate + 1 memory candidate, got %+v", res.Prompt.Candidates)
 	}
 	if res.Prompt.Candidates[0].Dir != "/home/alice" {
-		t.Fatalf("candidate = %+v, want /home/alice", res.Prompt.Candidates[0])
+		t.Fatalf("candidate[0] = %+v, want /home/alice", res.Prompt.Candidates[0])
+	}
+	if want := (Candidate{Dir: "/home/alice", Kind: KindMemory}); res.Prompt.Candidates[1] != want {
+		t.Fatalf("candidate[1] = %+v, want %+v", res.Prompt.Candidates[1], want)
 	}
 }
 
@@ -270,8 +282,82 @@ func TestResolve_NoRuneAnywhere_EmptyHome(t *testing.T) {
 	if res.Prompt == nil {
 		t.Fatal("expected a Prompt")
 	}
-	if len(res.Prompt.Candidates) != 1 || res.Prompt.Candidates[0].Dir != "/scratch" {
-		t.Fatalf("expected only cwd candidate with empty home, got %+v", res.Prompt.Candidates)
+	if len(res.Prompt.Candidates) != 2 {
+		t.Fatalf("expected cwd candidate + trailing memory candidate with empty home, got %+v", res.Prompt.Candidates)
+	}
+	if res.Prompt.Candidates[0].Dir != "/scratch" || res.Prompt.Candidates[0].Kind != KindHere {
+		t.Fatalf("candidate[0] = %+v, want cwd/KindHere", res.Prompt.Candidates[0])
+	}
+	if want := (Candidate{Dir: "/scratch", Kind: KindMemory}); res.Prompt.Candidates[1] != want {
+		t.Fatalf("candidate[1] = %+v, want %+v", res.Prompt.Candidates[1], want)
+	}
+}
+
+func TestResolve_CwdEqualsProjectRoot_MemoryCandidateStillOffered(t *testing.T) {
+	m := vfs.NewMem()
+	// cwd IS the project root itself (.git lives right here) — projectRoot
+	// and cwd dedup to a single KindProject disk candidate.
+	mustWrite(t, m, "/home/alice/repo/.git", "gitfile")
+	mustWrite(t, m, "/home/alice/repo/README.md", "hi")
+
+	res := Resolve(m, "/home/alice/repo", "/home/alice")
+
+	if res.Prompt == nil {
+		t.Fatal("expected a Prompt")
+	}
+	last := res.Prompt.Candidates[len(res.Prompt.Candidates)-1]
+	want := Candidate{Dir: "/home/alice/repo", Kind: KindMemory}
+	if last != want {
+		t.Fatalf("expected trailing candidate = %+v, got %+v (all: %+v)", want, last, res.Prompt.Candidates)
+	}
+	if res.Prompt.Default == len(res.Prompt.Candidates)-1 {
+		t.Fatalf("Default must never point at the trailing memory candidate, got Default=%d", res.Prompt.Default)
+	}
+}
+
+// TestResolve_DefaultNeverPointsAtMemoryCandidate sweeps every dedup
+// scenario buildPrompt handles (project+here+global, bare cwd+home,
+// cwd==home, empty home) and proves two invariants hold in every case: the
+// trailing candidate is always KindMemory, and Default never selects it —
+// None must always be a conscious opt-in, never pre-selected.
+func TestResolve_DefaultNeverPointsAtMemoryCandidate(t *testing.T) {
+	scenarios := []struct {
+		name string
+		cwd  string
+		home string
+		seed func(m *vfs.Mem)
+	}{
+		{"project+here+global", "/home/alice/repo/src", "/home/alice", func(m *vfs.Mem) {
+			mustWrite(t, m, "/home/alice/repo/.git", "gitfile")
+			mustWrite(t, m, "/home/alice/repo/src/main.go", "package main")
+		}},
+		{"bare cwd+home", "/home/alice/scratch", "/home/alice", func(m *vfs.Mem) {
+			mustWrite(t, m, "/home/alice/scratch/notes.md", "hi")
+		}},
+		{"cwd==home", "/home/alice", "/home/alice", func(m *vfs.Mem) {
+			mustWrite(t, m, "/home/alice/notes.md", "hi")
+		}},
+		{"empty home", "/scratch", "", func(m *vfs.Mem) {
+			mustWrite(t, m, "/scratch/notes.md", "hi")
+		}},
+	}
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			m := vfs.NewMem()
+			sc.seed(m)
+			res := Resolve(m, sc.cwd, sc.home)
+			if res.Prompt == nil {
+				t.Fatal("expected a Prompt")
+			}
+			last := len(res.Prompt.Candidates) - 1
+			if res.Prompt.Candidates[last].Kind != KindMemory {
+				t.Fatalf("expected trailing candidate to be KindMemory, got %+v", res.Prompt.Candidates)
+			}
+			if res.Prompt.Default == last {
+				t.Fatalf("Default must never point at the trailing memory candidate (index %d), got Default=%d", last, res.Prompt.Default)
+			}
+		})
 	}
 }
 

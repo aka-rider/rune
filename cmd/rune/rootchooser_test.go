@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +16,7 @@ func testPrompt() *workspaceroot.Prompt {
 			{Dir: "/home/alice/repo", Kind: workspaceroot.KindProject},
 			{Dir: "/home/alice/repo/src", Kind: workspaceroot.KindHere},
 			{Dir: "/home/alice", Kind: workspaceroot.KindGlobal},
+			{Dir: "/home/alice/repo/src", Kind: workspaceroot.KindMemory},
 		},
 		Default: 0,
 	}
@@ -69,10 +71,16 @@ func TestRootChooser_ArrowDownMovesCursor(t *testing.T) {
 		t.Fatalf("cursor after 2nd KeyDown = %d, want 2", m.cursor)
 	}
 
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = updated.(rootChooser)
+	if m.cursor != 3 {
+		t.Fatalf("cursor after 3rd KeyDown = %d, want 3", m.cursor)
+	}
+
 	// Clamped at the last candidate — no wraparound.
 	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m = updated.(rootChooser)
-	if m.cursor != 2 {
+	if m.cursor != 3 {
 		t.Fatalf("cursor overshot past last candidate: %d", m.cursor)
 	}
 }
@@ -106,15 +114,54 @@ func TestRootChooser_EnterEmitsSelectedDir(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(rootChooser)
 
-	dir, ok := m.Chosen()
+	candidate, ok := m.Chosen()
 	if !ok {
 		t.Fatal("expected Chosen ok=true after Enter")
 	}
-	if dir != "/home/alice/repo/src" {
-		t.Fatalf("Chosen dir = %q, want /home/alice/repo/src", dir)
+	if candidate.Dir != "/home/alice/repo/src" {
+		t.Fatalf("Chosen dir = %q, want /home/alice/repo/src", candidate.Dir)
+	}
+	if candidate.Kind != workspaceroot.KindHere {
+		t.Fatalf("Chosen kind = %v, want KindHere", candidate.Kind)
 	}
 	if cmd == nil {
 		t.Fatal("expected a quit Cmd after Enter")
+	}
+}
+
+func TestRootChooser_EnterOnMemoryCandidateReturnsKindMemory(t *testing.T) {
+	prompt := testPrompt()
+	prompt.Default = 3 // the trailing KindMemory candidate
+	m := newRootChooser(prompt, styles.Default())
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(rootChooser)
+
+	candidate, ok := m.Chosen()
+	if !ok {
+		t.Fatal("expected Chosen ok=true after Enter")
+	}
+	if candidate.Kind != workspaceroot.KindMemory {
+		t.Fatalf("Chosen kind = %v, want KindMemory", candidate.Kind)
+	}
+	if cmd == nil {
+		t.Fatal("expected a quit Cmd after Enter")
+	}
+}
+
+func TestRootChooser_RenderShowsNoneForMemoryCandidate(t *testing.T) {
+	prompt := testPrompt()
+	prompt.Default = 3 // the trailing KindMemory candidate
+	m := newRootChooser(prompt, styles.Default())
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = updated.(rootChooser)
+
+	rendered := m.render()
+	if !strings.Contains(rendered, "None") {
+		t.Fatalf("expected rendered output to contain %q, got:\n%s", "None", rendered)
+	}
+	if strings.Contains(rendered, "/.rune (memory)") {
+		t.Fatalf("expected rendered output to NOT show a fake disk path for the memory candidate, got:\n%s", rendered)
 	}
 }
 

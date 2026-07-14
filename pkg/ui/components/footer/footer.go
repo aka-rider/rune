@@ -54,6 +54,7 @@ type Model struct {
 	mergeLeft        int
 	diskChanged      bool
 	degraded         bool
+	ephemeral        bool
 	errorMsg         string
 	errorExpireID    int
 	statusMsg        string
@@ -120,6 +121,18 @@ func (m Model) SetDegraded(degraded bool) Model { m.degraded = degraded; return 
 // do (workspace_fuzz.go, built with -tags fuzzing — a caller a plain build's
 // dead-code check does not see).
 func (m Model) Degraded() bool { return m.degraded }
+
+// SetEphemeral mirrors the workspace's memoryStore flag onto the footer: a
+// PERSISTENT banner (mirrors SetDegraded) that the rootChooser's "None"
+// option was picked — recovery history is :memory: only for this session,
+// by the user's own deliberate choice, distinct from SetDegraded's
+// unexpected-failure case (never both true at once: OpenInMemory always
+// leaves Degraded() false).
+func (m Model) SetEphemeral(ephemeral bool) Model { m.ephemeral = ephemeral; return m }
+
+// Ephemeral reports the persistent in-memory-session banner state
+// (SetEphemeral), mirroring Degraded().
+func (m Model) Ephemeral() bool { return m.ephemeral }
 
 func (m Model) Init() tea.Cmd { return nil }
 

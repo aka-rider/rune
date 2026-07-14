@@ -44,6 +44,9 @@ func displayModeCases() []displayModeCase {
 		{"degraded", modeDegraded, func(m Model) Model {
 			return m.SetDegraded(true)
 		}},
+		{"ephemeral", modeEphemeral, func(m Model) Model {
+			return m.SetEphemeral(true)
+		}},
 		{"status", modeStatus, func(m Model) Model {
 			m.statusMsg = "hi"
 			return m
