@@ -16,6 +16,7 @@ package markdownedit
 // double-click — a plain follow, no "new tab".
 
 import (
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -29,6 +30,9 @@ import (
 // target (wiki/markdown links). An absolute target is returned iff it exists. This
 // is the single resolver shared by link-follow and image embeds.
 func resolveRef(fsys vfs.FS, target, docDir, root string, appendMD bool) (string, bool) {
+	if decoded, err := url.PathUnescape(target); err == nil {
+		target = decoded
+	}
 	target = strings.TrimSpace(target)
 	if target == "" {
 		return "", false

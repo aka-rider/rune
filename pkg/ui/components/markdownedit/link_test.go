@@ -177,6 +177,27 @@ func TestResolveRefUsesInjectedFS(t *testing.T) {
 	}
 }
 
+// TestResolveRefDecodesPercentEncoding verifies that CommonMark percent-encoded
+// spaces (%20) in link paths are decoded before resolution, so that links to files
+// with spaces in their names work correctly.
+func TestResolveRefDecodesPercentEncoding(t *testing.T) {
+	mem := vfs.NewMem()
+	if err := mem.WriteFile("/vault/archive/Canary tokens security.md", []byte("# C"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content := "[c](archive/Canary%20tokens%20security.md)"
+	m := newLinkModel(t, content)
+	m = m.SetFS(mem).SetDocPath("/vault/a.md").SetRoot("/vault")
+
+	// [c](archive/Canary%20tokens%20security.md): the %20 should be decoded to spaces
+	// before resolution, so the file (which has literal spaces) is found → LinkInternal.
+	// The Dest should be the decoded path, and Raw should preserve the original encoding.
+	if la, ok := m.linkAt(1); !ok || la.Kind != LinkInternal || la.Dest != "/vault/archive/Canary tokens security.md" || la.Raw != "archive/Canary%20tokens%20security.md" {
+		t.Errorf("percent-encoded link: got ok=%v Kind=%d Dest=%q Raw=%q; want ok=true Kind=%d Dest=/vault/archive/Canary tokens security.md Raw=archive/Canary%%20tokens%%20security.md", ok, la.Kind, la.Dest, la.Raw, LinkInternal)
+	}
+}
+
 // TestLinkAtCursorReturnsRawTarget: the footer hint shows the link as written,
 // even when the target does not exist (LinkMissing).
 // TestUntitledImagePasteUsesWorkspaceRoot locks in review-#2: pasting an image
