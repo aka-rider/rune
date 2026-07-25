@@ -165,6 +165,18 @@ impl CursorProbe {
 /// The inherited context every parent hands its children. Downstream
 /// elements NEVER own wrap or focus state — they read the root's through
 /// this (plan directive: "downstream inherits upstream state").
+///
+/// `grant` is Phase 1's only ACTIVELY CONSUMED channel: every element's
+/// `sync` reads it (via `RevealGrant::resolve`) to decide its own reveal
+/// state, and `InheritCtx::child` is what recomputes it going down the
+/// tree. `wrap`/`focus` are carried context for elements that don't exist
+/// yet — no Phase-1 block or inline machine reads them (a Phase-5 table
+/// machine will read `wrap.width` to lay out columns; a future element
+/// keyed directly on focus, independent of `grant`'s already-focus-derived
+/// value, would read `focus`). They stay on this struct now rather than
+/// being bolted on later, since every element already receives `&InheritCtx`
+/// — adding a field here is free; adding it after the fact would touch
+/// every `sync` signature in the crate.
 #[derive(Clone, Copy)]
 pub struct InheritCtx<'a> {
     pub focus: DocState,

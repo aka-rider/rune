@@ -3,16 +3,20 @@
 //! `DocMachine::snapshot` — children never wrap themselves (plan: "The wrap
 //! pass runs only inside `DocMachine::snapshot`").
 //!
-//! A `Rendered` (concealed) span's visible text is not a byte-for-byte
-//! subrange of its buffer range, so it can never be split mid-span when a
-//! greedy break would otherwise land inside it (Gotchas: "A Rendered
-//! (concealed) span can NEVER be split byte-wise in wrap — include whole
-//! when overlapping a break"). This port runs Go's exact greedy
-//! width-break loop over the concatenated line text first, then pushes any
-//! resulting boundary that would bisect a `Rendered` span out to that
-//! span's end — the two-phase split keeps the width/greedy arithmetic a
-//! literal port of `wrap_map.go` while still upholding the atomicity
-//! invariant as a separate, easily-audited step.
+//! A `Rendered` (concealed) span's visible TEXT is not byte-for-byte
+//! aligned to its BUFFER range (delimiters were dropped), so a Rendered
+//! span's `buffer_start`/`buffer_end` cannot be narrowed when the greedy
+//! break lands inside it — but its `text` and `cell_map` CAN be, and are:
+//! this is Go's actual behavior (`wrap_map.go:411-424`), not the "include
+//! whole, never split" reading its own comment there suggests. The comment
+//! describes why `BufferStart`/`BufferEnd` stay untouched; the code two
+//! lines below it still does `s.Text[localStart:localEnd]` and
+//! rune-slices `CellMap` to match. Ported literally: `slice_spans` below
+//! slices `Rendered` spans exactly like `Revealed` ones for `text`, and
+//! slices `cell_map` by RUNE count into that same byte range, while leaving
+//! `buffer_start`/`buffer_end` at the span's full original values — the
+//! `cell_map`, not the buffer range, is the authoritative per-char mapping
+//! for a `Rendered` span from here on.
 
 use crate::element::RevealState;
 use crate::emit::{SyntaxLine, SyntaxSpan};
@@ -45,7 +49,6 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 pub struct WrapSegment {
     pub spans: Vec<SyntaxSpan>,
     pub model_line: usize,
-    pub wrap_index: usize,
     /// Start offset of this segment within its line's syntax-space text, in
     /// BYTES (matches Go's `WrapSegment.StartCol`, which indexes with
     /// `len(text)`).
@@ -54,8 +57,12 @@ pub struct WrapSegment {
 
 #[derive(Clone, Debug, Default)]
 pub struct WrapSnapshot {
+    // Phase 1 has no table/image row expansion, so `segments` IS the row
+    // index — row `i` is always `segments[i]` (no separate `row_to_segment`
+    // indirection; Go's original keeps one because post-expansion the two
+    // can diverge, but nothing here needs that yet — reintroduce it in
+    // Phase 5 alongside the expansion pass that actually requires it).
     segments: Vec<WrapSegment>,
-    row_to_segment: Vec<usize>,
     line_to_first_row: Vec<usize>,
 }
 
@@ -68,16 +75,15 @@ impl WrapSnapshot {
     }
 
     fn clamp_row(&self, row: usize) -> Option<usize> {
-        if self.row_to_segment.is_empty() {
+        if self.segments.is_empty() {
             return None;
         }
-        Some(row.min(self.row_to_segment.len() - 1))
+        Some(row.min(self.segments.len() - 1))
     }
 
     fn segment_at(&self, row: usize) -> Option<&WrapSegment> {
         let row = self.clamp_row(row)?;
-        let seg_idx = self.row_to_segment.get(row).copied()?;
-        self.segments.get(seg_idx)
+        self.segments.get(row)
     }
 
     fn segment_text(&self, seg: &WrapSegment) -> String {
@@ -217,74 +223,52 @@ impl WrapMap {
 
     pub fn sync(&self, lines: &[SyntaxLine]) -> WrapSnapshot {
         let mut segments: Vec<WrapSegment> = Vec::new();
-        let mut row_to_segment: Vec<usize> = Vec::new();
         let mut line_to_first_row = vec![0usize; lines.len()];
 
         for (line_idx, line) in lines.iter().enumerate() {
             if let Some(slot) = line_to_first_row.get_mut(line_idx) {
                 *slot = segments.len();
             }
-            self.wrap_line(line_idx, line, &mut segments, &mut row_to_segment);
+            self.wrap_line(line_idx, line, &mut segments);
         }
 
         WrapSnapshot {
             segments,
-            row_to_segment,
             line_to_first_row,
         }
     }
 
-    fn push_whole_line(
-        &self,
-        line_idx: usize,
-        line: &SyntaxLine,
-        segments: &mut Vec<WrapSegment>,
-        row_to_segment: &mut Vec<usize>,
-    ) {
+    fn push_whole_line(&self, line_idx: usize, line: &SyntaxLine, segments: &mut Vec<WrapSegment>) {
         segments.push(WrapSegment {
             spans: line.spans.clone(),
             model_line: line_idx,
-            wrap_index: 0,
             start_col: 0,
         });
-        row_to_segment.push(segments.len() - 1);
     }
 
-    fn wrap_line(
-        &self,
-        line_idx: usize,
-        line: &SyntaxLine,
-        segments: &mut Vec<WrapSegment>,
-        row_to_segment: &mut Vec<usize>,
-    ) {
+    fn wrap_line(&self, line_idx: usize, line: &SyntaxLine, segments: &mut Vec<WrapSegment>) {
         if line.spans.is_empty() || self.width == 0 {
-            self.push_whole_line(line_idx, line, segments, row_to_segment);
+            self.push_whole_line(line_idx, line, segments);
             return;
         }
         let width = self.width as usize;
 
-        // (span index, start offset, end offset, is_rendered) in the
-        // concatenated line text.
-        let mut span_refs: Vec<(usize, usize, usize, bool)> = Vec::with_capacity(line.spans.len());
+        // (span index, start offset, end offset) in the concatenated line
+        // text.
+        let mut span_refs: Vec<(usize, usize, usize)> = Vec::with_capacity(line.spans.len());
         let mut text = String::new();
         for (i, s) in line.spans.iter().enumerate() {
             let start = text.len();
             text.push_str(&s.text);
-            span_refs.push((
-                i,
-                start,
-                start + s.text.len(),
-                s.state == RevealState::Rendered,
-            ));
+            span_refs.push((i, start, start + s.text.len()));
         }
 
         if text.is_empty() {
-            self.push_whole_line(line_idx, line, segments, row_to_segment);
+            self.push_whole_line(line_idx, line, segments);
             return;
         }
 
         let mut start_col = 0usize;
-        let mut wrap_index = 0usize;
         while start_col < text.len() {
             let Some(remain) = text.get(start_col..) else {
                 break;
@@ -323,53 +307,40 @@ impl WrapMap {
 
             let seg_start = start_col;
             // `byte_len >= 1` always (the force-include-one-char fallback
-            // above guarantees it), so `raw_end > seg_start`; extending past
-            // a Rendered span only ever grows the boundary, so `seg_end`
-            // stays strictly past `seg_start` and the loop always progresses.
-            let raw_end = start_col + byte_len;
-            let seg_end = extend_past_rendered(raw_end, &span_refs).min(text.len());
+            // above guarantees it), so the loop always progresses.
+            let seg_end = (start_col + byte_len).min(text.len());
 
             let seg_spans = slice_spans(&line.spans, &span_refs, seg_start, seg_end);
             segments.push(WrapSegment {
                 spans: seg_spans,
                 model_line: line_idx,
-                wrap_index,
                 start_col: seg_start,
             });
-            row_to_segment.push(segments.len() - 1);
 
             start_col = seg_end;
-            wrap_index += 1;
         }
     }
-}
-
-/// If `boundary` falls strictly inside a `Rendered` span's range in the
-/// concatenated line text, push it out to that span's end — the atomicity
-/// invariant (module docs).
-fn extend_past_rendered(boundary: usize, span_refs: &[(usize, usize, usize, bool)]) -> usize {
-    for &(_, start, end, is_rendered) in span_refs {
-        if is_rendered && boundary > start && boundary < end {
-            return end;
-        }
-    }
-    boundary
 }
 
 /// Slice the original spans down to `[seg_start, seg_end)` of the
-/// concatenated line text. `Rendered` spans are always either fully inside
-/// or fully outside this range (guaranteed by `extend_past_rendered` at
-/// every call site) — port of `pkg/editor/display/wrap_map.go`'s
-/// `sliceOriginalSpans`, simplified accordingly: only `Revealed` spans ever
-/// need a partial sub-slice with recomputed `buffer_start`/`buffer_end`.
+/// concatenated line text — port of `pkg/editor/display/wrap_map.go`'s
+/// `sliceOriginalSpans`. Every span's `text` is sliced identically
+/// regardless of `state`; the two states differ only in what happens to
+/// the buffer-range metadata (module docs): a `Revealed` span's text is
+/// byte-for-byte its buffer range, so slicing recomputes
+/// `buffer_start`/`buffer_end` too; a `Rendered` span's text is NOT
+/// byte-for-byte its buffer range (delimiters were dropped), so
+/// `buffer_start`/`buffer_end` are left at the span's full original
+/// values and `cell_map` — the authoritative per-char mapping for a
+/// `Rendered` span — is rune-sliced to match instead.
 fn slice_spans(
     spans: &[SyntaxSpan],
-    span_refs: &[(usize, usize, usize, bool)],
+    span_refs: &[(usize, usize, usize)],
     seg_start: usize,
     seg_end: usize,
 ) -> Vec<SyntaxSpan> {
     let mut result = Vec::new();
-    for &(idx, start_off, end_off, _is_rendered) in span_refs {
+    for &(idx, start_off, end_off) in span_refs {
         if end_off <= seg_start || start_off >= seg_end {
             continue;
         }
@@ -381,15 +352,37 @@ fn slice_spans(
         if local_end <= local_start {
             continue;
         }
-        if s.state == RevealState::Rendered {
-            result.push(s.clone());
-        } else if let Some(sliced) = s.text.get(local_start..local_end) {
-            let mut out = s.clone();
-            out.text = sliced.to_string();
-            out.buffer_start = s.buffer_start + local_start;
-            out.buffer_end = s.buffer_start + local_end;
-            result.push(out);
+        let Some(sliced) = s.text.get(local_start..local_end) else {
+            continue;
+        };
+
+        let mut out = s.clone();
+        out.text = sliced.to_string();
+        match s.state {
+            RevealState::Revealed => {
+                out.buffer_start = s.buffer_start + local_start;
+                out.buffer_end = s.buffer_start + local_end;
+                out.cell_map = None;
+            }
+            RevealState::Rendered => {
+                // buffer_start/buffer_end intentionally left as the full
+                // original span range (Go parity, module docs).
+                if let Some(cm) = &s.cell_map {
+                    let start_runes = s
+                        .text
+                        .get(..local_start)
+                        .map(|p| p.chars().count())
+                        .unwrap_or(0);
+                    let end_runes = s
+                        .text
+                        .get(..local_end)
+                        .map(|p| p.chars().count())
+                        .unwrap_or(0);
+                    out.cell_map = cm.get(start_runes..end_runes).map(|sl| sl.to_vec());
+                }
+            }
         }
+        result.push(out);
     }
     result
 }
@@ -449,20 +442,46 @@ mod tests {
     }
 
     #[test]
-    fn rendered_span_is_never_split_across_a_break() {
-        // Cursor off the bold's line so it's concealed; the concealed "bold"
-        // text is short but the surrounding context forces a tight width so
-        // a naive break would try to land inside it.
-        let content = "aa **bold** bb\nsecond line\n";
+    fn rendered_span_text_and_cell_map_split_together_buffer_range_stays_whole() {
+        // Go parity (module docs): a Rendered span's TEXT and CellMap DO
+        // get sliced at a wrap break, same as any other span — only
+        // buffer_start/buffer_end are left at the full original range,
+        // because a Rendered span's text isn't byte-for-byte its buffer
+        // range once delimiters are dropped.
+        let content = "x `aaaaaaaaaaaaaaaaaaaa` y\n";
         let wrap = wrap_lines(content, content.len(), true, 6);
-        for seg in wrap.segments() {
+
+        let mut full_rendered_text = String::new();
+        let mut buffer_ranges: Vec<(usize, usize)> = Vec::new();
+        for seg in wrap.segments().iter().filter(|s| s.model_line == 0) {
             for span in &seg.spans {
+                assert!(
+                    span.text.chars().map(control_aware_width).sum::<usize>() <= 6
+                        || span.text.chars().count() == 1,
+                    "segment exceeds width 6 without being a single over-wide char: {:?}",
+                    span.text
+                );
                 if span.state == RevealState::Rendered {
-                    // The whole rendered span's text must appear intact in
-                    // exactly one segment — never truncated by a break.
-                    assert_eq!(span.text, "bold");
+                    full_rendered_text.push_str(&span.text);
+                    buffer_ranges.push((span.buffer_start, span.buffer_end));
                 }
             }
+        }
+        // The concealed inline-code content is split across multiple
+        // segments (width 6 can't fit all 20 'a's on one row) but
+        // reconstructs exactly, and every piece's buffer range is the
+        // SAME full original span range (Go parity — never narrowed).
+        assert_eq!(full_rendered_text, "aaaaaaaaaaaaaaaaaaaa");
+        assert!(
+            buffer_ranges.len() > 1,
+            "expected the rendered span to be split across more than one segment"
+        );
+        let first = buffer_ranges[0];
+        for r in &buffer_ranges {
+            assert_eq!(
+                *r, first,
+                "buffer_start/buffer_end must stay at the full original range on every slice"
+            );
         }
     }
 }

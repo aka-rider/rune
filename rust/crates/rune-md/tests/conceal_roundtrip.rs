@@ -127,6 +127,171 @@ fn blockquote_marker_reveals_per_line_independently() {
 }
 
 // ---------------------------------------------------------------------
+// (a2) Per-byte coverage regression cases (review BLOCKER 1/2/3, MAJOR 4):
+// every byte of every line is either visible or hidden — never dropped.
+// ---------------------------------------------------------------------
+
+/// The invariant BLOCKER 1 violated: per line, the sum of every span's
+/// buffer-byte length plus every hidden range's byte length must equal the
+/// line's exact byte length. A per-LINE `touched` bool couldn't distinguish
+/// a partially-covered line from a fully-covered one; this checks BYTES.
+fn assert_full_line_coverage(
+    buf: &Buffer,
+    lines: &[rune_md::emit::SyntaxLine],
+    snap: &rune_md::emit::SyntaxSnapshot,
+) {
+    for line in 0..buf.line_count() {
+        let expected_len = buf.line(line).len();
+        let visible: usize = lines
+            .get(line)
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.buffer_end.saturating_sub(s.buffer_start))
+                    .sum()
+            })
+            .unwrap_or(0);
+        let hidden = snap.hidden_byte_count(line);
+        assert_eq!(
+            visible + hidden,
+            expected_len,
+            "line {line} ({:?}): visible {visible} + hidden {hidden} != line length {expected_len} — a byte was silently dropped",
+            buf.line(line)
+        );
+    }
+}
+
+#[test]
+fn trailing_whitespace_is_visible_not_dropped() {
+    let (buf, doc) = synced("hello   \nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), "hello   ");
+}
+
+#[test]
+fn leading_indent_is_visible_not_dropped() {
+    let (buf, doc) = synced("  leading spaces\nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), "  leading spaces");
+}
+
+#[test]
+fn embedded_tab_is_visible_not_dropped() {
+    let (buf, doc) = synced("a\tb\nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), "a\tb");
+}
+
+#[test]
+fn whitespace_only_line_is_visible_not_dropped() {
+    let (buf, doc) = synced("para\n   \nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+}
+
+#[test]
+fn indented_code_block_is_visible_not_dropped() {
+    let (buf, doc) = synced("para\n\n    indented code\n\nafter\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 2), "    indented code");
+}
+
+#[test]
+fn indented_list_marker_is_visible_not_dropped() {
+    let (buf, doc) = synced("  - nested item\nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+}
+
+#[test]
+fn crlf_carriage_return_is_visible_not_dropped() {
+    let (buf, doc) = synced("line one\r\nline two\r\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    // The bare \r before \n is user content (§1.4.5) — it must show up in
+    // the concealed/revealed text exactly as written.
+    assert!(
+        joined_line(&lines, 0).ends_with('\r'),
+        "line 0 = {:?}",
+        joined_line(&lines, 0)
+    );
+}
+
+#[test]
+fn atx_heading_closing_sequence_is_visible_not_dropped() {
+    // CommonMark strips an optional trailing "#"-run from an ATX heading's
+    // CONTENT, but those trailing bytes are still part of the raw line —
+    // they must show up as visible text when concealed, not vanish.
+    let (buf, doc) = synced("## heading ##\nnext\n", "## heading ##\n".len(), true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+}
+
+#[test]
+fn backslash_escape_is_visible_not_dropped() {
+    let (buf, doc) = synced("\\*not bold\\*\nnext\n", 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+}
+
+#[test]
+fn empty_link_hides_exactly_once() {
+    // BLOCKER 2: an empty-text link's open/close delimiter fallbacks used to
+    // both default to the whole token range, double-hiding it and breaking
+    // buffer_to_syntax monotonicity.
+    let content = "see [](http://x) here\n";
+    let (buf, doc) = synced(content, 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), "see  here");
+
+    // buffer_to_syntax must be monotonic non-decreasing across the line.
+    let mut prev = None;
+    for col in 0..=content.trim_end_matches('\n').len() {
+        let sp = snap.buffer_to_syntax(BufferPoint { line: 0, col });
+        if let Some(p) = prev {
+            assert!(
+                sp.col >= p,
+                "buffer_to_syntax not monotonic at col {col}: prev={p} now={}",
+                sp.col
+            );
+        }
+        prev = Some(sp.col);
+    }
+}
+
+#[test]
+fn unterminated_fence_keeps_every_line_visible_content() {
+    // BLOCKER 3: `last_line > first_line` alone was wrongly treated as
+    // "closing fence exists" — an in-progress (unterminated) fence lost its
+    // last content line to a phantom fence_close.
+    let content = "```rust\nfn f() {}\nlet x = 1;\n";
+    let (buf, doc) = synced(content, 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    // Cursor away (unfocused-equivalent conceal): every content line must
+    // still show its text — nothing after the opening fence is a phantom
+    // closing marker.
+    assert_eq!(joined_line(&lines, 1), "fn f() {}");
+    assert_eq!(joined_line(&lines, 2), "let x = 1;");
+}
+
+#[test]
+fn nested_blockquote_markers_are_at_their_true_depth_offset() {
+    // MAJOR 4: both depths used to report marker range [0,2), double-hiding
+    // the same 2 bytes and leaving the inner "> " at [2,4) unmodeled.
+    let content = "> > nested quote\n";
+    let (buf, doc) = synced(content, content.len(), true); // cursor away: both conceal
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), "nested quote");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -211,6 +376,22 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("---".to_string()),
         Just("```\nfenced\ncontent\n```".to_string()),
         Just("**[bo*ld*](url)**".to_string()),
+        // The shapes review round B2/B3/M1 caught: trailing/leading
+        // whitespace, tabs, whitespace-only lines, indented code/lists,
+        // CRLF, a closing ATX "##" sequence, backslash escapes, an empty
+        // link, an unterminated fence, and a nested blockquote.
+        Just("trailing   ".to_string()),
+        Just("  leading indent".to_string()),
+        Just("a\tb\tc".to_string()),
+        Just("   ".to_string()),
+        Just("    indented code".to_string()),
+        Just("  - nested item".to_string()),
+        Just("line one\r\nline two".to_string()),
+        Just("## heading ##".to_string()),
+        Just("\\*escaped\\*".to_string()),
+        Just("[](url)".to_string()),
+        Just("```rust\nunterminated".to_string()),
+        Just("> > nested".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
     ]
 }
@@ -278,6 +459,39 @@ proptest! {
                     let expected = buf.content().get(span.buffer_start..span.buffer_end);
                     prop_assert_eq!(expected, Some(span.text.as_str()));
                 }
+            }
+        }
+
+        // BLOCKER 1's invariant, strengthened from clamp-stability alone
+        // (which BL2 passed while badly wrong): per line, every visible
+        // span's buffer-byte length plus every hidden range's byte length
+        // must equal the line's exact byte length — no byte is ever
+        // silently dropped (trailing/leading whitespace, tabs, a bare `\r`,
+        // an ATX heading's closing "#"-run, anything a comrak sourcepos
+        // doesn't happen to span).
+        for line in 0..buf.line_count() {
+            let expected_len = buf.line(line).len();
+            let visible: usize = lines
+                .get(line)
+                .map(|l| l.spans.iter().map(|s| s.buffer_end.saturating_sub(s.buffer_start)).sum())
+                .unwrap_or(0);
+            let hidden = snap.hidden_byte_count(line);
+            prop_assert_eq!(visible + hidden, expected_len, "line {} coverage gap: visible {} + hidden {} != length {}", line, visible, hidden, expected_len);
+
+            // When a line has NO hidden ranges at all (nothing on it is
+            // concealed — note this is a different question from "every
+            // span.state == Revealed": a Text run nested inside a
+            // CONCEALED emphasis is still tagged Revealed itself, since
+            // `state` marks "this run is a verbatim buffer copy", not
+            // "nothing wrapping it is hidden" — only `hidden_byte_count`
+            // answers the line-wide question), the concatenated span text
+            // must equal the exact buffer line bytes.
+            if let Some(l) = lines.get(line)
+                && !l.spans.is_empty()
+                && hidden == 0
+            {
+                let joined: String = l.spans.iter().map(|s| s.text.as_str()).collect();
+                prop_assert_eq!(joined, buf.line(line));
             }
         }
     }

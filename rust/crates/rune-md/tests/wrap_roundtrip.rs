@@ -7,7 +7,6 @@ use proptest::prelude::*;
 use rune_core::buffer::Buffer;
 use rune_core::coords::SyntaxPoint;
 use rune_core::cursor::CursorSet;
-use rune_md::element::RevealState;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
 use rune_md::wrap::WrapMap;
@@ -77,9 +76,11 @@ proptest! {
         }
 
         // Segment texts concatenate back to the exact syntax-space line
-        // text, and no segment's byte length exceeds the configured width
-        // in VISUAL columns except a single over-wide char or a whole
-        // Rendered span (Gotchas: whole-inclusion invariant).
+        // text, and no segment's VISUAL width exceeds the configured width
+        // except a single over-wide char (Major 5: Rendered spans are NOT
+        // exempt — Go's wrap_map.go actually slices a Rendered span's text
+        // at a break just like any other span; only its buffer range stays
+        // whole. No whitelist here anymore.).
         for line in 0..buf.line_count() {
             let mut joined = String::new();
             let mut row = wrap_snap.model_line_to_first_row(line);
@@ -89,13 +90,10 @@ proptest! {
                 }
                 let seg_visual_width = wrap_snap.visual_col(row, wrap_snap.segment_len_at(row));
                 if seg_visual_width > raw_width as usize {
-                    // Only permitted if the segment is a single over-wide
-                    // rune or a single whole Rendered span.
                     let segs = wrap_snap.segments();
                     if let Some(seg) = segs.get(row) {
-                        let is_single_rendered_span = seg.spans.len() == 1 && seg.spans[0].state == RevealState::Rendered;
                         let is_single_overwide_char = seg.spans.iter().map(|s| s.text.chars().count()).sum::<usize>() == 1;
-                        prop_assert!(is_single_rendered_span || is_single_overwide_char, "segment at row {} exceeds width {} without being a single over-wide char or whole Rendered span", row, raw_width);
+                        prop_assert!(is_single_overwide_char, "segment at row {} exceeds width {} without being a single over-wide char: {:?}", row, raw_width, seg.spans.iter().map(|s| s.text.as_str()).collect::<String>());
                     }
                 }
                 for span in &wrap_snap.segments()[row].spans {

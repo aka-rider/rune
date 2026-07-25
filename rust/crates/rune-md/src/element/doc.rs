@@ -197,19 +197,36 @@ mod tests {
     }
 
     #[test]
-    fn sync_content_reparses_only_on_version_change() {
+    fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
         let mut doc = DocMachine::new();
+        doc.set_focus(true); // Decide policies only fire when focused.
         let buf = Buffer::new("# hello\n");
         doc.sync_content(&buf);
-        let built_after_first = doc.built_version;
-        assert_eq!(built_after_first, buf.version());
+        assert_eq!(doc.built_version, buf.version());
         assert!(!doc.blocks().is_empty());
 
-        // Same version: sync_content is a no-op (reparse would be visible via
-        // a changed Vec identity in a real profiler; here we assert the
-        // recorded version is untouched).
+        // Reveal the heading (cursor on its line), so its `RevealSm` is now
+        // `Revealed` — a state that lives ONLY on the current `blocks` Vec.
+        let cursors = CursorSet::new(0);
+        doc.sync_cursors(&buf, &cursors);
+        assert_eq!(
+            doc.blocks()[0].reveal_state(),
+            crate::element::RevealState::Revealed
+        );
+
+        // Calling sync_content again with the SAME version must be a true
+        // no-op: if it silently reparsed, the freshly-built Heading machine
+        // would reset to its default Rendered state, discarding the reveal
+        // transition above without ever bumping `built_version` — a `Vec`
+        // identity check can't catch this (a Vec can get a new backing
+        // allocation with byte-identical contents), but the reveal state
+        // survives if and only if no reparse actually happened.
         doc.sync_content(&buf);
-        assert_eq!(doc.built_version, built_after_first);
+        assert_eq!(
+            doc.blocks()[0].reveal_state(),
+            crate::element::RevealState::Revealed,
+            "sync_content must not reparse when buf.version() is unchanged"
+        );
     }
 
     #[test]
@@ -224,7 +241,14 @@ mod tests {
     }
 
     #[test]
-    fn unfocused_forces_all_blocks_rendered() {
+    fn unfocused_forces_every_decide_policy_block_rendered() {
+        // This fixture has only a Heading — a `Decide`-policy block, whose
+        // reveal follows `ctx.grant`. It does NOT cover Frontmatter/
+        // Verbatim, which are pinned Revealed by design regardless of
+        // focus (the reveal-policy table: "Frontmatter, Verbatim | pinned
+        // Revealed (no Decide)") — see
+        // `frontmatter_and_verbatim_survive_unfocused_as_revealed` below
+        // for that intentional exception.
         let mut doc = DocMachine::new();
         let buf = Buffer::new("# hello\n");
         doc.sync_content(&buf);
@@ -235,8 +259,35 @@ mod tests {
             assert_eq!(
                 b.reveal_state(),
                 crate::element::RevealState::Rendered,
-                "unfocused doc must force every block Rendered"
+                "unfocused doc must force every Decide-policy block Rendered"
             );
+        }
+    }
+
+    #[test]
+    fn frontmatter_and_verbatim_survive_unfocused_as_revealed() {
+        // The reveal-policy table's declared exception to "Unfocused ->
+        // ForceRendered": Frontmatter and Verbatim (tables/HTML/math) have
+        // no Decide policy at all — they ignore `ctx.grant` entirely and
+        // stay pinned Revealed even when the document is unfocused.
+        let mut doc = DocMachine::new();
+        let buf = Buffer::new("---\ntitle: x\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+        doc.sync_content(&buf);
+        doc.sync_cursors(&buf, &CursorSet::new(0));
+        assert!(
+            doc.blocks().len() >= 2,
+            "expected a Frontmatter block and a Verbatim (table) block"
+        );
+        for b in doc.blocks() {
+            assert!(
+                matches!(
+                    b,
+                    crate::element::block::Block::Frontmatter(_)
+                        | crate::element::block::Block::Verbatim(_)
+                ),
+                "unexpected block kind in this fixture: {b:?}"
+            );
+            assert_eq!(b.reveal_state(), crate::element::RevealState::Revealed);
         }
     }
 }

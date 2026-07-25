@@ -30,9 +30,17 @@ mod tests {
 
     #[test]
     fn display_snapshot_row_count_matches_wrap_in_phase_one() {
+        // Two empty lines wrap to exactly 2 rows (each empty `SyntaxLine`
+        // gets its own single, empty segment — see `WrapMap::wrap_line`'s
+        // `line.spans.is_empty()` case). Pin that concrete count instead of
+        // comparing `DisplaySnapshot::from_wrap`'s output back to
+        // `wrap.total_rows()` — the very value it copies — which passes
+        // trivially by construction regardless of what `total_rows()`
+        // actually is.
         let lines = vec![SyntaxLine::default(), SyntaxLine::default()];
         let wrap = WrapMap::new(80).sync(&lines);
+        assert_eq!(wrap.total_rows(), 2);
         let display = DisplaySnapshot::from_wrap(&wrap);
-        assert_eq!(display.total_rows, wrap.total_rows());
+        assert_eq!(display.total_rows, 2);
     }
 }
