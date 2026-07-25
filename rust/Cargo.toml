@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+ratatui = "0.30.2"
+ratatui-termina = "0.1.0"
+termina = "0.3.3"
+comrak = "0.54"
+unicode-width = "0.2.2"
+unicode-segmentation = "1.13"
+libc = "0.2"
+base64 = "0.22"
+proptest = "1"
+criterion = "0.5"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
