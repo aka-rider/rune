@@ -147,13 +147,14 @@ fn clamp_col(col: usize, hidden: &[HiddenRange]) -> usize {
 
 /// `true` iff `sorted` (already ordered by start) contains a genuine
 /// overlap — two ranges sharing at least one byte. Adjacent-but-touching
-/// ranges (`end == next.start`) are NOT an overlap. Used only by a
-/// `debug_assert` in `build_line_conversions`: every hidden-range producer
-/// in this crate is expected to already emit disjoint ranges, so an
-/// overlap here means a producer bug (the exact shape two separate
-/// findings on this branch turned out to be — a fence's ranges colliding
-/// with its container's marker ranges) — this makes it surface in tests
-/// instead of being silently absorbed by the merge below.
+/// ranges (`end == next.start`) are NOT an overlap. Used only by the
+/// `STRICT_INVARIANTS`-gated assert in `build_line_conversions`: every
+/// hidden-range producer in this crate is expected to already emit
+/// disjoint ranges, so an overlap here means a producer bug (the exact
+/// shape two separate findings on this branch turned out to be — a
+/// fence's ranges colliding with its container's marker ranges) — this
+/// makes it surface in tests instead of being silently absorbed by the
+/// merge below.
 fn has_overlap(sorted: &[(usize, usize)]) -> bool {
     sorted.windows(2).any(|w| match w {
         [(_, prev_end), (next_start, _)] => prev_end > next_start,
@@ -167,9 +168,12 @@ fn has_overlap(sorted: &[(usize, usize)]) -> bool {
 /// structural rather than every producer's responsibility: even if some
 /// future producer reintroduces an overlapping-range bug (the class two
 /// separate findings on this branch belonged to), the delta accumulation
-/// below can no longer double-count it — merging happens unconditionally,
-/// the `debug_assert` above is what surfaces the producer bug in tests.
-fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+/// below can no longer double-count it — merging happens UNCONDITIONALLY
+/// in every build (§1.3 graceful degradation); the `STRICT_INVARIANTS`
+/// assert above is what surfaces the producer bug, in tests only. Also
+/// reused by `emit::unclaimed_subranges` for the visible-side counterpart
+/// of this same collapse.
+pub(crate) fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
     for (s, e) in sorted {
         if e <= s {
@@ -192,8 +196,9 @@ fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
 /// hidden AT MOST ONCE by construction: overlapping/touching ranges are
 /// merged before the deltas are summed (see `merge_overlapping`), so a
 /// producer bug that hands back overlapping ranges degrades to a
-/// (debug-asserted, see `has_overlap`) coordinate inaccuracy rather than a
-/// doubly-counted delta corrupting every position past it on the line.
+/// (test-asserted, see `has_overlap` and `crate::emit::STRICT_INVARIANTS`)
+/// coordinate inaccuracy rather than a doubly-counted delta corrupting
+/// every position past it on the line.
 pub(crate) fn build_line_conversions(
     starts: &[usize],
     hidden: &[Vec<(usize, usize)>],
@@ -208,10 +213,15 @@ pub(crate) fn build_line_conversions(
             .collect();
         rel.sort_by_key(|&(s, _)| s);
 
-        debug_assert!(
-            !has_overlap(&rel),
-            "line {line}: overlapping hidden ranges from a producer bug: {rel:?}"
-        );
+        // §1.3: never panics in an ordinary shipped build — only in tests
+        // (or a build that opts in via the `strict-invariants` feature).
+        // The merge two lines below runs unconditionally regardless.
+        if crate::emit::STRICT_INVARIANTS {
+            assert!(
+                !has_overlap(&rel),
+                "line {line}: overlapping hidden ranges from a producer bug: {rel:?}"
+            );
+        }
 
         let merged = merge_overlapping(rel);
 
@@ -246,8 +256,8 @@ mod tests {
     /// The structural-hardening chokepoint: overlapping input intervals
     /// merge into the minimal disjoint set covering the SAME bytes exactly
     /// once — an overlapping-range producer bug degrades to a coordinate
-    /// inaccuracy (caught separately by the `debug_assert` below in debug
-    /// builds), never a doubly-counted delta.
+    /// inaccuracy (caught separately by the `STRICT_INVARIANTS`-gated
+    /// assert below, in tests), never a doubly-counted delta.
     #[test]
     fn merge_overlapping_intervals_counts_each_byte_once() {
         // [0,5) and [3,8) share bytes [3,5) — merged into one [0,8): 8
@@ -273,16 +283,16 @@ mod tests {
         assert!(!has_overlap(&[]));
     }
 
-    /// Proves the `debug_assert` in `build_line_conversions` is actually
-    /// wired to fire on overlapping input — the two prior findings on this
-    /// branch (a fence's ranges colliding with its container's marker
-    /// ranges) were both this exact shape, and would have tripped this
-    /// assertion in tests immediately instead of silently corrupting
-    /// coordinate conversion. Debug-only: `debug_assert!` is compiled out
-    /// under `cfg(not(debug_assertions))`, so this test would fail with
-    /// "did not panic" in a release-profile test run — it is gated to
-    /// match.
-    #[cfg(debug_assertions)]
+    /// Proves the `STRICT_INVARIANTS`-gated assert in
+    /// `build_line_conversions` is actually wired to fire on overlapping
+    /// input — the two prior findings on this branch (a fence's ranges
+    /// colliding with its container's marker ranges) were both this exact
+    /// shape, and would have tripped this assertion in tests immediately
+    /// instead of silently corrupting coordinate conversion. Unlike the
+    /// old `debug_assert!`-based version, `STRICT_INVARIANTS` is tied to
+    /// `cfg(test)` (not `cfg(debug_assertions)`), so this fires in a
+    /// `--release` test run too (§1.3: the assert is test-only, not
+    /// profile-only — a `cargo test --release` run must still catch this).
     #[test]
     #[should_panic(expected = "overlapping hidden ranges")]
     fn build_line_conversions_debug_asserts_on_overlapping_input() {

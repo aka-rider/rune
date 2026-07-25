@@ -371,6 +371,111 @@ fn fence_with_multiple_content_lines_inside_blockquote() {
 }
 
 // ---------------------------------------------------------------------
+// (a4) Empty-list-item-marker regression cases (verification round 3
+// BLOCKER): an empty item's marker ran from the item's own start to its
+// FIRST CHILD's start — which, for a lazily-indented continuation (e.g. a
+// nested blockquote under "- \n  > q"), sits on the NEXT physical line.
+// The marker swallowed that line's leading indent, bytes the
+// continuation's own scan (`blockquote_markers`) claims independently:
+// content invented on the visible side (both spans show the same 2
+// bytes) — §1.4.5's mirror image of dropping a byte.
+// ---------------------------------------------------------------------
+
+#[allow(clippy::needless_range_loop)] // `line` also indexes buf.line()/snap.hidden_byte_count(), not just `lines`
+fn assert_no_duplicate_content(content: &str) {
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, snap) = emit(buf.content(), doc.blocks());
+        assert_full_line_coverage(&buf, &lines, &snap);
+
+        for line in 0..buf.line_count() {
+            let line_len = buf.line(line).len();
+            let l = &lines[line];
+
+            // No two spans on this line may claim overlapping buffer
+            // bytes — the literal "content duplicated" shape.
+            for i in 0..l.spans.len() {
+                for j in (i + 1)..l.spans.len() {
+                    let a = &l.spans[i];
+                    let b = &l.spans[j];
+                    assert!(
+                        a.buffer_end <= b.buffer_start || b.buffer_end <= a.buffer_start,
+                        "line {line} (focused={focused}): spans {i} {a:?} and {j} {b:?} claim overlapping buffer bytes"
+                    );
+                }
+            }
+
+            // When nothing on this line is hidden, the emitted text must
+            // equal the exact buffer bytes — not longer (duplicated
+            // content) or shorter (dropped content).
+            if snap.hidden_byte_count(line) == 0 {
+                let joined: String = l.spans.iter().map(|s| s.text.as_str()).collect();
+                assert_eq!(
+                    joined,
+                    buf.line(line),
+                    "line {line} (focused={focused}): rendered text != exact buffer bytes"
+                );
+            }
+
+            let mut prev_syntax_col = None;
+            for col in 0..=line_len {
+                let bp = BufferPoint { line, col };
+                let sp = snap.buffer_to_syntax(bp);
+                if let Some(prev) = prev_syntax_col {
+                    assert!(
+                        sp.col >= prev,
+                        "buffer_to_syntax not monotonic (focused={focused}) at line {line} col {col}: prev={prev} now={}",
+                        sp.col
+                    );
+                }
+                prev_syntax_col = Some(sp.col);
+
+                let bp2 = snap.syntax_to_buffer(sp);
+                let sp2 = snap.buffer_to_syntax(bp2);
+                assert_eq!(
+                    sp, sp2,
+                    "round-trip stability failed (focused={focused}) at line {line} col {col}: bp={bp:?} sp={sp:?} bp2={bp2:?} sp2={sp2:?}"
+                );
+
+                // The reported symptom: syntax_to_buffer mapping past the
+                // buffer line's own end.
+                assert!(
+                    bp2.col <= line_len,
+                    "syntax_to_buffer mapped past end-of-line (focused={focused}) at line {line} col {col}: bp2={bp2:?} line_len={line_len}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_list_item_marker_does_not_duplicate_continuation_indent() {
+    // The reviewer's exact repro: buffer line 1 is "  > q" (5 bytes) but
+    // the marker used to swallow the 2-space indent a second time,
+    // emitting "    > q" (7 bytes).
+    assert_no_duplicate_content("- \n  > q");
+}
+
+#[test]
+fn empty_item_variants_times_continuation_matrix() {
+    let empty_markers = ["-", "- ", "*", "+", "1.", "\t-"];
+    let continuations = ["  > q", "> q", "  x", "x"];
+    for m in empty_markers {
+        for c in continuations {
+            assert_no_duplicate_content(&format!("{m}\n{c}"));
+        }
+    }
+}
+
+#[test]
+fn empty_item_continuation_controls_stay_clean() {
+    // Known-good controls that must remain clean.
+    assert_no_duplicate_content("- a\n  > q");
+    assert_no_duplicate_content("-\n>");
+    assert_no_duplicate_content("-\n  x");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -495,6 +600,31 @@ fn arb_container_wrapped_fragment() -> impl Strategy<Value = String> {
     })
 }
 
+/// An empty list item (no content on its OWN first line — just the
+/// marker) followed by an indented continuation. Verification round 3's
+/// BLOCKER shape: `arb_container_wrapped_fragment` above always wraps a
+/// NON-empty inner fragment as the item's first line, so it can never
+/// reach "the item's first line is empty" — this generator exists
+/// specifically to cover that gap.
+fn arb_empty_item_with_continuation() -> impl Strategy<Value = String> {
+    let marker = prop_oneof![
+        Just("-".to_string()),
+        Just("- ".to_string()),
+        Just("*".to_string()),
+        Just("+".to_string()),
+        Just("1.".to_string()),
+        Just("\t-".to_string()),
+    ];
+    let continuation = prop_oneof![
+        Just("  > q".to_string()),
+        Just("> q".to_string()),
+        Just("  x".to_string()),
+        Just("x".to_string()),
+        Just("  > nested\n  > more".to_string()),
+    ];
+    (marker, continuation).prop_map(|(m, c)| format!("{m}\n{c}"))
+}
+
 fn arb_markdown_fragment() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("plain text".to_string()),
@@ -534,6 +664,9 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         // Verification-round BLOCKER shape: a block nested inside a
         // container (blockquote/nested-blockquote/list item).
         arb_container_wrapped_fragment(),
+        // Verification round 3's BLOCKER shape: an empty list item marker
+        // followed by an indented continuation.
+        arb_empty_item_with_continuation(),
     ]
 }
 

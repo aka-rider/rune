@@ -21,6 +21,19 @@
 //! walk — no `InlineMarks` bitfield is stored on any `SyntaxSpan` (plan
 //! Context: "Nested styling ... falls out of the tree via the Emitter's
 //! style stack — no `InlineMarks` bitfield").
+//!
+//! Every producer-bug invariant this module checks (an overlapping hidden
+//! range in `syntax::build_line_conversions`, a duplicate visible claim in
+//! `push_span_split_by_line`) is gated on [`STRICT_INVARIANTS`], never on
+//! `cfg(debug_assertions)`: CONSTITUTION §1.3 requires an ORDINARY shipped
+//! build — including an unoptimized debug one a developer might run
+//! directly — to degrade gracefully on a producer bug, never panic on a
+//! real user's document. Only a test run (or a build that explicitly opts
+//! in via the `strict-invariants` feature) is allowed to treat the
+//! violation as fatal. Graceful degradation itself (merge overlapping
+//! hidden ranges; skip an already-claimed visible byte) runs in EVERY
+//! build unconditionally — `STRICT_INVARIANTS` only gates whether a
+//! detected violation additionally panics.
 
 mod style;
 mod syntax;
@@ -33,6 +46,13 @@ use crate::element::block::Block;
 use crate::element::{ByteRange, RevealState};
 use crate::parse::{line_at, line_end_at, line_starts};
 use syntax::build_line_conversions;
+
+/// See the module docs: `true` only in test builds or when the
+/// `strict-invariants` feature is explicitly enabled. `cfg!()` folds this
+/// to a compile-time literal, so an `if STRICT_INVARIANTS { assert!(...) }`
+/// guard compiles away entirely (dead code, zero cost) in an ordinary
+/// shipped build.
+pub(crate) const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
 /// Every byte of every line is accounted for exactly once: either as part
 /// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
@@ -89,6 +109,43 @@ fn account(accounted: &mut Accounted, content: &str, starts: &[usize], range: By
     });
 }
 
+/// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
+/// possibly unsorted, possibly-overlapping already-claimed set on the same
+/// line) — the visible-side counterpart of `syntax::merge_overlapping`'s
+/// hidden-side collapse. Reuses that same merge so both sides agree on
+/// what "already claimed" means.
+fn unclaimed_subranges(
+    start: usize,
+    end: usize,
+    existing: &[(usize, usize)],
+) -> Vec<(usize, usize)> {
+    if end <= start {
+        return Vec::new();
+    }
+    let mut sorted: Vec<(usize, usize)> =
+        existing.iter().copied().filter(|&(s, e)| e > s).collect();
+    sorted.sort_by_key(|&(s, _)| s);
+    let merged = syntax::merge_overlapping(sorted);
+
+    let mut result = Vec::new();
+    let mut cursor = start;
+    for (s, e) in merged {
+        if e <= start || s >= end {
+            continue; // doesn't intersect [start, end) at all
+        }
+        let clipped_start = s.max(start);
+        let clipped_end = e.min(end);
+        if clipped_start > cursor {
+            result.push((cursor, clipped_start));
+        }
+        cursor = cursor.max(clipped_end);
+    }
+    if cursor < end {
+        result.push((cursor, end));
+    }
+    result
+}
+
 /// Port of `pkg/editor/display/cellmap.go:buildInlineCellMap`: one entry per
 /// visual char, the absolute buffer offset it maps back to.
 fn build_cell_map(content_start: usize, text: &str) -> CellMap {
@@ -106,6 +163,20 @@ fn build_cell_map(content_start: usize, text: &str) -> CellMap {
 /// for `Rendered` spans (their text is always a direct, contiguous slice of
 /// the buffer at this call site — concealed content minus its delimiters).
 /// Every emitted slice is also recorded into `accounted` (see its docs).
+///
+/// HARDENING: before pushing, clips each line-slice against whatever
+/// `accounted[line]` already claims (from an earlier visible span OR a
+/// hidden range) via `unclaimed_subranges`, so a byte already emitted (or
+/// hidden) is never emitted a second time — the visible-side counterpart
+/// of `syntax::build_line_conversions`'s hidden-side merge. A hidden range
+/// can be merged AFTER the fact because `build_line_conversions` runs once
+/// over the whole set; a visible span becomes a real `SyntaxSpan` the
+/// instant it's pushed, so this has to happen HERE, at the point of claim
+/// (the class of bug this guards: an empty list item's marker running
+/// onto its continuation line and re-showing bytes a nested blockquote's
+/// own marker scan already claimed — content invented on the visible
+/// side, content_range's mirror image of dropping a byte, both are a
+/// §1.4.5 violation).
 pub(crate) fn push_span_split_by_line(
     content: &str,
     starts: &[usize],
@@ -116,22 +187,37 @@ pub(crate) fn push_span_split_by_line(
     accounted: &mut Accounted,
 ) {
     for_each_line_slice(content, starts, range, |line, seg_start, seg_end| {
-        let Some(text) = content.get(seg_start..seg_end) else {
-            return;
-        };
-        let cell_map = (state == RevealState::Rendered).then(|| build_cell_map(seg_start, text));
-        if let Some(bucket) = out.get_mut(line) {
-            bucket.push(SyntaxSpan {
-                text: text.to_string(),
-                style,
-                state,
-                buffer_start: seg_start,
-                buffer_end: seg_end,
-                cell_map,
-            });
+        let existing = accounted.get(line).cloned().unwrap_or_default();
+        let pieces = unclaimed_subranges(seg_start, seg_end, &existing);
+
+        let requested_len = seg_end - seg_start;
+        let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
+        if STRICT_INVARIANTS {
+            assert!(
+                kept_len == requested_len,
+                "line {line}: visible claim [{seg_start},{seg_end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
+                requested_len - kept_len
+            );
         }
-        if let Some(bucket) = accounted.get_mut(line) {
-            bucket.push((seg_start, seg_end));
+
+        for (s, e) in pieces {
+            let Some(text) = content.get(s..e) else {
+                continue;
+            };
+            let cell_map = (state == RevealState::Rendered).then(|| build_cell_map(s, text));
+            if let Some(bucket) = out.get_mut(line) {
+                bucket.push(SyntaxSpan {
+                    text: text.to_string(),
+                    style,
+                    state,
+                    buffer_start: s,
+                    buffer_end: e,
+                    cell_map,
+                });
+            }
+            if let Some(bucket) = accounted.get_mut(line) {
+                bucket.push((s, e));
+            }
         }
     });
 }
@@ -246,151 +332,4 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-    use crate::element::doc::DocMachine;
-    use rune_core::buffer::Buffer;
-    use rune_core::coords::BufferPoint;
-    use rune_core::cursor::CursorSet;
-
-    fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
-        let buf = Buffer::new(content);
-        let mut doc = DocMachine::new();
-        doc.set_focus(focused);
-        doc.sync_content(&buf);
-        let cursors = CursorSet::new(cursor_offset);
-        doc.sync_cursors(&buf, &cursors);
-        (buf, doc)
-    }
-
-    #[test]
-    fn heading_marker_hidden_when_not_on_cursor_line() {
-        let (buf, doc) = synced("# hi\nsecond\n", 8, true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(joined, "hi", "marker must be concealed off-cursor-line");
-    }
-
-    #[test]
-    fn heading_marker_revealed_on_cursor_line() {
-        let (buf, doc) = synced("# hi\nsecond\n", 0, true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(joined, "# hi");
-    }
-
-    #[test]
-    fn unfocused_conceals_everything() {
-        let (buf, doc) = synced("# hi\n", 0, false);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(joined, "hi");
-    }
-
-    #[test]
-    fn code_fence_whole_block_reveals_as_unit() {
-        let content = "```rust\nfn f() {}\n```\n";
-        let (buf, doc) = synced(content, content.find("fn").unwrap(), true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        // Cursor is on line 1 (the content line); the whole 3-line fence
-        // block must reveal, including the fence marker lines.
-        assert_eq!(lines[0].spans[0].text, "```rust");
-        assert_eq!(lines[1].spans[0].text, "fn f() {}");
-        assert_eq!(lines[2].spans[0].text, "```");
-    }
-
-    #[test]
-    fn code_fence_conceals_marker_lines_off_cursor() {
-        let content = "```rust\nfn f() {}\n```\nafter\n";
-        let (buf, doc) = synced(content, content.find("after").unwrap(), true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        // Fence marker lines collapse to empty; content line shows verbatim.
-        assert_eq!(
-            lines[0]
-                .spans
-                .iter()
-                .map(|s| s.text.as_str())
-                .collect::<String>(),
-            ""
-        );
-        assert_eq!(lines[1].spans[0].text, "fn f() {}");
-    }
-
-    #[test]
-    fn bold_reveals_with_nested_link_as_a_unit() {
-        let content = "**[bo*ld*](url)** end\n";
-        let cursor = content.find("ld").unwrap();
-        let (buf, doc) = synced(content, cursor, true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(joined, "**[bo*ld*](url)** end");
-    }
-
-    #[test]
-    fn bold_conceals_but_still_shows_nested_link_text() {
-        let content = "**[bo*ld*](url)** end\n";
-        let (buf, doc) = synced(content, content.len(), true); // cursor at " end", not inside bold
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
-        assert_eq!(joined, "bold end");
-    }
-
-    #[test]
-    fn rendered_span_cell_map_offsets_are_within_range() {
-        let content = "**bold** text\n";
-        let (buf, doc) = synced(content, content.len(), true);
-        let (lines, _snap) = emit(buf.content(), doc.blocks());
-        for span in &lines[0].spans {
-            if let Some(cm) = &span.cell_map {
-                for &off in cm {
-                    assert!(off == -1 || (off as usize) < span.buffer_end);
-                    if off != -1 {
-                        assert!((off as usize) >= span.buffer_start);
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn buffer_to_syntax_roundtrip_on_cursor_legal_position() {
-        // Cursor is at end-of-buffer, well outside "**bold**"'s range, so
-        // the emphasis is concealed on line 0 and its "**" delimiters (buffer
-        // cols [0,2) and [6,8)) are NOT cursor-legal. Buffer col 8 is the
-        // space right after the closing "**", a position with no hidden
-        // delimiter on either side — genuinely cursor-legal, so the
-        // roundtrip must be exact (unlike a position inside a hidden range,
-        // which only guarantees the weaker stability invariant the other
-        // test below checks).
-        let content = "**bold** text\n";
-        let (buf, doc) = synced(content, content.len(), true);
-        let (_lines, snap) = emit(buf.content(), doc.blocks());
-        let bp = BufferPoint { line: 0, col: 8 }; // buffer col 8 = the space after "**bold**"
-        let sp = snap.buffer_to_syntax(bp);
-        let bp2 = snap.syntax_to_buffer(sp);
-        assert_eq!(bp, bp2);
-    }
-
-    #[test]
-    fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
-        // Mirrors Go's FuzzSyntaxMapRoundtrip stability property: a
-        // position inside a hidden delimiter range does NOT roundtrip to
-        // itself, but the CLAMPED position it lands on must be idempotent.
-        let content = "**bold** text\n";
-        let (buf, doc) = synced(content, content.len(), true);
-        let (_lines, snap) = emit(buf.content(), doc.blocks());
-        let bp = BufferPoint { line: 0, col: 0 }; // inside the "**" open delimiter
-        let sp = snap.buffer_to_syntax(bp);
-        let bp2 = snap.syntax_to_buffer(sp);
-        assert_ne!(
-            bp, bp2,
-            "col 0 sits inside a hidden delimiter, not cursor-legal"
-        );
-        let sp2 = snap.buffer_to_syntax(bp2);
-        assert_eq!(
-            sp, sp2,
-            "the clamped position must be stable under a second round-trip"
-        );
-    }
-}
+mod tests;

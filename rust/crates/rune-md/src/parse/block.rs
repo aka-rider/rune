@@ -256,12 +256,24 @@ fn build_list_items<'a>(
             _ => None,
         };
 
+        // BLOCKER fix: an item's marker can never span lines. For an EMPTY
+        // item (`"- "`, bare `"-"`, `"1."`, ...) the first child is whatever
+        // block starts the item's CONTENT, which for a lazily-indented
+        // continuation (e.g. a nested blockquote under `"- \n  > q"`) sits
+        // on the NEXT physical line — so `first_child.start` alone let the
+        // marker run past the item's own line-0 end and swallow line 1's
+        // leading indent, bytes the continuation's own scan (e.g.
+        // `blockquote_markers`) claims independently. Clamping to this
+        // line's own end makes "a marker never crosses a line boundary" a
+        // structural guarantee instead of something every call site has to
+        // get right.
         let marker_end = item_node
             .first_child()
             .map(|c| node_range(content, starts, c).start)
             .unwrap_or(range.end)
             .max(range.start)
-            .min(range.end);
+            .min(range.end)
+            .min(line_end_at(content.len(), starts, line));
         let marker = ByteRange::new(range.start, marker_end);
         let children = build_blocks(content, starts, item_node, hint);
 

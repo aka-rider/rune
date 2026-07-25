@@ -729,6 +729,7 @@ dependencies = [
  "comrak",
  "proptest",
  "rune-core",
+ "rune-md",
  "unicode-width",
 ]
 
