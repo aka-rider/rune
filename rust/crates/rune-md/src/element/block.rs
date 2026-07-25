@@ -106,6 +106,16 @@ impl BlockquoteM {
 
 /// A fenced code block. Decide policy: `cursors.any_in_lines(first, last)` —
 /// the whole block reveals as a unit.
+///
+/// `content_lines` is one `ByteRange` PER content line, not a single
+/// contiguous range: when the fence sits inside a container (blockquote,
+/// list item), every content line past the first can carry its own
+/// repeating container prefix (`"> "`) that a single contiguous range
+/// could never exclude — the per-line decomposition is what lets each
+/// line's range start AFTER that line's own container prefix instead of
+/// re-claiming bytes the container already hid (the class of bug this
+/// type shape exists to make unrepresentable; see `parse::block`'s
+/// `CodeBlock` arm).
 #[derive(Clone, Debug)]
 pub struct CodeFenceM {
     pub sm: RevealSm,
@@ -115,7 +125,7 @@ pub struct CodeFenceM {
     pub language: String,
     pub fence_open: Option<ByteRange>,
     pub fence_close: Option<ByteRange>,
-    pub content: ByteRange,
+    pub content_lines: Vec<ByteRange>,
 }
 
 impl CodeFenceM {

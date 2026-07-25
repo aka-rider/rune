@@ -201,10 +201,11 @@ mod tests {
         assert_eq!(cf.language, "rust");
         assert_eq!(text_of(content, cf.fence_open.unwrap()), "```rust");
         assert_eq!(text_of(content, cf.fence_close.unwrap()), "```");
-        // `content` runs up to the start of the closing fence LINE, so it
-        // keeps the content line's own trailing `\n` verbatim (§1.4.5); the
-        // emitter (`emit/`) is what clips per-line at render time.
-        assert_eq!(text_of(content, cf.content), "fn f() {}\n");
+        // One range per content line (never one contiguous span — see
+        // CodeFenceM's docs), each excluding its own trailing `\n` like
+        // every other per-line range in this crate.
+        assert_eq!(cf.content_lines.len(), 1);
+        assert_eq!(text_of(content, cf.content_lines[0]), "fn f() {}");
     }
 
     #[test]

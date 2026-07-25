@@ -15,6 +15,15 @@ use crate::element::inline::Inline;
 use crate::element::{ByteRange, RevealState};
 use crate::emit::style::StyleId;
 
+/// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
+/// is already exactly one physical line's range, computed container-aware
+/// at parse time (`parse::block`'s `CodeBlock` arm) — never re-derived from
+/// `cf.range` as one contiguous multi-line span. `cf.range` spans every
+/// line the fence occupies INCLUDING any repeating container prefix
+/// (blockquote's `"> "`) on continuation lines; pushing it whole through
+/// the generic per-physical-line splitter (as the Revealed path used to)
+/// re-hides/re-shows those container-prefix bytes a second time, on top of
+/// whatever the container itself already claimed for that line.
 fn emit_code_fence(
     content: &str,
     starts: &[usize],
@@ -24,15 +33,39 @@ fn emit_code_fence(
     accounted: &mut Accounted,
 ) {
     if cf.sm.state() == RevealState::Revealed {
-        push_span_split_by_line(
-            content,
-            starts,
-            cf.range,
-            StyleId::CodeFence,
-            RevealState::Revealed,
-            out,
-            accounted,
-        );
+        if let Some(open) = cf.fence_open {
+            push_span_split_by_line(
+                content,
+                starts,
+                open,
+                StyleId::CodeFence,
+                RevealState::Revealed,
+                out,
+                accounted,
+            );
+        }
+        for &line in &cf.content_lines {
+            push_span_split_by_line(
+                content,
+                starts,
+                line,
+                StyleId::CodeFence,
+                RevealState::Revealed,
+                out,
+                accounted,
+            );
+        }
+        if let Some(close) = cf.fence_close {
+            push_span_split_by_line(
+                content,
+                starts,
+                close,
+                StyleId::CodeFence,
+                RevealState::Revealed,
+                out,
+                accounted,
+            );
+        }
         return;
     }
     if let Some(open) = cf.fence_open {
@@ -41,15 +74,17 @@ fn emit_code_fence(
     if let Some(close) = cf.fence_close {
         hide_range(hidden, accounted, content, starts, close);
     }
-    push_span_split_by_line(
-        content,
-        starts,
-        cf.content,
-        StyleId::CodeFence,
-        RevealState::Rendered,
-        out,
-        accounted,
-    );
+    for &line in &cf.content_lines {
+        push_span_split_by_line(
+            content,
+            starts,
+            line,
+            StyleId::CodeFence,
+            RevealState::Rendered,
+            out,
+            accounted,
+        );
+    }
 }
 
 fn emit_list_item(

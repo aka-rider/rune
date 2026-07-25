@@ -292,6 +292,85 @@ fn nested_blockquote_markers_are_at_their_true_depth_offset() {
 }
 
 // ---------------------------------------------------------------------
+// (a3) Fence-inside-container regression cases (verification-round
+// BLOCKER): fence_open/content/fence_close used to be derived from
+// PHYSICAL line extents (line_start_at/line_end_at), ignoring the
+// enclosing container's own prefix already claimed on that line — the
+// fence's ranges swallowed bytes the container's marker had already hidden
+// (or, for the Revealed dump, already shown), so every position past the
+// collision was off by the doubly-counted delta. Checked in BOTH focus
+// states, per line: full byte coverage, `buffer_to_syntax` monotonic
+// non-decreasing across the line, and round-trip stability.
+// ---------------------------------------------------------------------
+
+fn assert_container_fence_invariants(content: &str) {
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, snap) = emit(buf.content(), doc.blocks());
+        assert_full_line_coverage(&buf, &lines, &snap);
+
+        for line in 0..buf.line_count() {
+            let line_len = buf.line(line).len();
+            let mut prev_syntax_col = None;
+            for col in 0..=line_len {
+                let bp = BufferPoint { line, col };
+                let sp = snap.buffer_to_syntax(bp);
+                if let Some(prev) = prev_syntax_col {
+                    assert!(
+                        sp.col >= prev,
+                        "buffer_to_syntax not monotonic (focused={focused}) at line {line} col {col}: prev={prev} now={}",
+                        sp.col
+                    );
+                }
+                prev_syntax_col = Some(sp.col);
+
+                // Round-trip stability: buffer_to_syntax(syntax_to_buffer(sp))
+                // == sp for every syntax point reachable from this line.
+                let bp2 = snap.syntax_to_buffer(sp);
+                let sp2 = snap.buffer_to_syntax(bp2);
+                assert_eq!(
+                    sp, sp2,
+                    "round-trip stability failed (focused={focused}) at line {line} col {col}: bp={bp:?} sp={sp:?} bp2={bp2:?} sp2={sp2:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fence_inside_blockquote_container_prefix_not_double_hidden() {
+    // The reviewer's exact repro: unfocused line 0 used to report
+    // visible=0 + hidden=11 on a 9-byte line ("> ```rust"), and
+    // syntax_to_buffer(0) returned col 11 — out of the line entirely.
+    assert_container_fence_invariants("> ```rust\n> fn main() {}\n> ```\n");
+}
+
+#[test]
+fn fence_inside_bare_blockquote_container_prefix_not_double_hidden() {
+    assert_container_fence_invariants("> ```\n> code\n> ```\n");
+}
+
+#[test]
+fn fence_inside_nested_blockquote_container_prefix_not_double_hidden() {
+    assert_container_fence_invariants("> > ```\n> > c\n> > ```\n");
+}
+
+#[test]
+fn fence_inside_list_item_container_prefix_not_double_hidden() {
+    // fence_open on line 0 used to span the whole physical line
+    // ("- ```rust"), colliding with the list item's own marker [0,2).
+    assert_container_fence_invariants("- ```rust\n  code\n  ```\n");
+}
+
+#[test]
+fn fence_with_multiple_content_lines_inside_blockquote() {
+    // Every content line (not just the first/last) carries the
+    // container's repeating "> " prefix — this is the shape a single
+    // contiguous `content` range could never handle correctly.
+    assert_container_fence_invariants("> ```rust\n> line1\n> line2\n> ```\n");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -357,6 +436,65 @@ fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
 // FuzzSyntaxMapRoundtrip (pkg/editor/display/display_test.go).
 // ---------------------------------------------------------------------
 
+/// Prefixes EVERY line of `inner` with `"> "` — a blockquote wrapping
+/// (single application) or a nested blockquote (applied twice).
+fn wrap_in_blockquote(inner: &str) -> String {
+    inner
+        .lines()
+        .map(|l| format!("> {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Wraps `inner` as a list item: `"- "` on the first line, `"  "` (the
+/// marker's own width) on every continuation line — the list-item
+/// counterpart of `wrap_in_blockquote`.
+fn wrap_in_list_item(inner: &str) -> String {
+    let mut out = String::new();
+    for (i, l) in inner.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(if i == 0 { "- " } else { "  " });
+        out.push_str(l);
+    }
+    out
+}
+
+/// Multi-line, block-shaped fragments worth nesting inside a container —
+/// the fence-inside-blockquote/list-item shape was exactly this: a
+/// multi-line block whose OWN lines each need the enclosing container's
+/// prefix accounted for. The verification-round BLOCKER lived here.
+fn arb_inner_block_fragment() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("```rust\nfn f() {}\n```".to_string()),
+        Just("```\ncode\n```".to_string()),
+        Just("```rust\nline1\nline2\n```".to_string()),
+        Just("```rust\nunterminated".to_string()),
+        Just("# heading".to_string()),
+        Just("---".to_string()),
+        Just("**bold** text".to_string()),
+        Just("plain text".to_string()),
+    ]
+}
+
+/// Wraps an inner block fragment in a container: single blockquote, nested
+/// (doubly wrapped) blockquote, or a list item. This is what makes the
+/// generator actually REACH "fence/heading/hr inside blockquote/list"
+/// shapes — the previous generator only ever joined whole fragments at TOP
+/// LEVEL (`arb_content`'s `frags.join("\n")`), so nothing it produced ever
+/// put one block INSIDE another's container prefix, which is exactly why
+/// it missed the fence-inside-container BLOCKER.
+fn arb_container_wrapped_fragment() -> impl Strategy<Value = String> {
+    arb_inner_block_fragment().prop_flat_map(|inner| {
+        prop_oneof![
+            Just(wrap_in_blockquote(&inner)),
+            Just(wrap_in_blockquote(&wrap_in_blockquote(&inner))),
+            Just(wrap_in_list_item(&inner)),
+        ]
+    })
+}
+
 fn arb_markdown_fragment() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("plain text".to_string()),
@@ -393,6 +531,9 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("```rust\nunterminated".to_string()),
         Just("> > nested".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
+        // Verification-round BLOCKER shape: a block nested inside a
+        // container (blockquote/nested-blockquote/list item).
+        arb_container_wrapped_fragment(),
     ]
 }
 

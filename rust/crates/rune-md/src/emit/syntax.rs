@@ -145,9 +145,55 @@ fn clamp_col(col: usize, hidden: &[HiddenRange]) -> usize {
     col
 }
 
+/// `true` iff `sorted` (already ordered by start) contains a genuine
+/// overlap — two ranges sharing at least one byte. Adjacent-but-touching
+/// ranges (`end == next.start`) are NOT an overlap. Used only by a
+/// `debug_assert` in `build_line_conversions`: every hidden-range producer
+/// in this crate is expected to already emit disjoint ranges, so an
+/// overlap here means a producer bug (the exact shape two separate
+/// findings on this branch turned out to be — a fence's ranges colliding
+/// with its container's marker ranges) — this makes it surface in tests
+/// instead of being silently absorbed by the merge below.
+fn has_overlap(sorted: &[(usize, usize)]) -> bool {
+    sorted.windows(2).any(|w| match w {
+        [(_, prev_end), (next_start, _)] => prev_end > next_start,
+        _ => false,
+    })
+}
+
+/// Merges overlapping or touching-adjacent intervals in `sorted` (already
+/// ordered by start) into the minimal disjoint set covering the same
+/// bytes. The chokepoint that makes "a byte is hidden at most once"
+/// structural rather than every producer's responsibility: even if some
+/// future producer reintroduces an overlapping-range bug (the class two
+/// separate findings on this branch belonged to), the delta accumulation
+/// below can no longer double-count it — merging happens unconditionally,
+/// the `debug_assert` above is what surfaces the producer bug in tests.
+fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
+    for (s, e) in sorted {
+        if e <= s {
+            continue;
+        }
+        if let Some(last) = merged.last_mut()
+            && s <= last.1
+        {
+            last.1 = last.1.max(e);
+            continue;
+        }
+        merged.push((s, e));
+    }
+    merged
+}
+
 /// Builds the per-line `LineConversion` table from each line's raw hidden
 /// byte ranges (absolute buffer offsets) — the accumulating-delta model
-/// `SyntaxSnapshot::buffer_to_syntax`/`syntax_to_buffer` read.
+/// `SyntaxSnapshot::buffer_to_syntax`/`syntax_to_buffer` read. Every byte is
+/// hidden AT MOST ONCE by construction: overlapping/touching ranges are
+/// merged before the deltas are summed (see `merge_overlapping`), so a
+/// producer bug that hands back overlapping ranges degrades to a
+/// (debug-asserted, see `has_overlap`) coordinate inaccuracy rather than a
+/// doubly-counted delta corrupting every position past it on the line.
 pub(crate) fn build_line_conversions(
     starts: &[usize],
     hidden: &[Vec<(usize, usize)>],
@@ -157,17 +203,22 @@ pub(crate) fn build_line_conversions(
         let line_start = starts.get(line).copied().unwrap_or(0);
         let mut rel: Vec<(usize, usize)> = ranges
             .iter()
+            .filter(|&&(s, e)| e > s)
             .map(|&(s, e)| (s.saturating_sub(line_start), e.saturating_sub(line_start)))
             .collect();
         rel.sort_by_key(|&(s, _)| s);
 
-        let mut deltas = Vec::with_capacity(rel.len());
-        let mut hidden_ranges = Vec::with_capacity(rel.len());
+        debug_assert!(
+            !has_overlap(&rel),
+            "line {line}: overlapping hidden ranges from a producer bug: {rel:?}"
+        );
+
+        let merged = merge_overlapping(rel);
+
+        let mut deltas = Vec::with_capacity(merged.len());
+        let mut hidden_ranges = Vec::with_capacity(merged.len());
         let mut accum = 0usize;
-        for (s, e) in rel {
-            if e <= s {
-                continue;
-            }
+        for (s, e) in merged {
             accum += e - s;
             hidden_ranges.push(HiddenRange {
                 start: s,
@@ -185,4 +236,59 @@ pub(crate) fn build_line_conversions(
         });
     }
     convs
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// The structural-hardening chokepoint: overlapping input intervals
+    /// merge into the minimal disjoint set covering the SAME bytes exactly
+    /// once — an overlapping-range producer bug degrades to a coordinate
+    /// inaccuracy (caught separately by the `debug_assert` below in debug
+    /// builds), never a doubly-counted delta.
+    #[test]
+    fn merge_overlapping_intervals_counts_each_byte_once() {
+        // [0,5) and [3,8) share bytes [3,5) — merged into one [0,8): 8
+        // bytes total, NOT 5+5=10 (which is what a naive unmerged sum
+        // would produce, the exact "delta summed twice" shape reported for
+        // a fence's ranges colliding with its container's marker ranges).
+        let merged = merge_overlapping(vec![(0, 5), (3, 8), (10, 12)]);
+        assert_eq!(merged, vec![(0, 8), (10, 12)]);
+        let total_bytes: usize = merged.iter().map(|&(s, e)| e - s).sum();
+        assert_eq!(total_bytes, 10); // 8 (merged) + 2, not 5+5+2=12
+
+        // Touching-but-not-overlapping ranges also merge (no shared byte,
+        // but no gap either): [0,4) and [4,9).
+        let touching = merge_overlapping(vec![(0, 4), (4, 9)]);
+        assert_eq!(touching, vec![(0, 9)]);
+    }
+
+    #[test]
+    fn has_overlap_distinguishes_overlap_from_mere_adjacency() {
+        assert!(has_overlap(&[(0, 5), (3, 8)])); // shares bytes [3,5)
+        assert!(!has_overlap(&[(0, 4), (4, 9)])); // touches at 4, no shared byte
+        assert!(!has_overlap(&[(0, 2), (5, 7)])); // disjoint with a gap
+        assert!(!has_overlap(&[]));
+    }
+
+    /// Proves the `debug_assert` in `build_line_conversions` is actually
+    /// wired to fire on overlapping input — the two prior findings on this
+    /// branch (a fence's ranges colliding with its container's marker
+    /// ranges) were both this exact shape, and would have tripped this
+    /// assertion in tests immediately instead of silently corrupting
+    /// coordinate conversion. Debug-only: `debug_assert!` is compiled out
+    /// under `cfg(not(debug_assertions))`, so this test would fail with
+    /// "did not panic" in a release-profile test run — it is gated to
+    /// match.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "overlapping hidden ranges")]
+    fn build_line_conversions_debug_asserts_on_overlapping_input() {
+        // Two overlapping ranges on line 0: [0,5) and [3,8).
+        let starts = vec![0usize];
+        let hidden = vec![vec![(0usize, 5usize), (3usize, 8usize)]];
+        let _ = build_line_conversions(&starts, &hidden);
+    }
 }

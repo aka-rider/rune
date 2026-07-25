@@ -1,7 +1,7 @@
 //! AST -> `Block` construction: the top-level dispatch (`build_block`) and
 //! the block kinds that recurse into further blocks (`BlockQuote`, `List`).
 
-use super::{ScanHint, line_end_at, line_start_at, node_range};
+use super::{ScanHint, line_end_at, node_range};
 use crate::element::block::{
     Block, BlockquoteM, BlockquoteMarkerM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM,
     ListM, ParagraphM, VerbatimKind, VerbatimM,
@@ -134,45 +134,58 @@ fn build_block<'a>(
             }
             let first_line = line;
             let last_line = sp.end.line.saturating_sub(1);
-            let first_line_start = line_start_at(starts, first_line);
-            let first_line_end = line_end_at(content.len(), starts, first_line);
-            let fence_open =
-                Some(ByteRange::new(first_line_start, first_line_end).clamp(content.len()));
 
-            // BLOCKER 3 fix: `last_line > first_line` alone is NOT "a
-            // closing fence exists" — every fence is unterminated while
-            // being typed (open fence + content, no closing ``` yet), and
-            // that shape also has `last_line > first_line`. comrak already
-            // tells us whether a real closing fence was matched
+            // CONTAINER-PREFIX fix: `fence_open`'s start is `range.start`,
+            // NOT `line_start_at`/`hint` — a node's own sourcepos already
+            // bakes in EVERY ancestor's line-0 prefix (a blockquote's
+            // `"> "` AND a list item's `"- "`/`"1. "`, whichever applies),
+            // so `range.start` is already exactly where this fence's own
+            // first line begins. `hint` only tracks REPEATING blockquote
+            // markers across continuation lines — it has no entry for a
+            // list item's non-repeating marker, so using it here (instead
+            // of `range.start`) would silently fall back to the physical
+            // line start and re-claim bytes the list item's own marker
+            // already hid (`"- ```rust"` -> fence_open `[0, 9)` colliding
+            // with the item's own marker `[0, 2)`).
+            let first_line_end = line_end_at(content.len(), starts, first_line);
+            let fence_open = Some(ByteRange::new(range.start, first_line_end).clamp(content.len()));
+
+            // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
+            // NOT "a closing fence exists" — every fence is unterminated
+            // while being typed (open fence + content, no closing ``` yet),
+            // and that shape also has `last_line > first_line`. comrak
+            // already tells us whether a real closing fence was matched
             // (`NodeCodeBlock::closed`); trust it instead of inferring from
             // line span. Unclosed -> no `fence_close`, and every byte after
             // the opening fence line through the end of the block is live
             // content (never silently concealed as if it were a fence).
-            let (fence_close, content_range) = if closed {
-                let ls = line_start_at(starts, last_line);
+            //
+            // CONTAINER-PREFIX fix (this round): `fence_close`'s start and
+            // EVERY content line's start use `hint.start_for_line` — unlike
+            // `fence_open`'s own first line, these are CONTINUATION lines of
+            // the fence, which is exactly what `hint` exists to handle
+            // (skip a repeating blockquote `"> "` on that physical line; a
+            // no-op physical-line-start for a list item, which has nothing
+            // to skip past line 0). Each content line gets its OWN range —
+            // never one contiguous span across lines — because a single
+            // range can't exclude an interior container prefix (the
+            // overlapping-hidden-range bug this fix exists to close).
+            let (fence_close, content_line_range) = if closed {
+                let ls = hint.start_for_line(starts, last_line);
                 let le = line_end_at(content.len(), starts, last_line);
                 let close = ByteRange::new(ls, le).clamp(content.len());
-                let body =
-                    ByteRange::new(line_start_at(starts, first_line + 1), ls).clamp(content.len());
-                (Some(close), body)
+                (Some(close), (first_line + 1)..last_line)
             } else {
-                // `line_start_at` falls back to 0 for an out-of-bounds line
-                // — correct for "this document has no such line", but WRONG
-                // as a content-range start: when the unterminated fence is
-                // the document's LAST line (`first_line + 1` has no entry
-                // in `starts`), the fallback must be `range.end` (nothing
-                // left to show), not byte 0 (which would wrongly claim the
-                // ENTIRE document from the start as this fence's content).
-                let body_start = starts
-                    .get(first_line + 1)
-                    .copied()
-                    .unwrap_or(range.end)
-                    .min(range.end);
-                (
-                    None,
-                    ByteRange::new(body_start, range.end).clamp(content.len()),
-                )
+                (None, (first_line + 1)..(last_line + 1))
             };
+
+            let content_lines: Vec<ByteRange> = content_line_range
+                .map(|l| {
+                    let s = hint.start_for_line(starts, l);
+                    let e = line_end_at(content.len(), starts, l);
+                    ByteRange::new(s, e).clamp(content.len())
+                })
+                .collect();
 
             Some(Block::CodeFence(CodeFenceM {
                 sm: RevealSm::new(RevealState::Rendered),
@@ -182,7 +195,7 @@ fn build_block<'a>(
                 language: info,
                 fence_open,
                 fence_close,
-                content: content_range,
+                content_lines,
             }))
         }
         BlockKind::ThematicBreak => Some(Block::ThematicBreak(HrM {
