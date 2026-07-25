@@ -23,7 +23,7 @@
 //!
 //! Both implementations expose `&self`-receiver methods (interior
 //! mutability in `Mem` via `Mutex`), so the trait works behind shared
-//! references.
+//! references. `Disk` is stateless and has no synchronization overhead.
 //!
 //! # Design rationale
 //!
@@ -41,8 +41,8 @@ use std::path::Path;
 /// A virtual file system with read and atomic-save operations.
 ///
 /// Both methods take `&self` (not `&mut self`) so implementations can
-/// use interior mutability — `Disk` is `!Sync`-free (stateless), `Mem`
-/// uses `Mutex`.
+/// use interior mutability — `Disk` is stateless (no synchronization),
+/// `Mem` uses `Mutex`.
 pub trait Vfs {
     /// Read the entire contents of `path`.
     fn read(&self, path: &Path) -> io::Result<Vec<u8>>;

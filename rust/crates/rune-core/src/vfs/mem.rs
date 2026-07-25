@@ -3,11 +3,12 @@
 //! A `Mutex`-backed `HashMap<PathBuf, Vec<u8>>` with an optional
 //! `fail_next_save` hook for testing error paths.
 
-use crate::vfs::Vfs;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+use crate::vfs::Vfs;
 
 /// In-memory `Vfs` keyed by `PathBuf`. Suitable for tests.
 pub struct Mem {
@@ -28,21 +29,16 @@ impl Mem {
     /// The failure fires exactly once and is then cleared.
     pub fn fail_next_save(&self, kind: io::ErrorKind) {
         let err = io::Error::new(kind, "fail_next_save triggered");
-        if let Ok(mut guard) = self.fail_next.lock() {
-            *guard = Some(err);
-        }
+        let mut guard = self.fail_next.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(err);
     }
 
     fn lock_data(&self) -> std::io::Result<std::sync::MutexGuard<'_, HashMap<PathBuf, Vec<u8>>>> {
-        self.data
-            .lock()
-            .map_err(|e| io::Error::other(e.to_string()))
+        Ok(self.data.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
     fn lock_fail(&self) -> std::io::Result<std::sync::MutexGuard<'_, Option<io::Error>>> {
-        self.fail_next
-            .lock()
-            .map_err(|e| io::Error::other(e.to_string()))
+        Ok(self.fail_next.lock().unwrap_or_else(|p| p.into_inner()))
     }
 }
 
