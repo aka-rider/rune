@@ -88,11 +88,27 @@ impl std::error::Error for BufferError {}
 /// `Buffer`; the receiver is untouched (fuzz-proven in
 /// `tests/buffer_roundtrip.rs`, port of `FuzzBufferSnapshotImmutability`).
 /// Port of `buffer.go:32-36`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Invariant: `line_starts` is never empty and `line_starts[0] == 0` —
+/// every method below assumes it (`line_start`/`line_end`/`find_line`/
+/// `update_line_starts` all read `line_starts` under this assumption). Go's
+/// `getLineStarts()` (`lineindex.go:15-20`) nil-guards a zero-valued
+/// `Buffer{}` back to `[0]` for exactly this reason. A derived
+/// `#[derive(Default)]` would produce `line_starts: vec![]` instead — an
+/// unrepresentable-by-construction fix: `Buffer` gets a manual `Default`
+/// impl below that routes through `Buffer::new("")`, so no `Buffer` can
+/// ever exist with a malformed line index in the first place.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Buffer {
     content: String,
     line_starts: Vec<usize>,
     version: u64,
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Buffer::new("")
+    }
 }
 
 impl Buffer {
@@ -130,11 +146,17 @@ impl Buffer {
         &self.content
     }
 
-    /// Returns `""` instead of panicking when `[start, end)` is not a valid
-    /// range on `content` (see module docs — a deliberate deviation from
-    /// Go's panicking `content[start:end]`).
-    pub fn slice(&self, start: usize, end: usize) -> &str {
-        self.content.get(start..end).unwrap_or("")
+    /// Returns `None` instead of panicking when `[start, end)` is not a
+    /// valid range on `content` — out of bounds, reversed (`start > end`),
+    /// or splitting a multi-byte char — consistent with `byte`/`rune_at`
+    /// below (see module docs — a deliberate deviation from Go's panicking
+    /// `content[start:end]`). Deliberately NOT `""` on failure: an empty
+    /// string is indistinguishable from a legitimately empty slice, which
+    /// would be a §1.4.10 hazard for any caller recording displaced bytes
+    /// (a `None` they mishandle is at least a visible bug, not a silent
+    /// "nothing was displaced").
+    pub fn slice(&self, start: usize, end: usize) -> Option<&str> {
+        self.content.get(start..end)
     }
 
     pub fn byte(&self, offset: usize) -> Option<u8> {
@@ -156,12 +178,17 @@ impl Buffer {
         self.replace(start, end, "")
     }
 
-    /// Convenience single-edit wrapper over `apply_edits`. Mirrors Go's
-    /// `Replace`, which discards `ApplyEdits`' error and returns the
+    /// Convenience single-edit wrapper over `apply_edits`, used by
+    /// `insert`/`delete`, tests, and programmatic edits that already know
+    /// the range is valid. Discards `apply_edits`' error and returns the
     /// receiver's content unchanged on a rejected edit — `apply_edits` is
-    /// the primitive that surfaces the error (§1.3); this wrapper is for
-    /// callers (tests, programmatic edits) that already know the range is
-    /// valid. Port of `buffer.go:81-92`.
+    /// the primitive that surfaces the error (§1.3). Port of
+    /// `buffer.go:81-92`, EXCEPT the start/end swap-if-reversed below: Go's
+    /// `Buffer.Replace` has no such swap (it passes `start`/`end` straight
+    /// through to `ApplyEdits`, so a reversed range is simply rejected as
+    /// out-of-bounds) — the swap is ported from `textedit.ReplaceRange`
+    /// (`edit_primitives.go:28-30`), which this method's actual callers
+    /// (`insert`/`delete`, and arbitrary start/end from tests) rely on.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> Buffer {
         let (start, end) = if start > end {
             (end, start)
@@ -357,6 +384,7 @@ impl Buffer {
             }
             line_starts = next_starts;
         }
+        debug_assert_line_starts_invariant(&line_starts);
         line_starts
     }
 }
@@ -387,7 +415,22 @@ fn compute_line_starts(content: &str) -> Vec<usize> {
             starts.push(i + 1);
         }
     }
+    debug_assert_line_starts_invariant(&starts);
     starts
+}
+
+/// The invariant every `Buffer::line_starts` must uphold: non-empty, with
+/// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
+/// rebuilt (`compute_line_starts`, `update_line_starts`) rather than only
+/// documented — a `debug_assert!` catches a future change that reintroduces
+/// the empty-index state finding 1 fixed (`Buffer::default()` used to
+/// derive `line_starts: vec![]`).
+fn debug_assert_line_starts_invariant(line_starts: &[usize]) {
+    debug_assert_eq!(
+        line_starts.first().copied(),
+        Some(0),
+        "line_starts must be non-empty and start with 0"
+    );
 }
 
 /// Port of `lineindex.go:51-59`.

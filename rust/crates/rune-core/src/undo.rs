@@ -12,17 +12,33 @@ use crate::cursor::Cursor;
 /// edit's insert becomes a delete range, and its deleted text becomes the
 /// new insert. Port of the edit construction in
 /// `edit_primitives.go:51-60` (`ApplyInverse`).
-pub fn inverse_edits(edits: &[AppliedEdit]) -> Vec<Edit> {
-    let raw: Vec<Edit> = edits
-        .iter()
-        .map(|ae| Edit {
+///
+/// Returns `BufferError::OutOfBounds` instead of panicking if
+/// `ae.start + ae.insert.len()` would overflow `usize`. Unreachable from
+/// any edit `apply_edits` itself produced (every real `start`/`len` is
+/// bounded by a live document's byte length), but `edits` is `pub fn`
+/// -reachable data — Phase 2 will feed it back from SQLite — and §1.3
+/// forbids panicking on adversarial input regardless of how unreachable it
+/// is today.
+pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
+    let mut raw = Vec::with_capacity(edits.len());
+    for ae in edits {
+        let end = ae
+            .start
+            .checked_add(ae.insert.len())
+            .ok_or(BufferError::OutOfBounds {
+                start: ae.start,
+                end: usize::MAX,
+                len: usize::MAX,
+            })?;
+        raw.push(Edit {
             start: ae.start,
-            end: ae.start + ae.insert.len(),
+            end,
             insert: ae.deleted.clone(),
             cursor_id: 0,
-        })
-        .collect();
-    clone_and_sort_edits_descending(&raw)
+        });
+    }
+    Ok(clone_and_sort_edits_descending(&raw))
 }
 
 /// Apply the inverse of `edits` to `buf` (undo). All-or-nothing: on error
@@ -30,7 +46,7 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Vec<Edit> {
 /// too (§1.4.8, `workspace_undo.go:31-46`). Port of
 /// `edit_primitives.go:51-68`.
 pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
-    let inverse = inverse_edits(edits);
+    let inverse = inverse_edits(edits)?;
     let (new_buf, _) = buf.apply_edits(&inverse)?;
     Ok(new_buf)
 }
@@ -42,17 +58,43 @@ pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, Buff
 /// why batching them would be wrong. All-or-nothing: any edit's failure
 /// returns the error and the original `buf` is never touched. Port of
 /// `edit_primitives.go:86-110`.
+///
+/// Precondition: no two edits in `edits` share the same `start` (in the
+/// post-edit coordinate space `AppliedEdit::start` lives in). The ascending
+/// sort below ties on `start` alone, with no secondary key — this mirrors
+/// Go's `sort.Slice` in `edit_primitives.go:91-93`, which has the identical
+/// characteristic — so a tie's relative replay order is
+/// implementation-defined and can silently reorder an insert against an
+/// adjacent delete. The real editing pipeline never produces this:
+/// `CursorSet::merge` coalesces any two cursors whose selections touch into
+/// one before edits are ever generated, so two edits landing on the
+/// identical post-edit `start` cannot arise from a real multi-cursor batch.
+/// Checked with `debug_assert!` — a caller invariant to catch during
+/// development, not user input this function should refuse at runtime.
 pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     if edits.is_empty() {
         return Ok(buf.clone());
     }
     let mut sorted: Vec<&AppliedEdit> = edits.iter().collect();
     sorted.sort_by_key(|e| e.start);
+    debug_assert!(
+        no_duplicate_starts(&sorted),
+        "reapply: two edits share a post-edit start; CursorSet::merge should have coalesced them upstream"
+    );
 
     let mut work = buf.clone();
     for e in sorted {
         let start = e.start;
-        let end = e.start + e.deleted.len();
+        let end = match start.checked_add(e.deleted.len()) {
+            Some(end) => end,
+            None => {
+                return Err(BufferError::OutOfBounds {
+                    start,
+                    end: usize::MAX,
+                    len: work.len(),
+                });
+            }
+        };
         if start > work.len() || end > work.len() || start > end {
             return Err(BufferError::OutOfBounds {
                 start,
@@ -70,6 +112,15 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
         work = new_buf;
     }
     Ok(work)
+}
+
+/// Port of the `reapply` precondition check above: `true` iff no two
+/// (already start-ascending-sorted) edits share a `start`.
+fn no_duplicate_starts(sorted: &[&AppliedEdit]) -> bool {
+    sorted.windows(2).all(|w| match (w.first(), w.get(1)) {
+        (Some(a), Some(b)) => a.start != b.start,
+        _ => true,
+    })
 }
 
 /// One undo/redo unit: the edits applied plus cursor state before/after, so

@@ -4,7 +4,13 @@
 //! plan-required inverse/reapply round-trip through `rune_core::undo`:
 //! random doc + random valid edit batch -> apply -> inverse -> byte-identical
 //! original; `reapply(applied)` reproduces the edited bytes.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::type_complexity
+)]
 
 use proptest::prelude::*;
 use rune_core::buffer::{Buffer, Edit};
@@ -173,4 +179,82 @@ proptest! {
             prop_assert_eq!(redone.content(), edited.content());
         }
     }
+}
+
+/// Review finding 6(a): the incrementally-updated line index
+/// (`update_line_starts`, exercised via `apply_edits`) must always agree
+/// with a from-scratch line index built by `Buffer::new` over the same
+/// final content. Table cases cover the scenarios named in the finding: a
+/// multi-line insert, a newline-spanning delete, and a descending
+/// multi-edit batch that touches several lines in one call.
+#[test]
+fn incremental_line_index_matches_from_scratch_rebuild() {
+    let cases: [(&str, &[(usize, usize, &str)]); 3] = [
+        // Multi-line insert into a single-line buffer.
+        ("hello world", &[(5, 5, "\none\ntwo\nthree")]),
+        // Newline-spanning delete: removes "\nbbb\nccc", collapsing four
+        // lines ("aaa","bbb","ccc","ddd") down to two ("aaa","ddd").
+        ("aaa\nbbb\nccc\nddd", &[(3, 11, "")]),
+        // Descending multi-edit batch touching several lines at once:
+        // replace "line4" (24..29), then "line2\n" (12..18), then "line0"
+        // (0..5) — total length is 29 (5 * "lineN" + 4 newlines).
+        (
+            "line0\nline1\nline2\nline3\nline4",
+            &[(24, 29, "X"), (12, 18, "\nY\nZ"), (0, 5, "L0")],
+        ),
+    ];
+
+    for (init, edits) in cases {
+        let b = Buffer::new(init);
+        let edit_batch: Vec<Edit> = edits
+            .iter()
+            .map(|&(start, end, insert)| Edit {
+                start,
+                end,
+                insert: insert.to_string(),
+                cursor_id: 0,
+            })
+            .collect();
+        let (edited, _) = b
+            .apply_edits(&edit_batch)
+            .unwrap_or_else(|e| panic!("edit batch should apply for {init:?}: {e}"));
+        let fresh = Buffer::new(edited.content());
+
+        assert_eq!(
+            edited.line_count(),
+            fresh.line_count(),
+            "line_count mismatch for case {init:?} -> {:?}",
+            edited.content()
+        );
+        for i in 0..fresh.line_count() {
+            assert_eq!(
+                edited.line_start(i),
+                fresh.line_start(i),
+                "line_start({i}) mismatch for case {init:?} -> {:?}",
+                edited.content()
+            );
+            assert_eq!(
+                edited.line(i),
+                fresh.line(i),
+                "line({i}) mismatch for case {init:?} -> {:?}",
+                edited.content()
+            );
+        }
+    }
+}
+
+/// Review finding 6(b) / regression for finding 1:
+/// `Buffer::default()` used to derive `line_starts: vec![]` via
+/// `#[derive(Default)]`, silently breaking the `line_starts[0] == 0`
+/// invariant on the very first edit. `Buffer::default()` must behave
+/// identically to `Buffer::new("")` for every line-index-observing method.
+#[test]
+fn default_buffer_then_insert_has_correct_line_index() {
+    let b = Buffer::default().insert(0, "hello\nworld");
+
+    assert_eq!(b.line_count(), 2);
+    assert_eq!(b.line(0), "hello");
+    assert_eq!(b.line(1), "world");
+    assert_eq!(b.offset_to_line_col(8), BufferPoint { line: 1, col: 2 });
+    assert_eq!(b.line_col_to_offset(BufferPoint { line: 1, col: 2 }), 8);
 }
