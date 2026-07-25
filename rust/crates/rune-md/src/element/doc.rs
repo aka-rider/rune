@@ -7,18 +7,21 @@
 
 use crate::element::block::Block;
 use crate::element::{CursorProbe, InheritCtx, RevealGrant};
-use crate::emit::{SyntaxLine, SyntaxSnapshot};
+use crate::emit::SyntaxSnapshot;
+use crate::snapshot::DisplaySnapshot;
+use crate::wrap::WrapSnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 
-/// `emit` -> wrap (root-owned) -> `DisplaySnapshot`, per `DocMachine::snapshot`.
-/// WP3 stubs the wrap stage as identity (`lines` is exactly the emitter's
-/// per-buffer-line output, unwrapped); WP4 replaces this with the real wrap
-/// pass and adds the `WrapSnapshot`/`DisplaySnapshot` fields (plan WP3.S3:
-/// "Stub `snapshot()`'s wrap stage (identity) until WP4").
+/// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
+/// per `DocMachine::snapshot`. `syntax`/`wrap` carry the coordinate
+/// conversions (`buffer_to_syntax`/`syntax_to_buffer`,
+/// `syntax_to_wrap`/`wrap_to_syntax`); `display` is the wrap-rows view
+/// Phase 5 will later expand for tables/images.
 pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
-    pub lines: Vec<SyntaxLine>,
+    pub wrap: WrapSnapshot,
+    pub display: DisplaySnapshot,
 }
 
 /// Whether the editor currently has focus. Unfocused forces every
@@ -159,12 +162,19 @@ impl DocMachine {
         self.dirty |= dirty;
     }
 
-    /// `emit` -> wrap (root-owned) -> `DisplaySnapshot`. WP3 stub: identity
-    /// (no wrap pass yet — completed in WP4).
+    /// `emit` -> wrap (keyed off the root-owned `self.wrap`) ->
+    /// `DisplaySnapshot`. The wrap pass runs only here — children never wrap
+    /// themselves (plan Context, "Emit -> wrap -> snapshot").
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
         let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks);
+        let wrap = crate::wrap::WrapMap::new(self.wrap.width).sync(&lines);
+        let display = DisplaySnapshot::from_wrap(&wrap);
         self.dirty = false;
-        ViewSnapshots { syntax, lines }
+        ViewSnapshots {
+            syntax,
+            wrap,
+            display,
+        }
     }
 }
 

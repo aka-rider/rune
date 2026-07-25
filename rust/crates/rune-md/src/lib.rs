@@ -5,3 +5,5 @@
 pub mod element;
 pub mod emit;
 pub mod parse;
+pub mod snapshot;
+pub mod wrap;
