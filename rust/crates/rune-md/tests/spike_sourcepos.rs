@@ -18,35 +18,15 @@
 )]
 
 use comrak::nodes::{AstNode, NodeValue, Sourcepos};
-use comrak::{Arena, Options, parse_document};
+use comrak::{Arena, parse_document};
+use rune_md::parse::{line_starts, options, sourcepos_to_range};
 
-/// Port of `pkg/editor/buffer/lineindex.go:computeLineStarts` — byte offset
-/// of the start of each line.
-fn line_starts(src: &str) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    for (i, b) in src.bytes().enumerate() {
-        if b == b'\n' {
-            starts.push(i + 1);
-        }
-    }
-    starts
-}
-
-/// The WP0-proven conversion formula, byte-exact.
+/// The WP0-proven conversion formula, byte-exact — now the shared
+/// `rune_md::parse::sourcepos_to_range` (Ground rule 3: "make it a shared fn
+/// in `src/parse.rs`, don't duplicate").
 fn to_range(starts: &[usize], sp: Sourcepos) -> (usize, usize) {
-    let start = starts[sp.start.line - 1] + (sp.start.column - 1);
-    let end = starts[sp.end.line - 1] + sp.end.column;
-    (start, end)
-}
-
-fn options() -> Options<'static> {
-    let mut opts = Options::default();
-    opts.extension.strikethrough = true;
-    opts.extension.tasklist = true;
-    opts.extension.table = true;
-    opts.extension.wikilinks_title_after_pipe = true;
-    opts.extension.front_matter_delimiter = Some("---".to_owned());
-    opts
+    let r = sourcepos_to_range(starts, sp);
+    (r.start, r.end)
 }
 
 /// Depth-first search for the first descendant (root included) whose
