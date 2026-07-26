@@ -57,6 +57,16 @@ fn child_gap_delims(
 /// recorded hidden on the wikilink's own line while the emitter placed it,
 /// unhidden, on the actual closing line: a coverage/duplicate-claim bug at
 /// a new site, same root cause).
+///
+/// MIXED-INDEX SEAM fix (verification round 9's exhaustive audit, third
+/// pass): this used to check only `'\n'`, but `idx.comrak` — and comrak's
+/// own internal line counter, the thing this check exists to predict —
+/// treats a LONE `\r` as a line terminator exactly like `\n` (CR/LF/CRLF
+/// all count, CRLF as one). A wikilink match embedding a bare `\r` (no
+/// following `\n`, e.g. `"[[\r]]"`) desyncs comrak's line counter the
+/// same way an embedded `\n` does, but the old `'\n'`-only check let it
+/// through undetected, leaving a corrupted sibling's range to collide
+/// with an already-claimed byte under strict invariants.
 fn subtree_has_multiline_wikilink<'a>(
     content: &str,
     idx: &LineIndex,
@@ -66,7 +76,7 @@ fn subtree_has_multiline_wikilink<'a>(
         let range = node_range(content, idx, node);
         if content
             .get(range.start..range.end)
-            .is_none_or(|s| s.contains('\n'))
+            .is_none_or(|s| s.contains(['\n', '\r']))
         {
             return true;
         }
@@ -146,8 +156,14 @@ pub(super) fn build_inlines<'a>(
                 .min(range.end)
                 .min(parent_range.end)
                 .max(range.start);
+            // Each piece pushed below is already clamped to exactly ONE
+            // comrak line's own extent, so `content_lines` is trivially
+            // `vec![range]` for every one of them — no need to re-derive
+            // via `per_line_content`.
+            let first_range = ByteRange::new(range.start, first_line_end).clamp(content.len());
             out.push(Inline::Text(TextRun {
-                range: ByteRange::new(range.start, first_line_end).clamp(content.len()),
+                range: first_range,
+                content_lines: vec![first_range],
             }));
             for line in (first_line + 1)..=parent_last_line {
                 let s = hint.start_for_line(&idx.comrak, line);
@@ -166,8 +182,10 @@ pub(super) fn build_inlines<'a>(
                 // above.
                 let e = line_end_at(content.len(), &idx.comrak, line).min(parent_range.end);
                 if s < e {
+                    let piece_range = ByteRange::new(s, e).clamp(content.len());
                     out.push(Inline::Text(TextRun {
-                        range: ByteRange::new(s, e).clamp(content.len()),
+                        range: piece_range,
+                        content_lines: vec![piece_range],
                     }));
                 }
             }
@@ -189,6 +207,62 @@ enum InlineKind {
     /// machine (plan: "Inline images ... -> plain revealed text runs").
     Image,
     WikiLink(String),
+}
+
+/// The leading run of exactly `want` backtick bytes at the start of
+/// `line` — comrak's own delimiter matching guarantees a code span's
+/// OPEN is always found this way (the backtick run that started the
+/// match), so `line.start` is trustworthy as-is; this only clamps
+/// defensively (never scans backward past `line.start`) for the same
+/// "checked, not assumed" reason `trailing_backtick_run` below scans at
+/// all. Returns `line` itself if fewer than `want` backtick bytes are
+/// actually present (should not happen; degrades to "whole line hidden"
+/// rather than panicking on a malformed slice).
+fn leading_backtick_run(content: &str, line: ByteRange, want: usize) -> ByteRange {
+    let bytes = content.as_bytes();
+    let mut end = line.start;
+    while end < line.end && end - line.start < want && bytes.get(end) == Some(&b'`') {
+        end += 1;
+    }
+    if end - line.start == want {
+        ByteRange::new(line.start, end)
+    } else {
+        line
+    }
+}
+
+/// The trailing run of exactly `want` backtick bytes at the end of
+/// `line`, found by scanning BACKWARD from `line.end` rather than
+/// subtracting `want` from `line.end` directly (verification round 9's
+/// exhaustive audit, third pass): comrak's own sourcepos for a `Code`
+/// node's outer span can extend one or more bytes past the true closing
+/// backtick run — confirmed empirically with two independent minimal
+/// repros (`"]\n x```\n``` `\"`, where a trailing space after the real
+/// close run got folded into the node's own end column; and `">t\n>`\n`>"`,
+/// where the very next character after a single-backtick close got
+/// folded in the same way). Neither involves a container prefix or a
+/// `\r` — this is a raw comrak sourcepos quirk, not a mixed-index seam,
+/// so the fix is structural: don't trust `line.end` as the close run's
+/// own end, DERIVE it by skipping any trailing non-backtick bytes first.
+fn trailing_backtick_run(content: &str, line: ByteRange, want: usize) -> ByteRange {
+    let bytes = content.as_bytes();
+    let mut end = line.end;
+    while end > line.start && bytes.get(end - 1) != Some(&b'`') {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > line.start && bytes.get(start - 1) == Some(&b'`') {
+        start -= 1;
+    }
+    if end - start >= want {
+        let close_start = end - want;
+        ByteRange::new(close_start, end)
+    } else {
+        // No backtick run of the expected length found in this line at
+        // all — fall back to the naive clamp rather than guessing.
+        let close_start = line.end.saturating_sub(want).max(line.start);
+        ByteRange::new(close_start, line.end)
+    }
 }
 
 fn inline_kind(v: &NodeValue) -> InlineKind {
@@ -221,7 +295,19 @@ fn build_inline<'a>(
     let kind = inline_kind(&node.data.borrow().value);
 
     match kind {
-        InlineKind::TextLike | InlineKind::Image => Inline::Text(TextRun { range }),
+        InlineKind::TextLike | InlineKind::Image => Inline::Text(TextRun {
+            range,
+            // MAJOR fix (verification round 9's exhaustive audit): an
+            // unmodeled inline node (raw HTML, a hard line break, ...)
+            // can legitimately span multiple physical lines — verified
+            // empirically with a multi-line `<span\n...>` HTML tag
+            // nested in a blockquote, which used to re-claim the second
+            // line's own "> " marker the same way an un-fixed fence or
+            // table did. `per_line_content` naturally collapses to
+            // `vec![range]` for the overwhelmingly common single-line
+            // case.
+            content_lines: super::per_line_content(content, idx, range, hint),
+        }),
         InlineKind::Emph => {
             let (open, close) = child_gap_delims(content, idx, node, range);
             let children = build_inlines(content, idx, node, hint);
@@ -233,6 +319,7 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
+                content_lines: super::per_line_content(content, idx, range, hint),
             })
         }
         InlineKind::Strong => {
@@ -246,6 +333,7 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
+                content_lines: super::per_line_content(content, idx, range, hint),
             })
         }
         InlineKind::Strikethrough => {
@@ -259,14 +347,32 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
+                content_lines: super::per_line_content(content, idx, range, hint),
             })
         }
         InlineKind::Code(num_backticks) => {
-            let open_end = range.start.saturating_add(num_backticks).min(range.end);
-            let close_start = range.end.saturating_sub(num_backticks).max(open_end);
-            let open = ByteRange::new(range.start, open_end);
-            let close = ByteRange::new(close_start, range.end);
-            let content_range = ByteRange::new(open.end, close.start);
+            // MAJOR fix (verification round 9's exhaustive audit, second
+            // pass): a backtick run can never itself contain a newline, so
+            // `open`/`close` are each genuinely single-line — but deriving
+            // them via raw arithmetic straight off `range.start`/`range.end`
+            // silently assumed `range` is CONTIGUOUS raw bytes, which only
+            // holds when every line the span crosses has the SAME
+            // container-marker width. A blockquote's lazy-continuation line
+            // (no "> " at all) followed by one with a bare ">" (no trailing
+            // space, 1 byte instead of 2) breaks that assumption:
+            // `range.end - num_backticks` lands mid-marker instead of on
+            // the real closing backticks, producing a `close` that
+            // overlaps the marker's own hidden range. Deriving `open` from
+            // the FIRST content_lines piece and `close` from the LAST one
+            // makes both track the actual per-line content instead of raw
+            // extents, closing the same class VerbatimM/EmphasisM's own
+            // `range` had.
+            let content_lines = super::per_line_content(content, idx, range, hint);
+            let first_line = content_lines.first().copied().unwrap_or(range);
+            let last_line = content_lines.last().copied().unwrap_or(range);
+            let open = leading_backtick_run(content, first_line, num_backticks);
+            let close = trailing_backtick_run(content, last_line, num_backticks);
+            let content_range = ByteRange::new(open.end, close.start).clamp(content.len());
             Inline::Code(InlineCodeM {
                 sm: RevealSm::new(RevealState::Rendered),
                 range,
@@ -274,6 +380,8 @@ fn build_inline<'a>(
                 close,
                 content: content_range,
                 line,
+                content_lines,
+                inner_lines: super::per_line_content(content, idx, content_range, hint),
             })
         }
         InlineKind::Link(url) => {
@@ -281,6 +389,7 @@ fn build_inline<'a>(
             let url_range = link_url_range(range, &text, &url, content.len());
             Inline::Link(LinkM {
                 sm: RevealSm::new(RevealState::Rendered),
+                content_lines: super::per_line_content(content, idx, range, hint),
                 range,
                 line,
                 text,

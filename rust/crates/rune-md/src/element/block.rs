@@ -252,6 +252,19 @@ pub struct VerbatimM {
     pub sm: RevealSm,
     pub range: ByteRange,
     pub kind: VerbatimKind,
+    /// One entry per physical line `range` spans (AS COMRAK PARSED
+    /// THEM), each already clamped to that line's own `hint`-derived
+    /// content start — the emit path iterates this instead of pushing
+    /// `range` whole through the generic per-line splitter (verification
+    /// round 9 MAJOR: a comrak-recognized table/HTML block/unknown
+    /// construct nested in a blockquote or list item is exactly as
+    /// multi-line as a fence or a setext heading, and `range` alone —
+    /// one contiguous span — can't exclude an interior container prefix
+    /// any more than `CodeFenceM::range`/`HeadingM::range` can; this is
+    /// the SAME shape those two were already fixed for, just never
+    /// extended here). Always single-entry `vec![range]` for a
+    /// genuinely single-line block.
+    pub content_lines: Vec<ByteRange>,
 }
 
 impl VerbatimM {

@@ -173,6 +173,50 @@ pub(crate) fn node_range(content: &str, idx: &LineIndex, node: &AstNode) -> Byte
     sourcepos_to_range(&idx.comrak, sp).clamp(content.len())
 }
 
+/// One `ByteRange` per physical line `range` spans, AS COMRAK PARSED
+/// THEM (`idx.comrak`) — the single chokepoint EVERY multi-line
+/// construct's own per-line, `hint`-aware breakdown routes through
+/// (`CodeFenceM`'s content lines, `HeadingM`'s setext content lines,
+/// `VerbatimM`'s table/HTML-block/unknown content lines, and a bare
+/// `TextRun`'s own content lines — verification round 9's exhaustive
+/// audit: ANY node whose OWN raw extent can span more than one physical
+/// line needs this, not just the block kinds already fixed in rounds
+/// 4-7). Pushing a multi-line `range` whole through the generic per-line
+/// splitter (`emit::for_each_line_slice`, which only knows BUFFER line
+/// boundaries) re-claims a container's own repeating prefix on any
+/// continuation line the range crosses — this derives each line's OWN
+/// range instead, explicitly excluding that prefix via `hint`.
+///
+/// The first line trusts `range.start` (a node's own sourcepos-derived
+/// first-line start is always reliable — see `CodeFenceM::fence_open`'s
+/// docs); every CONTINUATION line uses `hint.start_for_line` to skip a
+/// repeating container prefix comrak's sourcepos alone can't be trusted
+/// to exclude. Naturally collapses to `vec![range]` for a genuinely
+/// single-line node — the overwhelmingly common case, so this is cheap
+/// for everything that doesn't need it.
+pub(crate) fn per_line_content(
+    content: &str,
+    idx: &LineIndex,
+    range: ByteRange,
+    hint: &ScanHint,
+) -> Vec<ByteRange> {
+    let comrak_first_line = line_at(&idx.comrak, range.start);
+    let comrak_last_line = line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
+    (comrak_first_line..=comrak_last_line)
+        .map(|l| {
+            let s = if l == comrak_first_line {
+                range.start
+            } else {
+                hint.start_for_line(&idx.comrak, l)
+            };
+            let e = line_end_at(content.len(), &idx.comrak, l)
+                .min(range.end)
+                .max(s);
+            ByteRange::new(s, e).clamp(content.len())
+        })
+        .collect()
+}
+
 /// Per-line scan-start hints for locating a blockquote depth's own `"> "`
 /// marker. Only line 0 of a nested `BlockQuote` node's OWN sourcepos tells
 /// us where that depth's content starts; for a CONTINUATION line (line >

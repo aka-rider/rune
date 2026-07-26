@@ -219,15 +219,24 @@ pub(crate) fn emit_block(
             );
         }
         Block::Verbatim(v) => {
-            push_span_split_by_line(
-                content,
-                starts,
-                v.range,
-                verbatim_style(),
-                RevealState::Revealed,
-                out,
-                accounted,
-            );
+            // MAJOR fix (verification round 9): `v.content_lines` — never
+            // `v.range` directly — the same reason `emit_code_fence`
+            // iterates `cf.content_lines` instead of pushing `cf.range`
+            // whole (see this file's `CodeFence` docs): `range` alone can
+            // span a container's own repeating prefix on a table/HTML-
+            // block/unknown construct's continuation line, which a
+            // single contiguous push can't exclude.
+            for &line in &v.content_lines {
+                push_span_split_by_line(
+                    content,
+                    starts,
+                    line,
+                    verbatim_style(),
+                    RevealState::Revealed,
+                    out,
+                    accounted,
+                );
+            }
         }
     }
 }
@@ -280,28 +289,48 @@ fn emit_inline(
 ) {
     match inl {
         Inline::Text(t) => {
-            push_span_split_by_line(
-                content,
-                starts,
-                t.range,
-                style_ctx.resolve(),
-                RevealState::Revealed,
-                out,
-                accounted,
-            );
-        }
-        Inline::Emphasis(m) => {
-            let child_ctx = style_ctx.with_kind(m.kind);
-            if m.sm.state() == RevealState::Revealed {
+            // MAJOR fix (verification round 9): `t.content_lines` — never
+            // `t.range` directly — the same reason `Block::Verbatim`'s
+            // (and `CodeFenceM`'s) emission iterates its own content
+            // lines instead of pushing one contiguous range (see this
+            // file's `CodeFence`/`Verbatim` docs): an unmodeled inline
+            // node's `range` alone can span a container's own repeating
+            // prefix on a continuation line, which a single contiguous
+            // push can't exclude.
+            for &line in &t.content_lines {
                 push_span_split_by_line(
                     content,
                     starts,
-                    m.range,
-                    child_ctx.resolve(),
+                    line,
+                    style_ctx.resolve(),
                     RevealState::Revealed,
                     out,
                     accounted,
                 );
+            }
+        }
+        Inline::Emphasis(m) => {
+            let child_ctx = style_ctx.with_kind(m.kind);
+            if m.sm.state() == RevealState::Revealed {
+                // MAJOR fix (verification round 9's exhaustive audit):
+                // `m.content_lines` — never `m.range` directly — the
+                // same reason `Block::Verbatim`'s emission iterates its
+                // own content lines (see this file's `Verbatim` docs):
+                // emphasis/strong/strikethrough content can soft-wrap
+                // across lines, and `range` alone can't exclude a
+                // container's own repeating prefix on the continuation
+                // line.
+                for &line in &m.content_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        child_ctx.resolve(),
+                        RevealState::Revealed,
+                        out,
+                        accounted,
+                    );
+                }
             } else {
                 hide_range(hidden, accounted, content, starts, m.open);
                 emit_inlines(
@@ -318,40 +347,56 @@ fn emit_inline(
         }
         Inline::Code(m) => {
             if m.sm.state() == RevealState::Revealed {
-                push_span_split_by_line(
-                    content,
-                    starts,
-                    m.range,
-                    StyleId::Code,
-                    RevealState::Revealed,
-                    out,
-                    accounted,
-                );
+                // MAJOR fix (verification round 9): `m.content_lines`,
+                // matching `Emphasis`'s own revealed-path fix above.
+                for &line in &m.content_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        StyleId::Code,
+                        RevealState::Revealed,
+                        out,
+                        accounted,
+                    );
+                }
             } else {
                 hide_range(hidden, accounted, content, starts, m.open);
-                push_span_split_by_line(
-                    content,
-                    starts,
-                    m.content,
-                    StyleId::Code,
-                    RevealState::Rendered,
-                    out,
-                    accounted,
-                );
+                // MAJOR fix (verification round 9): `m.inner_lines` —
+                // never `m.content` directly — a code span's INNER text
+                // can soft-wrap across lines exactly like its outer
+                // `range` can (verified empirically: "> `a\n> b`" used
+                // to re-claim the continuation line's own "> " marker as
+                // part of the code span's rendered content).
+                for &line in &m.inner_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        StyleId::Code,
+                        RevealState::Rendered,
+                        out,
+                        accounted,
+                    );
+                }
                 hide_range(hidden, accounted, content, starts, m.close);
             }
         }
         Inline::Link(m) => {
             if m.sm.state() == RevealState::Revealed {
-                push_span_split_by_line(
-                    content,
-                    starts,
-                    m.range,
-                    StyleId::Link,
-                    RevealState::Revealed,
-                    out,
-                    accounted,
-                );
+                // MAJOR fix (verification round 9): `m.content_lines`,
+                // matching `Emphasis`'s own revealed-path fix above.
+                for &line in &m.content_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        StyleId::Link,
+                        RevealState::Revealed,
+                        out,
+                        accounted,
+                    );
+                }
             } else {
                 let (open, close) = link_delims(m.range, &m.text);
                 hide_range(hidden, accounted, content, starts, open);

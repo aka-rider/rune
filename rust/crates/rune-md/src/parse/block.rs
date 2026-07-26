@@ -126,39 +126,19 @@ fn build_block<'a>(
             // container prefix comrak's sourcepos alone can't be trusted
             // to exclude.
             //
-            // MIXED-INDEX SEAM fix (verification round 7): this loop
-            // iterates and clamps by comrak's OWN physical-line count
-            // (`idx.comrak`), not the buffer's `\n`-only one — a setext
-            // heading's own two "lines" (text + underline) are lines AS
-            // COMRAK PARSED THEM, and a lone `\r` elsewhere in the
-            // document shifts comrak's line numbering relative to the
-            // buffer's without changing how many DISTINCT lines this
-            // node itself spans. `line`/`last_line` (buffer-derived,
-            // stored on `HeadingM` for the cursor-reveal decide policy)
-            // stay separate from `comrak_first_line`/`comrak_last_line`
-            // (this loop's own iteration bounds) — conflating the two
-            // was the exact bug (`CodeFenceM` had the same seam, see the
-            // `CodeBlock` arm below).
-            let comrak_first_line = super::line_at(&idx.comrak, range.start);
-            let comrak_last_line =
-                super::line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
-            let content_lines: Vec<ByteRange> = if comrak_last_line > comrak_first_line {
-                (comrak_first_line..=comrak_last_line)
-                    .map(|l| {
-                        let s = if l == comrak_first_line {
-                            range.start
-                        } else {
-                            hint.start_for_line(&idx.comrak, l)
-                        };
-                        let e = line_end_at(content.len(), &idx.comrak, l)
-                            .min(range.end)
-                            .max(s);
-                        ByteRange::new(s, e).clamp(content.len())
-                    })
-                    .collect()
-            } else {
-                vec![range]
-            };
+            // MIXED-INDEX SEAM fix (verification round 7): built via
+            // `per_line_content`, which iterates and clamps by comrak's
+            // OWN physical-line count (`idx.comrak`), not the buffer's
+            // `\n`-only one — a setext heading's own two "lines" (text +
+            // underline) are lines AS COMRAK PARSED THEM, and a lone `\r`
+            // elsewhere in the document shifts comrak's line numbering
+            // relative to the buffer's without changing how many
+            // DISTINCT lines this node itself spans. `line` (buffer-
+            // derived, stored on `HeadingM` for the cursor-reveal decide
+            // policy) stays separate — conflating the two was the exact
+            // bug (`CodeFenceM` had the same seam, see the `CodeBlock`
+            // arm below).
+            let content_lines = super::per_line_content(content, idx, range, hint);
 
             Some(Block::Heading(HeadingM {
                 sm: RevealSm::new(RevealState::Rendered),
@@ -203,10 +183,12 @@ fn build_block<'a>(
             closed,
         } => {
             if !fenced {
+                let content_lines = super::per_line_content(content, idx, range, hint);
                 return Some(Block::Verbatim(VerbatimM {
                     sm: RevealSm::new(RevealState::Revealed),
                     range,
                     kind: VerbatimKind::Unknown,
+                    content_lines,
                 }));
             }
             // `first_line`/`last_line` stay BUFFER-derived — they're
@@ -366,17 +348,20 @@ fn build_block<'a>(
             sm: RevealSm::new(RevealState::Revealed),
             range,
             kind: VerbatimKind::Table,
+            content_lines: super::per_line_content(content, idx, range, hint),
         })),
         BlockKind::HtmlBlock => Some(Block::Verbatim(VerbatimM {
             sm: RevealSm::new(RevealState::Revealed),
             range,
             kind: VerbatimKind::Html,
+            content_lines: super::per_line_content(content, idx, range, hint),
         })),
         BlockKind::Document => None,
         BlockKind::Other => Some(Block::Verbatim(VerbatimM {
             sm: RevealSm::new(RevealState::Revealed),
             range,
             kind: VerbatimKind::Unknown,
+            content_lines: super::per_line_content(content, idx, range, hint),
         })),
     }
 }

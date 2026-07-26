@@ -833,6 +833,220 @@ fn thematic_break_empty_continuation_controls_stay_clean() {
 }
 
 // ---------------------------------------------------------------------
+// (a13) MAJOR (verification round 9): `Block::Verbatim` (GFM tables,
+// HTML blocks, and unknown/math constructs) never received the
+// container-aware per-line treatment `CodeFenceM`/`HeadingM`/`HrM` got
+// across rounds 4-7 — the dominant remaining panic class under the
+// adopted reviewer alphabet (~325/214k). Minimal repro: "> t\n> ---|"
+// (comrak recognizes "t\n---|" as a single-column GFM table; the
+// un-clamped `range` used to re-claim the blockquote's own "> " marker
+// on the table's second line). Fixed the same way `CodeFenceM` was:
+// `VerbatimM::content_lines`, one `ByteRange` per COMRAK line, built at
+// parse time via the new shared `per_line_content` chokepoint.
+//
+// The same exhaustive audit (§0 — "no variant derives multi-line ranges
+// from raw extents", checked variant by variant, not assumed) found the
+// identical gap in FOUR more places sharing the exact shape: `TextRun`
+// (an unmodeled multi-line inline node, e.g. raw HTML), `EmphasisM`/
+// `InlineCodeM`/`LinkM`'s own Revealed-path `range`, and
+// `InlineCodeM::content`'s Rendered-path inner text. All five now route
+// through the same `per_line_content` chokepoint. Assertions check the
+// EXACT rendered text (code/quote/emphasis content must appear in the
+// output, not just pass a coverage check) — a coverage-only check can't
+// tell "byte accounted for" from "byte accounted for AND shown".
+// ---------------------------------------------------------------------
+
+#[test]
+fn table_in_blockquote_does_not_double_claim() {
+    let content = "> t\n> ---|";
+    assert_no_duplicate_content(content);
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, _snap) = emit(buf.content(), doc.blocks());
+        let joined = joined_line(&lines, 1);
+        assert!(
+            joined.contains("---|"),
+            "table separator row missing from rendered output (focused={focused}): {joined:?}"
+        );
+    }
+}
+
+#[test]
+fn table_in_nested_blockquote_and_list_item_does_not_double_claim() {
+    assert_no_duplicate_content("> > t\n> > ---|");
+    assert_no_duplicate_content("- t\n  ---|");
+    assert_no_duplicate_content("1. t\n   ---|");
+}
+
+#[test]
+fn table_control_without_trailing_pipe_stays_clean() {
+    // The control: "t\n---" (no "|") is a setext heading, not a table —
+    // must stay clean either way, already covered by round 5-7's fix,
+    // pinned here again as the direct control for the table repro above.
+    assert_no_duplicate_content("> t\n> ---");
+}
+
+#[test]
+fn html_block_in_container_does_not_lose_content() {
+    let content = "> <div\n> foo>text";
+    assert_no_duplicate_content(content);
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, _snap) = emit(buf.content(), doc.blocks());
+        let joined = joined_line(&lines, 1);
+        assert!(
+            joined.contains("foo"),
+            "HTML block content missing from rendered output (focused={focused}): {joined:?}"
+        );
+    }
+    assert_no_duplicate_content("- <div\n  foo>text");
+}
+
+#[test]
+fn table_and_html_block_in_container_cr_variants_stay_clean() {
+    assert_no_duplicate_content("> t\r> ---|");
+    assert_no_duplicate_content("- t\r  ---|");
+    assert_no_duplicate_content("> <div\r> foo>text");
+}
+
+#[test]
+fn multiline_emphasis_strong_strikethrough_in_blockquote_stays_in_order() {
+    // Found by this round's own exhaustive audit (not in the original
+    // ticket): `EmphasisM`'s Revealed-path `range` has the SAME
+    // un-clamped-multi-line-range shape `VerbatimM` did.
+    for content in [
+        "> *a\n> b*",
+        "> **a\n> b**",
+        "> ~~a\n> b~~",
+        "> *a\n> b*\n> more",
+        "> > *a\n> > b*",
+    ] {
+        assert_no_duplicate_content(content);
+    }
+    let content = "> *a\n> b*";
+    // Cursor INSIDE the emphasis span (on "a") reveals the whole multi-line
+    // emphasis token as a unit — but the blockquote marker itself reveals
+    // per LINE independently (see `blockquote_marker_reveals_per_line_
+    // independently` above), so only line 0's own "> " shows.
+    let cursor = content.find('a').expect("fixture contains 'a'");
+    let (buf, doc) = synced(content, cursor, true);
+    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    assert_eq!(joined_line(&lines, 0), "> *a");
+    assert_eq!(joined_line(&lines, 1), "b*");
+    // Cursor OUTSIDE the emphasis span (line 0 only) conceals the
+    // delimiters and, per-line, line 1's own blockquote marker too.
+    let (buf, doc) = synced(content, 0, true);
+    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    assert_eq!(joined_line(&lines, 0), "> a");
+    assert_eq!(joined_line(&lines, 1), "b");
+}
+
+#[test]
+fn multiline_inline_code_in_blockquote_shows_content_both_states() {
+    // Found by the same audit: `InlineCodeM` has TWO separate multi-line-
+    // capable fields — the Revealed-path `range` (same shape as
+    // Emphasis) AND the Rendered-path `content` (the code span's own
+    // inner text, concealed state) — both used to re-claim the
+    // continuation line's own "> " marker.
+    let content = "> `a\n> b`\n> more";
+    assert_no_duplicate_content(content);
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, _snap) = emit(buf.content(), doc.blocks());
+        // Concealed (cursor away from the code span): rendered code text
+        // must show "a" and "b" without duplicating the quote marker.
+        assert!(joined_line(&lines, 0).contains('a'));
+        assert!(joined_line(&lines, 1).contains('b'));
+    }
+    // Revealed (cursor INSIDE the code span, on "a"): raw backticks show;
+    // the blockquote marker still reveals per line independently, so only
+    // line 0 (the cursor's own line) keeps its "> ".
+    let cursor = content.find('a').expect("fixture contains 'a'");
+    let (buf, doc) = synced(content, cursor, true);
+    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    assert_eq!(joined_line(&lines, 0), "> `a");
+    assert_eq!(joined_line(&lines, 1), "b`");
+}
+
+#[test]
+fn multiline_link_text_in_blockquote_stays_in_order() {
+    let content = "> [a\n> b](url)\n> more";
+    assert_no_duplicate_content(content);
+    // Revealed (cursor INSIDE the link's text span, on "a"); the blockquote
+    // marker reveals per line independently, so only line 0 keeps "> ".
+    let cursor = content.find('a').expect("fixture contains 'a'");
+    let (buf, doc) = synced(content, cursor, true);
+    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    assert_eq!(joined_line(&lines, 0), "> [a");
+    assert_eq!(joined_line(&lines, 1), "b](url)");
+    // Concealed (cursor away from the link, line 0 only): text shows,
+    // markup hidden, and line 1's own blockquote marker conceals too.
+    let (buf, doc) = synced(content, 0, true);
+    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    assert_eq!(joined_line(&lines, 0), "> a");
+    assert_eq!(joined_line(&lines, 1), "b");
+}
+
+#[test]
+fn multiline_inline_variants_in_list_item_stay_clean() {
+    // List items have no REPEATING marker, so these were never actually
+    // reachable — pinned as controls confirming that stays true.
+    assert_no_duplicate_content("- *a\n  b*");
+    assert_no_duplicate_content("- `a\n  b`");
+    assert_no_duplicate_content("- [a\n  b](url)");
+}
+
+// ---------------------------------------------------------------------
+// (a14) MAJOR (verification round 9, second and third fuzz-driven pass):
+// two more producer bugs the adopted reviewer harness found AFTER the
+// `content_lines` fix above, neither one a container-prefix omission —
+// both fuzz-minimized to their smallest repro, pinned here verbatim the
+// same way the file's existing `lone_cr_*` regressions are.
+// ---------------------------------------------------------------------
+
+#[test]
+fn inline_code_close_delimiter_is_located_not_computed_arithmetically() {
+    // `InlineCodeM::open`/`close` used to be derived by subtracting
+    // `num_backticks` straight off the outer `range`'s start/end — safe
+    // ONLY when `range` is contiguous raw bytes. Two independent bugs
+    // broke that assumption: (1) a multi-line code span crossing a
+    // blockquote's lazy-continuation line (no "> " at all) followed by a
+    // bare "> " (no trailing space, narrower than usual) has mismatched
+    // per-line marker widths, so naive arithmetic on `range.end` no
+    // longer lands on the real closing backticks; (2) independently of
+    // any container, comrak's OWN sourcepos for a `Code` node's outer
+    // span can extend one or more bytes past the true close run (e.g. a
+    // trailing space folded in after the CommonMark line-ending-to-space
+    // conversion). Both are fixed by LOCATING the close run (scan
+    // backward over non-backtick bytes, then take the trailing run) —
+    // see `trailing_backtick_run` in `parse/inline.rs` — instead of
+    // computing its position by subtraction.
+    assert_no_duplicate_content("]\n x```\n``` `");
+    assert_no_duplicate_content(">t\n>`\n`>");
+    // A realistic shape of bug (1): a code span opened on a blockquote's
+    // lazy-continuation line, closed on a line with a bare ">" (no
+    // trailing space).
+    assert_no_duplicate_content("> a\n`b\n>`c");
+}
+
+#[test]
+fn wikilink_matching_a_lone_cr_is_treated_as_a_line_break() {
+    // `subtree_has_multiline_wikilink` decides whether a `[[...]]` match
+    // could have desynced comrak's own internal line counter (verification
+    // rounds 3-4) by checking whether the match's own text contains a
+    // raw newline — but it only checked `'\n'`. `idx.comrak` (and
+    // comrak's own line counter, the thing this check exists to predict)
+    // treats a LONE `\r` as a line terminator exactly like `\n` (CR/LF/
+    // CRLF all count). A wikilink matching a bare `\r` (no following
+    // `\n`) desyncs comrak's line counter the same way an embedded `\n`
+    // does, but went undetected, leaving a corrupted sibling's range to
+    // collide with an already-claimed byte.
+    assert_no_duplicate_content("[[\r]]\n[");
+    assert_no_duplicate_content("[[\r]]\nx");
+    assert_no_duplicate_content("x [[a\rb]] **bold**\r");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
