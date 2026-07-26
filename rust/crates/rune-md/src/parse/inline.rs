@@ -3,7 +3,7 @@
 //! `wikilink_label_range`) that recover markup ranges comrak has no
 //! dedicated node for.
 
-use super::node_range;
+use super::{ScanHint, line_end_at, node_range};
 use crate::element::inline::{
     EmphasisKind, EmphasisM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
@@ -49,10 +49,62 @@ pub(super) fn build_inlines<'a>(
     content: &str,
     starts: &[usize],
     parent: &'a AstNode<'a>,
+    hint: &ScanHint,
 ) -> Vec<Inline> {
     let mut out = Vec::new();
     for child in parent.children() {
-        out.push(build_inline(content, starts, child));
+        // RESIDUAL PRODUCER fix (verification round 3, "[[\n]]"): a
+        // WikiLink match that embeds a raw newline desyncs comrak's OWN
+        // internal line counter for the REST of this paragraph — verified
+        // empirically: a plain-text sibling several nodes later reported
+        // the wrong physical line, so its sourcepos-derived byte range
+        // came out shifted earlier than its true position, landing on
+        // top of an EARLIER sibling's already-claimed bytes (a
+        // producer-bug duplicate-claim under strict invariants).
+        // Reconstructing each later sibling's TRUE position from
+        // comrak's now-unreliable sourcepos is not generally possible —
+        // but this crate already has a reliable, comrak-sourcepos-
+        // INDEPENDENT way to find where each remaining physical line's
+        // OWN content starts: `hint`, the same per-line container-prefix
+        // scan `blockquote_markers`/a fenced code block's `content_lines`
+        // already use to skip a repeating `"> "` (or a list item's
+        // continuation indent) on a line comrak's sourcepos alone can't
+        // be trusted for either. So the recovery is per PHYSICAL LINE
+        // (never one contiguous span, which could reach into a LATER
+        // line's container-marker bytes the block scanner independently
+        // — and reliably — already claims, an overlap this exact class of
+        // combinator found): the corrupted WikiLink's own range is kept
+        // as-is (proven reliable — verified empirically it never desyncs
+        // itself, only siblings AFTER it), and every remaining line
+        // through `parent`'s own (still-reliable) last line becomes its
+        // own raw, verbatim, always-`Revealed` text run starting at that
+        // line's `hint`-derived content start.
+        let range = node_range(content, starts, child);
+        let is_multiline_wikilink = matches!(child.data.borrow().value, NodeValue::WikiLink(_))
+            && content
+                .get(range.start..range.end)
+                .is_none_or(|s| s.contains('\n'));
+        if is_multiline_wikilink {
+            out.push(Inline::Text(TextRun { range }));
+            let last_covered_line =
+                super::line_at(starts, range.end.saturating_sub(1).max(range.start));
+            let parent_range = node_range(content, starts, parent);
+            let parent_last_line = super::line_at(
+                starts,
+                parent_range.end.saturating_sub(1).max(parent_range.start),
+            );
+            for line in (last_covered_line + 1)..=parent_last_line {
+                let s = hint.start_for_line(starts, line);
+                let e = line_end_at(content.len(), starts, line);
+                if s < e {
+                    out.push(Inline::Text(TextRun {
+                        range: ByteRange::new(s, e).clamp(content.len()),
+                    }));
+                }
+            }
+            return out;
+        }
+        out.push(build_inline(content, starts, child, hint));
     }
     out
 }
@@ -86,7 +138,12 @@ fn inline_kind(v: &NodeValue) -> InlineKind {
     }
 }
 
-fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> Inline {
+fn build_inline<'a>(
+    content: &str,
+    starts: &[usize],
+    node: &'a AstNode<'a>,
+    hint: &ScanHint,
+) -> Inline {
     let range = node_range(content, starts, node);
     let sp = node.data.borrow().sourcepos;
     let line = sp.start.line.saturating_sub(1);
@@ -96,7 +153,7 @@ fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> I
         InlineKind::TextLike | InlineKind::Image => Inline::Text(TextRun { range }),
         InlineKind::Emph => {
             let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Italic,
@@ -109,7 +166,7 @@ fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> I
         }
         InlineKind::Strong => {
             let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Bold,
@@ -122,7 +179,7 @@ fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> I
         }
         InlineKind::Strikethrough => {
             let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Strike,
@@ -149,7 +206,7 @@ fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> I
             })
         }
         InlineKind::Link(url) => {
-            let text = build_inlines(content, starts, node);
+            let text = build_inlines(content, starts, node, hint);
             let url_range = link_url_range(range, &text, &url, content.len());
             Inline::Link(LinkM {
                 sm: RevealSm::new(RevealState::Rendered),
@@ -161,7 +218,12 @@ fn build_inline<'a>(content: &str, starts: &[usize], node: &'a AstNode<'a>) -> I
             })
         }
         InlineKind::WikiLink(target) => {
-            let label = wikilink_label_range(content, starts, node, range);
+            // `build_inlines` (the only caller) already filters out any
+            // WikiLink whose own match spans a raw newline before ever
+            // reaching here (see its docs) — this arm only ever builds a
+            // genuinely single-line wikilink, so `range` is safe to hand
+            // straight to the byte-arithmetic label derivation below.
+            let label = wikilink_label_range(content, range);
             Inline::WikiLink(WikiLinkM {
                 sm: RevealSm::new(RevealState::Rendered),
                 range,
@@ -194,21 +256,39 @@ fn link_url_range(range: ByteRange, text: &[Inline], url: &str, content_len: usi
     ByteRange::new(url_start, url_end)
 }
 
-/// `[[target|label]]` has a child (the label text) when a pipe is present;
-/// `[[target]]` alone has none, and the label is `target` itself between the
-/// `"[["`/`"]]"` delimiters.
-fn wikilink_label_range(
-    content: &str,
-    starts: &[usize],
-    node: &AstNode,
-    range: ByteRange,
-) -> ByteRange {
-    if let (Some(first), Some(last)) = (node.first_child(), node.last_child()) {
-        let start = node_range(content, starts, first).start;
-        let end = node_range(content, starts, last).end;
-        return ByteRange::new(start, end).clamp(content.len());
-    }
+/// `[[target|label]]` displays a label: the part after the `'|'` when a pipe
+/// is present, else `target` itself — always the byte span between the
+/// `"[["`/`"]]"` delimiters (minus any `"target|"` prefix).
+///
+/// MAJOR fix (verification round 3): this USED to read the label's range off
+/// comrak's own child-node sourcepos (`node.first_child()`/`last_child()`),
+/// mirroring `child_gap_delims`'s pattern for emphasis/strong. But for a
+/// WikiLink specifically, comrak's child Text node sourcepos is unreliable
+/// when the target has LEADING WHITESPACE that gets trimmed (`"[[ a]]"` ->
+/// url `"a"`): the reported span pointed at the trimmed-away leading space
+/// instead of the retained character, undercounting the label by exactly
+/// one byte (invisible for a 1-byte ASCII char — "[[ a]]" rendered " "
+/// instead of " a" — and OUT-OF-BOUNDS-splitting for a multibyte final char,
+/// since the reported end landed mid-char: "[[ 日]]" / "[[ 👍]]").
+///
+/// A wikilink's own OUTER sourcepos (`range`, already proven reliable by the
+/// WP0 sourcepos spike) is always `"[[" target ["|" label] "]]"` — so the
+/// label always ends exactly 2 bytes before `range.end` (skipping the ASCII
+/// `"]]"`, always a char boundary) and starts either 2 bytes after
+/// `range.start` (skipping `"[["`, no pipe) or right after the first `'|'`
+/// found between the delimiters. Pure byte arithmetic off `range`'s own
+/// boundaries never depends on a child node's sourcepos at all, so this
+/// class of bug cannot recur here.
+fn wikilink_label_range(content: &str, range: ByteRange) -> ByteRange {
     let inner_start = range.start.saturating_add(2).min(range.end);
-    let inner_end = range.end.saturating_sub(2).max(inner_start);
-    ByteRange::new(inner_start, inner_end).clamp(content.len())
+    let label_end = range.end.saturating_sub(2).max(inner_start);
+    let inner = content.get(inner_start..label_end).unwrap_or("");
+    let label_start = match inner.find('|') {
+        Some(pipe_offset) => inner_start
+            .saturating_add(pipe_offset)
+            .saturating_add(1)
+            .min(label_end),
+        None => inner_start,
+    };
+    ByteRange::new(label_start, label_end).clamp(content.len())
 }

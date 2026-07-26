@@ -73,6 +73,60 @@ fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {
     );
 }
 
+/// Proves the char-boundary-snap-and-surface path (verification round 3
+/// MAJOR: `content.get(s..e)` returning `None` for a producer's
+/// non-boundary range used to hit `else { continue }` and silently drop
+/// the whole span — user bytes vanishing from the display) actually
+/// fires under strict invariants, rather than being silently absorbed.
+/// The exact shape a wikilink label range used to produce for a
+/// multibyte final char ("[[ 日]]"): a range whose end lands mid-char.
+#[test]
+#[should_panic(expected = "not on a char boundary")]
+fn push_span_split_by_line_asserts_on_non_char_boundary_span() {
+    // "a日\n": 'a' is byte 0, '日' occupies bytes [1,4), '\n' is byte 4.
+    let content = "a日\n";
+    let starts = vec![0usize, content.len()];
+    let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new()];
+    let mut accounted: Accounted = vec![Vec::new()];
+
+    push_span_split_by_line(
+        content,
+        &starts,
+        ByteRange::new(0, 2), // byte 2 sits inside '日' — not a char boundary
+        StyleId::Text,
+        RevealState::Revealed,
+        &mut spans,
+        &mut accounted,
+    );
+}
+
+/// The snap-outward arithmetic itself (used by the `else` branch above to
+/// recover a valid, verbatim span instead of dropping one): for every
+/// byte index in a multi-width string, `floor_char_boundary` rounds DOWN
+/// to a valid boundary and `ceil_char_boundary` rounds UP to one — never
+/// panicking, and never landing outside `[floor, idx] `/`[idx, ceil]`
+/// respectively. This is what makes "snap outward and emit verbatim"
+/// always safe: the recovered range only ever grows to include a few
+/// more of the user's own bytes, never shrinks past what was asked.
+#[test]
+fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
+    let content = "a日b👍c";
+    for idx in 0..=content.len() {
+        let f = floor_char_boundary(content, idx);
+        let c = ceil_char_boundary(content, idx);
+        assert!(
+            content.is_char_boundary(f),
+            "floor({idx}) = {f} not a boundary"
+        );
+        assert!(
+            content.is_char_boundary(c),
+            "ceil({idx}) = {c} not a boundary"
+        );
+        assert!(f <= idx, "floor({idx}) = {f} rounded UP, not down");
+        assert!(c >= idx, "ceil({idx}) = {c} rounded DOWN, not up");
+    }
+}
+
 fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();

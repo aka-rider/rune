@@ -476,6 +476,90 @@ fn empty_item_continuation_controls_stay_clean() {
 }
 
 // ---------------------------------------------------------------------
+// (a5) Wikilink label-range regression cases (verification round 3
+// MAJOR): the label range used to be read off comrak's own child-node
+// sourcepos, which is unreliable for a WikiLink target with leading
+// whitespace that gets trimmed — off by one for ASCII ("[[ a]]" showed
+// " " instead of " a"), and char-splitting/out-of-range for a multibyte
+// final char ("[[ 日]]", "[[ 👍]]"), which used to hit the emit-site
+// `else { continue }` and silently drop the whole span (bytes
+// unaccounted for — the round-1 byte-loss class at a new site). Checked
+// revealed (cursor on the wikilink's own line), concealed (cursor on an
+// unrelated line), and unfocused (always concealed) — plus full
+// per-line byte coverage in every state.
+// ---------------------------------------------------------------------
+
+fn assert_wikilink_label(content: &str, concealed_label: &str) {
+    // Revealed: cursor ON the wikilink's own line shows the raw markup
+    // verbatim — nothing about revealing depends on the label arithmetic.
+    let (buf, doc) = synced(content, 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), content.trim_end_matches('\n'));
+
+    // Concealed: cursor on an unrelated line shows just the label.
+    let wrapped = format!("x\n{content}");
+    let (buf, doc) = synced(&wrapped, 0, true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 1), concealed_label);
+
+    // Unfocused: always concealed regardless of cursor position.
+    let (buf, doc) = synced(content, 0, false);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    assert_eq!(joined_line(&lines, 0), concealed_label);
+}
+
+#[test]
+fn wikilink_label_with_leading_space_ascii_is_byte_exact() {
+    assert_wikilink_label("[[ a]]\n", " a");
+}
+
+#[test]
+fn wikilink_label_with_leading_space_cjk_is_byte_exact() {
+    assert_wikilink_label("[[ 日]]\n", " 日");
+}
+
+#[test]
+fn wikilink_label_with_leading_space_emoji_is_byte_exact() {
+    assert_wikilink_label("[[ 👍]]\n", " 👍");
+}
+
+// ---------------------------------------------------------------------
+// (a6) Residual-producer regression cases (verification round 3:
+// advisory promoted to work): two inputs still tripped the
+// strict-invariants assert, saved only by the emit-site chokepoint —
+// both producers now line-clamp/disjoint their claims like every other
+// producer in this crate, so these are green even under strict mode.
+// ---------------------------------------------------------------------
+
+#[test]
+fn multiline_wikilink_does_not_claim_across_lines() {
+    // A wikilink whose own sourcepos spans more than one physical line
+    // degrades to plain text — no single-line home for open/close
+    // delimiter claims exists, so it must never reach WikiLinkM
+    // construction in the first place.
+    for &focused in &[true, false] {
+        let (buf, doc) = synced("[[\n]]\n", 0, focused);
+        let (lines, snap) = emit(buf.content(), doc.blocks());
+        assert_full_line_coverage(&buf, &lines, &snap);
+    }
+}
+
+#[test]
+fn tab_indented_blockquote_continuation_does_not_double_claim() {
+    // comrak treats a TAB-indented continuation line as lazy-continuation
+    // PARAGRAPH TEXT (CommonMark: a repeated container marker may only be
+    // preceded by 0-3 SPACES, never a tab, which represents 4 columns) —
+    // `blockquote_markers` used to recognize it as a repeated ">" marker
+    // anyway (`str::trim_start` strips tabs too), double-claiming the
+    // same byte the paragraph's own Text node also claims: a
+    // producer-bug duplicate-claim panic under strict invariants.
+    assert_no_duplicate_content(">]\n\t>");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -660,6 +744,17 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("[](url)".to_string()),
         Just("```rust\nunterminated".to_string()),
         Just("> > nested".to_string()),
+        // Verification round 3's MAJOR + residual-producer shapes: a
+        // wikilink label with leading whitespace and a CJK/emoji final
+        // char (the comrak-child-sourcepos-unreliable case), a wikilink
+        // whose own range spans multiple lines, and a tab-indented
+        // blockquote continuation (comrak's own 0-3-SPACES-only
+        // indentation rule for a repeated container marker).
+        Just("[[ a]]".to_string()),
+        Just("[[ 日]]".to_string()),
+        Just("[[ 👍]]".to_string()),
+        Just("[[\n]]".to_string()),
+        Just(">]\n\t>".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
         // Verification-round BLOCKER shape: a block nested inside a
         // container (blockquote/nested-blockquote/list item).

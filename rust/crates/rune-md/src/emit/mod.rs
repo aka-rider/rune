@@ -54,6 +54,42 @@ use syntax::build_line_conversions;
 /// shipped build.
 pub(crate) const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
+/// The chokepoint every "this should never happen, but let's be sure"
+/// producer-bug check in this crate routes through (the hidden-range
+/// overlap check in `syntax::build_line_conversions`, the duplicate- and
+/// invalid-span checks in `push_span_split_by_line`) — a single place that
+/// decides whether a violation panics, so no call site has to repeat the
+/// `if STRICT_INVARIANTS { assert!(...) }` boilerplate (or risk getting it
+/// wrong). `msg` is a closure so the `format!` cost is paid only when the
+/// check is actually active.
+pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
+    if STRICT_INVARIANTS {
+        assert!(cond, "{}", msg());
+    }
+}
+
+/// The nearest char boundary at or BEFORE `idx` — a safe, stable-Rust
+/// equivalent of the nightly-only `str::floor_char_boundary`. Never panics:
+/// `is_char_boundary` is a plain byte-position check, and a UTF-8 char is
+/// at most 4 bytes, so the loop always terminates within a few iterations.
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+/// The nearest char boundary at or AFTER `idx` — the stable-Rust
+/// equivalent of the nightly-only `str::ceil_char_boundary`.
+fn ceil_char_boundary(s: &str, idx: usize) -> usize {
+    let mut idx = idx.min(s.len());
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
+}
+
 /// Every byte of every line is accounted for exactly once: either as part
 /// of a VISIBLE span (pushed by `push_span_split_by_line`) or as a hidden
 /// delimiter range (`hide_range`). `accounted[line]` is the union of both,
@@ -192,17 +228,40 @@ pub(crate) fn push_span_split_by_line(
 
         let requested_len = seg_end - seg_start;
         let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
-        if STRICT_INVARIANTS {
-            assert!(
-                kept_len == requested_len,
+        assert_invariant(kept_len == requested_len, || {
+            format!(
                 "line {line}: visible claim [{seg_start},{seg_end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
                 requested_len - kept_len
-            );
-        }
+            )
+        });
 
         for (s, e) in pieces {
-            let Some(text) = content.get(s..e) else {
-                continue;
+            // A producer's range arithmetic (e.g. a delimiter derived by
+            // subtracting a fixed byte count from a multibyte-char-
+            // adjacent position) can land inside a char instead of on its
+            // boundary — `content.get` then returns `None`. These are the
+            // user's own bytes (§0/§1.4.5): snapping the range OUTWARD to
+            // the nearest valid boundaries and emitting verbatim is always
+            // safe (worst case: a little more context shown than the
+            // producer intended), whereas silently dropping the span would
+            // vanish real content from the display. The producer bug
+            // itself still needs fixing — `assert_invariant` surfaces it.
+            let (s, e, text) = match content.get(s..e) {
+                Some(text) => (s, e, text),
+                None => {
+                    let snapped_s = floor_char_boundary(content, s);
+                    let snapped_e = ceil_char_boundary(content, e);
+                    let snapped_ok = snapped_s == s && snapped_e == e;
+                    assert_invariant(snapped_ok, || {
+                        format!(
+                            "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
+                        )
+                    });
+                    let Some(text) = content.get(snapped_s..snapped_e) else {
+                        continue; // unreachable in practice: floor/ceil always land in-bounds on a valid &str
+                    };
+                    (snapped_s, snapped_e, text)
+                }
             };
             let cell_map = (state == RevealState::Rendered).then(|| build_cell_map(s, text));
             if let Some(bucket) = out.get_mut(line) {

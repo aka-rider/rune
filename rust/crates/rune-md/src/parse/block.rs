@@ -85,7 +85,7 @@ fn build_block<'a>(
     let kind = { node.data.borrow().value.clone_kind_tag() };
     match kind {
         BlockKind::Paragraph => {
-            let inlines = super::inline::build_inlines(content, starts, node);
+            let inlines = super::inline::build_inlines(content, starts, node, hint);
             Some(Block::Paragraph(ParagraphM { range, inlines }))
         }
         BlockKind::Heading(level) => {
@@ -96,7 +96,7 @@ fn build_block<'a>(
                 .max(range.start)
                 .min(range.end);
             let marker = ByteRange::new(range.start, marker_end);
-            let inlines = super::inline::build_inlines(content, starts, node);
+            let inlines = super::inline::build_inlines(content, starts, node, hint);
             Some(Block::Heading(HeadingM {
                 sm: RevealSm::new(RevealState::Rendered),
                 level,
@@ -320,8 +320,24 @@ fn blockquote_markers(
         let Some(line_text) = content.get(scan_start..line_end.max(scan_start)) else {
             continue;
         };
-        let trimmed = line_text.trim_start();
-        let ws_len = line_text.len() - trimmed.len();
+        // RESIDUAL PRODUCER fix (verification round 3, ">]\n\t>"): only
+        // SPACES (never a tab), capped at 3, count as marker-prefix
+        // indentation — CommonMark's own indentation rule for a repeated
+        // block-container marker. `str::trim_start()` strips ANY
+        // whitespace including tabs, so it used to also recognize a
+        // tab-indented line ("\t>") as a repeated ">" marker; comrak
+        // itself does NOT (a leading tab represents 4 columns, past the
+        // 3-space budget, so it treats the line as lazy-continuation
+        // paragraph TEXT instead). That mismatch meant this scan and the
+        // paragraph's own Text node both claimed the same "> " bytes — a
+        // producer-bug double-claim `push_span_split_by_line` now catches
+        // via `assert_invariant`. Capping at 3 spaces (not just excluding
+        // tabs outright) keeps a legitimately 1-3-space-indented
+        // continuation ("   > cont") recognized, matching comrak exactly.
+        let ws_len = line_text.bytes().take_while(|&b| b == b' ').count().min(3);
+        let Some(trimmed) = line_text.get(ws_len..) else {
+            continue;
+        };
         if let Some(rest) = trimmed.strip_prefix('>') {
             let mut marker_len = ws_len + 1;
             if rest.starts_with(' ') {

@@ -214,14 +214,12 @@ pub(crate) fn build_line_conversions(
         rel.sort_by_key(|&(s, _)| s);
 
         // §1.3: never panics in an ordinary shipped build — only in tests
-        // (or a build that opts in via the `strict-invariants` feature).
-        // The merge two lines below runs unconditionally regardless.
-        if crate::emit::STRICT_INVARIANTS {
-            assert!(
-                !has_overlap(&rel),
-                "line {line}: overlapping hidden ranges from a producer bug: {rel:?}"
-            );
-        }
+        // (or a build that opts in via the `strict-invariants` feature),
+        // via the shared `assert_invariant` chokepoint. The merge two
+        // lines below runs unconditionally regardless.
+        crate::emit::assert_invariant(!has_overlap(&rel), || {
+            format!("line {line}: overlapping hidden ranges from a producer bug: {rel:?}")
+        });
 
         let merged = merge_overlapping(rel);
 
