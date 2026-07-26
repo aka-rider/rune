@@ -1759,6 +1759,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rune-fuzz"
+version = "0.1.0"
+
+[[package]]
 name = "rune-md"
 version = "0.1.0"
 dependencies = [

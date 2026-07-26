@@ -1,6 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+# Explicit, NOT `crates/*`: a glob makes any stray directory under `crates/`
+# (an agent-harness scratch dir, an editor temp folder) a workspace member,
+# and cargo then fails the whole workspace with "failed to load manifest for
+# workspace member". Spelling the members out makes that impossible.
+members = [
+    "crates/rune-cli",
+    "crates/rune-core",
+    "crates/rune-fuzz",
+    "crates/rune-md",
+    "crates/rune-tui",
+]
 
 [workspace.package]
 edition = "2024"
