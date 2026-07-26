@@ -97,6 +97,42 @@ fn build_block<'a>(
                 .min(range.end);
             let marker = ByteRange::new(range.start, marker_end);
             let inlines = super::inline::build_inlines(content, starts, node, hint);
+
+            // MAJOR fix (verification round 4): a setext heading's own
+            // `range` spans BOTH its text line and its "==="/"---"
+            // underline — feeding that whole multi-line span straight
+            // into the generic per-physical-line splitter (as the
+            // Revealed emit path used to) re-claims a REPEATING container
+            // prefix (a blockquote's "> ") on the underline's own
+            // continuation line, on top of whatever the blockquote's own
+            // marker scan already (and correctly) claims there — the
+            // exact "fence-inside-container" class `CodeFenceM` was
+            // already fixed for. An ATX heading is always single-line
+            // (`last_line == line`), so this is a no-op `vec![range]`;
+            // only a setext heading needs the per-line, `hint`-aware
+            // breakdown — first line trusts `range.start` (a block's own
+            // sourcepos-derived first-line start is always reliable, the
+            // same assumption `CodeFenceM::fence_open` relies on), every
+            // CONTINUATION line uses `hint.start_for_line` to skip a
+            // repeating container prefix comrak's sourcepos alone can't
+            // be trusted to exclude.
+            let last_line = sp.end.line.saturating_sub(1);
+            let content_lines: Vec<ByteRange> = if last_line > line {
+                (line..=last_line)
+                    .map(|l| {
+                        let s = if l == line {
+                            range.start
+                        } else {
+                            hint.start_for_line(starts, l)
+                        };
+                        let e = line_end_at(content.len(), starts, l).min(range.end).max(s);
+                        ByteRange::new(s, e).clamp(content.len())
+                    })
+                    .collect()
+            } else {
+                vec![range]
+            };
+
             Some(Block::Heading(HeadingM {
                 sm: RevealSm::new(RevealState::Rendered),
                 level,
@@ -104,6 +140,7 @@ fn build_block<'a>(
                 range,
                 marker,
                 inlines,
+                content_lines,
             }))
         }
         BlockKind::BlockQuote => {

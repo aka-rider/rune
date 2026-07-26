@@ -593,6 +593,48 @@ fn multiline_wikilink_without_wrapper_stays_clean() {
 }
 
 // ---------------------------------------------------------------------
+// (a8) Setext heading nested in a container (verification round 4
+// MAJOR, second site — same comrak-desync family of "a multi-line
+// construct's own raw range fed whole into the generic per-line
+// splitter"): `HeadingM::range` spans BOTH the text line and the
+// "==="/"---" underline for a setext heading. Pushing that whole span
+// through the Revealed emit path's per-physical-line splitter re-claims
+// a REPEATING container prefix (a blockquote's "> ") on the underline's
+// own continuation line, on top of what the blockquote's own marker
+// scan already (and correctly) claims there — fixed the same way
+// `CodeFenceM` already was: per-line, `hint`-aware `content_lines` built
+// at parse time, never `range` used whole at emit time. Unlike round 4's
+// wikilink MAJOR, this one is comrak-desync-FREE — comrak's own
+// sourcepos for a setext heading is entirely reliable; the bug was
+// purely in how this crate turned a reliable multi-line range into
+// per-line pieces.
+// ---------------------------------------------------------------------
+
+#[test]
+fn setext_heading_nested_in_double_blockquote_does_not_double_claim() {
+    assert_no_duplicate_content("> > nested\n> > ---");
+}
+
+#[test]
+fn setext_heading_nested_in_blockquote_does_not_double_claim() {
+    assert_no_duplicate_content("> nested\n> ---");
+}
+
+#[test]
+fn setext_heading_nested_in_list_item_does_not_double_claim() {
+    assert_no_duplicate_content("- nested\n  ---");
+}
+
+#[test]
+fn setext_heading_with_trailing_content_lines_stays_clean() {
+    // Content AFTER the underline (a later continuation line, nested or
+    // not) must stay unaffected — the fix only changes how the heading's
+    // OWN two lines are split, never anything past them.
+    assert_no_duplicate_content("> nested\n> ---\n> more text");
+    assert_no_duplicate_content("nested\n---\nafter");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 

@@ -26,8 +26,8 @@ impl ParagraphM {
     }
 }
 
-/// ATX heading (`## text`). Decide policy: `cursors.any_on_line(line)` (the
-/// reveal-policy table).
+/// ATX heading (`## text`) or setext heading (`text\n===`/`text\n---`).
+/// Decide policy: `cursors.any_on_line(line)` (the reveal-policy table).
 #[derive(Clone, Debug)]
 pub struct HeadingM {
     pub sm: RevealSm,
@@ -35,9 +35,22 @@ pub struct HeadingM {
     pub line: usize,
     pub range: ByteRange,
     /// The `"## "`-style prefix range (parent/child sourcepos-gap derivation,
-    /// plan Context "Parse").
+    /// plan Context "Parse"). Empty for a setext heading (no leading prefix
+    /// on its own text line).
     pub marker: ByteRange,
     pub inlines: Vec<Inline>,
+    /// One entry per physical line `range` spans, each already clamped to
+    /// that line's own `hint`-derived content start (parse time, container-
+    /// aware) — the Revealed (raw-markup-shown) emit path iterates this
+    /// instead of pushing `range` whole through the generic per-line
+    /// splitter. An ATX heading is always single-line, so this is simply
+    /// `vec![range]`; a setext heading spans its text line AND its `===`/
+    /// `---` underline, and `range` alone — one contiguous span — cannot
+    /// exclude an interior container prefix (a blockquote's repeating
+    /// `"> "` on the underline's own continuation line) the SAME way
+    /// `CodeFenceM::content_lines` already can't be replaced by
+    /// `CodeFenceM::range` for a multi-line fence (mirrors that fix).
+    pub content_lines: Vec<ByteRange>,
 }
 
 impl HeadingM {

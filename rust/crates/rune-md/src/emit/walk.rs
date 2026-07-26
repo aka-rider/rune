@@ -135,15 +135,24 @@ pub(crate) fn emit_block(
         }
         Block::Heading(h) => {
             if h.sm.state() == RevealState::Revealed {
-                push_span_split_by_line(
-                    content,
-                    starts,
-                    h.range,
-                    heading_style(h.level),
-                    RevealState::Revealed,
-                    out,
-                    accounted,
-                );
+                // MAJOR fix (verification round 4): `h.content_lines` —
+                // never `h.range` directly — the same reason
+                // `emit_code_fence` iterates `cf.content_lines` instead of
+                // pushing `cf.range` whole (see this file's CodeFence
+                // docs): `range` alone can span a container's own
+                // repeating prefix on a setext heading's underline line,
+                // which a single contiguous push can't exclude.
+                for &line in &h.content_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        heading_style(h.level),
+                        RevealState::Revealed,
+                        out,
+                        accounted,
+                    );
+                }
             } else {
                 hide_range(hidden, accounted, content, starts, h.marker);
                 emit_inlines(
