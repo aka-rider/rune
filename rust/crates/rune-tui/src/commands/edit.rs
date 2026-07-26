@@ -27,7 +27,7 @@ use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::Step;
 
-use crate::app::App;
+use crate::app::{App, StatusSource};
 use crate::commands::nav;
 
 /// Port of `commands_edit_lines.go:sortInfosDescending` +
@@ -59,8 +59,18 @@ use crate::commands::nav;
 /// signal, gone). This function only ever WRITES `status_message` on its
 /// own failure path below; a message set by someone else survives here
 /// until whatever set it (or a later, unrelated event) supersedes it.
+///
+/// The read-only CHOKEPOINT (review finding F1): every mutating command —
+/// typing, backspace/delete, indent/outdent, cut, paste — funnels through
+/// `per_cursor_selection_edits`/`per_line_edits` into this one function, so
+/// checking `app.editor.read_only` HERE (before anything else — no partial
+/// work, no journal entry, no cursor change) makes "a read-only document got
+/// mutated" unreachable regardless of which command tried it, rather than
+/// relying on every call site to remember its own guard (see `Editor::
+/// read_only`'s docs for the bug this closes and why `undo`/`redo` below are
+/// deliberately exempt).
 fn commit_edit_batch(app: &mut App, mut infos: Vec<(Edit, u32)>, cursors_before: CursorSet) {
-    if infos.is_empty() {
+    if app.editor.read_only || infos.is_empty() {
         return;
     }
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
@@ -89,7 +99,7 @@ fn commit_edit_batch(app: &mut App, mut infos: Vec<(Edit, u32)>, cursors_before:
             });
         }
         Err(e) => {
-            app.status_message = Some(format!("edit failed: {e}"));
+            app.set_status(format!("edit failed: {e}"), StatusSource::Other);
         }
     }
 }
@@ -330,7 +340,7 @@ pub fn undo(app: &mut App) {
             app.editor.journal.move_pos(new_pos);
         }
         Err(e) => {
-            app.status_message = Some(format!("undo failed: {e}"));
+            app.set_status(format!("undo failed: {e}"), StatusSource::Other);
         }
     }
 }
@@ -352,7 +362,7 @@ pub fn redo(app: &mut App) {
             app.editor.journal.move_pos(new_pos);
         }
         Err(e) => {
-            app.status_message = Some(format!("redo failed: {e}"));
+            app.set_status(format!("redo failed: {e}"), StatusSource::Other);
         }
     }
 }
@@ -512,6 +522,80 @@ mod tests {
             app.status_message.as_deref(),
             Some("save failed: disk full"),
             "an unrelated save-failure message must survive a successful redo"
+        );
+    }
+
+    /// Regression for F1: a read-only `Editor` rejects every mutating
+    /// command at the `commit_edit_batch` chokepoint — buffer content,
+    /// buffer version, and the undo journal are all left untouched by
+    /// typing, Backspace, and Indent alike (an earlier version guarded only
+    /// `commands::clipboard::handle_paste_content`, leaving these three
+    /// paths able to mutate a "read-only" document).
+    #[test]
+    fn read_only_blocks_typing_backspace_and_indent() {
+        let mut app = app_with("hello", 5);
+        app.editor.read_only = true;
+        let before_content = app.editor.buffer.content().to_string();
+        let before_version = app.editor.buffer.version();
+
+        insert_char(&mut app, '!');
+        assert_eq!(app.editor.buffer.content(), before_content, "typing");
+
+        delete_left(&mut app);
+        assert_eq!(app.editor.buffer.content(), before_content, "backspace");
+
+        indent(&mut app);
+        assert_eq!(app.editor.buffer.content(), before_content, "indent");
+
+        outdent(&mut app);
+        assert_eq!(app.editor.buffer.content(), before_content, "outdent");
+
+        delete_right(&mut app);
+        assert_eq!(app.editor.buffer.content(), before_content, "delete-right");
+
+        newline(&mut app);
+        assert_eq!(app.editor.buffer.content(), before_content, "newline");
+
+        assert_eq!(
+            app.editor.buffer.version(),
+            before_version,
+            "a rejected mutation must never bump the buffer version"
+        );
+        assert_eq!(
+            app.editor.journal.len(),
+            0,
+            "a rejected mutation must never be journaled"
+        );
+    }
+
+    /// Regression for F1 (Go parity): `undo`/`redo` are deliberately NOT
+    /// gated by `read_only` — Go's own `ApplyInverse`/`Reapply`
+    /// (`edit_primitives.go:51,86`) bypass `m.readOnly` the same way
+    /// `ReplaceRange` (`edit_primitives.go:25`) does not. A document that
+    /// became read-only after edits were already journaled (e.g. Go's Help
+    /// view is generated fresh and never has journal history, but this
+    /// property must hold regardless) must still let undo/redo walk that
+    /// history.
+    #[test]
+    fn undo_and_redo_are_not_blocked_by_read_only() {
+        let mut app = app_with("hello", 5);
+        insert_char(&mut app, '!');
+        assert_eq!(app.editor.buffer.content(), "hello!");
+
+        app.editor.read_only = true;
+
+        undo(&mut app);
+        assert_eq!(
+            app.editor.buffer.content(),
+            "hello",
+            "undo must not be blocked by read_only"
+        );
+
+        redo(&mut app);
+        assert_eq!(
+            app.editor.buffer.content(),
+            "hello!",
+            "redo must not be blocked by read_only"
         );
     }
 }

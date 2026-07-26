@@ -63,14 +63,24 @@ pub struct Editor {
     /// pushed here as a `Step`; `commands::edit::undo`/`redo` peek-then-
     /// commit against it (plan Context, "Undo journal").
     pub journal: Journal,
-    /// Guards `commands::clipboard::handle_paste_content` against mutating a
-    /// read-only document (plan Gotchas port of `commands_clipboard.go:153-
-    /// 181`'s `m.readOnly` guard — the Go bug it closes: paste bypassing the
-    /// read-only check that every keyboard-insert path already had). Phase 1
-    /// defines no read-only document (Go's Help view is workspace/Phase-4
-    /// scope), so this is always `false` today — the field exists so a
-    /// future read-only view only needs to set it, not re-plumb the guard
-    /// into every paste source again.
+    /// Guards every buffer-mutating command (typing, backspace/delete,
+    /// indent/outdent, cut, paste — anything that reaches
+    /// `commands::edit::commit_edit_batch`, the sole writer of buffer
+    /// mutations) against touching a read-only document. Checked at that ONE
+    /// chokepoint rather than at each command's call site, so no future
+    /// mutating command can forget the guard (review finding F1: an earlier
+    /// version checked this only in `commands::clipboard::handle_paste_
+    /// content`, leaving Cut and every keyboard-insert path able to mutate a
+    /// "read-only" document — the exact Go bug `commands_clipboard.go:142-
+    /// 152`'s comment describes, reintroduced by guarding the wrong layer).
+    /// `commands::edit::undo`/`redo` deliberately do NOT check this field —
+    /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go:51,86`) bypass
+    /// `m.readOnly` the same way, unlike `ReplaceRange`
+    /// (`edit_primitives.go:25`) which checks it first. Phase 1 defines no
+    /// read-only document (Go's Help view is workspace/Phase-4 scope), so
+    /// this is always `false` today — the field exists so a future read-only
+    /// view only needs to set it, not re-plumb a guard into every mutating
+    /// command again.
     pub read_only: bool,
 }
 

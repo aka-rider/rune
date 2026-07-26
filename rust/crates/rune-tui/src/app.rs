@@ -19,6 +19,30 @@ use crate::runtime::{Cmd, Effects, Msg};
 /// press arms + spawns 2s timer Cmd carrying gen").
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Which subsystem last wrote `App::status_message` — the provenance tag
+/// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
+/// save path set, never an unrelated one (review finding F2: an earlier
+/// version cleared `status_message` unconditionally on every successful
+/// save, stomping e.g. an unresolved "pbpaste failed" error the user hadn't
+/// dismissed yet). The ORIGINAL status-message ownership rule (F2 in
+/// `commands::edit`: a successful edit/undo/redo must never clear an
+/// unrelated message) still holds unchanged — those call sites only ever
+/// WRITE `status_message`, they never clear it, so they need no provenance
+/// tag for that rule; they still tag their writes below so a stale write
+/// from one of them can never be mistaken for `SaveError` and get swept up
+/// by a later successful save.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatusSource {
+    /// A failed (or un-attempted, e.g. "no file to save") save attempt —
+    /// the ONLY source a successful `Msg::SaveDone` is allowed to clear.
+    SaveError,
+    /// Everything else: edit/undo/redo failures, `Msg::Error` (a pbpaste
+    /// failure, a caught background-`Cmd` panic, the input stream ending),
+    /// ...
+    #[default]
+    Other,
+}
+
 /// The whole editor model: the single editing pane (Phase 1 is one file, one
 /// pane), file identity, the injected `Vfs` save target, and app-wide UI
 /// state (status message, quit-confirm arming) that doesn't belong to any
@@ -30,6 +54,11 @@ pub struct App {
     pub saved_version: u64,
     pub save_in_flight: bool,
     pub status_message: Option<String>,
+    /// Provenance of `status_message` — see `StatusSource`'s docs. Only
+    /// meaningful while `status_message.is_some()`; a later `set_status`
+    /// call always updates both fields together, so a stale value here
+    /// after the message is cleared can never be observed.
+    pub status_source: StatusSource,
     /// The armed quit chord and its timer generation — `None` when no quit
     /// is pending. Stale `ConfirmTimeout` generations are ignored (plan
     /// Context, "Quit-confirm").
@@ -51,6 +80,7 @@ impl App {
             saved_version,
             save_in_flight: false,
             status_message: None,
+            status_source: StatusSource::Other,
             pending_quit: None,
             next_quit_gen: 0,
             should_quit: false,
@@ -75,6 +105,15 @@ impl App {
     /// docs.
     pub fn sync_view(&mut self) {
         self.view = Some(self.editor.sync());
+    }
+
+    /// The single writer of a NEW `status_message`: every call site that
+    /// wants to set one goes through here instead of writing
+    /// `status_message`/`status_source` separately, so the text and its
+    /// provenance tag (`StatusSource`) can never drift apart.
+    pub fn set_status(&mut self, message: impl Into<String>, source: StatusSource) {
+        self.status_message = Some(message.into());
+        self.status_source = source;
     }
 }
 
@@ -108,10 +147,19 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
                     if version > app.saved_version {
                         app.saved_version = version;
                     }
-                    app.status_message = None;
+                    // Provenance-aware clear (review finding F2): only a
+                    // message THIS save path set (a prior failed/un-
+                    // attempted save) is dismissed here. An unrelated
+                    // message — a pbpaste failure, an edit/undo/redo
+                    // failure — survives a successful save exactly as it
+                    // already survives a successful edit (F2's original
+                    // rule in `commands::edit`).
+                    if app.status_source == StatusSource::SaveError {
+                        app.status_message = None;
+                    }
                 }
                 Err(e) => {
-                    app.status_message = Some(format!("save failed: {e}"));
+                    app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
                 }
             }
         }
@@ -125,7 +173,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
             // re-armed with a new chord since) is ignored.
         }
         Msg::Error(e) => {
-            app.status_message = Some(e);
+            app.set_status(e, StatusSource::Other);
         }
         Msg::Quit => {
             app.should_quit = true;
@@ -285,8 +333,10 @@ fn trigger_save(app: &mut App, effects: &mut Effects) {
         return;
     }
     let Some(path) = app.file_path.clone() else {
-        app.status_message =
-            Some("no file to save \u{2014} rune was opened without a path".to_string());
+        app.set_status(
+            "no file to save \u{2014} rune was opened without a path",
+            StatusSource::SaveError,
+        );
         return;
     };
 
@@ -448,21 +498,78 @@ mod tests {
     }
 
     #[test]
-    fn save_done_ok_advances_saved_version_and_clears_status() {
+    fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
         let mut app = test_app();
-        app.status_message = Some("save failed: oops".to_string());
         let version = app.editor.buffer.version();
+
+        // A real prior save failure — the only kind of message the
+        // provenance-aware clear below (review finding F2) is allowed to
+        // dismiss.
         let mut effects = Effects::default();
+        update(
+            &mut app,
+            Msg::SaveDone {
+                version,
+                result: Err("oops".to_string()),
+            },
+            &mut effects,
+        );
+        assert!(app.status_message.is_some());
+
+        let mut effects2 = Effects::default();
         update(
             &mut app,
             Msg::SaveDone {
                 version,
                 result: Ok(()),
             },
-            &mut effects,
+            &mut effects2,
         );
         assert_eq!(app.saved_version, version);
-        assert!(app.status_message.is_none());
+        assert!(
+            app.status_message.is_none(),
+            "a successful save must clear the failure message ITS OWN save path set"
+        );
+    }
+
+    /// Regression for F2: a successful save must not clear a status message
+    /// some OTHER subsystem set — e.g. an unresolved `Msg::Error` such as a
+    /// pbpaste failure the user hasn't dismissed yet. Only a message tagged
+    /// `StatusSource::SaveError` (see `save_done_ok_advances_saved_version_
+    /// and_clears_a_prior_save_failure`) may be cleared by `SaveDone { Ok
+    /// }`.
+    #[test]
+    fn save_done_ok_does_not_clear_an_unrelated_status_message() {
+        let mut app = test_app();
+        let mut effects = Effects::default();
+        update(
+            &mut app,
+            Msg::Error("pbpaste failed to run: No such file or directory".to_string()),
+            &mut effects,
+        );
+        assert!(app.status_message.is_some());
+
+        let version = app.editor.buffer.version();
+        let mut effects2 = Effects::default();
+        update(
+            &mut app,
+            Msg::SaveDone {
+                version,
+                result: Ok(()),
+            },
+            &mut effects2,
+        );
+
+        assert_eq!(app.saved_version, version);
+        assert!(
+            app.status_message.is_some(),
+            "a successful save must not clear an unrelated (non-save) status message"
+        );
+        assert!(
+            app.status_message
+                .as_deref()
+                .is_some_and(|s| s.contains("pbpaste"))
+        );
     }
 
     #[test]

@@ -94,11 +94,14 @@ pub fn paste(effects: &mut Effects) {
 
 /// Port of `commands_clipboard.go:handlePasteContent` (:153-181), the
 /// single funnel `Msg::Paste` (bracketed paste) and `Msg::ClipboardRead`
-/// (pbpaste) both call — see module docs. The `read_only` guard is kept
-/// 1:1 with Go even though Phase 1 defines no read-only document
-/// (`Editor::read_only` is always `false` today, see its docs) — the seam
-/// exists now so a future read-only view only needs to set the flag, not
-/// re-plumb this guard into every paste source again.
+/// (pbpaste) both call — see module docs. Read-only documents are NOT
+/// guarded here (review finding F1): `edit::insert_text` bottoms out in
+/// `commands::edit::commit_edit_batch`, the single chokepoint that rejects
+/// every mutating command against a read-only `Editor` — see its docs and
+/// `Editor::read_only`'s. Duplicating the check here would just be a second
+/// copy that could silently drift from the real gate; the only guard this
+/// function keeps is the empty-text early-out, which the chokepoint doesn't
+/// (and shouldn't) special-case.
 ///
 /// Multi-cursor line-distribution (Go: paste text with the same line count
 /// as the cursor set spread one line per cursor) is NOT ported: Phase 1
@@ -107,7 +110,7 @@ pub fn paste(effects: &mut Effects) {
 /// the same whole text replacing every cursor's selection — which is the
 /// only case that can occur in Phase 1.
 pub fn handle_paste_content(app: &mut App, text: &str) {
-    if text.is_empty() || app.editor.read_only {
+    if text.is_empty() {
         return;
     }
     if app.editor.cursors.is_empty() {
@@ -206,6 +209,26 @@ mod tests {
 
         assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
         assert_eq!(app.editor.buffer.content(), "first\nthird");
+    }
+
+    /// Regression for F1: on a read-only `Editor`, Cut must not mutate the
+    /// buffer, bump its version, or journal anything — the deletion is
+    /// rejected at `commands::edit::commit_edit_batch`, the shared
+    /// chokepoint every mutating command (including cut) funnels through.
+    /// The OSC 52 copy itself is a read, not a mutation, and is unaffected.
+    #[test]
+    fn cut_on_a_read_only_editor_does_not_mutate_the_buffer() {
+        let mut app = app_with("hello world", 0);
+        selecting(&mut app, 0, 5); // "hello"
+        app.editor.read_only = true;
+        let before_version = app.editor.buffer.version();
+
+        let mut effects = Effects::default();
+        cut(&mut app, &mut effects);
+
+        assert_eq!(app.editor.buffer.content(), "hello world");
+        assert_eq!(app.editor.buffer.version(), before_version);
+        assert_eq!(app.editor.journal.len(), 0);
     }
 
     #[test]
