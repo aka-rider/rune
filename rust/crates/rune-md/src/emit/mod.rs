@@ -382,6 +382,30 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
     }
     fill_gaps(content, &starts, &accounted, &mut spans);
 
+    // MIXED-INDEX SEAM fallout (verification round 7): a producer's own
+    // CALL ORDER is not the same thing as buffer-BYTE order, and this
+    // crate never used to need the distinction — every producer used to
+    // push a line's OWN spans strictly left-to-right (a container's
+    // repeating marker always sat at the very START of its own buffer
+    // line, so "walk markers, then walk children" happened to match byte
+    // order by construction). Once a blockquote marker can legitimately
+    // sit MID-buffer-line (a marker on a comrak line that follows a bare
+    // `\r` earlier in the SAME buffer line — exactly what round 7's
+    // comrak-line-aware `blockquote_markers` now allows), `Blockquote`'s
+    // own "every marker, then every child" walk order in `walk.rs` no
+    // longer matches byte order for that line, and the concatenated
+    // rendered text comes out scrambled (verified empirically:
+    // `"a\r> q"` rendered as `"> a\rq"` — right bytes, wrong order).
+    // Sorting each line's spans by `buffer_start` here — the ONE place
+    // every producer's output converges before becoming the emitted
+    // line — makes "a line's spans are always in byte order" a
+    // structural guarantee no producer's own walk order can violate,
+    // rather than requiring every current and future producer to get
+    // its OWN call order byte-perfect.
+    for line_spans in &mut spans {
+        line_spans.sort_by_key(|s| s.buffer_start);
+    }
+
     let lines: Vec<SyntaxLine> = spans
         .into_iter()
         .map(|spans| SyntaxLine { spans })

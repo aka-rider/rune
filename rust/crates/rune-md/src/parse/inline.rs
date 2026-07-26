@@ -126,13 +126,23 @@ pub(super) fn build_inlines<'a>(
         // "inside" the corrupted node's own reported extent.
         let range = node_range(content, idx, child);
         if subtree_has_multiline_wikilink(content, idx, child) {
+            // MIXED-INDEX SEAM fix (verification round 7): this rebuild
+            // iterates and clamps by `idx.comrak`, not `idx.buffer` — it
+            // exists to reconstruct content per line AS COMRAK PARSED IT
+            // (mirroring the fence/heading content-line fix; see
+            // `parse::block`'s `CodeBlock` arm), and `ScanHint` itself is
+            // now keyed by comrak lines too (see the `BlockQuote` arm),
+            // so a buffer-line lookup here would silently miss a
+            // container's own marker_ends entry the moment an earlier
+            // `\r` has shifted comrak's line count relative to the
+            // buffer's.
             let parent_range = node_range(content, idx, parent);
             let parent_last_line = super::line_at(
-                &idx.buffer,
+                &idx.comrak,
                 parent_range.end.saturating_sub(1).max(parent_range.start),
             );
-            let first_line = super::line_at(&idx.buffer, range.start);
-            let first_line_end = line_end_at(content.len(), &idx.buffer, first_line)
+            let first_line = super::line_at(&idx.comrak, range.start);
+            let first_line_end = line_end_at(content.len(), &idx.comrak, first_line)
                 .min(range.end)
                 .min(parent_range.end)
                 .max(range.start);
@@ -140,7 +150,7 @@ pub(super) fn build_inlines<'a>(
                 range: ByteRange::new(range.start, first_line_end).clamp(content.len()),
             }));
             for line in (first_line + 1)..=parent_last_line {
-                let s = hint.start_for_line(&idx.buffer, line);
+                let s = hint.start_for_line(&idx.comrak, line);
                 // CLASS A fallout (verification round 5): a lone `\r`
                 // elsewhere in this SAME buffer line can make comrak
                 // split its OWN block-level parsing at that point — this
@@ -154,7 +164,7 @@ pub(super) fn build_inlines<'a>(
                 // claims — clamp to `parent_range.end`, this paragraph's
                 // own reliable outer bound, same as the first piece
                 // above.
-                let e = line_end_at(content.len(), &idx.buffer, line).min(parent_range.end);
+                let e = line_end_at(content.len(), &idx.comrak, line).min(parent_range.end);
                 if s < e {
                     out.push(Inline::Text(TextRun {
                         range: ByteRange::new(s, e).clamp(content.len()),

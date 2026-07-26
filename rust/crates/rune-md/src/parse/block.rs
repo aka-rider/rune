@@ -1,10 +1,11 @@
 //! AST -> `Block` construction: the top-level dispatch (`build_block`) and
 //! the block kinds that recurse into further blocks (`BlockQuote`, `List`).
 
+use super::blockquote::blockquote_markers;
 use super::{LineIndex, ScanHint, line_end_at, node_range};
 use crate::element::block::{
-    Block, BlockquoteM, BlockquoteMarkerM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM,
-    ListM, ParagraphM, VerbatimKind, VerbatimM,
+    Block, BlockquoteM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM, ListM, ParagraphM,
+    VerbatimKind, VerbatimM,
 };
 use crate::element::{ByteRange, RevealSm, RevealState};
 use comrak::nodes::{AstNode, ListType, NodeValue};
@@ -115,25 +116,41 @@ fn build_block<'a>(
             // marker scan already (and correctly) claims there — the
             // exact "fence-inside-container" class `CodeFenceM` was
             // already fixed for. An ATX heading is always single-line
-            // (`last_line == line`), so this is a no-op `vec![range]`;
-            // only a setext heading needs the per-line, `hint`-aware
-            // breakdown — first line trusts `range.start` (a block's own
-            // sourcepos-derived first-line start is always reliable, the
-            // same assumption `CodeFenceM::fence_open` relies on), every
-            // CONTINUATION line uses `hint.start_for_line` to skip a
-            // repeating container prefix comrak's sourcepos alone can't
-            // be trusted to exclude.
-            let last_line =
-                super::line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
-            let content_lines: Vec<ByteRange> = if last_line > line {
-                (line..=last_line)
+            // (`comrak_last_line == comrak_first_line`), so this is a
+            // no-op `vec![range]`; only a setext heading needs the
+            // per-line, `hint`-aware breakdown — first line trusts
+            // `range.start` (a block's own sourcepos-derived first-line
+            // start is always reliable, the same assumption
+            // `CodeFenceM::fence_open` relies on), every CONTINUATION
+            // line uses `hint.start_for_line` to skip a repeating
+            // container prefix comrak's sourcepos alone can't be trusted
+            // to exclude.
+            //
+            // MIXED-INDEX SEAM fix (verification round 7): this loop
+            // iterates and clamps by comrak's OWN physical-line count
+            // (`idx.comrak`), not the buffer's `\n`-only one — a setext
+            // heading's own two "lines" (text + underline) are lines AS
+            // COMRAK PARSED THEM, and a lone `\r` elsewhere in the
+            // document shifts comrak's line numbering relative to the
+            // buffer's without changing how many DISTINCT lines this
+            // node itself spans. `line`/`last_line` (buffer-derived,
+            // stored on `HeadingM` for the cursor-reveal decide policy)
+            // stay separate from `comrak_first_line`/`comrak_last_line`
+            // (this loop's own iteration bounds) — conflating the two
+            // was the exact bug (`CodeFenceM` had the same seam, see the
+            // `CodeBlock` arm below).
+            let comrak_first_line = super::line_at(&idx.comrak, range.start);
+            let comrak_last_line =
+                super::line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
+            let content_lines: Vec<ByteRange> = if comrak_last_line > comrak_first_line {
+                (comrak_first_line..=comrak_last_line)
                     .map(|l| {
-                        let s = if l == line {
+                        let s = if l == comrak_first_line {
                             range.start
                         } else {
-                            hint.start_for_line(&idx.buffer, l)
+                            hint.start_for_line(&idx.comrak, l)
                         };
-                        let e = line_end_at(content.len(), &idx.buffer, l)
+                        let e = line_end_at(content.len(), &idx.comrak, l)
                             .min(range.end)
                             .max(s);
                         ByteRange::new(s, e).clamp(content.len())
@@ -154,8 +171,21 @@ fn build_block<'a>(
             }))
         }
         BlockKind::BlockQuote => {
-            let markers = blockquote_markers(content, &idx.buffer, range, hint);
-            let marker_ends = markers.iter().map(|m| (m.line, m.marker.end)).collect();
+            let markers = blockquote_markers(content, idx, range, hint);
+            // MIXED-INDEX SEAM fix (verification round 7): keyed by each
+            // marker's own COMRAK line (`idx.comrak`), NOT `m.line` (the
+            // buffer-derived field `BlockquoteMarkerM` stores for the
+            // cursor-reveal decide policy) — every consumer of this map
+            // (`ScanHint::start_for_line`, reached from fence/heading
+            // content-line loops that now iterate comrak lines too) looks
+            // itself up by comrak line number, so the map's own keys must
+            // match that space or every lookup on a line past an earlier
+            // `\r` silently misses and falls through to the un-adjusted
+            // physical start (re-claiming this marker's own bytes).
+            let marker_ends = markers
+                .iter()
+                .map(|m| (super::line_at(&idx.comrak, m.marker.start), m.marker.end))
+                .collect();
             let child_hint = ScanHint::Nested {
                 marker_ends,
                 parent: hint,
@@ -179,9 +209,38 @@ fn build_block<'a>(
                     kind: VerbatimKind::Unknown,
                 }));
             }
+            // `first_line`/`last_line` stay BUFFER-derived — they're
+            // stored on `CodeFenceM` and read ONLY by the cursor-reveal
+            // decide policy (`cursors.any_in_lines`, comparing against the
+            // cursor's own buffer row).
             let first_line = line;
             let last_line =
                 super::line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
+
+            // MIXED-INDEX SEAM fix (verification round 7 BLOCKER): a
+            // fence's OWN internal physical-line structure — where its
+            // opening fence line ends, where each content line starts,
+            // where the closing fence line begins — is lines AS COMRAK
+            // PARSED THEM, not the buffer's `\n`-only lines. A lone `\r`
+            // inside a fence still ends a line for comrak's own
+            // recognition of the fence's shape even though it is not a
+            // buffer line break, so deriving `fence_open`/`fence_close`/
+            // `content_lines` from `idx.buffer` (as this used to) could
+            // collapse the WHOLE fence — open marker, every content line,
+            // and the close marker — onto ONE physical-line span whenever
+            // it contained a bare `\r` and no `\n` at all: verified
+            // empirically for `"a\r```\rc\r```"`, where `first_line ==
+            // last_line == 0` under the buffer's `\n`-only count (there is
+            // no `\n` anywhere in the document), so `fence_open` swallowed
+            // the ENTIRE rest of the document — `content_lines` came out
+            // empty and everything past "a" silently vanished from the
+            // display. Deriving the SAME quantities from `idx.comrak`
+            // instead recovers each of comrak's own recognized lines
+            // (`comrak_first_line`..=`comrak_last_line`), exactly mirroring
+            // the setext-heading fix above.
+            let comrak_first_line = super::line_at(&idx.comrak, range.start);
+            let comrak_last_line =
+                super::line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
 
             // CONTAINER-PREFIX fix: `fence_open`'s start is `range.start`,
             // NOT `line_start_at`/`hint` — a node's own sourcepos already
@@ -195,8 +254,9 @@ fn build_block<'a>(
             // line start and re-claim bytes the list item's own marker
             // already hid (`"- ```rust"` -> fence_open `[0, 9)` colliding
             // with the item's own marker `[0, 2)`).
-            let first_line_end = line_end_at(content.len(), &idx.buffer, first_line);
-            let fence_open = Some(ByteRange::new(range.start, first_line_end).clamp(content.len()));
+            let comrak_first_line_end = line_end_at(content.len(), &idx.comrak, comrak_first_line);
+            let fence_open =
+                Some(ByteRange::new(range.start, comrak_first_line_end).clamp(content.len()));
 
             // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
             // NOT "a closing fence exists" — every fence is unterminated
@@ -219,18 +279,18 @@ fn build_block<'a>(
             // range can't exclude an interior container prefix (the
             // overlapping-hidden-range bug this fix exists to close).
             let (fence_close, content_line_range) = if closed {
-                let ls = hint.start_for_line(&idx.buffer, last_line);
-                let le = line_end_at(content.len(), &idx.buffer, last_line);
+                let ls = hint.start_for_line(&idx.comrak, comrak_last_line);
+                let le = line_end_at(content.len(), &idx.comrak, comrak_last_line);
                 let close = ByteRange::new(ls, le).clamp(content.len());
-                (Some(close), (first_line + 1)..last_line)
+                (Some(close), (comrak_first_line + 1)..comrak_last_line)
             } else {
-                (None, (first_line + 1)..(last_line + 1))
+                (None, (comrak_first_line + 1)..(comrak_last_line + 1))
             };
 
             let content_lines: Vec<ByteRange> = content_line_range
                 .map(|l| {
-                    let s = hint.start_for_line(&idx.buffer, l);
-                    let e = line_end_at(content.len(), &idx.buffer, l);
+                    let s = hint.start_for_line(&idx.comrak, l);
+                    let e = line_end_at(content.len(), &idx.comrak, l);
                     ByteRange::new(s, e).clamp(content.len())
                 })
                 .collect();
@@ -263,7 +323,18 @@ fn build_block<'a>(
             // Clamping to the HR's own single line makes "a thematic
             // break's range never crosses a line boundary" a structural
             // guarantee, the same shape as `ListItemM`'s marker clamp.
-            let clamped_end = line_end_at(content.len(), &idx.buffer, line)
+            //
+            // MIXED-INDEX SEAM fix (verification round 7): clamped to the
+            // HR's own COMRAK line end (`idx.comrak`), not the buffer's —
+            // a thematic break is exactly one comrak line by CommonMark's
+            // own grammar, and this clamp exists specifically to stop a
+            // comrak-reported `range` from reaching past that ONE line;
+            // using the buffer's `\n`-only end here would only coincide
+            // with the comrak line's own end when the document has no
+            // `\r`, silently reopening the same class of bug for a `\r`-
+            // adjacent thematic break.
+            let comrak_line = super::line_at(&idx.comrak, range.start);
+            let clamped_end = line_end_at(content.len(), &idx.comrak, comrak_line)
                 .min(range.end)
                 .max(range.start);
             let range = ByteRange::new(range.start, clamped_end).clamp(content.len());
@@ -345,13 +416,20 @@ fn build_list_items<'a>(
         // line's own end makes "a marker never crosses a line boundary" a
         // structural guarantee instead of something every call site has to
         // get right.
+        //
+        // MIXED-INDEX SEAM fix (verification round 7): clamped to the
+        // item's own COMRAK line end (`idx.comrak`) — the marker itself
+        // is always on comrak's own first line of the item, and this
+        // clamp exists to stop it reaching past THAT line, which a bare
+        // `\r` can end without ending a buffer line.
+        let comrak_line = super::line_at(&idx.comrak, range.start);
         let marker_end = item_node
             .first_child()
             .map(|c| node_range(content, idx, c).start)
             .unwrap_or(range.end)
             .max(range.start)
             .min(range.end)
-            .min(line_end_at(content.len(), &idx.buffer, line));
+            .min(line_end_at(content.len(), &idx.comrak, comrak_line));
         let marker = ByteRange::new(range.start, marker_end);
         let children = build_blocks(content, idx, item_node, hint);
 
@@ -377,70 +455,4 @@ pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> boo
     };
     let trimmed = text.strip_suffix('\n').unwrap_or(text);
     trimmed.rsplit('\n').next() == Some("---")
-}
-
-/// Derives one `"> "` marker range per source line covered by a blockquote's
-/// range — there is no dedicated comrak node for the marker itself, so this
-/// scans the raw text (plan Context "Parse": unmodeled delimiters are
-/// derived, never invented from thin air).
-///
-/// MAJOR 4 fix: for a NESTED blockquote (`"> > nested"`), comrak reports
-/// each depth's own `BlockQuote` node sourcepos starting right AFTER the
-/// outer level's `"> "` prefix on line 0 — verified empirically: for
-/// `"> > nested quote\n"` the outer node's sourcepos is `1:1-1:16` and the
-/// inner's is `1:3-1:16` (column 3 = byte offset 2, right past the outer
-/// `"> "`). But that per-line signal only exists for line 0 — a multi-line
-/// nested blockquote (`"> > nested\n> > nested"`) needs the SAME
-/// depth-aware scan-start on every continuation line too, which comrak's
-/// sourcepos doesn't give us (only the node's overall start/end). `hint`
-/// (built by the caller from the immediately enclosing depth's own
-/// just-computed markers) supplies it uniformly for every line, line 0
-/// included — see `ScanHint`'s docs.
-fn blockquote_markers(
-    content: &str,
-    starts: &[usize],
-    range: ByteRange,
-    hint: &ScanHint,
-) -> Vec<BlockquoteMarkerM> {
-    let first_line = super::line_at(starts, range.start);
-    let last_line = super::line_at(starts, range.end.saturating_sub(1).max(range.start));
-    let mut markers = Vec::new();
-    for line in first_line..=last_line {
-        let line_end = line_end_at(content.len(), starts, line);
-        let scan_start = hint.start_for_line(starts, line);
-        let Some(line_text) = content.get(scan_start..line_end.max(scan_start)) else {
-            continue;
-        };
-        // RESIDUAL PRODUCER fix (verification round 3, ">]\n\t>"): only
-        // SPACES (never a tab), capped at 3, count as marker-prefix
-        // indentation — CommonMark's own indentation rule for a repeated
-        // block-container marker. `str::trim_start()` strips ANY
-        // whitespace including tabs, so it used to also recognize a
-        // tab-indented line ("\t>") as a repeated ">" marker; comrak
-        // itself does NOT (a leading tab represents 4 columns, past the
-        // 3-space budget, so it treats the line as lazy-continuation
-        // paragraph TEXT instead). That mismatch meant this scan and the
-        // paragraph's own Text node both claimed the same "> " bytes — a
-        // producer-bug double-claim `push_span_split_by_line` now catches
-        // via `assert_invariant`. Capping at 3 spaces (not just excluding
-        // tabs outright) keeps a legitimately 1-3-space-indented
-        // continuation ("   > cont") recognized, matching comrak exactly.
-        let ws_len = line_text.bytes().take_while(|&b| b == b' ').count().min(3);
-        let Some(trimmed) = line_text.get(ws_len..) else {
-            continue;
-        };
-        if let Some(rest) = trimmed.strip_prefix('>') {
-            let mut marker_len = ws_len + 1;
-            if rest.starts_with(' ') {
-                marker_len += 1;
-            }
-            let marker_end = scan_start.saturating_add(marker_len).min(content.len());
-            markers.push(BlockquoteMarkerM {
-                sm: RevealSm::new(RevealState::Rendered),
-                line,
-                marker: ByteRange::new(scan_start, marker_end),
-            });
-        }
-    }
-    markers
 }

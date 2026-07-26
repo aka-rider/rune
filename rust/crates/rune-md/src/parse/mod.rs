@@ -6,6 +6,7 @@
 //! `Inline` construction; this file holds the primitives they're built on.
 
 mod block;
+mod blockquote;
 mod inline;
 
 use crate::element::ByteRange;

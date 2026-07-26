@@ -696,6 +696,111 @@ fn lone_cr_inside_frontmatter_does_not_desync_the_rest_of_the_document() {
 }
 
 // ---------------------------------------------------------------------
+// (a11) MIXED-INDEX SEAM (verification round 7 BLOCKER): a fence
+// (and any other multi-line construct's per-line range derivation)
+// still used the buffer's `\n`-only index for its OWN internal physical-
+// line arithmetic (`fence_open`/`fence_close`/`content_lines`,
+// `blockquote_markers`, `ScanHint`) even after round 5's fix taught
+// `node_range`/`sourcepos_to_range` to use the comrak-compatible one.
+// For a document with NO `\n` at all (a lone `\r`-only fence), the
+// buffer's `\n`-only line count collapses the WHOLE fence onto ONE
+// physical line, so `fence_open` swallowed everything from the fence's
+// own start through the END OF THE DOCUMENT — code and quote content
+// after it silently vanished from the display, not just a coverage
+// mismatch. Fixed by deriving all of this per-line arithmetic from
+// `idx.comrak` instead.
+// ---------------------------------------------------------------------
+
+#[test]
+fn lone_cr_fence_does_not_swallow_the_rest_of_the_document() {
+    let content = "a\r```\rc\r```";
+    assert_no_duplicate_content(content);
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, _snap) = emit(buf.content(), doc.blocks());
+        let joined = joined_line(&lines, 0);
+        assert!(
+            joined.contains('c'),
+            "fence content 'c' missing from rendered output (focused={focused}): {joined:?}"
+        );
+    }
+}
+
+#[test]
+fn classic_mac_readme_shape_does_not_lose_fence_or_quote_content() {
+    // A realistic multi-construct classic-Mac-line-ending document:
+    // heading, intro paragraph, a fenced code block, and a blockquote —
+    // exactly the shape verification round 7 found losing content in a
+    // real README render ("TIntro", code and quote text both gone).
+    let content = "# T\rIntro\r\r```\rcode\r```\r\r> quote\r";
+    assert_no_duplicate_content(content);
+    for &focused in &[true, false] {
+        let (buf, doc) = synced(content, 0, focused);
+        let (lines, _snap) = emit(buf.content(), doc.blocks());
+        let joined = joined_line(&lines, 0);
+        assert!(
+            joined.contains("code"),
+            "fence content 'code' missing from rendered output (focused={focused}): {joined:?}"
+        );
+        assert!(
+            joined.contains("quote"),
+            "blockquote content 'quote' missing from rendered output (focused={focused}): {joined:?}"
+        );
+    }
+}
+
+#[test]
+fn lone_cr_fence_controls_stay_clean() {
+    assert_no_duplicate_content("# T\rp");
+    assert_no_duplicate_content("# T\r- a");
+    assert_no_duplicate_content("a\r> q");
+    assert_no_duplicate_content("# T\rp\r\r- one\r- two");
+}
+
+#[test]
+fn lone_cr_fence_lf_equivalents_stay_clean() {
+    assert_no_duplicate_content("a\n```\nc\n```");
+    assert_no_duplicate_content("# T\np");
+    assert_no_duplicate_content("# T\n- a");
+    assert_no_duplicate_content("a\n> q");
+    assert_no_duplicate_content("# T\np\n\n- one\n- two");
+}
+
+// ---------------------------------------------------------------------
+// (a12) EMIT-ORDER fallout (verification round 7, found by this round's
+// own widened generator — not part of the reviewer's report): making
+// blockquote markers comrak-line-aware (this round's CLASS A/BLOCKER
+// fix) means a marker can now legitimately sit MID-buffer-line — a
+// comrak line following a bare `\r` earlier on the SAME buffer line.
+// `Blockquote`'s own emit walk pushes every marker for every line BEFORE
+// any child content, which used to be harmless (a marker was always the
+// very FIRST thing on its own buffer line, so that push order already
+// matched byte order) but scrambles the rendered text the moment a
+// marker sits mid-line: `"a\r> q"` rendered as `"> a\rq"` — right bytes,
+// wrong order. Fixed by sorting each line's spans by `buffer_start` once
+// at the `emit()` chokepoint, so every producer's own walk order stops
+// mattering.
+// ---------------------------------------------------------------------
+
+#[test]
+fn blockquote_marker_mid_buffer_line_after_lone_cr_stays_in_order() {
+    let content = "[[\n]]\na\r> q\na\r> q";
+    assert_no_duplicate_content(content);
+    let (buf, doc) = synced(content, content.len(), true);
+    let (lines, snap) = emit(buf.content(), doc.blocks());
+    assert_full_line_coverage(&buf, &lines, &snap);
+    for line in 0..buf.line_count() {
+        if snap.hidden_byte_count(line) == 0 {
+            assert_eq!(
+                joined_line(&lines, line),
+                buf.line(line),
+                "line {line}: rendered text out of byte order"
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // (a10) CLASS B (verification round 5): an empty blockquote
 // continuation line immediately after a thematic break ("> ---\n>").
 // CommonMark's own grammar makes a thematic break exactly ONE line, but
