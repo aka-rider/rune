@@ -10,8 +10,9 @@ use rune_core::buffer::Buffer;
 use rune_core::vfs::Vfs;
 use rune_md::element::doc::ViewSnapshots;
 
+use crate::commands::nav;
 use crate::editor::Editor;
-use crate::keymap::{self, Command, KeyInput, QuitKey};
+use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::runtime::{Cmd, Effects, Msg};
 
 /// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
@@ -91,8 +92,9 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
                 .set_size(width, height.saturating_sub(1));
         }
         Msg::Paste(_text) => {
-            // `handle_paste_content` is wired in WP8; WP5 has no editing
-            // yet, so a paste is a no-op placeholder.
+            // `handle_paste_content` is wired in WP7 (through the edit
+            // module); movement-only WP6 has no editing yet, so a paste is
+            // a no-op placeholder.
         }
         Msg::ClipboardRead(_text) => {
             // Wired alongside paste handling in WP8.
@@ -130,22 +132,63 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
 }
 
 fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    // Hardcoded fast paths outside the resolver, exactly as Go
+    // (`textedit/update.go:67-85`): Enter (mod 0) -> newline (wired in
+    // WP7); Escape -> collapse selection. Neither is a resolver-bound
+    // chord (plan Context, "Keymap").
+    if key.code == KeyCode::Escape && key.mods == Mods::NONE {
+        nav::escape(app);
+        return;
+    }
+
     let Some(command) = keymap::resolve(key) else {
         // WP7 wires the printable-insert fallthrough for unresolved keys;
-        // WP5 has no editing yet, so an unbound key is simply ignored.
+        // WP6 has no editing yet, so an unbound key is simply ignored.
         return;
     };
 
-    // Movement/selection/editing/clipboard/undo/save commands are acted on
-    // starting WP6/7/8/9 (plan: "movement commands may no-op until WP6").
-    // The resolver already covers the full chord table; only this dispatch
-    // grows in later WPs.
-    if command == Command::QuitConfirm {
-        // `resolve` only ever returns `QuitConfirm` when `key` is a known
-        // quit chord (see `keymap::QuitKey::from_key`, the single source of
-        // truth both functions route through).
-        if let Some(quit_key) = QuitKey::from_key(key) {
-            handle_quit_key(app, quit_key, effects);
+    match command {
+        Command::CharLeft => nav::char_left(app, false),
+        Command::CharRight => nav::char_right(app, false),
+        Command::LineUp => nav::line_up(app, false),
+        Command::LineDown => nav::line_down(app, false),
+        Command::WordLeft => nav::word_left(app, false),
+        Command::WordRight => nav::word_right(app, false),
+        Command::LineStart => nav::line_start(app, false),
+        Command::LineEnd => nav::line_end(app, false),
+        Command::PageUp => nav::page_up(app, false),
+        Command::PageDown => nav::page_down(app, false),
+        Command::SelectCharLeft => nav::char_left(app, true),
+        Command::SelectCharRight => nav::char_right(app, true),
+        Command::SelectLineUp => nav::line_up(app, true),
+        Command::SelectLineDown => nav::line_down(app, true),
+        Command::SelectWordLeft => nav::word_left(app, true),
+        Command::SelectWordRight => nav::word_right(app, true),
+        Command::SelectLineStart => nav::line_start(app, true),
+        Command::SelectLineEnd => nav::line_end(app, true),
+        Command::SelectPageUp => nav::page_up(app, true),
+        Command::SelectPageDown => nav::page_down(app, true),
+        Command::SelectAll => nav::select_all(app),
+        // Editing/clipboard/undo/save commands are acted on starting
+        // WP7/8/9 (plan: "movement commands may no-op until WP6" — the
+        // mirror image is true here: editing commands no-op until WP7).
+        Command::DeleteLeft
+        | Command::DeleteRight
+        | Command::Indent
+        | Command::Outdent
+        | Command::Copy
+        | Command::Cut
+        | Command::Paste
+        | Command::Undo
+        | Command::Redo
+        | Command::Save => {}
+        Command::QuitConfirm => {
+            // `resolve` only ever returns `QuitConfirm` when `key` is a
+            // known quit chord (see `keymap::QuitKey::from_key`, the single
+            // source of truth both functions route through).
+            if let Some(quit_key) = QuitKey::from_key(key) {
+                handle_quit_key(app, quit_key, effects);
+            }
         }
     }
 }

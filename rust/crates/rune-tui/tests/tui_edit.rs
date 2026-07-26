@@ -1,0 +1,278 @@
+//! WP6 done-when: movement, selection, and scrolling driven through the
+//! real `app::update` (headless — `TestBackend` + `Mem` vfs only, no
+//! wall-clock sleeps, no real terminal — mirrors `tests/tui_render.rs`).
+//! WP7 extends this file with editing/undo-redo tests.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use std::sync::Arc;
+
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer as RtBuffer;
+
+use rune_core::buffer::Buffer;
+use rune_core::cursor::CursorSet;
+use rune_core::vfs::Mem;
+use rune_tui::app::{self, App};
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::render;
+use rune_tui::runtime::{Effects, Msg};
+
+const WIDTH: u16 = 80;
+const HEIGHT: u16 = 24;
+
+fn app_for(content: &str, cursor_offset: usize) -> App {
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    app.editor.focused = true;
+    app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.editor.viewport.set_size(WIDTH, HEIGHT - 1);
+    app.sync_view();
+    app
+}
+
+fn key(code: KeyCode, mods: Mods) -> KeyInput {
+    KeyInput { code, mods }
+}
+
+/// Sends one `Msg::Key` through the real `update`, then resyncs `app.view`
+/// (what the runtime does once per whole message batch — see
+/// `runtime::run`) so render/scroll assertions see the settled state.
+fn press(app: &mut App, code: KeyCode, mods: Mods) {
+    let mut effects = Effects::default();
+    app::update(app, Msg::Key(key(code, mods)), &mut effects);
+    app.sync_view();
+}
+
+const SHIFT: Mods = Mods {
+    shift: true,
+    alt: false,
+    ctrl: false,
+    sup: false,
+};
+const ALT: Mods = Mods {
+    shift: false,
+    alt: true,
+    ctrl: false,
+    sup: false,
+};
+const SUP: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
+
+fn render_to_test_backend(app: &App) -> RtBuffer {
+    let backend = TestBackend::new(WIDTH, HEIGHT);
+    let mut terminal = Terminal::new(backend).expect("terminal construction");
+    terminal
+        .draw(|frame| render::draw(app, frame))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn full_text(buf: &RtBuffer) -> String {
+    let mut s = String::new();
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if let Some(cell) = buf.cell((x, y)) {
+                s.push_str(cell.symbol());
+            }
+        }
+        s.push('\n');
+    }
+    s
+}
+
+// ---- Movement matrix (WP6) ----
+
+#[test]
+fn char_right_then_left_returns_to_start() {
+    let mut app = app_for("hello", 0);
+    press(&mut app, KeyCode::Right, Mods::NONE);
+    assert_eq!(app.editor.cursors.primary().position, 1);
+    press(&mut app, KeyCode::Left, Mods::NONE);
+    assert_eq!(app.editor.cursors.primary().position, 0);
+}
+
+#[test]
+fn char_left_at_buffer_start_does_not_go_negative() {
+    let mut app = app_for("hello", 0);
+    press(&mut app, KeyCode::Left, Mods::NONE);
+    assert_eq!(app.editor.cursors.primary().position, 0);
+}
+
+#[test]
+fn word_right_left_navigate_word_boundaries() {
+    let mut app = app_for("hello world", 0);
+    press(&mut app, KeyCode::Right, ALT);
+    assert_eq!(app.editor.cursors.primary().position, 5);
+    press(&mut app, KeyCode::Left, ALT);
+    assert_eq!(app.editor.cursors.primary().position, 0);
+}
+
+#[test]
+fn home_end_move_to_line_boundaries() {
+    let mut app = app_for("hello\nworld", 8); // caret inside "world"
+    press(&mut app, KeyCode::Home, Mods::NONE);
+    assert_eq!(app.editor.cursors.primary().position, 6);
+    press(&mut app, KeyCode::End, Mods::NONE);
+    assert_eq!(app.editor.cursors.primary().position, 11);
+}
+
+#[test]
+fn shift_right_extends_a_selection_plain_right_collapses_it() {
+    let mut app = app_for("hello", 0);
+    press(&mut app, KeyCode::Right, SHIFT);
+    let c = app.editor.cursors.primary();
+    assert_eq!((c.anchor, c.position), (0, 1));
+    assert!(c.has_selection());
+
+    press(&mut app, KeyCode::Right, Mods::NONE);
+    let c = app.editor.cursors.primary();
+    assert!(!c.has_selection(), "a plain move consumes the selection");
+}
+
+#[test]
+fn select_all_selects_the_whole_buffer() {
+    let mut app = app_for("hello world", 3);
+    press(&mut app, KeyCode::Char('a'), SUP);
+    let c = app.editor.cursors.primary();
+    assert_eq!((c.anchor, c.position), (0, 11));
+}
+
+#[test]
+fn escape_collapses_a_selection_to_the_caret() {
+    let mut app = app_for("hello", 0);
+    press(&mut app, KeyCode::Right, SHIFT);
+    assert!(app.editor.cursors.primary().has_selection());
+    press(&mut app, KeyCode::Escape, Mods::NONE);
+    let c = app.editor.cursors.primary();
+    assert!(!c.has_selection());
+    assert_eq!(c.position, 1);
+}
+
+#[test]
+fn page_down_then_page_up_returns_to_the_original_row() {
+    let mut lines = String::new();
+    for i in 0..200 {
+        lines.push_str(&format!("line{i}\n"));
+    }
+    let mut app = app_for(&lines, 0);
+    let before = app.editor.cursors.primary();
+
+    press(&mut app, KeyCode::PageDown, Mods::NONE);
+    let after_down = app.editor.cursors.primary();
+    assert_ne!(
+        after_down.position, before.position,
+        "page down must move the caret"
+    );
+
+    press(&mut app, KeyCode::PageUp, Mods::NONE);
+    let after_up = app.editor.cursors.primary();
+    assert_eq!(
+        after_up.position, before.position,
+        "page up must return to the original row"
+    );
+}
+
+/// Desired-col preservation across wrapped VISUAL rows within one long,
+/// space-free logical line (plan: "desired-col preservation across wrap
+/// rows"). Established by moving right to a known byte/visual column, then
+/// verified to survive a vertical move to a different-length wrap row.
+#[test]
+fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
+    let content = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"; // no spaces: force-break wrap
+    let mut app = app_for(content, 0);
+    app.editor.viewport.set_size(8, HEIGHT - 1);
+
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Right, Mods::NONE);
+    }
+    let after_right = app.editor.cursors.primary();
+    assert_eq!(after_right.position, 5);
+    assert_eq!(after_right.desired_col, 5);
+
+    press(&mut app, KeyCode::Down, Mods::NONE);
+    let after_down = app.editor.cursors.primary();
+    assert_eq!(
+        after_down.desired_col, 5,
+        "desired_col must be preserved across a vertical move"
+    );
+
+    let view = app.editor.sync();
+    let bp = app.editor.buffer.offset_to_line_col(after_down.position);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wp = view.wrap.syntax_to_wrap(sp);
+    assert_eq!(
+        view.wrap.visual_col(wp.row, wp.col),
+        5,
+        "the caret must land on visual column 5 of the next wrap row"
+    );
+}
+
+/// Regression for the plan's carried-forward review constraint: a `Key`
+/// handled right after a `Resize` in the SAME message batch must see the
+/// post-resize wrap, not a stale `app.view` (only refreshed once per
+/// batch by the runtime — see `runtime::run`). `nav` handlers call
+/// `Editor::sync()` fresh instead of reading the cache, so this must pass
+/// even though `app.sync_view()` is deliberately NOT called between the
+/// two `update` calls below (simulating same-batch delivery).
+#[test]
+fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
+    let content = "0123456789\n"; // one space-free 10-char line
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    app.editor.focused = true;
+    app.editor.cursors = CursorSet::new(0);
+    app.editor.viewport.set_size(80, HEIGHT - 1); // wide: the whole line is one row
+    app.sync_view();
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Resize(5, HEIGHT), &mut effects);
+    assert_eq!(app.editor.viewport.width, 5);
+
+    // No `app.sync_view()` here: this Key must be handled within the same
+    // logical batch as the Resize above, purely off `Editor::sync()`.
+    let mut effects2 = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Key(key(KeyCode::Down, Mods::NONE)),
+        &mut effects2,
+    );
+
+    let after = app.editor.cursors.primary();
+    assert_eq!(
+        after.position, 5,
+        "Down must move within the narrow (width-5) wrap of the SAME logical \
+         line, not skip to the trailing blank line a stale width-80 wrap \
+         would have produced"
+    );
+}
+
+// ---- Reveal follows the cursor (WP6) ----
+
+#[test]
+fn moving_onto_a_heading_line_reveals_its_marker_moving_off_conceals_it() {
+    let content = "plain text\n## Heading\nmore text\n";
+    let mut app = app_for(content, 0); // caret on line 0
+
+    let buf0 = render_to_test_backend(&app);
+    assert!(
+        !full_text(&buf0).contains("## "),
+        "heading concealed while the cursor is elsewhere"
+    );
+
+    press(&mut app, KeyCode::Down, Mods::NONE); // -> line 1 (the heading)
+    let buf1 = render_to_test_backend(&app);
+    assert!(
+        full_text(&buf1).contains("## Heading"),
+        "heading revealed while the cursor sits on its line"
+    );
+
+    press(&mut app, KeyCode::Down, Mods::NONE); // -> line 2, off the heading
+    let buf2 = render_to_test_backend(&app);
+    assert!(
+        !full_text(&buf2).contains("## "),
+        "heading concealed again once the cursor moves off"
+    );
+}
