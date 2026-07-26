@@ -371,7 +371,7 @@ pub fn redo(app: &mut App) {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use rune_core::vfs::Mem;
+    use rune_vfs::Mem;
     use std::sync::Arc;
 
     fn app_with(content: &str, cursor_offset: usize) -> App {

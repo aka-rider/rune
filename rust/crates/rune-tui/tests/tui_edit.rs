@@ -11,11 +11,11 @@ use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_core::vfs::Mem;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;

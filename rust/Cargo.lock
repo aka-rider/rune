@@ -1748,13 +1748,13 @@ version = "0.1.0"
 dependencies = [
  "rune-core",
  "rune-tui",
+ "rune-vfs",
 ]
 
 [[package]]
 name = "rune-core"
 version = "0.1.0"
 dependencies = [
- "libc",
  "proptest",
 ]
 
@@ -1779,7 +1779,15 @@ dependencies = [
  "ratatui-termina",
  "rune-core",
  "rune-md",
+ "rune-vfs",
  "termina",
+]
+
+[[package]]
+name = "rune-vfs"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

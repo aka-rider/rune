@@ -14,8 +14,8 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, BufferError};
-use rune_core::vfs::{Disk, Vfs};
 use rune_tui::app::App;
+use rune_vfs::{Disk, Vfs};
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (bad invocation), `EX_DATAERR`
 /// (the file's bytes are not valid data for this program — invalid UTF-8),
@@ -150,7 +150,7 @@ fn to_abs_path(input: &str) -> PathBuf {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use rune_core::vfs::Mem;
+    use rune_vfs::Mem;
 
     #[test]
     fn load_buffer_reads_existing_file_through_the_vfs() {

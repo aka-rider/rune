@@ -51,7 +51,7 @@ mod tests {
     use super::*;
     use crate::app::App;
     use rune_core::buffer::Buffer;
-    use rune_core::vfs::Mem;
+    use rune_vfs::Mem;
     use std::sync::Arc;
 
     fn app_with(content: &str) -> App {

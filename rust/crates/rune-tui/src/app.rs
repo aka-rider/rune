@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rune_core::buffer::Buffer;
-use rune_core::vfs::Vfs;
 use rune_md::element::doc::ViewSnapshots;
+use rune_vfs::Vfs;
 
 use crate::commands::{clipboard, edit, nav};
 use crate::editor::Editor;
@@ -361,7 +361,7 @@ fn save_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, vers
 mod tests {
     use super::*;
     use crate::keymap::{KeyCode, Mods};
-    use rune_core::vfs::{Disk, Mem, Vfs};
+    use rune_vfs::{Disk, Mem, Vfs};
 
     fn test_app() -> App {
         App::new(Buffer::new("hello"), None, Arc::new(Mem::new()))
