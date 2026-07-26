@@ -5,9 +5,25 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! This commit lands the action/snapshot/step-context model only; `driver`,
-//! `invariant`, and `generate` follow in subsequent commits (each adds its
-//! own `pub mod` line here).
+//! This commit adds the invariant checkers; `driver` and `generate` follow
+//! in subsequent commits (each adds its own `pub mod` line here).
+//!
+//! # Invariant roster (WP3: six)
+//!
+//! - `NO-PANIC` — the driver caught an unwind (a `debug_assert!`
+//!   tripping, or any other panic) while settling a message.
+//! - `CUR-BOUNDS` — every cursor's `position`/`anchor` is a valid, in-bounds,
+//!   char-boundary byte offset (§1.3, §1.5).
+//! - `CUR-ORDER` — cursors are ordered and non-overlapping.
+//! - `CUR-ID` — at least one cursor; every id is non-zero and unique.
+//! - `BUF-LINE-INDEX` — the line index (`line_count`/`line_starts`/
+//!   `line_ends`) is internally consistent with the buffer content.
+//! - `VERSION-MONOTONE` — `Buffer::version()`/`saved_version` never regress
+//!   across a step.
+//!
+//! A later work package adds 15 more of the same three checker shapes
+//! (`invariant.rs`'s module docs) for a final roster of 21.
 pub mod action;
+pub mod invariant;
 pub mod snapshot;
 pub mod step;
