@@ -22,7 +22,7 @@ use rune_md::element::doc::DocMachine;
 fn build_5k_doc() -> String {
     let mut doc = String::with_capacity(5_000 * 40);
 
-    // Pattern: 30 lines per cycle, repeated 166 times (4,980 lines) + 20
+    // Pattern: 31 lines per cycle, repeated 161 times (4,991 lines) + 9
     // extra lines = 5,000 total.
     let pattern: [&str; 31] = [
         "# Heading One",
@@ -59,8 +59,8 @@ fn build_5k_doc() -> String {
     ];
 
     let pattern_len = pattern.len(); // 31
-    let full_cycles = 5_000 / pattern_len; // 166
-    let remainder = 5_000 % pattern_len; // 20
+    let full_cycles = 5_000 / pattern_len; // 161
+    let remainder = 5_000 % pattern_len; // 9
 
     for _ in 0..full_cycles {
         for line in &pattern {
@@ -86,7 +86,7 @@ fn full_pipeline_benchmark(c: &mut Criterion) {
             let mut machine = DocMachine::new();
             machine.sync_content(&buf);
             machine.sync_cursors(&buf, &cursors);
-            let _snap = machine.snapshot(&buf);
+            black_box(machine.snapshot(&buf));
         });
     });
 }
