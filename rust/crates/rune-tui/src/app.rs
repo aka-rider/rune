@@ -13,7 +13,7 @@ use rune_md::element::doc::ViewSnapshots;
 use crate::commands::{clipboard, edit, nav};
 use crate::editor::Editor;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
-use crate::runtime::{Cmd, Effects, Msg};
+use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 
 /// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
 /// press arms + spawns 2s timer Cmd carrying gen").
@@ -306,7 +306,7 @@ fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
 /// correct primitive (this Cmd runs on its own dedicated thread by runtime
 /// design, never blocking the main loop).
 fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
-    Box::new(move || {
+    Cmd::new(CmdKind::QuitTimeout, move || {
         std::thread::sleep(CONFIRM_TIMEOUT);
         Some(Msg::ConfirmTimeout { generation })
     })
@@ -350,14 +350,14 @@ fn trigger_save(app: &mut App, effects: &mut Effects) {
 /// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
 /// `bytes` — §1.4.5 byte-verbatim, no normalization anywhere on this path.
 fn save_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, version: u64) -> Cmd {
-    Box::new(move || {
+    Cmd::new(CmdKind::Save, move || {
         let result = vfs.save_atomic(&path, &bytes).map_err(|e| e.to_string());
         Some(Msg::SaveDone { version, result })
     })
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use crate::keymap::{KeyCode, Mods};
@@ -671,7 +671,7 @@ mod tests {
     /// spawn-then-`recv` loop.
     fn settle_cmds(app: &mut App, effects: Effects) {
         for cmd in effects.cmds {
-            if let Some(msg) = cmd() {
+            if let Some(msg) = cmd.run() {
                 let mut next = Effects::default();
                 update(app, msg, &mut next);
                 settle_cmds(app, next);
@@ -809,5 +809,40 @@ mod tests {
         assert_eq!(saved, b"brand new file\n");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn every_cmd_is_tagged_with_its_kind() {
+        let vfs = Arc::new(Mem::new());
+        let mut app = App::new(
+            Buffer::new("x"),
+            Some(PathBuf::from("/doc.md")),
+            Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+        );
+        app.saved_version = 0; // force dirty without touching content (see above)
+        let effects = press_save(&mut app);
+        assert_eq!(effects.cmds.len(), 1);
+        assert_eq!(effects.cmds[0].kind(), CmdKind::Save);
+
+        let mut app2 = test_app();
+        let mut e2 = Effects::default();
+        update(
+            &mut app2,
+            Msg::Key(key(
+                KeyCode::Char('c'),
+                Mods {
+                    ctrl: true,
+                    ..Mods::NONE
+                },
+            )),
+            &mut e2,
+        );
+        assert_eq!(e2.cmds.len(), 1);
+        assert_eq!(e2.cmds[0].kind(), CmdKind::QuitTimeout);
+
+        let mut e3 = Effects::default();
+        crate::commands::clipboard::paste(&mut e3);
+        assert_eq!(e3.cmds.len(), 1);
+        assert_eq!(e3.cmds[0].kind(), CmdKind::ClipboardRead);
     }
 }

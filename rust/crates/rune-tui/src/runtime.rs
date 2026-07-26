@@ -24,6 +24,7 @@ use crate::term::Guard;
 /// thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout` originate from a
 /// spawned `Cmd`'s return value; `Error`/`Quit` can be synthesized by
 /// `update` itself.
+#[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
     Paste(String),
@@ -40,10 +41,45 @@ pub enum Msg {
     Quit,
 }
 
+/// What kind of off-thread work a `Cmd` performs. Exists so a consumer that
+/// must NOT execute certain effects (a headless driver: `QuitTimeout` sleeps
+/// 2 real seconds, `ClipboardRead` forks `/usr/bin/pbpaste`) can decide by
+/// inspection instead of inferring it from `App` field diffs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CmdKind {
+    /// `vfs.save_atomic` — the §1.4.1 durable publish.
+    Save,
+    /// The 2s quit-confirm timer. Sleeps; never run it inline.
+    QuitTimeout,
+    /// `/usr/bin/pbpaste`. Spawns a subprocess and reads the live OS
+    /// clipboard; never run it inline.
+    ClipboardRead,
+}
+
 /// Off-thread work `update` asks the runtime to perform, spawned one
 /// `std::thread` each. Returns the `Msg` to feed back once the work
 /// completes, or `None` to produce nothing.
-pub type Cmd = Box<dyn FnOnce() -> Option<Msg> + Send + 'static>;
+pub struct Cmd {
+    kind: CmdKind,
+    run: Box<dyn FnOnce() -> Option<Msg> + Send + 'static>,
+}
+
+impl Cmd {
+    pub fn new(kind: CmdKind, run: impl FnOnce() -> Option<Msg> + Send + 'static) -> Cmd {
+        Cmd {
+            kind,
+            run: Box::new(run),
+        }
+    }
+
+    pub fn kind(&self) -> CmdKind {
+        self.kind
+    }
+
+    pub fn run(self) -> Option<Msg> {
+        (self.run)()
+    }
+}
 
 /// What one `update` call asks the runtime to do. `raw` is escape-byte
 /// output (OSC 52): the main loop drains it to the terminal writer with
@@ -129,8 +165,8 @@ fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> 
 /// spawned `Cmd` thread sends SOMETHING back, success, `None`, or a caught
 /// panic.
 fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
-    thread::spawn(
-        move || match std::panic::catch_unwind(std::panic::AssertUnwindSafe(cmd)) {
+    thread::spawn(move || {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
             Ok(Some(msg)) => {
                 let _ = tx.send(msg);
             }
@@ -138,8 +174,8 @@ fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
             Err(_) => {
                 let _ = tx.send(Msg::Error("a background task panicked".to_string()));
             }
-        },
-    );
+        }
+    });
 }
 
 fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
