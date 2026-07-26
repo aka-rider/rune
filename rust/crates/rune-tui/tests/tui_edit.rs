@@ -205,7 +205,7 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
         "desired_col must be preserved across a vertical move"
     );
 
-    let view = app.editor.sync();
+    let view = app.editor.view();
     let bp = app.editor.buffer.offset_to_line_col(after_down.position);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
@@ -251,6 +251,44 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
         "Down must move within the narrow (width-5) wrap of the SAME logical \
          line, not skip to the trailing blank line a stale width-80 wrap \
          would have produced"
+    );
+}
+
+/// Regression for F4: `viewport.scroll_row` has exactly one writer
+/// (`Editor::scroll_to_cursor`, invoked once per settled batch via
+/// `Editor::sync`/`App::sync_view`) — a nav command's internal
+/// `Editor::view()` call must NEVER move it mid-motion.
+#[test]
+fn scroll_row_does_not_move_until_the_batch_settles() {
+    let mut lines = String::new();
+    for i in 0..100 {
+        lines.push_str(&format!("line{i}\n"));
+    }
+    let mut app = app_for(&lines, 0);
+    app.editor.viewport.set_size(WIDTH, 10);
+    let scroll_before = app.editor.viewport.scroll_row;
+
+    // Bypass the `press` helper (which calls `sync_view()` after every
+    // key) to observe the PRE-settle state directly.
+    let mut effects = Effects::default();
+    for _ in 0..50 {
+        app::update(
+            &mut app,
+            Msg::Key(key(KeyCode::Down, Mods::NONE)),
+            &mut effects,
+        );
+    }
+    assert_eq!(
+        app.editor.viewport.scroll_row, scroll_before,
+        "scroll_row must not move until the batch settles"
+    );
+
+    // Settling the batch (what the runtime does once per whole message
+    // batch) scrolls in one shot to follow the final cursor.
+    app.sync_view();
+    assert!(
+        app.editor.viewport.scroll_row > scroll_before,
+        "scroll_row must follow the cursor once the batch settles"
     );
 }
 

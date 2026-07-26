@@ -9,11 +9,17 @@
 //! this matches Go exactly: `commands_nav.go:prevRuneOffset`/
 //! `nextRuneOffset` (which `execDeleteLeft`/`execDeleteRight` call) decode
 //! one UTF-8 rune at a time via `utf8.DecodeLastRuneInString`, with no
-//! grapheme-segmentation anywhere in the Go source (confirmed: no
-//! reference to "grapheme" in the Go tree). A ZWJ emoji family sequence
-//! therefore deletes one codepoint per Backspace in both implementations,
-//! not the whole cluster — ported 1:1, not "improved", since drifting from
-//! Go here would be a silent behavior change the plan didn't ask for.
+//! grapheme-CLUSTER SEGMENTATION anywhere in the Go source's delete path.
+//! The Go tree does use `Grapheme` as a struct field name elsewhere
+//! (`textedit/cell.go`'s per-`Cell` rendered glyph string,
+//! `markdownedit/render_image.go`, `internal/fuzz/artifact/artifact.go`'s
+//! serialized snapshot of it) — but those are RENDER-TIME display-cell
+//! payloads (what glyph a cell shows), never consulted by
+//! `execDeleteLeft`/`execDeleteRight`'s offset computation. A ZWJ emoji
+//! family sequence therefore deletes one codepoint per Backspace in both
+//! implementations, not the whole cluster — ported 1:1, not "improved",
+//! since drifting from Go here would be a silent behavior change the plan
+//! didn't ask for.
 
 use std::collections::HashSet;
 
@@ -43,6 +49,16 @@ use crate::commands::nav;
 /// only ever change on `Ok`; a rejected batch surfaces to the status line
 /// and leaves buffer/cursors untouched (CONSTITUTION §1.3: "fail fast on
 /// data risk", the same discipline `undo`/`redo` below already follow).
+///
+/// Status-message OWNERSHIP (review finding F2): a successful edit must
+/// NOT clear `app.status_message` — that field is a shared, single slot
+/// with no provenance tag, so an unconditional clear here would erase an
+/// unrelated message another subsystem is still showing (the reported
+/// case: a save failure, "save failed: disk full", vanishing on the very
+/// next keystroke while the buffer is still dirty — the user's only
+/// signal, gone). This function only ever WRITES `status_message` on its
+/// own failure path below; a message set by someone else survives here
+/// until whatever set it (or a later, unrelated event) supersedes it.
 fn commit_edit_batch(app: &mut App, mut infos: Vec<(Edit, u32)>, cursors_before: CursorSet) {
     if infos.is_empty() {
         return;
@@ -71,7 +87,6 @@ fn commit_edit_batch(app: &mut App, mut infos: Vec<(Edit, u32)>, cursors_before:
                 cursors_before: cursors_before.all(),
                 cursors_after: app.editor.cursors.all(),
             });
-            app.status_message = None;
         }
         Err(e) => {
             app.status_message = Some(format!("edit failed: {e}"));
@@ -283,7 +298,10 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
 /// moving the journal), apply its inverse to the buffer, and commit the
 /// position move ONLY if the buffer edit succeeds (§1.4.8) — a failed
 /// apply surfaces a status-line error and leaves the journal position (and
-/// buffer) untouched, so the journal never runs ahead of the buffer.
+/// buffer) untouched, so the journal never runs ahead of the buffer. Same
+/// status-message ownership rule as `commit_edit_batch` (F2): success never
+/// clears `app.status_message` — only this function's own failure path
+/// writes it.
 pub fn undo(app: &mut App) {
     let Some((step, new_pos)) = app.editor.journal.undo_peek() else {
         return;
@@ -296,7 +314,6 @@ pub fn undo(app: &mut App) {
             app.editor.buffer = new_buf;
             app.editor.cursors = CursorSet::new_from(&cursors_before);
             app.editor.journal.move_pos(new_pos);
-            app.status_message = None;
         }
         Err(e) => {
             app.status_message = Some(format!("undo failed: {e}"));
@@ -305,7 +322,8 @@ pub fn undo(app: &mut App) {
 }
 
 /// Port of `workspace_undo.go:handleRedo` — mirrors `undo` above: reapply
-/// the step forward, commit the position move only on success.
+/// the step forward, commit the position move only on success. Same
+/// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
 pub fn redo(app: &mut App) {
     let Some((step, new_pos)) = app.editor.journal.redo_peek() else {
         return;
@@ -318,7 +336,6 @@ pub fn redo(app: &mut App) {
             app.editor.buffer = new_buf;
             app.editor.cursors = CursorSet::new_from(&cursors_after);
             app.editor.journal.move_pos(new_pos);
-            app.status_message = None;
         }
         Err(e) => {
             app.status_message = Some(format!("redo failed: {e}"));
@@ -451,5 +468,36 @@ mod tests {
         insert_char(&mut app, 'x');
         undo(&mut app);
         assert_eq!(app.editor.buffer.content(), original);
+    }
+
+    /// Regression for F2: a successful edit must not clobber an unrelated
+    /// (e.g. save-failure) status message — only this module's OWN failure
+    /// paths may write `status_message`.
+    #[test]
+    fn a_successful_edit_does_not_clear_an_unrelated_status_message() {
+        let mut app = app_with("hello", 5);
+        app.status_message = Some("save failed: disk full".to_string());
+
+        insert_char(&mut app, '!');
+        assert_eq!(app.editor.buffer.content(), "hello!");
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("save failed: disk full"),
+            "an unrelated save-failure message must survive a successful edit"
+        );
+
+        undo(&mut app);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("save failed: disk full"),
+            "an unrelated save-failure message must survive a successful undo"
+        );
+
+        redo(&mut app);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("save failed: disk full"),
+            "an unrelated save-failure message must survive a successful redo"
+        );
     }
 }

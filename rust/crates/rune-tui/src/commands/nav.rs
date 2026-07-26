@@ -4,19 +4,28 @@
 //! (`commands_multi.go:70-101`).
 //!
 //! Every handler that needs Buffer<->Syntax<->Wrap coordinate conversions
-//! calls `Editor::sync()` fresh at entry rather than reading `App::view`:
+//! calls `Editor::view()` fresh at entry rather than reading `App::view`:
 //! `App::view` is only refreshed once per whole message BATCH (by the
 //! runtime, after every `Msg` in the batch has been applied — see
 //! `runtime::run`), so within a batch it can still reflect the state from
 //! BEFORE an earlier `Msg::Resize` in the same batch already widened the
-//! viewport. `Editor::sync()` is documented idempotent/cheap and always
+//! viewport. `Editor::view()` is documented idempotent/cheap and always
 //! reflects the CURRENT `Editor` fields (`viewport.width` in particular),
 //! so a `Key` handled right after a `Resize` in the same batch sees the
 //! post-resize wrap. This mirrors Go's own behavior too: Go's command
 //! context is built from `m.syntaxSnap`/`m.wrapSnap`, populated by the
 //! MOST RECENT `syncDisplay()` — i.e. reflecting cursor/reveal state from
-//! before this keystroke's own movement, exactly what calling `sync()` at
+//! before this keystroke's own movement, exactly what calling `view()` at
 //! handler-entry (before this handler updates `cursors`) reproduces here.
+//!
+//! Handlers here call `view()`, NEVER `sync()` (review finding F4):
+//! `sync()` also scrolls the viewport toward the PRIMARY cursor, and this
+//! module calls in BEFORE it has updated `cursors` for this motion — an
+//! intermediate scroll toward a soon-to-change cursor that the batch's
+//! real settle (`App::sync_view`, called once per batch) would then
+//! silently overwrite. `viewport.scroll_row` has exactly one writer:
+//! `Editor::scroll_to_cursor`, invoked exactly once per settled batch via
+//! `Editor::sync`/`App::sync_view` — never from inside a single command.
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferPoint, WrapPoint};
@@ -326,7 +335,7 @@ fn move_cursors(
     select: bool,
     step: impl Fn(&ViewSnapshots, &Buffer, Cursor, bool) -> Cursor,
 ) {
-    let view = app.editor.sync();
+    let view = app.editor.view();
     let new_cursors: Vec<Cursor> = app
         .editor
         .cursors
@@ -339,7 +348,7 @@ fn move_cursors(
 
 /// Shared vertical-motion driver (line up/down, page up/down).
 fn move_row_cursors(app: &mut App, select: bool, delta: isize) {
-    let view = app.editor.sync();
+    let view = app.editor.view();
     let new_cursors: Vec<Cursor> = app
         .editor
         .cursors

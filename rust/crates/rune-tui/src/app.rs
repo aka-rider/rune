@@ -157,6 +157,7 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
             && !key.mods.ctrl
             && !key.mods.alt
             && !key.mods.sup
+            && is_insertable_key_char(ch)
         {
             edit::insert_char(app, ch);
         }
@@ -202,6 +203,31 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
             }
         }
     }
+}
+
+/// Guards the printable-insert fallthrough against control-byte leakage
+/// (data-integrity fix, review finding F1). Go's equivalent gate is
+/// `isPrintableChar` (`textedit.go:441-443`: `r >= ' ' && r <= '~'`), but
+/// that gate applies ONLY to Go's SYNTHESIZED-from-`BaseCode` case
+/// (`update.go:136-145`) — real decoded text (`msg.Text`, and everything
+/// `Msg::Paste` carries here) flows unrestricted, including non-ASCII
+/// (CJK, emoji). This crate's termina-backed `KeyCode::Char(char)` has no
+/// such split: it is Go's `BaseCode` concept alone, never a separate
+/// decoded-text stream, so a literal ASCII-only port would also block
+/// genuine direct-keystroke Unicode entry Go itself allows unrestricted
+/// (and which `tests/tui_edit.rs` requires). The hazard Go's gate actually
+/// closes is narrower than "ASCII only": a raw C0 control byte or DEL
+/// leaking through as `Char` with no modifier flag at all — the reported
+/// case is a non-Kitty terminal's legacy encoding, where Ctrl+A IS the
+/// literal SOH byte (no separate "this was a chord" signal survives
+/// decoding) rather than a Kitty-protocol key report with an explicit
+/// Ctrl modifier. Such a leaked byte can only ever be a single codepoint
+/// in `0x00..=0x1F` or `0x7F` — ASCII's own control range — so excluding
+/// `char::is_control()` (Unicode category Cc: `0x00..=0x1F` and
+/// `0x7F..=0x9F`) closes that exact hazard without narrowing what a human
+/// can actually type.
+fn is_insertable_key_char(ch: char) -> bool {
+    !ch.is_control()
 }
 
 /// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
@@ -426,5 +452,45 @@ mod tests {
         update(&mut app, Msg::Resize(80, 24), &mut effects);
         assert_eq!(app.editor.viewport.width, 80);
         assert_eq!(app.editor.viewport.height, 23);
+    }
+
+    /// Regression for F1: a raw C0 control byte or DEL arriving as
+    /// `KeyCode::Char` with NO modifier flag at all (the non-Kitty legacy-
+    /// terminal degradation path, where Ctrl+A IS the literal SOH byte)
+    /// must never reach the buffer.
+    #[test]
+    fn control_bytes_with_no_modifier_are_never_inserted() {
+        let mut app = test_app();
+        let before = app.editor.buffer.content().to_string();
+
+        for raw in ['\u{1}', '\u{7f}', '\u{1b}'] {
+            let mut effects = Effects::default();
+            update(
+                &mut app,
+                Msg::Key(key(KeyCode::Char(raw), Mods::NONE)),
+                &mut effects,
+            );
+        }
+
+        assert_eq!(
+            app.editor.buffer.content(),
+            before,
+            "a raw control byte must never be inserted into the document"
+        );
+    }
+
+    #[test]
+    fn printable_ascii_and_unicode_chars_are_still_insertable() {
+        let mut app = test_app();
+        let mut effects = Effects::default();
+        update(
+            &mut app,
+            Msg::Key(key(KeyCode::Char('汉'), Mods::NONE)),
+            &mut effects,
+        );
+        assert!(
+            app.editor.buffer.content().contains('汉'),
+            "genuine Unicode text entry must not be blocked by the control-byte guard"
+        );
     }
 }
