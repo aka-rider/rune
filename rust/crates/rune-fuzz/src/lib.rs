@@ -5,9 +5,6 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! This commit adds the deterministic driver; `generate` follows in a
-//! subsequent commit (which adds its own `pub mod` line here).
-//!
 //! # Invariant roster (WP3: six)
 //!
 //! - `NO-PANIC` — the driver caught an unwind (a `debug_assert!`
@@ -25,6 +22,7 @@
 //! (`invariant.rs`'s module docs) for a final roster of 21.
 pub mod action;
 pub mod driver;
+pub mod generate;
 pub mod invariant;
 pub mod snapshot;
 pub mod step;
