@@ -195,8 +195,7 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Command::Copy => clipboard::copy(app, effects),
         Command::Cut => clipboard::cut(app, effects),
         Command::Paste => clipboard::paste(effects),
-        // Save is wired in WP9.
-        Command::Save => {}
+        Command::Save => trigger_save(app, effects),
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single
@@ -265,12 +264,54 @@ fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
     })
 }
 
+/// `super+s` (WP9, plan Context "Save"): guarded by the in-flight flag (a
+/// second `super+s` before the first save's `Cmd` reports back is a no-op —
+/// there is exactly one save `Cmd` in flight at a time, so its eventual
+/// `Msg::SaveDone` can never be ambiguous about which attempt it answers)
+/// and by `version != saved_version` (nothing to persist otherwise). Clones
+/// the buffer's bytes and its CURRENT version onto the `Cmd`'s own thread —
+/// never the buffer itself, never the `Vfs` call site's shared state — so
+/// the actual `save_atomic` I/O happens entirely off the main thread
+/// (§5.4). `version` rides along on `Msg::SaveDone` so `update`'s handler
+/// can tell whether further edits landed while this save was in flight (see
+/// its docs) rather than blindly trusting "a save just finished" to mean
+/// "the buffer is now clean".
+fn trigger_save(app: &mut App, effects: &mut Effects) {
+    if app.save_in_flight {
+        return;
+    }
+    let version = app.editor.buffer.version();
+    if version == app.saved_version {
+        return;
+    }
+    let Some(path) = app.file_path.clone() else {
+        app.status_message =
+            Some("no file to save \u{2014} rune was opened without a path".to_string());
+        return;
+    };
+
+    app.save_in_flight = true;
+    let bytes = app.editor.buffer.content().as_bytes().to_vec();
+    let vfs = Arc::clone(&app.vfs);
+    effects.cmds.push(save_cmd(vfs, path, bytes, version));
+}
+
+/// The off-thread save I/O itself: `vfs.save_atomic` (§1.4.1's durable
+/// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
+/// `bytes` — §1.4.5 byte-verbatim, no normalization anywhere on this path.
+fn save_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, version: u64) -> Cmd {
+    Box::new(move || {
+        let result = vfs.save_atomic(&path, &bytes).map_err(|e| e.to_string());
+        Some(Msg::SaveDone { version, result })
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::keymap::{KeyCode, Mods};
-    use rune_core::vfs::Mem;
+    use rune_core::vfs::{Disk, Mem, Vfs};
 
     fn test_app() -> App {
         App::new(Buffer::new("hello"), None, Arc::new(Mem::new()))
@@ -495,5 +536,171 @@ mod tests {
             app.editor.buffer.content().contains('汉'),
             "genuine Unicode text entry must not be blocked by the control-byte guard"
         );
+    }
+
+    fn save_key() -> KeyInput {
+        key(
+            KeyCode::Char('s'),
+            Mods {
+                sup: true,
+                ..Mods::NONE
+            },
+        )
+    }
+
+    /// Presses `super+s` through the real `update` and returns the
+    /// `Effects` it produced — the caller drives `effects.cmds` to
+    /// completion itself via `settle_cmds` (headless: this crate's `Cmd` is
+    /// a plain `FnOnce`, no real thread or terminal needed to run one).
+    fn press_save(app: &mut App) -> Effects {
+        let mut effects = Effects::default();
+        update(app, Msg::Key(save_key()), &mut effects);
+        effects
+    }
+
+    /// Runs every `Cmd` in `effects` synchronously and feeds each resulting
+    /// `Msg` back through `update`, recursively settling whatever new
+    /// `Effects` that produces — the headless stand-in for `runtime::run`'s
+    /// spawn-then-`recv` loop.
+    fn settle_cmds(app: &mut App, effects: Effects) {
+        for cmd in effects.cmds {
+            if let Some(msg) = cmd() {
+                let mut next = Effects::default();
+                update(app, msg, &mut next);
+                settle_cmds(app, next);
+            }
+        }
+    }
+
+    #[test]
+    fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
+        for content in ["a\r\nb\r\n", "\u{feff}hello", "no trailing newline"] {
+            let vfs = Arc::new(Mem::new());
+            let path = PathBuf::from("/doc.md");
+            let mut app = App::new(
+                Buffer::new(content),
+                Some(path.clone()),
+                Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+            );
+            // The buffer as freshly loaded IS the saved state (App::new sets
+            // `saved_version = buffer.version()`) — force it dirty without
+            // touching the CONTENT, so `super+s` actually has something to
+            // persist and the assertion below is exercising the real write
+            // path, not a same-content no-op.
+            app.saved_version = 0;
+
+            let effects = press_save(&mut app);
+            assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
+            settle_cmds(&mut app, effects);
+
+            let saved = vfs.read(&path).expect("save must have written the file");
+            assert_eq!(
+                saved,
+                content.as_bytes(),
+                "saved bytes must be byte-identical to the buffer, verbatim"
+            );
+            assert!(!app.is_dirty());
+        }
+    }
+
+    #[test]
+    fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
+        let vfs = Arc::new(Mem::new());
+        vfs.fail_next_save(std::io::ErrorKind::Other);
+        let path = PathBuf::from("/doc.md");
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(path),
+            Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+        );
+        app.saved_version = 0; // force dirty — see the byte-exact test's comment
+
+        let effects = press_save(&mut app);
+        settle_cmds(&mut app, effects);
+
+        assert!(app.is_dirty());
+        assert!(
+            app.status_message.is_some(),
+            "a failed save must surface a status-line error"
+        );
+    }
+
+    #[test]
+    fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc.md")),
+            Arc::new(Mem::new()),
+        );
+        app.editor.buffer = app.editor.buffer.insert(0, "x"); // makes it dirty
+
+        let effects = press_save(&mut app);
+        assert_eq!(effects.cmds.len(), 1);
+        assert!(app.save_in_flight);
+
+        // A second press before the first save's Cmd has run must not spawn
+        // a second Cmd.
+        let effects2 = press_save(&mut app);
+        assert!(
+            effects2.cmds.is_empty(),
+            "a save already in flight must not spawn a second save Cmd"
+        );
+        assert!(app.save_in_flight);
+    }
+
+    #[test]
+    fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
+        let vfs = Arc::new(Mem::new());
+        let path = PathBuf::from("/doc.md");
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(path),
+            Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+        );
+        app.saved_version = 0; // force dirty — see the byte-exact test's comment
+
+        let effects = press_save(&mut app); // captures the pre-edit version
+        assert_eq!(effects.cmds.len(), 1);
+
+        // An edit lands while the save Cmd hasn't reported back yet.
+        edit::insert_char(&mut app, '!');
+        let after_edit_version = app.editor.buffer.version();
+
+        settle_cmds(&mut app, effects); // delivers SaveDone for the OLD version
+
+        assert!(
+            app.saved_version < after_edit_version,
+            "SaveDone must only advance saved_version to the version IT saved, \
+             not the buffer's current (post-edit) version"
+        );
+        assert!(
+            app.is_dirty(),
+            "an edit made during the in-flight save must leave the buffer dirty \
+             once that save completes"
+        );
+    }
+
+    #[test]
+    fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("rune-wp9-excl-{}-{n}.md", std::process::id()));
+        let _ = std::fs::remove_file(&path); // in case a prior run left it behind
+        assert!(!path.exists(), "the fixture path must not exist yet");
+
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
+        let mut app = App::new(Buffer::new("brand new file\n"), Some(path.clone()), vfs);
+        app.saved_version = 0; // force dirty — see the byte-exact test's comment
+
+        let effects = press_save(&mut app);
+        settle_cmds(&mut app, effects);
+
+        assert!(!app.is_dirty());
+        let saved = std::fs::read(&path).expect("save must have created the file on disk");
+        assert_eq!(saved, b"brand new file\n");
+
+        let _ = std::fs::remove_file(&path);
     }
 }
