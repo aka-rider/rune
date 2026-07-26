@@ -40,5 +40,24 @@ release-snapshot:
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server
 
-.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart
+.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard
+
+rust-build:
+	cd rust && cargo build --workspace
+
+rust-test:
+	cd rust && cargo test --workspace
+	cd rust && cargo test -p rune-md --features strict-invariants
+
+rust-lint:
+	cd rust && cargo clippy --workspace --all-targets -- -D warnings
+
+rust-fmt:
+	cd rust && cargo fmt --all --check
+
+rust-bench:
+	cd rust && cargo bench -p rune-md --bench parse_bench
+
+rust-perf-guard:
+	cd rust && cargo test -p rune-md --release -- --ignored --test-threads=1 full_pipeline_5k_under_100ms
 
