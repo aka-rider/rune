@@ -5,4 +5,3 @@ pub mod buffer;
 pub mod coords;
 pub mod cursor;
 pub mod undo;
-pub mod vfs;

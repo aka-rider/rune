@@ -2,8 +2,7 @@
 //! `Disk` and `Mem` backends, plus error-path and residue checks.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_core::buffer::Buffer;
-use rune_core::vfs::{Disk, Mem, Vfs};
+use rune_vfs::{Disk, Mem, Vfs};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -213,13 +212,6 @@ fn mem_fail_next_save_error_kind() {
 
     // Should succeed after the one-shot failure.
     vfs.save_atomic(&path, b"data").expect("should succeed");
-}
-
-/// `Buffer::from_bytes` refuses invalid UTF-8.
-#[test]
-fn buffer_refuses_invalid_utf8() {
-    let result = Buffer::from_bytes(vec![0xff, 0xfe]);
-    assert!(result.is_err(), "invalid UTF-8 should be refused");
 }
 
 // ============================================================================
