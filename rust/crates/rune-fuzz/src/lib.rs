@@ -5,8 +5,8 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! This commit adds the invariant checkers; `driver` and `generate` follow
-//! in subsequent commits (each adds its own `pub mod` line here).
+//! This commit adds the deterministic driver; `generate` follows in a
+//! subsequent commit (which adds its own `pub mod` line here).
 //!
 //! # Invariant roster (WP3: six)
 //!
@@ -24,6 +24,7 @@
 //! A later work package adds 15 more of the same three checker shapes
 //! (`invariant.rs`'s module docs) for a final roster of 21.
 pub mod action;
+pub mod driver;
 pub mod invariant;
 pub mod snapshot;
 pub mod step;
