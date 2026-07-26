@@ -1761,6 +1761,13 @@ dependencies = [
 [[package]]
 name = "rune-fuzz"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "proptest",
+ "rune-core",
+ "rune-md",
+ "rune-tui",
+]
 
 [[package]]
 name = "rune-md"
