@@ -45,6 +45,36 @@ fn child_gap_delims(
     }
 }
 
+/// True if `node` itself is a WikiLink whose own match spans a raw newline,
+/// OR any node in its descendant subtree is — i.e. whether comrak's
+/// internal line-counter desync (see `build_inlines`'s docs) could have
+/// touched anything inside `node`. A PARENT that merely WRAPS such a
+/// wikilink (`"*[[\n]]\n(*"` — an Emphasis whose child list is
+/// `[WikiLink, Text]`) is just as exposed as the wikilink itself: its own
+/// `child_gap_delims` reads the LAST child's sourcepos to place the close
+/// delimiter, and that sibling's sourcepos is exactly what the desync
+/// corrupts (verification round 4's MAJOR — the wrapper's close `*` got
+/// recorded hidden on the wikilink's own line while the emitter placed it,
+/// unhidden, on the actual closing line: a coverage/duplicate-claim bug at
+/// a new site, same root cause).
+fn subtree_has_multiline_wikilink<'a>(
+    content: &str,
+    starts: &[usize],
+    node: &'a AstNode<'a>,
+) -> bool {
+    if matches!(node.data.borrow().value, NodeValue::WikiLink(_)) {
+        let range = node_range(content, starts, node);
+        if content
+            .get(range.start..range.end)
+            .is_none_or(|s| s.contains('\n'))
+        {
+            return true;
+        }
+    }
+    node.children()
+        .any(|child| subtree_has_multiline_wikilink(content, starts, child))
+}
+
 pub(super) fn build_inlines<'a>(
     content: &str,
     starts: &[usize],
@@ -53,47 +83,62 @@ pub(super) fn build_inlines<'a>(
 ) -> Vec<Inline> {
     let mut out = Vec::new();
     for child in parent.children() {
-        // RESIDUAL PRODUCER fix (verification round 3, "[[\n]]"): a
+        // RESIDUAL PRODUCER fix (verification rounds 3-4, "[[\n]]"): a
         // WikiLink match that embeds a raw newline desyncs comrak's OWN
         // internal line counter for the REST of this paragraph — verified
         // empirically: a plain-text sibling several nodes later reported
         // the wrong physical line, so its sourcepos-derived byte range
         // came out shifted earlier than its true position, landing on
         // top of an EARLIER sibling's already-claimed bytes (a
-        // producer-bug duplicate-claim under strict invariants).
-        // Reconstructing each later sibling's TRUE position from
-        // comrak's now-unreliable sourcepos is not generally possible —
-        // but this crate already has a reliable, comrak-sourcepos-
-        // INDEPENDENT way to find where each remaining physical line's
-        // OWN content starts: `hint`, the same per-line container-prefix
-        // scan `blockquote_markers`/a fenced code block's `content_lines`
-        // already use to skip a repeating `"> "` (or a list item's
-        // continuation indent) on a line comrak's sourcepos alone can't
-        // be trusted for either. So the recovery is per PHYSICAL LINE
-        // (never one contiguous span, which could reach into a LATER
-        // line's container-marker bytes the block scanner independently
-        // — and reliably — already claims, an overlap this exact class of
-        // combinator found): the corrupted WikiLink's own range is kept
-        // as-is (proven reliable — verified empirically it never desyncs
-        // itself, only siblings AFTER it), and every remaining line
-        // through `parent`'s own (still-reliable) last line becomes its
-        // own raw, verbatim, always-`Revealed` text run starting at that
-        // line's `hint`-derived content start.
+        // producer-bug duplicate-claim under strict invariants). Round 4
+        // found the SAME corruption reaching a PARENT wrapping such a
+        // wikilink too (`"*[[\n]]\n(*"`): an Emphasis/Strikethrough/Link's
+        // own `child_gap_delims`/`build_inlines` calls read a LAST
+        // child's (possibly corrupted) sourcepos, so trusting the
+        // wrapper's internal structure is just as unsafe as trusting a
+        // corrupted sibling directly — `subtree_has_multiline_wikilink`
+        // checks the WHOLE subtree, not just "is this child itself the
+        // wikilink". Reconstructing a corrupted node's or its ancestor's
+        // TRUE internal structure from comrak's now-unreliable sourcepos
+        // is not generally possible — but this crate already has a
+        // reliable, comrak-sourcepos-INDEPENDENT way to find where each
+        // remaining physical line's OWN content starts: `hint`, the same
+        // per-line container-prefix scan `blockquote_markers`/a fenced
+        // code block's `content_lines` already use to skip a repeating
+        // `"> "` (or a list item's continuation indent) on a line
+        // comrak's sourcepos alone can't be trusted for either. So the
+        // recovery is per PHYSICAL LINE (never one contiguous span, which
+        // could reach into a LATER line's container-marker bytes the
+        // block scanner independently — and reliably — already claims):
+        // the corrupted child's own OUTER range gives us its reliable
+        // START (the first line's own true content start, verified
+        // reliable even for a wrapper's own delimiter-matched sourcepos —
+        // that's assigned by the base emphasis/strong pass, BEFORE the
+        // wikilink substitution that corrupts its children, so only its
+        // INTERNAL structure is untrustworthy, not its own outer start).
+        // But when that node's own range spans MULTIPLE physical lines
+        // itself — nested in a container, a repeated "> " sits on every
+        // CONTINUATION line too, bytes `blockquote_markers` independently
+        // (and reliably) already claims — so every line past the FIRST,
+        // including the node's own remaining lines, is rebuilt the same
+        // `hint`-derived way as the lines strictly after it: never one
+        // blind contiguous span, whether or not it happens to still be
+        // "inside" the corrupted node's own reported extent.
         let range = node_range(content, starts, child);
-        let is_multiline_wikilink = matches!(child.data.borrow().value, NodeValue::WikiLink(_))
-            && content
-                .get(range.start..range.end)
-                .is_none_or(|s| s.contains('\n'));
-        if is_multiline_wikilink {
-            out.push(Inline::Text(TextRun { range }));
-            let last_covered_line =
-                super::line_at(starts, range.end.saturating_sub(1).max(range.start));
+        if subtree_has_multiline_wikilink(content, starts, child) {
+            let first_line = super::line_at(starts, range.start);
+            let first_line_end = line_end_at(content.len(), starts, first_line)
+                .min(range.end)
+                .max(range.start);
+            out.push(Inline::Text(TextRun {
+                range: ByteRange::new(range.start, first_line_end).clamp(content.len()),
+            }));
             let parent_range = node_range(content, starts, parent);
             let parent_last_line = super::line_at(
                 starts,
                 parent_range.end.saturating_sub(1).max(parent_range.start),
             );
-            for line in (last_covered_line + 1)..=parent_last_line {
+            for line in (first_line + 1)..=parent_last_line {
                 let s = hint.start_for_line(starts, line);
                 let e = line_end_at(content.len(), starts, line);
                 if s < e {

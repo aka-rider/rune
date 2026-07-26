@@ -560,6 +560,39 @@ fn tab_indented_blockquote_continuation_does_not_double_claim() {
 }
 
 // ---------------------------------------------------------------------
+// (a7) Emphasis/strikethrough wrapping a multi-line wikilink
+// (verification round 4 MAJOR): comrak's line-counter desync (round 3's
+// "[[\n]]" root cause) doesn't stop at the wikilink's own siblings — a
+// PARENT wrapping it is exposed too, because its own `child_gap_delims`
+// reads the LAST child's (possibly corrupted) sourcepos to place the
+// close delimiter. `"*[[\n]]\n(*"`: the closing "*" got recorded hidden
+// on the wikilink's own line while the emitter placed it, unhidden, on
+// the real closing line — a coverage/duplicate-claim bug at a new site,
+// same root cause as round 3's residual producers.
+// ---------------------------------------------------------------------
+
+#[test]
+fn emphasis_wrapped_multiline_wikilink_does_not_double_claim() {
+    assert_no_duplicate_content("*[[\n]]\n(*");
+    assert_no_duplicate_content("*[[\n]]\n-*");
+}
+
+#[test]
+fn strikethrough_wrapped_multiline_wikilink_does_not_double_claim() {
+    assert_no_duplicate_content("~~[[\n]]\nb~~");
+}
+
+#[test]
+fn multiline_wikilink_without_wrapper_stays_clean() {
+    // The reviewer's clean control: without the Emphasis/Strikethrough
+    // wrapper, a bare multi-line wikilink followed by more content was
+    // already correctly handled by round 3's fix — pinned here so a
+    // future change can't silently regress the unwrapped case while
+    // fixing the wrapped one.
+    assert_no_duplicate_content("[[\n]]\n(");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -664,6 +697,13 @@ fn arb_inner_block_fragment() -> impl Strategy<Value = String> {
         Just("---".to_string()),
         Just("**bold** text".to_string()),
         Just("plain text".to_string()),
+        // Verification round 4's MAJOR shape, nested inside a container
+        // too: an Emphasis/Strikethrough wrapping a multi-line wikilink
+        // match, so the generator also reaches "the wrapper's own
+        // child_gap_delims desync" INSIDE a blockquote/list item's own
+        // line-prefix accounting, not just at top level.
+        Just("*[[\n]]\n(*".to_string()),
+        Just("~~[[\n]]\nb~~".to_string()),
     ]
 }
 
@@ -755,6 +795,14 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("[[ 👍]]".to_string()),
         Just("[[\n]]".to_string()),
         Just(">]\n\t>".to_string()),
+        // Verification round 4's MAJOR + control: an Emphasis/
+        // Strikethrough wrapping a multi-line wikilink (the wrapper's
+        // own child_gap_delims reads the corrupted last-child sourcepos
+        // too), plus the unwrapped control that must stay clean.
+        Just("*[[\n]]\n(*".to_string()),
+        Just("*[[\n]]\n-*".to_string()),
+        Just("~~[[\n]]\nb~~".to_string()),
+        Just("[[\n]]\n(".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
         // Verification-round BLOCKER shape: a block nested inside a
         // container (blockquote/nested-blockquote/list item).
