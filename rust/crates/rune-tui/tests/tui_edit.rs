@@ -1,7 +1,6 @@
-//! WP6 done-when: movement, selection, and scrolling driven through the
-//! real `app::update` (headless — `TestBackend` + `Mem` vfs only, no
-//! wall-clock sleeps, no real terminal — mirrors `tests/tui_render.rs`).
-//! WP7 extends this file with editing/undo-redo tests.
+//! WP6/WP7 done-when: movement, selection, editing, and undo/redo driven
+//! through the real `app::update` (headless — `TestBackend` + `Mem` vfs
+//! only, no wall-clock sleeps, no real terminal — mirrors `tests/tui_render.rs`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::sync::Arc;
@@ -57,6 +56,12 @@ const ALT: Mods = Mods {
 };
 const SUP: Mods = Mods {
     shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
+const SUP_SHIFT: Mods = Mods {
+    shift: true,
     alt: false,
     ctrl: false,
     sup: true,
@@ -275,4 +280,135 @@ fn moving_onto_a_heading_line_reveals_its_marker_moving_off_conceals_it() {
         !full_text(&buf2).contains("## "),
         "heading concealed again once the cursor moves off"
     );
+}
+
+// ---- Editing (WP7) ----
+
+#[test]
+fn typing_inserts_characters_in_order_and_moves_the_caret() {
+    let mut app = app_for("", 0);
+    for ch in "hi!".chars() {
+        press(&mut app, KeyCode::Char(ch), Mods::NONE);
+    }
+    assert_eq!(app.editor.buffer.content(), "hi!");
+    assert_eq!(app.editor.cursors.primary().position, 3);
+}
+
+#[test]
+fn typing_marks_the_buffer_dirty() {
+    let mut app = app_for("hi", 0);
+    assert!(!app.is_dirty());
+    press(&mut app, KeyCode::Char('!'), Mods::NONE);
+    assert!(app.is_dirty());
+}
+
+#[test]
+fn typing_over_a_selection_replaces_it() {
+    let mut app = app_for("hello world", 0);
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Right, SHIFT); // select "hello"
+    }
+    assert!(app.editor.cursors.primary().has_selection());
+
+    press(&mut app, KeyCode::Char('X'), Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "X world");
+    let c = app.editor.cursors.primary();
+    assert_eq!(c.position, 1);
+    assert!(!c.has_selection());
+}
+
+#[test]
+fn backspace_key_removes_the_char_to_the_left() {
+    let mut app = app_for("abc", 1);
+    press(&mut app, KeyCode::Backspace, Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "bc");
+    assert_eq!(app.editor.cursors.primary().position, 0);
+}
+
+#[test]
+fn delete_key_removes_the_char_to_the_right() {
+    let mut app = app_for("abc", 0);
+    press(&mut app, KeyCode::Delete, Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "bc");
+    assert_eq!(app.editor.cursors.primary().position, 0);
+}
+
+#[test]
+fn enter_inserts_a_newline_preserving_indentation() {
+    let mut app = app_for("  indented", 10);
+    press(&mut app, KeyCode::Enter, Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "  indented\n  ");
+}
+
+#[test]
+fn tab_indents_the_current_line_shift_tab_outdents_it() {
+    let mut app = app_for("hello", 2);
+    press(&mut app, KeyCode::Tab, Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "\thello");
+
+    press(&mut app, KeyCode::Tab, SHIFT);
+    assert_eq!(app.editor.buffer.content(), "hello");
+}
+
+// ---- Undo/redo (WP7) ----
+
+#[test]
+fn undo_restores_byte_exact_content_and_redo_reapplies_it() {
+    let mut app = app_for("hello", 5);
+    press(&mut app, KeyCode::Char('!'), Mods::NONE);
+    assert_eq!(app.editor.buffer.content(), "hello!");
+
+    press(&mut app, KeyCode::Char('z'), SUP); // Undo
+    assert_eq!(app.editor.buffer.content(), "hello");
+
+    press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
+    assert_eq!(app.editor.buffer.content(), "hello!");
+}
+
+#[test]
+fn undo_redo_never_split_a_cjk_or_emoji_char() {
+    let mut app = app_for("你好", "你".len());
+    let original = app.editor.buffer.content().to_string();
+
+    press(&mut app, KeyCode::Char('\u{1f389}'), Mods::NONE); // insert 🎉 between 你 and 好
+    assert_eq!(app.editor.buffer.content(), "你\u{1f389}好");
+
+    press(&mut app, KeyCode::Char('z'), SUP); // Undo
+    assert_eq!(
+        app.editor.buffer.content(),
+        original,
+        "undo must restore the original content byte-exact, including CJK"
+    );
+
+    press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
+    assert_eq!(app.editor.buffer.content(), "你\u{1f389}好");
+}
+
+#[test]
+fn undo_redo_restore_the_recorded_cursor_position() {
+    let mut app = app_for("hello", 2);
+    press(&mut app, KeyCode::Char('X'), Mods::NONE); // insert at 2 -> caret at 3
+    assert_eq!(app.editor.cursors.primary().position, 3);
+
+    press(&mut app, KeyCode::Char('z'), SUP); // Undo
+    assert_eq!(app.editor.buffer.content(), "hello");
+    assert_eq!(
+        app.editor.cursors.primary().position,
+        2,
+        "undo must restore the pre-edit cursor position"
+    );
+
+    press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
+    assert_eq!(
+        app.editor.cursors.primary().position,
+        3,
+        "redo must restore the post-edit cursor position"
+    );
+}
+
+#[test]
+fn undo_with_an_empty_journal_is_a_no_op() {
+    let mut app = app_for("hello", 0);
+    press(&mut app, KeyCode::Char('z'), SUP);
+    assert_eq!(app.editor.buffer.content(), "hello");
 }

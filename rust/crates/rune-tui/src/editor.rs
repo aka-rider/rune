@@ -6,6 +6,7 @@
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
+use rune_core::undo::Journal;
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 
 /// The visible window onto the wrapped document: `width`/`height` in cells,
@@ -58,6 +59,10 @@ pub struct Editor {
     pub doc: DocMachine,
     pub viewport: Viewport,
     pub focused: bool,
+    /// The in-memory undo/redo journal (WP7): every applied edit batch is
+    /// pushed here as a `Step`; `commands::edit::undo`/`redo` peek-then-
+    /// commit against it (plan Context, "Undo journal").
+    pub journal: Journal,
 }
 
 impl Editor {
@@ -68,6 +73,7 @@ impl Editor {
             doc: DocMachine::new(),
             viewport: Viewport::default(),
             focused: true,
+            journal: Journal::new(),
         }
     }
 

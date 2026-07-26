@@ -10,7 +10,7 @@ use rune_core::buffer::Buffer;
 use rune_core::vfs::Vfs;
 use rune_md::element::doc::ViewSnapshots;
 
-use crate::commands::nav;
+use crate::commands::{edit, nav};
 use crate::editor::Editor;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::runtime::{Cmd, Effects, Msg};
@@ -91,10 +91,12 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
                 .viewport
                 .set_size(width, height.saturating_sub(1));
         }
-        Msg::Paste(_text) => {
-            // `handle_paste_content` is wired in WP7 (through the edit
-            // module); movement-only WP6 has no editing yet, so a paste is
-            // a no-op placeholder.
+        Msg::Paste(text) => {
+            // Bracketed paste inserts through the same selection-replacing
+            // insert path as typed text (plan Context, "Bracketed-paste
+            // Msg::Paste may insert text through the same insert path");
+            // clipboard.copy/cut/pbpaste stay no-op until WP8.
+            edit::insert_text(app, &text);
         }
         Msg::ClipboardRead(_text) => {
             // Wired alongside paste handling in WP8.
@@ -133,17 +135,31 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
 
 fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     // Hardcoded fast paths outside the resolver, exactly as Go
-    // (`textedit/update.go:67-85`): Enter (mod 0) -> newline (wired in
-    // WP7); Escape -> collapse selection. Neither is a resolver-bound
-    // chord (plan Context, "Keymap").
+    // (`textedit/update.go:67-85`): Enter (mod 0) -> newline; Escape ->
+    // collapse selection. Neither is a resolver-bound chord (plan Context,
+    // "Keymap").
+    if key.code == KeyCode::Enter && key.mods == Mods::NONE {
+        edit::newline(app);
+        return;
+    }
     if key.code == KeyCode::Escape && key.mods == Mods::NONE {
         nav::escape(app);
         return;
     }
 
     let Some(command) = keymap::resolve(key) else {
-        // WP7 wires the printable-insert fallthrough for unresolved keys;
-        // WP6 has no editing yet, so an unbound key is simply ignored.
+        // Unmatched printable text -> insert fallthrough (plan Context,
+        // "Hardcoded fast paths outside the resolver": `update.go:134-158`).
+        // Ctrl/Alt/Super chords that reach here are simply unbound, never an
+        // insert — every bound Ctrl/Alt/Super chord is already caught by
+        // `keymap::resolve` above.
+        if let KeyCode::Char(ch) = key.code
+            && !key.mods.ctrl
+            && !key.mods.alt
+            && !key.mods.sup
+        {
+            edit::insert_char(app, ch);
+        }
         return;
     };
 
@@ -169,19 +185,14 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Command::SelectPageUp => nav::page_up(app, true),
         Command::SelectPageDown => nav::page_down(app, true),
         Command::SelectAll => nav::select_all(app),
-        // Editing/clipboard/undo/save commands are acted on starting
-        // WP7/8/9 (plan: "movement commands may no-op until WP6" — the
-        // mirror image is true here: editing commands no-op until WP7).
-        Command::DeleteLeft
-        | Command::DeleteRight
-        | Command::Indent
-        | Command::Outdent
-        | Command::Copy
-        | Command::Cut
-        | Command::Paste
-        | Command::Undo
-        | Command::Redo
-        | Command::Save => {}
+        Command::DeleteLeft => edit::delete_left(app),
+        Command::DeleteRight => edit::delete_right(app),
+        Command::Indent => edit::indent(app),
+        Command::Outdent => edit::outdent(app),
+        Command::Undo => edit::undo(app),
+        Command::Redo => edit::redo(app),
+        // Clipboard is wired in WP8; save is wired in WP9.
+        Command::Copy | Command::Cut | Command::Paste | Command::Save => {}
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single
