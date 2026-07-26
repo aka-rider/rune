@@ -17,6 +17,8 @@ test:
 	go vet -tags fuzzing ./...
 
 T ?= 1m
+RC ?= 512
+RS ?=
 
 test-fuzz:
 	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferSnapshotImmutability$$' -fuzztime=$(T) ./pkg/editor/buffer
@@ -40,24 +42,26 @@ release-snapshot:
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server
 
-.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard
+.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard rust-test-fuzz
 
 rust-build:
-	cd rust && cargo build --workspace
+	$(MAKE) -C rust build
 
 rust-test:
-	cd rust && cargo test --workspace
-	cd rust && cargo test -p rune-md --features strict-invariants
+	$(MAKE) -C rust test
 
 rust-lint:
-	cd rust && cargo clippy --workspace --all-targets -- -D warnings
+	$(MAKE) -C rust lint
 
 rust-fmt:
-	cd rust && cargo fmt --all --check
+	$(MAKE) -C rust fmt
 
 rust-bench:
-	cd rust && cargo bench -p rune-md --bench parse_bench
+	$(MAKE) -C rust bench
 
 rust-perf-guard:
-	cd rust && cargo test -p rune-md --release -- --ignored --test-threads=1 full_pipeline_5k_under_100ms
+	$(MAKE) -C rust perf-guard
+
+rust-test-fuzz:
+	$(MAKE) -C rust test-fuzz RC=$(RC) RS=$(RS)
 
