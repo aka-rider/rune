@@ -3,7 +3,7 @@
 //! `wikilink_label_range`) that recover markup ranges comrak has no
 //! dedicated node for.
 
-use super::{ScanHint, line_end_at, node_range};
+use super::{LineIndex, ScanHint, line_end_at, node_range};
 use crate::element::inline::{
     EmphasisKind, EmphasisM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
@@ -22,17 +22,17 @@ use comrak::nodes::{AstNode, NodeValue};
 /// fallback independently defaulted to the full span).
 fn child_gap_delims(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     node: &AstNode,
     range: ByteRange,
 ) -> (ByteRange, ByteRange) {
     match (node.first_child(), node.last_child()) {
         (Some(first), Some(last)) => {
-            let open_end = node_range(content, starts, first)
+            let open_end = node_range(content, idx, first)
                 .start
                 .max(range.start)
                 .min(range.end);
-            let close_start = node_range(content, starts, last)
+            let close_start = node_range(content, idx, last)
                 .end
                 .max(range.start)
                 .min(range.end);
@@ -59,11 +59,11 @@ fn child_gap_delims(
 /// a new site, same root cause).
 fn subtree_has_multiline_wikilink<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     node: &'a AstNode<'a>,
 ) -> bool {
     if matches!(node.data.borrow().value, NodeValue::WikiLink(_)) {
-        let range = node_range(content, starts, node);
+        let range = node_range(content, idx, node);
         if content
             .get(range.start..range.end)
             .is_none_or(|s| s.contains('\n'))
@@ -72,12 +72,12 @@ fn subtree_has_multiline_wikilink<'a>(
         }
     }
     node.children()
-        .any(|child| subtree_has_multiline_wikilink(content, starts, child))
+        .any(|child| subtree_has_multiline_wikilink(content, idx, child))
 }
 
 pub(super) fn build_inlines<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     parent: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Vec<Inline> {
@@ -124,23 +124,37 @@ pub(super) fn build_inlines<'a>(
         // `hint`-derived way as the lines strictly after it: never one
         // blind contiguous span, whether or not it happens to still be
         // "inside" the corrupted node's own reported extent.
-        let range = node_range(content, starts, child);
-        if subtree_has_multiline_wikilink(content, starts, child) {
-            let first_line = super::line_at(starts, range.start);
-            let first_line_end = line_end_at(content.len(), starts, first_line)
+        let range = node_range(content, idx, child);
+        if subtree_has_multiline_wikilink(content, idx, child) {
+            let parent_range = node_range(content, idx, parent);
+            let parent_last_line = super::line_at(
+                &idx.buffer,
+                parent_range.end.saturating_sub(1).max(parent_range.start),
+            );
+            let first_line = super::line_at(&idx.buffer, range.start);
+            let first_line_end = line_end_at(content.len(), &idx.buffer, first_line)
                 .min(range.end)
+                .min(parent_range.end)
                 .max(range.start);
             out.push(Inline::Text(TextRun {
                 range: ByteRange::new(range.start, first_line_end).clamp(content.len()),
             }));
-            let parent_range = node_range(content, starts, parent);
-            let parent_last_line = super::line_at(
-                starts,
-                parent_range.end.saturating_sub(1).max(parent_range.start),
-            );
             for line in (first_line + 1)..=parent_last_line {
-                let s = hint.start_for_line(starts, line);
-                let e = line_end_at(content.len(), starts, line);
+                let s = hint.start_for_line(&idx.buffer, line);
+                // CLASS A fallout (verification round 5): a lone `\r`
+                // elsewhere in this SAME buffer line can make comrak
+                // split its OWN block-level parsing at that point — this
+                // paragraph's true (comrak-correct) extent can end
+                // MID-buffer-line, with a SEPARATE sibling block (e.g. a
+                // blockquote comrak recognizes starting right after the
+                // `\r`) independently claiming the rest of that buffer
+                // line. Blindly rebuilding the WHOLE buffer line here
+                // (as if it were entirely this paragraph's own trailing
+                // content) would re-claim bytes that sibling block also
+                // claims — clamp to `parent_range.end`, this paragraph's
+                // own reliable outer bound, same as the first piece
+                // above.
+                let e = line_end_at(content.len(), &idx.buffer, line).min(parent_range.end);
                 if s < e {
                     out.push(Inline::Text(TextRun {
                         range: ByteRange::new(s, e).clamp(content.len()),
@@ -149,7 +163,7 @@ pub(super) fn build_inlines<'a>(
             }
             return out;
         }
-        out.push(build_inline(content, starts, child, hint));
+        out.push(build_inline(content, idx, child, hint));
     }
     out
 }
@@ -185,20 +199,22 @@ fn inline_kind(v: &NodeValue) -> InlineKind {
 
 fn build_inline<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     node: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Inline {
-    let range = node_range(content, starts, node);
-    let sp = node.data.borrow().sourcepos;
-    let line = sp.start.line.saturating_sub(1);
+    let range = node_range(content, idx, node);
+    // BUFFER line — see `parse::block::build_block`'s docs on why `line`
+    // is derived from the already-correct byte range, not comrak's raw
+    // line number (verification round 5 CLASS A).
+    let line = super::line_at(&idx.buffer, range.start);
     let kind = inline_kind(&node.data.borrow().value);
 
     match kind {
         InlineKind::TextLike | InlineKind::Image => Inline::Text(TextRun { range }),
         InlineKind::Emph => {
-            let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node, hint);
+            let (open, close) = child_gap_delims(content, idx, node, range);
+            let children = build_inlines(content, idx, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Italic,
@@ -210,8 +226,8 @@ fn build_inline<'a>(
             })
         }
         InlineKind::Strong => {
-            let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node, hint);
+            let (open, close) = child_gap_delims(content, idx, node, range);
+            let children = build_inlines(content, idx, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Bold,
@@ -223,8 +239,8 @@ fn build_inline<'a>(
             })
         }
         InlineKind::Strikethrough => {
-            let (open, close) = child_gap_delims(content, starts, node, range);
-            let children = build_inlines(content, starts, node, hint);
+            let (open, close) = child_gap_delims(content, idx, node, range);
+            let children = build_inlines(content, idx, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Strike,
@@ -251,7 +267,7 @@ fn build_inline<'a>(
             })
         }
         InlineKind::Link(url) => {
-            let text = build_inlines(content, starts, node, hint);
+            let text = build_inlines(content, idx, node, hint);
             let url_range = link_url_range(range, &text, &url, content.len());
             Inline::Link(LinkM {
                 sm: RevealSm::new(RevealState::Rendered),

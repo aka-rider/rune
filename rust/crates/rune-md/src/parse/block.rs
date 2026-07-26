@@ -1,7 +1,7 @@
 //! AST -> `Block` construction: the top-level dispatch (`build_block`) and
 //! the block kinds that recurse into further blocks (`BlockQuote`, `List`).
 
-use super::{ScanHint, line_end_at, node_range};
+use super::{LineIndex, ScanHint, line_end_at, node_range};
 use crate::element::block::{
     Block, BlockquoteM, BlockquoteMarkerM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM,
     ListM, ParagraphM, VerbatimKind, VerbatimM,
@@ -59,13 +59,13 @@ impl ClassifyBlock for NodeValue {
 
 pub(super) fn build_blocks<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     parent: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Vec<Block> {
     let mut out = Vec::new();
     for child in parent.children() {
-        if let Some(b) = build_block(content, starts, child, hint) {
+        if let Some(b) = build_block(content, idx, child, hint) {
             out.push(b);
         }
     }
@@ -74,29 +74,36 @@ pub(super) fn build_blocks<'a>(
 
 fn build_block<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     node: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Option<Block> {
-    let range = node_range(content, starts, node);
-    let sp = node.data.borrow().sourcepos;
-    let line = sp.start.line.saturating_sub(1);
+    let range = node_range(content, idx, node);
+    // BUFFER line, not comrak's own `sp.start.line` (verification round 5
+    // CLASS A): every consumer of `line` — the cursor-reveal decide
+    // policy (`any_on_line`), and every `hint`/`line_end_at` loop bound
+    // below — reasons about the EDITOR's `\n`-only line concept, which
+    // can disagree with comrak's CR/LF/CRLF-aware line count the moment
+    // content has a bare `\r`. Deriving `line` from the ALREADY-correct
+    // absolute byte range (via `idx.buffer`) instead of trusting
+    // comrak's raw line number keeps it meaningful for both purposes.
+    let line = super::line_at(&idx.buffer, range.start);
 
     let kind = { node.data.borrow().value.clone_kind_tag() };
     match kind {
         BlockKind::Paragraph => {
-            let inlines = super::inline::build_inlines(content, starts, node, hint);
+            let inlines = super::inline::build_inlines(content, idx, node, hint);
             Some(Block::Paragraph(ParagraphM { range, inlines }))
         }
         BlockKind::Heading(level) => {
             let marker_end = node
                 .first_child()
-                .map(|c| node_range(content, starts, c).start)
+                .map(|c| node_range(content, idx, c).start)
                 .unwrap_or(range.end)
                 .max(range.start)
                 .min(range.end);
             let marker = ByteRange::new(range.start, marker_end);
-            let inlines = super::inline::build_inlines(content, starts, node, hint);
+            let inlines = super::inline::build_inlines(content, idx, node, hint);
 
             // MAJOR fix (verification round 4): a setext heading's own
             // `range` spans BOTH its text line and its "==="/"---"
@@ -116,16 +123,19 @@ fn build_block<'a>(
             // CONTINUATION line uses `hint.start_for_line` to skip a
             // repeating container prefix comrak's sourcepos alone can't
             // be trusted to exclude.
-            let last_line = sp.end.line.saturating_sub(1);
+            let last_line =
+                super::line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
             let content_lines: Vec<ByteRange> = if last_line > line {
                 (line..=last_line)
                     .map(|l| {
                         let s = if l == line {
                             range.start
                         } else {
-                            hint.start_for_line(starts, l)
+                            hint.start_for_line(&idx.buffer, l)
                         };
-                        let e = line_end_at(content.len(), starts, l).min(range.end).max(s);
+                        let e = line_end_at(content.len(), &idx.buffer, l)
+                            .min(range.end)
+                            .max(s);
                         ByteRange::new(s, e).clamp(content.len())
                     })
                     .collect()
@@ -144,13 +154,13 @@ fn build_block<'a>(
             }))
         }
         BlockKind::BlockQuote => {
-            let markers = blockquote_markers(content, starts, range, hint);
+            let markers = blockquote_markers(content, &idx.buffer, range, hint);
             let marker_ends = markers.iter().map(|m| (m.line, m.marker.end)).collect();
             let child_hint = ScanHint::Nested {
                 marker_ends,
                 parent: hint,
             };
-            let children = build_blocks(content, starts, node, &child_hint);
+            let children = build_blocks(content, idx, node, &child_hint);
             Some(Block::Blockquote(BlockquoteM {
                 range,
                 markers,
@@ -170,7 +180,8 @@ fn build_block<'a>(
                 }));
             }
             let first_line = line;
-            let last_line = sp.end.line.saturating_sub(1);
+            let last_line =
+                super::line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
 
             // CONTAINER-PREFIX fix: `fence_open`'s start is `range.start`,
             // NOT `line_start_at`/`hint` — a node's own sourcepos already
@@ -184,7 +195,7 @@ fn build_block<'a>(
             // line start and re-claim bytes the list item's own marker
             // already hid (`"- ```rust"` -> fence_open `[0, 9)` colliding
             // with the item's own marker `[0, 2)`).
-            let first_line_end = line_end_at(content.len(), starts, first_line);
+            let first_line_end = line_end_at(content.len(), &idx.buffer, first_line);
             let fence_open = Some(ByteRange::new(range.start, first_line_end).clamp(content.len()));
 
             // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
@@ -208,8 +219,8 @@ fn build_block<'a>(
             // range can't exclude an interior container prefix (the
             // overlapping-hidden-range bug this fix exists to close).
             let (fence_close, content_line_range) = if closed {
-                let ls = hint.start_for_line(starts, last_line);
-                let le = line_end_at(content.len(), starts, last_line);
+                let ls = hint.start_for_line(&idx.buffer, last_line);
+                let le = line_end_at(content.len(), &idx.buffer, last_line);
                 let close = ByteRange::new(ls, le).clamp(content.len());
                 (Some(close), (first_line + 1)..last_line)
             } else {
@@ -218,8 +229,8 @@ fn build_block<'a>(
 
             let content_lines: Vec<ByteRange> = content_line_range
                 .map(|l| {
-                    let s = hint.start_for_line(starts, l);
-                    let e = line_end_at(content.len(), starts, l);
+                    let s = hint.start_for_line(&idx.buffer, l);
+                    let e = line_end_at(content.len(), &idx.buffer, l);
                     ByteRange::new(s, e).clamp(content.len())
                 })
                 .collect();
@@ -235,19 +246,47 @@ fn build_block<'a>(
                 content_lines,
             }))
         }
-        BlockKind::ThematicBreak => Some(Block::ThematicBreak(HrM {
-            sm: RevealSm::new(RevealState::Rendered),
-            line,
-            range,
-        })),
+        BlockKind::ThematicBreak => {
+            // CLASS B fix (verification round 5): a thematic break is
+            // ALWAYS exactly one line by CommonMark's own grammar (three
+            // or more matching "-"/"_"/"*" chars, nothing else) — but
+            // comrak's reported sourcepos for one immediately followed by
+            // an EMPTY blockquote continuation line ("> ---\n>") extends
+            // THROUGH that next line's own "> " marker (verified
+            // empirically: for "> ---\n>", `range` came out `[2,7)` =
+            // "---\n>", not just "---" = `[2,5)`). The blockquote's own
+            // marker scan independently (and correctly) claims that same
+            // trailing "> " byte, so pushing the HR's un-clamped `range`
+            // whole doubles it up — a hidden-side double-claim: the
+            // marker is BOTH counted hidden (by the blockquote's own
+            // scan) and swept into the HR's own hidden/visible range.
+            // Clamping to the HR's own single line makes "a thematic
+            // break's range never crosses a line boundary" a structural
+            // guarantee, the same shape as `ListItemM`'s marker clamp.
+            let clamped_end = line_end_at(content.len(), &idx.buffer, line)
+                .min(range.end)
+                .max(range.start);
+            let range = ByteRange::new(range.start, clamped_end).clamp(content.len());
+            Some(Block::ThematicBreak(HrM {
+                sm: RevealSm::new(RevealState::Rendered),
+                line,
+                range,
+            }))
+        }
         BlockKind::List => {
             let ordered = matches!(
                 node.data.borrow().value,
                 NodeValue::List(ref l) if matches!(l.list_type, ListType::Ordered)
             );
-            let items = build_list_items(content, starts, node, hint);
+            let items = build_list_items(content, idx, node, hint);
             Some(Block::List(ListM { ordered, items }))
         }
+        // By the time `build_block` ever sees a `FrontMatter` node,
+        // `parse()`'s own pre-check (`frontmatter_extension_is_safe`) has
+        // already ruled out the ONE shape whose `range` can't be trusted
+        // (verification round 5 — see that function's docs) by re-
+        // parsing the whole document with the extension disabled instead
+        // — so `range` here is always genuine.
         BlockKind::FrontMatter => Some(Block::Frontmatter(FrontmatterM {
             sm: RevealSm::new(RevealState::Revealed),
             range,
@@ -273,19 +312,21 @@ fn build_block<'a>(
 
 fn build_list_items<'a>(
     content: &str,
-    starts: &[usize],
+    idx: &LineIndex,
     list_node: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Vec<ListItemM> {
     let mut items = Vec::new();
     for item_node in list_node.children() {
-        let range = node_range(content, starts, item_node);
-        let sp = item_node.data.borrow().sourcepos;
-        let line = sp.start.line.saturating_sub(1);
+        let range = node_range(content, idx, item_node);
+        // BUFFER line — see `build_block`'s docs on why `line` is derived
+        // from the already-correct byte range, not comrak's raw line
+        // number (verification round 5 CLASS A).
+        let line = super::line_at(&idx.buffer, range.start);
 
         let task = match &item_node.data.borrow().value {
             NodeValue::TaskItem(t) => {
-                let sym = super::sourcepos_to_range(starts, t.symbol_sourcepos);
+                let sym = super::sourcepos_to_range(&idx.comrak, t.symbol_sourcepos);
                 let bracket_start = sym.start.saturating_sub(1);
                 let bracket_end = sym.end.saturating_add(1).min(content.len());
                 Some(ByteRange::new(bracket_start, bracket_end).clamp(content.len()))
@@ -306,13 +347,13 @@ fn build_list_items<'a>(
         // get right.
         let marker_end = item_node
             .first_child()
-            .map(|c| node_range(content, starts, c).start)
+            .map(|c| node_range(content, idx, c).start)
             .unwrap_or(range.end)
             .max(range.start)
             .min(range.end)
-            .min(line_end_at(content.len(), starts, line));
+            .min(line_end_at(content.len(), &idx.buffer, line));
         let marker = ByteRange::new(range.start, marker_end);
-        let children = build_blocks(content, starts, item_node, hint);
+        let children = build_blocks(content, idx, item_node, hint);
 
         items.push(ListItemM {
             sm: RevealSm::new(RevealState::Rendered),
@@ -323,6 +364,19 @@ fn build_list_items<'a>(
         });
     }
     items
+}
+
+/// True if `range`'s own last line — as comrak (via our conversion)
+/// reports it — is genuinely a closing `"---"` line: the sanity check
+/// `parse::frontmatter_extension_is_safe` uses to decide whether a
+/// `FrontMatter` node's reported range can be trusted at all (see that
+/// function's docs for the comrak-internal desync it exists to detect).
+pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> bool {
+    let Some(text) = content.get(range.start..range.end) else {
+        return false;
+    };
+    let trimmed = text.strip_suffix('\n').unwrap_or(text);
+    trimmed.rsplit('\n').next() == Some("---")
 }
 
 /// Derives one `"> "` marker range per source line covered by a blockquote's

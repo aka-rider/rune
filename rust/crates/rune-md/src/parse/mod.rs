@@ -13,9 +13,14 @@ use crate::element::block::Block;
 use comrak::nodes::{AstNode, Sourcepos};
 use comrak::{Arena, Options, parse_document};
 
-/// Byte offset of the start of each line — port of
-/// `pkg/editor/buffer/lineindex.go:computeLineStarts`, and the index every
-/// sourcepos conversion below is built on.
+/// Byte offset of the start of each BUFFER line — port of
+/// `pkg/editor/buffer/lineindex.go:computeLineStarts` (Go parity, §1.5):
+/// a line ends at `\n`, nothing else. This is the ONLY line model the
+/// buffer, the emitter, and every editor-facing concept (`ScanHint`'s
+/// container-prefix scanning, per-line marker/content clamping, cursor
+/// row math) ever uses — see `LineIndex`'s docs for why a SECOND,
+/// comrak-only line model also exists and why the two must never be
+/// swapped.
 pub fn line_starts(src: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in src.bytes().enumerate() {
@@ -24,6 +29,70 @@ pub fn line_starts(src: &str) -> Vec<usize> {
         }
     }
     starts
+}
+
+/// Byte offset of the start of each line under CommonMark's own line-
+/// ending rule — CR, LF, or CRLF, with CRLF counted as ONE terminator —
+/// exactly how comrak itself counts lines when it assigns a node's
+/// `Sourcepos`. See `LineIndex`'s docs for why this must stay separate
+/// from the buffer's `\n`-only `line_starts`.
+pub fn comrak_line_starts(src: &str) -> Vec<usize> {
+    let bytes = src.as_bytes();
+    let mut starts = vec![0usize];
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        match b {
+            b'\r' => {
+                // CRLF is ONE terminator, not two: a "\r\n" pair advances
+                // past BOTH bytes to the next line's start; a lone "\r"
+                // (no paired "\n") advances past just itself.
+                let next = if bytes.get(i + 1) == Some(&b'\n') {
+                    i + 2
+                } else {
+                    i + 1
+                };
+                starts.push(next);
+                i = next;
+            }
+            b'\n' => {
+                i += 1;
+                starts.push(i);
+            }
+            _ => i += 1,
+        }
+    }
+    starts
+}
+
+/// Two line-boundary indexes over the SAME source text, each valid ONLY
+/// for its own purpose (verification round 5's CLASS A MAJOR): comrak
+/// follows CommonMark's line-ending rule internally (CR, LF, or CRLF all
+/// end a line) when it assigns a node's `Sourcepos` `(line, column)` —
+/// but this crate's BUFFER line model is `\n`-only (Go parity, §1.5: a
+/// bare `\r` is ordinary mid-line content, never a line break, matching
+/// `rune_core::buffer::Buffer`/`pkg/editor/buffer`). Converting a
+/// comrak-assigned sourcepos through the `\n`-only index desyncs the
+/// moment content contains a lone `\r` — comrak's line N is this crate's
+/// line N-minus-something, and every byte offset downstream lands on the
+/// wrong physical position (§1.4.5 forbids normalizing the `\r` away to
+/// "fix" this; the fix is using the RIGHT index for each purpose, never
+/// changing the bytes). `.buffer` is what `ScanHint`, `line_at`,
+/// `line_end_at`, and the emitter's per-line splitting all use — the
+/// EDITOR's line concept. `.comrak` is read ONLY by `node_range`/
+/// `sourcepos_to_range` — the ONE place a raw comrak `Sourcepos` gets
+/// turned into an absolute byte offset.
+pub(crate) struct LineIndex {
+    pub buffer: Vec<usize>,
+    pub comrak: Vec<usize>,
+}
+
+impl LineIndex {
+    pub(crate) fn new(content: &str) -> LineIndex {
+        LineIndex {
+            buffer: line_starts(content),
+            comrak: comrak_line_starts(content),
+        }
+    }
 }
 
 /// The WP0-proven conversion: comrak `Sourcepos` (1-based, end-inclusive,
@@ -59,6 +128,15 @@ pub fn options() -> Options<'static> {
     opts
 }
 
+/// `options()` with the frontmatter extension turned off — the fallback
+/// `parse()` uses for the one shape `frontmatter_extension_is_safe`
+/// detects as untrustworthy.
+fn options_without_frontmatter() -> Options<'static> {
+    let mut opts = options();
+    opts.extension.front_matter_delimiter = None;
+    opts
+}
+
 pub(crate) fn line_start_at(starts: &[usize], line: usize) -> usize {
     starts.get(line).copied().unwrap_or(0)
 }
@@ -86,9 +164,12 @@ pub(crate) fn line_at(starts: &[usize], offset: usize) -> usize {
     idx.saturating_sub(1)
 }
 
-pub(crate) fn node_range(content: &str, starts: &[usize], node: &AstNode) -> ByteRange {
+/// The ONLY place a raw comrak `Sourcepos` becomes an absolute byte
+/// range — always through `idx.comrak` (see `LineIndex`'s docs), never
+/// `idx.buffer`.
+pub(crate) fn node_range(content: &str, idx: &LineIndex, node: &AstNode) -> ByteRange {
     let sp = node.data.borrow().sourcepos;
-    sourcepos_to_range(starts, sp).clamp(content.len())
+    sourcepos_to_range(&idx.comrak, sp).clamp(content.len())
 }
 
 /// Per-line scan-start hints for locating a blockquote depth's own `"> "`
@@ -130,15 +211,57 @@ impl ScanHint<'_> {
     }
 }
 
+/// True unless comrak's frontmatter extension has desynced its OWN
+/// internal line count on this specific document (verification round 5
+/// CLASS A fallout, found by the widened fuzz alphabet — NOT part of the
+/// reviewer's original CLASS A/B reports). Verified empirically: comrak's
+/// frontmatter extension appears to search for its closing `"---"`
+/// delimiter using `\n`-only line splitting internally, but then reports
+/// `Sourcepos` through the OUTER, CR/LF/CRLF-aware line counter that the
+/// REST of comrak's block parser keeps counting from afterward — the
+/// same "one internal scan, a DIFFERENT reported line basis" shape as
+/// round 4's wikilink-extension desync, but with a DOCUMENT-WIDE blast
+/// radius here (frontmatter parsing runs first, so every later block's
+/// sourcepos comes out wrong too) rather than one paragraph's siblings.
+/// Detected by the one cheap, reliable signal available: a genuine
+/// frontmatter block's own (correctly converted) range always ends on a
+/// closing `"---"` line; if it doesn't, comrak's internal state for the
+/// rest of this document can't be trusted at all. `parse()` reacts by
+/// re-parsing the WHOLE document with the extension turned off — the
+/// `"---...---"` blob degrades to ordinary paragraphs/thematic breaks
+/// (§0: unknown syntax degrades to visible raw text, never lost), which
+/// this crate's other producers are already proven safe against.
+fn frontmatter_extension_is_safe(content: &str, idx: &LineIndex) -> bool {
+    let arena = Arena::new();
+    let opts = options();
+    let root = parse_document(&arena, content, &opts);
+    match root.first_child() {
+        Some(first)
+            if matches!(
+                first.data.borrow().value,
+                comrak::nodes::NodeValue::FrontMatter(_)
+            ) =>
+        {
+            let range = node_range(content, idx, first);
+            block::is_valid_frontmatter_close(content, range)
+        }
+        _ => true,
+    }
+}
+
 /// Parse `content` into the top-level `Block` tree. This is the ONLY entry
 /// point `DocMachine::sync_content` calls — every downstream module reaches
 /// comrak through here.
 pub fn parse(content: &str) -> Vec<Block> {
-    let starts = line_starts(content);
+    let idx = LineIndex::new(content);
+    let opts = if frontmatter_extension_is_safe(content, &idx) {
+        options()
+    } else {
+        options_without_frontmatter()
+    };
     let arena = Arena::new();
-    let opts = options();
     let root = parse_document(&arena, content, &opts);
-    block::build_blocks(content, &starts, root, &ScanHint::Root)
+    block::build_blocks(content, &idx, root, &ScanHint::Root)
 }
 
 #[cfg(test)]

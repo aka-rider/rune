@@ -635,6 +635,99 @@ fn setext_heading_with_trailing_content_lines_stays_clean() {
 }
 
 // ---------------------------------------------------------------------
+// (a9) CLASS A (verification round 5): a lone `\r` line terminator.
+// comrak follows CommonMark: CR, LF, or CRLF all end a line. This
+// crate's BUFFER line model is `\n`-only (Go parity, §1.5) — correctly
+// so, a bare `\r` is ordinary mid-line content, never a buffer line
+// break. But `sourcepos_to_range` used to convert comrak's own
+// (CR/LF/CRLF-aware) sourcepos through that SAME `\n`-only index, so the
+// moment content contained a bare `\r`, comrak's line N stopped matching
+// this crate's line N and every downstream byte offset landed on the
+// wrong physical position. Fixed with a SECOND, comrak-compatible line
+// index (`LineIndex::comrak`) used ONLY for sourcepos conversion — the
+// bytes themselves are never touched (§1.4.5).
+// ---------------------------------------------------------------------
+
+#[test]
+fn lone_cr_before_list_marker_does_not_desync() {
+    assert_no_duplicate_content("a\r- n");
+}
+
+#[test]
+fn lone_cr_before_fence_does_not_desync() {
+    assert_no_duplicate_content("a\r```");
+}
+
+#[test]
+fn lone_cr_before_heading_does_not_desync() {
+    assert_no_duplicate_content("a\r# h");
+}
+
+#[test]
+fn lone_cr_controls_stay_clean() {
+    // The reviewer's clean controls: plain text and a blockquote after a
+    // lone CR, plus a CR with nothing following it at all.
+    assert_no_duplicate_content("a\rb");
+    assert_no_duplicate_content("a\r> q");
+    assert_no_duplicate_content("a\r");
+}
+
+#[test]
+fn crlf_before_list_marker_stays_clean() {
+    // The CRLF control: CRLF is ONE terminator, not two — must NOT be
+    // treated as a lone CR immediately followed by a lone LF (which
+    // would double-count a line break that only happened once).
+    assert_no_duplicate_content("a\r\n- n");
+}
+
+#[test]
+fn lone_cr_inside_frontmatter_does_not_desync_the_rest_of_the_document() {
+    // A THIRD comrak-extension desync, found by this round's own widened
+    // generator (not part of the reviewer's original CLASS A report): a
+    // lone `\r` inside a frontmatter block's body throws off comrak's
+    // frontmatter-closing search (which appears to scan by `\n`-only
+    // splitting internally) relative to the CR/LF/CRLF-aware line
+    // counter the REST of comrak's block parser keeps counting from
+    // afterward — corrupting every LATER block's sourcepos too, not just
+    // the frontmatter block's own (the wikilink-extension desync's
+    // document-wide sibling). `parse()`'s `frontmatter_extension_is_safe`
+    // pre-check detects this and re-parses with the extension disabled.
+    assert_no_duplicate_content("---\na\r```\n---\n> nested");
+}
+
+// ---------------------------------------------------------------------
+// (a10) CLASS B (verification round 5): an empty blockquote
+// continuation line immediately after a thematic break ("> ---\n>").
+// CommonMark's own grammar makes a thematic break exactly ONE line, but
+// comrak's reported sourcepos for one immediately followed by an EMPTY
+// blockquote continuation line extended THROUGH that next line's own
+// "> " marker — a hidden-side double-claim: the marker byte was BOTH
+// counted hidden by the blockquote's own marker scan AND swept into the
+// (un-clamped) thematic break's own range. Fixed by clamping `HrM::range`
+// to its own single line, the same shape as `ListItemM`'s marker clamp.
+// ---------------------------------------------------------------------
+
+#[test]
+fn thematic_break_before_empty_quote_continuation_does_not_double_claim() {
+    assert_no_duplicate_content("> ---\n>");
+    assert_no_duplicate_content("> ---\n> ");
+    assert_no_duplicate_content("> ---\n>\n");
+    assert_no_duplicate_content("> ---\n> \n");
+}
+
+#[test]
+fn thematic_break_empty_continuation_controls_stay_clean() {
+    // The reviewer's clean controls: a NON-empty continuation line, "==="
+    // (not a valid thematic break marker, so a different node kind
+    // entirely), a setext heading (a REAL multi-line construct) followed
+    // by an empty continuation, and a doubly-nested empty continuation.
+    assert_no_duplicate_content("> ---\n> x");
+    assert_no_duplicate_content(">===\n>");
+    assert_no_duplicate_content("> a\n> ---\n>");
+    assert_no_duplicate_content("> ---\n>>");
+}
+
+// ---------------------------------------------------------------------
 // (c) Single-transition-writer grep gate.
 // ---------------------------------------------------------------------
 
@@ -746,6 +839,21 @@ fn arb_inner_block_fragment() -> impl Strategy<Value = String> {
         // line-prefix accounting, not just at top level.
         Just("*[[\n]]\n(*".to_string()),
         Just("~~[[\n]]\nb~~".to_string()),
+        // HARNESS fix (verification round 5): the independent reviewer
+        // found 2.81% of docs broken where this harness reported 0,
+        // because these PRE-COMPOSED multi-line fragments — a setext
+        // heading, a thematic break immediately followed by an empty
+        // continuation line, a fence, a list item with an empty first
+        // line — never appeared as ONE fragment the generator could
+        // nest inside a container. Joining two SEPARATE top-level
+        // fragments only reaches that adjacency by chance (that's how
+        // rounds 4/5 originally found their bugs) — nesting requires the
+        // adjacency to already exist INSIDE the one fragment being
+        // wrapped.
+        Just("x\n---".to_string()),
+        Just("---\n>".to_string()),
+        Just("- \n  > ".to_string()),
+        Just("```\nc\n```".to_string()),
     ]
 }
 
@@ -845,6 +953,29 @@ fn arb_markdown_fragment() -> impl Strategy<Value = String> {
         Just("*[[\n]]\n-*".to_string()),
         Just("~~[[\n]]\nb~~".to_string()),
         Just("[[\n]]\n(".to_string()),
+        // HARNESS fix (verification round 5): pre-composed multi-line
+        // fragments the independent reviewer's own generator carried but
+        // this one didn't — CLASS A (lone-CR: CR, LF, or CRLF all end a
+        // line per CommonMark, but only `\n` ends a BUFFER line) and
+        // CLASS B (a thematic break immediately followed by an empty
+        // blockquote continuation line) shapes, plus the reviewer's own
+        // named fragments verbatim so the SAME adjacency this harness
+        // missed is now a first-class alphabet member, not something
+        // that only emerges by chance from two separate fragments.
+        Just("a\r- n".to_string()),
+        Just("a\r```".to_string()),
+        Just("a\r# h".to_string()),
+        Just("a\rb".to_string()),
+        Just("a\r> q".to_string()),
+        Just("a\r".to_string()),
+        Just("a\r\n- n".to_string()),
+        Just("> ---\n>".to_string()),
+        Just("> ---\n> ".to_string()),
+        Just("> ---\n> x".to_string()),
+        Just(">===\n>".to_string()),
+        Just("> a\n> ---\n>".to_string()),
+        Just("> ---\n>>".to_string()),
+        Just("> t\n> ---".to_string()),
         "[a-zA-Z0-9 ]{0,10}".prop_map(|s| s),
         // Verification-round BLOCKER shape: a block nested inside a
         // container (blockquote/nested-blockquote/list item).
