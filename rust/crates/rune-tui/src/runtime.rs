@@ -75,8 +75,16 @@ pub fn run(app: &mut App) -> io::Result<()> {
     app.sync_view();
     guard.draw(|frame| crate::render::draw(app, frame))?;
 
-    // Ends when the input-reader thread hangs up (its `tx` clone dropped)
-    // and no `Cmd` reply is in flight — nothing left to drive the loop.
+    // The normal exit is `app.should_quit` becoming true, set either by
+    // `Msg::Quit` (quit-confirm) or synthesized by `spawn_input_reader`
+    // itself when its `events.read` fails (input stream gone — tty closed,
+    // SIGHUP, ...): it sends `Msg::Error` then `Msg::Quit` before exiting,
+    // specifically so this loop is never left blocking on `rx.recv()`
+    // forever while holding an unsaved buffer hostage (no recovery store in
+    // Phase 1). The `while let` here is a total fallback for the case where
+    // literally every `Sender` clone (the reader's and any in-flight
+    // `Cmd`'s) has been dropped without sending anything — shouldn't happen
+    // given the above, but keeps this loop correct even if it did.
     while let Ok(first) = rx.recv() {
         let mut batch = vec![first];
         while let Ok(msg) = rx.try_recv() {
@@ -114,22 +122,46 @@ fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> 
     Ok(())
 }
 
+/// A panicking `Cmd` must not vanish silently — `update` might be waiting on
+/// exactly this `Cmd`'s reply with no other input in flight, which would
+/// otherwise leave the main loop's `rx.recv()` blocked forever. Catching the
+/// unwind here and reporting it as `Msg::Error` keeps that impossible: every
+/// spawned `Cmd` thread sends SOMETHING back, success, `None`, or a caught
+/// panic.
 fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
-    thread::spawn(move || {
-        if let Some(msg) = cmd() {
-            let _ = tx.send(msg);
-        }
-    });
+    thread::spawn(
+        move || match std::panic::catch_unwind(std::panic::AssertUnwindSafe(cmd)) {
+            Ok(Some(msg)) => {
+                let _ = tx.send(msg);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                let _ = tx.send(Msg::Error("a background task panicked".to_string()));
+            }
+        },
+    );
 }
 
 fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
     thread::spawn(move || {
-        while let Ok(event) = events.read(|_| true) {
-            let Some(msg) = translate_event(event) else {
-                continue;
-            };
-            if tx.send(msg).is_err() {
-                break;
+        loop {
+            match events.read(|_| true) {
+                Ok(event) => {
+                    if let Some(msg) = translate_event(event)
+                        && tx.send(msg).is_err()
+                    {
+                        return; // main loop gone; nothing left to notify
+                    }
+                }
+                Err(e) => {
+                    // The input source is gone (tty closed, SIGHUP, the
+                    // process losing its controlling terminal, ...) — see
+                    // `run`'s doc comment on why this must not just exit
+                    // silently.
+                    let _ = tx.send(Msg::Error(format!("input stream ended: {e}")));
+                    let _ = tx.send(Msg::Quit);
+                    return;
+                }
             }
         }
     });

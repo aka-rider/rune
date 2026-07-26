@@ -16,7 +16,7 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::RevealState;
 use rune_md::element::doc::ViewSnapshots;
 use rune_md::emit::StyleId;
-use rune_md::wrap::{WrapSegment, control_aware_width};
+use rune_md::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
 
 use crate::app::App;
 
@@ -68,35 +68,127 @@ pub fn style_for(id: StyleId) -> Style {
     }
 }
 
+/// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
+/// "control picture" glyph (`U+2400..=U+2421`) so a raw control byte never
+/// reaches `ratatui::buffer::Cell::set_char`. ratatui-core's `cell_width()`
+/// `debug_assert!`s that a single-byte symbol is never
+/// `u8::is_ascii_control` (`cell_width.rs:36`) — feeding it a literal `\r`,
+/// `\x07`, `\x0c`, etc. panics a debug build the instant that cell is diffed
+/// (an unsaved buffer lost, with no recovery store in Phase 1) and silently
+/// corrupts the row in a release build. `\n`/`\r` and `\t` are handled
+/// separately in `push_char_cells` below and never reach this function; any
+/// other Unicode control category (e.g. C1, `0x80..=0x9f`) has no assigned
+/// control-picture glyph and falls back to the replacement character.
+fn control_placeholder(ch: char) -> char {
+    match ch as u32 {
+        0x00..=0x1f => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{FFFD}'),
+        0x7f => '\u{2421}',
+        _ => '\u{FFFD}',
+    }
+}
+
+/// The ONE width chokepoint `segment_cells` uses to advance its running
+/// visual column — the exact same functions (`rune_width_with_tab`,
+/// `control_aware_width`) `rune_md::wrap` uses for its own greedy line
+/// breaking and for `WrapSnapshot::visual_col`/`byte_col_from_visual`. If
+/// this ever drifted from wrap's width math, a row's `Cell` columns would no
+/// longer line up with the column `visual_col` computes for the same
+/// content, and `place_caret` would land the caret on the wrong cell (e.g.
+/// after "abc" instead of on "a" for `"\tabc"` if tabs were treated as
+/// width 1 here but width-to-next-4-stop there).
+///
+/// `\n`/`\r` are dropped entirely — zero cells, zero width — matching Go's
+/// `cell.go:79,106` (`if r == '\n' || r == '\r' { continue }`) and
+/// `control_aware_width`'s own `0` for them. `\t` expands into `width`
+/// single-width space cells, ALL carrying the tab's own `buf_offset`, so
+/// the caret can land on any of the tab's columns and still map back to the
+/// tab byte; `width` is computed against `*visual_col`, so it lands on the
+/// same 4-stop boundary `rune_width_with_tab` would compute for wrap
+/// breaking or cursor coordinate conversion. Every other control char is
+/// replaced with a safe placeholder glyph (`control_placeholder`) at its
+/// `control_aware_width` (always `1` for a control char — no width change,
+/// only a render-safety substitution).
+fn push_char_cells(
+    cells: &mut Vec<Cell>,
+    visual_col: &mut usize,
+    ch: char,
+    buf_offset: i64,
+    style: Style,
+) {
+    match ch {
+        '\n' | '\r' => {}
+        '\t' => {
+            let width = rune_width_with_tab(ch, *visual_col);
+            for _ in 0..width {
+                cells.push(Cell {
+                    ch: ' ',
+                    width: 1,
+                    style,
+                    buf_offset,
+                });
+            }
+            *visual_col += width;
+        }
+        _ if ch.is_control() => {
+            let width = control_aware_width(ch);
+            cells.push(Cell {
+                ch: control_placeholder(ch),
+                width: width as u8,
+                style,
+                buf_offset,
+            });
+            *visual_col += width;
+        }
+        _ => {
+            let width = control_aware_width(ch);
+            cells.push(Cell {
+                ch,
+                width: width as u8,
+                style,
+                buf_offset,
+            });
+            *visual_col += width;
+        }
+    }
+}
+
 /// One wrap segment's spans -> its `Cell` row. Rendered spans map each char
 /// through `cell_map` (their text is NOT byte-for-byte their buffer range —
 /// delimiters were dropped); Revealed spans (and any span with no
 /// `cell_map`) walk `text` directly from `buffer_start` since their text IS
-/// byte-for-byte their buffer range.
+/// byte-for-byte their buffer range. `visual_col` accumulates across the
+/// WHOLE segment (a wrap row), reset to `0` at the segment's start — the
+/// same per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col`
+/// use, so a tab's width agrees with both regardless of which span it's in.
 pub fn segment_cells(seg: &WrapSegment) -> Vec<Cell> {
     let mut cells = Vec::new();
+    let mut visual_col = 0usize;
     for span in &seg.spans {
         let style = style_for(span.style);
         match (&span.state, &span.cell_map) {
             (RevealState::Rendered, Some(cell_map)) => {
+                let char_count = span.text.chars().count();
+                // A producer bug (cell_map built from different text than
+                // what's emitted) would make `zip` below silently drop
+                // whichever side is longer — surfaced here as a debug-mode
+                // diagnostic rather than a silent row truncation; an
+                // ordinary shipped build still degrades gracefully (renders
+                // only the min of the two, same as `zip`'s normal
+                // behavior), per CONSTITUTION §1.3.
+                debug_assert_eq!(
+                    char_count,
+                    cell_map.len(),
+                    "Rendered span's cell_map length ({}) does not match its text's char count ({char_count}) — a producer bug upstream in rune-md; truncating to the shorter of the two",
+                    cell_map.len(),
+                );
                 for (ch, &offset) in span.text.chars().zip(cell_map.iter()) {
-                    cells.push(Cell {
-                        ch,
-                        width: control_aware_width(ch) as u8,
-                        style,
-                        buf_offset: offset,
-                    });
+                    push_char_cells(&mut cells, &mut visual_col, ch, offset, style);
                 }
             }
             _ => {
                 let mut offset = span.buffer_start;
                 for ch in span.text.chars() {
-                    cells.push(Cell {
-                        ch,
-                        width: control_aware_width(ch) as u8,
-                        style,
-                        buf_offset: offset as i64,
-                    });
+                    push_char_cells(&mut cells, &mut visual_col, ch, offset as i64, style);
                     offset += ch.len_utf8();
                 }
             }
@@ -217,12 +309,12 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     for (row_idx, row) in rows.iter().enumerate() {
         let y = area.y.saturating_add(row_idx as u16);
-        if y >= area.y + area.height {
+        if y >= area.y.saturating_add(area.height) {
             break;
         }
         let mut x = area.x;
         for cell in row {
-            if x >= area.x + area.width {
+            if x >= area.x.saturating_add(area.width) {
                 break;
             }
             if let Some(target) = buf.cell_mut((x, y)) {

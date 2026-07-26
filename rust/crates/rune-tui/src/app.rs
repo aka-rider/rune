@@ -14,6 +14,10 @@ use crate::editor::Editor;
 use crate::keymap::{self, Command, KeyInput, QuitKey};
 use crate::runtime::{Cmd, Effects, Msg};
 
+/// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
+/// press arms + spawns 2s timer Cmd carrying gen").
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// The whole editor model: the single editing pane (Phase 1 is one file, one
 /// pane), file identity, the injected `Vfs` save target, and app-wide UI
 /// state (status message, quit-confirm arming) that doesn't belong to any
@@ -173,7 +177,7 @@ fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
 /// design, never blocking the main loop).
 fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
     Box::new(move || {
-        std::thread::sleep(Duration::from_secs(2));
+        std::thread::sleep(CONFIRM_TIMEOUT);
         Some(Msg::ConfirmTimeout { generation })
     })
 }

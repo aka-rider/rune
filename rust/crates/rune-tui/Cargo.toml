@@ -6,11 +6,9 @@ edition.workspace = true
 [dependencies]
 rune-core = { path = "../rune-core" }
 rune-md = { path = "../rune-md" }
-ratatui = { workspace = true, features = ["termina", "unstable-backend-writer"] }
+ratatui = { workspace = true, features = ["termina"] }
 ratatui-termina = { workspace = true }
 termina = { workspace = true }
-unicode-width = { workspace = true }
-base64 = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
