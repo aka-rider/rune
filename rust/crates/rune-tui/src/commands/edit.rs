@@ -208,6 +208,20 @@ pub fn newline(app: &mut App) {
     );
 }
 
+/// Port of `commands_clipboard.go:buildDeleteEdits`, reused by
+/// `commands::clipboard::cut` (WP8): deletes each cursor's selection, or —
+/// with no selection — its whole current line including the trailing `\n`
+/// (`nav::line_range_incl_newline`, the same range `copy_entire_line` used
+/// to build the text cut just copied — so cut always removes precisely
+/// what it captured).
+pub(crate) fn delete_selection_or_line(app: &mut App) {
+    per_cursor_selection_edits(
+        app,
+        |_i, _c, _buf| String::new(),
+        |buf, c| Some(nav::line_range_incl_newline(buf, c.position)),
+    );
+}
+
 /// Port of `commands_edit.go:execDeleteLeft` (Backspace).
 pub fn delete_left(app: &mut App) {
     per_cursor_selection_edits(

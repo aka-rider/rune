@@ -10,7 +10,7 @@ use rune_core::buffer::Buffer;
 use rune_core::vfs::Vfs;
 use rune_md::element::doc::ViewSnapshots;
 
-use crate::commands::{edit, nav};
+use crate::commands::{clipboard, edit, nav};
 use crate::editor::Editor;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::runtime::{Cmd, Effects, Msg};
@@ -92,14 +92,14 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
                 .set_size(width, height.saturating_sub(1));
         }
         Msg::Paste(text) => {
-            // Bracketed paste inserts through the same selection-replacing
-            // insert path as typed text (plan Context, "Bracketed-paste
-            // Msg::Paste may insert text through the same insert path");
-            // clipboard.copy/cut/pbpaste stay no-op until WP8.
-            edit::insert_text(app, &text);
+            // Bracketed paste and pbpaste (`Msg::ClipboardRead` below) both
+            // funnel through the same `handle_paste_content` (plan Gotchas:
+            // "Bracketed paste vs pbpaste double-paste" — never handle one
+            // event twice, never insert through two different paths).
+            clipboard::handle_paste_content(app, &text);
         }
-        Msg::ClipboardRead(_text) => {
-            // Wired alongside paste handling in WP8.
+        Msg::ClipboardRead(text) => {
+            clipboard::handle_paste_content(app, &text);
         }
         Msg::SaveDone { version, result } => {
             app.save_in_flight = false;
@@ -192,8 +192,11 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Command::Outdent => edit::outdent(app),
         Command::Undo => edit::undo(app),
         Command::Redo => edit::redo(app),
-        // Clipboard is wired in WP8; save is wired in WP9.
-        Command::Copy | Command::Cut | Command::Paste | Command::Save => {}
+        Command::Copy => clipboard::copy(app, effects),
+        Command::Cut => clipboard::cut(app, effects),
+        Command::Paste => clipboard::paste(effects),
+        // Save is wired in WP9.
+        Command::Save => {}
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single

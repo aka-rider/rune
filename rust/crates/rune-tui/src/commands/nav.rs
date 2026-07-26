@@ -199,6 +199,23 @@ pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
     end
 }
 
+/// The byte range `[line_start, line_end)` of the line containing `offset`,
+/// extended to include the line's trailing `\n` unless it's the buffer's
+/// last line. The shared chokepoint for "whole current line" ranges: port
+/// of `commands_clipboard.go:copyEntireLine`'s range arithmetic, used
+/// identically by `commands::clipboard::copy_entire_line` (what gets
+/// copied) and `commands::edit::delete_selection_or_line` (what cut
+/// removes) so the two can never disagree about where a line-copy ends.
+pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, usize) {
+    let bp = buf.offset_to_line_col(offset);
+    let line_start = buf.line_start(bp.line);
+    let mut line_end = buf.line_end(bp.line);
+    if line_end < buf.len() {
+        line_end += 1; // include the trailing '\n'
+    }
+    (line_start, line_end)
+}
+
 /// Port of `commands_nav.go:selectionEndInclusive`. Used both by movement
 /// (implicitly, via `handle_left`/`handle_right`'s `SelectionStart`/`End`)
 /// and by `commands::edit`'s selection-replacing edits.
