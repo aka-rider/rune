@@ -201,7 +201,8 @@ pub fn segment_cells(seg: &WrapSegment) -> Vec<Cell> {
 /// rows in `[scroll_row, scroll_row + height)`, with cursor/selection
 /// overlays applied.
 pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
-    let viewport = &app.editor.viewport;
+    let doc = app.active_doc();
+    let viewport = &doc.viewport;
     let height = viewport.height as usize;
     let mut rows: Vec<Vec<Cell>> = view
         .wrap
@@ -215,8 +216,8 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     apply_cursor_overlays(
         &mut rows,
         view,
-        &app.editor.cursors,
-        &app.editor.buffer,
+        &doc.cursors,
+        &doc.buffer,
         viewport.scroll_row,
     );
     rows
@@ -296,7 +297,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
         .copied()
         .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
 
-    if let Some(view) = &app.view {
+    if let Some(view) = &app.active_doc().view {
         let rows = build_rows(view, app);
         blit(&rows, editor_area, frame);
     }
