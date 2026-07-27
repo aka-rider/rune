@@ -27,7 +27,7 @@ use rune_vfs::Vfs;
 
 use crate::observation::ObsId;
 use crate::writer::{OnEvent, OpKind, WriteOp};
-use crate::{Error, reader, session, writer};
+use crate::{Error, reader, retry, session, writer};
 
 /// An injectable wall clock (plan Gotchas: "Wall-clock coalescing is
 /// nondeterministic in tests — rune-db must take a `clock: ... -> SystemTime`
@@ -80,7 +80,18 @@ impl Store {
         on_event: OnEvent,
     ) -> Result<(Store, Option<String>), Error> {
         let rung = open_ladder(path)?;
-        Self::from_ladder(rung, fs, on_event)
+        let (store, warning) = Self::from_ladder(rung, fs, on_event)?;
+
+        // Old-schema-version file GC (WP6.S3), best-effort — never blocks
+        // open, mirrors the dead-session reaper's own contract. Runs
+        // against `path`'s directory regardless of whether THIS open
+        // degraded, since a leftover old-version file is unrelated to
+        // whether today's own file could be opened.
+        if let Some(parent) = path.parent() {
+            crate::versioning::gc_old_versions(parent, store.liveness_check().as_ref());
+        }
+
+        Ok((store, warning))
     }
 
     /// Opens a store entirely in memory, undegraded (unlike the fallback
@@ -99,6 +110,9 @@ impl Store {
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
+        // One startup blob-sweep batch (WP6.S1), after the reaper — best
+        // effort, never blocks open.
+        let _ = retry::with_retry(&mut conn, crate::gc::sweep_unreferenced_blobs);
         let writer = writer::spawn(conn, fs, on_event);
         let reader = reader::spawn(&uri)?;
         Ok(Store {
@@ -127,6 +141,9 @@ impl Store {
         // `openStoreAt` (`liveness.go:93` doc comment).
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
+        // One startup blob-sweep batch (WP6.S1), after the reaper — best
+        // effort, never blocks open.
+        let _ = retry::with_retry(&mut writer_conn, crate::gc::sweep_unreferenced_blobs);
 
         let writer = writer::spawn(writer_conn, fs, on_event);
         let reader = reader::spawn(&rung.reader_target)?;
@@ -336,11 +353,22 @@ impl Store {
         &self.reader
     }
 
-    /// Deterministically drains and joins both threads. WP6 wires the
-    /// clean-shutdown `wal_checkpoint(TRUNCATE)` ahead of this call.
+    /// Deterministically drains and joins both threads. The writer's final
+    /// op (enqueued by `writer::WriterHandle::shutdown`, WP6.S2) runs
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` when this session is the last live
+    /// one, then `PRAGMA optimize`, before the thread actually exits.
     pub fn shutdown(self) {
-        let Store { writer, reader, .. } = self;
-        writer.shutdown();
+        let Store {
+            writer,
+            reader,
+            session_id,
+            liveness_check,
+            ..
+        } = self;
+        let liveness_check = liveness_check
+            .into_inner()
+            .unwrap_or_else(|p| p.into_inner());
+        writer.shutdown(session_id, liveness_check);
         reader.shutdown();
     }
 }

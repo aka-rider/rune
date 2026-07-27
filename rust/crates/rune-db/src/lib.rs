@@ -9,12 +9,16 @@
 //! retry classifier. WP3 added the durable journal, content-addressed
 //! blobs, and recovery snapshots (`append_edit`, `undo_peek`/`redo_peek`/
 //! `move_undo_pos`, `create_snapshot`, `recover_document`,
-//! `edits_in_range`). WP4 (this work package) adds observations
-//! (`observation.rs`), the conflict-lifecycle comparison (`sync.rs`),
-//! `probe`, `materialize` (the CAS write protocol), the Adoption Contract
-//! (`adopt.rs`), `load`, and the dead-session reaper (`reaper.rs`). Wiring
-//! into `rune-tui` lands in WP5; lifecycle (checkpoints, GC, multiprocess
-//! tests) lands in WP6.
+//! `edits_in_range`). WP4 adds observations (`observation.rs`), the
+//! conflict-lifecycle comparison (`sync.rs`), `probe`, `materialize` (the
+//! CAS write protocol), the Adoption Contract (`adopt.rs`), `load`, and the
+//! dead-session reaper (`reaper.rs`). Wiring into `rune-tui` lands in WP5.
+//! WP6 (this work package) adds lifecycle: the writer's idle
+//! checkpoint/blob-sweep timer and clean-shutdown `TRUNCATE` (`writer.rs`),
+//! unreferenced-blob GC (`gc.rs`), old-schema-version file GC
+//! (`versioning.rs`), and the multiprocess integration tests
+//! (`tests/multiprocess.rs`) that exercise all of it against real, separate
+//! OS processes.
 //!
 //! Darwin-only, matching the rest of this workspace (`CLAUDE.md`): no
 //! portability shims, no `!darwin` build tags.
@@ -23,6 +27,7 @@ mod adopt;
 mod blob;
 mod document;
 mod error;
+mod gc;
 mod journal;
 mod load;
 mod materialize;
