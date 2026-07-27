@@ -171,11 +171,16 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
                     break 'session;
                 }
             }
-            Action::DirLoaded { entries, cause } => {
+            Action::DirLoaded {
+                entries,
+                cause,
+                generation,
+            } => {
                 let msg = Msg::DirLoaded {
                     root: PathBuf::from(FUZZ_DIR_ROOT),
                     entries: entries.clone(),
                     cause: *cause,
+                    generation: *generation,
                 };
                 if step_and_check(
                     &mut state,

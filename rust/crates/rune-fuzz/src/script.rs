@@ -11,7 +11,7 @@
 //! confirm-timeout
 //! deliver
 //! fail-next-save
-//! dirloaded <nav|refresh>       # followed by 0+ continuation lines:
+//! dirloaded <nav|refresh> <generation>   # followed by 0+ continuation lines:
 //! dirloaded-entry <f|d> <escaped name>
 //! ```
 //!
@@ -132,9 +132,15 @@ fn encode_action(out: &mut String, action: &Action) {
         Action::ConfirmTimeout => out.push_str("confirm-timeout\n"),
         Action::Deliver => out.push_str("deliver\n"),
         Action::FailNextSave => out.push_str("fail-next-save\n"),
-        Action::DirLoaded { entries, cause } => {
+        Action::DirLoaded {
+            entries,
+            cause,
+            generation,
+        } => {
             out.push_str("dirloaded ");
             out.push_str(encode_dir_cause(*cause));
+            out.push(' ');
+            out.push_str(&generation.to_string());
             out.push('\n');
             for entry in entries {
                 out.push_str("dirloaded-entry ");
@@ -285,7 +291,12 @@ fn parse_dir_loaded<'a>(
     line: usize,
     lines: &mut Peekable<impl Iterator<Item = (usize, &'a str)>>,
 ) -> Result<Action, ScriptError> {
-    let cause = match rest.trim() {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `dirloaded <nav|refresh> <generation>`".to_string(),
+    };
+    let mut parts = rest.trim().splitn(2, ' ');
+    let cause = match parts.next().ok_or_else(malformed)? {
         "nav" => DirCause::Nav,
         "refresh" => DirCause::Refresh,
         other => {
@@ -295,6 +306,15 @@ fn parse_dir_loaded<'a>(
             });
         }
     };
+    let generation: u32 = parts
+        .next()
+        .ok_or_else(malformed)?
+        .trim()
+        .parse()
+        .map_err(|_| ScriptError::MalformedLine {
+            line,
+            reason: "expected a u32 generation".to_string(),
+        })?;
 
     let mut entries = Vec::new();
     while let Some(&(_, next_raw)) = lines.peek() {
@@ -308,7 +328,11 @@ fn parse_dir_loaded<'a>(
         entries.push(parse_dir_entry(entry_rest, entry_line)?);
     }
 
-    Ok(Action::DirLoaded { entries, cause })
+    Ok(Action::DirLoaded {
+        entries,
+        cause,
+        generation,
+    })
 }
 
 fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
@@ -542,10 +566,12 @@ mod tests {
                     },
                 ],
                 cause: DirCause::Nav,
+                generation: 7,
             },
             Action::DirLoaded {
                 entries: Vec::new(),
                 cause: DirCause::Refresh,
+                generation: 0,
             },
         ];
 

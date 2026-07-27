@@ -382,7 +382,8 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             root,
             entries,
             cause,
-        } => explorer::handle_dir_loaded(app, root, entries, cause),
+            generation,
+        } => explorer::handle_dir_loaded(app, root, entries, cause, generation),
         // Routed through the modal banner, not `status_message` (plan
         // WP3.S4) — `report_error` is the one chokepoint every error
         // report funnels through.
