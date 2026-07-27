@@ -22,9 +22,12 @@ const HEIGHT: u16 = 24;
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     let id = app.active;
-    app.doc_mut(id).focused = focused;
-    app.doc_mut(id).cursors = CursorSet::new(cursor_offset.min(content.len()));
-    app.doc_mut(id).viewport.set_size(WIDTH, HEIGHT - 1);
+    app.doc_mut(id).unwrap().focused = focused;
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id)
+        .unwrap()
+        .viewport
+        .set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
 }

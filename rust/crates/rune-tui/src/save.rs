@@ -48,14 +48,15 @@ const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 /// able to save (plan decision 5: "losing the DB never damages a user
 /// file").
 pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    if app.doc(id).save_in_flight {
+    let Some(doc) = app.doc(id) else { return };
+    if doc.save_in_flight {
         return;
     }
-    let version = app.doc(id).buffer.version();
-    if version == app.doc(id).saved_version {
+    let version = doc.buffer.version();
+    if version == doc.saved_version {
         return;
     }
-    let Some(path) = app.doc(id).file_path.clone() else {
+    let Some(path) = doc.file_path.clone() else {
         app.set_status(
             "no file to save \u{2014} rune was opened without a path",
             StatusSource::SaveError,
@@ -63,12 +64,14 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         return;
     };
 
-    let has_binding = app.db.is_some() && app.doc(id).db.is_some();
+    let has_binding = app.db.is_some() && doc.db.is_some();
     if !has_binding {
         // No store at all, or this document has no binding to it — the
         // pre-WP5 direct-vfs fallback.
-        app.doc_mut(id).save_in_flight = true;
-        let bytes = app.doc(id).buffer.content().as_bytes().to_vec();
+        let bytes = doc.buffer.content().as_bytes().to_vec();
+        if let Some(doc) = app.doc_mut(id) {
+            doc.save_in_flight = true;
+        }
         let vfs = Arc::clone(&app.vfs);
         effects.cmds.push(save_cmd(id, vfs, path, bytes, version));
         return;
@@ -105,22 +108,24 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
 /// all captured HERE, synchronously — never re-derived once the op runs
 /// (§1.4.2/§1.4.8).
 fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
-    let Some((db_id, expect_obs, last_known_seq, bind_new)) = app
-        .doc(id)
+    let Some(doc) = app.doc(id) else { return };
+    let Some((db_id, expect_obs, last_known_seq, bind_new)) = doc
         .db
         .as_ref()
         .map(|d| (d.db_id, d.expect_obs, d.last_known_seq, d.bind_new))
     else {
         return;
     };
-    let content = app.doc(id).buffer.content().to_string();
+    let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
     let result = db
         .store
         .materialize(db_id, &path, &content, expect_obs, last_known_seq, bind_new);
 
-    app.doc_mut(id).save_in_flight = true;
-    app.doc_mut(id).save_pending_version = Some(version);
+    if let Some(doc) = app.doc_mut(id) {
+        doc.save_in_flight = true;
+        doc.save_pending_version = Some(version);
+    }
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, id);
@@ -144,20 +149,22 @@ fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
 /// `save_in_flight` and recomputes its dirty cache (trigger (b) of
 /// `recompute_dirty`'s doc comment).
 pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResult) {
-    app.doc_mut(id).save_in_flight = false;
-    let pending_version = app.doc_mut(id).save_pending_version.take();
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.save_in_flight = false;
+    let pending_version = doc.save_pending_version.take();
 
     if mat.committed {
         if let Some(saved) = &mat.saved
-            && let Some(doc_db) = app.doc_mut(id).db.as_mut()
+            && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
         {
             doc_db.expect_obs = saved.id;
             doc_db.bind_new = false;
         }
         if let Some(version) = pending_version
-            && version > app.doc(id).saved_version
+            && let Some(doc) = app.doc_mut(id)
+            && version > doc.saved_version
         {
-            app.doc_mut(id).saved_version = version;
+            doc.saved_version = version;
         }
         if app.status_source == StatusSource::SaveError {
             app.status_message = None;
@@ -192,11 +199,14 @@ pub(crate) fn handle_save_done(
     version: u64,
     result: Result<(), String>,
 ) {
-    app.doc_mut(id).save_in_flight = false;
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.save_in_flight = false;
     match result {
         Ok(()) => {
-            if version > app.doc(id).saved_version {
-                app.doc_mut(id).saved_version = version;
+            if let Some(doc) = app.doc_mut(id)
+                && version > doc.saved_version
+            {
+                doc.saved_version = version;
             }
             // Provenance-aware clear (review finding F2): only a message
             // THIS save path set (a prior failed/un-attempted save) is
@@ -226,8 +236,8 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
-    let Some((db_id, last_known_seq)) = app
-        .doc(id)
+    let Some(doc) = app.doc(id) else { return };
+    let Some((db_id, last_known_seq)) = doc
         .db
         .as_ref()
         .filter(|d| d.snapshot_generation == generation)
@@ -235,7 +245,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     else {
         return;
     };
-    let content = app.doc(id).buffer.content().to_string();
+    let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.create_snapshot(db_id, &content, last_known_seq);
     match result {
@@ -254,7 +264,8 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId, effects:
     if app.db.is_none() {
         return;
     }
-    let Some(doc_db) = app.doc_mut(id).db.as_mut() else {
+    let Some(doc) = app.doc_mut(id) else { return };
+    let Some(doc_db) = doc.db.as_mut() else {
         return;
     };
     doc_db.snapshot_generation = doc_db.snapshot_generation.wrapping_add(1);
@@ -309,8 +320,10 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
 /// `buffer.version()` they just changed, so the cache never observes a
 /// stale pairing.
 pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
-    let dirty = app.doc(id).buffer.version() != app.doc(id).saved_version;
-    app.doc_mut(id).is_dirty_cached = dirty;
+    let Some(doc) = app.doc(id) else { return };
+    let dirty = doc.buffer.version() != doc.saved_version;
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.is_dirty_cached = dirty;
 }
 
 /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6) — mirrors

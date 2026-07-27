@@ -75,7 +75,7 @@ mod tests {
     fn dirty_buffer_shows_dot_and_pending_quit_shows_hint() {
         let mut app = app_with("hello");
         let id = app.active;
-        app.doc_mut(id).buffer = app.doc(id).buffer.insert(0, "x");
+        app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x");
         // A direct field mutation bypasses `update` — recompute the §1.4.8
         // dirty cache by hand, exactly like the real edit path
         // (`commands::edit::commit_edit_batch`) does after every journal

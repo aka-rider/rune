@@ -80,9 +80,8 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
         vfs,
         None,
     );
-    let doc_id = app.active;
-    app.doc_mut(doc_id).focused = true;
-    app.doc_mut(doc_id).viewport.set_size(80, 23);
+    app.active_doc_mut().focused = true;
+    app.active_doc_mut().viewport.set_size(80, 23);
     app.sync_view();
 
     let mut state = State {

@@ -87,7 +87,8 @@ fn commit_edit_batch(
     mut infos: Vec<(Edit, u32)>,
     cursors_before: CursorSet,
 ) {
-    if app.doc(id).read_only || infos.is_empty() {
+    let Some(doc) = app.doc(id) else { return };
+    if doc.read_only || infos.is_empty() {
         return;
     }
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
@@ -95,7 +96,7 @@ fn commit_edit_batch(
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
     let ids: Vec<u32> = infos.iter().map(|(_, cid)| *cid).collect();
 
-    match app.doc(id).buffer.apply_edits(&edits) {
+    match doc.buffer.apply_edits(&edits) {
         Ok((new_buf, applied)) => {
             let new_cursors: Vec<Cursor> = applied
                 .iter()
@@ -107,10 +108,11 @@ fn commit_edit_batch(
                     id: cid,
                 })
                 .collect();
-            app.doc_mut(id).buffer = new_buf;
-            app.doc_mut(id).cursors = CursorSet::new_from(&new_cursors);
-            let cursors_after = app.doc(id).cursors.all();
-            app.doc_mut(id).journal.push(Step {
+            let Some(doc) = app.doc_mut(id) else { return };
+            doc.buffer = new_buf;
+            doc.cursors = CursorSet::new_from(&new_cursors);
+            let cursors_after = doc.cursors.all();
+            doc.journal.push(Step {
                 edits: applied.clone(),
                 cursors_before: cursors_before.all(),
                 cursors_after: cursors_after.clone(),
@@ -119,7 +121,7 @@ fn commit_edit_batch(
             // above is already the authoritative, synchronous source of
             // truth — this enqueue can never roll it back, only mark the
             // store degraded on failure (`db::append_edit`'s doc comment).
-            let local_pos = app.doc(id).journal.pos();
+            let local_pos = doc.journal.pos();
             db::append_edit(
                 app,
                 id,
@@ -146,7 +148,8 @@ fn per_cursor_selection_edits(
     text_for: impl Fn(usize, &Cursor, &Buffer) -> String,
     bare: impl Fn(&Buffer, &Cursor) -> Option<(usize, usize)>,
 ) {
-    let cursors_before = app.doc(id).cursors.clone();
+    let Some(doc) = app.doc(id) else { return };
+    let cursors_before = doc.cursors.clone();
     let all = cursors_before.all();
     if all.is_empty() {
         return;
@@ -154,7 +157,8 @@ fn per_cursor_selection_edits(
 
     let mut infos: Vec<(Edit, u32)> = Vec::new();
     for (i, c) in all.iter().enumerate() {
-        let buf = &app.doc(id).buffer;
+        let Some(doc) = app.doc(id) else { return };
+        let buf = &doc.buffer;
         let edit = if c.has_selection() {
             let start = c.selection_start();
             let end = nav::selection_end_inclusive(c, buf);
@@ -184,7 +188,8 @@ fn per_cursor_selection_edits(
 /// caller in this file dedupes — Go's only `dedupe=false` caller,
 /// clone-line-up/down, is out of Phase-1 scope).
 fn per_line_edits(app: &mut App, id: DocumentId, build: impl Fn(usize, &Buffer) -> Option<Edit>) {
-    let cursors_before = app.doc(id).cursors.clone();
+    let Some(doc) = app.doc(id) else { return };
+    let cursors_before = doc.cursors.clone();
     let all = cursors_before.all();
     if all.is_empty() {
         return;
@@ -193,11 +198,13 @@ fn per_line_edits(app: &mut App, id: DocumentId, build: impl Fn(usize, &Buffer) 
     let mut infos: Vec<(Edit, u32)> = Vec::new();
     let mut seen: HashSet<usize> = HashSet::new();
     for c in &all {
-        let bp = app.doc(id).buffer.offset_to_line_col(c.position);
+        let Some(doc) = app.doc(id) else { return };
+        let bp = doc.buffer.offset_to_line_col(c.position);
         if !seen.insert(bp.line) {
             continue;
         }
-        if let Some(edit) = build(bp.line, &app.doc(id).buffer) {
+        let Some(doc) = app.doc(id) else { return };
+        if let Some(edit) = build(bp.line, &doc.buffer) {
             infos.push((edit, c.id));
         }
     }
@@ -365,17 +372,19 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
 /// clears `app.status_message` — only this function's own failure path
 /// writes it.
 pub fn undo(app: &mut App, id: DocumentId) {
-    let Some((step, new_pos)) = app.doc(id).journal.undo_peek() else {
+    let Some(doc) = app.doc(id) else { return };
+    let Some((step, new_pos)) = doc.journal.undo_peek() else {
         return;
     };
     let edits: Vec<AppliedEdit> = step.edits.clone();
     let cursors_before: Vec<Cursor> = step.cursors_before.clone();
 
-    match rune_core::undo::apply_inverse(&app.doc(id).buffer, &edits) {
+    match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
         Ok(new_buf) => {
-            app.doc_mut(id).buffer = new_buf;
-            app.doc_mut(id).cursors = CursorSet::new_from(&cursors_before);
-            app.doc_mut(id).journal.move_pos(new_pos);
+            let Some(doc) = app.doc_mut(id) else { return };
+            doc.buffer = new_buf;
+            doc.cursors = CursorSet::new_from(&cursors_before);
+            doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             save::recompute_dirty(app, id);
         }
@@ -389,17 +398,19 @@ pub fn undo(app: &mut App, id: DocumentId) {
 /// the step forward, commit the position move only on success. Same
 /// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
 pub fn redo(app: &mut App, id: DocumentId) {
-    let Some((step, new_pos)) = app.doc(id).journal.redo_peek() else {
+    let Some(doc) = app.doc(id) else { return };
+    let Some((step, new_pos)) = doc.journal.redo_peek() else {
         return;
     };
     let edits: Vec<AppliedEdit> = step.edits.clone();
     let cursors_after: Vec<Cursor> = step.cursors_after.clone();
 
-    match rune_core::undo::reapply(&app.doc(id).buffer, &edits) {
+    match rune_core::undo::reapply(&doc.buffer, &edits) {
         Ok(new_buf) => {
-            app.doc_mut(id).buffer = new_buf;
-            app.doc_mut(id).cursors = CursorSet::new_from(&cursors_after);
-            app.doc_mut(id).journal.move_pos(new_pos);
+            let Some(doc) = app.doc_mut(id) else { return };
+            doc.buffer = new_buf;
+            doc.cursors = CursorSet::new_from(&cursors_after);
+            doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             save::recompute_dirty(app, id);
         }
@@ -419,8 +430,8 @@ mod tests {
     fn app_with(content: &str, cursor_offset: usize) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         let id = app.active;
-        app.doc_mut(id).cursors = CursorSet::new(cursor_offset.min(content.len()));
-        app.doc_mut(id).viewport.set_size(80, 23);
+        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+        app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
     }
 
@@ -429,23 +440,23 @@ mod tests {
         let mut app = app_with("ac", 1);
         let id = app.active;
         insert_char(&mut app, id, 'b');
-        assert_eq!(app.doc(id).buffer.content(), "abc");
-        assert_eq!(app.doc(id).cursors.primary().position, 2);
-        assert_eq!(app.doc(id).journal.len(), 1);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 2);
+        assert_eq!(app.doc(id).unwrap().journal.len(), 1);
     }
 
     #[test]
     fn insert_char_replaces_a_selection() {
         let mut app = app_with("hello world", 0);
         let id = app.active;
-        app.doc_mut(id).cursors = CursorSet::new(0).map(|c| Cursor {
+        app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
             anchor: 0,
             position: 5,
             ..c
         });
         insert_char(&mut app, id, 'X');
-        assert_eq!(app.doc(id).buffer.content(), "X world");
-        assert_eq!(app.doc(id).cursors.primary().position, 1);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "X world");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 1);
     }
 
     #[test]
@@ -453,7 +464,7 @@ mod tests {
         let mut app = app_with("a\u{6c49}", "a".len() + '\u{6c49}'.len_utf8());
         let id = app.active;
         delete_left(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "a");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "a");
     }
 
     #[test]
@@ -461,8 +472,8 @@ mod tests {
         let mut app = app_with("abc", 0);
         let id = app.active;
         delete_left(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "abc");
-        assert_eq!(app.doc(id).journal.len(), 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
     #[test]
@@ -470,8 +481,8 @@ mod tests {
         let mut app = app_with("abc", 0);
         let id = app.active;
         delete_right(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "bc");
-        assert_eq!(app.doc(id).cursors.primary().position, 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "bc");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 0);
     }
 
     #[test]
@@ -479,8 +490,8 @@ mod tests {
         let mut app = app_with("  indented", 10);
         let id = app.active;
         newline(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "  indented\n  ");
-        assert_eq!(app.doc(id).cursors.primary().position, 13);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "  indented\n  ");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 13);
     }
 
     #[test]
@@ -488,7 +499,7 @@ mod tests {
         let mut app = app_with("hello", 2);
         let id = app.active;
         indent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "\thello");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "\thello");
     }
 
     #[test]
@@ -496,7 +507,7 @@ mod tests {
         let mut app = app_with("\thello", 3);
         let id = app.active;
         outdent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
     }
 
     #[test]
@@ -504,7 +515,7 @@ mod tests {
         let mut app = app_with("    hello", 5);
         let id = app.active;
         outdent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
     }
 
     #[test]
@@ -512,8 +523,8 @@ mod tests {
         let mut app = app_with("hello", 0);
         let id = app.active;
         outdent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello");
-        assert_eq!(app.doc(id).journal.len(), 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
     #[test]
@@ -521,15 +532,15 @@ mod tests {
         let mut app = app_with("hello", 5);
         let id = app.active;
         insert_char(&mut app, id, '!');
-        assert_eq!(app.doc(id).buffer.content(), "hello!");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
         undo(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello");
-        assert_eq!(app.doc(id).cursors.primary().position, 5);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 5);
 
         redo(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello!");
-        assert_eq!(app.doc(id).cursors.primary().position, 6);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 6);
     }
 
     #[test]
@@ -537,17 +548,17 @@ mod tests {
         let mut app = app_with("hello", 0);
         let id = app.active;
         undo(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
     }
 
     #[test]
     fn cjk_and_emoji_round_trip_byte_exact_through_undo() {
         let mut app = app_with("汉字 👩‍👩‍👧‍👦", 0);
         let id = app.active;
-        let original = app.doc(id).buffer.content().to_string();
+        let original = app.doc(id).unwrap().buffer.content().to_string();
         insert_char(&mut app, id, 'x');
         undo(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), original);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), original);
     }
 
     /// Regression for F2: a successful edit must not clobber an unrelated
@@ -560,7 +571,7 @@ mod tests {
         app.status_message = Some("save failed: disk full".to_string());
 
         insert_char(&mut app, id, '!');
-        assert_eq!(app.doc(id).buffer.content(), "hello!");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
         assert_eq!(
             app.status_message.as_deref(),
             Some("save failed: disk full"),
@@ -592,35 +603,59 @@ mod tests {
     fn read_only_blocks_typing_backspace_and_indent() {
         let mut app = app_with("hello", 5);
         let id = app.active;
-        app.doc_mut(id).read_only = true;
-        let before_content = app.doc(id).buffer.content().to_string();
-        let before_version = app.doc(id).buffer.version();
+        app.doc_mut(id).unwrap().read_only = true;
+        let before_content = app.doc(id).unwrap().buffer.content().to_string();
+        let before_version = app.doc(id).unwrap().buffer.version();
 
         insert_char(&mut app, id, '!');
-        assert_eq!(app.doc(id).buffer.content(), before_content, "typing");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "typing"
+        );
 
         delete_left(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), before_content, "backspace");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "backspace"
+        );
 
         indent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), before_content, "indent");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "indent"
+        );
 
         outdent(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), before_content, "outdent");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "outdent"
+        );
 
         delete_right(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), before_content, "delete-right");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "delete-right"
+        );
 
         newline(&mut app, id);
-        assert_eq!(app.doc(id).buffer.content(), before_content, "newline");
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before_content,
+            "newline"
+        );
 
         assert_eq!(
-            app.doc(id).buffer.version(),
+            app.doc(id).unwrap().buffer.version(),
             before_version,
             "a rejected mutation must never bump the buffer version"
         );
         assert_eq!(
-            app.doc(id).journal.len(),
+            app.doc(id).unwrap().journal.len(),
             0,
             "a rejected mutation must never be journaled"
         );
@@ -639,20 +674,20 @@ mod tests {
         let mut app = app_with("hello", 5);
         let id = app.active;
         insert_char(&mut app, id, '!');
-        assert_eq!(app.doc(id).buffer.content(), "hello!");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
-        app.doc_mut(id).read_only = true;
+        app.doc_mut(id).unwrap().read_only = true;
 
         undo(&mut app, id);
         assert_eq!(
-            app.doc(id).buffer.content(),
+            app.doc(id).unwrap().buffer.content(),
             "hello",
             "undo must not be blocked by read_only"
         );
 
         redo(&mut app, id);
         assert_eq!(
-            app.doc(id).buffer.content(),
+            app.doc(id).unwrap().buffer.content(),
             "hello!",
             "redo must not be blocked by read_only"
         );

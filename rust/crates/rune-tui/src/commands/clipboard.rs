@@ -67,7 +67,7 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 /// Gotchas: "Cmds must never touch the terminal", exactly why this is
 /// `raw` output, not a `Cmd`).
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    let doc = app.doc(id);
+    let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
     if !text.is_empty() {
         effects.raw.push(osc52_copy(text.as_bytes()));
@@ -84,7 +84,7 @@ pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// succeeds (mirrors Go's `command.Result` returning `Cmd:
 /// clipboardWriteCmd(text)` alongside the edit operation unconditionally).
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    let doc = app.doc(id);
+    let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
     if !text.is_empty() {
         effects.raw.push(osc52_copy(text.as_bytes()));
@@ -121,7 +121,7 @@ pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;
     }
-    if app.doc(id).cursors.is_empty() {
+    if app.doc(id).is_none_or(|doc| doc.cursors.is_empty()) {
         return;
     }
     edit::insert_text(app, id, text);
@@ -139,14 +139,14 @@ mod tests {
     fn app_with(content: &str, cursor_offset: usize) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         let id = app.active;
-        app.doc_mut(id).cursors = CursorSet::new(cursor_offset.min(content.len()));
-        app.doc_mut(id).viewport.set_size(80, 23);
+        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
+        app.doc_mut(id).unwrap().viewport.set_size(80, 23);
         app
     }
 
     fn selecting(app: &mut App, id: DocumentId, anchor: usize, position: usize) {
-        let primary = app.doc(id).cursors.primary();
-        app.doc_mut(id).cursors = CursorSet::new_from(&[Cursor {
+        let primary = app.doc(id).unwrap().cursors.primary();
+        app.doc_mut(id).unwrap().cursors = CursorSet::new_from(&[Cursor {
             anchor,
             position,
             ..primary
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(effects.raw, vec![expected_osc52("hello")]);
         assert!(effects.cmds.is_empty(), "copy must never spawn a Cmd");
         assert_eq!(
-            app.doc(id).buffer.content(),
+            app.doc(id).unwrap().buffer.content(),
             "hello world",
             "copy must never mutate the buffer"
         );
@@ -203,12 +203,12 @@ mod tests {
         cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("hello")]);
-        assert_eq!(app.doc(id).buffer.content(), " world");
-        assert_eq!(app.doc(id).journal.len(), 1);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), " world");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 1);
 
         edit::undo(&mut app, id);
         assert_eq!(
-            app.doc(id).buffer.content(),
+            app.doc(id).unwrap().buffer.content(),
             "hello world",
             "undo must restore what cut removed"
         );
@@ -222,7 +222,7 @@ mod tests {
         cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
-        assert_eq!(app.doc(id).buffer.content(), "first\nthird");
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "first\nthird");
     }
 
     /// Regression for F1: on a read-only `Document`, Cut must not mutate
@@ -235,15 +235,15 @@ mod tests {
         let mut app = app_with("hello world", 0);
         let id = app.active;
         selecting(&mut app, id, 0, 5); // "hello"
-        app.doc_mut(id).read_only = true;
-        let before_version = app.doc(id).buffer.version();
+        app.doc_mut(id).unwrap().read_only = true;
+        let before_version = app.doc(id).unwrap().buffer.version();
 
         let mut effects = Effects::default();
         cut(&mut app, id, &mut effects);
 
-        assert_eq!(app.doc(id).buffer.content(), "hello world");
-        assert_eq!(app.doc(id).buffer.version(), before_version);
-        assert_eq!(app.doc(id).journal.len(), 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().buffer.version(), before_version);
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
     #[test]
@@ -261,9 +261,9 @@ mod tests {
         let id = app.active;
         handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.doc(id).buffer.content(), "abc");
-        assert_eq!(app.doc(id).cursors.primary().position, 2);
-        assert_eq!(app.doc(id).journal.len(), 1);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "abc");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 2);
+        assert_eq!(app.doc(id).unwrap().journal.len(), 1);
     }
 
     #[test]
@@ -285,19 +285,19 @@ mod tests {
             &mut effects2,
         );
 
-        assert_eq!(paste_app.doc(paste_id).buffer.content(), "abc");
+        assert_eq!(paste_app.doc(paste_id).unwrap().buffer.content(), "abc");
         assert_eq!(
-            paste_app.doc(paste_id).buffer.content(),
-            read_app.doc(read_id).buffer.content(),
+            paste_app.doc(paste_id).unwrap().buffer.content(),
+            read_app.doc(read_id).unwrap().buffer.content(),
             "Msg::Paste and Msg::ClipboardRead must produce identical results"
         );
         assert_eq!(
-            paste_app.doc(paste_id).cursors.primary().position,
-            read_app.doc(read_id).cursors.primary().position
+            paste_app.doc(paste_id).unwrap().cursors.primary().position,
+            read_app.doc(read_id).unwrap().cursors.primary().position
         );
         assert_eq!(
-            paste_app.doc(paste_id).journal.len(),
-            read_app.doc(read_id).journal.len()
+            paste_app.doc(paste_id).unwrap().journal.len(),
+            read_app.doc(read_id).unwrap().journal.len()
         );
     }
 
@@ -305,11 +305,11 @@ mod tests {
     fn handle_paste_content_is_a_no_op_on_a_read_only_editor() {
         let mut app = app_with("ac", 1);
         let id = app.active;
-        app.doc_mut(id).read_only = true;
+        app.doc_mut(id).unwrap().read_only = true;
         handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.doc(id).buffer.content(), "ac");
-        assert_eq!(app.doc(id).journal.len(), 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 
     #[test]
@@ -318,7 +318,7 @@ mod tests {
         let id = app.active;
         handle_paste_content(&mut app, id, "");
 
-        assert_eq!(app.doc(id).buffer.content(), "ac");
-        assert_eq!(app.doc(id).journal.len(), 0);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
     }
 }

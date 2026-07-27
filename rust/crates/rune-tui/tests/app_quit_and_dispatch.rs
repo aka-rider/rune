@@ -208,7 +208,7 @@ fn every_cmd_is_tagged_with_its_kind() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).saved_version = 0; // force dirty without touching content
+    app.doc_mut(id).unwrap().saved_version = 0; // force dirty without touching content
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(save_key()), &mut effects);
     assert_eq!(effects.cmds.len(), 1);

@@ -21,21 +21,12 @@ use crate::db::DocDb;
 /// Identifies one open `Document` for the lifetime of the process — minted
 /// monotonically by `App::next_doc_id` (plan WP1 decision 1). Tabs and every
 /// doc-scoped `Msg` key on this, never on a path: help/untitled documents
-/// are first-class and have no path at all.
+/// are first-class and have no path at all. The inner `NonZeroU64` is
+/// `pub(crate)`, not private: `App` — the sole minter, via
+/// `App::mint_doc_id` — constructs one directly from its own `NonZeroU64`
+/// counter, with no fallible conversion step to route around.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct DocumentId(NonZeroU64);
-
-impl DocumentId {
-    /// Constructs a `DocumentId` from a raw, already-minted id. The sole
-    /// caller, `App::mint_doc_id`, starts its counter at 1 and only ever
-    /// increments it, so `id` is always nonzero in practice; `0` (which
-    /// cannot occur) falls back to `1` rather than panicking (CONSTITUTION
-    /// §1.3: never panic on a value derived from internal bookkeeping, no
-    /// matter how unreachable it's believed to be).
-    pub(crate) fn from_raw(id: u64) -> DocumentId {
-        DocumentId(NonZeroU64::new(id).unwrap_or(NonZeroU64::MIN))
-    }
-}
+pub struct DocumentId(pub(crate) NonZeroU64);
 
 /// The visible window onto the wrapped document: `width`/`height` in cells,
 /// `scroll_row` the first visible wrap row (plan Context, "Cell model" /
@@ -243,6 +234,7 @@ impl Document {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use rune_vfs::Mem;
 
     #[test]
     fn sync_reparses_once_and_is_idempotent_on_repeat_calls() {
@@ -270,8 +262,16 @@ mod tests {
 
     #[test]
     fn document_ids_are_distinct_and_ordered() {
-        let a = DocumentId::from_raw(1);
-        let b = DocumentId::from_raw(2);
+        // Mints two REAL ids the same way production code does — through
+        // `App`, never a raw-number constructor.
+        let mut app = crate::app::App::new(
+            Buffer::new("a"),
+            None,
+            std::sync::Arc::new(Mem::new()),
+            None,
+        );
+        let a = app.active;
+        let b = app.open_document(Buffer::new("b"));
         assert_ne!(a, b);
         assert!(a < b);
     }

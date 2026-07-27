@@ -12,6 +12,7 @@
 //! quit-confirm arming, the degraded-store banner).
 
 use std::collections::{BTreeMap, HashMap};
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ pub enum StatusSource {
 pub struct App {
     pub documents: BTreeMap<DocumentId, Document>,
     pub active: DocumentId,
-    next_doc_id: u64,
+    next_doc_id: NonZeroU64,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
@@ -118,13 +119,13 @@ impl App {
         document.file_path = file_path;
 
         let mut documents = BTreeMap::new();
-        let id = DocumentId::from_raw(1);
+        let id = DocumentId(NonZeroU64::MIN);
         documents.insert(id, document);
 
         App {
             documents,
             active: id,
-            next_doc_id: 2,
+            next_doc_id: NonZeroU64::MIN.saturating_add(1),
             vfs,
             status_message: None,
             status_source: StatusSource::Other,
@@ -141,10 +142,14 @@ impl App {
 
     /// Mints the next `DocumentId`, monotonically — never reused, even
     /// across a close (out of scope for WP1; the counter design already
-    /// supports it).
+    /// supports it). `saturating_add` rather than `wrapping_add`: wrapping
+    /// back to a low id could collide with one still live in `documents`,
+    /// silently aliasing two documents — saturating at `u64::MAX` instead
+    /// (a session would need to open ~2^64 documents to ever reach it) just
+    /// stops minting new ones, never hands out a reused id.
     fn mint_doc_id(&mut self) -> DocumentId {
-        let id = DocumentId::from_raw(self.next_doc_id);
-        self.next_doc_id = self.next_doc_id.wrapping_add(1);
+        let id = DocumentId(self.next_doc_id);
+        self.next_doc_id = self.next_doc_id.saturating_add(1);
         id
     }
 
@@ -158,51 +163,42 @@ impl App {
         id
     }
 
-    /// Looks up `id`. Every `DocumentId` in circulation was minted by
-    /// `mint_doc_id` and inserted into `documents` in the same breath, and
-    /// WP1 has no document-close path yet, so `id` referencing a live entry
-    /// is an invariant, not a possibility to route around. CONSTITUTION
-    /// §1.3 forbids panicking on it regardless: an `id` that somehow isn't
-    /// live falls back to `self.active` — itself invariant-guaranteed live
-    /// (set exactly once, in `App::new`, to a `DocumentId` it just
-    /// inserted; nothing in WP1 ever removes a `documents` entry or
-    /// reassigns `active`). A future close feature must keep `active` in
-    /// sync with every removal to preserve that floor.
-    pub fn doc(&self, id: DocumentId) -> &Document {
-        let key = if self.documents.contains_key(&id) {
-            id
-        } else {
-            self.active
-        };
-        match self.documents.get(&key) {
-            Some(doc) => doc,
-            None => unreachable!(
-                "App::active must always reference a live document (DocumentId {key:?} missing)"
-            ),
-        }
+    /// Looks up `id` — `None` if it doesn't reference a live document
+    /// (never true today, since nothing removes a `documents` entry, but
+    /// once WP5 adds close this is exactly the shape a stale id from
+    /// `App::db_ops` racing a close must produce: a plain, honest "not
+    /// found" a caller can drop, never a silent write to some OTHER
+    /// document). Callers that specifically want the active document use
+    /// `active_doc`/`active_doc_mut` instead, which are infallible.
+    pub fn doc(&self, id: DocumentId) -> Option<&Document> {
+        self.documents.get(&id)
     }
 
-    pub fn doc_mut(&mut self, id: DocumentId) -> &mut Document {
-        let key = if self.documents.contains_key(&id) {
-            id
-        } else {
-            self.active
-        };
-        match self.documents.get_mut(&key) {
-            Some(doc) => doc,
-            None => unreachable!(
-                "App::active must always reference a live document (DocumentId {key:?} missing)"
-            ),
-        }
+    pub fn doc_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
+        self.documents.get_mut(&id)
     }
 
+    /// `documents` is structurally non-empty (`App::new` inserts one;
+    /// nothing today ever removes an entry) — a future close feature must
+    /// reassign `active` to a survivor before removing the old entry, so
+    /// this floor-to-the-first-entry branch stays dead code rather than a
+    /// masked bug.
+    #[allow(clippy::unwrap_used)]
     pub fn active_doc(&self) -> &Document {
-        self.doc(self.active)
+        match self.documents.get(&self.active) {
+            Some(doc) => doc,
+            None => self.documents.values().next().unwrap(),
+        }
     }
 
+    #[allow(clippy::unwrap_used)]
     pub fn active_doc_mut(&mut self) -> &mut Document {
-        let id = self.active;
-        self.doc_mut(id)
+        let key = if self.documents.contains_key(&self.active) {
+            self.active
+        } else {
+            *self.documents.keys().next().unwrap()
+        };
+        self.documents.get_mut(&key).unwrap()
     }
 
     /// Convenience delegate to the active document's dirty cache

@@ -97,8 +97,7 @@ fn main() -> ExitCode {
     // installs on the initial document — App::new only wires up the
     // app-wide store handle above.
     if let Some(doc_db) = db_bootstrap.doc_db {
-        let id = app.active;
-        app.doc_mut(id).db = Some(doc_db);
+        app.active_doc_mut().db = Some(doc_db);
     }
     if let Some(bridge_edit) = db_bootstrap.bridge_edit {
         // Seeds the LOCAL in-memory undo journal with the ONE synthetic
@@ -110,8 +109,7 @@ fn main() -> ExitCode {
         // (never through `commands::edit::commit_edit_batch`/`db::
         // append_edit`) — the durable side already has this edit recorded;
         // re-enqueueing it here would duplicate it.
-        let id = app.active;
-        app.doc_mut(id).journal.push(Step {
+        app.active_doc_mut().journal.push(Step {
             edits: vec![bridge_edit],
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),

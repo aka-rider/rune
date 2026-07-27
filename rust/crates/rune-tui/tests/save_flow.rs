@@ -23,7 +23,7 @@ fn test_app() -> App {
 fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
     let mut app = test_app();
     let id = app.active;
-    let version = app.doc(id).buffer.version();
+    let version = app.doc(id).unwrap().buffer.version();
 
     // A real prior save failure — the only kind of message the
     // provenance-aware clear below (review finding F2) is allowed to
@@ -50,7 +50,7 @@ fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
         },
         &mut effects2,
     );
-    assert_eq!(app.doc(id).saved_version, version);
+    assert_eq!(app.doc(id).unwrap().saved_version, version);
     assert!(
         app.status_message.is_none(),
         "a successful save must clear the failure message ITS OWN save path set"
@@ -72,7 +72,7 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
     );
     assert!(app.status_message.is_some());
 
-    let version = app.doc(id).buffer.version();
+    let version = app.doc(id).unwrap().buffer.version();
     let mut effects2 = Effects::default();
     update(
         &mut app,
@@ -84,7 +84,7 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
         &mut effects2,
     );
 
-    assert_eq!(app.doc(id).saved_version, version);
+    assert_eq!(app.doc(id).unwrap().saved_version, version);
     assert!(
         app.status_message.is_some(),
         "a successful save must not clear an unrelated (non-save) status message"
@@ -100,9 +100,9 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
 fn save_done_err_surfaces_status_and_keeps_dirty() {
     let mut app = test_app();
     let id = app.active;
-    app.doc_mut(id).buffer = app.doc(id).buffer.insert(0, "x");
-    let before_saved = app.doc(id).saved_version;
-    let version = app.doc(id).buffer.version();
+    app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x");
+    let before_saved = app.doc(id).unwrap().saved_version;
+    let version = app.doc(id).unwrap().buffer.version();
     let mut effects = Effects::default();
     update(
         &mut app,
@@ -113,7 +113,7 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
         },
         &mut effects,
     );
-    assert_eq!(app.doc(id).saved_version, before_saved);
+    assert_eq!(app.doc(id).unwrap().saved_version, before_saved);
     assert!(app.is_dirty());
     assert!(
         app.status_message
@@ -160,7 +160,7 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
             None,
         );
         let id = app.active;
-        app.doc_mut(id).saved_version = 0;
+        app.doc_mut(id).unwrap().saved_version = 0;
 
         let effects = press_save(&mut app);
         assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
@@ -188,7 +188,7 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).saved_version = 0;
+    app.doc_mut(id).unwrap().saved_version = 0;
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
@@ -209,18 +209,18 @@ fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).buffer = app.doc(id).buffer.insert(0, "x"); // makes it dirty
+    app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x"); // makes it dirty
 
     let effects = press_save(&mut app);
     assert_eq!(effects.cmds.len(), 1);
-    assert!(app.doc(id).save_in_flight);
+    assert!(app.doc(id).unwrap().save_in_flight);
 
     let effects2 = press_save(&mut app);
     assert!(
         effects2.cmds.is_empty(),
         "a save already in flight must not spawn a second save Cmd"
     );
-    assert!(app.doc(id).save_in_flight);
+    assert!(app.doc(id).unwrap().save_in_flight);
 }
 
 #[test]
@@ -234,18 +234,18 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).saved_version = 0;
+    app.doc_mut(id).unwrap().saved_version = 0;
 
     let effects = press_save(&mut app); // captures the pre-edit version
     assert_eq!(effects.cmds.len(), 1);
 
     edit::insert_char(&mut app, id, '!');
-    let after_edit_version = app.doc(id).buffer.version();
+    let after_edit_version = app.doc(id).unwrap().buffer.version();
 
     settle_cmds(&mut app, effects); // delivers SaveDone for the OLD version
 
     assert!(
-        app.doc(id).saved_version < after_edit_version,
+        app.doc(id).unwrap().saved_version < after_edit_version,
         "SaveDone must only advance saved_version to the version IT saved, \
          not the buffer's current (post-edit) version"
     );
@@ -273,7 +273,7 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).saved_version = 0;
+    app.doc_mut(id).unwrap().saved_version = 0;
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);

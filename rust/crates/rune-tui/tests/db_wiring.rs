@@ -127,13 +127,13 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).db = Some(doc_db);
-    let len = app.doc(id).buffer.len();
-    app.doc_mut(id).cursors = CursorSet::new(len);
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     // Typing while the store is healthy journals normally — no banner.
     press(&mut app, '!');
-    assert_eq!(app.doc(id).buffer.content(), "hi!");
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hi!");
     assert!(app.db_banner.is_none());
 
     app.db
@@ -183,7 +183,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     // keystroke typed so far, regardless of exactly when the writer died
     // relative to these presses.
     assert_eq!(
-        app.doc(id).buffer.content(),
+        app.doc(id).unwrap().buffer.content(),
         typed,
         "a store failure must never roll back the in-memory buffer"
     );
@@ -217,13 +217,13 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         Some(db_a),
     );
     let id_a = app_a.active;
-    app_a.doc_mut(id_a).db = Some(doc_db_a);
-    let len_a = app_a.doc(id_a).buffer.len();
-    app_a.doc_mut(id_a).cursors = CursorSet::new(len_a);
+    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    let len_a = app_a.doc(id_a).unwrap().buffer.len();
+    app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(len_a);
     for ch in " world".chars() {
         press(&mut app_a, ch);
     }
-    assert_eq!(app_a.doc(id_a).buffer.content(), "hello world");
+    assert_eq!(app_a.doc(id_a).unwrap().buffer.content(), "hello world");
     assert!(
         app_a.db_banner.is_none(),
         "session A's own store must stay healthy throughout"
@@ -286,20 +286,20 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         Some(db_b),
     );
     let id_b = app_b.active;
-    app_b.doc_mut(id_b).db = Some(doc_db_b);
+    app_b.doc_mut(id_b).unwrap().db = Some(doc_db_b);
     if let Some(bridge_edit) = bridge_edit {
-        app_b.doc_mut(id_b).journal.push(Step {
+        app_b.doc_mut(id_b).unwrap().journal.push(Step {
             edits: vec![bridge_edit],
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
         });
     }
 
-    assert_eq!(app_b.doc(id_b).buffer.content(), "hello world");
+    assert_eq!(app_b.doc(id_b).unwrap().buffer.content(), "hello world");
 
     edit::undo(&mut app_b, id_b);
     assert_eq!(
-        app_b.doc(id_b).buffer.content(),
+        app_b.doc(id_b).unwrap().buffer.content(),
         "hello",
         "post-restart undo must reach the pre-crash anchor (the disk content)"
     );
@@ -335,9 +335,9 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).db = Some(doc_db);
-    let len = app.doc(id).buffer.len();
-    app.doc_mut(id).cursors = CursorSet::new(len);
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     // Dirty the buffer (a healthy edit — the writer is still alive here) so
     // `trigger_save` below actually has something to save.
@@ -386,7 +386,7 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
         "the store must be marked degraded via on_store_failure, not left untouched"
     );
     assert!(
-        !app.doc(id).save_in_flight,
+        !app.doc(id).unwrap().save_in_flight,
         "on_store_failure must clear save_in_flight on an enqueue failure"
     );
 }
@@ -427,10 +427,10 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         Some(db),
     );
     let id = app.active;
-    app.doc_mut(id).db = Some(doc_db);
-    app.doc_mut(id).saved_version = 0; // force dirty — nothing to save otherwise
-    let len = app.doc(id).buffer.len();
-    app.doc_mut(id).cursors = CursorSet::new(len);
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().saved_version = 0; // force dirty — nothing to save otherwise
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(save_key()), &mut effects);
@@ -439,7 +439,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the first super+s on a degraded store must only arm the confirm gate"
     );
     assert!(
-        !app.doc(id).save_in_flight,
+        !app.doc(id).unwrap().save_in_flight,
         "no materialize must be enqueued before the gate is confirmed"
     );
     assert!(
@@ -455,7 +455,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the second super+s must consume the confirm gate"
     );
     assert!(
-        app.doc(id).save_in_flight,
+        app.doc(id).unwrap().save_in_flight,
         "the second super+s must actually enqueue the materialize"
     );
 }

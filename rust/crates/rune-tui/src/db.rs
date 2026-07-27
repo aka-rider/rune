@@ -255,7 +255,10 @@ pub fn append_edit(
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
-    let Some(db_id) = app.doc(id).db.as_ref().map(|d| d.db_id) else {
+    // `id` not (or no longer) live is a plain, correct no-op — see
+    // `App::doc`'s docs.
+    let Some(doc) = app.doc(id) else { return };
+    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
         return;
     };
     let Some(db) = app.db.as_ref() else { return };
@@ -265,7 +268,7 @@ pub fn append_edit(
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, id);
-            if let Some(doc_db) = app.doc_mut(id).db.as_mut() {
+            if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
                 doc_db.note_pending_append(local_pos);
             }
         }
@@ -281,8 +284,8 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
-    let Some((target_seq, db_id)) = app
-        .doc(id)
+    let Some(doc) = app.doc(id) else { return };
+    let Some((target_seq, db_id)) = doc
         .db
         .as_ref()
         .map(|d| (d.seq_for_local_pos(local_pos), d.db_id))
@@ -302,9 +305,12 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// Records that `seq` was durably committed for `id`'s oldest still-pending
 /// `AppendEdit` — called from `app::handle_db_event`'s `Msg::Db` handler on
 /// `DbEvent::Ok { result: OpOutcome::Seq(seq), .. }`, after `app.db_ops` has
-/// already resolved the ack's op id to `id`.
+/// already resolved the ack's op id to `id`. `id` no longer live (an ack
+/// racing a future close) is a correct, silent drop — the document it would
+/// have updated is already gone.
 pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
-    if let Some(doc_db) = app.doc_mut(id).db.as_mut() {
+    let Some(doc) = app.doc_mut(id) else { return };
+    if let Some(doc_db) = doc.db.as_mut() {
         doc_db.resolve_append_ack(seq);
     }
 }
@@ -340,8 +346,8 @@ mod tests {
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
 
-        app.doc_mut(id_a).db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).db = Some(DocDb::new(2, 0, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
 
         append_edit(&mut app, id_a, 1, &[], &[], &[]);
         append_edit(&mut app, id_b, 1, &[], &[], &[]);
@@ -370,6 +376,7 @@ mod tests {
 
         assert_eq!(
             app.doc(id_a)
+                .expect("doc a exists")
                 .db
                 .as_ref()
                 .expect("doc a has a DocDb")
@@ -378,6 +385,7 @@ mod tests {
         );
         assert_eq!(
             app.doc(id_b)
+                .expect("doc b exists")
                 .db
                 .as_ref()
                 .expect("doc b has a DocDb")
@@ -397,8 +405,8 @@ mod tests {
         );
         let id_a = app.active;
         let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).db = Some(DocDb::new(2, 0, true, 0));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
 
         append_edit(&mut app, id_a, 1, &[], &[], &[]);
         let op_for_a = *app
@@ -424,6 +432,7 @@ mod tests {
         );
         assert_eq!(
             app.doc(id_a)
+                .expect("doc a exists")
                 .db
                 .as_ref()
                 .expect("doc a has a DocDb")
