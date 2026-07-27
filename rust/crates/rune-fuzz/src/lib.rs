@@ -24,5 +24,6 @@ pub mod action;
 pub mod driver;
 pub mod generate;
 pub mod invariant;
+pub mod script;
 pub mod snapshot;
 pub mod step;
