@@ -429,7 +429,22 @@ fn handle_db_event(app: &mut App, evt: DbEvent) {
             app.db_ops.remove(&op_id);
             save::on_store_failure(app, error);
         }
-        DbEvent::Fatal { error } => save::on_store_failure(app, error),
+        DbEvent::Fatal { error } => {
+            save::on_store_failure(app, error);
+            // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
+            // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
+            // all bail out once `db.degraded`), but does nothing about
+            // in-flight entries already sitting in `db_ops` — a `Fatal`
+            // tears the whole writer thread down, so none of them will
+            // EVER receive their ack. Left alone, they'd carry dead weight
+            // forward for the rest of the session (an unbounded leak across
+            // a long-running degrade-then-keep-editing session); clearing
+            // them here is correct, not just tidy — `App::doc_mut` already
+            // treats a missing `db_ops` entry as a plain no-op for any
+            // ack that *did* somehow still land, so no real ack is ever
+            // silently dropped by this.
+            app.db_ops.clear();
+        }
     }
 }
 
