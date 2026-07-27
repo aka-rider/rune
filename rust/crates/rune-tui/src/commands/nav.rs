@@ -3,20 +3,26 @@
 //! `commands_nav_gen.go` + `multicursor.escape`
 //! (`commands_multi.go:70-101`).
 //!
+//! Doc-local (plan WP1 decision 4): every function here takes `&mut
+//! Document` directly — motion/selection never touches `App`-level state
+//! (the recovery store, status message, dirty cache), so there is no reason
+//! to thread a `DocumentId` through this module at all.
+//!
 //! Every handler that needs Buffer<->Syntax<->Wrap coordinate conversions
-//! calls `Editor::view()` fresh at entry rather than reading `App::view`:
-//! `App::view` is only refreshed once per whole message BATCH (by the
-//! runtime, after every `Msg` in the batch has been applied — see
-//! `runtime::run`), so within a batch it can still reflect the state from
-//! BEFORE an earlier `Msg::Resize` in the same batch already widened the
-//! viewport. `Editor::view()` is documented idempotent/cheap and always
-//! reflects the CURRENT `Editor` fields (`viewport.width` in particular),
-//! so a `Key` handled right after a `Resize` in the same batch sees the
-//! post-resize wrap. This mirrors Go's own behavior too: Go's command
-//! context is built from `m.syntaxSnap`/`m.wrapSnap`, populated by the
-//! MOST RECENT `syncDisplay()` — i.e. reflecting cursor/reveal state from
-//! before this keystroke's own movement, exactly what calling `view()` at
-//! handler-entry (before this handler updates `cursors`) reproduces here.
+//! calls `Document::view()` fresh at entry rather than reading `Document::
+//! view` (the cached field): that cache is only refreshed once per whole
+//! message BATCH (by the runtime, after every `Msg` in the batch has been
+//! applied — see `runtime::run`), so within a batch it can still reflect
+//! the state from BEFORE an earlier `Msg::Resize` in the same batch already
+//! widened the viewport. `Document::view()` is documented idempotent/cheap
+//! and always reflects the CURRENT `Document` fields (`viewport.width` in
+//! particular), so a `Key` handled right after a `Resize` in the same batch
+//! sees the post-resize wrap. This mirrors Go's own behavior too: Go's
+//! command context is built from `m.syntaxSnap`/`m.wrapSnap`, populated by
+//! the MOST RECENT `syncDisplay()` — i.e. reflecting cursor/reveal state
+//! from before this keystroke's own movement, exactly what calling `view()`
+//! at handler-entry (before this handler updates `cursors`) reproduces
+//! here.
 //!
 //! Handlers here call `view()`, NEVER `sync()` (review finding F4):
 //! `sync()` also scrolls the viewport toward the PRIMARY cursor, and this
@@ -24,15 +30,15 @@
 //! intermediate scroll toward a soon-to-change cursor that the batch's
 //! real settle (`App::sync_view`, called once per batch) would then
 //! silently overwrite. `viewport.scroll_row` has exactly one writer:
-//! `Editor::scroll_to_cursor`, invoked exactly once per settled batch via
-//! `Editor::sync`/`App::sync_view` — never from inside a single command.
+//! `Document::scroll_to_cursor`, invoked exactly once per settled batch via
+//! `Document::sync`/`App::sync_view` — never from inside a single command.
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferPoint, WrapPoint};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
-use crate::app::App;
+use crate::document::Document;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CharClass {
@@ -340,119 +346,117 @@ fn move_row(view: &ViewSnapshots, buf: &Buffer, c: Cursor, delta: isize, select:
 
 /// Port of `commands_nav_gen.go:pageStep`: a full viewport minus one row of
 /// overlap for context.
-fn page_step(app: &App) -> isize {
-    let h = app.editor.viewport.height;
+fn page_step(doc: &Document) -> isize {
+    let h = doc.viewport.height;
     if h > 1 { (h - 1) as isize } else { 1 }
 }
 
 /// Shared horizontal/line-start-end driver — port of `handleCursorCmd`
 /// applied to every cursor in the set.
 fn move_cursors(
-    app: &mut App,
+    doc: &mut Document,
     select: bool,
     step: impl Fn(&ViewSnapshots, &Buffer, Cursor, bool) -> Cursor,
 ) {
-    let view = app.editor.view();
-    let new_cursors: Vec<Cursor> = app
-        .editor
+    let view = doc.view();
+    let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
         .into_iter()
-        .map(|c| step(&view, &app.editor.buffer, c, select))
+        .map(|c| step(&view, &doc.buffer, c, select))
         .collect();
-    app.editor.cursors = CursorSet::new_from(&new_cursors);
+    doc.cursors = CursorSet::new_from(&new_cursors);
 }
 
 /// Shared vertical-motion driver (line up/down, page up/down).
-fn move_row_cursors(app: &mut App, select: bool, delta: isize) {
-    let view = app.editor.view();
-    let new_cursors: Vec<Cursor> = app
-        .editor
+fn move_row_cursors(doc: &mut Document, select: bool, delta: isize) {
+    let view = doc.view();
+    let new_cursors: Vec<Cursor> = doc
         .cursors
         .all()
         .into_iter()
-        .map(|c| move_row(&view, &app.editor.buffer, c, delta, select))
+        .map(|c| move_row(&view, &doc.buffer, c, delta, select))
         .collect();
-    app.editor.cursors = CursorSet::new_from(&new_cursors);
+    doc.cursors = CursorSet::new_from(&new_cursors);
 }
 
-pub fn char_left(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn char_left(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_left(view, buf, c, select, prev_rune_offset)
     });
 }
 
-pub fn char_right(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn char_right(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_right(view, buf, c, select, next_rune_offset)
     });
 }
 
-pub fn word_left(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn word_left(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_left(view, buf, c, select, word_left_offset)
     });
 }
 
-pub fn word_right(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn word_right(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_right(view, buf, c, select, word_right_offset)
     });
 }
 
-pub fn line_start(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn line_start(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_move_to(view, buf, c, select, line_start_offset)
     });
 }
 
-pub fn line_end(app: &mut App, select: bool) {
-    move_cursors(app, select, |view, buf, c, select| {
+pub fn line_end(doc: &mut Document, select: bool) {
+    move_cursors(doc, select, |view, buf, c, select| {
         handle_move_to(view, buf, c, select, line_end_offset)
     });
 }
 
-pub fn line_up(app: &mut App, select: bool) {
-    move_row_cursors(app, select, -1);
+pub fn line_up(doc: &mut Document, select: bool) {
+    move_row_cursors(doc, select, -1);
 }
 
-pub fn line_down(app: &mut App, select: bool) {
-    move_row_cursors(app, select, 1);
+pub fn line_down(doc: &mut Document, select: bool) {
+    move_row_cursors(doc, select, 1);
 }
 
-pub fn page_up(app: &mut App, select: bool) {
-    let step = page_step(app);
-    move_row_cursors(app, select, -step);
+pub fn page_up(doc: &mut Document, select: bool) {
+    let step = page_step(doc);
+    move_row_cursors(doc, select, -step);
 }
 
-pub fn page_down(app: &mut App, select: bool) {
-    let step = page_step(app);
-    move_row_cursors(app, select, step);
+pub fn page_down(doc: &mut Document, select: bool) {
+    let step = page_step(doc);
+    move_row_cursors(doc, select, step);
 }
 
 /// Port of `commands_nav_gen.go:execSelectAll`.
-pub fn select_all(app: &mut App) {
-    let all = app.editor.cursors.all();
+pub fn select_all(doc: &mut Document) {
+    let all = doc.cursors.all();
     let mut c = all.first().copied().unwrap_or_default();
-    c.position = app.editor.buffer.len();
+    c.position = doc.buffer.len();
     c.anchor = 0;
     c.desired_col = 0;
-    app.editor.cursors = CursorSet::new_from(&[c]);
+    doc.cursors = CursorSet::new_from(&[c]);
 }
 
 /// Port of `commands_multi.go:execMulticursorEscape` — the Escape
 /// hardcoded fast path (plan Context, "Hardcoded fast paths outside the
 /// resolver"): multi-cursor collapses to the primary; a single cursor with
 /// a selection collapses the selection; otherwise a no-op.
-pub fn escape(app: &mut App) {
-    if app.editor.cursors.is_multi() {
-        let primary = app.editor.cursors.primary();
-        app.editor.cursors = app.editor.cursors.collapse_to(primary);
+pub fn escape(doc: &mut Document) {
+    if doc.cursors.is_multi() {
+        let primary = doc.cursors.primary();
+        doc.cursors = doc.cursors.collapse_to(primary);
         return;
     }
-    let primary = app.editor.cursors.primary();
+    let primary = doc.cursors.primary();
     if primary.has_selection() {
-        app.editor.cursors = CursorSet::new_from(&[primary.collapse_to_position()]);
+        doc.cursors = CursorSet::new_from(&[primary.collapse_to_position()]);
     }
 }
 

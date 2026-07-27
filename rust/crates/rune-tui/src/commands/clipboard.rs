@@ -4,6 +4,11 @@
 //! `pkg/ui/components/textedit/commands_clipboard.go`: `extractCopyText`
 //! (:72), `copyEntireLine` (:102-110), `handlePasteContent` (:153-181).
 //!
+//! Workspace-coupled (plan WP1 decision 4): `copy`/`cut`/`handle_paste_
+//! content` take `(app: &mut App, id: DocumentId)` — `cut`/`handle_paste_
+//! content` bottom out in `commands::edit`, which touches `app.db`/dirty
+//! bookkeeping.
+//!
 //! `Msg::Paste` (bracketed paste) and `Msg::ClipboardRead` (pbpaste) both
 //! funnel through `handle_paste_content` — the single function every paste
 //! source calls, so a terminal ⌘V and an in-app `super+v` can never double-
@@ -17,6 +22,7 @@ use crate::app::App;
 use crate::clipboard::{osc52_copy, pbpaste_cmd};
 use crate::commands::edit;
 use crate::commands::nav;
+use crate::document::DocumentId;
 use crate::runtime::Effects;
 
 /// Port of `commands_clipboard.go:extractCopyText`. Single cursor (Phase
@@ -60,8 +66,9 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 /// buffer — pushes the OSC 52 write directly into `Effects.raw` (plan
 /// Gotchas: "Cmds must never touch the terminal", exactly why this is
 /// `raw` output, not a `Cmd`).
-pub fn copy(app: &mut App, effects: &mut Effects) {
-    let text = extract_copy_text(&app.editor.buffer, &app.editor.cursors);
+pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    let doc = app.doc(id);
+    let text = extract_copy_text(&doc.buffer, &doc.cursors);
     if !text.is_empty() {
         effects.raw.push(osc52_copy(text.as_bytes()));
     }
@@ -76,12 +83,13 @@ pub fn copy(app: &mut App, effects: &mut Effects) {
 /// once there's text to send, independent of whether the delete itself
 /// succeeds (mirrors Go's `command.Result` returning `Cmd:
 /// clipboardWriteCmd(text)` alongside the edit operation unconditionally).
-pub fn cut(app: &mut App, effects: &mut Effects) {
-    let text = extract_copy_text(&app.editor.buffer, &app.editor.cursors);
+pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    let doc = app.doc(id);
+    let text = extract_copy_text(&doc.buffer, &doc.cursors);
     if !text.is_empty() {
         effects.raw.push(osc52_copy(text.as_bytes()));
     }
-    edit::delete_selection_or_line(app);
+    edit::delete_selection_or_line(app, id);
 }
 
 /// Port of `commands_clipboard.go:clipboardPaste`: no buffer mutation
@@ -97,11 +105,11 @@ pub fn paste(effects: &mut Effects) {
 /// (pbpaste) both call — see module docs. Read-only documents are NOT
 /// guarded here (review finding F1): `edit::insert_text` bottoms out in
 /// `commands::edit::commit_edit_batch`, the single chokepoint that rejects
-/// every mutating command against a read-only `Editor` — see its docs and
-/// `Editor::read_only`'s. Duplicating the check here would just be a second
-/// copy that could silently drift from the real gate; the only guard this
-/// function keeps is the empty-text early-out, which the chokepoint doesn't
-/// (and shouldn't) special-case.
+/// every mutating command against a read-only `Document` — see its docs and
+/// `Document::read_only`'s. Duplicating the check here would just be a
+/// second copy that could silently drift from the real gate; the only
+/// guard this function keeps is the empty-text early-out, which the
+/// chokepoint doesn't (and shouldn't) special-case.
 ///
 /// Multi-cursor line-distribution (Go: paste text with the same line count
 /// as the cursor set spread one line per cursor) is NOT ported: Phase 1
@@ -109,14 +117,14 @@ pub fn paste(effects: &mut Effects) {
 /// `edit::insert_text` already reproduces Go's non-distribute fallback —
 /// the same whole text replacing every cursor's selection — which is the
 /// only case that can occur in Phase 1.
-pub fn handle_paste_content(app: &mut App, text: &str) {
+pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;
     }
-    if app.editor.cursors.is_empty() {
+    if app.doc(id).cursors.is_empty() {
         return;
     }
-    edit::insert_text(app, text);
+    edit::insert_text(app, id, text);
 }
 
 #[cfg(test)]
@@ -130,14 +138,15 @@ mod tests {
 
     fn app_with(content: &str, cursor_offset: usize) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-        app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
-        app.editor.viewport.set_size(80, 23);
+        let id = app.active;
+        app.doc_mut(id).cursors = CursorSet::new(cursor_offset.min(content.len()));
+        app.doc_mut(id).viewport.set_size(80, 23);
         app
     }
 
-    fn selecting(app: &mut App, anchor: usize, position: usize) {
-        let primary = app.editor.cursors.primary();
-        app.editor.cursors = CursorSet::new_from(&[Cursor {
+    fn selecting(app: &mut App, id: DocumentId, anchor: usize, position: usize) {
+        let primary = app.doc(id).cursors.primary();
+        app.doc_mut(id).cursors = CursorSet::new_from(&[Cursor {
             anchor,
             position,
             ..primary
@@ -151,14 +160,15 @@ mod tests {
     #[test]
     fn copy_of_a_selection_emits_exactly_one_osc52_raw_chunk_with_the_selected_bytes() {
         let mut app = app_with("hello world", 0);
-        selecting(&mut app, 0, 5); // "hello"
+        let id = app.active;
+        selecting(&mut app, id, 0, 5); // "hello"
         let mut effects = Effects::default();
-        copy(&mut app, &mut effects);
+        copy(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("hello")]);
         assert!(effects.cmds.is_empty(), "copy must never spawn a Cmd");
         assert_eq!(
-            app.editor.buffer.content(),
+            app.doc(id).buffer.content(),
             "hello world",
             "copy must never mutate the buffer"
         );
@@ -167,8 +177,9 @@ mod tests {
     #[test]
     fn copy_with_no_selection_copies_the_whole_line_including_its_trailing_newline() {
         let mut app = app_with("first\nsecond\nthird", 8); // caret inside "second"
+        let id = app.active;
         let mut effects = Effects::default();
-        copy(&mut app, &mut effects);
+        copy(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
     }
@@ -176,8 +187,9 @@ mod tests {
     #[test]
     fn copy_with_no_selection_on_the_last_line_has_no_trailing_newline() {
         let mut app = app_with("first\nsecond\nthird", 15); // caret inside "third", the last line
+        let id = app.active;
         let mut effects = Effects::default();
-        copy(&mut app, &mut effects);
+        copy(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("third")]);
     }
@@ -185,17 +197,18 @@ mod tests {
     #[test]
     fn cut_removes_the_selection_journals_it_and_emits_the_same_osc52_payload() {
         let mut app = app_with("hello world", 0);
-        selecting(&mut app, 0, 5); // "hello"
+        let id = app.active;
+        selecting(&mut app, id, 0, 5); // "hello"
         let mut effects = Effects::default();
-        cut(&mut app, &mut effects);
+        cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("hello")]);
-        assert_eq!(app.editor.buffer.content(), " world");
-        assert_eq!(app.editor.journal.len(), 1);
+        assert_eq!(app.doc(id).buffer.content(), " world");
+        assert_eq!(app.doc(id).journal.len(), 1);
 
-        edit::undo(&mut app);
+        edit::undo(&mut app, id);
         assert_eq!(
-            app.editor.buffer.content(),
+            app.doc(id).buffer.content(),
             "hello world",
             "undo must restore what cut removed"
         );
@@ -204,31 +217,33 @@ mod tests {
     #[test]
     fn cut_with_no_selection_removes_the_whole_line_including_its_newline() {
         let mut app = app_with("first\nsecond\nthird", 8);
+        let id = app.active;
         let mut effects = Effects::default();
-        cut(&mut app, &mut effects);
+        cut(&mut app, id, &mut effects);
 
         assert_eq!(effects.raw, vec![expected_osc52("second\n")]);
-        assert_eq!(app.editor.buffer.content(), "first\nthird");
+        assert_eq!(app.doc(id).buffer.content(), "first\nthird");
     }
 
-    /// Regression for F1: on a read-only `Editor`, Cut must not mutate the
-    /// buffer, bump its version, or journal anything — the deletion is
+    /// Regression for F1: on a read-only `Document`, Cut must not mutate
+    /// the buffer, bump its version, or journal anything — the deletion is
     /// rejected at `commands::edit::commit_edit_batch`, the shared
     /// chokepoint every mutating command (including cut) funnels through.
     /// The OSC 52 copy itself is a read, not a mutation, and is unaffected.
     #[test]
     fn cut_on_a_read_only_editor_does_not_mutate_the_buffer() {
         let mut app = app_with("hello world", 0);
-        selecting(&mut app, 0, 5); // "hello"
-        app.editor.read_only = true;
-        let before_version = app.editor.buffer.version();
+        let id = app.active;
+        selecting(&mut app, id, 0, 5); // "hello"
+        app.doc_mut(id).read_only = true;
+        let before_version = app.doc(id).buffer.version();
 
         let mut effects = Effects::default();
-        cut(&mut app, &mut effects);
+        cut(&mut app, id, &mut effects);
 
-        assert_eq!(app.editor.buffer.content(), "hello world");
-        assert_eq!(app.editor.buffer.version(), before_version);
-        assert_eq!(app.editor.journal.len(), 0);
+        assert_eq!(app.doc(id).buffer.content(), "hello world");
+        assert_eq!(app.doc(id).buffer.version(), before_version);
+        assert_eq!(app.doc(id).journal.len(), 0);
     }
 
     #[test]
@@ -243,11 +258,12 @@ mod tests {
     #[test]
     fn handle_paste_content_inserts_at_the_caret_and_journals_it() {
         let mut app = app_with("ac", 1);
-        handle_paste_content(&mut app, "b");
+        let id = app.active;
+        handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.editor.buffer.content(), "abc");
-        assert_eq!(app.editor.cursors.primary().position, 2);
-        assert_eq!(app.editor.journal.len(), 1);
+        assert_eq!(app.doc(id).buffer.content(), "abc");
+        assert_eq!(app.doc(id).cursors.primary().position, 2);
+        assert_eq!(app.doc(id).journal.len(), 1);
     }
 
     #[test]
@@ -256,10 +272,12 @@ mod tests {
         use crate::runtime::Msg;
 
         let mut paste_app = app_with("ac", 1);
+        let paste_id = paste_app.active;
         let mut effects = Effects::default();
         app::update(&mut paste_app, Msg::Paste("b".to_string()), &mut effects);
 
         let mut read_app = app_with("ac", 1);
+        let read_id = read_app.active;
         let mut effects2 = Effects::default();
         app::update(
             &mut read_app,
@@ -267,38 +285,40 @@ mod tests {
             &mut effects2,
         );
 
-        assert_eq!(paste_app.editor.buffer.content(), "abc");
+        assert_eq!(paste_app.doc(paste_id).buffer.content(), "abc");
         assert_eq!(
-            paste_app.editor.buffer.content(),
-            read_app.editor.buffer.content(),
+            paste_app.doc(paste_id).buffer.content(),
+            read_app.doc(read_id).buffer.content(),
             "Msg::Paste and Msg::ClipboardRead must produce identical results"
         );
         assert_eq!(
-            paste_app.editor.cursors.primary().position,
-            read_app.editor.cursors.primary().position
+            paste_app.doc(paste_id).cursors.primary().position,
+            read_app.doc(read_id).cursors.primary().position
         );
         assert_eq!(
-            paste_app.editor.journal.len(),
-            read_app.editor.journal.len()
+            paste_app.doc(paste_id).journal.len(),
+            read_app.doc(read_id).journal.len()
         );
     }
 
     #[test]
     fn handle_paste_content_is_a_no_op_on_a_read_only_editor() {
         let mut app = app_with("ac", 1);
-        app.editor.read_only = true;
-        handle_paste_content(&mut app, "b");
+        let id = app.active;
+        app.doc_mut(id).read_only = true;
+        handle_paste_content(&mut app, id, "b");
 
-        assert_eq!(app.editor.buffer.content(), "ac");
-        assert_eq!(app.editor.journal.len(), 0);
+        assert_eq!(app.doc(id).buffer.content(), "ac");
+        assert_eq!(app.doc(id).journal.len(), 0);
     }
 
     #[test]
     fn handle_paste_content_of_empty_text_is_a_no_op() {
         let mut app = app_with("ac", 1);
-        handle_paste_content(&mut app, "");
+        let id = app.active;
+        handle_paste_content(&mut app, id, "");
 
-        assert_eq!(app.editor.buffer.content(), "ac");
-        assert_eq!(app.editor.journal.len(), 0);
+        assert_eq!(app.doc(id).buffer.content(), "ac");
+        assert_eq!(app.doc(id).journal.len(), 0);
     }
 }
