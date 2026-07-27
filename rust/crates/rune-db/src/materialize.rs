@@ -272,7 +272,7 @@ fn materialize_create(
 /// displaced bytes on a swap-race (§1.4.10 mandates this capture happens
 /// unconditionally, never gated on UTF-8 validity: see `blob.rs`'s module
 /// doc). Port of `materialize.go:235-243` (`recordFresh`).
-fn record_fresh(
+pub(crate) fn record_fresh(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     ds: DocSession,
@@ -315,7 +315,6 @@ fn commit_save(
     let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, write.data))?;
 
     let stat = observation::stat_identity(vfs, resolved);
-    let id_ok = stat.inode.is_some();
     let at = crate::session::format_rfc3339_nanos(now);
     let resolved_str = resolved.to_string_lossy().into_owned();
 
@@ -333,25 +332,74 @@ fn commit_save(
             &at,
         )?;
 
-        tx.execute(
-            "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-            params![resolved_str, ds.doc_id],
-        )?;
-
-        if id_ok {
-            tx.execute(
-                "UPDATE documents SET inode=NULL, device=NULL WHERE inode=?1 AND device=?2 AND id!=?3",
-                params![stat.inode, stat.device, ds.doc_id],
-            )?;
-        }
-
-        tx.execute(
-            "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-            params![resolved_str, stat.inode, stat.device, at, ds.doc_id],
+        rebind_document_tx(
+            tx,
+            ds.doc_id,
+            Rebind {
+                path: &resolved_str,
+                stat: &stat,
+                at: &at,
+            },
         )?;
 
         Ok(obs)
     })
+}
+
+/// The path/identity half of a document rebind, bundled for the same
+/// argument-count reason as [`DocSession`]/[`WriteIntent`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Rebind<'a> {
+    /// The destination path, already `vfs.resolve`d and stringified.
+    pub path: &'a str,
+    /// The destination's post-publish stat. `inode.is_some()` is what gates
+    /// the identity-steal statement — a backend that exposes no inode must
+    /// not blank every other row's `NULL` identity as if it matched.
+    pub stat: &'a observation::StatFacts,
+    /// RFC3339-nanos timestamp for `last_seen_at`.
+    pub at: &'a str,
+}
+
+/// Points `doc_id`'s `documents` row at `rebind.path` + its on-disk
+/// identity, evicting any OTHER row that currently claims that path or that
+/// (inode, device) — §1.7's one-value-one-meaning applied to the
+/// path/identity columns: two rows must never both claim the same file.
+///
+/// Extracted verbatim from [`commit_save`] (plan step 2, "zero behavior
+/// change") because a rename needs exactly this and nothing else around it.
+/// A rename must NOT go through `commit_save`: that also does
+/// `put_blob(write.data)` + `record_adoption_tx(origin='save')`, which after
+/// renaming a *dirty* document would move `saved_obs` to an observation
+/// claiming the disk holds the journal head. The next ⌘S would then CAS
+/// against a lie (§1.4.7).
+///
+/// Caller-supplied transaction: this is pure SQLite with no `vfs` call
+/// inside, so it is safe to run under an open tx (invariant I1).
+pub(crate) fn rebind_document_tx(
+    tx: &Connection,
+    doc_id: i64,
+    rebind: Rebind<'_>,
+) -> Result<(), Error> {
+    let stat = rebind.stat;
+
+    tx.execute(
+        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
+        params![rebind.path, doc_id],
+    )?;
+
+    if stat.inode.is_some() {
+        tx.execute(
+            "UPDATE documents SET inode=NULL, device=NULL WHERE inode=?1 AND device=?2 AND id!=?3",
+            params![stat.inode, stat.device, doc_id],
+        )?;
+    }
+
+    tx.execute(
+        "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
+        params![rebind.path, stat.inode, stat.device, rebind.at, doc_id],
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
