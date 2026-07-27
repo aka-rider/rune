@@ -13,8 +13,12 @@
 //! thread use).
 
 use std::io;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+
+use rune_vfs::{DirEntry, Vfs};
 
 use crate::app::{self, App};
 use crate::document::DocumentId;
@@ -61,8 +65,32 @@ pub enum Msg {
     /// A completion posted by `rune-db`'s writer thread, routed through
     /// `db::DbBridge` (plan WP5.S1).
     Db(rune_db::DbEvent),
+    /// `vfs.read_dir(root)` completed (plan WP4.S4) — the Explorer's own
+    /// boundary Msg, delivered by [`load_dir_cmd`]. `Nav` (navigated into
+    /// `root`) resets the Explorer's cursor to the top; `Refresh` (a future
+    /// watcher-triggered reload, out of scope for WP4 itself — no
+    /// production caller constructs it yet) preserves the selected entry by
+    /// name when it's still present. A `read_dir` failure becomes
+    /// `Msg::Error` instead — see `load_dir_cmd`.
+    DirLoaded {
+        root: PathBuf,
+        entries: Vec<DirEntry>,
+        cause: DirCause,
+    },
     Error(String),
     Quit,
+}
+
+/// Why a `Msg::DirLoaded` was requested (plan WP4.S4) — `explorer::
+/// handle_dir_loaded` reacts differently: `Nav` (the user navigated to a
+/// new root — Enter on a directory, Backspace to the parent, or the initial
+/// `^x` load) resets the cursor to the top; `Refresh` (reserved for a later
+/// fsnotify-driven reload — out of scope here per the plan's "Out of
+/// scope") preserves the currently selected entry by name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirCause {
+    Nav,
+    Refresh,
 }
 
 /// What kind of off-thread work a `Cmd` performs. Exists so a consumer that
@@ -84,6 +112,11 @@ pub enum CmdKind {
     /// The 2s snapshot-autosave debounce timer (plan WP5.S6). Sleeps; never
     /// run it inline.
     SnapshotDebounce,
+    /// `vfs.read_dir` for the Explorer pane (plan WP4.S4). Not a sleeping/
+    /// forking `Cmd` like the three above, but still off-thread per §5.4 so
+    /// a slow or degraded filesystem (an NFS mount, a huge directory) never
+    /// blocks the main loop.
+    ReadDir,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -241,6 +274,27 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
             }
         }
     });
+}
+
+/// Reads `root`'s children off-thread via `vfs.read_dir` (plan WP4.S4) and
+/// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
+/// Explorer's own boundary Msg, called from `explorer::handle_key` (Open on
+/// a directory, Backspace to the parent) and from `pane::handle_global_
+/// command`'s `ToggleExplorer` arm (the very first load). §1.4.9: the
+/// filesystem is reached only through the injected `Vfs`; §5.4: this I/O
+/// never runs inline in `update`, only inside a spawned `Cmd`.
+pub fn load_dir_cmd(vfs: Arc<dyn Vfs + Send + Sync>, root: PathBuf, cause: DirCause) -> Cmd {
+    Cmd::new(CmdKind::ReadDir, move || match vfs.read_dir(&root) {
+        Ok(entries) => Some(Msg::DirLoaded {
+            root,
+            entries,
+            cause,
+        }),
+        Err(e) => Some(Msg::Error(format!(
+            "could not list {}: {e}",
+            root.display()
+        ))),
+    })
 }
 
 fn translate_event(event: termina::Event) -> Option<Msg> {

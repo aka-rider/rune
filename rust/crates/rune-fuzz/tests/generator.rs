@@ -13,6 +13,8 @@
 use rune_fuzz::action::Action;
 use rune_fuzz::driver;
 use rune_fuzz::generate::TYPE_PALETTE;
+use rune_tui::runtime::DirCause;
+use rune_vfs::DirEntry;
 
 /// Every `TYPE_PALETTE` entry must be deliverable through `Action::Type`:
 /// `Msg::Key(Char(c))` silently drops any `char::is_control()` character
@@ -52,4 +54,40 @@ fn a_pasted_crlf_survives_verbatim() {
     let result = driver::run("", &[Action::Paste("line1\r\nline2".to_string())]);
     assert_eq!(result.violation, None, "{:?}", result.violation);
     assert_eq!(result.final_content, "line1\r\nline2");
+}
+
+/// `Action::DirLoaded` (plan WP4.S6): driving an arbitrary `Msg::DirLoaded`
+/// (garbage entries, either cause) through real `update`, interleaved with
+/// ordinary typing, never panics and never touches the editor's own
+/// content — `explorer::handle_dir_loaded` only ever writes `App::
+/// explorer`, which this content-equality assertion proves end to end.
+#[test]
+fn dir_loaded_never_panics_and_never_touches_editor_content() {
+    let garbage_entries = vec![
+        DirEntry {
+            name: "\u{0}weird\u{0}".to_string(),
+            is_dir: true,
+        },
+        DirEntry {
+            name: String::new(),
+            is_dir: false,
+        },
+    ];
+    let result = driver::run(
+        "hello",
+        &[
+            Action::Type("abc".to_string()),
+            Action::DirLoaded {
+                entries: garbage_entries.clone(),
+                cause: DirCause::Nav,
+            },
+            Action::DirLoaded {
+                entries: garbage_entries,
+                cause: DirCause::Refresh,
+            },
+            Action::Type("def".to_string()),
+        ],
+    );
+    assert_eq!(result.violation, None, "{:?}", result.violation);
+    assert_eq!(result.final_content, "abcdefhello");
 }

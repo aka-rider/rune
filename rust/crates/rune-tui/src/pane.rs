@@ -6,11 +6,13 @@
 //! it's the sole reader/writer of `App::focus`/`App::left_visible` outside
 //! `app.rs` itself.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::explorer;
 use crate::keymap::{GlobalCommand, QuitKey};
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::runtime::{Cmd, CmdKind, DirCause, Effects, Msg, load_dir_cmd};
 use crate::save;
 
 /// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
@@ -40,6 +42,18 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             } else {
                 Pane::Editor
             };
+            // The Explorer's very first load (plan WP4.S4): "empty and not
+            // already loading" is the no-shadow-state stand-in for "never
+            // loaded" — `Explorer`'s exact field list (`explorer.rs`) has
+            // no separate `loaded` flag, and a genuinely-empty directory
+            // re-triggering this on a later toggle is a harmless no-op
+            // reload, not an incorrect state.
+            if app.left_visible && app.explorer.entries.is_empty() && !app.explorer.loading {
+                let root = explorer::initial_root(app);
+                app.explorer.loading = true;
+                let vfs = Arc::clone(&app.vfs);
+                effects.cmds.push(load_dir_cmd(vfs, root, DirCause::Nav));
+            }
         }
         GlobalCommand::FocusEditor => app.focus = Pane::Editor,
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),

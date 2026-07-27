@@ -9,6 +9,8 @@
 //! `[fixes R1]`.
 
 use rune_tui::keymap::KeyInput;
+use rune_tui::runtime::DirCause;
+use rune_vfs::DirEntry;
 
 /// One fuzzer-generated input. `driver::run` expands each `Action` into one
 /// or more `Msg`s (`Type` expands per character) and delivers them through
@@ -47,4 +49,14 @@ pub enum Action {
     Deliver,
     /// Arm `Mem::fail_next_save(ErrorKind::PermissionDenied)`.
     FailNextSave,
+    /// Delivers `Msg::DirLoaded` with an arbitrary entry set and cause
+    /// (plan WP4.S6) — the driver always targets a fixed root; only
+    /// `entries`/`cause` vary. Exercises the Explorer's dir-loaded handler
+    /// against garbage input with no real `ReadDir` `Cmd` behind it, the
+    /// same "deliver a synthesized reply directly" shape `ClipboardReply`/
+    /// `ConfirmTimeout` already use.
+    DirLoaded {
+        entries: Vec<DirEntry>,
+        cause: DirCause,
+    },
 }
