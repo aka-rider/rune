@@ -1,0 +1,376 @@
+//! `Store`: the public handle over `rune-db`'s writer/reader threads and
+//! this process's own session identity. This is the ONLY type the rest of
+//! the workspace (`rune-tui`, WP5) is meant to touch — no table-level CRUD
+//! escapes the crate (plan decision 11); domain verbs land here as WP3+
+//! grows `OpKind` and the reader's request enum.
+//!
+//! # Open ladder (port of `store.go:199-231`)
+//!
+//! 1. Open `path` directly (creating it if missing).
+//! 2. On failure: `mkdir_all(path.parent())`, retry step 1.
+//! 3. On failure: fall back to a private, process-unique in-memory database
+//!    and set `degraded = true`.
+//!
+//! Establishing this process's own `sessions` row is the one remaining hard
+//! failure past that point (plan decision — session identity is
+//! load-bearing for every subsequent write); there is no fallback left
+//! below `:memory:`.
+
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+
+use rusqlite::{Connection, OpenFlags};
+
+use crate::writer::{OnEvent, OpKind, WriteOp};
+use crate::{Error, reader, session, writer};
+
+/// An injectable wall clock (plan Gotchas: "Wall-clock coalescing is
+/// nondeterministic in tests — rune-db must take a `clock: ... -> SystemTime`
+/// injection"). Production uses `SystemTime::now`; tests install a
+/// deterministic stand-in.
+pub type ClockFn = Arc<dyn Fn() -> SystemTime + Send + Sync>;
+
+/// An injectable liveness check: `(pid, proc_started_at) -> still running?`.
+/// Production uses [`session::is_process_alive`]; tests simulate a dead
+/// session deterministically (mirrors `SetClock`/`SetLivenessCheck` in the
+/// Go source).
+pub type LivenessCheckFn = Arc<dyn Fn(i64, &str) -> bool + Send + Sync>;
+
+/// The default synchronous busy-of-storage warning surfaced when the open
+/// ladder bottoms out at the in-memory fallback.
+pub const DEGRADED_WARNING: &str = "history disabled — storage unavailable";
+
+pub struct Store {
+    writer: writer::WriterHandle,
+    reader: reader::ReaderHandle,
+    degraded: bool,
+    session_id: i64,
+    next_op_id: AtomicU64,
+    // `Mutex`, not `RefCell`: `Store` has no `Sync`/`Send` requirement of
+    // its own yet, but the poison idiom below (`lock().unwrap_or_else(|p|
+    // p.into_inner())`, matching `rune-vfs::mem`'s convention) is what the
+    // rest of this workspace already uses for shared, swappable state, so
+    // WP3+ callers that DO need to touch these from another thread inherit
+    // a correct pattern instead of reinventing one.
+    clock: Mutex<ClockFn>,
+    liveness_check: Mutex<LivenessCheckFn>,
+}
+
+impl Store {
+    /// Runs the open ladder against `path` (a full file path — production
+    /// callers pass `versioning::production_db_path()`; tests pass a temp
+    /// path directly, so the same ladder logic is exercised either way).
+    /// Returns the store plus a non-fatal degradation warning; the caller
+    /// may surface the warning to the user but must not treat it as
+    /// failure. `on_event` receives every writer-thread completion (plan
+    /// decision 4) — `rune-tui` (WP5) adapts it into the runtime's
+    /// `Sender<Msg>`.
+    pub fn open(path: &Path, on_event: OnEvent) -> Result<(Store, Option<String>), Error> {
+        let rung = open_ladder(path)?;
+        Self::from_ladder(rung, on_event)
+    }
+
+    /// Opens a store entirely in memory, undegraded (unlike the fallback
+    /// rung of [`Store::open`], this is an intentional, explicit choice —
+    /// tests and, eventually, the session fuzzer). `clock` seeds this
+    /// store's clock from construction, matching Go's `OpenInMemory`
+    /// honoring a caller-supplied clock even at session-establish time.
+    pub fn open_in_memory(clock: ClockFn, on_event: OnEvent) -> Result<Store, Error> {
+        let uri = memory_uri();
+        let conn = open_memory_backed(&uri)?;
+        let now = clock();
+        let session_id = session::establish_session(&conn, now)?;
+        let writer = writer::spawn(conn, on_event);
+        let reader = reader::spawn(&uri)?;
+        Ok(Store {
+            writer,
+            reader,
+            degraded: false,
+            session_id,
+            next_op_id: AtomicU64::new(1),
+            clock: Mutex::new(clock),
+            liveness_check: Mutex::new(Arc::new(session::is_process_alive)),
+        })
+    }
+
+    fn from_ladder(
+        rung: LadderResult,
+        on_event: OnEvent,
+    ) -> Result<(Store, Option<String>), Error> {
+        let clock: ClockFn = Arc::new(SystemTime::now);
+        let now = clock();
+        let session_id = session::establish_session(&rung.writer_conn, now)?;
+
+        let writer = writer::spawn(rung.writer_conn, on_event);
+        let reader = reader::spawn(&rung.reader_target)?;
+
+        let store = Store {
+            writer,
+            reader,
+            degraded: rung.degraded,
+            session_id,
+            next_op_id: AtomicU64::new(1),
+            clock: Mutex::new(clock),
+            liveness_check: Mutex::new(Arc::new(session::is_process_alive)),
+        };
+        Ok((store, rung.warning))
+    }
+
+    /// True only for the in-memory fallback rung taken when the real
+    /// on-disk database could not be opened — never for an intentional
+    /// [`Store::open_in_memory`]. Drives a persistent footer banner and a
+    /// confirm gate before every materialize (WP5).
+    pub fn degraded(&self) -> bool {
+        self.degraded
+    }
+
+    /// This process's own row in `sessions` — established once at
+    /// construction and never mutated after.
+    pub fn session_id(&self) -> i64 {
+        self.session_id
+    }
+
+    /// Replaces the store's clock. Used in deterministic tests (mirrors
+    /// Go's `SetClock`).
+    pub fn set_clock(&self, clock: ClockFn) {
+        *self.clock.lock().unwrap_or_else(|p| p.into_inner()) = clock;
+    }
+
+    /// Replaces how this store decides whether a different session's
+    /// recorded process is still alive (mirrors Go's `SetLivenessCheck`).
+    /// Consumed by WP4's cross-session inheritance decision.
+    pub fn set_liveness_check(&self, check: LivenessCheckFn) {
+        *self
+            .liveness_check
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = check;
+    }
+
+    /// Returns the current liveness check, for callers (WP4) that need to
+    /// invoke it directly.
+    pub fn liveness_check(&self) -> LivenessCheckFn {
+        Arc::clone(
+            &self
+                .liveness_check
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
+    }
+
+    /// Enqueues `kind` to the writer thread, returning the op id the
+    /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
+    /// surfaces [`Error::WriterQueueFull`] immediately (plan Gotchas).
+    pub fn enqueue(&self, kind: OpKind) -> Result<u64, Error> {
+        let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
+        self.writer.try_send(WriteOp { id, kind })?;
+        Ok(id)
+    }
+
+    /// The reader handle, for display/immutable reads dispatched from a
+    /// spawned `Cmd` (CONSTITUTION §5.4 — never from `update` directly).
+    pub fn reader(&self) -> &reader::ReaderHandle {
+        &self.reader
+    }
+
+    /// Deterministically drains and joins both threads. WP6 wires the
+    /// clean-shutdown `wal_checkpoint(TRUNCATE)` ahead of this call.
+    pub fn shutdown(self) {
+        let Store { writer, reader, .. } = self;
+        writer.shutdown();
+        reader.shutdown();
+    }
+}
+
+struct LadderResult {
+    writer_conn: Connection,
+    /// What the reader thread opens: a plain file path for a file-backed
+    /// store, or the same `cache=shared` memory URI the writer just created
+    /// for a degraded one.
+    reader_target: String,
+    degraded: bool,
+    warning: Option<String>,
+}
+
+fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
+    if let Ok(conn) = open_file_backed(path) {
+        return Ok(LadderResult {
+            writer_conn: conn,
+            reader_target: path.to_string_lossy().into_owned(),
+            degraded: false,
+            warning: None,
+        });
+    }
+
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+        && let Ok(conn) = open_file_backed(path)
+    {
+        return Ok(LadderResult {
+            writer_conn: conn,
+            reader_target: path.to_string_lossy().into_owned(),
+            degraded: false,
+            warning: None,
+        });
+    }
+
+    let uri = memory_uri();
+    let conn = open_memory_backed(&uri)?;
+    Ok(LadderResult {
+        writer_conn: conn,
+        reader_target: uri,
+        degraded: true,
+        warning: Some(DEGRADED_WARNING.to_string()),
+    })
+}
+
+fn open_file_backed(path: &Path) -> Result<Connection, Error> {
+    let conn = Connection::open(path)?;
+    apply_connection_pragmas(&conn)?;
+    set_wal_mode_verified(&conn)?;
+    crate::schema::apply(&conn)?;
+    Ok(conn)
+}
+
+fn open_memory_backed(uri: &str) -> Result<Connection, Error> {
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = Connection::open_with_flags(uri, flags)?;
+    apply_connection_pragmas(&conn)?;
+    // journal_mode=WAL is a documented no-op for :memory: databases (falls
+    // back to "memory" journaling) — nothing to verify here, unlike the
+    // file-backed rung.
+    crate::schema::apply(&conn)?;
+    Ok(conn)
+}
+
+/// A process-unique `cache=shared` in-memory database name, so the writer
+/// and reader connections of ONE degraded `Store` see the same data while
+/// two independent (degraded or explicitly in-memory) `Store`s never
+/// collide with each other.
+fn memory_uri() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "file:rune-db-mem-{}-{n}?mode=memory&cache=shared",
+        std::process::id()
+    )
+}
+
+/// Sets the per-connection pragmas required on **both** the writer and
+/// reader connections on every open (plan Gotchas: "only `journal_mode`
+/// persists in the file" — everything else here does not).
+pub(crate) fn apply_connection_pragmas(conn: &Connection) -> Result<(), Error> {
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    conn.pragma_update(None, "journal_size_limit", 67_108_864i64)?;
+    conn.pragma_update(None, "wal_autocheckpoint", 1000i64)?;
+    Ok(())
+}
+
+fn set_wal_mode_verified(conn: &Connection) -> Result<(), Error> {
+    let mode: String =
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+    if mode.eq_ignore_ascii_case("wal") {
+        Ok(())
+    } else {
+        Err(Error::WalModeUnavailable(mode))
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rune-db-store-test-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn noop_on_event() -> OnEvent {
+        Box::new(|_evt| {})
+    }
+
+    /// Two `Store::open` calls against the SAME temp path (same process)
+    /// both succeed, each establishing its own `sessions` row, and the file
+    /// really is in WAL mode.
+    #[test]
+    fn two_opens_on_one_path_both_succeed_with_two_sessions_and_wal_mode() {
+        let dir = temp_dir("two-opens");
+        let path = dir.join("rune-v1.db");
+
+        let (store_a, warn_a) = Store::open(&path, noop_on_event()).expect("open a");
+        assert!(warn_a.is_none());
+        assert!(!store_a.degraded());
+
+        let (store_b, warn_b) = Store::open(&path, noop_on_event()).expect("open b");
+        assert!(warn_b.is_none());
+        assert!(!store_b.degraded());
+
+        assert_ne!(store_a.session_id(), store_b.session_id());
+
+        let verify = Connection::open(&path).expect("open verify connection");
+        let sessions: i64 = verify
+            .query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))
+            .expect("count sessions");
+        assert_eq!(sessions, 2);
+
+        let mode: String = verify
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("read journal_mode");
+        assert_eq!(mode, "wal");
+
+        store_a.shutdown();
+        store_b.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A path whose parent can never be created (a plain FILE occupies the
+    /// spot a directory needs to exist, which fails `mkdir_all` even for
+    /// root) must degrade to an in-memory store, never return an error.
+    #[test]
+    fn unwritable_parent_degrades_to_in_memory_store_not_an_error() {
+        let dir = temp_dir("unwritable");
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"not a directory").expect("create blocker file");
+        let path = blocker.join("subdir").join("rune-v1.db");
+
+        let (store, warning) = Store::open(&path, noop_on_event()).expect("open must not error");
+        assert!(store.degraded());
+        assert_eq!(warning.as_deref(), Some(DEGRADED_WARNING));
+
+        // The degraded store must still be fully functional: writer and
+        // reader threads are both alive.
+        let id = store.enqueue(OpKind::Noop).expect("enqueue must succeed");
+        assert!(id >= 1);
+
+        store.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_in_memory_is_never_degraded() {
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = Store::open_in_memory(clock, noop_on_event()).expect("open in memory");
+        assert!(!store.degraded());
+        assert_eq!(store.session_id(), 1);
+        store.shutdown();
+    }
+}
