@@ -36,6 +36,7 @@ mod payload;
 mod probe;
 mod reader;
 mod reaper;
+mod rename;
 mod retry;
 mod schema;
 mod session;
@@ -57,6 +58,7 @@ pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;
+pub use rename::{RenameOutcome, rename_bind, rename_replace};
 pub use retry::{Classification, classify as classify_retry};
 pub use schema::SCHEMA;
 pub use session::is_process_alive;
