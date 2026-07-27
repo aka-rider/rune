@@ -65,10 +65,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.focus = Pane::Tabs;
         }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
-        // WP7 mints the generated Help document; until then F1 is bound
-        // but inert rather than unbound (plan WP2.S4: "a no-op stub with a
-        // `// WP7` comment").
-        GlobalCommand::Help => {}
+        // WP7.S2: mints/toggles the generated Help virtual document — a
+        // direct, same-tick call (decision 10), no I/O involved.
+        GlobalCommand::Help => crate::workspace::toggle_help(app),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
     }
 }
