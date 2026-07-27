@@ -22,8 +22,12 @@
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
+use std::time::SystemTime;
 
 use rusqlite::Connection;
+
+use rune_core::buffer::AppliedEdit;
+use rune_core::cursor::Cursor;
 
 use crate::Error;
 use crate::retry;
@@ -41,12 +45,17 @@ pub struct WriteOp {
     pub kind: OpKind,
 }
 
-/// The write operations the writer thread knows how to execute. WP2 ships
-/// only [`OpKind::Noop`] — a real op that exercises the full
-/// `BEGIN IMMEDIATE` + retry chokepoint without any domain semantics yet;
-/// the domain verbs (`AppendEdit`, `MoveUndoPos`, `CreateSnapshot`, ...)
-/// land in WP3+, each as one hand-written transaction embodying its own
-/// invariant (plan decision 11 — no table-level CRUD escapes this crate).
+/// The write operations the writer thread knows how to execute. WP2 shipped
+/// only [`OpKind::Noop`], a real op that exercises the full
+/// `BEGIN IMMEDIATE` + retry chokepoint without any domain semantics; WP3
+/// adds the journal/snapshot domain verbs (plan decision 11 — no
+/// table-level CRUD escapes this crate, each variant below is one
+/// hand-written transaction from `journal.rs`/`snapshot.rs` embodying its
+/// own invariant). `session_id`/`now` are baked into each variant's payload
+/// by the `Store` convenience method that constructs it (`store.rs`) —
+/// `Store` is the one place that knows this process's session identity and
+/// injected clock; the writer thread itself stays a plain
+/// `Connection` executor with no identity of its own.
 pub enum OpKind {
     /// Executes an empty `BEGIN IMMEDIATE` / `COMMIT` — proves the writer's
     /// execute-with-retry path end-to-end with no side effects.
@@ -57,6 +66,32 @@ pub enum OpKind {
     /// repo convention — a real rendezvous instead).
     #[cfg(test)]
     TestBlock(mpsc::Receiver<()>),
+    /// Port of `journal.go:39-194` (`AppendEdit`). On success, the
+    /// completion's `DbEvent::Ok.result` carries the journal seq of the
+    /// inserted (or coalesced) event.
+    AppendEdit {
+        session_id: i64,
+        now: SystemTime,
+        doc_id: i64,
+        edits: Vec<AppliedEdit>,
+        cursors_before: Vec<Cursor>,
+        cursors_after: Vec<Cursor>,
+    },
+    /// Port of `journal.go:293-312` (`MoveUndoPos`).
+    MoveUndoPos {
+        session_id: i64,
+        doc_id: i64,
+        pos: i64,
+    },
+    /// Port of `snapshot.go:74-103` (`CreateSnapshot`). On success, the
+    /// completion's `DbEvent::Ok.result` carries the new `snapshots.id`.
+    CreateSnapshot {
+        session_id: i64,
+        now: SystemTime,
+        doc_id: i64,
+        content: String,
+        seq: i64,
+    },
 }
 
 /// A completion posted by the writer thread for one [`WriteOp`], or a fatal
@@ -65,6 +100,13 @@ pub enum OpKind {
 pub enum DbEvent {
     Ok {
         id: u64,
+        /// The domain-specific result the op produced, if any (e.g.
+        /// `AppendEdit`'s journal seq, `CreateSnapshot`'s row id) — `None`
+        /// for ops with no meaningful return value (`Noop`, `MoveUndoPos`).
+        /// One flexible field rather than a family of `*Ok` variants (plan
+        /// decision 4's "Ok/classified Err", extended minimally — WP3
+        /// Hard rules: "extend WriteOp/OpKind as needed").
+        result: Option<i64>,
     },
     Err {
         id: u64,
@@ -130,7 +172,7 @@ fn writer_loop(mut conn: Connection, receiver: mpsc::Receiver<WriteOp>, on_event
         let kind = op.kind;
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, kind)));
         match outcome {
-            Ok(Ok(())) => on_event(DbEvent::Ok { id }),
+            Ok(Ok(result)) => on_event(DbEvent::Ok { id, result }),
             Ok(Err(e)) => on_event(DbEvent::Err {
                 id,
                 error: e.to_string(),
@@ -151,13 +193,63 @@ fn writer_loop(mut conn: Connection, receiver: mpsc::Receiver<WriteOp>, on_event
     }
 }
 
-fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<(), Error> {
+/// Runs `kind` to completion against `conn`, inside `retry::with_retry`'s
+/// `BEGIN IMMEDIATE` chokepoint (plan Gotchas) for every variant that
+/// touches the database. Returns the domain result (if any) that becomes
+/// `DbEvent::Ok.result`.
+fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<Option<i64>, Error> {
     match kind {
-        OpKind::Noop => retry::with_retry(conn, |_tx| Ok(())),
+        OpKind::Noop => {
+            retry::with_retry(conn, |_tx| Ok(()))?;
+            Ok(None)
+        }
         #[cfg(test)]
         OpKind::TestBlock(rx) => {
             let _ = rx.recv();
-            Ok(())
+            Ok(None)
+        }
+        OpKind::AppendEdit {
+            session_id,
+            now,
+            doc_id,
+            edits,
+            cursors_before,
+            cursors_after,
+        } => {
+            let seq = retry::with_retry(conn, |tx| {
+                crate::journal::append_edit(
+                    tx,
+                    session_id,
+                    now,
+                    doc_id,
+                    &edits,
+                    &cursors_before,
+                    &cursors_after,
+                )
+            })?;
+            Ok(Some(seq))
+        }
+        OpKind::MoveUndoPos {
+            session_id,
+            doc_id,
+            pos,
+        } => {
+            retry::with_retry(conn, |tx| {
+                crate::journal::move_undo_pos(tx, session_id, doc_id, pos)
+            })?;
+            Ok(None)
+        }
+        OpKind::CreateSnapshot {
+            session_id,
+            now,
+            doc_id,
+            content,
+            seq,
+        } => {
+            let row_id = retry::with_retry(conn, |tx| {
+                crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, seq)
+            })?;
+            Ok(Some(row_id))
         }
     }
 }
@@ -206,9 +298,70 @@ mod tests {
         let events = events.lock().unwrap_or_else(|p| p.into_inner());
         assert_eq!(events.len(), 1);
         assert!(
-            matches!(events.first(), Some(DbEvent::Ok { id: 7 })),
-            "expected exactly one Ok(id: 7), got {events:?}"
+            matches!(
+                events.first(),
+                Some(DbEvent::Ok {
+                    id: 7,
+                    result: None
+                })
+            ),
+            "expected exactly one Ok(id: 7, result: None), got {events:?}"
         );
+    }
+
+    /// Proves `OpKind::AppendEdit` runs end-to-end through the writer
+    /// thread's `BEGIN IMMEDIATE`/retry chokepoint and echoes the inserted
+    /// journal seq back via `DbEvent::Ok.result` (plan Hard rule: "every
+    /// write op flows through the WP2 writer FIFO/BEGIN IMMEDIATE
+    /// machinery"). Domain correctness (coalescing, replay) is covered at
+    /// the connection level in `journal.rs`/`tests/replay_equivalence.rs` —
+    /// this test only exercises the async plumbing.
+    #[test]
+    fn append_edit_op_runs_through_the_writer_and_echoes_seq() {
+        let conn = open_ready_connection();
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
+            [],
+        )
+        .expect("seed document");
+        let doc_id = conn.last_insert_rowid();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+
+        let (tx, rx) = mpsc::channel::<DbEvent>();
+        let on_event: OnEvent = Box::new(move |evt| {
+            let _ = tx.send(evt);
+        });
+        let handle = spawn(conn, on_event);
+
+        handle
+            .try_send(WriteOp {
+                id: 1,
+                kind: OpKind::AppendEdit {
+                    session_id,
+                    now: SystemTime::now(),
+                    doc_id,
+                    edits: vec![AppliedEdit {
+                        start: 0,
+                        end: 0,
+                        deleted: String::new(),
+                        insert: "hi".to_string(),
+                    }],
+                    cursors_before: vec![],
+                    cursors_after: vec![],
+                },
+            })
+            .expect("enqueue AppendEdit");
+
+        let evt = rx.recv().expect("append edit completion");
+        match evt {
+            DbEvent::Ok { id: 1, result } => {
+                assert_eq!(result, Some(1), "first event for this doc must be seq 1");
+            }
+            other => panic!("expected Ok(id:1, result:Some(seq)), got {other:?}"),
+        }
+
+        handle.shutdown();
     }
 
     #[test]

@@ -168,6 +168,60 @@ impl Store {
         Ok(id)
     }
 
+    /// Enqueues an `AppendEdit` op for `doc_id`, tagged with this session's
+    /// own identity and a fresh sample of this store's injected clock (plan
+    /// decision 3: "every batch is also enqueued to the DB writer thread and
+    /// committed per batch"). Fire-and-forget: the journal seq the write
+    /// produced arrives asynchronously as `DbEvent::Ok.result` on the
+    /// `on_event` callback this `Store` was constructed with; this method
+    /// only returns the op id used to correlate that completion. Port of
+    /// `journal.go:39` (`AppendEdit`) — see `journal::append_edit` for the
+    /// transaction itself.
+    pub fn append_edit(
+        &self,
+        doc_id: i64,
+        edits: &[rune_core::buffer::AppliedEdit],
+        cursors_before: &[rune_core::cursor::Cursor],
+        cursors_after: &[rune_core::cursor::Cursor],
+    ) -> Result<u64, Error> {
+        let now = (self.clock.lock().unwrap_or_else(|p| p.into_inner()))();
+        self.enqueue(OpKind::AppendEdit {
+            session_id: self.session_id,
+            now,
+            doc_id,
+            edits: edits.to_vec(),
+            cursors_before: cursors_before.to_vec(),
+            cursors_after: cursors_after.to_vec(),
+        })
+    }
+
+    /// Enqueues a `MoveUndoPos` op committing this session's undo position
+    /// for `doc_id` to `pos` — call only after the corresponding buffer
+    /// edit has already succeeded (§1.4.8; see `journal::move_undo_pos`).
+    /// Port of `journal.go:303` (`MoveUndoPos`).
+    pub fn move_undo_pos(&self, doc_id: i64, pos: i64) -> Result<u64, Error> {
+        self.enqueue(OpKind::MoveUndoPos {
+            session_id: self.session_id,
+            doc_id,
+            pos,
+        })
+    }
+
+    /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
+    /// `doc_id` at journal position `seq`. Port of `snapshot.go:83`
+    /// (`CreateSnapshot`) — see `snapshot::create_snapshot` for the
+    /// transaction itself.
+    pub fn create_snapshot(&self, doc_id: i64, content: &str, seq: i64) -> Result<u64, Error> {
+        let now = (self.clock.lock().unwrap_or_else(|p| p.into_inner()))();
+        self.enqueue(OpKind::CreateSnapshot {
+            session_id: self.session_id,
+            now,
+            doc_id,
+            content: content.to_string(),
+            seq,
+        })
+    }
+
     /// The reader handle, for display/immutable reads dispatched from a
     /// spawned `Cmd` (CONSTITUTION §5.4 — never from `update` directly).
     pub fn reader(&self) -> &reader::ReaderHandle {

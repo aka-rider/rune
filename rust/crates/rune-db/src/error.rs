@@ -41,6 +41,25 @@ pub enum Error {
     /// through to the next rung rather than silently running without WAL's
     /// multi-connection concurrency guarantees.
     WalModeUnavailable(String),
+    /// A `events`/`snapshots` JSON payload (edits or cursors) failed to
+    /// parse. Port of `journal.go`'s §1.3 discipline: `UndoPeek`/`RedoPeek`
+    /// surface a corrupt payload as an error, NEVER silently fold it into
+    /// `ok=false` ("nothing to undo/redo") — a corrupt row is a Tolerable
+    /// halt with the buffer kept, not an empty journal
+    /// (`journal.go:203-206`).
+    CorruptPayload(String),
+    /// `get_blob` decompressed a row whose SHA-256 does not match its own
+    /// `hash` key — blob rot / bit-flip detection (port of
+    /// `snapshot.go:67-70`). Surfaced, never silently returned as if it were
+    /// the original content.
+    BlobHashMismatch { hash: String, got: String },
+    /// A replay (`snapshot::recover_document`) attempted to apply an
+    /// `AppliedEdit` batch that does not fit the buffer it was replayed
+    /// against — an out-of-range or malformed journal row. Wraps
+    /// `rune_core::buffer::BufferError` (port of the failure mode
+    /// `buffer.ReplayForward` used to silently clamp/skip; §1.3 forbids
+    /// that here — see `snapshot.rs`'s module doc).
+    ReplayFailed(String),
 }
 
 impl fmt::Display for Error {
@@ -55,6 +74,12 @@ impl fmt::Display for Error {
             Error::WalModeUnavailable(got) => {
                 write!(f, "PRAGMA journal_mode=WAL returned {got:?}, not \"wal\"")
             }
+            Error::CorruptPayload(msg) => write!(f, "corrupt journal payload: {msg}"),
+            Error::BlobHashMismatch { hash, got } => write!(
+                f,
+                "get blob {hash}: content hash mismatch (corrupt blob): got {got}"
+            ),
+            Error::ReplayFailed(msg) => write!(f, "replay failed: {msg}"),
         }
     }
 }

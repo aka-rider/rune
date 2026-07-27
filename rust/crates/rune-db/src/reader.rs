@@ -22,17 +22,22 @@ use crate::Error;
 
 /// A display/immutable read the reader thread can serve. See the module doc
 /// for why this enum's membership is a hard boundary, not a convenience.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderRequestKind {
     /// Round-trips `SELECT 1` — proves the reader thread and its
     /// `SQLITE_OPEN_READ_ONLY` connection are alive and can run a query.
     Ping,
+    /// Decompresses and hash-verifies the blob stored under `hash` (plan
+    /// Hard rules: "reader.rs may gain get_blob/display reads only") —
+    /// stale-tolerant content, never a decision input (Decision 8).
+    GetBlob { hash: String },
 }
 
 /// The reply to a [`ReaderRequestKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderReply {
     Pong,
+    Blob(String),
 }
 
 struct Request {
@@ -110,6 +115,9 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
             conn.query_row("SELECT 1", [], |_row| Ok(()))?;
             Ok(ReaderReply::Pong)
         }
+        ReaderRequestKind::GetBlob { hash } => {
+            crate::blob::get_blob(conn, &hash).map(ReaderReply::Blob)
+        }
     }
 }
 
@@ -142,6 +150,29 @@ mod tests {
         let handle = spawn(uri).expect("spawn reader");
         let reply = handle.query(ReaderRequestKind::Ping).expect("ping");
         assert_eq!(reply, ReaderReply::Pong);
+        handle.shutdown();
+
+        drop(bootstrap);
+    }
+
+    #[test]
+    fn get_blob_round_trips_through_the_reader() {
+        let uri = "file:rune-db-reader-test-getblob?mode=memory&cache=shared";
+        let bootstrap = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("bootstrap shared memdb");
+        crate::schema::apply(&bootstrap).expect("apply schema");
+        let hash = crate::blob::put_blob(&bootstrap, "reader blob content").expect("put blob");
+
+        let handle = spawn(uri).expect("spawn reader");
+        let reply = handle
+            .query(ReaderRequestKind::GetBlob { hash })
+            .expect("get blob");
+        assert_eq!(reply, ReaderReply::Blob("reader blob content".to_string()));
         handle.shutdown();
 
         drop(bootstrap);
