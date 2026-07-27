@@ -22,6 +22,7 @@ use rune_core::buffer::Buffer;
 use rune_core::vfs::{Mem, Vfs};
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyCode, KeyInput, Mods};
+use rune_tui::render::{self, Cell};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 
 use crate::action::Action;
@@ -197,6 +198,74 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
         step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome);
     }
 
+    // WP6.S4 end-of-session checks (once): drive `sup+z` down to
+    // `journal_pos == 0` (`UNDO-TOTAL`, content-only per G5), then
+    // `sup+shift+z` back up to the journal_pos the session was ACTUALLY at
+    // when this drive began (`REDO-TOTAL`) — not unconditionally
+    // `journal_len`: the session's own last action(s) can legitimately be
+    // an undo, leaving an intact, never-superseded redo tail past the
+    // point the session stopped at (`invariant::redo_total`'s docs).
+    // Skipped once a violation already stopped the session, or the session
+    // tore itself down via quit (G15: a torn-down model must not receive
+    // more input, same as Go's driver).
+    if outcome.violation.is_none() && !state.app.should_quit {
+        let pre_undo = prev.clone();
+        let bound = pre_undo.journal_len.saturating_add(8);
+
+        let mut presses = 0usize;
+        while outcome.violation.is_none()
+            && !state.app.should_quit
+            && prev.journal_pos != 0
+            && presses < bound
+        {
+            let (msg, tag) = key_step(KeyInput {
+                code: KeyCode::Char('z'),
+                mods: Mods {
+                    sup: true,
+                    ..Mods::NONE
+                },
+            });
+            if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                break;
+            }
+            presses += 1;
+        }
+        if outcome.violation.is_none()
+            && let Some(v) = invariant::undo_total(content, &prev)
+        {
+            outcome.violation = Some(v);
+            outcome.final_snapshot = Some(Snapshot::capture(&mut state.app, true));
+        }
+
+        if outcome.violation.is_none() && !state.app.should_quit {
+            let mut redo_presses = 0usize;
+            while outcome.violation.is_none()
+                && !state.app.should_quit
+                && prev.journal_pos != pre_undo.journal_pos
+                && redo_presses < bound
+            {
+                let (msg, tag) = key_step(KeyInput {
+                    code: KeyCode::Char('z'),
+                    mods: Mods {
+                        sup: true,
+                        shift: true,
+                        ..Mods::NONE
+                    },
+                });
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break;
+                }
+                redo_presses += 1;
+            }
+            if outcome.violation.is_none()
+                && let Some(v) = invariant::redo_total(&pre_undo, &prev)
+            {
+                outcome.violation = Some(v);
+                outcome.final_snapshot = Some(Snapshot::capture(&mut state.app, true));
+            }
+        }
+    }
+
     RunResult {
         violation: outcome.violation,
         steps: state.steps,
@@ -279,7 +348,8 @@ fn step_and_check(
         state.saves_delivered_ok += 1;
     }
 
-    let next = Snapshot::capture(&mut state.app, false);
+    let sampled = should_sample(step_index);
+    let next = Snapshot::capture(&mut state.app, sampled);
     let disk = state.mem.read(Path::new(DOC_PATH)).ok();
     let pending_save_bytes = state.pending_save.as_ref().map(|(_, b)| b.clone());
 
@@ -293,7 +363,15 @@ fn step_and_check(
         saves_delivered_ok: state.saves_delivered_ok,
     };
 
-    let violation = invariant::check_all(prev, &next, &ctx);
+    let mut violation = invariant::check_all(prev, &next, &ctx);
+    // `SYNC-IDEMPOTENT`/`WRAP-RT` need live `&mut App`/`ViewSnapshots`
+    // access `Snapshot` can't carry (module docs) — checked only on
+    // sampled steps (G19: the display pipeline dominates debug-build
+    // runtime).
+    if violation.is_none() && sampled {
+        violation = sync_idempotent_check(&mut state.app)
+            .or_else(|| wrap_rt_check(&state.app, next.line_count));
+    }
     *prev = next;
 
     if let Some(v) = violation {
@@ -335,4 +413,48 @@ fn downcast_panic(payload: &(dyn std::any::Any + Send)) -> String {
     } else {
         "<unknown panic value>".to_string()
     }
+}
+
+/// `SYNC-IDEMPOTENT`/`CELL-*`/`WRAP-RT` sampling cadence (G19: the display
+/// pipeline — comrak parse -> emit -> wrap — runs on every `sync_view()`,
+/// dominating debug-build runtime): full check for the first 32 steps,
+/// then every 8th, mirroring Go's precedent
+/// (`internal/fuzz/driver/driver_v4_properties.go:57`).
+fn should_sample(step: usize) -> bool {
+    step <= 32 || step.is_multiple_of(8)
+}
+
+/// Builds the current visible rows, or an empty grid before the first
+/// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
+fn build_rows_or_empty(app: &App) -> Vec<Vec<Cell>> {
+    match &app.view {
+        Some(view) => render::build_rows(view, app),
+        None => Vec::new(),
+    }
+}
+
+/// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Editor::
+/// view` never reads `viewport.scroll_row`, and `Viewport::scroll_to_row`
+/// converges in one call). Calls `app.sync_view()` a SECOND time with no
+/// intervening message and compares the rendered rows and scroll position
+/// against the state just before that second call; a divergence is a real
+/// non-settling scroll or a non-memoized parse, never a false positive.
+fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
+    let scroll_before = app.editor.viewport.scroll_row;
+    let rows_before = build_rows_or_empty(app);
+    app.sync_view();
+    let scroll_after = app.editor.viewport.scroll_row;
+    let rows_after = build_rows_or_empty(app);
+    invariant::sync_idempotent(&rows_before, scroll_before, &rows_after, scroll_after)
+}
+
+/// `WRAP-RT` (G7): the forward composition `wrap_to_syntax(syntax_to_wrap(
+/// ..))` is an identity over the exact in-domain rectangle
+/// `invariant::wrap_line_lens` computes from the CURRENT `ViewSnapshots.
+/// wrap` — never a fixed/stale bound, so this can never false-positive
+/// against a legitimately re-wrapped document.
+fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
+    let view = app.view.as_ref()?;
+    let line_lens = invariant::wrap_line_lens(&view.wrap, line_count);
+    invariant::wrap_rt(&view.wrap, &line_lens)
 }
