@@ -10,9 +10,9 @@
 
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
+use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
 use rune_tui::render::{self, Cell};
-use rune_tui::status;
 
 /// One point-in-time observation of `App`, built ONLY from its public
 /// accessors (`Buffer`'s fields are private — G16 — so line bounds come
@@ -87,7 +87,7 @@ impl Snapshot {
             save_in_flight: doc.save_in_flight,
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
-            status: status::status_text(app),
+            status: footer::footer_text(app),
             cells,
         }
     }

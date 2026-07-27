@@ -24,12 +24,9 @@ use crate::commands::{clipboard, edit, nav};
 use crate::db::Db;
 use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::pane::{self, Pane};
+use crate::runtime::{Effects, Msg};
 use crate::save;
-
-/// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
-/// press arms + spawns 2s timer Cmd carrying gen").
-const CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Which subsystem last wrote `App::status_message` — the provenance tag
 /// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
@@ -64,6 +61,12 @@ pub struct App {
     pub active: DocumentId,
     next_doc_id: NonZeroU64,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
+    /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
+    /// doesn't claim it (decision 7/8, `pane.rs`) — defaults to `Editor`.
+    pub focus: Pane,
+    /// Whether the Explorer/Open-Tabs left column is showing (decision 7);
+    /// `false` by default (pre-WP2 geometry) until `^x` shows it.
+    pub left_visible: bool,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -104,7 +107,9 @@ pub struct App {
     /// Context, "Quit-confirm"). App-wide, not doc-tagged: quitting closes
     /// the whole session, not one document.
     pub pending_quit: Option<(QuitKey, u32)>,
-    next_quit_gen: u32,
+    /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module in
+    /// WP2) is the sole minter of new generations.
+    pub(crate) next_quit_gen: u32,
     pub should_quit: bool,
 }
 
@@ -127,6 +132,8 @@ impl App {
             active: id,
             next_doc_id: NonZeroU64::MIN.saturating_add(1),
             vfs,
+            focus: Pane::Editor,
+            left_visible: false,
             status_message: None,
             status_source: StatusSource::Other,
             db,
@@ -224,7 +231,15 @@ impl App {
     /// document is synced (Phase 1/WP1: exactly one document is ever
     /// visible) — a later multi-pane WP re-evaluates this against whichever
     /// documents are actually on screen.
+    ///
+    /// Derives the active document's `focused` flag from `App::focus`
+    /// FIRST, every call (plan Gotchas: `focused = app.focus == Pane::
+    /// Editor` — no modal yet, so that's the whole rule) — this is
+    /// `Document::focused`'s one writer from here on, never a direct field
+    /// set elsewhere.
     pub fn sync_view(&mut self) {
+        let focused = self.focus == Pane::Editor;
+        self.active_doc_mut().focused = focused;
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
     }
@@ -352,18 +367,43 @@ fn handle_db_event(app: &mut App, evt: DbEvent) {
     }
 }
 
+/// The four-stage key pipeline (plan Context, decision 8): (1) modal
+/// capture — WP3 inserts `App::modal` handling here; (2) the global chord
+/// table (`GLOBAL_BINDINGS`), fired regardless of focus — quit/Save must
+/// work while a stub pane owns focus (WP2.S4); (3) the focused pane's own
+/// keymap; (4) `Ignored` -> nothing.
 fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    // Stage 1 (modal capture) lands in WP3 — insertion point.
+
+    // Stage 2: global chrome keys, before any pane sees the key.
+    if let Some(cmd) = keymap::resolve_in(keymap::GLOBAL_BINDINGS, key) {
+        pane::handle_global_command(app, cmd, effects);
+        return;
+    }
+
+    // Stage 3 (Explorer/Tabs are WP4/WP5 stubs) + stage 4 (no further
+    // stage yet, so the `Ignored` outcome is captured but unused).
+    let _outcome = match app.focus {
+        Pane::Editor => handle_editor_key(app, key, effects),
+        Pane::Explorer | Pane::Tabs => keymap::KeyOutcome::Ignored,
+    };
+}
+
+/// The editor pane's own key handling — the pre-WP2 `handle_key` body,
+/// reached only when `app.focus == Pane::Editor`. `Save`/`QuitConfirm` stay
+/// reachable here too, though stage 2 above always intercepts those first.
+fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
     // Hardcoded fast paths outside the resolver, exactly as Go
     // (`textedit/update.go:67-85`): Enter (mod 0) -> newline; Escape ->
     // collapse selection. Neither is a resolver-bound chord (plan Context,
     // "Keymap").
     if key.code == KeyCode::Enter && key.mods == Mods::NONE {
         edit::newline(app, app.active);
-        return;
+        return keymap::KeyOutcome::Consumed;
     }
     if key.code == KeyCode::Escape && key.mods == Mods::NONE {
         nav::escape(app.active_doc_mut());
-        return;
+        return keymap::KeyOutcome::Consumed;
     }
 
     let Some(command) = keymap::resolve(key) else {
@@ -379,8 +419,9 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
             && is_insertable_key_char(ch)
         {
             edit::insert_char(app, app.active, ch);
+            return keymap::KeyOutcome::Consumed;
         }
-        return;
+        return keymap::KeyOutcome::Ignored;
     };
 
     match command {
@@ -418,12 +459,15 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single
-            // source of truth both functions route through).
+            // source of truth both functions route through). Dead in
+            // practice — stage 2 (`keymap::GLOBAL_BINDINGS`) always
+            // intercepts a quit chord before it reaches here.
             if let Some(quit_key) = QuitKey::from_key(key) {
-                handle_quit_key(app, quit_key, effects);
+                pane::handle_quit_key(app, quit_key, effects);
             }
         }
     }
+    keymap::KeyOutcome::Consumed
 }
 
 /// Guards the printable-insert fallthrough against control-byte leakage
@@ -451,40 +495,6 @@ fn is_insertable_key_char(ch: char) -> bool {
     !ch.is_control()
 }
 
-/// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
-/// mirroring `footer.go:230-237`): the SAME chord pressed twice quits;
-/// pressing a quit chord while a DIFFERENT quit chord is pending re-arms
-/// with the new chord and a fresh generation, restarting the 2s window.
-fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
-    if let Some((pending_key, generation)) = app.pending_quit
-        && pending_key == key
-    {
-        let _ = generation; // the SAME chord always quits regardless of generation
-        app.should_quit = true;
-        return;
-    }
-
-    let generation = app.next_quit_gen;
-    app.next_quit_gen = app.next_quit_gen.wrapping_add(1);
-    app.pending_quit = Some((key, generation));
-    effects.cmds.push(quit_confirm_timeout_cmd(generation));
-}
-
-/// The 2s quit-confirm timer, carrying its generation so a stale timeout
-/// (superseded by a second press or a re-arm) is ignored on arrival (plan
-/// Context, "Quit-confirm"). Genuine wall-clock pacing for a real UI
-/// feature — not a test-ordering hack — so `std::thread::sleep` here is the
-/// correct primitive (this Cmd runs on its own dedicated thread by runtime
-/// design, never blocking the main loop).
-fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
-    Cmd::new(CmdKind::QuitTimeout, move || {
-        std::thread::sleep(CONFIRM_TIMEOUT);
-        Some(Msg::ConfirmTimeout { generation })
-    })
-}
-
-// The quit-confirm state machine / Cmd-tagging unit tests that used to live
-// here moved to `tests/app_quit_and_dispatch.rs` (plan WP1.S5): every item
-// they exercise (`App`, `update`, `Msg`, `Effects`, `CmdKind`, the `keymap`
-// types) is already public, so keeping them in-crate bought nothing but
-// line count against the §1.6 budget this extraction exists to satisfy.
+// `handle_quit_key` and its 2s timer `Cmd` moved to `pane.rs` in WP2 (§1.6
+// budget) — `GlobalCommand::QuitChord` is its only remaining caller. Their
+// unit tests moved to `tests/app_quit_and_dispatch.rs` earlier (WP1.S5).

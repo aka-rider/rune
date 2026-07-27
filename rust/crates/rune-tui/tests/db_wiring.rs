@@ -21,9 +21,9 @@ use rune_db::{ClockFn, DbEvent, LoadResult, OpOutcome, Store};
 use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
 use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::footer;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
-use rune_tui::status;
 use rune_vfs::{Mem, Vfs};
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -99,7 +99,7 @@ fn press(app: &mut App, ch: char) {
 
 /// Plan WP5 "Done when": type -> kill the store writer via the test hook
 /// (`Store::kill_writer_for_test`) -> the persistent degraded banner
-/// appears in `status::status_text`'s output, and the buffer's content is
+/// appears in `footer::footer_text`'s output, and the buffer's content is
 /// NEVER rolled back (plan decision 3: an enqueue-time failure only
 /// degrades the store — it never touches the in-memory buffer/journal).
 #[test]
@@ -172,8 +172,8 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
         app.db_banner
     );
     assert!(
-        status::status_text(&app).contains("recovery disabled"),
-        "the banner must be part of the rendered status line"
+        footer::footer_text(&app).contains("recovery disabled"),
+        "the banner must be part of the rendered footer line"
     );
     assert!(
         app.db.as_ref().is_some_and(|d| d.degraded),
