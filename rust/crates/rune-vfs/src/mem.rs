@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, UNIX_EPOCH};
 
-use crate::{Identity, Stat, Vfs, temp_name};
+use crate::{DirEntry, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
 /// The `Vfs` operation a `Mem::fail_next` injection targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -24,6 +24,7 @@ pub enum OpKind {
     Stat,
     Resolve,
     MkdirAll,
+    ReadDir,
 }
 
 struct MemFile {
@@ -240,5 +241,42 @@ impl Vfs for Mem {
     fn mkdir_all(&self, _path: &Path) -> io::Result<()> {
         self.take_failure(OpKind::MkdirAll)?;
         Ok(())
+    }
+
+    /// `Mem` has no directory nodes (`MemState.files` is a flat
+    /// `HashMap<PathBuf, MemFile>`), so children are derived from key
+    /// shape: for every key under `path`, the component immediately below
+    /// `path` becomes an entry. A key exactly one component deeper is a
+    /// file; anything deeper contributes its first component as a
+    /// synthetic directory (deduplicated — many files can share the same
+    /// synthetic parent). A key not under `path` at all is not a
+    /// component-prefix match, so it's skipped.
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        self.take_failure(OpKind::ReadDir)?;
+        let state = self.lock_state();
+        let mut seen_dirs = std::collections::HashSet::new();
+        let mut entries = Vec::new();
+        for key in state.files.keys() {
+            let Ok(rest) = key.strip_prefix(path) else {
+                continue;
+            };
+            let mut components = rest.components();
+            let Some(first) = components.next() else {
+                // `rest` is empty: `key == path`, not a child of it.
+                continue;
+            };
+            let name = first.as_os_str().to_string_lossy().to_string();
+            if components.next().is_some() {
+                // More components remain below `first`: `first` is a
+                // synthetic directory, not the file itself.
+                if seen_dirs.insert(name.clone()) {
+                    entries.push(DirEntry { name, is_dir: true });
+                }
+            } else {
+                entries.push(DirEntry { name, is_dir: false });
+            }
+        }
+        sort_dir_entries(&mut entries);
+        Ok(entries)
     }
 }
