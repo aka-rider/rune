@@ -17,7 +17,7 @@ use rune_core::buffer::{AppliedEdit, Buffer, BufferError};
 use rune_core::undo::Step;
 use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
-use rune_tui::db::{AppDb, DbBridge};
+use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_vfs::{Disk, Vfs};
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (bad invocation), `EX_DATAERR`
@@ -91,8 +91,15 @@ fn main() -> ExitCode {
         None => buffer,
     };
 
-    let mut app = App::new(buffer, Some(path), vfs, db_bootstrap.app_db);
+    let mut app = App::new(buffer, Some(path), vfs, db_bootstrap.db);
     app.db_banner = db_bootstrap.banner;
+    // The DocDb half of the old combined AppDb (plan WP1 decision 5)
+    // installs on the initial document — App::new only wires up the
+    // app-wide store handle above.
+    if let Some(doc_db) = db_bootstrap.doc_db {
+        let id = app.active;
+        app.doc_mut(id).db = Some(doc_db);
+    }
     if let Some(bridge_edit) = db_bootstrap.bridge_edit {
         // Seeds the LOCAL in-memory undo journal with the ONE synthetic
         // edit `rune_db::load` itself already journaled durably (its own
@@ -103,7 +110,8 @@ fn main() -> ExitCode {
         // (never through `commands::edit::commit_edit_batch`/`db::
         // append_edit`) — the durable side already has this edit recorded;
         // re-enqueueing it here would duplicate it.
-        app.editor.journal.push(Step {
+        let id = app.active;
+        app.doc_mut(id).journal.push(Step {
             edits: vec![bridge_edit],
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
@@ -198,10 +206,15 @@ fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadError> {
 }
 
 /// The result of [`bootstrap_db`] — everything `main` needs to finish
-/// constructing `App` with a hydrated recovery store (plan WP5.S2/S4).
+/// constructing `App` with a hydrated recovery store (plan WP5.S2/S4,
+/// re-split in WP1 alongside `AppDb` -> `Db`/`DocDb`, plan decision 5):
+/// `db` wires onto `App` directly (`App::new`'s 4th argument); `doc_db`
+/// installs on the initial document afterward, since `App::new` only knows
+/// about the app-wide half.
 #[derive(Default)]
 struct DbBootstrap {
-    app_db: Option<AppDb>,
+    db: Option<Db>,
+    doc_db: Option<DocDb>,
     /// `Some` only when `rune-db`'s `Load` reconstructed content that
     /// differs from the buffer `load_buffer` already read straight off
     /// disk (a crash-recovered draft this session inherited) — `main`
@@ -325,11 +338,9 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         deleted: load_result.disk_content.clone(),
         insert: load_result.recovered.clone(),
     });
-    let app_db = AppDb::new(
-        store,
-        bridge,
+    let db = Db::new(store, bridge, degraded_at_open);
+    let doc_db = DocDb::new(
         load_result.doc_id,
-        degraded_at_open,
         expect_obs,
         false, // bind_new: `file_existed` at the call site guarantees the target exists
         // last_known_seq: `load` may have already durably journaled a
@@ -349,7 +360,8 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
     };
 
     DbBootstrap {
-        app_db: Some(app_db),
+        db: Some(db),
+        doc_db: Some(doc_db),
         recovered_content: Some(load_result.recovered),
         bridge_edit,
         banner,
