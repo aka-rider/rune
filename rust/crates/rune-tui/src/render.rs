@@ -326,10 +326,12 @@ pub fn draw(app: &App, frame: &mut Frame) {
     crate::footer::draw(app, footer_area, frame);
 }
 
-/// The left column's two empty, titled, bordered blocks (plan WP2.S5):
-/// Explorer on top ("Files" — a placeholder title until WP4 has a root dir
-/// to name), Open Tabs below ("Open"). Contents land in WP4/WP5; this only
-/// establishes the geometry and the focus-colored border.
+/// The left column's two titled, bordered blocks (plan WP2.S5): Explorer on
+/// top ("Files"), Open Tabs below ("Open" — its own content lands in WP5).
+/// This owns only the geometry, the border, and the focus-colored border
+/// style; the Explorer's own row content (root path, entries) is delegated
+/// to `explorer::draw` at the block's INNER rect (plan WP4.S6) — the one
+/// content-owning call this function makes.
 fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -349,13 +351,14 @@ fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
         }
     };
 
-    frame.render_widget(
-        Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(border_style(Pane::Explorer))
-            .title("Files"),
-        explorer_area,
-    );
+    let explorer_block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(border_style(Pane::Explorer))
+        .title("Files");
+    let explorer_inner = explorer_block.inner(explorer_area);
+    frame.render_widget(explorer_block, explorer_area);
+    crate::explorer::draw(app, explorer_inner, frame);
+
     frame.render_widget(
         Block::bordered()
             .border_type(BorderType::Rounded)

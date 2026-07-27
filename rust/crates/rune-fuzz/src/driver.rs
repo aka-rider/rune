@@ -25,6 +25,10 @@ use rune_tui::render::{self, Cell};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
+/// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
+/// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
+const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
+
 use crate::action::Action;
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
@@ -161,6 +165,23 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
                     &mut prev,
                     Msg::ClipboardRead(s.clone()),
                     tag,
+                    None,
+                    &mut outcome,
+                ) {
+                    break 'session;
+                }
+            }
+            Action::DirLoaded { entries, cause } => {
+                let msg = Msg::DirLoaded {
+                    root: PathBuf::from(FUZZ_DIR_ROOT),
+                    entries: entries.clone(),
+                    cause: *cause,
+                };
+                if step_and_check(
+                    &mut state,
+                    &mut prev,
+                    msg,
+                    MsgTag::DirLoaded,
                     None,
                     &mut outcome,
                 ) {

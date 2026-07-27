@@ -11,7 +11,16 @@
 //! confirm-timeout
 //! deliver
 //! fail-next-save
+//! dirloaded <nav|refresh>       # followed by 0+ continuation lines:
+//! dirloaded-entry <f|d> <escaped name>
 //! ```
+//!
+//! `dirloaded`/`dirloaded-entry` is the one MULTI-line action (plan
+//! WP4.S6): a `DirEntry`'s `name` is an arbitrary `String` that may itself
+//! contain a literal space, so packing a variable-length entry list onto
+//! one line with a space-joined delimiter would be ambiguous — one
+//! `dirloaded-entry` continuation line per entry sidesteps that instead of
+//! inventing a second escaping scheme.
 //!
 //! Deviation from the plan's grammar sketch: `Action` (`crate::action`) has
 //! no `DeliverMode` — G9 proves at most one save can ever be outstanding —
@@ -34,9 +43,12 @@
 //! `rune_core::buffer::BufferError`'s idiom.
 
 use std::fmt;
+use std::iter::Peekable;
 
 use crate::action::Action;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::runtime::DirCause;
+use rune_vfs::DirEntry;
 
 /// Why a script line could not be decoded. Never constructed by `encode` —
 /// only ever returned by `decode` on malformed input.
@@ -120,6 +132,25 @@ fn encode_action(out: &mut String, action: &Action) {
         Action::ConfirmTimeout => out.push_str("confirm-timeout\n"),
         Action::Deliver => out.push_str("deliver\n"),
         Action::FailNextSave => out.push_str("fail-next-save\n"),
+        Action::DirLoaded { entries, cause } => {
+            out.push_str("dirloaded ");
+            out.push_str(encode_dir_cause(*cause));
+            out.push('\n');
+            for entry in entries {
+                out.push_str("dirloaded-entry ");
+                out.push(if entry.is_dir { 'd' } else { 'f' });
+                out.push(' ');
+                out.push_str(&escape(&entry.name));
+                out.push('\n');
+            }
+        }
+    }
+}
+
+fn encode_dir_cause(cause: DirCause) -> &'static str {
+    match cause {
+        DirCause::Nav => "nav",
+        DirCause::Refresh => "refresh",
     }
 }
 
@@ -214,8 +245,9 @@ fn unescape(s: &str, line: usize) -> Result<String, ScriptError> {
 pub fn decode(text: &str) -> Result<(String, Vec<Action>), ScriptError> {
     let mut content: Option<String> = None;
     let mut actions = Vec::new();
+    let mut lines = text.lines().enumerate().peekable();
 
-    for (idx, raw) in text.lines().enumerate() {
+    while let Some((idx, raw)) = lines.next() {
         let line = idx + 1;
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -233,11 +265,69 @@ pub fn decode(text: &str) -> Result<(String, Vec<Action>), ScriptError> {
             continue;
         }
 
+        if let Some(rest) = raw.strip_prefix("dirloaded ") {
+            actions.push(parse_dir_loaded(rest, line, &mut lines)?);
+            continue;
+        }
+
         actions.push(parse_action_line(raw, line)?);
     }
 
     let content = content.ok_or(ScriptError::MissingContentLine)?;
     Ok((content, actions))
+}
+
+/// Parses a `dirloaded <cause>` line plus its `dirloaded-entry` continuation
+/// lines (module docs) — the one multi-line action in this grammar, so this
+/// is the only parser that needs to look ahead in `lines`.
+fn parse_dir_loaded<'a>(
+    rest: &str,
+    line: usize,
+    lines: &mut Peekable<impl Iterator<Item = (usize, &'a str)>>,
+) -> Result<Action, ScriptError> {
+    let cause = match rest.trim() {
+        "nav" => DirCause::Nav,
+        "refresh" => DirCause::Refresh,
+        other => {
+            return Err(ScriptError::MalformedLine {
+                line,
+                reason: format!("unknown dirloaded cause {other:?}"),
+            });
+        }
+    };
+
+    let mut entries = Vec::new();
+    while let Some(&(_, next_raw)) = lines.peek() {
+        let Some(entry_rest) = next_raw.strip_prefix("dirloaded-entry ") else {
+            break;
+        };
+        let entry_line = match lines.next() {
+            Some((idx, _)) => idx + 1,
+            None => break,
+        };
+        entries.push(parse_dir_entry(entry_rest, entry_line)?);
+    }
+
+    Ok(Action::DirLoaded { entries, cause })
+}
+
+fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `dirloaded-entry <f|d> <name>`".to_string(),
+    };
+    let mut parts = rest.splitn(2, ' ');
+    let flag = parts.next().ok_or_else(malformed)?;
+    let name_field = parts.next().ok_or_else(malformed)?;
+    let is_dir = match flag {
+        "d" => true,
+        "f" => false,
+        _ => return Err(malformed()),
+    };
+    Ok(DirEntry {
+        name: unescape(name_field, line)?,
+        is_dir,
+    })
 }
 
 fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
@@ -440,6 +530,23 @@ mod tests {
             Action::ConfirmTimeout,
             Action::Deliver,
             Action::FailNextSave,
+            Action::DirLoaded {
+                entries: vec![
+                    DirEntry {
+                        name: "sub dir".to_string(), // a literal space in the name
+                        is_dir: true,
+                    },
+                    DirEntry {
+                        name: "a.md".to_string(),
+                        is_dir: false,
+                    },
+                ],
+                cause: DirCause::Nav,
+            },
+            Action::DirLoaded {
+                entries: Vec::new(),
+                cause: DirCause::Refresh,
+            },
         ];
 
         let encoded = encode(content, &actions);

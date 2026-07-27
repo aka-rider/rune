@@ -13,6 +13,8 @@ use proptest::prelude::*;
 use proptest::sample::select;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::runtime::DirCause;
+use rune_vfs::DirEntry;
 
 use crate::action::Action;
 
@@ -444,13 +446,30 @@ fn cluster_async_deliver() -> impl Strategy<Value = Vec<Action>> {
     Just(vec![Action::Deliver])
 }
 
-/// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`.
+/// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
+/// waste its shrink budget on absurdly long ones) plus an arbitrary
+/// `is_dir`.
+fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
+    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| DirEntry { name, is_dir })
+}
+
+fn arb_dir_cause() -> impl Strategy<Value = DirCause> {
+    prop_oneof![Just(DirCause::Nav), Just(DirCause::Refresh)]
+}
+
+/// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`, or
+/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6).
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
         Just(vec![Action::FailNextSave]),
         Just(vec![Action::Key(CTRL_C_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
+        (
+            proptest::collection::vec(arb_dir_entry(), 0..=6),
+            arb_dir_cause()
+        )
+            .prop_map(|(entries, cause)| vec![Action::DirLoaded { entries, cause }]),
     ]
 }
 

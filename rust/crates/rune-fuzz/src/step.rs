@@ -32,6 +32,11 @@ pub enum MsgTag {
     ConfirmTimeout {
         generation: u32,
     },
+    /// `Msg::DirLoaded` (plan WP4.S6) — no checker keys off this yet; the
+    /// point of driving it is simply that `update` never panics and never
+    /// touches the active document (proved structurally: `explorer::
+    /// handle_dir_loaded` only ever writes `App::explorer`).
+    DirLoaded,
     Quit,
 }
 

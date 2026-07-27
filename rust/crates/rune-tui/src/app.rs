@@ -23,6 +23,7 @@ use rune_vfs::Vfs;
 use crate::commands::{clipboard, edit, nav};
 use crate::db::Db;
 use crate::document::{Document, DocumentId};
+use crate::explorer::{self, Explorer};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg};
@@ -67,6 +68,9 @@ pub struct App {
     /// Whether the Explorer/Open-Tabs left column is showing (decision 7);
     /// `false` by default (pre-WP2 geometry) until `^x` shows it.
     pub left_visible: bool,
+    /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
+    /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
+    pub explorer: Explorer,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -134,6 +138,7 @@ impl App {
             vfs,
             focus: Pane::Editor,
             left_visible: false,
+            explorer: Explorer::default(),
             status_message: None,
             status_source: StatusSource::Other,
             db,
@@ -319,6 +324,11 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
         Msg::Db(evt) => handle_db_event(app, evt),
+        Msg::DirLoaded {
+            root,
+            entries,
+            cause,
+        } => explorer::handle_dir_loaded(app, root, entries, cause),
         Msg::Error(e) => {
             app.set_status(e, StatusSource::Other);
         }
@@ -381,11 +391,12 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    // Stage 3 (Explorer/Tabs are WP4/WP5 stubs) + stage 4 (no further
-    // stage yet, so the `Ignored` outcome is captured but unused).
+    // Stage 3 (Tabs is still a WP5 stub) + stage 4 (no further stage yet,
+    // so the `Ignored` outcome is captured but unused).
     let _outcome = match app.focus {
         Pane::Editor => handle_editor_key(app, key, effects),
-        Pane::Explorer | Pane::Tabs => keymap::KeyOutcome::Ignored,
+        Pane::Explorer => explorer::handle_key(app, key, effects),
+        Pane::Tabs => keymap::KeyOutcome::Ignored,
     };
 }
 
