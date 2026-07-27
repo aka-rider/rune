@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use rusqlite::Connection;
 
@@ -142,6 +142,18 @@ pub enum OpKind {
     },
     /// Port of `adopt.go:33-99` (`ResolveAbandon`).
     ResolveAbandon { session_id: i64, doc_id: i64 },
+    /// WP6.S2: the writer thread's own shutdown housekeeping —
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
+    /// session (checked FRESH via `liveness_check` against every OTHER
+    /// `sessions` row — never a spawn-time snapshot, so a test's
+    /// `Store::set_liveness_check` override still applies), then
+    /// `PRAGMA optimize`. [`WriterHandle::shutdown`] enqueues this as the
+    /// FINAL op before closing the queue, so it always runs strictly after
+    /// every write already queued ahead of it.
+    Shutdown {
+        session_id: i64,
+        liveness_check: LivenessCheckFn,
+    },
 }
 
 /// The domain-specific result an [`OpKind`] produced, carried in
@@ -220,8 +232,24 @@ impl WriterHandle {
     /// disconnection and exits — a deterministic drain, never a polling
     /// loop or a wall-clock sleep. Consumes `self`: there is nothing left
     /// to enqueue to afterward.
-    pub fn shutdown(self) {
+    ///
+    /// Enqueues [`OpKind::Shutdown`] first (WP6.S2) so the writer's
+    /// TRUNCATE-checkpoint/`optimize` housekeeping runs strictly after every
+    /// write already queued ahead of it, reading `liveness_check` FRESH at
+    /// this exact moment (honors any `Store::set_liveness_check` override,
+    /// mirroring `Load`'s per-op threading — WP6.S4 scenario (d) relies on
+    /// this to force two real processes into a genuine TRUNCATE race).
+    /// Best-effort: a full queue (a wedged writer) just skips the
+    /// housekeeping — shutdown itself must never block or fail.
+    pub fn shutdown(self, session_id: i64, liveness_check: LivenessCheckFn) {
         let WriterHandle { sender, thread } = self;
+        let _ = sender.try_send(WriteOp {
+            id: 0,
+            kind: OpKind::Shutdown {
+                session_id,
+                liveness_check,
+            },
+        });
         drop(sender);
         if let Some(thread) = thread {
             let _ = thread.join();
@@ -229,14 +257,33 @@ impl WriterHandle {
     }
 }
 
+/// How long the writer thread waits on an empty queue before treating
+/// itself as idle (plan WP6.S1: "N quiet seconds (constant, e.g. 5s)").
+/// Production always uses this via [`spawn`]; [`spawn_with_idle_timeout`]
+/// lets a test install a short timeout instead of actually waiting several
+/// seconds to observe the idle path fire.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Spawns the writer thread owning `conn`. `conn` must already have its
 /// schema applied and pragmas set (`store::open`'s responsibility) — this
 /// function only spawns the loop. `vfs` is the ONE filesystem every
 /// disk-touching op (`Probe`/`Materialize`/`Load`) uses (plan decision 12 /
 /// WP4) — owned by this thread exclusively, exactly like `conn`.
 pub fn spawn(conn: Connection, vfs: Arc<dyn Vfs + Send + Sync>, on_event: OnEvent) -> WriterHandle {
+    spawn_with_idle_timeout(conn, vfs, on_event, IDLE_TIMEOUT)
+}
+
+/// Like [`spawn`], but with an injectable idle timeout — the mechanism
+/// WP6's idle-checkpoint/blob-sweep test uses to observe the idle path
+/// firing without a multi-second test.
+pub(crate) fn spawn_with_idle_timeout(
+    conn: Connection,
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    on_event: OnEvent,
+    idle_timeout: Duration,
+) -> WriterHandle {
     let (sender, receiver) = mpsc::sync_channel(QUEUE_DEPTH);
-    let thread = thread::spawn(move || writer_loop(conn, vfs, receiver, on_event));
+    let thread = thread::spawn(move || writer_loop(conn, vfs, receiver, on_event, idle_timeout));
     WriterHandle {
         sender,
         thread: Some(thread),
@@ -248,33 +295,143 @@ fn writer_loop(
     vfs: Arc<dyn Vfs + Send + Sync>,
     receiver: mpsc::Receiver<WriteOp>,
     on_event: OnEvent,
+    idle_timeout: Duration,
 ) {
-    while let Ok(op) = receiver.recv() {
-        let id = op.id;
-        let kind = op.kind;
-        let vfs_ref = vfs.as_ref();
-        let outcome =
-            panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, vfs_ref, kind)));
-        match outcome {
-            Ok(Ok(result)) => on_event(DbEvent::Ok { id, result }),
-            Ok(Err(e)) => on_event(DbEvent::Err {
-                id,
-                error: e.to_string(),
-            }),
-            Err(_) => {
-                on_event(DbEvent::Fatal {
-                    error: format!("writer thread panicked processing op {id}"),
-                });
-                // Never process another op against a connection left in an
-                // unknown state after an unwind — park forever rather than
-                // exit, so the thread's presence (and the queue behind it)
-                // stays diagnosable rather than silently vanishing.
-                loop {
-                    thread::park();
+    loop {
+        match receiver.recv_timeout(idle_timeout) {
+            Ok(op) => {
+                let id = op.id;
+                let kind = op.kind;
+                let vfs_ref = vfs.as_ref();
+                let outcome =
+                    panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, vfs_ref, kind)));
+                match outcome {
+                    Ok(Ok(result)) => on_event(DbEvent::Ok { id, result }),
+                    Ok(Err(e)) => on_event(DbEvent::Err {
+                        id,
+                        error: e.to_string(),
+                    }),
+                    Err(_) => {
+                        on_event(DbEvent::Fatal {
+                            error: format!("writer thread panicked processing op {id}"),
+                        });
+                        // Never process another op against a connection left
+                        // in an unknown state after an unwind — park forever
+                        // rather than exit, so the thread's presence (and
+                        // the queue behind it) stays diagnosable rather than
+                        // silently vanishing.
+                        loop {
+                            thread::park();
+                        }
+                    }
+                }
+            }
+            // A quiet period (plan WP6.S1): opportunistic PASSIVE checkpoint
+            // plus one bounded blob-sweep batch. Best-effort — there is no
+            // caller in flight to surface a failure to.
+            Err(mpsc::RecvTimeoutError::Timeout) => run_idle_maintenance(&mut conn),
+            // `WriterHandle::shutdown` dropped the sender after enqueueing
+            // `OpKind::Shutdown` (already processed via the `Ok(op)` arm
+            // above by the time this fires) — nothing left to do but exit,
+            // which drops `conn` and closes it.
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+/// Runs on every quiet period (plan WP6.S1). Best-effort: a failure here is
+/// exactly as harmless as a checkpoint that never got a quiet enough moment
+/// to run — logged, never surfaced.
+fn run_idle_maintenance(conn: &mut Connection) {
+    if let Err(e) = checkpoint(conn, "PASSIVE") {
+        eprintln!("rune-db: idle wal_checkpoint(PASSIVE) failed: {e}");
+    }
+    if let Err(e) = retry::with_retry(conn, crate::gc::sweep_unreferenced_blobs) {
+        eprintln!("rune-db: idle blob sweep failed: {e}");
+    }
+}
+
+/// Port of plan decision 9 / WP6.S2: `wal_checkpoint(TRUNCATE)` only when no
+/// OTHER `sessions` row is still alive, then `PRAGMA optimize` regardless.
+/// Never surfaces an error — `Store::shutdown` is infallible by design
+/// (every already-acked write already committed; TRUNCATE/`optimize` are
+/// pure housekeeping) — any failure is logged and swallowed, INCLUDING a
+/// BUSY-class TRUNCATE failure, which is the EXPECTED outcome when two
+/// sessions close at the same moment (plan Risks: "Two instances exiting
+/// simultaneously both attempt TRUNCATE ... swallowed by design").
+fn run_shutdown_maintenance(
+    conn: &mut Connection,
+    session_id: i64,
+    is_alive: &dyn Fn(i64, &str) -> bool,
+) {
+    if is_last_live_session(conn, session_id, is_alive) {
+        match checkpoint(conn, "TRUNCATE") {
+            Ok(busy) if busy != 0 => {
+                eprintln!(
+                    "rune-db: wal_checkpoint(TRUNCATE) could not fully complete at \
+                     shutdown (busy) — expected under dual-exit, proceeding"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                let expected = matches!(
+                    retry::classify(&e),
+                    retry::Classification::RestartTransaction | retry::Classification::Backoff
+                );
+                if expected {
+                    eprintln!(
+                        "rune-db: wal_checkpoint(TRUNCATE) busy at shutdown \
+                         (expected under dual-exit): {e}"
+                    );
+                } else {
+                    eprintln!("rune-db: wal_checkpoint(TRUNCATE) failed at shutdown: {e}");
                 }
             }
         }
     }
+    if let Err(e) = conn.execute_batch("PRAGMA optimize") {
+        eprintln!("rune-db: PRAGMA optimize failed at shutdown: {e}");
+    }
+}
+
+/// True when no OTHER `sessions` row is currently alive per `is_alive`
+/// (plan WP6.S2: "if this session is the last live one (liveness over
+/// sessions rows)"). Best-effort: a query failure counts as "not last" —
+/// skipping an opportunistic TRUNCATE is always safe; attempting one against
+/// a `sessions` table this call couldn't even read would not be.
+fn is_last_live_session(
+    conn: &Connection,
+    session_id: i64,
+    is_alive: &dyn Fn(i64, &str) -> bool,
+) -> bool {
+    let others: Vec<(i64, String)> = match conn
+        .prepare("SELECT pid, proc_started_at FROM sessions WHERE id != ?1")
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map(rusqlite::params![session_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+            rows.collect()
+        }) {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("rune-db: shutdown: could not read sessions, skipping TRUNCATE: {e}");
+            return false;
+        }
+    };
+    !others
+        .iter()
+        .any(|(pid, started_at)| is_alive(*pid, started_at))
+}
+
+/// Runs `PRAGMA wal_checkpoint(<mode>)`, returning the `busy` column (1 when
+/// the checkpoint could not fully complete because another connection holds
+/// a conflicting lock — reported as data, not itself always a SQLite
+/// error). Extra columns (`log`, `checkpointed`) are unused by any caller
+/// here.
+fn checkpoint(conn: &Connection, mode: &str) -> Result<i64, rusqlite::Error> {
+    conn.query_row(&format!("PRAGMA wal_checkpoint({mode})"), [], |row| {
+        row.get::<_, i64>(0)
+    })
 }
 
 /// Runs `kind` to completion against `conn`, inside `retry::with_retry`'s
@@ -386,6 +543,13 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             crate::adopt::resolve_abandon(conn, session_id, doc_id)?;
             Ok(OpOutcome::None)
         }
+        OpKind::Shutdown {
+            session_id,
+            liveness_check,
+        } => {
+            run_shutdown_maintenance(conn, session_id, liveness_check.as_ref());
+            Ok(OpOutcome::None)
+        }
     }
 }
 
@@ -432,19 +596,21 @@ mod tests {
         // Dropping the sender (inside shutdown) closes the queue once
         // drained, so `join` returns only after the writer thread's `recv`
         // loop has processed our op and exited — deterministic, no polling.
-        handle.shutdown();
+        // `shutdown` also enqueues its own `OpKind::Shutdown` housekeeping
+        // op (WP6.S2), which posts a second `DbEvent` for id 0 — assert on
+        // the noop's own id rather than the events vec's exact length.
+        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
 
         let events = events.lock().unwrap_or_else(|p| p.into_inner());
-        assert_eq!(events.len(), 1);
         assert!(
-            matches!(
-                events.first(),
-                Some(DbEvent::Ok {
+            events.iter().any(|e| matches!(
+                e,
+                DbEvent::Ok {
                     id: 7,
                     result: OpOutcome::None
-                })
-            ),
-            "expected exactly one Ok(id: 7, result: None), got {events:?}"
+                }
+            )),
+            "expected an Ok(id: 7, result: None) among {events:?}"
         );
     }
 
@@ -504,7 +670,7 @@ mod tests {
             other => panic!("expected Ok(id:1, result:Seq(seq)), got {other:?}"),
         }
 
-        handle.shutdown();
+        handle.shutdown(session_id, Arc::new(crate::session::is_process_alive));
     }
 
     #[test]
@@ -546,6 +712,62 @@ mod tests {
         // thread can exit cleanly during shutdown.
         let _ = block_tx.send(());
         drop(block_tx);
-        handle.shutdown();
+        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+    }
+
+    /// Proves the writer idle timer actually fires (WP6.S1): with a short
+    /// injected idle timeout and an empty queue, the writer's own idle
+    /// maintenance sweeps an orphaned blob without any op ever being
+    /// enqueued. File-backed (not `:memory:`) so a SEPARATE verify
+    /// connection can observe what the writer thread wrote.
+    #[test]
+    fn idle_timeout_sweeps_an_orphaned_blob() {
+        let dir = std::env::temp_dir().join(format!(
+            "rune-db-writer-idle-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("idle-test.db");
+
+        let conn = Connection::open(&path).expect("open file db");
+        crate::schema::apply(&conn).expect("apply schema");
+        let hash = crate::blob::put_blob(&conn, "orphaned").expect("seed orphaned blob");
+
+        let handle = spawn_with_idle_timeout(
+            conn,
+            test_vfs(),
+            Box::new(|_evt| {}),
+            Duration::from_millis(20),
+        );
+
+        // Bounded poll with a deadline (not a fixed-duration pacing sleep):
+        // the idle timer fires repeatedly every 20ms against an empty
+        // queue, so the sweep should observe and delete the orphaned blob
+        // well within the deadline.
+        let verify = Connection::open(&path).expect("verify connection");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut swept = false;
+        while std::time::Instant::now() < deadline {
+            let present: bool = verify
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM blobs WHERE hash=?1)",
+                    rusqlite::params![hash],
+                    |r| r.get(0),
+                )
+                .expect("check blob presence");
+            if !present {
+                swept = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(swept, "idle timer must eventually sweep the orphaned blob");
+
+        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
