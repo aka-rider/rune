@@ -403,8 +403,16 @@ fn cur_id_accepts_nonzero_id() {
 
 #[test]
 fn cur_id_accepts_nonempty() {
+    // Distinct from `cur_id_accepts_nonzero_id` (single cursor): several
+    // cursors, distinct non-zero ids, ascending non-overlapping positions —
+    // exercises the "all ids distinct" scan over a multi-element set, not
+    // just the single-cursor trivial case.
     let mut snap = base_snapshot("abcdefgh");
-    snap.cursors = vec![collapsed_cursor(1, 0)];
+    snap.cursors = vec![
+        collapsed_cursor(1, 0),
+        collapsed_cursor(2, 3),
+        collapsed_cursor(3, 6),
+    ];
     assert_eq!(cur_id(&snap), None);
 }
 
