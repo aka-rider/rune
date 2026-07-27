@@ -15,12 +15,14 @@ use crate::keymap::GLOBAL_BINDINGS;
 use crate::styles;
 
 /// Which single visual state the footer's left side shows for this render
-/// — priority order highest-first (plan WP2.S6): a save error always wins
-/// over a pending chord hint, which wins over the degraded-store banner,
-/// which wins over a plain status message, which falls back to the default
-/// keymap hints. Mutually exclusive by construction — never concatenated,
-/// unlike the pre-WP2 `status.rs::status_text`.
+/// — priority order highest-first (plan WP2.S6, WP3.S3): a modal (the
+/// banner) always wins over a save error, which wins over a pending chord
+/// hint, which wins over the degraded-store banner, which wins over a plain
+/// status message, which falls back to the default keymap hints. Mutually
+/// exclusive by construction — never concatenated, unlike the pre-WP2
+/// `status.rs::status_text`.
 enum Mode<'a> {
+    Modal,
     SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
@@ -29,6 +31,9 @@ enum Mode<'a> {
 }
 
 fn mode(app: &App) -> Mode<'_> {
+    if app.modal.is_some() {
+        return Mode::Modal;
+    }
     if app.status_source == StatusSource::SaveError
         && let Some(msg) = &app.status_message
     {
@@ -76,6 +81,11 @@ fn quit_hint(app: &App) -> &'static str {
 /// `draw` renders and tests assert on via `footer_text` below.
 fn left_spans(app: &App) -> Vec<Span<'static>> {
     match mode(app) {
+        Mode::Modal => vec![
+            Span::styled("[C]opy", styles::footer_key()),
+            Span::styled("  ", styles::footer_hint()),
+            Span::styled("[Esc] discard", styles::footer_hint()),
+        ],
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), styles::error())],
         Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],

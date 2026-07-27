@@ -58,18 +58,19 @@ fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
 }
 
 /// Regression for F2: a successful save must not clear a status message
-/// some OTHER subsystem set — e.g. an unresolved `Msg::Error` such as a
-/// pbpaste failure the user hasn't dismissed yet.
+/// some OTHER subsystem set — e.g. an `Other`-sourced message an
+/// edit/undo/redo failure left behind. (`Msg::Error` itself no longer
+/// writes `status_message` at all as of plan WP3.S4 — it opens the modal
+/// banner instead, see `tests/banner.rs`; this test's OWN concern, the
+/// provenance-aware clear, is unrelated to which subsystem wrote the
+/// unrelated message, so any `Other`-sourced one exercises it identically.)
 #[test]
 fn save_done_ok_does_not_clear_an_unrelated_status_message() {
+    use rune_tui::app::StatusSource;
+
     let mut app = test_app();
     let id = app.active;
-    let mut effects = Effects::default();
-    update(
-        &mut app,
-        Msg::Error("pbpaste failed to run: No such file or directory".to_string()),
-        &mut effects,
-    );
+    app.set_status("edit failed: some other message", StatusSource::Other);
     assert!(app.status_message.is_some());
 
     let version = app.doc(id).unwrap().buffer.version();
@@ -92,7 +93,7 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
     assert!(
         app.status_message
             .as_deref()
-            .is_some_and(|s| s.contains("pbpaste"))
+            .is_some_and(|s| s.contains("some other message"))
     );
 }
 

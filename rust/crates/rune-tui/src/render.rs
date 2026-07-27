@@ -20,6 +20,7 @@ use rune_md::emit::StyleId;
 use rune_md::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
 
 use crate::app::App;
+use crate::banner;
 use crate::pane::Pane;
 use crate::styles;
 
@@ -302,6 +303,26 @@ pub fn draw(app: &App, frame: &mut Frame) {
         .copied()
         .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
 
+    // (a) The banner Rect (plan WP3.S3): reserved directly above the
+    // footer, full frame width, height capped at half the frame — shrinks
+    // `main_area` (and so the editor's share of it) accordingly. `None`
+    // when no modal is up, leaving `main_area`/the editor geometry below
+    // exactly as pre-WP3.
+    let (main_area, banner_area) = match app.modal.as_ref().map(banner::Modal::total_rows) {
+        Some(total_rows) => {
+            let banner_h = (total_rows as u16).min(area.height / 2);
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(banner_h)])
+                .split(main_area);
+            (
+                rows.first().copied().unwrap_or(main_area),
+                rows.get(1).copied(),
+            )
+        }
+        None => (main_area, None),
+    };
+
     let editor_area = if app.left_visible {
         match left_pane_width(main_area.width) {
             Some(left_w) => {
@@ -330,6 +351,11 @@ pub fn draw(app: &App, frame: &mut Frame) {
     if let Some(view) = &app.active_doc().view {
         let rows = build_rows(view, app);
         blit(&rows, editor_area, frame);
+    }
+    // (b) The one banner delegation (plan WP3.S3) — all of its own cell
+    // building lives in `banner.rs`, never here.
+    if let Some(banner_area) = banner_area {
+        banner::draw(app, banner_area, frame);
     }
     crate::footer::draw(app, footer_area, frame);
 }
