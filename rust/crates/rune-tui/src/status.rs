@@ -74,12 +74,13 @@ mod tests {
     #[test]
     fn dirty_buffer_shows_dot_and_pending_quit_shows_hint() {
         let mut app = app_with("hello");
-        app.editor.buffer = app.editor.buffer.insert(0, "x");
+        let id = app.active;
+        app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x");
         // A direct field mutation bypasses `update` — recompute the §1.4.8
         // dirty cache by hand, exactly like the real edit path
         // (`commands::edit::commit_edit_batch`) does after every journal
         // mutation.
-        crate::app::recompute_dirty(&mut app);
+        crate::save::recompute_dirty(&mut app, id);
         assert!(status_text(&app).contains(DIRTY_DOT));
 
         app.pending_quit = Some((crate::keymap::QuitKey::CtrlC, 0));

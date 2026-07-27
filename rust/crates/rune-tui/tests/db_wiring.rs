@@ -20,7 +20,7 @@ use rune_core::undo::Step;
 use rune_db::{ClockFn, DbEvent, LoadResult, OpOutcome, Store};
 use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
-use rune_tui::db::{AppDb, DbBridge};
+use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::status;
@@ -72,12 +72,13 @@ fn open_and_load(
     (store, bridge, load_result)
 }
 
-fn app_db_from(store: Store, bridge: Arc<DbBridge>, load: &LoadResult, degraded: bool) -> AppDb {
-    AppDb::new(
-        store,
-        bridge,
+fn db_from(store: Store, bridge: Arc<DbBridge>, degraded: bool) -> Db {
+    Db::new(store, bridge, degraded)
+}
+
+fn doc_db_from(load: &LoadResult) -> DocDb {
+    DocDb::new(
         load.doc_id,
-        degraded,
         load.saved_obs.unwrap_or(0),
         false, // bind_new: the doc already exists on disk in every test here
         0,
@@ -116,19 +117,23 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
         !store.degraded(),
         "a fresh temp-dir store must not open degraded"
     );
-    let app_db = app_db_from(store, bridge, &load, false);
+    let db = db_from(store, bridge, false);
+    let doc_db = doc_db_from(&load);
 
     let mut app = App::new(
         Buffer::new(load.recovered.clone()),
         Some(doc_path.to_path_buf()),
         vfs,
-        Some(app_db),
+        Some(db),
     );
-    app.editor.cursors = CursorSet::new(app.editor.buffer.len());
+    let id = app.active;
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     // Typing while the store is healthy journals normally — no banner.
     press(&mut app, '!');
-    assert_eq!(app.editor.buffer.content(), "hi!");
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hi!");
     assert!(app.db_banner.is_none());
 
     app.db
@@ -178,7 +183,7 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
     // keystroke typed so far, regardless of exactly when the writer died
     // relative to these presses.
     assert_eq!(
-        app.editor.buffer.content(),
+        app.doc(id).unwrap().buffer.content(),
         typed,
         "a store failure must never roll back the in-memory buffer"
     );
@@ -202,19 +207,23 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     let (store_a, bridge_a, load_a) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
     assert_eq!(load_a.disk_content, "hello");
     assert_eq!(load_a.recovered, "hello");
-    let app_db_a = app_db_from(store_a, bridge_a, &load_a, false);
+    let db_a = db_from(store_a, bridge_a, false);
+    let doc_db_a = doc_db_from(&load_a);
 
     let mut app_a = App::new(
         Buffer::new(load_a.recovered.clone()),
         Some(doc_path.to_path_buf()),
         Arc::clone(&vfs),
-        Some(app_db_a),
+        Some(db_a),
     );
-    app_a.editor.cursors = CursorSet::new(app_a.editor.buffer.len());
+    let id_a = app_a.active;
+    app_a.doc_mut(id_a).unwrap().db = Some(doc_db_a);
+    let len_a = app_a.doc(id_a).unwrap().buffer.len();
+    app_a.doc_mut(id_a).unwrap().cursors = CursorSet::new(len_a);
     for ch in " world".chars() {
         press(&mut app_a, ch);
     }
-    assert_eq!(app_a.editor.buffer.content(), "hello world");
+    assert_eq!(app_a.doc(id_a).unwrap().buffer.content(), "hello world");
     assert!(
         app_a.db_banner.is_none(),
         "session A's own store must stay healthy throughout"
@@ -267,27 +276,30 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
         deleted: load_b.disk_content.clone(),
         insert: load_b.recovered.clone(),
     });
-    let app_db_b = app_db_from(store_b, bridge_b, &load_b, false);
+    let db_b = db_from(store_b, bridge_b, false);
+    let doc_db_b = doc_db_from(&load_b);
 
     let mut app_b = App::new(
         Buffer::new(load_b.recovered.clone()),
         Some(doc_path.to_path_buf()),
         Arc::clone(&vfs),
-        Some(app_db_b),
+        Some(db_b),
     );
+    let id_b = app_b.active;
+    app_b.doc_mut(id_b).unwrap().db = Some(doc_db_b);
     if let Some(bridge_edit) = bridge_edit {
-        app_b.editor.journal.push(Step {
+        app_b.doc_mut(id_b).unwrap().journal.push(Step {
             edits: vec![bridge_edit],
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
         });
     }
 
-    assert_eq!(app_b.editor.buffer.content(), "hello world");
+    assert_eq!(app_b.doc(id_b).unwrap().buffer.content(), "hello world");
 
-    edit::undo(&mut app_b);
+    edit::undo(&mut app_b, id_b);
     assert_eq!(
-        app_b.editor.buffer.content(),
+        app_b.doc(id_b).unwrap().buffer.content(),
         "hello",
         "post-restart undo must reach the pre-crash anchor (the disk content)"
     );
@@ -313,15 +325,19 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
 
     let (store, bridge, load) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
-    let app_db = app_db_from(store, bridge, &load, false);
+    let db = db_from(store, bridge, false);
+    let doc_db = doc_db_from(&load);
 
     let mut app = App::new(
         Buffer::new(load.recovered.clone()),
         Some(doc_path.to_path_buf()),
         vfs,
-        Some(app_db),
+        Some(db),
     );
-    app.editor.cursors = CursorSet::new(app.editor.buffer.len());
+    let id = app.active;
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     // Dirty the buffer (a healthy edit — the writer is still alive here) so
     // `trigger_save` below actually has something to save.
@@ -370,7 +386,7 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
         "the store must be marked degraded via on_store_failure, not left untouched"
     );
     assert!(
-        !app.save_in_flight,
+        !app.doc(id).unwrap().save_in_flight,
         "on_store_failure must clear save_in_flight on an enqueue failure"
     );
 }
@@ -391,7 +407,7 @@ fn save_key() -> KeyInput {
 /// actually enqueues the save — mirrors `app::tests::first_quit_press_
 /// arms_and_spawns_a_timer_cmd_without_quitting`/`same_chord_twice_quits`'s
 /// shape for `pending_quit`. Uses `Store::open_in_memory` (no real file
-/// needed) with `AppDb::degraded` forced `true` by hand — simulating a
+/// needed) with `Db::degraded` forced `true` by hand — simulating a
 /// LATER store failure (plan decision 3), independent of the open ladder's
 /// own state, which is exactly what this gate must react to either way.
 #[test]
@@ -401,17 +417,20 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
     let store = Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
         .expect("open in-memory store");
     let (bridge, _rx) = DbBridge::bootstrap();
-    let mut app_db = AppDb::new(store, bridge, 1, false, 0, true, 0);
-    app_db.degraded = true;
+    let db = Db::new(store, bridge, true);
+    let doc_db = DocDb::new(1, 0, true, 0);
 
     let mut app = App::new(
         Buffer::new("hi"),
         Some(PathBuf::from("/doc.md")),
         vfs,
-        Some(app_db),
+        Some(db),
     );
-    app.saved_version = 0; // force dirty — nothing to save otherwise
-    app.editor.cursors = CursorSet::new(app.editor.buffer.len());
+    let id = app.active;
+    app.doc_mut(id).unwrap().db = Some(doc_db);
+    app.doc_mut(id).unwrap().saved_version = 0; // force dirty — nothing to save otherwise
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(save_key()), &mut effects);
@@ -420,7 +439,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the first super+s on a degraded store must only arm the confirm gate"
     );
     assert!(
-        !app.save_in_flight,
+        !app.doc(id).unwrap().save_in_flight,
         "no materialize must be enqueued before the gate is confirmed"
     );
     assert!(
@@ -436,7 +455,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         "the second super+s must consume the confirm gate"
     );
     assert!(
-        app.save_in_flight,
+        app.doc(id).unwrap().save_in_flight,
         "the second super+s must actually enqueue the materialize"
     );
 }

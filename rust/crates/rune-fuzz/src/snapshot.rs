@@ -54,7 +54,7 @@ impl Snapshot {
     pub fn capture(app: &mut App, with_cells: bool) -> Snapshot {
         app.sync_view();
 
-        let buf = &app.editor.buffer;
+        let buf = &app.active_doc().buffer;
         let line_count = buf.line_count();
         let mut line_starts = Vec::with_capacity(line_count);
         let mut line_ends = Vec::with_capacity(line_count);
@@ -64,7 +64,7 @@ impl Snapshot {
         }
 
         let cells = if with_cells {
-            match &app.view {
+            match &app.active_doc().view {
                 Some(view) => render::build_rows(view, app),
                 None => Vec::new(),
             }
@@ -72,18 +72,19 @@ impl Snapshot {
             Vec::new()
         };
 
+        let doc = app.active_doc();
         Snapshot {
-            content: app.editor.buffer.content().to_string(),
-            version: app.editor.buffer.version(),
-            saved_version: app.saved_version,
+            content: doc.buffer.content().to_string(),
+            version: doc.buffer.version(),
+            saved_version: doc.saved_version,
             is_dirty: app.is_dirty(),
-            cursors: app.editor.cursors.all(),
+            cursors: doc.cursors.all(),
             line_count,
             line_starts,
             line_ends,
-            journal_pos: app.editor.journal.pos(),
-            journal_len: app.editor.journal.len(),
-            save_in_flight: app.save_in_flight,
+            journal_pos: doc.journal.pos(),
+            journal_len: doc.journal.len(),
+            save_in_flight: doc.save_in_flight,
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
             status: status::status_text(app),
