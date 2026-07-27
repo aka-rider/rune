@@ -1854,6 +1854,7 @@ name = "rune-cli"
 version = "0.1.0"
 dependencies = [
  "rune-core",
+ "rune-db",
  "rune-tui",
  "rune-vfs",
 ]
@@ -1900,6 +1901,7 @@ dependencies = [
  "ratatui",
  "ratatui-termina",
  "rune-core",
+ "rune-db",
  "rune-md",
  "rune-vfs",
  "termina",

@@ -201,6 +201,15 @@ impl Store {
         )
     }
 
+    /// Test-support hook: kills the writer thread as if it had died,
+    /// without a real crash — see [`OpKind::KillWriterForTest`]'s doc
+    /// comment. Every enqueue after this call observes
+    /// [`Error::WriterGone`]. Not `#[cfg(test)]` — this needs to cross the
+    /// crate boundary into `rune-tui`'s own integration tests.
+    pub fn kill_writer_for_test(&self) -> Result<(), Error> {
+        self.enqueue(OpKind::KillWriterForTest).map(|_| ())
+    }
+
     /// Enqueues `kind` to the writer thread, returning the op id the
     /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
     /// surfaces [`Error::WriterQueueFull`] immediately (plan Gotchas).

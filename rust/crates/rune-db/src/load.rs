@@ -21,7 +21,7 @@ use rune_vfs::Vfs;
 use crate::Error;
 use crate::adopt;
 use crate::document::{self, DocRef};
-use crate::observation;
+use crate::observation::{self, ObsId};
 use crate::retry;
 use crate::sync::SyncState;
 
@@ -41,6 +41,15 @@ pub struct LoadResult {
     /// doesn't expose it) — `nlink > 1` means saving through this path
     /// forks the document from its other names on disk.
     pub nlink: i64,
+    /// This session's CAS baseline for `doc_id` (`session_documents.
+    /// saved_obs`) once `load` returns — the `expect` `Store::materialize`
+    /// (WP5) needs for this session's very first save. `None` only if
+    /// adoption somehow never happened for this session/doc pair (should
+    /// not occur — every branch of `load` above either adopts or leaves a
+    /// PRIOR adoption of this session's own in place — kept `Option` rather
+    /// than assumed, matching this crate's "Options for absent facts" rule
+    /// rather than a caller-visible panic risk).
+    pub saved_obs: Option<ObsId>,
 }
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
@@ -254,6 +263,10 @@ pub fn load(
     }
 
     let sync_state = retry::with_retry(conn, |tx| crate::sync::sync(tx, session_id, doc_id))?;
+    let saved_obs = retry::with_retry(conn, |tx| {
+        observation::saved_obs_for(tx, session_id, doc_id)
+    })?
+    .map(|o| o.id);
 
     Ok(LoadResult {
         doc_id,
@@ -263,6 +276,7 @@ pub fn load(
         has_history: has_hist,
         sync: sync_state,
         nlink: nlink.unwrap_or(0),
+        saved_obs,
     })
 }
 

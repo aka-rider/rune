@@ -129,7 +129,7 @@ mod tests {
     use std::sync::Arc;
 
     fn app_with(content: &str, cursor_offset: usize) -> App {
-        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
         app.editor.viewport.set_size(80, 23);
         app

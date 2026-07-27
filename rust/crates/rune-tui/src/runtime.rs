@@ -21,9 +21,10 @@ use crate::keymap::{self, KeyInput};
 use crate::term::Guard;
 
 /// One runtime event. `Key`/`Paste`/`Resize` originate from the input-reader
-/// thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout` originate from a
-/// spawned `Cmd`'s return value; `Error`/`Quit` can be synthesized by
-/// `update` itself.
+/// thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/`SaveConfirmTimeout`/
+/// `SnapshotDue` originate from a spawned `Cmd`'s return value; `Db`
+/// originates from the `rune-db` writer thread via `db::DbBridge` (plan
+/// WP5.S1); `Error`/`Quit` can be synthesized by `update` itself.
 pub enum Msg {
     Key(KeyInput),
     Paste(String),
@@ -36,6 +37,21 @@ pub enum Msg {
     ConfirmTimeout {
         generation: u32,
     },
+    /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6, mirroring
+    /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
+    /// ignored exactly like `ConfirmTimeout`.
+    SaveConfirmTimeout {
+        generation: u32,
+    },
+    /// The 2s snapshot-autosave debounce timer (plan WP5.S6, port of
+    /// `workspace_timers.go:11`) — a stale generation (a later journal
+    /// mutation already rescheduled) is ignored.
+    SnapshotDue {
+        generation: u32,
+    },
+    /// A completion posted by `rune-db`'s writer thread, routed through
+    /// `db::DbBridge` (plan WP5.S1).
+    Db(rune_db::DbEvent),
     Error(String),
     Quit,
 }
@@ -65,6 +81,16 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let mut guard = Guard::new()?;
     let (tx, rx) = mpsc::channel::<Msg>();
     spawn_input_reader(guard.event_reader(), tx.clone());
+
+    // Hand the runtime's own `Sender<Msg>` to the DB bridge (plan WP5.S1's
+    // "App-held setter" — `Store::open`, at bootstrap in `rune-cli::main`,
+    // ran before this `Sender<Msg>` ever existed, see `db::DbBridge`'s doc
+    // comment) so every `DbEvent` from here on is delivered as `Msg::Db`
+    // through the ordinary Elm loop below, exactly like the initial
+    // `Msg::Resize` seed right after it.
+    if let Some(db) = &app.db {
+        db.bridge.attach(tx.clone());
+    }
 
     // Seed the initial size through the ordinary `update` path (not a
     // one-off field write) so `Msg::Resize`'s effect on the viewport has

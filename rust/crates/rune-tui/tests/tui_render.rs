@@ -20,7 +20,7 @@ const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.editor.focused = focused;
     app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
     app.editor.viewport.set_size(WIDTH, HEIGHT - 1);
