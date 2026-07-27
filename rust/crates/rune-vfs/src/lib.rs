@@ -153,15 +153,25 @@ pub trait Vfs {
     }
 }
 
-/// The single chokepoint for `read_dir`'s ordering contract (directories
-/// first, then case-sensitive by `name` within each group) — shared by
+/// The single chokepoint for `read_dir`'s ordering contract — shared by
 /// `Disk` and `Mem` so both backends sort identically instead of each
-/// re-implementing the comparator.
+/// re-implementing the comparator. Directories sort before files; within
+/// each group, the primary key is the LOWERCASED name (matching the Go
+/// reference, `pkg/ui/pages/workspace/workspace_fileio.go:256`'s
+/// `strings.ToLower(a.Name) < strings.ToLower(b.Name)`), with the exact
+/// (original-case) name as a tie-break so two names differing only by case
+/// (`"File.md"` vs `"file.md"`) still sort deterministically rather than
+/// depending on `sort_by`'s stability + whatever order the caller happened
+/// to hand them in.
 pub(crate) fn sort_dir_entries(entries: &mut [DirEntry]) {
     entries.sort_by(|a, b| {
         // `is_dir: true` (dirs) must sort before `false` (files): reverse
-        // the natural bool order, then break ties by name.
-        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name))
+        // the natural bool order, then break ties case-insensitively, then
+        // by exact name for determinism.
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.name.cmp(&b.name))
     });
 }
 

@@ -248,14 +248,25 @@ impl Vfs for Mem {
     /// shape: for every key under `path`, the component immediately below
     /// `path` becomes an entry. A key exactly one component deeper is a
     /// file; anything deeper contributes its first component as a
-    /// synthetic directory (deduplicated — many files can share the same
-    /// synthetic parent). A key not under `path` at all is not a
+    /// synthetic directory. A key not under `path` at all is not a
     /// component-prefix match, so it's skipped.
+    ///
+    /// Exactly ONE entry per name, even when a name is claimed BOTH ways —
+    /// once as a synthetic directory (some key goes deeper below it) and
+    /// once as an exact file key itself (e.g. `path/a` stored as a file AND
+    /// `path/a/b.md` stored too, an inconsistent-but-representable `Mem`
+    /// state): the directory claim always wins, contributing `is_dir:
+    /// true`, and the file claim for the same name is dropped rather than
+    /// contributing a second, `is_dir: false` entry. Every key under `path`
+    /// is folded into a `name -> is_dir` map first (dir overwrites file,
+    /// never the reverse; a HashMap's iteration order can visit either key
+    /// first) and only THEN turned into `entries`, so the result never
+    /// depends on which of the colliding keys `state.files` happens to
+    /// iterate first.
     fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
         self.take_failure(OpKind::ReadDir)?;
         let state = self.lock_state();
-        let mut seen_dirs = std::collections::HashSet::new();
-        let mut entries = Vec::new();
+        let mut by_name: HashMap<String, bool> = HashMap::new();
         for key in state.files.keys() {
             let Ok(rest) = key.strip_prefix(path) else {
                 continue;
@@ -266,19 +277,18 @@ impl Vfs for Mem {
                 continue;
             };
             let name = first.as_os_str().to_string_lossy().to_string();
-            if components.next().is_some() {
-                // More components remain below `first`: `first` is a
-                // synthetic directory, not the file itself.
-                if seen_dirs.insert(name.clone()) {
-                    entries.push(DirEntry { name, is_dir: true });
-                }
-            } else {
-                entries.push(DirEntry {
-                    name,
-                    is_dir: false,
-                });
+            // More components remain below `first`: `first` is a synthetic
+            // directory, not the file itself.
+            let is_dir = components.next().is_some();
+            let entry = by_name.entry(name).or_insert(is_dir);
+            if is_dir {
+                *entry = true;
             }
         }
+        let mut entries: Vec<DirEntry> = by_name
+            .into_iter()
+            .map(|(name, is_dir)| DirEntry { name, is_dir })
+            .collect();
         sort_dir_entries(&mut entries);
         Ok(entries)
     }

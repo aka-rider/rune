@@ -1,5 +1,7 @@
 //! `Vfs::read_dir` tests — direct-children enumeration, sorted
-//! directories-first then case-sensitive by name, for both `Disk` and `Mem`.
+//! directories-first then case-INsensitively by name (ties broken by exact,
+//! original-case name), for both `Disk` and `Mem` — matches the Go
+//! reference, `pkg/ui/pages/workspace/workspace_fileio.go:256`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rune_vfs::{DirEntry, Disk, Mem, Vfs};
@@ -25,8 +27,11 @@ fn disk_read_dir_lists_children_sorted_dirs_first() {
     let vfs = Disk;
     let entries = vfs.read_dir(&tmp).expect("read_dir should succeed");
 
-    // Dirs first (case-sensitive by name: 'A' < 'b' in ASCII), then files
-    // (case-sensitive by name: 'a' < 'z').
+    // Dirs first (case-insensitive by name: "aardvark" < "beta"), then
+    // files (case-insensitive by name: "alpha.md" < "zeta.md") — this
+    // fixture's names happen to sort the same way case-sensitively too;
+    // see `mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak`
+    // for a fixture where that would NOT hold.
     assert_eq!(
         entries,
         vec![
@@ -202,10 +207,13 @@ fn mem_read_dir_dedups_synthetic_dir_from_multiple_keys() {
     );
 }
 
-/// Sort order: directories before files, then case-sensitive by name within
-/// each group.
+/// Sort order: directories before files, then case-INsensitively by name
+/// within each group (matches the Go reference — see this file's module
+/// docs). This fixture's names happen to sort the same way case-sensitively
+/// too; `mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak`
+/// below covers a fixture where that would NOT hold.
 #[test]
-fn mem_read_dir_sort_order_dirs_first_then_case_sensitive_name() {
+fn mem_read_dir_sort_order_dirs_first_then_case_insensitive_name() {
     let vfs = Mem::new();
     vfs.save_atomic(&PathBuf::from("/r/zeta.md"), b"z")
         .expect("save zeta");
@@ -242,6 +250,51 @@ fn mem_read_dir_sort_order_dirs_first_then_case_sensitive_name() {
     );
 }
 
+/// A fixture where case-sensitive and case-insensitive ordering actually
+/// DISAGREE: `"Banana"` sorts before `"apple"` case-sensitively (ASCII 'B'
+/// = 66 < 'a' = 97) but after it case-insensitively ("apple" < "banana").
+/// Also covers the tie-break: `"File.md"` and `"file.md"` collide once
+/// lowercased, so the exact (original-case) name breaks the tie
+/// deterministically ('F' = 70 < 'f' = 102).
+#[test]
+fn mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak() {
+    let vfs = Mem::new();
+    vfs.save_atomic(&PathBuf::from("/r/Banana"), b"b")
+        .expect("save Banana");
+    vfs.save_atomic(&PathBuf::from("/r/apple"), b"a")
+        .expect("save apple");
+    vfs.save_atomic(&PathBuf::from("/r/file.md"), b"f")
+        .expect("save file.md");
+    vfs.save_atomic(&PathBuf::from("/r/File.md"), b"F")
+        .expect("save File.md");
+
+    let entries = vfs
+        .read_dir(&PathBuf::from("/r"))
+        .expect("read_dir should succeed");
+    assert_eq!(
+        entries,
+        vec![
+            DirEntry {
+                name: "apple".to_string(),
+                is_dir: false
+            },
+            DirEntry {
+                name: "Banana".to_string(),
+                is_dir: false
+            },
+            DirEntry {
+                name: "File.md".to_string(),
+                is_dir: false
+            },
+            DirEntry {
+                name: "file.md".to_string(),
+                is_dir: false
+            },
+        ],
+        "case-insensitive primary order (apple before Banana), exact-name tiebreak (File.md before file.md)"
+    );
+}
+
 /// A key equal to `path` itself (e.g. `path` was saved as a file) is not a
 /// child of itself and must not appear in its own listing.
 #[test]
@@ -262,5 +315,33 @@ fn mem_read_dir_excludes_the_queried_path_itself() {
             is_dir: false
         }],
         "the key `/a` itself must not appear as a child of `/a`"
+    );
+}
+
+/// The collision the previous test's setup also creates, one level up:
+/// `/a` exists both as a FILE key and as a directory PREFIX (`/a/b.md`
+/// makes `a` a synthetic directory under `/`). Listing `/a`'s own children
+/// correctly excludes `/a` itself (the test above) — but listing `/a`'s
+/// PARENT must show `a` exactly ONCE, as a directory, never twice (once
+/// `is_dir: false` from the `/a` key, once `is_dir: true` from the
+/// `/a/b.md` key) — the bug this fix removes.
+#[test]
+fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
+    let vfs = Mem::new();
+    vfs.save_atomic(&PathBuf::from("/a"), b"a-is-a-file")
+        .expect("save /a as a file");
+    vfs.save_atomic(&PathBuf::from("/a/b.md"), b"b")
+        .expect("save /a/b.md");
+
+    let entries = vfs
+        .read_dir(&PathBuf::from("/"))
+        .expect("read_dir should succeed");
+    assert_eq!(
+        entries,
+        vec![DirEntry {
+            name: "a".to_string(),
+            is_dir: true
+        }],
+        "`a` must appear exactly once, as a directory — the directory claim wins"
     );
 }
