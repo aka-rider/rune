@@ -3,6 +3,7 @@
 //! workspace that talks to a real terminal (`term::Guard`).
 
 pub mod app;
+pub mod breadcrumb;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
@@ -16,3 +17,4 @@ pub mod runtime;
 pub mod save;
 pub mod styles;
 pub mod term;
+pub mod title;

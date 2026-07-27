@@ -21,6 +21,11 @@ pub const FILE_TEXT: Color = Color::Indexed(252);
 /// below so the cursor-overlay path also draws from the one style source.
 pub const SELECTION_BG: Color = Color::Indexed(239);
 
+/// The title bar's text color (Go `TitleText`, `styles.go:188`: `lipgloss.
+/// Color("216")`, a yellow-ish tone distinct from the six chrome tokens
+/// above — WP6.S1's `title.rs` is its only user).
+pub const TITLE_TEXT: Color = Color::Indexed(216);
+
 // ── Markdown-only indexed colors ───────────────────────────────────
 //
 // Inline `lipgloss.Color("NN")` literals from Go's `pkg/ui/styles/
@@ -120,6 +125,12 @@ pub fn inactive_border() -> Style {
     Style::new().fg(SUBTLE)
 }
 
+/// Returns style with fg TITLE_TEXT, bold — the title bar's document name
+/// (Go `title.go::View`'s unfocused path: `Foreground(TitleText).Bold(true)`).
+pub fn title_text() -> Style {
+    Style::new().fg(TITLE_TEXT).add_modifier(Modifier::BOLD)
+}
+
 /// Semantic `StyleId` -> `ratatui::style::Style` — the markdown token theme
 /// (WP2.S2, critic R2), ported 1:1 from Go's `pkg/ui/styles/styles.go:104-
 /// 200` `Default()` wherever a Go token exists. `render.rs::style_for`
@@ -206,6 +217,13 @@ mod tests {
     fn active_border_fg() {
         let s = active_border();
         assert_eq!(s.fg, Some(HIGHLIGHT));
+    }
+
+    #[test]
+    fn title_text_fg_and_bold() {
+        let s = title_text();
+        assert_eq!(s.fg, Some(TITLE_TEXT));
+        assert!(s.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
