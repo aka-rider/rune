@@ -146,6 +146,36 @@ fn clean_session_trips_nothing() {
             .map(|v| format!("{}: {}", v.id, v.message))
             .unwrap_or_default()
     );
+
+    // Defeats a no-op driver: `violation.is_none()` alone is vacuously true
+    // for a driver that never delivers anything (plan Gotcha G2's class of
+    // vacuous gate). `Action::Type` expands unconditionally, one step per
+    // `char`, with no gate on app state (`driver.rs`'s `for ch in
+    // s.chars() { ... step_and_check(...) }`) — so the four `Type` actions
+    // in `tripwire_script` alone floor the step count at the sum of their
+    // literal lengths, independent of whether `Deliver`/`ConfirmTimeout`
+    // happened to find nothing pending: "annotate this: ".len() (15) +
+    // "more prose after the paste".len() (26) + "after the resize".len()
+    // (16) + "session continues after the timeout".len() (35) = 92.
+    // (Observed on this script: 121 steps — every other action also
+    // contributes a step here — so 92 is a deliberately conservative
+    // floor, not the true count.)
+    assert!(
+        result.steps >= 92,
+        "expected at least 92 steps (one per Type char alone), got {}; \
+         a driver that never delivers a Msg would report steps=0",
+        result.steps
+    );
+
+    // Defeats a no-op driver: two no-ops trivially have equal, empty
+    // content. The script types text and pastes via ClipboardReply, so the
+    // buffer MUST differ from the seed; if it doesn't, that's a real
+    // driver defect worth surfacing, not something to paper over here.
+    assert_ne!(
+        result.final_content, FIXTURE,
+        "the script types and pastes text; final_content identical to the seed \
+         means the driver did not actually deliver those edits"
+    );
 }
 
 /// WP4.S5 — the driver is deterministic given `(content, actions)`: running
@@ -164,6 +194,19 @@ fn driver_is_deterministic() {
     assert_eq!(
         first.final_content, second.final_content,
         "final content must be deterministic across two runs of the same script"
+    );
+
+    // Defeats a no-op driver: two runs of a driver that never delivers
+    // anything are trivially "equal" (steps=0 == steps=0). Pinning
+    // `steps > 0` as well as equality rules that out — determinism must be
+    // demonstrated over real work, not over two identical no-ops.
+    assert_eq!(
+        first.steps, second.steps,
+        "step count must be deterministic across two runs of the same script"
+    );
+    assert!(
+        first.steps > 0,
+        "expected the script to actually deliver messages, got steps=0"
     );
 }
 
