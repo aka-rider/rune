@@ -9,7 +9,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::{Identity, Stat, Vfs, temp_name};
+use crate::{DirEntry, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
 /// Disk-backed `Vfs` on Darwin. Uses `renamex_np` for crash-safe atomic
 /// publish; stateless (no synchronization needed).
@@ -172,5 +172,31 @@ impl Vfs for Disk {
 
     fn mkdir_all(&self, path: &Path) -> io::Result<()> {
         fs::create_dir_all(path)
+    }
+
+    /// `path` itself failing to open propagates (the caller needs to know
+    /// the listing didn't happen at all). A single entry's `file_type()`
+    /// failing — e.g. it vanished between the readdir syscall and the stat
+    /// (TOCTOU), or a permissions edge case — only skips that one entry:
+    /// the rest of the listing is still real information the caller can
+    /// use, so one flaky entry shouldn't fail the whole call.
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path)? {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let is_dir = match entry.file_type() {
+                Ok(ft) => ft.is_dir(),
+                Err(_) => continue,
+            };
+            entries.push(DirEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                is_dir,
+            });
+        }
+        sort_dir_entries(&mut entries);
+        Ok(entries)
     }
 }
