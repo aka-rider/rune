@@ -46,9 +46,18 @@ pub struct Stat {
     pub nlink: Option<u64>,
 }
 
+/// A single direct child of a directory, as returned by [`Vfs::read_dir`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirEntry {
+    /// The entry's own name (not a full path) — the final component you'd
+    /// join onto the directory that was listed.
+    pub name: String,
+    pub is_dir: bool,
+}
+
 /// A virtual file system exposing the materialize-complete primitive set
-/// (plan decision 12). `Trash`/`ReadDir`/`Rename` are deferred to the
-/// features that consume them.
+/// (plan decision 12), plus `read_dir` for directory enumeration.
+/// `Trash`/`Rename` are still deferred to the features that consume them.
 ///
 /// All methods take `&self` (not `&mut self`) so implementations can use
 /// interior mutability — `Disk` is stateless, `Mem` uses `Mutex`.
@@ -96,6 +105,12 @@ pub trait Vfs {
     /// Create `path` and all missing parent directories.
     fn mkdir_all(&self, path: &Path) -> io::Result<()>;
 
+    /// List the direct children of `path` (not recursive). Order is part of
+    /// the contract, not an implementation accident: directories first, then
+    /// files, and case-sensitive by `name` within each group — callers (e.g.
+    /// a filetree) can rely on this instead of re-sorting.
+    fn read_dir(&self, path: &Path) -> io::Result<Vec<DirEntry>>;
+
     /// Atomically save `bytes` to `path`, composed from the primitives
     /// above: `resolve` the destination, `write_durable` the bytes to a
     /// sibling temp, then publish via `exchange` (destination exists) or
@@ -136,6 +151,18 @@ pub trait Vfs {
             }
         }
     }
+}
+
+/// The single chokepoint for `read_dir`'s ordering contract (directories
+/// first, then case-sensitive by `name` within each group) — shared by
+/// `Disk` and `Mem` so both backends sort identically instead of each
+/// re-implementing the comparator.
+pub(crate) fn sort_dir_entries(entries: &mut [DirEntry]) {
+    entries.sort_by(|a, b| {
+        // `is_dir: true` (dirs) must sort before `false` (files): reverse
+        // the natural bool order, then break ties by name.
+        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name))
+    });
 }
 
 /// The sibling temp filename a durable write uses for `path`:
