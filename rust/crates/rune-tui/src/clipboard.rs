@@ -13,7 +13,7 @@ use std::process::Command as ProcessCommand;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use crate::runtime::{Cmd, Msg};
+use crate::runtime::{Cmd, CmdKind, Msg};
 
 /// Builds the OSC 52 "set system clipboard" escape sequence for `payload`:
 /// `ESC ] 5 2 ; c ; <base64> BEL` (plan Context "Clipboard": "exact Go
@@ -46,7 +46,7 @@ pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
 /// pasting the rest of the text is strictly more useful than discarding an
 /// entire paste over one bad byte from some other application.
 pub fn pbpaste_cmd() -> Cmd {
-    Box::new(|| {
+    Cmd::new(CmdKind::ClipboardRead, || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
             Ok(output) => output,
             Err(e) => return Some(Msg::Error(format!("pbpaste failed to run: {e}"))),

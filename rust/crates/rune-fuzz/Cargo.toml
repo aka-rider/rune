@@ -1,0 +1,17 @@
+[package]
+name = "rune-fuzz"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+rune-core = { path = "../rune-core" }
+rune-md = { path = "../rune-md" }
+rune-tui = { path = "../rune-tui" }
+rune-vfs = { path = "../rune-vfs" }
+base64 = { workspace = true }
+# A normal (not dev) dependency: the generators live in `src/generate.rs` so the
+# fuzz target, the tripwire, and the replay test all share one grammar.
+proptest = { workspace = true }
+
+[lints]
+workspace = true

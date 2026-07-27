@@ -4,3 +4,4 @@ coverage.out
 .scratch/
 .DS_Store
 .claude/worktrees
+rust/crates/.claude/

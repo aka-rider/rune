@@ -68,9 +68,18 @@
 
 ## rust port — deferred hygiene items (recorded 2026-07-26, stage-2b repair rounds)
 
-- `rust/crates/rune-md/tests/conceal_roundtrip.rs` is 867 lines (§1.6 limit 500). Split into focused test modules with a shared helper crate/module when next touched.
+- `rust/crates/rune-md/tests/conceal_roundtrip.rs` is 1407 lines (§1.6 limit 500). Split into focused test modules with a shared helper crate/module when next touched.
 - Upstream comrak bug (worked around, not reported): comrak 0.54's internal line counter desyncs after a wikilink containing an embedded newline, corrupting sourcepos for later inline siblings in the paragraph. `build_inlines` detects and defends (per-line rebuild). Consider minimizing + reporting upstream; remove the workaround when fixed.
 - rune-md residual fuzz-line-noise double-claims (4 docs per 214k shipped-build, 182 strict): fence/backtick + blockquote compositions like ">c\n`\n>`" and "t\n  -```\n*```\n>" — focused-only 1-byte caret skews, absorbed by the single-claim chokepoint in shipped builds. Repro/shrinker: scratchpad probe-strict harnesses (stage-2b review). Fix the producer when next in rune-md/parse.
 - Upstream comrak sourcepos self-inconsistencies (independently confirmed by AST probe): sibling Text nodes sharing one byte range, ranges not containing their own literal, children escaping parents — triggered by lone-CR / raw-tab × lazy continuation. 18 strict panics + 2 shipped violations per 214k fuzz docs, all upstream, gracefully absorbed. Three repros in rust/crates/rune-md/TODO.md. Action: minimize + file against comrak; keep any strict-invariants CI job NON-BLOCKING (or exclude the three repros) until fixed upstream.
 - Inherited Go parity papercut (both implementations): cut with nothing to cut (empty last line / empty buffer) journals a zero-width step, bumps version, and marks the doc dirty — a clean file then warns "unsaved changes" until undo. Go's ApplyEdits (buffer.go:115-145) likewise doesn't skip zero-width batches. Fix in both: skip empty edit batches at the commit chokepoint.
 - rune-md perf harness: `build_5k_doc` is duplicated verbatim between benches/parse_bench.rs and tests/perf_guard.rs — the guard defends the number the bench measures, so silent divergence would decouple them. Extract a shared generator (include! of a common file) when next touched.
+
+## rust port — §1.6 file-size overages (recorded 2026-07-27)
+
+CONSTITUTION.md §1.6: "One primary type per file; decompose any file past 500 LoC." Decomposing any of these is out of scope for the work that surfaced them; recording per the project convention that a pre-existing issue is never silently skipped.
+
+- `rust/crates/rune-tui/src/app.rs` is 848 lines (§1.6 limit 500) — **grown by this work**, from 813 to 848 (~35 lines) by the `CmdKind` refactor. Decompose into focused modules (e.g. split `CmdKind`/dispatch out of the core `App` update loop) when next touched.
+- `rust/crates/rune-tui/src/commands/edit.rs` is 601 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by command family when next touched.
+- `rust/crates/rune-core/src/buffer.rs` is 568 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by concern when next touched.
+- `rust/crates/rune-tui/src/commands/nav.rs` is 526 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by command family when next touched.

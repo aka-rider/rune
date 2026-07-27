@@ -1,0 +1,35 @@
+content # Title\n\nSome prose about caf\u{e9} and \u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30c6}\u{30b9}\u{30c8} mixed in.\n\nA second paragraph follows.\n
+type annotate this: 
+key left ----
+key right ----
+key right ----
+key down ----
+key end ----
+key home ----
+key up ----
+key pagedown ----
+key pageup ----
+key right s---
+key right s---
+key right s---
+key left s---
+key char:c ---u
+key right ----
+key char:v ---u
+clip pasted caf\u{e9} \u{6587}\u{5b57}
+type more prose after the paste
+key char:z ---u
+key char:z ---u
+key char:z ---u
+key char:z s--u
+key char:z s--u
+key char:s ---u
+deliver
+resize 100 30
+type after the resize
+fail-next-save
+key char:s ---u
+deliver
+key char:c --c-
+confirm-timeout
+type session continues after the timeout
