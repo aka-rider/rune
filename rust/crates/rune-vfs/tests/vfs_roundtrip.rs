@@ -2,8 +2,7 @@
 //! `Disk` and `Mem` backends, plus error-path and residue checks.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_core::buffer::Buffer;
-use rune_core::vfs::{Disk, Mem, Vfs};
+use rune_vfs::{Disk, Mem, Vfs};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -215,11 +214,31 @@ fn mem_fail_next_save_error_kind() {
     vfs.save_atomic(&path, b"data").expect("should succeed");
 }
 
-/// `Buffer::from_bytes` refuses invalid UTF-8.
+/// Finding 10: `Mem::write_durable` must match `Disk`'s
+/// `OpenOptions::create_new(true)` collision behavior — a second
+/// `write_durable` for the same destination (same deterministic temp name)
+/// must error `AlreadyExists`, never silently overwrite the first temp's
+/// bytes (the mirror of `disk_regression_preexisting_temp_not_deleted_on_
+/// conflict` below, so this failure mode is testable against `Mem` too).
 #[test]
-fn buffer_refuses_invalid_utf8() {
-    let result = Buffer::from_bytes(vec![0xff, 0xfe]);
-    assert!(result.is_err(), "invalid UTF-8 should be refused");
+fn mem_write_durable_errors_already_exists_on_temp_collision() {
+    let vfs = Mem::new();
+    let path = PathBuf::from("collision_test");
+
+    let temp1 = vfs
+        .write_durable(&path, b"first")
+        .expect("first write_durable");
+
+    let err = vfs
+        .write_durable(&path, b"second")
+        .expect_err("temp collision must error");
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+
+    let content = vfs.read(&temp1).expect("first temp still readable");
+    assert_eq!(
+        &content, b"first",
+        "the first temp's bytes must be untouched by the failed second write_durable"
+    );
 }
 
 // ============================================================================

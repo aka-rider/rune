@@ -9,7 +9,9 @@ path = "src/main.rs"
 
 [dependencies]
 rune-core = { path = "../rune-core" }
+rune-db = { path = "../rune-db" }
 rune-tui = { path = "../rune-tui" }
+rune-vfs = { path = "../rune-vfs" }
 
 [lints]
 workspace = true

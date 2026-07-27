@@ -12,15 +12,15 @@ use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_core::vfs::Mem;
 use rune_tui::app::App;
 use rune_tui::render;
+use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.editor.focused = focused;
     app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
     app.editor.viewport.set_size(WIDTH, HEIGHT - 1);

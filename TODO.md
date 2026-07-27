@@ -83,3 +83,5 @@ CONSTITUTION.md §1.6: "One primary type per file; decompose any file past 500 L
 - `rust/crates/rune-tui/src/commands/edit.rs` is 601 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by command family when next touched.
 - `rust/crates/rune-core/src/buffer.rs` is 568 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by concern when next touched.
 - `rust/crates/rune-tui/src/commands/nav.rs` is 526 lines (§1.6 limit 500). Pre-existing, untouched by this work. Split by command family when next touched.
+- `rust/crates/rune-db/tests/multiprocess.rs` showed one transient timeout under heavy sandbox load (marker-file poll deadline; rusqlite 5s busy_timeout × 5 backoff attempts can approach the 30s ceiling worst-case). Passed repeatedly otherwise. If it recurs in CI: raise the scenario deadline or serialize the four scenarios.
+- `rust/crates/rune-tui/src/app.rs` grew to 1165 lines after the rune-db wiring merge (§1.6 limit 500; was 848). The db handle/degraded/dirty-cache/save block is a natural split seam when next touched.

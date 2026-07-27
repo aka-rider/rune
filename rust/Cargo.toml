@@ -7,9 +7,11 @@ resolver = "2"
 members = [
     "crates/rune-cli",
     "crates/rune-core",
+    "crates/rune-db",
     "crates/rune-fuzz",
     "crates/rune-md",
     "crates/rune-tui",
+    "crates/rune-vfs",
 ]
 
 [workspace.package]

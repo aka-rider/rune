@@ -19,11 +19,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_core::vfs::{Mem, Vfs};
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyCode, KeyInput, Mods};
 use rune_tui::render::{self, Cell};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
+use rune_vfs::{Mem, Vfs};
 
 use crate::action::Action;
 use crate::invariant::{self, Violation};
@@ -74,7 +74,12 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
     let _ = mem.save_atomic(Path::new(DOC_PATH), content.as_bytes());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mut app = App::new(Buffer::new(content), Some(PathBuf::from(DOC_PATH)), vfs);
+    let mut app = App::new(
+        Buffer::new(content),
+        Some(PathBuf::from(DOC_PATH)),
+        vfs,
+        None,
+    );
     app.editor.focused = true;
     app.editor.viewport.set_size(80, 23);
     app.sync_view();

@@ -11,17 +11,17 @@ use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_core::vfs::Mem;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, cursor_offset: usize) -> App {
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.editor.focused = true;
     app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
     app.editor.viewport.set_size(WIDTH, HEIGHT - 1);
@@ -226,7 +226,7 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
 #[test]
 fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
     let content = "0123456789\n"; // one space-free 10-char line
-    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.editor.focused = true;
     app.editor.cursors = CursorSet::new(0);
     app.editor.viewport.set_size(80, HEIGHT - 1); // wide: the whole line is one row

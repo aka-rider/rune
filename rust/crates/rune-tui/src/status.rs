@@ -22,6 +22,13 @@ pub fn status_text(app: &App) -> String {
     }
 
     let mut parts = vec![name];
+    // The degraded-store banner (plan WP5.S2/S3) is a SEPARATE, persistent
+    // slot from `status_message`'s provenance-cleared one — it must survive
+    // every ordinary status update, success or failure, until the process
+    // exits (WP5 has no store-reopen path).
+    if let Some(banner) = &app.db_banner {
+        parts.push(banner.clone());
+    }
     if let Some(msg) = &app.status_message {
         parts.push(msg.clone());
     }
@@ -51,11 +58,11 @@ mod tests {
     use super::*;
     use crate::app::App;
     use rune_core::buffer::Buffer;
-    use rune_core::vfs::Mem;
+    use rune_vfs::Mem;
     use std::sync::Arc;
 
     fn app_with(content: &str) -> App {
-        App::new(Buffer::new(content), None, Arc::new(Mem::new()))
+        App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
     }
 
     #[test]
@@ -68,6 +75,11 @@ mod tests {
     fn dirty_buffer_shows_dot_and_pending_quit_shows_hint() {
         let mut app = app_with("hello");
         app.editor.buffer = app.editor.buffer.insert(0, "x");
+        // A direct field mutation bypasses `update` — recompute the §1.4.8
+        // dirty cache by hand, exactly like the real edit path
+        // (`commands::edit::commit_edit_batch`) does after every journal
+        // mutation.
+        crate::app::recompute_dirty(&mut app);
         assert!(status_text(&app).contains(DIRTY_DOT));
 
         app.pending_quit = Some((crate::keymap::QuitKey::CtrlC, 0));

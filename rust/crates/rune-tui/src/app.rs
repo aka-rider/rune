@@ -7,10 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rune_core::buffer::Buffer;
-use rune_core::vfs::Vfs;
+use rune_db::{DbEvent, MatResult, OpOutcome};
 use rune_md::element::doc::ViewSnapshots;
+use rune_vfs::Vfs;
 
 use crate::commands::{clipboard, edit, nav};
+use crate::db::{self, AppDb};
 use crate::editor::Editor;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
@@ -18,6 +20,15 @@ use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 /// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
 /// press arms + spawns 2s timer Cmd carrying gen").
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The degraded-save confirm-gate's arm-to-confirm window — mirrors
+/// `CONFIRM_TIMEOUT` (plan WP5.S2/S6: "a pending-confirm state like the
+/// existing quit-confirm pattern").
+const SAVE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// The snapshot-autosave debounce window (plan WP5.S6, port of
+/// `workspace_timers.go:11`'s 2s debounce).
+const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 
 /// Which subsystem last wrote `App::status_message` — the provenance tag
 /// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
@@ -51,14 +62,45 @@ pub struct App {
     pub editor: Editor,
     pub file_path: Option<PathBuf>,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
+    /// The buffer version the LAST successful save/materialize ack
+    /// persisted — advanced ONLY from a store ack (`handle_materialize_ack`)
+    /// or, for the no-store fallback path, `Msg::SaveDone` (see
+    /// `trigger_save`'s docs). Never read directly by `is_dirty` — see
+    /// `is_dirty_cached`.
     pub saved_version: u64,
+    /// The version `materialize`/the fallback save `Cmd` targets while a
+    /// save is in flight — carried so its eventual ack only ever advances
+    /// `saved_version` to the version IT captured, never the buffer's
+    /// current (possibly further-edited) version (mirrors the pre-WP5
+    /// `Msg::SaveDone { version, .. }` field, now also needed for the
+    /// `materialize` path, whose ack carries no version of its own).
+    pub save_pending_version: Option<u64>,
     pub save_in_flight: bool,
+    /// The render-only dirty cache (CONSTITUTION §1.4.8): `is_dirty` reads
+    /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
+    /// two trigger points — see `recompute_dirty`'s doc comment.
+    is_dirty_cached: bool,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
     /// call always updates both fields together, so a stale value here
     /// after the message is cleared can never be observed.
     pub status_source: StatusSource,
+    /// This session's recovery store (plan WP5) — `None` only when no
+    /// store could be constructed at all (an extreme fallback distinct from
+    /// `AppDb::degraded`, which still has a live, if untrusted, store).
+    pub db: Option<AppDb>,
+    /// A persistent status banner independent of `status_message`'s
+    /// provenance-cleared slot (plan WP5.S2/S3: "persistent status banner")
+    /// — set once the store degrades (at open, or from a later
+    /// `on_store_failure`) and never cleared automatically (WP5 has no
+    /// store-reopen path).
+    pub db_banner: Option<String>,
+    /// The armed degraded-save confirm chord's timer generation — `None`
+    /// when no confirm is pending (plan WP5.S2/S6, mirroring `pending_quit`
+    /// below). Stale `SaveConfirmTimeout` generations are ignored.
+    pub pending_save_confirm: Option<u32>,
+    next_save_confirm_gen: u32,
     /// The armed quit chord and its timer generation — `None` when no quit
     /// is pending. Stale `ConfirmTimeout` generations are ignored (plan
     /// Context, "Quit-confirm").
@@ -71,16 +113,27 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(buffer: Buffer, file_path: Option<PathBuf>, vfs: Arc<dyn Vfs + Send + Sync>) -> App {
+    pub fn new(
+        buffer: Buffer,
+        file_path: Option<PathBuf>,
+        vfs: Arc<dyn Vfs + Send + Sync>,
+        db: Option<AppDb>,
+    ) -> App {
         let saved_version = buffer.version();
         App {
             editor: Editor::new(buffer),
             file_path,
             vfs,
             saved_version,
+            save_pending_version: None,
             save_in_flight: false,
+            is_dirty_cached: false,
             status_message: None,
             status_source: StatusSource::Other,
+            db,
+            db_banner: None,
+            pending_save_confirm: None,
+            next_save_confirm_gen: 0,
             pending_quit: None,
             next_quit_gen: 0,
             should_quit: false,
@@ -88,8 +141,25 @@ impl App {
         }
     }
 
+    /// Reads the render-only dirty cache — see `recompute_dirty`'s doc
+    /// comment for the two points that keep it current (CONSTITUTION
+    /// §1.4.8: dirty is recomputed only in `update`, never guessed at
+    /// render time).
     pub fn is_dirty(&self) -> bool {
-        self.editor.buffer.version() != self.saved_version
+        self.is_dirty_cached
+    }
+
+    /// Marks the freshly constructed buffer dirty relative to the file it
+    /// was hydrated from — for `rune-cli::main`'s bootstrap ONLY, called
+    /// (at most once, before the runtime loop and thus before `update` has
+    /// ever run) when `rune-db`'s `Load` ack reports `recovered !=
+    /// disk_content`: pending journaled edits this session inherited were
+    /// never actually written to disk. A direct fact from that ack, not a
+    /// guess (§1.4.8's "baseline only ever from store acks") — this is the
+    /// one place outside `update` allowed to touch the cache, precisely
+    /// because there is no `update` call yet at this point in the program.
+    pub fn mark_dirty_from_hydration(&mut self) {
+        self.is_dirty_cached = true;
     }
 
     pub fn file_name(&self) -> &str {
@@ -121,8 +191,25 @@ impl App {
 /// runtime loop to perform after the whole message batch is applied:
 /// `effects.raw` for OSC 52 (drained by the main loop, never a `Cmd` — plan
 /// Gotchas, "Cmds must never touch the terminal"), `effects.cmds` for
-/// off-thread work (save, pbpaste, the quit-confirm timer).
+/// off-thread work (save, pbpaste, the quit-confirm/save-confirm/snapshot
+/// timers).
+///
+/// Wraps `update_inner` with the ONE chokepoint for the snapshot-autosave
+/// debounce (plan WP5.S6): every message that mutates
+/// `app.editor.journal` — typing, undo/redo, cut, paste, ... — funnels
+/// through `commands::edit::commit_edit_batch`/`undo`/`redo`, so comparing
+/// the journal position before and after `update_inner` catches all of them
+/// uniformly, without threading a debounce call through every editing
+/// command's call site individually.
 pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
+    let journal_pos_before = app.editor.journal.pos();
+    update_inner(app, msg, effects);
+    if app.editor.journal.pos() != journal_pos_before {
+        schedule_snapshot_debounce(app, effects);
+    }
+}
+
+fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
         Msg::Resize(width, height) => {
@@ -162,6 +249,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
                     app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
                 }
             }
+            recompute_dirty(app);
         }
         Msg::ConfirmTimeout { generation } => {
             if let Some((_, pending_gen)) = app.pending_quit
@@ -172,6 +260,13 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
             // A stale generation (the user already quit-confirmed or
             // re-armed with a new chord since) is ignored.
         }
+        Msg::SaveConfirmTimeout { generation } => {
+            if app.pending_save_confirm == Some(generation) {
+                app.pending_save_confirm = None;
+            }
+        }
+        Msg::SnapshotDue { generation } => handle_snapshot_due(app, generation),
+        Msg::Db(evt) => handle_db_event(app, evt),
         Msg::Error(e) => {
             app.set_status(e, StatusSource::Other);
         }
@@ -179,6 +274,144 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
             app.should_quit = true;
         }
     }
+}
+
+/// A stale `generation` (a later journal mutation already rescheduled the
+/// debounce — `schedule_snapshot_debounce`) is ignored. `content` and the
+/// journal position ("current position", plan WP5.S6) are captured
+/// SYNCHRONOUSLY here, in `update` — never re-derived once the enqueued
+/// `CreateSnapshot` op actually runs on the writer thread (§1.4.2/§1.4.8's
+/// "caller-captured, never re-derived" discipline, same as `materialize`).
+/// Never touches the user's file — `create_snapshot` is a pure recovery
+/// anchor (`rune-db::snapshot`'s doc comment).
+fn handle_snapshot_due(app: &mut App, generation: u32) {
+    let Some(db) = app.db.as_ref() else { return };
+    if db.snapshot_generation != generation || db.degraded {
+        return;
+    }
+    let content = app.editor.buffer.content().to_string();
+    let result = db
+        .store
+        .create_snapshot(db.doc_id, &content, db.last_known_seq);
+    if let Err(e) = result {
+        on_store_failure(app, e.to_string());
+    }
+}
+
+/// Bumps the snapshot-autosave generation and (re)schedules its 2s debounce
+/// timer (plan WP5.S6, port of `workspace_timers.go:11`) — called once per
+/// message batch that mutated the journal, from `update`'s wrapper above.
+fn schedule_snapshot_debounce(app: &mut App, effects: &mut Effects) {
+    let Some(db) = app.db.as_mut() else { return };
+    db.snapshot_generation = db.snapshot_generation.wrapping_add(1);
+    let generation = db.snapshot_generation;
+    effects.cmds.push(snapshot_timeout_cmd(generation));
+}
+
+fn snapshot_timeout_cmd(generation: u32) -> Cmd {
+    Cmd::new(CmdKind::SnapshotDebounce, move || {
+        std::thread::sleep(SNAPSHOT_DEBOUNCE);
+        Some(Msg::SnapshotDue { generation })
+    })
+}
+
+/// Routes a `rune-db` writer-thread completion (plan WP5.S1). Only
+/// `Materialize` acks (the save path, WP5.S6) and `AppendEdit` acks (seq
+/// bookkeeping, `db::resolve_append_ack`) need a reaction on success;
+/// `MoveUndoPos`/`CreateSnapshot`/adoption acks are fire-and-forget. Any
+/// `Err`/`Fatal` degrades the store (plan decision 3) — never a buffer
+/// rollback.
+fn handle_db_event(app: &mut App, evt: DbEvent) {
+    match evt {
+        DbEvent::Ok {
+            result: OpOutcome::Seq(seq),
+            ..
+        } => db::resolve_append_ack(app, seq),
+        DbEvent::Ok {
+            result: OpOutcome::Materialize(mat),
+            ..
+        } => handle_materialize_ack(app, *mat),
+        DbEvent::Ok { .. } => {}
+        DbEvent::Err { error, .. } => on_store_failure(app, error),
+        DbEvent::Fatal { error } => on_store_failure(app, error),
+    }
+}
+
+/// The reaction to a `materialize` ack (plan WP5.S6): advances
+/// `saved_version`/`AppDb::expect_obs`/`bind_new` on a commit, surfaces each
+/// `MatResult` outcome as status text, and — either way — clears
+/// `save_in_flight` and recomputes the dirty cache (trigger (b) of
+/// `recompute_dirty`'s doc comment).
+fn handle_materialize_ack(app: &mut App, mat: MatResult) {
+    app.save_in_flight = false;
+    let pending_version = app.save_pending_version.take();
+
+    if mat.committed {
+        if let Some(saved) = &mat.saved
+            && let Some(db) = app.db.as_mut()
+        {
+            db.expect_obs = saved.id;
+            db.bind_new = false;
+        }
+        if let Some(version) = pending_version
+            && version > app.saved_version
+        {
+            app.saved_version = version;
+        }
+        if app.status_source == StatusSource::SaveError {
+            app.status_message = None;
+        }
+        if mat.raced {
+            app.set_status(
+                "saved \u{2014} a concurrent external change was overwritten; its bytes were preserved",
+                StatusSource::Other,
+            );
+        }
+    } else if mat.missing {
+        app.set_status(
+            "save failed: file no longer exists",
+            StatusSource::SaveError,
+        );
+    } else {
+        app.set_status(
+            "save refused \u{2014} the file changed on disk since it was opened",
+            StatusSource::SaveError,
+        );
+    }
+    recompute_dirty(app);
+}
+
+/// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed
+/// (plan decision 3): the in-memory buffer/journal are NEVER rolled back —
+/// only the store is marked degraded (sticky; WP5 has no reopen path) and a
+/// persistent banner is raised. If a save was in flight, its guard is
+/// released and the failure surfaces as an ordinary save error too, so
+/// `trigger_save`'s in-flight guard can never wedge open on a lost ack.
+pub(crate) fn on_store_failure(app: &mut App, error: String) {
+    if let Some(db) = app.db.as_mut() {
+        db.degraded = true;
+    }
+    app.db_banner = Some(format!("recovery disabled: {error}"));
+    if app.save_in_flight {
+        app.save_in_flight = false;
+        app.save_pending_version = None;
+        app.set_status(format!("save failed: {error}"), StatusSource::SaveError);
+    }
+}
+
+/// CONSTITUTION §1.4.8: `is_dirty` reads only the cache this recomputes —
+/// called from `update` at exactly two trigger points: (a) any journal
+/// mutation (`commands::edit::commit_edit_batch`/`undo`/`redo`, immediately
+/// after they mutate `app.editor.journal`) and (b) any `DbEvent` ack that
+/// moves the baseline (`handle_materialize_ack`, immediately after
+/// `saved_version` itself changes). The comparison is the buffer-version
+/// proxy already established pre-WP5 (`saved_version`, now advanced ONLY by
+/// a successful materialize ack or the no-store fallback's `SaveDone`) —
+/// both trigger points call this immediately after whichever of
+/// `saved_version`/`buffer.version()` they just changed, so the cache never
+/// observes a stale pairing.
+pub(crate) fn recompute_dirty(app: &mut App) {
+    app.is_dirty_cached = app.editor.buffer.version() != app.saved_version;
 }
 
 fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
@@ -312,18 +545,24 @@ fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
     })
 }
 
-/// `super+s` (WP9, plan Context "Save"): guarded by the in-flight flag (a
-/// second `super+s` before the first save's `Cmd` reports back is a no-op —
-/// there is exactly one save `Cmd` in flight at a time, so its eventual
-/// `Msg::SaveDone` can never be ambiguous about which attempt it answers)
-/// and by `version != saved_version` (nothing to persist otherwise). Clones
-/// the buffer's bytes and its CURRENT version onto the `Cmd`'s own thread —
-/// never the buffer itself, never the `Vfs` call site's shared state — so
-/// the actual `save_atomic` I/O happens entirely off the main thread
-/// (§5.4). `version` rides along on `Msg::SaveDone` so `update`'s handler
-/// can tell whether further edits landed while this save was in flight (see
-/// its docs) rather than blindly trusting "a save just finished" to mean
-/// "the buffer is now clean".
+/// `super+s` (WP9, plan Context "Save"; WP5.S6 routes it through
+/// `rune-db`'s `materialize` on the writer FIFO when a store is present).
+/// Guarded by the in-flight flag (a second `super+s` before the first
+/// save's ack reports back is a no-op) and by `version != saved_version`
+/// (nothing to persist otherwise).
+///
+/// When the store is degraded (open-ladder fallback or a later
+/// `on_store_failure`), the FIRST `super+s` only arms a confirm gate
+/// (mirrors `handle_quit_key`'s pending_quit shape, plan WP5.S2: "confirm
+/// gate before materialize") — a document with no durable recovery journal
+/// can still be saved, but only once the user has explicitly acknowledged
+/// that crash protection is off; a SECOND `super+s` within the window
+/// proceeds.
+///
+/// With no store at all (an extreme fallback beyond even `degraded` —
+/// Prime Directive: the user must always be able to save, plan decision 5:
+/// "losing the DB never damages a user file"), falls back to the pre-WP5
+/// direct `vfs.save_atomic` `Cmd`.
 fn trigger_save(app: &mut App, effects: &mut Effects) {
     if app.save_in_flight {
         return;
@@ -340,15 +579,83 @@ fn trigger_save(app: &mut App, effects: &mut Effects) {
         return;
     };
 
+    let Some(db) = &app.db else {
+        // No store at all — the pre-WP5 direct-vfs fallback.
+        app.save_in_flight = true;
+        let bytes = app.editor.buffer.content().as_bytes().to_vec();
+        let vfs = Arc::clone(&app.vfs);
+        effects.cmds.push(save_cmd(vfs, path, bytes, version));
+        return;
+    };
+
+    if db.degraded {
+        if let Some(generation) = app.pending_save_confirm {
+            let _ = generation;
+            app.pending_save_confirm = None;
+            materialize_now(app, path, version);
+        } else {
+            let generation = app.next_save_confirm_gen;
+            app.next_save_confirm_gen = app.next_save_confirm_gen.wrapping_add(1);
+            app.pending_save_confirm = Some(generation);
+            app.set_status(
+                "recovery disabled \u{2014} press \u{2318}S again to save anyway",
+                StatusSource::Other,
+            );
+            effects.cmds.push(save_confirm_timeout_cmd(generation));
+        }
+        return;
+    }
+
+    materialize_now(app, path, version);
+}
+
+/// Enqueues `content` to `rune-db`'s writer FIFO via `Store::materialize`
+/// (plan WP5.S6). Not a `Cmd`: `Store::enqueue` is a plain, non-blocking
+/// channel send (never I/O that leaves this thread — the actual disk write
+/// happens on the writer thread, whose eventual `DbEvent::Ok{ result:
+/// OpOutcome::Materialize(..), .. }` ack arrives as `Msg::Db`, handled by
+/// `handle_materialize_ack`), so §5.4 lets `update` call it directly.
+/// `content`/`expect`/`seq`/`bind_new` are all captured HERE, synchronously
+/// — never re-derived once the op runs (§1.4.2/§1.4.8).
+fn materialize_now(app: &mut App, path: PathBuf, version: u64) {
+    let Some(db) = app.db.as_ref() else { return };
+    let content = app.editor.buffer.content().to_string();
+    let result = db.store.materialize(
+        db.doc_id,
+        &path,
+        &content,
+        db.expect_obs,
+        db.last_known_seq,
+        db.bind_new,
+    );
+
     app.save_in_flight = true;
-    let bytes = app.editor.buffer.content().as_bytes().to_vec();
-    let vfs = Arc::clone(&app.vfs);
-    effects.cmds.push(save_cmd(vfs, path, bytes, version));
+    app.save_pending_version = Some(version);
+    if let Err(e) = result {
+        // A store enqueue-time failure is exactly the same class of event
+        // as an async `DbEvent::Err`/`Fatal` (plan decision 3) — degrade
+        // the store and raise the sticky banner via the same chokepoint
+        // `append_edit`/`move_undo_pos` use (`handle_snapshot_due`,
+        // `db.rs`), not a one-shot `SaveError` status that leaves `db.
+        // degraded` untouched and lets the next save silently retry
+        // against an already-wedged writer.
+        on_store_failure(app, e.to_string());
+    }
+}
+
+/// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6) — mirrors
+/// `quit_confirm_timeout_cmd`'s shape exactly.
+fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
+    Cmd::new(CmdKind::SaveConfirmTimeout, move || {
+        std::thread::sleep(SAVE_CONFIRM_TIMEOUT);
+        Some(Msg::SaveConfirmTimeout { generation })
+    })
 }
 
 /// The off-thread save I/O itself: `vfs.save_atomic` (§1.4.1's durable
 /// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
 /// `bytes` — §1.4.5 byte-verbatim, no normalization anywhere on this path.
+/// Only reached when `App::db` is `None` — see `trigger_save`'s docs.
 fn save_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, version: u64) -> Cmd {
     Cmd::new(CmdKind::Save, move || {
         let result = vfs.save_atomic(&path, &bytes).map_err(|e| e.to_string());
@@ -361,10 +668,10 @@ fn save_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, vers
 mod tests {
     use super::*;
     use crate::keymap::{KeyCode, Mods};
-    use rune_core::vfs::{Disk, Mem, Vfs};
+    use rune_vfs::{Disk, Mem, Vfs};
 
     fn test_app() -> App {
-        App::new(Buffer::new("hello"), None, Arc::new(Mem::new()))
+        App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
     }
 
     fn key(code: KeyCode, mods: Mods) -> KeyInput {
@@ -688,6 +995,7 @@ mod tests {
                 Buffer::new(content),
                 Some(path.clone()),
                 Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+                None,
             );
             // The buffer as freshly loaded IS the saved state (App::new sets
             // `saved_version = buffer.version()`) — force it dirty without
@@ -719,6 +1027,7 @@ mod tests {
             Buffer::new("hello"),
             Some(path),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+            None,
         );
         app.saved_version = 0; // force dirty — see the byte-exact test's comment
 
@@ -738,6 +1047,7 @@ mod tests {
             Buffer::new("hello"),
             Some(PathBuf::from("/doc.md")),
             Arc::new(Mem::new()),
+            None,
         );
         app.editor.buffer = app.editor.buffer.insert(0, "x"); // makes it dirty
 
@@ -763,6 +1073,7 @@ mod tests {
             Buffer::new("hello"),
             Some(path),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+            None,
         );
         app.saved_version = 0; // force dirty — see the byte-exact test's comment
 
@@ -798,7 +1109,12 @@ mod tests {
         assert!(!path.exists(), "the fixture path must not exist yet");
 
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
-        let mut app = App::new(Buffer::new("brand new file\n"), Some(path.clone()), vfs);
+        let mut app = App::new(
+            Buffer::new("brand new file\n"),
+            Some(path.clone()),
+            vfs,
+            None,
+        );
         app.saved_version = 0; // force dirty — see the byte-exact test's comment
 
         let effects = press_save(&mut app);
@@ -818,6 +1134,7 @@ mod tests {
             Buffer::new("x"),
             Some(PathBuf::from("/doc.md")),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
+            None,
         );
         app.saved_version = 0; // force dirty without touching content (see above)
         let effects = press_save(&mut app);

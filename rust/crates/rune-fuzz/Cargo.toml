@@ -7,6 +7,7 @@ edition.workspace = true
 rune-core = { path = "../rune-core" }
 rune-md = { path = "../rune-md" }
 rune-tui = { path = "../rune-tui" }
+rune-vfs = { path = "../rune-vfs" }
 base64 = { workspace = true }
 # A normal (not dev) dependency: the generators live in `src/generate.rs` so the
 # fuzz target, the tripwire, and the replay test all share one grammar.
