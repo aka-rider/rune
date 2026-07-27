@@ -174,7 +174,12 @@ pub fn request_close(app: &mut App, id: DocumentId) {
 /// Sweeps `db_ops` of any entry still pointing at `id` — a stale ack would
 /// already be a correct no-op via `App::doc_mut` returning `None` (see its
 /// docs), but leaving the entry forever would make `db_ops` an unbounded
-/// leak over a long session of open/close cycles.
+/// leak over a long session of open/close cycles. Clears `pending_close_on_
+/// save`/`pending_save_confirm` when either still targets `id` (review fix
+/// for the latter — it was left dangling): both are doc-tagged `Option`s
+/// that would otherwise point at a document that no longer exists, e.g. a
+/// stray `SaveConfirmTimeout` generation match resurrecting a confirm gate
+/// for a doc `[D]iscard` just closed.
 pub fn close_now(app: &mut App, id: DocumentId) {
     if app.documents.len() <= 1 || !app.documents.contains_key(&id) {
         return;
@@ -189,6 +194,9 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     app.db_ops.retain(|_, doc_id| *doc_id != id);
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
+    }
+    if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
+        app.pending_save_confirm = None;
     }
 
     app.tabs.nav.cursor = app
