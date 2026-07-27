@@ -20,6 +20,7 @@ use rune_core::buffer::Buffer;
 use rune_db::DbEvent;
 use rune_vfs::Vfs;
 
+use crate::banner::Modal;
 use crate::commands::{clipboard, edit, nav};
 use crate::db::Db;
 use crate::document::{Document, DocumentId};
@@ -45,9 +46,9 @@ pub enum StatusSource {
     /// A failed (or un-attempted, e.g. "no file to save") save attempt —
     /// the ONLY source a successful `Msg::SaveDone` is allowed to clear.
     SaveError,
-    /// Everything else: edit/undo/redo failures, `Msg::Error` (a pbpaste
-    /// failure, a caught background-`Cmd` panic, the input stream ending),
-    /// ...
+    /// Everything else: edit/undo/redo failures, the degraded-save confirm
+    /// hint, ... `Msg::Error` no longer writes `status_message` at all (plan
+    /// WP3.S4: routed through `banner::report_error`, a modal, instead).
     #[default]
     Other,
 }
@@ -110,6 +111,11 @@ pub struct App {
     /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module in
     /// WP2) is the sole minter of new generations.
     pub(crate) next_quit_gen: u32,
+    /// The single modal slot (plan WP3, decision 13): `Some` while an error
+    /// banner (WP5: or a close-guard prompt) is up. `banner::set_modal` is
+    /// the one chokepoint that writes a NEW modal here (plan Risks, "Banner
+    /// reentrancy"); stage 1's `Esc`/`c` handling is the only other writer.
+    pub modal: Option<Modal>,
     pub should_quit: bool,
 }
 
@@ -143,6 +149,7 @@ impl App {
             next_save_confirm_gen: 0,
             pending_quit: None,
             next_quit_gen: 0,
+            modal: None,
             should_quit: false,
         }
     }
@@ -232,16 +239,20 @@ impl App {
     /// visible) — a later multi-pane WP re-evaluates this against whichever
     /// documents are actually on screen.
     ///
-    /// Derives the active document's `focused` flag from `App::focus`
-    /// FIRST, every call (plan Gotchas: `focused = app.focus == Pane::
-    /// Editor` — no modal yet, so that's the whole rule) — this is
-    /// `Document::focused`'s one writer from here on, never a direct field
-    /// set elsewhere.
+    /// Derives the active document's `focused` flag from `App::focus` FIRST,
+    /// every call (plan Gotchas: `&& app.modal.is_none()` — a modal up means
+    /// the editor is never really focused). Also re-syncs the modal
+    /// document, if one is up (WP3.S3), at the terminal's own width — kept
+    /// in this settle step, never inside `render::draw` itself (§5.4).
     pub fn sync_view(&mut self) {
-        let focused = self.focus == Pane::Editor;
+        let focused = self.focus == Pane::Editor && self.modal.is_none();
         self.active_doc_mut().focused = focused;
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
+        if self.modal.is_some() {
+            let width = self.active_doc().viewport.width;
+            crate::banner::sync_modal(self, width);
+        }
     }
 
     /// The single writer of a NEW `status_message`: every call site that
@@ -319,9 +330,10 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
         Msg::Db(evt) => handle_db_event(app, evt),
-        Msg::Error(e) => {
-            app.set_status(e, StatusSource::Other);
-        }
+        // Routed through the modal banner, not `status_message` (plan
+        // WP3.S4) — `report_error` is the one chokepoint every error
+        // report funnels through.
+        Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -367,13 +379,17 @@ fn handle_db_event(app: &mut App, evt: DbEvent) {
     }
 }
 
-/// The four-stage key pipeline (plan Context, decision 8): (1) modal
-/// capture — WP3 inserts `App::modal` handling here; (2) the global chord
-/// table (`GLOBAL_BINDINGS`), fired regardless of focus — quit/Save must
-/// work while a stub pane owns focus (WP2.S4); (3) the focused pane's own
-/// keymap; (4) `Ignored` -> nothing.
+/// The four-stage key pipeline (plan Context, decision 8): (1) modal capture
+/// (`banner::handle_key`) — every key consumed there while `App.modal` is
+/// `Some`, quit chords included; (2) the global chord table
+/// (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3) the focused
+/// pane's own keymap; (4) `Ignored` -> nothing.
 fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    // Stage 1 (modal capture) lands in WP3 — insertion point.
+    // Stage 1: modal capture, before any other stage ever sees this key.
+    if app.modal.is_some() {
+        crate::banner::handle_key(app, key, effects);
+        return;
+    }
 
     // Stage 2: global chrome keys, before any pane sees the key.
     if let Some(cmd) = keymap::resolve_in(keymap::GLOBAL_BINDINGS, key) {
