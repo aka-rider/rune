@@ -22,9 +22,9 @@ const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.editor.focused = true;
-    app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
-    app.editor.viewport.set_size(WIDTH, HEIGHT - 1);
+    app.active_doc_mut().focused = true;
+    app.active_doc_mut().cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
 }
@@ -95,46 +95,46 @@ fn full_text(buf: &RtBuffer) -> String {
 fn char_right_then_left_returns_to_start() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Right, Mods::NONE);
-    assert_eq!(app.editor.cursors.primary().position, 1);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 1);
     press(&mut app, KeyCode::Left, Mods::NONE);
-    assert_eq!(app.editor.cursors.primary().position, 0);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 0);
 }
 
 #[test]
 fn char_left_at_buffer_start_does_not_go_negative() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Left, Mods::NONE);
-    assert_eq!(app.editor.cursors.primary().position, 0);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 0);
 }
 
 #[test]
 fn word_right_left_navigate_word_boundaries() {
     let mut app = app_for("hello world", 0);
     press(&mut app, KeyCode::Right, ALT);
-    assert_eq!(app.editor.cursors.primary().position, 5);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 5);
     press(&mut app, KeyCode::Left, ALT);
-    assert_eq!(app.editor.cursors.primary().position, 0);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 0);
 }
 
 #[test]
 fn home_end_move_to_line_boundaries() {
     let mut app = app_for("hello\nworld", 8); // caret inside "world"
     press(&mut app, KeyCode::Home, Mods::NONE);
-    assert_eq!(app.editor.cursors.primary().position, 6);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 6);
     press(&mut app, KeyCode::End, Mods::NONE);
-    assert_eq!(app.editor.cursors.primary().position, 11);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 11);
 }
 
 #[test]
 fn shift_right_extends_a_selection_plain_right_collapses_it() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Right, SHIFT);
-    let c = app.editor.cursors.primary();
+    let c = app.active_doc_mut().cursors.primary();
     assert_eq!((c.anchor, c.position), (0, 1));
     assert!(c.has_selection());
 
     press(&mut app, KeyCode::Right, Mods::NONE);
-    let c = app.editor.cursors.primary();
+    let c = app.active_doc_mut().cursors.primary();
     assert!(!c.has_selection(), "a plain move consumes the selection");
 }
 
@@ -142,7 +142,7 @@ fn shift_right_extends_a_selection_plain_right_collapses_it() {
 fn select_all_selects_the_whole_buffer() {
     let mut app = app_for("hello world", 3);
     press(&mut app, KeyCode::Char('a'), SUP);
-    let c = app.editor.cursors.primary();
+    let c = app.active_doc_mut().cursors.primary();
     assert_eq!((c.anchor, c.position), (0, 11));
 }
 
@@ -150,9 +150,9 @@ fn select_all_selects_the_whole_buffer() {
 fn escape_collapses_a_selection_to_the_caret() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Right, SHIFT);
-    assert!(app.editor.cursors.primary().has_selection());
+    assert!(app.active_doc_mut().cursors.primary().has_selection());
     press(&mut app, KeyCode::Escape, Mods::NONE);
-    let c = app.editor.cursors.primary();
+    let c = app.active_doc_mut().cursors.primary();
     assert!(!c.has_selection());
     assert_eq!(c.position, 1);
 }
@@ -164,17 +164,17 @@ fn page_down_then_page_up_returns_to_the_original_row() {
         lines.push_str(&format!("line{i}\n"));
     }
     let mut app = app_for(&lines, 0);
-    let before = app.editor.cursors.primary();
+    let before = app.active_doc_mut().cursors.primary();
 
     press(&mut app, KeyCode::PageDown, Mods::NONE);
-    let after_down = app.editor.cursors.primary();
+    let after_down = app.active_doc_mut().cursors.primary();
     assert_ne!(
         after_down.position, before.position,
         "page down must move the caret"
     );
 
     press(&mut app, KeyCode::PageUp, Mods::NONE);
-    let after_up = app.editor.cursors.primary();
+    let after_up = app.active_doc_mut().cursors.primary();
     assert_eq!(
         after_up.position, before.position,
         "page up must return to the original row"
@@ -189,24 +189,27 @@ fn page_down_then_page_up_returns_to_the_original_row() {
 fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     let content = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"; // no spaces: force-break wrap
     let mut app = app_for(content, 0);
-    app.editor.viewport.set_size(8, HEIGHT - 1);
+    app.active_doc_mut().viewport.set_size(8, HEIGHT - 1);
 
     for _ in 0..5 {
         press(&mut app, KeyCode::Right, Mods::NONE);
     }
-    let after_right = app.editor.cursors.primary();
+    let after_right = app.active_doc_mut().cursors.primary();
     assert_eq!(after_right.position, 5);
     assert_eq!(after_right.desired_col, 5);
 
     press(&mut app, KeyCode::Down, Mods::NONE);
-    let after_down = app.editor.cursors.primary();
+    let after_down = app.active_doc_mut().cursors.primary();
     assert_eq!(
         after_down.desired_col, 5,
         "desired_col must be preserved across a vertical move"
     );
 
-    let view = app.editor.view();
-    let bp = app.editor.buffer.offset_to_line_col(after_down.position);
+    let view = app.active_doc_mut().view();
+    let bp = app
+        .active_doc_mut()
+        .buffer
+        .offset_to_line_col(after_down.position);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
     assert_eq!(
@@ -227,14 +230,14 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
 fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
     let content = "0123456789\n"; // one space-free 10-char line
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.editor.focused = true;
-    app.editor.cursors = CursorSet::new(0);
-    app.editor.viewport.set_size(80, HEIGHT - 1); // wide: the whole line is one row
+    app.active_doc_mut().focused = true;
+    app.active_doc_mut().cursors = CursorSet::new(0);
+    app.active_doc_mut().viewport.set_size(80, HEIGHT - 1); // wide: the whole line is one row
     app.sync_view();
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Resize(5, HEIGHT), &mut effects);
-    assert_eq!(app.editor.viewport.width, 5);
+    assert_eq!(app.active_doc_mut().viewport.width, 5);
 
     // No `app.sync_view()` here: this Key must be handled within the same
     // logical batch as the Resize above, purely off `Editor::sync()`.
@@ -245,7 +248,7 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
         &mut effects2,
     );
 
-    let after = app.editor.cursors.primary();
+    let after = app.active_doc_mut().cursors.primary();
     assert_eq!(
         after.position, 5,
         "Down must move within the narrow (width-5) wrap of the SAME logical \
@@ -265,8 +268,8 @@ fn scroll_row_does_not_move_until_the_batch_settles() {
         lines.push_str(&format!("line{i}\n"));
     }
     let mut app = app_for(&lines, 0);
-    app.editor.viewport.set_size(WIDTH, 10);
-    let scroll_before = app.editor.viewport.scroll_row;
+    app.active_doc_mut().viewport.set_size(WIDTH, 10);
+    let scroll_before = app.active_doc_mut().viewport.scroll_row;
 
     // Bypass the `press` helper (which calls `sync_view()` after every
     // key) to observe the PRE-settle state directly.
@@ -279,7 +282,8 @@ fn scroll_row_does_not_move_until_the_batch_settles() {
         );
     }
     assert_eq!(
-        app.editor.viewport.scroll_row, scroll_before,
+        app.active_doc_mut().viewport.scroll_row,
+        scroll_before,
         "scroll_row must not move until the batch settles"
     );
 
@@ -287,7 +291,7 @@ fn scroll_row_does_not_move_until_the_batch_settles() {
     // batch) scrolls in one shot to follow the final cursor.
     app.sync_view();
     assert!(
-        app.editor.viewport.scroll_row > scroll_before,
+        app.active_doc_mut().viewport.scroll_row > scroll_before,
         "scroll_row must follow the cursor once the batch settles"
     );
 }
@@ -328,8 +332,8 @@ fn typing_inserts_characters_in_order_and_moves_the_caret() {
     for ch in "hi!".chars() {
         press(&mut app, KeyCode::Char(ch), Mods::NONE);
     }
-    assert_eq!(app.editor.buffer.content(), "hi!");
-    assert_eq!(app.editor.cursors.primary().position, 3);
+    assert_eq!(app.active_doc_mut().buffer.content(), "hi!");
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 3);
 }
 
 #[test]
@@ -346,11 +350,11 @@ fn typing_over_a_selection_replaces_it() {
     for _ in 0..5 {
         press(&mut app, KeyCode::Right, SHIFT); // select "hello"
     }
-    assert!(app.editor.cursors.primary().has_selection());
+    assert!(app.active_doc_mut().cursors.primary().has_selection());
 
     press(&mut app, KeyCode::Char('X'), Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "X world");
-    let c = app.editor.cursors.primary();
+    assert_eq!(app.active_doc_mut().buffer.content(), "X world");
+    let c = app.active_doc_mut().cursors.primary();
     assert_eq!(c.position, 1);
     assert!(!c.has_selection());
 }
@@ -359,33 +363,33 @@ fn typing_over_a_selection_replaces_it() {
 fn backspace_key_removes_the_char_to_the_left() {
     let mut app = app_for("abc", 1);
     press(&mut app, KeyCode::Backspace, Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "bc");
-    assert_eq!(app.editor.cursors.primary().position, 0);
+    assert_eq!(app.active_doc_mut().buffer.content(), "bc");
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 0);
 }
 
 #[test]
 fn delete_key_removes_the_char_to_the_right() {
     let mut app = app_for("abc", 0);
     press(&mut app, KeyCode::Delete, Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "bc");
-    assert_eq!(app.editor.cursors.primary().position, 0);
+    assert_eq!(app.active_doc_mut().buffer.content(), "bc");
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 0);
 }
 
 #[test]
 fn enter_inserts_a_newline_preserving_indentation() {
     let mut app = app_for("  indented", 10);
     press(&mut app, KeyCode::Enter, Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "  indented\n  ");
+    assert_eq!(app.active_doc_mut().buffer.content(), "  indented\n  ");
 }
 
 #[test]
 fn tab_indents_the_current_line_shift_tab_outdents_it() {
     let mut app = app_for("hello", 2);
     press(&mut app, KeyCode::Tab, Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "\thello");
+    assert_eq!(app.active_doc_mut().buffer.content(), "\thello");
 
     press(&mut app, KeyCode::Tab, SHIFT);
-    assert_eq!(app.editor.buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
 }
 
 // ---- Undo/redo (WP7) ----
@@ -394,51 +398,51 @@ fn tab_indents_the_current_line_shift_tab_outdents_it() {
 fn undo_restores_byte_exact_content_and_redo_reapplies_it() {
     let mut app = app_for("hello", 5);
     press(&mut app, KeyCode::Char('!'), Mods::NONE);
-    assert_eq!(app.editor.buffer.content(), "hello!");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello!");
 
     press(&mut app, KeyCode::Char('z'), SUP); // Undo
-    assert_eq!(app.editor.buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
-    assert_eq!(app.editor.buffer.content(), "hello!");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello!");
 }
 
 #[test]
 fn undo_redo_never_split_a_cjk_or_emoji_char() {
     let mut app = app_for("你好", "你".len());
-    let original = app.editor.buffer.content().to_string();
+    let original = app.active_doc_mut().buffer.content().to_string();
 
     press(&mut app, KeyCode::Char('\u{1f389}'), Mods::NONE); // insert 🎉 between 你 and 好
-    assert_eq!(app.editor.buffer.content(), "你\u{1f389}好");
+    assert_eq!(app.active_doc_mut().buffer.content(), "你\u{1f389}好");
 
     press(&mut app, KeyCode::Char('z'), SUP); // Undo
     assert_eq!(
-        app.editor.buffer.content(),
+        app.active_doc_mut().buffer.content(),
         original,
         "undo must restore the original content byte-exact, including CJK"
     );
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
-    assert_eq!(app.editor.buffer.content(), "你\u{1f389}好");
+    assert_eq!(app.active_doc_mut().buffer.content(), "你\u{1f389}好");
 }
 
 #[test]
 fn undo_redo_restore_the_recorded_cursor_position() {
     let mut app = app_for("hello", 2);
     press(&mut app, KeyCode::Char('X'), Mods::NONE); // insert at 2 -> caret at 3
-    assert_eq!(app.editor.cursors.primary().position, 3);
+    assert_eq!(app.active_doc_mut().cursors.primary().position, 3);
 
     press(&mut app, KeyCode::Char('z'), SUP); // Undo
-    assert_eq!(app.editor.buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
     assert_eq!(
-        app.editor.cursors.primary().position,
+        app.active_doc_mut().cursors.primary().position,
         2,
         "undo must restore the pre-edit cursor position"
     );
 
     press(&mut app, KeyCode::Char('z'), SUP_SHIFT); // Redo
     assert_eq!(
-        app.editor.cursors.primary().position,
+        app.active_doc_mut().cursors.primary().position,
         3,
         "redo must restore the post-edit cursor position"
     );
@@ -448,5 +452,5 @@ fn undo_redo_restore_the_recorded_cursor_position() {
 fn undo_with_an_empty_journal_is_a_no_op() {
     let mut app = app_for("hello", 0);
     press(&mut app, KeyCode::Char('z'), SUP);
-    assert_eq!(app.editor.buffer.content(), "hello");
+    assert_eq!(app.active_doc_mut().buffer.content(), "hello");
 }

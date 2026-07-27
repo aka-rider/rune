@@ -21,9 +21,10 @@ const HEIGHT: u16 = 24;
 
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
-    app.editor.focused = focused;
-    app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
-    app.editor.viewport.set_size(WIDTH, HEIGHT - 1);
+    let id = app.active;
+    app.doc_mut(id).focused = focused;
+    app.doc_mut(id).cursors = CursorSet::new(cursor_offset.min(content.len()));
+    app.doc_mut(id).viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
     app
 }
@@ -170,7 +171,7 @@ fn status_line_present_on_last_row() {
 fn cell_grid_buf_offsets_map_back_into_the_source_text() {
     let content = "## Heading\n";
     let app = app_for(content, 0, true); // cursor on the heading line: revealed
-    let view = app.view.as_ref().expect("synced view");
+    let view = app.active_doc().view.as_ref().expect("synced view");
     let rows = render::build_rows(view, &app);
 
     let first_row = rows.first().expect("at least one row");
@@ -225,7 +226,7 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
     assert!(text.contains("ab"), "expected 'ab' visible:\n{text}");
     assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
 
-    let view = app.view.as_ref().expect("synced view");
+    let view = app.active_doc().view.as_ref().expect("synced view");
     let rows = render::build_rows(view, &app);
     for row in &rows {
         for cell in row {
@@ -250,8 +251,8 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     let cursor_offset = 3; // byte offset of 'c', right after the tab
     let app = app_for(content, cursor_offset, true);
 
-    let view = app.view.as_ref().expect("synced view");
-    let buffer_point = app.editor.buffer.offset_to_line_col(cursor_offset);
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let expected_visual_col = view.wrap.visual_col(wrap_point.row, wrap_point.col);
@@ -284,8 +285,8 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let cursor_offset = 4; // byte offset of 'a': 3 bytes of 汉 + 1 byte tab
     let app = app_for(content, cursor_offset, true);
 
-    let view = app.view.as_ref().expect("synced view");
-    let buffer_point = app.editor.buffer.offset_to_line_col(cursor_offset);
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
     let expected_visual_col = view.wrap.visual_col(wrap_point.row, wrap_point.col);
@@ -336,7 +337,7 @@ fn control_char_gets_a_safe_placeholder_glyph() {
         "expected the BEL control-picture placeholder (U+2407):\n{text:?}"
     );
 
-    let view = app.view.as_ref().expect("synced view");
+    let view = app.active_doc().view.as_ref().expect("synced view");
     let rows = render::build_rows(view, &app);
     let placeholder = rows
         .first()

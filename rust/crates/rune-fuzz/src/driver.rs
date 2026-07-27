@@ -80,8 +80,9 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
         vfs,
         None,
     );
-    app.editor.focused = true;
-    app.editor.viewport.set_size(80, 23);
+    let doc_id = app.active;
+    app.doc_mut(doc_id).focused = true;
+    app.doc_mut(doc_id).viewport.set_size(80, 23);
     app.sync_view();
 
     let mut state = State {
@@ -301,7 +302,10 @@ fn key_step(key: KeyInput) -> (Msg, MsgTag) {
 fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Vec<u8>)> {
     let (cmd, bytes) = state.pending_save.take()?;
     let msg = cmd.run()?;
-    let Msg::SaveDone { version, result } = &msg else {
+    let Msg::SaveDone {
+        version, result, ..
+    } = &msg
+    else {
         return None;
     };
     let tag = MsgTag::SaveDone {
@@ -432,23 +436,23 @@ fn should_sample(step: usize) -> bool {
 /// Builds the current visible rows, or an empty grid before the first
 /// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
 fn build_rows_or_empty(app: &App) -> Vec<Vec<Cell>> {
-    match &app.view {
+    match &app.active_doc().view {
         Some(view) => render::build_rows(view, app),
         None => Vec::new(),
     }
 }
 
-/// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Editor::
+/// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::
 /// view` never reads `viewport.scroll_row`, and `Viewport::scroll_to_row`
 /// converges in one call). Calls `app.sync_view()` a SECOND time with no
 /// intervening message and compares the rendered rows and scroll position
 /// against the state just before that second call; a divergence is a real
 /// non-settling scroll or a non-memoized parse, never a false positive.
 fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
-    let scroll_before = app.editor.viewport.scroll_row;
+    let scroll_before = app.active_doc().viewport.scroll_row;
     let rows_before = build_rows_or_empty(app);
     app.sync_view();
-    let scroll_after = app.editor.viewport.scroll_row;
+    let scroll_after = app.active_doc().viewport.scroll_row;
     let rows_after = build_rows_or_empty(app);
     invariant::sync_idempotent(&rows_before, scroll_before, &rows_after, scroll_after)
 }
@@ -459,7 +463,7 @@ fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
 /// wrap` — never a fixed/stale bound, so this can never false-positive
 /// against a legitimately re-wrapped document.
 fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
-    let view = app.view.as_ref()?;
+    let view = app.active_doc().view.as_ref()?;
     let line_lens = invariant::wrap_line_lens(&view.wrap, line_count);
     invariant::wrap_rt(&view.wrap, &line_lens)
 }
