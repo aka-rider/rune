@@ -39,6 +39,7 @@ impl List {
     /// [top + margin .. top + height - 1 - margin], with a jump buffer.
     pub fn follow(&mut self, len: usize, height: usize, margin: usize, jump: usize) {
         if len == 0 || height == 0 {
+            self.top = 0;
             return;
         }
 
@@ -46,10 +47,6 @@ impl List {
         let total = len as isize;
         let mut offset = self.top as isize;
         let cursor = self.cursor as isize;
-
-        if size <= 0 {
-            return;
-        }
 
         // Clamp margin to (size-1)/2 if margin*2 > size
         let mut m = margin as isize;
@@ -90,8 +87,8 @@ impl List {
         if height == 0 || len == 0 {
             return 0..0;
         }
-        let start = self.top;
-        let end = (self.top + height).min(len);
+        let start = self.top.min(len);
+        let end = (start + height).min(len);
         start..end
     }
 }
@@ -172,5 +169,21 @@ mod tests {
         let w = list.window(18, 5);
         // top=17, height=5 → 17..18 (clamped to len=18)
         assert_eq!(w, 17..18);
+    }
+
+    #[test]
+    fn follow_resets_top_on_empty_list() {
+        // top must be reset to 0 when len or height is 0, not left stale
+        let mut list = List { cursor: 0, top: 9 };
+        list.follow(0, 5, 1, 0);
+        assert_eq!(list.top, 0);
+    }
+
+    #[test]
+    fn window_start_clamped_past_end() {
+        // When top > len, start must be clamped to len, not produce backwards range
+        let list = List { cursor: 0, top: 17 };
+        let w = list.window(10, 5);
+        assert_eq!(w, 10..10);
     }
 }
