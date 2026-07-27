@@ -20,6 +20,8 @@
 //! continuing to process ops against a connection left in an unknown state.
 
 use std::panic::{self, AssertUnwindSafe};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::time::SystemTime;
@@ -28,9 +30,15 @@ use rusqlite::Connection;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
+use rune_vfs::Vfs;
 
 use crate::Error;
+use crate::load::LoadResult;
+use crate::materialize::MatResult;
+use crate::observation::{ObsId, Observation};
 use crate::retry;
+use crate::store::LivenessCheckFn;
+use crate::sync::SyncState;
 
 /// Bounded writer-queue depth (plan Assumption A2). At per-keystroke-batch
 /// granularity this is many seconds of furious typing; overflow implies a
@@ -92,6 +100,75 @@ pub enum OpKind {
         content: String,
         seq: i64,
     },
+    /// Port of `probe.go:38-102` (`Probe`). Disk I/O (`vfs.resolve`/`stat`/
+    /// `read`) happens between this op's own internal transactions, never
+    /// inside one (plan WP4.S3) — see `probe::probe`.
+    Probe {
+        session_id: i64,
+        doc_id: i64,
+        now: SystemTime,
+    },
+    /// Port of `materialize.go` (`Materialize`) — the CAS write protocol.
+    /// `content`/`expect`/`seq` are caller-captured at enqueue time
+    /// (`Store::materialize`), never re-derived inside (plan WP4.S4).
+    #[allow(clippy::upper_case_acronyms)]
+    Materialize {
+        session_id: i64,
+        doc_id: i64,
+        path: PathBuf,
+        content: String,
+        expect: ObsId,
+        seq: i64,
+        bind_new: bool,
+        now: SystemTime,
+    },
+    /// Port of `load.go` (`Load`). `liveness_check` is this `Store`'s own
+    /// injected liveness function (`Store::set_liveness_check`), threaded
+    /// through per-op rather than read from shared state, so the writer
+    /// thread never needs to touch `Store`'s mutex.
+    Load {
+        session_id: i64,
+        liveness_check: LivenessCheckFn,
+        path: PathBuf,
+        now: SystemTime,
+    },
+    /// Port of `adopt.go:9-31` (`ResolveAdopt`).
+    ResolveAdopt {
+        session_id: i64,
+        doc_id: i64,
+        obs: ObsId,
+        edit_seq: i64,
+        now: SystemTime,
+    },
+    /// Port of `adopt.go:33-99` (`ResolveAbandon`).
+    ResolveAbandon { session_id: i64, doc_id: i64 },
+}
+
+/// The domain-specific result an [`OpKind`] produced, carried in
+/// `DbEvent::Ok.result`. Broadened from WP2/WP3's single `Option<i64>`
+/// (plan WP4 Hard rules: "extend WriteOp/OpKind + Store verbs") now that
+/// `Probe`/`Materialize`/`Load` produce structured results richer than a
+/// row id.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OpOutcome {
+    /// No meaningful return value (`Noop`, `MoveUndoPos`, `ResolveAbandon`).
+    None,
+    /// `AppendEdit`'s journal seq.
+    Seq(i64),
+    /// `CreateSnapshot`'s new `snapshots.id`.
+    RowId(i64),
+    /// `Probe`'s resulting [`SyncState`]. Boxed: `SyncState` carries several
+    /// `Option<Version>`/`String` fields, large enough that clippy's
+    /// `large_enum_variant` flags the unboxed enum — the common, cheap
+    /// variants (`None`/`Seq`/`RowId`) shouldn't all pay for the rare, rich
+    /// ones' size.
+    Sync(Box<SyncState>),
+    /// `Materialize`'s [`MatResult`] (boxed — see `Sync`'s doc comment).
+    Materialize(Box<MatResult>),
+    /// `Load`'s [`LoadResult`] (boxed — see `Sync`'s doc comment).
+    Load(Box<LoadResult>),
+    /// `ResolveAdopt`'s resulting [`Observation`].
+    Observation(Observation),
 }
 
 /// A completion posted by the writer thread for one [`WriteOp`], or a fatal
@@ -100,13 +177,11 @@ pub enum OpKind {
 pub enum DbEvent {
     Ok {
         id: u64,
-        /// The domain-specific result the op produced, if any (e.g.
-        /// `AppendEdit`'s journal seq, `CreateSnapshot`'s row id) — `None`
-        /// for ops with no meaningful return value (`Noop`, `MoveUndoPos`).
+        /// The domain-specific result the op produced (see [`OpOutcome`]).
         /// One flexible field rather than a family of `*Ok` variants (plan
-        /// decision 4's "Ok/classified Err", extended minimally — WP3
+        /// decision 4's "Ok/classified Err", extended minimally — WP3/WP4
         /// Hard rules: "extend WriteOp/OpKind as needed").
-        result: Option<i64>,
+        result: OpOutcome,
     },
     Err {
         id: u64,
@@ -156,21 +231,30 @@ impl WriterHandle {
 
 /// Spawns the writer thread owning `conn`. `conn` must already have its
 /// schema applied and pragmas set (`store::open`'s responsibility) — this
-/// function only spawns the loop.
-pub fn spawn(conn: Connection, on_event: OnEvent) -> WriterHandle {
+/// function only spawns the loop. `vfs` is the ONE filesystem every
+/// disk-touching op (`Probe`/`Materialize`/`Load`) uses (plan decision 12 /
+/// WP4) — owned by this thread exclusively, exactly like `conn`.
+pub fn spawn(conn: Connection, vfs: Arc<dyn Vfs + Send + Sync>, on_event: OnEvent) -> WriterHandle {
     let (sender, receiver) = mpsc::sync_channel(QUEUE_DEPTH);
-    let thread = thread::spawn(move || writer_loop(conn, receiver, on_event));
+    let thread = thread::spawn(move || writer_loop(conn, vfs, receiver, on_event));
     WriterHandle {
         sender,
         thread: Some(thread),
     }
 }
 
-fn writer_loop(mut conn: Connection, receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent) {
+fn writer_loop(
+    mut conn: Connection,
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    receiver: mpsc::Receiver<WriteOp>,
+    on_event: OnEvent,
+) {
     while let Ok(op) = receiver.recv() {
         let id = op.id;
         let kind = op.kind;
-        let outcome = panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, kind)));
+        let vfs_ref = vfs.as_ref();
+        let outcome =
+            panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, vfs_ref, kind)));
         match outcome {
             Ok(Ok(result)) => on_event(DbEvent::Ok { id, result }),
             Ok(Err(e)) => on_event(DbEvent::Err {
@@ -196,17 +280,20 @@ fn writer_loop(mut conn: Connection, receiver: mpsc::Receiver<WriteOp>, on_event
 /// Runs `kind` to completion against `conn`, inside `retry::with_retry`'s
 /// `BEGIN IMMEDIATE` chokepoint (plan Gotchas) for every variant that
 /// touches the database. Returns the domain result (if any) that becomes
-/// `DbEvent::Ok.result`.
-fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<Option<i64>, Error> {
+/// `DbEvent::Ok.result`. `Probe`/`Materialize`/`Load` call several
+/// `retry::with_retry` transactions internally, interleaved with `vfs`
+/// calls made with NO transaction open (plan binding rule / Go invariant
+/// I1) — `execute_op` itself never wraps their whole body in one tx.
+fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOutcome, Error> {
     match kind {
         OpKind::Noop => {
             retry::with_retry(conn, |_tx| Ok(()))?;
-            Ok(None)
+            Ok(OpOutcome::None)
         }
         #[cfg(test)]
         OpKind::TestBlock(rx) => {
             let _ = rx.recv();
-            Ok(None)
+            Ok(OpOutcome::None)
         }
         OpKind::AppendEdit {
             session_id,
@@ -227,7 +314,7 @@ fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<Option<i64>, Error>
                     &cursors_after,
                 )
             })?;
-            Ok(Some(seq))
+            Ok(OpOutcome::Seq(seq))
         }
         OpKind::MoveUndoPos {
             session_id,
@@ -237,7 +324,7 @@ fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<Option<i64>, Error>
             retry::with_retry(conn, |tx| {
                 crate::journal::move_undo_pos(tx, session_id, doc_id, pos)
             })?;
-            Ok(None)
+            Ok(OpOutcome::None)
         }
         OpKind::CreateSnapshot {
             session_id,
@@ -249,7 +336,55 @@ fn execute_op(conn: &mut Connection, kind: OpKind) -> Result<Option<i64>, Error>
             let row_id = retry::with_retry(conn, |tx| {
                 crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, seq)
             })?;
-            Ok(Some(row_id))
+            Ok(OpOutcome::RowId(row_id))
+        }
+        OpKind::Probe {
+            session_id,
+            doc_id,
+            now,
+        } => {
+            let state = crate::probe::probe(conn, vfs, session_id, doc_id, now)?;
+            Ok(OpOutcome::Sync(Box::new(state)))
+        }
+        OpKind::Materialize {
+            session_id,
+            doc_id,
+            path,
+            content,
+            expect,
+            seq,
+            bind_new,
+            now,
+        } => {
+            let result = crate::materialize::materialize(
+                conn, vfs, session_id, doc_id, &path, &content, expect, seq, bind_new, now,
+            )?;
+            Ok(OpOutcome::Materialize(Box::new(result)))
+        }
+        OpKind::Load {
+            session_id,
+            liveness_check,
+            path,
+            now,
+        } => {
+            let result =
+                crate::load::load(conn, vfs, session_id, liveness_check.as_ref(), &path, now)?;
+            Ok(OpOutcome::Load(Box::new(result)))
+        }
+        OpKind::ResolveAdopt {
+            session_id,
+            doc_id,
+            obs,
+            edit_seq,
+            now,
+        } => {
+            let observation =
+                crate::adopt::resolve_adopt(conn, session_id, doc_id, obs, edit_seq, now)?;
+            Ok(OpOutcome::Observation(observation))
+        }
+        OpKind::ResolveAbandon { session_id, doc_id } => {
+            crate::adopt::resolve_abandon(conn, session_id, doc_id)?;
+            Ok(OpOutcome::None)
         }
     }
 }
@@ -271,6 +406,10 @@ mod tests {
         conn
     }
 
+    fn test_vfs() -> Arc<dyn Vfs + Send + Sync> {
+        Arc::new(rune_vfs::Mem::new())
+    }
+
     #[test]
     fn noop_op_round_trips_ok() {
         let events: Arc<Mutex<Vec<DbEvent>>> = Arc::new(Mutex::new(Vec::new()));
@@ -282,7 +421,7 @@ mod tests {
                 .push(evt);
         });
 
-        let handle = spawn(open_ready_connection(), on_event);
+        let handle = spawn(open_ready_connection(), test_vfs(), on_event);
         handle
             .try_send(WriteOp {
                 id: 7,
@@ -302,7 +441,7 @@ mod tests {
                 events.first(),
                 Some(DbEvent::Ok {
                     id: 7,
-                    result: None
+                    result: OpOutcome::None
                 })
             ),
             "expected exactly one Ok(id: 7, result: None), got {events:?}"
@@ -332,7 +471,7 @@ mod tests {
         let on_event: OnEvent = Box::new(move |evt| {
             let _ = tx.send(evt);
         });
-        let handle = spawn(conn, on_event);
+        let handle = spawn(conn, test_vfs(), on_event);
 
         handle
             .try_send(WriteOp {
@@ -356,9 +495,13 @@ mod tests {
         let evt = rx.recv().expect("append edit completion");
         match evt {
             DbEvent::Ok { id: 1, result } => {
-                assert_eq!(result, Some(1), "first event for this doc must be seq 1");
+                assert_eq!(
+                    result,
+                    OpOutcome::Seq(1),
+                    "first event for this doc must be seq 1"
+                );
             }
-            other => panic!("expected Ok(id:1, result:Some(seq)), got {other:?}"),
+            other => panic!("expected Ok(id:1, result:Seq(seq)), got {other:?}"),
         }
 
         handle.shutdown();
@@ -369,7 +512,7 @@ mod tests {
         let (block_tx, block_rx) = mpsc::channel::<()>();
         let on_event: OnEvent = Box::new(|_evt| {});
 
-        let handle = spawn(open_ready_connection(), on_event);
+        let handle = spawn(open_ready_connection(), test_vfs(), on_event);
 
         // The first op stalls the writer thread indefinitely until we
         // signal it — a deterministic rendezvous, not a sleep.

@@ -64,7 +64,12 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<String, Error> {
     String::from_utf8(data).map_err(|e| Error::CorruptPayload(e.to_string()))
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+/// Exposed `pub(crate)` (rather than kept private) so `observation.rs`
+/// (`hashBytes`, `observation.go:207-212`) and `sync.rs` (`emptyHash`,
+/// `sync.go:149-152`) share this ONE hex-SHA-256 implementation instead of a
+/// second copy — the same hash space `blobs.hash`/`observations.blob_hash`
+/// both live in.
+pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(bytes);

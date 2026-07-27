@@ -91,6 +91,16 @@ impl Mem {
     fn lock_state(&self) -> MutexGuard<'_, MemState> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
+
+    /// Test/debug introspection only: every path currently stored,
+    /// including orphaned temps a caller never published or removed. Used
+    /// by `rune-db`'s materialize failure-path tests to prove a temp file
+    /// left behind by a failed publish still physically exists (§1.4.10's
+    /// "capture/never silently discard" spirit) without hand-computing
+    /// `temp_name`'s private naming scheme.
+    pub fn debug_paths(&self) -> Vec<PathBuf> {
+        self.lock_state().files.keys().cloned().collect()
+    }
 }
 
 impl Default for Mem {

@@ -23,6 +23,9 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags};
 
+use rune_vfs::Vfs;
+
+use crate::observation::ObsId;
 use crate::writer::{OnEvent, OpKind, WriteOp};
 use crate::{Error, reader, session, writer};
 
@@ -66,10 +69,18 @@ impl Store {
     /// may surface the warning to the user but must not treat it as
     /// failure. `on_event` receives every writer-thread completion (plan
     /// decision 4) — `rune-tui` (WP5) adapts it into the runtime's
-    /// `Sender<Msg>`.
-    pub fn open(path: &Path, on_event: OnEvent) -> Result<(Store, Option<String>), Error> {
+    /// `Sender<Msg>`. `fs` is the ONE filesystem `Probe`/`Materialize`/
+    /// `Load` use (plan decision 12) — production passes
+    /// `Arc::new(rune_vfs::Disk)`; tests and the fuzzer pass a shared
+    /// `Arc::new(rune_vfs::Mem::new())` so the store and workspace resolve
+    /// identity and disk state against the SAME files.
+    pub fn open(
+        path: &Path,
+        fs: Arc<dyn Vfs + Send + Sync>,
+        on_event: OnEvent,
+    ) -> Result<(Store, Option<String>), Error> {
         let rung = open_ladder(path)?;
-        Self::from_ladder(rung, on_event)
+        Self::from_ladder(rung, fs, on_event)
     }
 
     /// Opens a store entirely in memory, undegraded (unlike the fallback
@@ -77,12 +88,18 @@ impl Store {
     /// tests and, eventually, the session fuzzer). `clock` seeds this
     /// store's clock from construction, matching Go's `OpenInMemory`
     /// honoring a caller-supplied clock even at session-establish time.
-    pub fn open_in_memory(clock: ClockFn, on_event: OnEvent) -> Result<Store, Error> {
+    pub fn open_in_memory(
+        clock: ClockFn,
+        fs: Arc<dyn Vfs + Send + Sync>,
+        on_event: OnEvent,
+    ) -> Result<Store, Error> {
         let uri = memory_uri();
-        let conn = open_memory_backed(&uri)?;
+        let mut conn = open_memory_backed(&uri)?;
         let now = clock();
         let session_id = session::establish_session(&conn, now)?;
-        let writer = writer::spawn(conn, on_event);
+        let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
+        let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
+        let writer = writer::spawn(conn, fs, on_event);
         let reader = reader::spawn(&uri)?;
         Ok(Store {
             writer,
@@ -91,19 +108,27 @@ impl Store {
             session_id,
             next_op_id: AtomicU64::new(1),
             clock: Mutex::new(clock),
-            liveness_check: Mutex::new(Arc::new(session::is_process_alive)),
+            liveness_check: Mutex::new(liveness_check),
         })
     }
 
     fn from_ladder(
         rung: LadderResult,
+        fs: Arc<dyn Vfs + Send + Sync>,
         on_event: OnEvent,
     ) -> Result<(Store, Option<String>), Error> {
         let clock: ClockFn = Arc::new(SystemTime::now);
         let now = clock();
-        let session_id = session::establish_session(&rung.writer_conn, now)?;
+        let mut writer_conn = rung.writer_conn;
+        let session_id = session::establish_session(&writer_conn, now)?;
 
-        let writer = writer::spawn(rung.writer_conn, on_event);
+        // Best-effort dead-session reaper (plan WP4.S6): never blocks open
+        // — a failure here is swallowed, not surfaced, exactly like Go's
+        // `openStoreAt` (`liveness.go:93` doc comment).
+        let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
+        let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
+
+        let writer = writer::spawn(writer_conn, fs, on_event);
         let reader = reader::spawn(&rung.reader_target)?;
 
         let store = Store {
@@ -113,7 +138,7 @@ impl Store {
             session_id,
             next_op_id: AtomicU64::new(1),
             clock: Mutex::new(clock),
-            liveness_check: Mutex::new(Arc::new(session::is_process_alive)),
+            liveness_check: Mutex::new(liveness_check),
         };
         Ok((store, rung.warning))
     }
@@ -220,6 +245,89 @@ impl Store {
             content: content.to_string(),
             seq,
         })
+    }
+
+    /// Enqueues a `Probe` op refreshing `doc_id`'s disk fact. Port of
+    /// `probe.go:38` (`Probe`) — see `probe::probe` for the transaction
+    /// sequence. The resulting `SyncState` arrives asynchronously as
+    /// `DbEvent::Ok.result` (`OpOutcome::Sync`).
+    pub fn probe(&self, doc_id: i64) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::Probe {
+            session_id: self.session_id,
+            doc_id,
+            now,
+        })
+    }
+
+    /// Enqueues a `Materialize` op writing `content` to `doc_id`'s bound
+    /// file under the CAS contract described by `expect`/`seq`/`bind_new` —
+    /// both caller-captured at enqueue time, never re-derived once the op
+    /// runs (§1.4.2/§1.4.8). Port of `materialize.go:69` (`Materialize`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn materialize(
+        &self,
+        doc_id: i64,
+        path: &Path,
+        content: &str,
+        expect: ObsId,
+        seq: i64,
+        bind_new: bool,
+    ) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::Materialize {
+            session_id: self.session_id,
+            doc_id,
+            path: path.to_path_buf(),
+            content: content.to_string(),
+            expect,
+            seq,
+            bind_new,
+            now,
+        })
+    }
+
+    /// Enqueues a `Load` op reading `path` fresh from disk. This `Store`'s
+    /// currently-installed liveness check (`set_liveness_check`) travels
+    /// with the op so the writer thread never needs to touch `Store`'s own
+    /// mutex. Port of `load.go:38` (`Load`).
+    pub fn load(&self, path: &Path) -> Result<u64, Error> {
+        let now = self.now();
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::Load {
+            session_id: self.session_id,
+            liveness_check,
+            path: path.to_path_buf(),
+            now,
+        })
+    }
+
+    /// Enqueues a `ResolveAdopt` op — a user-driven [D]iscard/[M]erge
+    /// resolution. Port of `adopt.go:20` (`ResolveAdopt`).
+    pub fn resolve_adopt(&self, doc_id: i64, obs: ObsId, edit_seq: i64) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::ResolveAdopt {
+            session_id: self.session_id,
+            doc_id,
+            obs,
+            edit_seq,
+            now,
+        })
+    }
+
+    /// Enqueues a `ResolveAbandon` op — the Esc-abort-out-of-the-merge-
+    /// resolver counterpart to `resolve_adopt`. Port of `adopt.go:47`
+    /// (`ResolveAbandon`).
+    pub fn resolve_abandon(&self, doc_id: i64) -> Result<u64, Error> {
+        self.enqueue(OpKind::ResolveAbandon {
+            session_id: self.session_id,
+            doc_id,
+        })
+    }
+
+    /// A fresh sample of this store's injected clock.
+    fn now(&self) -> SystemTime {
+        (self.clock.lock().unwrap_or_else(|p| p.into_inner()))()
     }
 
     /// The reader handle, for display/immutable reads dispatched from a
@@ -362,6 +470,10 @@ mod tests {
         Box::new(|_evt| {})
     }
 
+    fn test_vfs() -> Arc<dyn Vfs + Send + Sync> {
+        Arc::new(rune_vfs::Disk)
+    }
+
     /// Two `Store::open` calls against the SAME temp path (same process)
     /// both succeed, each establishing its own `sessions` row, and the file
     /// really is in WAL mode.
@@ -370,11 +482,11 @@ mod tests {
         let dir = temp_dir("two-opens");
         let path = dir.join("rune-v1.db");
 
-        let (store_a, warn_a) = Store::open(&path, noop_on_event()).expect("open a");
+        let (store_a, warn_a) = Store::open(&path, test_vfs(), noop_on_event()).expect("open a");
         assert!(warn_a.is_none());
         assert!(!store_a.degraded());
 
-        let (store_b, warn_b) = Store::open(&path, noop_on_event()).expect("open b");
+        let (store_b, warn_b) = Store::open(&path, test_vfs(), noop_on_event()).expect("open b");
         assert!(warn_b.is_none());
         assert!(!store_b.degraded());
 
@@ -406,7 +518,8 @@ mod tests {
         std::fs::write(&blocker, b"not a directory").expect("create blocker file");
         let path = blocker.join("subdir").join("rune-v1.db");
 
-        let (store, warning) = Store::open(&path, noop_on_event()).expect("open must not error");
+        let (store, warning) =
+            Store::open(&path, test_vfs(), noop_on_event()).expect("open must not error");
         assert!(store.degraded());
         assert_eq!(warning.as_deref(), Some(DEGRADED_WARNING));
 
@@ -422,7 +535,8 @@ mod tests {
     #[test]
     fn open_in_memory_is_never_degraded() {
         let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-        let store = Store::open_in_memory(clock, noop_on_event()).expect("open in memory");
+        let store =
+            Store::open_in_memory(clock, test_vfs(), noop_on_event()).expect("open in memory");
         assert!(!store.degraded());
         assert_eq!(store.session_id(), 1);
         store.shutdown();

@@ -95,7 +95,12 @@ mod tests {
         let dir = tempfile_dir("versioning-frozen-contract");
         let path = dir.join(db_file_name(SCHEMA_VERSION));
 
-        let (store, warning) = Store::open(&path, Box::new(|_evt| {})).expect("open store");
+        let (store, warning) = Store::open(
+            &path,
+            std::sync::Arc::new(rune_vfs::Disk),
+            Box::new(|_evt| {}),
+        )
+        .expect("open store");
         assert!(
             warning.is_none(),
             "fresh writable temp dir must not degrade"

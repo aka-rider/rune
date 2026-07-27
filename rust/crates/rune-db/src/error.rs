@@ -60,6 +60,23 @@ pub enum Error {
     /// `buffer.ReplayForward` used to silently clamp/skip; §1.3 forbids
     /// that here — see `snapshot.rs`'s module doc).
     ReplayFailed(String),
+    /// A lookup that Go wraps `sql.ErrNoRows` into a genuine error for
+    /// (rather than a silent zero value) — e.g. `getObservation`
+    /// (`observation.go:315-328`) on an id with no row. Never used for a
+    /// legitimate "not found" outcome a caller treats as ordinary control
+    /// flow (those stay `Option`/`bool`, per this crate's own
+    /// Options-for-absent-facts rule) — only for a caller-supplied
+    /// reference (an `ObsId`, a bound path) that MUST resolve.
+    NotFound(String),
+    /// A WP4 business-rule refusal with no dedicated variant — the direct
+    /// port of an ad hoc `fmt.Errorf` guard in the Go source (e.g.
+    /// `Materialize`'s "no path bound (untitled document)",
+    /// `ResolveAbandon`'s "not a resolve adoption" refusal) or a
+    /// non-UTF-8 disk read (the Rust port's `Buffer`/`AppliedEdit` model
+    /// is `String`-based throughout, unlike Go's raw `[]byte`↔`string`
+    /// conversions, which tolerate arbitrary bytes — see `probe.rs`/
+    /// `materialize.rs`/`load.rs` doc comments).
+    Invalid(String),
 }
 
 impl fmt::Display for Error {
@@ -80,6 +97,8 @@ impl fmt::Display for Error {
                 "get blob {hash}: content hash mismatch (corrupt blob): got {got}"
             ),
             Error::ReplayFailed(msg) => write!(f, "replay failed: {msg}"),
+            Error::NotFound(msg) => write!(f, "not found: {msg}"),
+            Error::Invalid(msg) => write!(f, "{msg}"),
         }
     }
 }
