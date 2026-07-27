@@ -93,6 +93,33 @@ pub enum GuardKind {
     DirtyClose,
 }
 
+/// One `[X]abel` option in the dirty-close Guard's footer chord list: `key`
+/// is the exact char `handle_guard_key` below matches via `eq_ignore_ascii_
+/// case`; `label` is what `footer.rs`'s `Mode::Guard` rendering shows for
+/// it. The ONE source both sides read from (review fix: `footer.rs`
+/// previously carried its own independently hand-maintained `[S]ave
+/// [D]iscard [Esc] Cancel` literal, free to drift from this function's
+/// `s`/`d`/Esc match arms).
+pub struct GuardOption {
+    pub key: char,
+    pub label: &'static str,
+}
+
+pub const DIRTY_CLOSE_SAVE: GuardOption = GuardOption {
+    key: 's',
+    label: "[S]ave",
+};
+pub const DIRTY_CLOSE_DISCARD: GuardOption = GuardOption {
+    key: 'd',
+    label: "[D]iscard",
+};
+/// In display order — `footer.rs` iterates this for the Save/Discard pair;
+/// `Esc`/Cancel isn't a `GuardOption` (it never triggers an ACTION beyond
+/// clearing the modal, so there's no behavior to key off) and keeps its own
+/// `DIRTY_CLOSE_CANCEL_LABEL` below instead.
+pub const DIRTY_CLOSE_OPTIONS: &[GuardOption] = &[DIRTY_CLOSE_SAVE, DIRTY_CLOSE_DISCARD];
+pub const DIRTY_CLOSE_CANCEL_LABEL: &str = "[Esc] Cancel";
+
 /// The banner's private state (plan WP3.S1): a read-only `Document` that is
 /// NOT in `App.documents` and has no tab — `render::draw`'s editor-area
 /// blit and every doc-scoped command (`commands::nav`/`commands::edit`) never
@@ -258,14 +285,14 @@ fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     let doc = prompt.doc;
     match key.code {
         KeyCode::Escape => app.modal = None,
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s') => {
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
             app.modal = None;
             crate::save::trigger_save(app, doc, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }
         }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'d') => {
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
             app.modal = None;
             crate::workspace::close_now(app, doc);
         }

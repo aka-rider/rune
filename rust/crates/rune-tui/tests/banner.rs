@@ -176,7 +176,7 @@ fn page_down_scrolls_by_the_actually_rendered_banner_height() {
     app::update(&mut app, key(KeyCode::PageDown), &mut effects2);
 
     let banner::Modal::Error(state) = app.modal.as_ref().expect("modal set") else {
-        panic!("expected the Error modal");
+        unreachable!("expected the Error modal");
     };
     assert_eq!(
         state.doc.viewport.scroll_row, expected as usize,
