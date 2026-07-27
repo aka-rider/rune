@@ -17,6 +17,7 @@ use rune_vfs::Vfs;
 use crate::app::{App, StatusSource};
 use crate::document::DocumentId;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use crate::workspace;
 
 /// The degraded-save confirm-gate's arm-to-confirm window — mirrors
 /// `app::CONFIRM_TIMEOUT` (plan WP5.S2/S6: "a pending-confirm state like the
@@ -187,6 +188,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         );
     }
     recompute_dirty(app, id);
+    close_if_pending(app, id, mat.committed);
 }
 
 /// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
@@ -201,6 +203,7 @@ pub(crate) fn handle_save_done(
 ) {
     let Some(doc) = app.doc_mut(id) else { return };
     doc.save_in_flight = false;
+    let succeeded = result.is_ok();
     match result {
         Ok(()) => {
             if let Some(doc) = app.doc_mut(id)
@@ -222,6 +225,28 @@ pub(crate) fn handle_save_done(
         }
     }
     recompute_dirty(app, id);
+    close_if_pending(app, id, succeeded);
+}
+
+/// The close-on-save-ack chokepoint (plan WP5.S3): both save completion
+/// paths (`handle_materialize_ack`'s store-backed flow and this module's
+/// own no-store `handle_save_done` fallback — Assumption A1 documents with
+/// `db: None` take THIS path, never the other) funnel through here. Only
+/// closes when `id` is STILL the document `pending_close_on_save` names —
+/// a later unrelated `^w`/Guard interaction on a DIFFERENT document
+/// overwrites that single global slot, which correctly abandons (never
+/// mis-fires) this document's stale close intent — and only when the save
+/// itself actually succeeded; a failed save leaves the document open with
+/// its usual error surfaced instead of losing the user's only path back to
+/// it.
+fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
+    if app.pending_close_on_save != Some(id) {
+        return;
+    }
+    app.pending_close_on_save = None;
+    if succeeded {
+        workspace::close_now(app, id);
+    }
 }
 
 /// A stale `generation` (a later journal mutation already rescheduled the

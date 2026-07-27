@@ -21,36 +21,37 @@ use rune_core::buffer::Buffer;
 
 use crate::app::App;
 use crate::clipboard::osc52_copy;
-use crate::document::Document;
+use crate::document::{Document, DocumentId};
 use crate::keymap::{KeyCode, KeyInput};
 use crate::render::{self, Cell};
 use crate::runtime::Effects;
 
 /// One modal state `App.modal` can hold — `Option<Modal>`, never a stack:
 /// only ever the single highest-priority modal currently warranted (see
-/// `set_modal`). `Error` is WP3's only variant; WP5 adds `Guard` beneath it.
+/// `set_modal`). `Error` is WP3's variant; `Guard` (plan WP5.S3) is the
+/// close-confirmation prompt for a dirty document, ranked BELOW it (see
+/// `priority` below) — a fresh error always wins over a stale close prompt,
+/// but a close prompt never silently displaces an error already up.
 pub enum Modal {
-    Error(ErrorState),
+    /// Boxed (clippy `large_enum_variant`): `ErrorState` embeds a whole
+    /// `Document`, hundreds of bytes against `GuardPrompt`'s single
+    /// `DocumentId` — without this every `Modal` value, `Guard` included,
+    /// would pay `ErrorState`'s size.
+    Error(Box<ErrorState>),
+    Guard(GuardPrompt),
 }
 
 impl Modal {
     /// Higher wins ties (`set_modal`'s `>=`): a second `Error` while an
     /// `Error` is already up REPLACES it (plan Risks: a fresh error is
-    /// never suppressed by a stale one) rather than being dropped. WP5's
-    /// `Guard` arm returns a value below this one, so an `Error` raised
-    /// while a `Guard` is up always wins, but a `Guard` raised while an
-    /// `Error` is up does not silently displace it.
+    /// never suppressed by a stale one) rather than being dropped. `Guard`
+    /// sits below `Error`, so an `Error` raised while a `Guard` is up
+    /// always wins, but a `Guard` raised while an `Error` is up does not
+    /// silently displace it.
     fn priority(&self) -> u8 {
         match self {
             Modal::Error(_) => 10,
-        }
-    }
-
-    /// The bytes `'c'`/`'C'` (stage-1 key capture) copies via OSC 52 — the
-    /// modal document's whole buffer content, byte-verbatim.
-    fn copy_bytes(&self) -> Vec<u8> {
-        match self {
-            Modal::Error(state) => state.doc.buffer.content().as_bytes().to_vec(),
+            Modal::Guard(_) => 5,
         }
     }
 
@@ -59,7 +60,10 @@ impl Modal {
     /// "`DisplaySnapshot.total_rows` gives the height input"). `0` before
     /// the modal's first `sync_modal` pass (never observed in practice:
     /// `App::sync_view` syncs it the same tick `set_modal` raises it, before
-    /// the next `render::draw`).
+    /// the next `render::draw`) — and `0`, always, for `Guard`: its prompt
+    /// has no banner-body document at all, it renders entirely through the
+    /// footer's Guard display mode (plan WP5.S3: "options rendered by the
+    /// footer").
     pub fn total_rows(&self) -> usize {
         match self {
             Modal::Error(state) => state
@@ -68,8 +72,25 @@ impl Modal {
                 .as_ref()
                 .map(|v| v.display.total_rows)
                 .unwrap_or(0),
+            Modal::Guard(_) => 0,
         }
     }
+}
+
+/// The close-confirmation prompt for a dirty document (plan WP5.S3): armed
+/// by `workspace::request_close` when the document at `doc` is dirty, and
+/// resolved by stage 1's `handle_guard_key` below — `[S]ave`/`[D]iscard`/
+/// `Esc`. `kind` is a single-variant enum today (only one prompt shape
+/// exists) rather than a bare marker struct, so a later second Guard use
+/// case (untitled-draft close, say) is an additive `GuardKind` arm, not a
+/// second `Modal` variant.
+pub struct GuardPrompt {
+    pub doc: DocumentId,
+    pub kind: GuardKind,
+}
+
+pub enum GuardKind {
+    DirtyClose,
 }
 
 /// The banner's private state (plan WP3.S1): a read-only `Document` that is
@@ -125,7 +146,7 @@ pub fn set_modal(app: &mut App, modal: Modal) {
 /// WP3.S1/S4) instead of writing `app.status_message` directly — a full
 /// banner instead of a footer-line message.
 pub fn report_error(app: &mut App, text: impl Into<String>) {
-    set_modal(app, Modal::Error(ErrorState::new(&text.into())));
+    set_modal(app, Modal::Error(Box::new(ErrorState::new(&text.into()))));
 }
 
 /// Re-syncs the modal's private `Document` at `width` and caches the
@@ -146,22 +167,36 @@ pub fn sync_modal(app: &mut App, width: u16) {
             let view = state.doc.sync();
             state.doc.view = Some(view);
         }
+        // No banner-body document to sync — see `Modal::total_rows`'s docs.
+        Modal::Guard(_) => {}
     }
 }
 
 /// Stage 1 of the four-stage key pipeline (plan Context, decision 8;
 /// `app::handle_key`'s insertion point): while `app.modal` is `Some`, EVERY
 /// key is consumed HERE — quit chords included, a modal interposes on quit
-/// by design (plan WP3.S2) — never falling through to stage 2/3. `Esc`
-/// clears the modal; `c`/`C` copies the modal document's whole buffer via
-/// OSC 52 then clears it; `Up`/`Down`/`PageUp`/`PageDown` scroll it;
-/// everything else is a consumed no-op.
+/// by design (plan WP3.S2) — never falling through to stage 2/3. Dispatches
+/// by WHICH modal is up: `Error`'s own key handling is unchanged from WP3;
+/// `Guard`'s is new in WP5.
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    match &app.modal {
+        Some(Modal::Error(_)) => handle_error_key(app, key, effects),
+        Some(Modal::Guard(_)) => handle_guard_key(app, key, effects),
+        None => {}
+    }
+}
+
+/// `Esc` clears the modal; `c`/`C` copies the modal document's whole buffer
+/// via OSC 52 then clears it; `Up`/`Down`/`PageUp`/`PageDown` scroll it;
+/// everything else is a consumed no-op.
+fn handle_error_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Escape => app.modal = None,
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c') => {
-            if let Some(modal) = &app.modal {
-                effects.raw.push(osc52_copy(&modal.copy_bytes()));
+            if let Some(Modal::Error(state)) = &app.modal {
+                effects
+                    .raw
+                    .push(osc52_copy(state.doc.buffer.content().as_bytes()));
             }
             app.modal = None;
         }
@@ -173,13 +208,44 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     }
 }
 
+/// `s`/`S` saves `prompt.doc` then closes it — but ONLY once `trigger_save`
+/// actually started a save (`doc.save_in_flight` true right after calling
+/// it): a document with no file path, or one that just armed the degraded-
+/// store confirm gate instead of saving, never gets its `save_in_flight`
+/// set, so `pending_close_on_save` is deliberately left `None` in that
+/// case — the close intent is dropped (the user must press `^w` again once
+/// ready), never silently mis-fired against a save that never happened.
+/// `d`/`D` discards and closes immediately. `Esc` cancels, leaving the
+/// document untouched. Every other key is a consumed no-op (plan WP5.S3).
+fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    let Some(Modal::Guard(prompt)) = &app.modal else {
+        return;
+    };
+    let doc = prompt.doc;
+    match key.code {
+        KeyCode::Escape => app.modal = None,
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s') => {
+            app.modal = None;
+            crate::save::trigger_save(app, doc, effects);
+            if app.doc(doc).is_some_and(|d| d.save_in_flight) {
+                app.pending_close_on_save = Some(doc);
+            }
+        }
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'d') => {
+            app.modal = None;
+            crate::workspace::close_now(app, doc);
+        }
+        _ => {}
+    }
+}
+
 /// The modal document's own viewport height, as a page-scroll amount — `1`
 /// when there's no modal up at all (dead in practice: every caller already
 /// checked `app.modal.is_some()`).
 fn page_amount(app: &App) -> isize {
     match &app.modal {
         Some(Modal::Error(state)) => state.doc.viewport.height.max(1) as isize,
-        None => 1,
+        Some(Modal::Guard(_)) | None => 1,
     }
 }
 
@@ -235,6 +301,9 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             let rows = build_rows(&state.doc, area.height);
             render::blit(&rows, area, frame);
         }
+        // No banner body to draw — the footer's Guard display mode carries
+        // the whole prompt (see `Modal::total_rows`'s docs).
+        Modal::Guard(_) => {}
     }
 }
 
@@ -278,12 +347,13 @@ mod tests {
             std::sync::Arc::new(rune_vfs::Mem::new()),
             None,
         );
-        set_modal(&mut app, Modal::Error(ErrorState::new("first")));
-        set_modal(&mut app, Modal::Error(ErrorState::new("second")));
+        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("first"))));
+        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("second"))));
         match app.modal {
             Some(Modal::Error(state)) => {
                 assert!(state.doc.buffer.content().contains("second"));
             }
+            Some(Modal::Guard(_)) => panic!("expected the Error modal, not a Guard"),
             None => panic!("expected a modal to be set"),
         }
     }

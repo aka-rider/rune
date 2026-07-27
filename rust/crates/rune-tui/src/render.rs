@@ -419,13 +419,13 @@ fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(explorer_block, explorer_area);
     crate::explorer::draw(app, explorer_inner, frame);
 
-    frame.render_widget(
-        Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(border_style(Pane::Tabs))
-            .title("Open"),
-        tabs_area,
-    );
+    let tabs_block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(border_style(Pane::Tabs))
+        .title("Open");
+    let tabs_inner = tabs_block.inner(tabs_area);
+    frame.render_widget(tabs_block, tabs_area);
+    crate::opentabs::draw(app, tabs_inner, frame);
 }
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left

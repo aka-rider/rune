@@ -56,6 +56,14 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             }
         }
         GlobalCommand::FocusEditor => app.focus = Pane::Editor,
+        // Mirrors `ToggleExplorer`'s "show + focus" pairing (plan WP5): the
+        // Tabs pane's own cursor is meaningless to a user who can't see it.
+        // No dir-load side effect needed here — unlike Explorer, Tabs has
+        // nothing to lazily fetch off-thread.
+        GlobalCommand::FocusTabs => {
+            app.left_visible = true;
+            app.focus = Pane::Tabs;
+        }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
         // WP7 mints the generated Help document; until then F1 is bound
         // but inert rather than unbound (plan WP2.S4: "a no-op stub with a

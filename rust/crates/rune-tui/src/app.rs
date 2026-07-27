@@ -26,6 +26,7 @@ use crate::db::Db;
 use crate::document::{Document, DocumentId};
 use crate::explorer::{self, Explorer};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
+use crate::opentabs::{self, OpenTabs};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg};
 use crate::save;
@@ -72,6 +73,10 @@ pub struct App {
     /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
     /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
     pub explorer: Explorer,
+    /// The Open Tabs pane's own state (plan WP5.S1): tab display order and
+    /// its cursor/scroll position — kept in sync with `documents` at its own
+    /// chokepoints (`App::open_document`/`workspace::close_now`).
+    pub tabs: OpenTabs,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -107,6 +112,15 @@ pub struct App {
     /// `pub(crate)`, not private: `save::trigger_save` — a different module
     /// since the WP1.S5 extraction — is the sole minter of new generations.
     pub(crate) next_save_confirm_gen: u32,
+    /// The document a Guard modal's `[S]ave` armed a save-then-close for
+    /// (plan WP5.S3) — `None` when no close is waiting on a save ack.
+    /// `banner::handle_key`'s Guard arm sets this immediately before
+    /// calling `save::trigger_save`; `save::handle_materialize_ack`/
+    /// `handle_save_done`'s success paths are the only readers, closing
+    /// the document (`workspace::close_now`) only when the id still
+    /// matches AND the save actually committed — a failed save leaves the
+    /// document open with its usual error surfaced instead.
+    pub pending_close_on_save: Option<DocumentId>,
     /// The armed quit chord and its timer generation — `None` when no quit
     /// is pending. Stale `ConfirmTimeout` generations are ignored (plan
     /// Context, "Quit-confirm"). App-wide, not doc-tagged: quitting closes
@@ -145,6 +159,7 @@ impl App {
             focus: Pane::Editor,
             left_visible: false,
             explorer: Explorer::default(),
+            tabs: OpenTabs::new(id),
             status_message: None,
             status_source: StatusSource::Other,
             db,
@@ -152,6 +167,7 @@ impl App {
             db_banner: None,
             pending_save_confirm: None,
             next_save_confirm_gen: 0,
+            pending_close_on_save: None,
             pending_quit: None,
             next_quit_gen: 0,
             modal: None,
@@ -179,6 +195,9 @@ impl App {
     pub fn open_document(&mut self, buffer: Buffer) -> DocumentId {
         let id = self.mint_doc_id();
         self.documents.insert(id, Document::new(buffer));
+        // The Open Tabs chokepoint (plan WP5.S1): every document, however
+        // it was opened, gets a tab the moment it exists.
+        self.tabs.order.push(id);
         id
     }
 
@@ -407,12 +426,12 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    // Stage 3 (Tabs is still a WP5 stub) + stage 4 (no further stage yet,
-    // so the `Ignored` outcome is captured but unused).
+    // Stage 3 + stage 4 (no further stage yet, so the `Ignored` outcome is
+    // captured but unused).
     let _outcome = match app.focus {
         Pane::Editor => handle_editor_key(app, key, effects),
         Pane::Explorer => explorer::handle_key(app, key, effects),
-        Pane::Tabs => keymap::KeyOutcome::Ignored,
+        Pane::Tabs => opentabs::handle_key(app, key),
     };
 }
 
