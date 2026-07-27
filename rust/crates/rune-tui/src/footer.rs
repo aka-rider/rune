@@ -62,12 +62,18 @@ fn mode(app: &App) -> Mode<'_> {
 /// unchanged below); `pending_save_confirm`'s hint text is already sitting
 /// in `app.status_message` — `trigger_save` wrote it there the same tick it
 /// armed the confirm gate — so this just surfaces that rather than
-/// duplicating the string.
+/// duplicating the string. The `cid == app.active` check is load-bearing:
+/// `pending_save_confirm` is doc-tagged (armed for the document that
+/// attempted the save), so switching tabs away from that document must not
+/// leave its stale hint showing over whatever document is active now.
 fn chord_hint(app: &App) -> Option<String> {
     if app.pending_quit.is_some() {
         return Some(quit_hint(app).to_string());
     }
-    if app.pending_save_confirm.is_some() {
+    if app
+        .pending_save_confirm
+        .is_some_and(|(cid, _)| cid == app.active)
+    {
         return app
             .status_message
             .clone()
@@ -217,5 +223,34 @@ mod tests {
     fn position_text_reports_one_indexed_line_and_col() {
         let app = app_with("hello");
         assert_eq!(position_text(&app), "Ln 1, Col 1");
+    }
+
+    /// `pending_save_confirm` is doc-tagged (plan WP1 decision 3): a chord
+    /// armed on doc A must not leak its hint onto doc B's footer after a
+    /// tab switch, and must reappear once doc A is active again.
+    #[test]
+    fn save_confirm_hint_is_scoped_to_the_document_it_was_armed_on() {
+        let mut app = app_with("hello");
+        let doc_a = app.active;
+        let doc_b = app.open_document(Buffer::new("world"));
+        app.pending_save_confirm = Some((doc_a, 0));
+
+        assert_eq!(app.active, doc_a);
+        assert!(
+            footer_text(&app).contains("save anyway"),
+            "doc A is active: its own pending confirm hint must show"
+        );
+
+        app.active = doc_b;
+        assert!(
+            !footer_text(&app).contains("save anyway"),
+            "doc B is active: doc A's stale pending confirm hint must not show"
+        );
+
+        app.active = doc_a;
+        assert!(
+            footer_text(&app).contains("save anyway"),
+            "switching back to doc A must show its hint again"
+        );
     }
 }
