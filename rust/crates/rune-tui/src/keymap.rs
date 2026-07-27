@@ -27,6 +27,10 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     Delete,
+    /// The F1 function key — bound to `GlobalCommand::Help` (WP2/WP7)
+    /// below. The only `Function(u8)` termina reports this crate binds; no
+    /// other function key is meaningful here yet.
+    F1,
 }
 
 /// Modifier keys held during a key event. Field names avoid `super` (a
@@ -83,6 +87,7 @@ pub fn from_termina(event: termina::event::KeyEvent) -> Option<KeyInput> {
         TK::PageUp => KeyCode::PageUp,
         TK::PageDown => KeyCode::PageDown,
         TK::Delete => KeyCode::Delete,
+        TK::Function(1) => KeyCode::F1,
         _ => return None,
     };
 
@@ -253,6 +258,162 @@ fn resolve_char(c: char, m: Mods) -> Option<Command> {
         _ => None,
     }
 }
+
+// ── Generic binding tables (plan WP2.S3/decision 9) ─────────────────────
+//
+// A second, data-driven resolution style alongside `resolve` above:
+// `KeyPattern` matches a chord EXACTLY (code + the WHOLE `Mods` set, unlike
+// `resolve_char`'s partial guards), and `resolve_in` looks one up in a
+// `const` table. `resolve` itself stays hand-written (decision 9: "tables
+// only where WP7's Help doc needs enumeration") — `GLOBAL_BINDINGS` below,
+// and `EXPLORER_BINDINGS`/`TABS_BINDINGS` in WP4/WP5, are that case.
+
+/// One exact chord: a `KeyCode` plus the WHOLE `Mods` set that must be held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyPattern {
+    pub code: KeyCode,
+    pub mods: Mods,
+}
+
+impl KeyPattern {
+    pub const fn new(code: KeyCode, mods: Mods) -> KeyPattern {
+        KeyPattern { code, mods }
+    }
+
+    fn matches(self, key: KeyInput) -> bool {
+        self.code == key.code && self.mods == key.mods
+    }
+
+    /// A short display label (footer default-mode hints, WP7's Help doc —
+    /// one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup, then
+    /// the key, `Char` uppercased ("^X" for Ctrl+x).
+    pub fn label(&self) -> String {
+        let mut s = String::new();
+        if self.mods.ctrl {
+            s.push('^');
+        }
+        if self.mods.alt {
+            s.push('\u{2325}'); // ⌥
+        }
+        if self.mods.shift {
+            s.push('\u{21e7}'); // ⇧
+        }
+        if self.mods.sup {
+            s.push('\u{2318}'); // ⌘
+        }
+        match self.code {
+            KeyCode::Char(c) => s.push(c.to_ascii_uppercase()),
+            KeyCode::F1 => s.push_str("F1"),
+            other => s.push_str(&format!("{other:?}")),
+        }
+        s
+    }
+}
+
+/// One table entry: the chord, the command it produces, and its help-line
+/// label — `help` is the one source the footer's hints and WP7's Help doc
+/// both read.
+#[derive(Clone, Copy, Debug)]
+pub struct Binding<C: Copy + 'static> {
+    pub key: KeyPattern,
+    pub cmd: C,
+    pub help: &'static str,
+}
+
+/// Linear first-match lookup — these are chord tables (single- to low-
+/// double-digit entries), not per-keystroke text, so a `HashMap` would cost
+/// this module's whole appeal (a `const` table, no allocation) for nothing.
+pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
+    table
+        .iter()
+        .find(|binding| binding.key.matches(key))
+        .map(|binding| binding.cmd)
+}
+
+/// A pane's key handler's verdict on one keystroke (decision 8's four-stage
+/// pipeline, `app::handle_key`): `Consumed` stops the pipeline there;
+/// `Ignored` lets a later stage see the same key. `#[must_use]` — dropping
+/// the verdict is indistinguishable from a bug that always consumes.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyOutcome {
+    Consumed,
+    Ignored,
+}
+
+/// The global chord table's command set (decision 7: `Pane` focus
+/// discriminant + these chrome-level actions). Resolved BEFORE any pane's
+/// own keymap, so every variant fires regardless of focus — including the
+/// quit chords and Save, which must keep working while the Explorer/Tabs
+/// stub panes own it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobalCommand {
+    ToggleExplorer,
+    FocusEditor,
+    Save,
+    Help,
+    QuitChord(QuitKey),
+}
+
+const CTRL: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: true,
+    sup: false,
+};
+const CTRL_ALT: Mods = Mods {
+    shift: false,
+    alt: true,
+    ctrl: true,
+    sup: false,
+};
+const SUP: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
+
+/// `^x`/`^e`/F1 are new WP2 bindings. `Save` and the two quit chords are the
+/// SAME combos `resolve`/`QuitKey::from_key` already bind above — moving
+/// their resolution to the global pipeline stage changes only WHEN they're
+/// seen (before, not after, a pane's own keymap), not which chord activates
+/// them. `KeyPattern`'s exact-modifier match narrows `resolve_char`'s `'s'
+/// if m.sup && !m.ctrl` guard (which also tolerated shift/alt held) to the
+/// one precise combo below — the loosely-matched variants were never a
+/// documented, intentional binding.
+pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('x'), CTRL),
+        cmd: GlobalCommand::ToggleExplorer,
+        help: "explorer",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('e'), CTRL),
+        cmd: GlobalCommand::FocusEditor,
+        help: "editor",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('s'), SUP),
+        cmd: GlobalCommand::Save,
+        help: "save",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::F1, Mods::NONE),
+        cmd: GlobalCommand::Help,
+        help: "help",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('c'), CTRL),
+        cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
+        help: "quit",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('d'), CTRL_ALT),
+        cmd: GlobalCommand::QuitChord(QuitKey::CtrlAltD),
+        help: "quit",
+    },
+];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -425,4 +586,10 @@ mod tests {
             None
         );
     }
+
+    // `resolve_in`/`KeyPattern`/`GLOBAL_BINDINGS` coverage lives in
+    // `tests/keymap_global.rs` (plan WP2.S7) — every item it exercises is
+    // already `pub`, and keeping it out-of-crate holds this module closer
+    // to the §1.6 budget (already over from the WP2 chord-table additions;
+    // see `TODO.md`).
 }

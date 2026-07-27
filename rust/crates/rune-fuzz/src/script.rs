@@ -142,6 +142,7 @@ fn encode_code(code: KeyCode) -> String {
         KeyCode::PageUp => "pageup".into(),
         KeyCode::PageDown => "pagedown".into(),
         KeyCode::Delete => "delete".into(),
+        KeyCode::F1 => "f1".into(),
     }
 }
 
@@ -374,6 +375,7 @@ fn parse_code(s: &str, line: usize) -> Result<KeyCode, ScriptError> {
         "pageup" => KeyCode::PageUp,
         "pagedown" => KeyCode::PageDown,
         "delete" => KeyCode::Delete,
+        "f1" => KeyCode::F1,
         _ => {
             let invalid = || ScriptError::InvalidKeyCode {
                 line,
