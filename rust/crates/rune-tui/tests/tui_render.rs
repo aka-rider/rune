@@ -13,16 +13,23 @@ use ratatui::buffer::Buffer as RtBuffer;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_tui::app::App;
+use rune_tui::pane::Pane;
 use rune_tui::render;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
+/// `focused` no longer sets `Document::focused` directly (WP2: `App::
+/// sync_view` derives it from `app.focus` every call — see its doc
+/// comment) — an unfocused fixture instead moves `app.focus` off `Editor`
+/// so the SAME derivation the real app uses produces `focused == false`.
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+    if !focused {
+        app.focus = Pane::Explorer;
+    }
     let id = app.active;
-    app.doc_mut(id).unwrap().focused = focused;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));
     app.doc_mut(id)
         .unwrap()
@@ -152,16 +159,22 @@ fn bold_text_is_styled_bold() {
     );
 }
 
-/// The status line renders on the last row and shows the (unnamed) file
-/// name placeholder.
+/// The footer row renders on the last row and shows its default-mode
+/// content: a `GLOBAL_BINDINGS` hint on the left, `Ln n, Col n` on the
+/// right (plan WP2.S6 — the file-name/dirty-dot placeholder this test used
+/// to check for moved out of the footer; WP6's `title.rs` owns it next).
 #[test]
 fn status_line_present_on_last_row() {
     let app = app_for("hello\n", 0, true);
     let buf = render_to_test_backend(&app);
     let status_row = row_text(&buf, HEIGHT - 1, WIDTH);
     assert!(
-        status_row.contains("[No Name]"),
-        "expected the unnamed-draft placeholder on the status row:\n{status_row}"
+        status_row.contains("explorer"),
+        "expected a GLOBAL_BINDINGS hint on the footer row:\n{status_row}"
+    );
+    assert!(
+        status_row.contains("Ln 1, Col 1"),
+        "expected the cursor position on the footer row:\n{status_row}"
     );
 }
 
