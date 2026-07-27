@@ -70,6 +70,18 @@ pub struct App {
     /// Whether the Explorer/Open-Tabs left column is showing (decision 7);
     /// `false` by default (pre-WP2 geometry) until `^x` shows it.
     pub left_visible: bool,
+    /// The terminal's last-known RAW row count, as reported by the most
+    /// recent `Msg::Resize` — unlike the active document's own `viewport.
+    /// height` (which `Msg::Resize` sets to `height - 1`, reserving the
+    /// footer row), this is the exact `frame.area().height` `render::draw`
+    /// itself sizes the banner against. `App::sync_view` threads this into
+    /// `banner::sync_modal` (mirroring how it already threads the active
+    /// document's `viewport.width` through) so `banner::banner_height` — the
+    /// one function both `render::draw` and `sync_modal` call — computes the
+    /// identical figure in both places. `0` before the first `Msg::Resize`
+    /// (never observed in practice: `runtime::run` seeds one before the
+    /// first `sync_view`/draw).
+    pub frame_height: u16,
     /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
     /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
     pub explorer: Explorer,
@@ -165,6 +177,7 @@ impl App {
             vfs,
             focus: Pane::Editor,
             left_visible: false,
+            frame_height: 0,
             explorer: Explorer::default(),
             tabs: OpenTabs::new(id),
             help_doc: None,
@@ -284,7 +297,8 @@ impl App {
         self.active_doc_mut().view = Some(view);
         if self.modal.is_some() {
             let width = self.active_doc().viewport.width;
-            crate::banner::sync_modal(self, width);
+            let frame_height = self.frame_height;
+            crate::banner::sync_modal(self, width, frame_height);
         }
     }
 
@@ -325,6 +339,7 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
         Msg::Resize(width, height) => {
+            app.frame_height = height;
             app.active_doc_mut()
                 .viewport
                 .set_size(width, height.saturating_sub(1));

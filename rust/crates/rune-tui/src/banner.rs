@@ -149,26 +149,60 @@ pub fn report_error(app: &mut App, text: impl Into<String>) {
     set_modal(app, Modal::Error(Box::new(ErrorState::new(&text.into()))));
 }
 
-/// Re-syncs the modal's private `Document` at `width` and caches the
-/// resulting view (plan WP3.S3), mirroring what `App::sync_view` already
-/// does for the active document — called from there, once per frame,
-/// BEFORE `render::draw` reads `Modal::total_rows` to size the banner
-/// `Rect`. Keeping this mutation in the settle step (not inside `render`
-/// itself, which only ever borrows `&App`) is what keeps every synchronous
-/// state write inside `update`/its settle phase, never inside rendering
-/// (§5.4).
-pub fn sync_modal(app: &mut App, width: u16) {
+/// The banner's rendered height for a `frame_height`-tall terminal: the
+/// modal document's total wrap-row count, capped at half the frame (plan
+/// WP3.S3) — `0` when no modal is up, or for `Guard` (no banner body, see
+/// `Modal::total_rows`'s docs). The ONE height computation both
+/// `render::draw`'s rect math and `sync_modal` below call — previously each
+/// computed this independently (`render.rs` from `Modal::total_rows`/
+/// `area.height` directly, `sync_modal` never at all, leaving `state.doc.
+/// viewport.height` never updated to the actually-rendered height), which
+/// let `page_amount` page by a stale screenful that disagreed with what was
+/// actually on screen — exactly the shadow state this repo's rules forbid.
+pub fn banner_height(app: &App, frame_height: u16) -> u16 {
+    match &app.modal {
+        Some(modal) => (modal.total_rows() as u16).min(frame_height / 2),
+        None => 0,
+    }
+}
+
+/// Re-syncs the modal's private `Document` at `width`/`frame_height` and
+/// caches the resulting view (plan WP3.S3), mirroring what `App::sync_view`
+/// already does for the active document — called from there, once per
+/// frame, BEFORE `render::draw` reads `banner_height` to size the banner
+/// `Rect`. `frame_height` is threaded through exactly like `width` already
+/// is (`App::sync_view` reads both off its own last-known state) so this can
+/// set `state.doc.viewport.height` to the SAME value `render::draw` sizes
+/// the banner `Rect` at — the single source of truth `banner_height` above
+/// establishes. Keeping this mutation in the settle step (not inside
+/// `render` itself, which only ever borrows `&App`) is what keeps every
+/// synchronous state write inside `update`/its settle phase, never inside
+/// rendering (§5.4).
+pub fn sync_modal(app: &mut App, width: u16, frame_height: u16) {
     let Some(modal) = app.modal.as_mut() else {
         return;
     };
     match modal {
         Modal::Error(state) => {
+            // `width` (not height) first, then sync: `banner_height` reads
+            // `Modal::total_rows`, which only exists once THIS sync has run
+            // — a wrap row count depends only on width (`Document::view`),
+            // never on `viewport.height`, so it's safe to sync before the
+            // height is known. Computing `banner_height` before this sync
+            // instead (this fix's first draft) would read the modal's
+            // PREVIOUS (possibly zero, on the modal's first-ever sync)
+            // `total_rows`, one tick stale — exactly the kind of drift this
+            // fix exists to remove.
             state.doc.viewport.width = width;
             let view = state.doc.sync();
             state.doc.view = Some(view);
         }
         // No banner-body document to sync — see `Modal::total_rows`'s docs.
         Modal::Guard(_) => {}
+    }
+    let height = banner_height(app, frame_height);
+    if let Some(Modal::Error(state)) = app.modal.as_mut() {
+        state.doc.viewport.height = height;
     }
 }
 
@@ -355,6 +389,64 @@ mod tests {
             }
             Some(Modal::Guard(_)) => panic!("expected the Error modal, not a Guard"),
             None => panic!("expected a modal to be set"),
+        }
+    }
+
+    /// A fresh `Error` outranks an existing `Guard` (plan Risks: an error is
+    /// never suppressed by a stale close prompt) — `priority`'s `Error: 10 >
+    /// Guard: 5`.
+    #[test]
+    fn set_modal_replaces_an_existing_guard_with_a_new_error() {
+        let mut app = crate::app::App::new(
+            rune_core::buffer::Buffer::new("hi"),
+            None,
+            std::sync::Arc::new(rune_vfs::Mem::new()),
+            None,
+        );
+        let id = app.active;
+        set_modal(
+            &mut app,
+            Modal::Guard(GuardPrompt {
+                doc: id,
+                kind: GuardKind::DirtyClose,
+            }),
+        );
+        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
+        match app.modal {
+            Some(Modal::Error(state)) => {
+                assert!(state.doc.buffer.content().contains("boom"));
+            }
+            Some(Modal::Guard(_)) => panic!("a fresh Error must replace an existing Guard"),
+            None => panic!("expected a modal to be set"),
+        }
+    }
+
+    /// A `Guard` raised while an `Error` is already up must NOT silently
+    /// displace it (plan Risks, "Banner reentrancy") — `set_modal` refuses
+    /// since `Guard`'s priority (5) is below the existing `Error`'s (10).
+    #[test]
+    fn set_modal_refuses_to_replace_an_existing_error_with_a_guard() {
+        let mut app = crate::app::App::new(
+            rune_core::buffer::Buffer::new("hi"),
+            None,
+            std::sync::Arc::new(rune_vfs::Mem::new()),
+            None,
+        );
+        let id = app.active;
+        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
+        set_modal(
+            &mut app,
+            Modal::Guard(GuardPrompt {
+                doc: id,
+                kind: GuardKind::DirtyClose,
+            }),
+        );
+        match app.modal {
+            Some(Modal::Error(state)) => {
+                assert!(state.doc.buffer.content().contains("boom"));
+            }
+            Some(Modal::Guard(_)) => panic!("a Guard must never displace an existing Error"),
+            None => panic!("expected the Error modal to still be set"),
         }
     }
 

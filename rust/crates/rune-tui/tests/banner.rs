@@ -15,6 +15,7 @@ use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
+use rune_tui::banner;
 use rune_tui::clipboard::osc52_copy;
 use rune_tui::footer;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -28,6 +29,7 @@ const HEIGHT: u16 = 24;
 fn app_for(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
+    app.frame_height = HEIGHT;
     app.sync_view();
     app
 }
@@ -142,6 +144,43 @@ fn banner_height_caps_at_half_the_frame_for_a_huge_error() {
     assert!(
         !text.contains("line 30"),
         "content past the half-frame cap must not render"
+    );
+}
+
+/// PageDown's scroll delta must equal the ACTUALLY-rendered banner height —
+/// review fix: previously `page_amount` read the modal document's own
+/// `viewport.height`, which `sync_modal` never updated from the real
+/// rendered height (`render::draw` computed its own `min(total_rows,
+/// area.height / 2)` independently), so PageUp/PageDown paged by a stale
+/// screenful that disagreed with what was actually on screen — shadow
+/// state. `banner::banner_height` is now the one function both sides call.
+#[test]
+fn page_down_scrolls_by_the_actually_rendered_banner_height() {
+    let mut app = app_for("hello");
+    // Deliberately small frame: forces the half-frame cap well below the
+    // error's own `total_rows`, so a stale (uncapped) `viewport.height`
+    // would produce a visibly different scroll delta than the real one.
+    app.frame_height = 10;
+    let mut effects = Effects::default();
+    let huge: String = (0..40)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    app::update(&mut app, Msg::Error(huge), &mut effects);
+    app.sync_view();
+
+    let expected = banner::banner_height(&app, app.frame_height);
+    assert!(expected > 0, "test setup: the banner must actually be capped");
+
+    let mut effects2 = Effects::default();
+    app::update(&mut app, key(KeyCode::PageDown), &mut effects2);
+
+    let banner::Modal::Error(state) = app.modal.as_ref().expect("modal set") else {
+        panic!("expected the Error modal");
+    };
+    assert_eq!(
+        state.doc.viewport.scroll_row, expected as usize,
+        "PageDown must scroll by exactly the rendered banner height"
     );
 }
 
