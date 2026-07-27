@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 rune-core = { path = "../rune-core" }
+rune-db = { path = "../rune-db" }
 rune-md = { path = "../rune-md" }
 rune-vfs = { path = "../rune-vfs" }
 ratatui = { workspace = true, features = ["termina"] }

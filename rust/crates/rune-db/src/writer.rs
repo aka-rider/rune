@@ -74,6 +74,17 @@ pub enum OpKind {
     /// repo convention — a real rendezvous instead).
     #[cfg(test)]
     TestBlock(mpsc::Receiver<()>),
+    /// Test-support hook (mirrors `rune_vfs::Mem::fail_next`'s permanently-
+    /// public test-support surface): makes the writer thread exit its
+    /// receive loop immediately, dropping its `Receiver` and thereby
+    /// closing the channel from the receive side — every LATER `try_send`
+    /// then observes `Error::WriterGone`, simulating the writer thread
+    /// having died (a panic that somehow escaped `catch_unwind`, the
+    /// process being killed) without requiring a real crash. Deliberately
+    /// NOT `#[cfg(test)]`: `rune-tui`'s own integration tests (a DIFFERENT
+    /// crate, where this crate's `cfg(test)` is never enabled) need this to
+    /// exercise the degraded-mode banner end-to-end (plan WP5 "Done when").
+    KillWriterForTest,
     /// Port of `journal.go:39-194` (`AppendEdit`). On success, the
     /// completion's `DbEvent::Ok.result` carries the journal seq of the
     /// inserted (or coalesced) event.
@@ -250,6 +261,11 @@ fn writer_loop(
     on_event: OnEvent,
 ) {
     while let Ok(op) = receiver.recv() {
+        if matches!(op.kind, OpKind::KillWriterForTest) {
+            // Drop `receiver` (by returning) rather than processing or
+            // replying — see the variant's doc comment.
+            return;
+        }
         let id = op.id;
         let kind = op.kind;
         let vfs_ref = vfs.as_ref();
@@ -295,6 +311,9 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             let _ = rx.recv();
             Ok(OpOutcome::None)
         }
+        // Intercepted in `writer_loop` before this function is ever called
+        // — see the variant's doc comment.
+        OpKind::KillWriterForTest => Ok(OpOutcome::None),
         OpKind::AppendEdit {
             session_id,
             now,

@@ -27,8 +27,9 @@ use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::Step;
 
-use crate::app::{App, StatusSource};
+use crate::app::{App, StatusSource, recompute_dirty};
 use crate::commands::nav;
+use crate::db;
 
 /// Port of `commands_edit_lines.go:sortInfosDescending` +
 /// `buildEditResultFromInfos` + `textedit.go:applyOperation`'s edit-apply
@@ -93,10 +94,23 @@ fn commit_edit_batch(app: &mut App, mut infos: Vec<(Edit, u32)>, cursors_before:
             app.editor.buffer = new_buf;
             app.editor.cursors = CursorSet::new_from(&new_cursors);
             app.editor.journal.push(Step {
-                edits: applied,
+                edits: applied.clone(),
                 cursors_before: cursors_before.all(),
                 cursors_after: app.editor.cursors.all(),
             });
+            // Async replica journaling (plan WP5.S3): the LOCAL journal
+            // above is already the authoritative, synchronous source of
+            // truth — this enqueue can never roll it back, only mark the
+            // store degraded on failure (`db::append_edit`'s doc comment).
+            let local_pos = app.editor.journal.pos();
+            db::append_edit(
+                app,
+                local_pos,
+                &applied,
+                &cursors_before.all(),
+                &app.editor.cursors.all(),
+            );
+            recompute_dirty(app);
         }
         Err(e) => {
             app.set_status(format!("edit failed: {e}"), StatusSource::Other);
@@ -338,6 +352,8 @@ pub fn undo(app: &mut App) {
             app.editor.buffer = new_buf;
             app.editor.cursors = CursorSet::new_from(&cursors_before);
             app.editor.journal.move_pos(new_pos);
+            db::move_undo_pos(app, new_pos);
+            recompute_dirty(app);
         }
         Err(e) => {
             app.set_status(format!("undo failed: {e}"), StatusSource::Other);
@@ -360,6 +376,8 @@ pub fn redo(app: &mut App) {
             app.editor.buffer = new_buf;
             app.editor.cursors = CursorSet::new_from(&cursors_after);
             app.editor.journal.move_pos(new_pos);
+            db::move_undo_pos(app, new_pos);
+            recompute_dirty(app);
         }
         Err(e) => {
             app.set_status(format!("redo failed: {e}"), StatusSource::Other);
@@ -375,7 +393,7 @@ mod tests {
     use std::sync::Arc;
 
     fn app_with(content: &str, cursor_offset: usize) -> App {
-        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()));
+        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         app.editor.cursors = CursorSet::new(cursor_offset.min(content.len()));
         app.editor.viewport.set_size(80, 23);
         app
