@@ -20,6 +20,13 @@ use rune_vfs::Mem;
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
+/// The editor's own first row within the full backend (plan WP6.S2: the
+/// center pane reserves a title row + a breadcrumb row above the editor
+/// whenever it's tall enough — `app_for`'s fixed HEIGHT always is). Tests
+/// that pin an assertion to a specific editor row use this rather than a
+/// bare literal `0`, so a future chrome-row change has one place to update.
+const EDITOR_TOP_ROW: u16 = 2;
+
 /// `focused` no longer sets `Document::focused` directly (WP2: `App::
 /// sync_view` derives it from `app.focus` every call — see its doc
 /// comment) — an unfocused fixture instead moves `app.focus` off `Editor`
@@ -140,7 +147,7 @@ fn bold_text_is_styled_bold() {
     let app = app_for(content, 0, true);
 
     let buf = render_to_test_backend(&app);
-    let text = row_text(&buf, 0, WIDTH);
+    let text = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
     assert!(
         text.contains("bold"),
         "expected folded bold text visible:\n{text}"
@@ -152,7 +159,9 @@ fn bold_text_is_styled_bold() {
 
     // Find the cell under the 'b' of "bold" and check its style carries BOLD.
     let bold_start = text.find("bold").expect("bold text present");
-    let cell = buf.cell((bold_start as u16, 0)).expect("cell in bounds");
+    let cell = buf
+        .cell((bold_start as u16, EDITOR_TOP_ROW))
+        .expect("cell in bounds");
     assert!(
         cell.modifier.contains(ratatui::style::Modifier::BOLD),
         "expected the bold span's cell to carry the BOLD modifier"
@@ -278,14 +287,15 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     );
 
     let buf = render_to_test_backend(&app);
-    let text = row_text(&buf, 0, WIDTH);
+    let text = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
     assert_eq!(
         text.trim_end(),
         "ab  cd",
         "the tab must expand to exactly 2 columns here"
     );
 
-    let caret_x = caret_column(&buf, 0, WIDTH).expect("caret cell must be present on row 0");
+    let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
+        .expect("caret cell must be present on the editor's first row");
     assert_eq!(
         caret_x as usize, expected_visual_col,
         "caret column must agree with wrap's visual_col across a tab"
@@ -329,7 +339,8 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     );
 
     let buf = render_to_test_backend(&app);
-    let caret_x = caret_column(&buf, 0, WIDTH).expect("caret cell must be present on row 0");
+    let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
+        .expect("caret cell must be present on the editor's first row");
     assert_eq!(caret_x as usize, expected_visual_col);
 }
 

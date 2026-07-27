@@ -319,11 +319,45 @@ pub fn draw(app: &App, frame: &mut Frame) {
         main_area
     };
 
+    let (title_area, breadcrumb_area, editor_area) = center_chrome_rows(editor_area);
+    if let Some(area) = title_area {
+        crate::title::draw(app, area, frame);
+    }
+    if let Some(area) = breadcrumb_area {
+        crate::breadcrumb::draw(app, area, frame);
+    }
+
     if let Some(view) = &app.active_doc().view {
         let rows = build_rows(view, app);
         blit(&rows, editor_area, frame);
     }
     crate::footer::draw(app, footer_area, frame);
+}
+
+/// Reserves the center pane's title row and the breadcrumb row directly
+/// under it (plan WP6.S2), shrinking the returned editor rect to match.
+/// Both rows are reserved together, or neither: the plan's "≥ 4 rows tall"
+/// gate already assumes a genuinely usable editor area survives underneath
+/// (2 rows minimum) — a 3-row center pane has no room to spare for even a
+/// title-only sliver, so it drops both rather than leaving one editor row
+/// under a lone title. `render::draw` is left as pure rect math plus the two
+/// delegation calls above — ALL text/styling lives in `title.rs`/
+/// `breadcrumb.rs`.
+fn center_chrome_rows(area: Rect) -> (Option<Rect>, Option<Rect>, Rect) {
+    const CHROME_ROWS: u16 = 2;
+    const MIN_CENTER_H: u16 = 4;
+    if area.height < MIN_CENTER_H {
+        return (None, None, area);
+    }
+    let title_area = Rect::new(area.x, area.y, area.width, 1);
+    let breadcrumb_area = Rect::new(area.x, area.y + 1, area.width, 1);
+    let editor_area = Rect::new(
+        area.x,
+        area.y + CHROME_ROWS,
+        area.width,
+        area.height - CHROME_ROWS,
+    );
+    (Some(title_area), Some(breadcrumb_area), editor_area)
 }
 
 /// The left column's two empty, titled, bordered blocks (plan WP2.S5):
