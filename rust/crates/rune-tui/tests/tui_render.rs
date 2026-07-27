@@ -25,7 +25,17 @@ const HEIGHT: u16 = 24;
 /// whenever it's tall enough — `app_for`'s fixed HEIGHT always is). Tests
 /// that pin an assertion to a specific editor row use this rather than a
 /// bare literal `0`, so a future chrome-row change has one place to update.
+/// Stays `2` after WP4 (plan gotcha 10): row 0 is now the top border, row 1
+/// the title, row 2 the editor's first content row — same literal value,
+/// different provenance.
 const EDITOR_TOP_ROW: u16 = 2;
+
+/// The editor content's first COLUMN within the full backend (plan gotcha
+/// 10): WP4's center `Block::bordered()` puts a `│` at column 0, so the
+/// editor's own column 0 (where `WrapSnapshot::visual_col` starts counting)
+/// is backend column 1, not 0. Any assertion comparing a backend column
+/// against a `visual_col`/wrap-relative column must offset by this.
+const EDITOR_LEFT_COL: u16 = 1;
 
 /// `focused` no longer sets `Document::focused` directly (WP2: `App::
 /// sync_view` derives it from `app.focus` every call — see its doc
@@ -287,9 +297,14 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     );
 
     let buf = render_to_test_backend(&app);
-    let text = row_text(&buf, EDITOR_TOP_ROW, WIDTH);
+    // Skip the center block's left AND right border columns (plan gotcha
+    // 10) before comparing against the editor-relative text.
+    let text: String = row_text(&buf, EDITOR_TOP_ROW, WIDTH)
+        .chars()
+        .skip(EDITOR_LEFT_COL as usize)
+        .collect();
     assert_eq!(
-        text.trim_end(),
+        text.trim_end_matches('│').trim_end(),
         "ab  cd",
         "the tab must expand to exactly 2 columns here"
     );
@@ -297,7 +312,8 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
         .expect("caret cell must be present on the editor's first row");
     assert_eq!(
-        caret_x as usize, expected_visual_col,
+        (caret_x - EDITOR_LEFT_COL) as usize,
+        expected_visual_col,
         "caret column must agree with wrap's visual_col across a tab"
     );
 }
@@ -341,7 +357,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let buf = render_to_test_backend(&app);
     let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
         .expect("caret cell must be present on the editor's first row");
-    assert_eq!(caret_x as usize, expected_visual_col);
+    assert_eq!((caret_x - EDITOR_LEFT_COL) as usize, expected_visual_col);
 }
 
 /// Regression for the control-safe cell builder: a non-tab/newline control

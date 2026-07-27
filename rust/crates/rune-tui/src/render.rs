@@ -8,7 +8,7 @@
 //! here IS the cursor, Go parity.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier as RtModifier, Style};
 use ratatui::widgets::{Block, BorderType};
 
@@ -264,147 +264,74 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
     });
 }
 
-/// Left-pane geometry (plan WP2.S5): the DEFAULT column width, the
-/// smallest it may shrink to, and the smallest the editor pane may shrink
-/// to in exchange. `left_pane_width` below is the pure query both `draw`'s
-/// layout and any test asserting on the split use, so they can never
-/// disagree on the number.
-pub const DEFAULT_LEFT_PANE_W: u16 = 22;
-pub const MIN_LEFT_PANE_W: u16 = 16;
-pub const MIN_CENTER_W: u16 = 24;
-
-/// The left-pane column width for a `total_width`-wide main area, or `None`
-/// when the terminal is too narrow to give BOTH the left pane its minimum
-/// AND the editor `MIN_CENTER_W` (plan WP2.S5: "if the terminal is too
-/// narrow for both minimums, drop the left pane for that frame").
-fn left_pane_width(total_width: u16) -> Option<u16> {
-    if total_width < MIN_LEFT_PANE_W.saturating_add(MIN_CENTER_W) {
-        return None;
-    }
-    let max_left = total_width.saturating_sub(MIN_CENTER_W);
-    Some(DEFAULT_LEFT_PANE_W.min(max_left).max(MIN_LEFT_PANE_W))
-}
-
-/// Splits the frame into (optionally) a left pane column, the editor
-/// viewport, and the footer row, and blits `app.view`'s current snapshot
-/// into the editor area. The editor pane's own geometry is UNCHANGED from
-/// pre-WP2 when `app.left_visible` is false (plan WP2.S5) — this `if`
-/// exists entirely inside the space the left pane would otherwise borrow
-/// from `main_area`, never touching `footer_area`.
+/// Blits `app.view`'s current snapshot into the editor rect, and every
+/// other chrome rect `layout::geometry` computes (plan WP3.S8: `draw`
+/// itself no longer computes any split — it consumes `Geometry`, the one
+/// chokepoint every rect comes from, so it can never disagree with
+/// `App::relayout`'s or `explorer`/`opentabs`'s own idea of the same
+/// rects).
+///
+/// Render order is load-bearing (plan gotcha 16, WP4.S2/S5): the center
+/// `Block` must paint before the editor rows are blitted (its border
+/// spans the WHOLE `geo.center` rect, including where the editor sits one
+/// cell in), and the breadcrumb overlay must run after both — it splices
+/// directly onto the border row the `Block` already painted, exactly the
+/// ordering Go documents at `workspace_view.go:327-330`.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(0), Constraint::Length(1)])
-        .split(area);
-    let main_area = chunks.first().copied().unwrap_or(area);
-    let footer_area = chunks
-        .get(1)
-        .copied()
-        .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
+    let geo = crate::layout::geometry(area, app);
 
-    // (a) The banner Rect (plan WP3.S3): reserved directly above the
-    // footer, full frame width, height capped at half the frame — shrinks
-    // `main_area` (and so the editor's share of it) accordingly. `None`
-    // when no modal is up, leaving `main_area`/the editor geometry below
-    // exactly as pre-WP3. `banner::banner_height` is the SAME function
-    // `App::sync_view`'s `banner::sync_modal` call sizes `state.doc.
-    // viewport.height` from (review fix: one source of truth for the
-    // banner's height, so PageUp/PageDown page by exactly what's rendered
-    // here, never a stale figure computed independently).
-    let (main_area, banner_area) = if app.modal.is_some() {
-        let banner_h = banner::banner_height(app, area.height);
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(banner_h)])
-            .split(main_area);
-        (
-            rows.first().copied().unwrap_or(main_area),
-            rows.get(1).copied(),
-        )
-    } else {
-        (main_area, None)
-    };
-
-    let editor_area = if app.left_visible {
-        match left_pane_width(main_area.width) {
-            Some(left_w) => {
-                let cols = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Length(left_w), Constraint::Min(0)])
-                    .split(main_area);
-                let left_area = cols.first().copied().unwrap_or(main_area);
-                draw_left_pane(app, left_area, frame);
-                cols.get(1).copied().unwrap_or(main_area)
-            }
-            None => main_area,
-        }
-    } else {
-        main_area
-    };
-
-    let (title_area, breadcrumb_area, editor_area) = center_chrome_rows(editor_area);
-    if let Some(area) = title_area {
-        crate::title::draw(app, area, frame);
+    // `explorer_block.is_some()` iff `tabs_block.is_some()` (plan WP3.S1:
+    // both come from the same `left_pane_width` branch) — `draw_left_pane`
+    // itself re-checks both and no-ops if either is `None`.
+    if geo.explorer_block.is_some() {
+        draw_left_pane(app, &geo, frame);
     }
-    if let Some(area) = breadcrumb_area {
-        crate::breadcrumb::draw(app, area, frame);
+
+    if geo.center_bordered {
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(if app.focus == Pane::Editor {
+                styles::active_border()
+            } else {
+                styles::inactive_border()
+            });
+        frame.render_widget(block, geo.center);
+    }
+
+    if let Some(title_area) = geo.title {
+        crate::title::draw(app, title_area, frame);
     }
 
     if let Some(view) = &app.active_doc().view {
         let rows = build_rows(view, app);
-        blit(&rows, editor_area, frame);
+        blit(&rows, geo.editor, frame);
     }
+
+    if geo.center_bordered {
+        crate::breadcrumb::overlay(app, geo.center, app.focus == Pane::Editor, frame);
+    }
+
     // (b) The one banner delegation (plan WP3.S3) — all of its own cell
     // building lives in `banner.rs`, never here.
-    if let Some(banner_area) = banner_area {
+    if let Some(banner_area) = geo.banner {
         banner::draw(app, banner_area, frame);
     }
-    crate::footer::draw(app, footer_area, frame);
-}
-
-/// Reserves the center pane's title row and the breadcrumb row directly
-/// under it (plan WP6.S2), shrinking the returned editor rect to match.
-/// Both rows are reserved together, or neither: the plan's "≥ 4 rows tall"
-/// gate already assumes a genuinely usable editor area survives underneath
-/// (2 rows minimum) — a 3-row center pane has no room to spare for even a
-/// title-only sliver, so it drops both rather than leaving one editor row
-/// under a lone title. `render::draw` is left as pure rect math plus the two
-/// delegation calls above — ALL text/styling lives in `title.rs`/
-/// `breadcrumb.rs`.
-fn center_chrome_rows(area: Rect) -> (Option<Rect>, Option<Rect>, Rect) {
-    const CHROME_ROWS: u16 = 2;
-    const MIN_CENTER_H: u16 = 4;
-    if area.height < MIN_CENTER_H {
-        return (None, None, area);
-    }
-    let title_area = Rect::new(area.x, area.y, area.width, 1);
-    let breadcrumb_area = Rect::new(area.x, area.y + 1, area.width, 1);
-    let editor_area = Rect::new(
-        area.x,
-        area.y + CHROME_ROWS,
-        area.width,
-        area.height - CHROME_ROWS,
-    );
-    (Some(title_area), Some(breadcrumb_area), editor_area)
+    crate::footer::draw(app, geo.footer, frame);
 }
 
 /// The left column's two titled, bordered blocks (plan WP2.S5): Explorer on
 /// top ("Files"), Open Tabs below ("Open" — its own content lands in WP5).
-/// This owns only the geometry, the border, and the focus-colored border
-/// style; the Explorer's own row content (root path, entries) is delegated
-/// to `explorer::draw` at the block's INNER rect (plan WP4.S6) — the one
-/// content-owning call this function makes.
-fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-    let explorer_area = rows.first().copied().unwrap_or(area);
-    let tabs_area = rows
-        .get(1)
-        .copied()
-        .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
+/// This owns only the border and the focus-colored border style; its two
+/// block rects and their inner rects all come from `Geometry` (plan
+/// WP3.S8) rather than computing its own `Layout::split`. The Explorer's
+/// own row content (root path, entries) is delegated to `explorer::draw`
+/// at the block's INNER rect (plan WP4.S6) — the one content-owning call
+/// this function makes.
+fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
+    let (Some(explorer_area), Some(tabs_area)) = (geo.explorer_block, geo.tabs_block) else {
+        return;
+    };
 
     let border_style = |pane: Pane| {
         if app.focus == pane {
@@ -418,17 +345,15 @@ fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
         .border_type(BorderType::Rounded)
         .border_style(border_style(Pane::Explorer))
         .title("Files");
-    let explorer_inner = explorer_block.inner(explorer_area);
     frame.render_widget(explorer_block, explorer_area);
-    crate::explorer::draw(app, explorer_inner, frame);
+    crate::explorer::draw(app, geo.explorer_inner, frame);
 
     let tabs_block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(border_style(Pane::Tabs))
         .title("Open");
-    let tabs_inner = tabs_block.inner(tabs_area);
     frame.render_widget(tabs_block, tabs_area);
-    crate::opentabs::draw(app, tabs_inner, frame);
+    crate::opentabs::draw(app, geo.tabs_inner, frame);
 }
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left

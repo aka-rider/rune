@@ -235,8 +235,12 @@ fn resize_then_key_in_the_same_batch_sees_the_post_resize_wrap() {
     app.active_doc_mut().viewport.set_size(80, HEIGHT - 1); // wide: the whole line is one row
     app.sync_view();
 
+    // Resizing the FRAME to 7 columns (not 5): the center pane's border
+    // (plan WP4) eats 2 of those for its own left/right border cells,
+    // leaving the editor's wrap width at exactly 5 — the width this test
+    // actually wants to drive the "Down wraps at column 5" behavior below.
     let mut effects = Effects::default();
-    app::update(&mut app, Msg::Resize(5, HEIGHT), &mut effects);
+    app::update(&mut app, Msg::Resize(7, HEIGHT), &mut effects);
     assert_eq!(app.active_doc_mut().viewport.width, 5);
 
     // No `app.sync_view()` here: this Key must be handled within the same

@@ -24,13 +24,12 @@ fn hidden_left_pane_at_120x34_gives_the_center_the_whole_main_area() {
     assert!(geo.explorer_block.is_none());
     assert!(geo.tabs_block.is_none());
 
-    // No border yet at this WP (plan WP3.S1): title row 0, breadcrumb row
-    // 1, editor from row 2 — a direct port of the pre-WP3 `center_chrome_
-    // rows`. WP4 adds the border and removes the reserved breadcrumb row.
-    assert!(!geo.center_bordered);
-    assert_eq!(geo.title, Some(Rect::new(0, 0, 120, 1)));
-    assert_eq!(geo.breadcrumb, Some(Rect::new(0, 1, 120, 1)));
-    assert_eq!(geo.editor.height, 31);
+    // Plan WP4.S1: the center pane is bordered (120x33 is well over the
+    // 3x3 floor), so `content` is `center.inner(Margin::new(1, 1))` —
+    // title and editor both start one cell in from `center`'s own origin.
+    assert!(geo.center_bordered);
+    assert_eq!(geo.title, Some(Rect::new(1, 1, 118, 1)));
+    assert_eq!(geo.editor, Rect::new(1, 2, 118, 30));
 }
 
 #[test]
@@ -41,10 +40,10 @@ fn visible_left_pane_at_120x34_gives_it_the_default_width() {
 
     let explorer_block = geo.explorer_block.expect("left pane wide enough to show");
     assert_eq!(explorer_block.width, 22);
-    // The center pane starts at x=22 (past the 22-wide left column); no
-    // border yet at this WP, so the editor's own x matches it exactly.
+    // The center pane starts at x=22 (past the 22-wide left column) but is
+    // itself bordered too, so the editor's content starts one more cell in.
     assert_eq!(geo.center.x, 22);
-    assert_eq!(geo.editor.x, 22);
+    assert_eq!(geo.editor.x, 23);
 }
 
 #[test]

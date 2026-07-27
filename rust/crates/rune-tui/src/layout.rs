@@ -59,11 +59,6 @@ pub struct Geometry {
     /// WP3 — no border exists yet, so `render::draw` never asks for one.
     pub center_bordered: bool,
     pub title: Option<Rect>,
-    /// The breadcrumb's own reserved row, directly under `title` (plan
-    /// WP3: a straight port of the pre-WP3 `center_chrome_rows`). WP4
-    /// removes this field once the breadcrumb splices onto the bordered
-    /// block's bottom border row instead of reserving a row of its own.
-    pub breadcrumb: Option<Rect>,
     pub editor: Rect,
 }
 
@@ -140,30 +135,30 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         (None, zero, None, zero, main_area)
     };
 
-    // No border yet at this WP (plan WP3.S1: "this WP reproduces today's
-    // rect shapes exactly, and only fixes what the viewport is measured
-    // against") — `center_bordered` is hardcoded `false`; WP4 flips this to
-    // a real `center.width >= 3 && center.height >= 3` check once the
-    // `Block::bordered()` render exists to match it. The title/breadcrumb/
-    // editor split below is a direct port of the pre-WP3 `render.rs::
-    // center_chrome_rows` (`CHROME_ROWS = 2`, `MIN_CENTER_H = 4`, both rows
-    // reserved together or neither).
-    let center_bordered = false;
-    const CHROME_ROWS: u16 = 2;
-    const MIN_CENTER_H: u16 = 4;
-    let (title, breadcrumb, editor) = if center.height < MIN_CENTER_H {
-        (None, None, center)
+    // The center pane gets a `Block::bordered()` (plan WP4.S1) whenever
+    // there's room for the border to actually enclose something — matches
+    // the same "too small, drop the chrome" shape `left_pane_width`/the old
+    // `center_chrome_rows` used, just against the border's own 1-cell-per-
+    // side minimum instead of a title+breadcrumb row minimum.
+    let center_bordered = center.width >= 3 && center.height >= 3;
+    let content = if center_bordered {
+        center.inner(Margin::new(1, 1))
     } else {
-        let title = Some(Rect::new(center.x, center.y, center.width, 1));
-        let breadcrumb = Some(Rect::new(center.x, center.y + 1, center.width, 1));
-        let editor = Rect::new(
-            center.x,
-            center.y + CHROME_ROWS,
-            center.width,
-            center.height - CHROME_ROWS,
-        );
-        (title, breadcrumb, editor)
+        center
     };
+
+    // No more breadcrumb rect (plan WP4.S1): the breadcrumb is spliced
+    // directly onto the bordered block's own bottom border row
+    // (`breadcrumb::overlay`, reading `geo.center` + `geo.center_bordered`
+    // itself) rather than reserving a second content row the way the
+    // pre-WP4 `center_chrome_rows` did.
+    let title = (content.height >= 1).then(|| Rect::new(content.x, content.y, content.width, 1));
+    let editor = Rect::new(
+        content.x,
+        content.y.saturating_add(1),
+        content.width,
+        content.height.saturating_sub(1),
+    );
 
     Geometry {
         footer,
@@ -175,7 +170,6 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         center,
         center_bordered,
         title,
-        breadcrumb,
         editor,
     }
 }
