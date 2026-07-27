@@ -457,6 +457,17 @@ fn arb_dir_cause() -> impl Strategy<Value = DirCause> {
     prop_oneof![Just(DirCause::Nav), Just(DirCause::Refresh)]
 }
 
+/// A `DirLoaded` generation: a small bounded range, not `any::<u32>()` —
+/// `Explorer::request_generation` starts at 0 and increments by 1 per
+/// issued `ReadDir`, so a narrow range gives a real chance of landing
+/// exactly on the live value (exercising the "applied" path) while still
+/// mostly missing it (exercising the "ignored as stale" path the review fix
+/// added `handle_dir_loaded`'s guard for) — deliberately NOT pinned to the
+/// live generation the way `ConfirmTimeout` (G15) is.
+fn arb_dir_loaded_generation() -> impl Strategy<Value = u32> {
+    0u32..=4u32
+}
+
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`, or
 /// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6).
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
@@ -467,9 +478,14 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::ConfirmTimeout]),
         (
             proptest::collection::vec(arb_dir_entry(), 0..=6),
-            arb_dir_cause()
+            arb_dir_cause(),
+            arb_dir_loaded_generation()
         )
-            .prop_map(|(entries, cause)| vec![Action::DirLoaded { entries, cause }]),
+            .prop_map(|(entries, cause, generation)| vec![Action::DirLoaded {
+                entries,
+                cause,
+                generation
+            }]),
     ]
 }
 

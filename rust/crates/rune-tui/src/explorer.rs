@@ -40,6 +40,15 @@ pub struct Explorer {
     pub entries: Vec<DirEntry>,
     pub nav: listnav::List,
     pub loading: bool,
+    /// Bumped at every `ReadDir` `Cmd` this Explorer issues (`request_dir`
+    /// below, and `pane::handle_global_command`'s initial `^x` load) — the
+    /// generation token `Msg::DirLoaded` carries back. Two in-flight
+    /// `ReadDir` Cmds can land out of order (e.g. Backspace to a slow parent
+    /// directory, then immediately Enter into a fast child one): without
+    /// this, the OLDER reply could overwrite the newer listing. Mirrors
+    /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
+    /// bump in place, compare on receipt, ignore a stale one.
+    pub request_generation: u32,
 }
 
 impl Default for Explorer {
@@ -49,6 +58,7 @@ impl Default for Explorer {
             entries: Vec::new(),
             nav: listnav::List { cursor: 0, top: 0 },
             loading: false,
+            request_generation: 0,
         }
     }
 }
@@ -185,7 +195,14 @@ fn visible_rows(app: &App) -> usize {
 /// Opens the currently selected entry: a file activates it through
 /// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
 /// the Explorer into it (plan WP4.S3: "Open on a file → workspace::
-/// open_path; Open on a dir → dir load Cmd for the new root").
+/// open_path; Open on a dir → dir load Cmd for the new root"). The
+/// directory branch resolves the candidate root through `app.vfs.resolve`
+/// first (§1.4.9), same as `initial_root`/`open_path` already do — a plain
+/// `join` would let an unresolved (e.g. symlinked) path become the
+/// Explorer's new root, unlike every other root-changing path in this
+/// module. Falls back to the unresolved path on a `resolve` error, mirroring
+/// `workspace::open_path`'s own `unwrap_or_else` fallback (Prime Directive:
+/// a resolve failure must never just strand the user mid-navigation).
 fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some((name, is_dir)) = app
         .explorer
@@ -197,7 +214,8 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
     };
     let target = app.explorer.root.join(&name);
     if is_dir {
-        request_dir(app, target, effects);
+        let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
+        request_dir(app, resolved, effects);
     } else {
         workspace::open_path(app, &target);
     }
@@ -205,22 +223,36 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
 
 /// Backspace navigates to the CURRENT root's own parent — a no-op at a
 /// filesystem root (`Path::parent` returns `None`), never a Cmd for a
-/// nonexistent target.
+/// nonexistent target. Resolved through `app.vfs.resolve` before use (see
+/// `open_selected`'s docs) — a plain `Path::parent` is pure path arithmetic
+/// that never consults the filesystem, unlike `initial_root`'s own root
+/// resolution.
 fn go_to_parent(app: &mut App, effects: &mut Effects) {
     let Some(parent) = app.explorer.root.parent() else {
         return;
     };
-    request_dir(app, parent.to_path_buf(), effects);
+    let parent = parent.to_path_buf();
+    let resolved = app.vfs.resolve(&parent).unwrap_or_else(|_| parent.clone());
+    request_dir(app, resolved, effects);
 }
 
 fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
     app.explorer.loading = true;
+    app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
+    let generation = app.explorer.request_generation;
     let vfs = Arc::clone(&app.vfs);
-    effects.cmds.push(load_dir_cmd(vfs, root, DirCause::Nav));
+    effects
+        .cmds
+        .push(load_dir_cmd(vfs, root, DirCause::Nav, generation));
 }
 
 /// Reacts to `Msg::DirLoaded` (plan WP4.S4), routed from `app::update_
-/// inner`. `Nav` always adopts the new root/entries and resets the cursor
+/// inner`. A `generation` that no longer matches `app.explorer.request_
+/// generation` is a reply to a SUPERSEDED request (a later `ReadDir` was
+/// already issued — `request_dir`/the initial `^x` load bump the
+/// generation at every issue site) and is ignored outright, never adopted
+/// over whatever a newer, still-in-flight (or already-landed) request
+/// produced. `Nav` always adopts the new root/entries and resets the cursor
 /// to the top; `Refresh` keeps the currently selected entry selected BY
 /// NAME when it's still present in the new listing (falling back to the
 /// top otherwise), and is the shape a later fsnotify-driven reload would
@@ -232,7 +264,12 @@ pub(crate) fn handle_dir_loaded(
     root: PathBuf,
     entries: Vec<DirEntry>,
     cause: DirCause,
+    generation: u32,
 ) {
+    if generation != app.explorer.request_generation {
+        return;
+    }
+
     let preserve_name = match cause {
         DirCause::Nav => None,
         DirCause::Refresh => app
@@ -346,6 +383,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false)]),
             DirCause::Nav,
+            0,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
         assert_eq!(app.explorer.entries.len(), 2);
@@ -359,6 +397,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false), ("c", false)]),
             DirCause::Nav,
+            0,
         );
         app.explorer.nav.cursor = 2; // "c"
 
@@ -367,6 +406,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("new", false), ("a", false), ("c", false)]),
             DirCause::Refresh,
+            0,
         );
         assert_eq!(app.explorer.entries[app.explorer.nav.cursor].name, "c");
     }
@@ -379,6 +419,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("gone", false)]),
             DirCause::Nav,
+            0,
         );
         app.explorer.nav.cursor = 1; // "gone"
 
@@ -387,8 +428,54 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("still-here", false)]),
             DirCause::Refresh,
+            0,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
+    }
+
+    /// A `DirLoaded` reply whose `generation` no longer matches the
+    /// Explorer's current `request_generation` (a later request already
+    /// superseded it) must be ignored outright — the review fix for two
+    /// in-flight `ReadDir` Cmds landing out of order.
+    #[test]
+    fn a_stale_generation_reply_is_ignored() {
+        let mut app = app();
+        app.explorer.request_generation = 5;
+        app.explorer.root = PathBuf::from("/root");
+        app.explorer.entries = entries(&[("a", false)]);
+
+        handle_dir_loaded(
+            &mut app,
+            PathBuf::from("/elsewhere"),
+            entries(&[("stale", false)]),
+            DirCause::Nav,
+            4, // superseded — the live generation is 5
+        );
+
+        assert_eq!(
+            app.explorer.root,
+            PathBuf::from("/root"),
+            "a stale-generation reply must not overwrite the current listing"
+        );
+        assert_eq!(app.explorer.entries, entries(&[("a", false)]));
+    }
+
+    /// The reply carrying the CURRENT generation is applied normally.
+    #[test]
+    fn the_current_generation_reply_is_applied() {
+        let mut app = app();
+        app.explorer.request_generation = 5;
+
+        handle_dir_loaded(
+            &mut app,
+            PathBuf::from("/fresh"),
+            entries(&[("fresh", false)]),
+            DirCause::Nav,
+            5,
+        );
+
+        assert_eq!(app.explorer.root, PathBuf::from("/fresh"));
+        assert_eq!(app.explorer.entries, entries(&[("fresh", false)]));
     }
 
     #[test]
@@ -399,6 +486,7 @@ mod tests {
             PathBuf::from("/root"),
             entries(&[("a", false), ("b", false), ("c", false)]),
             DirCause::Nav,
+            0,
         );
         let mut effects = Effects::default();
 

@@ -440,4 +440,45 @@ mod tests {
             99
         );
     }
+
+    /// Review fix: a `DbEvent::Fatal` tears the whole writer thread down —
+    /// every `db_ops` entry still in flight will never receive its ack, so
+    /// `handle_db_event`'s `Fatal` arm must clear the map outright rather
+    /// than leaving those entries as dead weight for the rest of the
+    /// session.
+    #[test]
+    fn handle_db_event_fatal_clears_every_in_flight_db_op() {
+        let mut app = App::new(
+            Buffer::new("a"),
+            None,
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id_a = app.active;
+        let id_b = app.open_document(Buffer::new("b"));
+        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
+        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
+
+        append_edit(&mut app, id_a, 1, &[], &[], &[]);
+        append_edit(&mut app, id_b, 1, &[], &[], &[]);
+        assert_eq!(app.db_ops.len(), 2, "test setup: two ops in flight");
+
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Db(DbEvent::Fatal {
+                error: "writer thread died".to_string(),
+            }),
+            &mut effects,
+        );
+
+        assert!(
+            app.db_ops.is_empty(),
+            "a Fatal event must clear every in-flight db_ops entry"
+        );
+        assert!(
+            app.db.as_ref().expect("store still present").degraded,
+            "a Fatal event must still degrade the store via on_store_failure"
+        );
+    }
 }

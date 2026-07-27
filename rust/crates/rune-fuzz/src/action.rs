@@ -49,14 +49,22 @@ pub enum Action {
     Deliver,
     /// Arm `Mem::fail_next_save(ErrorKind::PermissionDenied)`.
     FailNextSave,
-    /// Delivers `Msg::DirLoaded` with an arbitrary entry set and cause
-    /// (plan WP4.S6) — the driver always targets a fixed root; only
-    /// `entries`/`cause` vary. Exercises the Explorer's dir-loaded handler
-    /// against garbage input with no real `ReadDir` `Cmd` behind it, the
-    /// same "deliver a synthesized reply directly" shape `ClipboardReply`/
-    /// `ConfirmTimeout` already use.
+    /// Delivers `Msg::DirLoaded` with an arbitrary entry set, cause, and
+    /// generation (plan WP4.S6; `generation` added by the review fix for
+    /// `explorer::handle_dir_loaded`'s staleness guard) — the driver always
+    /// targets a fixed root; only `entries`/`cause`/`generation` vary.
+    /// Exercises the Explorer's dir-loaded handler against garbage input
+    /// with no real `ReadDir` `Cmd` behind it, the same "deliver a
+    /// synthesized reply directly" shape `ClipboardReply`/`ConfirmTimeout`
+    /// already use. Unlike `ConfirmTimeout` (G15: must always target the
+    /// LIVE armed generation), `generation` here is deliberately allowed to
+    /// be an arbitrary, usually-stale value — `handle_dir_loaded` silently
+    /// ignoring a reply that doesn't match `Explorer::request_generation`
+    /// is exactly the property under fuzz, so pinning the generator to only
+    /// ever emit the live value would stop exercising it.
     DirLoaded {
         entries: Vec<DirEntry>,
         cause: DirCause,
+        generation: u32,
     },
 }

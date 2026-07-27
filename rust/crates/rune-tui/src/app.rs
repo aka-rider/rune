@@ -70,6 +70,18 @@ pub struct App {
     /// Whether the Explorer/Open-Tabs left column is showing (decision 7);
     /// `false` by default (pre-WP2 geometry) until `^x` shows it.
     pub left_visible: bool,
+    /// The terminal's last-known RAW row count, as reported by the most
+    /// recent `Msg::Resize` — unlike the active document's own `viewport.
+    /// height` (which `Msg::Resize` sets to `height - 1`, reserving the
+    /// footer row), this is the exact `frame.area().height` `render::draw`
+    /// itself sizes the banner against. `App::sync_view` threads this into
+    /// `banner::sync_modal` (mirroring how it already threads the active
+    /// document's `viewport.width` through) so `banner::banner_height` — the
+    /// one function both `render::draw` and `sync_modal` call — computes the
+    /// identical figure in both places. `0` before the first `Msg::Resize`
+    /// (never observed in practice: `runtime::run` seeds one before the
+    /// first `sync_view`/draw).
+    pub frame_height: u16,
     /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
     /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
     pub explorer: Explorer,
@@ -165,6 +177,7 @@ impl App {
             vfs,
             focus: Pane::Editor,
             left_visible: false,
+            frame_height: 0,
             explorer: Explorer::default(),
             tabs: OpenTabs::new(id),
             help_doc: None,
@@ -284,7 +297,8 @@ impl App {
         self.active_doc_mut().view = Some(view);
         if self.modal.is_some() {
             let width = self.active_doc().viewport.width;
-            crate::banner::sync_modal(self, width);
+            let frame_height = self.frame_height;
+            crate::banner::sync_modal(self, width, frame_height);
         }
     }
 
@@ -325,6 +339,7 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
         Msg::Resize(width, height) => {
+            app.frame_height = height;
             app.active_doc_mut()
                 .viewport
                 .set_size(width, height.saturating_sub(1));
@@ -367,7 +382,8 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             root,
             entries,
             cause,
-        } => explorer::handle_dir_loaded(app, root, entries, cause),
+            generation,
+        } => explorer::handle_dir_loaded(app, root, entries, cause, generation),
         // Routed through the modal banner, not `status_message` (plan
         // WP3.S4) — `report_error` is the one chokepoint every error
         // report funnels through.
@@ -413,7 +429,22 @@ fn handle_db_event(app: &mut App, evt: DbEvent) {
             app.db_ops.remove(&op_id);
             save::on_store_failure(app, error);
         }
-        DbEvent::Fatal { error } => save::on_store_failure(app, error),
+        DbEvent::Fatal { error } => {
+            save::on_store_failure(app, error);
+            // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
+            // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
+            // all bail out once `db.degraded`), but does nothing about
+            // in-flight entries already sitting in `db_ops` — a `Fatal`
+            // tears the whole writer thread down, so none of them will
+            // EVER receive their ack. Left alone, they'd carry dead weight
+            // forward for the rest of the session (an unbounded leak across
+            // a long-running degrade-then-keep-editing session); clearing
+            // them here is correct, not just tidy — `App::doc_mut` already
+            // treats a missing `db_ops` entry as a plain no-op for any
+            // ack that *did* somehow still land, so no real ack is ever
+            // silently dropped by this.
+            app.db_ops.clear();
+        }
     }
 }
 

@@ -71,11 +71,16 @@ pub enum Msg {
     /// watcher-triggered reload, out of scope for WP4 itself — no
     /// production caller constructs it yet) preserves the selected entry by
     /// name when it's still present. A `read_dir` failure becomes
-    /// `Msg::Error` instead — see `load_dir_cmd`.
+    /// `Msg::Error` instead — see `load_dir_cmd`. `generation` is the
+    /// request's own generation token (review fix: two in-flight `ReadDir`
+    /// Cmds can land out of order) — `explorer::handle_dir_loaded` ignores a
+    /// reply whose `generation` no longer matches `Explorer::request_
+    /// generation`.
     DirLoaded {
         root: PathBuf,
         entries: Vec<DirEntry>,
         cause: DirCause,
+        generation: u32,
     },
     Error(String),
     Quit,
@@ -282,13 +287,23 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
 /// a directory, Backspace to the parent) and from `pane::handle_global_
 /// command`'s `ToggleExplorer` arm (the very first load). §1.4.9: the
 /// filesystem is reached only through the injected `Vfs`; §5.4: this I/O
-/// never runs inline in `update`, only inside a spawned `Cmd`.
-pub fn load_dir_cmd(vfs: Arc<dyn Vfs + Send + Sync>, root: PathBuf, cause: DirCause) -> Cmd {
+/// never runs inline in `update`, only inside a spawned `Cmd`. `generation`
+/// is echoed back verbatim on the `Msg::DirLoaded` reply — every call site
+/// passes `Explorer::request_generation` AFTER bumping it, so a later
+/// request's reply can never be shadowed by an earlier, slower one landing
+/// after it (review fix).
+pub fn load_dir_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    root: PathBuf,
+    cause: DirCause,
+    generation: u32,
+) -> Cmd {
     Cmd::new(CmdKind::ReadDir, move || match vfs.read_dir(&root) {
         Ok(entries) => Some(Msg::DirLoaded {
             root,
             entries,
             cause,
+            generation,
         }),
         Err(e) => Some(Msg::Error(format!(
             "could not list {}: {e}",

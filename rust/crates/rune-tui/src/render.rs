@@ -307,20 +307,23 @@ pub fn draw(app: &App, frame: &mut Frame) {
     // footer, full frame width, height capped at half the frame — shrinks
     // `main_area` (and so the editor's share of it) accordingly. `None`
     // when no modal is up, leaving `main_area`/the editor geometry below
-    // exactly as pre-WP3.
-    let (main_area, banner_area) = match app.modal.as_ref().map(banner::Modal::total_rows) {
-        Some(total_rows) => {
-            let banner_h = (total_rows as u16).min(area.height / 2);
-            let rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(banner_h)])
-                .split(main_area);
-            (
-                rows.first().copied().unwrap_or(main_area),
-                rows.get(1).copied(),
-            )
-        }
-        None => (main_area, None),
+    // exactly as pre-WP3. `banner::banner_height` is the SAME function
+    // `App::sync_view`'s `banner::sync_modal` call sizes `state.doc.
+    // viewport.height` from (review fix: one source of truth for the
+    // banner's height, so PageUp/PageDown page by exactly what's rendered
+    // here, never a stale figure computed independently).
+    let (main_area, banner_area) = if app.modal.is_some() {
+        let banner_h = banner::banner_height(app, area.height);
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(banner_h)])
+            .split(main_area);
+        (
+            rows.first().copied().unwrap_or(main_area),
+            rows.get(1).copied(),
+        )
+    } else {
+        (main_area, None)
     };
 
     let editor_area = if app.left_visible {

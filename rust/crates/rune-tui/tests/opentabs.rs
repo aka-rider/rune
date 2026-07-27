@@ -242,6 +242,11 @@ fn discard_closes_and_activates_the_neighbor() {
 
     workspace::request_close(&mut app, second);
     assert!(app.modal.is_some());
+    // A degraded-save confirm gate armed for `second` and left unresolved
+    // (review fix: `close_now` must sweep it, not just `pending_close_on_
+    // save`) — must not survive the close as a dangling reference to a
+    // document that no longer exists.
+    app.pending_save_confirm = Some((second, 0));
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
@@ -251,6 +256,10 @@ fn discard_closes_and_activates_the_neighbor() {
     assert_eq!(app.documents.len(), 1);
     assert_eq!(app.active, first, "the sole remaining document takes over");
     assert!(!app.tabs.order.contains(&second));
+    assert!(
+        app.pending_save_confirm.is_none(),
+        "a pending_save_confirm targeting the closed doc must be cleared too"
+    );
 }
 
 /// `[S]ave` triggers a save, closing only once its `Msg::SaveDone` ack

@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, StatusSource};
+use crate::banner;
 use crate::banner::Modal;
 use crate::keymap::GLOBAL_BINDINGS;
 use crate::styles;
@@ -62,12 +63,18 @@ fn mode(app: &App) -> Mode<'_> {
 /// unchanged below); `pending_save_confirm`'s hint text is already sitting
 /// in `app.status_message` — `trigger_save` wrote it there the same tick it
 /// armed the confirm gate — so this just surfaces that rather than
-/// duplicating the string.
+/// duplicating the string. The `cid == app.active` check is load-bearing:
+/// `pending_save_confirm` is doc-tagged (armed for the document that
+/// attempted the save), so switching tabs away from that document must not
+/// leave its stale hint showing over whatever document is active now.
 fn chord_hint(app: &App) -> Option<String> {
     if app.pending_quit.is_some() {
         return Some(quit_hint(app).to_string());
     }
-    if app.pending_save_confirm.is_some() {
+    if app
+        .pending_save_confirm
+        .is_some_and(|(cid, _)| cid == app.active)
+    {
         return app
             .status_message
             .clone()
@@ -93,19 +100,34 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
             Span::styled("  ", styles::footer_hint()),
             Span::styled("[Esc] discard", styles::footer_hint()),
         ],
-        Mode::Guard => vec![
-            Span::styled("[S]ave", styles::footer_key()),
-            Span::styled("  ", styles::footer_hint()),
-            Span::styled("[D]iscard", styles::footer_key()),
-            Span::styled("  ", styles::footer_hint()),
-            Span::styled("[Esc] Cancel", styles::footer_hint()),
-        ],
+        Mode::Guard => guard_spans(),
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), styles::error())],
         Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
         Mode::Status(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
         Mode::DefaultHints => default_hint_spans(),
     }
+}
+
+/// The dirty-close Guard's `[S]ave [D]iscard [Esc] Cancel` hint (plan
+/// WP5.S3), built from `banner::DIRTY_CLOSE_OPTIONS`/`DIRTY_CLOSE_CANCEL_
+/// LABEL` — the SAME consts `banner::handle_guard_key` matches its `s`/`d`
+/// keys against, so this render can never drift from what those keys
+/// actually do (review fix).
+fn guard_spans() -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for opt in banner::DIRTY_CLOSE_OPTIONS {
+        if !spans.is_empty() {
+            spans.push(Span::styled("  ", styles::footer_hint()));
+        }
+        spans.push(Span::styled(opt.label, styles::footer_key()));
+    }
+    spans.push(Span::styled("  ", styles::footer_hint()));
+    spans.push(Span::styled(
+        banner::DIRTY_CLOSE_CANCEL_LABEL,
+        styles::footer_hint(),
+    ));
+    spans
 }
 
 /// Default-mode hints (plan WP2.S6/S7): one `<key> label` pair per
@@ -188,6 +210,30 @@ mod tests {
         }
     }
 
+    /// The Guard mode's rendered labels are exactly `banner::DIRTY_CLOSE_
+    /// OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the same consts `banner::
+    /// handle_guard_key` matches its `s`/`d` keys against (review fix: no
+    /// more independently hand-maintained literal here).
+    #[test]
+    fn guard_mode_labels_come_from_the_shared_dirty_close_consts() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.modal = Some(crate::banner::Modal::Guard(crate::banner::GuardPrompt {
+            doc,
+            kind: crate::banner::GuardKind::DirtyClose,
+        }));
+
+        let text = footer_text(&app);
+        for opt in crate::banner::DIRTY_CLOSE_OPTIONS {
+            assert!(
+                text.contains(opt.label),
+                "expected {:?} in the Guard footer text {text:?}",
+                opt.label
+            );
+        }
+        assert!(text.contains(crate::banner::DIRTY_CLOSE_CANCEL_LABEL));
+    }
+
     #[test]
     fn save_error_outranks_everything_else() {
         let mut app = app_with("hello");
@@ -217,5 +263,34 @@ mod tests {
     fn position_text_reports_one_indexed_line_and_col() {
         let app = app_with("hello");
         assert_eq!(position_text(&app), "Ln 1, Col 1");
+    }
+
+    /// `pending_save_confirm` is doc-tagged (plan WP1 decision 3): a chord
+    /// armed on doc A must not leak its hint onto doc B's footer after a
+    /// tab switch, and must reappear once doc A is active again.
+    #[test]
+    fn save_confirm_hint_is_scoped_to_the_document_it_was_armed_on() {
+        let mut app = app_with("hello");
+        let doc_a = app.active;
+        let doc_b = app.open_document(Buffer::new("world"));
+        app.pending_save_confirm = Some((doc_a, 0));
+
+        assert_eq!(app.active, doc_a);
+        assert!(
+            footer_text(&app).contains("save anyway"),
+            "doc A is active: its own pending confirm hint must show"
+        );
+
+        app.active = doc_b;
+        assert!(
+            !footer_text(&app).contains("save anyway"),
+            "doc B is active: doc A's stale pending confirm hint must not show"
+        );
+
+        app.active = doc_a;
+        assert!(
+            footer_text(&app).contains("save anyway"),
+            "switching back to doc A must show its hint again"
+        );
     }
 }

@@ -80,10 +80,16 @@ fn dir_loaded_never_panics_and_never_touches_editor_content() {
             Action::DirLoaded {
                 entries: garbage_entries.clone(),
                 cause: DirCause::Nav,
+                // `Explorer::request_generation` starts at 0 and no
+                // `ReadDir` Cmd is ever issued in this driven session, so
+                // `0` is the live generation — these replies are actually
+                // adopted, exercising the write path this test asserts on.
+                generation: 0,
             },
             Action::DirLoaded {
                 entries: garbage_entries,
                 cause: DirCause::Refresh,
+                generation: 0,
             },
             Action::Type("def".to_string()),
         ],
