@@ -51,8 +51,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             if app.left_visible && app.explorer.entries.is_empty() && !app.explorer.loading {
                 let root = explorer::initial_root(app);
                 app.explorer.loading = true;
-                app.explorer.request_generation =
-                    app.explorer.request_generation.wrapping_add(1);
+                app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
                 let generation = app.explorer.request_generation;
                 let vfs = Arc::clone(&app.vfs);
                 effects

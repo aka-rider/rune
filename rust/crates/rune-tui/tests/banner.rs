@@ -170,7 +170,10 @@ fn page_down_scrolls_by_the_actually_rendered_banner_height() {
     app.sync_view();
 
     let expected = banner::banner_height(&app, app.frame_height);
-    assert!(expected > 0, "test setup: the banner must actually be capped");
+    assert!(
+        expected > 0,
+        "test setup: the banner must actually be capped"
+    );
 
     let mut effects2 = Effects::default();
     app::update(&mut app, key(KeyCode::PageDown), &mut effects2);

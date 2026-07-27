@@ -205,7 +205,11 @@ fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
     let mut effects = Effects::default();
     let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
-    assert_eq!(effects.cmds.len(), 1, "a resolve failure must not drop the ReadDir Cmd");
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "a resolve failure must not drop the ReadDir Cmd"
+    );
 
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
@@ -227,7 +231,11 @@ fn go_to_parent_falls_back_when_resolve_fails() {
     let mut effects = Effects::default();
     let outcome = explorer::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
-    assert_eq!(effects.cmds.len(), 1, "a resolve failure must not drop the ReadDir Cmd");
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "a resolve failure must not drop the ReadDir Cmd"
+    );
 
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
