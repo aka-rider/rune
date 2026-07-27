@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, StatusSource};
+use crate::banner::Modal;
 use crate::keymap::GLOBAL_BINDINGS;
 use crate::styles;
 
@@ -23,6 +24,10 @@ use crate::styles;
 /// `status.rs::status_text`.
 enum Mode<'a> {
     Modal,
+    /// The close-confirmation prompt (plan WP5.S3) — outranks everything
+    /// below it exactly like `Modal` does, since it's the SAME `App.modal`
+    /// slot, just the other variant.
+    Guard,
     SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
@@ -31,8 +36,10 @@ enum Mode<'a> {
 }
 
 fn mode(app: &App) -> Mode<'_> {
-    if app.modal.is_some() {
-        return Mode::Modal;
+    match &app.modal {
+        Some(Modal::Error(_)) => return Mode::Modal,
+        Some(Modal::Guard(_)) => return Mode::Guard,
+        None => {}
     }
     if app.status_source == StatusSource::SaveError
         && let Some(msg) = &app.status_message
@@ -85,6 +92,13 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
             Span::styled("[C]opy", styles::footer_key()),
             Span::styled("  ", styles::footer_hint()),
             Span::styled("[Esc] discard", styles::footer_hint()),
+        ],
+        Mode::Guard => vec![
+            Span::styled("[S]ave", styles::footer_key()),
+            Span::styled("  ", styles::footer_hint()),
+            Span::styled("[D]iscard", styles::footer_key()),
+            Span::styled("  ", styles::footer_hint()),
+            Span::styled("[Esc] Cancel", styles::footer_hint()),
         ],
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), styles::error())],
         Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],

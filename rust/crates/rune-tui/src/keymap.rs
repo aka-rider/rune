@@ -350,6 +350,14 @@ pub enum KeyOutcome {
 pub enum GlobalCommand {
     ToggleExplorer,
     FocusEditor,
+    /// Focuses the Open Tabs pane (plan WP5: Explorer/Tabs are separate
+    /// panes — decision 7 — so, unlike Go's single shared `FocusExplorer`
+    /// chord, this needs its own binding; `^x`'s `ToggleExplorer` only ever
+    /// focuses Explorer). Shows the left column too (mirroring
+    /// `ToggleExplorer`'s own "show + focus" pairing) so the tab list is
+    /// actually visible the moment it's focused. `^t` — free in both this
+    /// table and `keymap::resolve`'s char guards.
+    FocusTabs,
     Save,
     Help,
     QuitChord(QuitKey),
@@ -392,6 +400,11 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('e'), CTRL),
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('t'), CTRL),
+        cmd: GlobalCommand::FocusTabs,
+        help: "tabs",
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('s'), SUP),
