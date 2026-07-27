@@ -195,7 +195,14 @@ fn visible_rows(app: &App) -> usize {
 /// Opens the currently selected entry: a file activates it through
 /// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
 /// the Explorer into it (plan WP4.S3: "Open on a file → workspace::
-/// open_path; Open on a dir → dir load Cmd for the new root").
+/// open_path; Open on a dir → dir load Cmd for the new root"). The
+/// directory branch resolves the candidate root through `app.vfs.resolve`
+/// first (§1.4.9), same as `initial_root`/`open_path` already do — a plain
+/// `join` would let an unresolved (e.g. symlinked) path become the
+/// Explorer's new root, unlike every other root-changing path in this
+/// module. Falls back to the unresolved path on a `resolve` error, mirroring
+/// `workspace::open_path`'s own `unwrap_or_else` fallback (Prime Directive:
+/// a resolve failure must never just strand the user mid-navigation).
 fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some((name, is_dir)) = app
         .explorer
@@ -207,7 +214,8 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
     };
     let target = app.explorer.root.join(&name);
     if is_dir {
-        request_dir(app, target, effects);
+        let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
+        request_dir(app, resolved, effects);
     } else {
         workspace::open_path(app, &target);
     }
@@ -215,12 +223,17 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
 
 /// Backspace navigates to the CURRENT root's own parent — a no-op at a
 /// filesystem root (`Path::parent` returns `None`), never a Cmd for a
-/// nonexistent target.
+/// nonexistent target. Resolved through `app.vfs.resolve` before use (see
+/// `open_selected`'s docs) — a plain `Path::parent` is pure path arithmetic
+/// that never consults the filesystem, unlike `initial_root`'s own root
+/// resolution.
 fn go_to_parent(app: &mut App, effects: &mut Effects) {
     let Some(parent) = app.explorer.root.parent() else {
         return;
     };
-    request_dir(app, parent.to_path_buf(), effects);
+    let parent = parent.to_path_buf();
+    let resolved = app.vfs.resolve(&parent).unwrap_or_else(|_| parent.clone());
+    request_dir(app, resolved, effects);
 }
 
 fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
