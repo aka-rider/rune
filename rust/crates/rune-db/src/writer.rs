@@ -36,12 +36,13 @@ use rusqlite::Connection;
 
 use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
-use rune_vfs::Vfs;
+use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
 use crate::load::LoadResult;
 use crate::materialize::MatResult;
 use crate::observation::{ObsId, Observation};
+use crate::rename::RenameOutcome;
 use crate::retry;
 use crate::store::LivenessCheckFn;
 use crate::sync::SyncState;
@@ -155,6 +156,31 @@ pub enum OpKind {
         path: PathBuf,
         now: SystemTime,
     },
+    /// Rename `from` → `to` with no clobber (`rename::rename_bind`). A
+    /// collision comes back as `RenameOutcome::Collided` — a refusal, not
+    /// an `Err` — carrying the destination's stat as the consent baseline
+    /// for a possible [`OpKind::RenameReplace`].
+    RenameFile {
+        session_id: i64,
+        doc_id: i64,
+        from: PathBuf,
+        to: PathBuf,
+        now: SystemTime,
+    },
+    /// The user-confirmed destructive rename (`rename::rename_replace`).
+    /// `seen` is the stat the user consented to replace; the op re-checks
+    /// it and refuses on a mismatch. Capture-then-swap-then-commit-then-
+    /// unlink is deliberately ONE op: splitting it across a message
+    /// boundary would make "swapped but not captured" representable
+    /// (§1.4.10).
+    RenameReplace {
+        session_id: i64,
+        doc_id: i64,
+        from: PathBuf,
+        to: PathBuf,
+        seen: Stat,
+        now: SystemTime,
+    },
     /// Port of `adopt.go:9-31` (`ResolveAdopt`).
     ResolveAdopt {
         session_id: i64,
@@ -204,6 +230,9 @@ pub enum OpOutcome {
     Load(Box<LoadResult>),
     /// `ResolveAdopt`'s resulting [`Observation`].
     Observation(Observation),
+    /// `RenameFile`/`RenameReplace`'s [`RenameOutcome`] (boxed — see
+    /// `Sync`'s doc comment: `Replaced` carries a whole `Observation`).
+    Rename(Box<RenameOutcome>),
 }
 
 /// A completion posted by the writer thread for one [`WriteOp`], or a fatal
@@ -602,6 +631,42 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
                 now,
             )?;
             Ok(OpOutcome::Materialize(Box::new(result)))
+        }
+        OpKind::RenameFile {
+            session_id,
+            doc_id,
+            from,
+            to,
+            now,
+        } => {
+            let outcome = crate::rename::rename_bind(
+                conn,
+                vfs,
+                crate::materialize::DocSession { doc_id, session_id },
+                &from,
+                &to,
+                now,
+            )?;
+            Ok(OpOutcome::Rename(Box::new(outcome)))
+        }
+        OpKind::RenameReplace {
+            session_id,
+            doc_id,
+            from,
+            to,
+            seen,
+            now,
+        } => {
+            let outcome = crate::rename::rename_replace(
+                conn,
+                vfs,
+                crate::materialize::DocSession { doc_id, session_id },
+                &from,
+                &to,
+                seen,
+                now,
+            )?;
+            Ok(OpOutcome::Rename(Box::new(outcome)))
         }
         OpKind::Load {
             session_id,

@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, OpenFlags};
 
-use rune_vfs::Vfs;
+use rune_vfs::{Stat, Vfs};
 
 use crate::observation::ObsId;
 use crate::writer::{OnEvent, OpKind, WriteOp};
@@ -311,6 +311,44 @@ impl Store {
             expect,
             seq,
             bind_new,
+            now,
+        })
+    }
+
+    /// Enqueues a `RenameFile` op moving `doc_id`'s file from `from` to
+    /// `to` without clobbering anything. A collision arrives as
+    /// `OpOutcome::Rename(RenameOutcome::Collided)` — a refusal the caller
+    /// turns into the §1.4.4 guard prompt, not an error.
+    pub fn rename_file(&self, doc_id: i64, from: &Path, to: &Path) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::RenameFile {
+            session_id: self.session_id,
+            doc_id,
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+            now,
+        })
+    }
+
+    /// Enqueues a `RenameReplace` op — the user-confirmed destructive
+    /// rename. `seen` is the stat the user consented to replace, captured
+    /// from the preceding `Collided` outcome and re-checked inside the op
+    /// (a consent check; the safety mechanism is the post-swap capture,
+    /// §1.4.10).
+    pub fn rename_replace(
+        &self,
+        doc_id: i64,
+        from: &Path,
+        to: &Path,
+        seen: Stat,
+    ) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::RenameReplace {
+            session_id: self.session_id,
+            doc_id,
+            from: from.to_path_buf(),
+            to: to.to_path_buf(),
+            seen,
             now,
         })
     }
