@@ -191,11 +191,16 @@ fn printable_ascii_and_unicode_chars_are_still_insertable() {
 
 #[test]
 fn resize_sets_viewport_size_reserving_the_status_row() {
+    // Recomputed from `layout::geometry` (plan gotcha 12), not copied from
+    // pre-WP3 behavior: at 80x24 the footer takes row 23, leaving an
+    // 80x23 main/center area (no left pane); no border exists yet at this
+    // WP (plan WP3.S1), so only the reserved title + breadcrumb rows (2)
+    // come off, leaving the editor at 80x21. WP4 adds the border (78x20).
     let mut app = test_app();
     let mut effects = Effects::default();
     update(&mut app, Msg::Resize(80, 24), &mut effects);
     assert_eq!(app.active_doc().viewport.width, 80);
-    assert_eq!(app.active_doc().viewport.height, 23);
+    assert_eq!(app.active_doc().viewport.height, 21);
 }
 
 #[test]

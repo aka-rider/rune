@@ -13,6 +13,7 @@ pub mod explorer;
 pub mod footer;
 pub mod help;
 pub mod keymap;
+pub mod layout;
 pub mod listnav;
 pub mod opentabs;
 pub mod pane;

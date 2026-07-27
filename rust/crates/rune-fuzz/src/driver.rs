@@ -86,7 +86,15 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
         None,
     );
     app.active_doc_mut().focused = true;
-    app.active_doc_mut().viewport.set_size(80, 23);
+    // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
+    // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since
+    // WP3, `App::relayout` (called from `sync_view` below) overrides the
+    // viewport whenever `frame_width != 0`, so a driver that only set the
+    // viewport directly would have it silently overwritten on the very
+    // first `sync_view` call.
+    app.frame_width = 80;
+    app.frame_height = 24;
+    app.relayout();
     app.sync_view();
 
     let mut state = State {

@@ -174,22 +174,17 @@ fn ensure_visible(app: &mut App) {
     app.explorer.nav.follow(len, height, margin, 0);
 }
 
-/// Approximates the Explorer pane's visible entry-row count for `ensure_
-/// visible`'s scroll margin. `Explorer` stores no height of its own (plan
-/// WP4.S3's exact field list has none), so this derives one from the
-/// active document's viewport height — kept live by every `Msg::Resize`
-/// (`document.rs`) — mirroring `render.rs::draw`'s own split: the main
-/// area is `viewport.height + 1` (the footer's one row), the left column
-/// splits it 50/50 with Open Tabs (`draw_left_pane`), each pane loses 2
-/// rows to its own border and this one more to its root-path title row.
-/// An approximation only (percentage-split rounding can be off by a row) —
-/// harmless, since `listnav::List::window` independently clamps to the
-/// REAL rect at render time regardless of what `top` this over/under-
-/// estimated.
+/// The Explorer pane's visible entry-row count for `ensure_visible`'s
+/// scroll margin — read straight from `layout::geometry` (plan WP3.S7),
+/// the one chokepoint every pane's rect comes from, rather than the
+/// `viewport.height`-based approximation this used to reverse-engineer.
+/// The `-1` is the root-path row (`draw` below, row 0 of the block's inner
+/// rect) that isn't available for entries.
 fn visible_rows(app: &App) -> usize {
-    let main_area_height = app.active_doc().viewport.height as usize + 1;
-    let pane_height = (main_area_height / 2).saturating_sub(2);
-    pane_height.saturating_sub(1).max(1)
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    (crate::layout::geometry(area, app).explorer_inner.height as usize)
+        .saturating_sub(1)
+        .max(1)
 }
 
 /// Opens the currently selected entry: a file activates it through

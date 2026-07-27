@@ -82,6 +82,16 @@ pub struct App {
     /// (never observed in practice: `runtime::run` seeds one before the
     /// first `sync_view`/draw).
     pub frame_height: u16,
+    /// The terminal's last-known RAW column count, alongside `frame_height`
+    /// above — same provenance (the most recent `Msg::Resize`), same reason
+    /// it exists separately from any document's own `viewport.width`: once
+    /// `relayout` sizes the viewport from the EDITOR rect (which may be
+    /// narrower than the frame — the left pane, a border), `viewport.width`
+    /// is no longer the full frame width, so anything that needs the frame's
+    /// own width (`banner::sync_modal`, `layout::geometry` itself) reads
+    /// this instead. `0` before the first `Msg::Resize`, exactly like
+    /// `frame_height`. `App::relayout` is a no-op while this is `0`.
+    pub frame_width: u16,
     /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
     /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
     pub explorer: Explorer,
@@ -178,6 +188,7 @@ impl App {
             focus: Pane::Editor,
             left_visible: false,
             frame_height: 0,
+            frame_width: 0,
             explorer: Explorer::default(),
             tabs: OpenTabs::new(id),
             help_doc: None,
@@ -278,6 +289,34 @@ impl App {
         self.active_doc_mut().mark_dirty_from_hydration();
     }
 
+    /// The ONE geometry chokepoint's writer (plan WP3 decision 1/2): derives
+    /// every frame rect from `layout::geometry` and sizes the ACTIVE
+    /// document's viewport from its `editor` rect. A no-op while either
+    /// frame dimension is still `0` (before the first `Msg::Resize` —
+    /// `layout::geometry` would otherwise be asked to lay out a
+    /// zero-by-something frame it never actually has to render).
+    ///
+    /// Called as the first statement of `sync_view` below (`runtime.rs:189,
+    /// 216` call it immediately before every `render::draw` — verified this
+    /// session — so that's the one chokepoint no call site can forget) AND
+    /// again from `Msg::Resize` itself, so tests that call `update` without
+    /// a following `sync_view` still see a correctly-sized viewport;
+    /// calling it twice in the same message batch is harmless (it's a pure
+    /// function of `frame_width`/`frame_height`, idempotent either way).
+    ///
+    /// `.max(1)` on both dimensions (plan gotcha 13): the fuzzer drives
+    /// `Resize` down to a 1x2 frame, and a 0-width/0-height viewport would
+    /// reach `Document::set_width`'s wrap engine with a wrap column of `0`.
+    pub fn relayout(&mut self) {
+        if self.frame_width == 0 || self.frame_height == 0 {
+            return;
+        }
+        let area = ratatui::layout::Rect::new(0, 0, self.frame_width, self.frame_height);
+        let geo = crate::layout::geometry(area, self);
+        let (w, h) = (geo.editor.width.max(1), geo.editor.height.max(1));
+        self.active_doc_mut().viewport.set_size(w, h);
+    }
+
     /// Re-runs the display pipeline for the ACTIVE document and caches the
     /// result on it for `render::draw` to blit. Safe to call more than once
     /// per message batch — see `Document::sync`'s docs. Only the active
@@ -291,12 +330,13 @@ impl App {
     /// document, if one is up (WP3.S3), at the terminal's own width — kept
     /// in this settle step, never inside `render::draw` itself (§5.4).
     pub fn sync_view(&mut self) {
+        self.relayout();
         let focused = self.focus == Pane::Editor && self.modal.is_none();
         self.active_doc_mut().focused = focused;
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
         if self.modal.is_some() {
-            let width = self.active_doc().viewport.width;
+            let width = self.frame_width;
             let frame_height = self.frame_height;
             crate::banner::sync_modal(self, width, frame_height);
         }
@@ -339,10 +379,9 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
         Msg::Resize(width, height) => {
+            app.frame_width = width;
             app.frame_height = height;
-            app.active_doc_mut()
-                .viewport
-                .set_size(width, height.saturating_sub(1));
+            app.relayout();
         }
         Msg::Paste(text) => {
             // Bracketed paste and pbpaste (`Msg::ClipboardRead` below) both

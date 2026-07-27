@@ -132,15 +132,13 @@ fn ensure_visible(app: &mut App) {
     app.tabs.nav.follow(len, height, margin, 0);
 }
 
-/// Approximates the Tabs pane's visible row count — same derivation as
-/// `explorer::visible_rows` (the active document's viewport height, halved
-/// for the 50/50 left-column split, minus this pane's own border rows). No
-/// title row here (unlike Explorer's root-path row), so only the border is
-/// subtracted.
+/// The Tabs pane's visible row count — same derivation as
+/// `explorer::visible_rows` (plan WP3.S7: read straight from
+/// `layout::geometry`'s `tabs_inner`), without the `-1`: no title row here
+/// (unlike Explorer's root-path row).
 fn visible_rows(app: &App) -> usize {
-    let main_area_height = app.active_doc().viewport.height as usize + 1;
-    let pane_height = (main_area_height / 2).saturating_sub(2);
-    pane_height.max(1)
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    (crate::layout::geometry(area, app).tabs_inner.height as usize).max(1)
 }
 
 /// Draws the Tabs pane's content into `area` — the block's INNER rect
