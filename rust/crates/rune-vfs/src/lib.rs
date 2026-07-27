@@ -34,7 +34,14 @@ pub struct Identity {
 }
 
 /// File metadata returned by `Vfs::stat`.
-#[derive(Clone, Copy, Debug)]
+///
+/// `PartialEq`/`Eq` exist for the rename-replace **consent** check: the
+/// `[R]eplace` guard records the `Stat` the user was shown, and the replace
+/// op re-stats the destination and refuses when it no longer matches ("still
+/// the file you agreed to replace?"). That comparison is a consent check, not
+/// the safety mechanism — safety comes from capturing the displaced bytes
+/// after the atomic swap (§1.4.10). `Identity` already derives them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stat {
     pub size: u64,
     pub mtime: SystemTime,
