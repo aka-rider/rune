@@ -91,6 +91,11 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     }
     app.active = id;
     app.focus = Pane::Editor;
+    // The title field describes the ACTIVE document, so it is reseeded at
+    // the one chokepoint every switch funnels through — never left holding
+    // the previous document's name (no shadow state).
+    let stem = crate::title::stem_for(app.active_doc());
+    app.title.seed(&stem);
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }

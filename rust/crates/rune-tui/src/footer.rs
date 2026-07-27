@@ -174,6 +174,12 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
                 .map(|b| (b.key.label(), b.help, true)),
         ),
         Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.key.label(), b.help, true))),
+        // The title field has no binding TABLE of its own — `title::
+        // handle_key` matches Enter/Esc/editing keys directly (they are a
+        // text field's own behaviour, not chords worth enumerating in the
+        // Help doc), so there is nothing here to reflect over. The global
+        // hints below still render while renaming.
+        Pane::Title => {}
         Pane::Editor => {}
     }
 

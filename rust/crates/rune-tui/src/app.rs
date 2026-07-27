@@ -106,6 +106,11 @@ pub struct App {
     /// The document active right before `F1` last activated Help —
     /// `workspace::toggle_help`'s target when toggling back off.
     pub help_return_to: Option<DocumentId>,
+    /// The editable title field (`title.rs`) — the file name a rename types
+    /// into. Reseeded at every document switch (`workspace::switch_to`) and
+    /// at every focus gain (`pane::focus_title`), so it always describes
+    /// the document actually showing. Unjournaled (§12).
+    pub title: crate::title::TitleField,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -206,6 +211,7 @@ impl App {
             tabs: OpenTabs::new(id),
             help_doc: None,
             help_return_to: None,
+            title: crate::title::TitleField::default(),
             status_message: None,
             status_source: StatusSource::Other,
             db,
@@ -546,6 +552,7 @@ fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Pane::Editor => handle_editor_key(app, key, effects),
         Pane::Explorer => explorer::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key),
+        Pane::Title => crate::title::handle_key(app, key, effects),
     };
 }
 
@@ -595,7 +602,17 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     match command {
         Command::CharLeft => nav::char_left(app.active_doc_mut(), false),
         Command::CharRight => nav::char_right(app.active_doc_mut(), false),
-        Command::LineUp => nav::line_up(app.active_doc_mut(), false),
+        // Up at the very top of the buffer focuses the title instead — a
+        // contextual gesture, not a new binding, so §3.1's one-key-one-
+        // binding rule is untouched. Anywhere else it's an ordinary
+        // cursor move.
+        Command::LineUp => {
+            if at_buffer_top(app) {
+                pane::focus_title(app);
+            } else {
+                nav::line_up(app.active_doc_mut(), false);
+            }
+        }
         Command::LineDown => nav::line_down(app.active_doc_mut(), false),
         Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
         Command::WordRight => nav::word_right(app.active_doc_mut(), false),
@@ -659,6 +676,14 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 /// `char::is_control()` (Unicode category Cc: `0x00..=0x1F` and
 /// `0x7F..=0x9F`) closes that exact hazard without narrowing what a human
 /// can actually type.
+/// Whether the active document's primary cursor sits on the FIRST display
+/// line — `display_position` is one-indexed, so line 1 is the top.
+fn at_buffer_top(app: &App) -> bool {
+    let doc = app.active_doc();
+    let offset = doc.cursors.primary().position;
+    doc.buffer.display_position(offset).0 == 1
+}
+
 fn is_insertable_key_char(ch: char) -> bool {
     !ch.is_control()
 }

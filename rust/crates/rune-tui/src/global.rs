@@ -22,6 +22,12 @@ pub enum GlobalCommand {
     /// `ToggleExplorer`'s own "show + focus" pairing) so the tab list is
     /// actually visible the moment it's focused.
     FocusTabs,
+    /// Focuses the title field so the active document can be renamed (`^r`
+    /// — free across `GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `resolve_char`,
+    /// `TABS_BINDINGS` and `EXPLORER_BINDINGS`). Global rather than
+    /// editor-scoped so a rename is reachable from any pane, exactly like
+    /// Save.
+    FocusTitle,
     Save,
     Help,
     QuitChord(QuitKey),
@@ -66,6 +72,11 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         key: KeyPattern::new(KeyCode::Char('t'), CTRL),
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
+    },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('r'), CTRL),
+        cmd: GlobalCommand::FocusTitle,
+        help: "rename",
     },
     Binding {
         key: KeyPattern::new(KeyCode::Char('s'), SUP),

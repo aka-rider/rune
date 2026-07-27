@@ -27,6 +27,10 @@ pub enum Pane {
     Explorer,
     Tabs,
     Editor,
+    /// The editable title field (`title.rs`) — focused by `^r` or by
+    /// pressing Up at the top of the editor. While it owns focus every
+    /// keystroke goes to the file name and none of them reach the buffer.
+    Title,
 }
 
 /// Stage 2 of the four-stage key pipeline (plan Context, decision 8,
@@ -34,6 +38,12 @@ pub enum Pane {
 /// currently has focus — the quit chords and Save in particular must keep
 /// working while the Explorer/Tabs stub panes own it (plan WP2.S4).
 pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: &mut Effects) {
+    // ONE hoisted gate, deliberately before the match (plan "Keybinding"):
+    // a global chord pressed while the title is focused commits the typed
+    // name FIRST, so ⌘S can never save under the old name and the edit is
+    // never silently discarded. A no-op when the title isn't focused.
+    crate::title::finalize_if_focused(app, effects);
+
     match cmd {
         GlobalCommand::ToggleExplorer => {
             app.left_visible = !app.left_visible;
@@ -60,6 +70,10 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             }
         }
         GlobalCommand::FocusEditor => app.focus = Pane::Editor,
+        // Reseed from the document that is actually showing, every time:
+        // the field must never present a stale name from a previous
+        // document or a previously abandoned edit (no shadow state).
+        GlobalCommand::FocusTitle => focus_title(app),
         // Mirrors `ToggleExplorer`'s "show + focus" pairing (plan WP5): the
         // Tabs pane's own cursor is meaningless to a user who can't see it.
         // No dir-load side effect needed here — unlike Explorer, Tabs has
@@ -74,6 +88,16 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::Help => crate::workspace::toggle_help(app),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
     }
+}
+
+/// Focuses the title field, reseeding it from the active document's own
+/// stem and landing the cursor at the end. The single entry point for
+/// gaining title focus — `^r` and the Up-at-editor-top gesture both route
+/// here, so the seed can never be skipped by one of them.
+pub(crate) fn focus_title(app: &mut App) {
+    let stem = crate::title::stem_for(app.active_doc());
+    app.title.seed(&stem);
+    app.focus = Pane::Title;
 }
 
 /// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
