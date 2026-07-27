@@ -11,6 +11,7 @@ pub mod db;
 pub mod document;
 pub mod explorer;
 pub mod footer;
+pub mod help;
 pub mod keymap;
 pub mod listnav;
 pub mod opentabs;

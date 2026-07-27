@@ -77,6 +77,13 @@ pub struct App {
     /// its cursor/scroll position — kept in sync with `documents` at its own
     /// chokepoints (`App::open_document`/`workspace::close_now`).
     pub tabs: OpenTabs,
+    /// The Help virtual document's id, once minted (plan WP7.S2) — `None`
+    /// until the first `F1`. Makes `workspace::toggle_help` idempotent (a
+    /// second press never mints a duplicate).
+    pub help_doc: Option<DocumentId>,
+    /// The document active right before `F1` last activated Help —
+    /// `workspace::toggle_help`'s target when toggling back off.
+    pub help_return_to: Option<DocumentId>,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -160,6 +167,8 @@ impl App {
             left_visible: false,
             explorer: Explorer::default(),
             tabs: OpenTabs::new(id),
+            help_doc: None,
+            help_return_to: None,
             status_message: None,
             status_source: StatusSource::Other,
             db,

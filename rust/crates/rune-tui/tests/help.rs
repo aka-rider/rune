@@ -1,0 +1,213 @@
+//! WP7 "Done when" tests: the Help virtual document — minted once, toggled
+//! via `F1`, read-only, and rendered in the Open Tabs pane.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use std::sync::Arc;
+
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer as RtBuffer;
+
+use rune_core::buffer::Buffer;
+use rune_tui::app::{self, App};
+use rune_tui::explorer::EXPLORER_BINDINGS;
+use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
+use rune_tui::opentabs::TABS_BINDINGS;
+use rune_tui::pane::Pane;
+use rune_tui::render;
+use rune_tui::runtime::{Effects, Msg};
+use rune_tui::workspace;
+use rune_vfs::Mem;
+
+const WIDTH: u16 = 80;
+const HEIGHT: u16 = 24;
+
+fn app_with(content: &str) -> App {
+    let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
+    app.sync_view();
+    app
+}
+
+fn f1() -> KeyInput {
+    KeyInput {
+        code: KeyCode::F1,
+        mods: Mods::NONE,
+    }
+}
+
+fn draw(app: &App) -> RtBuffer {
+    let backend = TestBackend::new(WIDTH, HEIGHT);
+    let mut terminal = Terminal::new(backend).expect("terminal construction");
+    terminal
+        .draw(|frame| render::draw(app, frame))
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn frame_text(buf: &RtBuffer) -> String {
+    let mut s = String::new();
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            if let Some(cell) = buf.cell((x, y)) {
+                s.push_str(cell.symbol());
+            }
+        }
+    }
+    s
+}
+
+/// `F1` twice mints exactly one Help document — the second press must not
+/// duplicate it (plan WP7.S3: "press twice -> documents.len() grows by
+/// exactly 1 across both presses").
+#[test]
+fn f1_twice_creates_exactly_one_help_document() {
+    let mut app = app_with("hello");
+    let before = app.documents.len();
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+    let after_first = app.documents.len();
+
+    let mut effects2 = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects2);
+    let after_second = app.documents.len();
+
+    assert_eq!(after_first, before + 1, "first F1 must mint the help doc");
+    assert_eq!(
+        after_second,
+        before + 1,
+        "second F1 must not mint a duplicate; documents.len() grew by exactly 1 across both presses"
+    );
+}
+
+/// The generated content contains `## Global` plus at least one help label
+/// string from each of the three real binding tables — asserted against
+/// the tables themselves, not hardcoded strings, so this can never drift.
+#[test]
+fn help_content_covers_every_binding_table() {
+    let mut app = app_with("hello");
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+
+    let content = app.active_doc().buffer.content().to_string();
+    assert!(
+        content.contains("## Global"),
+        "missing ## Global:\n{content}"
+    );
+
+    assert!(
+        GLOBAL_BINDINGS.iter().any(|b| content.contains(b.help)),
+        "expected a GLOBAL_BINDINGS help label in:\n{content}"
+    );
+    assert!(
+        EXPLORER_BINDINGS.iter().any(|b| content.contains(b.help)),
+        "expected an EXPLORER_BINDINGS help label in:\n{content}"
+    );
+    assert!(
+        TABS_BINDINGS.iter().any(|b| content.contains(b.help)),
+        "expected a TABS_BINDINGS help label in:\n{content}"
+    );
+}
+
+/// The Help document rejects edits: a printable key while it's active
+/// leaves the buffer unchanged, and `is_dirty()` stays false.
+#[test]
+fn help_document_rejects_edits_and_never_goes_dirty() {
+    let mut app = app_with("hello");
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+    assert!(app.active_doc().read_only, "help doc must be read-only");
+
+    let content_before = app.active_doc().buffer.content().to_string();
+    let printable = KeyInput {
+        code: KeyCode::Char('x'),
+        mods: Mods::NONE,
+    };
+    let mut effects2 = Effects::default();
+    app::update(&mut app, Msg::Key(printable), &mut effects2);
+
+    assert_eq!(
+        app.active_doc().buffer.content(),
+        content_before,
+        "a printable key must not mutate a read-only document"
+    );
+    assert!(
+        !app.active_doc().is_dirty(),
+        "a rejected edit must never mark the help doc dirty"
+    );
+}
+
+/// `F1` while Help is active returns to the document that was active right
+/// before Help was toggled on.
+#[test]
+fn f1_while_help_active_returns_to_the_previous_document() {
+    let mut app = app_with("hello");
+    let original = app.active;
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+    let help_id = app.active;
+    assert_ne!(help_id, original);
+
+    let mut effects2 = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects2);
+
+    assert_eq!(
+        app.active, original,
+        "F1 must switch back to the original doc"
+    );
+    assert!(
+        app.documents.contains_key(&help_id),
+        "toggling off must not close the help doc, only switch away from it"
+    );
+}
+
+/// Closing the document Help would otherwise switch back to must not
+/// panic: toggling Help off lands on any other live document instead.
+#[test]
+fn closing_the_previous_document_then_toggling_help_lands_somewhere_live() {
+    let mut app = app_with("hello");
+    let original = app.active;
+    let second = app.open_document(Buffer::new("second"));
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+    let help_id = app.active;
+    assert_eq!(app.help_return_to, Some(original));
+
+    // Close `original` while it's not active (help is) — a clean document,
+    // so this closes immediately rather than arming the Guard.
+    workspace::close_now(&mut app, original);
+    assert!(!app.documents.contains_key(&original));
+    assert_eq!(app.documents.len(), 2, "help doc + second must remain");
+
+    let mut effects2 = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects2);
+
+    assert_ne!(app.active, help_id, "must have switched away from help");
+    assert!(
+        app.documents.contains_key(&app.active),
+        "must land on a live document"
+    );
+    assert_eq!(app.active, second);
+}
+
+/// The help tab renders in the Open Tabs pane with the display name
+/// "Help".
+#[test]
+fn help_tab_renders_in_open_tabs_pane_with_the_name_help() {
+    let mut app = app_with("hello");
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(f1()), &mut effects);
+
+    app.left_visible = true;
+    app.focus = Pane::Tabs;
+    app.sync_view();
+
+    let text = frame_text(&draw(&app));
+    assert!(
+        text.contains("Help"),
+        "expected \"Help\" in the Tabs pane:\n{text}"
+    );
+}

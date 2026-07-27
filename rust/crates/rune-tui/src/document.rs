@@ -132,6 +132,14 @@ pub struct Document {
     /// document, or one opened before per-doc hydration exists (Assumption
     /// A1).
     pub db: Option<DocDb>,
+    /// Overrides `file_name`'s file-path-derived display name (plan
+    /// WP7.S2) — the minimal seam a document with no `file_path` at all
+    /// (and never will have one) needs to show a real name instead of the
+    /// `"[No Name]"` untitled-draft fallback. `Some("Help")` for the Help
+    /// virtual document; `None` for every ordinary document, where
+    /// `file_name` derives its display name from `file_path` exactly as
+    /// before.
+    pub display_name: Option<String>,
 }
 
 impl Document {
@@ -152,6 +160,7 @@ impl Document {
             is_dirty_cached: false,
             view: None,
             db: None,
+            display_name: None,
         }
     }
 
@@ -170,6 +179,9 @@ impl Document {
     }
 
     pub fn file_name(&self) -> &str {
+        if let Some(name) = self.display_name.as_deref() {
+            return name;
+        }
         self.file_path
             .as_ref()
             .and_then(|p| p.file_name())

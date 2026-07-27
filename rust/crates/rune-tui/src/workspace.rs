@@ -15,6 +15,7 @@ use rune_core::buffer::{Buffer, BufferError};
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
+use crate::help;
 use crate::pane::Pane;
 
 /// Opens `path`: normalizes it via `app.vfs.resolve`, then either
@@ -93,6 +94,48 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
+}
+
+/// `F1` (plan WP7.S2, `keymap::GlobalCommand::Help`): mints the read-only
+/// Help virtual document the first time it's ever needed (`App.help_doc`,
+/// idempotent — a second press never mints a duplicate), then toggles
+/// between it and whatever was active before. Unlike Go's `toggleHelp`
+/// (`workspace_nav.go:152`, which CLOSES the help tab on the second press
+/// while focused there), this port keeps the Help document as an ordinary,
+/// closable tab and instead switches back to `App.help_return_to` — the
+/// document that was active right before Help was last activated. Falls
+/// back to any other live document if that one has since been closed
+/// (e.g. via the Tabs pane's own `^w`). If the Help document ITSELF has
+/// since been closed the same way, `live_help`'s `documents.contains_key`
+/// check below fails and this mints a fresh one — `App.help_doc` never
+/// points at a stale id.
+pub fn toggle_help(app: &mut App) {
+    let live_help = app.help_doc.filter(|id| app.documents.contains_key(id));
+
+    if let Some(id) = live_help {
+        if app.active == id {
+            let target = app
+                .help_return_to
+                .filter(|t| *t != id && app.documents.contains_key(t))
+                .or_else(|| app.documents.keys().find(|&&other| other != id).copied())
+                .unwrap_or(id);
+            switch_to(app, target);
+        } else {
+            app.help_return_to = Some(app.active);
+            switch_to(app, id);
+        }
+        return;
+    }
+
+    let previous = app.active;
+    let id = app.open_document(Buffer::new(help::help_markdown()));
+    if let Some(doc) = app.doc_mut(id) {
+        doc.read_only = true;
+        doc.display_name = Some("Help".to_string());
+    }
+    app.help_doc = Some(id);
+    app.help_return_to = Some(previous);
+    switch_to(app, id);
 }
 
 /// Requests closing `id` (plan WP5.S3): refuses outright if it's the LAST
