@@ -9,7 +9,8 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier as RtModifier, Style};
+use ratatui::style::{Modifier as RtModifier, Style};
+use ratatui::widgets::{Block, BorderType};
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
@@ -19,6 +20,8 @@ use rune_md::emit::StyleId;
 use rune_md::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
 
 use crate::app::App;
+use crate::pane::Pane;
+use crate::styles;
 
 /// One visible terminal cell, with its buffer-byte provenance. `-1` marks a
 /// cell with no direct buffer correspondence — decorative/synthetic (port of
@@ -35,37 +38,13 @@ pub struct Cell {
     pub buf_offset: i64,
 }
 
-/// Semantic `StyleId` -> `ratatui::style::Style` — the lipgloss-equivalent
-/// theme (plan Context, "Parse": "the lipgloss-equivalent theme lives in
-/// rune-tui"). Phase-1 placeholder palette; not itself under test — the
-/// `StyleId` dispatch (which span gets which id) is what `tests/tui_render.rs`
-/// asserts on.
+/// Semantic `StyleId` -> `ratatui::style::Style` — delegates to
+/// `styles::markdown` (plan WP2.S2, critic R2: "exactly one style source").
+/// Kept as a thin wrapper (rather than calling `styles::markdown` directly
+/// from `segment_cells` below) so `render.rs` still owns the ONE call site
+/// `tests/tui_render.rs` documents itself against.
 pub fn style_for(id: StyleId) -> Style {
-    let base = Style::default();
-    match id {
-        StyleId::Text => base,
-        StyleId::H1 | StyleId::H2 | StyleId::H3 | StyleId::H4 | StyleId::H5 | StyleId::H6 => {
-            base.fg(Color::Magenta).add_modifier(RtModifier::BOLD)
-        }
-        StyleId::Bold => base.add_modifier(RtModifier::BOLD),
-        StyleId::Italic => base.add_modifier(RtModifier::ITALIC),
-        StyleId::BoldItalic => base.add_modifier(RtModifier::BOLD | RtModifier::ITALIC),
-        StyleId::Strike => base.add_modifier(RtModifier::CROSSED_OUT),
-        StyleId::BoldStrike => base.add_modifier(RtModifier::BOLD | RtModifier::CROSSED_OUT),
-        StyleId::ItalicStrike => base.add_modifier(RtModifier::ITALIC | RtModifier::CROSSED_OUT),
-        StyleId::BoldItalicStrike => {
-            base.add_modifier(RtModifier::BOLD | RtModifier::ITALIC | RtModifier::CROSSED_OUT)
-        }
-        StyleId::Code | StyleId::CodeFence => base.fg(Color::Yellow),
-        StyleId::Link | StyleId::WikiLink => {
-            base.fg(Color::Cyan).add_modifier(RtModifier::UNDERLINED)
-        }
-        StyleId::Blockquote => base.fg(Color::Gray),
-        StyleId::ListMarker => base.fg(Color::Blue),
-        StyleId::TaskMarker => base.fg(Color::Green),
-        StyleId::Hr | StyleId::FrontmatterDim => base.fg(Color::DarkGray),
-        StyleId::Verbatim => base.fg(Color::Gray),
-    }
+    styles::markdown(id)
 }
 
 /// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
@@ -256,7 +235,8 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize) {
             if cell.buf_offset >= 0 {
                 let offset = cell.buf_offset as usize;
                 if offset >= start && offset < end {
-                    cell.style = cell.style.bg(Color::DarkGray);
+                    // Go `Selection` (`styles.go:196`, WP2.S2 migration).
+                    cell.style = cell.style.bg(styles::SELECTION_BG);
                 }
             }
         }
@@ -283,25 +263,106 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
     });
 }
 
-/// Splits the frame into the editor viewport (all but the last row) and the
-/// status line, and blits `app.view`'s current snapshot into the buffer.
+/// Left-pane geometry (plan WP2.S5): the DEFAULT column width, the
+/// smallest it may shrink to, and the smallest the editor pane may shrink
+/// to in exchange. `left_pane_width` below is the pure query both `draw`'s
+/// layout and any test asserting on the split use, so they can never
+/// disagree on the number.
+pub const DEFAULT_LEFT_PANE_W: u16 = 22;
+pub const MIN_LEFT_PANE_W: u16 = 16;
+pub const MIN_CENTER_W: u16 = 24;
+
+/// The left-pane column width for a `total_width`-wide main area, or `None`
+/// when the terminal is too narrow to give BOTH the left pane its minimum
+/// AND the editor `MIN_CENTER_W` (plan WP2.S5: "if the terminal is too
+/// narrow for both minimums, drop the left pane for that frame").
+fn left_pane_width(total_width: u16) -> Option<u16> {
+    if total_width < MIN_LEFT_PANE_W.saturating_add(MIN_CENTER_W) {
+        return None;
+    }
+    let max_left = total_width.saturating_sub(MIN_CENTER_W);
+    Some(DEFAULT_LEFT_PANE_W.min(max_left).max(MIN_LEFT_PANE_W))
+}
+
+/// Splits the frame into (optionally) a left pane column, the editor
+/// viewport, and the footer row, and blits `app.view`'s current snapshot
+/// into the editor area. The editor pane's own geometry is UNCHANGED from
+/// pre-WP2 when `app.left_visible` is false (plan WP2.S5) — this `if`
+/// exists entirely inside the space the left pane would otherwise borrow
+/// from `main_area`, never touching `footer_area`.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
-    let editor_area = chunks.first().copied().unwrap_or(area);
-    let status_area = chunks
+    let main_area = chunks.first().copied().unwrap_or(area);
+    let footer_area = chunks
         .get(1)
         .copied()
         .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
+
+    let editor_area = if app.left_visible {
+        match left_pane_width(main_area.width) {
+            Some(left_w) => {
+                let cols = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Length(left_w), Constraint::Min(0)])
+                    .split(main_area);
+                let left_area = cols.first().copied().unwrap_or(main_area);
+                draw_left_pane(app, left_area, frame);
+                cols.get(1).copied().unwrap_or(main_area)
+            }
+            None => main_area,
+        }
+    } else {
+        main_area
+    };
 
     if let Some(view) = &app.active_doc().view {
         let rows = build_rows(view, app);
         blit(&rows, editor_area, frame);
     }
-    crate::status::draw(app, status_area, frame);
+    crate::footer::draw(app, footer_area, frame);
+}
+
+/// The left column's two empty, titled, bordered blocks (plan WP2.S5):
+/// Explorer on top ("Files" — a placeholder title until WP4 has a root dir
+/// to name), Open Tabs below ("Open"). Contents land in WP4/WP5; this only
+/// establishes the geometry and the focus-colored border.
+fn draw_left_pane(app: &App, area: Rect, frame: &mut Frame) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let explorer_area = rows.first().copied().unwrap_or(area);
+    let tabs_area = rows
+        .get(1)
+        .copied()
+        .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
+
+    let border_style = |pane: Pane| {
+        if app.focus == pane {
+            styles::active_border()
+        } else {
+            styles::inactive_border()
+        }
+    };
+
+    frame.render_widget(
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(border_style(Pane::Explorer))
+            .title("Files"),
+        explorer_area,
+    );
+    frame.render_widget(
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(border_style(Pane::Tabs))
+            .title("Open"),
+        tabs_area,
+    );
 }
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left
