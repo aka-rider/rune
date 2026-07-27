@@ -37,7 +37,11 @@ pub enum ReaderRequestKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReaderReply {
     Pong,
-    Blob(String),
+    /// The raw bytes stored under the requested hash — never decoded as
+    /// text here (blob.rs's module doc: content is only ever validated as
+    /// UTF-8 at the point it re-enters a `String`-typed buffer, which is
+    /// not this stale-tolerant display path's concern).
+    Blob(Vec<u8>),
 }
 
 struct Request {
@@ -166,13 +170,13 @@ mod tests {
         )
         .expect("bootstrap shared memdb");
         crate::schema::apply(&bootstrap).expect("apply schema");
-        let hash = crate::blob::put_blob(&bootstrap, "reader blob content").expect("put blob");
+        let hash = crate::blob::put_blob(&bootstrap, b"reader blob content").expect("put blob");
 
         let handle = spawn(uri).expect("spawn reader");
         let reply = handle
             .query(ReaderRequestKind::GetBlob { hash })
             .expect("get blob");
-        assert_eq!(reply, ReaderReply::Blob("reader blob content".to_string()));
+        assert_eq!(reply, ReaderReply::Blob(b"reader blob content".to_vec()));
         handle.shutdown();
 
         drop(bootstrap);

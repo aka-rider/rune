@@ -75,8 +75,8 @@ pub trait Vfs {
 
     /// Atomically rename `old` to `new`, failing with an error wrapping
     /// `io::ErrorKind::AlreadyExists` if `new` already exists — no clobber
-    /// (§1.4.4: never silently create on an overwrite-intent save). Disk:
-    /// `renamex_np(RENAME_EXCL)` + parent fsync.
+    /// (§1.4.1: atomic publish via `RenameExcl`, no window for a silent
+    /// overwrite). Disk: `renamex_np(RENAME_EXCL)` + parent fsync.
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()>;
 
     /// Delete a single file. Not `Trash` — internal temps must never shell

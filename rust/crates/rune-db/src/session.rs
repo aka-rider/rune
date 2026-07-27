@@ -76,25 +76,41 @@ fn proc_started_at(pid: i32) -> Option<String> {
     Some(format!("{sec}.{usec:06}"))
 }
 
+/// The result of [`process_exists`] — three genuinely distinct outcomes, not
+/// two independent booleans (a `(bool, bool)` pair leaves the
+/// "inconclusive, but which way does the existence bit lean" question only
+/// implicit in the caller's own memory of the old encoding, `(false,
+/// false)`). Every caller must fail toward [`Alive`](Existence::Alive) on
+/// [`Inconclusive`](Existence::Inconclusive) — CONSTITUTION §0's harm ladder
+/// (wrongly refusing to inherit a recoverable draft is tolerable; wrongly
+/// inheriting into and corrupting a still-live session's journal is not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Existence {
+    /// `kill(pid, 0)` succeeded, or failed with `EPERM` (exists, owned by
+    /// another user — still a real process).
+    Alive,
+    /// Positively confirmed gone (`ESRCH`).
+    Dead,
+    /// The check itself failed for any other reason — no positive claim
+    /// either way.
+    Inconclusive,
+}
+
 /// Reports whether `pid` currently identifies a running process, via the
 /// POSIX `kill(pid, 0)` idiom (sends no signal, only checks addressability)
 /// — the one existence check that behaves identically and unambiguously on
 /// every unix (`liveness_unix.go`), unlike `proc_started_at`, which on
 /// Darwin cannot cleanly distinguish "no such process" from an unrelated
 /// read failure.
-///
-/// `found = false` means POSITIVELY confirmed gone (`ESRCH`); `ok = false`
-/// means the check itself was inconclusive (any other errno) — the caller
-/// must fail toward "alive" in that case, never toward "dead".
-fn process_exists(pid: i32) -> (bool, bool) {
+fn process_exists(pid: i32) -> Existence {
     let ret = unsafe { libc::kill(pid, 0) };
     if ret == 0 {
-        return (true, true); // exists, and we can signal it
+        return Existence::Alive; // exists, and we can signal it
     }
     match std::io::Error::last_os_error().raw_os_error() {
-        Some(code) if code == libc::ESRCH => (false, true), // positively confirmed: no such process
-        Some(code) if code == libc::EPERM => (true, true), // exists, owned by another user — still a real process
-        _ => (false, false),                               // inconclusive
+        Some(code) if code == libc::ESRCH => Existence::Dead, // positively confirmed: no such process
+        Some(code) if code == libc::EPERM => Existence::Alive, // exists, owned by another user — still a real process
+        _ => Existence::Inconclusive,
     }
 }
 
@@ -112,12 +128,10 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
         Ok(p) => p,
         Err(_) => return false, // out of pid_t range: not a real, currently-alive pid
     };
-    let (exists, ok) = process_exists(pid);
-    if !ok {
-        return true; // inconclusive existence check (e.g. sandboxed) — fail toward alive
-    }
-    if !exists {
-        return false; // positively confirmed: no such process
+    match process_exists(pid) {
+        Existence::Inconclusive => return true, // e.g. sandboxed — fail toward alive
+        Existence::Dead => return false,        // positively confirmed: no such process
+        Existence::Alive => {}
     }
     if started_at.is_empty() {
         return true; // this session never captured a start time to compare — fail toward alive

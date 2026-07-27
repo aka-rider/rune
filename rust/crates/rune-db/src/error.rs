@@ -71,11 +71,14 @@ pub enum Error {
     /// A WP4 business-rule refusal with no dedicated variant — the direct
     /// port of an ad hoc `fmt.Errorf` guard in the Go source (e.g.
     /// `Materialize`'s "no path bound (untitled document)",
-    /// `ResolveAbandon`'s "not a resolve adoption" refusal) or a
-    /// non-UTF-8 disk read (the Rust port's `Buffer`/`AppliedEdit` model
+    /// `ResolveAbandon`'s "not a resolve adoption" refusal), or `load.rs`'s
+    /// own non-UTF-8 disk read (the Rust port's `Buffer`/`AppliedEdit` model
     /// is `String`-based throughout, unlike Go's raw `[]byte`↔`string`
-    /// conversions, which tolerate arbitrary bytes — see `probe.rs`/
-    /// `materialize.rs`/`load.rs` doc comments).
+    /// conversions, which tolerate arbitrary bytes — see `load.rs`'s doc
+    /// comment). `probe.rs`/`materialize.rs` no longer hit this case: their
+    /// disk-sourced reads never need to decode as text at all (`blob.rs`'s
+    /// module doc) — only `load.rs`'s return path, which must produce a
+    /// genuine `String` for the edit buffer, still can.
     Invalid(String),
 }
 

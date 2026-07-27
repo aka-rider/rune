@@ -34,7 +34,7 @@ pub fn create_snapshot(
     content: &str,
     seq: i64,
 ) -> Result<i64, Error> {
-    let hash = put_blob(tx, content)?;
+    let hash = put_blob(tx, content.as_bytes())?;
     let at = format_rfc3339_nanos(now);
     tx.execute(
         "INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at) \
@@ -93,7 +93,20 @@ pub fn recover_document(conn: &Connection, session_id: i64, doc_id: i64) -> Resu
         .optional()?;
 
     let (anchor_seq, anchor_content) = match anchor {
-        Some((seq, hash)) => (seq, get_blob(conn, &hash)?),
+        Some((seq, hash)) => {
+            let bytes = get_blob(conn, &hash)?;
+            // The anchor blob is always session-authored buffer content
+            // (written by `create_snapshot` from a `&str`) re-entering the
+            // String-typed edit buffer here — a decode failure means a
+            // genuinely corrupt snapshot, which must surface as an error,
+            // never be silently coerced (blob.rs module doc).
+            let content = String::from_utf8(bytes).map_err(|e| {
+                Error::CorruptPayload(format!(
+                    "snapshot blob {hash} for doc {doc_id}: non-utf8 content: {e}"
+                ))
+            })?;
+            (seq, content)
+        }
         None => (0, String::new()),
     };
 

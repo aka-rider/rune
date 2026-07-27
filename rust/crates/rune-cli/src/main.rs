@@ -115,6 +115,19 @@ fn main() -> ExitCode {
     }
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| rune_tui::runtime::run(&mut app)));
+
+    // Drain the writer FIFO and run clean-shutdown housekeeping
+    // (`wal_checkpoint(TRUNCATE)`/`optimize`, WP6.S2) on EVERY exit path —
+    // normal quit, a surfaced runtime error, AND a recovered panic — never
+    // only the three bootstrap-failure branches above. Queued ops (an
+    // in-flight `AppendEdit` burst, a pending snapshot, an in-flight
+    // `Materialize`) would otherwise be silently abandoned when `main`
+    // returns: a durability hole `Store::shutdown`'s own deterministic
+    // drain exists specifically to close.
+    if let Some(app_db) = app.db.take() {
+        app_db.shutdown();
+    }
+
     match result {
         Ok(Ok(())) => ExitCode::SUCCESS,
         Ok(Err(e)) => {
@@ -231,7 +244,10 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         Ok(pair) => pair,
         Err(e) => {
             eprintln!("rune: recovery store unavailable: {e}");
-            return DbBootstrap::default();
+            return DbBootstrap {
+                banner: Some(format!("recovery disabled: {e}")),
+                ..DbBootstrap::default()
+            };
         }
     };
     let degraded_at_open = store.degraded();
@@ -241,7 +257,10 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         Err(e) => {
             eprintln!("rune: recovery store load failed: {e}");
             store.shutdown();
-            return DbBootstrap::default();
+            return DbBootstrap {
+                banner: Some(format!("recovery disabled: {e}")),
+                ..DbBootstrap::default()
+            };
         }
     };
 
@@ -264,13 +283,40 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         Ok(_) => {
             eprintln!("rune: recovery store returned an unexpected reply to Load");
             store.shutdown();
-            return DbBootstrap::default();
+            return DbBootstrap {
+                banner: Some(
+                    "recovery disabled: internal error: unexpected reply to Load".to_string(),
+                ),
+                ..DbBootstrap::default()
+            };
         }
         Err(e) => {
             eprintln!("rune: recovery store load failed: {e}");
             store.shutdown();
-            return DbBootstrap::default();
+            return DbBootstrap {
+                banner: Some(format!("recovery disabled: {e}")),
+                ..DbBootstrap::default()
+            };
         }
+    };
+
+    // §1.7: `saved_obs` is `None` here only if `load` itself failed to
+    // adopt anything for this session/doc pair — "should not occur" per
+    // `LoadResult::saved_obs`'s own doc comment, but a `0` fallback would be
+    // a fabricated `ObsId` (AUTOINCREMENT ids start at 1, so `0` is never a
+    // real row) silently handed to every later CAS `materialize` as if it
+    // were a genuine baseline. Treat it as the loud internal error it is —
+    // degrade rather than fake a baseline no observation backs.
+    let Some(expect_obs) = load_result.saved_obs else {
+        eprintln!("rune: recovery store load did not adopt a saved_obs baseline");
+        store.shutdown();
+        return DbBootstrap {
+            banner: Some(
+                "recovery disabled: internal error: load did not adopt a saved_obs baseline"
+                    .to_string(),
+            ),
+            ..DbBootstrap::default()
+        };
     };
 
     let bridge_edit = (load_result.recovered != load_result.disk_content).then(|| AppliedEdit {
@@ -279,7 +325,6 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         deleted: load_result.disk_content.clone(),
         insert: load_result.recovered.clone(),
     });
-    let expect_obs = load_result.saved_obs.unwrap_or(0);
     let app_db = AppDb::new(
         store,
         bridge,
@@ -287,7 +332,14 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         degraded_at_open,
         expect_obs,
         false, // bind_new: `file_existed` at the call site guarantees the target exists
-        0,     // last_known_seq: this session's own durable journal starts empty
+        // last_known_seq: `load` may have already durably journaled a
+        // cross-session-inheritance bridge edit under THIS session's own
+        // id — `bridge_seq` is that edit's own seq when it happened, and
+        // this session's true durable journal head either way (a fresh
+        // session journals nothing else during `load`). `0` would silently
+        // regress behind it for any `move_undo_pos`/`materialize` issued
+        // before the first ordinary `AppendEdit` ack lands (finding 8).
+        load_result.bridge_seq.unwrap_or(0),
     );
 
     let banner = if degraded_at_open {

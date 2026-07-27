@@ -227,11 +227,24 @@ mod tests {
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
         let tx = conn.transaction().expect("tx");
         let doc_id = seed_doc(&tx);
-        let hash = crate::blob::put_blob(&tx, "some content").expect("seed blob");
+        let hash = crate::blob::put_blob(&tx, b"some content").expect("seed blob");
 
         // A bare (uncorrelated) sighting: never ancestor-eligible.
         crate::observation::record_observation(
-            &tx, doc_id, session_id, &hash, None, 1, "t", None, None, None, "watch", "t",
+            &tx,
+            doc_id,
+            session_id,
+            crate::observation::ObservationMeta {
+                blob_hash: &hash,
+                seq: None,
+                origin: "watch",
+            },
+            &crate::observation::StatFacts {
+                size: 1,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
+            "t",
         )
         .expect("record");
 
@@ -258,19 +271,20 @@ mod tests {
 
         // An ancestor-eligible 'load' observation at seq 0, matching the
         // (empty) journal reconstruction at that position.
-        let empty_hash = crate::blob::put_blob(&tx, "").expect("seed empty blob");
+        let empty_hash = crate::blob::put_blob(&tx, b"").expect("seed empty blob");
         crate::observation::record_observation(
             &tx,
             doc_id,
             session_id,
-            &empty_hash,
-            Some(0),
-            0,
-            "t",
-            None,
-            None,
-            None,
-            "load",
+            crate::observation::ObservationMeta {
+                blob_hash: &empty_hash,
+                seq: Some(0),
+                origin: "load",
+            },
+            &crate::observation::StatFacts {
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
             "t",
         )
         .expect("record load observation");
@@ -293,19 +307,21 @@ mod tests {
             &[],
         )
         .expect("append_edit");
-        let hello_hash = crate::blob::put_blob(&tx, "hello").expect("seed hello blob");
+        let hello_hash = crate::blob::put_blob(&tx, b"hello").expect("seed hello blob");
         crate::observation::record_observation(
             &tx,
             doc_id,
             session_id,
-            &hello_hash,
-            Some(1),
-            5,
-            "t",
-            None,
-            None,
-            None,
-            "resolve",
+            crate::observation::ObservationMeta {
+                blob_hash: &hello_hash,
+                seq: Some(1),
+                origin: "resolve",
+            },
+            &crate::observation::StatFacts {
+                size: 5,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
             "t",
         )
         .expect("record resolve observation");

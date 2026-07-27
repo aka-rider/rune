@@ -66,12 +66,23 @@ pub fn probe(
     }
 
     let data = vfs.read(&resolved).map_err(Error::Io)?;
-    let content = String::from_utf8(data)
-        .map_err(|e| Error::Invalid(format!("probe doc {doc_id}: non-utf8 content: {e}")))?;
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &content))?;
+    // Recorded as a raw-bytes blob regardless of UTF-8 validity — a probe is
+    // a passive observation of whatever is actually on disk (blob.rs module
+    // doc); it must never hard-fail just because the file isn't valid text.
+    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &data))?;
 
     let fresh = observation::observe_from_stat(
-        conn, vfs, session_id, doc_id, &resolved, &hash, None, "probe", now,
+        conn,
+        vfs,
+        session_id,
+        doc_id,
+        &resolved,
+        observation::ObservationMeta {
+            blob_hash: &hash,
+            seq: None,
+            origin: "probe",
+        },
+        now,
     )?;
 
     let theirs = Some(Version {

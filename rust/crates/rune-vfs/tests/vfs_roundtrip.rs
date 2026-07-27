@@ -214,6 +214,33 @@ fn mem_fail_next_save_error_kind() {
     vfs.save_atomic(&path, b"data").expect("should succeed");
 }
 
+/// Finding 10: `Mem::write_durable` must match `Disk`'s
+/// `OpenOptions::create_new(true)` collision behavior — a second
+/// `write_durable` for the same destination (same deterministic temp name)
+/// must error `AlreadyExists`, never silently overwrite the first temp's
+/// bytes (the mirror of `disk_regression_preexisting_temp_not_deleted_on_
+/// conflict` below, so this failure mode is testable against `Mem` too).
+#[test]
+fn mem_write_durable_errors_already_exists_on_temp_collision() {
+    let vfs = Mem::new();
+    let path = PathBuf::from("collision_test");
+
+    let temp1 = vfs
+        .write_durable(&path, b"first")
+        .expect("first write_durable");
+
+    let err = vfs
+        .write_durable(&path, b"second")
+        .expect_err("temp collision must error");
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+
+    let content = vfs.read(&temp1).expect("first temp still readable");
+    assert_eq!(
+        &content, b"first",
+        "the first temp's bytes must be untouched by the failed second write_durable"
+    );
+}
+
 // ============================================================================
 // REGRESSION TESTS for review fixes
 // ============================================================================

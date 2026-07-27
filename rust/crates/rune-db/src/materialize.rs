@@ -21,8 +21,43 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::adopt;
-use crate::observation::{self, ObsId, Observation};
+use crate::observation::{self, ObsId, Observation, ObservationMeta};
 use crate::retry;
+
+/// `doc_id`/`session_id` bundled together — every function in this module
+/// needs both, and threading them as a pair (rather than two separate
+/// parameters at every call site) is what keeps each signature under
+/// clippy's argument-count lint without an `#[allow]` (repo rule: no such
+/// allow outside test code).
+#[derive(Clone, Copy, Debug)]
+pub struct DocSession {
+    pub doc_id: i64,
+    pub session_id: i64,
+}
+
+/// The bytes to write and the journal position they correspond to, bundled
+/// for the same argument-count reason — always passed together from
+/// [`materialize`] down through [`materialize_overwrite`]/
+/// [`materialize_create`]/[`commit_save`].
+#[derive(Clone, Copy, Debug)]
+struct WriteIntent<'a> {
+    data: &'a [u8],
+    seq: i64,
+}
+
+/// The caller-captured save intent [`materialize`] takes: `content` is what
+/// to write, `expect` is the observation the caller last read as the
+/// current disk fact (`SavedObs`, captured synchronously at save-start),
+/// `seq` is the journal position `content` corresponds to, and `bind_new`
+/// is the caller's explicit "a missing target is OK to create" intent.
+/// Never re-derived once the op is enqueued (§1.4.2/§1.4.8).
+#[derive(Clone, Copy, Debug)]
+pub struct MaterializeInput<'a> {
+    pub content: &'a str,
+    pub expect: ObsId,
+    pub seq: i64,
+    pub bind_new: bool,
+}
 
 /// The outcome of [`materialize`]. Port of `materialize.go:157-187`
 /// (`MatResult`) — Go's boolean-flagged always-present `Saved`/`Fresh`
@@ -48,48 +83,50 @@ pub struct MatResult {
     pub raced: bool,
 }
 
-/// Writes `content` to `doc_id`'s bound file under a CAS contract. `expect`
-/// is the observation the caller last read as the current disk fact
-/// (`SavedObs`, captured synchronously at save-start). `seq` is the journal
-/// position `content` corresponds to. `bind_new` is the caller's explicit
-/// "a missing target is OK to create" intent. Port of `materialize.go:69-146`
-/// (`Materialize`).
-#[allow(clippy::too_many_arguments)]
+/// Writes `input.content` to `doc_id`'s bound file under a CAS contract.
+/// Port of `materialize.go:69-146` (`Materialize`).
 pub fn materialize(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    ds: DocSession,
     path: &Path,
-    content: &str,
-    expect: ObsId,
-    seq: i64,
-    bind_new: bool,
+    input: MaterializeInput<'_>,
     now: SystemTime,
 ) -> Result<MatResult, Error> {
-    let data = content.as_bytes();
+    let data = input.content.as_bytes();
 
-    if bind_new {
+    if input.bind_new {
         let resolved = vfs.resolve(path).map_err(Error::Io)?;
         if let Some(dir) = resolved.parent()
             && !dir.as_os_str().is_empty()
         {
             vfs.mkdir_all(dir).map_err(Error::Io)?;
         }
-        return materialize_create(conn, vfs, session_id, doc_id, &resolved, data, seq, now);
+        return materialize_create(
+            conn,
+            vfs,
+            ds,
+            &resolved,
+            WriteIntent {
+                data,
+                seq: input.seq,
+            },
+            now,
+        );
     }
 
     let db_path: String = retry::with_retry(conn, |tx| {
         tx.query_row(
             "SELECT path FROM documents WHERE id=?1",
-            params![doc_id],
+            params![ds.doc_id],
             |r| r.get(0),
         )
         .map_err(Error::from)
     })?;
     if db_path.is_empty() {
         return Err(Error::Invalid(format!(
-            "materialize doc {doc_id}: no path bound (untitled document)"
+            "materialize doc {}: no path bound (untitled document)",
+            ds.doc_id
         )));
     }
     let resolved = vfs.resolve(Path::new(&db_path)).map_err(Error::Io)?;
@@ -108,13 +145,11 @@ pub fn materialize(
         Err(e) => return Err(Error::Io(e)),
     };
 
-    let expect_obs = retry::with_retry(conn, |tx| observation::get_observation(tx, expect))?;
+    let expect_obs = retry::with_retry(conn, |tx| observation::get_observation(tx, input.expect))?;
 
     // Step 2: live hash != expect -> refuse, no write.
     if observation::hash_bytes(&live_data) != expect_obs.blob_hash {
-        let fresh = record_fresh(
-            conn, vfs, session_id, doc_id, &resolved, &live_data, "probe", now,
-        )?;
+        let fresh = record_fresh(conn, vfs, ds, &resolved, &live_data, "probe", now)?;
         return Ok(MatResult {
             fresh: Some(fresh),
             ..Default::default()
@@ -124,12 +159,13 @@ pub fn materialize(
     materialize_overwrite(
         conn,
         vfs,
-        session_id,
-        doc_id,
+        ds,
         &resolved,
-        data,
+        WriteIntent {
+            data,
+            seq: input.seq,
+        },
         &expect_obs,
-        seq,
         now,
     )
 }
@@ -137,19 +173,16 @@ pub fn materialize(
 /// Steps 3-5: once the pre-write hash confirmed the live target still
 /// matches `expect`. Port of `materialize.go:148-203`
 /// (`materializeOverwrite`).
-#[allow(clippy::too_many_arguments)]
 fn materialize_overwrite(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    ds: DocSession,
     resolved: &Path,
-    data: &[u8],
+    write: WriteIntent<'_>,
     expect_obs: &Observation,
-    seq: i64,
     now: SystemTime,
 ) -> Result<MatResult, Error> {
-    let temp = vfs.write_durable(resolved, data).map_err(Error::Io)?;
+    let temp = vfs.write_durable(resolved, write.data).map_err(Error::Io)?;
 
     if let Err(e) = vfs.exchange(&temp, resolved) {
         // Deliberately NOT removed (a documented strengthening over Go's
@@ -172,10 +205,8 @@ fn materialize_overwrite(
         // sitting at `resolved` right now. Capture the displaced bytes,
         // THEN commit our own write for real (the CAS record must match
         // physical reality), and remove the temp only after BOTH commit.
-        let fresh = record_fresh(
-            conn, vfs, session_id, doc_id, &temp, &displaced, "swap", now,
-        )?;
-        let saved = commit_save(conn, vfs, session_id, doc_id, resolved, data, seq, now)?;
+        let fresh = record_fresh(conn, vfs, ds, &temp, &displaced, "swap", now)?;
+        let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
         let _ = vfs.remove(&temp); // disk hygiene, not data safety — both records already committed
         return Ok(MatResult {
             committed: true,
@@ -186,7 +217,7 @@ fn materialize_overwrite(
         });
     }
 
-    let saved = commit_save(conn, vfs, session_id, doc_id, resolved, data, seq, now)?;
+    let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
     // Only after the tx commits: remove the displaced-bytes temp (I1 —
     // never discard before the record commits).
     let _ = vfs.remove(&temp);
@@ -200,18 +231,15 @@ fn materialize_overwrite(
 /// Step 6: an atomic, no-clobber `rename_excl` for a bind-new or
 /// recreate-after-delete target. Port of `materialize.go:205-233`
 /// (`materializeCreate`).
-#[allow(clippy::too_many_arguments)]
 fn materialize_create(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    ds: DocSession,
     resolved: &Path,
-    data: &[u8],
-    seq: i64,
+    write: WriteIntent<'_>,
     now: SystemTime,
 ) -> Result<MatResult, Error> {
-    let temp = vfs.write_durable(resolved, data).map_err(Error::Io)?;
+    let temp = vfs.write_durable(resolved, write.data).map_err(Error::Io)?;
     if let Err(e) = vfs.rename_excl(&temp, resolved) {
         if e.kind() == io::ErrorKind::AlreadyExists {
             // A concurrent creator raced us — our own temp is genuinely
@@ -219,9 +247,7 @@ fn materialize_create(
             // safe to discard.
             let _ = vfs.remove(&temp);
             let live_data = vfs.read(resolved).map_err(Error::Io)?;
-            let fresh = record_fresh(
-                conn, vfs, session_id, doc_id, resolved, &live_data, "probe", now,
-            )?;
+            let fresh = record_fresh(conn, vfs, ds, resolved, &live_data, "probe", now)?;
             return Ok(MatResult {
                 fresh: Some(fresh),
                 ..Default::default()
@@ -232,7 +258,7 @@ fn materialize_create(
         // place the user's bytes still physically exist.
         return Err(Error::Io(e));
     }
-    let saved = commit_save(conn, vfs, session_id, doc_id, resolved, data, seq, now)?;
+    let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
     Ok(MatResult {
         committed: true,
         saved: Some(saved),
@@ -240,86 +266,88 @@ fn materialize_create(
     })
 }
 
-/// Puts `data`'s content as a blob and records an observation of it at
-/// `path`'s current stat, for the `Conflict{Fresh}` outcomes. Port of
-/// `materialize.go:235-243` (`recordFresh`).
-#[allow(clippy::too_many_arguments)]
+/// Puts `data`'s raw bytes as a blob and records an observation of it at
+/// `path`'s current stat, for the `Conflict{Fresh}` outcomes. `data` is
+/// disk-sourced — the target's live content on a CAS refusal, or a racer's
+/// displaced bytes on a swap-race (§1.4.10 mandates this capture happens
+/// unconditionally, never gated on UTF-8 validity: see `blob.rs`'s module
+/// doc). Port of `materialize.go:235-243` (`recordFresh`).
 fn record_fresh(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    ds: DocSession,
     path: &Path,
     data: &[u8],
     origin: &str,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let content = std::str::from_utf8(data)
-        .map_err(|e| Error::Invalid(format!("materialize doc {doc_id}: non-utf8 content: {e}")))?;
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, content))?;
+    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, data))?;
     observation::observe_from_stat(
-        conn, vfs, session_id, doc_id, path, &hash, None, origin, now,
+        conn,
+        vfs,
+        ds.session_id,
+        ds.doc_id,
+        path,
+        ObservationMeta {
+            blob_hash: &hash,
+            seq: None,
+            origin,
+        },
+        now,
     )
 }
 
 /// Step 5: ONE tx — observation(`origin='save'`, hash of the bytes WE
 /// WROTE) + `saved_obs` update + re-Bind (path/inode/device/`kind='file'`,
-/// post-swap stat). `seq` is the caller's save-start-captured journal
+/// post-swap stat). `write.seq` is the caller's save-start-captured journal
 /// position — NEVER re-read here. The post-write stat (disk I/O) happens
 /// BEFORE the tx opens; the tx itself is pure SQLite (I1's
 /// no-tx-across-disk-I/O contract). Port of `materialize.go:245-325`
 /// (`commitSave`).
-#[allow(clippy::too_many_arguments)]
 fn commit_save(
     conn: &mut Connection,
     vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
+    ds: DocSession,
     resolved: &Path,
-    data: &[u8],
-    seq: i64,
+    write: WriteIntent<'_>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let content = std::str::from_utf8(data)
-        .map_err(|e| Error::Invalid(format!("commit save doc {doc_id}: non-utf8 content: {e}")))?;
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, content))?;
+    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, write.data))?;
 
-    let (size, mtime, inode, device, nlink) = observation::stat_identity(vfs, resolved);
-    let id_ok = inode.is_some();
+    let stat = observation::stat_identity(vfs, resolved);
+    let id_ok = stat.inode.is_some();
     let at = crate::session::format_rfc3339_nanos(now);
     let resolved_str = resolved.to_string_lossy().into_owned();
 
     retry::with_retry(conn, |tx| {
         let obs = adopt::record_adoption_tx(
             tx,
-            doc_id,
-            session_id,
-            &hash,
-            size,
-            &mtime,
-            inode,
-            device,
-            nlink,
-            "save",
-            Some(seq),
+            ds.doc_id,
+            ds.session_id,
+            ObservationMeta {
+                blob_hash: &hash,
+                seq: Some(write.seq),
+                origin: "save",
+            },
+            &stat,
             &at,
         )?;
 
         tx.execute(
             "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-            params![resolved_str, doc_id],
+            params![resolved_str, ds.doc_id],
         )?;
 
         if id_ok {
             tx.execute(
                 "UPDATE documents SET inode=NULL, device=NULL WHERE inode=?1 AND device=?2 AND id!=?3",
-                params![inode, device, doc_id],
+                params![stat.inode, stat.device, ds.doc_id],
             )?;
         }
 
         tx.execute(
             "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-            params![resolved_str, inode, device, at, doc_id],
+            params![resolved_str, stat.inode, stat.device, at, ds.doc_id],
         )?;
 
         Ok(obs)
@@ -357,7 +385,7 @@ mod tests {
     /// `content` is durably stored first via `put_blob` (never a
     /// hand-picked hash string with no backing row).
     fn record_obs(conn: &Connection, doc_id: i64, session_id: i64, content: &str) -> ObsId {
-        let hash = crate::blob::put_blob(conn, content).expect("seed blob");
+        let hash = crate::blob::put_blob(conn, content.as_bytes()).expect("seed blob");
         conn.execute(
             "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, origin, at) \
              VALUES(?1,?2,?3,NULL,0,'t','load','t')",
@@ -392,13 +420,14 @@ mod tests {
         let result = materialize(
             &mut conn,
             &vfs,
-            session_id,
-            doc_id,
+            DocSession { doc_id, session_id },
             path,
-            "our content",
-            expect,
-            1,
-            false,
+            MaterializeInput {
+                content: "our content",
+                expect,
+                seq: 1,
+                bind_new: false,
+            },
             SystemTime::now(),
         )
         .expect("materialize must not error, only refuse");
@@ -460,12 +489,13 @@ mod tests {
         let result = materialize_overwrite(
             &mut conn,
             &vfs,
-            session_id,
-            doc_id,
+            DocSession { doc_id, session_id },
             path,
-            b"our content",
+            WriteIntent {
+                data: b"our content",
+                seq: 1,
+            },
             &expect_obs,
-            1,
             SystemTime::now(),
         )
         .expect("materialize_overwrite");
@@ -479,9 +509,83 @@ mod tests {
         // The blob is durably retrievable.
         let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
             .expect("racer bytes durably stored as a blob");
-        assert_eq!(blob, "racer bytes");
+        assert_eq!(blob, b"racer bytes");
 
         // OUR bytes are what's physically on disk now.
+        let disk = vfs.read(path).expect("read disk");
+        assert_eq!(disk, b"our content");
+    }
+
+    /// §1.4.10 mandates capturing displaced bytes unconditionally — even
+    /// when the racer's bytes are NOT valid UTF-8 (e.g. a binary file, or
+    /// another process's own in-progress non-text write landing in the
+    /// swap window). Before the blob layer was retyped to raw bytes, this
+    /// hit `std::str::from_utf8` inside `record_fresh` and hard-errored:
+    /// no blob, no `commit_save`, even though OUR bytes had already
+    /// physically swapped in — exactly the failure mode this test guards
+    /// against.
+    #[test]
+    fn swap_race_with_non_utf8_racer_bytes_commits_raced_and_captures_the_blob_byte_exact() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"original");
+        let doc_id = seed_doc_with_path(&conn, "/doc.md");
+
+        let expect_obs = Observation {
+            id: 0,
+            doc_id,
+            session_id,
+            blob_hash: observation::hash_bytes(b"original"),
+            seq: None,
+            size: 0,
+            mtime: String::new(),
+            inode: None,
+            device: None,
+            nlink: None,
+            origin: "load".to_string(),
+            supersedes: None,
+            at: String::new(),
+        };
+
+        // Non-UTF-8 racer bytes land at `path` in the swap window (0xFF is
+        // never a valid UTF-8 lead byte).
+        let racer_bytes: &[u8] = &[0xff, 0xfe, 0x00, 0x9f, 0x92, 0x96, 0x80];
+        let racer_temp = vfs
+            .write_durable(path, racer_bytes)
+            .expect("racer write_durable");
+        vfs.exchange(&racer_temp, path).expect("racer exchange");
+        vfs.remove(&racer_temp).ok();
+
+        let result = materialize_overwrite(
+            &mut conn,
+            &vfs,
+            DocSession { doc_id, session_id },
+            path,
+            WriteIntent {
+                data: b"our content",
+                seq: 1,
+            },
+            &expect_obs,
+            SystemTime::now(),
+        )
+        .expect("materialize_overwrite must commit, not hard-error, on non-utf8 displaced bytes");
+
+        assert!(result.committed, "our write must commit despite the race");
+        assert!(result.raced, "must be flagged as a swap-race win");
+        let fresh = result.fresh.expect("displaced bytes must be captured");
+        assert_eq!(fresh.origin, "swap");
+        assert_eq!(fresh.blob_hash, observation::hash_bytes(racer_bytes));
+
+        let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
+            .expect("non-utf8 racer bytes must still be durably stored as a blob");
+        assert_eq!(
+            blob, racer_bytes,
+            "displaced bytes must round-trip byte-exact, even though not valid UTF-8"
+        );
+
         let disk = vfs.read(path).expect("read disk");
         assert_eq!(disk, b"our content");
     }
@@ -505,13 +609,14 @@ mod tests {
         let err = materialize(
             &mut conn,
             &vfs,
-            session_id,
-            doc_id,
+            DocSession { doc_id, session_id },
             path,
-            "user bytes",
-            expect,
-            1,
-            false,
+            MaterializeInput {
+                content: "user bytes",
+                expect,
+                seq: 1,
+                bind_new: false,
+            },
             SystemTime::now(),
         )
         .expect_err("exchange failure must surface");
@@ -559,13 +664,14 @@ mod tests {
         let result = materialize(
             &mut conn,
             &vfs,
-            session_id,
-            doc_id,
+            DocSession { doc_id, session_id },
             Path::new("/gone.md"),
-            "content",
-            expect,
-            1,
-            false,
+            MaterializeInput {
+                content: "content",
+                expect,
+                seq: 1,
+                bind_new: false,
+            },
             SystemTime::now(),
         )
         .expect("materialize must not error");
@@ -586,13 +692,14 @@ mod tests {
         let result = materialize(
             &mut conn,
             &vfs,
-            session_id,
-            doc_id,
+            DocSession { doc_id, session_id },
             Path::new("/new.md"),
-            "brand new content",
-            0,
-            1,
-            true,
+            MaterializeInput {
+                content: "brand new content",
+                expect: 0,
+                seq: 1,
+                bind_new: true,
+            },
             SystemTime::now(),
         )
         .expect("materialize");
@@ -601,5 +708,58 @@ mod tests {
 
         let disk = vfs.read(Path::new("/new.md")).expect("file created");
         assert_eq!(disk, b"brand new content");
+    }
+
+    /// Port of Go `materialize_test.go:278-317` parity (finding 9): a
+    /// concurrent creator publishes the target BEFORE our own `bind_new`
+    /// materialize's `rename_excl` runs. We must refuse (never clobber the
+    /// winner), record a fresh `origin='probe'` observation of the winner's
+    /// actual bytes, and leave the winner's bytes on disk untouched.
+    #[test]
+    fn bind_new_create_race_refuses_and_records_winners_bytes() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc_with_path(&conn, "");
+        let path = Path::new("/new.md");
+
+        // A concurrent creator wins the race and publishes first.
+        publish(&vfs, path, b"winner's bytes");
+
+        let result = materialize(
+            &mut conn,
+            &vfs,
+            DocSession { doc_id, session_id },
+            path,
+            MaterializeInput {
+                content: "our content",
+                expect: 0,
+                seq: 1,
+                bind_new: true,
+            },
+            SystemTime::now(),
+        )
+        .expect("materialize must not error, only refuse");
+
+        assert!(!result.committed, "the create must be refused");
+        let fresh = result.fresh.expect("winner's bytes must be recorded");
+        assert_eq!(fresh.origin, "probe");
+        assert_eq!(fresh.blob_hash, observation::hash_bytes(b"winner's bytes"));
+
+        let saved_obs_row_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM session_documents WHERE session_id=?1 AND doc_id=?2)",
+                params![session_id, doc_id],
+                |r| r.get(0),
+            )
+            .expect("check saved_obs existence");
+        assert!(
+            !saved_obs_row_exists,
+            "a refused create must never move saved_obs"
+        );
+
+        let disk = vfs.read(path).expect("winner's file still on disk");
+        assert_eq!(disk, b"winner's bytes", "the winner's bytes must be intact");
     }
 }

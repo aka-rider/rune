@@ -50,6 +50,19 @@ pub struct LoadResult {
     /// than assumed, matching this crate's "Options for absent facts" rule
     /// rather than a caller-visible panic risk).
     pub saved_obs: Option<ObsId>,
+    /// The durable journal seq THIS session's own cross-session-inheritance
+    /// bridge edit (`find_inheritable_draft`'s synthetic replace-all,
+    /// journaled under `session_id`) committed to, when `load` performed
+    /// one — `None` when it didn't (no inheritance, or `has_history` was
+    /// already true). This is this session's own durable journal HEAD
+    /// immediately after `load` returns: a fresh session has journaled
+    /// nothing else of its own before or during `load`, so a caller seeding
+    /// its local "last acked durable seq" tracking (`AppDb::last_known_seq`)
+    /// MUST start from this, not an assumed `0` — an `undo`/`redo`
+    /// committing `move_undo_pos` before its first ordinary `AppendEdit` ack
+    /// lands would otherwise silently regress this session's own
+    /// `current_seq` past a bridge edit that already advanced it.
+    pub bridge_seq: Option<i64>,
 }
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
@@ -171,26 +184,39 @@ pub fn load(
 ) -> Result<LoadResult, Error> {
     let resolved = vfs.resolve(path).map_err(Error::Io)?;
     let data = vfs.read(&resolved).map_err(Error::Io)?;
-    let content = String::from_utf8(data)
-        .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
 
     let doc_ref: DocRef = document::open_path(conn, vfs, &resolved, now)?;
     let doc_id = doc_ref.id;
 
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &content))?;
+    // Hashing and blob storage operate on the raw disk bytes UNCONDITIONALLY
+    // — a load must still durably record what's actually on disk even if it
+    // turns out not to be valid UTF-8 (blob.rs's module doc: disk-sourced
+    // content is never gated on decode success). Only the `content: String`
+    // this function ultimately returns for the edit buffer requires the
+    // file to be genuinely valid text — that check happens below, AFTER
+    // this sighting is already durably recorded.
+    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &data))?;
 
     // The journal position AT LOAD TIME.
     let load_seq = retry::with_retry(conn, |tx| {
         crate::journal::current_seq(tx, session_id, doc_id)
     })?;
 
-    let (size, mtime, inode, device, nlink) = observation::stat_identity(vfs, &resolved);
+    let stat = observation::stat_identity(vfs, &resolved);
 
     // BEFORE recording anything below — must reflect GENUINE prior history,
     // not history this very call is about to create.
     let has_hist = retry::with_retry(conn, |tx| has_history(tx, session_id, doc_id))?;
 
+    // Content re-enters the String-typed edit buffer HERE: this is
+    // session-editable content, which must be valid UTF-8 (rune-core's
+    // `Buffer` has no other representation) — a load of genuinely non-text
+    // content is a real, surfaced error, never silently mangled or dropped.
+    let content = String::from_utf8(data)
+        .map_err(|e| Error::Invalid(format!("load {}: non-utf8 content: {e}", path.display())))?;
+
     let mut recovered = content.clone();
+    let mut bridge_seq = None;
     if has_hist {
         recovered = retry::with_retry(conn, |tx| {
             crate::snapshot::recover_document(tx, session_id, doc_id)
@@ -213,7 +239,15 @@ pub fn load(
             crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, load_seq)
         })?;
         adopt::record_adoption(
-            conn, doc_id, session_id, &hash, size, &mtime, inode, device, nlink, "load", load_seq,
+            conn,
+            doc_id,
+            session_id,
+            observation::ObservationMeta {
+                blob_hash: &hash,
+                seq: Some(load_seq),
+                origin: "load",
+            },
+            &stat,
             now,
         )?;
 
@@ -229,9 +263,10 @@ pub fn load(
                 deleted: content.clone(),
                 insert: draft_content.clone(),
             }];
-            retry::with_retry(conn, |tx| {
+            let seq = retry::with_retry(conn, |tx| {
                 crate::journal::append_edit(tx, session_id, now, doc_id, &bridge, &[], &[])
             })?;
+            bridge_seq = Some(seq);
             recovered = draft_content;
         }
     } else if hash == observation::hash_bytes(recovered.as_bytes()) {
@@ -246,8 +281,16 @@ pub fn load(
         };
         if needs_heal {
             adopt::record_adoption(
-                conn, doc_id, session_id, &hash, size, &mtime, inode, device, nlink, "resolve",
-                load_seq, now,
+                conn,
+                doc_id,
+                session_id,
+                observation::ObservationMeta {
+                    blob_hash: &hash,
+                    seq: Some(load_seq),
+                    origin: "resolve",
+                },
+                &stat,
+                now,
             )?;
         }
     } else {
@@ -256,7 +299,15 @@ pub fn load(
         let at = crate::session::format_rfc3339_nanos(now);
         retry::with_retry(conn, |tx| {
             observation::record_observation(
-                tx, doc_id, session_id, &hash, None, size, &mtime, inode, device, nlink, "load",
+                tx,
+                doc_id,
+                session_id,
+                observation::ObservationMeta {
+                    blob_hash: &hash,
+                    seq: None,
+                    origin: "load",
+                },
+                &stat,
                 &at,
             )
         })?;
@@ -275,8 +326,9 @@ pub fn load(
         recovered,
         has_history: has_hist,
         sync: sync_state,
-        nlink: nlink.unwrap_or(0),
+        nlink: stat.nlink.unwrap_or(0),
         saved_obs,
+        bridge_seq,
     })
 }
 
@@ -383,14 +435,15 @@ mod tests {
                 &tx,
                 doc_id,
                 session_a,
-                &observation::hash_bytes(b"session A's content"),
-                0,
-                "t",
-                None,
-                None,
-                None,
-                "load",
-                Some(0),
+                observation::ObservationMeta {
+                    blob_hash: &observation::hash_bytes(b"session A's content"),
+                    seq: Some(0),
+                    origin: "load",
+                },
+                &observation::StatFacts {
+                    mtime: "t".to_string(),
+                    ..Default::default()
+                },
                 "t",
             )
             .expect("adopt load");
@@ -456,14 +509,15 @@ mod tests {
                 &tx,
                 doc_id,
                 session_a,
-                &disk_hash,
-                0,
-                "t",
-                None,
-                None,
-                None,
-                "load",
-                Some(0),
+                observation::ObservationMeta {
+                    blob_hash: &disk_hash,
+                    seq: Some(0),
+                    origin: "load",
+                },
+                &observation::StatFacts {
+                    mtime: "t".to_string(),
+                    ..Default::default()
+                },
                 "t",
             )
             .expect("adopt load");
@@ -493,5 +547,107 @@ mod tests {
             "disk unchanged since the dead session's baseline -> safe to bridge"
         );
         assert_eq!(draft, "UNSAVED shared content");
+    }
+
+    /// End-to-end through the full [`load`] entry point (finding 8): a
+    /// fresh session inheriting a dead session's draft must report the
+    /// bridge edit's own durable seq in `LoadResult::bridge_seq`, exactly
+    /// matching this session's own `current_seq` immediately after —
+    /// a caller seeding `last_known_seq` from a hardcoded `0` instead would
+    /// silently regress behind a `move_undo_pos`/`materialize` issued
+    /// before this session's first ordinary `AppendEdit` ack lands.
+    #[test]
+    fn load_through_inheritance_reports_the_bridge_edits_own_durable_seq() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"shared content");
+
+        // Session A loads, types an unsaved edit, then "dies" without
+        // saving.
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        let doc_id = load(
+            &mut conn,
+            &vfs,
+            session_a,
+            &always_alive,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session a load")
+        .doc_id;
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "UNSAVED ".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        // Session B (a fresh process/session) loads the SAME doc after A
+        // died — disk hasn't moved since A's own baseline, so B inherits
+        // A's unsaved content via a bridge edit.
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let result = load(
+            &mut conn,
+            &vfs,
+            session_b,
+            &always_dead,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session b load");
+
+        assert_eq!(result.recovered, "UNSAVED shared content");
+        let bridge_seq = result
+            .bridge_seq
+            .expect("a bridge edit must have been journaled for session b");
+
+        let head = retry::with_retry(&mut conn, |tx| {
+            crate::journal::current_seq(tx, session_b, doc_id)
+        })
+        .expect("current_seq");
+        assert_eq!(
+            head, bridge_seq,
+            "bridge_seq must equal this session's own durable journal head"
+        );
+    }
+
+    /// The mirror-image control: no cross-session inheritance happened (a
+    /// document's very first-ever load, no prior session at all), so
+    /// `bridge_seq` must be `None` — never a stale or fabricated seq.
+    #[test]
+    fn load_without_inheritance_reports_no_bridge_seq() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"hello world");
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+
+        let result = load(
+            &mut conn,
+            &vfs,
+            session_id,
+            &always_alive,
+            path,
+            SystemTime::now(),
+        )
+        .expect("load");
+        assert_eq!(result.bridge_seq, None);
     }
 }

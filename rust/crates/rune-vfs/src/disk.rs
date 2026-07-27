@@ -32,9 +32,10 @@ impl Disk {
         }
     }
 
-    /// The only `unsafe` block in the workspace. Wraps the Darwin
-    /// `renamex_np` syscall to atomically exchange or create files with
-    /// proper crash-safety semantics.
+    /// The only `unsafe` block in `rune-vfs` (`rune-db::session` has three
+    /// of its own, for `sysctl`/`kill`-based liveness checks). Wraps the
+    /// Darwin `renamex_np` syscall to atomically exchange or create files
+    /// with proper crash-safety semantics.
     fn renamex_np(src: &Path, dst: &Path, flags: libc::c_uint) -> io::Result<()> {
         let src_c = CString::new(src.as_os_str().as_bytes())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -46,6 +47,31 @@ impl Disk {
         } else {
             Err(io::Error::last_os_error())
         }
+    }
+
+    /// Shared shape behind [`Vfs::exchange`]/[`Vfs::rename_excl`]: both are
+    /// `renamex_np` under a different flag, followed by a parent-directory
+    /// fsync (§1.4.1) — they differ only in the flag and the label their
+    /// error messages report. `label` reads as `"{label} {src} -> {dst}:
+    /// ..."`.
+    fn publish(src: &Path, dst: &Path, flags: libc::c_uint, label: &str) -> io::Result<()> {
+        Self::renamex_np(src, dst, flags).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("{label} {} -> {}: {}", src.display(), dst.display(), e),
+            )
+        })?;
+        Self::fsync_dir(&Self::parent_to_fsync(dst)).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "{label} {} -> {}: fsync parent: {}",
+                    src.display(),
+                    dst.display(),
+                    e
+                ),
+            )
+        })
     }
 }
 
@@ -86,43 +112,11 @@ impl Vfs for Disk {
     }
 
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
-        Self::renamex_np(a, b, libc::RENAME_SWAP).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("exchange {} <-> {}: {}", a.display(), b.display(), e),
-            )
-        })?;
-        Self::fsync_dir(&Self::parent_to_fsync(a)).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!(
-                    "exchange {} <-> {}: fsync parent: {}",
-                    a.display(),
-                    b.display(),
-                    e
-                ),
-            )
-        })
+        Self::publish(a, b, libc::RENAME_SWAP, "exchange")
     }
 
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()> {
-        Self::renamex_np(old, new, libc::RENAME_EXCL).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("renameexcl {} -> {}: {}", old.display(), new.display(), e),
-            )
-        })?;
-        Self::fsync_dir(&Self::parent_to_fsync(new)).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!(
-                    "renameexcl {} -> {}: fsync parent: {}",
-                    old.display(),
-                    new.display(),
-                    e
-                ),
-            )
-        })
+        Self::publish(old, new, libc::RENAME_EXCL, "renameexcl")
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {

@@ -109,6 +109,9 @@ impl Store {
         let now = clock();
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
+        // Best-effort dead-session reaper (plan WP4.S6): never blocks open
+        // — a failure here is swallowed, not surfaced, exactly like Go's
+        // `openStoreAt` (`liveness.go:93` doc comment).
         let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
         // One startup blob-sweep batch (WP6.S1), after the reaper — best
         // effort, never blocks open.
@@ -235,7 +238,7 @@ impl Store {
         cursors_before: &[rune_core::cursor::Cursor],
         cursors_after: &[rune_core::cursor::Cursor],
     ) -> Result<u64, Error> {
-        let now = (self.clock.lock().unwrap_or_else(|p| p.into_inner()))();
+        let now = self.now();
         self.enqueue(OpKind::AppendEdit {
             session_id: self.session_id,
             now,
@@ -263,7 +266,7 @@ impl Store {
     /// (`CreateSnapshot`) — see `snapshot::create_snapshot` for the
     /// transaction itself.
     pub fn create_snapshot(&self, doc_id: i64, content: &str, seq: i64) -> Result<u64, Error> {
-        let now = (self.clock.lock().unwrap_or_else(|p| p.into_inner()))();
+        let now = self.now();
         self.enqueue(OpKind::CreateSnapshot {
             session_id: self.session_id,
             now,
@@ -290,7 +293,6 @@ impl Store {
     /// file under the CAS contract described by `expect`/`seq`/`bind_new` —
     /// both caller-captured at enqueue time, never re-derived once the op
     /// runs (§1.4.2/§1.4.8). Port of `materialize.go:69` (`Materialize`).
-    #[allow(clippy::too_many_arguments)]
     pub fn materialize(
         &self,
         doc_id: i64,

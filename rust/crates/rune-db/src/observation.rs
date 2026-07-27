@@ -62,6 +62,21 @@ pub struct Observation {
     pub at: String,
 }
 
+impl Observation {
+    /// This observation's own stat facts, repackaged as [`StatFacts`] — for
+    /// copy-forward callers (`adopt::adopt_equal`/`resolve_adopt`) that
+    /// re-record a PRIOR observation's identity under a new adoption.
+    pub fn stat(&self) -> StatFacts {
+        StatFacts {
+            size: self.size,
+            mtime: self.mtime.clone(),
+            inode: self.inode,
+            device: self.device,
+            nlink: self.nlink,
+        }
+    }
+}
+
 /// The lowercase hex SHA-256 of `data` — the same hash space
 /// `blobs.hash`/`observations.blob_hash` both live in. Port of
 /// `observation.go:207-212` (`hashBytes`).
@@ -89,82 +104,104 @@ fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
     })
 }
 
-/// Stats `path` through `vfs` and returns the (size, mtime, inode, device,
-/// nlink) facts — `None` identity fields when the stat failed or exposed no
-/// usable identity, never a literal `0`. Port of `observation.go:244-265`
-/// (`statIdentity`). Pure — no DB access, so callers control exactly when
-/// this (disk I/O) runs relative to any open transaction.
-pub fn stat_identity(
-    vfs: &dyn Vfs,
-    path: &Path,
-) -> (i64, String, Option<i64>, Option<i64>, Option<i64>) {
+/// The stat facts a single `vfs.stat` call exposes about a path — bundled
+/// (rather than threaded as five separate parameters) so every function
+/// downstream of a stat call stays under clippy's argument-count lint
+/// without resorting to `#[allow(clippy::too_many_arguments)]` (repo rule:
+/// no such allow outside test code). `None` identity fields mean the stat
+/// failed or exposed no usable identity, never a literal `0` (D12/D13/§1.7).
+/// Port of the facts `observation.go:244-265` (`statIdentity`) returns.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StatFacts {
+    pub size: i64,
+    pub mtime: String,
+    pub inode: Option<i64>,
+    pub device: Option<i64>,
+    pub nlink: Option<i64>,
+}
+
+/// Stats `path` through `vfs` and returns the resulting [`StatFacts`]. Pure —
+/// no DB access, so callers control exactly when this (disk I/O) runs
+/// relative to any open transaction.
+pub fn stat_identity(vfs: &dyn Vfs, path: &Path) -> StatFacts {
     match vfs.stat(path) {
-        Ok(st) => {
-            let size = st.size as i64;
-            let mtime = format_rfc3339_nanos(st.mtime);
-            let inode = st.identity.inode.map(|v| v as i64);
-            let device = st.identity.device.map(|v| v as i64);
-            let nlink = st.nlink.map(|v| v as i64);
-            (size, mtime, inode, device, nlink)
-        }
-        Err(_) => (0, String::new(), None, None, None),
+        Ok(st) => StatFacts {
+            size: st.size as i64,
+            mtime: format_rfc3339_nanos(st.mtime),
+            inode: st.identity.inode.map(|v| v as i64),
+            device: st.identity.device.map(|v| v as i64),
+            nlink: st.nlink.map(|v| v as i64),
+        },
+        Err(_) => StatFacts::default(),
     }
+}
+
+/// The non-stat facts describing what an observation records — bundled with
+/// [`StatFacts`] for the same argument-count reason. Port of the remaining
+/// (non-identity) fields `observation.go:228-242`/`267-290` take.
+#[derive(Clone, Copy, Debug)]
+pub struct ObservationMeta<'a> {
+    pub blob_hash: &'a str,
+    /// The journal position this sighting correlates to; `None` means
+    /// uncorrelated (never ancestor-eligible).
+    pub seq: Option<i64>,
+    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
+    pub origin: &'a str,
 }
 
 /// Inserts a new `observations` row. Pure SQLite — the caller has already
 /// done any disk I/O and blob storage this observation reports on. Port of
 /// `observation.go:228-242` (`recordObservation`).
-#[allow(clippy::too_many_arguments)]
 pub fn record_observation(
     tx: &Transaction<'_>,
     doc_id: i64,
     session_id: i64,
-    blob_hash: &str,
-    seq: Option<i64>,
-    size: i64,
-    mtime: &str,
-    inode: Option<i64>,
-    device: Option<i64>,
-    nlink: Option<i64>,
-    origin: &str,
+    meta: ObservationMeta<'_>,
+    stat: &StatFacts,
     at: &str,
 ) -> Result<ObsId, Error> {
     tx.execute(
         "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at) \
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-        params![doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at],
+        params![
+            doc_id,
+            session_id,
+            meta.blob_hash,
+            meta.seq,
+            stat.size,
+            stat.mtime,
+            stat.inode,
+            stat.device,
+            stat.nlink,
+            meta.origin,
+            at
+        ],
     )?;
     Ok(tx.last_insert_rowid())
 }
 
-/// Stats `path` and records an observation of `blob_hash` at that metadata,
-/// tagged `origin`. NOT a single transaction: the stat (disk I/O) runs with
-/// no tx open, then a fresh `retry::with_retry` inserts the row — the
-/// caller (`probe`/`materialize::record_fresh`) is trusted to already have
-/// done its own read/blob-store before calling in. Port of
-/// `observation.go:267-290` (`observeFromStat`).
-#[allow(clippy::too_many_arguments)]
+/// Stats `path` and records an observation of `meta.blob_hash` at that
+/// metadata. NOT a single transaction: the stat (disk I/O) runs with no tx
+/// open, then a fresh `retry::with_retry` inserts the row — the caller
+/// (`probe`/`materialize::record_fresh`) is trusted to already have done its
+/// own read/blob-store before calling in. Port of `observation.go:267-290`
+/// (`observeFromStat`).
 pub fn observe_from_stat(
     conn: &mut Connection,
     vfs: &dyn Vfs,
     session_id: i64,
     doc_id: i64,
     path: &Path,
-    blob_hash: &str,
-    seq: Option<i64>,
-    origin: &str,
+    meta: ObservationMeta<'_>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let (size, mtime, inode, device, nlink) = stat_identity(vfs, path);
+    let stat = stat_identity(vfs, path);
     let at = format_rfc3339_nanos(now);
-    let blob_hash = blob_hash.to_string();
-    let origin = origin.to_string();
+    let blob_hash = meta.blob_hash.to_string();
+    let origin = meta.origin.to_string();
 
     let id = retry::with_retry(conn, |tx| {
-        record_observation(
-            tx, doc_id, session_id, &blob_hash, seq, size, &mtime, inode, device, nlink, &origin,
-            &at,
-        )
+        record_observation(tx, doc_id, session_id, meta, &stat, &at)
     })?;
 
     Ok(Observation {
@@ -172,12 +209,12 @@ pub fn observe_from_stat(
         doc_id,
         session_id,
         blob_hash,
-        seq,
-        size,
-        mtime,
-        inode,
-        device,
-        nlink,
+        seq: meta.seq,
+        size: stat.size,
+        mtime: stat.mtime,
+        inode: stat.inode,
+        device: stat.device,
+        nlink: stat.nlink,
         origin,
         supersedes: None,
         at,
@@ -295,7 +332,7 @@ mod tests {
     /// `observations.blob_hash` is FK-constrained to `blobs.hash` — every
     /// hand-seeded observation in these tests needs a real blob row first.
     fn seed_blob(tx: &Transaction<'_>, content: &str) -> String {
-        crate::blob::put_blob(tx, content).expect("seed blob")
+        crate::blob::put_blob(tx, content.as_bytes()).expect("seed blob")
     }
 
     #[test]
@@ -323,12 +360,35 @@ mod tests {
         let hash_a = seed_blob(&tx, "content a");
         let hash_b = seed_blob(&tx, "content b");
 
+        let stat = StatFacts {
+            size: 1,
+            mtime: "t".to_string(),
+            ..Default::default()
+        };
         record_observation(
-            &tx, doc_id, session_a, &hash_a, None, 1, "t", None, None, None, "probe", "t",
+            &tx,
+            doc_id,
+            session_a,
+            ObservationMeta {
+                blob_hash: &hash_a,
+                seq: None,
+                origin: "probe",
+            },
+            &stat,
+            "t",
         )
         .expect("record a");
         let b_id = record_observation(
-            &tx, doc_id, session_b, &hash_b, None, 1, "t", None, None, None, "probe", "t",
+            &tx,
+            doc_id,
+            session_b,
+            ObservationMeta {
+                blob_hash: &hash_b,
+                seq: None,
+                origin: "probe",
+            },
+            &stat,
+            "t",
         )
         .expect("record b");
 
@@ -352,14 +412,16 @@ mod tests {
             &tx,
             doc_id,
             session_id,
-            &hash,
-            Some(5),
-            1,
-            "t",
-            None,
-            None,
-            None,
-            "load",
+            ObservationMeta {
+                blob_hash: &hash,
+                seq: Some(5),
+                origin: "load",
+            },
+            &StatFacts {
+                size: 1,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
             "t",
         )
         .expect("record");

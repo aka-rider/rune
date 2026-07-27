@@ -172,10 +172,25 @@ fn read_frozen_contract(path: &Path) -> Result<Vec<(i64, String)>, rusqlite::Err
 }
 
 fn delete_old_version_files(path: &Path, name: &str) {
-    let _ = std::fs::remove_file(path);
+    // Log per-outcome — a failed removal must never claim success (the
+    // caller's next scan would otherwise believe the stale file is already
+    // gone and stop retrying it every launch).
+    match std::fs::remove_file(path) {
+        Ok(()) => {
+            eprintln!("rune-db: gc: deleted stale {name} (every recorded session is dead)");
+        }
+        Err(e) => {
+            eprintln!("rune-db: gc: failed to delete stale {name}: {e}");
+        }
+    }
+    // Sidecars are best-effort cleanup only, ignored deliberately: the main
+    // db file above is the one the frozen-contract query and every future
+    // open actually depend on; a lingering `-wal`/`-shm` after it's gone is
+    // disk-space untidiness, never a correctness or re-open hazard (SQLite
+    // recreates them fresh the next time anything opens a file at this
+    // path).
     let _ = std::fs::remove_file(sidecar_path(path, "-wal"));
     let _ = std::fs::remove_file(sidecar_path(path, "-shm"));
-    eprintln!("rune-db: gc: deleted stale {name} (every recorded session is dead)");
 }
 
 /// SQLite's WAL/SHM sidecar naming: the suffix is appended to the FULL

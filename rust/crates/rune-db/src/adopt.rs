@@ -9,7 +9,7 @@ use std::time::SystemTime;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::Error;
-use crate::observation::{self, ObsId, Observation};
+use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
 use crate::retry;
 
 /// The shared one-tx BODY behind every path that moves `saved_obs` to a
@@ -22,19 +22,12 @@ use crate::retry;
 /// must commit atomically together there); [`record_adoption`] below wraps
 /// it in its own transaction for standalone callers. Port of
 /// `adopt.go:101-150` (`recordAdoptionTx`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_adoption_tx(
     tx: &Transaction<'_>,
     doc_id: i64,
     session_id: i64,
-    blob_hash: &str,
-    size: i64,
-    mtime: &str,
-    inode: Option<i64>,
-    device: Option<i64>,
-    nlink: Option<i64>,
-    origin: &str,
-    seq: Option<i64>,
+    meta: ObservationMeta<'_>,
+    stat: &StatFacts,
     at: &str,
 ) -> Result<Observation, Error> {
     let supersedes: Option<i64> = tx
@@ -49,7 +42,20 @@ pub(crate) fn record_adoption_tx(
     tx.execute(
         "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at) \
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-        params![doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at],
+        params![
+            doc_id,
+            session_id,
+            meta.blob_hash,
+            meta.seq,
+            stat.size,
+            stat.mtime,
+            stat.inode,
+            stat.device,
+            stat.nlink,
+            meta.origin,
+            supersedes,
+            at
+        ],
     )?;
     let new_id = tx.last_insert_rowid();
 
@@ -63,14 +69,14 @@ pub(crate) fn record_adoption_tx(
         id: new_id,
         doc_id,
         session_id,
-        blob_hash: blob_hash.to_string(),
-        seq,
-        size,
-        mtime: mtime.to_string(),
-        inode,
-        device,
-        nlink,
-        origin: origin.to_string(),
+        blob_hash: meta.blob_hash.to_string(),
+        seq: meta.seq,
+        size: stat.size,
+        mtime: stat.mtime.clone(),
+        inode: stat.inode,
+        device: stat.device,
+        nlink: stat.nlink,
+        origin: meta.origin.to_string(),
         supersedes,
         at: at.to_string(),
     })
@@ -80,40 +86,17 @@ pub(crate) fn record_adoption_tx(
 /// `saved_obs` to a newly-inserted observation — [`adopt_equal`],
 /// [`resolve_adopt`], and `load::load`'s own first-sighting/heal-adopt
 /// cases. Port of `adopt.go:152-177` (`recordAdoption`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn record_adoption(
     conn: &mut Connection,
     doc_id: i64,
     session_id: i64,
-    blob_hash: &str,
-    size: i64,
-    mtime: &str,
-    inode: Option<i64>,
-    device: Option<i64>,
-    nlink: Option<i64>,
-    origin: &str,
-    seq: i64,
+    meta: ObservationMeta<'_>,
+    stat: &StatFacts,
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let at = crate::session::format_rfc3339_nanos(now);
-    let blob_hash = blob_hash.to_string();
-    let mtime = mtime.to_string();
-    let origin = origin.to_string();
     retry::with_retry(conn, |tx| {
-        record_adoption_tx(
-            tx,
-            doc_id,
-            session_id,
-            &blob_hash,
-            size,
-            &mtime,
-            inode,
-            device,
-            nlink,
-            &origin,
-            Some(seq),
-            &at,
-        )
+        record_adoption_tx(tx, doc_id, session_id, meta, stat, &at)
     })
 }
 
@@ -134,18 +117,17 @@ pub fn adopt_equal(
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let source = retry::with_retry(conn, |tx| observation::get_observation(tx, obs))?;
+    let stat = source.stat();
     record_adoption(
         conn,
         doc_id,
         session_id,
-        &source.blob_hash,
-        source.size,
-        &source.mtime,
-        source.inode,
-        source.device,
-        source.nlink,
-        "resolve",
-        head_seq,
+        ObservationMeta {
+            blob_hash: &source.blob_hash,
+            seq: Some(head_seq),
+            origin: "resolve",
+        },
+        &stat,
         now,
     )
 }
@@ -167,18 +149,17 @@ pub fn resolve_adopt(
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let source = retry::with_retry(conn, |tx| observation::get_observation(tx, obs))?;
+    let stat = source.stat();
     record_adoption(
         conn,
         doc_id,
         session_id,
-        &source.blob_hash,
-        source.size,
-        &source.mtime,
-        source.inode,
-        source.device,
-        source.nlink,
-        "resolve",
-        edit_seq,
+        ObservationMeta {
+            blob_hash: &source.blob_hash,
+            seq: Some(edit_seq),
+            origin: "resolve",
+        },
+        &stat,
         now,
     )
 }
@@ -254,7 +235,15 @@ mod tests {
     /// `observations.blob_hash` is FK-constrained to `blobs.hash` — every
     /// hand-seeded observation in these tests needs a real blob row first.
     fn seed_blob(conn: &Connection, content: &str) -> String {
-        crate::blob::put_blob(conn, content).expect("seed blob")
+        crate::blob::put_blob(conn, content.as_bytes()).expect("seed blob")
+    }
+
+    fn test_stat() -> StatFacts {
+        StatFacts {
+            size: 1,
+            mtime: "t".to_string(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -270,14 +259,12 @@ mod tests {
             &mut conn,
             doc_id,
             session_id,
-            &hash_1,
-            1,
-            "t",
-            None,
-            None,
-            None,
-            "save",
-            1,
+            ObservationMeta {
+                blob_hash: &hash_1,
+                seq: Some(1),
+                origin: "save",
+            },
+            &test_stat(),
             SystemTime::now(),
         )
         .expect("first adoption");
@@ -331,14 +318,12 @@ mod tests {
             &mut conn,
             doc_id,
             session_id,
-            &hash_1,
-            1,
-            "t",
-            None,
-            None,
-            None,
-            "save",
-            1,
+            ObservationMeta {
+                blob_hash: &hash_1,
+                seq: Some(1),
+                origin: "save",
+            },
+            &test_stat(),
             SystemTime::now(),
         )
         .expect("save adoption");

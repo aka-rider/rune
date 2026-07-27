@@ -166,17 +166,17 @@ CREATE TABLE IF NOT EXISTS search_history (
 );
 "#;
 
-/// The `PRAGMA user_version` sanity stamp. Not the real version (the
-/// filename is, per `versioning.rs`) — a defensive marker so a future reader
-/// that opens a `rune-v{N}.db` file directly (e.g. `sqlite3` on the CLI) can
-/// tell schema shape apart from an empty file at a glance.
-pub const USER_VERSION_STAMP: u32 = 1;
-
-/// Applies `SCHEMA` to `conn` and stamps `PRAGMA user_version`. Idempotent
+/// Applies `SCHEMA` to `conn` and stamps `PRAGMA user_version` with
+/// [`crate::versioning::SCHEMA_VERSION`] — the ONE constant this crate's
+/// version number is. Not the real version (the filename is, per
+/// `versioning.rs`) — a defensive marker so a future reader that opens a
+/// `rune-v{N}.db` file directly (e.g. `sqlite3` on the CLI) can tell schema
+/// shape apart from an empty file at a glance, and so the pragma can never
+/// drift out of sync with the filename it's supposed to echo. Idempotent
 /// (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` throughout) —
 /// safe to call on every open, not just first creation.
 pub fn apply(conn: &Connection) -> Result<(), Error> {
     conn.execute_batch(SCHEMA)?;
-    conn.pragma_update(None, "user_version", USER_VERSION_STAMP)?;
+    conn.pragma_update(None, "user_version", crate::versioning::SCHEMA_VERSION)?;
     Ok(())
 }

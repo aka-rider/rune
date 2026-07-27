@@ -131,6 +131,17 @@ impl Vfs for Mem {
         self.take_failure(OpKind::WriteDurable)?;
         let temp = temp_name(path);
         let mut state = self.lock_state();
+        // Backend parity with `Disk::write_durable` (`OpenOptions::
+        // create_new(true)`, which errors `AlreadyExists` rather than
+        // silently truncating a colliding temp): a `HashMap::insert` here
+        // would instead silently overwrite whatever the collision already
+        // held, making that failure mode untestable against `Mem`.
+        if state.files.contains_key(&temp) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("write_durable {}: temp already exists", temp.display()),
+            ));
+        }
         state.tick += 1;
         let mod_tick = state.tick;
         let inode = state.next_inode;

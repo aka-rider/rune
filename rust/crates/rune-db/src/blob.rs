@@ -1,9 +1,23 @@
 //! Content-addressed blob storage: zstd-compressed values keyed by the hex
-//! SHA-256 of the PLAINTEXT (port of `pkg/docstate/snapshot.go:18-72`).
+//! SHA-256 of the PLAINTEXT bytes (port of `pkg/docstate/snapshot.go:18-72`).
 //! CONSTITUTION §1.4.10 ("capture displaced bytes as a durable blob before
 //! they're ever discarded") is what this table exists to satisfy — every
 //! snapshot and every `origin='swap'` observation (WP4) routes its content
 //! through here.
+//!
+//! Deliberately `&[u8]`/`Vec<u8>`-typed, never `&str`/`String`: Go's `string`
+//! is just a byte sequence with no UTF-8 validity requirement (`PutBlob`
+//! there takes `string(data)` unconditionally, `load.go:49`), so disk-sourced
+//! content — including a swap-race's *displaced* bytes, which may come from
+//! ANY other writer and are captured under duress, never validated — must
+//! never be rejected here just because it fails to decode as UTF-8. A hard
+//! `unwrap`/error at this layer would mean "no blob, no commit" for bytes
+//! that are already physically on disk (§1.4.10's exact failure mode this
+//! type turns into a compile-time impossibility). Callers holding genuinely
+//! session-authored `String` content (the journal/snapshot/buffer path) pass
+//! `.as_bytes()`; callers that need the content back as `String` (recovery
+//! replay re-entering the edit buffer) convert explicitly at that boundary
+//! and surface a decode failure there as a genuine error.
 //!
 //! Both functions take `&Connection` (rather than `&Transaction`) so they
 //! compose into a larger multi-statement transaction (`snapshot::
@@ -18,14 +32,14 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::Error;
 
-/// Stores `content` compressed under the hex SHA-256 of the PLAINTEXT,
+/// Stores `content` compressed under the hex SHA-256 of the raw bytes,
 /// `INSERT OR IGNORE` (content-addressed — an existing row with the same
 /// hash is already byte-identical, so a duplicate insert is a deliberate
 /// no-op, not a conflict). Returns the hash either way. Port of
 /// `snapshot.go:18-43`.
-pub(crate) fn put_blob(conn: &Connection, content: &str) -> Result<String, Error> {
-    let hash = hex_sha256(content.as_bytes());
-    let compressed = zstd::encode_all(content.as_bytes(), 0).map_err(Error::Io)?;
+pub(crate) fn put_blob(conn: &Connection, content: &[u8]) -> Result<String, Error> {
+    let hash = hex_sha256(content);
+    let compressed = zstd::encode_all(content, 0).map_err(Error::Io)?;
 
     conn.execute(
         "INSERT OR IGNORE INTO blobs(hash, content) VALUES(?1, ?2)",
@@ -34,12 +48,14 @@ pub(crate) fn put_blob(conn: &Connection, content: &str) -> Result<String, Error
     Ok(hash)
 }
 
-/// Decompresses and returns the content stored under `hash`, re-verifying
-/// its SHA-256 against `hash` before returning — blob rot / bit-flip
-/// detection. A mismatch is a corrupt blob and is surfaced as
+/// Decompresses and returns the raw bytes stored under `hash`,
+/// re-verifying its SHA-256 against `hash` before returning — blob rot /
+/// bit-flip detection. A mismatch is a corrupt blob and is surfaced as
 /// [`Error::BlobHashMismatch`], never silently returned (port of
-/// `snapshot.go:49-71`).
-pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<String, Error> {
+/// `snapshot.go:49-71`). Never attempts a UTF-8 decode — that is each
+/// caller's own concern, only where (and if) the bytes need to re-enter a
+/// `String`.
+pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> {
     let compressed: Option<Vec<u8>> = conn
         .query_row(
             "SELECT content FROM blobs WHERE hash=?1",
@@ -48,9 +64,7 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<String, Error> {
         )
         .optional()?;
     let Some(compressed) = compressed else {
-        return Err(Error::CorruptPayload(format!(
-            "get blob {hash}: no such blob"
-        )));
+        return Err(Error::NotFound(format!("get blob {hash}: no such blob")));
     };
 
     let data = zstd::decode_all(compressed.as_slice()).map_err(Error::Io)?;
@@ -61,7 +75,7 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<String, Error> {
             got,
         });
     }
-    String::from_utf8(data).map_err(|e| Error::CorruptPayload(e.to_string()))
+    Ok(data)
 }
 
 /// Exposed `pub(crate)` (rather than kept private) so `observation.rs`
@@ -95,16 +109,36 @@ mod tests {
     #[test]
     fn put_then_get_round_trips() {
         let conn = open();
-        let hash = put_blob(&conn, "hello, blob").expect("put");
+        let hash = put_blob(&conn, b"hello, blob").expect("put");
         let got = get_blob(&conn, &hash).expect("get");
-        assert_eq!(got, "hello, blob");
+        assert_eq!(got, b"hello, blob");
+    }
+
+    #[test]
+    fn get_blob_missing_hash_is_not_found() {
+        let conn = open();
+        let err = get_blob(
+            &conn,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        )
+        .expect_err("missing blob must error");
+        assert!(matches!(err, Error::NotFound(_)));
+    }
+
+    #[test]
+    fn non_utf8_content_round_trips_byte_exact() {
+        let conn = open();
+        let bytes: &[u8] = &[0xff, 0xfe, 0x00, 0x01, 0x9f, 0x92, 0x96];
+        let hash = put_blob(&conn, bytes).expect("put non-utf8 blob");
+        let got = get_blob(&conn, &hash).expect("get non-utf8 blob");
+        assert_eq!(got, bytes, "non-utf8 bytes must round-trip byte-exact");
     }
 
     #[test]
     fn identical_content_deduplicates_to_one_row() {
         let conn = open();
-        let h1 = put_blob(&conn, "same").expect("put 1");
-        let h2 = put_blob(&conn, "same").expect("put 2");
+        let h1 = put_blob(&conn, b"same").expect("put 1");
+        let h2 = put_blob(&conn, b"same").expect("put 2");
         assert_eq!(h1, h2);
         let n: i64 = conn
             .query_row(
@@ -123,7 +157,7 @@ mod tests {
     #[test]
     fn corrupted_blob_content_surfaces_hash_mismatch() {
         let conn = open();
-        let hash = put_blob(&conn, "original content").expect("put");
+        let hash = put_blob(&conn, b"original content").expect("put");
 
         let mut compressed: Vec<u8> = conn
             .query_row(

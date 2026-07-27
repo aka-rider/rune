@@ -77,7 +77,7 @@ mod tests {
         // gets deleted (ON DELETE CASCADE takes the snapshot row with it,
         // orphaning the blob it pointed to).
         let doc_a = seed_doc(&conn);
-        let hash_a = crate::blob::put_blob(&conn, "orphan me").expect("put blob a");
+        let hash_a = crate::blob::put_blob(&conn, b"orphan me").expect("put blob a");
         conn.execute(
             "INSERT INTO snapshots(doc_id, session_id, blob_hash, seq, created_at) \
              VALUES (?1, ?2, ?3, 0, 'x')",
@@ -89,7 +89,7 @@ mod tests {
 
         // Blob B: still referenced by a live observation on a live document.
         let doc_b = seed_doc(&conn);
-        let hash_b = crate::blob::put_blob(&conn, "keep me").expect("put blob b");
+        let hash_b = crate::blob::put_blob(&conn, b"keep me").expect("put blob b");
         conn.execute(
             "INSERT INTO observations(doc_id, session_id, blob_hash, origin, at) \
              VALUES (?1, ?2, ?3, 'probe', 'x')",

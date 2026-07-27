@@ -52,8 +52,8 @@ pub use journal::{
     EditRow, Step, append_edit, current_seq, edits_in_range, move_undo_pos, redo_peek, undo_peek,
 };
 pub use load::{LoadResult, has_history, load};
-pub use materialize::{MatResult, materialize};
-pub use observation::{ObsId, Observation, hash_bytes, stat_identity};
+pub use materialize::{DocSession, MatResult, MaterializeInput, materialize};
+pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;

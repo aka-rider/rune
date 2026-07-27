@@ -33,6 +33,11 @@ use crate::Error;
 use crate::payload::{cursors_from_json, cursors_to_json, edits_from_json, edits_to_json};
 use crate::session::format_rfc3339_nanos;
 
+/// The coalescing window (`journal.go:97-159`, plan Gotchas): a
+/// single-rune pure insert is folded into the previous event only when it
+/// arrives within this long of it.
+const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(300);
+
 /// One undo/redo journal step: the edits to (re)apply to the buffer, the
 /// cursor state to restore, and the journal position `move_undo_pos` should
 /// commit to once the buffer reapply succeeds. Port of `journal.go:14-23`.
@@ -64,7 +69,6 @@ pub struct EditRow {
 /// correctness: the row's bytes must never silently outrun what a
 /// recovery-anchor reconstruction can see). Returns the journal seq of the
 /// inserted (or coalesced) event. Port of `journal.go:39-194`.
-#[allow(clippy::too_many_arguments)]
 pub fn append_edit(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -129,7 +133,7 @@ pub fn append_edit(
         if let Some((last_seq, last_edits_json, last_at)) = last {
             let elapsed = elapsed_since(&last_at, now);
             if let Some(elapsed) = elapsed
-                && elapsed <= std::time::Duration::from_millis(300)
+                && elapsed <= COALESCE_WINDOW
                 && can_coalesce_into(&last_edits_json, only)?
             {
                 let snapshot_exists: bool = tx.query_row(

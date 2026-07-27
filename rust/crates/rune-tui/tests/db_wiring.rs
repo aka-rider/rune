@@ -293,6 +293,88 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
 }
 
+/// Finding 5: a `materialize` enqueue failure (the store writer confirmed
+/// gone) must degrade the store and raise the sticky banner through the
+/// SAME `on_store_failure` chokepoint `append_edit`/`move_undo_pos` use —
+/// not a one-shot `SaveError` status that leaves `db.degraded` untouched
+/// and lets the next `super+s` silently retry against an already-dead
+/// writer. Deterministically waits for the writer to be CONFIRMED gone (a
+/// side-channel `probe` enqueue returning `Err`) before pressing save
+/// exactly once, rather than racing `super+s`'s own in-flight latch against
+/// the kill op's async dequeue.
+#[test]
+fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
+    let dir = temp_db_dir("kill-writer-materialize");
+    let db_path = dir.join("rune-v1.db");
+    let doc_path = Path::new("/doc.md");
+
+    let mem = Mem::new();
+    publish(&mem, doc_path, b"hi");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (store, bridge, load) = open_and_load(&db_path, Arc::clone(&vfs), doc_path);
+    let app_db = app_db_from(store, bridge, &load, false);
+
+    let mut app = App::new(
+        Buffer::new(load.recovered.clone()),
+        Some(doc_path.to_path_buf()),
+        vfs,
+        Some(app_db),
+    );
+    app.editor.cursors = CursorSet::new(app.editor.buffer.len());
+
+    // Dirty the buffer (a healthy edit — the writer is still alive here) so
+    // `trigger_save` below actually has something to save.
+    press(&mut app, '!');
+    assert!(app.db_banner.is_none());
+
+    let db = app.db.as_ref().expect("app has a store");
+    db.store
+        .kill_writer_for_test()
+        .expect("enqueue the kill op");
+
+    // Bounded spin, not a wall-clock sleep (repo convention): the kill op
+    // must first be DEQUEUED by the writer thread before `try_send` starts
+    // observing `WriterGone` — poll with a cheap, repeatable, non-latching
+    // op (`probe`, which carries no in-flight guard) until the writer is
+    // CONFIRMED gone.
+    let mut confirmed_gone = false;
+    for _ in 0..20_000 {
+        if db.store.probe(load.doc_id).is_err() {
+            confirmed_gone = true;
+            break;
+        }
+    }
+    assert!(
+        confirmed_gone,
+        "the writer must eventually be confirmed gone"
+    );
+
+    // Exactly ONE super+s now: `trigger_save`'s `materialize_now` enqueues
+    // against a writer already confirmed gone, so this single call's
+    // enqueue failure — and therefore `on_store_failure` — is deterministic,
+    // never racing the in-flight latch `save_in_flight` would otherwise
+    // impose on a retry loop.
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(save_key()), &mut effects);
+
+    assert!(
+        app.db_banner
+            .as_deref()
+            .is_some_and(|b| b.contains("recovery disabled")),
+        "banner text must read 'recovery disabled: <err>' (got {:?})",
+        app.db_banner
+    );
+    assert!(
+        app.db.as_ref().is_some_and(|d| d.degraded),
+        "the store must be marked degraded via on_store_failure, not left untouched"
+    );
+    assert!(
+        !app.save_in_flight,
+        "on_store_failure must clear save_in_flight on an enqueue failure"
+    );
+}
+
 fn save_key() -> KeyInput {
     KeyInput {
         code: KeyCode::Char('s'),

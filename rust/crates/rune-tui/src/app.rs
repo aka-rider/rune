@@ -632,9 +632,14 @@ fn materialize_now(app: &mut App, path: PathBuf, version: u64) {
     app.save_in_flight = true;
     app.save_pending_version = Some(version);
     if let Err(e) = result {
-        app.save_in_flight = false;
-        app.save_pending_version = None;
-        app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
+        // A store enqueue-time failure is exactly the same class of event
+        // as an async `DbEvent::Err`/`Fatal` (plan decision 3) — degrade
+        // the store and raise the sticky banner via the same chokepoint
+        // `append_edit`/`move_undo_pos` use (`handle_snapshot_due`,
+        // `db.rs`), not a one-shot `SaveError` status that leaves `db.
+        // degraded` untouched and lets the next save silently retry
+        // against an already-wedged writer.
+        on_store_failure(app, e.to_string());
     }
 }
 

@@ -14,10 +14,16 @@
 //! an injected `on_event` callback (plan decision 4: "op carries a `u64` op
 //! id; writer thread posts a completion ... into the runtime's existing
 //! `Sender<Msg>`"); `rune-tui` (WP5) adapts it to the runtime's `Msg`
-//! channel. The loop wraps each op in `catch_unwind` — a panic must not
-//! vanish silently and must not corrupt an in-progress transaction; it
-//! posts [`DbEvent::Fatal`] and parks the thread forever rather than
-//! continuing to process ops against a connection left in an unknown state.
+//! channel. The loop wraps op execution, completion delivery (`on_event`
+//! itself), AND idle maintenance in `catch_unwind` — a panic anywhere in
+//! any of them must not vanish silently and must not corrupt an
+//! in-progress transaction. It posts one best-effort [`DbEvent::Fatal`],
+//! then drains every subsequently queued op with an immediate `Err` reply
+//! — touching nothing but the channel and the event callback, never `conn`
+//! again — until the sender side disconnects and the thread exits (see
+//! `fatal`). Deliberately NOT park-forever: parking left
+//! `WriterHandle::shutdown`'s `thread.join()` blocked forever, so a quit
+//! after a writer panic would have hung the whole app.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -74,6 +80,13 @@ pub enum OpKind {
     /// repo convention — a real rendezvous instead).
     #[cfg(test)]
     TestBlock(mpsc::Receiver<()>),
+    /// Test-only: deliberately panics `execute_op`, for proving the writer
+    /// loop's panic guard (finding 2) survives a REAL unwind from op
+    /// execution and that `WriterHandle::shutdown` afterward completes
+    /// without hanging (the park-forever design it replaces would have
+    /// deadlocked `shutdown`'s `thread.join()` here).
+    #[cfg(test)]
+    PanicForTest,
     /// Test-support hook (mirrors `rune_vfs::Mem::fail_next`'s permanently-
     /// public test-support surface): makes the writer thread exit its
     /// receive loop immediately, dropping its `Receiver` and thereby
@@ -122,7 +135,6 @@ pub enum OpKind {
     /// Port of `materialize.go` (`Materialize`) — the CAS write protocol.
     /// `content`/`expect`/`seq` are caller-captured at enqueue time
     /// (`Store::materialize`), never re-derived inside (plan WP4.S4).
-    #[allow(clippy::upper_case_acronyms)]
     Materialize {
         session_id: i64,
         doc_id: i64,
@@ -319,39 +331,76 @@ fn writer_loop(
                 let id = op.id;
                 let kind = op.kind;
                 let vfs_ref = vfs.as_ref();
-                let outcome =
-                    panic::catch_unwind(AssertUnwindSafe(|| execute_op(&mut conn, vfs_ref, kind)));
-                match outcome {
-                    Ok(Ok(result)) => on_event(DbEvent::Ok { id, result }),
-                    Ok(Err(e)) => on_event(DbEvent::Err {
-                        id,
-                        error: e.to_string(),
-                    }),
-                    Err(_) => {
-                        on_event(DbEvent::Fatal {
-                            error: format!("writer thread panicked processing op {id}"),
-                        });
-                        // Never process another op against a connection left
-                        // in an unknown state after an unwind — park forever
-                        // rather than exit, so the thread's presence (and
-                        // the queue behind it) stays diagnosable rather than
-                        // silently vanishing.
-                        loop {
-                            thread::park();
-                        }
+                // ONE guard covers executing the op AND delivering its
+                // completion: a panic inside `on_event` (which runs on
+                // EVERY delivery, not just a failure) is exactly as
+                // dangerous as one inside `execute_op` — both must trip the
+                // same fatal path, never unwind the thread silently.
+                let delivered = panic::catch_unwind(AssertUnwindSafe(|| {
+                    let outcome = execute_op(&mut conn, vfs_ref, kind);
+                    match outcome {
+                        Ok(result) => on_event(DbEvent::Ok { id, result }),
+                        Err(e) => on_event(DbEvent::Err {
+                            id,
+                            error: e.to_string(),
+                        }),
                     }
+                }));
+                if delivered.is_err() {
+                    return fatal(receiver, on_event, format!("op {id}"));
                 }
             }
             // A quiet period (plan WP6.S1): opportunistic PASSIVE checkpoint
             // plus one bounded blob-sweep batch. Best-effort — there is no
-            // caller in flight to surface a failure to.
-            Err(mpsc::RecvTimeoutError::Timeout) => run_idle_maintenance(&mut conn),
+            // caller in flight to surface a failure to. Guarded exactly like
+            // op processing: `run_idle_maintenance` runs on every quiet
+            // period this thread will ever see, with no caller to catch an
+            // unwind for it otherwise.
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let maintained =
+                    panic::catch_unwind(AssertUnwindSafe(|| run_idle_maintenance(&mut conn)));
+                if maintained.is_err() {
+                    return fatal(receiver, on_event, "idle maintenance".to_string());
+                }
+            }
             // `WriterHandle::shutdown` dropped the sender after enqueueing
             // `OpKind::Shutdown` (already processed via the `Ok(op)` arm
             // above by the time this fires) — nothing left to do but exit,
             // which drops `conn` and closes it.
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+    }
+}
+
+/// Entered once, from exactly one place: a panic was caught somewhere in
+/// the writer loop (op execution, completion delivery, or idle
+/// maintenance) and `conn` is left in an unknown state that must never be
+/// touched again. Posts one best-effort `DbEvent::Fatal` (itself
+/// panic-guarded — a `Fatal` delivery that also panics is not this
+/// function's problem to solve, only to survive), then drains every
+/// subsequent queued op with an immediate `Err` reply — touching nothing
+/// but the channel and the event callback — until the sender side
+/// disconnects and this function (and the thread) returns.
+///
+/// Deliberately NOT park-forever (the prior design): parking left
+/// `WriterHandle::shutdown`'s `thread.join()` blocked forever, so a quit
+/// after a writer panic hung the whole app instead of exiting.
+fn fatal(receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent, context: String) {
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        on_event(DbEvent::Fatal {
+            error: format!("writer thread panicked during {context}"),
+        })
+    }));
+    while let Ok(op) = receiver.recv() {
+        if matches!(op.kind, OpKind::KillWriterForTest) {
+            continue; // already fatal — nothing left to simulate killing
+        }
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            on_event(DbEvent::Err {
+                id: op.id,
+                error: "writer in fatal state".to_string(),
+            })
+        }));
     }
 }
 
@@ -468,6 +517,13 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             let _ = rx.recv();
             Ok(OpOutcome::None)
         }
+        // Test-only, deliberate — see the variant's doc comment. `panic!`
+        // is denied workspace-wide EXCEPT in test code; this arm only ever
+        // compiles under `cfg(test)`, i.e. never into the production
+        // binary.
+        #[cfg(test)]
+        #[allow(clippy::panic)]
+        OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
         // Intercepted in `writer_loop` before this function is ever called
         // — see the variant's doc comment.
         OpKind::KillWriterForTest => Ok(OpOutcome::None),
@@ -533,7 +589,17 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             now,
         } => {
             let result = crate::materialize::materialize(
-                conn, vfs, session_id, doc_id, &path, &content, expect, seq, bind_new, now,
+                conn,
+                vfs,
+                crate::materialize::DocSession { doc_id, session_id },
+                &path,
+                crate::materialize::MaterializeInput {
+                    content: &content,
+                    expect,
+                    seq,
+                    bind_new,
+                },
+                now,
             )?;
             Ok(OpOutcome::Materialize(Box::new(result)))
         }
@@ -754,7 +820,7 @@ mod tests {
 
         let conn = Connection::open(&path).expect("open file db");
         crate::schema::apply(&conn).expect("apply schema");
-        let hash = crate::blob::put_blob(&conn, "orphaned").expect("seed orphaned blob");
+        let hash = crate::blob::put_blob(&conn, b"orphaned").expect("seed orphaned blob");
 
         let handle = spawn_with_idle_timeout(
             conn,
@@ -788,5 +854,70 @@ mod tests {
 
         handle.shutdown(1, Arc::new(|_pid, _started_at| false));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Finding 2: a panic-inducing op must (a) post a `Fatal` event rather
+    /// than vanish silently, (b) leave the thread replying `Err` to every
+    /// op enqueued afterward instead of processing it against a
+    /// possibly-corrupt connection, and (c) — the regression this test
+    /// exists for — `WriterHandle::shutdown` must complete and its
+    /// `thread.join()` must return, never hang. The prior park-forever
+    /// design failed exactly (c): a quit after a writer panic would have
+    /// deadlocked here.
+    #[test]
+    fn panic_in_op_posts_fatal_then_shutdown_completes_without_hanging() {
+        let events: Arc<Mutex<Vec<DbEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_for_cb = Arc::clone(&events);
+        let on_event: OnEvent = Box::new(move |evt| {
+            events_for_cb
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(evt);
+        });
+
+        let handle = spawn(open_ready_connection(), test_vfs(), on_event);
+
+        handle
+            .try_send(WriteOp {
+                id: 1,
+                kind: OpKind::PanicForTest,
+            })
+            .expect("enqueue the panic-inducing op");
+
+        // Enqueued strictly after the panicking op — the FIFO ordering
+        // guarantees the writer has already caught the panic and entered
+        // its fatal-drain state by the time this is processed, so it must
+        // observe `Err`, never be silently dropped or processed normally.
+        handle
+            .try_send(WriteOp {
+                id: 2,
+                kind: OpKind::Noop,
+            })
+            .expect("enqueue a follow-up op");
+
+        // Deterministic drain: `shutdown` blocks on `thread.join()`, which
+        // only returns once the writer thread's loop has actually exited —
+        // this call itself is the regression assertion (it must return at
+        // all, not hang).
+        handle.shutdown(1, Arc::new(|_pid, _started_at| false));
+
+        let events = events.lock().unwrap_or_else(|p| p.into_inner());
+        assert!(
+            events.iter().any(|e| matches!(e, DbEvent::Fatal { .. })),
+            "expected a Fatal event among {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                DbEvent::Err { id: 2, error } if error == "writer in fatal state"
+            )),
+            "expected op 2 to be rejected with the fatal-state error among {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DbEvent::Ok { id: 2, .. })),
+            "op 2 must never be processed against a post-panic connection: {events:?}"
+        );
     }
 }

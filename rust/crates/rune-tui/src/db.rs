@@ -163,6 +163,14 @@ impl AppDb {
         }
     }
 
+    /// Deterministically drains and joins the underlying `Store`'s
+    /// writer/reader threads (`Store::shutdown`'s own doc comment) — the
+    /// one place `rune-cli::main` closes the recovery store on every exit
+    /// path, not just its own bootstrap-failure branches.
+    pub fn shutdown(self) {
+        self.store.shutdown();
+    }
+
     /// Records that local `Journal` position `local_pos` (`Journal::pos()`
     /// AFTER the push it corresponds to) has been enqueued as an
     /// `AppendEdit` — reserves its slot in `seq_by_local_pos` so a LATER ack
