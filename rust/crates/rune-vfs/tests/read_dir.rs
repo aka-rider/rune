@@ -99,8 +99,7 @@ fn disk_read_dir_not_recursive() {
 
 #[test]
 fn disk_read_dir_missing_path_errors() {
-    let tmp =
-        std::env::temp_dir().join(format!("rune-vfs-readdir-missing-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("rune-vfs-readdir-missing-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
 
     let vfs = Disk;

@@ -273,7 +273,10 @@ impl Vfs for Mem {
                     entries.push(DirEntry { name, is_dir: true });
                 }
             } else {
-                entries.push(DirEntry { name, is_dir: false });
+                entries.push(DirEntry {
+                    name,
+                    is_dir: false,
+                });
             }
         }
         sort_dir_entries(&mut entries);
