@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc f3e1a9e1f5be6921f3f864a092d30bb07ea9a727def3f3df4afd583a059eab32 # shrinks to ("", [Type("hello"), Key(KeyInput { code: Char('z'), mods: Mods { shift: false, alt: false, ctrl: false, sup: true } })])
+cc f8fa0f8b94d2be53abce94eb1b38287c8b31acc4f2d3740405a3cf57acebc59f # shrinks to ("", [Type("hello world"), Key(KeyInput { code: Char('x'), mods: Mods { shift: false, alt: false, ctrl: true, sup: false } }), Key(KeyInput { code: Char('A'), mods: Mods { shift: false, alt: false, ctrl: false, sup: false } }), Key(KeyInput { code: Char('¡'), mods: Mods { shift: false, alt: false, ctrl: false, sup: false } })])

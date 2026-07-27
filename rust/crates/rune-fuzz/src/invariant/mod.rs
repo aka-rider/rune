@@ -22,10 +22,11 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 21 invariants total, one domain per file (mirrors the Go tree's
+//! 22 invariants total, one domain per file (mirrors the Go tree's
 //! per-domain split under `internal/fuzz/`):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
+//! - `pane` — `PANE-NO-BLEED`
 //! - `render` — `SYNC-IDEMPOTENT`, `CELL-OFFSET`, `CELL-NO-EOL`,
 //!   `CELL-ORDER`
 //! - `wrap` — `WRAP-RT`
@@ -37,6 +38,7 @@
 mod buffer;
 mod clipboard;
 mod cursor;
+mod pane;
 mod render;
 mod save;
 mod session;
@@ -46,6 +48,7 @@ mod wrap;
 pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_order};
+pub use pane::pane_no_bleed;
 pub use render::{cell_no_eol, cell_offset, cell_order, sync_idempotent};
 pub use save::{save_clean_matches_disk, save_verbatim};
 pub use session::{confirm_gen, quit_chord, save_inflight_sm};
@@ -97,6 +100,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| cell_no_eol(next))
         .or_else(|| cell_order(next))
         .or_else(|| redo_clear(prev, next))
+        .or_else(|| pane_no_bleed(prev, next, ctx))
         .or_else(|| save_inflight_sm(prev, next, ctx))
         .or_else(|| quit_chord(prev, next, ctx))
         .or_else(|| confirm_gen(prev, next, ctx))

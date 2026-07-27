@@ -29,12 +29,19 @@
     clippy::panic
 )]
 
+use std::sync::Arc;
+
+use rune_core::buffer::Buffer;
 use rune_core::cursor::Cursor;
 use rune_fuzz::action::Action;
 use rune_fuzz::driver;
 use rune_fuzz::invariant::{buf_line_index, cur_bounds, cur_id, cur_order, version_monotone};
 use rune_fuzz::snapshot::Snapshot;
+use rune_tui::app::App;
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pane::Pane;
+use rune_vfs::{Mem, Vfs};
 
 /// Seed content for the positive tripwire session. Headers and paragraphs
 /// only — no list, no blockquote, no tab, no `\r` (plan Gotcha G1).
@@ -255,9 +262,21 @@ fn line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
     (starts, ends)
 }
 
+/// `DocumentId`'s inner field is `pub(crate)` to `rune_tui` (G16), so the
+/// only way a test outside that crate can obtain a value is through its
+/// public API. `App::new` always mints its first (and here, only)
+/// document as `DocumentId(NonZeroU64::MIN)` (`app.rs:170`), so this is a
+/// deterministic constant in practice — a fresh in-memory `App` exists
+/// only long enough to read `.active` back out of it.
+fn base_active_id() -> DocumentId {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    App::new(Buffer::new(""), None, vfs, None).active
+}
+
 /// A well-formed baseline `Snapshot` over `content`: one valid cursor at
-/// offset 0, a correctly derived line index, and otherwise-quiescent
-/// fields. Each test overrides exactly the field(s) it's exercising.
+/// offset 0, a correctly derived line index, the editor focused with no
+/// modal up, and otherwise-quiescent fields. Each test overrides exactly
+/// the field(s) it's exercising.
 fn base_snapshot(content: &str) -> Snapshot {
     let (line_starts, line_ends) = line_bounds(content);
     let line_count = line_starts.len();
@@ -276,6 +295,9 @@ fn base_snapshot(content: &str) -> Snapshot {
         pending_quit: None,
         should_quit: false,
         status: String::new(),
+        focus: Pane::Editor,
+        modal_open: false,
+        active: base_active_id(),
         cells: Vec::new(),
     }
 }

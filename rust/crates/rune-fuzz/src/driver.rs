@@ -21,6 +21,7 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyCode, KeyInput, Mods};
+use rune_tui::pane::Pane;
 use rune_tui::render::{self, Cell};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
@@ -239,7 +240,10 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
     // Skipped once a violation already stopped the session, or the session
     // tore itself down via quit (G15: a torn-down model must not receive
     // more input, same as Go's driver).
-    if outcome.violation.is_none() && !state.app.should_quit {
+    if outcome.violation.is_none()
+        && !state.app.should_quit
+        && !restore_editor_focus(&mut state, &mut prev, &mut outcome)
+    {
         let pre_undo = prev.clone();
         let bound = pre_undo.journal_len.saturating_add(8);
 
@@ -315,6 +319,51 @@ fn key_step(key: KeyInput) -> (Msg, MsgTag) {
         command: keymap::resolve(key),
     };
     (Msg::Key(key), tag)
+}
+
+/// Hands the keyboard back to the editor before the end-of-session
+/// undo/redo drive begins, using the same keys a user would press — never
+/// by poking `App` directly. `⌘Z` reaching the document is a PRECONDITION
+/// `UNDO-TOTAL`/`REDO-TOTAL` need, not a property they assert: per-pane
+/// routing (plan Context, decision 8) means an unfocused editor correctly
+/// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`,
+/// `app.rs:539`), and a modal correctly captures every key at stage 1
+/// before any pane sees it (`app.rs:457-461`). Both are reachable at
+/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer
+/// focused, and an Explorer `Enter` on a path missing from the fuzz `Mem`
+/// raises `Modal::Error` (`workspace.rs:39/57`). Each press runs through
+/// `step_and_check`, so every per-step invariant still applies and a
+/// violation here still stops the session, same as any other step.
+///
+/// Order: `Escape` first, only while a modal is up — both `Modal::Error`
+/// and `Modal::Guard` clear on it without touching a buffer byte
+/// (`banner.rs:252-300`). Then `^E` (`GlobalCommand::FocusEditor`), only
+/// while focus isn't already `Pane::Editor` (`pane.rs:62`) — re-checked
+/// fresh rather than decided up front, since dismissing the modal can
+/// itself leave focus somewhere other than `Editor`.
+fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
+    if state.app.modal.is_some() {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    if state.app.focus != Pane::Editor {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Char('e'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it

@@ -10,8 +10,10 @@
 
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
+use rune_tui::document::DocumentId;
 use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
+use rune_tui::pane::Pane;
 use rune_tui::render::{self, Cell};
 
 /// One point-in-time observation of `App`, built ONLY from its public
@@ -36,6 +38,21 @@ pub struct Snapshot {
     pub pending_quit: Option<(QuitKey, u32)>,
     pub should_quit: bool,
     pub status: String,
+    /// `app.focus` — which chrome region owns the next keystroke (`pane::
+    /// Pane`). Needed by `PANE-NO-BLEED` (`invariant/pane.rs`) and by the
+    /// end-of-session undo/redo drive (`driver.rs`), both of which must
+    /// tell an editor-focused step apart from a chrome-focused one.
+    pub focus: Pane,
+    /// `app.modal.is_some()` — a modal (`Modal::Error`/`Modal::Guard`)
+    /// captures every key at stage 1 of the pipeline regardless of
+    /// `focus` (`app.rs:457-461`), so `PANE-NO-BLEED` and the undo/redo
+    /// drive precondition both need this in addition to `focus`.
+    pub modal_open: bool,
+    /// `app.active` — which document the OTHER fields in this `Snapshot`
+    /// describe. `PANE-NO-BLEED` needs it to tell a chrome key that
+    /// switched the active document (Explorer/Tabs `Enter`, `^w`) apart
+    /// from one that left it alone but still shouldn't touch its content.
+    pub active: DocumentId,
     /// `render::build_rows(view, app)`. Empty when not sampled (G19: the
     /// display pipeline runs on every `sync_view()`, dominating debug-build
     /// runtime — later work packages sample this rather than paying for it
@@ -88,6 +105,9 @@ impl Snapshot {
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
             status: footer::footer_text(app),
+            focus: app.focus,
+            modal_open: app.modal.is_some(),
+            active: app.active,
             cells,
         }
     }

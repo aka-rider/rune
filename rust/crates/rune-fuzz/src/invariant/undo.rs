@@ -12,6 +12,13 @@
 //! `journal_len + 8` presses, and if that didn't reach the target
 //! position, `after.journal_pos` still shows it — a non-converging
 //! undo/redo is itself a violation, not a silent no-op.
+//!
+//! Both drives assume `⌘Z`/`⌘⇧Z` actually reach the document — per-pane
+//! key routing means they don't unless the editor is focused and no modal
+//! owns the keyboard. `driver.rs::restore_editor_focus` establishes that
+//! precondition with real keystrokes immediately before either drive
+//! starts, so a session that ends with (say) the Explorer focused no
+//! longer misreads "the keys were ignored" as "undo doesn't converge".
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;

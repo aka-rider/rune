@@ -1,7 +1,9 @@
-//! WP6.S4/S5 detection tests for the 15 invariants added on top of WP3's
+//! WP6.S4/S5 detection tests for the 16 invariants added on top of WP3's
 //! six (`tests/tripwire.rs`, at its own 500-line-adjacent size and owned by
 //! a parallel work package, is deliberately NOT touched here — this is a
-//! separate, non-`#[ignore]`d file so `make test` still runs all of it).
+//! separate, non-`#[ignore]`d file so `make test` still runs all of it),
+//! plus `PANE-NO-BLEED` (the `UNDO-TOTAL` harness fix's own invariant,
+//! `tests/invariants/pane.rs`).
 //!
 //! Same pattern as `tests/tripwire.rs` (WP4.S3/S4): one hand-built BAD
 //! input per invariant asserting the checker fires with the right id, one
@@ -11,7 +13,7 @@
 //!
 //! One test TARGET (`--test invariants`, matching the Done-when gate), but
 //! split into small per-domain files under `tests/invariants/` — §1.6 caps
-//! any one file at 500 LoC, and one flat file for all 15 invariants would
+//! any one file at 500 LoC, and one flat file for all 16 invariants would
 //! blow well past that.
 
 #![allow(
@@ -30,6 +32,8 @@
 mod clipboard;
 #[path = "invariants/journal.rs"]
 mod journal;
+#[path = "invariants/pane.rs"]
+mod pane;
 #[path = "invariants/protocol.rs"]
 mod protocol;
 #[path = "invariants/render_cells.rs"]

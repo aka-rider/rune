@@ -3,12 +3,18 @@
 //! integration test binary can't import another one; both build on
 //! `Snapshot`/`Cursor`'s fully-`pub` fields, G16).
 
+use std::sync::Arc;
+
 use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_fuzz::snapshot::Snapshot;
 use rune_fuzz::step::{MsgTag, StepCtx};
+use rune_tui::app::App;
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pane::Pane;
 use rune_tui::render::Cell;
+use rune_vfs::{Mem, Vfs};
 
 pub(crate) fn key(code: KeyCode, mods: Mods) -> KeyInput {
     KeyInput { code, mods }
@@ -59,9 +65,35 @@ fn line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
     (starts, ends)
 }
 
+/// `DocumentId`'s inner field is `pub(crate)` to `rune_tui` (G16), so the
+/// only way a test outside that crate can obtain a value is through its
+/// public API. `App::new` always mints its first (and here, only)
+/// document as `DocumentId(NonZeroU64::MIN)` (`app.rs:170`), so this is a
+/// deterministic constant in practice — a fresh in-memory `App` exists
+/// only long enough to read `.active` back out of it.
+pub(crate) fn base_active_id() -> DocumentId {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    App::new(Buffer::new(""), None, vfs, None).active
+}
+
+/// A second, definitely-different `DocumentId` from `base_active_id()`'s
+/// value — `App::open_document` mints ids strictly increasing from
+/// `NonZeroU64::MIN.saturating_add(1)` (`app.rs:176/207-208`), so calling
+/// it once on a fresh `App` always returns something distinct from the
+/// bootstrap document's own id. `PANE-NO-BLEED`'s "active document
+/// changed" negative case (`tests/invariants/pane.rs`) needs exactly one
+/// such value.
+pub(crate) fn other_doc_id() -> DocumentId {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let mut app = App::new(Buffer::new(""), None, vfs, None);
+    app.open_document(Buffer::new(""))
+}
+
 /// A well-formed baseline `Snapshot`: one valid collapsed cursor at offset
-/// 0, a correctly derived line index, otherwise-quiescent fields. Each
-/// test overrides exactly the field(s) it exercises.
+/// 0, a correctly derived line index, the editor focused with no modal up
+/// (the precondition `PANE-NO-BLEED` and the undo/redo drive both assume),
+/// otherwise-quiescent fields. Each test overrides exactly the field(s) it
+/// exercises.
 pub(crate) fn base_snapshot(content: &str) -> Snapshot {
     let (line_starts, line_ends) = line_bounds(content);
     let line_count = line_starts.len();
@@ -80,6 +112,9 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         pending_quit: None,
         should_quit: false,
         status: String::new(),
+        focus: Pane::Editor,
+        modal_open: false,
+        active: base_active_id(),
         cells: Vec::new(),
     }
 }
