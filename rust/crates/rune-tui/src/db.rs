@@ -1,14 +1,25 @@
 //! Wiring between `rune-tui`'s Elm-style runtime and `rune-db`'s async
-//! writer-thread `Store` (plan WP5): the `DbEvent` -> `Msg::Db` bridge, the
-//! per-`App` `AppDb` handle, and the small bookkeeping the three journal
-//! call sites (`commands::edit::commit_edit_batch`/`undo`/`redo`) need to
-//! talk to it. CONSTITUTION §1.4.8/§5.4: the in-memory
+//! writer-thread `Store` (plan WP5, re-split in WP1 for multi-document
+//! support — plan WP1 decision 5): the `DbEvent` -> `Msg::Db` bridge, the
+//! app-level `Db` handle (the `Store` itself + the bridge + the sticky
+//! degraded flag), the per-document `DocDb` handle (this doc's bound row +
+//! its async-replica bookkeeping), and the small functions the three
+//! journal call sites (`commands::edit::commit_edit_batch`/`undo`/`redo`)
+//! need to talk to them. CONSTITUTION §1.4.8/§5.4: the in-memory
 //! `rune_core::undo::Journal` stays the synchronous, authoritative source
 //! of truth for the running session — nothing here ever waits on a `Store`
 //! ack before mutating the buffer (plan decision 3), and every call below
 //! is a plain, non-blocking channel send (`Store::enqueue`'s `try_send`),
 //! never I/O — so these are called directly from `update`, not from a
 //! spawned `Cmd`.
+//!
+//! One `Store` is shared by every open document (`App::db: Option<Db>`);
+//! each document binds its own row via `DocDb::db_id` (formerly `doc_id`).
+//! Because the writer thread processes one ordered FIFO across ALL
+//! documents, a `DbEvent` ack's `id` alone doesn't say which document it
+//! belongs to — `App::db_ops: HashMap<u64, DocumentId>` records that
+//! mapping at every successful enqueue (plan decision 6) and is consulted/
+//! popped by `app::handle_db_event`.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Sender};
@@ -18,7 +29,8 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_db::{DbEvent, ObsId, OnEvent, Store};
 
-use crate::app::{self, App};
+use crate::app::App;
+use crate::document::DocumentId;
 use crate::runtime::Msg;
 
 /// Where a `DbEvent` goes before vs after the runtime loop exists. See
@@ -86,22 +98,50 @@ impl DbBridge {
     }
 }
 
-/// This `App`'s handle onto its recovery store: the `Store` itself, the
-/// bridge routing its acks into `Msg::Db`, this session's bound document,
-/// and the small amount of bookkeeping the async replica needs. One `App`
-/// == one document == one `AppDb` (Phase 1 is one file, one pane).
-pub struct AppDb {
+/// The app-wide half of the old `AppDb` (plan WP1 decision 5): the `Store`
+/// itself, the bridge routing its acks into `Msg::Db`, and the sticky
+/// degraded flag — shared by every open `Document`. Per-document state
+/// (bound row, CAS baseline, async-replica bookkeeping) lives on `DocDb`
+/// below, one per `Document`.
+pub struct Db {
     pub store: Store,
     pub bridge: Arc<DbBridge>,
-    pub doc_id: i64,
     /// True once this store can no longer be trusted for recovery — either
     /// the open ladder degraded to `:memory:` at launch, or a LATER
     /// enqueue-time error / `DbEvent::Err`/`Fatal` (plan decision 3: "on
     /// hard write failure the buffer is never rolled back; the store
-    /// enters degraded mode"). Sticky for the process lifetime — WP5 has no
+    /// enters degraded mode"). Sticky for the process lifetime — WP1 has no
     /// reopen/reconnect path.
     pub degraded: bool,
-    /// This session's current CAS baseline for `doc_id` — updated from
+}
+
+impl Db {
+    pub fn new(store: Store, bridge: Arc<DbBridge>, degraded: bool) -> Db {
+        Db {
+            store,
+            bridge,
+            degraded,
+        }
+    }
+
+    /// Deterministically drains and joins the underlying `Store`'s
+    /// writer/reader threads (`Store::shutdown`'s own doc comment) — the
+    /// one place `rune-cli::main` closes the recovery store on every exit
+    /// path, not just its own bootstrap-failure branches.
+    pub fn shutdown(self) {
+        self.store.shutdown();
+    }
+}
+
+/// This document's handle onto the app-wide recovery store (plan WP1
+/// decision 5, split out of the pre-WP1 `AppDb`): the bound `documents` row
+/// id (`db_id`, formerly `doc_id` — renamed so it can't be confused with
+/// `DocumentId`, the in-process tab identity), this session's current CAS
+/// baseline, and the async-replica bookkeeping reconciling the LOCAL
+/// journal against the DURABLE one.
+pub struct DocDb {
+    pub db_id: i64,
+    /// This session's current CAS baseline for `db_id` — updated from
     /// every successful `materialize` ack's `saved` observation (plan
     /// WP5.S6). Seeded from `LoadResult::saved_obs` at hydration.
     pub expect_obs: ObsId,
@@ -110,10 +150,10 @@ pub struct AppDb {
     /// — true until the first successful create commits.
     pub bind_new: bool,
     /// The highest durable journal seq (`events.seq`) this session has SEEN
-    /// acknowledged so far — a conservative stand-in for "the durable
-    /// journal's current head", used as `materialize`'s `seq` parameter and
-    /// as the fallback when `seq_by_local_pos` doesn't have an exact answer
-    /// yet (see its doc comment).
+    /// acknowledged so far for this document — a conservative stand-in for
+    /// "the durable journal's current head", used as `materialize`'s `seq`
+    /// parameter and as the fallback when `seq_by_local_pos` doesn't have an
+    /// exact answer yet (see its doc comment).
     pub last_known_seq: i64,
     /// `seq_by_local_pos[i]` is the durable seq that local `Journal`
     /// position `i + 1` (i.e., after the `(i+1)`-th local `push`)
@@ -126,9 +166,9 @@ pub struct AppDb {
     pub seq_by_local_pos: Vec<Option<i64>>,
     /// FIFO of local positions still awaiting their `AppendEdit` ack,
     /// oldest first — the writer thread's single ordered queue guarantees
-    /// `AppendEdit` acks land in the same relative order their ops were
-    /// enqueued, so the oldest entry here is always the next ack to fill
-    /// in.
+    /// THIS document's `AppendEdit` acks land in the same relative order
+    /// its own ops were enqueued (a subsequence of the global FIFO order),
+    /// so the oldest entry here is always the next ack to fill in.
     pub pending_seq_acks: VecDeque<usize>,
     /// Bumped on every journal mutation; the debounce token for the 2s
     /// snapshot-autosave timer (plan WP5.S6, port of
@@ -138,22 +178,10 @@ pub struct AppDb {
     pub snapshot_generation: u32,
 }
 
-impl AppDb {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        store: Store,
-        bridge: Arc<DbBridge>,
-        doc_id: i64,
-        degraded: bool,
-        expect_obs: ObsId,
-        bind_new: bool,
-        last_known_seq: i64,
-    ) -> AppDb {
-        AppDb {
-            store,
-            bridge,
-            doc_id,
-            degraded,
+impl DocDb {
+    pub fn new(db_id: i64, expect_obs: ObsId, bind_new: bool, last_known_seq: i64) -> DocDb {
+        DocDb {
+            db_id,
             expect_obs,
             bind_new,
             last_known_seq,
@@ -161,14 +189,6 @@ impl AppDb {
             pending_seq_acks: VecDeque::new(),
             snapshot_generation: 0,
         }
-    }
-
-    /// Deterministically drains and joins the underlying `Store`'s
-    /// writer/reader threads (`Store::shutdown`'s own doc comment) — the
-    /// one place `rune-cli::main` closes the recovery store on every exit
-    /// path, not just its own bootstrap-failure branches.
-    pub fn shutdown(self) {
-        self.store.shutdown();
     }
 
     /// Records that local `Journal` position `local_pos` (`Journal::pos()`
@@ -215,59 +235,200 @@ impl AppDb {
 }
 
 /// Enqueues an `AppendEdit` replica of a batch this session just committed
-/// to the LOCAL in-memory journal (plan WP5.S3) — called immediately after
-/// `Journal::push` at `commands::edit::commit_edit_batch`'s one call site.
-/// `local_pos` is `app.editor.journal.pos()` AFTER that push. A failure
-/// here (enqueue-time `Error`, never an async one — that lands via
-/// `Msg::Db` instead) only ever marks the store degraded
+/// to `id`'s LOCAL in-memory journal (plan WP5.S3) — called immediately
+/// after `Journal::push` at `commands::edit::commit_edit_batch`'s one call
+/// site. `local_pos` is `doc.journal.pos()` AFTER that push. A failure here
+/// (enqueue-time `Error`, never an async one — that lands via `Msg::Db`
+/// instead) only ever marks the whole store degraded
 /// (`app::on_store_failure`) — the buffer/journal mutation already
-/// happened and is never rolled back (plan decision 3).
+/// happened and is never rolled back (plan decision 3). Every successful
+/// enqueue records `id` in `app.db_ops` (plan decision 6) so the eventual
+/// ack routes back to the right document.
 pub fn append_edit(
     app: &mut App,
+    id: DocumentId,
     local_pos: usize,
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
 ) {
-    let Some(db) = app.db.as_ref() else { return };
-    if db.degraded {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
+    let Some(db_id) = app.doc(id).db.as_ref().map(|d| d.db_id) else {
+        return;
+    };
+    let Some(db) = app.db.as_ref() else { return };
     let result = db
         .store
-        .append_edit(db.doc_id, edits, cursors_before, cursors_after);
+        .append_edit(db_id, edits, cursors_before, cursors_after);
     match result {
-        Ok(_op_id) => {
-            if let Some(db) = app.db.as_mut() {
-                db.note_pending_append(local_pos);
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, id);
+            if let Some(doc_db) = app.doc_mut(id).db.as_mut() {
+                doc_db.note_pending_append(local_pos);
             }
         }
-        Err(e) => app::on_store_failure(app, e.to_string()),
+        Err(e) => crate::save::on_store_failure(app, e.to_string()),
     }
 }
 
-/// Enqueues a `MoveUndoPos` replica of an undo/redo this session just
-/// committed locally (plan WP5.S3) — called immediately after
-/// `Journal::move_pos` at `commands::edit::undo`/`redo`'s call sites.
-/// `local_pos` is the journal position just committed (`Journal::move_pos`'s
-/// own argument).
-pub fn move_undo_pos(app: &mut App, local_pos: usize) {
-    let Some(db) = app.db.as_ref() else { return };
-    if db.degraded {
+/// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
+/// locally (plan WP5.S3) — called immediately after `Journal::move_pos` at
+/// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
+/// position just committed (`Journal::move_pos`'s own argument).
+pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
-    let target_seq = db.seq_for_local_pos(local_pos);
-    let result = db.store.move_undo_pos(db.doc_id, target_seq);
-    if let Err(e) = result {
-        app::on_store_failure(app, e.to_string());
+    let Some((target_seq, db_id)) = app
+        .doc(id)
+        .db
+        .as_ref()
+        .map(|d| (d.seq_for_local_pos(local_pos), d.db_id))
+    else {
+        return;
+    };
+    let Some(db) = app.db.as_ref() else { return };
+    let result = db.store.move_undo_pos(db_id, target_seq);
+    match result {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, id);
+        }
+        Err(e) => crate::save::on_store_failure(app, e.to_string()),
     }
 }
 
-/// Records that `seq` was durably committed for the oldest still-pending
-/// `AppendEdit` — called from `app::update`'s `Msg::Db` handler on
-/// `DbEvent::Ok { result: OpOutcome::Seq(seq), .. }`.
-pub fn resolve_append_ack(app: &mut App, seq: i64) {
-    if let Some(db) = app.db.as_mut() {
-        db.resolve_append_ack(seq);
+/// Records that `seq` was durably committed for `id`'s oldest still-pending
+/// `AppendEdit` — called from `app::handle_db_event`'s `Msg::Db` handler on
+/// `DbEvent::Ok { result: OpOutcome::Seq(seq), .. }`, after `app.db_ops` has
+/// already resolved the ack's op id to `id`.
+pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
+    if let Some(doc_db) = app.doc_mut(id).db.as_mut() {
+        doc_db.resolve_append_ack(seq);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use rune_core::buffer::Buffer;
+    use rune_db::{ClockFn, OpOutcome};
+    use rune_vfs::{Mem, Vfs};
+
+    fn in_memory_db() -> Db {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
+        let (bridge, _rx) = DbBridge::bootstrap();
+        Db::new(store, bridge, false)
+    }
+
+    /// Plan WP1.S8: two documents each enqueue an `AppendEdit`; delivering
+    /// their `DbEvent::Ok` acks (identified only by op id, via `app.db_ops`)
+    /// must route each `Seq` result to the CORRECT document's `DocDb`, never
+    /// crossing them.
+    #[test]
+    fn db_event_acks_route_to_the_correct_document_via_db_ops() {
+        let mut app = App::new(
+            Buffer::new("a"),
+            None,
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id_a = app.active;
+        let id_b = app.open_document(Buffer::new("b"));
+
+        app.doc_mut(id_a).db = Some(DocDb::new(1, 0, true, 0));
+        app.doc_mut(id_b).db = Some(DocDb::new(2, 0, true, 0));
+
+        append_edit(&mut app, id_a, 1, &[], &[], &[]);
+        append_edit(&mut app, id_b, 1, &[], &[], &[]);
+
+        assert_eq!(app.db_ops.len(), 2);
+        let op_for_a = *app
+            .db_ops
+            .iter()
+            .find(|(_, doc)| **doc == id_a)
+            .expect("op recorded for doc a")
+            .0;
+        let op_for_b = *app
+            .db_ops
+            .iter()
+            .find(|(_, doc)| **doc == id_b)
+            .expect("op recorded for doc b")
+            .0;
+        assert_ne!(op_for_a, op_for_b);
+
+        // Simulate the acks arriving in reverse enqueue order — routing
+        // must key off the op id, not arrival order.
+        let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b");
+        resolve_append_ack(&mut app, doc_for_b, 42);
+        let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a");
+        resolve_append_ack(&mut app, doc_for_a, 7);
+
+        assert_eq!(
+            app.doc(id_a)
+                .db
+                .as_ref()
+                .expect("doc a has a DocDb")
+                .last_known_seq,
+            7
+        );
+        assert_eq!(
+            app.doc(id_b)
+                .db
+                .as_ref()
+                .expect("doc b has a DocDb")
+                .last_known_seq,
+            42
+        );
+        assert!(app.db_ops.is_empty());
+    }
+
+    #[test]
+    fn handle_db_event_ok_seq_pops_db_ops_and_routes_to_the_right_document() {
+        let mut app = App::new(
+            Buffer::new("a"),
+            None,
+            Arc::new(Mem::new()),
+            Some(in_memory_db()),
+        );
+        let id_a = app.active;
+        let id_b = app.open_document(Buffer::new("b"));
+        app.doc_mut(id_a).db = Some(DocDb::new(1, 0, true, 0));
+        app.doc_mut(id_b).db = Some(DocDb::new(2, 0, true, 0));
+
+        append_edit(&mut app, id_a, 1, &[], &[], &[]);
+        let op_for_a = *app
+            .db_ops
+            .iter()
+            .find(|(_, doc)| **doc == id_a)
+            .expect("op recorded for doc a")
+            .0;
+
+        let mut effects = crate::runtime::Effects::default();
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Db(DbEvent::Ok {
+                id: op_for_a,
+                result: OpOutcome::Seq(99),
+            }),
+            &mut effects,
+        );
+
+        assert!(
+            !app.db_ops.contains_key(&op_for_a),
+            "a resolved ack must be popped from db_ops"
+        );
+        assert_eq!(
+            app.doc(id_a)
+                .db
+                .as_ref()
+                .expect("doc a has a DocDb")
+                .last_known_seq,
+            99
+        );
     }
 }
