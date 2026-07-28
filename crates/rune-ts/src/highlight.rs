@@ -50,9 +50,15 @@ pub fn highlight(
     let mut parser = Parser::new();
     parser.set_language(language).ok()?;
 
-    let deadline = Instant::now() + budget;
+    // `Instant + Duration` panics on overflow; a public function taking an
+    // arbitrary caller-supplied `Duration` must not trust it to stay in
+    // range. `checked_add` returning `None` (a `budget` so large the
+    // deadline can't be represented) is treated as no deadline at all —
+    // the honest reading of an effectively unbounded budget — rather than
+    // a reason to fail the parse.
+    let deadline = Instant::now().checked_add(budget);
     let mut on_progress = |_: &ParseState| {
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())

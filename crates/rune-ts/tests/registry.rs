@@ -52,6 +52,15 @@ fn elapsed_budget_returns_none() {
 }
 
 #[test]
+fn unbounded_budget_does_not_panic() {
+    let result = highlight("rust", "fn main() {}", Duration::MAX);
+    assert!(
+        result.is_some(),
+        "Duration::MAX must be treated as an unbounded budget, not overflow"
+    );
+}
+
+#[test]
 fn unknown_language_returns_none() {
     assert_eq!(highlight("klingon", "x", Duration::from_secs(1)), None);
 }
