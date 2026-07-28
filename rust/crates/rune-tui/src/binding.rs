@@ -2,17 +2,19 @@
 //! alongside `keymap::resolve`. Split out of `keymap.rs` to bring that file
 //! under the §1.6 500-line budget; `keymap` re-exports every item here so no
 //! import path downstream changed.
+//!
+//! Plan WP6.S1 extended `Binding<C>` from a single `key: KeyPattern` to a
+//! `keys: &'static [KeyPattern]` sequence plus a `when: &'static str` guard
+//! clause (`crate::when`, `""` meaning unconditional) — the two fields the
+//! sequence-capable resolver in `crate::keymap::index` needs. Every existing
+//! table (`GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `EXPLORER_BINDINGS`,
+//! `TABS_BINDINGS`) still binds a single key each, so `resolve_in` (the
+//! plain, context-free lookup those tables use) only ever matches a
+//! one-element `keys` slice; the sequence- and context-aware engine that
+//! actually walks a multi-key chord to completion lives in
+//! `crate::keymap::index::resolve`/`resolve_stateful`.
 
 use crate::keymap::{KeyCode, KeyInput, Mods};
-
-// ── Generic binding tables (plan WP2.S3/decision 9) ─────────────────────
-//
-// A second, data-driven resolution style alongside `keymap::resolve`:
-// `KeyPattern` matches a chord EXACTLY (code + the WHOLE `Mods` set, unlike
-// `resolve_char`'s partial guards), and `resolve_in` looks one up in a
-// `const` table. `resolve` itself stays hand-written (decision 9: "tables
-// only where WP7's Help doc needs enumeration") — `GLOBAL_BINDINGS`, and
-// `EXPLORER_BINDINGS`/`TABS_BINDINGS`, are that case.
 
 /// One exact chord: a `KeyCode` plus the WHOLE `Mods` set that must be held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,13 +28,13 @@ impl KeyPattern {
         KeyPattern { code, mods }
     }
 
-    fn matches(self, key: KeyInput) -> bool {
+    pub(crate) fn matches(self, key: KeyInput) -> bool {
         self.code == key.code && self.mods == key.mods
     }
 
-    /// A short display label (footer default-mode hints, WP7's Help doc —
-    /// one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup, then
-    /// the key, `Char` uppercased ("^X" for Ctrl+x).
+    /// A short display label (footer default-mode hints, the generated Help
+    /// doc — one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup,
+    /// then the key, `Char` uppercased ("^X" for Ctrl+x).
     pub fn label(&self) -> String {
         let mut s = String::new();
         if self.mods.ctrl {
@@ -56,23 +58,44 @@ impl KeyPattern {
     }
 }
 
-/// One table entry: the chord, the command it produces, and its help-line
-/// label — `help` is the one source the footer's hints and WP7's Help doc
-/// both read.
-#[derive(Clone, Copy, Debug)]
+/// One table entry: the (possibly multi-key) chord sequence, the command it
+/// produces, its help-line label, and a `when` clause gating it (plan
+/// WP6.S1/S2). `when: ""` is the unconditional case every pre-WP6 table
+/// uses — `crate::keymap::index::resolve` treats an empty clause as always
+/// true without invoking the `when` parser at all.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Binding<C: Copy + 'static> {
-    pub key: KeyPattern,
+    pub keys: &'static [KeyPattern],
     pub cmd: C,
     pub help: &'static str,
+    pub when: &'static str,
 }
 
-/// Linear first-match lookup — these are chord tables (single- to low-
-/// double-digit entries), not per-keystroke text, so a `HashMap` would cost
-/// this module's whole appeal (a `const` table, no allocation) for nothing.
+impl<C: Copy + 'static> Binding<C> {
+    /// The sequence's display label: each key's own label, space-joined
+    /// ("^K ^C" for a two-key chord). A single-key binding's label is
+    /// unchanged from `KeyPattern::label`.
+    pub fn label(&self) -> String {
+        self.keys
+            .iter()
+            .map(KeyPattern::label)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Linear first-match lookup over a SINGLE-key binding table — these are
+/// chord tables (single- to low-double-digit entries), not per-keystroke
+/// text, so a `HashMap` would cost this module's whole appeal (a `const`
+/// table, no allocation) for nothing. A binding whose `keys` is a sequence
+/// longer than one never matches here — callers that need sequences use
+/// `crate::keymap::index::resolve`/`resolve_stateful` instead.
 pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
     table
         .iter()
-        .find(|binding| binding.key.matches(key))
+        .find(|binding| {
+            binding.keys.len() == 1 && binding.keys.first().is_some_and(|k| k.matches(key))
+        })
         .map(|binding| binding.cmd)
 }
 
@@ -85,4 +108,69 @@ pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
 pub enum KeyOutcome {
     Consumed,
     Ignored,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    const CTRL: Mods = Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    };
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum TestCmd {
+        Foo,
+    }
+
+    #[test]
+    fn resolve_in_ignores_a_multi_key_binding() {
+        const TABLE: &[Binding<TestCmd>] = &[Binding {
+            keys: &[
+                KeyPattern::new(KeyCode::Char('k'), CTRL),
+                KeyPattern::new(KeyCode::Char('c'), CTRL),
+            ],
+            cmd: TestCmd::Foo,
+            help: "foo",
+            when: "",
+        }];
+        let key = KeyInput {
+            code: KeyCode::Char('k'),
+            mods: CTRL,
+        };
+        assert_eq!(resolve_in(TABLE, key), None);
+    }
+
+    #[test]
+    fn resolve_in_matches_a_single_key_binding() {
+        const TABLE: &[Binding<TestCmd>] = &[Binding {
+            keys: &[KeyPattern::new(KeyCode::Char('k'), CTRL)],
+            cmd: TestCmd::Foo,
+            help: "foo",
+            when: "",
+        }];
+        let key = KeyInput {
+            code: KeyCode::Char('k'),
+            mods: CTRL,
+        };
+        assert_eq!(resolve_in(TABLE, key), Some(TestCmd::Foo));
+    }
+
+    #[test]
+    fn binding_label_joins_a_sequence_with_spaces() {
+        const TABLE: &[Binding<TestCmd>] = &[Binding {
+            keys: &[
+                KeyPattern::new(KeyCode::Char('k'), CTRL),
+                KeyPattern::new(KeyCode::Char('c'), CTRL),
+            ],
+            cmd: TestCmd::Foo,
+            help: "foo",
+            when: "",
+        }];
+        assert_eq!(TABLE.first().expect("one entry").label(), "^K ^C");
+    }
 }

@@ -59,44 +59,52 @@ const SUP: Mods = Mods {
 /// intentional binding.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
-        key: KeyPattern::new(KeyCode::Char('b'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
         cmd: GlobalCommand::ToggleExplorer,
         help: "explorer",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('e'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('e'), CTRL)],
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('t'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('t'), CTRL)],
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('r'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('r'), CTRL)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('s'), SUP),
+        keys: &[KeyPattern::new(KeyCode::Char('s'), SUP)],
         cmd: GlobalCommand::Save,
         help: "save",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::F1, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::F1, Mods::NONE)],
         cmd: GlobalCommand::Help,
         help: "help",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('c'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('c'), CTRL)],
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
         help: "quit",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('d'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('d'), CTRL)],
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlD),
         help: "quit",
+        when: "",
     },
 ];
 
@@ -115,24 +123,28 @@ pub const LEADER_GLYPH: char = '␣';
 /// mistaken for a leader completion.
 pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
-        key: KeyPattern::new(KeyCode::Char('x'), Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Char('x'), Mods::NONE)],
         cmd: GlobalCommand::ToggleExplorer,
         help: "explorer",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('e'), Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Char('e'), Mods::NONE)],
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('t'), Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Char('t'), Mods::NONE)],
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('r'), Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Char('r'), Mods::NONE)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
+        when: "",
     },
 ];
 
@@ -140,5 +152,5 @@ pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
 /// render, so the two can never drift out of step with each other or with
 /// `LEADER_BINDINGS` itself.
 pub fn leader_label(b: &Binding<GlobalCommand>) -> String {
-    format!("{LEADER_GLYPH}{}", b.key.label())
+    format!("{LEADER_GLYPH}{}", b.label())
 }

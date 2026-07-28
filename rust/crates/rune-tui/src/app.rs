@@ -177,6 +177,13 @@ pub struct App {
     /// `FixedSpaceProbe`, and the fuzzer keeps the default and so stays
     /// deterministic.
     pub space_probe: Box<dyn crate::keystate::SpaceProbe>,
+    /// Which binding set governs the editor pane (plan WP6.S8) — defaults to
+    /// `BindingSet::Default` (the VS Code-style set this crate has had since
+    /// WP2). `app::handle_editor_key` does not consult this yet: full vim
+    /// modal editing is out of scope for this plan (see `keymap::vim`'s doc
+    /// comment); this field exists so a future dispatch switch has
+    /// somewhere to read from.
+    pub binding_set: crate::keymap::BindingSet,
     /// The document a literal space was just typed into, armed by the
     /// printable-insert path (`handle_editor_key`) and cleared at the top
     /// of the NEXT `handle_key` (plan WP5.S4/S5). `Some` for exactly one
@@ -232,6 +239,7 @@ impl App {
             pending_quit: None,
             next_quit_gen: 0,
             space_probe: Box::new(crate::keystate::NullProbe),
+            binding_set: crate::keymap::BindingSet::default(),
             speculative_space: None,
             modal: None,
             should_quit: false,

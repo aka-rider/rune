@@ -182,16 +182,14 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
     {
-        entries.push((save.key.label(), save.help, app.is_dirty()));
+        entries.push((save.label(), save.help, app.is_dirty()));
     }
 
     match app.focus {
-        Pane::Explorer => entries.extend(
-            EXPLORER_BINDINGS
-                .iter()
-                .map(|b| (b.key.label(), b.help, true)),
-        ),
-        Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.key.label(), b.help, true))),
+        Pane::Explorer => {
+            entries.extend(EXPLORER_BINDINGS.iter().map(|b| (b.label(), b.help, true)))
+        }
+        Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.label(), b.help, true))),
         // The title field has no binding TABLE of its own — `title::
         // handle_key` matches Enter/Esc/editing keys directly (they are a
         // text field's own behaviour, not chords worth enumerating in the
@@ -205,7 +203,7 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
         GLOBAL_BINDINGS
             .iter()
             .filter(|b| matches!(b.cmd, GlobalCommand::Help | GlobalCommand::QuitChord(_)))
-            .map(|b| (b.key.label(), b.help, true)),
+            .map(|b| (b.label(), b.help, true)),
     );
 
     entries
@@ -379,7 +377,6 @@ mod tests {
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
             .expect("a Save binding exists")
-            .key
             .label();
 
         let app = app_with("hello");

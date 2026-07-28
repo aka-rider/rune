@@ -81,34 +81,40 @@ pub enum ExplorerCommand {
 /// entry) — mirroring Go filetree's `..`-less parent-dir chord.
 pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     Binding {
-        key: KeyPattern::new(KeyCode::Up, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
         cmd: ExplorerCommand::Up,
         help: "up",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Down, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
         cmd: ExplorerCommand::Down,
         help: "down",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Home, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Home, Mods::NONE)],
         cmd: ExplorerCommand::Top,
         help: "top",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::End, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::End, Mods::NONE)],
         cmd: ExplorerCommand::Bottom,
         help: "bottom",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
         cmd: ExplorerCommand::Open,
         help: "open",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Backspace, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
         cmd: ExplorerCommand::ParentDir,
         help: "up dir",
+        when: "",
     },
 ];
 

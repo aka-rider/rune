@@ -1,17 +1,35 @@
 //! Typed `Command` enum + a stateless resolver table (plan Context,
-//! "Keymap"). `resolve` never consults any state — chord *sequences* don't
-//! exist in production; the only stateful chord is quit-confirm, and even
-//! that lives in `App` (`app::handle_quit_key`), not here. WP5 wires
-//! quit-confirm and the resolver end to end; the resolver already covers the
-//! full Phase-1 chord table so WP6/7/8 only need to act on the `Command`s it
-//! already produces, never touch this file's matching logic again.
+//! "Keymap"). `resolve` never consults any state and stays hand-written —
+//! it's still the LIVE dispatch path `app::handle_editor_key` calls; WP6
+//! adds `editor_bindings::EDITOR_BINDINGS`, a data table mirroring the same
+//! chords, purely so the generated Help doc (`help.rs`) and the startup
+//! collision index (`index.rs`) have something to read without a hand-
+//! maintained second copy — it does not replace `resolve` as the thing that
+//! actually executes a keystroke. The held-space leader (`global::
+//! LEADER_BINDINGS`) is a separate, already-live stateful mechanism (see
+//! `keystate.rs`/`app::handle_key`'s stage 1.5); `index::KeymapState` below
+//! is a second, general-purpose sequence tracker for a future binding-table-
+//! driven chord, not a replacement for it.
 
 // The generic binding machinery now lives in `crate::binding` and the
 // global chord table in `crate::global` (§1.6: this file was over the
 // 500-line budget). Re-exported here so every existing `keymap::` import
 // path keeps working.
+//
+// `index`/`editor_bindings`/`vim` are submodules of THIS file (plan WP6):
+// Rust lets a `foo.rs` module have its submodules live under `foo/` even
+// though `foo.rs` itself is not `foo/mod.rs` — so `keymap.rs` stays the
+// single top-level file the rest of the crate already imports from, while
+// its new WP6 machinery gets its own files instead of growing this one
+// past the §1.6 budget again.
+pub mod editor_bindings;
+pub mod index;
+pub mod vim;
+
 pub use crate::binding::{Binding, KeyOutcome, KeyPattern, resolve_in};
 pub use crate::global::{GLOBAL_BINDINGS, GlobalCommand};
+pub use index::{KeymapState, NextKeyFn, Resolution};
+pub use vim::{BindingSet, VIM_BINDINGS, VimCommand};
 
 /// A platform- and library-independent key identity — decoupled from
 /// termina's `KeyCode` so the resolver table below (and its tests) don't

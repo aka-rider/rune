@@ -68,24 +68,28 @@ const CTRL: Mods = Mods {
 /// `ctrl+w`, help "close").
 pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     Binding {
-        key: KeyPattern::new(KeyCode::Up, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
         cmd: TabsCommand::Up,
         help: "up",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Down, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
         cmd: TabsCommand::Down,
         help: "down",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Enter, Mods::NONE),
+        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
         cmd: TabsCommand::Select,
         help: "open",
+        when: "",
     },
     Binding {
-        key: KeyPattern::new(KeyCode::Char('w'), CTRL),
+        keys: &[KeyPattern::new(KeyCode::Char('w'), CTRL)],
         cmd: TabsCommand::Close,
         help: "close",
+        when: "",
     },
 ];
 

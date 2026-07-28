@@ -11,6 +11,7 @@ pub mod commands;
 pub mod db;
 pub mod document;
 pub mod explorer;
+pub mod focus;
 pub mod footer;
 pub mod global;
 pub mod help;
@@ -29,4 +30,5 @@ pub mod term;
 #[cfg(any(test, feature = "testgrid"))]
 pub mod testgrid;
 pub mod title;
+pub mod when;
 pub mod workspace;
