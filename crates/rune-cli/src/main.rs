@@ -1,11 +1,15 @@
-//! `rune`: the CLI entry point (plan Context, WP5.S2). Parses one optional
-//! positional file (abs-path'd) or `--version`; no file opens an empty
-//! untitled document; a nonexistent path opens an empty buffer (created on
-//! first save via `RENAME_EXCL`); invalid UTF-8 is
-//! refused at load, before the TUI is ever entered (CONSTITUTION §0, plan
-//! decision 4); a panic anywhere in the run loop is caught here, after the
-//! terminal has already been restored by `term::Guard`'s `Drop` running
-//! during unwind.
+//! `rune`: the CLI entry point (plan Context, WP5.S2; strict argument
+//! parsing and multi-file launch added WP7). `cli::parse` (abs-path'ing
+//! every positional and `-w`'s value) hands back `--version`/`--help`, a
+//! parsed [`cli::Cli`], or a rejected command line; the first positional
+//! opens through the load path below exactly as a single-file launch
+//! always has, every remaining one opens as its own tab, and the first
+//! stays the active document. No file opens an empty untitled document; a
+//! nonexistent path opens an empty buffer (created on first save via
+//! `RENAME_EXCL`); invalid UTF-8 is refused at load, before the TUI is
+//! ever entered (CONSTITUTION §0, plan decision 4); a panic anywhere in
+//! the run loop is caught here, after the terminal has already been
+//! restored by `term::Guard`'s `Drop` running during unwind.
 
 use std::any::Any;
 use std::env;
@@ -19,13 +23,21 @@ use rune_core::undo::Step;
 use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{Disk, Vfs};
 
-/// `sysexits.h`-flavored exit codes: `EX_DATAERR` (the file's bytes are not
-/// valid data for this program — invalid UTF-8), `EX_IOERR` (the file exists
-/// but couldn't be read), `EX_SOFTWARE` (an internal error — a recovered
-/// panic or a runtime I/O failure).
+use cli::{CliAction, CliError};
+
+mod cli;
+
+/// `sysexits.h`-flavored exit codes: `EX_USAGE` (a malformed command line —
+/// an unrecognised flag, a missing `-w` value, or `-w` pointing somewhere
+/// that isn't a directory), `EX_DATAERR` (the file's bytes are not valid
+/// data for this program — invalid UTF-8), `EX_IOERR` (the file exists but
+/// couldn't be read), `EX_SOFTWARE` (an internal error — a recovered panic
+/// or a runtime I/O failure).
 mod exit_code {
+    pub const USAGE: u8 = 64;
     pub const DATA_ERR: u8 = 65;
     pub const IO_ERR: u8 = 74;
     pub const SOFTWARE: u8 = 70;
@@ -34,18 +46,35 @@ mod exit_code {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    if args.iter().any(|a| a == "--version") {
-        println!("rune {}", env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
+    let launch = match cli::parse(args.into_iter()) {
+        Ok(CliAction::Version) => {
+            println!("rune {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Ok(CliAction::Help) => {
+            println!("{}", cli::USAGE_TEXT);
+            return ExitCode::SUCCESS;
+        }
+        Ok(CliAction::Run(launch)) => launch,
+        Err(e) => return usage_error(&e),
+    };
 
     // Constructed before the load so the whole load path — like every other
     // filesystem access in this app (CONSTITUTION §1.4.9) — goes through the
     // injected `Vfs`, not a direct `std::fs` call: see `load_buffer`.
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
 
-    let (mut app, db_bootstrap) = if let Some(path_arg) = args.first() {
-        let path = to_abs_path(path_arg);
+    // `-w`'s existence/directory-ness check is the documented §1.4.9
+    // launch-bootstrap exception, same class as `workspaceroot::resolve`'s
+    // own `read_dir` walk below (WP7.S4).
+    if let Some(dir) = &launch.work_dir
+        && let Err(e) = validate_work_dir(vfs.as_ref(), dir)
+    {
+        return usage_error(&e);
+    }
+
+    let (mut app, db_bootstrap) = if let Some(path) = launch.files.first() {
+        let path = path.clone();
 
         let file_existed = vfs.stat(&path).is_ok();
 
@@ -90,7 +119,7 @@ fn main() -> ExitCode {
         let app = App::new(buffer, Some(path), vfs, db_bootstrap.db.take());
         (app, db_bootstrap)
     } else {
-        // No file argument — open the default untitled document
+        // No positional files — open the default untitled document
         // (`App::new_untitled`). The Go implementation uses
         // `nextUntitledName` to pick the first "Untitled N" not already
         // used by open tabs; at startup there are none, so this is always
@@ -98,6 +127,39 @@ fn main() -> ExitCode {
         // hydrate either — see `App::new_untitled`'s own docs.
         (App::new_untitled(vfs), DbBootstrap::default())
     };
+
+    // `-w` wins outright; otherwise walk up from `cwd` (falling back to the
+    // first file's parent) for a `.git`/`.obsidian` marker. Reading `cwd`
+    // and `$HOME` here is the same documented §1.4.9 launch-bootstrap
+    // exception as the `-w` validation above (WP7.S5) — every actual
+    // directory read during the walk itself goes through `app.vfs`.
+    let root = match &launch.work_dir {
+        Some(dir) => dir.clone(),
+        None => {
+            let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let home = env::var_os("HOME").map(PathBuf::from);
+            workspaceroot::resolve(
+                app.vfs.as_ref(),
+                &cwd,
+                home.as_deref(),
+                launch.files.first().map(|p| p.as_path()),
+            )
+        }
+    };
+    app.set_root(root);
+
+    // The first positional is already open (above) and stays the active,
+    // displayed document (Go treats it as the awaited display document and
+    // the rest as tabs) — every REMAINING file opens as its own tab through
+    // the same path the Explorer uses, which reports its own failures via
+    // the banner instead of aborting startup (WP7.S6).
+    let first_doc_id = app.active;
+    for extra in launch.files.iter().skip(1) {
+        workspace::open_path(&mut app, extra);
+    }
+    if launch.files.len() > 1 {
+        workspace::switch_to(&mut app, first_doc_id);
+    }
 
     app.db_banner = db_bootstrap.banner;
     // Install the real hardware probe (plan WP5.S8) — production is the
@@ -393,6 +455,26 @@ fn to_abs_path(input: &str) -> PathBuf {
     }
 }
 
+/// `-w`'s own validation (WP7.S4): `dir` (already absolutized by
+/// `cli::parse`) must `stat` successfully as a directory. Split out from
+/// `main` so it's exercisable against `Mem` in tests, exactly like
+/// `load_buffer` above.
+fn validate_work_dir(vfs: &dyn Vfs, dir: &Path) -> Result<(), CliError> {
+    match vfs.stat(dir) {
+        Ok(stat) if stat.is_dir => Ok(()),
+        _ => Err(CliError::NotADirectory(dir.to_path_buf())),
+    }
+}
+
+/// The one exit path for every [`CliError`] — from `cli::parse` itself or
+/// from `validate_work_dir` afterward: the specific message, then
+/// [`cli::USAGE_TEXT`], both to stderr (WP7.S3).
+fn usage_error(e: &CliError) -> ExitCode {
+    eprintln!("rune: {e}");
+    eprintln!("{}", cli::USAGE_TEXT);
+    ExitCode::from(exit_code::USAGE)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -425,5 +507,15 @@ mod tests {
 
         let err = load_buffer(&vfs, path).expect_err("invalid utf-8 must error");
         assert!(matches!(err, LoadError::InvalidUtf8));
+    }
+
+    #[test]
+    fn validate_work_dir_rejects_a_regular_file() {
+        let vfs = Mem::new();
+        let path = Path::new("/not/a/dir.md");
+        vfs.save_atomic(path, b"hi").expect("seed the mem vfs");
+
+        let err = validate_work_dir(&vfs, path).expect_err("a regular file is not a directory");
+        assert!(matches!(err, CliError::NotADirectory(p) if p == path));
     }
 }
