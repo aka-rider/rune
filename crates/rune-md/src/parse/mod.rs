@@ -8,6 +8,7 @@
 mod block;
 mod blockquote;
 mod inline;
+mod table;
 
 use crate::element::block::Block;
 use comrak::nodes::{AstNode, Sourcepos};
@@ -418,9 +419,17 @@ mod tests {
 
     #[test]
     fn table_and_html_block_become_verbatim() {
-        let content = "| a | b |\n|---|---|\n| 1 | 2 |\n";
-        let blocks = parse(content);
+        // HTML blocks still degrade to raw passthrough (§0: unknown syntax
+        // degrades to visible raw text, never lost).
+        let html = "<div>\nraw\n</div>\n";
+        let blocks = parse(html);
         assert!(matches!(blocks[0], Block::Verbatim(_)));
+
+        // A table now parses into a real element machine instead — see
+        // `table_model.rs` for coverage of its shape.
+        let table = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+        let blocks = parse(table);
+        assert!(matches!(blocks[0], Block::Table(_)));
     }
 
     #[test]
