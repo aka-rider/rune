@@ -3,7 +3,7 @@
 //! `wikilink_label_range`) that recover markup ranges comrak has no
 //! dedicated node for.
 
-use super::{LineIndex, ScanHint, line_end_at, node_range};
+use super::{ScanHint, line_end_at, node_range};
 use crate::element::inline::{
     EmphasisKind, EmphasisM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
@@ -22,17 +22,17 @@ use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 /// fallback independently defaulted to the full span).
 fn child_gap_delims(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     node: &AstNode,
     range: ByteRange,
 ) -> (ByteRange, ByteRange) {
     match (node.first_child(), node.last_child()) {
         (Some(first), Some(last)) => {
-            let open_end = node_range(content, idx, first)
+            let open_end = node_range(content, starts, first)
                 .start
                 .max(range.start)
                 .min(range.end);
-            let close_start = node_range(content, idx, last)
+            let close_start = node_range(content, starts, last)
                 .end
                 .max(range.start)
                 .min(range.end);
@@ -58,22 +58,19 @@ fn child_gap_delims(
 /// unhidden, on the actual closing line: a coverage/duplicate-claim bug at
 /// a new site, same root cause).
 ///
-/// MIXED-INDEX SEAM fix (verification round 9's exhaustive audit, third
-/// pass): this used to check only `'\n'`, but `idx.comrak` — and comrak's
-/// own internal line counter, the thing this check exists to predict —
-/// treats a LONE `\r` as a line terminator exactly like `\n` (CR/LF/CRLF
-/// all count, CRLF as one). A wikilink match embedding a bare `\r` (no
-/// following `\n`, e.g. `"[[\r]]"`) desyncs comrak's line counter the
-/// same way an embedded `\n` does, but the old `'\n'`-only check let it
-/// through undetected, leaving a corrupted sibling's range to collide
-/// with an already-claimed byte under strict invariants.
+/// Checks for both `'\n'` and `'\r'`, not just `'\n'`: a wikilink match
+/// embedding either desyncs comrak's own internal line counter for the
+/// rest of the paragraph, the same way an embedded `\n` does — checking
+/// only `'\n'` would let a `\r`-embedding match through undetected,
+/// leaving a corrupted sibling's range to collide with an already-claimed
+/// byte under strict invariants.
 fn subtree_has_multiline_wikilink<'a>(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     node: &'a AstNode<'a>,
 ) -> bool {
     if matches!(node.data.borrow().value, NodeValue::WikiLink(_)) {
-        let range = node_range(content, idx, node);
+        let range = node_range(content, starts, node);
         if content
             .get(range.start..range.end)
             .is_none_or(|s| s.contains(['\n', '\r']))
@@ -82,12 +79,12 @@ fn subtree_has_multiline_wikilink<'a>(
         }
     }
     node.children()
-        .any(|child| subtree_has_multiline_wikilink(content, idx, child))
+        .any(|child| subtree_has_multiline_wikilink(content, starts, child))
 }
 
 pub(super) fn build_inlines<'a>(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     parent: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Vec<Inline> {
@@ -134,25 +131,20 @@ pub(super) fn build_inlines<'a>(
         // `hint`-derived way as the lines strictly after it: never one
         // blind contiguous span, whether or not it happens to still be
         // "inside" the corrupted node's own reported extent.
-        let range = node_range(content, idx, child);
-        if subtree_has_multiline_wikilink(content, idx, child) {
-            // MIXED-INDEX SEAM fix (verification round 7): this rebuild
-            // iterates and clamps by `idx.comrak`, not `idx.buffer` — it
-            // exists to reconstruct content per line AS COMRAK PARSED IT
-            // (mirroring the fence/heading content-line fix; see
-            // `parse::block`'s `CodeBlock` arm), and `ScanHint` itself is
-            // now keyed by comrak lines too (see the `BlockQuote` arm),
-            // so a buffer-line lookup here would silently miss a
-            // container's own marker_ends entry the moment an earlier
-            // `\r` has shifted comrak's line count relative to the
-            // buffer's.
-            let parent_range = node_range(content, idx, parent);
+        let range = node_range(content, starts, child);
+        if subtree_has_multiline_wikilink(content, starts, child) {
+            // This rebuild iterates and clamps by `starts` — the same
+            // index `ScanHint`'s own marker_ends map is keyed by (see the
+            // `BlockQuote` arm in `parse::block`) — to reconstruct content
+            // per physical line, mirroring the fence/heading content-line
+            // fix (`parse::block`'s `CodeBlock` arm).
+            let parent_range = node_range(content, starts, parent);
             let parent_last_line = super::line_at(
-                &idx.comrak,
+                starts,
                 parent_range.end.saturating_sub(1).max(parent_range.start),
             );
-            let first_line = super::line_at(&idx.comrak, range.start);
-            let first_line_end = line_end_at(content.len(), &idx.comrak, first_line)
+            let first_line = super::line_at(starts, range.start);
+            let first_line_end = line_end_at(content.len(), starts, first_line)
                 .min(range.end)
                 .min(parent_range.end)
                 .max(range.start);
@@ -166,7 +158,7 @@ pub(super) fn build_inlines<'a>(
                 content_lines: vec![first_range],
             }));
             for line in (first_line + 1)..=parent_last_line {
-                let s = hint.start_for_line(&idx.comrak, line);
+                let s = hint.start_for_line(starts, line);
                 // CLASS A fallout (verification round 5): a lone `\r`
                 // elsewhere in this SAME buffer line can make comrak
                 // split its OWN block-level parsing at that point — this
@@ -180,7 +172,7 @@ pub(super) fn build_inlines<'a>(
                 // claims — clamp to `parent_range.end`, this paragraph's
                 // own reliable outer bound, same as the first piece
                 // above.
-                let e = line_end_at(content.len(), &idx.comrak, line).min(parent_range.end);
+                let e = line_end_at(content.len(), starts, line).min(parent_range.end);
                 if s < e {
                     let piece_range = ByteRange::new(s, e).clamp(content.len());
                     out.push(Inline::Text(TextRun {
@@ -191,7 +183,7 @@ pub(super) fn build_inlines<'a>(
             }
             return out;
         }
-        out.push(build_inline(content, idx, child, hint));
+        out.push(build_inline(content, starts, child, hint));
     }
     out
 }
@@ -283,15 +275,15 @@ fn inline_kind(v: &NodeValue) -> InlineKind {
 
 fn build_inline<'a>(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     node: &'a AstNode<'a>,
     hint: &ScanHint,
 ) -> Inline {
-    let range = node_range(content, idx, node);
+    let range = node_range(content, starts, node);
     // BUFFER line — see `parse::block::build_block`'s docs on why `line`
     // is derived from the already-correct byte range, not comrak's raw
     // line number (verification round 5 CLASS A).
-    let line = super::line_at(&idx.buffer, range.start);
+    let line = super::line_at(starts, range.start);
     let kind = inline_kind(&node.data.borrow().value);
 
     match kind {
@@ -306,11 +298,11 @@ fn build_inline<'a>(
             // table did. `per_line_content` naturally collapses to
             // `vec![range]` for the overwhelmingly common single-line
             // case.
-            content_lines: super::per_line_content(content, idx, range, hint),
+            content_lines: super::per_line_content(content, starts, range, hint),
         }),
         InlineKind::Emph => {
-            let (open, close) = child_gap_delims(content, idx, node, range);
-            let children = build_inlines(content, idx, node, hint);
+            let (open, close) = child_gap_delims(content, starts, node, range);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Italic,
@@ -319,12 +311,12 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
-                content_lines: super::per_line_content(content, idx, range, hint),
+                content_lines: super::per_line_content(content, starts, range, hint),
             })
         }
         InlineKind::Strong => {
-            let (open, close) = child_gap_delims(content, idx, node, range);
-            let children = build_inlines(content, idx, node, hint);
+            let (open, close) = child_gap_delims(content, starts, node, range);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Bold,
@@ -333,12 +325,12 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
-                content_lines: super::per_line_content(content, idx, range, hint),
+                content_lines: super::per_line_content(content, starts, range, hint),
             })
         }
         InlineKind::Strikethrough => {
-            let (open, close) = child_gap_delims(content, idx, node, range);
-            let children = build_inlines(content, idx, node, hint);
+            let (open, close) = child_gap_delims(content, starts, node, range);
+            let children = build_inlines(content, starts, node, hint);
             Inline::Emphasis(EmphasisM {
                 sm: RevealSm::new(RevealState::Rendered),
                 kind: EmphasisKind::Strike,
@@ -347,7 +339,7 @@ fn build_inline<'a>(
                 close,
                 children,
                 line,
-                content_lines: super::per_line_content(content, idx, range, hint),
+                content_lines: super::per_line_content(content, starts, range, hint),
             })
         }
         InlineKind::Code(num_backticks) => {
@@ -367,7 +359,7 @@ fn build_inline<'a>(
             // makes both track the actual per-line content instead of raw
             // extents, closing the same class VerbatimM/EmphasisM's own
             // `range` had.
-            let content_lines = super::per_line_content(content, idx, range, hint);
+            let content_lines = super::per_line_content(content, starts, range, hint);
             let first_line = content_lines.first().copied().unwrap_or(range);
             let last_line = content_lines.last().copied().unwrap_or(range);
             let open = leading_backtick_run(content, first_line, num_backticks);
@@ -381,15 +373,15 @@ fn build_inline<'a>(
                 content: content_range,
                 line,
                 content_lines,
-                inner_lines: super::per_line_content(content, idx, content_range, hint),
+                inner_lines: super::per_line_content(content, starts, content_range, hint),
             })
         }
         InlineKind::Link(url) => {
-            let text = build_inlines(content, idx, node, hint);
+            let text = build_inlines(content, starts, node, hint);
             let url_range = link_url_range(range, &text, &url, content.len());
             Inline::Link(LinkM {
                 sm: RevealSm::new(RevealState::Rendered),
-                content_lines: super::per_line_content(content, idx, range, hint),
+                content_lines: super::per_line_content(content, starts, range, hint),
                 range,
                 line,
                 text,

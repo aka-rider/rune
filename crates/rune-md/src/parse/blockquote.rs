@@ -1,7 +1,7 @@
 //! Blockquote marker derivation — split out from `block.rs` to keep it
 //! under CONSTITUTION §1.6's 500-LoC limit.
 
-use super::{LineIndex, ScanHint, line_end_at};
+use super::{ScanHint, line_end_at};
 use crate::element::block::BlockquoteMarkerM;
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
@@ -24,22 +24,19 @@ use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 /// included — see `ScanHint`'s docs.
 pub(super) fn blockquote_markers(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     range: ByteRange,
     hint: &ScanHint,
 ) -> Vec<BlockquoteMarkerM> {
-    // MIXED-INDEX SEAM fix (verification round 7): iterated and clamped
-    // by `idx.comrak`, not `idx.buffer` — a `"> "` marker repeats once
-    // per line AS COMRAK PARSED THEM (matching `ScanHint`'s own
-    // `.comrak`-keyed lookups, see `block.rs`'s `BlockQuote` arm), while
-    // each individual marker's OWN stored `.line` field (below) stays
-    // buffer-derived for the cursor-reveal decide policy.
-    let first_line = super::line_at(&idx.comrak, range.start);
-    let last_line = super::line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
+    // Iterated and clamped by `starts` — a `"> "` marker repeats once per
+    // line, matching `ScanHint`'s own `starts`-keyed lookups (see
+    // `block.rs`'s `BlockQuote` arm).
+    let first_line = super::line_at(starts, range.start);
+    let last_line = super::line_at(starts, range.end.saturating_sub(1).max(range.start));
     let mut markers = Vec::new();
     for line in first_line..=last_line {
-        let line_end = line_end_at(content.len(), &idx.comrak, line);
-        let scan_start = hint.start_for_line(&idx.comrak, line);
+        let line_end = line_end_at(content.len(), starts, line);
+        let scan_start = hint.start_for_line(starts, line);
         let Some(line_text) = content.get(scan_start..line_end.max(scan_start)) else {
             continue;
         };
@@ -69,10 +66,9 @@ pub(super) fn blockquote_markers(
             let marker_end = scan_start.saturating_add(marker_len).min(content.len());
             markers.push(BlockquoteMarkerM {
                 sm: RevealSm::new(RevealState::Rendered),
-                // Buffer-derived — the cursor-reveal decide policy
-                // compares against the cursor's own buffer row, not this
-                // loop's comrak line counter (see this function's docs).
-                line: super::line_at(&idx.buffer, scan_start),
+                // Stored for the cursor-reveal decide policy, which
+                // compares against the cursor's own buffer row.
+                line: super::line_at(starts, scan_start),
                 marker: ByteRange::new(scan_start, marker_end),
             });
         }
