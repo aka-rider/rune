@@ -22,7 +22,19 @@ use std::path::Component;
 
 use crate::app::App;
 use crate::styles;
-use unicode_width::UnicodeWidthStr;
+use rune_md::wrap::control_aware_width;
+
+/// The display width of `s`, measured through the crate's ONE width
+/// chokepoint (`render::segment_cells`'s own `control_aware_width`, itself
+/// `rune_md::wrap`'s — see `render.rs`'s "ONE width chokepoint" note). Every
+/// width in this module — the `bc` total, `build_crumb`'s per-part
+/// accounting, and `put`'s column advance — goes through it, so the dash
+/// fill can never be sized in one unit and drawn in another (§1.5: display
+/// widths are one system, and a CJK/emoji path component makes the
+/// difference visible immediately).
+fn text_width(s: &str) -> usize {
+    s.chars().map(control_aware_width).sum()
+}
 
 /// Go's `Padding(0, 1)`-rendered ellipsis (`st.Breadcrumb.Render("... / ")`,
 /// `breadcrumb.go:90`): the padding adds one space on EACH side of the
@@ -70,7 +82,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
 
     let bc: usize = segments
         .iter()
-        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+        .map(|s| text_width(s.content.as_ref()))
         .sum();
     // Go's `minOverhead := 7` (`workspace_view.go`'s bail-out) — leaves the
     // plain border row (already painted by `render::draw`'s `Block`)
@@ -125,7 +137,7 @@ fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
 
     for (i, part) in parts.iter().enumerate().rev() {
         let part_text = format!(" {part} ");
-        let part_width = UnicodeWidthStr::width(part_text.as_str());
+        let part_width = text_width(part_text.as_str());
         let is_last = i == n - 1;
 
         let (seg_width, seg): (usize, Vec<Span<'static>>) = if is_last {
@@ -134,7 +146,7 @@ fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
                 vec![Span::styled(part_text, Style::new().fg(styles::SPECIAL))],
             )
         } else {
-            let sep_width = UnicodeWidthStr::width(SEP);
+            let sep_width = text_width(SEP);
             (
                 part_width + sep_width,
                 vec![
@@ -160,12 +172,21 @@ fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
     segments
 }
 
+/// Writes one character at `(*x, y)` and advances `*x` by that character's
+/// DISPLAY width — the identical idiom `render::blit` uses
+/// (`x.saturating_add(cell.width.max(1) as u16)`), and the reason this
+/// module can splice into a border row at all. Advancing by 1 per `char`
+/// while `overlay` sizes its dash fill in display columns would desync the
+/// two the moment a path component holds a CJK/emoji glyph: the `──╯` would
+/// land short of the right edge, leaving stale border cells behind it, and
+/// the cell ratatui reserves after a double-width glyph would be written
+/// into. Out-of-buffer writes are dropped by `cell_mut` returning `None`.
 fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, ch: char, style: Style) {
     if let Some(cell) = buf.cell_mut((*x, y)) {
         cell.set_char(ch);
         cell.set_style(style);
     }
-    *x = x.saturating_add(1);
+    *x = x.saturating_add(control_aware_width(ch).max(1) as u16);
 }
 
 #[cfg(test)]
@@ -228,6 +249,33 @@ mod tests {
     }
 
     #[test]
+    fn wide_path_components_keep_the_corner_in_the_last_column() {
+        // A CJK component is 2 display columns per `char`. `overlay` sizes
+        // its dash fill in display columns, so `put` must advance in the
+        // same unit: advancing 1-per-`char` would land `──╯` three columns
+        // short of the right edge here, leaving stale cells behind the
+        // corner (§1.5 — the two coordinate systems must not be mixed).
+        const W: u16 = 40;
+        let app = app_for("hello", Some("/a/日本語/note.md"));
+        let backend = TestBackend::new(W, 3);
+        let mut terminal = Terminal::new(backend).expect("terminal construction");
+        terminal
+            .draw(|frame| overlay(&app, Rect::new(0, 0, W, 3), true, frame))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let sym = |x: u16| {
+            buf.cell((x, 2))
+                .map(|c| c.symbol().to_string())
+                .unwrap_or_default()
+        };
+        assert_eq!(
+            (sym(W - 3), sym(W - 2), sym(W - 1)),
+            ("─".to_string(), "─".to_string(), "╯".to_string()),
+            "the bottom-right corner must sit in the last column"
+        );
+    }
+
+    #[test]
     fn bails_out_and_leaves_the_row_untouched_at_a_tiny_width() {
         let app = app_for("hello", Some("/a/b/note.md"));
         // Even the smallest possible crumb can't fit `bc + 7 <= width`
@@ -265,7 +313,7 @@ mod tests {
             let segments = build_crumb(&parts, width as usize);
             let bc: usize = segments
                 .iter()
-                .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                .map(|s| text_width(s.content.as_ref()))
                 .sum();
             if bc + 7 > block.width as usize {
                 continue;

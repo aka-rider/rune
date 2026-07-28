@@ -1917,7 +1917,6 @@ dependencies = [
  "rune-md",
  "rune-vfs",
  "termina",
- "unicode-width",
 ]
 
 [[package]]

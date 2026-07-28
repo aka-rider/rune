@@ -12,7 +12,6 @@ ratatui = { workspace = true, features = ["termina"] }
 ratatui-termina = { workspace = true }
 termina = { workspace = true }
 base64 = { workspace = true }
-unicode-width = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
