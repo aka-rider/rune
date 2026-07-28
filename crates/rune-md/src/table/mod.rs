@@ -14,7 +14,9 @@
 //! corrupts the render instead of protecting it.
 
 pub mod layout;
+pub mod pivot;
 pub mod render;
+pub mod wrapped;
 
 use rune_syntax::{CellMap, ScopeId, SyntaxSpan};
 
@@ -149,6 +151,37 @@ pub fn row_spans(
     spans
 }
 
+/// Builds the `SyntaxSpan`s for a Wrapped/Pivoted table row's CONTINUATION
+/// visual row (row 2..N of one source line — `TableRowInfo::extra_rows`,
+/// WP4). Unlike `row_spans`, this does NOT tile `[line_start, line_start +
+/// line_len)`: an extra row claims no bytes at all (Gotcha 2). Every span
+/// gets the SAME empty `range` (`line_start..line_start`), so it never
+/// enters `accounted`/`fill_gaps`'s bookkeeping — that machinery only ever
+/// sees a line's OWN `spans`, never its `extra_rows`. One `SyntaxSpan` per
+/// run, preserving each run's own scope and per-char `cell_map` — only the
+/// `range` is synthetic.
+pub fn extra_row_spans(
+    line_start: usize,
+    runs: &[(String, Vec<CellSrc>, ScopeId)],
+) -> Vec<SyntaxSpan> {
+    runs.iter()
+        .map(|(text, run, scope)| {
+            let cell_map: CellMap = run.iter().map(|c| c.buf).collect();
+            debug_assert_eq!(
+                cell_map.len(),
+                text.chars().count(),
+                "extra_row_spans: cell_map length must equal the run's own visible char count"
+            );
+            SyntaxSpan::Substituted {
+                scope: *scope,
+                text: text.clone(),
+                range: line_start..line_start,
+                cell_map,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
@@ -197,5 +230,32 @@ mod tests {
         let spans = row_spans(100, 5, &runs);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].range(), 100..105);
+    }
+
+    /// Gotcha 2: an extra row's spans claim NO bytes — every one gets the
+    /// SAME empty range at the line's own start, regardless of how many
+    /// runs it has or what real buffer offsets its own `cell_map` carries.
+    #[test]
+    fn extra_row_spans_all_carry_the_same_empty_range_at_line_start() {
+        let runs: Vec<(String, Vec<CellSrc>, ScopeId)> = vec![
+            ("  Name: ".to_string(), vec![src(-1); 8], ScopeId(1)),
+            (
+                "Alice".to_string(),
+                vec![src(10), src(11), src(12), src(13), src(14)],
+                ScopeId(2),
+            ),
+        ];
+        let spans = extra_row_spans(50, &runs);
+        assert_eq!(spans.len(), 2);
+        for s in &spans {
+            assert_eq!(s.range(), 50..50);
+        }
+        // The real buf offsets are preserved in each span's own cell_map
+        // even though `range` itself carries none of them.
+        let cell_map = match &spans[1] {
+            SyntaxSpan::Substituted { cell_map, .. } => cell_map.clone(),
+            SyntaxSpan::Identical { .. } => Vec::new(),
+        };
+        assert_eq!(cell_map, vec![10, 11, 12, 13, 14]);
     }
 }
