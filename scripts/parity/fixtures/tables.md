@@ -7,13 +7,6 @@ A simple table:
 | Alice | 30  | Anywhere |
 | Bob   | 25  | Nowhere  |
 
-A table with alignment markers:
-
-| Left | Center | Right |
-| :--- | :----: | ----: |
-| a    |   b    |     c |
-| dd   |   ee   |    ff |
-
 A table with inline styling in cells:
 
 | Feature      | Status |
