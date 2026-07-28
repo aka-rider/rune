@@ -313,12 +313,10 @@ mod tests {
     /// `undo::reapply`'s `STRICT_INVARIANTS`-gated assertion in production
     /// (the earlier pure-deletion edit's negative shift collapses the
     /// later edit's post-edit `start` onto it) — not reproduced by THIS
-    /// test, since `rune-tui`'s own test build does not compile `rune-core`
-    /// with `cfg(test)` or the `strict-invariants` feature (only
-    /// `rune-fuzz`'s `Cargo.toml` opts into that, deliberately, per
-    /// `rune-core/src/lib.rs`'s module docs); `crates/rune-fuzz/repros/
-    /// no-panic-01.rune` (via `cargo test -p rune-fuzz --test replay`, and
-    /// `make test-fuzz`) is what proves the reapply panic itself is gone.
+    /// test, since this crate's own test build does not compile `rune-core`
+    /// with `cfg(test)` or the `strict-invariants` feature; only the
+    /// session fuzzer opts into that, deliberately. The checked-in replay
+    /// repro is what proves the reapply panic itself is gone.
     /// Verified by temporarily reverting the `coalesce_touching_edits`
     /// call in `apply_edit_batch_with_cursors` and re-running this test: it
     /// then fails at the `step.edits.len()` assertion below.
