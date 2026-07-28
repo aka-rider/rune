@@ -116,6 +116,10 @@ pub const MARKDOWN_SCOPES: &[&str] = &[
     "markup.quote",
     "markup.list",
     "markup.list.checked",
+    "markup.table",
+    "markup.table.header",
+    "markup.table.separator",
+    "markup.table.border",
     "punctuation.special",
     "comment",
 ];

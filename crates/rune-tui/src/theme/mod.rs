@@ -154,6 +154,15 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
+        // Go parity (`golang/pkg/ui/styles/styles.go`'s `TableHeader`/
+        // `TableBody`/`TableBorder`/`TableSeparator`): raw ANSI-256 indices,
+        // not derived from the Catppuccin palette — table chrome is meant
+        // to match the Go reference exactly, in both truecolor and
+        // quantized rendering, rather than following this theme's hues.
+        "markup.table.header" => base.fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
+        "markup.table" => base.fg(Color::Indexed(252)),
+        "markup.table.separator" => base.fg(Color::Indexed(240)),
+        "markup.table.border" => base.fg(Color::Indexed(240)),
         "punctuation.special" => base.fg(c(p.overlay0)),
         "comment" => base.fg(c(p.overlay1)),
         // Unreachable in practice: `name` is always drawn from this same
