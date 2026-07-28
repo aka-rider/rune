@@ -25,12 +25,24 @@ pub const MAX_SPANS: usize = 100_000;
 /// both.
 static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 
+/// One [`highlight`] call's outcome: its spans in painter order, plus
+/// whether the query still had unyielded captures when collection stopped
+/// at [`MAX_SPANS`] — the flag that lets a caller tell a truncated result
+/// from a complete one instead of the two being indistinguishable.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HighlightResult {
+    pub spans: Vec<(Range<usize>, ScopeId)>,
+    pub truncated: bool,
+}
+
 /// Parses `source` as `lang` and returns its highlight spans in painter
 /// order: `(range.start ASC, range.end DESC, yield-order ASC)`, so an
 /// enclosing capture always comes before one it contains and an earlier
 /// query pattern before a later one over the same node — reproducing
 /// `tree-sitter-highlight`'s innermost-and-last-wins resolution with no
-/// per-cell search.
+/// per-cell search. [`HighlightResult::truncated`] is set when the cap in
+/// [`MAX_SPANS`] was reached before the query finished yielding — the cap
+/// itself always stays in force, this only makes hitting it observable.
 ///
 /// `None` means no result — an unrecognised language, a `Parser::set_language`
 /// failure recorded in `registry().failures()`, or a parse that did not
@@ -39,11 +51,7 @@ static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 /// them.
 ///
 /// Every call is a full parse — incremental reparse is never attempted.
-pub fn highlight(
-    lang: &str,
-    source: &str,
-    budget: Duration,
-) -> Option<Vec<(Range<usize>, ScopeId)>> {
+pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<HighlightResult> {
     let name = lang::resolve(lang)?;
     let (language, query) = registry().get(name)?;
 
@@ -81,6 +89,7 @@ pub fn highlight(
     let mut captures = cursor.captures(query, tree.root_node(), bytes);
     let mut spans: Vec<(Range<usize>, ScopeId, usize)> = Vec::new();
     let mut seq: usize = 0;
+    let mut truncated = false;
     while let Some((query_match, capture_idx)) = captures.next() {
         let Some(capture) = query_match.captures.get(*capture_idx) else {
             continue;
@@ -98,6 +107,7 @@ pub fn highlight(
         spans.push((range, scope_id, seq));
         seq += 1;
         if spans.len() >= MAX_SPANS {
+            truncated = true;
             break;
         }
     }
@@ -109,10 +119,11 @@ pub fn highlight(
             .then(a.2.cmp(&b.2))
     });
 
-    Some(
-        spans
+    Some(HighlightResult {
+        spans: spans
             .into_iter()
             .map(|(range, scope_id, _)| (range, scope_id))
             .collect(),
-    )
+        truncated,
+    })
 }

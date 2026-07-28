@@ -91,8 +91,8 @@ fn assert_result_shape(lang: &str, source: &str, spans: &[(Range<usize>, ScopeId
 /// half the assertion), and a `Some` result must satisfy the shape
 /// invariants above.
 fn check_language(lang: &'static str, source: &str) {
-    if let Some(spans) = highlight(lang, source, BUDGET) {
-        assert_result_shape(lang, source, &spans);
+    if let Some(result) = highlight(lang, source, BUDGET) {
+        assert_result_shape(lang, source, &result.spans);
     }
 }
 
@@ -101,10 +101,11 @@ fn empty_source_never_panics() {
     for def in LANGUAGES {
         match highlight(def.name, "", BUDGET) {
             None => {}
-            Some(spans) => assert!(
-                spans.is_empty(),
-                "{}: expected no spans for empty input, got {spans:?}",
-                def.name
+            Some(result) => assert!(
+                result.spans.is_empty(),
+                "{}: expected no spans for empty input, got {:?}",
+                def.name,
+                result.spans
             ),
         }
     }
