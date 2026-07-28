@@ -774,3 +774,40 @@ fn a_second_timeout_stops_retrying_instead_of_looping() {
          document could never be highlighted again by any future edit"
     );
 }
+
+/// The retry chain must end even when a further schedule request arrived
+/// while the retry was in flight. `schedule_highlight` arms `pending`
+/// whenever it is called during an in-flight highlight — including on a
+/// plain document switch, with no edit at all — so a `pending` that
+/// outlives the final timeout must not dispatch a fresh attempt whose own
+/// `None` reply would re-enter the retry arm and restart the chain.
+#[test]
+fn a_second_timeout_with_pending_armed_still_stops_retrying() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    app.doc_mut(id).expect("doc").highlight.pending = true;
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::HighlightRetried {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert!(
+        effects.cmds.is_empty(),
+        "an exhausted retry must be terminal even with `pending` armed — \
+         scheduling here restarts the one-retry chain without any edit"
+    );
+    assert_eq!(
+        app.doc(id).expect("doc").highlight.in_flight,
+        None,
+        "the exhausted reply must still clear in_flight"
+    );
+}

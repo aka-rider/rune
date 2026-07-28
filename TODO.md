@@ -343,3 +343,48 @@ key up ----
 **Deliberately NOT checked into `repros/`** — that directory's contract is that
 every script in it replays clean, and this one does not until the bug is fixed.
 It belongs there in the same commit as its fix.
+
+## rust port — open findings from the second code review (recorded 2026-07-29)
+
+Three items from that review were fixed in the same commit that records this
+entry (the missing `return` bounding the highlight retry chain, a stray
+`path:line` citation, and this note). The rest are open:
+
+**`make test-fuzz` mutates a tracked file, so the gate list is not idempotent.**
+A random-seed run appends its failing seed to
+`crates/rune-fuzz/proptest-regressions/human_session.txt`. Running the
+documented gates in order therefore leaves a dirty tree AND makes the
+subsequent `RS=1 make test-fuzz` replay the brand-new seed and fail — which
+looks like a pinned-run regression and is not one. Either the gate list should
+run the pinned form first, or `test-fuzz` should write its persistence file
+somewhere untracked.
+
+**A token spanning a line boundary inside a blockquoted fence still swallows
+the `"> "` prefix.** The per-line fence fix closed the common case, but
+`map_reconstructed_span` maps start and end independently, so a token crossing
+the gap between two non-contiguous lines yields a buffer range covering the
+prefix between them. Measured: a `/* one\n> two */` comment gives span
+`12..27` = `"/* one\n> two */"`, and the overlay then paints the `>` marker.
+Cosmetic, and strictly better than the bug it replaced.
+
+**`crates/rune-tui/tests/highlight.rs` is 776 lines** (477 before the fix
+round), well over §1.6. It is the largest file in that change set. Split it
+when next touched — the fence, retry, clamp and overlay cases are four
+natural files.
+
+**`MAX_SPANS` truncation is still invisible to the user.** `HighlightState`
+carries the flag and it is testable, but nothing renders it, while the sibling
+timeout does surface a status line. Half-closed.
+
+**The two highlight reply handlers are near-duplicates.** `handle_highlighted`
+and `handle_highlight_retried` differ only in their terminal action and in
+whether the `return` before the shared `pending` tail is present — the exact
+divergence that produced the bug fixed above. One variant carrying an
+`is_retry` flag would make that class unreachable rather than repeatedly
+caught.
+
+**Does coalescing touching per-cursor edits intend to drop a cursor?** Two
+touching cursors collapse to one survivor (lower id), mirroring
+`CursorSet::merge`, but no test asserts the post-edit cursor count. Confirm the
+shrinking count is the intended editing UX rather than an unexamined side
+effect.

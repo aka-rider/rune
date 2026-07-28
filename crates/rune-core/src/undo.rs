@@ -229,7 +229,7 @@ mod tests {
     /// leaves them as two separate cursors) each deleting one byte
     /// forward derive ADJACENT, touching ranges `[0,1)` and `[1,2)`.
     /// `Buffer::apply_edits` is a low-level, Go-ported primitive
-    /// (`buffer.go:94-101`) that only refuses OVERLAPPING input — a
+    /// (ported from Go) that only refuses OVERLAPPING input — a
     /// touching pair is valid input — so it hands back two `AppliedEdit`s
     /// that both land on post-edit `start == 0`: the identical illegal
     /// state.

@@ -274,6 +274,11 @@ fn handle_highlight_retried(
             "syntax highlighting timed out for this document",
             crate::app::StatusSource::Other,
         );
+        // Terminal, exactly as the sibling handler returns after arming the
+        // retry: falling through to the `pending` tail would dispatch a
+        // fresh normal-budget attempt whose own `None` reply re-enters the
+        // retry arm, restarting a chain this arm exists to end.
+        return;
     }
 
     if pending {
