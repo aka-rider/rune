@@ -58,12 +58,23 @@ All tmux state lives on a private server (`tmux -L rune-parity -f /dev/null`)
 2. Each file is a newline-separated list of `tmux send-keys` key names (one
    per line; blank lines and `#`-prefixed lines are skipped). Use `tmux`'s
    own key-name syntax, e.g. `C-x`, `Down`, `Enter`.
-3. Both sides start from `scripts/parity/fixtures/sample.md` by default,
+3. If a `<side>.keys` sends any key, `capture.sh` requires a matching
+   `<side>.settle` — a one-line `grep -q --` pattern (BRE, not necessarily a
+   regex-escaped literal) that appears ONLY after those keys have taken
+   effect, so the capture cannot race the repaint. Its text may contain the
+   literal token `{{FIXTURE}}`, which `capture.sh` expands to the actual
+   fixture filename (the 3rd `capture.sh` argument, `sample.md` by default)
+   before waiting — e.g. `rust.settle` uses `{{FIXTURE}} *──╯` to wait for
+   the breadcrumb's own file name at the bottom border, not just the
+   Explorer pane's border painting first. `wait_for_pane`'s pattern is a BRE,
+   so ` *` means "zero or more spaces" — mirroring `assert.sh`'s own
+   `sample\.md +──╯` — a fixed single-space literal must not be used.
+4. Both sides start from `scripts/parity/fixtures/sample.md` by default,
    copied into a scratch workspace. `capture.sh` takes the fixture as an
    optional 3rd argument (`capture.sh <go|rust> [scenario] [fixture]`) —
    add a new file under `fixtures/` and pass its name to use it instead
    (`grid.sh`, below, does exactly this for each corpus fixture).
-4. Run `PARITY_SCENARIO=<name> make parity-capture`.
+5. Run `PARITY_SCENARIO=<name> make parity-capture`.
 
 ## Glyph-grid parity (plan WP1)
 
