@@ -9,6 +9,7 @@ pub mod breadcrumb;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
+mod dispatch;
 pub mod document;
 pub mod explorer;
 pub mod focus;
