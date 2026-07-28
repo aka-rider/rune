@@ -377,7 +377,25 @@ impl Buffer {
         };
         // Go's original has a redundant `if bp.Line < len(starts)-1 { return
         // end }; return end` — both arms return `end`; simplified here.
-        if offset > end { end } else { offset }
+        let offset = if offset > end { end } else { offset };
+        // `bp.col` is a BYTE column (§1.5) and callers routinely carry one
+        // across lines — a remembered desired column, a click, a multicursor
+        // add. Clamping to the line's end keeps it in RANGE but says nothing
+        // about char boundaries, so a column measured on an ASCII line lands
+        // mid-UTF-8 when replayed against a line holding wide characters.
+        // Snapping here rather than at each call site is what makes an
+        // out-of-boundary cursor unrepresentable instead of merely unlikely
+        // (§1.3 clamp, §1.5 bytes).
+        self.floor_char_boundary(offset)
+    }
+
+    /// The largest offset `<= offset` that is a valid char boundary.
+    fn floor_char_boundary(&self, offset: usize) -> usize {
+        let mut o = offset.min(self.content.len());
+        while o > 0 && !self.content.is_char_boundary(o) {
+            o -= 1;
+        }
+        o
     }
 
     /// Port of `lineindex.go:22-49`: an incremental `line_starts` rebuild

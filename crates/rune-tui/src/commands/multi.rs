@@ -55,10 +55,15 @@ fn add_cursor(doc: &mut Document, dir: isize) {
         extreme.desired_col
     };
 
-    let line_len = doc.buffer.line_end(target_line) - doc.buffer.line_start(target_line);
-    let col = desired_col.min(line_len);
-
-    let new_offset = doc.buffer.line_start(target_line) + col;
+    // Through the buffer's own (line, byte-col) chokepoint rather than raw
+    // `line_start + col` arithmetic: `desired_col` is a byte column measured
+    // on a DIFFERENT line, so replaying it here can land mid-UTF-8 when the
+    // target line holds wide characters. The chokepoint clamps to the line
+    // end and snaps to a char boundary in one place.
+    let new_offset = doc.buffer.line_col_to_offset(BufferPoint {
+        line: target_line,
+        col: desired_col,
+    });
     let new_cursor = Cursor {
         position: new_offset,
         anchor: new_offset,
