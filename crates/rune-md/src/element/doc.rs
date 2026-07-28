@@ -254,9 +254,8 @@ mod tests {
         // table rendering, WP1): `Block::Table` now has a real Decide
         // policy (`cursors.any_in_lines(first_line, last_line)`, mirroring
         // `CodeFenceM`), so an unfocused document forces it Rendered like
-        // every other Decide-policy block — see
-        // `unfocused_forces_every_decide_policy_block_rendered` above, and
-        // `crates/rune-md/tests/table_model.rs` for table-shape coverage.
+        // every other Decide-policy block. The fixture below therefore uses
+        // an HTML block, which is still a pinned-Revealed `Verbatim`.
         let mut doc = DocMachine::new();
         let buf = Buffer::new("---\ntitle: x\n---\n\n<div>\nraw\n</div>\n");
         doc.sync_content(&buf);
