@@ -30,6 +30,11 @@ static CONTENT_SEEDS: &[&str] = &[
     "no trailing newline in this document",
     "你好世界 🙂 mixed CJK and emoji content 日本語のテスト\n",
     "# Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n",
+    // WP5.S2: a GFM table seed, so a whole session can start from, edit,
+    // and navigate a real rendered table — the only seed that ever gives
+    // `render::build_rows`/`row_meta::row_meta` a `TableSegInfo`-bearing
+    // segment to walk without relying on `MarkdownWrite` typing one in.
+    "# Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n",
 ];
 
 /// `Action::Paste`/`Action::ClipboardReply` payloads: Go's 16 entries,
@@ -84,8 +89,22 @@ pub static TYPE_PALETTE: &[&str] = &[
     "𝓒𝓾𝓻𝓼𝓲𝓿𝓮",
 ];
 
-/// Markdown structural fragments for the `MarkdownWrite` cluster.
-static MARKDOWN_FRAGMENTS: &[&str] = &["# ", "- ", "> ", "[a](b)", "[[wiki]]", "**b**", "`c`"];
+/// Markdown structural fragments for the `MarkdownWrite` cluster. The
+/// three table fragments (WP5.S2) let a session type a table into
+/// existence mid-document — a row, a delimiter, and an inline-alignment
+/// delimiter — rather than only ever starting from a table seed.
+static MARKDOWN_FRAGMENTS: &[&str] = &[
+    "# ",
+    "- ",
+    "> ",
+    "[a](b)",
+    "[[wiki]]",
+    "**b**",
+    "`c`",
+    "| a | b |",
+    "|---|---|",
+    "| :-: |",
+];
 
 /// The eight motions the `Navigate` cluster draws from, plus alt+Left/Right.
 static NAV_KEYS: &[KeyInput] = &[
