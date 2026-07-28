@@ -12,9 +12,9 @@ use rune_vfs::DirEntry;
 use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
-    COPY_KEY, CTRL_C_KEY, CTRL_R_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, MARKDOWN_FRAGMENTS,
-    NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS,
-    TYPE_PALETTE, UNDO_KEY,
+    COPY_KEY, CTRL_C_KEY, CTRL_E_KEY, CTRL_R_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
+    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
+    SELECT_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -209,6 +209,22 @@ fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
 /// Stale` resolves via `buffer.version().saturating_sub(1)`, which at
 /// version 0 is silently the SAME as `Live` — an edit first guarantees
 /// `Stale` is genuinely distinct (plan WP7.S6).
+///
+/// The guarantee is made TRUE by construction, not by assumption:
+/// `Action::Key` only reaches the buffer while `app.focus == Pane::Editor`
+/// (the ordinary four-stage key pipeline), and a preceding cluster can
+/// leave focus anywhere — `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks it
+/// on `Pane::Title` with no restore. So this cluster prepends the same
+/// two-key focus-restoring sequence `driver/checks.rs::
+/// restore_editor_focus` uses at end-of-session (`ESCAPE_KEY` to dismiss
+/// any modal, then `CTRL_E_KEY`/`GlobalCommand::FocusEditor` to reclaim
+/// focus regardless of which pane held it) BEFORE `Key('h')`, unconditional
+/// on generator-time state (there is none to condition on — this runs
+/// before any session exists). Both keys are no-ops from the editor's own
+/// perspective: `Esc` with no modal up either collapses a selection or is
+/// consumed by whichever pane owns focus, and `^e` is idempotent when focus
+/// is already `Editor`. See `cluster_highlight_edit_survives_focus_parked_
+/// off_editor` below for the regression this closes.
 fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
     (
         arb_highlight_version(),
@@ -216,6 +232,8 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
     )
         .prop_map(|(version, spans)| {
             vec![
+                Action::Key(ESCAPE_KEY),
+                Action::Key(CTRL_E_KEY),
                 Action::Key(KeyInput {
                     code: KeyCode::Char('h'),
                     mods: Mods::NONE,
@@ -265,4 +283,59 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
     ]
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    use crate::driver;
+
+    use super::*;
+
+    /// FINDING A regression: `cluster_highlight`'s own doc comment claims
+    /// its `Key('h')` edit is mandatory, but `Action::Key` only reaches the
+    /// buffer while `focus == Pane::Editor` — and a preceding cluster can
+    /// leave focus elsewhere with no restore (`cluster_chrome`'s
+    /// `Key(CTRL_R_KEY)` arm parks it on `Pane::Title`). This test starts a
+    /// session with exactly that arm, THEN runs whatever `cluster_highlight`
+    /// itself generates — sampled from the real strategy, not a hand-copied
+    /// stand-in — and asserts the edit still lands. Run this with the
+    /// `Action::Key(ESCAPE_KEY)`/`Action::Key(CTRL_E_KEY)` prefix reverted
+    /// to confirm it fails first (recorded in the fix's commit/handoff, not
+    /// re-derivable from the test alone).
+    #[test]
+    fn cluster_highlight_edit_survives_focus_parked_off_editor() {
+        let mut runner = TestRunner::default();
+        let tree = cluster_highlight()
+            .new_tree(&mut runner)
+            .expect("cluster_highlight strategy generation failed");
+
+        // Mirrors `cluster_chrome`'s no-restore `Key(CTRL_R_KEY)` arm: parks
+        // focus on `Pane::Title` before `cluster_highlight`'s own actions
+        // run, with no subsequent focus restore of any kind.
+        let mut actions = vec![Action::Key(CTRL_R_KEY)];
+        actions.extend(tree.current());
+
+        let result = driver::run(driver::DOC_PATH, "", &actions);
+
+        assert_eq!(
+            result.violation.as_ref().map(|v| v.id),
+            None,
+            "session should settle with no invariant violation"
+        );
+        assert_eq!(
+            result.final_content, "h",
+            "cluster_highlight's guaranteed edit must land the 'h' keystroke in the buffer even \
+             when a preceding action parks focus off the editor; got {:?} instead",
+            result.final_content
+        );
+    }
 }

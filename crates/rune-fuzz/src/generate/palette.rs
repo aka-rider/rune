@@ -381,3 +381,34 @@ pub(super) const CTRL_R_KEY: KeyInput = KeyInput {
         sup: false,
     },
 };
+
+/// Plain `Esc`, no mods — the key `banner::handle_key`'s stage 1 uses to
+/// clear EITHER modal variant (`Modal::Error`/`Modal::Guard`) without
+/// touching a buffer byte, and the key `title::handle_key` uses to revert
+/// and hand focus back to the editor. `driver/checks.rs::
+/// restore_editor_focus` is the existing precedent for this exact key.
+pub(super) const ESCAPE_KEY: KeyInput = KeyInput {
+    code: KeyCode::Escape,
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: false,
+    },
+};
+
+/// `^e` (`GlobalCommand::FocusEditor`) — fires at stage 2, regardless of
+/// which pane currently has focus (`pane::handle_global_command`'s own
+/// docs: "every `GlobalCommand` fires regardless of which pane"), so this
+/// unconditionally lands `app.focus == Pane::Editor` once any modal is
+/// already cleared. The other half of `restore_editor_focus`'s two-key
+/// sequence, alongside `ESCAPE_KEY`.
+pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('e'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
