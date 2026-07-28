@@ -456,3 +456,40 @@ fn wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_w
         );
     }
 }
+
+/// A table whose range starts mid-line (leading whitespace before the
+/// header) must degrade to raw passthrough, not render. comrak reports the
+/// cell sourcepos of every later row shifted one byte right in that case,
+/// so rendering it drops the first character of every body cell and leaks
+/// the skipped byte back as raw text — displaying the user's words wrongly.
+/// Raw markdown is the correct fallback (§1.3).
+#[test]
+fn a_table_starting_mid_line_degrades_to_raw_text_instead_of_rendering_wrong() {
+    let content = " Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let rows = display_rows_at(&buf, &doc, 80);
+
+    for (i, r) in rows.iter().take(3).enumerate() {
+        assert_eq!(
+            r,
+            buf.line(i),
+            "line {i} must be byte-verbatim raw markdown"
+        );
+    }
+    assert!(
+        !rows
+            .iter()
+            .any(|r| r.contains('\u{2502}') || r.contains('\u{250c}')),
+        "no box drawing may be rendered for a mid-line table: {rows:#?}"
+    );
+
+    // The same table with its leading pipe restored still renders normally,
+    // so the guard is narrow rather than disabling tables wholesale.
+    let ok = "| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n";
+    let (buf2, doc2) = synced(ok, 0, false);
+    let rows2 = display_rows_at(&buf2, &doc2, 80);
+    assert!(
+        rows2.iter().any(|r| r.starts_with('\u{250c}')),
+        "{rows2:#?}"
+    );
+}

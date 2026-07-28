@@ -105,6 +105,26 @@ pub(super) fn build_table<'a>(
     // decline it here: the caller falls back to raw passthrough, so the
     // user's bytes still reach the screen verbatim (§1.3 — unknown or
     // undecidable syntax degrades to visible raw text, never lost).
+    // The table's range must begin exactly where its first line's content
+    // begins — at the line start, or after whatever container prefix the
+    // scan hint accounts for (a blockquote's `"> "`, a list item's marker).
+    // An UNEXPLAINED mid-line start means raw leading whitespace, and there
+    // comrak reports the cell sourcepos of every LATER row shifted one byte
+    // right: a header written `" Name | Age |"` yields body cells
+    // `"Alice |"`/`"30 |"` instead of `" Alice "`/`" 30 "`, so every cell
+    // would render missing its first character while the skipped byte leaks
+    // back as raw text. Decline rather than render the user's words wrongly
+    // — the caller falls back to raw passthrough and the bytes reach the
+    // screen verbatim (§1.3, and the prime directive: protect the words
+    // above rendering them prettily). A container-explained start is NOT
+    // affected and still renders, so this doesn't disable tables in
+    // blockquotes or list items.
+    let comrak_first = line_at(&idx.comrak, range.start);
+    let expected_start = hint.start_for_line(&idx.comrak, comrak_first);
+    if range.start != expected_start {
+        return None;
+    }
+
     let mut claimed: Vec<usize> = rows.iter().map(|r| r.line).collect();
     claimed.push(sep_line);
     claimed.sort_unstable();
