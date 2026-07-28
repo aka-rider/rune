@@ -246,3 +246,24 @@ of how each side renders:
   third-party dependency's behavior, not a bug in this repo's own `pkg/`/
   `cmd/` code, so left unfixed rather than forcing a speculative patch
   into either the dependency or the renderer.
+
+- **Link following and URL autolinking.** The `links.md` fixture is
+  excluded from the grid gate: Rust and Go deliberately disagree here.
+  - **Bare-URL autolinking.** Rust enables comrak's `autolink` extension,
+    so a bare `https://example.com` (and a bare `www.` host, and an email
+    address) becomes a styled, followable link. Go never enables
+    goldmark's `Linkify`, so all of those stay plain text.
+  - **Angle autolinks.** `<https://example.com>` is a real link node in
+    Rust because comrak parses CommonMark autolinks natively with no
+    extension. Go's goldmark produces an `ast.AutoLink` node that its AST
+    walk has no case for, so it renders as unstyled plain text and cannot
+    be followed.
+  - **Follow gesture.** Rust follows a link with ⌘↵, ^↵ or ^click. Go uses
+    Enter/Ctrl+Enter and double-click. ⌘+click is impossible in any
+    terminal: the SGR mouse report byte encodes only shift, alt and
+    control, so Super can never reach a mouse event. Rust keeps
+    double-click bound to word selection for that reason.
+  - **Heading anchors.** Rust resolves `[[note#Setup]]` and `[x](#Setup)`
+    and moves the caret to the heading. Go parses the fragment and then
+    discards it, opening the file at the top; an in-document `#anchor`
+    resolves to no file at all.

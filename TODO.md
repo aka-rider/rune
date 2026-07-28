@@ -253,3 +253,45 @@ copy. **`make test-fuzz` stays red until this is fixed** — every other gate
 (`fmt`/`lint`/`build`/`test`/`perf-guard`/`parity-grid`/`replay`) is green.
 Fix: make `CursorSet::merge` coalesce on post-edit start, not only on
 pre-edit selection range. Out of scope for the table plan.
+
+## rust port — `![[embed]]` produces no catalogue entry (recorded 2026-07-28, navigation plan WP3)
+
+**Status:** open; disclosed gap, pinned by a test.
+
+- **Symptom:** an embed is invisible to the navigation catalogue. `catalogue()`
+  returns zero refs for `![[note]]`.
+- **Root cause:** comrak's wikilink inline parser only fires when `[` is
+  immediately followed by `[` AND the parser is not already `within_brackets`.
+  A leading `!` opens an image bracket first, so the guard suppresses the
+  wikilink match entirely and the whole construct degrades to one plain
+  `Inline::Text` run — comrak never produces a `WikiLink` node to inspect.
+  The `UseRole::Embed` classification (a `!`-byte test on the byte preceding
+  the wikilink's own range) is implemented and correct, but unreachable for
+  this spelling.
+- **Consequence:** the future vault graph will be missing every embed edge.
+  Obsidian counts embeds as links in its graph, so a backlinks/graph feature
+  built on this catalogue would under-report until this is fixed.
+- **Pinned by:** `catalogue::tests::embed_prefixed_wikilink_comrak_behaviour_is_pinned`
+  asserts the current comrak behaviour, so a future comrak upgrade that starts
+  emitting the node will fail the test rather than change graph output silently.
+- **Fix design:** hand-parse `![[` in the same pass, the way the Go reference's
+  own wikilink extension does (it carries an explicit `Embed` flag), or
+  pre-scan for the construct before comrak sees it.
+
+## rust port — navigation follow-up backlog (recorded 2026-07-28, navigation plan)
+
+Deliberately out of scope for the navigation plan; the types exist so none of
+these needs a redesign:
+
+- **Back/forward navigation history.** Following a link opens or reactivates a
+  tab with no way back. `Destination` is the value a history stack would push.
+- **Vault-wide index, backlinks and graph.** `catalogue()` is pure and takes
+  `(content, blocks)`, so a headless indexer can run `parse() -> catalogue()`
+  over unopened files without a viewport; nothing else is built.
+- **Tree-sitter producers.** `DefRole::Symbol` and `UseRole::Import` exist and
+  no producer emits them; they are what go-to-definition and import navigation
+  will fill.
+- **`^block` references.** `Anchor::Block` exists in the type; no producer
+  emits it. The Go reference has no `^` handling either.
+- **Reference-style links** `[text][ref]` and link reference definitions are
+  not modelled.
