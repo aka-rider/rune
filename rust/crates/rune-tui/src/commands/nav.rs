@@ -251,7 +251,7 @@ fn update_horizontal(
     let bp = buf.offset_to_line_col(offset);
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
-    let desired_col = view.wrap.visual_col(wp.row, wp.col);
+    let desired_col = view.wrap.visual_col(buf.content(), wp.row, wp.col);
     Cursor {
         position: offset,
         anchor: if select { c.anchor } else { offset },
@@ -328,7 +328,9 @@ fn move_row(view: &ViewSnapshots, buf: &Buffer, c: Cursor, delta: isize, select:
         }
     } else {
         let row = target_row as usize;
-        let col = view.wrap.byte_col_from_visual(row, c.desired_col);
+        let col = view
+            .wrap
+            .byte_col_from_visual(buf.content(), row, c.desired_col);
         WrapPoint { row, col }
     };
 

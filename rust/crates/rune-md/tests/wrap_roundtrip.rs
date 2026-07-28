@@ -88,7 +88,8 @@ proptest! {
                 if wrap_snap.row_to_model_line(row) != line {
                     break;
                 }
-                let seg_visual_width = wrap_snap.visual_col(row, wrap_snap.segment_len_at(row));
+                let seg_visual_width =
+                    wrap_snap.visual_col(buf.content(), row, wrap_snap.segment_len_at(row));
                 if seg_visual_width > raw_width as usize {
                     let segs = wrap_snap.segments();
                     if let Some(seg) = segs.get(row) {
@@ -128,40 +129,40 @@ fn wrap_for(content: &str, width: u16) -> (rune_core::buffer::Buffer, rune_md::w
 
 #[test]
 fn cjk_double_width_visual_col_is_inverse_of_byte_col_from_visual() {
-    let (_buf, wrap) = wrap_for("汉字テスト\n", 80);
+    let (buf, wrap) = wrap_for("汉字テスト\n", 80);
     // Each of these 5 chars is double-width (visual width 2), 3 bytes each.
     for byte_col in [0, 3, 6, 9, 12, 15] {
-        let visual = wrap.visual_col(0, byte_col);
-        let back = wrap.byte_col_from_visual(0, visual);
+        let visual = wrap.visual_col(buf.content(), 0, byte_col);
+        let back = wrap.byte_col_from_visual(buf.content(), 0, visual);
         assert_eq!(back, byte_col, "byte_col={byte_col} visual={visual}");
     }
-    assert_eq!(wrap.visual_col(0, 15), 10); // 5 double-width chars = 10 cols
+    assert_eq!(wrap.visual_col(buf.content(), 0, 15), 10); // 5 double-width chars = 10 cols
 }
 
 #[test]
 fn emoji_zwj_family_width_round_trips() {
     let content = "a \u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466} b\n";
-    let (_buf, wrap) = wrap_for(content, 80);
+    let (buf, wrap) = wrap_for(content, 80);
     let line_len = wrap.segment_len_at(0);
     // visual_col is monotonic non-decreasing with byte_col, and
     // byte_col_from_visual never returns past the line length.
     let mut last_visual = 0usize;
     for byte_col in 0..=line_len {
-        let visual = wrap.visual_col(0, byte_col);
+        let visual = wrap.visual_col(buf.content(), 0, byte_col);
         assert!(visual >= last_visual);
         last_visual = visual;
-        let back = wrap.byte_col_from_visual(0, visual);
+        let back = wrap.byte_col_from_visual(buf.content(), 0, visual);
         assert!(back <= line_len);
     }
 }
 
 #[test]
 fn tab_expands_to_next_stop_of_four() {
-    let (_buf, wrap) = wrap_for("a\tb\n", 80);
+    let (buf, wrap) = wrap_for("a\tb\n", 80);
     // 'a' at visual col 0 (width 1); '\t' at visual col 1 expands to the
     // next stop-of-4, i.e. to visual col 4; 'b' follows at visual col 4.
-    assert_eq!(wrap.visual_col(0, 0), 0); // before 'a'
-    assert_eq!(wrap.visual_col(0, 1), 1); // before '\t', after 'a'
-    assert_eq!(wrap.visual_col(0, 2), 4); // before 'b', after the tab stop
-    assert_eq!(wrap.byte_col_from_visual(0, 4), 2); // 'b' starts at byte 2
+    assert_eq!(wrap.visual_col(buf.content(), 0, 0), 0); // before 'a'
+    assert_eq!(wrap.visual_col(buf.content(), 0, 1), 1); // before '\t', after 'a'
+    assert_eq!(wrap.visual_col(buf.content(), 0, 2), 4); // before 'b', after the tab stop
+    assert_eq!(wrap.byte_col_from_visual(buf.content(), 0, 4), 2); // 'b' starts at byte 2
 }

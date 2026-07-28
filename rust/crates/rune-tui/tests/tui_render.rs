@@ -279,7 +279,9 @@ fn tab_caret_column_agrees_with_wrap_visual_col() {
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-    let expected_visual_col = view.wrap.visual_col(wrap_point.row, wrap_point.col);
+    let expected_visual_col = view
+        .wrap
+        .visual_col(content, wrap_point.row, wrap_point.col);
     assert_eq!(
         expected_visual_col, 4,
         "a tab starting at column 2 must expand to the next 4-stop (column 4)"
@@ -320,7 +322,9 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
     let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
     let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-    let expected_visual_col = view.wrap.visual_col(wrap_point.row, wrap_point.col);
+    let expected_visual_col = view
+        .wrap
+        .visual_col(content, wrap_point.row, wrap_point.col);
     assert_eq!(
         expected_visual_col, 4,
         "汉 (width 2) then a tab to the next 4-stop must land 'a' at column 4"

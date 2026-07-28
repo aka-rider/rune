@@ -223,7 +223,9 @@ fn apply_cursor_overlays(
         let Some(row) = rows.get_mut(wrap_point.row - scroll_row) else {
             continue;
         };
-        let visual_col = view.wrap.visual_col(wrap_point.row, wrap_point.col);
+        let visual_col = view
+            .wrap
+            .visual_col(buf.content(), wrap_point.row, wrap_point.col);
         place_caret(row, visual_col, cursor.position);
     }
 }

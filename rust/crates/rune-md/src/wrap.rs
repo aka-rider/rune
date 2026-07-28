@@ -47,10 +47,6 @@ pub struct WrapSegment {
 
 #[derive(Clone, Debug, Default)]
 pub struct WrapSnapshot {
-    // Owned copy of the buffer content this snapshot was built from — needed
-    // to recover an `Identical` span's visible text (it stores none of its
-    // own). Cheap: rebuilt from scratch every buffer version change anyway.
-    content: String,
     // Phase 1 has no table/image row expansion, so `segments` IS the row
     // index — row `i` is always `segments[i]`.
     segments: Vec<WrapSegment>,
@@ -77,13 +73,19 @@ impl WrapSnapshot {
         self.segments.get(row)
     }
 
-    fn segment_text(&self, seg: &WrapSegment) -> String {
+    // `content` is the caller-supplied buffer text this snapshot was built
+    // from (WP2 fix: previously an owned `content: String` field on
+    // `WrapSnapshot` itself — an O(document) allocation and copy on every
+    // wrap sync — recovered it instead; that field is gone, so every query
+    // that needs an `Identical` span's text now takes `content: &str` from
+    // its caller, exactly like `render::segment_cells` already does).
+    fn segment_text(&self, content: &str, seg: &WrapSegment) -> String {
         if let [only] = seg.spans.as_slice() {
-            return only.text(&self.content).to_string();
+            return only.text(content).to_string();
         }
         let mut s = String::new();
         for sp in &seg.spans {
-            s.push_str(sp.text(&self.content));
+            s.push_str(sp.text(content));
         }
         s
     }
@@ -148,11 +150,11 @@ impl WrapSnapshot {
         self.segment_at(row).map(Self::segment_len).unwrap_or(0)
     }
 
-    pub fn visual_col(&self, row: usize, byte_col: usize) -> usize {
+    pub fn visual_col(&self, content: &str, row: usize, byte_col: usize) -> usize {
         let Some(seg) = self.segment_at(row) else {
             return 0;
         };
-        let text = self.segment_text(seg);
+        let text = self.segment_text(content, seg);
         let mut visual = 0usize;
         let mut bytes = 0usize;
         while bytes < text.len() && bytes < byte_col {
@@ -165,11 +167,11 @@ impl WrapSnapshot {
         visual
     }
 
-    pub fn byte_col_from_visual(&self, row: usize, visual_col: usize) -> usize {
+    pub fn byte_col_from_visual(&self, content: &str, row: usize, visual_col: usize) -> usize {
         let Some(seg) = self.segment_at(row) else {
             return 0;
         };
-        let text = self.segment_text(seg);
+        let text = self.segment_text(content, seg);
         let mut visual = 0usize;
         let mut bytes = 0usize;
         while bytes < text.len() {
@@ -224,7 +226,6 @@ impl WrapMap {
         }
 
         WrapSnapshot {
-            content: content.to_string(),
             segments,
             line_to_first_row,
         }

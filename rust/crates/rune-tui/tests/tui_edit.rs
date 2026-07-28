@@ -206,7 +206,7 @@ fn desired_col_survives_a_vertical_move_across_wrapped_rows() {
     let sp = view.syntax.buffer_to_syntax(bp);
     let wp = view.wrap.syntax_to_wrap(sp);
     assert_eq!(
-        view.wrap.visual_col(wp.row, wp.col),
+        view.wrap.visual_col(content, wp.row, wp.col),
         5,
         "the caret must land on visual column 5 of the next wrap row"
     );
