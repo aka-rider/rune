@@ -217,3 +217,34 @@ edit-commit chokepoint, not just the primary. Out of scope for the table plan.
 - **Root cause, part 1:** `crates/rune-syntax/src/wrap/table.rs`'s `wrap_table_line` stamped the SAME `TableSegInfo` — including `boundary` — onto every `WrapSegment` a table source line produced (row 1 plus every `extra_rows` entry). `boundary` describes the LOGICAL row's own top/bottom border membership, a property of the source line as a whole; Grid layout never produces more than one segment per line, so this was invisible until Wrapped/Pivoted (WP4) started producing several. Fixed: only the FIRST segment of a line may carry `First`/`Only` (the top border goes before it), and only the LAST segment may carry `Last`/`Only` (the bottom border goes after it) — every segment in between is forced to `Middle`.
 - **Root cause, part 2:** `crates/rune-md/src/emit/table.rs`'s `emit_table` always stored the Grid layout's natural `widths` into `TableRowInfo::col_widths`, the value `DisplaySnapshot::expand_tables` uses to build a synthesised border's own text — even when the layout actually chosen for that table was Wrapped, which renders at `constrained_widths` instead. Fixed: `col_widths` now stores `constrained_widths` when the layout is Wrapped.
 - **Regression test:** `crates/rune-md/tests/table_render.rs`'s `wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_width`.
+
+## rust port — PRE-EXISTING: `reapply` debug_assert fires on multicursor + CRLF (recorded 2026-07-28, markdown-table plan)
+
+Surfaced by the markdown-table plan's fuzz work — **not caused by it**. Verified by
+replaying the script below at `a1fe09d^` (immediately before this plan's only
+`rune-core` change): it fails there identically, and the fixture contains no table.
+
+```
+content # Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n
+paste line1\r\nline2
+key up -a-u
+key char:  ----
+key char:\u{0} ----
+type # 
+key char:x ---u
+type 
+```
+
+Violation: `NO-PANIC`, from
+`reapply: two edits share a post-edit start; CursorSet::merge should have
+coalesced them upstream` (`crates/rune-core/src/undo.rs`). An `alt+cmd+Up`
+add-cursor-above over content holding a lone `\r` produces two cursors whose
+edits land on the same post-edit start, which `CursorSet::merge` did not
+coalesce.
+
+**Not committed to `repros/` while red** (standing convention: a repro belongs
+there only in the same commit as its fix). The script above is the verbatim
+copy. **`make test-fuzz` stays red until this is fixed** — every other gate
+(`fmt`/`lint`/`build`/`test`/`perf-guard`/`parity-grid`/`replay`) is green.
+Fix: make `CursorSet::merge` coalesce on post-edit start, not only on
+pre-edit selection range. Out of scope for the table plan.
