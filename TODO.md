@@ -219,7 +219,7 @@ edit-commit chokepoint, not just the primary. Out of scope for the table plan.
 - **Root cause, part 2:** `crates/rune-md/src/emit/table.rs`'s `emit_table` always stored the Grid layout's natural `widths` into `TableRowInfo::col_widths`, the value `DisplaySnapshot::expand_tables` uses to build a synthesised border's own text — even when the layout actually chosen for that table was Wrapped, which renders at `constrained_widths` instead. Fixed: `col_widths` now stores `constrained_widths` when the layout is Wrapped.
 - **Regression test:** `crates/rune-md/tests/table_render.rs`'s `wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_width`.
 
-## rust port — PRE-EXISTING: `reapply` debug_assert fires on multicursor + CRLF (recorded 2026-07-28, markdown-table plan)
+## rust port — PRE-EXISTING: `reapply`'s STRICT_INVARIANTS check fires on multicursor + CRLF (recorded 2026-07-28, markdown-table plan)
 
 Surfaced by the markdown-table plan's fuzz work — **not caused by it**. Verified by
 replaying the script below at `a1fe09d^` (immediately before this plan's only
@@ -242,6 +242,16 @@ coalesced them upstream` (`crates/rune-core/src/undo.rs`). An `alt+cmd+Up`
 add-cursor-above over content holding a lone `\r` produces two cursors whose
 edits land on the same post-edit start, which `CursorSet::merge` did not
 coalesce.
+
+The check itself is gated on `rune-core`'s `STRICT_INVARIANTS` (§1.3: an
+ordinary build must degrade gracefully, never panic, on a producer bug —
+see `crates/rune-core/src/lib.rs`'s module docs), not on `cfg(debug_assertions)`
+anymore. Since a dependency does not inherit `cfg(test)`, `crates/rune-fuzz`
+now depends on `rune-core` with `features = ["strict-invariants"]` explicitly
+(its `Cargo.toml`) so the session fuzzer keeps exercising this check — without
+that feature the violation above compiles out of the fuzzer silently and
+`reapply` would instead replay the duplicate-start batch in whatever order the
+tied sort produced, a possible buffer-corruption path during redo.
 
 **Not committed to `repros/` while red** (standing convention: a repro belongs
 there only in the same commit as its fix). The script above is the verbatim
