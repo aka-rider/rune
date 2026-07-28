@@ -53,13 +53,11 @@ fn app_for(content: &str, path: &str) -> App {
 /// (plan WP6.S5) through the real `app::update` chokepoint, bumping its
 /// buffer version so `App::update`'s own before/after gate schedules a
 /// highlight `Cmd` — mirrors how a real keystroke does it, without needing
-/// the private `highlight::schedule_highlight` directly. Positioning the
-/// cursor at the very end first (rather than wherever `App::new` put it)
-/// means the appended byte lands after every fence in the fixtures below,
-/// so it never shifts a fence's own byte range out from under the parse
-/// `code_fences()` reads (that parse is refreshed by `App::sync_view`, not
-/// by this call — calling `sync_view` once before this, as every test below
-/// does, mirrors `runtime::run`'s own bootstrap ordering).
+/// the private `highlight::schedule_highlight` directly. The cursor is moved
+/// to the very end first (rather than wherever `App::new` put it) so the
+/// edit is a pure append. Scheduling refreshes the block tree itself, so an
+/// edit BEFORE a fence is equally safe — the sibling regression test below
+/// covers exactly that.
 fn type_one_char_at_end(app: &mut App, effects: &mut Effects) {
     let id = app.active;
     let end = app.doc(id).expect("doc").buffer.content().len();
@@ -405,4 +403,75 @@ fn unknown_and_untagged_fences_schedule_nothing() {
         "no fence resolved to a known language, so no highlight cmd should be scheduled"
     );
     assert!(app.doc(app.active).expect("doc").highlight.spans.is_empty());
+}
+
+/// An edit that lands BEFORE a fence must not leave that fence's spans at
+/// their pre-edit offsets. Scheduling runs inside the update loop, while the
+/// settle step that rebuilds the block tree runs after it returns — so the
+/// fence ranges a scheduled command reads are the previous version's unless
+/// scheduling refreshes them first. The reply carries the CURRENT version, so
+/// the staleness check accepts it and every fence would be painted shifted by
+/// the edit's own delta, with nothing rescheduling until the next keystroke.
+#[test]
+fn an_edit_before_a_fence_does_not_shift_its_spans() {
+    let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
+    let mut app = app_for(content, "/x/notes.md");
+    app.sync_view();
+
+    // Insert ahead of the fence in ONE edit, and insert enough bytes that a
+    // stale range cannot accidentally still work: with a single byte the two
+    // errors cancel (the slice starts one byte early, so its tokens sit one
+    // byte later inside it, and rebasing by the stale start cancels out).
+    // A wider shift moves the stale window off the fence body entirely.
+    let id = app.active;
+    app.doc_mut(id).expect("doc").cursors = CursorSet::new(0);
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Paste("a much longer prefix inserted ahead of the fence\n\n".to_string()),
+        &mut effects,
+    );
+
+    let cmd = effects
+        .cmds
+        .pop()
+        .expect("an edit before the fence must still schedule a highlight");
+    let msg = cmd.run().expect("fence_highlight_cmd always replies");
+    let mut effects = Effects::default();
+    app::update(&mut app, msg, &mut effects);
+
+    let doc = app.doc(id).expect("doc");
+    let updated = doc.buffer.content().to_string();
+    let fence_start = updated.find("fn main").expect("fence body");
+    let fence_end = updated[fence_start..]
+        .find("```")
+        .map(|i| fence_start + i)
+        .expect("fence close");
+
+    assert!(
+        !doc.highlight.spans.is_empty(),
+        "the rust fence must still produce spans after a leading insert"
+    );
+    for (range, _) in &doc.highlight.spans {
+        assert!(
+            range.start >= fence_start && range.end <= fence_end,
+            "span {range:?} is outside the fence's post-edit bytes \
+             {fence_start}..{fence_end}"
+        );
+    }
+
+    // Containment alone is too weak to catch a stale parse: a one-byte shift
+    // still lands inside the fence. Compare the bytes a span actually selects
+    // against the token they must select — off by one and this reads "\nf".
+    let sliced: Vec<&str> = doc
+        .highlight
+        .spans
+        .iter()
+        .filter_map(|(range, _)| updated.get(range.clone()))
+        .collect();
+    assert!(
+        sliced.contains(&"fn"),
+        "no span selects the `fn` keyword exactly; spans selected {sliced:?} \
+         — they were rebased onto a pre-edit parse of the fence"
+    );
 }

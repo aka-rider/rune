@@ -35,6 +35,17 @@ enum HighlightSource {
 /// `pending`, consumed by `dispatch::handle_highlighted` once the reply
 /// lands.
 pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    // Rebuild the block tree before reading fence ranges. The settle step
+    // that normally does this runs AFTER the update loop returns, so without
+    // this the fences describe the PREVIOUS buffer version while the command
+    // is stamped with the current one — a reply the version check would then
+    // accept as authoritative, painting every fence at a shifted offset until
+    // the next edit happens to schedule again. Costs nothing: this is
+    // version-guarded and early-returns, so the settle step's own call
+    // becomes the no-op instead of this one.
+    if let Some(doc) = app.doc_mut(id) {
+        doc.doc.sync_content(&doc.buffer);
+    }
     let Some(doc) = app.doc(id) else { return };
     let source = if let Some(lang) = doc.kind.language() {
         HighlightSource::Whole(lang)
