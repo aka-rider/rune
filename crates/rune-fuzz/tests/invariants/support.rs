@@ -14,6 +14,7 @@ use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::render::Cell;
+use rune_tui::row_meta::RowMeta;
 use rune_vfs::{Mem, Vfs};
 
 pub(crate) fn key(code: KeyCode, mods: Mods) -> KeyInput {
@@ -116,6 +117,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         modal_open: false,
         active: base_active_id(),
         cells: Vec::new(),
+        row_meta: Vec::new(),
     }
 }
 
@@ -141,6 +143,30 @@ pub(crate) fn cell(ch: char, buf_offset: i64) -> Cell {
         width: 1,
         style: rune_tui::render::style_for(&theme, rune_syntax::ScopeId(0)),
         buf_offset,
+    }
+}
+
+/// Same as `cell` but with an explicit column `width` — `TABLE-ROW-WIDTH`'s
+/// tests need cells wider than one column to build rows of a chosen
+/// summed width without padding them out with dozens of `cell` calls.
+pub(crate) fn cell_w(ch: char, buf_offset: i64, width: u8) -> Cell {
+    let theme = rune_tui::theme::Theme::catppuccin_mocha(false);
+    Cell {
+        text: ch.to_string(),
+        width,
+        style: rune_tui::render::style_for(&theme, rune_syntax::ScopeId(0)),
+        buf_offset,
+    }
+}
+
+/// A `RowMeta` literal, named to read at the call site as "this row is
+/// (synthetic?, in table_group)" — `TABLE-ROW-WIDTH`/
+/// `TABLE-SYNTHETIC-DECORATIVE`'s tests build `Snapshot.row_meta` entirely
+/// out of this.
+pub(crate) fn meta(synthetic: bool, table_group: Option<usize>) -> RowMeta {
+    RowMeta {
+        synthetic,
+        table_group,
     }
 }
 
