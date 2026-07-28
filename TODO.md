@@ -129,6 +129,76 @@ Landed regardless, since WP1-WP3 are self-contained and green: the `keymap.rs` -
 - `rust/crates/rune-tui/src/keymap.rs` is 619 lines (§1.6 limit 500; was 608) — grown ~11 lines by `GlobalCommand::FocusTitle` + its `^r` `GLOBAL_BINDINGS` entry. Same fix as the WP2/WP5 entries above.
 - `rust/crates/rune-tui/src/explorer.rs` is 553 lines (§1.6 limit 500; was 527) — grown ~26 lines by `refresh_for`, the post-rename re-listing (a `pub(crate)` sibling of the private `request_dir`, using `DirCause::Refresh` so a rename preserves the user's selection instead of snapping to the top — a rename is not a navigation). `DirCause::Refresh` had until now been a shape with no production caller; this is its first one.
 
+## go workspace — TAB-SET orphan: a failed close→neighbour load strands the workspace with no active tab (recorded 2026-07-28, found by `make test-fuzz` during the Rust rename work; PRE-EXISTING, unrelated to it)
+
+Deterministic repro (<1s), seed written by the fuzzer to
+`pkg/ui/pages/workspace/testdata/fuzz/FuzzHumanSession/2ddbeeb17e97700d` = `[]byte("!020c")`:
+
+    go test ./pkg/ui/pages/workspace -run='FuzzHumanSession/2ddbeeb17e97700d'
+    human_fuzz_test.go:117: invariant TAB-SET: expected exactly 1 active tab, got 0
+
+Minimal human repro, independent of the seed's Help-toggle framing: **open two files, delete
+the neighbour's file externally, then close the active tab.**
+
+**Root cause.** `executeClose` (`workspace_nav.go:248-265`) sets `m.view = untitledView(0)` — the
+deliberate save-safe transitional identity — and issues an async load of the neighbour.
+`finalize` (`workspace_edit.go:279-292`) covers that gap *only while* `m.pendingLoad.active`,
+deriving the active tab from `pendingLoad` (the documented one-hop lead). When the load fails,
+`handleFileLoadErrorMsg` (`workspace_update.go:275-299`) clears `m.pendingLoad` at `:284` but its
+re-anchor branch is gated on `msg.Gen == 1 && len(m.initialFiles) > 0` — startup only — so it
+returns **without restoring any document identity**. `finalize` then runs with
+`m.view.Handle() == {0, ""}`, and `opentabs.SetActive` (`components/opentabs/opentabs.go:175-198`)
+falls off the end at `:197`, storing an `activeHandle` that names no tab. So this is not a path
+that skips `finalize`; it is finalize running with a handle matching no tab.
+
+**Blast radius is larger than a missing highlight** — the stranded state is reachable and sticky:
+- The editor still holds the **closed** document's text (anti-flash buffer never cleared) and
+  renders it as if current once the pending-load gate lifts.
+- `journalEditOK` (`workspace_journal.go:110-112`) returns false for `docID == 0`, so keystrokes
+  typed there are **never journaled** (§1.4.3) and ⌘S is inert. Type-into-the-void.
+- `requestCloseCurrent` returns unchanged for an untitled view (`workspace_nav.go:239-241`), so
+  **^W cannot dismiss the orphan**.
+- `EvictionCandidate` (`components/opentabs/eviction.go:48`) skips the *active* tab; with
+  `activeHandle` matching nothing the orphaned tab loses that protection and becomes an eviction
+  victim — a destructive §1.4.8 decision.
+- `ActiveTabIdx` (= `nav.Cursor`) still reports 0 while no tab is active, so T2 and TAB-SET
+  disagree about the same state.
+
+`supersedeLoad` (`workspace_nav.go:130-134`, called from `:96` and `:369`) and
+`handleFileLoadedMsg`'s gate lift (`workspace_io_handlers.go:36`) clear `pendingLoad` without
+re-anchoring either — so a spot guard in the error handler alone is insufficient.
+
+**Recommended fix (architectural — remove the illegal states, don't guard them).**
+1. *Workspace:* make the close→neighbour transition an explicit `docView` kind carrying the
+   target `TabHandle`, instead of the in-band sentinel `view == untitledView(0) &&
+   pendingLoad.active` that three sites currently sniff (`workspace_edit.go:289`,
+   `workspace_update.go:293`, and T4's commentary). `finalize` then derives the active tab from
+   the transition target unconditionally, and the load-error handler cannot merely clear a bool —
+   it must transition *out* (re-anchor to the failed tab with the buffer cleared, or close it and
+   fall to the next neighbour / `CreateUntitled`). This also deletes the
+   `gen==1 && len(initialFiles)>0` heuristic, fixes the stale-closed-document buffer and the
+   unjournaled-keystrokes trap, and matches the direction of the HSM refactor (f64b829).
+2. *opentabs:* replace the free-floating `activeHandle` with an active **index** into `m.tabs`
+   (invariant `len(tabs) > 0 ⇒ 0 <= activeIdx < len(tabs)`, maintained by `OpenFile`/`Close`/
+   `SetActive`, which already compute the needed indices — `Close` has `NeighborOf`). Then
+   `SetActive` physically cannot record a handle naming no tab, and `ActiveTabIdx` and TAB-SET
+   can no longer disagree. At minimum `SetActive`'s silent fall-through at `opentabs.go:197`
+   must stop being a no-op-that-corrupts.
+
+Fix 2 alone downgrades the failure to "a stale tab stays highlighted while the editor shows an
+unnamed buffer" — better, but still the type-into-the-void state. Fix 1 is the root-cause fix;
+2 is the structural backstop.
+
+**Tests that must move with the fix:** `workspace_pendingload_test.go:108`
+(`TestPendingLoad_FailedCloseNeighbourIsSaveSafe` — currently *pins the parked shape as intended*;
+keep its save-safety assertion, drop "identity stays 0/\"\" forever"). `:177` (T6) and `:204` (T7)
+pin the intentional one-hop lead and should stay green. `:542-564` documents that the
+`gen==1 && len(initialFiles)>0` heuristic exists solely to tell startup apart from this shape.
+
+**Corpus decision left open:** the seed file above is currently **untracked**. Committing it pins
+a genuine regression seed but leaves `make test-fuzz` red until the fix lands; it is held out of
+the rename commits so the branch's own gates reflect the rename work. Decide when scheduling the fix.
+
 ## rust port — accepted deviation: save-failure messages stay on the footer, not the Banner (recorded 2026-07-27, WP3.S4 vs WP3's original plan)
 
 `save.rs`/`app.rs` route a failed (or un-attempted) save through `app.set_status(..., StatusSource::SaveError)` — the footer's `Mode::SaveError` display (`footer.rs`) — rather than through `banner::report_error`, even though WP3.S4's plan text named `report_error` as "the one chokepoint every error report funnels through." This was the WP3 worker's own documented deviation at the time (plan WP3.S4), re-surfaced and RATIFIED (not flagged as a defect) by a later code review: save-failure messages are short, recoverable one-liners ("save failed: disk full", "no file to save — rune was opened without a path") that the user dismisses just by continuing to type or by fixing the underlying problem and pressing ⌘S again — exactly the footer's job. The Banner is reserved for multi-line, must-be-acknowledged error context (a read failure's full message, an unexpected exception) where scrolling/copy-via-OSC-52 actually matter. Routing SaveError through the Banner would interpose a full-screen modal on every transient save hiccup, which is a worse UX than the footer's own priority-ranked, self-clearing display. No action needed — this entry exists only so the deviation from the plan's literal chokepoint wording reads as a considered decision, not an unreviewed gap.
