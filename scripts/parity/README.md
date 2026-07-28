@@ -58,12 +58,35 @@ All tmux state lives on a private server (`tmux -L rune-parity -f /dev/null`)
 2. Each file is a newline-separated list of `tmux send-keys` key names (one
    per line; blank lines and `#`-prefixed lines are skipped). Use `tmux`'s
    own key-name syntax, e.g. `C-x`, `Down`, `Enter`.
-3. Both sides start from `scripts/parity/fixtures/sample.md` by default,
+3. If a `<side>.keys` sends any key, `capture.sh` requires a matching
+   `<side>.settle` — a one-line `grep -q --` pattern (BRE, not necessarily a
+   regex-escaped literal) that appears ONLY after those keys have taken
+   effect, so the capture cannot race the repaint. Its text may contain the
+   literal token `{{FIXTURE}}`, which `capture.sh` expands to the actual
+   fixture filename (the 3rd `capture.sh` argument, `sample.md` by default)
+   before waiting. `wait_for_pane`'s pattern is a BRE, so ` *` means "zero or
+   more spaces" — mirroring `assert.sh`'s own `sample\.md +──╯` — a fixed
+   single-space literal must not be used if a settle file ever anchors on
+   that row.
+   - `rust.settle` itself waits for the literal `Enter open` — a fragment of
+     the Explorer-focused footer, present only once `C-b` has switched focus
+     and rendered, absent from the initial single-pane view. It deliberately
+     does **not** wait for the bottom-border breadcrumb (`sample.md ──╯`,
+     what `assert.sh` itself checks): with the Explorer pane open, Rust's
+     un-relativized absolute-path breadcrumb (see "Known divergences" below)
+     overflows the narrower centre-pane width for any workspace path this
+     harness's own nesting produces (`<repo>/.scratch/parity/run/rust/
+     parityws/<fixture>`) and renders **nothing at all** on that row — not a
+     slow repaint, a permanent blank border. No settle predicate can wait for
+     text that structurally never appears; see this file's own "Known
+     divergences" section (breadcrumb relativization) and root `TODO.md` for
+     the resulting `assert.sh` gate impact.
+4. Both sides start from `scripts/parity/fixtures/sample.md` by default,
    copied into a scratch workspace. `capture.sh` takes the fixture as an
    optional 3rd argument (`capture.sh <go|rust> [scenario] [fixture]`) —
    add a new file under `fixtures/` and pass its name to use it instead
    (`grid.sh`, below, does exactly this for each corpus fixture).
-4. Run `PARITY_SCENARIO=<name> make parity-capture`.
+5. Run `PARITY_SCENARIO=<name> make parity-capture`.
 
 ## Glyph-grid parity (plan WP1)
 
@@ -130,7 +153,17 @@ of how each side renders:
   the workspace root; Rust has no workspace-root concept on `App` yet
   (`explorer.root` is empty until the first `^x`), so it renders every
   `Normal` component of the absolute path instead. Tracked in the repo's
-  root `TODO.md`.
+  root `TODO.md`. **Consequence proven empirically (glyph-grid parity plan
+  WP0):** with the Explorer pane open (this scenario's own `C-b`) and the
+  parity harness's own workspace path (`<repo>/.scratch/parity/run/rust/
+  parityws/<fixture>`, 10 `Normal` components deep), Rust's un-relativized
+  crumb doesn't just render longer than Go's — it exceeds `overlay`'s own
+  `bc + 7 > block.width` fit check even at its most truncated (one leaf part
+  plus the ellipsis) and renders **no crumb text at all**, a bare border, on
+  every capture, not intermittently. `assert.sh`'s "rust bottom content row
+  ends 'sample.md ──╯'" check therefore fails deterministically — see root
+  `TODO.md`. This is orthogonal to `parity-grid`'s own gate, which crops to
+  rows 2..(ROWS-2) and never looks at the bottom border row at all.
 - **Title text.** Observed via the WP5 screenshot comparison: Go's title
   row shows the file name WITHOUT its extension (`sample`, distinctly
   colored); Rust's shows the full file name (`sample.md`, plain). Title
