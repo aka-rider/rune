@@ -26,9 +26,10 @@ pub use viewport::{ScrollMode, Viewport};
 /// Derives the producer a path should use (plan WP4.S4): no path at all
 /// (an untitled draft) or a `.md` extension stays `Markdown`; an extension
 /// `rune_ts::lang::resolve` recognises becomes `Code`; anything else is
-/// `Plain`. Deliberately calls `lang::resolve`, never `registry()` — the
-/// former is a pure `&'static` table lookup with no tree-sitter call at
-/// all, so no query compilation happens on this (the UI) thread.
+/// `Plain`. Deliberately calls the compile-free `lang::resolve`, never the
+/// query-compiling registry getter — `resolve` is a pure `&'static` table
+/// lookup with no tree-sitter call at all, so no query compilation happens
+/// on this (the UI) thread.
 fn kind_for(path: Option<&Path>) -> DocumentKind {
     let Some(path) = path else {
         return DocumentKind::Markdown;
