@@ -24,7 +24,7 @@ use ratatui::style::{Color, Modifier, Style};
 use catppuccin::Mocha;
 use quantize::to_ansi256;
 use rune_syntax::ScopeId;
-use rune_syntax::scope::markdown_table;
+use rune_syntax::scope::scope_table;
 
 /// Every chrome (non-markdown/code) style the pre-WP4 `styles.rs` used to
 /// build from a raw `Color::Indexed` literal — one field per former
@@ -102,7 +102,7 @@ impl Theme {
             selection_bg: c(p.surface2),
         };
 
-        let table = markdown_table();
+        let table = scope_table();
         let mut scopes = vec![Style::default(); table.len()];
         for (id, name) in table.iter() {
             if let Some(slot) = scopes.get_mut(id.0 as usize) {
@@ -186,7 +186,7 @@ mod tests {
         // construction paths.
         for quantized in [false, true] {
             let theme = Theme::catppuccin_mocha(quantized);
-            let table = markdown_table();
+            let table = scope_table();
             for (id, _name) in table.iter() {
                 let _ = theme.scope_style(id);
             }
@@ -207,7 +207,7 @@ mod tests {
             theme.chrome.active_border.fg,
             Some(Color::Indexed(_))
         ));
-        let table = markdown_table();
+        let table = scope_table();
         for (id, _name) in table.iter() {
             let style = theme.scope_style(id);
             if let Some(fg) = style.fg {

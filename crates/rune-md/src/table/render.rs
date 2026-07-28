@@ -176,10 +176,10 @@ mod tests {
     use super::*;
     use crate::element::block::Block;
     use crate::parse::parse;
-    use rune_syntax::scope::markdown_table;
+    use rune_syntax::scope::scope_table;
 
     fn header_scope() -> ScopeId {
-        markdown_table()
+        scope_table()
             .resolve("markup.table.header")
             .expect("scope registered")
     }

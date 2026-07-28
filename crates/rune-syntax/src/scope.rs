@@ -94,7 +94,7 @@ impl ScopeTable {
 
 /// The canonical markdown scope vocabulary (WP4.S2's `StyleId` -> scope
 /// mapping) in the order that fixes each name's `ScopeId`. `rune-md`'s
-/// emitter resolves against [`MARKDOWN_TABLE`] built from this exact list,
+/// emitter resolves against [`scope_table`] built from this exact list,
 /// and `rune-tui`'s `Theme` walks the SAME table when it builds its
 /// `scopes: Vec<Style>` — one shared table is what keeps both sides
 /// agreeing on which id means which name, without either depending on the
@@ -156,14 +156,19 @@ pub const CODE_SCOPES: &[&str] = &[
     "tag",
 ];
 
-/// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`], in
-/// order. Exposed as a constructor (rather than a lazily-initialized
-/// static) so both the emitter and a theme built in a test can each own
-/// their own instance and still agree on ids, as long as they're both built
-/// from this same function.
-pub fn markdown_table() -> ScopeTable {
+/// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`] then
+/// [`CODE_SCOPES`], in that order. Exposed as a constructor (rather than a
+/// lazily-initialized static) so both the emitter and a theme built in a
+/// test can each own their own instance and still agree on ids, as long as
+/// they're both built from this same function. The one shared constructor
+/// every producer (comrak-driven `rune-md`, tree-sitter-driven `rune-ts`)
+/// and the theme (`rune-tui`) build from independently.
+pub fn scope_table() -> ScopeTable {
     let mut table = ScopeTable::new();
     for name in MARKDOWN_SCOPES {
+        table.register(name);
+    }
+    for name in CODE_SCOPES {
         table.register(name);
     }
     table
@@ -184,7 +189,7 @@ mod tests {
 
     #[test]
     fn resolve_exact_match() {
-        let table = markdown_table();
+        let table = scope_table();
         assert!(table.resolve("markup.heading.1").is_some());
     }
 
@@ -205,10 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn markdown_table_registers_every_canonical_scope() {
-        let table = markdown_table();
-        assert_eq!(table.len(), MARKDOWN_SCOPES.len());
+    fn scope_table_registers_every_canonical_scope() {
+        let table = scope_table();
+        assert_eq!(table.len(), MARKDOWN_SCOPES.len() + CODE_SCOPES.len());
         for name in MARKDOWN_SCOPES {
+            assert!(table.resolve(name).is_some(), "missing scope: {name}");
+        }
+        for name in CODE_SCOPES {
             assert!(table.resolve(name).is_some(), "missing scope: {name}");
         }
     }
