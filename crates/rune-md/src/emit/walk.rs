@@ -1,22 +1,30 @@
 //! The recursive tree walk: `Block`/`Inline` -> `SyntaxSpan`s, via the
-//! shared `push_span_split_by_line`/`hide_range` chokepoints in
-//! `emit::mod`. Concealment is physical here, uniformly for block markers
+//! shared `push_span_split_by_line`/`hide_range`/`claim_visible` chokepoints
+//! in `emit::mod`. Concealment is physical here, uniformly for block markers
 //! AND inline delimiters: a `Rendered` element's marker/delimiter bytes are
 //! dropped from the emitted text (recorded as a hidden range for
 //! coordinate conversion) rather than kept-but-restyled — see the crate
 //! root emit module docs for why this is a deliberate simplification of
 //! Go's split block/inline concealment model.
+//!
+//! Every `emit_block`/`emit_inline` call threads one `&mut EmitOut` (WP2.S3)
+//! instead of three loose out-params (`spans`, `hidden`, `accounted`) plus a
+//! fourth WP2 added (`tables`) — the repo bans
+//! `#[allow(clippy::too_many_arguments)]`.
 
 use super::style::{
     StyleCtx, blockquote_scope, code_fence_scope, code_scope, frontmatter_scope, heading_style,
-    hr_scope, link_scope, list_marker_style, verbatim_style,
+    hr_scope, link_scope, list_marker_style, table_header_scope, table_scope, verbatim_style,
 };
-use super::{Accounted, hide_range, push_span_split_by_line};
+use super::{Accounted, EmitOut, claim_visible, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
+use crate::element::table::TableM;
 use crate::parse::line_at;
+use crate::table::{layout, render, row_spans};
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::{ByteRange, RevealState};
+use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 
 /// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
 /// is already exactly one physical line's range, computed container-aware
@@ -27,14 +35,7 @@ use rune_syntax::element::{ByteRange, RevealState};
 /// the generic per-physical-line splitter (as the Revealed path used to)
 /// re-hides/re-shows those container-prefix bytes a second time, on top of
 /// whatever the container itself already claimed for that line.
-fn emit_code_fence(
-    content: &str,
-    starts: &[usize],
-    cf: &CodeFenceM,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
-) {
+fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut EmitOut) {
     if cf.sm.state() == RevealState::Revealed {
         if let Some(open) = cf.fence_open {
             push_span_split_by_line(
@@ -43,8 +44,8 @@ fn emit_code_fence(
                 open,
                 code_fence_scope(),
                 RevealState::Revealed,
-                out,
-                accounted,
+                out.spans,
+                out.accounted,
             );
         }
         for &line in &cf.content_lines {
@@ -54,8 +55,8 @@ fn emit_code_fence(
                 line,
                 code_fence_scope(),
                 RevealState::Revealed,
-                out,
-                accounted,
+                out.spans,
+                out.accounted,
             );
         }
         if let Some(close) = cf.fence_close {
@@ -65,17 +66,17 @@ fn emit_code_fence(
                 close,
                 code_fence_scope(),
                 RevealState::Revealed,
-                out,
-                accounted,
+                out.spans,
+                out.accounted,
             );
         }
         return;
     }
     if let Some(open) = cf.fence_open {
-        hide_range(hidden, accounted, content, starts, open);
+        hide_range(out.hidden, out.accounted, content, starts, open);
     }
     if let Some(close) = cf.fence_close {
-        hide_range(hidden, accounted, content, starts, close);
+        hide_range(out.hidden, out.accounted, content, starts, close);
     }
     for &line in &cf.content_lines {
         push_span_split_by_line(
@@ -84,20 +85,13 @@ fn emit_code_fence(
             line,
             code_fence_scope(),
             RevealState::Rendered,
-            out,
-            accounted,
+            out.spans,
+            out.accounted,
         );
     }
 }
 
-fn emit_list_item(
-    content: &str,
-    starts: &[usize],
-    item: &ListItemM,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
-) {
+fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut EmitOut) {
     if item.sm.state() == RevealState::Revealed {
         push_span_split_by_line(
             content,
@@ -105,8 +99,8 @@ fn emit_list_item(
             item.marker,
             list_marker_style(item.task.is_some()),
             RevealState::Revealed,
-            out,
-            accounted,
+            out.spans,
+            out.accounted,
         );
     } else if let Some(task) = item.task {
         // Go parity (`walkTaskList`): a task item's checkbox substitutes to a glyph even
@@ -116,8 +110,8 @@ fn emit_list_item(
         // The "- "/"1. " prefix before the checkbox is hidden exactly like
         // a plain marker; only the checkbox itself substitutes.
         let before = ByteRange::new(item.marker.start, task.start);
-        hide_range(hidden, accounted, content, starts, before);
-        push_task_checkbox(content, starts, task, out, accounted);
+        hide_range(out.hidden, out.accounted, content, starts, before);
+        push_task_checkbox(content, starts, task, out.spans, out.accounted);
         // Whatever sits between the checkbox and the item's own content
         // (normally exactly one space) is deliberately left UNCLAIMED here:
         // `fill_gaps` (`emit/mod.rs`) supplies it verbatim as an ordinary
@@ -127,10 +121,10 @@ fn emit_list_item(
         // hidden-ranges-only coordinate model instead of hand-rolling a
         // second hidden-range delta for the difference.
     } else {
-        hide_range(hidden, accounted, content, starts, item.marker);
+        hide_range(out.hidden, out.accounted, content, starts, item.marker);
     }
     for c in &item.children {
-        emit_block(content, starts, c, out, hidden, accounted);
+        emit_block(content, starts, c, out);
     }
 }
 
@@ -186,25 +180,127 @@ fn push_task_checkbox(
     }
 }
 
-pub(crate) fn emit_block(
-    content: &str,
-    starts: &[usize],
-    block: &Block,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
-) {
-    match block {
-        Block::Paragraph(p) => {
-            emit_inlines(
+/// Renders a table's Grid layout (plan WP2.S7). `Revealed` shows raw
+/// markdown, line by line, exactly like `Block::Verbatim` — `out.tables`
+/// stays `None` for those lines, there is no rendered geometry to describe.
+/// `Rendered` replaces every source line with its Grid row: a header/body
+/// content row via `table::layout::grid_row`, the (comrak-absent, Gotcha 10)
+/// delimiter line via `table::layout::separator_row` — both tiled onto the
+/// line's own byte range by `table::row_spans` and claimed through
+/// `claim_visible`, the SAME duplicate-claim guard `push_span_split_by_line`
+/// uses. Deliberately NOT routed through `push_span_split_by_line` itself
+/// (it only ever copies `content[range]` verbatim) — this substitutes a
+/// wholly different string for the claimed bytes, `push_task_checkbox`'s
+/// "substitutes visible content" shape, one call per source line rather
+/// than one call per delimiter/content sub-range.
+fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut EmitOut) {
+    if t.sm.state() == RevealState::Revealed {
+        for &line in &t.content_lines {
+            push_span_split_by_line(
                 content,
                 starts,
-                &p.inlines,
-                StyleCtx::default(),
-                out,
-                hidden,
-                accounted,
+                line,
+                verbatim_style(),
+                RevealState::Revealed,
+                out.spans,
+                out.accounted,
             );
+        }
+        return;
+    }
+
+    let n_cols = t.aligns.len();
+    let header_scope = table_header_scope();
+    let body_scope = table_scope();
+
+    // Every row's cells are rendered up front: `col_widths` is the max over
+    // ALL rows, so no row can be laid out until every row's own cells are
+    // known.
+    let rendered_rows: Vec<Vec<render::RenderedCell>> = t
+        .rows
+        .iter()
+        .map(|row| {
+            let base = if row.is_header {
+                header_scope
+            } else {
+                body_scope
+            };
+            row.cells
+                .iter()
+                .map(|c| render::render_cell(content, c, base))
+                .collect()
+        })
+        .collect();
+    let widths = layout::col_widths(&rendered_rows, n_cols);
+
+    let total_lines = t.content_lines.len();
+    for (i, &content_line) in t.content_lines.iter().enumerate() {
+        let line = line_at(starts, content_line.start);
+        let boundary = if total_lines <= 1 {
+            RowBoundary::Only
+        } else if i == 0 {
+            RowBoundary::First
+        } else if i == total_lines - 1 {
+            RowBoundary::Last
+        } else {
+            RowBoundary::Middle
+        };
+
+        let found_row = t
+            .rows
+            .iter()
+            .zip(rendered_rows.iter())
+            .find(|(r, _)| r.line == line);
+        let (role, runs) = if let Some((row, cells)) = found_row {
+            let is_header = row.is_header;
+            let role = if is_header {
+                TableRole::Header
+            } else {
+                TableRole::Body
+            };
+            let base = if is_header { header_scope } else { body_scope };
+            (role, layout::grid_row(&widths, &t.aligns, cells, base))
+        } else if line == t.sep_line {
+            (TableRole::Separator, layout::separator_row(&widths))
+        } else {
+            // Neither a modeled row's line nor the derived separator line
+            // — an unexpected gap within the table's own span (should not
+            // occur for a well-formed table; degrade to raw text rather
+            // than inventing content, §1.3).
+            push_span_split_by_line(
+                content,
+                starts,
+                content_line,
+                verbatim_style(),
+                RevealState::Revealed,
+                out.spans,
+                out.accounted,
+            );
+            continue;
+        };
+
+        let line_start = content_line.start;
+        let line_len = content_line.len();
+        let spans = row_spans(line_start, line_len, &runs);
+        let _ = claim_visible(out.accounted, line, line_start, line_start + line_len);
+        if let Some(bucket) = out.spans.get_mut(line) {
+            bucket.extend(spans);
+        }
+        if let Some(slot) = out.tables.get_mut(line) {
+            *slot = Some(TableRowInfo {
+                col_widths: widths.clone(),
+                role,
+                boundary,
+                extra_rows: Vec::new(),
+            });
+        }
+    }
+}
+
+pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &mut EmitOut) {
+    match block {
+        Block::Paragraph(p) => {
+            emit_inlines(content, starts, &p.inlines, StyleCtx::default(), out);
         }
         Block::Heading(h) => {
             if h.sm.state() == RevealState::Revealed {
@@ -222,21 +318,13 @@ pub(crate) fn emit_block(
                         line,
                         heading_style(h.level),
                         RevealState::Revealed,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 }
             } else {
-                hide_range(hidden, accounted, content, starts, h.marker);
-                emit_inlines(
-                    content,
-                    starts,
-                    &h.inlines,
-                    StyleCtx::default(),
-                    out,
-                    hidden,
-                    accounted,
-                );
+                hide_range(out.hidden, out.accounted, content, starts, h.marker);
+                emit_inlines(content, starts, &h.inlines, StyleCtx::default(), out);
             }
         }
         Block::Blockquote(bq) => {
@@ -248,21 +336,21 @@ pub(crate) fn emit_block(
                         m.marker,
                         blockquote_scope(),
                         RevealState::Revealed,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 } else {
-                    hide_range(hidden, accounted, content, starts, m.marker);
+                    hide_range(out.hidden, out.accounted, content, starts, m.marker);
                 }
             }
             for c in &bq.children {
-                emit_block(content, starts, c, out, hidden, accounted);
+                emit_block(content, starts, c, out);
             }
         }
-        Block::CodeFence(cf) => emit_code_fence(content, starts, cf, out, hidden, accounted),
+        Block::CodeFence(cf) => emit_code_fence(content, starts, cf, out),
         Block::List(list) => {
             for item in &list.items {
-                emit_list_item(content, starts, item, out, hidden, accounted);
+                emit_list_item(content, starts, item, out);
             }
         }
         Block::ThematicBreak(hr) => {
@@ -273,11 +361,11 @@ pub(crate) fn emit_block(
                     hr.range,
                     hr_scope(),
                     RevealState::Revealed,
-                    out,
-                    accounted,
+                    out.spans,
+                    out.accounted,
                 );
             } else {
-                hide_range(hidden, accounted, content, starts, hr.range);
+                hide_range(out.hidden, out.accounted, content, starts, hr.range);
             }
         }
         Block::Frontmatter(fm) => {
@@ -287,8 +375,8 @@ pub(crate) fn emit_block(
                 fm.range,
                 frontmatter_scope(),
                 RevealState::Revealed,
-                out,
-                accounted,
+                out.spans,
+                out.accounted,
             );
         }
         Block::Verbatim(v) => {
@@ -306,31 +394,12 @@ pub(crate) fn emit_block(
                     line,
                     verbatim_style(),
                     RevealState::Revealed,
-                    out,
-                    accounted,
+                    out.spans,
+                    out.accounted,
                 );
             }
         }
-        Block::Table(t) => {
-            // WP1: parsing only, no rendering change yet — a table still
-            // emits as raw verbatim text, identically to the `Verbatim` arm
-            // above, regardless of `t.sm.state()` (a later work package
-            // gives `Rendered` a real Grid/Wrapped/Pivoted layout; until
-            // then this arm ignores that field on purpose). `t.content_lines`
-            // — never `t.range` directly — for the same container-prefix
-            // reason the `Verbatim` arm above does.
-            for &line in &t.content_lines {
-                push_span_split_by_line(
-                    content,
-                    starts,
-                    line,
-                    verbatim_style(),
-                    RevealState::Revealed,
-                    out,
-                    accounted,
-                );
-            }
-        }
+        Block::Table(t) => emit_table(content, starts, t, out),
     }
 }
 
@@ -362,12 +431,10 @@ fn emit_inlines(
     starts: &[usize],
     inlines: &[Inline],
     style_ctx: StyleCtx,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
+    out: &mut EmitOut,
 ) {
     for inl in inlines {
-        emit_inline(content, starts, inl, style_ctx, out, hidden, accounted);
+        emit_inline(content, starts, inl, style_ctx, out);
     }
 }
 
@@ -376,9 +443,7 @@ fn emit_inline(
     starts: &[usize],
     inl: &Inline,
     style_ctx: StyleCtx,
-    out: &mut [Vec<SyntaxSpan>],
-    hidden: &mut Accounted,
-    accounted: &mut Accounted,
+    out: &mut EmitOut,
 ) {
     match inl {
         Inline::Text(t) => {
@@ -397,8 +462,8 @@ fn emit_inline(
                     line,
                     style_ctx.resolve(),
                     RevealState::Revealed,
-                    out,
-                    accounted,
+                    out.spans,
+                    out.accounted,
                 );
             }
         }
@@ -420,22 +485,14 @@ fn emit_inline(
                         line,
                         child_ctx.resolve(),
                         RevealState::Revealed,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 }
             } else {
-                hide_range(hidden, accounted, content, starts, m.open);
-                emit_inlines(
-                    content,
-                    starts,
-                    &m.children,
-                    child_ctx,
-                    out,
-                    hidden,
-                    accounted,
-                );
-                hide_range(hidden, accounted, content, starts, m.close);
+                hide_range(out.hidden, out.accounted, content, starts, m.open);
+                emit_inlines(content, starts, &m.children, child_ctx, out);
+                hide_range(out.hidden, out.accounted, content, starts, m.close);
             }
         }
         Inline::Code(m) => {
@@ -449,12 +506,12 @@ fn emit_inline(
                         line,
                         code_scope(),
                         RevealState::Revealed,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 }
             } else {
-                hide_range(hidden, accounted, content, starts, m.open);
+                hide_range(out.hidden, out.accounted, content, starts, m.open);
                 // MAJOR fix (verification round 9): `m.inner_lines` —
                 // never `m.content` directly — a code span's INNER text
                 // can soft-wrap across lines exactly like its outer
@@ -468,11 +525,11 @@ fn emit_inline(
                         line,
                         code_scope(),
                         RevealState::Rendered,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 }
-                hide_range(hidden, accounted, content, starts, m.close);
+                hide_range(out.hidden, out.accounted, content, starts, m.close);
             }
         }
         Inline::Link(m) => {
@@ -486,23 +543,21 @@ fn emit_inline(
                         line,
                         link_scope(),
                         RevealState::Revealed,
-                        out,
-                        accounted,
+                        out.spans,
+                        out.accounted,
                     );
                 }
             } else {
                 let (open, close) = link_delims(m.range, &m.text);
-                hide_range(hidden, accounted, content, starts, open);
+                hide_range(out.hidden, out.accounted, content, starts, open);
                 emit_inlines(
                     content,
                     starts,
                     &m.text,
                     StyleCtx::Override(link_scope()),
                     out,
-                    hidden,
-                    accounted,
                 );
-                hide_range(hidden, accounted, content, starts, close);
+                hide_range(out.hidden, out.accounted, content, starts, close);
             }
         }
         Inline::WikiLink(m) => {
@@ -513,8 +568,8 @@ fn emit_inline(
                     m.range,
                     link_scope(),
                     RevealState::Revealed,
-                    out,
-                    accounted,
+                    out.spans,
+                    out.accounted,
                 );
             } else {
                 let open = ByteRange::new(
@@ -523,17 +578,17 @@ fn emit_inline(
                 );
                 let close =
                     ByteRange::new(m.label.end.max(m.range.start).min(m.range.end), m.range.end);
-                hide_range(hidden, accounted, content, starts, open);
+                hide_range(out.hidden, out.accounted, content, starts, open);
                 push_span_split_by_line(
                     content,
                     starts,
                     m.label,
                     link_scope(),
                     RevealState::Rendered,
-                    out,
-                    accounted,
+                    out.spans,
+                    out.accounted,
                 );
-                hide_range(hidden, accounted, content, starts, close);
+                hide_range(out.hidden, out.accounted, content, starts, close);
             }
         }
     }

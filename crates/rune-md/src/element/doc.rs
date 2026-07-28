@@ -144,7 +144,7 @@ impl DocMachine {
     /// `DisplaySnapshot`. The wrap pass runs only here — children never wrap
     /// themselves (plan Context, "Emit -> wrap -> snapshot").
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
-        let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks);
+        let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks, self.wrap.width);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap);
         self.dirty = false;

@@ -36,12 +36,19 @@
 //! separately-defined `STRICT_INVARIANTS` — each crate's gate governs only
 //! its own invariants.
 
-mod style;
+// `pub(crate)`, not private: `crate::table::render`/`crate::table::layout`
+// (siblings of `emit`, not descendants) resolve table cell/border text
+// against the SAME scope table this module's own walk uses
+// (`style::table_scope`/`table_header_scope`/`table_separator_scope`/
+// `table_border_scope`/`text_scope`/`code_scope`/`link_scope`) — one
+// canonical scope resolver, not a second one reimplemented in `table::`.
+pub(crate) mod style;
 mod walk;
 
 use crate::element::block::Block;
 use crate::parse::{line_at, line_end_at, line_starts};
 use rune_syntax::element::{ByteRange, RevealState};
+use rune_syntax::syntax::TableRowInfo;
 use rune_syntax::{CellMap, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping};
 
 /// See the module docs: `true` only in test builds or when the
@@ -141,6 +148,64 @@ fn account(accounted: &mut Accounted, content: &str, starts: &[usize], range: By
     });
 }
 
+/// The four out-params every `emit_block`/`emit_inline` call used to thread
+/// separately (`out`, `hidden`, `accounted`, plus WP2's new per-line table
+/// slot) — bundled so the walk's own recursive signatures stay under the
+/// arg-count the workspace's clippy gate allows (the repo bans
+/// `#[allow(clippy::too_many_arguments)]`). `tables[line]` starts `None` for
+/// every line; only the `Block::Table` arm ever writes it, and only when
+/// the table is `Rendered` (a `Revealed` table line has raw markup, not
+/// rendered geometry, to describe).
+pub(crate) struct EmitOut<'a> {
+    pub spans: &'a mut [Vec<SyntaxSpan>],
+    pub hidden: &'a mut Accounted,
+    pub accounted: &'a mut Accounted,
+    pub tables: &'a mut [Option<TableRowInfo>],
+}
+
+/// Claims `[start, end)` on `line` as visible: runs the SAME
+/// `unclaimed_subranges` + `assert_invariant` pair `push_span_split_by_line`
+/// uses (that function is refactored below to call this, so both agree on
+/// what "already claimed" means), then records whatever was actually
+/// unclaimed into `accounted`. The chokepoint a producer that builds its
+/// OWN span text — rather than slicing `content[range]` directly, the way
+/// every other `SyntaxSpan` producer in this crate does — uses instead of
+/// re-deriving the duplicate-claim guard itself: `walk.rs`'s table Grid
+/// renderer substitutes a whole rendered row's text in one call per source
+/// line (mirroring `push_task_checkbox`'s "substitutes visible content"
+/// shape), rather than one call per delimiter/content sub-range the way
+/// `push_span_split_by_line` itself is built around.
+///
+/// Returns the pieces of `[start, end)` that were actually unclaimed (equal
+/// to `[(start, end)]` whenever nothing already overlapped it) — the caller
+/// decides what to do with a partial claim; this function only ever
+/// guards/records, it never builds a `SyntaxSpan` itself.
+pub(crate) fn claim_visible(
+    accounted: &mut Accounted,
+    line: usize,
+    start: usize,
+    end: usize,
+) -> Vec<(usize, usize)> {
+    let existing = accounted.get(line).cloned().unwrap_or_default();
+    let pieces = unclaimed_subranges(start, end, &existing);
+
+    let requested_len = end.saturating_sub(start);
+    let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
+    assert_invariant(kept_len == requested_len, || {
+        format!(
+            "line {line}: visible claim [{start},{end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
+            requested_len - kept_len
+        )
+    });
+
+    for &(s, e) in &pieces {
+        if let Some(bucket) = accounted.get_mut(line) {
+            bucket.push((s, e));
+        }
+    }
+    pieces
+}
+
 /// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
 /// possibly unsorted, possibly-overlapping already-claimed set on the same
 /// line) — the visible-side counterpart of `rune_syntax`'s
@@ -219,17 +284,7 @@ pub(crate) fn push_span_split_by_line(
     accounted: &mut Accounted,
 ) {
     for_each_line_slice(content, starts, range, |line, seg_start, seg_end| {
-        let existing = accounted.get(line).cloned().unwrap_or_default();
-        let pieces = unclaimed_subranges(seg_start, seg_end, &existing);
-
-        let requested_len = seg_end - seg_start;
-        let kept_len: usize = pieces.iter().map(|&(s, e)| e - s).sum();
-        assert_invariant(kept_len == requested_len, || {
-            format!(
-                "line {line}: visible claim [{seg_start},{seg_end}) overlaps {} already-claimed byte(s) — producer bug (content invented on the visible side)",
-                requested_len - kept_len
-            )
-        });
+        let pieces = claim_visible(accounted, line, seg_start, seg_end);
 
         for (s, e) in pieces {
             // A producer's range arithmetic (e.g. a delimiter derived by
@@ -272,9 +327,10 @@ pub(crate) fn push_span_split_by_line(
             if let Some(bucket) = out.get_mut(line) {
                 bucket.push(span);
             }
-            if let Some(bucket) = accounted.get_mut(line) {
-                bucket.push((s, e));
-            }
+            // `claim_visible` above already recorded this piece into
+            // `accounted` — no second push here (that used to be this
+            // function's own duplicate of the same bookkeeping `claim_visible`
+            // now owns).
         }
     });
 }
@@ -364,15 +420,30 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
 
 /// The crate's one Emit entry point: `Block` tree -> per-line `SyntaxLine`s
 /// and a `SyntaxSnapshot` for coordinate conversion. `DocMachine::snapshot`
-/// is the only caller.
-pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
+/// is the only caller. `width` is `DocMachine`'s own `self.wrap.width` — a
+/// PARAMETER, never a value this function or any element caches a copy of
+/// (plan architectural decision 4: "a value has exactly one writer", and
+/// `DocMachine`'s `WrapState` is that one writer). WP2's table renderer is
+/// Grid-only and does not read it yet; it is threaded through now so WP4's
+/// Wrapped/Pivoted layout selector (`table::layout::choose`, which DOES need
+/// the available width) is a pure addition inside the table arm rather than
+/// a second breaking change to this signature and every one of its callers.
+pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
+    let _ = width;
     let starts = line_starts(content);
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new(); starts.len()];
     let mut hidden: Accounted = vec![Vec::new(); starts.len()];
     let mut accounted: Accounted = vec![Vec::new(); starts.len()];
+    let mut tables: Vec<Option<TableRowInfo>> = (0..starts.len()).map(|_| None).collect();
 
+    let mut out = EmitOut {
+        spans: &mut spans,
+        hidden: &mut hidden,
+        accounted: &mut accounted,
+        tables: &mut tables,
+    };
     for b in blocks {
-        walk::emit_block(content, &starts, b, &mut spans, &mut hidden, &mut accounted);
+        walk::emit_block(content, &starts, b, &mut out);
     }
     fill_gaps(content, &starts, &accounted, &mut spans);
 
@@ -402,7 +473,8 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
 
     let lines: Vec<SyntaxLine> = spans
         .into_iter()
-        .map(|spans| SyntaxLine { spans, table: None })
+        .zip(tables)
+        .map(|(spans, table)| SyntaxLine { spans, table })
         .collect();
     let snapshot = SyntaxSnapshot::build(&starts, &hidden);
     (lines, snapshot)
