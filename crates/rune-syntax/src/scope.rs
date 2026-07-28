@@ -220,4 +220,28 @@ mod tests {
             assert!(table.resolve(name).is_some(), "missing scope: {name}");
         }
     }
+
+    #[test]
+    fn code_capture_resolves_by_longest_dotted_prefix() {
+        assert_eq!(
+            scope_table().resolve("keyword.control.return"),
+            scope_table().resolve("keyword")
+        );
+        assert_eq!(
+            scope_table().resolve("variable.builtin"),
+            scope_table().resolve("variable")
+        );
+    }
+
+    #[test]
+    fn markup_heading_scope_still_resolves() {
+        assert!(scope_table().resolve("markup.heading.1").is_some());
+    }
+
+    #[test]
+    fn markdown_scopes_still_start_at_id_zero() {
+        let table = scope_table();
+        let first = MARKDOWN_SCOPES.first().copied().unwrap_or_default();
+        assert_eq!(table.resolve(first), Some(ScopeId(0)));
+    }
 }
