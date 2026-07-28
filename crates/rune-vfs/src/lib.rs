@@ -51,6 +51,9 @@ pub struct Stat {
     /// fork the document from its other names on disk (materialize surfaces
     /// this as a footer warning — a later work package).
     pub nlink: Option<u64>,
+    /// Whether the path names a directory — link resolution must not accept
+    /// a directory as a target.
+    pub is_dir: bool,
 }
 
 /// A single direct child of a directory, as returned by [`Vfs::read_dir`].

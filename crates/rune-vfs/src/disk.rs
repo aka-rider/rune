@@ -134,6 +134,7 @@ impl Vfs for Disk {
                 device: Some(meta.dev()),
             },
             nlink: Some(meta.nlink()),
+            is_dir: meta.is_dir(),
         })
     }
 

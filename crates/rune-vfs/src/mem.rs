@@ -215,20 +215,38 @@ impl Vfs for Mem {
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         self.take_failure(OpKind::Stat)?;
         let state = self.lock_state();
-        let f = state
-            .files
-            .get(path)
-            .ok_or_else(|| not_found(path, "stat"))?;
-        Ok(Stat {
-            size: f.data.len() as u64,
-            mtime: UNIX_EPOCH + Duration::from_millis(f.mod_tick),
-            identity: Identity {
-                inode: Some(f.inode),
-                device: Some(f.device),
-            },
-            // Mem has no hardlink concept: every Mem file reports 1.
-            nlink: Some(1),
-        })
+        if let Some(f) = state.files.get(path) {
+            return Ok(Stat {
+                size: f.data.len() as u64,
+                mtime: UNIX_EPOCH + Duration::from_millis(f.mod_tick),
+                identity: Identity {
+                    inode: Some(f.inode),
+                    device: Some(f.device),
+                },
+                // Mem has no hardlink concept: every Mem file reports 1.
+                nlink: Some(1),
+                is_dir: false,
+            });
+        }
+        // No exact file at `path` — `Mem` has no directory nodes (flat
+        // `HashMap<PathBuf, MemFile>`), so a directory is synthesized the
+        // same way `read_dir` derives one: `path` is a directory iff some
+        // stored key sits strictly below it.
+        let is_synthetic_dir = state.files.keys().any(|key| {
+            key.strip_prefix(path)
+                .map(|rest| rest.components().next().is_some())
+                .unwrap_or(false)
+        });
+        if is_synthetic_dir {
+            return Ok(Stat {
+                size: 0,
+                mtime: UNIX_EPOCH,
+                identity: Identity::default(),
+                nlink: None,
+                is_dir: true,
+            });
+        }
+        Err(not_found(path, "stat"))
     }
 
     /// Identity: Mem has no symlinks.
