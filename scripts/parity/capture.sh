@@ -102,6 +102,7 @@ if (( SENT_KEYS )); then
         exit 1
     fi
     IFS= read -r SETTLE < "$SETTLE_FILE"
+    SETTLE="${SETTLE//\{\{FIXTURE\}\}/$FIXTURE}"
     wait_for_pane "$S" "$SETTLE" 20
 fi
 
