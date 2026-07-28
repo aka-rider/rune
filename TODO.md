@@ -195,3 +195,54 @@ a reproduction would be a spot-fix against a symptom, and the failure has not
 been reproduced under load with polled evidence of *which* spin ran out. The
 right fix is to make the wait condition-driven rather than iteration-bounded, so
 load cannot change the outcome — but that needs the repro first.
+
+## rust port — a lone `\r` projects a comrak line onto the wrong buffer line (recorded 2026-07-28, found by the session fuzzer during the tree-sitter plan)
+
+`make test-fuzz` is RED on this. Not caused by the tree-sitter work — WP7's new
+seeds and actions merely gave the fuzzer the reach to find it.
+
+Two line indexes exist: `line_starts` splits on `\n` only (the buffer/editor
+model, §1.5) while `comrak_line_starts` follows CommonMark, where a bare CR
+also ends a line. CRLF is safe — both agree. A LONE `\r` is where they diverge.
+`per_line_content` partitions correctly in comrak space, then `emit_table`
+reinterprets that partition element as a buffer line. A paragraph and a table
+header row then share one buffer line and render as one display row, so the
+row is wider than the border synthesised from its own `col_widths`.
+
+Reachable by an ordinary user, no fuzzing required: paste CRLF text, backspace
+over the line break, and the `\r` survives alone (paste is verbatim by §1.4.5,
+correctly). Opening a CR-only file does the same. The render layer maps `\r` to
+zero cells, so there is no glyph explaining the shift. No panic and no data
+loss — the bytes are intact. It is a rendering-integrity defect.
+
+`emit/walk.rs`'s task-checkbox path has the identical `line_at(starts, …)`
+shape, so this is a class, not one call site.
+
+**Fix, when scheduled:** parse a LENGTH-PRESERVING shadow copy (`Cow<str>`,
+allocated only when a lone CR is actually present) in which every lone `\r`
+becomes a space. One byte in, one byte out, so every sourcepos-derived offset
+stays valid against the real buffer and the user's bytes are never touched —
+a parse-time view, not a mutation, so §1.4.5 is untouched. The dual index then
+ceases to exist and the mis-projection becomes unrepresentable. It changes what
+`x\r| a | b |` parses to, so **check `golang/` for parity before committing** —
+that is why it is not being done inside the tree-sitter plan.
+
+Deliberately NOT fixed by measuring the border from the rendered row: that
+would satisfy the invariant by construction while painting a neat box around
+foreign text, and blind the only detector of the real defect.
+
+## rust port — wrapped table continuation rows each draw their own top/bottom border (recorded 2026-07-28, same investigation)
+
+Pre-existing and independent of the above. `wrap_table_line` clones the whole
+`TableSegInfo` — `boundary` included — onto every continuation segment, and
+`expand_tables` keys `starts_table`/`ends_table` purely off `boundary`. Its
+`Middle` branch guards with a `prev_line != model_line` check; those two do
+not. A 40-column wrapped table therefore emits a `└┴┘` after every continuation
+row and a `┌┬┐` before every one when the header wraps.
+
+Invisible to `TABLE-ROW-WIDTH` — every width agrees — but plain garbage on
+screen.
+
+**Fix:** make `TableSegInfo::boundary` an `Option<RowBoundary>` and have
+`wrap_table_line` emit `None` for continuation segments, so a continuation row
+cannot claim to be the table's first or last.

@@ -87,20 +87,23 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 .collect()
         })
         .collect();
-    let (widths, min_widths) = layout::col_widths(&rendered_rows, n_cols);
+    let (natural_widths, min_widths) = layout::col_widths(&rendered_rows, n_cols);
 
     let avail = out.width as usize;
-    let table_layout = layout::choose(&widths, &min_widths, avail);
+    let table_layout = layout::choose(&natural_widths, &min_widths, avail);
 
-    // Only Wrapped needs its own, proportionally shrunk column widths —
-    // Grid always uses the natural widths, and Pivoted doesn't lay out
-    // columns side by side at all.
-    let constrained_widths: Vec<usize> = if table_layout == layout::TableLayout::Wrapped {
+    // The ONE width vector this table is laid out at: Wrapped shrinks the
+    // natural widths proportionally, Grid and Pivoted keep them. Every
+    // rendered row AND the row info the border synthesizer reads must come
+    // from this same vector — holding the shrunk and natural widths in two
+    // variables is what let a Wrapped table emit content rows at one width
+    // and borders at another.
+    let layout_widths: Vec<usize> = if table_layout == layout::TableLayout::Wrapped {
         let frame_overhead = if n_cols > 0 { 4 * n_cols - 1 } else { 0 };
         let content_budget = avail.saturating_sub(frame_overhead);
-        layout::constrain_widths(&widths, &min_widths, content_budget)
+        layout::constrain_widths(&natural_widths, &min_widths, content_budget)
     } else {
-        Vec::new()
+        natural_widths
     };
 
     // Pivoted-only bookkeeping: the header row's own rendered cells supply
@@ -172,20 +175,20 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
             layout::TableLayout::Grid => {
                 extra_row_runs = Vec::new();
                 row1_runs = match role {
-                    TableRole::Separator => layout::separator_row(&widths),
+                    TableRole::Separator => layout::separator_row(&layout_widths),
                     TableRole::Header | TableRole::Body => {
                         let base = if role == TableRole::Header {
                             header_scope
                         } else {
                             body_scope
                         };
-                        layout::grid_row(&widths, &t.aligns, cells, base)
+                        layout::grid_row(&layout_widths, &t.aligns, cells, base)
                     }
                 };
             }
             layout::TableLayout::Wrapped => match role {
                 TableRole::Separator => {
-                    row1_runs = layout::separator_row(&constrained_widths);
+                    row1_runs = layout::separator_row(&layout_widths);
                     extra_row_runs = Vec::new();
                 }
                 TableRole::Header | TableRole::Body => {
@@ -197,13 +200,13 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                     let wrapped_cells: Vec<Vec<String>> = (0..n_cols)
                         .map(|col| {
                             let text = cells.get(col).map(|c| c.text.as_str()).unwrap_or("");
-                            let w = constrained_widths.get(col).copied().unwrap_or(0);
+                            let w = layout_widths.get(col).copied().unwrap_or(0);
                             wrapped::wrap_cell(text, w)
                         })
                         .collect();
                     let max_lines = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
                     let mut rows: Vec<Vec<(String, Vec<CellSrc>, ScopeId)>> = (0..max_lines)
-                        .map(|k| wrapped::wrapped_row(&constrained_widths, &wrapped_cells, k, base))
+                        .map(|k| wrapped::wrapped_row(&layout_widths, &wrapped_cells, k, base))
                         .collect();
                     row1_runs = if rows.is_empty() {
                         Vec::new()
@@ -247,7 +250,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
 
         if let Some(slot) = out.tables.get_mut(line) {
             *slot = Some(TableRowInfo {
-                col_widths: widths.clone(),
+                col_widths: layout_widths.clone(),
                 role,
                 boundary,
                 extra_rows,
