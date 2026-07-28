@@ -34,3 +34,4 @@ pub mod theme;
 pub mod title;
 pub mod when;
 pub mod workspace;
+pub mod workspaceroot;
