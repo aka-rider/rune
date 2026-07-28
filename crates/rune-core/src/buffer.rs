@@ -20,6 +20,7 @@
 //!   and the workspace's `clippy::panic`/`unwrap_used` deny-lints, the Rust
 //!   equivalents return an empty/`None` fallback instead of panicking.
 
+use crate::assert_invariant;
 use crate::coords::BufferPoint;
 use std::fmt;
 
@@ -423,7 +424,7 @@ impl Buffer {
             }
             line_starts = next_starts;
         }
-        debug_assert_line_starts_invariant(&line_starts);
+        assert_line_starts_invariant(&line_starts);
         line_starts
     }
 }
@@ -454,22 +455,22 @@ fn compute_line_starts(content: &str) -> Vec<usize> {
             starts.push(i + 1);
         }
     }
-    debug_assert_line_starts_invariant(&starts);
+    assert_line_starts_invariant(&starts);
     starts
 }
 
 /// The invariant every `Buffer::line_starts` must uphold: non-empty, with
 /// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
 /// rebuilt (`compute_line_starts`, `update_line_starts`) rather than only
-/// documented — a `debug_assert!` catches a future change that reintroduces
-/// the empty-index state finding 1 fixed (`Buffer::default()` used to
-/// derive `line_starts: vec![]`).
-fn debug_assert_line_starts_invariant(line_starts: &[usize]) {
-    debug_assert_eq!(
-        line_starts.first().copied(),
-        Some(0),
-        "line_starts must be non-empty and start with 0"
-    );
+/// documented — via the `STRICT_INVARIANTS`-gated `assert_invariant`
+/// chokepoint (see `lib.rs`'s module docs), so a future change that
+/// reintroduces the empty-index state finding 1 fixed (`Buffer::default()`
+/// used to derive `line_starts: vec![]`) is caught in tests without an
+/// ordinary build ever paying for it.
+fn assert_line_starts_invariant(line_starts: &[usize]) {
+    assert_invariant(line_starts.first().copied() == Some(0), || {
+        "line_starts must be non-empty and start with 0".to_string()
+    });
 }
 
 /// Port of `lineindex.go:51-59`.

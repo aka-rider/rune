@@ -1879,6 +1879,7 @@ name = "rune-core"
 version = "0.1.0"
 dependencies = [
  "proptest",
+ "rune-core",
 ]
 
 [[package]]

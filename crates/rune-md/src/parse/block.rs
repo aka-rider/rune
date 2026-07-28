@@ -346,10 +346,19 @@ fn build_block<'a>(
         })),
         BlockKind::Table => {
             super::table::build_table(content, idx, node, hint, range).or_else(|| {
-                // `build_table` returns `None` on anything unexpected (a
-                // non-`Table` node reaching this arm, or a table with no
-                // rows) — degrade to the same raw passthrough every other
-                // unmodeled construct gets (§0), never panic.
+                // `build_table` returns `None` on anything unexpected: a
+                // non-`Table` node reaching this arm; a table with no rows;
+                // a body row and the derived delimiter line landing on the
+                // same buffer line (a desync between the buffer's own line
+                // index and comrak's, so the collision would otherwise
+                // render one display row carrying two rows' worth of
+                // cells); or the table's range starting at a mid-line
+                // position not explained by the scan hint's container
+                // prefix (comrak would then report every later row's cell
+                // sourcepos shifted, rendering every cell missing its first
+                // character). In every case, degrade to the same raw
+                // passthrough every other unmodeled construct gets (§0),
+                // never panic or render the user's words wrongly.
                 Some(Block::Verbatim(VerbatimM {
                     sm: RevealSm::new(RevealState::Revealed),
                     range,

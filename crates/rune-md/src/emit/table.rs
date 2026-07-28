@@ -115,7 +115,6 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         .map(|(_, cells)| cells.as_slice())
         .unwrap_or(&[]);
     let first_body_line = t.rows.iter().find(|r| !r.is_header).map(|r| r.line);
-    let sep_width = if avail > 0 { avail } else { 40 };
 
     let total_lines = t.content_lines.len();
     for (i, &content_line) in t.content_lines.iter().enumerate() {
@@ -220,8 +219,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 }
                 TableRole::Body => {
                     let include_separator = Some(line) != first_body_line;
-                    let mut rows =
-                        pivot::pivot_rows(header_cells, cells, include_separator, sep_width);
+                    let mut rows = pivot::pivot_rows(header_cells, cells, include_separator, avail);
                     row1_runs = if rows.is_empty() {
                         Vec::new()
                     } else {
