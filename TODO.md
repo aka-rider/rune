@@ -185,8 +185,9 @@ edit-commit chokepoint, not just the primary. Out of scope for the table plan.
 
 ## rust port — `db_wiring` flakes under parallel test load (recorded 2026-07-28, tree-sitter plan, WP5.S5/S6 split)
 
-Observed twice, both times only while other work was compiling concurrently in
-another worktree; 9/9 clean when the machine is otherwise idle. The second
+Observed three times now, twice while other work was compiling concurrently in
+another worktree and once during an otherwise ordinary sequential run; 12/12
+clean on immediate re-runs. The second
 occurrence was a bare `test result: FAILED` count with the name not captured,
 so "it is `db_wiring`" rests on the first observation alone — treat the
 attribution as unconfirmed and re-derive it from a captured failure before
@@ -310,3 +311,35 @@ lone-`\r` fix reverted — and on one run the *Go* side failed too, which points
 at capture-harness flakiness (terminal-size timing under the sandbox) rather
 than a Rust regression. `make parity-grid` passes. Needs its own investigation
 with polled evidence before anyone changes rendering code to chase it.
+
+## rust port — a second `TABLE-ROW-WIDTH` instance, zero-width-space flavoured (recorded 2026-07-28, found by the session fuzzer)
+
+The lone-`\r` shadow-copy fix closed the CR-driven instance of this invariant.
+A fresh-seed `make test-fuzz` then found another: `table_group 0: row 3 has
+summed width 18, but row 2 (same group) has width 17`. Different mechanism —
+no CR anywhere; the script types two U+200B ZERO WIDTH SPACEs into a table
+cell. A zero-width character contributes 0 terminal cells but is 3 bytes, so
+this is a live §1.5 bytes-vs-cells hypothesis worth checking first.
+
+`RS=1 make test-fuzz` passes; this needs fresh seeds to surface.
+
+Shrunk script (12 steps, decodable by `rune_fuzz::script::decode`):
+
+```
+content # Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n
+type 
+key backspace ----
+key down ----
+key right -a--
+key left s---
+type  \u{200b}\u{200b}  
+key char:z ---u
+type 
+type 
+paste 
+key up ----
+```
+
+**Deliberately NOT checked into `repros/`** — that directory's contract is that
+every script in it replays clean, and this one does not until the bug is fixed.
+It belongs there in the same commit as its fix.
