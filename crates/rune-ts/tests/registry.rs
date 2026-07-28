@@ -1,11 +1,10 @@
-//! Coverage for the compiling half — `registry()` and `highlight()` — plus
-//! the compile-free `lang::resolve` paths this package's steps call for.
+//! Coverage for the compiling half — `registry()` and `highlight()`. The
+//! compile-free `lang::resolve` paths have their own suite.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::time::Duration;
 
 use rune_syntax::scope::scope_table;
-use rune_ts::lang::{self, ALIASES, LANGUAGES};
 use rune_ts::{highlight, registry};
 
 #[test]
