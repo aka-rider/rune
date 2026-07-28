@@ -48,6 +48,7 @@ return func() tea.Msg { return PinMsg{idx} } // reading m inside runs later → 
 - **Wrap with context and `%w`**: `fmt.Errorf("load dir %q: %w", dir, err)`. Keep errors as `error`; call `.Error()` only at the display boundary.
 - **Surface invalid input** — no silent fallback or default.
 - **Halt, never `panic`.** Enforce an invariant with graceful degradation or a test-only assert (`//go:build testing`). A rendering error is Tolerable; data loss is not.
+- **A crash in linked C is not a Rust panic and no Rust lint can see it.** `tree-sitter`'s `lib/src/ts_assert.h` compiles `ts_assert(e)` to a real `assert()` unless `NDEBUG` is defined; neither `tree-sitter`'s `lib/binding_rust/build.rs` nor the `cc` crate ever defines `NDEBUG`, so those asserts are **live in `--release` builds** — e.g. `ts_assert(symbol < self->token_count)` at `lib/src/language.c:73`. A failed C `assert()` calls `abort()` → `SIGABRT`: `catch_unwind` does not catch it, `panic = "abort"` vs `"unwind"` is irrelevant, and the workspace's `clippy::panic`/`unwrap_used`/`expect_used` deny lints govern Rust only, saying nothing about linked C. Upstream issues tree-sitter#4199 and #933 show this reachable from a malformed `InputEdit` or an ABI/grammar mismatch. The Rust port's mitigation: never construct an `InputEdit` — always full-parse — which removes the documented trigger, not the class. This is a §0.1 Severe-rung hazard (an uncatchable process abort loses the unsaved buffer) that the lint set cannot see.
 
 ### §1.4 Data Persistence & Durability
 
