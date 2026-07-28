@@ -1936,6 +1936,7 @@ dependencies = [
 name = "rune-ts"
 version = "0.1.0"
 dependencies = [
+ "proptest",
  "rune-syntax",
  "tree-sitter",
  "tree-sitter-bash",
