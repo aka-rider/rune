@@ -219,8 +219,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 }
                 TableRole::Body => {
                     let include_separator = Some(line) != first_body_line;
-                    let mut rows =
-                        pivot::pivot_rows(header_cells, cells, include_separator, avail);
+                    let mut rows = pivot::pivot_rows(header_cells, cells, include_separator, avail);
                     row1_runs = if rows.is_empty() {
                         Vec::new()
                     } else {
