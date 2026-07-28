@@ -148,3 +148,31 @@ Consequence: `scripts/parity/assert.sh`'s "rust bottom content row (line 33) end
 
 Not fixed here: a real fix needs either (a) implementing breadcrumb workspace-root relativization in Rust (the divergence itself, a real feature, not a parity-harness change), (b) widening the harness's pinned `PARITY_COLS`, or (c) shortening the harness's own workspace-path nesting — all out of scope for `scripts/parity/`'s owned files. Needs a decision before `make parity`/`make parity-assert` can be treated as a passing gate again.
 
+## rust port — PRE-EXISTING: `CUR-BOUNDS` fires on multicursor + page-down + CJK (recorded 2026-07-28, markdown-table plan WP5)
+
+Surfaced by the markdown-table plan's new fuzz table seeds, which made the
+session generator explore further — but **not caused by that work**. Verified by
+replaying the script below at `429fb2e` (the commit the table plan branched
+from, before any table code existed): it fails there byte-identically, and the
+fixture contains no table at all.
+
+```
+content # Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n
+key pagedown ----
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+key up ----
+key down -a-u
+key char:A ----
+key char:  ----
+```
+
+Violation: `CUR-BOUNDS: cursor id=2 position=100 anchor=100 content.len()=126`.
+A secondary cursor (added by `alt+down`) is left at a position that is not a
+valid char boundary of the post-edit content after CJK text is typed on a
+page-down-scrolled view.
+
+**Not committed to `repros/` while red** (the standing convention: a repro
+belongs there only in the same commit as its fix, since `replay.rs`'s contract
+is "every checked-in script replays clean"). The script above is the verbatim
+copy. Fix: clamp/re-validate every secondary cursor to a char boundary at the
+edit-commit chokepoint, not just the primary. Out of scope for the table plan.
