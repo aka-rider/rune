@@ -43,7 +43,7 @@ Cross-implementation screen parity: `make parity` (builds both sides, captures t
 
 ## House Rules
 
-- **Never cite a file path, line number, or symbol location in a code comment.** `foo/bar.rs:210` rots the moment either file moves — and it has, repeatedly. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
+- **Never cite a `path:line` location in a code comment.** `foo/bar.rs:210` rots the moment either file moves — and it has, repeatedly. A bare filename or module path (`cluster.rs`, `driver::checks`) is tolerated but discouraged — replace it with a description of the invariant when you touch the comment. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
 - Keep a source file under 500 lines (§1.6). When you push one over, record it in `TODO.md` with the reason.
 
 ## The Unbreakables (digest — full articles in CONSTITUTION.md)
