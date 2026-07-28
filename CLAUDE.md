@@ -19,6 +19,7 @@ crates/rune-syntax   Producer-agnostic syntax layer: reveal vocabulary, SyntaxSp
 crates/rune-md       Markdown pipeline over comrak: parse -> emit -> wrap -> snapshot. Terminal-free
 crates/rune-tui      Elm-style runtime, terminal lifecycle, keymap resolver, panes, editor UI
 crates/rune-fuzz     Headless session fuzzer: drives the real update loop, checks named invariants
+crates/rune-ts       Terminal-free tree-sitter layer: 22 grammars, compile-free language lookup, whole-document highlight
 ```
 
 ## Vocabulary
@@ -31,6 +32,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 - **draft** — untitled doc, recovery-backed, no file until named.
 - **pane** — a focusable region of the workspace (Editor, Explorer, Tabs); focus routing keys off it.
 - **snapshot (display)** — the `SyntaxSnapshot` a buffer parses to; distinct from a *document* snapshot in the recovery store. Say which one you mean.
+- **highlight overlay** — a `(Range<usize>, ScopeId)` list from `rune-ts` painted onto cell styles at render time, never emitted as a `SyntaxSpan`; distinct from *snapshot (display)* (the emitted syntax model) and from a *document* snapshot (the recovery store).
 - **help document** — virtual read-only tab generated from the keymap; never dirty.
 
 ## Build & Test

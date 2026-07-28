@@ -250,3 +250,34 @@ screen.
 **Fix:** make `TableSegInfo::boundary` an `Option<RowBoundary>` and have
 `wrap_table_line` emit `None` for continuation segments, so a continuation row
 cannot claim to be the table's first or last.
+
+## rust port — tree-sitter highlighting: unmeasured budgets and known-open gaps (recorded 2026-07-28, tree-sitter plan WP8)
+
+- `HIGHLIGHT_BUDGET` (`crates/rune-tui/src/runtime.rs`, 250ms) and `MAX_SPANS`
+  (`crates/rune-ts/src/highlight.rs`, 100_000) are constants chosen without
+  profiling a real large document — not measured against any target frame
+  budget or memory ceiling. Revisit once a slow-parse or span-flood case is
+  actually observed, rather than tuning blind.
+- The Terraform highlights query (`crates/rune-ts/queries/terraform.scm`) is
+  hand-authored in-repo, offline, from the grammar's own node kinds —
+  `tree-sitter-hcl` ships no highlights query at all. It is coarser than an
+  upstream community query would be and can drift from the grammar with no
+  upstream signal to catch it.
+- `crates/rune-fuzz` now transitively links 21 grammar crates through
+  `rune-tui`. A grammar's C `ts_assert` firing `SIGABRT` during
+  `make test-fuzz` kills the process before `tests/human_session.rs` writes
+  its artifact bundle — no shrunk input, no `script.rune`, no `repros/`
+  promotion path for that failure. The fuzzer never calls `rune_ts::highlight`
+  itself (it only delivers synthetic `Action::Highlight` replies), so the
+  exposure is confined to real `Cmd` worker threads, not the fuzzer's own
+  driver loop.
+- `scripts/parity/fixtures/fences-code.md` is excluded from
+  `make parity-grid` (`scripts/parity/grid.sh`'s `excluded_reason`) because Go
+  has no tree-sitter — its fenced-code token colours cannot be asserted
+  against a Go capture at all, not even as a byte-diff.
+- `make parity-grid` compares only `emphasis.md` today — nine of its ten
+  listed fixtures are excluded (see `scripts/parity/README.md`'s "Known
+  divergences"). It is retained as a cheap regression tripwire on markdown
+  rendering, not as evidence that Rust and Go screens actually match; treat a
+  green `make parity-grid` accordingly, and see plan Risks for the same
+  caveat.
