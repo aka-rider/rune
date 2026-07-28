@@ -14,17 +14,15 @@
 
 use super::style::{
     StyleCtx, blockquote_scope, code_fence_scope, code_scope, frontmatter_scope, heading_style,
-    hr_scope, link_scope, list_marker_style, table_header_scope, table_scope, verbatim_style,
+    hr_scope, link_scope, list_marker_style, verbatim_style,
 };
-use super::{Accounted, EmitOut, claim_visible, hide_range, push_span_split_by_line};
+use super::table::emit_table;
+use super::{Accounted, EmitOut, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
-use crate::element::table::TableM;
 use crate::parse::line_at;
-use crate::table::{layout, render, row_spans};
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::{ByteRange, RevealState};
-use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 
 /// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
 /// is already exactly one physical line's range, computed container-aware
@@ -177,123 +175,6 @@ fn push_task_checkbox(
     }
     if let Some(bucket) = accounted.get_mut(line) {
         bucket.push((task.start, task.end));
-    }
-}
-
-/// Renders a table's Grid layout (plan WP2.S7). `Revealed` shows raw
-/// markdown, line by line, exactly like `Block::Verbatim` — `out.tables`
-/// stays `None` for those lines, there is no rendered geometry to describe.
-/// `Rendered` replaces every source line with its Grid row: a header/body
-/// content row via `table::layout::grid_row`, the (comrak-absent, Gotcha 10)
-/// delimiter line via `table::layout::separator_row` — both tiled onto the
-/// line's own byte range by `table::row_spans` and claimed through
-/// `claim_visible`, the SAME duplicate-claim guard `push_span_split_by_line`
-/// uses. Deliberately NOT routed through `push_span_split_by_line` itself
-/// (it only ever copies `content[range]` verbatim) — this substitutes a
-/// wholly different string for the claimed bytes, `push_task_checkbox`'s
-/// "substitutes visible content" shape, one call per source line rather
-/// than one call per delimiter/content sub-range.
-fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut EmitOut) {
-    if t.sm.state() == RevealState::Revealed {
-        for &line in &t.content_lines {
-            push_span_split_by_line(
-                content,
-                starts,
-                line,
-                verbatim_style(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
-        return;
-    }
-
-    let n_cols = t.aligns.len();
-    let header_scope = table_header_scope();
-    let body_scope = table_scope();
-
-    // Every row's cells are rendered up front: `col_widths` is the max over
-    // ALL rows, so no row can be laid out until every row's own cells are
-    // known.
-    let rendered_rows: Vec<Vec<render::RenderedCell>> = t
-        .rows
-        .iter()
-        .map(|row| {
-            let base = if row.is_header {
-                header_scope
-            } else {
-                body_scope
-            };
-            row.cells
-                .iter()
-                .map(|c| render::render_cell(content, c, base))
-                .collect()
-        })
-        .collect();
-    let widths = layout::col_widths(&rendered_rows, n_cols);
-
-    let total_lines = t.content_lines.len();
-    for (i, &content_line) in t.content_lines.iter().enumerate() {
-        let line = line_at(starts, content_line.start);
-        let boundary = if total_lines <= 1 {
-            RowBoundary::Only
-        } else if i == 0 {
-            RowBoundary::First
-        } else if i == total_lines - 1 {
-            RowBoundary::Last
-        } else {
-            RowBoundary::Middle
-        };
-
-        let found_row = t
-            .rows
-            .iter()
-            .zip(rendered_rows.iter())
-            .find(|(r, _)| r.line == line);
-        let (role, runs) = if let Some((row, cells)) = found_row {
-            let is_header = row.is_header;
-            let role = if is_header {
-                TableRole::Header
-            } else {
-                TableRole::Body
-            };
-            let base = if is_header { header_scope } else { body_scope };
-            (role, layout::grid_row(&widths, &t.aligns, cells, base))
-        } else if line == t.sep_line {
-            (TableRole::Separator, layout::separator_row(&widths))
-        } else {
-            // Neither a modeled row's line nor the derived separator line
-            // — an unexpected gap within the table's own span (should not
-            // occur for a well-formed table; degrade to raw text rather
-            // than inventing content, §1.3).
-            push_span_split_by_line(
-                content,
-                starts,
-                content_line,
-                verbatim_style(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-            continue;
-        };
-
-        let line_start = content_line.start;
-        let line_len = content_line.len();
-        let spans = row_spans(line_start, line_len, &runs);
-        let _ = claim_visible(out.accounted, line, line_start, line_start + line_len);
-        if let Some(bucket) = out.spans.get_mut(line) {
-            bucket.extend(spans);
-        }
-        if let Some(slot) = out.tables.get_mut(line) {
-            *slot = Some(TableRowInfo {
-                col_widths: widths.clone(),
-                role,
-                boundary,
-                extra_rows: Vec::new(),
-            });
-        }
     }
 }
 
