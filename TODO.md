@@ -178,3 +178,20 @@ belongs there only in the same commit as its fix, since `replay.rs`'s contract
 is "every checked-in script replays clean"). The script above is the verbatim
 copy. Fix: clamp/re-validate every secondary cursor to a char boundary at the
 edit-commit chokepoint, not just the primary. Out of scope for the table plan.
+
+## rust port — `db_wiring` flakes under parallel test load (recorded 2026-07-28, tree-sitter plan, WP5.S5/S6 split)
+
+Observed once during `cargo test --workspace` while three agents were building
+concurrently; passed 3/3 in isolation and on a clean re-run. The file is not
+touched by the tree-sitter work.
+
+The test already follows the repo convention — it waits on bounded spins, not
+wall-clock sleeps, and says so. So the defect is not a sleep to delete: it is a
+spin bound calibrated on an unloaded machine, which a loaded one can exhaust
+before the writer thread posts its `DbEvent`.
+
+**Not fixed here, and deliberately not guessed at.** Widening the bound without
+a reproduction would be a spot-fix against a symptom, and the failure has not
+been reproduced under load with polled evidence of *which* spin ran out. The
+right fix is to make the wait condition-driven rather than iteration-bounded, so
+load cannot change the outcome — but that needs the repro first.
