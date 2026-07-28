@@ -93,6 +93,15 @@ fn main() -> ExitCode {
 
     let mut app = App::new(buffer, Some(path), vfs, db_bootstrap.db);
     app.db_banner = db_bootstrap.banner;
+    // Install the real hardware probe (plan WP5.S8) — production is the
+    // ONLY place `HidSpaceProbe` is installed; every test and the fuzzer
+    // keep `App::new`'s inert `NullProbe` default.
+    app.space_probe = Box::new(rune_tui::keystate::HidSpaceProbe);
+    // Prime `leader_available`'s cache now, at startup, rather than letting
+    // the first `space+x`/`e`/`t` press pay for it: `leader_available` is a
+    // `OnceLock` (plan WP3.S3), so this one-shot check runs here instead of
+    // on the user's first keystroke.
+    let _ = rune_tui::keystate::leader_available();
     // The DocDb half of the old combined AppDb (plan WP1 decision 5)
     // installs on the initial document — App::new only wires up the
     // app-wide store handle above.

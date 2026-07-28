@@ -264,7 +264,6 @@ fn quit_chord_is_consumed_by_the_modal_not_the_global_pipeline() {
             code: KeyCode::Char('d'),
             mods: Mods {
                 ctrl: true,
-                alt: true,
                 ..Mods::NONE
             },
         }),

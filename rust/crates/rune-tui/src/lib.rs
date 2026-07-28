@@ -4,6 +4,7 @@
 
 pub mod app;
 pub mod banner;
+pub mod binding;
 pub mod breadcrumb;
 pub mod clipboard;
 pub mod commands;
@@ -11,8 +12,10 @@ pub mod db;
 pub mod document;
 pub mod explorer;
 pub mod footer;
+pub mod global;
 pub mod help;
 pub mod keymap;
+pub mod keystate;
 pub mod layout;
 pub mod listnav;
 pub mod opentabs;

@@ -291,6 +291,51 @@ pub fn delete_left(app: &mut App, id: DocumentId) {
     );
 }
 
+/// Retracts a just-typed literal space for the held-space leader (plan
+/// decision 5 / WP4): a targeted, single-cursor, no-selection removal of
+/// exactly the one byte the leader-arming path (`app.rs`'s
+/// `handle_editor_key`) just inserted. Deliberately NOT built on
+/// `per_cursor_selection_edits` — that helper is selection-first
+/// (`has_selection` above) and would delete the user's SELECTED TEXT
+/// instead of the space, and it loops every cursor, where this must touch
+/// at most one. Refuses (no-op) unless every one of these holds: exactly
+/// one cursor, that cursor has no selection, the caret isn't at buffer
+/// start, and the byte immediately left of the caret is still `b' '` — the
+/// last check is the R5 guard against the buffer having changed between
+/// the space keystroke and the chord keystroke.
+///
+/// Accepted trade (decision 5 / risk note): this leaves an insert+delete
+/// pair in the undo journal, so ⌘Z after a chord restores the retracted
+/// space. Popping the just-journaled insert instead would desynchronise
+/// the recovery-store replica, since `db::append_edit` (`db.rs:247-277`)
+/// has already enqueued it via `commit_edit_batch` above.
+pub(crate) fn retract_space(app: &mut App, id: DocumentId) {
+    let Some(doc) = app.doc(id) else { return };
+    if doc.read_only {
+        return;
+    }
+    if doc.cursors.len() != 1 || doc.cursors.primary().has_selection() {
+        return;
+    }
+    let pos = doc.cursors.primary().position;
+    if pos == 0 {
+        return;
+    }
+    if doc.buffer.byte(pos - 1) != Some(b' ') {
+        return;
+    }
+
+    let cursors_before = doc.cursors.clone();
+    let cid = doc.cursors.primary().id;
+    let edit = Edit {
+        start: pos - 1,
+        end: pos,
+        insert: String::new(),
+        cursor_id: cid,
+    };
+    commit_edit_batch(app, id, vec![(edit, cid)], cursors_before);
+}
+
 /// Port of `commands_edit.go:execDeleteRight` (Delete).
 pub fn delete_right(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
@@ -669,6 +714,94 @@ mod tests {
     /// view is generated fresh and never has journal history, but this
     /// property must hold regardless) must still let undo/redo walk that
     /// history.
+    /// Regression for decision 5 / WP4: a lone trailing space is removed
+    /// and the caret lands at `pos - 1`.
+    #[test]
+    fn retract_space_removes_a_lone_trailing_space() {
+        let mut app = app_with("hello ", 6);
+        let id = app.active;
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().cursors.primary().position, 5);
+    }
+
+    /// A non-space byte left of the caret is a no-op.
+    #[test]
+    fn retract_space_is_a_no_op_when_the_byte_left_of_the_caret_is_not_a_space() {
+        let mut app = app_with("hello", 5);
+        let id = app.active;
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+    }
+
+    /// `pos == 0` is a no-op.
+    #[test]
+    fn retract_space_at_buffer_start_is_a_no_op() {
+        let mut app = app_with(" hello", 0);
+        let id = app.active;
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), " hello");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+    }
+
+    /// The data-loss regression guard this design exists to avoid: a
+    /// cursor with an active selection is a no-op and the selected text
+    /// survives, even though the byte left of the selection's `position`
+    /// is a space.
+    #[test]
+    fn retract_space_is_a_no_op_with_an_active_selection() {
+        // The caret MUST sit immediately right of a space (position 6, so
+        // `byte(5) == ' '`), otherwise the byte guard returns first and this
+        // never exercises the selection guard at all. Verified by mutation:
+        // delete the selection guard and this test must fail. An earlier
+        // version selected `[6, 11)` in "hello world" — caret after 'd' — and
+        // so passed even with the guard removed.
+        let mut app = app_with("hello world", 6);
+        let id = app.active;
+        app.doc_mut(id).unwrap().cursors = CursorSet::new(0).map(|c| Cursor {
+            anchor: 0,
+            position: 6,
+            ..c
+        });
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello world");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+        let c = app.doc(id).unwrap().cursors.primary();
+        assert_eq!((c.anchor, c.position), (0, 6), "selection must survive");
+    }
+
+    /// Two cursors are a no-op even when each sits right of a space — the
+    /// multi-cursor half of the same guard. Without it, `commit_edit_batch`
+    /// would delete a byte per cursor.
+    #[test]
+    fn retract_space_is_a_no_op_with_multiple_cursors() {
+        let mut app = app_with("ab cd ", 3);
+        let id = app.active;
+        let two = CursorSet::new(3).add(Cursor {
+            position: 6,
+            anchor: 6,
+            desired_col: 0,
+            id: 0,
+        });
+        assert_eq!(two.len(), 2, "fixture must really hold two cursors");
+        app.doc_mut(id).unwrap().cursors = two;
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "ab cd ");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+    }
+
+    /// A read-only document is a no-op.
+    #[test]
+    fn retract_space_is_a_no_op_on_a_read_only_document() {
+        let mut app = app_with("hello ", 6);
+        let id = app.active;
+        app.doc_mut(id).unwrap().read_only = true;
+        retract_space(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "hello ");
+        assert_eq!(app.doc(id).unwrap().journal.len(), 0);
+    }
+
     #[test]
     fn undo_and_redo_are_not_blocked_by_read_only() {
         let mut app = app_with("hello", 5);

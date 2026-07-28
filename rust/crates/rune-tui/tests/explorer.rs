@@ -44,9 +44,9 @@ fn app_with(mem: &Arc<Mem>) -> App {
     app
 }
 
-fn ctrl_x() -> KeyInput {
+fn ctrl_b() -> KeyInput {
     KeyInput {
-        code: KeyCode::Char('x'),
+        code: KeyCode::Char('b'),
         mods: Mods {
             ctrl: true,
             ..Mods::NONE
@@ -61,14 +61,14 @@ fn key(code: KeyCode) -> KeyInput {
     }
 }
 
-/// `^x` through the real `update`, then runs the one `ReadDir` `Cmd` it
+/// `^b` through the real `update`, then runs the one `ReadDir` `Cmd` it
 /// enqueues and delivers its `Msg::DirLoaded` reply — the same two-step
 /// production actually performs across the `Cmd` thread boundary, just
 /// synchronously here.
 fn load_explorer(app: &mut App) {
     let mut effects = Effects::default();
-    app::update(app, Msg::Key(ctrl_x()), &mut effects);
-    assert_eq!(effects.cmds.len(), 1, "^x must enqueue exactly one Cmd");
+    app::update(app, Msg::Key(ctrl_b()), &mut effects);
+    assert_eq!(effects.cmds.len(), 1, "^b must enqueue exactly one Cmd");
     assert_eq!(effects.cmds[0].kind(), CmdKind::ReadDir);
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
@@ -77,7 +77,7 @@ fn load_explorer(app: &mut App) {
 }
 
 #[test]
-fn ctrl_x_populates_the_explorer_via_dir_loaded() {
+fn ctrl_b_populates_the_explorer_via_dir_loaded() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
 
@@ -197,7 +197,7 @@ fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
         .expect("sub listed");
     app.explorer.nav.cursor = idx;
 
-    // Armed AFTER the initial `^x` load (which itself resolves
+    // Armed AFTER the initial `^b` load (which itself resolves
     // `initial_root`) so it targets THIS Enter-on-a-directory's own
     // `resolve` call, not an earlier, unrelated one.
     mem.fail_next(rune_vfs::OpKind::Resolve, std::io::ErrorKind::Other);

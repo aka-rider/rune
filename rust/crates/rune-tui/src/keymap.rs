@@ -6,6 +6,13 @@
 //! full Phase-1 chord table so WP6/7/8 only need to act on the `Command`s it
 //! already produces, never touch this file's matching logic again.
 
+// The generic binding machinery now lives in `crate::binding` and the
+// global chord table in `crate::global` (§1.6: this file was over the
+// 500-line budget). Re-exported here so every existing `keymap::` import
+// path keeps working.
+pub use crate::binding::{Binding, KeyOutcome, KeyPattern, resolve_in};
+pub use crate::global::{GLOBAL_BINDINGS, GlobalCommand};
+
 /// A platform- and library-independent key identity — decoupled from
 /// termina's `KeyCode` so the resolver table below (and its tests) don't
 /// depend on termina at all. `from_termina` is the only place that bridges
@@ -141,13 +148,13 @@ pub enum Command {
 }
 
 /// Which quit chord produced a `Command::QuitConfirm` — the identity `App`
-/// compares to require the SAME chord pressed twice (plan: "press-twice on
-/// the SAME chord (ctrl+c ctrl+c or ctrl+alt+d ctrl+alt+d) quits"; pressing
-/// the other quit chord does not count as the second press).
+/// compares to require the SAME chord pressed twice: the two quit chords
+/// are `ctrl+c ctrl+c` and `ctrl+d ctrl+d`; pressing the other quit chord
+/// does not count as the second press.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QuitKey {
     CtrlC,
-    CtrlAltD,
+    CtrlD,
 }
 
 impl QuitKey {
@@ -159,7 +166,7 @@ impl QuitKey {
         let m = key.mods;
         match key.code {
             KeyCode::Char('c') if m.ctrl && !m.alt && !m.shift && !m.sup => Some(QuitKey::CtrlC),
-            KeyCode::Char('d') if m.ctrl && m.alt && !m.shift && !m.sup => Some(QuitKey::CtrlAltD),
+            KeyCode::Char('d') if m.ctrl && !m.alt && !m.shift && !m.sup => Some(QuitKey::CtrlD),
             _ => None,
         }
     }
@@ -236,7 +243,7 @@ fn resolve_plain_or_shift(m: Mods, plain: Command, select: Command) -> Option<Co
 }
 
 /// The `Char(c)`-keyed chords: word motion (`alt+b`/`alt+f`), page motion
-/// (`ctrl+u`/`ctrl+d`), select-all, clipboard, undo/redo, save. Quit chords
+/// (`ctrl+u`), select-all, clipboard, undo/redo, save. Quit chords
 /// are handled by the `QuitKey::from_key` short-circuit in `resolve` above,
 /// not here.
 fn resolve_char(c: char, m: Mods) -> Option<Command> {
@@ -244,7 +251,6 @@ fn resolve_char(c: char, m: Mods) -> Option<Command> {
         'b' if m.alt && !m.ctrl && !m.sup => Some(Command::WordLeft),
         'f' if m.alt && !m.ctrl && !m.sup => Some(Command::WordRight),
         'u' if m.ctrl && !m.alt && !m.sup => Some(Command::PageUp),
-        'd' if m.ctrl && !m.alt && !m.sup => Some(Command::PageDown),
         'a' if (m.sup || m.ctrl) && !m.alt => Some(Command::SelectAll),
         'c' if m.sup && !m.ctrl && !m.shift => Some(Command::Copy),
         'c' if m.ctrl && m.shift && !m.sup => Some(Command::Copy),
@@ -258,175 +264,6 @@ fn resolve_char(c: char, m: Mods) -> Option<Command> {
         _ => None,
     }
 }
-
-// ── Generic binding tables (plan WP2.S3/decision 9) ─────────────────────
-//
-// A second, data-driven resolution style alongside `resolve` above:
-// `KeyPattern` matches a chord EXACTLY (code + the WHOLE `Mods` set, unlike
-// `resolve_char`'s partial guards), and `resolve_in` looks one up in a
-// `const` table. `resolve` itself stays hand-written (decision 9: "tables
-// only where WP7's Help doc needs enumeration") — `GLOBAL_BINDINGS` below,
-// and `EXPLORER_BINDINGS`/`TABS_BINDINGS` in WP4/WP5, are that case.
-
-/// One exact chord: a `KeyCode` plus the WHOLE `Mods` set that must be held.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KeyPattern {
-    pub code: KeyCode,
-    pub mods: Mods,
-}
-
-impl KeyPattern {
-    pub const fn new(code: KeyCode, mods: Mods) -> KeyPattern {
-        KeyPattern { code, mods }
-    }
-
-    fn matches(self, key: KeyInput) -> bool {
-        self.code == key.code && self.mods == key.mods
-    }
-
-    /// A short display label (footer default-mode hints, WP7's Help doc —
-    /// one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup, then
-    /// the key, `Char` uppercased ("^X" for Ctrl+x).
-    pub fn label(&self) -> String {
-        let mut s = String::new();
-        if self.mods.ctrl {
-            s.push('^');
-        }
-        if self.mods.alt {
-            s.push('\u{2325}'); // ⌥
-        }
-        if self.mods.shift {
-            s.push('\u{21e7}'); // ⇧
-        }
-        if self.mods.sup {
-            s.push('\u{2318}'); // ⌘
-        }
-        match self.code {
-            KeyCode::Char(c) => s.push(c.to_ascii_uppercase()),
-            KeyCode::F1 => s.push_str("F1"),
-            other => s.push_str(&format!("{other:?}")),
-        }
-        s
-    }
-}
-
-/// One table entry: the chord, the command it produces, and its help-line
-/// label — `help` is the one source the footer's hints and WP7's Help doc
-/// both read.
-#[derive(Clone, Copy, Debug)]
-pub struct Binding<C: Copy + 'static> {
-    pub key: KeyPattern,
-    pub cmd: C,
-    pub help: &'static str,
-}
-
-/// Linear first-match lookup — these are chord tables (single- to low-
-/// double-digit entries), not per-keystroke text, so a `HashMap` would cost
-/// this module's whole appeal (a `const` table, no allocation) for nothing.
-pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
-    table
-        .iter()
-        .find(|binding| binding.key.matches(key))
-        .map(|binding| binding.cmd)
-}
-
-/// A pane's key handler's verdict on one keystroke (decision 8's four-stage
-/// pipeline, `app::handle_key`): `Consumed` stops the pipeline there;
-/// `Ignored` lets a later stage see the same key. `#[must_use]` — dropping
-/// the verdict is indistinguishable from a bug that always consumes.
-#[must_use]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KeyOutcome {
-    Consumed,
-    Ignored,
-}
-
-/// The global chord table's command set (decision 7: `Pane` focus
-/// discriminant + these chrome-level actions). Resolved BEFORE any pane's
-/// own keymap, so every variant fires regardless of focus — including the
-/// quit chords and Save, which must keep working while the Explorer/Tabs
-/// stub panes own it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GlobalCommand {
-    ToggleExplorer,
-    FocusEditor,
-    /// Focuses the Open Tabs pane (plan WP5: Explorer/Tabs are separate
-    /// panes — decision 7 — so, unlike Go's single shared `FocusExplorer`
-    /// chord, this needs its own binding; `^x`'s `ToggleExplorer` only ever
-    /// focuses Explorer). Shows the left column too (mirroring
-    /// `ToggleExplorer`'s own "show + focus" pairing) so the tab list is
-    /// actually visible the moment it's focused. `^t` — free in both this
-    /// table and `keymap::resolve`'s char guards.
-    FocusTabs,
-    Save,
-    Help,
-    QuitChord(QuitKey),
-}
-
-const CTRL: Mods = Mods {
-    shift: false,
-    alt: false,
-    ctrl: true,
-    sup: false,
-};
-const CTRL_ALT: Mods = Mods {
-    shift: false,
-    alt: true,
-    ctrl: true,
-    sup: false,
-};
-const SUP: Mods = Mods {
-    shift: false,
-    alt: false,
-    ctrl: false,
-    sup: true,
-};
-
-/// `^x`/`^e`/F1 are new WP2 bindings. `Save` and the two quit chords are the
-/// SAME combos `resolve`/`QuitKey::from_key` already bind above — moving
-/// their resolution to the global pipeline stage changes only WHEN they're
-/// seen (before, not after, a pane's own keymap), not which chord activates
-/// them. `KeyPattern`'s exact-modifier match narrows `resolve_char`'s `'s'
-/// if m.sup && !m.ctrl` guard (which also tolerated shift/alt held) to the
-/// one precise combo below — the loosely-matched variants were never a
-/// documented, intentional binding.
-pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('x'), CTRL),
-        cmd: GlobalCommand::ToggleExplorer,
-        help: "explorer",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('e'), CTRL),
-        cmd: GlobalCommand::FocusEditor,
-        help: "editor",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('t'), CTRL),
-        cmd: GlobalCommand::FocusTabs,
-        help: "tabs",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('s'), SUP),
-        cmd: GlobalCommand::Save,
-        help: "save",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::F1, Mods::NONE),
-        cmd: GlobalCommand::Help,
-        help: "help",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('c'), CTRL),
-        cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
-        help: "quit",
-    },
-    Binding {
-        key: KeyPattern::new(KeyCode::Char('d'), CTRL_ALT),
-        cmd: GlobalCommand::QuitChord(QuitKey::CtrlAltD),
-        help: "quit",
-    },
-];
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -489,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_and_ctrl_alt_d_resolve_to_quit_confirm_with_distinct_identity() {
+    fn ctrl_c_and_ctrl_d_resolve_to_quit_confirm_with_distinct_identity() {
         let ctrl_c = key(
             KeyCode::Char('c'),
             Mods {
@@ -497,19 +334,18 @@ mod tests {
                 ..Mods::NONE
             },
         );
-        let ctrl_alt_d = key(
+        let ctrl_d = key(
             KeyCode::Char('d'),
             Mods {
                 ctrl: true,
-                alt: true,
                 ..Mods::NONE
             },
         );
         assert_eq!(resolve(ctrl_c), Some(Command::QuitConfirm));
-        assert_eq!(resolve(ctrl_alt_d), Some(Command::QuitConfirm));
+        assert_eq!(resolve(ctrl_d), Some(Command::QuitConfirm));
         assert_eq!(QuitKey::from_key(ctrl_c), Some(QuitKey::CtrlC));
-        assert_eq!(QuitKey::from_key(ctrl_alt_d), Some(QuitKey::CtrlAltD));
-        assert_ne!(QuitKey::from_key(ctrl_c), QuitKey::from_key(ctrl_alt_d));
+        assert_eq!(QuitKey::from_key(ctrl_d), Some(QuitKey::CtrlD));
+        assert_ne!(QuitKey::from_key(ctrl_c), QuitKey::from_key(ctrl_d));
     }
 
     #[test]
@@ -527,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_d_is_page_down_not_quit() {
+    fn ctrl_d_is_quit_not_page_down() {
         let chord = key(
             KeyCode::Char('d'),
             Mods {
@@ -535,7 +371,19 @@ mod tests {
                 ..Mods::NONE
             },
         );
-        assert_eq!(resolve(chord), Some(Command::PageDown));
+        assert_eq!(resolve(chord), Some(Command::QuitConfirm));
+    }
+
+    #[test]
+    fn ctrl_u_is_still_page_up() {
+        let chord = key(
+            KeyCode::Char('u'),
+            Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        );
+        assert_eq!(resolve(chord), Some(Command::PageUp));
     }
 
     #[test]
@@ -600,9 +448,7 @@ mod tests {
         );
     }
 
-    // `resolve_in`/`KeyPattern`/`GLOBAL_BINDINGS` coverage lives in
-    // `tests/keymap_global.rs` (plan WP2.S7) — every item it exercises is
-    // already `pub`, and keeping it out-of-crate holds this module closer
-    // to the §1.6 budget (already over from the WP2 chord-table additions;
-    // see `TODO.md`).
+    // The generic machinery (`resolve_in`/`KeyPattern`) now lives in
+    // `binding.rs` and the global table in `global.rs`; their coverage is
+    // in `tests/keymap_global.rs`.
 }

@@ -72,11 +72,10 @@ fn different_quit_chord_re_arms_instead_of_quitting() {
             ..Mods::NONE
         },
     );
-    let ctrl_alt_d = key(
+    let ctrl_d = key(
         KeyCode::Char('d'),
         Mods {
             ctrl: true,
-            alt: true,
             ..Mods::NONE
         },
     );
@@ -86,9 +85,9 @@ fn different_quit_chord_re_arms_instead_of_quitting() {
     assert_eq!(app.pending_quit, Some((QuitKey::CtrlC, 0)));
 
     let mut effects = Effects::default();
-    update(&mut app, Msg::Key(ctrl_alt_d), &mut effects);
+    update(&mut app, Msg::Key(ctrl_d), &mut effects);
     assert!(!app.should_quit, "a different quit chord must not quit");
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlAltD, 1)));
+    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
 }
 
 #[test]
@@ -125,19 +124,18 @@ fn stale_confirm_timeout_is_ignored() {
             ..Mods::NONE
         },
     );
-    let ctrl_alt_d = key(
+    let ctrl_d = key(
         KeyCode::Char('d'),
         Mods {
             ctrl: true,
-            alt: true,
             ..Mods::NONE
         },
     );
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(ctrl_c), &mut effects); // generation 0
     let mut effects2 = Effects::default();
-    update(&mut app, Msg::Key(ctrl_alt_d), &mut effects2); // re-arms, generation 1
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlAltD, 1)));
+    update(&mut app, Msg::Key(ctrl_d), &mut effects2); // re-arms, generation 1
+    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
 
     // The stale generation-0 timeout must not clear the generation-1 pending quit.
     let mut effects3 = Effects::default();
@@ -146,7 +144,7 @@ fn stale_confirm_timeout_is_ignored() {
         Msg::ConfirmTimeout { generation: 0 },
         &mut effects3,
     );
-    assert_eq!(app.pending_quit, Some((QuitKey::CtrlAltD, 1)));
+    assert_eq!(app.pending_quit, Some((QuitKey::CtrlD, 1)));
 }
 
 /// Regression for F1: a raw C0 control byte or DEL arriving as

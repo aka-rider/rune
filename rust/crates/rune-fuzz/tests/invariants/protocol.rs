@@ -92,17 +92,16 @@ fn quit_chord_detects_a_mismatched_chord() {
     prev.pending_quit = Some((QuitKey::CtrlC, 0));
     let mut next = base_snapshot("abc");
     next.should_quit = true;
-    let ctrl_alt_d = key(
+    let ctrl_d = key(
         KeyCode::Char('d'),
         Mods {
             ctrl: true,
-            alt: true,
             ..Mods::NONE
         },
     );
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Key {
-        input: ctrl_alt_d,
+        input: ctrl_d,
         command: Some(Command::QuitConfirm),
     };
     let v = quit_chord(&prev, &next, &ctx)

@@ -32,7 +32,11 @@ fn app_for(content: &str) -> App {
 }
 
 fn draw(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
+    draw_with_width(app, WIDTH)
+}
+
+fn draw_with_width(app: &App, width: u16) -> RtBuffer {
+    let backend = TestBackend::new(width, HEIGHT);
     let mut terminal = Terminal::new(backend).expect("terminal construction");
     terminal
         .draw(|frame| render::draw(app, frame))
@@ -106,17 +110,19 @@ fn left_pane_hidden_by_default_leaves_editor_geometry_unchanged() {
     );
 }
 
-/// `^x` end-to-end through the real `app::update`: flips `left_visible`,
+/// `^b` end-to-end through the real `app::update`: flips `left_visible`,
 /// focuses the Explorer, and the very next render shows the bordered
-/// blocks (plan WP2.S7: "ToggleExplorer flips left_visible+focus").
+/// blocks (plan WP2.S7: "ToggleExplorer flips left_visible+focus"; plan
+/// WP5.S1: `^b` is the always-works ctrl fallback for the Explorer, `^x`
+/// having retired in favor of the held-space leader's `␣x`).
 #[test]
-fn ctrl_x_toggles_the_explorer_through_update() {
+fn ctrl_b_toggles_the_explorer_through_update() {
     let mut app = app_for("hello");
     let mut effects = Effects::default();
     app::update(
         &mut app,
         Msg::Key(KeyInput {
-            code: KeyCode::Char('x'),
+            code: KeyCode::Char('b'),
             mods: Mods {
                 ctrl: true,
                 ..Mods::NONE
@@ -130,6 +136,28 @@ fn ctrl_x_toggles_the_explorer_through_update() {
     app.sync_view();
     let buf = draw(&app);
     assert!(row_text(&buf, 0, WIDTH).contains("Files"));
+}
+
+/// Plan WP6.S7/risk R3: with the Explorer focused (the contextual hints
+/// that can now grow past `GLOBAL_BINDINGS`' old fixed set), `Ln n, Col n`
+/// must still be visible on the footer row at both a full-width (80) and a
+/// narrow (40) terminal — the priority truncation reserves room for it
+/// first, so it can never fall off regardless of how many hint entries fit.
+#[test]
+fn footer_position_readout_survives_truncation_at_narrow_widths() {
+    for width in [80u16, 40u16] {
+        let mut app = app_for("hello");
+        app.left_visible = true;
+        app.focus = Pane::Explorer;
+        app.sync_view();
+
+        let buf = draw_with_width(&app, width);
+        let footer_row = row_text(&buf, HEIGHT - 1, width);
+        assert!(
+            footer_row.contains("Ln 1, Col 1"),
+            "width {width}: expected 'Ln 1, Col 1' on the footer row:\n{footer_row}"
+        );
+    }
 }
 
 /// `Ln n, Col n` on a multiline buffer with a multibyte character before

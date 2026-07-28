@@ -13,7 +13,11 @@ use ratatui::widgets::Paragraph;
 use crate::app::{App, StatusSource};
 use crate::banner;
 use crate::banner::Modal;
-use crate::keymap::GLOBAL_BINDINGS;
+use crate::explorer::EXPLORER_BINDINGS;
+use crate::global::{self, LEADER_BINDINGS};
+use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
+use crate::opentabs::TABS_BINDINGS;
+use crate::pane::Pane;
 use crate::styles;
 
 /// Which single visual state the footer's left side shows for this render
@@ -105,7 +109,7 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
         Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
         Mode::Status(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
-        Mode::DefaultHints => default_hint_spans(),
+        Mode::DefaultHints => default_hint_spans(app),
     }
 }
 
@@ -130,20 +134,117 @@ fn guard_spans() -> Vec<Span<'static>> {
     spans
 }
 
-/// Default-mode hints (plan WP2.S6/S7): one `<key> label` pair per
-/// `GLOBAL_BINDINGS` entry, in table order — the same table WP7's Help doc
-/// iterates, so a chord's footer hint and its Help-doc line can never
-/// drift apart. The two quit chords each render their own "quit" entry
-/// (iterating the table literally, not de-duplicating by label).
-fn default_hint_spans() -> Vec<Span<'static>> {
+/// Default-mode hints, now CONTEXTUAL per focused pane (plan WP6.S2,
+/// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
+/// priority-ordered `(label, help, active)` list —
+///
+/// 1. The three held-space leader chords (`global::LEADER_BINDINGS`),
+///    always active.
+/// 2. `⌘S save` — only in the Editor; styled active only when the
+///    document is dirty (assumption A2: always PRESENT there, never
+///    removed, so the row never jumps).
+/// 3. The focused pane's own table (`EXPLORER_BINDINGS`/`TABS_BINDINGS`) —
+///    nothing extra for the Editor, whose chords live in `keymap::resolve`,
+///    a match rather than a table (the same asymmetry `help.rs` already
+///    records).
+/// 4. `F1 help`, then the quit chords, from `GLOBAL_BINDINGS` — always
+///    last.
+///
+/// One source read by both the untruncated renderer (`footer_text`,
+/// `rune-fuzz`'s snapshots) and the width-truncated one `draw` uses, so the
+/// two can never disagree about WHAT the hints are, only how many fit.
+fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
+    let mut entries: Vec<(String, &'static str, bool)> = LEADER_BINDINGS
+        .iter()
+        .map(|b| (global::leader_label(b), b.help, true))
+        .collect();
+
+    if app.focus == Pane::Editor
+        && let Some(save) = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+    {
+        entries.push((save.key.label(), save.help, app.is_dirty()));
+    }
+
+    match app.focus {
+        Pane::Explorer => entries.extend(
+            EXPLORER_BINDINGS
+                .iter()
+                .map(|b| (b.key.label(), b.help, true)),
+        ),
+        Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.key.label(), b.help, true))),
+        Pane::Editor => {}
+    }
+
+    entries.extend(
+        GLOBAL_BINDINGS
+            .iter()
+            .filter(|b| matches!(b.cmd, GlobalCommand::Help | GlobalCommand::QuitChord(_)))
+            .map(|b| (b.key.label(), b.help, true)),
+    );
+
+    entries
+}
+
+/// One hint entry's own span group: a leading `"  "` separator (every
+/// entry but the first), the key label (active/inactive style), a space,
+/// then the help text. The chokepoint both `default_hint_spans` (full,
+/// untruncated) and `draw`'s width-truncated renderer build from, so an
+/// entry can never render differently in the two paths (plan WP6.S3).
+fn hint_entry_spans(
+    index: usize,
+    label: String,
+    help: &'static str,
+    active: bool,
+) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    for (i, binding) in GLOBAL_BINDINGS.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled("  ", styles::footer_hint()));
+    if index > 0 {
+        spans.push(Span::styled("  ", styles::footer_hint()));
+    }
+    let key_style = if active {
+        styles::footer_key()
+    } else {
+        styles::footer_key_inactive()
+    };
+    spans.push(Span::styled(label, key_style));
+    spans.push(Span::styled(" ", styles::footer_hint()));
+    spans.push(Span::styled(help, styles::footer_hint()));
+    spans
+}
+
+/// The FULL, untruncated hint spans (plan WP6.S4) — what `footer_text`
+/// asserts on and what `rune-fuzz/src/snapshot.rs` captures into every fuzz
+/// snapshot. Truncation happens only inside `draw`, so these stay
+/// width-independent and the snapshots stay stable.
+fn default_hint_spans(app: &App) -> Vec<Span<'static>> {
+    default_hint_entries(app)
+        .into_iter()
+        .enumerate()
+        .flat_map(|(i, (label, help, active))| hint_entry_spans(i, label, help, active))
+        .collect()
+}
+
+/// Priority-truncated hint spans (plan WP6.S3, risk R3): reserves room for
+/// `Ln n, Col n` (`right_width`) FIRST, then appends whole entries in
+/// priority order only while the next one still fits the remaining width —
+/// never a partial entry, so the position readout can never fall off the
+/// row.
+fn truncated_default_hint_spans(
+    app: &App,
+    available: usize,
+    right_width: usize,
+) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for (i, (label, help, active)) in default_hint_entries(app).into_iter().enumerate() {
+        let entry = hint_entry_spans(i, label, help, active);
+        let entry_width: usize = entry.iter().map(|s| s.content.chars().count()).sum();
+        if used + entry_width + right_width > available {
+            break;
         }
-        spans.push(Span::styled(binding.key.label(), styles::footer_key()));
-        spans.push(Span::styled(" ", styles::footer_hint()));
-        spans.push(Span::styled(binding.help, styles::footer_hint()));
+        used += entry_width;
+        spans.extend(entry);
     }
     spans
 }
@@ -168,11 +269,19 @@ pub fn position_text(app: &App) -> String {
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let bg = styles::footer();
-    let mut spans = left_spans(app);
-    let left_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let right_text = position_text(app);
     let right_width = right_text.chars().count();
     let available = area.width as usize;
+    // Truncation (plan WP6.S3/risk R3) only applies to `DefaultHints` — the
+    // one mode that grows with the focused pane's own hints; every other
+    // mode's content is already short and the three exact-equality tests
+    // (`save_error_outranks_everything_else` etc.) depend on it being
+    // rendered exactly as `left_spans` produces it, untouched.
+    let mut spans = match mode(app) {
+        Mode::DefaultHints => truncated_default_hint_spans(app, available, right_width),
+        _ => left_spans(app),
+    };
+    let left_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     if available > left_width + right_width {
         spans.push(Span::styled(
             " ".repeat(available - left_width - right_width),
@@ -199,7 +308,12 @@ mod tests {
 
     #[test]
     fn default_mode_lists_every_global_binding_label() {
+        // Editor focus (`App::new`'s default) — every `GLOBAL_BINDINGS`
+        // help string must still appear, though `explorer`/`editor`/`tabs`
+        // now come from the leader table's own entries rather than
+        // `GLOBAL_BINDINGS` itself (plan WP6.S5).
         let app = app_with("hello");
+        assert_eq!(app.focus, Pane::Editor);
         let text = footer_text(&app);
         for binding in GLOBAL_BINDINGS {
             assert!(
@@ -208,6 +322,60 @@ mod tests {
                 binding.help
             );
         }
+    }
+
+    /// Plan WP6.S5: with Explorer focus, the pane's own keys show and
+    /// `save` (Editor-only, assumption A2) does not.
+    #[test]
+    fn explorer_focus_shows_its_own_keys_and_omits_save() {
+        let mut app = app_with("hello");
+        app.focus = Pane::Explorer;
+        let text = footer_text(&app);
+        assert!(text.contains("up dir"), "footer text: {text:?}");
+        assert!(!text.contains("save"), "footer text: {text:?}");
+    }
+
+    /// Plan WP6.S5: with Tabs focus, the pane's own keys show.
+    #[test]
+    fn tabs_focus_shows_its_own_keys() {
+        let mut app = app_with("hello");
+        app.focus = Pane::Tabs;
+        let text = footer_text(&app);
+        assert!(text.contains("close"), "footer text: {text:?}");
+    }
+
+    /// Plan WP6.S6 — the span-level regression guard for assumption A2: the
+    /// `⌘S` label span carries `styles::footer_key_inactive()` on a clean
+    /// document and `styles::footer_key()` once an edit makes it dirty.
+    /// Reads `default_hint_spans` directly (private, but visible from this
+    /// descendant module) rather than re-deriving the span list.
+    #[test]
+    fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
+        let save_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+            .expect("a Save binding exists")
+            .key
+            .label();
+
+        let app = app_with("hello");
+        assert!(!app.is_dirty());
+        let spans = default_hint_spans(&app);
+        let save_span = spans
+            .iter()
+            .find(|s| s.content.as_ref() == save_label)
+            .expect("save label span present");
+        assert_eq!(save_span.style, styles::footer_key_inactive());
+
+        let mut app = app_with("hello");
+        app.active_doc_mut().is_dirty_cached = true;
+        assert!(app.is_dirty());
+        let spans = default_hint_spans(&app);
+        let save_span = spans
+            .iter()
+            .find(|s| s.content.as_ref() == save_label)
+            .expect("save label span present");
+        assert_eq!(save_span.style, styles::footer_key());
     }
 
     /// The Guard mode's rendered labels are exactly `banner::DIRTY_CLOSE_

@@ -13,15 +13,15 @@ fn key(code: KeyCode, mods: Mods) -> KeyInput {
 
 #[test]
 fn resolve_in_matches_the_exact_modifier_set() {
-    let ctrl_x = key(
-        KeyCode::Char('x'),
+    let ctrl_b = key(
+        KeyCode::Char('b'),
         Mods {
             ctrl: true,
             ..Mods::NONE
         },
     );
     assert_eq!(
-        resolve_in(GLOBAL_BINDINGS, ctrl_x),
+        resolve_in(GLOBAL_BINDINGS, ctrl_b),
         Some(GlobalCommand::ToggleExplorer)
     );
 }
@@ -31,15 +31,15 @@ fn resolve_in_rejects_an_extra_held_modifier() {
     // Same code+ctrl as `resolve_in_matches_the_exact_modifier_set`, plus
     // shift — `KeyPattern` matches the WHOLE `Mods` set, so this must NOT
     // resolve to `ToggleExplorer`.
-    let ctrl_shift_x = key(
-        KeyCode::Char('x'),
+    let ctrl_shift_b = key(
+        KeyCode::Char('b'),
         Mods {
             ctrl: true,
             shift: true,
             ..Mods::NONE
         },
     );
-    assert_eq!(resolve_in(GLOBAL_BINDINGS, ctrl_shift_x), None);
+    assert_eq!(resolve_in(GLOBAL_BINDINGS, ctrl_shift_b), None);
 }
 
 #[test]
@@ -83,30 +83,29 @@ fn global_bindings_cover_quit_focus_save_and_help() {
         Some(GlobalCommand::Save)
     );
 
-    let ctrl_alt_d = key(
+    let ctrl_d = key(
         KeyCode::Char('d'),
         Mods {
             ctrl: true,
-            alt: true,
             ..Mods::NONE
         },
     );
     assert_eq!(
-        resolve_in(GLOBAL_BINDINGS, ctrl_alt_d),
-        Some(GlobalCommand::QuitChord(QuitKey::CtrlAltD))
+        resolve_in(GLOBAL_BINDINGS, ctrl_d),
+        Some(GlobalCommand::QuitChord(QuitKey::CtrlD))
     );
 }
 
 #[test]
 fn key_pattern_label_renders_the_modifier_prefix_and_uppercased_char() {
-    let ctrl_x = KeyPattern::new(
-        KeyCode::Char('x'),
+    let ctrl_b = KeyPattern::new(
+        KeyCode::Char('b'),
         Mods {
             ctrl: true,
             ..Mods::NONE
         },
     );
-    assert_eq!(ctrl_x.label(), "^X");
+    assert_eq!(ctrl_b.label(), "^B");
 
     let sup_s = KeyPattern::new(
         KeyCode::Char('s'),

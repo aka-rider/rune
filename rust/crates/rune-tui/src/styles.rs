@@ -105,6 +105,14 @@ pub fn footer_hint() -> Style {
     Style::new().fg(SUBTLE).bg(SURFACE)
 }
 
+/// Returns style with fg SUBTLE, bg SURFACE, NOT bold — the muted twin of
+/// `footer_key()` (plan WP6.S1), mirroring the existing `active_border()`/
+/// `inactive_border()` pair. Used for a footer key label that's present but
+/// inactive right now (e.g. `⌘S` in a clean, non-dirty document).
+pub fn footer_key_inactive() -> Style {
+    Style::new().fg(SUBTLE).bg(SURFACE)
+}
+
 /// Returns style with fg SPECIAL, bg SURFACE — footer meta info.
 pub fn footer_meta() -> Style {
     Style::new().fg(SPECIAL).bg(SURFACE)
@@ -211,6 +219,14 @@ mod tests {
     fn footer_key_bg() {
         let s = footer_key();
         assert_eq!(s.bg, Some(SURFACE));
+    }
+
+    #[test]
+    fn footer_key_inactive_is_the_muted_twin_of_footer_key() {
+        let s = footer_key_inactive();
+        assert_eq!(s.fg, Some(SUBTLE));
+        assert_eq!(s.bg, Some(SURFACE));
+        assert!(!s.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
