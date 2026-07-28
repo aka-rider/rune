@@ -22,14 +22,15 @@
 //! popped by `app::handle_db_event`.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
-use rune_core::buffer::AppliedEdit;
+use rune_core::buffer::{AppliedEdit, Edit};
 use rune_core::cursor::Cursor;
-use rune_db::{DbEvent, ObsId, OnEvent, Store};
+use rune_db::{DbEvent, LoadResult, ObsId, OnEvent, Store};
 
-use crate::app::App;
+use crate::app::{App, StatusSource};
 use crate::document::DocumentId;
 use crate::runtime::Msg;
 
@@ -300,6 +301,90 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
         }
         Err(e) => crate::save::on_store_failure(app, e.to_string()),
     }
+}
+
+/// Enqueues a `Load` op hydrating `id` (already bound to `path`, an
+/// existing file just read straight off disk — `workspace::open_path`'s one
+/// call site) through the app-wide recovery store, closing the "Explorer-
+/// opened documents get no recovery journal" gap (plan WP6). Records `id`'s
+/// buffer version at the moment the load is ISSUED (`app.db_load_versions`)
+/// alongside the routing entry in `app.db_ops` — `app::handle_db_event`'s
+/// `Load` arm needs both to decide, on the ack, whether adopting the
+/// recovered content is still safe (see `handle_load_ack`'s docs). A
+/// degraded store enqueues nothing — there is no trustworthy recovery
+/// journal to bind this document to either way.
+pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
+    let Some(doc) = app.doc(id) else { return };
+    let issued_version = doc.buffer.version();
+    let Some(db) = app.db.as_ref() else { return };
+    match db.store.load(path) {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, id);
+            app.db_load_versions.insert(op_id, issued_version);
+        }
+        Err(e) => crate::save::on_store_failure(app, e.to_string()),
+    }
+}
+
+/// The reaction to a `Load` op's ack (plan WP6.S2/S3) — routed from
+/// `app::handle_db_event` once `app.db_ops` has resolved the ack's op id to
+/// `id`. `issued_version` is `id`'s buffer version recorded by
+/// `load_document` at ENQUEUE time (`app.db_load_versions`), `None` only if
+/// this ack's routing entry was somehow already consumed.
+///
+/// A `None` `saved_obs` (should not occur — see `LoadResult::saved_obs`'s
+/// own doc comment) installs nothing and surfaces a status message instead
+/// of binding a document to a recovery row with no CAS baseline.
+///
+/// Otherwise, `recovered` is adopted into the buffer ONLY when
+/// `issued_version` still equals the buffer's CURRENT version — `Load` is
+/// asynchronous, so the user may have typed into the buffer during the
+/// round trip, and clobbering those keystrokes to complete a recovery
+/// binding would violate the Prime Directive. When the version has moved
+/// on, `DocDb` is still installed (this document's own recovery journal is
+/// real and should be used going forward), but the buffer bytes are left
+/// exactly as the user last typed them — this session's baseline simply
+/// anchors from the disk content `load_document`'s caller already read,
+/// same as `recovered == disk_content` would.
+pub fn handle_load_ack(
+    app: &mut App,
+    id: DocumentId,
+    load_result: LoadResult,
+    issued_version: Option<u64>,
+) {
+    let Some(expect_obs) = load_result.saved_obs else {
+        app.set_status(
+            "crash recovery unavailable for this tab: load returned no baseline observation",
+            StatusSource::Other,
+        );
+        return;
+    };
+
+    let Some(doc) = app.doc_mut(id) else { return };
+    if issued_version == Some(doc.buffer.version())
+        && load_result.recovered != load_result.disk_content
+    {
+        let edit = Edit {
+            start: 0,
+            end: doc.buffer.len(),
+            insert: load_result.recovered.clone(),
+            cursor_id: 0,
+        };
+        if let Ok((new_buffer, applied)) = doc.buffer.apply_edits(std::slice::from_ref(&edit)) {
+            doc.cursors = doc.cursors.adjust_after_batch_edits(&applied);
+            doc.buffer = new_buffer;
+            doc.mark_dirty_from_hydration();
+        }
+    }
+    doc.db = Some(DocDb::new(
+        load_result.doc_id,
+        expect_obs,
+        false, // bind_new: `id` is already bound to a path read straight off disk
+        load_result.bridge_seq.unwrap_or(0),
+    ));
 }
 
 /// Records that `seq` was durably committed for `id`'s oldest still-pending

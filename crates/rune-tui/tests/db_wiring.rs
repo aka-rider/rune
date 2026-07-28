@@ -13,17 +13,19 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
 use rune_core::buffer::{AppliedEdit, Buffer};
 use rune_core::cursor::CursorSet;
 use rune_core::undo::Step;
-use rune_db::{ClockFn, DbEvent, LoadResult, OpOutcome, Store};
-use rune_tui::app::{self, App};
+use rune_db::{ClockFn, DbEvent, LoadResult, OpOutcome, Store, SyncKind, SyncState, Version};
+use rune_tui::app::{self, App, StatusSource};
 use rune_tui::commands::edit;
 use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_tui::footer;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 fn temp_db_dir(label: &str) -> PathBuf {
@@ -457,5 +459,217 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
     assert!(
         app.doc(id).unwrap().save_in_flight,
         "the second super+s must actually enqueue the materialize"
+    );
+}
+
+/// Opens a real `Store` at a fresh temp dir and wires it onto a brand-new
+/// `App` with exactly one untitled draft (no path) — the state
+/// `workspace::open_path`'s WP6 hydration runs against, since it only ever
+/// hydrates the document it opens, never the app's initial one. The
+/// returned bridge is left in its `Bootstrap` sink (never `attach`ed), so
+/// every `DbEvent` — including the `Load` ack `open_path` enqueues — lands
+/// on the returned receiver for the test to drive through `app::update`
+/// itself, exactly like `open_and_load` above does for bootstrap hydration.
+fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Receiver<DbEvent>) {
+    let dir = temp_db_dir(label);
+    let db_path = dir.join("rune-v1.db");
+    let (bridge, rx) = DbBridge::bootstrap();
+    let (store, _warning) =
+        Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
+    let db = Db::new(store, bridge, false);
+    let app = App::new(Buffer::new(""), None, vfs, Some(db));
+    (app, rx)
+}
+
+/// Blocks for the next `DbEvent::Ok` reply to `op_id` on `rx`, panicking on
+/// an `Err`/`Fatal`/mismatched-id reply — the same shape `open_and_load`
+/// above uses for bootstrap's own `Load` ack.
+fn recv_ok(rx: &Receiver<DbEvent>, op_id: u64) -> OpOutcome {
+    loop {
+        match rx.recv().expect("writer thread alive") {
+            DbEvent::Ok { id, result } if id == op_id => break result,
+            DbEvent::Err { id, error } if id == op_id => panic!("op {id} failed: {error}"),
+            DbEvent::Fatal { error } => panic!("writer thread fatal: {error}"),
+            _ => continue,
+        }
+    }
+}
+
+/// Plan WP6.S6: opening an Explorer path enqueues exactly one `Load` op and
+/// records it in `app.db_ops`, keyed to the newly opened document — not the
+/// app's pre-existing untitled draft.
+#[test]
+fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (mut app, _rx) = app_with_store("open-path-enqueue", vfs);
+    let initial_id = app.active;
+
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+
+    let opened_id = app.active;
+    assert_ne!(
+        opened_id, initial_id,
+        "open_path must switch to the newly opened document"
+    );
+    assert_eq!(
+        app.db_ops.len(),
+        1,
+        "open_path must enqueue exactly one op (the Load)"
+    );
+    assert_eq!(
+        app.db_ops.values().next().copied(),
+        Some(opened_id),
+        "the enqueued op must be routed to the opened document, not the initial draft"
+    );
+    assert!(
+        app.doc(opened_id).unwrap().db.is_none(),
+        "db stays None until the Load ack lands"
+    );
+}
+
+/// The `Load` ack installs `Document::db` as `Some` once it lands.
+#[test]
+fn load_ack_installs_document_db_as_some() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (mut app, rx) = app_with_store("open-path-ack-installs-db", vfs);
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+    let id = app.active;
+    let op_id = *app.db_ops.keys().next().expect("one op enqueued");
+
+    let result = recv_ok(&rx, op_id);
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Db(DbEvent::Ok { id: op_id, result }),
+        &mut effects,
+    );
+
+    assert!(
+        app.doc(id).unwrap().db.is_some(),
+        "a Load ack with a saved_obs baseline must install DocDb"
+    );
+    assert!(
+        !app.db_ops.contains_key(&op_id),
+        "the ack must pop its own db_ops entry"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello",
+        "no divergence to recover: the buffer stays exactly what was read off disk"
+    );
+}
+
+/// Data-safety guard (plan WP6.S3): an ack for a document the user kept
+/// typing into during the async round trip must NEVER clobber those
+/// keystrokes — the buffer bytes stay exactly as typed, even though the
+/// ack's own `recovered` content would otherwise differ from what's now on
+/// screen. `DocDb` is still installed: the document's own recovery journal
+/// is real and should be used going forward.
+#[test]
+fn ack_for_a_document_edited_during_the_round_trip_leaves_the_buffer_unchanged() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (mut app, rx) = app_with_store("open-path-edited-in-flight", vfs);
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+    let id = app.active;
+    let op_id = *app.db_ops.keys().next().expect("one op enqueued");
+
+    // The user types while the Load round trip is still in flight — this
+    // bumps the buffer's version past what was recorded at enqueue time.
+    let len = app.doc(id).unwrap().buffer.len();
+    app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
+    press(&mut app, '!');
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+
+    let result = recv_ok(&rx, op_id);
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Db(DbEvent::Ok { id: op_id, result }),
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "the ack must never clobber a keystroke typed during the round trip"
+    );
+    assert!(
+        app.doc(id).unwrap().db.is_some(),
+        "DocDb must still be installed even when the buffer adopt is skipped"
+    );
+}
+
+/// A `Load` ack whose `LoadResult` carries no `saved_obs` baseline (should
+/// not occur in practice — see `LoadResult::saved_obs`'s own doc comment;
+/// exercised here directly since a real `Store::load` always adopts one on
+/// a first load) must install nothing and surface a status message rather
+/// than binding a document to a recovery row with no CAS baseline.
+#[test]
+fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let mut app = App::new(
+        Buffer::new("hello"),
+        Some(PathBuf::from("/doc.md")),
+        vfs,
+        None,
+    );
+    let id = app.active;
+
+    let op_id = 1u64;
+    app.db_ops.insert(op_id, id);
+    app.db_load_versions
+        .insert(op_id, app.doc(id).unwrap().buffer.version());
+
+    let load_result = LoadResult {
+        doc_id: 1,
+        renamed_from: None,
+        disk_content: "hello".to_string(),
+        recovered: "hello".to_string(),
+        has_history: false,
+        sync: SyncState {
+            kind: SyncKind::Clean,
+            ancestor: None,
+            ours: Version {
+                hash: String::new(),
+                obs: None,
+            },
+            theirs: None,
+        },
+        nlink: 1,
+        saved_obs: None,
+        bridge_seq: None,
+    };
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Db(DbEvent::Ok {
+            id: op_id,
+            result: OpOutcome::Load(Box::new(load_result)),
+        }),
+        &mut effects,
+    );
+
+    assert!(
+        app.doc(id).unwrap().db.is_none(),
+        "no baseline observation means no DocDb binding"
+    );
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
+    assert_eq!(app.status_source, StatusSource::Other);
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|s| s.contains("no baseline observation")),
+        "a status message must explain why crash recovery wasn't bound (got {:?})",
+        app.status_message
     );
 }
