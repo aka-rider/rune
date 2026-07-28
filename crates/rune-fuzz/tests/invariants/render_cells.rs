@@ -7,7 +7,7 @@ use rune_fuzz::invariant::{
     table_synthetic_decorative,
 };
 
-use crate::support::{meta_unboxed, base_snapshot, cell, cell_w, meta};
+use crate::support::{base_snapshot, cell, cell_w, meta, meta_unboxed};
 
 // ---------------------------------------------------------------------
 // SYNC-IDEMPOTENT
