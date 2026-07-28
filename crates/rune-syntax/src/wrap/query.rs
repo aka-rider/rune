@@ -27,6 +27,63 @@ pub(super) fn span_visible_len(span: &SyntaxSpan) -> usize {
     }
 }
 
+/// Concatenates every span's own visible text — the shared building block
+/// behind `WrapSnapshot::segment_text` and the free-function width walkers
+/// below, so both take a plain `&[SyntaxSpan]` rather than needing a whole
+/// `WrapSegment` to key off (WP3: a `DisplayRow`'s synthesised border spans
+/// have no backing `WrapSegment` at all, only their own `spans`).
+fn spans_text(content: &str, spans: &[SyntaxSpan]) -> String {
+    if let [only] = spans {
+        return only.text(content).to_string();
+    }
+    let mut s = String::new();
+    for sp in spans {
+        s.push_str(sp.text(content));
+    }
+    s
+}
+
+/// The width-walking core of `WrapSnapshot::visual_col` — moved to a free
+/// function over a plain `&[SyntaxSpan]` (WP3.S3) so any span slice can be
+/// walked identically, not only one already indexed by wrap row.
+pub(super) fn visual_col(content: &str, spans: &[SyntaxSpan], byte_col: usize) -> usize {
+    let text = spans_text(content, spans);
+    let mut visual = 0usize;
+    let mut bytes = 0usize;
+    while bytes < text.len() && bytes < byte_col {
+        let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
+            break;
+        };
+        visual += grapheme_width_with_tab(cluster, visual);
+        bytes += cluster.len();
+    }
+    visual
+}
+
+/// The width-walking core of `WrapSnapshot::byte_col_from_visual` — the
+/// `visual_col` counterpart, same rationale (WP3.S3).
+pub(super) fn byte_col_from_visual(
+    content: &str,
+    spans: &[SyntaxSpan],
+    visual_col: usize,
+) -> usize {
+    let text = spans_text(content, spans);
+    let mut visual = 0usize;
+    let mut bytes = 0usize;
+    while bytes < text.len() {
+        let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
+            break;
+        };
+        let rw = grapheme_width_with_tab(cluster, visual);
+        if visual + rw > visual_col {
+            break;
+        }
+        visual += rw;
+        bytes += cluster.len();
+    }
+    bytes
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WrapSnapshot {
     // Phase 1 has no table/image row expansion, so `segments` IS the row
@@ -63,17 +120,6 @@ impl WrapSnapshot {
     fn segment_at(&self, row: usize) -> Option<&WrapSegment> {
         let row = self.clamp_row(row)?;
         self.segments.get(row)
-    }
-
-    fn segment_text(&self, content: &str, seg: &WrapSegment) -> String {
-        if let [only] = seg.spans.as_slice() {
-            return only.text(content).to_string();
-        }
-        let mut s = String::new();
-        for sp in &seg.spans {
-            s.push_str(sp.text(content));
-        }
-        s
     }
 
     fn segment_len(seg: &WrapSegment) -> usize {
@@ -140,38 +186,14 @@ impl WrapSnapshot {
         let Some(seg) = self.segment_at(row) else {
             return 0;
         };
-        let text = self.segment_text(content, seg);
-        let mut visual = 0usize;
-        let mut bytes = 0usize;
-        while bytes < text.len() && bytes < byte_col {
-            let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
-                break;
-            };
-            visual += grapheme_width_with_tab(cluster, visual);
-            bytes += cluster.len();
-        }
-        visual
+        visual_col(content, &seg.spans, byte_col)
     }
 
     pub fn byte_col_from_visual(&self, content: &str, row: usize, visual_col: usize) -> usize {
         let Some(seg) = self.segment_at(row) else {
             return 0;
         };
-        let text = self.segment_text(content, seg);
-        let mut visual = 0usize;
-        let mut bytes = 0usize;
-        while bytes < text.len() {
-            let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
-                break;
-            };
-            let rw = grapheme_width_with_tab(cluster, visual);
-            if visual + rw > visual_col {
-                break;
-            }
-            visual += rw;
-            bytes += cluster.len();
-        }
-        bytes
+        byte_col_from_visual(content, &seg.spans, visual_col)
     }
 
     pub fn model_line_to_first_row(&self, line: usize) -> usize {
