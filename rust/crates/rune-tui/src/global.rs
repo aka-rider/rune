@@ -129,6 +129,11 @@ pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
     },
+    Binding {
+        key: KeyPattern::new(KeyCode::Char('r'), Mods::NONE),
+        cmd: GlobalCommand::FocusTitle,
+        help: "rename",
+    },
 ];
 
 /// `␣X`-style label — the one source the footer and the Help doc both
