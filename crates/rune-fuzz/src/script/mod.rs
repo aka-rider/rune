@@ -1,0 +1,223 @@
+//! A hand-written, dependency-free line codec for `(content, Vec<Action>)`.
+//! One action per line, first line always `content <escaped>`:
+//!
+//! ```text
+//! content <escaped>            # always the first line
+//! key <code> <mods>            # key char:a ----   |  key left s---  |  key char:\u{20} ---u
+//! type <escaped>
+//! paste <escaped>
+//! resize <w> <h>
+//! clip <escaped>
+//! confirm-timeout
+//! deliver
+//! fail-next-save
+//! dirloaded <nav|refresh> <generation>   # followed by 0+ continuation lines:
+//! dirloaded-entry <f|d> <escaped name>
+//! ```
+//!
+//! `dirloaded`/`dirloaded-entry` is the one MULTI-line action (plan
+//! WP4.S6): a `DirEntry`'s `name` is an arbitrary `String` that may itself
+//! contain a literal space, so packing a variable-length entry list onto
+//! one line with a space-joined delimiter would be ambiguous — one
+//! `dirloaded-entry` continuation line per entry sidesteps that instead of
+//! inventing a second escaping scheme.
+//!
+//! Deviation from the plan's grammar sketch: `Action` (`crate::action`) has
+//! no `DeliverMode` — G9 proves at most one save can ever be outstanding —
+//! so `deliver` is a bare token, never `deliver oldest|newest|all`.
+//!
+//! `<mods>` is a fixed 4-char field (shift, alt, ctrl, sup), each `-` or its
+//! initial letter. Decode locates it by taking the LAST 4 characters of the
+//! line plus the separating space before them, never by a generic
+//! whitespace split — so an escaped `char:` payload may itself contain a
+//! literal space with no ambiguity.
+//!
+//! Text payloads are escaped with `char::escape_default()` — always ASCII:
+//! printable ASCII passes through unescaped, everything else becomes one of
+//! `\n \r \t \\ \' \"` or a `\u{HEX}` run. `unescape` accepts exactly that
+//! set, plus `\0` (which `escape_default` itself emits as `\u{0}`, but a
+//! hand-authored script may still use the mnemonic).
+//!
+//! No `unwrap`/`expect`/`panic!`/unchecked indexing across this module
+//! (`encode`/`decode` split into their own files, G17) — every fallible
+//! step returns a `ScriptError`, mirroring `rune_core::buffer::BufferError`'s
+//! idiom.
+
+mod decode;
+mod encode;
+
+use std::fmt;
+
+pub use decode::decode;
+pub use encode::encode;
+
+/// Why a script line could not be decoded. Never constructed by `encode` —
+/// only ever returned by `decode` on malformed input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScriptError {
+    /// No non-comment, non-blank `content` line was found.
+    MissingContentLine,
+    /// A line was structurally wrong in a way no more specific variant names.
+    MalformedLine { line: usize, reason: String },
+    /// An action line's first token matched no known keyword.
+    UnknownKeyword { line: usize, keyword: String },
+    /// A `\`-escape was unknown, truncated, or an invalid `\u{...}` value.
+    InvalidEscape { line: usize, reason: String },
+    /// A `key` line's code field matched no known `KeyCode` spelling.
+    InvalidKeyCode { line: usize, code: String },
+    /// A `key` line's mods field was not exactly 4 valid flag characters.
+    InvalidMods { line: usize, mods: String },
+    /// A numeric field did not parse as its expected integer type.
+    InvalidNumber { line: usize, reason: String },
+}
+
+impl fmt::Display for ScriptError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ScriptError::MissingContentLine => write!(f, "script has no `content` line"),
+            ScriptError::MalformedLine { line, reason } => write!(f, "line {line}: {reason}"),
+            ScriptError::UnknownKeyword { line, keyword } => {
+                write!(f, "line {line}: unknown action keyword {keyword:?}")
+            }
+            ScriptError::InvalidEscape { line, reason } => write!(f, "line {line}: {reason}"),
+            ScriptError::InvalidKeyCode { line, code } => {
+                write!(f, "line {line}: invalid key code {code:?}")
+            }
+            ScriptError::InvalidMods { line, mods } => {
+                write!(f, "line {line}: invalid mods field {mods:?}")
+            }
+            ScriptError::InvalidNumber { line, reason } => write!(f, "line {line}: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for ScriptError {}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    use super::*;
+    use crate::action::Action;
+    use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+    use rune_tui::runtime::DirCause;
+    use rune_vfs::DirEntry;
+
+    /// Fails loudly on an unexpected `Err` without an infallible-unwrap call
+    /// (keeps this whole file free of that family of call, tests included).
+    fn must_decode(text: &str) -> (String, Vec<Action>) {
+        let result = decode(text);
+        assert!(result.is_ok(), "decode({text:?}) failed: {result:?}");
+        result.unwrap_or_else(|_| (String::new(), Vec::new()))
+    }
+
+    fn key(code: KeyCode, mods: Mods) -> Action {
+        Action::Key(KeyInput { code, mods })
+    }
+
+    fn mods(shift: bool, alt: bool, ctrl: bool, sup: bool) -> Mods {
+        Mods {
+            shift,
+            alt,
+            ctrl,
+            sup,
+        }
+    }
+
+    #[test]
+    fn round_trips_every_action_variant() {
+        let content = "hello\nworld";
+        let actions = vec![
+            key(KeyCode::Char('a'), Mods::NONE),
+            key(KeyCode::Left, mods(true, false, false, false)),
+            key(KeyCode::Char(' '), mods(false, false, false, true)),
+            key(KeyCode::Char('😀'), mods(true, true, true, true)),
+            Action::Type("some prose".to_string()),
+            Action::Paste("line1\r\nline2".to_string()),
+            Action::Resize(80, 24),
+            Action::ClipboardReply("clipboard text".to_string()),
+            Action::ConfirmTimeout,
+            Action::Deliver,
+            Action::FailNextSave,
+            Action::DirLoaded {
+                entries: vec![
+                    DirEntry {
+                        name: "sub dir".to_string(), // a literal space in the name
+                        is_dir: true,
+                    },
+                    DirEntry {
+                        name: "a.md".to_string(),
+                        is_dir: false,
+                    },
+                ],
+                cause: DirCause::Nav,
+                generation: 7,
+            },
+            Action::DirLoaded {
+                entries: Vec::new(),
+                cause: DirCause::Refresh,
+                generation: 0,
+            },
+        ];
+
+        let encoded = encode(content, &actions);
+        assert_eq!(must_decode(&encoded), (content.to_string(), actions));
+    }
+
+    #[test]
+    fn escapes_newline_carriage_return_tab_quote_nul_and_emoji() {
+        let cases: &[(char, &str)] = &[
+            ('\n', "\\n"),
+            ('\r', "\\r"),
+            ('\t', "\\t"),
+            ('"', "\\\""),
+            ('\0', "\\u{0}"),
+            ('😀', "\\u{1f600}"),
+        ];
+        for &(ch, want_fragment) in cases {
+            let actions = vec![Action::Type(format!("x{ch}y"))];
+            let encoded = encode("", &actions);
+            assert!(
+                encoded.contains(want_fragment),
+                "encoding {ch:?} should contain {want_fragment:?}, got {encoded:?}"
+            );
+            assert_eq!(must_decode(&encoded).1, actions);
+        }
+    }
+
+    #[test]
+    fn rejects_a_malformed_line_with_a_typed_error() {
+        let err = decode("content hi\nbogus-keyword-here\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::UnknownKeyword { ref keyword, .. }
+            if keyword == "bogus-keyword-here")
+        );
+
+        let err = decode("no content line here\n").unwrap_err();
+        assert!(matches!(err, ScriptError::MalformedLine { .. }));
+
+        let err = decode("# only a comment\n\n").unwrap_err();
+        assert_eq!(err, ScriptError::MissingContentLine);
+
+        let err = decode("content hi\nkey --\n").unwrap_err();
+        assert!(matches!(err, ScriptError::MalformedLine { .. }));
+
+        let err = decode("content hi\nkey char:a xxxx\n").unwrap_err();
+        assert!(matches!(err, ScriptError::InvalidMods { .. }));
+
+        let err = decode("content hi\nresize wide tall\n").unwrap_err();
+        assert!(matches!(err, ScriptError::InvalidNumber { .. }));
+    }
+
+    #[test]
+    fn skips_comments_and_blank_lines() {
+        let text = "# a leading comment\n\ncontent hi\n\n# a comment between actions\ntype x\n";
+        let (content, actions) = must_decode(text);
+        assert_eq!(content, "hi");
+        assert_eq!(actions, vec![Action::Type("x".to_string())]);
+    }
+}
