@@ -76,10 +76,10 @@ fn every_checked_in_repro_replays_clean() {
 
         let text = fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let (content, actions) = script::decode(&text)
+        let (doc_path, content, actions) = script::decode(&text)
             .unwrap_or_else(|e| panic!("{} failed to decode: {e}", path.display()));
 
-        let result = driver::run(&content, &actions);
+        let result = driver::run(&doc_path, &content, &actions);
         assert!(
             result.violation.is_none(),
             "{}: {}",

@@ -2,16 +2,27 @@
 //! `Action`/`KeyCode`/`Mods` are already well-formed Rust values, so there is
 //! nothing here that can fail the way `decode` can.
 
-use crate::action::Action;
+use crate::action::{Action, HighlightVersion};
+use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::runtime::DirCause;
 
-/// Encodes `(content, actions)` as script text, one action per line.
-pub fn encode(content: &str, actions: &[Action]) -> String {
+/// Encodes `(path, content, actions)` as script text, one action per line.
+/// The `path` line (plan WP7.S2) is emitted only when `path != DOC_PATH` —
+/// every script written before a session carried a path (including the
+/// checked-in `repros/tripwire-clean.rune`) implicitly meant the default,
+/// so a session that still opens the default path keeps encoding to
+/// exactly that same terse form.
+pub fn encode(path: &str, content: &str, actions: &[Action]) -> String {
     let mut out = String::new();
     out.push_str("content ");
     out.push_str(&escape(content));
     out.push('\n');
+    if path != DOC_PATH {
+        out.push_str("path ");
+        out.push_str(&escape(path));
+        out.push('\n');
+    }
     for action in actions {
         encode_action(&mut out, action);
     }
@@ -64,6 +75,24 @@ fn encode_action(out: &mut String, action: &Action) {
                 out.push('\n');
             }
         }
+        Action::Highlight { version, spans } => {
+            out.push_str("highlight ");
+            out.push_str(encode_highlight_version(*version));
+            out.push(' ');
+            out.push_str(&spans.len().to_string());
+            out.push('\n');
+            for (start, end, scope) in spans {
+                out.push_str(&format!("highlight-span {start} {end} {scope}\n"));
+            }
+        }
+    }
+}
+
+fn encode_highlight_version(version: HighlightVersion) -> &'static str {
+    match version {
+        HighlightVersion::Live => "live",
+        HighlightVersion::Stale => "stale",
+        HighlightVersion::Future => "future",
     }
 }
 

@@ -17,7 +17,7 @@ mod checks;
 
 use std::io;
 use std::panic::AssertUnwindSafe;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
@@ -30,15 +30,17 @@ use rune_vfs::{Mem, Vfs};
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-use crate::action::Action;
+use crate::action::{Action, HighlightVersion};
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// The one seeded file path every session opens. Seeded on `Mem` directly
-/// at bootstrap (WP3.S7 rule 1), so a save-less session still reads back
-/// its starting content via `Vfs::read`.
-const DOC_PATH: &str = "/fuzz/doc.md";
+/// The default seeded file path (plan WP7.S2): every `SEEDS` entry
+/// inherited from before this package pairs with this path, and the script
+/// codec's optional `path` line defaults to it when absent — so the
+/// checked-in `repros/tripwire-clean.rune` (written before sessions carried
+/// a path) still decodes unchanged.
+pub const DOC_PATH: &str = "/fuzz/doc.md";
 
 /// The result of driving one whole session. `final_snapshot`/`final_ctx`
 /// are frozen at the violating step (`None` on a clean run) — Go's driver
@@ -53,10 +55,14 @@ pub struct RunResult {
 
 /// Mutable driver state threaded through one session. `pending_save` is an
 /// `Option`, never a queue — G9 proves at most one save `Cmd` can ever be
-/// outstanding.
+/// outstanding. `path` is the document path this session opened (plan
+/// WP7.S2) — carried here (not re-derived from `DOC_PATH`) since a session
+/// can now open any path, and the post-step disk read needs to consult the
+/// SAME path the document was seeded and bound to.
 struct State {
     app: App,
     mem: Arc<Mem>,
+    path: PathBuf,
     pending_save: Option<(Cmd, Vec<u8>)>,
     saves_delivered_ok: usize,
     steps: usize,
@@ -70,20 +76,19 @@ struct Outcome {
     final_ctx: Option<StepCtx>,
 }
 
-/// Runs `actions` against a fresh session seeded with `content` at
-/// `/fuzz/doc.md`. Deterministic: same input, same result, always — zero
-/// wall-clock reads, zero threads, zero subprocesses (WP3.S7 rule 7).
-pub fn run(content: &str, actions: &[Action]) -> RunResult {
+/// Runs `actions` against a fresh session seeded with `content` at `path`
+/// (plan WP7.S2 — a session now opens an arbitrary path, so `DocumentKind`
+/// producer selection, including a code or plain document, is reachable
+/// from this driver, not just markdown). Deterministic: same input, same
+/// result, always — zero wall-clock reads, zero threads, zero subprocesses
+/// (WP3.S7 rule 7).
+pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
+    let path = PathBuf::from(path);
     let mem = Arc::new(Mem::new());
-    let _ = mem.save_atomic(Path::new(DOC_PATH), content.as_bytes());
+    let _ = mem.save_atomic(&path, content.as_bytes());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mut app = App::new(
-        Buffer::new(content),
-        Some(PathBuf::from(DOC_PATH)),
-        vfs,
-        None,
-    );
+    let mut app = App::new(Buffer::new(content), Some(path.clone()), vfs, None);
     app.active_doc_mut().focused = true;
     // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
     // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since
@@ -99,6 +104,7 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
     let mut state = State {
         app,
         mem,
+        path,
         pending_save: None,
         saves_delivered_ok: 0,
         steps: 0,
@@ -198,6 +204,30 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
                     None,
                     &mut outcome,
                 ) {
+                    break 'session;
+                }
+            }
+            Action::Highlight { version, spans } => {
+                // Resolved against the LIVE buffer version at delivery
+                // time (`HighlightVersion`'s own docs) — never a fixed
+                // constant, mirroring `Action::ConfirmTimeout`'s rule.
+                let live = state.app.active_doc().buffer.version();
+                let delivered_version = match version {
+                    HighlightVersion::Live => live,
+                    HighlightVersion::Stale => live.saturating_sub(1),
+                    HighlightVersion::Future => live.saturating_add(1),
+                };
+                let doc = state.app.active;
+                let msg = Msg::Highlighted {
+                    doc,
+                    version: delivered_version,
+                    result: Some(crate::action::highlight_spans_from_raw(spans)),
+                };
+                let tag = MsgTag::Highlighted {
+                    delivered_version,
+                    span_count: spans.len(),
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
                 }
             }
@@ -329,7 +359,7 @@ fn step_and_check(
 
     let sampled = checks::should_sample(step_index);
     let next = Snapshot::capture(&mut state.app, sampled);
-    let disk = state.mem.read(Path::new(DOC_PATH)).ok();
+    let disk = state.mem.read(&state.path).ok();
     let pending_save_bytes = state.pending_save.as_ref().map(|(_, b)| b.clone());
 
     let ctx = StepCtx {

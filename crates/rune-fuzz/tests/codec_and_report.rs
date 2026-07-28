@@ -32,13 +32,14 @@ use rune_fuzz::{driver, generate, report, script};
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
-    /// WP5.S2 — `decode(&encode(&c, &a)) == Ok((c, a))` over every session
-    /// the generator can produce. Does not run the driver, so it is safe
-    /// under `strict-invariants`.
+    /// WP5.S2 — `decode(&encode(&p, &c, &a)) == Ok((p, c, a))` over every
+    /// session the generator can produce (extended WP7.S2 to cover
+    /// `path`). Does not run the driver, so it is safe under
+    /// `strict-invariants`.
     #[test]
-    fn codec_round_trips_every_generated_session((content, actions) in generate::arb_session()) {
-        let encoded = script::encode(&content, &actions);
-        prop_assert_eq!(script::decode(&encoded), Ok((content, actions)));
+    fn codec_round_trips_every_generated_session((path, content, actions) in generate::arb_session()) {
+        let encoded = script::encode(&path, &content, &actions);
+        prop_assert_eq!(script::decode(&encoded), Ok((path, content, actions)));
     }
 }
 
@@ -56,10 +57,10 @@ proptest! {
 #[test]
 fn report_writer_produces_a_replayable_bundle() {
     let script_text = include_str!("../repros/tripwire-clean.rune");
-    let (content, actions) = script::decode(script_text)
+    let (path, content, actions) = script::decode(script_text)
         .unwrap_or_else(|e| panic!("repros/tripwire-clean.rune failed to decode: {e}"));
 
-    let result = driver::run(&content, &actions);
+    let result = driver::run(&path, &content, &actions);
     let violation = Violation {
         id: "TRIPWIRE-PROBE",
         message: "synthetic violation for report::write's own regression test \
@@ -73,7 +74,7 @@ fn report_writer_produces_a_replayable_bundle() {
     ));
     let _ = fs::remove_dir_all(&scratch);
 
-    let dir = report::write(&scratch, &violation, &content, &actions, &result)
+    let dir = report::write(&scratch, &violation, &path, &content, &actions, &result)
         .unwrap_or_else(|e| panic!("report::write failed: {e}"));
 
     assert!(
@@ -89,8 +90,9 @@ fn report_writer_produces_a_replayable_bundle() {
 
     let written = fs::read_to_string(dir.join("script.rune"))
         .unwrap_or_else(|e| panic!("failed to read written script.rune: {e}"));
-    let (decoded_content, decoded_actions) = script::decode(&written)
+    let (decoded_path, decoded_content, decoded_actions) = script::decode(&written)
         .unwrap_or_else(|e| panic!("written script.rune failed to decode: {e}"));
+    assert_eq!(decoded_path, path, "script.rune path did not round-trip");
     assert_eq!(
         decoded_content, content,
         "script.rune content did not round-trip"
@@ -100,7 +102,7 @@ fn report_writer_produces_a_replayable_bundle() {
         "script.rune actions did not round-trip"
     );
 
-    let replayed = driver::run(&decoded_content, &decoded_actions);
+    let replayed = driver::run(&decoded_path, &decoded_content, &decoded_actions);
     assert_eq!(
         replayed.final_content, result.final_content,
         "replaying the decoded bundle did not reproduce the original run's final_content"

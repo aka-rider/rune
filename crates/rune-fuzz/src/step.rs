@@ -37,6 +37,16 @@ pub enum MsgTag {
     /// touches the active document (proved structurally: `explorer::
     /// handle_dir_loaded` only ever writes `App::explorer`).
     DirLoaded,
+    /// `Msg::Highlighted` (plan WP7.S4) — `delivered_version` is the version
+    /// the driver actually stamped on the message (resolved from
+    /// `HighlightVersion` against the live buffer at delivery time, not the
+    /// raw enum tag itself); `span_count` is how many raw spans the
+    /// generator attached, kept for report readability. `HL-STALE-DROP`/
+    /// `HL-NO-REFLOW` (`invariant/highlight.rs`) key off this variant.
+    Highlighted {
+        delivered_version: u64,
+        span_count: usize,
+    },
     Quit,
 }
 
