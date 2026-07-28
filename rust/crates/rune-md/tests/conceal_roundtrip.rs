@@ -114,10 +114,14 @@ fn tasklist_marker_reveals_on_cursor_line() {
 
 #[test]
 fn tasklist_marker_conceals_off_cursor_line() {
+    // Go parity (`walkTaskList`): the "- " prefix conceals like any list
+    // marker, but the checkbox itself substitutes to its glyph (`☑` for
+    // `[x]`) rather than disappearing outright — the defect this test
+    // pins (`scripts/parity/fixtures/tasks.md`).
     let content = "- [x] task\nother\n";
     let (buf, doc) = synced(content, "- [x] task\n".len(), true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0, buf.content()), "task");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "\u{2611} task");
 }
 
 #[test]

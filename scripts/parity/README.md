@@ -160,11 +160,6 @@ of how each side renders:
   for any cursor position. Rust conceals all of them. Vestigial on the Go
   side, not a cursor/focus condition — confirmed by reading Go's
   `walkTaskList` (`pkg/editor/display/markdown_walk.go`).
-- **Rust renders no checkbox glyph for GFM task items (`tasks.md`,
-  excluded from `parity-grid`).** Where Go substitutes `☐`/`☑` for `- [ ]`/
-  `- [x]`, Rust currently shows neither the raw brackets nor a checkbox
-  glyph — the whole marker disappears. Distinct from (and additional to)
-  the plain-list-marker gap above.
 - **Fenced code block info string stays visible in Go (`fences.md`,
   excluded from `parity-grid`).** Go strips a fence's backticks but leaves
   the language tag (e.g. `rust`, `text`) as a plain visible line; Rust

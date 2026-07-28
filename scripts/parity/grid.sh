@@ -52,7 +52,7 @@ excluded_reason() {
             echo "Go never conceals plain bullet/ordered list markers (vestigial in Go's own walker); Rust conceals them"
             ;;
         tasks.md)
-            echo "same list-marker gap as lists.md, plus Rust shows no checkbox glyph at all for GFM task items (Go substitutes ☐/☑)"
+            echo "same list-marker gap as lists.md (the checkbox-glyph defect this fixture also caught is fixed — see TODO.md)"
             ;;
         fences.md)
             echo "Go leaves a fenced code block's info string (e.g. 'rust') as visible text after stripping backticks; Rust conceals the whole fence delimiter line"

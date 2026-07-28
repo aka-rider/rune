@@ -14,6 +14,7 @@ use super::style::{
 use super::{Accounted, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
+use crate::parse::line_at;
 use rune_syntax::SyntaxSpan;
 use rune_syntax::element::{ByteRange, RevealState};
 
@@ -107,11 +108,82 @@ fn emit_list_item(
             out,
             accounted,
         );
+    } else if let Some(task) = item.task {
+        // Go parity (`walkTaskList`, `pkg/editor/display/markdown_walk.go:
+        // 193-247`): a task item's checkbox substitutes to a glyph even
+        // while concealed — plain bullet/ordered markers (the `else` arm
+        // below) stay fully hidden, the Rust-only "list markers are always
+        // concealed" divergence recorded in `scripts/parity/README.md`.
+        // The "- "/"1. " prefix before the checkbox is hidden exactly like
+        // a plain marker; only the checkbox itself substitutes.
+        let before = ByteRange::new(item.marker.start, task.start);
+        hide_range(hidden, accounted, content, starts, before);
+        push_task_checkbox(content, starts, task, out, accounted);
+        // Whatever sits between the checkbox and the item's own content
+        // (normally exactly one space) is deliberately left UNCLAIMED here:
+        // `fill_gaps` (`emit/mod.rs`) supplies it verbatim as an ordinary
+        // `Identical` span, so 0/1/N trailing spaces round-trip exactly —
+        // see `push_task_checkbox`'s docs for why this keeps the
+        // substitution byte-length-neutral against `SyntaxSnapshot`'s
+        // hidden-ranges-only coordinate model instead of hand-rolling a
+        // second hidden-range delta for the difference.
     } else {
         hide_range(hidden, accounted, content, starts, item.marker);
     }
     for c in &item.children {
         emit_block(content, starts, c, out, hidden, accounted);
+    }
+}
+
+/// Substitutes a task item's `"[ ]"`/`"[x]"`/`"[X]"` — always exactly 3
+/// bytes (`ListItemM::task`'s docs) — with its checkbox glyph: `☐`
+/// (U+2610) unchecked, `☑` (U+2611) checked. Go parity (`walkTaskList`).
+///
+/// Deliberately NOT routed through `hide_range` — this substitutes visible
+/// content, it doesn't hide it — and deliberately NOT built via
+/// `push_span_split_by_line` (which only ever copies `content[range]`
+/// itself into `Substituted::text`, never a genuinely different string).
+///
+/// Byte-length-preserving BY CONSTRUCTION, which is why this needs no
+/// extra hidden-range bookkeeping: `☐`/`☑` are each exactly 3 bytes in
+/// UTF-8 (codepoints `U+2610`/`U+2611`, the 3-byte range), the SAME length
+/// as the 3-byte ASCII `task` range they replace. `SyntaxSnapshot`'s
+/// buffer<->syntax coordinate model (`emit/syntax.rs`) only ever accounts
+/// for FULLY hidden byte ranges (`hide_range`) — it has no notion of a
+/// visible span whose substituted text is a different byte length than
+/// the buffer range it replaces — so a length-changing substitution here
+/// would desync every position later on the same line. Keeping this
+/// specific substitution exactly 3-for-3 bytes sidesteps that entirely: no
+/// hidden delta is needed, and `rune-md/src/wrap.rs`'s own byte-indexed
+/// `text.len()` math (built from `SyntaxSpan::text`, i.e. this span's own
+/// 3-byte `text`) stays consistent with it for free.
+fn push_task_checkbox(
+    content: &str,
+    starts: &[usize],
+    task: ByteRange,
+    out: &mut [Vec<SyntaxSpan>],
+    accounted: &mut Accounted,
+) {
+    let Some(bytes) = content.get(task.start..task.end) else {
+        return;
+    };
+    let checked = bytes.as_bytes().get(1).is_some_and(|&b| b != b' ');
+    let glyph = if checked { "\u{2611}" } else { "\u{2610}" };
+    let line = line_at(starts, task.start);
+
+    let span = SyntaxSpan::Substituted {
+        // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
+        // into `list_marker_style`'s task arm ("markup.list.checked").
+        scope: list_marker_style(true),
+        text: glyph.to_string(),
+        range: task.start..task.end,
+        cell_map: vec![task.start as i64],
+    };
+    if let Some(bucket) = out.get_mut(line) {
+        bucket.push(span);
+    }
+    if let Some(bucket) = accounted.get_mut(line) {
+        bucket.push((task.start, task.end));
     }
 }
 
