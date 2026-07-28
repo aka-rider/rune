@@ -69,13 +69,30 @@ $TM resize-window -t "$S" -x "$COLS" -y "$ROWS"
 
 wait_for_pane "$S" 'sample.md' 20
 
+SENT_KEYS=0
 while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     [[ "$line" == \#* ]] && continue
     $TM send-keys -t "$S" "$line"
+    SENT_KEYS=1
 done < "$KEYS_FILE"
 
-wait_for_pane "$S" 'parityws' 20
+# A scenario that sends keys MUST name a settle predicate that is absent
+# before those keys land — otherwise the capture races the repaint. This is
+# enforced, not documented: the old predicate ('parityws') was already on
+# screen from frame 1 via the breadcrumb, so the wait returned instantly
+# whether or not the keys had taken effect. Requiring the file makes the
+# unsynchronized scenario impossible to write rather than merely discouraged.
+if (( SENT_KEYS )); then
+    SETTLE_FILE="$SCENARIO_DIR/$SIDE.settle"
+    if [[ ! -s "$SETTLE_FILE" ]]; then
+        echo "capture.sh: $SIDE.keys sends keys but $SETTLE_FILE is missing or empty." >&2
+        echo "  Add a one-line grep pattern that appears ONLY after those keys land." >&2
+        exit 1
+    fi
+    IFS= read -r SETTLE < "$SETTLE_FILE"
+    wait_for_pane "$S" "$SETTLE" 20
+fi
 
 mkdir -p "$OUT_DIR"
 $TM capture-pane -p -t "$S" > "$OUT_DIR/$SIDE.txt"

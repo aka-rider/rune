@@ -4,8 +4,15 @@
 #
 # Every tmux invocation in this toolchain MUST go through $TM: a bare `tmux`
 # would touch the user's live server and ~/.tmux.conf.
-
-set -euo pipefail
+#
+# This file deliberately sets NO shell options. `source` runs in the caller's
+# shell, so a `set -e` here silently overrides the policy the sourcing script
+# declared on its own first lines — and assert.sh/clean.sh switch `-e` OFF on
+# purpose (they must survive a failing check to report it). When lib.sh set
+# `-euo pipefail`, a `grep -o | wc -l` count that legitimately found zero
+# matches aborted assert.sh mid-run: no FAIL line, and six of its eight gates
+# silently skipped. Every script here declares its own `set` line; leave that
+# decision to them.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
