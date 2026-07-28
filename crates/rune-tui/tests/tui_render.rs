@@ -497,3 +497,24 @@ fn one_by_one_backend_does_not_panic() {
     let app = app_for("hello\n", 0, true);
     let _buf = draw_into(&app, 1, 1);
 }
+
+/// WP2 Done-when: a table's Grid layout reaches the real terminal render
+/// through the full `App` pipeline, not just `rune-md`'s own `emit` unit
+/// tests. Cursor sits in the trailing "tail" paragraph, well outside the
+/// table's own lines, so the table stays `Rendered` (box-drawn) rather than
+/// revealing its raw `| a | b |` source.
+#[test]
+fn table_renders_as_box_drawing_not_raw_pipes() {
+    let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
+    let cursor = content.find("tail").expect("fixture has a tail paragraph");
+    let app = app_for(content, cursor, true);
+    let row = testgrid::row(&app, EDITOR_TOP_ROW, WIDTH, HEIGHT);
+    assert!(
+        row.contains('│'),
+        "expected the table's Grid border in the first editor row:\n{row:?}"
+    );
+    assert!(
+        !row.contains('|'),
+        "raw markdown pipe must not reach the rendered row:\n{row:?}"
+    );
+}
