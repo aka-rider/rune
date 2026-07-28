@@ -16,3 +16,4 @@
 pub mod block;
 pub mod doc;
 pub mod inline;
+pub mod table;
