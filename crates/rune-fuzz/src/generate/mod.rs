@@ -7,9 +7,10 @@
 //!
 //! Each cluster is a `Strategy<Value = Vec<Action>>`; a whole session is
 //! `vec(cluster, 1..=40).prop_map(|v| v.concat())`, truncated to 120 actions
-//! and paired with a seed from `CONTENT_SEEDS` (plan Assumption A3). The
-//! static palette data lives in `palette.rs` and the `cluster_*` strategies
-//! in `cluster.rs` (§1.6 budget) — this file is left with just the public
+//! and paired with a `(path, content)` seed from `SEEDS` (plan Assumption
+//! A3, extended by WP7.S3 to include non-markdown paths). The static
+//! palette data lives in `palette.rs` and the `cluster_*` strategies in
+//! `cluster.rs` (§1.6 budget) — this file is left with just the public
 //! entry point tying the two together.
 
 mod cluster;
@@ -23,18 +24,20 @@ use crate::action::Action;
 pub use palette::TYPE_PALETTE;
 
 use cluster::arb_cluster;
-use palette::CONTENT_SEEDS;
+use palette::SEEDS;
 
-/// One whole fuzz case: the seed content plus a weighted "normal human
-/// session" of 1..=40 clusters, concatenated and capped at 120 actions
-/// (plan Assumption A3, mirroring Go's `maxHumanEvents = 160`).
-pub fn arb_session() -> impl Strategy<Value = (String, Vec<Action>)> {
+/// One whole fuzz case: `(path, content, actions)` — the seed path and
+/// content (plan WP7.S2/S3) plus a weighted "normal human session" of
+/// 1..=40 clusters, concatenated and capped at 120 actions (plan Assumption
+/// A3, mirroring Go's `maxHumanEvents = 160`).
+pub fn arb_session() -> impl Strategy<Value = (String, String, Vec<Action>)> {
     (
-        select(CONTENT_SEEDS).prop_map(str::to_string),
+        select(SEEDS).prop_map(|(path, content)| (path.to_string(), content.to_string())),
         proptest::collection::vec(arb_cluster(), 1..=40).prop_map(|clusters| {
             let mut actions = clusters.concat();
             actions.truncate(120);
             actions
         }),
     )
+        .prop_map(|((path, content), actions)| (path, content, actions))
 }

@@ -41,7 +41,7 @@ fn type_palette_has_no_undeliverable_control_chars() {
 /// of the naive "buffer gains exactly this string" expectation.
 #[test]
 fn a_typed_newline_actually_creates_a_line() {
-    let result = driver::run("", &[Action::Type("a\nb".to_string())]);
+    let result = driver::run(driver::DOC_PATH, "", &[Action::Type("a\nb".to_string())]);
     assert_eq!(result.violation, None, "{:?}", result.violation);
     assert_eq!(result.final_content, "a\nb");
 }
@@ -51,7 +51,11 @@ fn a_typed_newline_actually_creates_a_line() {
 /// (`commands/clipboard.rs:112-120`, plan Gotcha G3).
 #[test]
 fn a_pasted_crlf_survives_verbatim() {
-    let result = driver::run("", &[Action::Paste("line1\r\nline2".to_string())]);
+    let result = driver::run(
+        driver::DOC_PATH,
+        "",
+        &[Action::Paste("line1\r\nline2".to_string())],
+    );
     assert_eq!(result.violation, None, "{:?}", result.violation);
     assert_eq!(result.final_content, "line1\r\nline2");
 }
@@ -74,6 +78,7 @@ fn dir_loaded_never_panics_and_never_touches_editor_content() {
         },
     ];
     let result = driver::run(
+        driver::DOC_PATH,
         "hello",
         &[
             Action::Type("abc".to_string()),

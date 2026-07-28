@@ -143,7 +143,7 @@ fn tripwire_script() -> Vec<Action> {
 /// WP4.S2 — a well-formed "normal human" session must trip nothing.
 #[test]
 fn clean_session_trips_nothing() {
-    let result = driver::run(FIXTURE, &tripwire_script());
+    let result = driver::run(driver::DOC_PATH, FIXTURE, &tripwire_script());
     assert!(
         result.violation.is_none(),
         "{}",
@@ -192,8 +192,8 @@ fn clean_session_trips_nothing() {
 #[test]
 fn driver_is_deterministic() {
     let script = tripwire_script();
-    let first = driver::run(FIXTURE, &script);
-    let second = driver::run(FIXTURE, &script);
+    let first = driver::run(driver::DOC_PATH, FIXTURE, &script);
+    let second = driver::run(driver::DOC_PATH, FIXTURE, &script);
     assert_eq!(
         first.violation, second.violation,
         "violation must be deterministic across two runs of the same script"
@@ -300,6 +300,8 @@ fn base_snapshot(content: &str) -> Snapshot {
         active: base_active_id(),
         cells: Vec::new(),
         row_meta: Vec::new(),
+        highlight_spans: Vec::new(),
+        highlight_version: 1,
     }
 }
 

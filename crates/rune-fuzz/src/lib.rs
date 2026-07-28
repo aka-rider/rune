@@ -5,12 +5,15 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! # Invariant roster (23 total)
+//! # Invariant roster (27 total)
 //!
 //! Mirrors the Go fuzzer's roster convention: id,
 //! one-line meaning, Go provenance where the plan names one. See
 //! `invariant/mod.rs` for the checker-shape taxonomy (L0/L1/L2) and the
-//! per-domain file split.
+//! per-domain file split. This crate deliberately does NOT depend on
+//! `rune-db` (plan WP7.S10) — no journal-coalescing/recovery-store
+//! invariant (a durable snapshot cadence, a materialize ack sequence, …)
+//! can be expressed here; that layer's own crate carries its own tests.
 //!
 //! - `NO-PANIC` — the driver caught an unwind (a `debug_assert!` tripping,
 //!   or any other panic) while settling a message. Constructed directly by
@@ -25,6 +28,10 @@
 //!   `B1`).
 //! - `VERSION-MONOTONE` — `Buffer::version()`/`saved_version` never regress
 //!   across a step (Go `B2`).
+//! - `PANE-NO-BLEED` — a keystroke aimed at chrome (no modal up, focus off
+//!   `Pane::Editor`, active document unchanged) never mutates the document
+//!   behind it — the rule the `UNDO-TOTAL`/`REDO-TOTAL` harness fix
+//!   (`driver.rs::restore_editor_focus`) rests on.
 //! - `SYNC-IDEMPOTENT` — a second `app.sync_view()` with no intervening
 //!   message reproduces the same rendered rows and the same
 //!   `viewport.scroll_row` (§8 "Render Purity"; sampled per G19).
@@ -70,6 +77,16 @@
 //! - `REDO-TOTAL` — pressing redo back up to `journal_pos == journal_len`
 //!   restores the pre-undo-drive content byte-for-byte (end-of-session,
 //!   once, immediately after `UNDO-TOTAL`).
+//! - `HL-CLAMPED` — every stored highlight span satisfies `start < end`,
+//!   `end <= content.len()`, and both endpoints are `char` boundaries
+//!   (plan WP7.S7).
+//! - `HL-STALE-DROP` — a `Msg::Highlighted` reply whose delivered version no
+//!   longer matches the live buffer leaves the stored spans unchanged
+//!   (plan WP7.S7, `[R2]`).
+//! - `HL-NO-REFLOW` — a `Msg::Highlighted` step never changes `content`,
+//!   `version`, the journal, `is_dirty`, or any rendered cell's
+//!   `buf_offset`/`width` — it is a pure style overlay (plan WP7.S7,
+//!   decision 1).
 pub mod action;
 pub mod driver;
 pub mod generate;

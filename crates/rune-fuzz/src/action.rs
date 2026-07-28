@@ -8,9 +8,22 @@
 //! 330`), so a mode enum would just be three names for one behaviour
 //! `[fixes R1]`.
 
+use rune_syntax::ScopeId;
 use rune_tui::keymap::KeyInput;
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
+
+/// Which buffer generation a synthesized `Msg::Highlighted` reply should
+/// claim, resolved against the LIVE buffer version at delivery time (never
+/// a fixed constant — mirrors `Action::ConfirmTimeout`'s own rule, since
+/// generation 0 is a real value): `Live` -> `buffer.version()`, `Stale` ->
+/// `buffer.version().saturating_sub(1)`, `Future` -> `buffer.version() + 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HighlightVersion {
+    Live,
+    Stale,
+    Future,
+}
 
 /// One fuzzer-generated input. `driver::run` expands each `Action` into one
 /// or more `Msg`s (`Type` expands per character) and delivers them through
@@ -67,4 +80,31 @@ pub enum Action {
         cause: DirCause,
         generation: u32,
     },
+    /// Synthesizes a `Msg::Highlighted` reply directly (plan WP7.S4) — the
+    /// same "deliver a synthesized reply with no real `Cmd` behind it" shape
+    /// `ClipboardReply`/`ConfirmTimeout`/`DirLoaded` already use. `version`
+    /// is resolved against the LIVE buffer version at delivery time, never
+    /// synthesized as a fixed constant (see `HighlightVersion`'s own docs).
+    /// `spans` is a raw, DELIBERATELY unvalidated `(start, end, ScopeId)`
+    /// triple list — out-of-bounds, inverted, and mid-`char` ranges are all
+    /// legal generator output, since `dispatch::handle_highlighted`'s own
+    /// clamping/discarding is exactly the property under fuzz.
+    Highlight {
+        version: HighlightVersion,
+        spans: Vec<(usize, usize, u16)>,
+    },
+}
+
+/// Rebuilds the concrete `(Range<usize>, ScopeId)` pairs `Msg::Highlighted`
+/// carries from an `Action::Highlight`'s raw triples — shared by the driver
+/// (constructing the real message) and the script codec (round-trip tests
+/// never need this, but keeping the conversion in one place avoids two
+/// copies of the same `u16 -> ScopeId` wrap).
+pub fn highlight_spans_from_raw(
+    spans: &[(usize, usize, u16)],
+) -> Vec<(std::ops::Range<usize>, ScopeId)> {
+    spans
+        .iter()
+        .map(|&(start, end, scope)| (start..end, ScopeId(scope)))
+        .collect()
 }

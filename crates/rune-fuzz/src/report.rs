@@ -35,14 +35,20 @@ fn fnv1a32(bytes: &[u8]) -> u32 {
 }
 
 /// Writes the failure bundle under `dir_root` and returns its directory.
+/// `path` (plan WP7.S2) is the document path the session that produced
+/// `result` was opened at — carried into the encoded `script.rune` so a
+/// non-default-path catch (a code document, a fenced-language document)
+/// replays against the SAME `DocumentKind`, not silently against the
+/// markdown default.
 pub fn write(
     dir_root: &Path,
     v: &Violation,
+    path: &str,
     content: &str,
     actions: &[Action],
     result: &RunResult,
 ) -> io::Result<PathBuf> {
-    let encoded = script::encode(content, actions);
+    let encoded = script::encode(path, content, actions);
     let hash = fnv1a32(encoded.as_bytes());
     let dir = dir_root.join(format!("{}-{hash:08x}", v.id.to_lowercase()));
 
@@ -156,13 +162,14 @@ mod tests {
 
     #[test]
     fn write_names_the_directory_deterministically_and_is_replayable() {
+        let path = "/fuzz/doc.md";
         let content = "hello";
         let actions = vec![Action::Type("world".to_string())];
         let violation = Violation {
             id: "TEST-PROBE",
             message: "synthetic violation for report::write's own test".to_string(),
         };
-        let result = driver::run(content, &actions);
+        let result = driver::run(path, content, &actions);
 
         let scratch = std::env::temp_dir().join(format!(
             "rune-fuzz-report-test-{:08x}",
@@ -171,12 +178,12 @@ mod tests {
         let _ = fs::remove_dir_all(&scratch);
 
         let dir1 = must(
-            write(&scratch, &violation, content, &actions, &result),
+            write(&scratch, &violation, path, content, &actions, &result),
             "write",
         );
         let expected_name = format!(
             "test-probe-{:08x}",
-            fnv1a32(script::encode(content, &actions).as_bytes())
+            fnv1a32(script::encode(path, content, &actions).as_bytes())
         );
         assert_eq!(
             dir1.file_name().and_then(|n| n.to_str()),
@@ -189,17 +196,19 @@ mod tests {
             fs::read_to_string(dir1.join("script.rune")),
             "read script.rune",
         );
-        let (decoded_content, decoded_actions) = must(script::decode(&script_text), "decode");
+        let (decoded_path, decoded_content, decoded_actions) =
+            must(script::decode(&script_text), "decode");
+        assert_eq!(decoded_path, path);
         assert_eq!(decoded_content, content);
         assert_eq!(decoded_actions, actions);
         assert_eq!(
-            driver::run(&decoded_content, &decoded_actions).final_content,
+            driver::run(&decoded_path, &decoded_content, &decoded_actions).final_content,
             result.final_content
         );
 
         // Re-running the same catch overwrites rather than accumulating.
         let dir2 = must(
-            write(&scratch, &violation, content, &actions, &result),
+            write(&scratch, &violation, path, content, &actions, &result),
             "write again",
         );
         assert_eq!(dir1, dir2);

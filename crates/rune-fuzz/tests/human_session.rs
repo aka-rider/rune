@@ -34,7 +34,7 @@ fn human_session() {
 
     let outcome = runner.run(
         &generate::arb_session(),
-        |(content, actions)| match driver::run(&content, &actions).violation {
+        |(path, content, actions)| match driver::run(&path, &content, &actions).violation {
             None => Ok(()),
             Some(v) => Err(TestCaseError::fail(format!("{}: {}", v.id, v.message))),
         },
@@ -43,24 +43,31 @@ fn human_session() {
     match outcome {
         Ok(()) => {}
         Err(TestError::Abort(why)) => panic!("proptest aborted: {}", why.message()),
-        Err(TestError::Fail(why, (content, actions))) => {
+        Err(TestError::Fail(why, (path, content, actions))) => {
             // Re-run the MINIMAL input to recover the frozen snapshot/
             // context proptest's own shrink loop discarded. The driver is
             // deterministic (tests/tripwire.rs's driver_is_deterministic),
             // so this reproduces the exact same violation.
-            let result = driver::run(&content, &actions);
+            let result = driver::run(&path, &content, &actions);
             let v = result.violation.clone().unwrap_or(Violation {
                 id: "UNKNOWN",
                 message: why.message().to_string(),
             });
-            let dir = report::write(Path::new("artifacts"), &v, &content, &actions, &result)
-                .expect("failed to write fuzz artifact");
+            let dir = report::write(
+                Path::new("artifacts"),
+                &v,
+                &path,
+                &content,
+                &actions,
+                &result,
+            )
+            .expect("failed to write fuzz artifact");
             panic!(
                 "{}: {}\nartifact: {}\nscript:\n{}\n{}",
                 v.id,
                 v.message,
                 dir.display(),
-                script::encode(&content, &actions),
+                script::encode(&path, &content, &actions),
                 runner
             );
         }

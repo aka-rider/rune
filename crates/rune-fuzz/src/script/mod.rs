@@ -1,8 +1,10 @@
-//! A hand-written, dependency-free line codec for `(content, Vec<Action>)`.
-//! One action per line, first line always `content <escaped>`:
+//! A hand-written, dependency-free line codec for `(path, content,
+//! Vec<Action>)`. One action per line, first line always `content
+//! <escaped>`:
 //!
 //! ```text
 //! content <escaped>            # always the first line
+//! path <escaped>                # OPTIONAL, only right after `content`; defaults to DOC_PATH
 //! key <code> <mods>            # key char:a ----   |  key left s---  |  key char:\u{20} ---u
 //! type <escaped>
 //! paste <escaped>
@@ -13,14 +15,16 @@
 //! fail-next-save
 //! dirloaded <nav|refresh> <generation>   # followed by 0+ continuation lines:
 //! dirloaded-entry <f|d> <escaped name>
+//! highlight <live|stale|future> <n>      # followed by exactly n continuation lines:
+//! highlight-span <start> <end> <scope>
 //! ```
 //!
-//! `dirloaded`/`dirloaded-entry` is the one MULTI-line action (plan
-//! WP4.S6): a `DirEntry`'s `name` is an arbitrary `String` that may itself
-//! contain a literal space, so packing a variable-length entry list onto
-//! one line with a space-joined delimiter would be ambiguous — one
-//! `dirloaded-entry` continuation line per entry sidesteps that instead of
-//! inventing a second escaping scheme.
+//! `dirloaded`/`dirloaded-entry` and `highlight`/`highlight-span` are the
+//! MULTI-line actions (plan WP4.S6, WP7.S5): a `DirEntry`'s `name` is an
+//! arbitrary `String` that may itself contain a literal space, so packing a
+//! variable-length entry list onto one line with a space-joined delimiter
+//! would be ambiguous — one continuation line per entry/span sidesteps
+//! that instead of inventing a second escaping scheme.
 //!
 //! Deviation from the plan's grammar sketch: `Action` (`crate::action`) has
 //! no `DeliverMode` — G9 proves at most one save can ever be outstanding —
@@ -102,17 +106,18 @@ impl std::error::Error for ScriptError {}
 )]
 mod tests {
     use super::*;
-    use crate::action::Action;
+    use crate::action::{Action, HighlightVersion};
+    use crate::driver::DOC_PATH;
     use rune_tui::keymap::{KeyCode, KeyInput, Mods};
     use rune_tui::runtime::DirCause;
     use rune_vfs::DirEntry;
 
     /// Fails loudly on an unexpected `Err` without an infallible-unwrap call
     /// (keeps this whole file free of that family of call, tests included).
-    fn must_decode(text: &str) -> (String, Vec<Action>) {
+    fn must_decode(text: &str) -> (String, String, Vec<Action>) {
         let result = decode(text);
         assert!(result.is_ok(), "decode({text:?}) failed: {result:?}");
-        result.unwrap_or_else(|_| (String::new(), Vec::new()))
+        result.unwrap_or_else(|_| (String::new(), String::new(), Vec::new()))
     }
 
     fn key(code: KeyCode, mods: Mods) -> Action {
@@ -162,10 +167,50 @@ mod tests {
                 cause: DirCause::Refresh,
                 generation: 0,
             },
+            Action::Highlight {
+                version: HighlightVersion::Live,
+                spans: vec![(0, 3, 5), (10, 20, 0)],
+            },
+            Action::Highlight {
+                version: HighlightVersion::Stale,
+                spans: Vec::new(),
+            },
+            Action::Highlight {
+                version: HighlightVersion::Future,
+                spans: vec![(7, 2, u16::MAX)], // deliberately inverted — never validated here
+            },
         ];
 
-        let encoded = encode(content, &actions);
-        assert_eq!(must_decode(&encoded), (content.to_string(), actions));
+        let encoded = encode(DOC_PATH, content, &actions);
+        assert_eq!(
+            must_decode(&encoded),
+            (DOC_PATH.to_string(), content.to_string(), actions)
+        );
+    }
+
+    #[test]
+    fn a_non_default_path_round_trips_via_an_explicit_path_line() {
+        let content = "fn main() {}\n";
+        let actions = vec![Action::Type("x".to_string())];
+        let encoded = encode("/fuzz/main.rs", content, &actions);
+        assert!(
+            encoded.contains("\npath /fuzz/main.rs\n"),
+            "expected an explicit path line, got {encoded:?}"
+        );
+        assert_eq!(
+            must_decode(&encoded),
+            ("/fuzz/main.rs".to_string(), content.to_string(), actions)
+        );
+    }
+
+    #[test]
+    fn the_default_path_is_never_written_and_absence_defaults_back_to_it() {
+        let encoded = encode(DOC_PATH, "hi", &[]);
+        assert!(
+            !encoded.contains("\npath "),
+            "the default path must not be written explicitly, got {encoded:?}"
+        );
+        assert_eq!(must_decode(&encoded).0, DOC_PATH);
     }
 
     #[test]
@@ -180,12 +225,12 @@ mod tests {
         ];
         for &(ch, want_fragment) in cases {
             let actions = vec![Action::Type(format!("x{ch}y"))];
-            let encoded = encode("", &actions);
+            let encoded = encode(DOC_PATH, "", &actions);
             assert!(
                 encoded.contains(want_fragment),
                 "encoding {ch:?} should contain {want_fragment:?}, got {encoded:?}"
             );
-            assert_eq!(must_decode(&encoded).1, actions);
+            assert_eq!(must_decode(&encoded).2, actions);
         }
     }
 
@@ -211,12 +256,19 @@ mod tests {
 
         let err = decode("content hi\nresize wide tall\n").unwrap_err();
         assert!(matches!(err, ScriptError::InvalidNumber { .. }));
+
+        let err = decode("content hi\nhighlight bogus 0\n").unwrap_err();
+        assert!(matches!(err, ScriptError::MalformedLine { .. }));
+
+        let err = decode("content hi\nhighlight live 1\n").unwrap_err();
+        assert!(matches!(err, ScriptError::MalformedLine { .. }));
     }
 
     #[test]
     fn skips_comments_and_blank_lines() {
         let text = "# a leading comment\n\ncontent hi\n\n# a comment between actions\ntype x\n";
-        let (content, actions) = must_decode(text);
+        let (path, content, actions) = must_decode(text);
+        assert_eq!(path, DOC_PATH);
         assert_eq!(content, "hi");
         assert_eq!(actions, vec![Action::Type("x".to_string())]);
     }

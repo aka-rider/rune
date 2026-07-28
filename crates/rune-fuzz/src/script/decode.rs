@@ -6,7 +6,8 @@
 use std::iter::Peekable;
 
 use super::ScriptError;
-use crate::action::Action;
+use crate::action::{Action, HighlightVersion};
+use crate::driver::DOC_PATH;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
@@ -58,9 +59,15 @@ fn unescape(s: &str, line: usize) -> Result<String, ScriptError> {
 
 /// Decodes script text produced by `encode` (or hand-written in the same
 /// grammar). Blank lines and lines whose first non-space character is `#`
-/// are comments, skipped wherever they appear.
-pub fn decode(text: &str) -> Result<(String, Vec<Action>), ScriptError> {
+/// are comments, skipped wherever they appear. Returns `(path, content,
+/// actions)` — `path` (plan WP7.S2) is an OPTIONAL line permitted only
+/// immediately after `content` (before any action line); its absence
+/// defaults to `DOC_PATH`, so every script written before sessions carried
+/// a path — including the checked-in `repros/tripwire-clean.rune` — still
+/// decodes unchanged.
+pub fn decode(text: &str) -> Result<(String, String, Vec<Action>), ScriptError> {
     let mut content: Option<String> = None;
+    let mut path: Option<String> = None;
     let mut actions = Vec::new();
     let mut lines = text.lines().enumerate().peekable();
 
@@ -82,8 +89,21 @@ pub fn decode(text: &str) -> Result<(String, Vec<Action>), ScriptError> {
             continue;
         }
 
+        if path.is_none()
+            && actions.is_empty()
+            && let Some(rest) = raw.strip_prefix("path ")
+        {
+            path = Some(unescape(rest, line)?);
+            continue;
+        }
+
         if let Some(rest) = raw.strip_prefix("dirloaded ") {
             actions.push(parse_dir_loaded(rest, line, &mut lines)?);
+            continue;
+        }
+
+        if let Some(rest) = raw.strip_prefix("highlight ") {
+            actions.push(parse_highlight(rest, line, &mut lines)?);
             continue;
         }
 
@@ -91,7 +111,8 @@ pub fn decode(text: &str) -> Result<(String, Vec<Action>), ScriptError> {
     }
 
     let content = content.ok_or(ScriptError::MissingContentLine)?;
-    Ok((content, actions))
+    let path = path.unwrap_or_else(|| DOC_PATH.to_string());
+    Ok((path, content, actions))
 }
 
 /// Parses a `dirloaded <cause>` line plus its `dirloaded-entry` continuation
@@ -163,6 +184,91 @@ fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
         name: unescape(name_field, line)?,
         is_dir,
     })
+}
+
+/// Parses a `highlight <live|stale|future> <n>` line plus its `n`
+/// `highlight-span <start> <end> <scope>` continuation lines (plan
+/// WP7.S5) — the count is known up front (unlike `dirloaded-entry`'s
+/// peek-until-mismatch loop), so this consumes exactly `n` lines, erroring
+/// if one doesn't match the expected prefix or the input runs out early.
+fn parse_highlight<'a>(
+    rest: &str,
+    line: usize,
+    lines: &mut Peekable<impl Iterator<Item = (usize, &'a str)>>,
+) -> Result<Action, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `highlight <live|stale|future> <n>`".to_string(),
+    };
+    let mut parts = rest.trim().splitn(2, ' ');
+    let version = match parts.next().ok_or_else(malformed)? {
+        "live" => HighlightVersion::Live,
+        "stale" => HighlightVersion::Stale,
+        "future" => HighlightVersion::Future,
+        other => {
+            return Err(ScriptError::MalformedLine {
+                line,
+                reason: format!("unknown highlight version {other:?}"),
+            });
+        }
+    };
+    let n: usize = parts
+        .next()
+        .ok_or_else(malformed)?
+        .trim()
+        .parse()
+        .map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: "expected a usize span count".to_string(),
+        })?;
+
+    let mut spans = Vec::with_capacity(n);
+    for _ in 0..n {
+        let Some((next_idx, next_raw)) = lines.next() else {
+            return Err(ScriptError::MalformedLine {
+                line,
+                reason: format!("expected {n} highlight-span lines, ran out of input"),
+            });
+        };
+        let entry_line = next_idx + 1;
+        let entry_rest =
+            next_raw
+                .strip_prefix("highlight-span ")
+                .ok_or_else(|| ScriptError::MalformedLine {
+                    line: entry_line,
+                    reason: "expected `highlight-span <start> <end> <scope>`".to_string(),
+                })?;
+        spans.push(parse_highlight_span(entry_rest, entry_line)?);
+    }
+
+    Ok(Action::Highlight { version, spans })
+}
+
+fn parse_highlight_span(rest: &str, line: usize) -> Result<(usize, usize, u16), ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `highlight-span <start> <end> <scope>`".to_string(),
+    };
+    let mut parts = rest.split(' ');
+    let start_str = parts.next().ok_or_else(malformed)?;
+    let end_str = parts.next().ok_or_else(malformed)?;
+    let scope_str = parts.next().ok_or_else(malformed)?;
+    if parts.next().is_some() {
+        return Err(malformed());
+    }
+    let num = |field: &str, v: &str| -> Result<usize, ScriptError> {
+        v.parse().map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: format!("invalid {field} {v:?}"),
+        })
+    };
+    let start = num("highlight-span start", start_str)?;
+    let end = num("highlight-span end", end_str)?;
+    let scope: u16 = scope_str.parse().map_err(|_| ScriptError::InvalidNumber {
+        line,
+        reason: format!("invalid highlight-span scope {scope_str:?}"),
+    })?;
+    Ok((start, end, scope))
 }
 
 fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {

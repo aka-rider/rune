@@ -9,7 +9,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::DirCause;
 use rune_vfs::DirEntry;
 
-use crate::action::Action;
+use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
     COPY_KEY, CTRL_C_KEY, CTRL_R_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, MARKDOWN_FRAGMENTS,
@@ -171,6 +171,60 @@ fn arb_dir_loaded_generation() -> impl Strategy<Value = u32> {
     0u32..=4u32
 }
 
+fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
+    prop_oneof![
+        Just(HighlightVersion::Live),
+        Just(HighlightVersion::Stale),
+        Just(HighlightVersion::Future),
+    ]
+}
+
+/// One raw `(start, end, ScopeId)` triple, deliberately unvalidated —
+/// `Action::Highlight`'s own docs — drawn from four shapes: a small
+/// well-formed range, a range entirely past a short document's length, a
+/// deliberately inverted `start > end` pair, and a narrow 1-byte-wide range
+/// at a small odd offset, chosen to land mid-`char` inside a CJK seed's
+/// multi-byte code points (`SEEDS`, `palette.rs`) about as often as it lands
+/// on a real boundary.
+fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
+    prop_oneof![
+        (0usize..30, 1usize..15, 0u16..30).prop_map(|(start, len, scope)| (
+            start,
+            start + len,
+            scope
+        )),
+        (900usize..2000, 1usize..200, 0u16..30).prop_map(|(start, len, scope)| (
+            start,
+            start + len,
+            scope
+        )),
+        (1usize..30, 0usize..30, 0u16..30).prop_map(|(gap, end, scope)| (end + gap, end, scope)),
+        (0usize..24, 0u16..30).prop_map(|(start, scope)| (start, start + 1, scope)),
+    ]
+}
+
+/// 3 — one guaranteed edit (`Key('h')`, so the live buffer version is >= 1
+/// before the reply is delivered) followed by a synthesized
+/// `Msg::Highlighted` reply. The edit is mandatory: `HighlightVersion::
+/// Stale` resolves via `buffer.version().saturating_sub(1)`, which at
+/// version 0 is silently the SAME as `Live` — an edit first guarantees
+/// `Stale` is genuinely distinct (plan WP7.S6).
+fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
+    (
+        arb_highlight_version(),
+        proptest::collection::vec(arb_highlight_span(), 0..=6),
+    )
+        .prop_map(|(version, spans)| {
+            vec![
+                Action::Key(KeyInput {
+                    code: KeyCode::Char('h'),
+                    mods: Mods::NONE,
+                }),
+                Action::Highlight { version, spans },
+            ]
+        })
+}
+
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`, or
 /// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6).
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
@@ -193,9 +247,9 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// The user-approved weighted table over 11 clusters. All 11 arms are
-/// `.boxed()` — `prop_oneof!` with >10 arms expands to
-/// `Union::new_weighted(vec![…boxed…])` (G16).
+/// The user-approved weighted table, now over 12 clusters (plan WP7.S6
+/// added `cluster_highlight`). All arms are `.boxed()` — `prop_oneof!` with
+/// >10 arms expands to `Union::new_weighted(vec![…boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -207,6 +261,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         5 => cluster_save().boxed(),
         4 => cluster_clipboard().boxed(),
         3 => cluster_monkey_burst().boxed(),
+        3 => cluster_highlight().boxed(),
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
     ]

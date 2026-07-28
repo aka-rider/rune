@@ -70,7 +70,7 @@ fn undo_redo_total_clean_script_via_driver_trips_nothing() {
         Action::Type("xyz".to_string()),
         Action::Key(key(KeyCode::Backspace, Mods::NONE)),
     ];
-    let result = driver::run(content, &script);
+    let result = driver::run(driver::DOC_PATH, content, &script);
     assert!(
         result.violation.is_none(),
         "{}",
