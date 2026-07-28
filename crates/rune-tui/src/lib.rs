@@ -19,6 +19,7 @@ pub mod keymap;
 pub mod keystate;
 pub mod layout;
 pub mod listnav;
+pub mod navigate;
 pub mod opentabs;
 pub mod pane;
 pub mod pointer;

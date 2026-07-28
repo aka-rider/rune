@@ -399,6 +399,20 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         help: "cursor to bottom of view",
         when: "",
     },
+    // WP5.S7: follow the link under the cursor — Super or Ctrl held, both
+    // mirroring the `keymap::resolve` arms exactly.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Enter, SUP)],
+        cmd: Command::FollowLink,
+        help: "follow link",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Enter, CTRL)],
+        cmd: Command::FollowLink,
+        help: "follow link",
+        when: "",
+    },
 ];
 
 #[cfg(test)]

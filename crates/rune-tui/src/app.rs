@@ -26,6 +26,7 @@ use crate::db::Db;
 use crate::document::{Document, DocumentId};
 use crate::explorer::{self, Explorer};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
+use crate::navigate;
 use crate::opentabs::{self, OpenTabs};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg};
@@ -485,7 +486,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
 fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
-        Msg::Mouse(input) => mouse::handle(app, input),
+        Msg::Mouse(input) => mouse::handle(app, input, effects),
         Msg::Resize(width, height) => {
             app.frame_width = width;
             app.frame_height = height;
@@ -766,6 +767,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::Cut => clipboard::cut(app, app.active, effects),
         Command::Paste => clipboard::paste(effects),
         Command::Save => save::trigger_save(app, app.active, effects),
+        Command::FollowLink => navigate::follow(app, effects),
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single
