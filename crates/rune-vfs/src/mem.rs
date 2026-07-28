@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, UNIX_EPOCH};
 
-use crate::{DirEntry, Identity, Stat, Vfs, sort_dir_entries, temp_name};
+use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
 /// The `Vfs` operation a `Mem::fail_next` injection targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -225,7 +225,7 @@ impl Vfs for Mem {
                 },
                 // Mem has no hardlink concept: every Mem file reports 1.
                 nlink: Some(1),
-                is_dir: false,
+                kind: FileKind::File,
             });
         }
         // No exact file at `path` — `Mem` has no directory nodes (flat
@@ -243,7 +243,7 @@ impl Vfs for Mem {
                 mtime: UNIX_EPOCH,
                 identity: Identity::default(),
                 nlink: None,
-                is_dir: true,
+                kind: FileKind::Dir,
             });
         }
         Err(not_found(path, "stat"))

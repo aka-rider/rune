@@ -9,7 +9,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::{DirEntry, Identity, Stat, Vfs, sort_dir_entries, temp_name};
+use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
 /// Disk-backed `Vfs` on Darwin. Uses `renamex_np` for crash-safe atomic
 /// publish; stateless (no synchronization needed).
@@ -134,7 +134,15 @@ impl Vfs for Disk {
                 device: Some(meta.dev()),
             },
             nlink: Some(meta.nlink()),
-            is_dir: meta.is_dir(),
+            // A FIFO, socket or device node is neither: it must never be
+            // offered as a link target, because reading one never returns.
+            kind: if meta.is_dir() {
+                FileKind::Dir
+            } else if meta.is_file() {
+                FileKind::File
+            } else {
+                FileKind::Other
+            },
         })
     }
 

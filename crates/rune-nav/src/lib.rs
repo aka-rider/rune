@@ -10,7 +10,7 @@ pub mod percent;
 use std::path::{Path, PathBuf};
 
 pub use rune_syntax::element::ByteRange;
-use rune_vfs::Vfs;
+use rune_vfs::{FileKind, Vfs};
 
 /// A single navigable reference found in a document: where it sits
 /// (`site`) and what it is (`kind`).
@@ -94,7 +94,15 @@ pub fn is_external(raw: &str) -> bool {
 /// `Vfs` (§1.4.9).
 pub fn resolve(vfs: &dyn Vfs, target: &Target, doc_dir: Option<&Path>, root: &Path) -> Destination {
     match target {
-        Target::Url(u) => Destination::Url(u.clone()),
+        // The allowlist is re-checked HERE, not trusted from whichever
+        // producer classified the target. `Destination::Url` is the only
+        // value that reaches the OS opener's process spawn, so the scheme
+        // check belongs at this boundary — a producer added later (a
+        // tree-sitter language, a vault indexer) then cannot smuggle a
+        // `javascript:`/`file://` target through to it, however it builds
+        // its `Target`s.
+        Target::Url(u) if is_external(u) => Destination::Url(u.clone()),
+        Target::Url(_) => Destination::Unresolved,
         // The caller handles same-document anchors without touching the
         // filesystem.
         Target::SameDoc(_) => Destination::Unresolved,
@@ -168,10 +176,12 @@ fn process_candidate(raw: &str, is_name: bool) -> String {
     }
 }
 
-/// This is why WP1 exists: a directory must never resolve as a link
-/// target.
+/// Only a regular file resolves as a link target. A directory cannot be
+/// opened as a buffer, and a FIFO, socket or device node is worse than
+/// useless: the open path reads synchronously, so following a link to one
+/// would block the editor forever with the buffer unsaved.
 fn is_regular(vfs: &dyn Vfs, p: &Path) -> bool {
-    matches!(vfs.stat(p), Ok(s) if !s.is_dir)
+    matches!(vfs.stat(p), Ok(s) if s.kind == FileKind::File)
 }
 
 /// Compare an in-document anchor reference against a definition's name
@@ -341,6 +351,27 @@ mod tests {
         assert!(!is_external("javascript:alert(1)"));
         assert!(!is_external("data:text/plain;base64,aGk="));
         assert!(!is_external("ftp://example.com"));
+    }
+
+    /// The allowlist is a property of `resolve` itself, not of whichever
+    /// producer built the `Target` — a producer added later must not be able
+    /// to reach the OS opener with a non-allowlisted scheme.
+    #[test]
+    fn a_non_allowlisted_url_target_never_becomes_a_url_destination() {
+        let vfs = Mem::new();
+        for hostile in [
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "data:text/plain;base64,aGk=",
+            "ftp://example.com",
+        ] {
+            let target = Target::Url(hostile.to_string());
+            assert_eq!(
+                resolve(&vfs, &target, None, Path::new("/root")),
+                Destination::Unresolved,
+                "{hostile} must not resolve to a Url destination"
+            );
+        }
     }
 
     #[test]

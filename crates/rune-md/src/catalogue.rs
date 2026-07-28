@@ -144,8 +144,8 @@ fn wikilink_role(content: &str, range_start: usize) -> UseRole {
 /// includes its trailing space, so an ATX heading's name is everything
 /// after the marker; a setext heading has no marker (`h.marker` is an empty
 /// range) so its name is its first content line instead. Either way, trim
-/// ASCII whitespace, strip a trailing run of `#` (CommonMark's closed ATX
-/// form, `## Setup ##`), then trim ASCII whitespace again.
+/// ASCII whitespace, strip a trailing run of `#` when CommonMark says it
+/// closes the heading, then trim ASCII whitespace again.
 fn heading_name(content: &str, h: &HeadingM) -> String {
     let raw = if !h.marker.is_empty() {
         content.get(h.marker.end..h.range.end).unwrap_or("")
@@ -156,8 +156,19 @@ fn heading_name(content: &str, h: &HeadingM) -> String {
             .unwrap_or("")
     };
     let trimmed = raw.trim_matches(|c: char| c.is_ascii_whitespace());
-    let trimmed = trimmed.trim_end_matches('#');
-    trimmed
+    // A run of `#` closes an ATX heading only when preceded by whitespace, or
+    // when it is the whole content. So `## Setup ##` is named `Setup`, while
+    // `## C#` keeps its own trailing `#` and is named `C#`.
+    let closed = trimmed.trim_end_matches('#');
+    let content = if closed.len() == trimmed.len()
+        || closed.is_empty()
+        || closed.ends_with(|c: char| c.is_ascii_whitespace())
+    {
+        closed
+    } else {
+        trimmed
+    };
+    content
         .trim_matches(|c: char| c.is_ascii_whitespace())
         .to_string()
 }
@@ -255,6 +266,24 @@ mod tests {
                 name: "Setup".to_string(),
             }
         );
+    }
+
+    /// A trailing `#` NOT preceded by whitespace is part of the heading's
+    /// text, not a CommonMark closing sequence — `## C#` is a language name,
+    /// and mangling it to `C` would make `[[note#C#]]` unmatchable.
+    #[test]
+    fn a_trailing_hash_without_a_preceding_space_stays_in_the_name() {
+        for (src, expected) in [("## C#\n", "C#"), ("## F#\n", "F#"), ("## a#b#\n", "a#b#")] {
+            let refs = refs_of(src);
+            assert_eq!(
+                refs[0].kind,
+                RefKind::Def {
+                    role: DefRole::Heading(2),
+                    name: expected.to_string(),
+                },
+                "{src:?} should name the heading {expected:?}"
+            );
+        }
     }
 
     #[test]

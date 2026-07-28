@@ -24,7 +24,7 @@ use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_tui::{workspace, workspaceroot};
-use rune_vfs::{Disk, Vfs};
+use rune_vfs::{Disk, FileKind, Vfs};
 
 use cli::{CliAction, CliError};
 
@@ -461,7 +461,7 @@ fn to_abs_path(input: &str) -> PathBuf {
 /// `load_buffer` above.
 fn validate_work_dir(vfs: &dyn Vfs, dir: &Path) -> Result<(), CliError> {
     match vfs.stat(dir) {
-        Ok(stat) if stat.is_dir => Ok(()),
+        Ok(stat) if stat.kind == FileKind::Dir => Ok(()),
         _ => Err(CliError::NotADirectory(dir.to_path_buf())),
     }
 }

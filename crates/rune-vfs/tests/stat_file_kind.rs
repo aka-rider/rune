@@ -1,8 +1,8 @@
-//! `Vfs::stat`'s `is_dir` field — a regular file must report `false`, a
-//! directory must report `true`, for both `Disk` and `Mem`.
+//! `Vfs::stat`'s `kind` field — a regular file must report `FileKind::File`,
+//! a directory `FileKind::Dir`, for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use rune_vfs::{Disk, Mem, Vfs};
+use rune_vfs::{Disk, FileKind, Mem, Vfs};
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,12 +24,15 @@ fn disk_stat_distinguishes_file_from_dir() {
     let vfs = Disk;
     let file_stat = vfs.stat(&file_path).expect("stat file should succeed");
     assert!(
-        !file_stat.is_dir,
-        "a regular file must report is_dir == false"
+        file_stat.kind == FileKind::File,
+        "a regular file must report FileKind::File"
     );
 
     let dir_stat = vfs.stat(&dir_path).expect("stat dir should succeed");
-    assert!(dir_stat.is_dir, "a directory must report is_dir == true");
+    assert!(
+        dir_stat.kind == FileKind::Dir,
+        "a directory must report FileKind::Dir"
+    );
 
     let _ = fs::remove_dir_all(&tmp);
 }
@@ -48,8 +51,8 @@ fn mem_stat_distinguishes_file_from_dir() {
         .stat(&PathBuf::from("/a/leaf.md"))
         .expect("stat file should succeed");
     assert!(
-        !file_stat.is_dir,
-        "a regular file must report is_dir == false"
+        file_stat.kind == FileKind::File,
+        "a regular file must report FileKind::File"
     );
 
     // `/a` has no direct key of its own, only the descendant key
@@ -59,7 +62,33 @@ fn mem_stat_distinguishes_file_from_dir() {
         .stat(&PathBuf::from("/a"))
         .expect("stat synthetic dir should succeed");
     assert!(
-        dir_stat.is_dir,
+        dir_stat.kind == FileKind::Dir,
         "a synthetic directory must report is_dir == true"
     );
+}
+
+/// A FIFO is neither a file nor a directory. This matters beyond taxonomy:
+/// the editor's open path reads synchronously, so offering a FIFO as a link
+/// target would block it forever with the buffer unsaved.
+#[test]
+fn disk_stat_reports_a_fifo_as_other() {
+    let tmp = std::env::temp_dir().join(format!("rune-vfs-stat-fifo-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).expect("create temp dir");
+    let fifo = tmp.join("pipe");
+
+    let made = std::process::Command::new("/usr/bin/mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo should succeed");
+
+    let stat = Disk.stat(&fifo).expect("stat fifo should succeed");
+    assert_eq!(
+        stat.kind,
+        FileKind::Other,
+        "a FIFO must report FileKind::Other, never File"
+    );
+
+    let _ = fs::remove_dir_all(&tmp);
 }

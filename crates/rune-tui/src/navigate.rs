@@ -152,9 +152,10 @@ fn describe_target(target: &Target) -> String {
 /// `clipboard::pbpaste_cmd`: runs off-thread, never touches the terminal.
 /// `url` is passed to `/usr/bin/open` as a SEPARATE argv element, never
 /// interpolated into a shell string, so a crafted link can never inject a
-/// command — the only targets that ever reach here have already passed
-/// `rune_nav::is_external`'s allowlist, which is the actual security
-/// boundary (see its own doc comment).
+/// command. The scheme allowlist is enforced inside `rune_nav::resolve`,
+/// which is the only thing that can produce the `Destination::Url` this
+/// function consumes — so no producer of navigation targets, present or
+/// future, can route an arbitrary scheme to this spawn.
 fn open_external_cmd(url: String) -> Cmd {
     Cmd::new(CmdKind::OpenExternal, move || {
         match ProcessCommand::new("/usr/bin/open").arg(&url).status() {

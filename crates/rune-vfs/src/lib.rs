@@ -51,9 +51,21 @@ pub struct Stat {
     /// fork the document from its other names on disk (materialize surfaces
     /// this as a footer warning — a later work package).
     pub nlink: Option<u64>,
-    /// Whether the path names a directory — link resolution must not accept
-    /// a directory as a target.
-    pub is_dir: bool,
+    /// What kind of filesystem object the path names. Link resolution accepts
+    /// only `File`: a directory cannot be opened as a buffer, and reading a
+    /// FIFO, socket or device node would block the caller forever.
+    pub kind: FileKind,
+}
+
+/// The kind of object a path names. Deliberately an enum rather than a pair
+/// of booleans so "neither a file nor a directory" is a representable, named
+/// state instead of an accidental one — the distinction matters because
+/// `Vfs::read` on a FIFO or socket never returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    File,
+    Dir,
+    Other,
 }
 
 /// A single direct child of a directory, as returned by [`Vfs::read_dir`].

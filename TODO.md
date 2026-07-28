@@ -289,7 +289,7 @@ pre-edit selection range. Out of scope for the table plan.
 Deliberately out of scope for the navigation plan; the types exist so none of
 these needs a redesign:
 
-- **Back/forward navigation history.** Following a link opens or reactivates a
+- **Back/forward navigation history** (back/forward). Following a link opens or reactivates a
   tab with no way back. `Destination` is the value a history stack would push.
 - **Vault-wide index, backlinks and graph.** `catalogue()` is pure and takes
   `(content, blocks)`, so a headless indexer can run `parse() -> catalogue()`
@@ -341,3 +341,48 @@ key right ----
   likewise not committed, so the default gate stays green rather than
   deterministically red for unrelated work.
 - **Out of scope** for the navigation plan.
+
+## rust port — §1.6 budget: `rune-cli/src/main.rs` and `explorer.rs` grew in the navigation plan (recorded 2026-07-29)
+
+- `crates/rune-cli/src/main.rs` is 521 lines (§1.6 limit 500; was 429 before this
+  work) — grown by WP7's strict-CLI wiring: `LaunchAction` dispatch, `-w`
+  validation, workspace-root resolution and the multi-file open loop. The parser
+  itself already lives in its own `cli.rs`; the remainder is startup sequencing
+  that has to happen in `main`. Split when next touched: the recovery-store
+  bootstrap (`bootstrap_db`/`DbBootstrap`, roughly 150 lines) is a self-contained
+  unit that could move to a sibling module.
+- `crates/rune-tui/src/explorer.rs` is 588 lines (§1.6 limit 500; was 553
+  immediately before this work) — grown 35 lines by WP4.S5's `app.root` fallback
+  in `initial_root` plus its three new tests. Same split suggestion as the older
+  entries above: `EXPLORER_BINDINGS` + `handle_key` are a self-contained unit.
+
+## rust port — `App::db_load_versions` shadows `db_ops` (recorded 2026-07-29, navigation plan code review)
+
+**Status:** open; newly-introduced tech debt, no defect observed.
+
+`crates/rune-tui/src/db.rs`'s `load_document` inserts into BOTH `App::db_ops`
+(`op id -> DocumentId`) and `App::db_load_versions` (`op id -> issue-time buffer
+version`), and `handle_db_event` must remove from both on every terminal arm.
+Nothing structurally enforces that the two maps stay in step — only convention
+at four call sites — which is exactly the parallel-source-of-truth shape the rest
+of this codebase avoids. Fix: give `db_ops` a richer value type (e.g.
+`PendingOp { doc: DocumentId, issued_version: Option<u64> }`) so one map carries
+both facts and the two cannot drift. Deferred because `db_ops` is read by
+`save.rs` and `rename.rs` too, so the change is wider than the navigation plan's
+scope.
+
+## rust port — `Mem::stat` re-derives `read_dir`'s directory test (recorded 2026-07-29, navigation plan code review)
+
+`crates/rune-vfs/src/mem.rs`'s `stat` decides "is this a synthetic directory" with
+its own `strip_prefix`-based scan over `state.files`, while `read_dir` a few lines
+below computes the same fact in a different shape. Two implementations of "does a
+stored key sit strictly below this path" that can disagree if only one is edited.
+Fix: extract one private helper both call.
+
+## rust port — `Anchor::Line` degrades to an empty-string match (recorded 2026-07-29, navigation plan code review)
+
+`crates/rune-tui/src/navigate.rs`'s `anchor_name` maps `Anchor::Line(_)` to `""`,
+and heading lookup compares normalized names — so a line anchor would match a
+heading whose name normalizes to empty rather than resolving by line number.
+Latent only: no producer emits `Anchor::Line` today. Fix it when the first one
+does, by giving line anchors their own lookup path instead of a name comparison.
