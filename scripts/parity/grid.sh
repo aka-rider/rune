@@ -67,7 +67,7 @@ excluded_reason() {
             echo "same list-marker gap as lists.md (the body's own bullet list)"
             ;;
         cjk.md)
-            echo "same list-marker gap as lists.md, plus Go pads a long CJK-containing line's remaining width with literal TAB bytes instead of spaces (reproducible, root cause not yet identified)"
+            echo "same list-marker gap as lists.md, plus Go pads a long CJK-containing line's remaining width with literal TAB bytes instead of spaces (root cause identified — a vendored bubbletea renderer fork's hard-tab optimization, see TODO.md — not fixed, third-party dependency behavior)"
             ;;
         emoji.md)
             echo "same list-marker gap as lists.md (the ZWJ/skin-tone-modifier corruption this fixture also caught is fixed — see TODO.md)"

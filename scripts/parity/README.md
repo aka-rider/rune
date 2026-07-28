@@ -179,6 +179,10 @@ of how each side renders:
   wide (CJK, width-2) run is followed by trailing blank width in a single
   visual row renders with real `\t` (0x09) characters filling that
   trailing width in Go's own `tmux capture-pane -p` output, instead of
-  spaces. Root cause not yet identified (a padding routine's off-by-N
-  after wide-character width accounting is the leading suspect); flagged
-  for follow-up, not fixed here.
+  spaces. Root cause identified (2026-07-28, see `TODO.md`): a hard-tab
+  cursor-movement optimization in the vendored `github.com/aka-rider/
+  ultraviolet` fork bubbletea's renderer uses (`replace` in `go.mod`),
+  triggered by a CJK-row-specific width-accounting mismatch — a
+  third-party dependency's behavior, not a bug in this repo's own `pkg/`/
+  `cmd/` code, so left unfixed rather than forcing a speculative patch
+  into either the dependency or the renderer.
