@@ -41,6 +41,7 @@ use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::document::Document;
 
@@ -51,16 +52,42 @@ enum CharClass {
     Other,
 }
 
-/// Port of `commands_nav.go:getClass` — ASCII word chars only (matches Go:
-/// non-ASCII letters classify as `Other`, not `Word`).
+/// Unicode-aware generalization of `commands_nav.go:getClass` (plan
+/// WP9.S1, recorded as a deliberate divergence in `TODO.md`). Go's
+/// original classifies `[A-Za-z0-9_]` as `Word` and every other rune —
+/// including every non-ASCII letter (Cyrillic, Greek, CJK ideographs,
+/// combining marks, …) — as `Other`, so `⌥←`/`⌥→` stop at every individual
+/// non-ASCII character instead of the actual word boundary. That is a
+/// defect in the Go original, not a behavior worth porting byte-for-byte:
+/// this classifier instead asks `unicode-segmentation`'s UAX #29
+/// word-boundary algorithm whether `r`, fused between two ordinary word
+/// characters, stays part of one word segment — the same rule that
+/// already makes `is_ascii_alphanumeric()` true for `a`-`z`/`0`-`9`, but
+/// extended to every script's letters, digits and combining marks, not
+/// just ASCII's. Whitespace is likewise generalized to `char::is_whitespace`
+/// (a superset of Go's ASCII `' '`/`'\t'`/`'\n'`/`'\r'` check).
 fn char_class(r: char) -> CharClass {
-    if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+    if r.is_whitespace() {
         CharClass::Whitespace
-    } else if r.is_ascii_alphanumeric() || r == '_' {
+    } else if is_word_forming(r) {
         CharClass::Word
     } else {
         CharClass::Other
     }
+}
+
+/// Probes `unicode-segmentation`'s word-boundary algorithm: wraps `r`
+/// between two ASCII letters and asks whether the three stay fused into a
+/// single UAX #29 word segment. The crate exposes no direct per-character
+/// word-break property, so this is the public API's own way to classify
+/// one character — it mirrors `unicode_words()`'s own definition of a
+/// word: a maximal run of Alphabetic/Numeric runes and the marks/joiners
+/// that combine with them (which is also why `_`, Unicode's
+/// `ExtendNumLet`, joins rather than breaks a run, matching Go's explicit
+/// `r == '_'` special case without needing one here).
+fn is_word_forming(r: char) -> bool {
+    let probe = format!("a{r}a");
+    probe.split_word_bounds().count() == 1
 }
 
 /// Port of `commands_nav.go:prevRuneOffset`. Simplified relative to Go's
@@ -450,6 +477,31 @@ mod tests {
         // Starting mid-word only skips to the end of the CURRENT word,
         // stopping at the following whitespace run.
         assert_eq!(word_right_offset(&buf, 2), 5);
+    }
+
+    /// Regression for WP9.S1 (the Go word-classification defect): a
+    /// non-ASCII alphabet must still form one word run, so `⌥→`/`⌥←` stop
+    /// at the WORD boundary, never at every individual Cyrillic character.
+    /// Under Go's original ASCII-only classifier every non-ASCII letter is
+    /// `Other`, so `word_right_offset` from 0 would stop after a single
+    /// rune instead of at the end of "привіт".
+    #[test]
+    fn word_motion_treats_a_non_ascii_alphabet_as_one_word() {
+        let buf = Buffer::new("привіт світ");
+        let privit_end = "привіт".len();
+        let svit_start = "привіт ".len();
+        assert_eq!(word_right_offset(&buf, 0), privit_end);
+        assert_eq!(word_left_offset(&buf, buf.len()), svit_start);
+    }
+
+    /// `_` still joins a word run (Go's explicit `r == '_'` special case),
+    /// and ASCII digits/letters keep classifying together with a
+    /// following Unicode letter (mixed identifiers stay one word).
+    #[test]
+    fn underscore_and_mixed_ascii_unicode_runs_stay_one_word() {
+        let buf = Buffer::new("foo_bar привіт1");
+        assert_eq!(word_right_offset(&buf, 0), "foo_bar".len());
+        assert_eq!(word_right_offset(&buf, "foo_bar ".len()), buf.len());
     }
 
     #[test]
