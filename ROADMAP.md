@@ -3,7 +3,7 @@
 - [x] Pre-flight: Port fuzzing infra and start fuzzing
 - [x] Add sqlite, state saving, models, VFS
 - [x] Add Explorer, Open Tabs and Footer 
-- [ ] Architecture with three-sitter, config, themes
+- [x] Architecture with tree-sitter (22 languages, render-layer overlay); config, themes still open
 - [ ] 100% features parity with golang's **markdown-edit** TUI parity with rune
 	- rendering readonly view and full editor r's keystrokes,
   row movements, etc. Rendering parity: colors, styles. Verification via ttyd golang/rust on the same file
