@@ -344,12 +344,20 @@ fn build_block<'a>(
             sm: RevealSm::new(RevealState::Revealed),
             range,
         })),
-        BlockKind::Table => Some(Block::Verbatim(VerbatimM {
-            sm: RevealSm::new(RevealState::Revealed),
-            range,
-            kind: VerbatimKind::Table,
-            content_lines: super::per_line_content(content, idx, range, hint),
-        })),
+        BlockKind::Table => {
+            super::table::build_table(content, idx, node, hint, range).or_else(|| {
+                // `build_table` returns `None` on anything unexpected (a
+                // non-`Table` node reaching this arm, or a table with no
+                // rows) — degrade to the same raw passthrough every other
+                // unmodeled construct gets (§0), never panic.
+                Some(Block::Verbatim(VerbatimM {
+                    sm: RevealSm::new(RevealState::Revealed),
+                    range,
+                    kind: VerbatimKind::Table,
+                    content_lines: super::per_line_content(content, idx, range, hint),
+                }))
+            })
+        }
         BlockKind::HtmlBlock => Some(Block::Verbatim(VerbatimM {
             sm: RevealSm::new(RevealState::Revealed),
             range,

@@ -245,16 +245,25 @@ mod tests {
     #[test]
     fn frontmatter_and_verbatim_survive_unfocused_as_revealed() {
         // The reveal-policy table's declared exception to "Unfocused ->
-        // ForceRendered": Frontmatter and Verbatim (tables/HTML/math) have
-        // no Decide policy at all — they ignore `ctx.grant` entirely and
-        // stay pinned Revealed even when the document is unfocused.
+        // ForceRendered": Frontmatter and Verbatim (HTML/math/any other
+        // unmodeled construct) have no Decide policy at all — they ignore
+        // `ctx.grant` entirely and stay pinned Revealed even when the
+        // document is unfocused.
+        //
+        // A table is no longer part of this exception (plan: markdown
+        // table rendering, WP1): `Block::Table` now has a real Decide
+        // policy (`cursors.any_in_lines(first_line, last_line)`, mirroring
+        // `CodeFenceM`), so an unfocused document forces it Rendered like
+        // every other Decide-policy block — see
+        // `unfocused_forces_every_decide_policy_block_rendered` above, and
+        // `crates/rune-md/tests/table_model.rs` for table-shape coverage.
         let mut doc = DocMachine::new();
-        let buf = Buffer::new("---\ntitle: x\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+        let buf = Buffer::new("---\ntitle: x\n---\n\n<div>\nraw\n</div>\n");
         doc.sync_content(&buf);
         doc.sync_cursors(&buf, &CursorSet::new(0));
         assert!(
             doc.blocks().len() >= 2,
-            "expected a Frontmatter block and a Verbatim (table) block"
+            "expected a Frontmatter block and a Verbatim (html) block"
         );
         for b in doc.blocks() {
             assert!(
