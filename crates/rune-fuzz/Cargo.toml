@@ -4,7 +4,17 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-rune-core = { path = "../rune-core" }
+# strict-invariants on purpose: a dependency does NOT inherit cfg(test), so
+# without this feature rune-core's STRICT_INVARIANTS-gated checks (e.g.
+# undo::reapply's duplicate-post-edit-start check) silently compile out of
+# the fuzzer, and the session fuzzer exists specifically to catch producer
+# bugs those checks detect. Unlike rune-md/rune-syntax below, rune-core has
+# no known-open false-positive invariants, so this is safe to enable broadly.
+rune-core = { path = "../rune-core", features = ["strict-invariants"] }
+# NOT strict-invariants: rune-md's known-open comrak sourcepos panics
+# (crates/rune-md/TODO.md) would drown the fuzzer in non-bugs — see the
+# Makefile's test-fuzz target comment for why this crate is deliberately
+# excluded from --workspace strict builds.
 rune-md = { path = "../rune-md" }
 rune-syntax = { path = "../rune-syntax" }
 rune-tui = { path = "../rune-tui" }
