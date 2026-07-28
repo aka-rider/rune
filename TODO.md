@@ -181,9 +181,13 @@ edit-commit chokepoint, not just the primary. Out of scope for the table plan.
 
 ## rust port — `db_wiring` flakes under parallel test load (recorded 2026-07-28, tree-sitter plan, WP5.S5/S6 split)
 
-Observed once during `cargo test --workspace` while three agents were building
-concurrently; passed 3/3 in isolation and on a clean re-run. The file is not
-touched by the tree-sitter work.
+Observed twice, both times only while other work was compiling concurrently in
+another worktree; 9/9 clean when the machine is otherwise idle. The second
+occurrence was a bare `test result: FAILED` count with the name not captured,
+so "it is `db_wiring`" rests on the first observation alone — treat the
+attribution as unconfirmed and re-derive it from a captured failure before
+fixing. The load correlation, however, reproduced. The file is not touched by
+the tree-sitter work.
 
 The test already follows the repo convention — it waits on bounded spins, not
 wall-clock sleeps, and says so. So the defect is not a sleep to delete: it is a
