@@ -185,21 +185,54 @@ fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
 /// deliberately inverted `start > end` pair, and a narrow 1-byte-wide range
 /// at a small odd offset, chosen to land mid-`char` inside a CJK seed's
 /// multi-byte code points (`SEEDS`, `palette.rs`) about as often as it lands
-/// on a real boundary.
+/// on a real boundary. Every arm draws `ScopeId` from the same `SCOPE_ID`
+/// range — an out-of-range scope id isn't a shape under test here, just
+/// filler, so all four arms share it rather than repeating an unexplained
+/// `30` four times.
+///
+/// Readability-only split (finding B): each bound below is the exact
+/// literal the four `prop_oneof!` arms used inline before, just named —
+/// the generated distribution is unchanged.
 fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
+    /// Arm 1 — a small well-formed span: `start` fits inside every `SEEDS`
+    /// document, `len >= 1` keeps `start < end`.
+    const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
+    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
+
+    /// Arm 2 — a span entirely past the end of every `SEEDS` document (the
+    /// longest seed is well under 900 bytes), exercising the out-of-bounds
+    /// clamp/discard path with a WIDE span, not just a narrow overrun.
+    const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
+    const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
+
+    /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,
+    /// then a positive `gap` added to it to derive `start`, so `start` is
+    /// always strictly greater than `end`.
+    const INVERTED_GAP: std::ops::Range<usize> = 1..30;
+    const INVERTED_END: std::ops::Range<usize> = 0..30;
+
+    /// Arm 4 — a narrow 1-byte-wide span at a small offset, landing
+    /// mid-`char` inside a CJK seed's multi-byte code points about as often
+    /// as it lands on a real boundary.
+    const MID_CHAR_START: std::ops::Range<usize> = 0..24;
+
+    /// Shared by every arm — filler, not itself a shape under test.
+    const SCOPE_ID: std::ops::Range<u16> = 0..30;
+
     prop_oneof![
-        (0usize..30, 1usize..15, 0u16..30).prop_map(|(start, len, scope)| (
+        (IN_BOUNDS_START, IN_BOUNDS_LEN, SCOPE_ID).prop_map(|(start, len, scope)| (
             start,
             start + len,
             scope
         )),
-        (900usize..2000, 1usize..200, 0u16..30).prop_map(|(start, len, scope)| (
-            start,
-            start + len,
+        (FAR_OUT_OF_BOUNDS_START, FAR_OUT_OF_BOUNDS_LEN, SCOPE_ID)
+            .prop_map(|(start, len, scope)| (start, start + len, scope)),
+        (INVERTED_GAP, INVERTED_END, SCOPE_ID).prop_map(|(gap, end, scope)| (
+            end + gap,
+            end,
             scope
         )),
-        (1usize..30, 0usize..30, 0u16..30).prop_map(|(gap, end, scope)| (end + gap, end, scope)),
-        (0usize..24, 0u16..30).prop_map(|(start, scope)| (start, start + 1, scope)),
+        (MID_CHAR_START, SCOPE_ID).prop_map(|(start, scope)| (start, start + 1, scope)),
     ]
 }
 
