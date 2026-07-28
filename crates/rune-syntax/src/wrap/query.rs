@@ -15,9 +15,12 @@ use rune_core::coords::{SyntaxPoint, WrapPoint};
 
 /// A span's visible byte length: `Identical`'s is its `range`'s length (no
 /// `content` needed); `Substituted`'s is its own `text`'s length, which
-/// differs from `range`'s length once wrap-sliced (module docs in
-/// `wrap/mod.rs`).
-fn span_visible_len(span: &SyntaxSpan) -> usize {
+/// differs from `range`'s length once wrap-sliced (see this module tree's
+/// own docs). `pub(super)` because the table branch of the wrap pass needs
+/// the same visible-length count to compute a Wrapped/Pivoted extra row's
+/// `start_col` — one shared chokepoint rather than a second copy of this
+/// match.
+pub(super) fn span_visible_len(span: &SyntaxSpan) -> usize {
     match span {
         SyntaxSpan::Identical { range, .. } => range.end - range.start,
         SyntaxSpan::Substituted { text, .. } => text.len(),

@@ -81,6 +81,32 @@ pub(crate) fn blockquote_scope() -> ScopeId {
     scope("markup.quote")
 }
 
+/// A rendered table's body-row base scope (WP2.S1's `markup.table`) —
+/// `table::render::render_cell`'s substitute for plain (non-emphasized)
+/// cell text, and `table::layout::grid_row`'s padding scope for a body row.
+pub(crate) fn table_scope() -> ScopeId {
+    scope("markup.table")
+}
+
+/// A rendered table's header-row base scope.
+pub(crate) fn table_header_scope() -> ScopeId {
+    scope("markup.table.header")
+}
+
+/// The synthesised delimiter-replacing separator row (`├───┼───┤`) —
+/// `table::layout::separator_row`'s one scope for every char, corners and
+/// fill alike.
+pub(crate) fn table_separator_scope() -> ScopeId {
+    scope("markup.table.separator")
+}
+
+/// A Grid row's `│` column borders and side padding — `table::layout::
+/// grid_row`'s bar scope specifically (padding uses the row's own role
+/// scope instead, see that function's docs).
+pub(crate) fn table_border_scope() -> ScopeId {
+    scope("markup.table.border")
+}
+
 pub(crate) fn hr_scope() -> ScopeId {
     scope("punctuation.special")
 }

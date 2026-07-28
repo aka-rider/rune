@@ -8,6 +8,7 @@ rune-core = { path = "../rune-core" }
 rune-syntax = { path = "../rune-syntax" }
 comrak = { workspace = true }
 unicode-width = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

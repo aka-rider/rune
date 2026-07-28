@@ -140,7 +140,7 @@ fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMac
 #[test]
 fn heading_marker_hidden_when_not_on_cursor_line() {
     let (buf, doc) = synced("# hi\nsecond\n", 8, true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined: String = lines[0]
         .spans
         .iter()
@@ -152,7 +152,7 @@ fn heading_marker_hidden_when_not_on_cursor_line() {
 #[test]
 fn heading_marker_revealed_on_cursor_line() {
     let (buf, doc) = synced("# hi\nsecond\n", 0, true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined: String = lines[0]
         .spans
         .iter()
@@ -164,7 +164,7 @@ fn heading_marker_revealed_on_cursor_line() {
 #[test]
 fn unfocused_conceals_everything() {
     let (buf, doc) = synced("# hi\n", 0, false);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined: String = lines[0]
         .spans
         .iter()
@@ -177,7 +177,7 @@ fn unfocused_conceals_everything() {
 fn code_fence_whole_block_reveals_as_unit() {
     let content = "```rust\nfn f() {}\n```\n";
     let (buf, doc) = synced(content, content.find("fn").unwrap(), true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     // Cursor is on line 1 (the content line); the whole 3-line fence
     // block must reveal, including the fence marker lines.
     assert_eq!(lines[0].spans[0].text(content), "```rust");
@@ -189,7 +189,7 @@ fn code_fence_whole_block_reveals_as_unit() {
 fn code_fence_conceals_marker_lines_off_cursor() {
     let content = "```rust\nfn f() {}\n```\nafter\n";
     let (buf, doc) = synced(content, content.find("after").unwrap(), true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     // Fence marker lines collapse to empty; content line shows verbatim.
     assert_eq!(
         lines[0]
@@ -207,7 +207,7 @@ fn bold_reveals_with_nested_link_as_a_unit() {
     let content = "**[bo*ld*](url)** end\n";
     let cursor = content.find("ld").unwrap();
     let (buf, doc) = synced(content, cursor, true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined: String = lines[0].spans.iter().map(|s| s.text(content)).collect();
     assert_eq!(joined, "**[bo*ld*](url)** end");
 }
@@ -216,7 +216,7 @@ fn bold_reveals_with_nested_link_as_a_unit() {
 fn bold_conceals_but_still_shows_nested_link_text() {
     let content = "**[bo*ld*](url)** end\n";
     let (buf, doc) = synced(content, content.len(), true); // cursor at " end", not inside bold
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined: String = lines[0].spans.iter().map(|s| s.text(content)).collect();
     assert_eq!(joined, "bold end");
 }
@@ -225,7 +225,7 @@ fn bold_conceals_but_still_shows_nested_link_text() {
 fn rendered_span_cell_map_offsets_are_within_range() {
     let content = "**bold** text\n";
     let (buf, doc) = synced(content, content.len(), true);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     for span in &lines[0].spans {
         if let SyntaxSpan::Substituted { cell_map, .. } = span {
             let range = span.range();
@@ -251,7 +251,7 @@ fn buffer_to_syntax_roundtrip_on_cursor_legal_position() {
     // test below checks).
     let content = "**bold** text\n";
     let (buf, doc) = synced(content, content.len(), true);
-    let (_lines, snap) = emit(buf.content(), doc.blocks());
+    let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
     let bp = BufferPoint { line: 0, col: 8 }; // buffer col 8 = the space after "**bold**"
     let sp = snap.buffer_to_syntax(bp);
     let bp2 = snap.syntax_to_buffer(sp);
@@ -265,7 +265,7 @@ fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
     // itself, but the CLAMPED position it lands on must be idempotent.
     let content = "**bold** text\n";
     let (buf, doc) = synced(content, content.len(), true);
-    let (_lines, snap) = emit(buf.content(), doc.blocks());
+    let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
     let bp = BufferPoint { line: 0, col: 0 }; // inside the "**" open delimiter
     let sp = snap.buffer_to_syntax(bp);
     let bp2 = snap.syntax_to_buffer(sp);

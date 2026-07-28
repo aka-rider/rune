@@ -61,7 +61,7 @@ proptest! {
         doc.sync_content(&buf);
         let cursors = CursorSet::new(offset);
         doc.sync_cursors(&buf, &cursors);
-        let (lines, _syntax_snap) = emit(buf.content(), doc.blocks());
+        let (lines, _syntax_snap) = emit(buf.content(), doc.blocks(), 80);
         let wrap_snap = WrapMap::new(raw_width).sync(buf.content(), &lines);
 
         for line in 0..buf.line_count() {
@@ -124,7 +124,7 @@ fn wrap_for(
     doc.sync_content(&buf);
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
-    let (lines, _snap) = emit(buf.content(), doc.blocks());
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let wrap = WrapMap::new(width).sync(buf.content(), &lines);
     (buf, wrap)
 }

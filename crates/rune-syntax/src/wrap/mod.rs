@@ -27,10 +27,13 @@
 //! produced, and read by both halves.
 
 mod query;
+mod table;
 
 pub use query::WrapSnapshot;
 
 use unicode_segmentation::UnicodeSegmentation;
+
+pub use table::TableSegInfo;
 
 use crate::syntax::{SyntaxLine, SyntaxSpan};
 
@@ -130,6 +133,9 @@ pub struct WrapSegment {
     /// BYTES (matches Go's `WrapSegment.StartCol`, which indexes with
     /// `len(text)`).
     pub start_col: usize,
+    /// `Some` only for a segment that came from a table source line —
+    /// `None` for every other segment, prose included.
+    pub table: Option<TableSegInfo>,
 }
 
 pub struct WrapMap {
@@ -160,6 +166,7 @@ impl WrapMap {
             spans: line.spans.clone(),
             model_line: line_idx,
             start_col: 0,
+            table: None,
         });
     }
 
@@ -170,6 +177,10 @@ impl WrapMap {
         line: &SyntaxLine,
         segments: &mut Vec<WrapSegment>,
     ) {
+        if let Some(info) = &line.table {
+            table::wrap_table_line(line_idx, line, info, segments);
+            return;
+        }
         if line.spans.is_empty() || self.width == 0 {
             self.push_whole_line(line_idx, line, segments);
             return;
@@ -239,6 +250,7 @@ impl WrapMap {
                 spans: seg_spans,
                 model_line: line_idx,
                 start_col: seg_start,
+                table: None,
             });
 
             start_col = seg_end;
