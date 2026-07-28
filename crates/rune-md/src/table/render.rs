@@ -8,9 +8,9 @@
 //! re-registering a second one.
 //!
 //! **comrak's cell sourcepos includes the padding spaces**, not the
-//! trimmed word (verified against comrak 0.54.0, `table_model.rs`'s own
-//! `aligns_header_and_separator_line` test) — irrelevant here, since this
-//! module never reads `TableCellM::range` directly; it walks `cell.inlines`
+//! trimmed word (measured against comrak 0.54.0 and pinned by the table
+//! model's own integration tests) — irrelevant here, since this module
+//! never reads `TableCellM::range` directly; it walks `cell.inlines`
 //! (already trimmed the same way a paragraph's inlines are) instead.
 
 use crate::element::inline::Inline;

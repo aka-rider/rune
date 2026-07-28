@@ -170,10 +170,10 @@ pub(crate) struct EmitOut<'a> {
 /// unclaimed into `accounted`. The chokepoint a producer that builds its
 /// OWN span text — rather than slicing `content[range]` directly, the way
 /// every other `SyntaxSpan` producer in this crate does — uses instead of
-/// re-deriving the duplicate-claim guard itself: `walk.rs`'s table Grid
-/// renderer substitutes a whole rendered row's text in one call per source
-/// line (mirroring `push_task_checkbox`'s "substitutes visible content"
-/// shape), rather than one call per delimiter/content sub-range the way
+/// re-deriving the duplicate-claim guard itself: the table Grid renderer
+/// substitutes a whole rendered row's text in one call per source line
+/// (mirroring `push_task_checkbox`'s "substitutes visible content" shape),
+/// rather than one call per delimiter/content sub-range the way
 /// `push_span_split_by_line` itself is built around.
 ///
 /// Returns the pieces of `[start, end)` that were actually unclaimed (equal

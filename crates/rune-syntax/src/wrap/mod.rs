@@ -186,10 +186,9 @@ impl WrapMap {
     /// leaves `extra_rows` empty, so this pushes exactly one segment;
     /// Wrapped/Pivoted (WP4) push one more per `extra_rows` entry, each
     /// `start_col`ed at the running sum of the previous rows' own visible
-    /// lengths (plan WP2.S8) so `syntax_to_wrap`/`wrap_to_syntax`
-    /// (`query.rs`) — purely mechanical over `start_col` + a segment's own
-    /// visible length — round-trip a multi-row table line with zero
-    /// special-casing.
+    /// lengths (plan WP2.S8) so `syntax_to_wrap`/`wrap_to_syntax` — purely
+    /// mechanical over `start_col` + a segment's own visible length —
+    /// round-trip a multi-row table line with zero special-casing.
     fn wrap_table_line(
         &self,
         line_idx: usize,
