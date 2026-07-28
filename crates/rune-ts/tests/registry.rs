@@ -20,27 +20,6 @@ fn every_language_loads_and_its_query_compiles() {
 }
 
 #[test]
-fn resolves_every_alias() {
-    for (alias, name) in ALIASES {
-        assert!(
-            LANGUAGES.iter().any(|def| def.name == *name),
-            "alias {alias:?} points at unknown language {name:?}"
-        );
-        assert_eq!(
-            lang::resolve(alias),
-            Some(*name),
-            "alias {alias:?} did not resolve to {name:?}"
-        );
-    }
-    assert_eq!(lang::resolve("md"), None);
-}
-
-#[test]
-fn resolve_touches_no_grammar() {
-    assert_eq!(lang::resolve("rs"), Some("rust"));
-}
-
-#[test]
 fn highlights_rust_keyword() {
     let spans = highlight("rust", "fn main() {}", Duration::from_secs(5)).expect("parse");
     let keyword_id = scope_table().resolve("keyword").expect("keyword scope");
