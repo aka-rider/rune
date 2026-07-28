@@ -423,7 +423,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
 /// orphaned.
 fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) {
     if let Some(doc) = app.doc_mut(doc_id) {
-        doc.file_path = Some(to.to_path_buf());
+        doc.bind_path(to.to_path_buf());
     }
     if app.active == doc_id {
         let stem = app.doc(doc_id).map(title::stem_for).unwrap_or_default();

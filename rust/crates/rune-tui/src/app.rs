@@ -206,7 +206,9 @@ impl App {
         db: Option<Db>,
     ) -> App {
         let mut document = Document::new(buffer);
-        document.file_path = file_path;
+        if let Some(path) = file_path {
+            document.bind_path(path);
+        }
 
         let mut documents = BTreeMap::new();
         let id = DocumentId(NonZeroU64::MIN);
@@ -244,6 +246,24 @@ impl App {
             modal: None,
             should_quit: false,
         }
+    }
+
+    /// The default entry point for a `rune` launch with no file argument
+    /// (`rune-cli::main`): an empty, pathless draft whose `display_name` is
+    /// overridden to "Untitled 1" so the title row reads that instead of
+    /// the generic `"[No Name]"` placeholder every OTHER pathless document
+    /// falls back to (`Document::file_name`). Kept as its own constructor,
+    /// rather than inline in the binary crate, so this bootstrap shape is
+    /// exercisable from `rune-tui`'s own test harnesses — `rune-cli` has no
+    /// `tests/` directory of its own.
+    ///
+    /// Always opens with `db: None` — a brand-new document has no
+    /// `documents` row for `rune-db` to hydrate yet (see `crates/rune-tui/
+    /// TODO.md`, "no recovery journal for the default untitled document").
+    pub fn new_untitled(vfs: Arc<dyn Vfs + Send + Sync>) -> App {
+        let mut app = App::new(Buffer::new(""), None, vfs, None);
+        app.active_doc_mut().display_name = Some("Untitled 1".to_string());
+        app
     }
 
     /// Mints the next `DocumentId`, monotonically — never reused, even

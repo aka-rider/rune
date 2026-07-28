@@ -58,9 +58,19 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         return;
     }
     let Some(path) = doc.file_path.clone() else {
+        // A pathless draft (including the default untitled document a
+        // no-arg launch opens) has nothing to save yet — ⌘S here means
+        // "name it", so route it into the same "pathless draft is a
+        // CREATE" flow `rename::begin` already implements
+        // (`rename.rs:212-218` -> `bind_new`): focus the title field so the
+        // user can type a name; Enter from there commits the create, and
+        // `Document::bind_path` (routed through by both `bind_to` and
+        // `handle_materialize_ack` below) is what actually switches the
+        // title off the placeholder once the file exists.
+        crate::pane::focus_title(app);
         app.set_status(
-            "no file to save \u{2014} rune was opened without a path",
-            StatusSource::SaveError,
+            "name this document to save it \u{2014} press Enter when done",
+            StatusSource::Other,
         );
         return;
     };
@@ -212,7 +222,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
         // succeeded (see `bind_new_now`'s docs).
         if let Some(path) = app.doc_mut(id).and_then(|d| d.pending_bind_path.take()) {
             if let Some(doc) = app.doc_mut(id) {
-                doc.file_path = Some(path);
+                doc.bind_path(path);
             }
             if app.active == id {
                 let stem = app.doc(id).map(crate::title::stem_for).unwrap_or_default();

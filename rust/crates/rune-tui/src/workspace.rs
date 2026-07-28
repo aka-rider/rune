@@ -61,7 +61,7 @@ pub fn open_path(app: &mut App, path: &Path) {
 
     let id = app.open_document(buffer);
     if let Some(doc) = app.doc_mut(id) {
-        doc.file_path = Some(resolved);
+        doc.bind_path(resolved);
     }
     switch_to(app, id);
     // Assumption A1 (plan): an Explorer-opened document has no per-doc

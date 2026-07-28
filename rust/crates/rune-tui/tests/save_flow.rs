@@ -285,3 +285,27 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// Regression: `trigger_save`'s pathless arm must never touch
+/// `display_name` — that field is only ever cleared once a path is
+/// actually bound (`Document::bind_path`). A dirty untitled document (the
+/// default no-arg launch's own shape: `file_path: None`, `display_name:
+/// Some("Untitled 1")`) that gets ⌘S pressed on it has no path to save to,
+/// so the save is refused — but the title must still read "Untitled 1"
+/// afterward, not silently flip to the `"[No Name]"` placeholder.
+#[test]
+fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
+    let mut app = test_app();
+    let id = app.active;
+    app.doc_mut(id).unwrap().display_name = Some("Untitled 1".to_string());
+    edit::insert_char(&mut app, id, '!');
+    assert!(app.is_dirty(), "the fixture must actually be dirty");
+
+    press_save(&mut app);
+
+    assert_eq!(
+        app.doc(id).unwrap().file_name(),
+        "Untitled 1",
+        "a refused pathless save must never clear display_name"
+    );
+}

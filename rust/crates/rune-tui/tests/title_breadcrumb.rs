@@ -69,6 +69,23 @@ fn title_row_shows_no_name_placeholder_when_pathless() {
     );
 }
 
+/// The default no-arg launch's own document (`App::new_untitled`) shows
+/// "Untitled 1" on the title row, not the generic "[No Name]" placeholder
+/// every OTHER pathless document falls back to.
+#[test]
+fn title_row_shows_untitled_1_for_the_default_untitled_document() {
+    let mut app = App::new_untitled(Arc::new(Mem::new()));
+    app.frame_width = WIDTH;
+    app.frame_height = HEIGHT;
+    app.sync_view();
+
+    let title_row = row_text(&app, 1, WIDTH);
+    assert!(
+        title_row.contains("Untitled 1"),
+        "expected \"Untitled 1\" on the title row:\n{title_row}"
+    );
+}
+
 /// The dirty dot appears on the title row after a real edit is driven
 /// through `app::update` (plan WP6.S2: "drive a real key Msg through
 /// update"; the disappears-on-save case is deliberately NOT covered here —

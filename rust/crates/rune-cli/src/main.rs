@@ -1,6 +1,7 @@
-//! `rune`: the CLI entry point (plan Context, WP5.S2). Parses one positional
-//! file (abs-path'd) or `--version`; a nonexistent path opens an empty
-//! buffer (created on first save via `RENAME_EXCL`); invalid UTF-8 is
+//! `rune`: the CLI entry point (plan Context, WP5.S2). Parses one optional
+//! positional file (abs-path'd) or `--version`; no file opens an empty
+//! untitled document; a nonexistent path opens an empty buffer (created on
+//! first save via `RENAME_EXCL`); invalid UTF-8 is
 //! refused at load, before the TUI is ever entered (CONSTITUTION §0, plan
 //! decision 4); a panic anywhere in the run loop is caught here, after the
 //! terminal has already been restored by `term::Guard`'s `Drop` running
@@ -20,12 +21,11 @@ use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb};
 use rune_vfs::{Disk, Vfs};
 
-/// `sysexits.h`-flavored exit codes: `EX_USAGE` (bad invocation), `EX_DATAERR`
-/// (the file's bytes are not valid data for this program — invalid UTF-8),
-/// `EX_IOERR` (the file exists but couldn't be read), `EX_SOFTWARE` (an
-/// internal error — a recovered panic or a runtime I/O failure).
+/// `sysexits.h`-flavored exit codes: `EX_DATAERR` (the file's bytes are not
+/// valid data for this program — invalid UTF-8), `EX_IOERR` (the file exists
+/// but couldn't be read), `EX_SOFTWARE` (an internal error — a recovered
+/// panic or a runtime I/O failure).
 mod exit_code {
-    pub const USAGE: u8 = 64;
     pub const DATA_ERR: u8 = 65;
     pub const IO_ERR: u8 = 74;
     pub const SOFTWARE: u8 = 70;
@@ -39,59 +39,66 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let Some(path_arg) = args.first() else {
-        eprintln!("usage: rune <file.md>");
-        return ExitCode::from(exit_code::USAGE);
-    };
-
-    let path = to_abs_path(path_arg);
-
     // Constructed before the load so the whole load path — like every other
     // filesystem access in this app (CONSTITUTION §1.4.9) — goes through the
     // injected `Vfs`, not a direct `std::fs` call: see `load_buffer`.
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
 
-    let file_existed = vfs.stat(&path).is_ok();
+    let (mut app, db_bootstrap) = if let Some(path_arg) = args.first() {
+        let path = to_abs_path(path_arg);
 
-    let buffer = match load_buffer(vfs.as_ref(), &path) {
-        Ok(buffer) => buffer,
-        Err(LoadError::InvalidUtf8) => {
-            eprintln!(
-                "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
-                path.display()
-            );
-            return ExitCode::from(exit_code::DATA_ERR);
-        }
-        Err(LoadError::Io(e)) => {
-            eprintln!("rune: failed to read {}: {e}", path.display());
-            return ExitCode::from(exit_code::IO_ERR);
-        }
-    };
+        let file_existed = vfs.stat(&path).is_ok();
 
-    // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
-    // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
-    // NotFound-tolerant branch, unlike `load_buffer` above) — a brand-new
-    // document has no `documents` row to bind yet (WP4 deliberately left
-    // "create a scratch/untitled document" out of scope, `document.rs`'s
-    // module doc), so hydration is skipped entirely for that case: the
-    // editor still opens and runs fully, just without recovery journaling
-    // for THIS launch. Any hydration failure is non-fatal for the same
-    // reason (CONSTITUTION Prime Directive: protect the user's words over
-    // every other feature) — it is reported to stderr, not to the TUI
-    // (which hasn't started yet), and the editor proceeds with `app.db =
-    // None`.
-    let db_bootstrap = if file_existed {
-        bootstrap_db(Arc::clone(&vfs), &path)
+        let buffer = match load_buffer(vfs.as_ref(), &path) {
+            Ok(buffer) => buffer,
+            Err(LoadError::InvalidUtf8) => {
+                eprintln!(
+                    "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
+                    path.display()
+                );
+                return ExitCode::from(exit_code::DATA_ERR);
+            }
+            Err(LoadError::Io(e)) => {
+                eprintln!("rune: failed to read {}: {e}", path.display());
+                return ExitCode::from(exit_code::IO_ERR);
+            }
+        };
+
+        // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
+        // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
+        // NotFound-tolerant branch, unlike `load_buffer` above) — a brand-new
+        // document has no `documents` row to bind yet (WP4 deliberately left
+        // "create a scratch/untitled document" out of scope, `document.rs`'s
+        // module doc), so hydration is skipped entirely for that case: the
+        // editor still opens and runs fully, just without recovery journaling
+        // for THIS launch. Any hydration failure is non-fatal for the same
+        // reason (CONSTITUTION Prime Directive: protect the user's words over
+        // every other feature) — it is reported to stderr, not to the TUI
+        // (which hasn't started yet), and the editor proceeds with `app.db =
+        // None`.
+        let mut db_bootstrap = if file_existed {
+            bootstrap_db(Arc::clone(&vfs), &path)
+        } else {
+            DbBootstrap::default()
+        };
+
+        let buffer = match &db_bootstrap.recovered_content {
+            Some(content) => Buffer::new(content.clone()),
+            None => buffer,
+        };
+
+        let app = App::new(buffer, Some(path), vfs, db_bootstrap.db.take());
+        (app, db_bootstrap)
     } else {
-        DbBootstrap::default()
+        // No file argument — open the default untitled document
+        // (`App::new_untitled`). The Go implementation uses
+        // `nextUntitledName` to pick the first "Untitled N" not already
+        // used by open tabs; at startup there are none, so this is always
+        // "Untitled 1". No file on disk means no recovery store to
+        // hydrate either — see `App::new_untitled`'s own docs.
+        (App::new_untitled(vfs), DbBootstrap::default())
     };
 
-    let buffer = match &db_bootstrap.recovered_content {
-        Some(content) => Buffer::new(content.clone()),
-        None => buffer,
-    };
-
-    let mut app = App::new(buffer, Some(path), vfs, db_bootstrap.db);
     app.db_banner = db_bootstrap.banner;
     // Install the real hardware probe (plan WP5.S8) — production is the
     // ONLY place `HidSpaceProbe` is installed; every test and the fuzzer

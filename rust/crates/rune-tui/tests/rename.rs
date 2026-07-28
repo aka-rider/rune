@@ -97,6 +97,52 @@ fn app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
     (app, rx)
 }
 
+/// A pathless draft bound to a real `Store` — not the CLI's own shape today
+/// (the default untitled document opens with `db: None`, see
+/// `crates/rune-tui/TODO.md`, "no recovery journal for the default
+/// untitled document"), but the routing this exercises —
+/// `rename::bind_new`'s store branch and `save::handle_materialize_ack`'s
+/// bind — does not care how the store binding was acquired, only that one
+/// exists.
+fn draft_app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
+    let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+    let (bridge, rx) = DbBridge::bootstrap();
+    let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
+
+    // Mints a real `doc_id` the same way `app_with_store` does — a fresh
+    // draft has no `documents` row of its own to load, so this borrows one
+    // via an ordinary `Load` against an unrelated seeded file.
+    store
+        .load(Path::new("/root/seed.md"))
+        .expect("enqueue load");
+    let load = match rx.recv().expect("a load ack") {
+        DbEvent::Ok {
+            result: OpOutcome::Load(load),
+            ..
+        } => *load,
+        other => panic!("expected a Load ack, got {other:?}"),
+    };
+
+    let mut app = App::new(
+        Buffer::new("draft body"),
+        None,
+        vfs,
+        Some(Db::new(store, bridge, false)),
+    );
+    // The default untitled document's own shape (`App::new_untitled`).
+    app.active_doc_mut().display_name = Some("Untitled 1".to_string());
+    app.active_doc_mut().db = Some(DocDb::new(
+        load.doc_id,
+        load.saved_obs.unwrap_or(0),
+        true,
+        0,
+    ));
+    app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
+    app.sync_view();
+    (app, rx)
+}
+
 fn key(code: KeyCode, mods: Mods) -> Msg {
     Msg::Key(KeyInput { code, mods })
 }
@@ -636,6 +682,11 @@ fn naming_a_draft_creates_the_file() {
     let path = active_path(&app).expect("the draft must now be bound");
     assert_eq!(path.file_name().unwrap(), "fresh.md");
     assert_eq!(mem.read(&path).unwrap(), b"draft body");
+    assert_eq!(
+        app.active_doc().file_name(),
+        "fresh.md",
+        "the no-store create ack must switch the title to the real filename"
+    );
 }
 
 /// A draft name that collides gives a FOOTER refusal and never a
@@ -678,4 +729,34 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
          not overwrite the winner)"
     );
     assert_eq!(mem.read(existing).unwrap(), b"someone else's file");
+}
+
+/// Regression: naming a store-bound draft (^R -> Enter, routed through
+/// `save::bind_new_now`'s materialize) must switch the title to the real
+/// filename via the SAME `Document::bind_path` chokepoint the no-store
+/// route (`naming_a_draft_creates_the_file`, above) already goes through —
+/// not just set `file_path` while leaving a stale `display_name` override
+/// (e.g. "Untitled 1") to shadow it forever.
+#[test]
+fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(Path::new("/root/seed.md"), b"seed")
+        .expect("seed");
+    let (mut app, rx) = draft_app_with_store(&mem);
+
+    send(&mut app, ctrl('r'));
+    type_text(&mut app, "fresh");
+    send(&mut app, plain(KeyCode::Enter));
+
+    let evt = rx.recv().expect("a materialize ack");
+    send(&mut app, Msg::Db(evt));
+
+    assert_eq!(app.rename, RenameState::Idle);
+    let path = active_path(&app).expect("the draft must now be bound");
+    assert_eq!(path.file_name().unwrap(), "fresh.md");
+    assert_eq!(
+        app.active_doc().file_name(),
+        "fresh.md",
+        "a store-bound create ack must clear the untitled display_name override"
+    );
 }

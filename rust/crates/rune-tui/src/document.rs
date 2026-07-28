@@ -196,6 +196,16 @@ impl Document {
             .unwrap_or("[No Name]")
     }
 
+    /// The only way a document acquires (or reacquires) a path. Clears any
+    /// `display_name` override so `file_name()` derives from the new path
+    /// (§1.7: one value, one meaning) — a document once shown under a
+    /// placeholder name (an "Untitled N" draft, a rename in progress) must
+    /// switch over to its real name the moment it actually has one.
+    pub fn bind_path(&mut self, path: PathBuf) {
+        self.file_path = Some(path);
+        self.display_name = None;
+    }
+
     /// The pure QUERY half of the per-message sync sequence (plan Context,
     /// "Msg/Cmd runtime"): `sync_content` iff version changed -> `set_width`
     /// -> `sync_cursors` -> `snapshot`. Deliberately does NOT touch
