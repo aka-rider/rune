@@ -43,6 +43,7 @@
 // `table_border_scope`/`text_scope`/`code_scope`/`link_scope`) — one
 // canonical scope resolver, not a second one reimplemented in `table::`.
 pub(crate) mod style;
+mod table;
 mod walk;
 
 use crate::element::block::Block;
@@ -148,19 +149,25 @@ fn account(accounted: &mut Accounted, content: &str, starts: &[usize], range: By
     });
 }
 
-/// The four out-params every `emit_block`/`emit_inline` call used to thread
+/// The out-params every `emit_block`/`emit_inline` call used to thread
 /// separately (`out`, `hidden`, `accounted`, plus WP2's new per-line table
 /// slot) — bundled so the walk's own recursive signatures stay under the
 /// arg-count the workspace's clippy gate allows (the repo bans
 /// `#[allow(clippy::too_many_arguments)]`). `tables[line]` starts `None` for
 /// every line; only the `Block::Table` arm ever writes it, and only when
 /// the table is `Rendered` (a `Revealed` table line has raw markup, not
-/// rendered geometry, to describe).
+/// rendered geometry, to describe). `width` is `emit()`'s own `width`
+/// parameter, copied in unchanged (plan architectural decision 4: "a value
+/// has exactly one writer" — `DocMachine`'s wrap state, `emit()`'s only
+/// caller, is that one writer; this bundle just carries the SAME value the
+/// rest of the way to the one arm that reads it, `Block::Table`'s layout
+/// selector) — every other producer ignores this field entirely.
 pub(crate) struct EmitOut<'a> {
     pub spans: &'a mut [Vec<SyntaxSpan>],
     pub hidden: &'a mut Accounted,
     pub accounted: &'a mut Accounted,
     pub tables: &'a mut [Option<TableRowInfo>],
+    pub width: u16,
 }
 
 /// Claims `[start, end)` on `line` as visible: runs the SAME
@@ -423,13 +430,12 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
 /// is the only caller. `width` is `DocMachine`'s own `self.wrap.width` — a
 /// PARAMETER, never a value this function or any element caches a copy of
 /// (plan architectural decision 4: "a value has exactly one writer", and
-/// `DocMachine`'s `WrapState` is that one writer). WP2's table renderer is
-/// Grid-only and does not read it yet; it is threaded through now so WP4's
-/// Wrapped/Pivoted layout selector (`table::layout::choose`, which DOES need
-/// the available width) is a pure addition inside the table arm rather than
-/// a second breaking change to this signature and every one of its callers.
+/// `DocMachine`'s `WrapState` is that one writer). Carried unchanged into
+/// `EmitOut::width` so the one arm that needs it — `Block::Table`'s
+/// Grid/Wrapped/Pivoted layout selector (`table::layout::choose`) — reads it
+/// without a second breaking change to this signature or every one of its
+/// callers; every other producer ignores the field entirely.
 pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
-    let _ = width;
     let starts = line_starts(content);
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new(); starts.len()];
     let mut hidden: Accounted = vec![Vec::new(); starts.len()];
@@ -441,6 +447,7 @@ pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, Sy
         hidden: &mut hidden,
         accounted: &mut accounted,
         tables: &mut tables,
+        width,
     };
     for b in blocks {
         walk::emit_block(content, &starts, b, &mut out);
