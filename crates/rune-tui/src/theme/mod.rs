@@ -154,11 +154,11 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
-        // Go parity (`golang/pkg/ui/styles/styles.go`'s `TableHeader`/
-        // `TableBody`/`TableBorder`/`TableSeparator`): raw ANSI-256 indices,
-        // not derived from the Catppuccin palette — table chrome is meant
-        // to match the Go reference exactly, in both truecolor and
-        // quantized rendering, rather than following this theme's hues.
+        // Raw ANSI-256 indices, deliberately NOT routed through the
+        // Catppuccin palette like every scope above. Table chrome has to
+        // match the Go reference's own table styles byte-for-byte in both
+        // truecolor and quantized rendering — the index IS the spec here,
+        // and a hue-derived approximation would break screen parity.
         "markup.table.header" => base.fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
         "markup.table" => base.fg(Color::Indexed(252)),
         "markup.table.separator" => base.fg(Color::Indexed(240)),
