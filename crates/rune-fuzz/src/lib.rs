@@ -5,7 +5,7 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! # Invariant roster (21 total)
+//! # Invariant roster (23 total)
 //!
 //! Mirrors the Go fuzzer's roster convention: id,
 //! one-line meaning, Go provenance where the plan names one. See
@@ -35,6 +35,11 @@
 //!   per G19).
 //! - `CELL-ORDER` — within a row, non-negative `buf_offset`s never go
 //!   backwards (Go `R3`; sampled per G19).
+//! - `TABLE-ROW-WIDTH` — within one contiguous table, every row (content
+//!   or a synthesised border) has the same summed cell width (plan WP5.S3;
+//!   sampled per G19).
+//! - `TABLE-SYNTHETIC-DECORATIVE` — every cell of a synthesised border row
+//!   carries `buf_offset == -1` (plan WP5.S4; sampled per G19).
 //! - `WRAP-RT` — `wrap_to_syntax(syntax_to_wrap(p)) == p` for every syntax
 //!   point `p` in the in-domain rectangle (Go `WRAP-RT`; forward
 //!   composition only, per G7; sampled per G19).

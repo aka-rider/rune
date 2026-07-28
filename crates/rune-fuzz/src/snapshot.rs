@@ -15,6 +15,7 @@ use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
 use rune_tui::pane::Pane;
 use rune_tui::render::{self, Cell};
+use rune_tui::row_meta::{self, RowMeta};
 
 /// One point-in-time observation of `App`, built ONLY from its public
 /// accessors (`Buffer`'s fields are private — G16 — so line bounds come
@@ -59,6 +60,12 @@ pub struct Snapshot {
     /// every step). Deliberately NOT `read_only` (`Editor::read_only` is
     /// dead in Phase 1 — G18).
     pub cells: Vec<Vec<Cell>>,
+    /// `row_meta::row_meta(view, app)` (plan WP5.S1) — table membership for
+    /// each of `cells`' own rows, same index, same sampling (empty
+    /// whenever `cells` is). Gives `TABLE-ROW-WIDTH`/
+    /// `TABLE-SYNTHETIC-DECORATIVE` the table/border signal `cells` alone
+    /// cannot express.
+    pub row_meta: Vec<RowMeta>,
 }
 
 impl Snapshot {
@@ -80,13 +87,13 @@ impl Snapshot {
             line_ends.push(buf.line_end(n));
         }
 
-        let cells = if with_cells {
+        let (cells, row_meta) = if with_cells {
             match &app.active_doc().view {
-                Some(view) => render::build_rows(view, app),
-                None => Vec::new(),
+                Some(view) => (render::build_rows(view, app), row_meta::row_meta(view, app)),
+                None => (Vec::new(), Vec::new()),
             }
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
 
         let doc = app.active_doc();
@@ -109,6 +116,7 @@ impl Snapshot {
             modal_open: app.modal.is_some(),
             active: app.active,
             cells,
+            row_meta,
         }
     }
 }

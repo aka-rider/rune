@@ -24,6 +24,7 @@ pub mod pane;
 pub mod pointer;
 pub mod rename;
 pub mod render;
+pub mod row_meta;
 pub mod runtime;
 pub mod save;
 pub mod term;

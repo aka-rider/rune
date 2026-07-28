@@ -299,6 +299,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         modal_open: false,
         active: base_active_id(),
         cells: Vec::new(),
+        row_meta: Vec::new(),
     }
 }
 

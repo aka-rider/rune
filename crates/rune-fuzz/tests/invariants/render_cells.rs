@@ -1,9 +1,13 @@
 //! WP6.S5 detection tests: `SYNC-IDEMPOTENT`, `CELL-OFFSET`,
-//! `CELL-NO-EOL`, `CELL-ORDER`.
+//! `CELL-NO-EOL`, `CELL-ORDER`. WP5.S5 adds `TABLE-ROW-WIDTH` and
+//! `TABLE-SYNTHETIC-DECORATIVE`.
 
-use rune_fuzz::invariant::{cell_no_eol, cell_offset, cell_order, sync_idempotent};
+use rune_fuzz::invariant::{
+    cell_no_eol, cell_offset, cell_order, sync_idempotent, table_row_width,
+    table_synthetic_decorative,
+};
 
-use crate::support::{base_snapshot, cell};
+use crate::support::{base_snapshot, cell, cell_w, meta};
 
 // ---------------------------------------------------------------------
 // SYNC-IDEMPOTENT
@@ -108,4 +112,71 @@ fn cell_order_accepts_non_decreasing_offsets_and_skips_sentinels() {
         cell('c', 2),
     ]];
     assert_eq!(cell_order(&snap), None);
+}
+
+// ---------------------------------------------------------------------
+// TABLE-ROW-WIDTH
+// ---------------------------------------------------------------------
+
+#[test]
+fn table_row_width_detects_a_disagreeing_row_in_the_same_group() {
+    let mut snap = base_snapshot("| a | b |\n| - | - |\n| c | d |\n");
+    // Same table_group (0): row 0 sums to width 4, row 1 to width 3 — a
+    // border/content row whose width disagrees with the rest of its own
+    // table, exactly the defect class this invariant exists to catch.
+    snap.cells = vec![
+        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
+        vec![cell_w('x', -1, 2), cell_w('y', -1, 1)],
+    ];
+    snap.row_meta = vec![meta(true, Some(0)), meta(false, Some(0))];
+    let v = table_row_width(&snap).expect(
+        "a row whose summed width disagrees with its table_group must trip TABLE-ROW-WIDTH",
+    );
+    assert_eq!(v.id, "TABLE-ROW-WIDTH");
+}
+
+#[test]
+fn table_row_width_accepts_equal_widths_within_a_group_and_ignores_other_groups() {
+    let mut snap = base_snapshot("| a | b |\n| - | - |\n| c | d |\n\n| e |\n| - |\n| f |\n");
+    // Group 0: two rows, both width 4. Group 1: one row, width 3 — a
+    // DIFFERENT table, allowed to differ from group 0 freely. A `None`
+    // group (plain prose) is ignored entirely.
+    snap.cells = vec![
+        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
+        vec![cell_w('x', -1, 2), cell_w('y', -1, 2)],
+        vec![cell_w('z', -1, 3)],
+        vec![cell_w('p', 0, 1)],
+    ];
+    snap.row_meta = vec![
+        meta(true, Some(0)),
+        meta(false, Some(0)),
+        meta(true, Some(1)),
+        meta(false, None),
+    ];
+    assert_eq!(table_row_width(&snap), None);
+}
+
+// ---------------------------------------------------------------------
+// TABLE-SYNTHETIC-DECORATIVE
+// ---------------------------------------------------------------------
+
+#[test]
+fn table_synthetic_decorative_detects_a_real_offset_on_a_border_row() {
+    let mut snap = base_snapshot("| a | b |\n| - | - |\n");
+    snap.cells = vec![vec![cell('┌', -1), cell('a', 3)]]; // a border row must never carry a real byte
+    snap.row_meta = vec![meta(true, Some(0))];
+    let v = table_synthetic_decorative(&snap)
+        .expect("a synthetic row cell with a real buf_offset must trip TABLE-SYNTHETIC-DECORATIVE");
+    assert_eq!(v.id, "TABLE-SYNTHETIC-DECORATIVE");
+}
+
+#[test]
+fn table_synthetic_decorative_accepts_all_sentinel_borders_and_ignores_content_rows() {
+    let mut snap = base_snapshot("| a | b |\n| - | - |\n");
+    snap.cells = vec![
+        vec![cell('┌', -1), cell('─', -1), cell('┐', -1)],
+        vec![cell('a', 2), cell(' ', -1), cell('b', 6)], // non-synthetic: real offsets are fine
+    ];
+    snap.row_meta = vec![meta(true, Some(0)), meta(false, Some(0))];
+    assert_eq!(table_synthetic_decorative(&snap), None);
 }
