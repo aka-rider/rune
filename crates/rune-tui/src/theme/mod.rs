@@ -262,4 +262,20 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn code_scopes_never_carry_a_background() {
+        // decision 2: a later render pass `Style::patch`es a code-token
+        // style onto a cell that may already carry a `markup.raw.block`
+        // background — `code_scope_style` must never set `bg`, or it would
+        // clobber that background instead of layering over it.
+        let theme = Theme::catppuccin_mocha(false);
+        let table = scope_table();
+        for name in CODE_SCOPES {
+            if let Some(id) = table.resolve(name) {
+                let style = theme.scope_style(id);
+                assert_eq!(style.bg, None, "scope {name} unexpectedly carries a bg");
+            }
+        }
+    }
 }
