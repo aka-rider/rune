@@ -1952,6 +1952,7 @@ dependencies = [
  "rune-core",
  "rune-db",
  "rune-md",
+ "rune-nav",
  "rune-syntax",
  "rune-tui",
  "rune-vfs",

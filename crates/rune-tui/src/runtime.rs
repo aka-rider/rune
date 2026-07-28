@@ -139,6 +139,11 @@ pub enum CmdKind {
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
+    /// `/usr/bin/open` on an external link's URL (plan WP5.S6). Spawns a
+    /// subprocess; never run it inline. The session fuzzer's driver keeps
+    /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
+    /// be spawned from a fuzz run.
+    OpenExternal,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one

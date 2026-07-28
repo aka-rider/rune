@@ -227,7 +227,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
         request_dir(app, resolved, effects);
     } else {
-        workspace::open_path(app, &target);
+        let _ = workspace::open_path(app, &target);
     }
 }
 

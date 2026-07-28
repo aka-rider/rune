@@ -230,6 +230,12 @@ pub struct Document {
     /// `file_name` derives its display name from `file_path` exactly as
     /// before.
     pub display_name: Option<String>,
+    /// Every navigable `Ref` (link, embed, heading/block definition) in
+    /// this document, in document order — rebuilt on every `view()` call
+    /// from the just-synced `doc`/`buffer` pair (plan WP5.S2). `navigate::
+    /// follow` reads this to find what the cursor is sitting on and where a
+    /// same-document or cross-document anchor lands.
+    pub catalogue: Vec<rune_nav::Ref>,
 }
 
 impl Document {
@@ -252,6 +258,7 @@ impl Document {
             view: None,
             db: None,
             display_name: None,
+            catalogue: Vec::new(),
         }
     }
 
@@ -309,6 +316,7 @@ impl Document {
     pub fn view(&mut self) -> ViewSnapshots {
         self.doc.set_focus(self.focused);
         self.doc.sync_content(&self.buffer);
+        self.catalogue = rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
         self.doc.set_width(self.viewport.width);
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)

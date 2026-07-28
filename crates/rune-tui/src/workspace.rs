@@ -23,22 +23,25 @@ use crate::pane::Pane;
 /// re-activates an already-open `Document` with that resolved `file_path`
 /// or reads a fresh one. A read/decode failure is reported through the
 /// error Banner (`banner::report_error`) — the one chokepoint every error
-/// report funnels through (plan WP3.S4).
-pub fn open_path(app: &mut App, path: &Path) {
+/// report funnels through (plan WP3.S4). Returns the opened/reactivated
+/// document's id, or `None` on any of the error paths — `navigate::follow`
+/// (plan WP5) needs the id back to force-parse the target and land the
+/// caret on an anchor.
+pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
     let resolved = app.vfs.resolve(path).unwrap_or_else(|_| path.to_path_buf());
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Re-activation moves the Tabs cursor only — never reorders
         // `tabs.order` (plan WP5.S1's own chokepoint list).
         switch_to(app, id);
-        return;
+        return Some(id);
     }
 
     let bytes = match app.vfs.read(&resolved) {
         Ok(bytes) => bytes,
         Err(e) => {
             crate::banner::report_error(app, format!("could not open {}: {e}", resolved.display()));
-            return;
+            return None;
         }
     };
 
@@ -52,11 +55,11 @@ pub fn open_path(app: &mut App, path: &Path) {
                     resolved.display()
                 ),
             );
-            return;
+            return None;
         }
         Err(e) => {
             crate::banner::report_error(app, format!("could not open {}: {e}", resolved.display()));
-            return;
+            return None;
         }
     };
 
@@ -71,6 +74,7 @@ pub fn open_path(app: &mut App, path: &Path) {
     // until that ack lands (or forever, if this store is absent/degraded).
     db::load_document(app, id, &resolved);
     switch_to(app, id);
+    Some(id)
 }
 
 fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {

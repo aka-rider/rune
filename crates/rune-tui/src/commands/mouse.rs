@@ -19,8 +19,10 @@ use crate::app::App;
 use crate::commands::nav::{line_range_incl_newline, word_range_at};
 use crate::commands::nav_scroll;
 use crate::document::Document;
+use crate::navigate;
 use crate::pointer::{MouseButton, MouseInput, MouseKind};
 use crate::render;
+use crate::runtime::Effects;
 
 /// The mouse wheel's step (plan WP7.S6: "wheel scrolls 3 rows" — vim,
 /// neovim's `mousescroll=ver:3`, and Helix's `scroll-lines = 3` all
@@ -30,8 +32,9 @@ const WHEEL_ROWS: isize = 3;
 /// Routes one `Msg::Mouse` (plan WP7.S4). Mouse events outside the editor
 /// rect (the Explorer/Tabs columns, the footer, a banner) are dropped —
 /// this plan's mouse support is editor-only; no gesture is defined for
-/// chrome panes.
-pub fn handle(app: &mut App, input: MouseInput) {
+/// chrome panes. Takes `effects` (plan WP5.S8) because a ctrl-click may
+/// follow an external link, which needs an `OpenExternal` `Cmd`.
+pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let editor = crate::layout::geometry(area, app).editor;
 
@@ -48,7 +51,7 @@ pub fn handle(app: &mut App, input: MouseInput) {
     match input.kind {
         MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
         MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
-        MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row),
+        MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
         MouseKind::Drag(MouseButton::Left) => handle_left_drag(app, col, row),
         MouseKind::Up(MouseButton::Left) => app.pointer.drag_anchor = None,
         _ => {}
@@ -132,10 +135,33 @@ fn desired_col_at(doc: &Document, view: &ViewSnapshots, offset: usize) -> usize 
     view.wrap.visual_col(doc.buffer.content(), wp.row, wp.col)
 }
 
-fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16) {
+fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
     let Some((offset, desired_col)) = hit_test(app.active_doc(), row, col) else {
         return;
     };
+
+    if input.ctrl {
+        // Ctrl-click: place the caret at the hit-tested offset and follow
+        // whatever link sits there (plan WP5.S8) — never registers toward
+        // the click-aggregation run (`PointerState::register_click` isn't
+        // called on this branch), so a ctrl-click can never accidentally
+        // chain into a double/triple-click select, and a plain double-click
+        // right after it still starts its own fresh run. ⌘+click is
+        // unavailable here: the SGR mouse protocol encodes only shift/alt/
+        // ctrl, never Super.
+        let doc = app.active_doc_mut();
+        let placed = Cursor {
+            position: offset,
+            anchor: offset,
+            desired_col,
+            id: 0,
+        };
+        doc.cursors = CursorSet::new_from(&[placed]);
+        app.pointer.drag_anchor = None;
+        navigate::follow(app, effects);
+        return;
+    }
+
     let now = app.pointer_clock.now();
     let count = app.pointer.register_click(now, col, row);
 

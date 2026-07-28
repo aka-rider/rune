@@ -196,6 +196,11 @@ pub enum Command {
     /// vim/Helix `zb`: scrolls the cursor's row to the bottom of the
     /// viewport.
     CursorToBottom,
+    /// Follows the link under the cursor (plan WP5.S7) — ⌘Enter or ^Enter.
+    /// Deliberately distinct from the hardcoded plain-Enter newline fast
+    /// path (`app::handle_editor_key`, `Mods::NONE` only), so the two can
+    /// never collide.
+    FollowLink,
 }
 
 /// Which quit chord produced a `Command::QuitConfirm` — the identity `App`
@@ -240,6 +245,12 @@ pub fn resolve(key: KeyInput) -> Option<Command> {
         sup: false,
     };
     match key.code {
+        // ⌘Enter / ^Enter: follow the link under the cursor (plan WP5.S7).
+        // Free of the hardcoded plain-Enter fast path (`app::
+        // handle_editor_key` matches `Mods::NONE` only, never reaching
+        // `resolve` at all for that chord).
+        KeyCode::Enter if m.sup && !m.ctrl && !m.alt && !m.shift => Some(Command::FollowLink),
+        KeyCode::Enter if m == CTRL_ONLY => Some(Command::FollowLink),
         KeyCode::Left => resolve_directional(
             m,
             Command::CharLeft,
