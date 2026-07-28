@@ -167,6 +167,18 @@ pub(crate) fn meta(synthetic: bool, table_group: Option<usize>) -> RowMeta {
     RowMeta {
         synthetic,
         table_group,
+        boxed: true,
+    }
+}
+
+/// `meta`'s counterpart for a Pivoted table's rows: affiliated with a
+/// table, but drawing no box, so the equal-width expectation does not
+/// apply to them.
+pub(crate) fn meta_unboxed(table_group: Option<usize>) -> RowMeta {
+    RowMeta {
+        synthetic: false,
+        table_group,
+        boxed: false,
     }
 }
 

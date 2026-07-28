@@ -155,6 +155,14 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
         let Some(group) = m.table_group else {
             continue;
         };
+        // Only a boxed table pads every row to one shared width. The
+        // Pivoted key-value layout draws no box and is deliberately ragged
+        // — a suppressed header renders blank, a record rule and a
+        // `Label: Value` row differ — so holding it to a single width
+        // would be asserting a property it never had.
+        if !m.boxed {
+            continue;
+        }
         let Some(row) = snap.cells.get(i) else {
             continue;
         };

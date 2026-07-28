@@ -23,6 +23,12 @@ pub struct RowMeta {
     /// table-affiliated display rows in THIS window; `None` for a row with
     /// no table affiliation at all.
     pub table_group: Option<usize>,
+    /// Whether this row's table draws a box. Grid and Wrapped do, and every
+    /// row of one is padded to a single shared width; the Pivoted key-value
+    /// layout does not, and its rows are deliberately ragged (a suppressed
+    /// header renders blank, a record rule and a `Label: Value` row differ),
+    /// so an equal-width expectation only holds where this is true.
+    pub boxed: bool,
 }
 
 /// Builds one `RowMeta` per row `render::build_rows(view, app)` returns,
@@ -53,6 +59,15 @@ pub fn row_meta(view: &ViewSnapshots, app: &App) -> Vec<RowMeta> {
                 .get(row.wrap_row)
                 .is_some_and(|seg| seg.table.is_some());
 
+        let boxed = segments
+            .get(row.wrap_row)
+            .and_then(|seg| seg.table.as_ref())
+            .is_some_and(|t| t.boxed)
+            // A synthetic border row only ever exists around a boxed table,
+            // and borrows its anchor's wrap row, so it is boxed by
+            // construction even where that lookup cannot see the flag.
+            || row.synthetic;
+
         let group = if is_table {
             if current_group.is_none() {
                 current_group = Some(next_id);
@@ -67,6 +82,7 @@ pub fn row_meta(view: &ViewSnapshots, app: &App) -> Vec<RowMeta> {
         out.push(RowMeta {
             synthetic: row.synthetic,
             table_group: group,
+            boxed,
         });
     }
 

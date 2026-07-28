@@ -7,7 +7,7 @@ use rune_fuzz::invariant::{
     table_synthetic_decorative,
 };
 
-use crate::support::{base_snapshot, cell, cell_w, meta};
+use crate::support::{meta_unboxed, base_snapshot, cell, cell_w, meta};
 
 // ---------------------------------------------------------------------
 // SYNC-IDEMPOTENT
@@ -179,4 +179,21 @@ fn table_synthetic_decorative_accepts_all_sentinel_borders_and_ignores_content_r
     ];
     snap.row_meta = vec![meta(true, Some(0)), meta(false, Some(0))];
     assert_eq!(table_synthetic_decorative(&snap), None);
+}
+
+/// A Pivoted table draws no box and is deliberately ragged — a suppressed
+/// header renders blank while a `Label: Value` row does not — so the
+/// equal-width expectation must not be applied to it. Without the `boxed`
+/// scoping this input trips the invariant on a table that is rendering
+/// exactly as intended (caught by the session fuzzer at a 7-column width,
+/// which is narrow enough to force the Pivoted layout).
+#[test]
+fn table_row_width_ignores_a_ragged_unboxed_pivot_group() {
+    let mut snap = base_snapshot("| a | b |\n| - | - |\n| c | d |\n");
+    snap.cells = vec![vec![], vec![cell_w('x', -1, 2), cell_w('y', -1, 2)]];
+    snap.row_meta = vec![meta_unboxed(Some(0)), meta_unboxed(Some(0))];
+    assert!(
+        table_row_width(&snap).is_none(),
+        "an unboxed (Pivoted) table's ragged rows must not trip TABLE-ROW-WIDTH"
+    );
 }
