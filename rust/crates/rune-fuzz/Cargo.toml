@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 rune-core = { path = "../rune-core" }
 rune-md = { path = "../rune-md" }
+rune-syntax = { path = "../rune-syntax" }
 rune-tui = { path = "../rune-tui" }
 rune-vfs = { path = "../rune-vfs" }
 base64 = { workspace = true }

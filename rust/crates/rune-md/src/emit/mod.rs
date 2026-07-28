@@ -22,30 +22,30 @@
 //! Context: "Nested styling ... falls out of the tree via the Emitter's
 //! style stack — no `InlineMarks` bitfield").
 //!
-//! Every producer-bug invariant this module checks (an overlapping hidden
-//! range in `syntax::build_line_conversions`, a duplicate visible claim in
-//! `push_span_split_by_line`) is gated on [`STRICT_INVARIANTS`], never on
-//! `cfg(debug_assertions)`: CONSTITUTION §1.3 requires an ORDINARY shipped
-//! build — including an unoptimized debug one a developer might run
+//! Every producer-bug invariant this module checks (a duplicate visible
+//! claim in `push_span_split_by_line`) is gated on [`STRICT_INVARIANTS`],
+//! never on `cfg(debug_assertions)`: CONSTITUTION §1.3 requires an ORDINARY
+//! shipped build — including an unoptimized debug one a developer might run
 //! directly — to degrade gracefully on a producer bug, never panic on a
 //! real user's document. Only a test run (or a build that explicitly opts
 //! in via the `strict-invariants` feature) is allowed to treat the
-//! violation as fatal. Graceful degradation itself (merge overlapping
-//! hidden ranges; skip an already-claimed visible byte) runs in EVERY
-//! build unconditionally — `STRICT_INVARIANTS` only gates whether a
-//! detected violation additionally panics.
+//! violation as fatal. Graceful degradation itself (skip an already-claimed
+//! visible byte) runs in EVERY build unconditionally — `STRICT_INVARIANTS`
+//! only gates whether a detected violation additionally panics. The
+//! sibling check over an overlapping HIDDEN range moved to `rune-syntax`'s
+//! `syntax::build_line_conversions` (WP3), gated by that crate's own,
+//! separately-defined `STRICT_INVARIANTS` — each crate's gate governs only
+//! its own invariants.
 
 mod style;
-mod syntax;
 mod walk;
 
-pub use style::StyleId;
-pub use syntax::{CellMap, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
+pub use rune_syntax::{CellMap, StyleId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
 
 use crate::element::block::Block;
 use crate::element::{ByteRange, RevealState};
 use crate::parse::{line_at, line_end_at, line_starts};
-use syntax::build_line_conversions;
+use rune_syntax::merge_overlapping;
 
 /// See the module docs: `true` only in test builds or when the
 /// `strict-invariants` feature is explicitly enabled. `cfg!()` folds this
@@ -55,8 +55,7 @@ use syntax::build_line_conversions;
 pub(crate) const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
 /// The chokepoint every "this should never happen, but let's be sure"
-/// producer-bug check in this crate routes through (the hidden-range
-/// overlap check in `syntax::build_line_conversions`, the duplicate- and
+/// producer-bug check in this crate routes through (the duplicate- and
 /// invalid-span checks in `push_span_split_by_line`) — a single place that
 /// decides whether a violation panics, so no call site has to repeat the
 /// `if STRICT_INVARIANTS { assert!(...) }` boilerplate (or risk getting it
@@ -147,9 +146,9 @@ fn account(accounted: &mut Accounted, content: &str, starts: &[usize], range: By
 
 /// The sub-ranges of `[start, end)` NOT already covered by `existing` (a
 /// possibly unsorted, possibly-overlapping already-claimed set on the same
-/// line) — the visible-side counterpart of `syntax::merge_overlapping`'s
-/// hidden-side collapse. Reuses that same merge so both sides agree on
-/// what "already claimed" means.
+/// line) — the visible-side counterpart of `rune_syntax`'s
+/// `merge_overlapping`'s hidden-side collapse. Reuses that same merge so
+/// both sides agree on what "already claimed" means.
 fn unclaimed_subranges(
     start: usize,
     end: usize,
@@ -161,7 +160,7 @@ fn unclaimed_subranges(
     let mut sorted: Vec<(usize, usize)> =
         existing.iter().copied().filter(|&(s, e)| e > s).collect();
     sorted.sort_by_key(|&(s, _)| s);
-    let merged = syntax::merge_overlapping(sorted);
+    let merged = merge_overlapping(sorted);
 
     let mut result = Vec::new();
     let mut cursor = start;
@@ -204,8 +203,8 @@ fn build_cell_map(content_start: usize, text: &str) -> CellMap {
 /// `accounted[line]` already claims (from an earlier visible span OR a
 /// hidden range) via `unclaimed_subranges`, so a byte already emitted (or
 /// hidden) is never emitted a second time — the visible-side counterpart
-/// of `syntax::build_line_conversions`'s hidden-side merge. A hidden range
-/// can be merged AFTER the fact because `build_line_conversions` runs once
+/// of `rune_syntax::syntax::build_line_conversions`'s hidden-side merge. A
+/// hidden range can be merged AFTER the fact because that runs once
 /// over the whole set; a visible span becomes a real `SyntaxSpan` the
 /// instant it's pushed, so this has to happen HERE, at the point of claim
 /// (the class of bug this guards: an empty list item's marker running
@@ -408,8 +407,8 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
         .into_iter()
         .map(|spans| SyntaxLine { spans })
         .collect();
-    let line_convs = build_line_conversions(&starts, &hidden);
-    (lines, SyntaxSnapshot { line_convs })
+    let snapshot = SyntaxSnapshot::build(&starts, &hidden);
+    (lines, snapshot)
 }
 
 #[cfg(test)]

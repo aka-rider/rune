@@ -1889,6 +1889,7 @@ dependencies = [
  "proptest",
  "rune-core",
  "rune-md",
+ "rune-syntax",
  "rune-tui",
  "rune-vfs",
 ]
@@ -1902,6 +1903,16 @@ dependencies = [
  "proptest",
  "rune-core",
  "rune-md",
+ "rune-syntax",
+ "unicode-width",
+]
+
+[[package]]
+name = "rune-syntax"
+version = "0.1.0"
+dependencies = [
+ "rune-core",
+ "unicode-segmentation",
  "unicode-width",
 ]
 
@@ -1915,6 +1926,7 @@ dependencies = [
  "rune-core",
  "rune-db",
  "rune-md",
+ "rune-syntax",
  "rune-tui",
  "rune-vfs",
  "termina",

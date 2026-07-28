@@ -1,40 +1,11 @@
-//! Semantic style tags and the emphasis-nesting resolver (plan Context,
-//! "Nested styling ... falls out of the tree via the Emitter's style
-//! stack — no `InlineMarks` bitfield").
+//! The emphasis-nesting resolver (plan Context, "Nested styling ... falls
+//! out of the tree via the Emitter's style stack — no `InlineMarks`
+//! bitfield"). `StyleId` itself moved to the producer-agnostic `rune-syntax`
+//! crate in WP3 (unchanged; WP4 replaces it with a `ScopeId`) — re-exported
+//! from `emit::mod` under its historical `rune_md::emit::StyleId` path.
 
 use crate::element::inline::EmphasisKind;
-
-/// Semantic style tag — "what kind of markdown token is this", not a
-/// rendered `ratatui::Style`. The lipgloss/ratatui-equivalent theme lives in
-/// rune-tui (plan Context: "the lipgloss-equivalent theme lives in
-/// rune-tui").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StyleId {
-    Text,
-    H1,
-    H2,
-    H3,
-    H4,
-    H5,
-    H6,
-    Bold,
-    Italic,
-    BoldItalic,
-    Strike,
-    BoldStrike,
-    ItalicStrike,
-    BoldItalicStrike,
-    Code,
-    CodeFence,
-    Link,
-    WikiLink,
-    Blockquote,
-    ListMarker,
-    TaskMarker,
-    Hr,
-    FrontmatterDim,
-    Verbatim,
-}
+use rune_syntax::StyleId;
 
 pub(crate) fn heading_style(level: u8) -> StyleId {
     match level {

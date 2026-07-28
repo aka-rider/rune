@@ -7,7 +7,7 @@
 //! seam).
 
 use rune_core::coords::SyntaxPoint;
-use rune_md::wrap::WrapSnapshot;
+use rune_syntax::wrap::WrapSnapshot;
 
 use super::Violation;
 

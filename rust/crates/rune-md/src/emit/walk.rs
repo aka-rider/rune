@@ -8,12 +8,11 @@
 //! Go's split block/inline concealment model.
 
 use super::style::{StyleCtx, heading_style, list_marker_style, verbatim_style};
-use super::syntax::SyntaxSpan;
 use super::{Accounted, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
 use crate::element::{ByteRange, RevealState};
-use crate::emit::style::StyleId;
+use rune_syntax::{StyleId, SyntaxSpan};
 
 /// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
 /// is already exactly one physical line's range, computed container-aware

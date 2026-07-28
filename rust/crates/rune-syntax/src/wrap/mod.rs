@@ -1,6 +1,8 @@
 //! The wrap pass (plan Context, "Emit -> wrap -> snapshot"): a structural
-//! port of `pkg/editor/display/wrap_map.go:206-454`. Runs only inside
-//! `DocMachine::snapshot` — children never wrap themselves.
+//! port of `pkg/editor/display/wrap_map.go:206-454`. Producer-agnostic
+//! (WP3): consumes whatever `SyntaxLine`s a producer emitted — `rune-md`'s
+//! `DocMachine::snapshot` is the only caller today ("children never wrap
+//! themselves"), but nothing here depends on markdown.
 //!
 //! A `Substituted` (concealed) span's visible TEXT is not byte-for-byte
 //! aligned to its BUFFER `range` (delimiters were dropped), so a
@@ -28,7 +30,7 @@ mod query;
 
 pub use query::WrapSnapshot;
 
-use crate::emit::{SyntaxLine, SyntaxSpan};
+use crate::syntax::{SyntaxLine, SyntaxSpan};
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared (in the Go original) by the wrap/coordinate layer and the
@@ -251,24 +253,55 @@ fn slice_spans(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use crate::element::doc::DocMachine;
-    use rune_core::buffer::Buffer;
-    use rune_core::cursor::CursorSet;
+    use crate::style::StyleId;
+    use crate::syntax::CellMap;
 
-    fn wrap_lines(content: &str, cursor_offset: usize, focused: bool, width: u16) -> WrapSnapshot {
-        let buf = Buffer::new(content);
-        let mut doc = DocMachine::new();
-        doc.set_focus(focused);
-        doc.sync_content(&buf);
-        let cursors = CursorSet::new(cursor_offset.min(buf.len()));
-        doc.sync_cursors(&buf, &cursors);
-        let (lines, _snap) = crate::emit::emit(buf.content(), doc.blocks());
-        WrapMap::new(width).sync(buf.content(), &lines)
+    /// Splits `content` on `\n` into one `Identical`, whole-line `SyntaxLine`
+    /// per line (dropping the line terminator from the visible range, an
+    /// empty line becoming a `SyntaxLine::default()`) — a minimal stand-in
+    /// for a producer's emitted output. Builds this crate's own test inputs
+    /// directly rather than routing through `rune-md`'s `DocMachine`/`emit`
+    /// (WP3: `rune-syntax` must stand up without depending on `rune-md`);
+    /// these tests exercise `WrapMap`'s own contract only, not concealment.
+    fn plain_lines(content: &str) -> Vec<SyntaxLine> {
+        let mut starts = vec![0usize];
+        for (i, b) in content.bytes().enumerate() {
+            if b == b'\n' {
+                starts.push(i + 1);
+            }
+        }
+        starts
+            .iter()
+            .enumerate()
+            .map(|(i, &s)| {
+                let e = starts.get(i + 1).copied().unwrap_or(content.len());
+                let line_end = if e > s && content.as_bytes().get(e - 1) == Some(&b'\n') {
+                    e - 1
+                } else {
+                    e
+                };
+                if line_end > s {
+                    SyntaxLine {
+                        spans: vec![SyntaxSpan::Identical {
+                            style: StyleId::Text,
+                            range: s..line_end,
+                        }],
+                    }
+                } else {
+                    SyntaxLine::default()
+                }
+            })
+            .collect()
+    }
+
+    fn wrap_lines(content: &str, width: u16) -> WrapSnapshot {
+        let lines = plain_lines(content);
+        WrapMap::new(width).sync(content, &lines)
     }
 
     #[test]
     fn short_line_is_a_single_segment() {
-        let wrap = wrap_lines("hello world\n", 0, true, 80);
+        let wrap = wrap_lines("hello world\n", 80);
         assert_eq!(wrap.total_rows(), 2); // "hello world" + the trailing empty line
         assert_eq!(wrap.segment_len_at(0), 11);
     }
@@ -282,7 +315,7 @@ mod tests {
         // (11 cols) exactly, but "again" still remains, so the segment
         // backs off to right after the FIRST space: "hello ".
         let content = "hello world again\n";
-        let wrap = wrap_lines(content, 0, true, 11);
+        let wrap = wrap_lines(content, 11);
         let seg0 = &wrap.segments()[0];
         let text: String = seg0.spans.iter().map(|s| s.text(content)).collect();
         assert_eq!(text, "hello ");
@@ -308,9 +341,32 @@ mod tests {
         // get sliced at a wrap break, same as any other span — only its
         // `range` is left at the full original range, because a
         // Substituted span's text isn't byte-for-byte its buffer range once
-        // delimiters are dropped.
+        // delimiters are dropped. Hand-built (see `plain_lines`'s docs): a
+        // concealed inline-code span, its delimiting backticks NOT part of
+        // any span's range (they'd be a separate hidden range in a real
+        // producer's `SyntaxSnapshot`, irrelevant to `WrapMap`).
         let content = "x `aaaaaaaaaaaaaaaaaaaa` y\n";
-        let wrap = wrap_lines(content, content.len(), true, 6);
+        let code_text = "aaaaaaaaaaaaaaaaaaaa";
+        let cell_map: CellMap = (3..3 + code_text.len() as i64).collect();
+        let line0 = SyntaxLine {
+            spans: vec![
+                SyntaxSpan::Identical {
+                    style: StyleId::Text,
+                    range: 0..2,
+                },
+                SyntaxSpan::Substituted {
+                    style: StyleId::Code,
+                    text: code_text.to_string(),
+                    range: 3..23,
+                    cell_map,
+                },
+                SyntaxSpan::Identical {
+                    style: StyleId::Text,
+                    range: 24..26,
+                },
+            ],
+        };
+        let wrap = WrapMap::new(6).sync(content, &[line0]);
 
         let mut full_rendered_text = String::new();
         let mut buffer_ranges: Vec<(usize, usize)> = Vec::new();

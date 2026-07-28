@@ -1,11 +1,27 @@
 //! `SyntaxSpan`/`SyntaxLine` (the Emitter's per-buffer-line output) and
 //! `SyntaxSnapshot` (Buffer Space <-> Syntax Space coordinate conversion) —
-//! port of `pkg/editor/display/syntax_snapshot.go:35-97`.
+//! port of `pkg/editor/display/syntax_snapshot.go:35-97`. Producer-agnostic
+//! (WP3): `rune-md`'s emitter is the only producer today, but nothing here
+//! depends on markdown.
 
 use std::ops::Range;
 
-use crate::emit::style::StyleId;
+use crate::style::StyleId;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
+
+/// Mirrors `rune-md`'s own `STRICT_INVARIANTS`/`assert_invariant` chokepoint
+/// (`emit/mod.rs`'s module docs): `true` only in test builds or when this
+/// crate's own `strict-invariants` feature is explicitly enabled. Kept as a
+/// local copy rather than a shared helper — each crate's gate governs only
+/// its own producer-bug invariants, and `rune-syntax` must stand alone
+/// without depending back on `rune-md`.
+const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
+
+fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
+    if STRICT_INVARIANTS {
+        assert!(cond, "{}", msg());
+    }
+}
 
 /// Per-visual-char buffer offset, `-1` for decorative/padding cells with no
 /// buffer correspondence — port of `pkg/editor/display/cellmap.go`'s
@@ -104,6 +120,18 @@ pub struct SyntaxSnapshot {
 }
 
 impl SyntaxSnapshot {
+    /// Builds a `SyntaxSnapshot` from a producer's raw per-line hidden-range
+    /// lists (see [`build_line_conversions`] for the accumulating-delta
+    /// model). The one entry point a cross-crate producer (`rune-md`'s
+    /// `emit()` today) uses instead of a `line_convs` struct literal — that
+    /// field is `pub(crate)` to this crate on purpose, so every conversion
+    /// table is built through the overlap-checked path below.
+    pub fn build(starts: &[usize], hidden: &[Vec<(usize, usize)>]) -> SyntaxSnapshot {
+        SyntaxSnapshot {
+            line_convs: build_line_conversions(starts, hidden),
+        }
+    }
+
     /// Sum of hidden-range byte lengths recorded for `line`. Exposed for the
     /// per-line coverage invariant test (every byte is either a visible
     /// span or a hidden range — never silently dropped) and useful to any
@@ -216,9 +244,10 @@ fn has_overlap(sorted: &[(usize, usize)]) -> bool {
 /// below can no longer double-count it — merging happens UNCONDITIONALLY
 /// in every build (§1.3 graceful degradation); the `STRICT_INVARIANTS`
 /// assert above is what surfaces the producer bug, in tests only. Also
-/// reused by `emit::unclaimed_subranges` for the visible-side counterpart
-/// of this same collapse.
-pub(crate) fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+/// reused by `rune-md`'s `emit::unclaimed_subranges` for the visible-side
+/// counterpart of this same collapse — `pub`, not `pub(crate)`, for exactly
+/// that cross-crate reuse (WP3).
+pub fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
     for (s, e) in sorted {
         if e <= s {
@@ -241,7 +270,7 @@ pub(crate) fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usiz
 /// hidden AT MOST ONCE by construction: overlapping/touching ranges are
 /// merged before the deltas are summed (see `merge_overlapping`), so a
 /// producer bug that hands back overlapping ranges degrades to a
-/// (test-asserted, see `has_overlap` and `crate::emit::STRICT_INVARIANTS`)
+/// (test-asserted, see `has_overlap` and this module's own `STRICT_INVARIANTS`)
 /// coordinate inaccuracy rather than a doubly-counted delta corrupting
 /// every position past it on the line.
 pub(crate) fn build_line_conversions(
@@ -262,7 +291,7 @@ pub(crate) fn build_line_conversions(
         // (or a build that opts in via the `strict-invariants` feature),
         // via the shared `assert_invariant` chokepoint. The merge two
         // lines below runs unconditionally regardless.
-        crate::emit::assert_invariant(!has_overlap(&rel), || {
+        assert_invariant(!has_overlap(&rel), || {
             format!("line {line}: overlapping hidden ranges from a producer bug: {rel:?}")
         });
 

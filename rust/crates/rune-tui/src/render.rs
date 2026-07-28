@@ -15,8 +15,8 @@ use ratatui::widgets::{Block, BorderType};
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
-use rune_md::emit::{StyleId, SyntaxSpan};
-use rune_md::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
+use rune_syntax::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
+use rune_syntax::{StyleId, SyntaxSpan};
 
 use crate::app::App;
 use crate::banner;
@@ -68,7 +68,7 @@ fn control_placeholder(ch: char) -> char {
 
 /// The ONE width chokepoint `segment_cells` uses to advance its running
 /// visual column — the exact same functions (`rune_width_with_tab`,
-/// `control_aware_width`) `rune_md::wrap` uses for its own greedy line
+/// `control_aware_width`) `rune_syntax::wrap` uses for its own greedy line
 /// breaking and for `WrapSnapshot::visual_col`/`byte_col_from_visual`. If
 /// this ever drifted from wrap's width math, a row's `Cell` columns would no
 /// longer line up with the column `visual_col` computes for the same

@@ -138,14 +138,14 @@ pub(crate) fn cell(ch: char, buf_offset: i64) -> Cell {
     Cell {
         ch,
         width: 1,
-        style: rune_tui::render::style_for(rune_md::emit::StyleId::Text),
+        style: rune_tui::render::style_for(rune_syntax::StyleId::Text),
         buf_offset,
     }
 }
 
 /// A real `WrapSnapshot` for `content` at `width`, built the same way
 /// `rune-md/tests/wrap_roundtrip.rs`'s own `wrap_for` helper does.
-pub(crate) fn wrap_for(content: &str, width: u16) -> (Buffer, rune_md::wrap::WrapSnapshot) {
+pub(crate) fn wrap_for(content: &str, width: u16) -> (Buffer, rune_syntax::wrap::WrapSnapshot) {
     let buf = Buffer::new(content);
     let mut doc = rune_md::element::doc::DocMachine::new();
     doc.set_focus(true);
@@ -153,6 +153,6 @@ pub(crate) fn wrap_for(content: &str, width: u16) -> (Buffer, rune_md::wrap::Wra
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
     let (lines, _snap) = rune_md::emit::emit(buf.content(), doc.blocks());
-    let wrap = rune_md::wrap::WrapMap::new(width).sync(buf.content(), &lines);
+    let wrap = rune_syntax::wrap::WrapMap::new(width).sync(buf.content(), &lines);
     (buf, wrap)
 }

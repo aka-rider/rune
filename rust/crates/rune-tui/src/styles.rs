@@ -4,7 +4,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 
-use rune_md::emit::StyleId;
+use rune_syntax::StyleId;
 
 // ── Indexed colour constants ──────────────────────────────────────
 

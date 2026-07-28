@@ -8,7 +8,7 @@
 //! `WrapSnapshot` never owns an O(document) allocation of its own.
 
 use super::{WrapSegment, rune_width_with_tab};
-use crate::emit::SyntaxSpan;
+use crate::syntax::SyntaxSpan;
 use rune_core::coords::{SyntaxPoint, WrapPoint};
 
 /// A span's visible byte length: `Identical`'s is its `range`'s length (no

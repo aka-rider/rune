@@ -1061,15 +1061,18 @@ fn wikilink_matching_a_lone_cr_is_treated_as_a_line_break() {
 // ---------------------------------------------------------------------
 
 /// Every RevealSm-shaped machine writes its state through exactly one
-/// method (`RevealSm::transition` in `element/mod.rs`); the root machine
+/// method (`RevealSm::transition`, in `rune-syntax/src/element.rs` since
+/// WP3 moved it out of `rune-md`'s own `element/mod.rs`); the root machine
 /// writes its own `DocState` through exactly one method
-/// (`DocMachine::transition` in `element/doc.rs`). No other file under
-/// `src/` may contain the literal write `self.state = next` — every other
-/// machine reaches a state change only by calling `self.sm.transition(..)`.
+/// (`DocMachine::transition` in `element/doc.rs`, which stays in
+/// `rune-md`). No other file under either crate's `src/` may contain the
+/// literal write `self.state = next` — every other machine reaches a state
+/// change only by calling `self.sm.transition(..)`.
 #[test]
 fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let src_dir = manifest_dir.join("src");
+    let rune_md_src = manifest_dir.join("src");
+    let rune_syntax_src = manifest_dir.join("..").join("rune-syntax").join("src");
 
     let needle = "self.state = next";
     let mut counts: Vec<(std::path::PathBuf, usize)> = Vec::new();
@@ -1089,7 +1092,8 @@ fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
     }
 
     let mut files = Vec::new();
-    visit(&src_dir, &mut files);
+    visit(&rune_md_src, &mut files);
+    visit(&rune_syntax_src, &mut files);
     assert!(!files.is_empty(), "expected to find .rs files under src/");
 
     for file in &files {
@@ -1098,11 +1102,11 @@ fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
         counts.push((file.clone(), count));
     }
 
-    let element_mod = src_dir.join("element").join("mod.rs");
-    let element_doc = src_dir.join("element").join("doc.rs");
+    let element_doc = rune_md_src.join("element").join("doc.rs");
+    let syntax_element = rune_syntax_src.join("element.rs");
 
     for (file, count) in &counts {
-        if file == &element_mod || file == &element_doc {
+        if file == &element_doc || file == &syntax_element {
             assert_eq!(
                 *count, 1,
                 "{file:?} must contain exactly one `{needle}` write (its own transition writer), found {count}"

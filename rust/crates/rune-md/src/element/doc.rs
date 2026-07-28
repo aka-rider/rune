@@ -9,9 +9,10 @@ use crate::element::block::Block;
 use crate::element::{CursorProbe, InheritCtx, RevealGrant};
 use crate::emit::SyntaxSnapshot;
 use crate::snapshot::DisplaySnapshot;
-use crate::wrap::WrapSnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
+use rune_syntax::element::{DocState, WrapState};
+use rune_syntax::wrap::WrapSnapshot;
 
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
 /// per `DocMachine::snapshot`. `syntax`/`wrap` carry the coordinate
@@ -22,28 +23,6 @@ pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
     pub display: DisplaySnapshot,
-}
-
-/// Whether the editor currently has focus. Unfocused forces every
-/// descendant `ForceRendered` — Go's `SyncNoReveal` (Gotchas: "Unfocused ->
-/// ForceRendered").
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DocState {
-    Unfocused,
-    Focused,
-}
-
-/// Root-owned wrap state; only `DocMachine` mutates it. Downstream elements
-/// read it through `InheritCtx::wrap`, never own a copy.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WrapState {
-    pub width: u16,
-}
-
-impl Default for WrapState {
-    fn default() -> Self {
-        WrapState { width: 80 }
-    }
 }
 
 pub struct DocMachine {
@@ -167,7 +146,7 @@ impl DocMachine {
     /// themselves (plan Context, "Emit -> wrap -> snapshot").
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
         let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks);
-        let wrap = crate::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
+        let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap);
         self.dirty = false;
         ViewSnapshots {
