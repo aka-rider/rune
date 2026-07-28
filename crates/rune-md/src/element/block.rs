@@ -5,6 +5,7 @@
 //! `ctx` to its inlines unchanged.
 
 use crate::element::inline::Inline;
+use crate::element::table::TableM;
 use rune_syntax::element::{ByteRange, InheritCtx, RevealSm, RevealState};
 
 /// A block with no delimiters of its own — plain prose. Forwards `ctx`
@@ -283,6 +284,7 @@ pub enum Block {
     ThematicBreak(HrM),
     Frontmatter(FrontmatterM),
     Verbatim(VerbatimM),
+    Table(TableM),
 }
 
 impl Block {
@@ -296,6 +298,7 @@ impl Block {
             Block::ThematicBreak(m) => m.sync(ctx),
             Block::Frontmatter(m) => m.sync(ctx),
             Block::Verbatim(m) => m.sync(ctx),
+            Block::Table(m) => m.sync(ctx),
         }
     }
 
@@ -313,6 +316,7 @@ impl Block {
             Block::ThematicBreak(m) => m.sm.state(),
             Block::Frontmatter(m) => m.sm.state(),
             Block::Verbatim(m) => m.sm.state(),
+            Block::Table(m) => m.reveal_state(),
         }
     }
 
@@ -340,6 +344,7 @@ impl Block {
             Block::ThematicBreak(m) => m.range,
             Block::Frontmatter(m) => m.range,
             Block::Verbatim(m) => m.range,
+            Block::Table(m) => m.range,
         }
     }
 }

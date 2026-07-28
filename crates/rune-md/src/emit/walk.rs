@@ -311,6 +311,26 @@ pub(crate) fn emit_block(
                 );
             }
         }
+        Block::Table(t) => {
+            // WP1: parsing only, no rendering change yet — a table still
+            // emits as raw verbatim text, identically to the `Verbatim` arm
+            // above, regardless of `t.sm.state()` (a later work package
+            // gives `Rendered` a real Grid/Wrapped/Pivoted layout; until
+            // then this arm ignores that field on purpose). `t.content_lines`
+            // — never `t.range` directly — for the same container-prefix
+            // reason the `Verbatim` arm above does.
+            for &line in &t.content_lines {
+                push_span_split_by_line(
+                    content,
+                    starts,
+                    line,
+                    verbatim_style(),
+                    RevealState::Revealed,
+                    out,
+                    accounted,
+                );
+            }
+        }
     }
 }
 
