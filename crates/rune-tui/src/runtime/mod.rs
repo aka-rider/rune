@@ -18,7 +18,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use rune_syntax::ScopeId;
 use rune_vfs::{DirEntry, Vfs};
@@ -108,6 +107,22 @@ pub enum Msg {
     /// buffer version the highlight ran against; a reply whose `version` no
     /// longer matches the live buffer is dropped the same way.
     Highlighted {
+        doc: DocumentId,
+        version: u64,
+        result: Option<Vec<(Range<usize>, ScopeId)>>,
+    },
+    /// The reply to `highlight::retry_highlight`'s single bounded retry: a
+    /// document that has NEVER been highlighted (no previous spans to fall
+    /// back on under `[R2]`) degrades to permanently uncoloured rather than
+    /// merely stale if its first parse alone exceeds `HIGHLIGHT_BUDGET` —
+    /// see that constant's own doc comment (unmeasured against a real large
+    /// document). A distinct variant, not a second `Msg::Highlighted`,
+    /// because `dispatch::handle_highlight_retried` deliberately never
+    /// calls `schedule_highlight`/`retry_highlight` again on a further
+    /// `None`: its very existence as the only place that can fire a second
+    /// time is what keeps the retry bounded at exactly one extra attempt,
+    /// with no per-document counter to fall out of sync.
+    HighlightRetried {
         doc: DocumentId,
         version: u64,
         result: Option<Vec<(Range<usize>, ScopeId)>>,
@@ -378,76 +393,16 @@ pub fn load_dir_cmd(
     })
 }
 
-/// The wall-clock budget one `rune_ts::highlight` call is allowed before it
-/// aborts and reports `None` (plan WP5.S2, Assumption A3) — unmeasured
-/// against a real large document (see `TODO.md`).
-pub const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(250);
-
-/// Parses `source` as `lang` off-thread and replies with `Msg::Highlighted`
-/// (plan WP5.S2). Owns `source` (moved into the closure, exactly like
-/// [`load_dir_cmd`]'s owned `root`) since the `Cmd` closure is `FnOnce() ->
-/// Option<Msg> + Send + 'static` and cannot borrow the document's buffer
-/// across the thread boundary. Always replies with `Some(..)` — even a
-/// `None` result from `rune_ts::highlight` — so `in_flight` is guaranteed to
-/// clear on the UI thread; `rune_ts::highlight` itself never panics
-/// (§1.3: it surfaces a failed language load or query compile as `None`,
-/// never `ts_assert`'s `SIGABRT`, since every parse is a full parse — no
-/// incremental-reparse edit is ever fed back into it). This is the ONLY
-/// place `rune-tui` reaches `rune_ts::highlight` — a background thread,
-/// never the UI thread.
-pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: String) -> Cmd {
-    Cmd::new(CmdKind::Highlight, move || {
-        Some(Msg::Highlighted {
-            doc,
-            version,
-            result: rune_ts::highlight(lang, &source, HIGHLIGHT_BUDGET),
-        })
-    })
-}
-
-/// Parses every fence of a markdown document off-thread and merges the
-/// results into ONE `Msg::Highlighted` reply (plan WP6.S3) — the same
-/// message and the same clamping path `highlight_cmd` above feeds, so
-/// `dispatch::handle_highlighted` needs no second case: a document has one
-/// span list whatever produced it. `HIGHLIGHT_BUDGET` is split evenly
-/// across `fences` (`fences.len().max(1)`) so a document with many fences
-/// still respects one overall budget rather than running each fence at the
-/// full budget. Each fence's own spans are rebased by that fence's buffer
-/// start BEFORE concatenation, and the concatenated result is re-sorted
-/// into the same painter order `rune_ts::highlight` itself guarantees
-/// within one fence (`start` ASC, `end` DESC) — concatenating two already-
-/// sorted lists is not itself sorted. `result` is `Some(..)` iff at least
-/// one fence actually parsed within its slice of the budget and `None` iff
-/// none did `[R2]` — an all-timed-out document must not flash to unstyled.
-pub fn fence_highlight_cmd(
-    doc: DocumentId,
-    version: u64,
-    fences: Vec<(&'static str, Range<usize>, String)>,
-) -> Cmd {
-    Cmd::new(CmdKind::Highlight, move || {
-        let per_fence_budget = HIGHLIGHT_BUDGET / (fences.len().max(1) as u32);
-        let mut spans: Vec<(Range<usize>, ScopeId)> = Vec::new();
-        let mut any_parsed = false;
-        for (lang, range, text) in fences {
-            let Some(fence_spans) = rune_ts::highlight(lang, &text, per_fence_budget) else {
-                continue;
-            };
-            any_parsed = true;
-            let base = range.start;
-            spans.extend(
-                fence_spans
-                    .into_iter()
-                    .map(|(r, scope)| (base + r.start..base + r.end, scope)),
-            );
-        }
-        spans.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(b.0.end.cmp(&a.0.end)));
-        Some(Msg::Highlighted {
-            doc,
-            version,
-            result: any_parsed.then_some(spans),
-        })
-    })
-}
+// The tree-sitter highlight `Cmd` constructors (`highlight_cmd`, `fence_
+// highlight_cmd`, and finding B's bounded-retry counterparts, plus
+// `HIGHLIGHT_BUDGET`/`HIGHLIGHT_RETRY_BUDGET`) moved to `runtime::
+// highlight_cmd` (§1.6 budget) — re-exported below so every existing
+// `runtime::` call site keeps working unchanged.
+mod highlight_cmd;
+pub use highlight_cmd::{
+    HIGHLIGHT_BUDGET, HIGHLIGHT_RETRY_BUDGET, fence_highlight_cmd, fence_highlight_retry_cmd,
+    highlight_cmd, highlight_retry_cmd,
+};
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {

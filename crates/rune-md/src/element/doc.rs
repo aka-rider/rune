@@ -84,16 +84,19 @@ impl DocMachine {
         &self.blocks
     }
 
-    /// Every fenced code block's language tag and content byte range (plan
-    /// WP6.S1) — walked recursively into blockquotes and list items so a
-    /// fence nested inside either is found too, not only a top-level one.
-    /// Each range spans the FIRST and LAST entries of `CodeFenceM::
-    /// content_lines`, never `CodeFenceM::range`, so a container's own
-    /// repeating prefix (`"> "`, a list marker's indent) on every content
-    /// line past the first is excluded — the same reason `content_lines`
-    /// exists at all (see its own doc comment). A fence with an empty
-    /// `language` or no content lines contributes nothing.
-    pub fn code_fences(&self) -> Vec<(&str, Range<usize>)> {
+    /// Every fenced code block's language tag and per-line content byte
+    /// ranges (plan WP6.S1) — walked recursively into blockquotes and list
+    /// items so a fence nested inside either is found too, not only a
+    /// top-level one. Returns `CodeFenceM::content_lines` itself, ONE
+    /// `Range` per physical content line, never collapsed into a single
+    /// `first.start..last.end` span: a container's own repeating prefix
+    /// (`"> "`, a list marker's indent) sits in the GAP between two
+    /// consecutive lines' buffer ranges, so a single contiguous range
+    /// covering both would include it, while the per-line list lets the
+    /// caller reconstruct a prefix-free source and map spans back through
+    /// the gaps instead. A fence with an empty `language` or no content
+    /// lines contributes nothing.
+    pub fn code_fences(&self) -> Vec<(&str, Vec<Range<usize>>)> {
         let mut out = Vec::new();
         collect_code_fences(&self.blocks, &mut out);
         out
@@ -200,18 +203,15 @@ impl DocMachine {
 /// `DocMachine::code_fences`'s own recursion — descends into `Blockquote`
 /// and `List` children (a fence can sit inside either), skipping every
 /// other block kind since none of them can contain a nested `CodeFence`.
-fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Range<usize>)>) {
+fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Vec<Range<usize>>)>) {
     for block in blocks {
         match block {
             Block::CodeFence(cf) => {
-                if cf.language.is_empty() {
+                if cf.language.is_empty() || cf.content_lines.is_empty() {
                     continue;
                 }
-                let (Some(first), Some(last)) = (cf.content_lines.first(), cf.content_lines.last())
-                else {
-                    continue;
-                };
-                out.push((cf.language.as_str(), first.start..last.end));
+                let lines = cf.content_lines.iter().map(|l| l.start..l.end).collect();
+                out.push((cf.language.as_str(), lines));
             }
             Block::Blockquote(bq) => collect_code_fences(&bq.children, out),
             Block::List(list) => {

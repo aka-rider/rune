@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::app::App;
 use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
-use crate::document::DocumentId;
+use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg};
@@ -82,6 +82,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
+        Msg::HighlightRetried {
+            doc,
+            version,
+            result,
+        } => handle_highlight_retried(app, doc, version, result, effects),
         Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;
@@ -150,6 +155,27 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
     }
 }
 
+/// The span-clamp chokepoint `handle_highlighted` and `handle_highlight_
+/// retried` (finding B) both apply on a reply whose spans are to be
+/// accepted: every range clamped to the live byte length, with mid-`char`
+/// or inverted ranges (§1.3) discarded, and the survivors replace `spans`
+/// tagged with the version they describe.
+fn apply_highlight_spans(doc: &mut Document, version: u64, spans: Vec<(Range<usize>, ScopeId)>) {
+    let content = doc.buffer.content();
+    let len = content.len();
+    let mut clamped: Vec<(Range<usize>, ScopeId)> = Vec::with_capacity(spans.len());
+    for (range, scope) in spans {
+        let start = range.start;
+        let end = range.end.min(len);
+        if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+            continue;
+        }
+        clamped.push((start..end, scope));
+    }
+    doc.highlight.spans = clamped;
+    doc.highlight.version = version;
+}
+
 /// Applies a `Msg::Highlighted` reply (plan WP5.S4), in the fixed order
 /// `[R2]` requires: (a) `in_flight` clears regardless of what the reply
 /// carries, so a document can never deadlock waiting on a highlight that
@@ -158,12 +184,19 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
 /// degrades to STALE colours, never to none; (c) a `version` that no longer
 /// matches the live buffer means a NEWER edit landed while this reply was in
 /// flight, so the payload describes stale content and is dropped, spans
-/// again left untouched; (d) otherwise every range is clamped to the live
-/// byte length and any range whose endpoints fall off a `char` boundary (or
-/// whose `start >= end` after clamping) is discarded (§1.3), and the
-/// survivors replace `spans`; (e) if a further edit arrived while this
-/// reply was in flight (`pending`), it is cleared and a fresh highlight is
-/// requested immediately rather than waiting for the next keystroke.
+/// again left untouched; (d) otherwise `apply_highlight_spans` clamps and
+/// stores the survivors; (e) if a further edit arrived while this reply was
+/// in flight (`pending`), it is cleared and a fresh highlight is requested
+/// immediately rather than waiting for the next keystroke.
+///
+/// Finding B's one exception to (b): a document that has NEVER been
+/// highlighted (`doc.highlight.version == 0`, `Buffer::version` never being
+/// 0 itself) has no previous spans for `[R2]` to fall back on, so `result:
+/// None` at the live version would otherwise leave it silently,
+/// permanently uncoloured — nothing else re-schedules a highlight for an
+/// unedited document. `highlight::retry_highlight` gives it exactly one
+/// further attempt at a widened budget instead; see that function's and
+/// `Msg::HighlightRetried`'s doc comments for why this is bounded.
 fn handle_highlighted(
     app: &mut App,
     id: DocumentId,
@@ -171,32 +204,77 @@ fn handle_highlighted(
     result: Option<Vec<(Range<usize>, ScopeId)>>,
     effects: &mut Effects,
 ) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.highlight.in_flight = None;
-    let pending = doc.highlight.pending;
-
-    if let Some(spans) = result
-        && version == doc.buffer.version()
-    {
-        let content = doc.buffer.content();
-        let len = content.len();
-        let mut clamped: Vec<(Range<usize>, ScopeId)> = Vec::with_capacity(spans.len());
-        for (range, scope) in spans {
-            let start = range.start;
-            let end = range.end.min(len);
-            if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
-                continue;
+    let mut retry = false;
+    let mut pending = false;
+    if let Some(doc) = app.doc_mut(id) {
+        doc.highlight.in_flight = None;
+        pending = doc.highlight.pending;
+        doc.highlight.pending = false;
+        let live_version = doc.buffer.version();
+        match result {
+            Some(spans) if version == live_version => {
+                apply_highlight_spans(doc, version, spans);
             }
-            clamped.push((start..end, scope));
+            None if version == live_version && doc.highlight.version == 0 => {
+                retry = true;
+            }
+            // `result: None` on a document with existing spans, or `Some`/
+            // `None` at a stale version, leaves `spans` untouched — `[R2]`.
+            _ => {}
         }
-        doc.highlight.spans = clamped;
-        doc.highlight.version = version;
     }
-    // `result: None`, or `Some(..)` at a stale version, leaves `spans`
-    // untouched — both cases fall through this `if let` with no write.
+
+    if retry {
+        crate::highlight::retry_highlight(app, id, version, effects);
+        return;
+    }
 
     if pending {
+        crate::highlight::schedule_highlight(app, id, effects);
+    }
+}
+
+/// Applies `Msg::HighlightRetried` (finding B's bounded retry reply):
+/// identical span-clamp handling to `handle_highlighted`'s `Some` case via
+/// the shared `apply_highlight_spans`, but a SECOND `None` for a
+/// still-never-highlighted document surfaces a status line instead of
+/// retrying again — this function never calls `schedule_highlight`/
+/// `highlight::retry_highlight` from that arm, so it is provably the last
+/// attempt for this failed first-highlight chain; a later edit still
+/// schedules a fresh one normally, starting the same one-retry chain over.
+fn handle_highlight_retried(
+    app: &mut App,
+    id: DocumentId,
+    version: u64,
+    result: Option<Vec<(Range<usize>, ScopeId)>>,
+    effects: &mut Effects,
+) {
+    let mut exhausted = false;
+    let mut pending = false;
+    if let Some(doc) = app.doc_mut(id) {
+        doc.highlight.in_flight = None;
+        pending = doc.highlight.pending;
         doc.highlight.pending = false;
+        let live_version = doc.buffer.version();
+        match result {
+            Some(spans) if version == live_version => {
+                apply_highlight_spans(doc, version, spans);
+            }
+            None if version == live_version && doc.highlight.version == 0 => {
+                exhausted = true;
+            }
+            _ => {}
+        }
+    }
+
+    if exhausted {
+        app.set_status(
+            "syntax highlighting timed out for this document",
+            crate::app::StatusSource::Other,
+        );
+    }
+
+    if pending {
         crate::highlight::schedule_highlight(app, id, effects);
     }
 }
