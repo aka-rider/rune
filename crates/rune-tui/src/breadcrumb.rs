@@ -65,13 +65,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     let Some(path) = &app.active_doc().file_path else {
         return;
     };
-    let parts: Vec<String> = path
-        .components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
+    let parts = crumb_parts(path, &app.root);
     if parts.is_empty() {
         return;
     }
@@ -118,9 +112,40 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     }
 }
 
-/// A direct port of Go's `buildCrumb` (`breadcrumb.go:56-119`), minus the
-/// workspace-root relativization (plan Out of scope — Rust has no
-/// workspace-root concept on `App` yet; see root `TODO.md`): builds the
+/// Relativizes `path` against `root` (plan WP4.S6, Go's own `buildCrumb`
+/// `root` argument), returning the ordered list of path components the
+/// crumb renders. When `root` is non-empty and `path` is under it (`Path::
+/// starts_with` compares whole components, so this can never mistake
+/// `/a/vault2` for being under `/a/vault` the way a bare string-prefix
+/// check would), the result is root's own base name followed by the
+/// remaining components below it — e.g. root `/Users/xiii/vault`, path
+/// `/Users/xiii/vault/notes/note.md` yields `["vault", "notes",
+/// "note.md"]`, not `["Users", "xiii", "vault", "notes", "note.md"]`.
+/// Falls back to every `Normal` component of the absolute path otherwise
+/// (`root` empty — not yet resolved — or `path` outside it).
+fn crumb_parts(path: &std::path::Path, root: &std::path::Path) -> Vec<String> {
+    if !root.as_os_str().is_empty()
+        && let Ok(remainder) = path.strip_prefix(root)
+    {
+        let mut parts = Vec::new();
+        if let Some(name) = root.file_name() {
+            parts.push(name.to_string_lossy().into_owned());
+        }
+        parts.extend(remainder.components().filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        }));
+        return parts;
+    }
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A direct port of Go's `buildCrumb`: builds the
 /// `Normal` path components right-to-left, each as `" part "` (fg
 /// `SPECIAL`, Go's `Breadcrumb` style) followed by `" / "` (fg `SUBTLE`,
 /// Go's `BreadcrumbSep`) for every part except the rightmost (leaf), until
@@ -204,7 +229,7 @@ mod tests {
     use crate::testgrid;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     fn app_for(content: &str, path: Option<&str>) -> App {
@@ -234,6 +259,50 @@ mod tests {
             }
         }
         s
+    }
+
+    #[test]
+    fn crumb_parts_relativizes_against_a_set_root() {
+        let parts = crumb_parts(
+            Path::new("/Users/xiii/vault/notes/note.md"),
+            Path::new("/Users/xiii/vault"),
+        );
+        assert_eq!(parts, vec!["vault", "notes", "note.md"]);
+    }
+
+    #[test]
+    fn crumb_parts_falls_back_to_the_absolute_path_outside_root() {
+        let parts = crumb_parts(
+            Path::new("/Users/xiii/other/note.md"),
+            Path::new("/Users/xiii/vault"),
+        );
+        assert_eq!(parts, vec!["Users", "xiii", "other", "note.md"]);
+    }
+
+    #[test]
+    fn crumb_parts_falls_back_to_the_absolute_path_when_root_is_unresolved() {
+        let parts = crumb_parts(Path::new("/Users/xiii/vault/note.md"), Path::new(""));
+        assert_eq!(parts, vec!["Users", "xiii", "vault", "note.md"]);
+    }
+
+    /// `/a/vault2` must never be treated as under root `/a/vault` —
+    /// `Path::starts_with` compares whole components, unlike a bare string
+    /// prefix check (the bug Go's own `buildCrumb` comment calls out).
+    #[test]
+    fn crumb_parts_does_not_mistake_a_sibling_with_a_shared_prefix_for_being_under_root() {
+        let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Path::new("/a/vault"));
+        assert_eq!(parts, vec!["a", "vault2", "notes.md"]);
+    }
+
+    #[test]
+    fn overlay_relativizes_against_app_root_end_to_end() {
+        let mut app = app_for("hello", Some("/Users/xiii/vault/notes/note.md"));
+        app.set_root(PathBuf::from("/Users/xiii/vault"));
+        // parts = ["vault", "notes", "note.md"] instead of the full
+        // ["Users", "xiii", "vault", "notes", "note.md"].
+        let row = overlay_bottom_row(&app, 60, 3, true);
+        assert!(row.contains("vault  /  notes  /  note.md"));
+        assert!(!row.contains("Users"));
     }
 
     #[test]

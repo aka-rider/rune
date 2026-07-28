@@ -119,10 +119,14 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 
 /// The Explorer's starting root the first time it's ever shown (plan
 /// WP4.S4's "`^x` triggers the initial load"): the active document's own
-/// directory, or the process's current directory for a pathless (draft)
-/// session — resolved through `app.vfs` (§1.4.9) so `Disk` canonicalizes it
-/// exactly like every other filesystem entry point, and `Mem` (tests)
-/// returns it unchanged (`Vfs::resolve`'s identity behavior there).
+/// directory takes priority (deliberate, and different from Go, which
+/// always roots the tree at the workspace root) — a pathless (draft)
+/// session falls back to `app.root` (the workspace root discovered at
+/// startup), and only when THAT is also unresolved (still empty) does this
+/// fall back to the literal `"."`. Resolved through `app.vfs` (§1.4.9) so
+/// `Disk` canonicalizes it exactly like every other filesystem entry point,
+/// and `Mem` (tests) returns it unchanged (`Vfs::resolve`'s identity
+/// behavior there).
 pub fn initial_root(app: &App) -> PathBuf {
     let base = app
         .active_doc()
@@ -130,7 +134,13 @@ pub fn initial_root(app: &App) -> PathBuf {
         .as_deref()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .unwrap_or_else(|| {
+            if app.root.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                app.root.clone()
+            }
+        });
     app.vfs.resolve(&base).unwrap_or(base)
 }
 
@@ -534,6 +544,31 @@ mod tests {
             );
         }
         assert_eq!(app.explorer.nav.cursor, 2, "clamped at the bottom");
+    }
+
+    #[test]
+    fn initial_root_falls_back_to_app_root_for_a_pathless_doc() {
+        let mut app = app();
+        app.set_root(PathBuf::from("/workspace/root"));
+        assert_eq!(initial_root(&app), PathBuf::from("/workspace/root"));
+    }
+
+    #[test]
+    fn initial_root_falls_back_to_dot_when_app_root_is_also_unresolved() {
+        let app = app();
+        assert_eq!(initial_root(&app), PathBuf::from("."));
+    }
+
+    #[test]
+    fn initial_root_prefers_the_active_doc_directory_over_app_root() {
+        let mut app = App::new(
+            Buffer::new("hello"),
+            Some(PathBuf::from("/doc/dir/note.md")),
+            Arc::new(Mem::new()),
+            None,
+        );
+        app.set_root(PathBuf::from("/workspace/root"));
+        assert_eq!(initial_root(&app), PathBuf::from("/doc/dir"));
     }
 
     #[test]

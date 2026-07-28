@@ -215,6 +215,14 @@ pub struct App {
     /// terminal; every test and the fuzzer keep this default, exactly like
     /// `space_probe`'s `NullProbe` default above.
     pub theme: crate::theme::Theme,
+    /// The workspace root discovered by `workspaceroot::resolve` (plan
+    /// WP4.S4) — the nearest ancestor of the launch directory carrying a
+    /// `.git`/`.obsidian` marker, or `cwd` itself when none is found.
+    /// `PathBuf::new()` (empty) until `set_root` runs; an empty root is a
+    /// legal "not yet resolved" state, and every consumer (the Explorer's
+    /// initial-root fallback, the breadcrumb's relativization) skips it
+    /// rather than treating it as a real path.
+    pub root: PathBuf,
 }
 
 impl App {
@@ -267,6 +275,7 @@ impl App {
             modal: None,
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
+            root: PathBuf::new(),
         }
     }
 
@@ -429,6 +438,14 @@ impl App {
     pub fn set_status(&mut self, message: impl Into<String>, source: StatusSource) {
         self.status_message = Some(message.into());
         self.status_source = source;
+    }
+
+    /// Records the workspace root discovered by `workspaceroot::resolve`
+    /// (plan WP4.S4) — the one writer of `root`, called once at startup once
+    /// the launch-time `cwd`/`home`/file-argument inputs the resolver needs
+    /// are available.
+    pub fn set_root(&mut self, root: PathBuf) {
+        self.root = root;
     }
 }
 
