@@ -285,3 +285,28 @@ cannot claim to be the table's first or last.
   rendering, not as evidence that Rust and Go screens actually match; treat a
   green `make parity-grid` accordingly, and see plan Risks for the same
   caveat.
+
+## rust port — findings from the lone-`\r` fix that were out of its scope (recorded 2026-07-28)
+
+Recorded together because one fix surfaced all of them.
+
+**`crates/rune-md/TODO.md`'s residual strict-invariants repros: two now pass.**
+`"- >_\r\tx\n]"` and `">\t<b>\ra"` both involved a lone `\r` and are closed by the
+shadow-copy parse. `"- >👍\n\tx\nc"` still panics — it is tab-stop expansion with
+no CR anywhere, genuinely separate. Someone who owns that file should strike the
+first two and keep the third.
+
+**A GFM table row with MORE cells than its header silently drops the extra
+cell's text at emit time**, with no fallback. Reproduces with plain pipes, no CR
+involved. Found while probing fixtures; not investigated further.
+
+**`crates/rune-tui/tests/tui_render.rs` is now 555 lines**, over §1.6. It was
+already 520 before this branch; the lone-CR render test pushed it further. Split
+it when next touched.
+
+**`make parity-capture && make parity-assert` fails on a "rust bottom content
+row (line 33)" width mismatch.** Confirmed pre-existing — reproduces with the
+lone-`\r` fix reverted — and on one run the *Go* side failed too, which points
+at capture-harness flakiness (terminal-size timing under the sandbox) rather
+than a Rust regression. `make parity-grid` passes. Needs its own investigation
+with polled evidence before anyone changes rendering code to chase it.
