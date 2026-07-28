@@ -34,31 +34,59 @@ pub struct TableSegInfo {
 /// previous rows' own visible lengths, so `syntax_to_wrap`/`wrap_to_syntax`
 /// — purely mechanical over `start_col` + a segment's own visible length —
 /// round-trip a multi-row table line with zero special-casing.
+///
+/// `info.boundary` describes the LOGICAL row's own boundary (whether a top
+/// and/or bottom border belongs around it) — a property of the source line
+/// as a whole, not of any one of its visual sub-rows. Only the FIRST
+/// segment may ever carry a `First`/`Only` boundary (the top border goes
+/// before it) and only the LAST segment may ever carry a `Last`/`Only`
+/// boundary (the bottom border goes after it): every segment in between —
+/// and, for a Grid line, there is exactly one segment so this never fires —
+/// is forced to `Middle`, so `DisplaySnapshot::expand_tables` never
+/// synthesises a border between two visual rows of the SAME wrapped line.
 pub(super) fn wrap_table_line(
     line_idx: usize,
     line: &SyntaxLine,
     info: &TableRowInfo,
     segments: &mut Vec<WrapSegment>,
 ) {
-    let seg_info = TableSegInfo {
-        col_widths: info.col_widths.clone(),
-        role: info.role,
-        boundary: info.boundary,
-        boxed: info.boxed,
+    let total_segments = 1 + info.extra_rows.len();
+    let starts = matches!(info.boundary, RowBoundary::First | RowBoundary::Only);
+    let ends = matches!(info.boundary, RowBoundary::Last | RowBoundary::Only);
+    let seg_boundary = |i: usize| -> RowBoundary {
+        let is_first = i == 0;
+        let is_last = i == total_segments - 1;
+        match (starts && is_first, ends && is_last) {
+            (true, true) => RowBoundary::Only,
+            (true, false) => RowBoundary::First,
+            (false, true) => RowBoundary::Last,
+            (false, false) => RowBoundary::Middle,
+        }
     };
+
     segments.push(WrapSegment {
         spans: line.spans.clone(),
         model_line: line_idx,
         start_col: 0,
-        table: Some(seg_info.clone()),
+        table: Some(TableSegInfo {
+            col_widths: info.col_widths.clone(),
+            role: info.role,
+            boundary: seg_boundary(0),
+            boxed: info.boxed,
+        }),
     });
     let mut start_col: usize = line.spans.iter().map(query::span_visible_len).sum();
-    for extra in &info.extra_rows {
+    for (k, extra) in info.extra_rows.iter().enumerate() {
         segments.push(WrapSegment {
             spans: extra.clone(),
             model_line: line_idx,
             start_col,
-            table: Some(seg_info.clone()),
+            table: Some(TableSegInfo {
+                col_widths: info.col_widths.clone(),
+                role: info.role,
+                boundary: seg_boundary(k + 1),
+                boxed: info.boxed,
+            }),
         });
         start_col += extra.iter().map(query::span_visible_len).sum::<usize>();
     }

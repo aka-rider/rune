@@ -411,3 +411,48 @@ fn display_rows_at(buf: &Buffer, doc: &DocMachine, width: u16) -> Vec<String> {
         })
         .collect()
 }
+
+/// Regression (found via WP6's `parity-grid` gate, `tables-narrow.md`):
+/// `wrap_table_line` used to stamp the SAME `TableRowInfo::boundary` onto
+/// every visual sub-row of a Wrapped body line, so
+/// `DisplaySnapshot::expand_tables` synthesised a `└┴┘` bottom border
+/// after EVERY visual row instead of only the last one; and `emit_table`
+/// stored the Grid layout's natural (unshrunk) `col_widths` in
+/// `TableRowInfo` even when Wrapped was the layout actually chosen, so any
+/// synthesised border ended up wider than the content rows it bordered.
+/// Both are asserted here at a width where the body row wraps into more
+/// than one visual row.
+#[test]
+fn wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_width() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 100u16;
+    let rows = display_rows_at(&buf, &doc, width);
+
+    let top: Vec<&String> = rows.iter().filter(|r| r.starts_with('┌')).collect();
+    let bottom: Vec<&String> = rows.iter().filter(|r| r.starts_with('└')).collect();
+    assert_eq!(top.len(), 1, "exactly one top border row: {rows:#?}");
+    assert_eq!(
+        bottom.len(),
+        1,
+        "exactly one bottom border row, not one per visual sub-row of the wrapped body line: {rows:#?}"
+    );
+
+    // Every content row's own display width must equal the border rows'
+    // width — a border sized off the Grid layout's natural widths would be
+    // wider than the Wrapped content it borders.
+    let content_width = rows
+        .iter()
+        .find(|r| {
+            !r.starts_with('┌') && !r.starts_with('└') && !r.starts_with('├') && !r.is_empty()
+        })
+        .map(|r| display_width(r))
+        .expect("at least one content row");
+    for border in top.iter().chain(bottom.iter()) {
+        assert_eq!(
+            display_width(border),
+            content_width,
+            "a synthesised border must match the Wrapped layout's own constrained width, not Grid's natural width"
+        );
+    }
+}

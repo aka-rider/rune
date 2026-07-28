@@ -33,6 +33,8 @@ FIXTURES=(
     fences.md
     quotes.md
     tables.md
+    tables-divergent.md
+    tables-narrow.md
     frontmatter.md
     cjk.md
     emoji.md
@@ -60,8 +62,8 @@ excluded_reason() {
         quotes.md)
             echo "Go's blockquote-marker concealment doesn't recurse into nested (depth >= 2) quotes or inline emphasis nested inside quoted text; Rust conceals both fully"
             ;;
-        tables.md)
-            echo "Go renders an actual bordered table widget; table rendering is explicitly out of scope for this plan on the Rust side (plan Goal, 'Explicitly not in this plan')"
+        tables-divergent.md)
+            echo "verified Go table defects: inverted alignment (goldmark's AlignLeft = iota + 1 cast into a renderer switch reading 0=left/1=center/2=right, so :--- renders centred and :---: renders left), strings.Split(line, \"|\") cell splitting (mishandles an escaped pipe and a ragged extra cell), container-prefix leakage inside a blockquote/list item, per-rune rather than per-grapheme emoji width, and the cjk.md TAB-padding defect"
             ;;
         frontmatter.md)
             echo "same list-marker gap as lists.md (the body's own bullet list)"

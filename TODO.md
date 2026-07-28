@@ -176,3 +176,44 @@ belongs there only in the same commit as its fix, since `replay.rs`'s contract
 is "every checked-in script replays clean"). The script above is the verbatim
 copy. Fix: clamp/re-validate every secondary cursor to a char boundary at the
 edit-commit chokepoint, not just the primary. Out of scope for the table plan.
+
+## rust port — Tables: deliberately left open (recorded 2026-07-28, markdown-table plan WP6.S7)
+
+**Status:** accepted, not fixed — each item below was a considered decision in the plan, not an oversight.
+
+- **Assumption A1 — grid-fit threshold divergence.** Rust's Grid-fit test uses the true
+  rendered row width `Σw + 3n + 1`; Go's `computeMinGridWidth` uses `Σw + 4n − 1`
+  (`markdown_table_layout.go:72-81`), which is Go's own bug (also recorded in
+  `golang/TODO.md`) — the two formulas agree only at exactly 2 columns. At other column
+  counts, a table whose width sits within `n − 2` of the threshold can make the two
+  implementations pick different layouts (Grid vs. Wrapped/Pivoted) at the same terminal
+  width. `scripts/parity/fixtures/tables-narrow.md` is sized well past both formulas'
+  thresholds specifically to avoid exercising this gap in the gated corpus; a user
+  resizing a real terminal to exactly that straddle width would still see it.
+- **Assumption A2 — hard-break-by-display-width vs. hard-break-by-rune-count.** Rust
+  hard-breaks an over-long word (no whitespace to wrap at) by accumulated display width;
+  Go's `hardBreakWord` (`markdown_table_layout.go:249-270`) breaks by rune count, so a
+  CJK-heavy over-long word overflows Go's column by up to 2x. Every gated fixture avoids
+  words longer than 12 characters so this divergence never fires in `parity-grid`; not
+  fixed on the Go side (decision 2 — Go is left alone).
+- **Approximate caret placement inside a rendered table row.** A table line's row 1
+  claims the WHOLE source line as one substituted span (decision 6); the buffer offset a
+  caret would need to land on mid-cell has no exact rendered-column counterpart. Caret
+  placement on a table row is therefore approximate in both implementations, and
+  unreachable in the focused pane in practice (reveal is whole-block — decision 5 — so a
+  rendered table row is never the row the cursor is actually drawn on).
+- **`crates/rune-md/tests/table_render.rs`** is 458 lines (§1.6 limit 500) after WP6's own
+  regression test for the Wrapped-layout border-synthesis bug (see the entry below) — under
+  budget, recorded here only because this plan's own WP2/WP4 work already pushed several
+  sibling files over the limit (see the "§1.6 file-size overages" entry above and the
+  per-work-package entries elsewhere in this file); no new file crossed 500 lines during
+  WP6 itself.
+
+## rust port — RESOLVED (2026-07-28, markdown-table plan WP6): Wrapped-layout tables synthesised a bottom border after every visual sub-row, at the wrong width
+
+**Status:** fixed, with a regression test; found while proving the `parity-grid` gate for `tables-narrow.md` (the first real exercise of a Wrapped table through the full render -> wrap -> display pipeline — WP4's own tests covered segment `start_col`s and cell wrapping, but not `DisplaySnapshot`'s border synthesis for a Wrapped line specifically).
+
+- **Symptom:** a Wrapped table's body row, once its cells wrap into more than one visual sub-row, rendered a `└┴┘` bottom border after EVERY sub-row instead of only the last one — and that border (and the table's top border) was drawn at the Grid layout's natural, unshrunk column widths instead of the actually-rendered, proportionally-shrunk Wrapped widths, so the border ran wider than the content it bordered and overflowed the pane. Confirmed via a real `tmux capture-pane` capture (`scripts/parity/fixtures/tables-narrow.md`), not just a unit test.
+- **Root cause, part 1:** `crates/rune-syntax/src/wrap/table.rs`'s `wrap_table_line` stamped the SAME `TableSegInfo` — including `boundary` — onto every `WrapSegment` a table source line produced (row 1 plus every `extra_rows` entry). `boundary` describes the LOGICAL row's own top/bottom border membership, a property of the source line as a whole; Grid layout never produces more than one segment per line, so this was invisible until Wrapped/Pivoted (WP4) started producing several. Fixed: only the FIRST segment of a line may carry `First`/`Only` (the top border goes before it), and only the LAST segment may carry `Last`/`Only` (the bottom border goes after it) — every segment in between is forced to `Middle`.
+- **Root cause, part 2:** `crates/rune-md/src/emit/table.rs`'s `emit_table` always stored the Grid layout's natural `widths` into `TableRowInfo::col_widths`, the value `DisplaySnapshot::expand_tables` uses to build a synthesised border's own text — even when the layout actually chosen for that table was Wrapped, which renders at `constrained_widths` instead. Fixed: `col_widths` now stores `constrained_widths` when the layout is Wrapped.
+- **Regression test:** `crates/rune-md/tests/table_render.rs`'s `wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_width`.

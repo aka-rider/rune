@@ -245,9 +245,19 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
             .map(|runs| extra_row_spans(line_start, runs))
             .collect();
 
+        // A synthesised border row must match the widths actually on
+        // screen: Grid draws at the natural widths, but Wrapped draws at
+        // the proportionally shrunk `constrained_widths` — using `widths`
+        // here for Wrapped would print a border sized for columns wider
+        // than the ones the content rows actually render.
+        let border_widths = if table_layout == layout::TableLayout::Wrapped {
+            &constrained_widths
+        } else {
+            &widths
+        };
         if let Some(slot) = out.tables.get_mut(line) {
             *slot = Some(TableRowInfo {
-                col_widths: widths.clone(),
+                col_widths: border_widths.clone(),
                 role,
                 boundary,
                 extra_rows,
