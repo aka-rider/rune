@@ -301,3 +301,43 @@ these needs a redesign:
   emits it. The Go reference has no `^` handling either.
 - **Reference-style links** `[text][ref]` and link reference definitions are
   not modelled.
+
+## rust port — CELL-ORDER violation pasting a ZWJ emoji into a list item (recorded 2026-07-28, navigation plan verification)
+
+**Status:** open; PRE-EXISTING, proven not caused by the navigation work.
+
+- **Symptom:** `make test-fuzz` at `RC=3000` catches
+  `CELL-ORDER: row cell buf_offsets go backwards: 29 then 9`. Not caught at the
+  default `RC=512`, so this is a low-frequency case the default gate misses.
+- **Proven pre-existing:** the shrunk script replays identically on `f3e837d6`,
+  the base commit this plan branched from, via the `replay` harness — the
+  navigation work is not implicated. It is recorded here rather than ignored
+  because "not caused by my changes" is never a reason to skip a failure.
+- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
+  replay with `cargo test -p rune-fuzz --test replay`):
+
+```
+content 
+key char:v ---u
+clip \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+key tab ----
+key delete ----
+key backspace ----
+type - 
+key right ----
+key right ----
+```
+
+- **Resulting buffer:** `"- \u{200d}👩\u{200d}👧\u{200d}👦 family"` — note the
+  leading `👨` was already consumed by the backspace, leaving the content
+  starting on a bare ZWJ joiner. The cell builder then emits a row whose cell
+  `buf_offset`s are not monotonic.
+- **Likely area:** grapheme-cluster segmentation in the cell/render path when a
+  cluster begins with a lone ZWJ. Adjacent to the previously-fixed ZWJ
+  grapheme-corruption entry in this file, so treat that fix as incomplete
+  rather than unrelated.
+- **Not committed to `repros/` while red**, per the standing convention that a
+  repro lands in the same commit as its fix. The proptest regression seed was
+  likewise not committed, so the default gate stays green rather than
+  deterministically red for unrelated work.
+- **Out of scope** for the navigation plan.
