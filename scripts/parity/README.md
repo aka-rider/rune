@@ -95,7 +95,8 @@ All tmux state lives on a private server (`tmux -L rune-parity -f /dev/null`)
 the same two-pane chrome geometry — over each markdown fixture under
 `fixtures/` (`headings.md`, `emphasis.md`, `lists.md`, `tasks.md`,
 `fences.md`, `quotes.md`, `tables.md`, `frontmatter.md`, `cjk.md`,
-`emoji.md`; `sample.md` stays `parity-assert`'s own fixture). For each one
+`emoji.md`, `fences-code.md`; `sample.md` stays `parity-assert`'s own
+fixture). For each one
 it crops BOTH captures down to the center pane's own content rows — not
 the left Explorer/Open pane, not the title/breadcrumb/footer chrome, which
 are already covered (or explicitly out of scope) via `parity-assert` — and
@@ -219,3 +220,11 @@ of how each side renders:
   third-party dependency's behavior, not a bug in this repo's own `pkg/`/
   `cmd/` code, so left unfixed rather than forcing a speculative patch
   into either the dependency or the renderer.
+- **No tree-sitter token colours in Go (`fences-code.md`, excluded from
+  `parity-grid`).** Go has no tree-sitter integration at all (plan Context:
+  `rune-ts` is a Rust-only crate), so its fenced code blocks render as
+  plain concealed text with no per-token colouring, while Rust paints
+  `rust`/`python`/`json` fence tokens via the highlight overlay (plan
+  WP6). There is nothing on the Go side to assert this fixture's Rust-only
+  colouring against; the fixture is retained under `fixtures/` so a human
+  can still eyeball it via `scripts/parity/serve.sh rust`.

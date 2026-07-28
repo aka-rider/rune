@@ -36,6 +36,7 @@ FIXTURES=(
     frontmatter.md
     cjk.md
     emoji.md
+    fences-code.md
 )
 
 # fixture -> reason, one real, verified cause each (README.md "Known
@@ -71,6 +72,9 @@ excluded_reason() {
             ;;
         emoji.md)
             echo "same list-marker gap as lists.md (the ZWJ/skin-tone-modifier corruption this fixture also caught is fixed — see TODO.md)"
+            ;;
+        fences-code.md)
+            echo "Go has no tree-sitter integration at all, so its fenced code blocks never gain token colours — there is nothing on the Go side to assert this fixture's Rust-only tree-sitter highlighting against (plan WP6.S4)"
             ;;
         *)
             return 1
