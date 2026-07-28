@@ -204,9 +204,7 @@ fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style
         "string" | "string.escape" | "string.regexp" => base.fg(c(p.green)),
         "number" | "boolean" => base.fg(c(p.peach)),
         "operator" => base.fg(c(p.sky)),
-        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => {
-            base.fg(c(p.overlay1))
-        }
+        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => base.fg(c(p.overlay1)),
         "attribute" => base.fg(c(p.yellow)),
         "label" => base.fg(c(p.sapphire)),
         "tag" => base.fg(c(p.blue)),
