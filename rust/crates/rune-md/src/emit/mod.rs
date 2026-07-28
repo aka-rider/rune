@@ -263,16 +263,18 @@ pub(crate) fn push_span_split_by_line(
                     (snapped_s, snapped_e, text)
                 }
             };
-            let cell_map = (state == RevealState::Rendered).then(|| build_cell_map(s, text));
-            if let Some(bucket) = out.get_mut(line) {
-                bucket.push(SyntaxSpan {
-                    text: text.to_string(),
+            let span = if state == RevealState::Rendered {
+                SyntaxSpan::Substituted {
                     style,
-                    state,
-                    buffer_start: s,
-                    buffer_end: e,
-                    cell_map,
-                });
+                    text: text.to_string(),
+                    range: s..e,
+                    cell_map: build_cell_map(s, text),
+                }
+            } else {
+                SyntaxSpan::Identical { style, range: s..e }
+            };
+            if let Some(bucket) = out.get_mut(line) {
+                bucket.push(span);
             }
             if let Some(bucket) = accounted.get_mut(line) {
                 bucket.push((s, e));
@@ -312,9 +314,9 @@ pub(crate) fn hide_range(
 /// is surfaced as ordinary visible text rather than silently dropped.
 /// Merges each line's `accounted` ranges (both visible spans AND hidden
 /// delimiters — see `Accounted`'s docs), finds the complement within the
-/// line's full byte range, and inserts a Revealed span per gap in the
-/// correct buffer-order position (the final per-line sort by
-/// `buffer_start`).
+/// line's full byte range, and inserts an `Identical` span per gap in the
+/// correct buffer-order position (the final per-line sort by `range`'s
+/// start).
 fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [Vec<SyntaxSpan>]) {
     for line in 0..starts.len() {
         let line_start = starts.get(line).copied().unwrap_or(0);
@@ -349,22 +351,18 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
             if e <= s {
                 continue;
             }
-            let Some(text) = content.get(s..e) else {
+            if content.get(s..e).is_none() {
                 continue;
-            };
-            bucket.push(SyntaxSpan {
-                text: text.to_string(),
+            }
+            bucket.push(SyntaxSpan::Identical {
                 style: StyleId::Text,
-                state: RevealState::Revealed,
-                buffer_start: s,
-                buffer_end: e,
-                cell_map: None,
+                range: s..e,
             });
         }
         // Gap-fill spans are appended out of buffer order relative to
         // whatever spans already sit in `bucket` — restore document order
         // so the line's spans concatenate back to the correct text.
-        bucket.sort_by_key(|s| s.buffer_start);
+        bucket.sort_by_key(|s| s.range().start);
     }
 }
 
@@ -396,14 +394,14 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
     // longer matches byte order for that line, and the concatenated
     // rendered text comes out scrambled (verified empirically:
     // `"a\r> q"` rendered as `"> a\rq"` — right bytes, wrong order).
-    // Sorting each line's spans by `buffer_start` here — the ONE place
+    // Sorting each line's spans by `range`'s start here — the ONE place
     // every producer's output converges before becoming the emitted
     // line — makes "a line's spans are always in byte order" a
     // structural guarantee no producer's own walk order can violate,
     // rather than requiring every current and future producer to get
     // its OWN call order byte-perfect.
     for line_spans in &mut spans {
-        line_spans.sort_by_key(|s| s.buffer_start);
+        line_spans.sort_by_key(|s| s.range().start);
     }
 
     let lines: Vec<SyntaxLine> = spans

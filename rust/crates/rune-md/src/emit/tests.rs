@@ -141,7 +141,11 @@ fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMac
 fn heading_marker_hidden_when_not_on_cursor_line() {
     let (buf, doc) = synced("# hi\nsecond\n", 8, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    let joined: String = lines[0]
+        .spans
+        .iter()
+        .map(|s| s.text(buf.content()))
+        .collect();
     assert_eq!(joined, "hi", "marker must be concealed off-cursor-line");
 }
 
@@ -149,7 +153,11 @@ fn heading_marker_hidden_when_not_on_cursor_line() {
 fn heading_marker_revealed_on_cursor_line() {
     let (buf, doc) = synced("# hi\nsecond\n", 0, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    let joined: String = lines[0]
+        .spans
+        .iter()
+        .map(|s| s.text(buf.content()))
+        .collect();
     assert_eq!(joined, "# hi");
 }
 
@@ -157,7 +165,11 @@ fn heading_marker_revealed_on_cursor_line() {
 fn unfocused_conceals_everything() {
     let (buf, doc) = synced("# hi\n", 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    let joined: String = lines[0]
+        .spans
+        .iter()
+        .map(|s| s.text(buf.content()))
+        .collect();
     assert_eq!(joined, "hi");
 }
 
@@ -168,9 +180,9 @@ fn code_fence_whole_block_reveals_as_unit() {
     let (lines, _snap) = emit(buf.content(), doc.blocks());
     // Cursor is on line 1 (the content line); the whole 3-line fence
     // block must reveal, including the fence marker lines.
-    assert_eq!(lines[0].spans[0].text, "```rust");
-    assert_eq!(lines[1].spans[0].text, "fn f() {}");
-    assert_eq!(lines[2].spans[0].text, "```");
+    assert_eq!(lines[0].spans[0].text(content), "```rust");
+    assert_eq!(lines[1].spans[0].text(content), "fn f() {}");
+    assert_eq!(lines[2].spans[0].text(content), "```");
 }
 
 #[test]
@@ -183,11 +195,11 @@ fn code_fence_conceals_marker_lines_off_cursor() {
         lines[0]
             .spans
             .iter()
-            .map(|s| s.text.as_str())
+            .map(|s| s.text(content))
             .collect::<String>(),
         ""
     );
-    assert_eq!(lines[1].spans[0].text, "fn f() {}");
+    assert_eq!(lines[1].spans[0].text(content), "fn f() {}");
 }
 
 #[test]
@@ -196,7 +208,7 @@ fn bold_reveals_with_nested_link_as_a_unit() {
     let cursor = content.find("ld").unwrap();
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    let joined: String = lines[0].spans.iter().map(|s| s.text(content)).collect();
     assert_eq!(joined, "**[bo*ld*](url)** end");
 }
 
@@ -205,7 +217,7 @@ fn bold_conceals_but_still_shows_nested_link_text() {
     let content = "**[bo*ld*](url)** end\n";
     let (buf, doc) = synced(content, content.len(), true); // cursor at " end", not inside bold
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let joined: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+    let joined: String = lines[0].spans.iter().map(|s| s.text(content)).collect();
     assert_eq!(joined, "bold end");
 }
 
@@ -215,11 +227,12 @@ fn rendered_span_cell_map_offsets_are_within_range() {
     let (buf, doc) = synced(content, content.len(), true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
     for span in &lines[0].spans {
-        if let Some(cm) = &span.cell_map {
-            for &off in cm {
-                assert!(off == -1 || (off as usize) < span.buffer_end);
+        if let SyntaxSpan::Substituted { cell_map, .. } = span {
+            let range = span.range();
+            for &off in cell_map {
+                assert!(off == -1 || (off as usize) < range.end);
                 if off != -1 {
-                    assert!((off as usize) >= span.buffer_start);
+                    assert!((off as usize) >= range.start);
                 }
             }
         }

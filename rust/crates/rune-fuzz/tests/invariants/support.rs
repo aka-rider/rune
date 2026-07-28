@@ -153,6 +153,6 @@ pub(crate) fn wrap_for(content: &str, width: u16) -> (Buffer, rune_md::wrap::Wra
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
     let (lines, _snap) = rune_md::emit::emit(buf.content(), doc.blocks());
-    let wrap = rune_md::wrap::WrapMap::new(width).sync(&lines);
+    let wrap = rune_md::wrap::WrapMap::new(width).sync(buf.content(), &lines);
     (buf, wrap)
 }

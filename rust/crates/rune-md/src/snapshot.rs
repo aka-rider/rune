@@ -38,7 +38,7 @@ mod tests {
         // trivially by construction regardless of what `total_rows()`
         // actually is.
         let lines = vec![SyntaxLine::default(), SyntaxLine::default()];
-        let wrap = WrapMap::new(80).sync(&lines);
+        let wrap = WrapMap::new(80).sync("", &lines);
         assert_eq!(wrap.total_rows(), 2);
         let display = DisplaySnapshot::from_wrap(&wrap);
         assert_eq!(display.total_rows, 2);

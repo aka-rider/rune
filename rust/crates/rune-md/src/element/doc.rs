@@ -167,7 +167,7 @@ impl DocMachine {
     /// themselves (plan Context, "Emit -> wrap -> snapshot").
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
         let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks);
-        let wrap = crate::wrap::WrapMap::new(self.wrap.width).sync(&lines);
+        let wrap = crate::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap);
         self.dirty = false;
         ViewSnapshots {

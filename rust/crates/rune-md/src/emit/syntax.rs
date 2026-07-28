@@ -2,7 +2,8 @@
 //! `SyntaxSnapshot` (Buffer Space <-> Syntax Space coordinate conversion) —
 //! port of `pkg/editor/display/syntax_snapshot.go:35-97`.
 
-use crate::element::RevealState;
+use std::ops::Range;
+
 use crate::emit::style::StyleId;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
 
@@ -14,16 +15,60 @@ use rune_core::coords::{BufferPoint, SyntaxPoint};
 /// future decorative producer doesn't need a type change.
 pub type CellMap = Vec<i64>;
 
+/// Port of `pkg/editor/display/syntax_map.go`'s per-run span, reshaped into
+/// two variants (plan Context: "Span becomes an enum ... Makes 'identical
+/// text carrying a cell map' unrepresentable") so a producer can no longer
+/// pair a `cell_map` with text that's already a verbatim buffer slice, nor
+/// omit one from text that isn't.
 #[derive(Clone, Debug)]
-pub struct SyntaxSpan {
-    pub text: String,
-    pub style: StyleId,
-    pub state: RevealState,
-    pub buffer_start: usize,
-    pub buffer_end: usize,
-    /// Only `Some` for `Rendered` spans (plan: "`cell_map` only for
-    /// Rendered spans, one buffer offset per char").
-    pub cell_map: Option<CellMap>,
+pub enum SyntaxSpan {
+    /// The visible text is a direct, verbatim slice of the buffer at
+    /// `range` — no delimiter bytes were dropped or substituted. Its text
+    /// is always recoverable as `&content[range]` (see [`SyntaxSpan::text`]);
+    /// no `cell_map` is needed since buffer position and visible position
+    /// coincide one-to-one.
+    Identical { style: StyleId, range: Range<usize> },
+    /// The visible `text` differs from the buffer at `range` (concealed
+    /// marker/delimiter bytes were dropped from what's shown), so it carries
+    /// its own text plus a `cell_map` mapping each visible char back to its
+    /// buffer offset.
+    Substituted {
+        style: StyleId,
+        text: String,
+        range: Range<usize>,
+        cell_map: CellMap,
+    },
+}
+
+impl SyntaxSpan {
+    pub fn style(&self) -> StyleId {
+        match self {
+            SyntaxSpan::Identical { style, .. } | SyntaxSpan::Substituted { style, .. } => *style,
+        }
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        match self {
+            SyntaxSpan::Identical { range, .. } | SyntaxSpan::Substituted { range, .. } => {
+                range.clone()
+            }
+        }
+    }
+
+    pub fn is_rendered(&self) -> bool {
+        matches!(self, SyntaxSpan::Substituted { .. })
+    }
+
+    /// The span's visible text. `Identical` recovers it verbatim from
+    /// `content` at `range`; `Substituted` returns its own stored `text`
+    /// (which is not, in general, `content[range]` — that range may still
+    /// cover dropped delimiter bytes, module docs in `wrap.rs`).
+    pub fn text<'a>(&'a self, content: &'a str) -> &'a str {
+        match self {
+            SyntaxSpan::Identical { range, .. } => content.get(range.clone()).unwrap_or(""),
+            SyntaxSpan::Substituted { text, .. } => text.as_str(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -38,10 +38,10 @@ fn arb_content() -> impl Strategy<Value = String> {
 /// `SyntaxSpan::text` (mirrors Go's `display_test.go:syntaxColWidth` — §1.5,
 /// display width is runes, but `SyntaxPoint::col` itself is bytes, matching
 /// `WrapSnapshot`'s own byte-indexed `start_col`).
-fn syntax_line_byte_len(lines: &[rune_md::emit::SyntaxLine], line: usize) -> usize {
+fn syntax_line_byte_len(lines: &[rune_md::emit::SyntaxLine], line: usize, content: &str) -> usize {
     lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text.len()).sum())
+        .map(|l| l.spans.iter().map(|s| s.text(content).len()).sum())
         .unwrap_or(0)
 }
 
@@ -63,10 +63,10 @@ proptest! {
         let cursors = CursorSet::new(offset);
         doc.sync_cursors(&buf, &cursors);
         let (lines, _syntax_snap) = emit(buf.content(), doc.blocks());
-        let wrap_snap = WrapMap::new(raw_width).sync(&lines);
+        let wrap_snap = WrapMap::new(raw_width).sync(buf.content(), &lines);
 
         for line in 0..buf.line_count() {
-            let syntax_len = syntax_line_byte_len(&lines, line);
+            let syntax_len = syntax_line_byte_len(&lines, line, buf.content());
             for col in 0..=syntax_len {
                 let sp = SyntaxPoint { line, col };
                 let wp = wrap_snap.syntax_to_wrap(sp);
@@ -92,19 +92,19 @@ proptest! {
                 if seg_visual_width > raw_width as usize {
                     let segs = wrap_snap.segments();
                     if let Some(seg) = segs.get(row) {
-                        let is_single_overwide_char = seg.spans.iter().map(|s| s.text.chars().count()).sum::<usize>() == 1;
-                        prop_assert!(is_single_overwide_char, "segment at row {} exceeds width {} without being a single over-wide char: {:?}", row, raw_width, seg.spans.iter().map(|s| s.text.as_str()).collect::<String>());
+                        let is_single_overwide_char = seg.spans.iter().map(|s| s.text(buf.content()).chars().count()).sum::<usize>() == 1;
+                        prop_assert!(is_single_overwide_char, "segment at row {} exceeds width {} without being a single over-wide char: {:?}", row, raw_width, seg.spans.iter().map(|s| s.text(buf.content())).collect::<String>());
                     }
                 }
-                for span in &wrap_snap.segments()[row].spans {
-                    joined.push_str(&span.text);
+                for sp in &wrap_snap.segments()[row].spans {
+                    joined.push_str(sp.text(buf.content()));
                 }
                 row += 1;
                 if row >= wrap_snap.total_rows() {
                     break;
                 }
             }
-            let expected = lines.get(line).map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>()).unwrap_or_default();
+            let expected = lines.get(line).map(|l| l.spans.iter().map(|s| s.text(buf.content())).collect::<String>()).unwrap_or_default();
             prop_assert_eq!(joined, expected);
         }
     }
@@ -122,7 +122,7 @@ fn wrap_for(content: &str, width: u16) -> (rune_core::buffer::Buffer, rune_md::w
     let cursors = CursorSet::new(0);
     doc.sync_cursors(&buf, &cursors);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    let wrap = WrapMap::new(width).sync(&lines);
+    let wrap = WrapMap::new(width).sync(buf.content(), &lines);
     (buf, wrap)
 }
 

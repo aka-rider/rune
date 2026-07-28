@@ -14,9 +14,8 @@ use ratatui::widgets::{Block, BorderType};
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_md::element::RevealState;
 use rune_md::element::doc::ViewSnapshots;
-use rune_md::emit::StyleId;
+use rune_md::emit::{StyleId, SyntaxSpan};
 use rune_md::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
 
 use crate::app::App;
@@ -132,42 +131,40 @@ fn push_char_cells(
     }
 }
 
-/// One wrap segment's spans -> its `Cell` row. Rendered spans map each char
-/// through `cell_map` (their text is NOT byte-for-byte their buffer range —
-/// delimiters were dropped); Revealed spans (and any span with no
-/// `cell_map`) walk `text` directly from `buffer_start` since their text IS
-/// byte-for-byte their buffer range. `visual_col` accumulates across the
-/// WHOLE segment (a wrap row), reset to `0` at the segment's start — the
-/// same per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col`
-/// use, so a tab's width agrees with both regardless of which span it's in.
-pub fn segment_cells(seg: &WrapSegment) -> Vec<Cell> {
+/// One wrap segment's spans -> its `Cell` row. A `Substituted` span maps
+/// each char through its `cell_map` (its text is NOT byte-for-byte its
+/// buffer range — delimiters were dropped); an `Identical` span walks
+/// `text` directly from its `range`'s start since its text IS byte-for-byte
+/// its buffer range. `visual_col` accumulates across the WHOLE segment (a
+/// wrap row), reset to `0` at the segment's start — the same
+/// per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col` use, so
+/// a tab's width agrees with both regardless of which span it's in.
+pub fn segment_cells(content: &str, seg: &WrapSegment) -> Vec<Cell> {
     let mut cells = Vec::new();
     let mut visual_col = 0usize;
-    for span in &seg.spans {
-        let style = style_for(span.style);
-        match (&span.state, &span.cell_map) {
-            (RevealState::Rendered, Some(cell_map)) => {
-                let char_count = span.text.chars().count();
+    for sp in &seg.spans {
+        let style = style_for(sp.style());
+        match sp {
+            SyntaxSpan::Substituted { text, cell_map, .. } => {
                 // A producer bug (cell_map built from different text than
                 // what's emitted) would make `zip` below silently drop
-                // whichever side is longer — surfaced here as a debug-mode
-                // diagnostic rather than a silent row truncation; an
-                // ordinary shipped build still degrades gracefully (renders
-                // only the min of the two, same as `zip`'s normal
-                // behavior), per CONSTITUTION §1.3.
-                debug_assert_eq!(
-                    char_count,
-                    cell_map.len(),
-                    "Rendered span's cell_map length ({}) does not match its text's char count ({char_count}) — a producer bug upstream in rune-md; truncating to the shorter of the two",
-                    cell_map.len(),
-                );
-                for (ch, &offset) in span.text.chars().zip(cell_map.iter()) {
+                // whichever side is longer — an ordinary shipped build
+                // degrades gracefully (renders only the min of the two,
+                // same as `zip`'s normal behavior), per CONSTITUTION §1.3.
+                // The `Substituted` variant itself now makes "text without
+                // a matching cell_map" unrepresentable (plan WP2): both are
+                // built together by `rune-md`'s one constructor, so the
+                // mismatch this used to `debug_assert_eq!` against is no
+                // longer a shape the type permits upstream — the `zip`
+                // degradation below is the only defense left, and it's
+                // unreachable in practice.
+                for (ch, &offset) in text.chars().zip(cell_map.iter()) {
                     push_char_cells(&mut cells, &mut visual_col, ch, offset, style);
                 }
             }
-            _ => {
-                let mut offset = span.buffer_start;
-                for ch in span.text.chars() {
+            SyntaxSpan::Identical { .. } => {
+                let mut offset = sp.range().start;
+                for ch in sp.text(content).chars() {
                     push_char_cells(&mut cells, &mut visual_col, ch, offset as i64, style);
                     offset += ch.len_utf8();
                 }
@@ -183,6 +180,7 @@ pub fn segment_cells(seg: &WrapSegment) -> Vec<Cell> {
 pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let doc = app.active_doc();
     let viewport = &doc.viewport;
+    let content = doc.buffer.content();
     let height = viewport.height as usize;
     let mut rows: Vec<Vec<Cell>> = view
         .wrap
@@ -190,7 +188,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         .iter()
         .skip(viewport.scroll_row)
         .take(height)
-        .map(segment_cells)
+        .map(|seg| segment_cells(content, seg))
         .collect();
 
     apply_cursor_overlays(

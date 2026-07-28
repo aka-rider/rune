@@ -23,10 +23,10 @@ fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMac
     (buf, doc)
 }
 
-fn joined_line(lines: &[rune_md::emit::SyntaxLine], line: usize) -> String {
+fn joined_line(lines: &[rune_md::emit::SyntaxLine], line: usize, content: &str) -> String {
     lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+        .map(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
         .unwrap_or_default()
 }
 
@@ -38,14 +38,14 @@ fn joined_line(lines: &[rune_md::emit::SyntaxLine], line: usize) -> String {
 fn cursor_on_heading_line_reveals_marker() {
     let (buf, doc) = synced("## heading\nbody\n", 0, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "## heading");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "## heading");
 }
 
 #[test]
 fn cursor_off_heading_line_conceals_marker() {
     let (buf, doc) = synced("## heading\nbody\n", "## heading\n".len(), true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "heading");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "heading");
 }
 
 #[test]
@@ -54,7 +54,10 @@ fn cursor_inside_bold_reveals_with_nested_link_as_a_unit() {
     let cursor = content.find("ld").expect("fixture contains 'ld'");
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "**[bo*ld*](url)** end");
+    assert_eq!(
+        joined_line(&lines, 0, buf.content()),
+        "**[bo*ld*](url)** end"
+    );
 }
 
 #[test]
@@ -62,7 +65,7 @@ fn cursor_outside_bold_conceals_delimiters_but_keeps_nested_text() {
     let content = "**[bo*ld*](url)** end\n";
     let (buf, doc) = synced(content, content.len(), true); // cursor on " end"
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "bold end");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "bold end");
 }
 
 #[test]
@@ -71,9 +74,9 @@ fn cursor_inside_fence_reveals_whole_block_as_a_unit() {
     let cursor = content.find("fn f").expect("fixture contains code");
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 1), "```rust");
-    assert_eq!(joined_line(&lines, 2), "fn f() {}");
-    assert_eq!(joined_line(&lines, 3), "```");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "```rust");
+    assert_eq!(joined_line(&lines, 2, buf.content()), "fn f() {}");
+    assert_eq!(joined_line(&lines, 3, buf.content()), "```");
 }
 
 #[test]
@@ -81,9 +84,9 @@ fn cursor_outside_fence_conceals_fence_markers() {
     let content = "before\n```rust\nfn f() {}\n```\nafter\n";
     let (buf, doc) = synced(content, 0, true); // cursor on "before"
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 1), "");
-    assert_eq!(joined_line(&lines, 2), "fn f() {}");
-    assert_eq!(joined_line(&lines, 3), "");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "");
+    assert_eq!(joined_line(&lines, 2, buf.content()), "fn f() {}");
+    assert_eq!(joined_line(&lines, 3, buf.content()), "");
 }
 
 #[test]
@@ -94,8 +97,8 @@ fn unfocused_renders_everything_concealed_even_on_cursor_line() {
     // (Gotchas: "Unfocused -> ForceRendered").
     let (buf, doc) = synced(content, 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "heading");
-    assert_eq!(joined_line(&lines, 1), "bold text");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "heading");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "bold text");
     for block in doc.blocks() {
         assert_eq!(block.reveal_state(), RevealState::Rendered);
     }
@@ -106,7 +109,7 @@ fn tasklist_marker_reveals_on_cursor_line() {
     let content = "- [x] task\nother\n";
     let (buf, doc) = synced(content, 0, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "- [x] task");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "- [x] task");
 }
 
 #[test]
@@ -114,7 +117,7 @@ fn tasklist_marker_conceals_off_cursor_line() {
     let content = "- [x] task\nother\n";
     let (buf, doc) = synced(content, "- [x] task\n".len(), true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "task");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "task");
 }
 
 #[test]
@@ -122,8 +125,8 @@ fn blockquote_marker_reveals_per_line_independently() {
     let content = "> line one\n> line two\n";
     let (buf, doc) = synced(content, 0, true); // cursor on line 0 only
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> line one");
-    assert_eq!(joined_line(&lines, 1), "line two");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> line one");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "line two");
 }
 
 // ---------------------------------------------------------------------
@@ -147,7 +150,10 @@ fn assert_full_line_coverage(
             .map(|l| {
                 l.spans
                     .iter()
-                    .map(|s| s.buffer_end.saturating_sub(s.buffer_start))
+                    .map(|s| {
+                        let r = s.range();
+                        r.end.saturating_sub(r.start)
+                    })
                     .sum()
             })
             .unwrap_or(0);
@@ -166,7 +172,7 @@ fn trailing_whitespace_is_visible_not_dropped() {
     let (buf, doc) = synced("hello   \nnext\n", 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), "hello   ");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "hello   ");
 }
 
 #[test]
@@ -174,7 +180,7 @@ fn leading_indent_is_visible_not_dropped() {
     let (buf, doc) = synced("  leading spaces\nnext\n", 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), "  leading spaces");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "  leading spaces");
 }
 
 #[test]
@@ -182,7 +188,7 @@ fn embedded_tab_is_visible_not_dropped() {
     let (buf, doc) = synced("a\tb\nnext\n", 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), "a\tb");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "a\tb");
 }
 
 #[test]
@@ -197,7 +203,7 @@ fn indented_code_block_is_visible_not_dropped() {
     let (buf, doc) = synced("para\n\n    indented code\n\nafter\n", 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 2), "    indented code");
+    assert_eq!(joined_line(&lines, 2, buf.content()), "    indented code");
 }
 
 #[test]
@@ -215,9 +221,9 @@ fn crlf_carriage_return_is_visible_not_dropped() {
     // The bare \r before \n is user content (§1.4.5) — it must show up in
     // the concealed/revealed text exactly as written.
     assert!(
-        joined_line(&lines, 0).ends_with('\r'),
+        joined_line(&lines, 0, buf.content()).ends_with('\r'),
         "line 0 = {:?}",
-        joined_line(&lines, 0)
+        joined_line(&lines, 0, buf.content())
     );
 }
 
@@ -247,7 +253,7 @@ fn empty_link_hides_exactly_once() {
     let (buf, doc) = synced(content, 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), "see  here");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "see  here");
 
     // buffer_to_syntax must be monotonic non-decreasing across the line.
     let mut prev = None;
@@ -276,8 +282,8 @@ fn unterminated_fence_keeps_every_line_visible_content() {
     // Cursor away (unfocused-equivalent conceal): every content line must
     // still show its text — nothing after the opening fence is a phantom
     // closing marker.
-    assert_eq!(joined_line(&lines, 1), "fn f() {}");
-    assert_eq!(joined_line(&lines, 2), "let x = 1;");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "fn f() {}");
+    assert_eq!(joined_line(&lines, 2, buf.content()), "let x = 1;");
 }
 
 #[test]
@@ -288,7 +294,7 @@ fn nested_blockquote_markers_are_at_their_true_depth_offset() {
     let (buf, doc) = synced(content, content.len(), true); // cursor away: both conceal
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), "nested quote");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "nested quote");
 }
 
 // ---------------------------------------------------------------------
@@ -398,8 +404,9 @@ fn assert_no_duplicate_content(content: &str) {
                 for j in (i + 1)..l.spans.len() {
                     let a = &l.spans[i];
                     let b = &l.spans[j];
+                    let (ar, br) = (a.range(), b.range());
                     assert!(
-                        a.buffer_end <= b.buffer_start || b.buffer_end <= a.buffer_start,
+                        ar.end <= br.start || br.end <= ar.start,
                         "line {line} (focused={focused}): spans {i} {a:?} and {j} {b:?} claim overlapping buffer bytes"
                     );
                 }
@@ -409,7 +416,7 @@ fn assert_no_duplicate_content(content: &str) {
             // equal the exact buffer bytes — not longer (duplicated
             // content) or shorter (dropped content).
             if snap.hidden_byte_count(line) == 0 {
-                let joined: String = l.spans.iter().map(|s| s.text.as_str()).collect();
+                let joined: String = l.spans.iter().map(|s| s.text(content)).collect();
                 assert_eq!(
                     joined,
                     buf.line(line),
@@ -495,20 +502,23 @@ fn assert_wikilink_label(content: &str, concealed_label: &str) {
     let (buf, doc) = synced(content, 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), content.trim_end_matches('\n'));
+    assert_eq!(
+        joined_line(&lines, 0, buf.content()),
+        content.trim_end_matches('\n')
+    );
 
     // Concealed: cursor on an unrelated line shows just the label.
     let wrapped = format!("x\n{content}");
     let (buf, doc) = synced(&wrapped, 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 1), concealed_label);
+    assert_eq!(joined_line(&lines, 1, buf.content()), concealed_label);
 
     // Unfocused: always concealed regardless of cursor position.
     let (buf, doc) = synced(content, 0, false);
     let (lines, snap) = emit(buf.content(), doc.blocks());
     assert_full_line_coverage(&buf, &lines, &snap);
-    assert_eq!(joined_line(&lines, 0), concealed_label);
+    assert_eq!(joined_line(&lines, 0, buf.content()), concealed_label);
 }
 
 #[test]
@@ -718,7 +728,7 @@ fn lone_cr_fence_does_not_swallow_the_rest_of_the_document() {
     for &focused in &[true, false] {
         let (buf, doc) = synced(content, 0, focused);
         let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined = joined_line(&lines, 0);
+        let joined = joined_line(&lines, 0, buf.content());
         assert!(
             joined.contains('c'),
             "fence content 'c' missing from rendered output (focused={focused}): {joined:?}"
@@ -737,7 +747,7 @@ fn classic_mac_readme_shape_does_not_lose_fence_or_quote_content() {
     for &focused in &[true, false] {
         let (buf, doc) = synced(content, 0, focused);
         let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined = joined_line(&lines, 0);
+        let joined = joined_line(&lines, 0, buf.content());
         assert!(
             joined.contains("code"),
             "fence content 'code' missing from rendered output (focused={focused}): {joined:?}"
@@ -792,7 +802,7 @@ fn blockquote_marker_mid_buffer_line_after_lone_cr_stays_in_order() {
     for line in 0..buf.line_count() {
         if snap.hidden_byte_count(line) == 0 {
             assert_eq!(
-                joined_line(&lines, line),
+                joined_line(&lines, line, buf.content()),
                 buf.line(line),
                 "line {line}: rendered text out of byte order"
             );
@@ -863,7 +873,7 @@ fn table_in_blockquote_does_not_double_claim() {
     for &focused in &[true, false] {
         let (buf, doc) = synced(content, 0, focused);
         let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined = joined_line(&lines, 1);
+        let joined = joined_line(&lines, 1, buf.content());
         assert!(
             joined.contains("---|"),
             "table separator row missing from rendered output (focused={focused}): {joined:?}"
@@ -893,7 +903,7 @@ fn html_block_in_container_does_not_lose_content() {
     for &focused in &[true, false] {
         let (buf, doc) = synced(content, 0, focused);
         let (lines, _snap) = emit(buf.content(), doc.blocks());
-        let joined = joined_line(&lines, 1);
+        let joined = joined_line(&lines, 1, buf.content());
         assert!(
             joined.contains("foo"),
             "HTML block content missing from rendered output (focused={focused}): {joined:?}"
@@ -931,14 +941,14 @@ fn multiline_emphasis_strong_strikethrough_in_blockquote_stays_in_order() {
     let cursor = content.find('a').expect("fixture contains 'a'");
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> *a");
-    assert_eq!(joined_line(&lines, 1), "b*");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> *a");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "b*");
     // Cursor OUTSIDE the emphasis span (line 0 only) conceals the
     // delimiters and, per-line, line 1's own blockquote marker too.
     let (buf, doc) = synced(content, 0, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> a");
-    assert_eq!(joined_line(&lines, 1), "b");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> a");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "b");
 }
 
 #[test]
@@ -955,8 +965,8 @@ fn multiline_inline_code_in_blockquote_shows_content_both_states() {
         let (lines, _snap) = emit(buf.content(), doc.blocks());
         // Concealed (cursor away from the code span): rendered code text
         // must show "a" and "b" without duplicating the quote marker.
-        assert!(joined_line(&lines, 0).contains('a'));
-        assert!(joined_line(&lines, 1).contains('b'));
+        assert!(joined_line(&lines, 0, buf.content()).contains('a'));
+        assert!(joined_line(&lines, 1, buf.content()).contains('b'));
     }
     // Revealed (cursor INSIDE the code span, on "a"): raw backticks show;
     // the blockquote marker still reveals per line independently, so only
@@ -964,8 +974,8 @@ fn multiline_inline_code_in_blockquote_shows_content_both_states() {
     let cursor = content.find('a').expect("fixture contains 'a'");
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> `a");
-    assert_eq!(joined_line(&lines, 1), "b`");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> `a");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "b`");
 }
 
 #[test]
@@ -977,14 +987,14 @@ fn multiline_link_text_in_blockquote_stays_in_order() {
     let cursor = content.find('a').expect("fixture contains 'a'");
     let (buf, doc) = synced(content, cursor, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> [a");
-    assert_eq!(joined_line(&lines, 1), "b](url)");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> [a");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "b](url)");
     // Concealed (cursor away from the link, line 0 only): text shows,
     // markup hidden, and line 1's own blockquote marker conceals too.
     let (buf, doc) = synced(content, 0, true);
     let (lines, _snap) = emit(buf.content(), doc.blocks());
-    assert_eq!(joined_line(&lines, 0), "> a");
-    assert_eq!(joined_line(&lines, 1), "b");
+    assert_eq!(joined_line(&lines, 0, buf.content()), "> a");
+    assert_eq!(joined_line(&lines, 1, buf.content()), "b");
 }
 
 #[test]
@@ -1347,26 +1357,26 @@ proptest! {
             }
         }
 
-        // Every Rendered span's cell_map entries are -1 or valid char
-        // boundaries within [buffer_start, buffer_end).
+        // Every Substituted span's cell_map entries are -1 or valid char
+        // boundaries within its range.
         for line in &lines {
-            for span in &line.spans {
-                if let Some(cm) = &span.cell_map {
-                    prop_assert_eq!(span.state, RevealState::Rendered);
-                    for &off in cm {
+            for sp in &line.spans {
+                let range = sp.range();
+                if let rune_md::emit::SyntaxSpan::Substituted { cell_map, .. } = sp {
+                    for &off in cell_map {
                         if off == -1 {
                             continue;
                         }
                         let off = off as usize;
-                        prop_assert!(off >= span.buffer_start && off < span.buffer_end);
+                        prop_assert!(off >= range.start && off < range.end);
                         prop_assert!(buf.content().is_char_boundary(off));
                     }
                 }
-                // A Revealed span's text is always a direct, verbatim slice
-                // of the buffer at its own recorded range.
-                if span.state == RevealState::Revealed {
-                    let expected = buf.content().get(span.buffer_start..span.buffer_end);
-                    prop_assert_eq!(expected, Some(span.text.as_str()));
+                // An Identical span's text is always a direct, verbatim
+                // slice of the buffer at its own recorded range.
+                if !sp.is_rendered() {
+                    let expected = buf.content().get(range.clone());
+                    prop_assert_eq!(expected, Some(sp.text(buf.content())));
                 }
             }
         }
@@ -1382,24 +1392,32 @@ proptest! {
             let expected_len = buf.line(line).len();
             let visible: usize = lines
                 .get(line)
-                .map(|l| l.spans.iter().map(|s| s.buffer_end.saturating_sub(s.buffer_start)).sum())
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| {
+                            let r = s.range();
+                            r.end.saturating_sub(r.start)
+                        })
+                        .sum()
+                })
                 .unwrap_or(0);
             let hidden = snap.hidden_byte_count(line);
             prop_assert_eq!(visible + hidden, expected_len, "line {} coverage gap: visible {} + hidden {} != length {}", line, visible, hidden, expected_len);
 
             // When a line has NO hidden ranges at all (nothing on it is
             // concealed — note this is a different question from "every
-            // span.state == Revealed": a Text run nested inside a
-            // CONCEALED emphasis is still tagged Revealed itself, since
-            // `state` marks "this run is a verbatim buffer copy", not
-            // "nothing wrapping it is hidden" — only `hidden_byte_count`
-            // answers the line-wide question), the concatenated span text
+            // span is Identical": a Text run nested inside a CONCEALED
+            // emphasis is still tagged Identical itself, since the variant
+            // marks "this run is a verbatim buffer copy", not "nothing
+            // wrapping it is hidden" — only `hidden_byte_count` answers the
+            // line-wide question), the concatenated span text
             // must equal the exact buffer line bytes.
             if let Some(l) = lines.get(line)
                 && !l.spans.is_empty()
                 && hidden == 0
             {
-                let joined: String = l.spans.iter().map(|s| s.text.as_str()).collect();
+                let joined: String = l.spans.iter().map(|s| s.text(buf.content())).collect();
                 prop_assert_eq!(joined, buf.line(line));
             }
         }

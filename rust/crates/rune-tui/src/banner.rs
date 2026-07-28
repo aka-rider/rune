@@ -435,12 +435,13 @@ fn build_rows(doc: &Document, height: u16) -> Vec<Vec<Cell>> {
     let Some(view) = &doc.view else {
         return Vec::new();
     };
+    let content = doc.buffer.content();
     view.wrap
         .segments()
         .iter()
         .skip(doc.viewport.scroll_row)
         .take(height as usize)
-        .map(render::segment_cells)
+        .map(|seg| render::segment_cells(content, seg))
         .collect()
 }
 
