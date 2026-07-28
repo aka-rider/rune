@@ -105,17 +105,17 @@ impl Theme {
         let table = scope_table();
         let mut scopes = vec![Style::default(); table.len()];
         for name in MARKDOWN_SCOPES {
-            if let Some(id) = table.resolve(name) {
-                if let Some(slot) = scopes.get_mut(id.0 as usize) {
-                    *slot = markdown_scope_style(name, &p, &c);
-                }
+            if let Some(id) = table.resolve(name)
+                && let Some(slot) = scopes.get_mut(id.0 as usize)
+            {
+                *slot = markdown_scope_style(name, &p, &c);
             }
         }
         for name in CODE_SCOPES {
-            if let Some(id) = table.resolve(name) {
-                if let Some(slot) = scopes.get_mut(id.0 as usize) {
-                    *slot = code_scope_style(name, &p, &c);
-                }
+            if let Some(id) = table.resolve(name)
+                && let Some(slot) = scopes.get_mut(id.0 as usize)
+            {
+                *slot = code_scope_style(name, &p, &c);
             }
         }
 
