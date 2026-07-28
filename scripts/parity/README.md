@@ -94,8 +94,9 @@ All tmux state lives on a private server (`tmux -L rune-parity -f /dev/null`)
 `capture.sh`/`01-open-file` path `parity-assert` uses, so both sides reach
 the same two-pane chrome geometry — over each markdown fixture under
 `fixtures/` (`headings.md`, `emphasis.md`, `lists.md`, `tasks.md`,
-`fences.md`, `quotes.md`, `tables.md`, `frontmatter.md`, `cjk.md`,
-`emoji.md`; `sample.md` stays `parity-assert`'s own fixture). For each one
+`fences.md`, `quotes.md`, `tables.md`, `tables-divergent.md`,
+`tables-narrow.md`, `frontmatter.md`, `cjk.md`, `emoji.md`; `sample.md`
+stays `parity-assert`'s own fixture). For each one
 it crops BOTH captures down to the center pane's own content rows — not
 the left Explorer/Open pane, not the title/breadcrumb/footer chrome, which
 are already covered (or explicitly out of scope) via `parity-assert` — and
@@ -202,11 +203,37 @@ of how each side renders:
   covers only the outermost `>` — a nested (depth ≥ 2) quote's own `>`
   stays raw — and, like headings, does not recurse into inline emphasis
   nested inside quoted text. Rust conceals both fully.
-- **No table rendering in Rust yet (`tables.md`, excluded from
-  `parity-grid`).** Go renders an actual box-drawn table widget; Rust
-  shows the raw pipe/dash markdown syntax, unstyled. Tables are explicitly
-  out of scope for this plan (Goal, "Explicitly not in this plan") — this
-  fixture exists for when a future plan adds Rust table rendering.
+- **Table rendering (`tables-divergent.md`, excluded from `parity-grid`;
+  `tables.md`/`tables-narrow.md` ARE gated and pass).** Both sides render
+  an actual box-drawn table widget; the constructs collected in
+  `tables-divergent.md` each have a verified Go-side defect instead of a
+  Rust one:
+  - **Inverted alignment.** goldmark's alignment enum is `AlignLeft = iota
+    + 1` (Left=1, Right=2, Center=3, None=4), and Go casts that value into
+    a renderer switch reading `0=left/1=center/2=right` — so `:---`
+    renders centred and `:---:` renders left in Go. Rust reads the
+    alignment correctly.
+  - **Escaped-pipe and ragged-row cell splitting.** Go splits a table row
+    on `strings.Split(line, "|")`, with no concept of `\|` escaping and no
+    tolerance for a row with more cells than the header — an escaped pipe
+    misaligns the row's columns, and an extra cell is kept instead of
+    truncated to the header's column count. comrak gives Rust real cell
+    sourcepos, so both come out correct.
+  - **Pipe inside inline code.** GFM requires `\|` even inside a code
+    span, so comrak counts an unescaped pipe there as a column separator
+    — in a header row that disagrees with the delimiter row's column
+    count and the whole construct degrades to a plain paragraph; in a
+    body row the row instead truncates to the established column count,
+    dropping the last cell. This is GFM-spec-conformant: Rust follows the
+    spec, Go does something else.
+  - **Container-prefix leakage.** A table inside a blockquote or list item
+    corrupts Go's own line-splitting, which doesn't account for the `> `
+    or list-indent prefix before looking for `|`.
+  - **Per-rune emoji width.** Go measures a cell's width per rune, not per
+    grapheme cluster, so a multi-codepoint ZWJ sequence is counted as
+    several cells wide instead of one.
+  - **CJK TAB-padding.** The same vendored-renderer defect that already
+    excludes `cjk.md` from this gate.
 - **Go pads a long CJK line's remainder with literal tab bytes (`cjk.md`,
   excluded from `parity-grid`).** Reproducible: a paragraph whose only
   wide (CJK, width-2) run is followed by trailing blank width in a single
