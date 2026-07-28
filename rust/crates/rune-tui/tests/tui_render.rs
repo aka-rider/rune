@@ -6,8 +6,6 @@
 
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
@@ -15,6 +13,7 @@ use rune_core::cursor::CursorSet;
 use rune_tui::app::App;
 use rune_tui::pane::Pane;
 use rune_tui::render;
+use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -57,12 +56,7 @@ fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
 }
 
 fn render_to_test_backend(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+    testgrid::draw(app, WIDTH, HEIGHT)
 }
 
 fn row_text(buf: &RtBuffer, y: u16, width: u16) -> String {
@@ -88,12 +82,7 @@ fn full_text(buf: &RtBuffer, height: u16, width: u16) -> String {
 /// non-default terminal size (degenerate 0x0/1x1 sizes; `app_for`'s WIDTH/
 /// HEIGHT is otherwise fixed).
 fn draw_into(app: &App, w: u16, h: u16) -> RtBuffer {
-    let backend = TestBackend::new(w, h);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+    testgrid::draw(app, w, h)
 }
 
 /// The backend column of the cell carrying the cursor's reverse-video

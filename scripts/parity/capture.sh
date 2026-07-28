@@ -8,8 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-SIDE="${1:?usage: capture.sh <go|rust> [scenario]}"
+SIDE="${1:?usage: capture.sh <go|rust> [scenario] [fixture]}"
 SCENARIO="${2:-01-open-file}"
+# The fixture file (under fixtures/) both sides open — defaults to
+# sample.md for the pre-existing chrome-parity scenario/assert.sh flow.
+# grid.sh (plan WP1.S4) drives this over the 10 markdown corpus fixtures
+# instead, one capture per fixture (see README's "Adding a scenario").
+FIXTURE="${3:-sample.md}"
 
 case "$SIDE" in
     go|rust) ;;
@@ -23,6 +28,12 @@ if [[ ! -f "$KEYS_FILE" ]]; then
     exit 1
 fi
 
+FIXTURE_FILE="$SCRIPT_DIR/fixtures/$FIXTURE"
+if [[ ! -f "$FIXTURE_FILE" ]]; then
+    echo "capture.sh: no fixture at $FIXTURE_FILE" >&2
+    exit 1
+fi
+
 S="$(session_name "$SIDE")"
 
 # Kill any prior session for this side and wipe its workspace.
@@ -31,7 +42,7 @@ WS_ROOT="$RUN_ROOT/$SIDE"
 rm -rf "$WS_ROOT"
 WS="$WS_ROOT/parityws"
 mkdir -p "$WS"
-cp "$SCRIPT_DIR/fixtures/sample.md" "$WS/sample.md"
+cp "$FIXTURE_FILE" "$WS/$FIXTURE"
 
 # Go writes .rune/ into its workspace on launch; pre-create an identical one
 # in both workspaces so the file trees list the same entries (gotcha 8).
@@ -51,7 +62,7 @@ case "$SIDE" in
             echo "capture.sh: Go binary missing at $BIN — run 'make build' first" >&2
             exit 1
         fi
-        CMD=(env TERM=xterm-256color "$BIN" -w "$WS" "$WS/sample.md")
+        CMD=(env TERM=xterm-256color "$BIN" -w "$WS" "$WS/$FIXTURE")
         ;;
     rust)
         BIN="$REPO_ROOT/rust/target/debug/rune"
@@ -59,7 +70,7 @@ case "$SIDE" in
             echo "capture.sh: Rust binary missing at $BIN — run 'make rust-build' first" >&2
             exit 1
         fi
-        CMD=(env TERM=xterm-256color HOME="$RUN_ROOT/rust/home" "$BIN" "$WS/sample.md")
+        CMD=(env TERM=xterm-256color HOME="$RUN_ROOT/rust/home" "$BIN" "$WS/$FIXTURE")
         ;;
 esac
 
@@ -67,7 +78,7 @@ $TM new-session -d -s "$S" -x "$COLS" -y "$ROWS" "${CMD[@]}"
 $TM set-option -t "$S" -w window-size manual
 $TM resize-window -t "$S" -x "$COLS" -y "$ROWS"
 
-wait_for_pane "$S" 'sample.md' 20
+wait_for_pane "$S" "$FIXTURE" 20
 
 SENT_KEYS=0
 while IFS= read -r line || [[ -n "$line" ]]; do

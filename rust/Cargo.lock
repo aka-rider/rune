@@ -1915,6 +1915,7 @@ dependencies = [
  "rune-core",
  "rune-db",
  "rune-md",
+ "rune-tui",
  "rune-vfs",
  "termina",
 ]

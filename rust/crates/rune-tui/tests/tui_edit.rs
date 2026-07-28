@@ -5,16 +5,14 @@
 
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -68,12 +66,7 @@ const SUP_SHIFT: Mods = Mods {
 };
 
 fn render_to_test_backend(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+    testgrid::draw(app, WIDTH, HEIGHT)
 }
 
 fn full_text(buf: &RtBuffer) -> String {

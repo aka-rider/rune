@@ -42,7 +42,7 @@ release-snapshot:
 whisper.cpp-restart:
 	brew services restart whisper-cpp-server
 
-.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard rust-test-fuzz parity parity-capture parity-diff parity-assert parity-serve parity-clean
+.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard rust-test-fuzz parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
 
 rust-build:
 	$(MAKE) -C rust build
@@ -78,6 +78,9 @@ parity-diff:
 
 parity-assert:
 	scripts/parity/assert.sh
+
+parity-grid: build rust-build
+	scripts/parity/grid.sh
 
 parity-serve:
 	scripts/parity/serve.sh go

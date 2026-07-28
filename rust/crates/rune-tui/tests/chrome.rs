@@ -6,8 +6,6 @@
 
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer as RtBuffer;
 use ratatui::style::Color;
 
@@ -16,9 +14,9 @@ use rune_core::cursor::CursorSet;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
-use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
 use rune_tui::styles;
+use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -36,12 +34,7 @@ fn draw(app: &App) -> RtBuffer {
 }
 
 fn draw_with_width(app: &App, width: u16) -> RtBuffer {
-    let backend = TestBackend::new(width, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+    testgrid::draw(app, width, HEIGHT)
 }
 
 fn row_text(buf: &RtBuffer, y: u16, width: u16) -> String {

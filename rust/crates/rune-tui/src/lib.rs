@@ -26,5 +26,7 @@ pub mod runtime;
 pub mod save;
 pub mod styles;
 pub mod term;
+#[cfg(any(test, feature = "testgrid"))]
+pub mod testgrid;
 pub mod title;
 pub mod workspace;

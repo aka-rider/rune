@@ -14,18 +14,14 @@
 
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer as RtBuffer;
-
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::banner;
 use rune_tui::clipboard::osc52_copy;
 use rune_tui::footer;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -39,27 +35,12 @@ fn app_for(content: &str) -> App {
     app
 }
 
-fn draw(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
+fn row_text(app: &App, y: u16) -> String {
+    testgrid::row(app, y, WIDTH, HEIGHT)
 }
 
-fn row_text(buf: &RtBuffer, y: u16, width: u16) -> String {
-    let mut s = String::new();
-    for x in 0..width {
-        if let Some(cell) = buf.cell((x, y)) {
-            s.push_str(cell.symbol());
-        }
-    }
-    s
-}
-
-fn frame_text(buf: &RtBuffer) -> String {
-    (0..HEIGHT).map(|y| row_text(buf, y, WIDTH)).collect()
+fn frame_text(app: &App) -> String {
+    testgrid::grid(app, WIDTH, HEIGHT).concat()
 }
 
 fn key(code: KeyCode) -> Msg {
@@ -105,14 +86,13 @@ fn banner_rows_render_above_the_footer() {
     let total_rows = app.modal.as_ref().expect("modal set").total_rows();
     assert!(total_rows > 0);
 
-    let buf = draw(&app);
-    let footer_row_text = row_text(&buf, HEIGHT - 1, WIDTH);
+    let footer_row_text = row_text(&app, HEIGHT - 1);
     assert!(
         !footer_row_text.contains("boom"),
         "the banner headline must not land on the footer's own row"
     );
     assert!(
-        frame_text(&buf).contains("boom"),
+        frame_text(&app).contains("boom"),
         "expected the banner headline somewhere in the frame"
     );
 }
@@ -140,8 +120,7 @@ fn banner_height_caps_at_half_the_frame_for_a_huge_error() {
         HEIGHT / 2
     );
 
-    let buf = draw(&app);
-    let text = frame_text(&buf);
+    let text = frame_text(&app);
     assert!(
         text.contains("line 0"),
         "the start of the error must still be visible"

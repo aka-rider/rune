@@ -4,18 +4,14 @@
 
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer as RtBuffer;
-
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::explorer::EXPLORER_BINDINGS;
 use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
 use rune_tui::opentabs::TABS_BINDINGS;
 use rune_tui::pane::Pane;
-use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::testgrid;
 use rune_tui::workspace;
 use rune_vfs::Mem;
 
@@ -36,25 +32,8 @@ fn f1() -> KeyInput {
     }
 }
 
-fn draw(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
-}
-
-fn frame_text(buf: &RtBuffer) -> String {
-    let mut s = String::new();
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            if let Some(cell) = buf.cell((x, y)) {
-                s.push_str(cell.symbol());
-            }
-        }
-    }
-    s
+fn frame_text(app: &App) -> String {
+    testgrid::grid(app, WIDTH, HEIGHT).concat()
 }
 
 /// `F1` twice mints exactly one Help document — the second press must not
@@ -205,7 +184,7 @@ fn help_tab_renders_in_open_tabs_pane_with_the_name_help() {
     app.focus = Pane::Tabs;
     app.sync_view();
 
-    let text = frame_text(&draw(&app));
+    let text = frame_text(&app);
     assert!(
         text.contains("Help"),
         "expected \"Help\" in the Tabs pane:\n{text}"

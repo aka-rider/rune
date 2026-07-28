@@ -193,8 +193,7 @@ fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, ch: char, style: 
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
+    use crate::testgrid;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::path::PathBuf;
@@ -209,19 +208,17 @@ mod tests {
         )
     }
 
-    /// Draws `overlay` into a `height`-tall `TestBackend` and returns the
+    /// Draws `overlay` into a `height`-tall `TestBackend` (via the shared
+    /// `testgrid::draw_with` — plan WP1: `overlay` renders a component
+    /// directly into its own `Rect`, not the whole `App` through
+    /// `render::draw`, so `grid`/`row` don't apply here) and returns the
     /// bottom row's rendered symbols concatenated into one `String` — the
     /// row `overlay` actually writes to.
     fn overlay_bottom_row(app: &App, width: u16, height: u16, focused: bool) -> String {
-        let backend = TestBackend::new(width, height);
-        let mut terminal = Terminal::new(backend).expect("terminal construction");
-        terminal
-            .draw(|frame| {
-                let block = Rect::new(0, 0, width, height);
-                overlay(app, block, focused, frame)
-            })
-            .expect("draw");
-        let buf = terminal.backend().buffer().clone();
+        let buf = testgrid::draw_with(width, height, |frame| {
+            let block = Rect::new(0, 0, width, height);
+            overlay(app, block, focused, frame)
+        });
         let mut s = String::new();
         for x in 0..width {
             if let Some(cell) = buf.cell((x, height - 1)) {
@@ -257,12 +254,9 @@ mod tests {
         // corner (§1.5 — the two coordinate systems must not be mixed).
         const W: u16 = 40;
         let app = app_for("hello", Some("/a/日本語/note.md"));
-        let backend = TestBackend::new(W, 3);
-        let mut terminal = Terminal::new(backend).expect("terminal construction");
-        terminal
-            .draw(|frame| overlay(&app, Rect::new(0, 0, W, 3), true, frame))
-            .expect("draw");
-        let buf = terminal.backend().buffer().clone();
+        let buf = testgrid::draw_with(W, 3, |frame| {
+            overlay(&app, Rect::new(0, 0, W, 3), true, frame)
+        });
         let sym = |x: u16| {
             buf.cell((x, 2))
                 .map(|c| c.symbol().to_string())
@@ -290,10 +284,7 @@ mod tests {
     fn pathless_doc_renders_nothing() {
         let app = app_for("hello", None);
         let touched = overlay_bottom_row(&app, 40, 3, true);
-        let untouched_backend = TestBackend::new(40, 3);
-        let mut terminal = Terminal::new(untouched_backend).expect("terminal construction");
-        terminal.draw(|_frame| {}).expect("draw");
-        let buf = terminal.backend().buffer().clone();
+        let buf = testgrid::draw_with(40, 3, |_frame| {});
         let mut expected = String::new();
         for x in 0..40 {
             if let Some(cell) = buf.cell((x, 2)) {

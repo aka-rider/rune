@@ -15,6 +15,17 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
+# Self-dependency trick (Cargo permits it for dev-dependencies): pulls in
+# THIS crate again with `testgrid` turned on, so feature unification
+# enables `crate::testgrid` for every integration test in `tests/` without
+# needing `--features testgrid` on the command line — `cargo test
+# --workspace` (the Makefile's `test` target) sees it automatically.
+rune-tui = { path = ".", features = ["testgrid"] }
+
+[features]
+# Exposes `testgrid` (plan WP1.S1) to integration tests, which link the
+# library WITHOUT `cfg(test)` — see the dev-dependency self-reference above.
+testgrid = []
 
 [lints]
 workspace = true

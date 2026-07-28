@@ -11,17 +11,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer as RtBuffer;
-
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
-use rune_tui::render;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::testgrid;
 use rune_tui::{opentabs, workspace};
 use rune_vfs::{Mem, Vfs};
 
@@ -85,25 +81,8 @@ fn ctrl_w() -> KeyInput {
     )
 }
 
-fn draw(app: &App) -> RtBuffer {
-    let backend = TestBackend::new(WIDTH, HEIGHT);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
-}
-
-fn frame_text(buf: &RtBuffer) -> String {
-    let mut s = String::new();
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            if let Some(cell) = buf.cell((x, y)) {
-                s.push_str(cell.symbol());
-            }
-        }
-    }
-    s
+fn frame_text(app: &App) -> String {
+    testgrid::grid(app, WIDTH, HEIGHT).concat()
 }
 
 /// Opening two documents populates `tabs.order`, and both render with their
@@ -119,7 +98,7 @@ fn tabs_render_both_open_documents_with_digit_shortcuts() {
     app.focus = Pane::Tabs;
     app.sync_view();
 
-    let text = frame_text(&draw(&app));
+    let text = frame_text(&app);
     assert!(
         text.contains("1:"),
         "expected the first tab's shortcut '1:' in:\n{text}"
@@ -162,7 +141,7 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     app.left_visible = true;
     app.sync_view();
     assert!(
-        !frame_text(&draw(&app)).contains(" x "),
+        !frame_text(&app).contains(" x "),
         "test setup: nothing should be dirty yet"
     );
 
@@ -170,7 +149,7 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     app.sync_view();
 
     assert!(app.doc(second).unwrap().is_dirty());
-    let text = frame_text(&draw(&app));
+    let text = frame_text(&app);
     assert!(
         text.contains(" x "),
         "expected the dirty marker somewhere in the Open block:\n{text}"

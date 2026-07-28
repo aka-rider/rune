@@ -10,15 +10,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
-use ratatui::buffer::Buffer as RtBuffer;
-
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::render;
 use rune_tui::runtime::{Effects, Msg};
+use rune_tui::testgrid;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -41,27 +37,12 @@ fn app_for(content: &str, path: Option<&str>) -> App {
     app
 }
 
-fn draw(app: &App) -> RtBuffer {
-    draw_sized(app, WIDTH, HEIGHT)
+fn row_text(app: &App, y: u16, width: u16) -> String {
+    row_text_sized(app, y, width, HEIGHT)
 }
 
-fn draw_sized(app: &App, width: u16, height: u16) -> RtBuffer {
-    let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend).expect("terminal construction");
-    terminal
-        .draw(|frame| render::draw(app, frame))
-        .expect("draw");
-    terminal.backend().buffer().clone()
-}
-
-fn row_text(buf: &RtBuffer, y: u16, width: u16) -> String {
-    let mut s = String::new();
-    for x in 0..width {
-        if let Some(cell) = buf.cell((x, y)) {
-            s.push_str(cell.symbol());
-        }
-    }
-    s
+fn row_text_sized(app: &App, y: u16, width: u16, height: u16) -> String {
+    testgrid::row(app, y, width, height)
 }
 
 /// Row 1 of the center pane (row 0 is now the top border, plan WP4) shows
@@ -69,8 +50,7 @@ fn row_text(buf: &RtBuffer, y: u16, width: u16) -> String {
 #[test]
 fn title_row_shows_the_active_doc_name() {
     let app = app_for("hello", Some("/notes/todo.md"));
-    let buf = draw(&app);
-    let title_row = row_text(&buf, 1, WIDTH);
+    let title_row = row_text(&app, 1, WIDTH);
     assert!(
         title_row.contains("todo.md"),
         "expected the doc name on the title row:\n{title_row}"
@@ -82,8 +62,7 @@ fn title_row_shows_the_active_doc_name() {
 #[test]
 fn title_row_shows_no_name_placeholder_when_pathless() {
     let app = app_for("hello", None);
-    let buf = draw(&app);
-    let title_row = row_text(&buf, 1, WIDTH);
+    let title_row = row_text(&app, 1, WIDTH);
     assert!(
         title_row.contains("[No Name]"),
         "expected the '[No Name]' placeholder on the title row:\n{title_row}"
@@ -98,7 +77,7 @@ fn title_row_shows_no_name_placeholder_when_pathless() {
 fn dirty_dot_appears_after_an_edit() {
     let mut app = app_for("hello", Some("/notes/todo.md"));
 
-    let clean_row = row_text(&draw(&app), 1, WIDTH);
+    let clean_row = row_text(&app, 1, WIDTH);
     assert!(
         !clean_row.contains('\u{2022}'),
         "a freshly opened doc must not show the dirty dot:\n{clean_row}"
@@ -115,7 +94,7 @@ fn dirty_dot_appears_after_an_edit() {
     );
     app.sync_view();
 
-    let dirty_row = row_text(&draw(&app), 1, WIDTH);
+    let dirty_row = row_text(&app, 1, WIDTH);
     assert!(
         dirty_row.contains('\u{2022}'),
         "expected the dirty dot on the title row after an edit:\n{dirty_row}"
@@ -129,8 +108,7 @@ fn dirty_dot_appears_after_an_edit() {
 #[test]
 fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
     let app = app_for("hello", Some("/notes/vault/todo.md"));
-    let buf = draw(&app);
-    let breadcrumb_row = row_text(&buf, HEIGHT - 2, WIDTH);
+    let breadcrumb_row = row_text(&app, HEIGHT - 2, WIDTH);
     assert!(
         breadcrumb_row.contains("notes"),
         "expected a path segment on the breadcrumb row:\n{breadcrumb_row}"
@@ -157,8 +135,7 @@ fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
 #[test]
 fn pathless_doc_has_no_breadcrumb_content() {
     let app = app_for("hello", None);
-    let buf = draw(&app);
-    let breadcrumb_row = row_text(&buf, HEIGHT - 2, WIDTH);
+    let breadcrumb_row = row_text(&app, HEIGHT - 2, WIDTH);
     assert!(
         breadcrumb_row.starts_with('╰') && breadcrumb_row.trim_end().ends_with('╯'),
         "expected the plain border row (no crumb spliced in):\n{breadcrumb_row:?}"
@@ -179,9 +156,7 @@ fn tiny_terminal_falls_back_to_the_unbordered_layout_without_panicking() {
     let app = app_for("hello", Some("/notes/todo.md"));
     // main area = 3 - 1 (footer) = 2 rows: center.height == 2 < 3, so
     // `layout::geometry` reports `center_bordered == false`.
-    let buf = draw_sized(&app, WIDTH, 3);
-
-    let row0 = row_text(&buf, 0, WIDTH);
+    let row0 = row_text_sized(&app, 0, WIDTH, 3);
     assert!(
         !row0.contains('╭') && !row0.contains('╮'),
         "no border corners expected in the unbordered fallback:\n{row0}"

@@ -1,0 +1,118 @@
+//! Shared `TestBackend` -> glyph-grid extractor for headless render tests
+//! (plan WP1.S1). Seven test files plus `src/breadcrumb.rs`'s own test
+//! module each hand-rolled the same draw-into-a-`TestBackend`-then-read-
+//! cells-back boilerplate (`tests/tui_render.rs:59-85` was the reference
+//! this module generalises); every one of them now goes through here
+//! instead of constructing its own `TestBackend` — `rg -c
+//! 'TestBackend::new'` over `tests/` and this crate's `src/breadcrumb.rs`
+//! is the enforced invariant (plan Done-when). `src/title.rs` keeps its own
+//! copy: a locked sibling worktree (`worktree-kind-inventing-marshmallow`)
+//! rewrites that file, so it is deliberately left untouched (plan Context).
+//!
+//! `draw_with` is the actual common denominator; `draw`/`grid`/`row` are
+//! thin convenience wrappers over it. Most callers only need the two named
+//! in the plan (`grid`, `row`); a few need the raw `ratatui::buffer::Buffer`
+//! back for cell-level color/modifier assertions (`tests/chrome.rs`'s
+//! border-color checks, `tests/tui_render.rs`'s caret/bold-modifier checks)
+//! or need to draw something other than the whole `App` (`src/
+//! breadcrumb.rs`'s `overlay` unit tests draw a sub-`Rect` directly,
+//! bypassing `render::draw`) — `draw`/`draw_with` cover those without
+//! reintroducing a tenth hand-rolled copy.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+use ratatui::Frame;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer as RtBuffer;
+
+use crate::app::App;
+use crate::render;
+
+/// Runs `f` against a fresh `w`x`h` `TestBackend` and returns the resulting
+/// buffer — the one place left in the crate that constructs a
+/// `TestBackend`. Generic over the draw closure so a caller that needs to
+/// render something other than the whole `App` (a single component, into
+/// its own `Rect`) still goes through here rather than rolling its own
+/// terminal.
+pub fn draw_with(w: u16, h: u16, f: impl FnOnce(&mut Frame)) -> RtBuffer {
+    let backend = TestBackend::new(w, h);
+    let mut terminal = Terminal::new(backend).expect("terminal construction");
+    terminal.draw(f).expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+/// Draws `app` into a `w`x`h` `TestBackend` via the real `render::draw` and
+/// returns the raw buffer — for callers that need cell-level style (color,
+/// modifiers) rather than just text.
+pub fn draw(app: &App, w: u16, h: u16) -> RtBuffer {
+    draw_with(w, h, |frame| render::draw(app, frame))
+}
+
+fn row_text(buf: &RtBuffer, y: u16, w: u16) -> String {
+    let mut s = String::new();
+    for x in 0..w {
+        if let Some(cell) = buf.cell((x, y)) {
+            s.push_str(cell.symbol());
+        }
+    }
+    s
+}
+
+/// Draws `app` into a `w`x`h` `TestBackend` and returns every row as its
+/// own `String` (plan WP1.S1).
+pub fn grid(app: &App, w: u16, h: u16) -> Vec<String> {
+    let buf = draw(app, w, h);
+    (0..h).map(|y| row_text(&buf, y, w)).collect()
+}
+
+/// Draws `app` into a `w`x`h` `TestBackend` and returns row `y` only (plan
+/// WP1.S1 names this `row(app, y, w)`; a height is required to actually
+/// draw a frame, so it is taken explicitly here — see WP1 report).
+pub fn row(app: &App, y: u16, w: u16, h: u16) -> String {
+    row_text(&draw(app, w, h), y, w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_for(content: &str) -> App {
+        App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    #[test]
+    fn grid_returns_h_rows_of_w_chars() {
+        let app = app_for("hello");
+        let g = grid(&app, 20, 5);
+        assert_eq!(g.len(), 5);
+        for r in &g {
+            assert_eq!(r.chars().count(), 20);
+        }
+    }
+
+    #[test]
+    fn row_matches_the_grids_own_row() {
+        let app = app_for("hello");
+        let g = grid(&app, 20, 5);
+        assert_eq!(row(&app, 2, 20, 5), g[2]);
+    }
+
+    #[test]
+    fn draw_with_renders_an_arbitrary_closure_not_just_render_draw() {
+        use ratatui::layout::Rect;
+        use ratatui::widgets::{Block, Widget};
+
+        let buf = draw_with(10, 3, |frame| {
+            Block::bordered().render(Rect::new(0, 0, 10, 3), frame.buffer_mut());
+        });
+        let corner = buf.cell((0, 0)).map(|c| c.symbol());
+        assert_ne!(
+            corner,
+            Some(" "),
+            "expected a border glyph drawn by the closure, not a blank cell"
+        );
+    }
+}
