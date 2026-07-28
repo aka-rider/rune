@@ -20,23 +20,28 @@ fn every_language_loads_and_its_query_compiles() {
 
 #[test]
 fn highlights_rust_keyword() {
-    let spans = highlight("rust", "fn main() {}", Duration::from_secs(5)).expect("parse");
+    let result = highlight("rust", "fn main() {}", Duration::from_secs(5)).expect("parse");
+    assert!(
+        !result.truncated,
+        "a trivial source must never hit the span cap"
+    );
     let keyword_id = scope_table().resolve("keyword").expect("keyword scope");
     assert!(
-        spans.iter().any(|(_, id)| *id == keyword_id),
-        "expected at least one keyword span, got {spans:?}"
+        result.spans.iter().any(|(_, id)| *id == keyword_id),
+        "expected at least one keyword span, got {:?}",
+        result.spans
     );
 }
 
 #[test]
 fn spans_are_in_painter_order() {
-    let spans = highlight(
+    let result = highlight(
         "rust",
         "fn f(x: u32) -> u32 { x + 1 }",
         Duration::from_secs(5),
     )
     .expect("parse");
-    for pair in spans.windows(2) {
+    for pair in result.spans.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         assert!(
             a.0.start < b.0.start || (a.0.start == b.0.start && a.0.end >= b.0.end),
@@ -52,6 +57,15 @@ fn elapsed_budget_returns_none() {
 }
 
 #[test]
+fn unbounded_budget_does_not_panic() {
+    let result = highlight("rust", "fn main() {}", Duration::MAX);
+    assert!(
+        result.is_some(),
+        "Duration::MAX must be treated as an unbounded budget, not overflow"
+    );
+}
+
+#[test]
 fn unknown_language_returns_none() {
     assert_eq!(highlight("klingon", "x", Duration::from_secs(1)), None);
 }
@@ -59,6 +73,30 @@ fn unknown_language_returns_none() {
 #[test]
 fn terraform_query_produces_spans() {
     let source = "resource \"aws_s3_bucket\" \"b\" {\n  bucket = \"x\" # c\n}\n";
-    let spans = highlight("terraform", source, Duration::from_secs(5)).expect("parse");
-    assert!(!spans.is_empty(), "expected at least one terraform span");
+    let result = highlight("terraform", source, Duration::from_secs(5)).expect("parse");
+    assert!(
+        !result.spans.is_empty(),
+        "expected at least one terraform span"
+    );
+}
+
+#[test]
+fn truncation_flag_set_when_span_cap_hit() {
+    let count = rune_ts::MAX_SPANS + 500;
+    let source = format!("[{}]", vec!["1"; count].join(","));
+    let result = highlight("json", &source, Duration::from_secs(5)).expect("parse");
+    assert_eq!(result.spans.len(), rune_ts::MAX_SPANS);
+    assert!(
+        result.truncated,
+        "collecting past MAX_SPANS must set truncated"
+    );
+}
+
+#[test]
+fn truncation_flag_clear_under_the_cap() {
+    let result = highlight("json", "[1, 2, 3]", Duration::from_secs(5)).expect("parse");
+    assert!(
+        !result.truncated,
+        "a small source must never report truncation"
+    );
 }
