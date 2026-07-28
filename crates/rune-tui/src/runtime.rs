@@ -160,7 +160,8 @@ pub enum CmdKind {
     /// query run, bounded by [`HIGHLIGHT_BUDGET`]. Off-thread per §5.4: a
     /// large document's parse must never block the main loop, and grammar
     /// crashes (`ts_assert`) are architecturally avoided rather than caught
-    /// (CONSTITUTION §1.3) by never constructing an `InputEdit`.
+    /// (CONSTITUTION §1.3) — every parse is a full parse, never an
+    /// incremental reparse fed a prior edit's location.
     Highlight,
 }
 
@@ -389,8 +390,11 @@ pub const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(250);
 /// across the thread boundary. Always replies with `Some(..)` — even a
 /// `None` result from `rune_ts::highlight` — so `in_flight` is guaranteed to
 /// clear on the UI thread; `rune_ts::highlight` itself never panics
-/// (§1.3: it surfaces failures as `None`/`registry().failures()`, never
-/// `ts_assert`'s `SIGABRT`, since it never constructs an `InputEdit`).
+/// (§1.3: it surfaces a failed language load or query compile as `None`,
+/// never `ts_assert`'s `SIGABRT`, since every parse is a full parse — no
+/// incremental-reparse edit is ever fed back into it). This is the ONLY
+/// place `rune-tui` reaches `rune_ts::highlight` — a background thread,
+/// never the UI thread.
 pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: String) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
         Some(Msg::Highlighted {

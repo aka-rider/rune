@@ -454,53 +454,40 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         let id = app.active;
         save::schedule_snapshot_debounce(app, id, effects);
     }
-    // Plan WP5.S3: the ACTIVE document's buffer changed shape (an edit) or
-    // the active document itself changed (a tab switch, `workspace::
-    // open_path`'s `switch_to`) — either way it may now need a highlight
-    // `schedule_highlight` itself has not yet scheduled. Gated on this
-    // before/after comparison rather than called unconditionally so a
-    // message that touches neither never even reaches `App::doc`.
+    // Plan WP5.S3: the active buffer changed shape, or the active document
+    // itself did (a tab switch) — either way it may still need a highlight.
     if app.active != active_before || app.active_doc().buffer.version() != buffer_version_before {
         let id = app.active;
         schedule_highlight(app, id, effects);
     }
 }
 
-/// Requests a background highlight for document `id` if its stored spans no
-/// longer describe its buffer (plan WP5.S3) — the sole `Cmd`-dispatching
-/// entry point for `rune_ts::highlight`, since `Document::sync`/`App::
-/// sync_view` have no `&mut Effects` to spawn one with. A no-op for a
-/// document with no highlightable language (`kind.language()` is `None` —
-/// `Markdown`/`Plain`, WP6 fenced-code scheduling is out of this package's
-/// scope). At most one highlight `Cmd` is ever in flight per document: a
-/// second call while one is running only arms `pending` (consumed by
-/// `dispatch::handle_highlighted` once the first reply lands), rather than
-/// spawning a second thread racing the first for the same document.
+/// Requests a background highlight for `id` if its stored spans no longer
+/// describe its buffer (plan WP5.S3) — the sole `Cmd`-dispatching entry
+/// point for `rune_ts::highlight` (`Document::sync`/`App::sync_view` have
+/// no `&mut Effects`). A no-op for a document with no highlightable
+/// language. At most one highlight `Cmd` runs per document at a time — a
+/// second call while one is in flight only arms `pending`, consumed by
+/// `dispatch::handle_highlighted` once the reply lands.
 pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let Some(lang) = doc.kind.language() else {
         return;
     };
     let version = doc.buffer.version();
-    let in_flight = doc.highlight.in_flight.is_some();
-    let up_to_date = doc.highlight.version == version;
-
-    if in_flight {
+    if doc.highlight.in_flight.is_some() {
         if let Some(doc) = app.doc_mut(id) {
             doc.highlight.pending = true;
         }
         return;
     }
-    if up_to_date {
+    if doc.highlight.version == version {
         return;
     }
-
     let Some(doc) = app.doc_mut(id) else { return };
     doc.highlight.in_flight = Some(version);
-    let source = doc.buffer.content().to_string();
-    effects
-        .cmds
-        .push(runtime::highlight_cmd(id, version, lang, source));
+    let cmd = runtime::highlight_cmd(id, version, lang, doc.buffer.content().to_string());
+    effects.cmds.push(cmd);
 }
 
 // `update_inner` (the top-level `Msg` dispatch), `handle_key`,

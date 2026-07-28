@@ -169,3 +169,88 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
         buf_offset: buf_offset as i64,
     });
 }
+
+/// Unit tests for [`apply_highlight_spans`] (plan WP5.S7) — hand-built
+/// `(rows, spans)` pairs, not a real document. `apply_highlight_spans` is
+/// `pub(super)` (this file's own encapsulation convention: every other
+/// overlay function here is `pub(super)` too, reached only through
+/// `render::build_rows`), so it is unreachable from the crate's external
+/// `tests/` integration tests — those exercise the SAME algorithm
+/// end-to-end instead, through `Document::highlight.spans` and
+/// `render::build_rows`/`testgrid`. This module covers the painter
+/// resolution itself directly.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+    use rune_syntax::scope::scope_table;
+
+    fn cell(offset: i64) -> Cell {
+        Cell {
+            text: "x".to_string(),
+            width: 1,
+            style: Style::default(),
+            buf_offset: offset,
+        }
+    }
+
+    fn scope(name: &str) -> ScopeId {
+        scope_table().resolve(name).expect("known scope name")
+    }
+
+    /// Decision 3: an outer span painted first, then a nested span painted
+    /// over it, leaves the nested bytes with the INNER style and everything
+    /// else with the OUTER one — innermost-wins, no per-cell search.
+    #[test]
+    fn nested_span_overwrites_the_outer_one_it_sits_inside() {
+        let theme = Theme::catppuccin_mocha(false);
+        let function_style = theme.scope_style(scope("function"));
+        let variable_style = theme.scope_style(scope("variable"));
+
+        let mut rows = vec![(0..10).map(cell).collect::<Vec<Cell>>()];
+        let spans = vec![(0..10, scope("function")), (3..5, scope("variable"))];
+        apply_highlight_spans(&mut rows, &spans, &theme);
+
+        let row = &rows[0];
+        for i in [0, 1, 2, 5, 6, 7, 8, 9] {
+            assert_eq!(
+                row[i].style, function_style,
+                "cell {i} should be function-styled"
+            );
+        }
+        for i in [3, 4] {
+            assert_eq!(
+                row[i].style, variable_style,
+                "cell {i} should be variable-styled"
+            );
+        }
+    }
+
+    /// The overlay patches `style` only — every cell's `buf_offset`/`width`
+    /// must come out byte-identical to what went in.
+    #[test]
+    fn overlay_changes_style_only_never_offset_or_width() {
+        let theme = Theme::catppuccin_mocha(false);
+        let before: Vec<Cell> = (0..10).map(cell).collect();
+        let mut rows = vec![before.clone()];
+        let spans = vec![(0..10, scope("function")), (3..5, scope("variable"))];
+        apply_highlight_spans(&mut rows, &spans, &theme);
+
+        for (b, a) in before.iter().zip(rows[0].iter()) {
+            assert_eq!(b.buf_offset, a.buf_offset);
+            assert_eq!(b.width, a.width);
+        }
+    }
+
+    /// No visible (non-decorative) cell means nothing to paint — the window
+    /// scan returns early and `rows` is left exactly as it was.
+    #[test]
+    fn all_decorative_cells_leave_rows_untouched() {
+        let theme = Theme::catppuccin_mocha(false);
+        let mut rows = vec![vec![cell(-1), cell(-1)]];
+        let before = rows.clone();
+        apply_highlight_spans(&mut rows, &[(0..2, scope("function"))], &theme);
+        assert_eq!(rows, before);
+    }
+}
