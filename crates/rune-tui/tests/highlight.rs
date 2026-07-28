@@ -27,12 +27,14 @@
     clippy::panic
 )]
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
+use rune_syntax::ScopeId;
 use rune_syntax::scope::scope_table;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -473,5 +475,297 @@ fn an_edit_before_a_fence_does_not_shift_its_spans() {
         sliced.contains(&"fn"),
         "no span selects the `fn` keyword exactly; spans selected {sliced:?} \
          — they were rebased onto a pre-edit parse of the fence"
+    );
+}
+
+/// Schedules and runs the ONE highlight `Cmd` a fresh markdown document
+/// with exactly one resolvable fence produces (mirrors the setup every test
+/// above this point repeats), and returns the spans it replied with —
+/// panicking with a descriptive message if scheduling or parsing didn't
+/// happen the way every other case here expects. Used by the finding-A
+/// (container-prefix leak) cases below, which only care about the reply's
+/// spans, never about applying them to a `Document`.
+fn fence_highlight_spans(content: &str, path: &str) -> Vec<(Range<usize>, ScopeId)> {
+    let mut app = app_for(content, path);
+    app.sync_view();
+    let mut effects = Effects::default();
+    type_one_char_at_end(&mut app, &mut effects);
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "expected exactly one scheduled highlight cmd for {content:?}"
+    );
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("fence_highlight_cmd always replies with Some(..)");
+    let Msg::Highlighted { result, .. } = msg else {
+        panic!("expected a Msg::Highlighted reply, got {msg:?}");
+    };
+    result.expect("the fence must parse within the budget")
+}
+
+/// Finding A: a fence nested in a blockquote must not feed the
+/// blockquote's own repeating `"> "` prefix to `rune_ts::highlight` as
+/// source bytes. YAML is the language the investigation measured this on
+/// (14 spans clean vs. 3 once `"> "` starts corrupting indentation-
+/// sensitive structure) — a top-level fence and the byte-identical fence
+/// nested one blockquote level deep must produce the exact same span
+/// count, since after `code_fence_sources` reconstructs the prefix-free
+/// source, tree-sitter sees byte-identical text either way.
+#[test]
+fn yaml_fence_nested_in_blockquote_produces_the_same_span_count_as_top_level() {
+    let yaml_body = "key: value\nnested:\n  child: 1\nlist:\n  - a\n  - b";
+
+    let top_level = format!("```yaml\n{yaml_body}\n```\n");
+    let top_spans = fence_highlight_spans(&top_level, "/x/top.md");
+    assert!(
+        !top_spans.is_empty(),
+        "a top-level yaml fence must produce spans at all"
+    );
+
+    // Every line, including the fence markers, gets the SAME "> " prefix —
+    // stripping it must reconstruct source byte-identical to `top_level`'s
+    // own fence content.
+    let quoted_body: String = yaml_body
+        .lines()
+        .map(|line| format!("> {line}\n"))
+        .collect();
+    let nested = format!("> ```yaml\n{quoted_body}> ```\n");
+    let nested_spans = fence_highlight_spans(&nested, "/x/nested.md");
+
+    assert_eq!(
+        nested_spans.len(),
+        top_spans.len(),
+        "a blockquoted yaml fence must highlight identically to the same \
+         fence at top level — a span-count mismatch means the blockquote's \
+         own \"> \" prefix leaked into the parsed source \
+         (top: {top_spans:?}, nested: {nested_spans:?})"
+    );
+}
+
+/// Finding A, list-item variant: the same prefix-leak bug applies to a
+/// list item's own repeating indent, not just a blockquote's `"> "`. Rust's
+/// error recovery absorbs a stray `"> "` (the investigation's own measured
+/// table), so this uses a structured-enough fixture (a function with a
+/// nested statement) that a shifted/corrupted source would still visibly
+/// change the span count, not silently reparse to the same shape.
+#[test]
+fn rust_fence_nested_in_list_item_produces_the_same_span_count_as_top_level() {
+    let top_level = "```rust\nfn main() {\n    let a = 1;\n}\n```\n";
+    let top_spans = fence_highlight_spans(top_level, "/x/top.md");
+    assert!(
+        !top_spans.is_empty(),
+        "a top-level rust fence must produce spans at all"
+    );
+
+    // A "- " marker is 2 bytes wide, so CommonMark requires every
+    // continuation line (the fence markers AND its content) indented by
+    // exactly 2 spaces — stripping that indent must reconstruct source
+    // byte-identical to `top_level`'s own fence content.
+    let nested = "- ```rust\n  fn main() {\n      let a = 1;\n  }\n  ```\n";
+    let nested_spans = fence_highlight_spans(nested, "/x/nested.md");
+
+    assert_eq!(
+        nested_spans.len(),
+        top_spans.len(),
+        "a rust fence nested in a list item must highlight identically to \
+         the same fence at top level (top: {top_spans:?}, nested: {nested_spans:?})"
+    );
+}
+
+/// Finding A: containment alone ("the span is somewhere inside the fence's
+/// buffer bytes") is too weak — a span could still straddle or sit right on
+/// top of the blockquote's own `"> "` marker bytes and merely happen to
+/// stay within the fence's overall extent. This asserts on the EXACT bytes
+/// each span selects: every one must be a real token, and none may begin
+/// with (or contain) a literal `"> "` — the blockquote marker this nested
+/// fence's every continuation line carries. YAML, not rust, is deliberately
+/// chosen here: rust's error recovery absorbs a stray `"> "` so completely
+/// that no span ever lands on it either way (the investigation's own
+/// measured table), which would make this assertion true regardless of
+/// whether the underlying fix is present — exactly the containment-only
+/// trap this test exists to avoid falling into a second time.
+#[test]
+fn nested_fence_spans_never_select_the_blockquote_prefix_bytes() {
+    let content = "> ```yaml\n> key: value\n> nested:\n>   child: 1\n> ```\n";
+    let mut app = app_for(content, "/x/notes.md");
+    app.sync_view();
+
+    let mut effects = Effects::default();
+    type_one_char_at_end(&mut app, &mut effects);
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("fence_highlight_cmd always replies");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+
+    let doc = app.doc(app.active).expect("doc");
+    assert!(
+        !doc.highlight.spans.is_empty(),
+        "the blockquoted yaml fence must still produce spans"
+    );
+
+    let sliced: Vec<&str> = doc
+        .highlight
+        .spans
+        .iter()
+        .filter_map(|(range, _)| content.get(range.clone()))
+        .collect();
+    for text in &sliced {
+        assert!(
+            !text.starts_with("> ") && !text.contains("> "),
+            "span text {text:?} carries the blockquote's own \"> \" marker \
+             bytes — spans selected {sliced:?}"
+        );
+    }
+    // Exact-token assertions (containment alone would pass even for a
+    // shifted parse that happens to still land inside the fence): the
+    // fence's real tokens must be selected verbatim.
+    assert!(
+        sliced.contains(&"key"),
+        "no span selects the `key` mapping key exactly; spans selected {sliced:?}"
+    );
+    assert!(
+        sliced.contains(&"nested"),
+        "no span selects the `nested` mapping key exactly; spans selected {sliced:?}"
+    );
+    assert!(
+        sliced.contains(&"child"),
+        "no span selects the `child` mapping key exactly; spans selected {sliced:?}"
+    );
+}
+
+/// Finding B: a document that has NEVER been highlighted must not stay
+/// silently, permanently uncoloured just because its first parse alone
+/// exceeded `HIGHLIGHT_BUDGET` — `dispatch::handle_highlighted` gives it
+/// one bounded retry (`highlight::retry_highlight`) at a widened budget
+/// instead of doing nothing. This drives that path directly with a
+/// synthetic `None` reply (the same shape a real timed-out `Cmd` would
+/// deliver) rather than trying to force an actual 250ms timeout, and
+/// checks that the retry schedules a REAL, runnable highlight `Cmd` whose
+/// own reply is `Msg::HighlightRetried` — i.e. `in_flight` did not just
+/// silently clear with nothing further queued.
+#[test]
+fn a_never_highlighted_document_gets_one_retry_after_a_timeout() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    assert_eq!(
+        app.doc(id).expect("doc").highlight.version,
+        0,
+        "a fresh document must never have been highlighted yet"
+    );
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert!(
+        app.doc(id).expect("doc").highlight.spans.is_empty(),
+        "a None reply must never invent spans"
+    );
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "a timed-out first highlight must schedule exactly one retry cmd \
+         instead of leaving the document permanently uncoloured"
+    );
+
+    let retry_msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("the retry cmd always replies with Some(..)");
+    let Msg::HighlightRetried {
+        doc, version: v, ..
+    } = &retry_msg
+    else {
+        panic!("expected a Msg::HighlightRetried reply, got {retry_msg:?}");
+    };
+    assert_eq!(*doc, id);
+    assert_eq!(*v, version);
+}
+
+/// Finding B: applying the retry's reply must colour the document exactly
+/// like an ordinary first-time highlight would — the bounded-retry path is
+/// invisible to the end result on success.
+#[test]
+fn a_successful_retry_colours_the_document_like_a_normal_first_highlight() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+
+    let result = rune_ts::highlight("rust", content, Duration::from_secs(5));
+    assert!(result.is_some(), "a trivial rust source must highlight");
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::HighlightRetried {
+            doc: id,
+            version,
+            result,
+        },
+        &mut effects,
+    );
+
+    let doc = app.doc(id).expect("doc");
+    assert!(
+        !doc.highlight.spans.is_empty(),
+        "a successful retry reply must populate spans"
+    );
+    assert_eq!(doc.highlight.version, version);
+}
+
+/// Finding B: the retry must be BOUNDED — a document whose parse never
+/// succeeds within any budget must settle (spans stay empty, no further
+/// cmd queued) rather than spin forever. `Msg::HighlightRetried` never
+/// re-arms another retry on its own `None`, so a second timeout is where
+/// the chain provably ends.
+#[test]
+fn a_second_timeout_stops_retrying_instead_of_looping() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::HighlightRetried {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert!(
+        app.doc(id).expect("doc").highlight.spans.is_empty(),
+        "a second None reply must still never invent spans"
+    );
+    assert!(
+        effects.cmds.is_empty(),
+        "a second timeout must not schedule yet another retry — the retry \
+         chain must be bounded, not an unbounded loop"
+    );
+    assert_eq!(
+        app.doc(id).expect("doc").highlight.in_flight,
+        None,
+        "in_flight must still clear even on the terminal failure, or this \
+         document could never be highlighted again by any future edit"
     );
 }
