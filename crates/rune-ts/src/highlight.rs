@@ -35,6 +35,18 @@ pub struct HighlightResult {
     pub truncated: bool,
 }
 
+impl From<Vec<(Range<usize>, ScopeId)>> for HighlightResult {
+    /// A complete result — nothing was dropped to the span cap. The natural
+    /// reading of a span list handed over directly rather than produced by a
+    /// capped parse.
+    fn from(spans: Vec<(Range<usize>, ScopeId)>) -> HighlightResult {
+        HighlightResult {
+            spans,
+            truncated: false,
+        }
+    }
+}
+
 /// Parses `source` as `lang` and returns its highlight spans in painter
 /// order: `(range.start ASC, range.end DESC, yield-order ASC)`, so an
 /// enclosing capture always comes before one it contains and an earlier

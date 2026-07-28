@@ -201,7 +201,7 @@ fn handle_highlighted(
     app: &mut App,
     id: DocumentId,
     version: u64,
-    result: Option<Vec<(Range<usize>, ScopeId)>>,
+    result: Option<rune_ts::HighlightResult>,
     effects: &mut Effects,
 ) {
     let mut retry = false;
@@ -213,7 +213,8 @@ fn handle_highlighted(
         let live_version = doc.buffer.version();
         match result {
             Some(spans) if version == live_version => {
-                apply_highlight_spans(doc, version, spans);
+                doc.highlight.truncated = spans.truncated;
+                apply_highlight_spans(doc, version, spans.spans);
             }
             None if version == live_version && doc.highlight.version == 0 => {
                 retry = true;
@@ -246,7 +247,7 @@ fn handle_highlight_retried(
     app: &mut App,
     id: DocumentId,
     version: u64,
-    result: Option<Vec<(Range<usize>, ScopeId)>>,
+    result: Option<rune_ts::HighlightResult>,
     effects: &mut Effects,
 ) {
     let mut exhausted = false;
@@ -258,7 +259,8 @@ fn handle_highlight_retried(
         let live_version = doc.buffer.version();
         match result {
             Some(spans) if version == live_version => {
-                apply_highlight_spans(doc, version, spans);
+                doc.highlight.truncated = spans.truncated;
+                apply_highlight_spans(doc, version, spans.spans);
             }
             None if version == live_version && doc.highlight.version == 0 => {
                 exhausted = true;

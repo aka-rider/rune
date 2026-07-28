@@ -72,6 +72,10 @@ pub struct HighlightState {
     pub spans: Vec<(Range<usize>, ScopeId)>,
     pub in_flight: Option<u64>,
     pub pending: bool,
+    /// The producer hit its span cap and the tail of this document is
+    /// uncoloured. Recorded so the state is observable and testable rather
+    /// than silent; nothing surfaces it in the UI yet.
+    pub truncated: bool,
 }
 
 /// One open editing pane's complete state (plan WP1 decision 2): buffer,

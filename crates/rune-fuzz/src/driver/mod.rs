@@ -221,7 +221,10 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 let msg = Msg::Highlighted {
                     doc,
                     version: delivered_version,
-                    result: Some(crate::action::highlight_spans_from_raw(spans)),
+                    result: Some(rune_tui::runtime::HighlightResult {
+                        spans: crate::action::highlight_spans_from_raw(spans),
+                        truncated: false,
+                    }),
                 };
                 let tag = MsgTag::Highlighted {
                     delivered_version,

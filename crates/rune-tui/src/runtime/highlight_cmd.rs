@@ -100,23 +100,28 @@ pub fn highlight_retry_cmd(
 fn run_fence_highlight(
     fences: Vec<(&'static str, Vec<Range<usize>>, String)>,
     budget: Duration,
-) -> Option<Vec<(Range<usize>, ScopeId)>> {
+) -> Option<rune_ts::HighlightResult> {
     let per_fence_budget = budget / (fences.len().max(1) as u32);
     let mut spans: Vec<(Range<usize>, ScopeId)> = Vec::new();
     let mut any_parsed = false;
+    // One fence hitting the producer's span cap truncates the whole reply:
+    // the document's colours are incomplete either way, and the flag says so.
+    let mut truncated = false;
     for (lang, lines, text) in fences {
-        let Some(fence_spans) = rune_ts::highlight(lang, &text, per_fence_budget) else {
+        let Some(fence) = rune_ts::highlight(lang, &text, per_fence_budget) else {
             continue;
         };
         any_parsed = true;
+        truncated |= fence.truncated;
         spans.extend(
-            fence_spans
+            fence
+                .spans
                 .into_iter()
                 .filter_map(|(r, scope)| map_reconstructed_span(&lines, r).map(|r| (r, scope))),
         );
     }
     spans.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(b.0.end.cmp(&a.0.end)));
-    any_parsed.then_some(spans)
+    any_parsed.then_some(rune_ts::HighlightResult { spans, truncated })
 }
 
 pub fn fence_highlight_cmd(

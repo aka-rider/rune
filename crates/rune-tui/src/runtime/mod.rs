@@ -13,13 +13,11 @@
 //! thread use).
 
 use std::io;
-use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
-use rune_syntax::ScopeId;
 use rune_vfs::{DirEntry, Vfs};
 
 use crate::app::{self, App};
@@ -27,6 +25,10 @@ use crate::document::DocumentId;
 use crate::keymap::{self, KeyInput};
 use crate::pointer::MouseInput;
 use crate::term::Guard;
+
+/// Re-exported so a consumer of `Msg::Highlighted` can name the payload
+/// type without taking its own dependency on the producer crate.
+pub use rune_ts::HighlightResult;
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
@@ -109,7 +111,7 @@ pub enum Msg {
     Highlighted {
         doc: DocumentId,
         version: u64,
-        result: Option<Vec<(Range<usize>, ScopeId)>>,
+        result: Option<rune_ts::HighlightResult>,
     },
     /// The reply to `highlight::retry_highlight`'s single bounded retry: a
     /// document that has NEVER been highlighted (no previous spans to fall
@@ -125,7 +127,7 @@ pub enum Msg {
     HighlightRetried {
         doc: DocumentId,
         version: u64,
-        result: Option<Vec<(Range<usize>, ScopeId)>>,
+        result: Option<rune_ts::HighlightResult>,
     },
     Error(String),
     Quit,

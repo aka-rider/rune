@@ -121,7 +121,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
         Msg::Highlighted {
             doc: id,
             version: stale_version,
-            result: Some(vec![(0..3, keyword)]),
+            result: Some(vec![(0..3, keyword)].into()),
         },
         &mut effects,
     );
@@ -151,12 +151,15 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(vec![
-                (0..1000, keyword), // past the end -> clamped to `len`
-                (5..3, keyword),    // inverted -> dropped
-                (1..2, keyword),    // mid-char -> dropped
-                (0..3, keyword),    // valid, char-boundary aligned
-            ]),
+            result: Some(
+                vec![
+                    (0..1000, keyword), // past the end -> clamped to `len`
+                    (5..3, keyword),    // inverted -> dropped
+                    (1..2, keyword),    // mid-char -> dropped
+                    (0..3, keyword),    // valid, char-boundary aligned
+                ]
+                .into(),
+            ),
         },
         &mut effects,
     );
@@ -262,13 +265,13 @@ fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
     let spans = result
         .clone()
         .expect("the rust fence must parse within the budget");
-    assert!(!spans.is_empty());
+    assert!(!spans.spans.is_empty());
 
     let fence_start = content.find("fn main").expect("fixture has a fence body");
     let fence_end = content
         .find("```\n\nOutro")
         .expect("fixture has a fence close");
-    for (range, _) in &spans {
+    for (range, _) in &spans.spans {
         assert!(
             range.start >= fence_start && range.end <= fence_end,
             "span {range:?} escapes the fence content bytes {fence_start}..{fence_end}"
@@ -382,7 +385,7 @@ fn fence_tagged_rust_comma_ignore_still_highlights() {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
     assert!(
-        result.as_ref().is_some_and(|spans| !spans.is_empty()),
+        result.as_ref().is_some_and(|r| !r.spans.is_empty()),
         "a rust,ignore fence must still produce spans"
     );
 }
@@ -503,7 +506,9 @@ fn fence_highlight_spans(content: &str, path: &str) -> Vec<(Range<usize>, ScopeI
     let Msg::Highlighted { result, .. } = msg else {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
-    result.expect("the fence must parse within the budget")
+    result
+        .expect("the fence must parse within the budget")
+        .spans
 }
 
 /// Finding A: a fence nested in a blockquote must not feed the
