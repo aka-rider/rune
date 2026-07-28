@@ -34,6 +34,7 @@ use crate::app::App;
 use crate::document::Document;
 use crate::keymap::{KeyCode, KeyInput, KeyOutcome};
 use crate::pane::Pane;
+use crate::rename;
 use crate::runtime::Effects;
 use crate::styles;
 
@@ -218,16 +219,18 @@ pub fn finalize_if_focused(app: &mut App, effects: &mut Effects) {
 /// A commit with an unchanged name is a plain refocus, never a rename of a
 /// file onto its own path.
 ///
-/// WP step 5 leaves the rename itself a stub: this only accepts the text.
-/// Step 7 replaces the body with `rename::begin`, which is where every
-/// refusal (read-only, save in flight, invalid name, a rename already in
-/// progress) is decided.
+/// `rename::begin` decides every refusal (read-only, a save in flight, an
+/// invalid name, a rename already in progress) and owns the whole workflow
+/// from here. `committed` is deliberately NOT advanced on the way out: it
+/// is the name the file actually has, and it moves only once a rename has
+/// really landed (`rename::bind_to` reseeds the field). Advancing it
+/// optimistically here would make `Esc` revert to a name no file has.
 fn commit(app: &mut App, effects: &mut Effects) {
-    let _ = effects;
-    if app.title.text != app.title.committed {
-        app.title.accept();
+    if app.title.text == app.title.committed {
+        app.focus = Pane::Editor;
+        return;
     }
-    app.focus = Pane::Editor;
+    rename::begin(app, effects);
 }
 
 /// Renders `<name>` (styled `styles::title_text`) followed by ` •` when the

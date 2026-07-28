@@ -111,6 +111,13 @@ pub struct App {
     /// at every focus gain (`pane::focus_title`), so it always describes
     /// the document actually showing. Unjournaled (§12).
     pub title: crate::title::TitleField,
+    /// The rename workflow's state (`rename.rs`) — a typed machine rather
+    /// than another ad hoc pending-boolean, because `[R]eplace` has a
+    /// mid-sequence point past which it is not cancellable (§1.4.10).
+    pub rename: crate::rename::RenameState,
+    /// `pub(crate)`: `rename.rs` is the sole minter of new generations for
+    /// its own `Cmd` route (mirrors `next_quit_gen`/`next_save_confirm_gen`).
+    pub(crate) next_rename_gen: u32,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -212,6 +219,8 @@ impl App {
             help_doc: None,
             help_return_to: None,
             title: crate::title::TitleField::default(),
+            rename: crate::rename::RenameState::default(),
+            next_rename_gen: 0,
             status_message: None,
             status_source: StatusSource::Other,
             db,
@@ -437,7 +446,7 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             }
         }
         Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
-        Msg::Db(evt) => handle_db_event(app, evt),
+        Msg::Db(evt) => handle_db_event(app, evt, effects),
         Msg::DirLoaded {
             root,
             entries,
@@ -447,6 +456,9 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         // Routed through the modal banner, not `status_message` (plan
         // WP3.S4) — `report_error` is the one chokepoint every error
         // report funnels through.
+        Msg::RenameDone { generation, result } => {
+            crate::rename::handle_rename_done(app, generation, result, effects)
+        }
         Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;
@@ -464,7 +476,7 @@ fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 /// success; `MoveUndoPos`/`CreateSnapshot`/adoption acks are fire-and-
 /// forget. Any `Err`/`Fatal` degrades the WHOLE store (plan decision 3) —
 /// never a buffer rollback.
-fn handle_db_event(app: &mut App, evt: DbEvent) {
+fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects) {
     match evt {
         DbEvent::Ok {
             id: op_id,
@@ -481,6 +493,13 @@ fn handle_db_event(app: &mut App, evt: DbEvent) {
             if let Some(doc_id) = app.db_ops.remove(&op_id) {
                 save::handle_materialize_ack(app, doc_id, *mat);
             }
+        }
+        DbEvent::Ok {
+            id: op_id,
+            result: rune_db::OpOutcome::Rename(outcome),
+        } => {
+            app.db_ops.remove(&op_id);
+            crate::rename::handle_rename_ack(app, op_id, *outcome, effects);
         }
         DbEvent::Ok { id: op_id, .. } => {
             app.db_ops.remove(&op_id);

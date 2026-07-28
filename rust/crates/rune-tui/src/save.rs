@@ -144,6 +144,58 @@ fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
     }
 }
 
+/// The draft-naming route (`rename::bind_new`): materialize the buffer to
+/// `path` with `bind_new=true` — an atomic no-clobber `rename_excl` create
+/// whose EEXIST branch refuses and records the winner's bytes
+/// (`materialize_create`).
+///
+/// `trigger_save` cannot be reused here: it reads `doc.file_path`, which is
+/// exactly what a draft does not have yet. And the document is deliberately
+/// NOT bound to `path` up front — a `rename_excl` that loses the race must
+/// leave the draft untitled, or a later ⌘S would overwrite the winner
+/// (§0.1 rung 1). `handle_materialize_ack` performs the bind once the
+/// write actually commits.
+pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
+    let Some(doc) = app.doc(id) else { return };
+    if doc.save_in_flight {
+        return;
+    }
+    let version = doc.buffer.version();
+    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+        return;
+    };
+    let content = doc.buffer.content().to_string();
+    let Some(db) = app.db.as_ref() else { return };
+    // `expect` is unused on the create path (`materialize_create` never
+    // consults it) and `seq` is the live journal position, captured HERE
+    // (§1.4.2/§1.4.8).
+    let seq = app
+        .doc(id)
+        .and_then(|d| d.db.as_ref())
+        .map(|d| d.last_known_seq)
+        .unwrap_or(0);
+    let result = db.store.materialize(db_id, &path, &content, 0, seq, true);
+
+    if let Some(doc) = app.doc_mut(id) {
+        doc.save_in_flight = true;
+        doc.save_pending_version = Some(version);
+        // Remembered so the ack can bind it — see `pending_bind_path`.
+        doc.pending_bind_path = Some(path);
+    }
+    match result {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, id);
+        }
+        Err(e) => {
+            if let Some(doc) = app.doc_mut(id) {
+                doc.save_in_flight = false;
+                doc.pending_bind_path = None;
+            }
+            on_store_failure(app, e.to_string());
+        }
+    }
+}
+
 /// The reaction to a `materialize` ack for `id` (plan WP5.S6): advances
 /// `saved_version`/`DocDb::expect_obs`/`bind_new` on a commit, surfaces each
 /// `MatResult` outcome as status text, and — either way — clears `id`'s
@@ -155,6 +207,18 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
     let pending_version = doc.save_pending_version.take();
 
     if mat.committed {
+        // A committed bind-new create is where an untitled draft finally
+        // gets its path — only now, after the no-clobber publish actually
+        // succeeded (see `bind_new_now`'s docs).
+        if let Some(path) = app.doc_mut(id).and_then(|d| d.pending_bind_path.take()) {
+            if let Some(doc) = app.doc_mut(id) {
+                doc.file_path = Some(path);
+            }
+            if app.active == id {
+                let stem = app.doc(id).map(crate::title::stem_for).unwrap_or_default();
+                app.title.seed(&stem);
+            }
+        }
         if let Some(saved) = &mat.saved
             && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
         {

@@ -20,6 +20,7 @@ pub mod layout;
 pub mod listnav;
 pub mod opentabs;
 pub mod pane;
+pub mod rename;
 pub mod render;
 pub mod runtime;
 pub mod save;

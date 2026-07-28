@@ -155,7 +155,11 @@ pub fn request_close(app: &mut App, id: DocumentId) {
     }
     let Some(doc) = app.doc(id) else { return };
     if doc.is_dirty() {
-        banner::set_modal(
+        // An `Error` already up outranks this prompt; the close intent is
+        // then simply not armed (the user presses `^w` again once the
+        // error is dismissed) — nothing waits on this Guard, unlike the
+        // rename machine's.
+        let _ = banner::set_modal(
             app,
             Modal::Guard(GuardPrompt {
                 doc: id,
@@ -203,6 +207,9 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
         app.pending_save_confirm = None;
     }
+    // The rename machine is one more doc-tagged pending slot to sweep
+    // (plan's transition table: "any | close_now(doc) | Idle").
+    crate::rename::forget_document(app, id);
 
     app.tabs.nav.cursor = app
         .tabs

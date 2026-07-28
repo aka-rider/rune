@@ -116,6 +116,12 @@ pub struct Document {
     /// current (possibly further-edited) version.
     pub save_pending_version: Option<u64>,
     pub save_in_flight: bool,
+    /// The path an in-flight `bind_new` materialize is trying to CREATE
+    /// (`save::bind_new_now`). Deliberately not `file_path`: a create that
+    /// loses the no-clobber race must leave the draft untitled, or a later
+    /// ⌘S would overwrite the winner (§0.1 rung 1). `handle_materialize_ack`
+    /// moves it into `file_path` only once the write actually commits.
+    pub pending_bind_path: Option<PathBuf>,
     /// The render-only dirty cache (CONSTITUTION §1.4.8): `is_dirty` reads
     /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
     /// two trigger points — see `save::recompute_dirty`'s doc comment.
@@ -157,6 +163,7 @@ impl Document {
             saved_version,
             save_pending_version: None,
             save_in_flight: false,
+            pending_bind_path: None,
             is_dirty_cached: false,
             view: None,
             db: None,

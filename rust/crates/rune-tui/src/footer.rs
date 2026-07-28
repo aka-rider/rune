@@ -12,7 +12,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{App, StatusSource};
 use crate::banner;
-use crate::banner::Modal;
+use crate::banner::{GuardKind, Modal};
 use crate::explorer::EXPLORER_BINDINGS;
 use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
@@ -32,7 +32,7 @@ enum Mode<'a> {
     /// The close-confirmation prompt (plan WP5.S3) — outranks everything
     /// below it exactly like `Modal` does, since it's the SAME `App.modal`
     /// slot, just the other variant.
-    Guard,
+    Guard(&'a GuardKind),
     SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
@@ -43,7 +43,7 @@ enum Mode<'a> {
 fn mode(app: &App) -> Mode<'_> {
     match &app.modal {
         Some(Modal::Error(_)) => return Mode::Modal,
-        Some(Modal::Guard(_)) => return Mode::Guard,
+        Some(Modal::Guard(prompt)) => return Mode::Guard(&prompt.kind),
         None => {}
     }
     if app.status_source == StatusSource::SaveError
@@ -104,7 +104,7 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
             Span::styled("  ", styles::footer_hint()),
             Span::styled("[Esc] discard", styles::footer_hint()),
         ],
-        Mode::Guard => guard_spans(),
+        Mode::Guard(kind) => guard_spans(app, kind),
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), styles::error())],
         Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
@@ -118,15 +118,33 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
 /// LABEL` — the SAME consts `banner::handle_guard_key` matches its `s`/`d`
 /// keys against, so this render can never drift from what those keys
 /// actually do (review fix).
-fn guard_spans() -> Vec<Span<'static>> {
+fn guard_spans(app: &App, kind: &GuardKind) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    for opt in banner::DIRTY_CLOSE_OPTIONS {
-        if !spans.is_empty() {
-            spans.push(Span::styled("  ", styles::footer_hint()));
+
+    // A rename collision names its target: "replace <what>?" is a question
+    // the user can answer; a bare `[R]eplace` is not.
+    let options: &[banner::GuardOption] = match kind {
+        GuardKind::DirtyClose => banner::DIRTY_CLOSE_OPTIONS,
+        GuardKind::RenameCollision { target } => {
+            spans.push(Span::styled(
+                format!("{target} already exists  "),
+                styles::footer_hint(),
+            ));
+            // §1.4.10: without a durable store there is nowhere to preserve
+            // the replaced file's bytes, so the option is not offered at
+            // all — an offer the app would then refuse is worse than none.
+            if crate::rename::replace_allowed(app) {
+                banner::RENAME_COLLISION_OPTIONS
+            } else {
+                &[]
+            }
         }
+    };
+
+    for opt in options {
         spans.push(Span::styled(opt.label, styles::footer_key()));
+        spans.push(Span::styled("  ", styles::footer_hint()));
     }
-    spans.push(Span::styled("  ", styles::footer_hint()));
     spans.push(Span::styled(
         banner::DIRTY_CLOSE_CANCEL_LABEL,
         styles::footer_hint(),

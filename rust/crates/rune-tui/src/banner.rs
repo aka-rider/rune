@@ -89,8 +89,17 @@ pub struct GuardPrompt {
     pub kind: GuardKind,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuardKind {
     DirtyClose,
+    /// A rename whose destination already exists (§1.4.4's destructive
+    /// transition). `[R]eplace` preserves the replaced file's bytes as a
+    /// durable blob before destroying it (§1.4.10) — see `rename.rs`.
+    /// `target` is the destination's display name, so the prompt can say
+    /// WHICH file is about to be replaced rather than asking blind.
+    RenameCollision {
+        target: String,
+    },
 }
 
 /// One `[X]abel` option in the dirty-close Guard's footer chord list: `key`
@@ -119,6 +128,15 @@ pub const DIRTY_CLOSE_DISCARD: GuardOption = GuardOption {
 /// `DIRTY_CLOSE_CANCEL_LABEL` below instead.
 pub const DIRTY_CLOSE_OPTIONS: &[GuardOption] = &[DIRTY_CLOSE_SAVE, DIRTY_CLOSE_DISCARD];
 pub const DIRTY_CLOSE_CANCEL_LABEL: &str = "[Esc] Cancel";
+
+/// The rename-collision Guard's only action. `key` is the exact char
+/// `handle_guard_key` matches; `label` is what the footer shows — the same
+/// one-source-of-truth pairing `DIRTY_CLOSE_*` established.
+pub const RENAME_REPLACE: GuardOption = GuardOption {
+    key: 'r',
+    label: "[R]eplace",
+};
+pub const RENAME_COLLISION_OPTIONS: &[GuardOption] = &[RENAME_REPLACE];
 
 /// The banner's private state (plan WP3.S1): a read-only `Document` that is
 /// NOT in `App.documents` and has no tab — `render::draw`'s editor-area
@@ -159,13 +177,53 @@ impl ErrorState {
 /// writer of `App.modal` besides stage-1 key handling below (`Esc`/`c`
 /// clearing it) — every caller that wants to raise a modal goes through
 /// this or `report_error`, never `app.modal = Some(...)` directly.
-pub fn set_modal(app: &mut App, modal: Modal) {
+///
+/// Returns whether the modal was actually raised. `#[must_use]`, and
+/// load-bearing rather than informational: a caller that raises a
+/// `RenameCollision` Guard and then waits on the user's answer would, if
+/// the Guard were silently dropped (an `Error` already up outranks it),
+/// wait forever on an invisible prompt while every keystroke went
+/// somewhere the user did not expect. `rename.rs` enters its `Collision`
+/// state only when this returns `true`.
+///
+/// Deliberately NOT solved by ranking `RenameCollision` above `Error`:
+/// `set_modal` replaces rather than stacks, so outranking `Error` would
+/// destroy an unread error — the exact inversion of the rule this
+/// function's own docs state.
+#[must_use]
+pub fn set_modal(app: &mut App, modal: Modal) -> bool {
     let should_replace = app
         .modal
         .as_ref()
         .is_none_or(|existing| modal.priority() >= existing.priority());
     if should_replace {
+        clear_modal(app);
         app.modal = Some(modal);
+    }
+    should_replace
+}
+
+/// The SOLE writer of `app.modal = None` — every dismissal path routes
+/// here, including `set_modal`'s own replace step above.
+///
+/// Its reason to exist is the global invariant `rename.rs` depends on:
+/// `matches!(app.rename, Collision{..})` ⟺ a `RenameCollision` Guard is up.
+/// `set_modal` returning `bool` closes only half of that (the raise side);
+/// without this, a `report_error` at any LATER tick would displace a live
+/// Guard and strand the rename machine waiting on a prompt that is no
+/// longer on screen. Notifying `rename::on_prompt_dismissed` from the one
+/// place removal can happen closes the other half.
+pub fn clear_modal(app: &mut App) {
+    let was_collision = matches!(
+        &app.modal,
+        Some(Modal::Guard(GuardPrompt {
+            kind: GuardKind::RenameCollision { .. },
+            ..
+        }))
+    );
+    app.modal = None;
+    if was_collision {
+        crate::rename::on_prompt_dismissed(app);
     }
 }
 
@@ -173,7 +231,9 @@ pub fn set_modal(app: &mut App, modal: Modal) {
 /// WP3.S1/S4) instead of writing `app.status_message` directly — a full
 /// banner instead of a footer-line message.
 pub fn report_error(app: &mut App, text: impl Into<String>) {
-    set_modal(app, Modal::Error(Box::new(ErrorState::new(&text.into()))));
+    // An `Error` outranks everything, so this always succeeds — the bool is
+    // meaningful only for callers that raise a LOWER-priority modal.
+    let _ = set_modal(app, Modal::Error(Box::new(ErrorState::new(&text.into()))));
 }
 
 /// The banner's rendered height for a `frame_height`-tall terminal: the
@@ -252,14 +312,14 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// everything else is a consumed no-op.
 fn handle_error_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     match key.code {
-        KeyCode::Escape => app.modal = None,
+        KeyCode::Escape => clear_modal(app),
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c') => {
             if let Some(Modal::Error(state)) = &app.modal {
                 effects
                     .raw
                     .push(osc52_copy(state.doc.buffer.content().as_bytes()));
             }
-            app.modal = None;
+            clear_modal(app);
         }
         KeyCode::Up => scroll(app, -1),
         KeyCode::Down => scroll(app, 1),
@@ -283,21 +343,55 @@ fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     };
     let doc = prompt.doc;
+    // `Esc` cancels EVERY Guard kind identically — one arm, hoisted, so a
+    // later kind can never forget to be cancellable.
+    if key.code == KeyCode::Escape {
+        clear_modal(app);
+        return;
+    }
+    match &prompt.kind {
+        GuardKind::DirtyClose => handle_dirty_close_key(app, doc, key, effects),
+        GuardKind::RenameCollision { .. } => handle_rename_collision_key(app, key),
+    }
+}
+
+/// The dirty-close arm, unchanged from WP5 apart from routing its modal
+/// clears through `clear_modal`.
+fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     match key.code {
-        KeyCode::Escape => app.modal = None,
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            app.modal = None;
+            clear_modal(app);
             crate::save::trigger_save(app, doc, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            app.modal = None;
+            clear_modal(app);
             crate::workspace::close_now(app, doc);
         }
         _ => {}
     }
+}
+
+/// `r`/`R` confirms the destructive replace — but only when there is a
+/// durable store to capture the displaced bytes into (§1.4.10). Without
+/// one the key is a consumed no-op with an explanation, and the prompt
+/// STAYS up: silently doing nothing would look like a dropped keypress,
+/// and clearing it would look like the replace happened.
+fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
+    let KeyCode::Char(c) = key.code else { return };
+    if !c.eq_ignore_ascii_case(&RENAME_REPLACE.key) {
+        return;
+    }
+    if !crate::rename::replace_allowed(app) {
+        app.set_status(
+            "cannot replace \u{2014} recovery store unavailable",
+            crate::app::StatusSource::Other,
+        );
+        return;
+    }
+    crate::rename::replace_confirmed(app);
 }
 
 /// The modal document's own viewport height, as a page-scroll amount — `1`
@@ -368,124 +462,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     }
 }
 
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn error_state_puts_the_first_line_as_the_headline_and_the_rest_as_body() {
-        let state = ErrorState::new("boom\n\nsecond line\nthird line");
-        // `text`'s own first line becomes the headline; EVERYTHING after
-        // its first `\n` — including the blank line already present in
-        // this input — is the body, carried verbatim (plan WP3.S1).
-        assert_eq!(
-            state.doc.buffer.content(),
-            "\u{26A0} boom\n\n\nsecond line\nthird line"
-        );
-    }
-
-    #[test]
-    fn error_state_single_line_has_an_empty_body() {
-        let state = ErrorState::new("boom");
-        assert_eq!(state.doc.buffer.content(), "\u{26A0} boom\n\n");
-    }
-
-    #[test]
-    fn error_state_is_read_only_and_unbound() {
-        let state = ErrorState::new("boom");
-        assert!(state.doc.read_only);
-        assert!(state.doc.file_path.is_none());
-        assert!(state.doc.db.is_none());
-        assert!(!state.doc.focused);
-    }
-
-    #[test]
-    fn set_modal_replaces_an_equal_or_lower_priority_modal() {
-        let mut app = crate::app::App::new(
-            rune_core::buffer::Buffer::new("hi"),
-            None,
-            std::sync::Arc::new(rune_vfs::Mem::new()),
-            None,
-        );
-        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("first"))));
-        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("second"))));
-        match app.modal {
-            Some(Modal::Error(state)) => {
-                assert!(state.doc.buffer.content().contains("second"));
-            }
-            Some(Modal::Guard(_)) => panic!("expected the Error modal, not a Guard"),
-            None => panic!("expected a modal to be set"),
-        }
-    }
-
-    /// A fresh `Error` outranks an existing `Guard` (plan Risks: an error is
-    /// never suppressed by a stale close prompt) — `priority`'s `Error: 10 >
-    /// Guard: 5`.
-    #[test]
-    fn set_modal_replaces_an_existing_guard_with_a_new_error() {
-        let mut app = crate::app::App::new(
-            rune_core::buffer::Buffer::new("hi"),
-            None,
-            std::sync::Arc::new(rune_vfs::Mem::new()),
-            None,
-        );
-        let id = app.active;
-        set_modal(
-            &mut app,
-            Modal::Guard(GuardPrompt {
-                doc: id,
-                kind: GuardKind::DirtyClose,
-            }),
-        );
-        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
-        match app.modal {
-            Some(Modal::Error(state)) => {
-                assert!(state.doc.buffer.content().contains("boom"));
-            }
-            Some(Modal::Guard(_)) => panic!("a fresh Error must replace an existing Guard"),
-            None => panic!("expected a modal to be set"),
-        }
-    }
-
-    /// A `Guard` raised while an `Error` is already up must NOT silently
-    /// displace it (plan Risks, "Banner reentrancy") — `set_modal` refuses
-    /// since `Guard`'s priority (5) is below the existing `Error`'s (10).
-    #[test]
-    fn set_modal_refuses_to_replace_an_existing_error_with_a_guard() {
-        let mut app = crate::app::App::new(
-            rune_core::buffer::Buffer::new("hi"),
-            None,
-            std::sync::Arc::new(rune_vfs::Mem::new()),
-            None,
-        );
-        let id = app.active;
-        set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
-        set_modal(
-            &mut app,
-            Modal::Guard(GuardPrompt {
-                doc: id,
-                kind: GuardKind::DirtyClose,
-            }),
-        );
-        match app.modal {
-            Some(Modal::Error(state)) => {
-                assert!(state.doc.buffer.content().contains("boom"));
-            }
-            Some(Modal::Guard(_)) => panic!("a Guard must never displace an existing Error"),
-            None => panic!("expected the Error modal to still be set"),
-        }
-    }
-
-    #[test]
-    fn report_error_sets_the_modal() {
-        let mut app = crate::app::App::new(
-            rune_core::buffer::Buffer::new("hi"),
-            None,
-            std::sync::Arc::new(rune_vfs::Mem::new()),
-            None,
-        );
-        report_error(&mut app, "boom");
-        assert!(app.modal.is_some());
-    }
-}
+// This module's unit tests moved to `tests/banner.rs` (§1.6: the Guard
+// plumbing pushed this file past the 500-line budget). Every item they
+// exercise — `Modal`, `ErrorState`, `set_modal`, `clear_modal`,
+// `GuardPrompt`/`GuardKind` — is already public.

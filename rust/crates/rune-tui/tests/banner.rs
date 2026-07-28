@@ -5,7 +5,12 @@
 //! reaches the editor's own buffer), the banner renders above the footer
 //! with its height capped at half the frame, and the footer's modal-mode
 //! hint shows `[C]opy`.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use std::sync::Arc;
 
@@ -290,4 +295,128 @@ fn footer_shows_copy_hint_in_modal_mode() {
         text.contains("[C]opy"),
         "expected '[C]opy' in the modal-mode footer text, got {text:?}"
     );
+}
+
+// ── Unit tests moved out of `banner.rs` itself (§1.6: the Guard plumbing
+// pushed that file past the 500-line budget). The priority tests keep their
+// original outcomes — only `set_modal`'s numbers decide them, and those did
+// not change — but each now also asserts the `bool` `set_modal` returns,
+// which is exactly what `rename.rs` reads to avoid waiting on a prompt that
+// was never raised.
+
+use rune_tui::banner::{ErrorState, GuardKind, GuardPrompt, Modal, clear_modal, set_modal};
+
+fn bare_app() -> App {
+    App::new(Buffer::new("hi"), None, Arc::new(Mem::new()), None)
+}
+
+fn error_modal(text: &str) -> Modal {
+    Modal::Error(Box::new(ErrorState::new(text)))
+}
+
+fn guard_modal(app: &App, kind: GuardKind) -> Modal {
+    Modal::Guard(GuardPrompt {
+        doc: app.active,
+        kind,
+    })
+}
+
+fn error_text(app: &App) -> String {
+    match &app.modal {
+        Some(Modal::Error(state)) => state.doc.buffer.content().to_string(),
+        Some(Modal::Guard(_)) => panic!("expected the Error modal, not a Guard"),
+        None => panic!("expected a modal to be set"),
+    }
+}
+
+#[test]
+fn error_state_puts_the_first_line_as_the_headline_and_the_rest_as_body() {
+    let state = ErrorState::new("boom\n\nsecond line\nthird line");
+    assert_eq!(
+        state.doc.buffer.content(),
+        "\u{26A0} boom\n\n\nsecond line\nthird line"
+    );
+}
+
+#[test]
+fn error_state_single_line_has_an_empty_body() {
+    let state = ErrorState::new("boom");
+    assert_eq!(state.doc.buffer.content(), "\u{26A0} boom\n\n");
+}
+
+#[test]
+fn error_state_is_read_only_and_unbound() {
+    let state = ErrorState::new("boom");
+    assert!(state.doc.read_only);
+    assert!(state.doc.file_path.is_none());
+    assert!(state.doc.db.is_none());
+    assert!(!state.doc.focused);
+}
+
+#[test]
+fn set_modal_replaces_an_equal_or_lower_priority_modal() {
+    let mut app = bare_app();
+    assert!(set_modal(&mut app, error_modal("first")));
+    assert!(
+        set_modal(&mut app, error_modal("second")),
+        "a fresh Error must never be suppressed by a stale one"
+    );
+    assert!(error_text(&app).contains("second"));
+}
+
+/// A fresh `Error` outranks an existing `Guard` — `priority`'s
+/// `Error: 10 > Guard: 5`.
+#[test]
+fn set_modal_replaces_an_existing_guard_with_a_new_error() {
+    let mut app = bare_app();
+    let g = guard_modal(&app, GuardKind::DirtyClose);
+    assert!(set_modal(&mut app, g));
+    assert!(set_modal(&mut app, error_modal("boom")));
+    assert!(error_text(&app).contains("boom"));
+}
+
+/// A `Guard` raised while an `Error` is up must NOT displace it — and the
+/// `false` return is what lets the caller notice.
+#[test]
+fn set_modal_refuses_to_replace_an_existing_error_with_a_guard() {
+    let mut app = bare_app();
+    assert!(set_modal(&mut app, error_modal("boom")));
+    let g = guard_modal(&app, GuardKind::DirtyClose);
+    assert!(
+        !set_modal(&mut app, g),
+        "a suppressed Guard must report that it was suppressed"
+    );
+    assert!(error_text(&app).contains("boom"));
+}
+
+/// Hazard 1, the raise side: a `RenameCollision` Guard raised while an
+/// `Error` is up is suppressed and says so. `rename.rs` reads exactly this
+/// bool to stay `Idle` instead of waiting on an invisible prompt.
+#[test]
+fn a_rename_collision_guard_is_suppressed_by_a_live_error_and_reports_it() {
+    let mut app = bare_app();
+    assert!(set_modal(&mut app, error_modal("boom")));
+    let g = guard_modal(
+        &app,
+        GuardKind::RenameCollision {
+            target: "b.md".to_string(),
+        },
+    );
+    assert!(!set_modal(&mut app, g));
+    assert!(error_text(&app).contains("boom"));
+}
+
+#[test]
+fn report_error_sets_the_modal() {
+    let mut app = bare_app();
+    banner::report_error(&mut app, "boom");
+    assert!(app.modal.is_some());
+}
+
+#[test]
+fn clear_modal_empties_the_slot() {
+    let mut app = bare_app();
+    banner::report_error(&mut app, "boom");
+    clear_modal(&mut app);
+    assert!(app.modal.is_none());
 }

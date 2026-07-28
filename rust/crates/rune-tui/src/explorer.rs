@@ -241,6 +241,32 @@ fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
         .push(load_dir_cmd(vfs, root, DirCause::Nav, generation));
 }
 
+/// Re-lists the Explorer when `path`'s parent IS its current root — the
+/// post-rename side effect (a `pub(crate)` sibling of the private
+/// `request_dir`). Uses `DirCause::Refresh` so the user's selected entry is
+/// preserved by name rather than snapping back to the top: a rename is not
+/// a navigation.
+///
+/// A no-op when the Explorer was never loaded (nothing on screen to go
+/// stale) or when the renamed file lives somewhere else.
+pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
+    if app.explorer.entries.is_empty() {
+        return; // never loaded; nothing to refresh
+    }
+    let Some(parent) = path.parent() else { return };
+    if parent != app.explorer.root {
+        return;
+    }
+    app.explorer.loading = true;
+    app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
+    let generation = app.explorer.request_generation;
+    let vfs = Arc::clone(&app.vfs);
+    let root = app.explorer.root.clone();
+    effects
+        .cmds
+        .push(load_dir_cmd(vfs, root, DirCause::Refresh, generation));
+}
+
 /// Reacts to `Msg::DirLoaded` (plan WP4.S4), routed from `app::update_
 /// inner`. A `generation` that no longer matches `app.explorer.request_
 /// generation` is a reply to a SUPERSEDED request (a later `ReadDir` was

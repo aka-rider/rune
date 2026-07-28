@@ -82,6 +82,15 @@ pub enum Msg {
         cause: DirCause,
         generation: u32,
     },
+    /// A rename/draft-create `Cmd` completed (the no-store route). Carries
+    /// its own `generation` so a reply to a rename the user has since
+    /// dismissed and restarted is dropped rather than applied to the fresh
+    /// one — `spawn_cmd` has no cancellation, so this echo is the only
+    /// thing standing between a late reply and a corrupted state.
+    RenameDone {
+        generation: u32,
+        result: Result<rune_db::RenameOutcome, String>,
+    },
     Error(String),
     Quit,
 }
@@ -117,6 +126,10 @@ pub enum CmdKind {
     /// The 2s snapshot-autosave debounce timer (plan WP5.S6). Sleeps; never
     /// run it inline.
     SnapshotDebounce,
+    /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
+    /// draft create) for the no-store route — the §1.4.1 no-clobber atomic
+    /// publish. Off-thread per §5.4.
+    Rename,
     /// `vfs.read_dir` for the Explorer pane (plan WP4.S4). Not a sleeping/
     /// forking `Cmd` like the three above, but still off-thread per §5.4 so
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
