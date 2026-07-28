@@ -14,6 +14,7 @@ use rune_core::buffer::{Buffer, BufferError};
 
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
+use crate::db;
 use crate::document::DocumentId;
 use crate::help;
 use crate::pane::Pane;
@@ -61,14 +62,15 @@ pub fn open_path(app: &mut App, path: &Path) {
 
     let id = app.open_document(buffer);
     if let Some(doc) = app.doc_mut(id) {
-        doc.bind_path(resolved);
+        doc.bind_path(resolved.clone());
     }
+    // Hydrates `id` through the app-wide recovery store (plan WP6, closing
+    // the gap TODO.md's "per-doc recovery hydration for explorer-opened
+    // documents" entry records): non-blocking, ack-driven via
+    // `app::handle_db_event`'s `Load` arm — `Document::db` stays `None`
+    // until that ack lands (or forever, if this store is absent/degraded).
+    db::load_document(app, id, &resolved);
     switch_to(app, id);
-    // Assumption A1 (plan): an Explorer-opened document has no per-doc
-    // recovery journal yet — `Document::db` stays `None` from `App::
-    // open_document`. See TODO.md, "per-doc recovery hydration for
-    // explorer-opened documents" (dated 2026-07-27).
-    app.set_status("no crash recovery for this tab yet", StatusSource::Other);
 }
 
 fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
