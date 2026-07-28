@@ -70,7 +70,7 @@ excluded_reason() {
             echo "same list-marker gap as lists.md, plus Go pads a long CJK-containing line's remaining width with literal TAB bytes instead of spaces (reproducible, root cause not yet identified)"
             ;;
         emoji.md)
-            echo "same list-marker gap as lists.md, plus Rust's ZWJ family-emoji/skin-tone-modifier grapheme handling visibly corrupts the text (recorded in TODO.md)"
+            echo "same list-marker gap as lists.md (the ZWJ/skin-tone-modifier corruption this fixture also caught is fixed — see TODO.md)"
             ;;
         *)
             return 1

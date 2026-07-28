@@ -187,9 +187,3 @@ of how each side renders:
   spaces. Root cause not yet identified (a padding routine's off-by-N
   after wide-character width accounting is the leading suspect); flagged
   for follow-up, not fixed here.
-- **Rust corrupts ZWJ emoji sequences (`emoji.md`, excluded from
-  `parity-grid`, tracked in the repo's root `TODO.md`).** A ZWJ family
-  emoji (`👨‍👩‍👧‍👦`) and skin-tone-modified emoji (`👋🏽`, `👍🏿`) render with
-  extra stray joiner/space fragments and visible reordering in Rust's
-  capture — a genuine grapheme-cluster-segmentation defect, not a cosmetic
-  difference. Go renders these correctly.

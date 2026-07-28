@@ -30,13 +30,19 @@ mod query;
 
 pub use query::WrapSnapshot;
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::syntax::{SyntaxLine, SyntaxSpan};
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared (in the Go original) by the wrap/coordinate layer and the
 /// cell renderer. Rule: `\n`/`\r` occupy no column; every other rune
 /// reported zero-width is clamped to 1 (this is a DISPLAY-width decision
-/// only — buffer bytes stay verbatim, §1.4.5).
+/// only — buffer bytes stay verbatim, §1.4.5). The 1-clamp exists so a LONE
+/// zero-width rune (an isolated control char, a bare combining mark with no
+/// base) still gets its own reachable caret column — see `grapheme_width`
+/// below for why that reasoning does NOT extend to a rune that's part of a
+/// larger grapheme cluster.
 pub fn control_aware_width(r: char) -> usize {
     if r == '\n' || r == '\r' {
         return 0;
@@ -53,6 +59,67 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
         return 4 - (current_width % 4);
     }
     control_aware_width(r)
+}
+
+/// The display width of a WHOLE grapheme cluster (`unicode_segmentation::
+/// graphemes`) — the second half of the shared width chokepoint alongside
+/// `control_aware_width`/`rune_width_with_tab` above, used by BOTH
+/// `wrap_line`'s greedy line-breaking (below) and `rune-tui`'s
+/// `render::push_grapheme_cells`/`WrapSnapshot::visual_col`/
+/// `byte_col_from_visual` (`query.rs`) — every place that walks text one
+/// visual unit at a time, not one rune at a time, must agree on this
+/// number or the caret lands on the wrong cell (this module's own
+/// load-bearing property).
+///
+/// A single-rune cluster (plain ASCII, CJK, an isolated control char — the
+/// overwhelming common case) delegates to `control_aware_width` unchanged.
+///
+/// A MULTI-rune cluster (a ZWJ-joined emoji sequence, a skin-tone-modified
+/// emoji, a base char plus a combining mark) takes the MAX of each rune's
+/// RAW `unicode_width::UnicodeWidthChar::width` — never the SUM, and never
+/// `control_aware_width`'s 1-clamp per rune. Both would overcount: a real
+/// terminal renders the WHOLE cluster as one glyph occupying as many
+/// columns as its single widest member needs (confirmed empirically
+/// against a real tmux capture, `scripts/parity/fixtures/emoji.md` — a
+/// summed or per-rune-clamped width reserves MORE columns than the
+/// terminal actually consumes, leaving a visible gap of blank columns
+/// before whatever follows on the row, the residual divergence a first
+/// attempt at this fix left behind). `control_aware_width`'s 1-clamp exists
+/// so a LONE zero-width rune still gets a reachable caret column, which
+/// doesn't apply inside a cluster either — it already has exactly one
+/// caret position, at its first byte, regardless of how many joiner/
+/// modifier/combining runes follow; a joiner contributing 0 to the MAX is
+/// correct precisely because the cluster's OWN width comes from its widest
+/// member, not from that rune. The result is still clamped to a minimum of
+/// 1 overall (never zero), so a real buffer byte always renders as at
+/// least one cell even for the pathological all-zero-width cluster
+/// (`CELL-OFFSET`'s invariant, `rune-fuzz`).
+pub fn grapheme_width(cluster: &str) -> usize {
+    let mut chars = cluster.chars();
+    let Some(first) = chars.next() else {
+        return 0;
+    };
+    if chars.next().is_none() {
+        return control_aware_width(first);
+    }
+    cluster
+        .chars()
+        .filter_map(unicode_width::UnicodeWidthChar::width)
+        .max()
+        .unwrap_or(0)
+        .max(1)
+}
+
+/// `grapheme_width`'s tab-aware counterpart, mirroring `rune_width_with_tab`
+/// — a tab is always its own single-rune cluster (grapheme segmentation
+/// never joins a control char to a neighboring rune), so the two functions
+/// agree exactly on every non-tab cluster and this only adds the 4-stop
+/// tab-expansion case on top.
+pub fn grapheme_width_with_tab(cluster: &str, current_width: usize) -> usize {
+    if cluster == "\t" {
+        return 4 - (current_width % 4);
+    }
+    grapheme_width(cluster)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -137,15 +204,15 @@ impl WrapMap {
 
             let mut i = 0usize;
             while let Some(rest) = remain.get(i..) {
-                let Some(ch) = rest.chars().next() else {
+                let Some(cluster) = rest.graphemes(true).next() else {
                     break;
                 };
-                let size = ch.len_utf8();
-                let rw = rune_width_with_tab(ch, curr_w);
+                let size = cluster.len();
+                let rw = grapheme_width_with_tab(cluster, curr_w);
                 if curr_w + rw > width && byte_len > 0 {
                     break;
                 }
-                if ch == ' ' || ch == '\t' {
+                if cluster == " " || cluster == "\t" {
                     last_space_bytes = Some(byte_len + size);
                 }
                 curr_w += rw;
@@ -154,7 +221,7 @@ impl WrapMap {
             }
 
             if byte_len == 0 && !remain.is_empty() {
-                byte_len = remain.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                byte_len = remain.graphemes(true).next().map(str::len).unwrap_or(1);
             } else if byte_len < remain.len()
                 && let Some(sp) = last_space_bytes
                 && sp > 0

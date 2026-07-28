@@ -1946,6 +1946,7 @@ dependencies = [
  "rune-tui",
  "rune-vfs",
  "termina",
+ "unicode-segmentation",
 ]
 
 [[package]]

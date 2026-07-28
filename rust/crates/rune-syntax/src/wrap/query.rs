@@ -7,7 +7,9 @@
 //! needs it (`visual_col`/`byte_col_from_visual`), never cached here, so a
 //! `WrapSnapshot` never owns an O(document) allocation of its own.
 
-use super::{WrapSegment, rune_width_with_tab};
+use unicode_segmentation::UnicodeSegmentation;
+
+use super::{WrapSegment, grapheme_width_with_tab};
 use crate::syntax::SyntaxSpan;
 use rune_core::coords::{SyntaxPoint, WrapPoint};
 
@@ -139,11 +141,11 @@ impl WrapSnapshot {
         let mut visual = 0usize;
         let mut bytes = 0usize;
         while bytes < text.len() && bytes < byte_col {
-            let Some(ch) = text.get(bytes..).and_then(|s| s.chars().next()) else {
+            let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
                 break;
             };
-            visual += rune_width_with_tab(ch, visual);
-            bytes += ch.len_utf8();
+            visual += grapheme_width_with_tab(cluster, visual);
+            bytes += cluster.len();
         }
         visual
     }
@@ -156,15 +158,15 @@ impl WrapSnapshot {
         let mut visual = 0usize;
         let mut bytes = 0usize;
         while bytes < text.len() {
-            let Some(ch) = text.get(bytes..).and_then(|s| s.chars().next()) else {
+            let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
                 break;
             };
-            let rw = rune_width_with_tab(ch, visual);
+            let rw = grapheme_width_with_tab(cluster, visual);
             if visual + rw > visual_col {
                 break;
             }
             visual += rw;
-            bytes += ch.len_utf8();
+            bytes += cluster.len();
         }
         bytes
     }

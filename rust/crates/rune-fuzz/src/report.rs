@@ -100,12 +100,13 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
     out
 }
 
-/// One line per row, joining each `Cell.ch` — the rendered frame at the
-/// violating step.
+/// One line per row, joining each `Cell.text` (a whole grapheme cluster,
+/// not necessarily one codepoint) — the rendered frame at the violating
+/// step.
 fn render_frame(cells: &[Vec<Cell>]) -> String {
     let mut out = String::new();
     for row in cells {
-        let line: String = row.iter().map(|c| c.ch).collect();
+        let line: String = row.iter().map(|c| c.text.as_str()).collect();
         out.push_str(&line);
         out.push('\n');
     }

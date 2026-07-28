@@ -11,21 +11,28 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier as RtModifier, Style};
 use ratatui::widgets::{Block, BorderType};
+use unicode_segmentation::UnicodeSegmentation;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
 use rune_syntax::ScopeId;
 use rune_syntax::SyntaxSpan;
-use rune_syntax::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
+use rune_syntax::wrap::{WrapSegment, control_aware_width, grapheme_width, rune_width_with_tab};
 
 use crate::app::App;
 use crate::banner;
 use crate::pane::Pane;
 use crate::theme::Theme;
 
-/// One visible terminal cell, with its buffer-byte provenance. `-1` marks a
-/// cell with no direct buffer correspondence — decorative/synthetic (port of
+/// One visible terminal cell, with its buffer-byte provenance. `text` holds
+/// the cell's WHOLE grapheme cluster (`unicode_segmentation::graphemes`),
+/// not a single `char`: a ZWJ family emoji or a skin-tone-modified emoji is
+/// several `char`s (joiner/modifier codepoints included) that together form
+/// ONE user-perceived character occupying ONE cell — see `push_grapheme_
+/// cells`'s docs for why splitting a cluster across multiple `Cell`s
+/// corrupts the terminal output. `-1` marks a cell with no direct buffer
+/// correspondence — decorative/synthetic (port of
 /// `pkg/editor/display/cellmap.go`'s `CellMapping` sentinel, reused here for
 /// the same reason: a synthetic EOL cursor cell still carries its actual
 /// cursor byte offset, never `-1`, since it DOES have a precise buffer
@@ -33,7 +40,7 @@ use crate::theme::Theme;
 /// never produces one).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
-    pub ch: char,
+    pub text: String,
     pub width: u8,
     pub style: Style,
     pub buf_offset: i64,
@@ -51,15 +58,16 @@ pub fn style_for(theme: &Theme, id: ScopeId) -> Style {
 
 /// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
 /// "control picture" glyph (`U+2400..=U+2421`) so a raw control byte never
-/// reaches `ratatui::buffer::Cell::set_char`. ratatui-core's `cell_width()`
+/// reaches `ratatui::buffer::Cell::set_symbol`. ratatui-core's `cell_width()`
 /// `debug_assert!`s that a single-byte symbol is never
 /// `u8::is_ascii_control` (`cell_width.rs:36`) — feeding it a literal `\r`,
 /// `\x07`, `\x0c`, etc. panics a debug build the instant that cell is diffed
 /// (an unsaved buffer lost, with no recovery store in Phase 1) and silently
 /// corrupts the row in a release build. `\n`/`\r` and `\t` are handled
-/// separately in `push_char_cells` below and never reach this function; any
-/// other Unicode control category (e.g. C1, `0x80..=0x9f`) has no assigned
-/// control-picture glyph and falls back to the replacement character.
+/// separately in `push_grapheme_cells` below and never reach this function;
+/// any other Unicode control category (e.g. C1, `0x80..=0x9f`) has no
+/// assigned control-picture glyph and falls back to the replacement
+/// character.
 fn control_placeholder(ch: char) -> char {
     match ch as u32 {
         0x00..=0x1f => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{FFFD}'),
@@ -69,7 +77,7 @@ fn control_placeholder(ch: char) -> char {
 }
 
 /// The ONE width chokepoint `segment_cells` uses to advance its running
-/// visual column — the exact same functions (`rune_width_with_tab`,
+/// visual column — built on the exact same functions (`rune_width_with_tab`,
 /// `control_aware_width`) `rune_syntax::wrap` uses for its own greedy line
 /// breaking and for `WrapSnapshot::visual_col`/`byte_col_from_visual`. If
 /// this ever drifted from wrap's width math, a row's `Cell` columns would no
@@ -78,6 +86,36 @@ fn control_placeholder(ch: char) -> char {
 /// after "abc" instead of on "a" for `"\tabc"` if tabs were treated as
 /// width 1 here but width-to-next-4-stop there).
 ///
+/// Operates on ONE GRAPHEME CLUSTER at a time (`unicode_segmentation::
+/// graphemes(text, true)`, called by `segment_cells` below), not one `char`
+/// — a ZWJ family emoji (`👨‍👩‍👧‍👦`, 7 codepoints joined by U+200D) or a
+/// skin-tone-modified emoji (`👋🏽`, base + Fitzpatrick modifier) is many
+/// `char`s but ONE user-perceived character. Splitting it across multiple
+/// `Cell`s used to corrupt the display: `ratatui::buffer::Buffer`'s own
+/// diffing (`BufferDiff`, ratatui-core) treats any cell whose `cell_width()`
+/// (derived from whatever's actually stored in that buffer position) is `>
+/// 1` as covering the NEXT `cell_width() - 1` columns too, and silently
+/// SKIPS diffing/redrawing them — "we're assuming buffers are well-formed,
+/// that is no double-width cell is followed by a non-blank cell" (ratatui's
+/// own `Buffer::diff_iter` docs). Emitting each ZWJ-sequence codepoint as
+/// its own `Cell` put a REAL (not blank) codepoint in exactly the column
+/// ratatui's diffing treats as a wide cell's hidden continuation — that
+/// codepoint's bytes never reach the real terminal, and every subsequent
+/// column on the row shifts, which is exactly the "stray joiner/emoji
+/// fragments" and "extra spaces inserted mid-sequence" corruption the
+/// parity harness caught. `blit` (below) closes the other half: it
+/// explicitly resets the buffer cells a wide `Cell` covers, matching
+/// `Buffer::set_stringn`'s own reset loop, so ratatui's well-formedness
+/// assumption actually holds for cells THIS code writes directly via
+/// `cell_mut` (which, unlike `set_string`, does no such reset on its own).
+///
+/// `visual_col` bookkeeping for a MULTI-rune cluster comes from `rune_md::
+/// wrap::grapheme_width` — the exact same function `wrap_line`'s own greedy
+/// line-breaking and `WrapSnapshot::visual_col`/`byte_col_from_visual` call
+/// for the same cluster — so the shared-chokepoint property (wrap's width
+/// math and render's width math must stay identical) is one function call,
+/// not two independently-written sums that merely happen to agree today.
+///
 /// `\n`/`\r` are dropped entirely — zero cells, zero width — matching Go's
 /// `cell.go:79,106` (`if r == '\n' || r == '\r' { continue }`) and
 /// `control_aware_width`'s own `0` for them. `\t` expands into `width`
@@ -85,60 +123,73 @@ fn control_placeholder(ch: char) -> char {
 /// the caret can land on any of the tab's columns and still map back to the
 /// tab byte; `width` is computed against `*visual_col`, so it lands on the
 /// same 4-stop boundary `rune_width_with_tab` would compute for wrap
-/// breaking or cursor coordinate conversion. Every other control char is
-/// replaced with a safe placeholder glyph (`control_placeholder`) at its
-/// `control_aware_width` (always `1` for a control char — no width change,
-/// only a render-safety substitution).
-fn push_char_cells(
+/// breaking or cursor coordinate conversion. A single non-tab/newline
+/// control char is replaced with a safe placeholder glyph
+/// (`control_placeholder`) at its `control_aware_width` (always `1` — no
+/// width change, only a render-safety substitution). Neither case can ever
+/// apply to a genuine multi-codepoint cluster (grapheme segmentation never
+/// joins a control char to a neighboring one), so both are single-char
+/// fast paths ahead of the generic (single- or multi-codepoint) case.
+fn push_grapheme_cells(
     cells: &mut Vec<Cell>,
     visual_col: &mut usize,
-    ch: char,
+    grapheme: &str,
     buf_offset: i64,
     style: Style,
 ) {
-    match ch {
-        '\n' | '\r' => {}
-        '\t' => {
-            let width = rune_width_with_tab(ch, *visual_col);
-            for _ in 0..width {
+    let mut chars = grapheme.chars();
+    let Some(first) = chars.next() else {
+        return;
+    };
+    if chars.next().is_none() {
+        match first {
+            '\n' | '\r' => return,
+            '\t' => {
+                let width = rune_width_with_tab(first, *visual_col);
+                for _ in 0..width {
+                    cells.push(Cell {
+                        text: " ".to_string(),
+                        width: 1,
+                        style,
+                        buf_offset,
+                    });
+                }
+                *visual_col += width;
+                return;
+            }
+            _ if first.is_control() => {
+                let width = control_aware_width(first);
                 cells.push(Cell {
-                    ch: ' ',
-                    width: 1,
+                    text: control_placeholder(first).to_string(),
+                    width: width as u8,
                     style,
                     buf_offset,
                 });
+                *visual_col += width;
+                return;
             }
-            *visual_col += width;
-        }
-        _ if ch.is_control() => {
-            let width = control_aware_width(ch);
-            cells.push(Cell {
-                ch: control_placeholder(ch),
-                width: width as u8,
-                style,
-                buf_offset,
-            });
-            *visual_col += width;
-        }
-        _ => {
-            let width = control_aware_width(ch);
-            cells.push(Cell {
-                ch,
-                width: width as u8,
-                style,
-                buf_offset,
-            });
-            *visual_col += width;
+            _ => {}
         }
     }
+
+    let width = grapheme_width(grapheme);
+    cells.push(Cell {
+        text: grapheme.to_string(),
+        width: width as u8,
+        style,
+        buf_offset,
+    });
+    *visual_col += width;
 }
 
 /// One wrap segment's spans -> its `Cell` row. A `Substituted` span maps
-/// each char through its `cell_map` (its text is NOT byte-for-byte its
-/// buffer range — delimiters were dropped); an `Identical` span walks
-/// `text` directly from its `range`'s start since its text IS byte-for-byte
-/// its buffer range. `visual_col` accumulates across the WHOLE segment (a
-/// wrap row), reset to `0` at the segment's start — the same
+/// each GRAPHEME CLUSTER through its `cell_map` (its text is NOT
+/// byte-for-byte its buffer range — delimiters were dropped), using the
+/// cluster's FIRST char's offset (`push_grapheme_cells`'s docs: a cluster is
+/// one visual unit, so it carries one `buf_offset`); an `Identical` span
+/// walks `text` directly from its `range`'s start since its text IS
+/// byte-for-byte its buffer range. `visual_col` accumulates across the WHOLE
+/// segment (a wrap row), reset to `0` at the segment's start — the same
 /// per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col` use, so
 /// a tab's width agrees with both regardless of which span it's in.
 pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cell> {
@@ -149,26 +200,29 @@ pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cel
         match sp {
             SyntaxSpan::Substituted { text, cell_map, .. } => {
                 // A producer bug (cell_map built from different text than
-                // what's emitted) would make `zip` below silently drop
-                // whichever side is longer — an ordinary shipped build
-                // degrades gracefully (renders only the min of the two,
-                // same as `zip`'s normal behavior), per CONSTITUTION §1.3.
-                // The `Substituted` variant itself now makes "text without
-                // a matching cell_map" unrepresentable (plan WP2): both are
-                // built together by `rune-md`'s one constructor, so the
-                // mismatch this used to `debug_assert_eq!` against is no
-                // longer a shape the type permits upstream — the `zip`
-                // degradation below is the only defense left, and it's
-                // unreachable in practice.
-                for (ch, &offset) in text.chars().zip(cell_map.iter()) {
-                    push_char_cells(&mut cells, &mut visual_col, ch, offset, style);
+                // what's emitted) would make a grapheme's offset lookup
+                // fall past the end of `cell_map` — an ordinary shipped
+                // build degrades gracefully (the `-1` "no buffer
+                // correspondence" sentinel, same as any other decorative
+                // cell), per CONSTITUTION §1.3.
+                let mut char_idx = 0usize;
+                for grapheme in text.graphemes(true) {
+                    let offset = cell_map.get(char_idx).copied().unwrap_or(-1);
+                    push_grapheme_cells(&mut cells, &mut visual_col, grapheme, offset, style);
+                    char_idx += grapheme.chars().count();
                 }
             }
             SyntaxSpan::Identical { .. } => {
                 let mut offset = sp.range().start;
-                for ch in sp.text(content).chars() {
-                    push_char_cells(&mut cells, &mut visual_col, ch, offset as i64, style);
-                    offset += ch.len_utf8();
+                for grapheme in sp.text(content).graphemes(true) {
+                    push_grapheme_cells(
+                        &mut cells,
+                        &mut visual_col,
+                        grapheme,
+                        offset as i64,
+                        style,
+                    );
+                    offset += grapheme.len();
                 }
             }
         }
@@ -261,7 +315,7 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
         col += cell.width.max(1) as usize;
     }
     row.push(Cell {
-        ch: ' ',
+        text: " ".to_string(),
         width: 1,
         style: Style::default().add_modifier(RtModifier::REVERSED),
         buf_offset: buf_offset as i64,
@@ -362,8 +416,33 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left
 /// corner, clipping to `area`'s bounds.
+///
+/// A `Cell` wider than 1 column (a wide CJK char, or a multi-codepoint
+/// grapheme cluster like a ZWJ emoji sequence — `push_grapheme_cells`'s
+/// docs) needs its OWN width's worth of buffer columns explicitly reset
+/// (`ratatui::buffer::Cell::reset`), not just skipped over: `cell_mut`
+/// writes one column at a time and never touches its neighbors, unlike
+/// `Buffer::set_stringn` (which this code deliberately doesn't use — it
+/// only ever writes ONE known-width symbol at a time, not a whole string to
+/// re-measure), so without this loop the "continuation" column(s) a wide
+/// cell covers keep whatever a PRIOR frame happened to leave there.
+/// Ratatui's own diffing (`BufferDiff`, ratatui-core) silently skips
+/// re-examining exactly that many columns after any cell whose OWN
+/// `cell_width()` is `> 1` — "we're assuming buffers are well-formed, that
+/// is no double-width cell is followed by a non-blank cell" — so leftover,
+/// non-blank content there would never even reach the real terminal's
+/// diff/redraw, breaking the ZWJ fix at the last step. Resetting by THIS
+/// `Cell`'s own `width` (not by re-deriving `cell_width()` from whatever
+/// symbol ends up stored) is always at least as wide as ratatui's own
+/// derivation ever needs, because `control_aware_width` only ever clamps a
+/// zero-or-negative-width codepoint UP to 1, never down — so this cell's
+/// own width sum can never fall short of what ratatui independently
+/// computes for the same text, and the render/wrap width-math identity
+/// (this module's other load-bearing property) stays intact without
+/// needing to force ratatui's own width derivation.
 pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
+    let right = area.x.saturating_add(area.width);
     for (row_idx, row) in rows.iter().enumerate() {
         let y = area.y.saturating_add(row_idx as u16);
         if y >= area.y.saturating_add(area.height) {
@@ -371,14 +450,24 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
         }
         let mut x = area.x;
         for cell in row {
-            if x >= area.x.saturating_add(area.width) {
+            if x >= right {
                 break;
             }
             if let Some(target) = buf.cell_mut((x, y)) {
-                target.set_char(cell.ch);
+                target.set_symbol(&cell.text);
                 target.set_style(cell.style);
             }
-            x = x.saturating_add(cell.width.max(1) as u16);
+            let width = u16::from(cell.width.max(1));
+            for dx in 1..width {
+                let cx = x.saturating_add(dx);
+                if cx >= right {
+                    break;
+                }
+                if let Some(cont) = buf.cell_mut((cx, y)) {
+                    cont.reset();
+                }
+            }
+            x = x.saturating_add(width);
         }
     }
 }

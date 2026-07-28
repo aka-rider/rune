@@ -91,18 +91,20 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CELL-NO-EOL` (L0, sampled per G19; Go `R8`) — no cell's `ch` is `\n` or
-/// `\r`: those bytes carry zero display width and must never reach a
-/// rendered cell (`push_char_cells` drops them, `render.rs`).
+/// `CELL-NO-EOL` (L0, sampled per G19; Go `R8`) — no cell's `text` is `\n`
+/// or `\r`: those bytes carry zero display width and must never reach a
+/// rendered cell (`push_grapheme_cells` drops them, `render.rs`). A
+/// grapheme cluster is never a bare `\n`/`\r` plus anything else (both
+/// break grapheme segmentation), so an exact string comparison is safe.
 pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
-            if cell.ch == '\n' || cell.ch == '\r' {
+            if cell.text == "\n" || cell.text == "\r" {
                 return Some(Violation {
                     id: "CELL-NO-EOL",
                     message: format!(
                         "cell carries an EOL char {:?} at buf_offset={}",
-                        cell.ch, cell.buf_offset
+                        cell.text, cell.buf_offset
                     ),
                 });
             }
