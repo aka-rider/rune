@@ -8,7 +8,7 @@
 
 use std::ops::Range;
 
-use crate::app::{self, App};
+use crate::app::App;
 use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
 use crate::document::DocumentId;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
@@ -197,7 +197,7 @@ fn handle_highlighted(
 
     if pending {
         doc.highlight.pending = false;
-        app::schedule_highlight(app, id, effects);
+        crate::highlight::schedule_highlight(app, id, effects);
     }
 }
 

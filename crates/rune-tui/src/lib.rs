@@ -16,6 +16,7 @@ pub mod focus;
 pub mod footer;
 pub mod global;
 pub mod help;
+pub mod highlight;
 pub mod keymap;
 pub mod keystate;
 pub mod layout;

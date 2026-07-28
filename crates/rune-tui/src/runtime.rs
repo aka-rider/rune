@@ -246,7 +246,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // `app::update`'s own before/after gate.
     {
         let mut effects = Effects::default();
-        app::schedule_highlight(app, app.active, &mut effects);
+        crate::highlight::schedule_highlight(app, app.active, &mut effects);
         for cmd in effects.cmds.drain(..) {
             spawn_cmd(cmd, tx.clone());
         }
