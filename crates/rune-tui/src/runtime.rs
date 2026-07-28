@@ -405,6 +405,50 @@ pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: 
     })
 }
 
+/// Parses every fence of a markdown document off-thread and merges the
+/// results into ONE `Msg::Highlighted` reply (plan WP6.S3) — the same
+/// message and the same clamping path `highlight_cmd` above feeds, so
+/// `dispatch::handle_highlighted` needs no second case: a document has one
+/// span list whatever produced it. `HIGHLIGHT_BUDGET` is split evenly
+/// across `fences` (`fences.len().max(1)`) so a document with many fences
+/// still respects one overall budget rather than running each fence at the
+/// full budget. Each fence's own spans are rebased by that fence's buffer
+/// start BEFORE concatenation, and the concatenated result is re-sorted
+/// into the same painter order `rune_ts::highlight` itself guarantees
+/// within one fence (`start` ASC, `end` DESC) — concatenating two already-
+/// sorted lists is not itself sorted. `result` is `Some(..)` iff at least
+/// one fence actually parsed within its slice of the budget and `None` iff
+/// none did `[R2]` — an all-timed-out document must not flash to unstyled.
+pub fn fence_highlight_cmd(
+    doc: DocumentId,
+    version: u64,
+    fences: Vec<(&'static str, Range<usize>, String)>,
+) -> Cmd {
+    Cmd::new(CmdKind::Highlight, move || {
+        let per_fence_budget = HIGHLIGHT_BUDGET / (fences.len().max(1) as u32);
+        let mut spans: Vec<(Range<usize>, ScopeId)> = Vec::new();
+        let mut any_parsed = false;
+        for (lang, range, text) in fences {
+            let Some(fence_spans) = rune_ts::highlight(lang, &text, per_fence_budget) else {
+                continue;
+            };
+            any_parsed = true;
+            let base = range.start;
+            spans.extend(
+                fence_spans
+                    .into_iter()
+                    .map(|(r, scope)| (base + r.start..base + r.end, scope)),
+            );
+        }
+        spans.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(b.0.end.cmp(&a.0.end)));
+        Some(Msg::Highlighted {
+            doc,
+            version,
+            result: any_parsed.then_some(spans),
+        })
+    })
+}
+
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {
         termina::Event::Key(key) => keymap::from_termina(key).map(Msg::Key),
