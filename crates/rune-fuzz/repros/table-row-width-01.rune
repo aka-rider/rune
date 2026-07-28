@@ -1,0 +1,8 @@
+content # Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n
+type 
+key down s---
+key right s---
+key right s---
+paste a\tb\tc\td
+type # 
+key pagedown ----

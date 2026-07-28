@@ -36,7 +36,16 @@ impl RenderedCell {
             return;
         };
         for (i, ch) in text.char_indices() {
-            self.text.push(ch);
+            // A tab is display-substituted with a single space. Column
+            // widths here are measured per grapheme, where a tab counts as
+            // one cell, but the terminal renderer expands a surviving tab to
+            // the next 4-column stop — so a tab inside a cell would draw a
+            // row wider than the geometry every other row was laid out to,
+            // and the box would not line up. Substituting keeps the
+            // char-for-char mapping intact (one char in, one char out, so
+            // `src` stays index-aligned) and leaves the buffer bytes
+            // untouched (§1.4.5) — this is a display decision only.
+            self.text.push(if ch == '\t' { ' ' } else { ch });
             self.src.push(CellSrc {
                 buf: (range.start + i) as i64,
                 scope,
