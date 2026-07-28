@@ -300,6 +300,8 @@ fn base_snapshot(content: &str) -> Snapshot {
         active: base_active_id(),
         cells: Vec::new(),
         row_meta: Vec::new(),
+        highlight_spans: Vec::new(),
+        highlight_version: 1,
     }
 }
 

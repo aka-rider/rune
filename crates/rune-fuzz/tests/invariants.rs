@@ -3,7 +3,9 @@
 //! a parallel work package, is deliberately NOT touched here — this is a
 //! separate, non-`#[ignore]`d file so `make test` still runs all of it),
 //! plus `PANE-NO-BLEED` (the `UNDO-TOTAL` harness fix's own invariant,
-//! `tests/invariants/pane.rs`).
+//! `tests/invariants/pane.rs`) and, added by WP7.S8, the three highlight
+//! overlay invariants `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW`
+//! (`tests/invariants/highlight.rs`).
 //!
 //! Same pattern as `tests/tripwire.rs` (WP4.S3/S4): one hand-built BAD
 //! input per invariant asserting the checker fires with the right id, one
@@ -30,6 +32,8 @@
 // home under `tests/invariants/` instead.
 #[path = "invariants/clipboard.rs"]
 mod clipboard;
+#[path = "invariants/highlight.rs"]
+mod highlight;
 #[path = "invariants/journal.rs"]
 mod journal;
 #[path = "invariants/pane.rs"]
