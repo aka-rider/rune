@@ -218,6 +218,15 @@ the rename commits so the branch's own gates reflect the rename work. Decide whe
 - **Fix design:** none yet — accepted as shipped (plan Assumption A3); re-examine once that branch merges rather than re-litigate now.
 - **Next step:** when `worktree-kind-inventing-marshmallow` lands, audit whether a rename's displaced-bytes observation can ever become the merge ancestor for a document other than the renaming one, and if so scope `ancestorAt`/`newestObservation` to exclude cross-doc-attributed observations.
 
+## rust port — the 100ms display-pipeline budget permits a visibly laggy keystroke (recorded 2026-07-28, WP11.S6)
+
+**Status:** open; disclosed risk, budget not changed.
+
+- **Symptom:** none observed — a budget is not a measurement; this records what the budget as written permits.
+- **Root cause:** `full_pipeline_5k_under_100ms` (`rust/crates/rune-md/tests/perf_guard.rs:80`) permits a 100 ms full display-pipeline run on a 5,000-line document, and `App::sync_view` (`rust/crates/rune-tui/src/app.rs:332-342`) runs that pipeline synchronously — no async offload — from the runtime's blocking message loop (`runtime.rs:189,216`) before every frame is drawn, i.e. on every processed message batch. §5.3 requires `update` to stay non-blocking; a 100 ms stall on every keystroke on a large document sits uneasily with that even though `sync_view` itself sits just outside `update` in the same synchronous loop.
+- **Fix design:** none proposed here — recording the tension with §5.3, not prescribing a redesign.
+- **Next step:** before treating 100 ms as a UX guarantee rather than a regression guard, consider moving the pipeline recompute off the synchronous render-loop path (e.g. incremental recompute, or an async worker with the last-good-result-kept rule already used for tree-sitter highlighting).
+
 ## rust port — breadcrumb path is absolute, not relativized against the workspace root (recorded 2026-07-27, chrome-parity plan WP4.S7)
 
 `rust/crates/rune-tui/src/breadcrumb.rs`'s `overlay`/`build_crumb` render every `Normal` component of the active document's absolute path. Go relativizes the same breadcrumb against the workspace root (`buildCrumb`'s `root` argument, `pkg/ui/components/breadcrumb/breadcrumb.go:57-79`) — e.g. `vault / notes / note.md` instead of `/ Users / xiii / vault / notes / note.md`. Rust's `App` has no workspace-root concept to relativize against yet: `explorer.root` starts empty and is only populated after the first `^x` (Explorer toggle/load), so there's no root available at document-open time, let alone for a pathless/draft doc. Needs a real workspace-root concept on `App` (set at startup, independent of whether the Explorer pane has ever been opened) before this can match Go. Deliberately out of scope for the chrome-parity plan (border + breadcrumb-splice fixes only).
