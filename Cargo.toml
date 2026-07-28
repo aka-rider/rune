@@ -11,6 +11,7 @@ members = [
     "crates/rune-fuzz",
     "crates/rune-md",
     "crates/rune-syntax",
+    "crates/rune-ts",
     "crates/rune-tui",
     "crates/rune-vfs",
 ]
