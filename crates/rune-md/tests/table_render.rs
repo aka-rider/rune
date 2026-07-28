@@ -365,3 +365,49 @@ fn wrapped_line_produces_one_wrap_segment_per_visual_row_at_running_start_cols()
         expected_start += seg_len;
     }
 }
+
+/// A Pivoted table draws no box, so the display pass must not synthesise
+/// `┌┬┐`/`├┼┤`/`└┴┘` rows around it. Asserted at the DISPLAY level rather
+/// than on spans: border rows never appear in a `SyntaxLine`'s spans at
+/// all, so a span-level "no box drawing" check passes whether or not the
+/// expansion pass is doing the right thing.
+#[test]
+fn pivoted_table_gets_no_synthetic_border_rows_in_the_display_snapshot() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+
+    let grid = display_rows_at(&buf, &doc, 200);
+    let pivot = display_rows_at(&buf, &doc, 20);
+
+    let boxy = |rows: &[String]| {
+        rows.iter()
+            .filter(|r| r.starts_with('┌') || r.starts_with('└') || r.starts_with('├'))
+            .count()
+    };
+
+    assert!(
+        boxy(&grid) > 0,
+        "a Grid table must still get border rows: {grid:#?}"
+    );
+    assert_eq!(
+        boxy(&pivot),
+        0,
+        "a Pivoted table must get no synthesised border rows: {pivot:#?}"
+    );
+}
+
+fn display_rows_at(buf: &Buffer, doc: &DocMachine, width: u16) -> Vec<String> {
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+    let wrap = WrapMap::new(width).sync(buf.content(), &lines);
+    let display = rune_md::snapshot::DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
+    display
+        .rows()
+        .iter()
+        .map(|r| {
+            r.spans
+                .iter()
+                .map(|s| s.text(buf.content()))
+                .collect::<String>()
+        })
+        .collect()
+}

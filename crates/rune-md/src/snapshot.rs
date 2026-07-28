@@ -87,7 +87,11 @@ impl DisplaySnapshot {
 
         for row in self.rows {
             let seg = segments.get(row.wrap_row);
-            let info = seg.and_then(|s| s.table.as_ref());
+            // Filtered on `boxed` at the single source rather than at each
+            // border site below: a Pivoted table draws no box at all, and
+            // the top, inter-row and bottom borders are three separate
+            // decisions that must not be allowed to disagree about it.
+            let info = seg.and_then(|s| s.table.as_ref()).filter(|i| i.boxed);
             let model_line = seg.map(|s| s.model_line).unwrap_or(0);
             let line_start = line_start_of(&row);
 

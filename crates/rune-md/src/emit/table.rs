@@ -251,6 +251,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
                 role,
                 boundary,
                 extra_rows,
+                boxed: table_layout != layout::TableLayout::Pivoted,
             });
         }
     }

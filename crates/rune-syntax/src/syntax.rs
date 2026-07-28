@@ -126,6 +126,12 @@ pub struct TableRowInfo {
     /// span sort ever sees them, which is what keeps a table line's
     /// visible-plus-hidden byte accounting whole.
     pub extra_rows: Vec<Vec<SyntaxSpan>>,
+    /// Whether this table draws a box around itself. Grid and Wrapped do;
+    /// the Pivoted key-value layout deliberately has no box at all, and a
+    /// consumer that synthesises border rows must not draw them around one.
+    /// A bool rather than a layout enum: this is the only thing the display
+    /// pass actually asks, and the layout kind itself lives in the producer.
+    pub boxed: bool,
 }
 
 #[derive(Clone, Debug, Default)]

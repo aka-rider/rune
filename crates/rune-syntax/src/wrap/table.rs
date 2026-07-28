@@ -22,6 +22,9 @@ pub struct TableSegInfo {
     pub col_widths: Vec<usize>,
     pub role: TableRole,
     pub boundary: RowBoundary,
+    /// Carried through from the source line: a Pivoted table draws no box,
+    /// so no border rows may be synthesised around it.
+    pub boxed: bool,
 }
 
 /// A table source line's row 1 is `line.spans` (already tiled by the table
@@ -41,6 +44,7 @@ pub(super) fn wrap_table_line(
         col_widths: info.col_widths.clone(),
         role: info.role,
         boundary: info.boundary,
+        boxed: info.boxed,
     };
     segments.push(WrapSegment {
         spans: line.spans.clone(),
