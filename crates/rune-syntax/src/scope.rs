@@ -124,6 +124,38 @@ pub const MARKDOWN_SCOPES: &[&str] = &[
     "comment",
 ];
 
+/// The canonical code-token scope vocabulary a tree-sitter producer resolves
+/// its grammar captures against, appended after [`MARKDOWN_SCOPES`] so
+/// markdown ids stay fixed at `0..=17`. `"comment"` is deliberately absent —
+/// it is already registered by `MARKDOWN_SCOPES` and a code capture landing
+/// on `@comment` resolves to that shared id instead of a duplicate.
+pub const CODE_SCOPES: &[&str] = &[
+    "keyword",
+    "function",
+    "function.method",
+    "type",
+    "type.builtin",
+    "constructor",
+    "variable",
+    "variable.parameter",
+    "variable.member",
+    "property",
+    "constant",
+    "constant.builtin",
+    "string",
+    "string.escape",
+    "string.regexp",
+    "number",
+    "boolean",
+    "operator",
+    "punctuation",
+    "punctuation.bracket",
+    "punctuation.delimiter",
+    "attribute",
+    "label",
+    "tag",
+];
+
 /// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`], in
 /// order. Exposed as a constructor (rather than a lazily-initialized
 /// static) so both the emitter and a theme built in a test can each own
