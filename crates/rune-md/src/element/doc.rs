@@ -11,6 +11,7 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_syntax::SyntaxSnapshot;
 use rune_syntax::element::{CursorProbe, DocState, InheritCtx, RevealGrant, WrapState};
+use rune_syntax::kind::DocumentKind;
 use rune_syntax::wrap::WrapSnapshot;
 
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
@@ -32,6 +33,7 @@ pub struct DocMachine {
     blocks: Vec<Block>,
     built_version: u64,
     dirty: bool,
+    kind: DocumentKind,
 }
 
 impl Default for DocMachine {
@@ -51,6 +53,7 @@ impl DocMachine {
             // always reparses without a separate "never built yet" flag.
             built_version: 0,
             dirty: true,
+            kind: DocumentKind::Markdown,
         }
     }
 
@@ -108,14 +111,33 @@ impl DocMachine {
         }
     }
 
-    /// Rebuild the block/inline tree via comrak iff the buffer version
-    /// changed. A pure cursor move never bumps `buf.version()`, so this is a
-    /// no-op on every keystroke that isn't a content edit.
+    /// Selects which producer `sync_content` runs — comrak for `Markdown`,
+    /// no parse at all (verbatim per-line text, plan WP4 decision 6) for
+    /// `Code`/`Plain`. Marks dirty only when the kind actually changes, so
+    /// re-binding a document to the kind it already has (e.g. re-opening
+    /// the same path) doesn't force a needless reparse.
+    pub fn set_kind(&mut self, kind: DocumentKind) {
+        if kind != self.kind {
+            self.kind = kind;
+            self.dirty = true;
+        }
+    }
+
+    /// Rebuild the block/inline tree iff the buffer version changed. A pure
+    /// cursor move never bumps `buf.version()`, so this is a no-op on every
+    /// keystroke that isn't a content edit. For a non-markdown `kind`, no
+    /// comrak parse happens at all — `blocks` is emptied and `snapshot`'s
+    /// `emit` call turns an empty block list into one verbatim `Identical`
+    /// span per line (plan WP4 decision 6: no second plain-text producer).
     pub fn sync_content(&mut self, buf: &Buffer) {
         if buf.version() == self.built_version {
             return;
         }
-        self.blocks = crate::parse::parse(buf.content());
+        self.blocks = if self.kind.is_markdown() {
+            crate::parse::parse(buf.content())
+        } else {
+            Vec::new()
+        };
         self.built_version = buf.version();
         self.dirty = true;
     }

@@ -8,9 +8,11 @@
 //! unicode-width and unicode-segmentation.
 
 pub mod element;
+pub mod kind;
 pub mod scope;
 pub mod syntax;
 pub mod wrap;
 
+pub use kind::DocumentKind;
 pub use scope::{ScopeId, ScopeTable};
 pub use syntax::{CellMap, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping};
