@@ -14,14 +14,26 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 
 /// Build the same deterministic 5,000-line markdown document as the
-/// criterion benchmark (benches/parse_bench.rs).
+/// criterion benchmark (benches/parse_bench.rs), EXTENDED (plan WP4.S6) with
+/// a GFM table in every cycle of the repeating pattern: `Makefile`'s
+/// `perf-guard` target pins `--exact full_pipeline_5k_under_100ms`, so a
+/// *new* test asserting table performance would be silently filtered out by
+/// that `--exact` match and the gate would stay green while measuring
+/// nothing — the only way to actually cover table rendering under this gate
+/// is to make the 5,000-line document this EXISTING test already builds
+/// contain a substantial run of table rows itself. One 4-line table
+/// (header, delimiter, two body rows) is folded into the pattern below,
+/// which now repeats ~140 times across 5,000 lines — roughly 560 table
+/// lines total, exercising `emit_table`'s Grid layout selection, cell
+/// rendering, and column-width computation on every single cycle, not just
+/// once.
 ///
 /// Duplicated here so the perf guard is a self-contained integration test
 /// that doesn't depend on the benchmark crate being compiled.
 fn build_5k_doc() -> String {
     let mut doc = String::with_capacity(5_000 * 40);
 
-    let pattern: [&str; 31] = [
+    let pattern: [&str; 36] = [
         "# Heading One",
         "## Heading Two",
         "### Heading Three",
@@ -52,6 +64,11 @@ fn build_5k_doc() -> String {
         "```",
         "- [x] completed task",
         "\u{1f680} \u{1f30d} \u{1f3af} CJK mixed content line",
+        "",
+        "| Name | Role | Notes |",
+        "| :--- | :---: | ---: |",
+        "| Alice | **Lead** | on the `api` team |",
+        "| Bob | Reviewer | works on [docs](https://example.com/docs) |",
         "",
     ];
 

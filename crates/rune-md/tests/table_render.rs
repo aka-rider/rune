@@ -17,7 +17,9 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
+use rune_md::table::layout::{TableLayout, choose};
 use rune_syntax::SyntaxSpan;
+use rune_syntax::wrap::WrapMap;
 use rune_syntax::wrap::grapheme_width;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -199,4 +201,167 @@ fn cjk_column_width_is_measured_in_display_cells_not_chars() {
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let info = lines[0].table.as_ref().expect("rendered table row");
     assert_eq!(info.col_widths[0], 4);
+}
+
+// ---------------------------------------------------------------------
+// WP4: Wrapped and Pivoted layouts.
+// ---------------------------------------------------------------------
+
+/// A 65-char URL, a wide-but-word-short "Description" column, and a short
+/// "Name" column — sized (worked out against `layout::choose`'s own
+/// formulas) so the table's natural Grid width does not fit at 100 columns
+/// but Wrapped viably does, and so it collapses all the way to Pivoted at
+/// 20 columns. One row only, so `include_separator` is `false` and the
+/// Pivoted case has exactly one record to check.
+fn wrap_pivot_url() -> String {
+    let url: String = format!("https://{}", "a".repeat(57));
+    assert_eq!(url.chars().count(), 65, "fixture must stay a 65-char URL");
+    format!(
+        "| Name | Description | URL |\n| --- | --- | --- |\n| Alice | quick brown fox jumps over lazy dog | {url} |\n"
+    )
+}
+
+/// WP4.S7: at width 100 this table doesn't fit Grid (natural width 115)
+/// but fits Wrapped (verified against `choose`'s own thresholds) — the
+/// 65-char URL column is atomic and gets its own full natural width, so
+/// `wrap_cell` never touches it; the "Description" column (all short
+/// words) wraps across more than one visual row instead. Every visual row
+/// of the body line must still come out the same total display width, and
+/// the URL must appear intact (as one contiguous substring) in whichever
+/// visual row carries it.
+#[test]
+fn wrapped_layout_keeps_a_long_url_intact_with_equal_width_visual_rows() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 100u16;
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+
+    // Sanity: this fixture really does pick Wrapped at this width, not
+    // Grid or Pivoted — confirms the fixture's own arithmetic, not just
+    // its rendered shape.
+    let widths = vec![5usize, 35, 65];
+    let min_widths = vec![5usize, 11, 65];
+    assert_eq!(
+        choose(&widths, &min_widths, width as usize),
+        TableLayout::Wrapped
+    );
+
+    let body_line = 2;
+    let info = lines[body_line].table.as_ref().expect("rendered table row");
+    assert!(
+        !info.extra_rows.is_empty(),
+        "the wide Description cell must wrap into more than one visual row"
+    );
+
+    let row1_text = joined_line(&lines, body_line, buf.content());
+    let row1_width = display_width(&row1_text);
+    for extra in &info.extra_rows {
+        let extra_text: String = extra.iter().map(|s| s.text(buf.content())).collect();
+        assert_eq!(
+            display_width(&extra_text),
+            row1_width,
+            "every visual row of a Wrapped table row must share the same display width"
+        );
+    }
+
+    // The URL is atomic and fits its own column exactly — it must appear
+    // whole, in exactly one visual row (never split across two).
+    let url: String = format!("https://{}", "a".repeat(57));
+    let mut rows_containing_url = 0usize;
+    if row1_text.contains(&url) {
+        rows_containing_url += 1;
+    }
+    for extra in &info.extra_rows {
+        let extra_text: String = extra.iter().map(|s| s.text(buf.content())).collect();
+        if extra_text.contains(&url) {
+            rows_containing_url += 1;
+        }
+    }
+    assert_eq!(
+        rows_containing_url, 1,
+        "the URL must appear intact exactly once"
+    );
+    assert!(
+        !row1_text.contains('|'),
+        "a rendered row never carries raw pipes"
+    );
+}
+
+/// WP4.S7: the SAME table collapses to Pivoted at width 20 (verified
+/// against `choose`'s own thresholds: every column is atomic-dominant once
+/// the frame overhead eats most of the tiny content budget). The body row
+/// becomes one `"  Label: Value"` row per column — `"Name: "` must appear,
+/// and no `│` anywhere (Pivoted abandons the box shape entirely).
+#[test]
+fn pivoted_layout_renders_label_value_pairs_with_no_box_drawing() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 20u16;
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+
+    let widths = vec![5usize, 35, 65];
+    let min_widths = vec![5usize, 11, 65];
+    assert_eq!(
+        choose(&widths, &min_widths, width as usize),
+        TableLayout::Pivoted
+    );
+
+    let body_line = 2;
+    let info = lines[body_line].table.as_ref().expect("rendered table row");
+
+    let mut all_text = joined_line(&lines, body_line, buf.content());
+    for extra in &info.extra_rows {
+        all_text.push_str(
+            &extra
+                .iter()
+                .map(|s| s.text(buf.content()))
+                .collect::<String>(),
+        );
+    }
+    assert!(
+        all_text.contains("Name: "),
+        "expected a Name label:value pair"
+    );
+    assert!(!all_text.contains('│'), "Pivoted never draws a box");
+
+    // Header and separator lines are suppressed to blank under Pivoted.
+    assert!(joined_line(&lines, 0, buf.content()).is_empty());
+    assert!(joined_line(&lines, 1, buf.content()).is_empty());
+}
+
+#[test]
+fn choose_selects_grid_unconditionally_when_avail_is_zero() {
+    assert_eq!(choose(&[50, 50, 50], &[10, 10, 10], 0), TableLayout::Grid);
+}
+
+/// WP4.S7: for a Wrapped source line, the wrap pass must yield exactly
+/// `1 + extra_rows.len()` segments for that line, each one's `start_col`
+/// the running sum of the PREVIOUS rows' own visible lengths — the
+/// existing `wrap_table_line` machinery this package builds on, exercised
+/// end to end through a real Wrapped table for the first time.
+#[test]
+fn wrapped_line_produces_one_wrap_segment_per_visual_row_at_running_start_cols() {
+    let content = wrap_pivot_url();
+    let (buf, doc) = synced(&content, 0, false);
+    let width = 100u16;
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), width);
+
+    let body_line = 2;
+    let info = lines[body_line].table.as_ref().expect("rendered table row");
+    let expected_segments = 1 + info.extra_rows.len();
+
+    let wrap = WrapMap::new(width).sync(buf.content(), &lines);
+    let segs: Vec<_> = wrap
+        .segments()
+        .iter()
+        .filter(|s| s.model_line == body_line)
+        .collect();
+    assert_eq!(segs.len(), expected_segments);
+
+    let mut expected_start = 0usize;
+    for seg in &segs {
+        assert_eq!(seg.start_col, expected_start);
+        let seg_len: usize = seg.spans.iter().map(|s| s.text(buf.content()).len()).sum();
+        expected_start += seg_len;
+    }
 }
