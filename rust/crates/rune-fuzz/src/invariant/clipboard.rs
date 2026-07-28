@@ -7,6 +7,7 @@ use base64::engine::general_purpose::STANDARD;
 use rune_core::buffer::Buffer;
 use rune_tui::commands::nav;
 use rune_tui::keymap::Command;
+use rune_tui::pane::Pane;
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
@@ -78,6 +79,19 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
         return None;
     };
     if !matches!(cmd, Command::Copy | Command::Cut) {
+        return None;
+    }
+    // `ctx.msg.command` is `keymap::resolve(input)` computed unconditionally
+    // — but `Command` is the EDITOR pane's command set (stage 3 of
+    // `app::handle_key`), so it only actually FIRES when the editor has
+    // focus and no modal is capturing. With focus on the Explorer, the Open
+    // Tabs pane or the title field, that pane consumes ⌘C itself and no
+    // copy happens — §3.3's "a component ignores keys when unfocused". This
+    // is the same scoping `pane_no_bleed` applies, and without it this
+    // checker asserts something false: that ⌘C copies from a pane that
+    // never saw it. (Latent since Explorer/Tabs focus existed; the
+    // Up-at-editor-top-focuses-the-title gesture made it easy to reach.)
+    if prev.modal_open || prev.focus != Pane::Editor {
         return None;
     }
     let [cursor] = prev.cursors.as_slice() else {

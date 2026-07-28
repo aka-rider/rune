@@ -314,6 +314,21 @@ const CTRL_C_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `^r` (`GlobalCommand::FocusTitle`) — reaching `Pane::Title` is what
+/// extends `PANE-NO-BLEED` to cover "typing a filename never touches a
+/// buffer byte". Every subsequent generated character then lands in the
+/// title field instead of the document, which is precisely the property
+/// worth fuzzing.
+const CTRL_R_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('r'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
     (1u16..=200, 2u16..=60)
 }
@@ -475,6 +490,7 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
         Just(vec![Action::FailNextSave]),
         Just(vec![Action::Key(CTRL_C_KEY)]),
+        Just(vec![Action::Key(CTRL_R_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
         (
             proptest::collection::vec(arb_dir_entry(), 0..=6),
