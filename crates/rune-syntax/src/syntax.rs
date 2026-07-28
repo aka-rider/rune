@@ -89,9 +89,52 @@ impl SyntaxSpan {
     }
 }
 
+/// Which row of a rendered table's Grid a `SyntaxLine` carries — feeds
+/// `markup.table.header` vs `markup.table.separator` vs body-role styling
+/// (WP2.S7/S8's producer, not this step's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableRole {
+    Header,
+    Separator,
+    Body,
+}
+
+/// Where a row sits among a table's rendered rows — the synthesised
+/// top/bottom/inter-row border a `DisplaySnapshot` inserts around it (WP3)
+/// depends on which edges are already the table's own start/end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowBoundary {
+    Only,
+    First,
+    Middle,
+    Last,
+}
+
+/// Table geometry a rendered row's source `SyntaxLine` carries directly
+/// (architectural decision 7: "one explicit field removes the illegal
+/// state instead of guarding it" — no consumer has to sniff every span's
+/// scope to tell a table row from prose). Not yet populated by any producer
+/// — this step only defines its shape.
+#[derive(Clone, Debug)]
+pub struct TableRowInfo {
+    pub col_widths: Vec<usize>,
+    pub role: TableRole,
+    pub boundary: RowBoundary,
+    /// Visual rows 2..N of this source line (Wrapped/Pivoted only). Row 1
+    /// is `SyntaxLine::spans`. These claim no bytes — they never enter
+    /// `line.spans`, so neither the emitter's gap-filler nor its per-line
+    /// span sort ever sees them, which is what keeps a table line's
+    /// visible-plus-hidden byte accounting whole.
+    pub extra_rows: Vec<Vec<SyntaxSpan>>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SyntaxLine {
     pub spans: Vec<SyntaxSpan>,
+    /// `Some` only for a rendered table row's source line — `None` for
+    /// every other line, including a Revealed table line (raw markdown,
+    /// no rendered geometry to describe).
+    pub table: Option<TableRowInfo>,
 }
 
 #[derive(Clone, Copy, Debug)]

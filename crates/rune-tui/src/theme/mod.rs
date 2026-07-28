@@ -154,6 +154,15 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
+        // Raw ANSI-256 indices, deliberately NOT routed through the
+        // Catppuccin palette like every scope above. Table chrome has to
+        // match the Go reference's own table styles byte-for-byte in both
+        // truecolor and quantized rendering — the index IS the spec here,
+        // and a hue-derived approximation would break screen parity.
+        "markup.table.header" => base.fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
+        "markup.table" => base.fg(Color::Indexed(252)),
+        "markup.table.separator" => base.fg(Color::Indexed(240)),
+        "markup.table.border" => base.fg(Color::Indexed(240)),
         "punctuation.special" => base.fg(c(p.overlay0)),
         "comment" => base.fg(c(p.overlay1)),
         // Unreachable in practice: `name` is always drawn from this same
