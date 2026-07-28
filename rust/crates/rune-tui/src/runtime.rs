@@ -23,23 +23,27 @@ use rune_vfs::{DirEntry, Vfs};
 use crate::app::{self, App};
 use crate::document::DocumentId;
 use crate::keymap::{self, KeyInput};
+use crate::pointer::MouseInput;
 use crate::term::Guard;
 
-/// One runtime event. `Key`/`Paste`/`Resize` originate from the input-reader
-/// thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/`SaveConfirmTimeout`/
-/// `SnapshotDue` originate from a spawned `Cmd`'s return value; `Db`
-/// originates from the `rune-db` writer thread via `db::DbBridge` (plan
-/// WP5.S1); `Error`/`Quit` can be synthesized by `update` itself. `SaveDone`/
-/// `SnapshotDue` carry a `DocumentId` (plan WP1.S3) so multi-document acks
-/// route back to the document that triggered them; `ConfirmTimeout`/
-/// `SaveConfirmTimeout` stay doc-agnostic — `pending_quit` is app-wide and
-/// `pending_save_confirm`'s doc tag lives in the `Option` tuple itself, not
-/// in the `Msg`.
+/// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
+/// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
+/// `SaveConfirmTimeout`/`SnapshotDue` originate from a spawned `Cmd`'s
+/// return value; `Db` originates from the `rune-db` writer thread via
+/// `db::DbBridge` (plan WP5.S1); `Error`/`Quit` can be synthesized by
+/// `update` itself. `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan
+/// WP1.S3) so multi-document acks route back to the document that
+/// triggered them; `ConfirmTimeout`/`SaveConfirmTimeout` stay doc-agnostic
+/// — `pending_quit` is app-wide and `pending_save_confirm`'s doc tag lives
+/// in the `Option` tuple itself, not in the `Msg`.
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
     Paste(String),
     Resize(u16, u16),
+    /// A mouse event, translated from `termina::Event::Mouse` (plan
+    /// WP7.S4) — `commands::mouse::handle` is its sole handler.
+    Mouse(MouseInput),
     ClipboardRead(String),
     SaveDone {
         id: DocumentId,
@@ -338,6 +342,7 @@ fn translate_event(event: termina::Event) -> Option<Msg> {
         termina::Event::Key(key) => keymap::from_termina(key).map(Msg::Key),
         termina::Event::Paste(text) => Some(Msg::Paste(text)),
         termina::Event::WindowResized(size) => Some(Msg::Resize(size.cols, size.rows)),
+        termina::Event::Mouse(mouse) => crate::pointer::from_termina(mouse).map(Msg::Mouse),
         _ => None,
     }
 }

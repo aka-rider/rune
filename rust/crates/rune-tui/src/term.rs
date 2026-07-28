@@ -1,6 +1,7 @@
 //! RAII terminal guard (plan Context, "Msg/Cmd runtime" / "Keymap"): enters
-//! raw mode, the alternate screen, Kitty keyboard enhancement flags, and
-//! bracketed paste on construction; `Drop` restores all of it. `Drop` runs
+//! raw mode, the alternate screen, Kitty keyboard enhancement flags,
+//! bracketed paste, and mouse reporting (plan WP7.S3) on construction;
+//! `Drop` restores all of it. `Drop` runs
 //! during unwind, before `catch_unwind` traps a panic in `rune-cli`'s
 //! `main` — the halt path CONSTITUTION §1.3 requires (panic = "abort" is
 //! forbidden precisely so this restore can run).
@@ -89,20 +90,30 @@ impl Guard {
         Ok(guard)
     }
 
-    /// Enables the alternate screen, bracketed paste, and Kitty keyboard
-    /// flags, and hides the terminal cursor (render.rs draws the caret
-    /// itself as a styled cell — plan Context, "Cell model": "Terminal
-    /// cursor hidden; caret drawn by us (Go parity)"). Only ever called
-    /// from `new`, on an already-constructed `Guard` — see its docs for why
-    /// that ordering matters.
+    /// Enables the alternate screen, bracketed paste, Kitty keyboard flags,
+    /// and mouse reporting, and hides the terminal cursor (render.rs draws
+    /// the caret itself as a styled cell — plan Context, "Cell model":
+    /// "Terminal cursor hidden; caret drawn by us (Go parity)"). Only ever
+    /// called from `new`, on an already-constructed `Guard` — see its docs
+    /// for why that ordering matters.
+    ///
+    /// Mouse mode 1002 (`ButtonEventMouse`, plan WP7.S3) reports press/
+    /// release/drag but never plain hover — mode 1003 (`AnyEventMouse`)
+    /// would additionally report every hover, flooding an otherwise idle
+    /// event loop with `Moved` events this crate has no gesture for.
+    /// `SGRMouse` (mode 1006) is the extended coordinate encoding termina
+    /// parses back into `Event::Mouse` without the classic protocol's
+    /// 223-column/-row ceiling.
     fn enter_app_mode(&mut self) -> io::Result<()> {
         let backend = self.terminal.backend_mut();
         write!(
             backend,
-            "{}{}{}",
+            "{}{}{}{}{}",
             dec_set(DecPrivateModeCode::ClearAndEnableAlternateScreen),
             dec_set(DecPrivateModeCode::BracketedPaste),
             Csi::Keyboard(Keyboard::PushFlags(keyboard_flags())),
+            dec_set(DecPrivateModeCode::ButtonEventMouse),
+            dec_set(DecPrivateModeCode::SGRMouse),
         )?;
         backend.flush()?;
         self.terminal.hide_cursor()
@@ -156,8 +167,10 @@ impl Drop for Guard {
         let backend = self.terminal.backend_mut();
         let _ = write!(
             backend,
-            "{}{}{}{}",
+            "{}{}{}{}{}{}",
             Csi::Keyboard(Keyboard::PopFlags(KITTY_FLAGS_PUSHED)),
+            dec_reset(DecPrivateModeCode::SGRMouse),
+            dec_reset(DecPrivateModeCode::ButtonEventMouse),
             dec_reset(DecPrivateModeCode::BracketedPaste),
             dec_reset(DecPrivateModeCode::ClearAndEnableAlternateScreen),
             dec_set(DecPrivateModeCode::ShowCursor),

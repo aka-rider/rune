@@ -295,6 +295,50 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         help: "redo",
         when: "",
     },
+    // WP7.S2/S7: viewport-only scroll commands — vim/Helix parity, see
+    // `keymap::resolve`'s doc comments on each arm for the exact rationale.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Up, CTRL)],
+        cmd: Command::ScrollLineUp,
+        help: "scroll line up",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Down, CTRL)],
+        cmd: Command::ScrollLineDown,
+        help: "scroll line down",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::PageUp, CTRL)],
+        cmd: Command::ScrollHalfPageUp,
+        help: "scroll half page up",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::PageDown, CTRL)],
+        cmd: Command::ScrollHalfPageDown,
+        help: "scroll half page down",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('l'), CTRL)],
+        cmd: Command::CentreCursor,
+        help: "centre cursor",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Home, CTRL)],
+        cmd: Command::CursorToTop,
+        help: "cursor to top of view",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::End, CTRL)],
+        cmd: Command::CursorToBottom,
+        help: "cursor to bottom of view",
+        when: "",
+    },
 ];
 
 #[cfg(test)]

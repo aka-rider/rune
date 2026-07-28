@@ -525,11 +525,12 @@ fn build_rows_or_empty(app: &App) -> Vec<Vec<Cell>> {
 }
 
 /// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::
-/// view` never reads `viewport.scroll_row`, and `Viewport::scroll_to_row`
-/// converges in one call). Calls `app.sync_view()` a SECOND time with no
-/// intervening message and compares the rendered rows and scroll position
-/// against the state just before that second call; a divergence is a real
-/// non-settling scroll or a non-memoized parse, never a false positive.
+/// view` never reads `viewport.scroll_row`, and `Viewport::reconcile`
+/// converges in one call, plan WP7.S1). Calls `app.sync_view()` a SECOND
+/// time with no intervening message and compares the rendered rows and
+/// scroll position against the state just before that second call; a
+/// divergence is a real non-settling scroll or a non-memoized parse, never
+/// a false positive.
 fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
     let scroll_before = app.active_doc().viewport.scroll_row;
     let rows_before = build_rows_or_empty(app);

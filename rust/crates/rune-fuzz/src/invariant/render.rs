@@ -6,10 +6,10 @@
 //! no intervening message — it is a comparison of two consecutive renders
 //! of the same settled state, not a property of one `Snapshot` — so
 //! `driver.rs` drives the two `render::build_rows` calls directly against
-//! `&mut App` (G6 proves this is a genuine fixpoint: `Editor::view` never
-//! reads `viewport.scroll_row`, and `Viewport::scroll_to_row` converges in
-//! one call) and hands the results to `sync_idempotent` below, which is
-//! the actual pure, hand-testable assertion.
+//! `&mut App` (G6 proves this is a genuine fixpoint: `Document::view` never
+//! reads `viewport.scroll_row`, and `Viewport::reconcile` converges in one
+//! call, plan WP7.S1) and hands the results to `sync_idempotent` below,
+//! which is the actual pure, hand-testable assertion.
 
 use rune_tui::render::Cell;
 

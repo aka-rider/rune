@@ -163,6 +163,24 @@ pub enum Command {
     Redo,
     Save,
     QuitConfirm,
+    /// Viewport-only scroll (plan WP7.S2): vim `ctrl+e`/Helix
+    /// `scroll_line_up`/`down` — moves `Viewport::scroll_row` by one row,
+    /// never the cursor (unless the scroll pushes it off screen; see
+    /// `Viewport::reconcile`'s docs).
+    ScrollLineUp,
+    ScrollLineDown,
+    /// vim/Helix `ctrl+u`/`ctrl+d`-style half-page scroll — viewport-only,
+    /// `commands::scroll(..., sync_cursor: false)` (Helix). Distinct from
+    /// `PageUp`/`PageDown` above, which move the CURSOR a full page.
+    ScrollHalfPageUp,
+    ScrollHalfPageDown,
+    /// vim/Helix `zz`: re-centres the viewport on the cursor's row.
+    CentreCursor,
+    /// vim/Helix `zt`: scrolls the cursor's row to the top of the viewport.
+    CursorToTop,
+    /// vim/Helix `zb`: scrolls the cursor's row to the bottom of the
+    /// viewport.
+    CursorToBottom,
 }
 
 /// Which quit chord produced a `Command::QuitConfirm` — the identity `App`
@@ -200,6 +218,12 @@ pub fn resolve(key: KeyInput) -> Option<Command> {
     }
 
     let m = key.mods;
+    const CTRL_ONLY: Mods = Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    };
     match key.code {
         KeyCode::Left => resolve_directional(
             m,
@@ -215,11 +239,28 @@ pub fn resolve(key: KeyInput) -> Option<Command> {
             Command::WordRight,
             Command::SelectWordRight,
         ),
+        // `ctrl+Up`/`ctrl+Down` (plan WP7.S2/S7): viewport-only line scroll
+        // — VS Code's own default binding for "Scroll Line Up"/"Scroll Line
+        // Down". Free: `resolve_plain_or_shift` only ever matches NONE/
+        // SHIFT.
+        KeyCode::Up if m == CTRL_ONLY => Some(Command::ScrollLineUp),
         KeyCode::Up => resolve_plain_or_shift(m, Command::LineUp, Command::SelectLineUp),
+        KeyCode::Down if m == CTRL_ONLY => Some(Command::ScrollLineDown),
         KeyCode::Down => resolve_plain_or_shift(m, Command::LineDown, Command::SelectLineDown),
+        // `ctrl+Home`/`ctrl+End`: scroll the cursor's row to the top/bottom
+        // of the viewport (vim/Helix `zt`/`zb`) — free of `Home`/`End`'s
+        // own NONE/SHIFT-only arms.
+        KeyCode::Home if m == CTRL_ONLY => Some(Command::CursorToTop),
         KeyCode::Home => resolve_plain_or_shift(m, Command::LineStart, Command::SelectLineStart),
+        KeyCode::End if m == CTRL_ONLY => Some(Command::CursorToBottom),
         KeyCode::End => resolve_plain_or_shift(m, Command::LineEnd, Command::SelectLineEnd),
+        // `ctrl+PageUp`/`ctrl+PageDown`: half-page viewport-only scroll
+        // (vim/Helix `ctrl+u`/`ctrl+d`) — distinct from the plain `ctrl+u`
+        // `Char` chord below, which stays bound to the full-page CURSOR
+        // motion `Command::PageUp`.
+        KeyCode::PageUp if m == CTRL_ONLY => Some(Command::ScrollHalfPageUp),
         KeyCode::PageUp => resolve_plain_or_shift(m, Command::PageUp, Command::SelectPageUp),
+        KeyCode::PageDown if m == CTRL_ONLY => Some(Command::ScrollHalfPageDown),
         KeyCode::PageDown => resolve_plain_or_shift(m, Command::PageDown, Command::SelectPageDown),
         KeyCode::Backspace if m == Mods::NONE => Some(Command::DeleteLeft),
         KeyCode::Delete if m == Mods::NONE => Some(Command::DeleteRight),
@@ -269,6 +310,10 @@ fn resolve_char(c: char, m: Mods) -> Option<Command> {
         'b' if m.alt && !m.ctrl && !m.sup => Some(Command::WordLeft),
         'f' if m.alt && !m.ctrl && !m.sup => Some(Command::WordRight),
         'u' if m.ctrl && !m.alt && !m.sup => Some(Command::PageUp),
+        // vim/Helix `zz` (plan WP7.S2/S7) — re-centre the viewport on the
+        // cursor's row; Emacs's own `C-l` "recenter" precedent for the
+        // chord itself.
+        'l' if m.ctrl && !m.alt && !m.shift && !m.sup => Some(Command::CentreCursor),
         'a' if (m.sup || m.ctrl) && !m.alt => Some(Command::SelectAll),
         'c' if m.sup && !m.ctrl && !m.shift => Some(Command::Copy),
         'c' if m.ctrl && m.shift && !m.sup => Some(Command::Copy),

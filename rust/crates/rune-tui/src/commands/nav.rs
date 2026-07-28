@@ -3,6 +3,10 @@
 //! `commands_nav_gen.go` + `multicursor.escape`
 //! (`commands_multi.go:70-101`).
 //!
+//! Vertical/page motion and the WP7.S2 viewport-only scroll commands live
+//! in the sibling `nav_scroll` module (plan WP7.S7, §1.6: this file was
+//! already over the 500-line budget before WP7 added anything).
+//!
 //! Doc-local (plan WP1 decision 4): every function here takes `&mut
 //! Document` directly — motion/selection never touches `App`-level state
 //! (the recovery store, status message, dirty cache), so there is no reason
@@ -34,7 +38,7 @@
 //! `Document::sync`/`App::sync_view` — never from inside a single command.
 
 use rune_core::buffer::Buffer;
-use rune_core::coords::{BufferPoint, WrapPoint};
+use rune_core::coords::BufferPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
@@ -222,6 +226,45 @@ pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, us
     (line_start, line_end)
 }
 
+/// The `[start, end)` byte range of the word (or whitespace/punctuation
+/// run) touching `offset` — the double-click "select word" gesture
+/// (`commands::mouse`, plan WP7.S6). Class-based like `word_left_offset`/
+/// `word_right_offset` above, but expands outward from a single anchor
+/// rather than walking motion-by-motion, since a click can land anywhere
+/// inside the run, not just at its start. `line_range_incl_newline` above is
+/// the equivalent chokepoint for the triple-click "select the whole
+/// logical line" gesture — it already spans every wrapped row of the
+/// buffer line, since it works in buffer-line space, not wrap-row space.
+pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
+    if buf.is_empty() {
+        return (0, 0);
+    }
+    // A click at (or past) EOF anchors on the last real byte instead of an
+    // out-of-range class lookup.
+    let anchor = if offset < buf.len() {
+        offset
+    } else {
+        prev_rune_offset(buf, offset)
+    };
+    let class = class_at(buf, anchor);
+
+    let mut start = anchor;
+    while start > 0 {
+        let prev = prev_rune_offset(buf, start);
+        if class_at(buf, prev) != class {
+            break;
+        }
+        start = prev;
+    }
+
+    let mut end = anchor;
+    while end < buf.len() && class_at(buf, end) == class {
+        end = next_rune_offset(buf, end);
+    }
+
+    (start, end)
+}
+
 /// Port of `commands_nav.go:selectionEndInclusive`. Used both by movement
 /// (implicitly, via `handle_left`/`handle_right`'s `SelectionStart`/`End`)
 /// and by `commands::edit`'s selection-replacing edits.
@@ -302,57 +345,6 @@ fn handle_move_to(
     update_horizontal(view, buf, c, offset, select)
 }
 
-/// Port of `commands_nav.go:moveRow`: visual-line up/down via the wrap
-/// conversions, preserving `c.desired_col` across the move (the property
-/// that makes moving through a ragged-right wrapped paragraph keep the
-/// caret in its visual column instead of snapping to each row's length).
-fn move_row(view: &ViewSnapshots, buf: &Buffer, c: Cursor, delta: isize, select: bool) -> Cursor {
-    let bp = buf.offset_to_line_col(c.position);
-    let sp = view.syntax.buffer_to_syntax(bp);
-    let wp = view.wrap.syntax_to_wrap(sp);
-    let target_row = wp.row as isize + delta;
-
-    let total = view.wrap.total_rows();
-    let wp2 = if target_row < 0 {
-        WrapPoint { row: 0, col: 0 }
-    } else if total > 0 && target_row as usize >= total {
-        // Clamped past the last row: land at that row's own end — the
-        // exact-length equivalent of Go's `wp.Col = 999999` sentinel (which
-        // relies on `WrapByteCol`/`WrapToSyntax` clamping it downstream);
-        // `segment_len_at` expresses the same "end of row" intent directly,
-        // without a magic number.
-        let row = total - 1;
-        WrapPoint {
-            row,
-            col: view.wrap.segment_len_at(row),
-        }
-    } else {
-        let row = target_row as usize;
-        let col = view
-            .wrap
-            .byte_col_from_visual(buf.content(), row, c.desired_col);
-        WrapPoint { row, col }
-    };
-
-    let sp2 = view.wrap.wrap_to_syntax(wp2);
-    let bp2 = view.syntax.syntax_to_buffer(sp2);
-    let offset2 = buf.line_col_to_offset(bp2);
-
-    Cursor {
-        position: offset2,
-        anchor: if select { c.anchor } else { offset2 },
-        desired_col: c.desired_col,
-        id: c.id,
-    }
-}
-
-/// Port of `commands_nav_gen.go:pageStep`: a full viewport minus one row of
-/// overlap for context.
-fn page_step(doc: &Document) -> isize {
-    let h = doc.viewport.height;
-    if h > 1 { (h - 1) as isize } else { 1 }
-}
-
 /// Shared horizontal/line-start-end driver — port of `handleCursorCmd`
 /// applied to every cursor in the set.
 fn move_cursors(
@@ -366,18 +358,6 @@ fn move_cursors(
         .all()
         .into_iter()
         .map(|c| step(&view, &doc.buffer, c, select))
-        .collect();
-    doc.cursors = CursorSet::new_from(&new_cursors);
-}
-
-/// Shared vertical-motion driver (line up/down, page up/down).
-fn move_row_cursors(doc: &mut Document, select: bool, delta: isize) {
-    let view = doc.view();
-    let new_cursors: Vec<Cursor> = doc
-        .cursors
-        .all()
-        .into_iter()
-        .map(|c| move_row(&view, &doc.buffer, c, delta, select))
         .collect();
     doc.cursors = CursorSet::new_from(&new_cursors);
 }
@@ -416,24 +396,6 @@ pub fn line_end(doc: &mut Document, select: bool) {
     move_cursors(doc, select, |view, buf, c, select| {
         handle_move_to(view, buf, c, select, line_end_offset)
     });
-}
-
-pub fn line_up(doc: &mut Document, select: bool) {
-    move_row_cursors(doc, select, -1);
-}
-
-pub fn line_down(doc: &mut Document, select: bool) {
-    move_row_cursors(doc, select, 1);
-}
-
-pub fn page_up(doc: &mut Document, select: bool) {
-    let step = page_step(doc);
-    move_row_cursors(doc, select, -step);
-}
-
-pub fn page_down(doc: &mut Document, select: bool) {
-    let step = page_step(doc);
-    move_row_cursors(doc, select, step);
 }
 
 /// Port of `commands_nav_gen.go:execSelectAll`.

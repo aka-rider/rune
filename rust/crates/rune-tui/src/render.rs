@@ -193,10 +193,31 @@ fn push_grapheme_cells(
 /// per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col` use, so
 /// a tab's width agrees with both regardless of which span it's in.
 pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cell> {
+    segment_cells_with(content, seg, |scope| style_for(theme, scope))
+}
+
+/// A segment's cells with styling elided — for callers that read only the
+/// GEOMETRY (`Cell::width`, `Cell::buf_offset`), neither of which depends
+/// on the theme. `commands::mouse`'s hit-testing is the one such caller:
+/// it already holds the document mutably, so borrowing `App::theme` purely
+/// to reach widths it would then discard is both a borrow conflict and a
+/// lie about what a click depends on.
+pub fn segment_geometry(content: &str, seg: &WrapSegment) -> Vec<Cell> {
+    segment_cells_with(content, seg, |_| Style::default())
+}
+
+/// The ONE cell walk both entry points above share — `style_of` is its
+/// only theme-dependent input, so the styled and geometry-only paths can
+/// never drift in how they measure a row.
+fn segment_cells_with(
+    content: &str,
+    seg: &WrapSegment,
+    style_of: impl Fn(ScopeId) -> Style,
+) -> Vec<Cell> {
     let mut cells = Vec::new();
     let mut visual_col = 0usize;
     for sp in &seg.spans {
-        let style = style_for(theme, sp.scope());
+        let style = style_of(sp.scope());
         match sp {
             SyntaxSpan::Substituted { text, cell_map, .. } => {
                 // A producer bug (cell_map built from different text than

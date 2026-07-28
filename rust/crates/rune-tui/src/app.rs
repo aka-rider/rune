@@ -21,7 +21,7 @@ use rune_db::DbEvent;
 use rune_vfs::Vfs;
 
 use crate::banner::Modal;
-use crate::commands::{clipboard, edit, nav};
+use crate::commands::{clipboard, edit, mouse, nav, nav_scroll};
 use crate::db::Db;
 use crate::document::{Document, DocumentId};
 use crate::explorer::{self, Explorer};
@@ -177,6 +177,14 @@ pub struct App {
     /// `FixedSpaceProbe`, and the fuzzer keeps the default and so stays
     /// deterministic.
     pub space_probe: Box<dyn crate::keystate::SpaceProbe>,
+    /// The click-aggregation + drag-selection state a mouse gesture needs
+    /// across messages (plan WP7.S5) — `commands::mouse`'s sole owner.
+    pub pointer: crate::pointer::PointerState,
+    /// Answers "what time is it right now?" for `pointer`'s multi-click
+    /// window (plan WP7.S5: "inject the clock as a field so the fuzzer can
+    /// reproduce a gesture"), mirroring `space_probe` above: production
+    /// installs the real wall clock, tests install a `ManualClock`.
+    pub pointer_clock: Box<dyn crate::pointer::Clock>,
     /// Which binding set governs the editor pane (plan WP6.S8) — defaults to
     /// `BindingSet::Default` (the VS Code-style set this crate has had since
     /// WP2). `app::handle_editor_key` does not consult this yet: full vim
@@ -252,6 +260,8 @@ impl App {
             pending_quit: None,
             next_quit_gen: 0,
             space_probe: Box::new(crate::keystate::NullProbe),
+            pointer: crate::pointer::PointerState::default(),
+            pointer_clock: Box::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
             speculative_space: None,
             modal: None,
@@ -448,6 +458,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
 fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
         Msg::Key(key) => handle_key(app, key, effects),
+        Msg::Mouse(input) => mouse::handle(app, input),
         Msg::Resize(width, height) => {
             app.frame_width = width;
             app.frame_height = height;
@@ -669,27 +680,34 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
             if at_buffer_top(app) {
                 pane::focus_title(app);
             } else {
-                nav::line_up(app.active_doc_mut(), false);
+                nav_scroll::line_up(app.active_doc_mut(), false);
             }
         }
-        Command::LineDown => nav::line_down(app.active_doc_mut(), false),
+        Command::LineDown => nav_scroll::line_down(app.active_doc_mut(), false),
         Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
         Command::WordRight => nav::word_right(app.active_doc_mut(), false),
         Command::LineStart => nav::line_start(app.active_doc_mut(), false),
         Command::LineEnd => nav::line_end(app.active_doc_mut(), false),
-        Command::PageUp => nav::page_up(app.active_doc_mut(), false),
-        Command::PageDown => nav::page_down(app.active_doc_mut(), false),
+        Command::PageUp => nav_scroll::page_up(app.active_doc_mut(), false),
+        Command::PageDown => nav_scroll::page_down(app.active_doc_mut(), false),
         Command::SelectCharLeft => nav::char_left(app.active_doc_mut(), true),
         Command::SelectCharRight => nav::char_right(app.active_doc_mut(), true),
-        Command::SelectLineUp => nav::line_up(app.active_doc_mut(), true),
-        Command::SelectLineDown => nav::line_down(app.active_doc_mut(), true),
+        Command::SelectLineUp => nav_scroll::line_up(app.active_doc_mut(), true),
+        Command::SelectLineDown => nav_scroll::line_down(app.active_doc_mut(), true),
         Command::SelectWordLeft => nav::word_left(app.active_doc_mut(), true),
         Command::SelectWordRight => nav::word_right(app.active_doc_mut(), true),
         Command::SelectLineStart => nav::line_start(app.active_doc_mut(), true),
         Command::SelectLineEnd => nav::line_end(app.active_doc_mut(), true),
-        Command::SelectPageUp => nav::page_up(app.active_doc_mut(), true),
-        Command::SelectPageDown => nav::page_down(app.active_doc_mut(), true),
+        Command::SelectPageUp => nav_scroll::page_up(app.active_doc_mut(), true),
+        Command::SelectPageDown => nav_scroll::page_down(app.active_doc_mut(), true),
         Command::SelectAll => nav::select_all(app.active_doc_mut()),
+        Command::ScrollLineUp => nav_scroll::scroll_line_up(app.active_doc_mut()),
+        Command::ScrollLineDown => nav_scroll::scroll_line_down(app.active_doc_mut()),
+        Command::ScrollHalfPageUp => nav_scroll::scroll_half_page_up(app.active_doc_mut()),
+        Command::ScrollHalfPageDown => nav_scroll::scroll_half_page_down(app.active_doc_mut()),
+        Command::CentreCursor => nav_scroll::centre_cursor(app.active_doc_mut()),
+        Command::CursorToTop => nav_scroll::cursor_to_top(app.active_doc_mut()),
+        Command::CursorToBottom => nav_scroll::cursor_to_bottom(app.active_doc_mut()),
         Command::DeleteLeft => edit::delete_left(app, app.active),
         Command::DeleteRight => edit::delete_right(app, app.active),
         Command::Indent => edit::indent(app, app.active),
