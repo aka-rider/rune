@@ -16,8 +16,10 @@ use rune_syntax::wrap::WrapSnapshot;
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
 /// per `DocMachine::snapshot`. `syntax`/`wrap` carry the coordinate
 /// conversions (`buffer_to_syntax`/`syntax_to_buffer`,
-/// `syntax_to_wrap`/`wrap_to_syntax`); `display` is the wrap-rows view
-/// Phase 5 will later expand for tables/images.
+/// `syntax_to_wrap`/`wrap_to_syntax`); `display` is the wrap rows with
+/// table borders synthesised in (WP3's `DisplaySnapshot::expand_tables`) —
+/// every display-space consumer (rendering, the viewport, mouse
+/// hit-testing) reads row geometry from `display`, never `wrap` directly.
 pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
@@ -146,7 +148,7 @@ impl DocMachine {
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
         let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks, self.wrap.width);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
-        let display = DisplaySnapshot::from_wrap(&wrap);
+        let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
         self.dirty = false;
         ViewSnapshots {
             syntax,

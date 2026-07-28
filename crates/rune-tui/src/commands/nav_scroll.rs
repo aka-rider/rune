@@ -120,16 +120,17 @@ fn cursor_wrap_row(doc: &Document, view: &ViewSnapshots) -> usize {
     view.wrap.syntax_to_wrap(sp).row
 }
 
-/// Moves `scroll_row` by `delta` wrap rows, clamped to `[0, total_rows -
-/// 1]` (never scrolled past the document), and arms `ScrollMode::
-/// Independent` (plan WP7.S1/S2) so the per-batch settle snaps the cursor
-/// onto screen instead of scrolling the viewport back to it. The shared
-/// chokepoint both the line-scroll commands below and the mouse wheel
-/// (`commands::mouse`, WP7.S6: "wheel scrolls 3 rows") route through, so
-/// the two can never disagree about how a scroll clamps or arms
-/// `Independent` mode.
+/// Moves `scroll_row` by `delta` DISPLAY rows (WP3: `scroll_row` indexes
+/// `DisplaySnapshot::rows`, table borders included — not the wrap rows
+/// directly), clamped to `[0, total_rows - 1]` (never scrolled past the
+/// document), and arms `ScrollMode::Independent` (plan WP7.S1/S2) so the
+/// per-batch settle snaps the cursor onto screen instead of scrolling the
+/// viewport back to it. The shared chokepoint both the line-scroll commands
+/// below and the mouse wheel (`commands::mouse`, WP7.S6: "wheel scrolls 3
+/// rows") route through, so the two can never disagree about how a scroll
+/// clamps or arms `Independent` mode.
 pub fn scroll_lines(doc: &mut Document, delta: isize) {
-    let total = doc.view().wrap.total_rows();
+    let total = doc.view().display.total_rows();
     let max_row = total.saturating_sub(1);
     let current = doc.viewport.scroll_row as isize;
     let next = (current + delta).clamp(0, max_row as isize);
@@ -165,11 +166,12 @@ pub fn scroll_half_page_down(doc: &mut Document) {
     scroll_lines(doc, step);
 }
 
-/// Sets `scroll_row` directly from the PRIMARY cursor's own row (not a
-/// delta) and arms `Independent` mode — shared by `centre_cursor`/
-/// `cursor_to_top`/`cursor_to_bottom` below.
+/// Sets `scroll_row` directly to `target_row` (a DISPLAY row — not a delta)
+/// and arms `Independent` mode — shared by `centre_cursor`/`cursor_to_top`/
+/// `cursor_to_bottom` below, each of which converts the cursor's own WRAP
+/// row through `DisplaySnapshot::wrap_to_display` before calling this.
 fn scroll_to(doc: &mut Document, target_row: usize) {
-    let total = doc.view().wrap.total_rows();
+    let total = doc.view().display.total_rows();
     let max_row = total.saturating_sub(1);
     doc.viewport.scroll_row = target_row.min(max_row);
     doc.viewport.mode = ScrollMode::Independent;
@@ -179,7 +181,7 @@ fn scroll_to(doc: &mut Document, target_row: usize) {
 /// without moving the cursor itself.
 pub fn centre_cursor(doc: &mut Document) {
     let view = doc.view();
-    let row = cursor_wrap_row(doc, &view);
+    let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     let half = doc.viewport.height as usize / 2;
     scroll_to(doc, row.saturating_sub(half));
 }
@@ -187,14 +189,14 @@ pub fn centre_cursor(doc: &mut Document) {
 /// vim/Helix `zt`: scrolls the cursor's row to the top of the viewport.
 pub fn cursor_to_top(doc: &mut Document) {
     let view = doc.view();
-    let row = cursor_wrap_row(doc, &view);
+    let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     scroll_to(doc, row);
 }
 
 /// vim/Helix `zb`: scrolls the cursor's row to the bottom of the viewport.
 pub fn cursor_to_bottom(doc: &mut Document) {
     let view = doc.view();
-    let row = cursor_wrap_row(doc, &view);
+    let row = view.display.wrap_to_display(cursor_wrap_row(doc, &view));
     let height = doc.viewport.height as usize;
     scroll_to(doc, row.saturating_sub(height.saturating_sub(1)));
 }

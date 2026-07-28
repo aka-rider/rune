@@ -323,13 +323,25 @@ impl Document {
     /// change again later in the same batch, then get silently overwritten
     /// by the batch's real settle — wasted work at best, a visibly wrong
     /// intermediate scroll at worst.
+    ///
+    /// `viewport.scroll_row` is a DISPLAY row (WP3: what `render::build_rows`
+    /// actually indexes, table borders included), but the cursor's own row
+    /// is always WRAP space (border rows aren't addressable by the caret) —
+    /// `view.display.wrap_to_display` converts before `reconcile` ever sees
+    /// it, and the row `reconcile` hands back (also display-space) converts
+    /// the OTHER way, through `display_to_wrap`, before `snap_cursor_to_row`
+    /// (which computes a wrap-space cursor position) ever sees it. Missing
+    /// either conversion scrolls every document containing a table wrong by
+    /// the number of border rows above the cursor.
     pub fn scroll_to_cursor(&mut self, view: &ViewSnapshots) {
         let primary = self.cursors.primary();
         let buffer_point = self.buffer.offset_to_line_col(primary.position);
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        if let Some(target_row) = self.viewport.reconcile(wrap_point.row) {
-            self.snap_cursor_to_row(view, target_row);
+        let display_row = view.display.wrap_to_display(wrap_point.row);
+        if let Some(target_row) = self.viewport.reconcile(display_row) {
+            let wrap_row = view.display.display_to_wrap(target_row);
+            self.snap_cursor_to_row(view, wrap_row);
         }
     }
 
@@ -382,9 +394,9 @@ mod tests {
         doc.viewport.set_size(80, 24);
         let first = doc.sync();
         // "# hello" + "world" + the trailing empty line from the final \n.
-        assert_eq!(first.display.total_rows, 3);
+        assert_eq!(first.display.total_rows(), 3);
         let second = doc.sync();
-        assert_eq!(second.display.total_rows, first.display.total_rows);
+        assert_eq!(second.display.total_rows(), first.display.total_rows());
     }
 
     fn viewport(width: u16, height: u16) -> Viewport {
