@@ -62,19 +62,19 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// by poking `App` directly. `⌘Z` reaching the document is a PRECONDITION
 /// `UNDO-TOTAL`/`REDO-TOTAL` need, not a property they assert: per-pane
 /// routing (plan Context, decision 8) means an unfocused editor correctly
-/// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`,
-/// `app.rs:539`), and a modal correctly captures every key at stage 1
-/// before any pane sees it (`app.rs:457-461`). Both are reachable at
+/// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`), and a modal
+/// correctly captures every key at stage 1 before any pane sees it.
+/// Both are reachable at
 /// session end today: `^x` (`ToggleExplorer`) leaves the Explorer
 /// focused, and an Explorer `Enter` on a path missing from the fuzz `Mem`
-/// raises `Modal::Error` (`workspace.rs:39/57`). Each press runs through
+/// raises `Modal::Error`. Each press runs through
 /// `step_and_check`, so every per-step invariant still applies and a
 /// violation here still stops the session, same as any other step.
 ///
 /// Order: `Escape` first, only while a modal is up — both `Modal::Error`
 /// and `Modal::Guard` clear on it without touching a buffer byte
-/// (`banner.rs:252-300`). Then `^E` (`GlobalCommand::FocusEditor`), only
-/// while focus isn't already `Pane::Editor` (`pane.rs:62`) — re-checked
+/// Then `^E` (`GlobalCommand::FocusEditor`), only
+/// while focus isn't already `Pane::Editor` — re-checked
 /// fresh rather than decided up front, since dismissing the modal can
 /// itself leave focus somewhere other than `Editor`.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {

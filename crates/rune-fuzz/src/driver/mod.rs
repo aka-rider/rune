@@ -383,7 +383,7 @@ fn run_update_catching_panic(
 }
 
 /// The same downcast ladder proptest itself uses to render a caught panic's
-/// payload (`proptest-1.11.0/src/test_runner/runner.rs:255-264`).
+/// payload.
 fn downcast_panic(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         (*s).to_string()

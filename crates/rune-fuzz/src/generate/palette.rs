@@ -51,7 +51,7 @@ pub(super) static PASTE_PALETTE: &[&str] = &[
 
 /// `Action::Type` payloads: `PASTE_PALETTE` with every `char::is_control()`
 /// character except `'\n'` removed, since `Msg::Key(Char)` silently drops
-/// control characters (`is_insertable_key_char`, `app.rs:279-281`, G3).
+/// control characters (`is_insertable_key_char`, G3).
 /// Concretely: drops the CRLF entry and the tab-separated entry, and strips
 /// the tab (keeping the ZWSPs, which are format chars, not control chars)
 /// from the ZWSP entry. Do not "restore" those — a `Type` cannot deliver
