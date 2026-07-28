@@ -17,7 +17,7 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
 use rune_syntax::ScopeId;
 use rune_syntax::SyntaxSpan;
-use rune_syntax::wrap::{WrapSegment, control_aware_width, grapheme_width, rune_width_with_tab};
+use rune_syntax::wrap::{control_aware_width, grapheme_width, rune_width_with_tab};
 
 use crate::app::App;
 use crate::banner;
@@ -191,8 +191,8 @@ fn push_grapheme_cells(
 /// segment (a wrap row), reset to `0` at the segment's start — the same
 /// per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col` use, so
 /// a tab's width agrees with both regardless of which span it's in.
-pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cell> {
-    segment_cells_with(content, seg, |scope| style_for(theme, scope))
+pub fn segment_cells(theme: &Theme, content: &str, spans: &[SyntaxSpan]) -> Vec<Cell> {
+    segment_cells_with(content, spans, |scope| style_for(theme, scope))
 }
 
 /// A segment's cells with styling elided — for callers that read only the
@@ -201,21 +201,23 @@ pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cel
 /// it already holds the document mutably, so borrowing `App::theme` purely
 /// to reach widths it would then discard is both a borrow conflict and a
 /// lie about what a click depends on.
-pub fn segment_geometry(content: &str, seg: &WrapSegment) -> Vec<Cell> {
-    segment_cells_with(content, seg, |_| Style::default())
+pub fn segment_geometry(content: &str, spans: &[SyntaxSpan]) -> Vec<Cell> {
+    segment_cells_with(content, spans, |_| Style::default())
 }
 
 /// The ONE cell walk both entry points above share — `style_of` is its
 /// only theme-dependent input, so the styled and geometry-only paths can
-/// never drift in how they measure a row.
+/// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`
+/// (WP3), not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
+/// spans have no backing `WrapSegment` to read `.spans` off of.
 fn segment_cells_with(
     content: &str,
-    seg: &WrapSegment,
+    spans: &[SyntaxSpan],
     style_of: impl Fn(ScopeId) -> Style,
 ) -> Vec<Cell> {
     let mut cells = Vec::new();
     let mut visual_col = 0usize;
-    for sp in &seg.spans {
+    for sp in spans {
         let style = style_of(sp.scope());
         match sp {
             SyntaxSpan::Substituted { text, cell_map, .. } => {
@@ -250,21 +252,24 @@ fn segment_cells_with(
     cells
 }
 
-/// Builds the visible `Vec<Vec<Cell>>` for the editor viewport: the wrap
-/// rows in `[scroll_row, scroll_row + height)`, with cursor/selection
-/// overlays applied.
+/// Builds the visible `Vec<Vec<Cell>>` for the editor viewport: the DISPLAY
+/// rows (WP3: wrap rows plus synthesised table borders) in `[scroll_row,
+/// scroll_row + height)`, with cursor/selection overlays applied.
+/// `viewport.scroll_row` is a DISPLAY row index — `Document::scroll_to_cursor`
+/// is its single writer and converts through `DisplaySnapshot::wrap_to_display`
+/// before ever assigning it (see that function's docs).
 pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let doc = app.active_doc();
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
     let height = viewport.height as usize;
     let mut rows: Vec<Vec<Cell>> = view
-        .wrap
-        .segments()
+        .display
+        .rows()
         .iter()
         .skip(viewport.scroll_row)
         .take(height)
-        .map(|seg| segment_cells(&app.theme, content, seg))
+        .map(|row| segment_cells(&app.theme, content, &row.spans))
         .collect();
 
     apply_cursor_overlays(
@@ -295,10 +300,15 @@ fn apply_cursor_overlays(
         let buffer_point = buf.offset_to_line_col(cursor.position);
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        if wrap_point.row < scroll_row {
+        // The cursor's own row lives in WRAP space (border rows aren't
+        // addressable by the caret); convert to the DISPLAY row `rows` is
+        // now indexed by before comparing against/indexing off `scroll_row`
+        // (also display-space, WP3.S5).
+        let display_row = view.display.wrap_to_display(wrap_point.row);
+        if display_row < scroll_row {
             continue;
         }
-        let Some(row) = rows.get_mut(wrap_point.row - scroll_row) else {
+        let Some(row) = rows.get_mut(display_row - scroll_row) else {
             continue;
         };
         let visual_col = view

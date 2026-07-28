@@ -57,11 +57,13 @@ pub fn handle(app: &mut App, input: MouseInput) {
 
 /// `(buffer offset, desired_col)` for a click at `(row, col)` relative to
 /// the editor rect — `None` before the document's first sync (`doc.view`
-/// unset), never observed past the seeded initial `Msg::Resize` in
-/// practice.
+/// unset, never observed past the seeded initial `Msg::Resize` in
+/// practice), or when the click landed on a synthesised table border row
+/// (Go parity: `offset_at` returns `None` there too, so the gesture is a
+/// complete no-op rather than moving the cursor to some nearby offset).
 fn hit_test(doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
     let view = doc.view.as_ref()?;
-    let offset = offset_at(doc, view, row, col);
+    let offset = offset_at(doc, view, row, col)?;
     Some((offset, desired_col_at(doc, view, offset)))
 }
 
@@ -71,24 +73,41 @@ fn hit_test(doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
 /// exactly what's on screen. A column past the last visible cell on that
 /// row lands at the row's own end (clicking in the empty space after a
 /// short line places the caret at that line's end, not its start).
-fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> usize {
-    let total = view.wrap.total_rows();
+///
+/// `row` is relative to the DISPLAY grid (WP3: what's actually on screen,
+/// borders included) — clamped against `DisplaySnapshot::total_rows`, then
+/// converted to the WRAP row the click's hit-tested content actually lives
+/// at via `display_to_wrap`, since every coordinate below this point (cell
+/// geometry, `wrap_to_syntax`) is wrap-space. A synthetic border row has no
+/// such wrap row of its own to click into — returns `None` instead (see
+/// `hit_test`'s docs).
+fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> Option<usize> {
+    let total = view.display.total_rows();
     if total == 0 {
-        return 0;
+        return Some(0);
     }
-    let wrap_row = (doc.viewport.scroll_row + row as usize).min(total - 1);
+    let display_row = (doc.viewport.scroll_row + row as usize).min(total - 1);
+    if view
+        .display
+        .rows()
+        .get(display_row)
+        .is_some_and(|r| r.synthetic)
+    {
+        return None;
+    }
+    let wrap_row = view.display.display_to_wrap(display_row);
     let content = doc.buffer.content();
 
     let mut acc = 0usize;
     if let Some(seg) = view.wrap.segments().get(wrap_row) {
-        for cell in render::segment_geometry(content, seg) {
+        for cell in render::segment_geometry(content, &seg.spans) {
             let width = cell.width.max(1) as usize;
             if (col as usize) < acc + width {
-                return if cell.buf_offset >= 0 {
+                return Some(if cell.buf_offset >= 0 {
                     cell.buf_offset as usize
                 } else {
                     0
-                };
+                });
             }
             acc += width;
         }
@@ -100,7 +119,7 @@ fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> usize 
         col: seg_len,
     });
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    doc.buffer.line_col_to_offset(buffer_point)
+    Some(doc.buffer.line_col_to_offset(buffer_point))
 }
 
 /// The visual column `offset` sits at — so a cursor a click plants keeps a
@@ -350,5 +369,40 @@ mod tests {
         // Row far below the editor's visible area.
         click(&mut app, MouseKind::Down(MouseButton::Left), 0, 200);
         assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    }
+
+    /// WP3.S5: a click on a synthesised table border row must be a
+    /// complete no-op (Go parity) — never move the caret to some nearby
+    /// offset. The table sits at the very top of the document, so editor
+    /// row 0 is its synthesised `┌┬┐` top border (`DisplaySnapshot::
+    /// expand_tables`), with no wrap row of its own to click into. The
+    /// cursor is placed on the trailing "tail" paragraph BEFORE the
+    /// initial `sync_view` (not via a click, per `app_with`'s own docs:
+    /// `doc.view` is cached once per batch, so a click's hit-test always
+    /// sees the reveal state as of that initial sync) — otherwise the
+    /// default cursor at buffer offset 0 sits ON the table's own line,
+    /// which keeps it `Revealed` (raw text, no borders at all) and the
+    /// premise of this test never holds.
+    #[test]
+    fn click_on_a_synthetic_table_border_row_does_not_move_the_cursor() {
+        let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";
+        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+        app.pointer_clock = Box::new(ManualClock::new());
+        app.frame_width = 40;
+        app.frame_height = 21; // + footer row
+        let cursor_offset = content.find("tail").expect("fixture has a tail paragraph");
+        let id = app.active;
+        app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset);
+        app.sync_view();
+        let cursor_before = app.active_doc().cursors.primary().position;
+
+        click(&mut app, MouseKind::Down(MouseButton::Left), 2, 0);
+
+        assert_eq!(
+            app.active_doc().cursors.primary().position,
+            cursor_before,
+            "a click on the synthesised top border must not move the caret"
+        );
+        assert!(!app.active_doc().cursors.primary().has_selection());
     }
 }

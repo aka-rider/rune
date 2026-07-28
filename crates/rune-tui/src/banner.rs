@@ -70,7 +70,7 @@ impl Modal {
                 .doc
                 .view
                 .as_ref()
-                .map(|v| v.display.total_rows)
+                .map(|v| v.display.total_rows())
                 .unwrap_or(0),
             Modal::Guard(_) => 0,
         }
@@ -417,7 +417,7 @@ fn scroll(app: &mut App, delta: isize) {
         .doc
         .view
         .as_ref()
-        .map(|v| v.display.total_rows.saturating_sub(1))
+        .map(|v| v.display.total_rows().saturating_sub(1))
         .unwrap_or(usize::MAX);
     let current = state.doc.viewport.scroll_row as isize;
     let next = (current + delta).max(0) as usize;
@@ -441,7 +441,7 @@ fn build_rows(theme: &crate::theme::Theme, doc: &Document, height: u16) -> Vec<V
         .iter()
         .skip(doc.viewport.scroll_row)
         .take(height as usize)
-        .map(|seg| render::segment_cells(theme, content, seg))
+        .map(|seg| render::segment_cells(theme, content, &seg.spans))
         .collect()
 }
 
