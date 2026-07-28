@@ -3,6 +3,7 @@
 //! Ports Go's inverse/reapply edit-primitive formulas and its
 //! peek-then-commit journal discipline.
 
+use crate::assert_invariant;
 use crate::buffer::{AppliedEdit, Buffer, BufferError, Edit, clone_and_sort_edits_descending};
 use crate::cursor::Cursor;
 
@@ -67,18 +68,20 @@ pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, Buff
 /// `CursorSet::merge` coalesces any two cursors whose selections touch into
 /// one before edits are ever generated, so two edits landing on the
 /// identical post-edit `start` cannot arise from a real multi-cursor batch.
-/// Checked with `debug_assert!` — a caller invariant to catch during
-/// development, not user input this function should refuse at runtime.
+/// Checked via the `STRICT_INVARIANTS`-gated `assert_invariant` chokepoint
+/// (see `lib.rs`'s module docs) — a caller invariant to catch during
+/// development and testing, not user input this function should refuse at
+/// runtime; an ordinary build simply replays the batch in whatever order
+/// the tied sort produced.
 pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     if edits.is_empty() {
         return Ok(buf.clone());
     }
     let mut sorted: Vec<&AppliedEdit> = edits.iter().collect();
     sorted.sort_by_key(|e| e.start);
-    debug_assert!(
-        no_duplicate_starts(&sorted),
-        "reapply: two edits share a post-edit start; CursorSet::merge should have coalesced them upstream"
-    );
+    assert_invariant(no_duplicate_starts(&sorted), || {
+        "reapply: two edits share a post-edit start; CursorSet::merge should have coalesced them upstream".to_string()
+    });
 
     let mut work = buf.clone();
     for e in sorted {
