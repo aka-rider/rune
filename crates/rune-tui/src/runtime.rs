@@ -13,11 +13,14 @@
 //! thread use).
 
 use std::io;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
+use rune_syntax::ScopeId;
 use rune_vfs::{DirEntry, Vfs};
 
 use crate::app::{self, App};
@@ -95,6 +98,20 @@ pub enum Msg {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
     },
+    /// A background `rune_ts::highlight` call completed (plan WP5.S2).
+    /// `result: None` means NO RESULT — the parse budget elapsed, the
+    /// language was unrecognised, or the parse failed — and is
+    /// distinguishable from `Some(vec![])`, a real empty result: `None`
+    /// must leave the document's previously stored spans untouched, or a
+    /// document whose parse is slower than the budget would lose its
+    /// colours on every keystroke and never regain them. `version` is the
+    /// buffer version the highlight ran against; a reply whose `version` no
+    /// longer matches the live buffer is dropped the same way.
+    Highlighted {
+        doc: DocumentId,
+        version: u64,
+        result: Option<Vec<(Range<usize>, ScopeId)>>,
+    },
     Error(String),
     Quit,
 }
@@ -139,6 +156,12 @@ pub enum CmdKind {
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
+    /// `rune_ts::highlight` (plan WP5.S2) — a full tree-sitter parse plus
+    /// query run, bounded by [`HIGHLIGHT_BUDGET`]. Off-thread per §5.4: a
+    /// large document's parse must never block the main loop, and grammar
+    /// crashes (`ts_assert`) are architecturally avoided rather than caught
+    /// (CONSTITUTION §1.3) by never constructing an `InputEdit`.
+    Highlight,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -210,6 +233,23 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // exactly one implementation, exercised the same way on every resize.
     let (width, height) = guard.size()?;
     apply(app, Msg::Resize(width, height), &mut guard, &tx)?;
+
+    // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
+    // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
+    // runtime, and before any `Msg` has ever reached `app::update`'s
+    // before/after gate), so the document it opened with never gets its
+    // first highlight kicked from there. This is the earliest point that
+    // both an `App` and an `Effects` sink exist together, so it is the one
+    // explicit kick this bootstrap path needs; every later document (an
+    // edit, a tab switch, `workspace::open_path`) is already covered by
+    // `app::update`'s own before/after gate.
+    {
+        let mut effects = Effects::default();
+        app::schedule_highlight(app, app.active, &mut effects);
+        for cmd in effects.cmds.drain(..) {
+            spawn_cmd(cmd, tx.clone());
+        }
+    }
 
     app.sync_view();
     guard.draw(|frame| crate::render::draw(app, frame))?;
@@ -334,6 +374,30 @@ pub fn load_dir_cmd(
             "could not list {}: {e}",
             root.display()
         ))),
+    })
+}
+
+/// The wall-clock budget one `rune_ts::highlight` call is allowed before it
+/// aborts and reports `None` (plan WP5.S2, Assumption A3) — unmeasured
+/// against a real large document (see `TODO.md`).
+pub const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(250);
+
+/// Parses `source` as `lang` off-thread and replies with `Msg::Highlighted`
+/// (plan WP5.S2). Owns `source` (moved into the closure, exactly like
+/// [`load_dir_cmd`]'s owned `root`) since the `Cmd` closure is `FnOnce() ->
+/// Option<Msg> + Send + 'static` and cannot borrow the document's buffer
+/// across the thread boundary. Always replies with `Some(..)` — even a
+/// `None` result from `rune_ts::highlight` — so `in_flight` is guaranteed to
+/// clear on the UI thread; `rune_ts::highlight` itself never panics
+/// (§1.3: it surfaces failures as `None`/`registry().failures()`, never
+/// `ts_assert`'s `SIGABRT`, since it never constructs an `InputEdit`).
+pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: String) -> Cmd {
+    Cmd::new(CmdKind::Highlight, move || {
+        Some(Msg::Highlighted {
+            doc,
+            version,
+            result: rune_ts::highlight(lang, &source, HIGHLIGHT_BUDGET),
+        })
     })
 }
 

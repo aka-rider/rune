@@ -272,6 +272,11 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         .map(|row| segment_cells(&app.theme, content, &row.spans))
         .collect();
 
+    // Plan WP5.S5: the tree-sitter overlay paints token colours BEFORE the
+    // cursor overlays below, so a selection background or the caret's
+    // reverse-video always wins over a token's foreground.
+    overlay::apply_highlight_spans(&mut rows, &doc.highlight.spans, &app.theme);
+
     overlay::apply_cursor_overlays(
         &mut rows,
         view,
@@ -283,9 +288,9 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     rows
 }
 
-// `apply_cursor_overlays`, `highlight_selection` and `place_caret` moved to
-// `overlay.rs` (§1.6 budget) — `build_rows` above calls the first through
-// `overlay::`.
+// `apply_cursor_overlays`, `highlight_selection`, `place_caret` and
+// `apply_highlight_spans` moved to `overlay.rs` (§1.6 budget) — `build_rows`
+// above calls them through `overlay::`.
 
 /// Blits `app.view`'s current snapshot into the editor rect, and every
 /// other chrome rect `layout::geometry` computes (plan WP3.S8: `draw`

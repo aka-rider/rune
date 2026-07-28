@@ -6,13 +6,17 @@
 //! `app.rs` used to define locally, now reached through `dispatch::`
 //! instead.
 
-use crate::app::App;
+use std::ops::Range;
+
+use crate::app::{self, App};
 use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
+use crate::document::DocumentId;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, Msg};
 use crate::{explorer, opentabs, save};
 use rune_db::DbEvent;
+use rune_syntax::ScopeId;
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
 /// half, split out here alongside the key/db-event routers it calls into —
@@ -73,6 +77,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
+        Msg::Highlighted {
+            doc,
+            version,
+            result,
+        } => handle_highlighted(app, doc, version, result, effects),
         Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;
@@ -138,6 +147,57 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // silently dropped by this.
             app.db_ops.clear();
         }
+    }
+}
+
+/// Applies a `Msg::Highlighted` reply (plan WP5.S4), in the fixed order
+/// `[R2]` requires: (a) `in_flight` clears regardless of what the reply
+/// carries, so a document can never deadlock waiting on a highlight that
+/// already returned; (b) `result: None` (budget elapsed, unknown language,
+/// parse failure) leaves `spans` exactly as they were — a slow document
+/// degrades to STALE colours, never to none; (c) a `version` that no longer
+/// matches the live buffer means a NEWER edit landed while this reply was in
+/// flight, so the payload describes stale content and is dropped, spans
+/// again left untouched; (d) otherwise every range is clamped to the live
+/// byte length and any range whose endpoints fall off a `char` boundary (or
+/// whose `start >= end` after clamping) is discarded (§1.3), and the
+/// survivors replace `spans`; (e) if a further edit arrived while this
+/// reply was in flight (`pending`), it is cleared and a fresh highlight is
+/// requested immediately rather than waiting for the next keystroke.
+fn handle_highlighted(
+    app: &mut App,
+    id: DocumentId,
+    version: u64,
+    result: Option<Vec<(Range<usize>, ScopeId)>>,
+    effects: &mut Effects,
+) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.highlight.in_flight = None;
+    let pending = doc.highlight.pending;
+
+    if let Some(spans) = result
+        && version == doc.buffer.version()
+    {
+        let content = doc.buffer.content();
+        let len = content.len();
+        let mut clamped: Vec<(Range<usize>, ScopeId)> = Vec::with_capacity(spans.len());
+        for (range, scope) in spans {
+            let start = range.start;
+            let end = range.end.min(len);
+            if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+                continue;
+            }
+            clamped.push((start..end, scope));
+        }
+        doc.highlight.spans = clamped;
+        doc.highlight.version = version;
+    }
+    // `result: None`, or `Some(..)` at a stale version, leaves `spans`
+    // untouched — both cases fall through this `if let` with no write.
+
+    if pending {
+        doc.highlight.pending = false;
+        app::schedule_highlight(app, id, effects);
     }
 }
 

@@ -9,6 +9,7 @@
 //! scroll-to-cursor).
 
 use std::num::NonZeroU64;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use rune_core::buffer::Buffer;
@@ -16,7 +17,7 @@ use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::Journal;
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
-use rune_syntax::DocumentKind;
+use rune_syntax::{DocumentKind, ScopeId};
 
 use crate::db::DocDb;
 
@@ -53,6 +54,25 @@ fn kind_for(path: Option<&Path>) -> DocumentKind {
 /// counter, with no fallible conversion step to route around.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DocumentId(pub(crate) NonZeroU64);
+
+/// The async highlight state for one document (plan WP5): the last spans a
+/// background `rune_ts::highlight` call actually delivered, tagged with the
+/// buffer `version` they describe. `in_flight` carries the version a
+/// currently-running highlight `Cmd` was spawned against — at most one may
+/// be in flight per document (`spawn_cmd` has no thread pool or
+/// cancellation); `pending` records that a further edit landed while that
+/// `Cmd` was still running, so its completion re-schedules instead of the
+/// document going stale until the next keystroke. A completion carrying
+/// `result: None` (budget elapsed, unknown language, parse failure) leaves
+/// `spans` untouched — see `Msg::Highlighted`'s doc comment: a slow document
+/// degrades to STALE colours, never to NO colours.
+#[derive(Debug, Default)]
+pub struct HighlightState {
+    pub version: u64,
+    pub spans: Vec<(Range<usize>, ScopeId)>,
+    pub in_flight: Option<u64>,
+    pub pending: bool,
+}
 
 /// One open editing pane's complete state (plan WP1 decision 2): buffer,
 /// cursors, the root display machine, the viewport onto it, file identity,
@@ -138,6 +158,10 @@ pub struct Document {
     /// Help document therefore stay `DocumentKind::Markdown`, exactly as
     /// before this plan.
     pub kind: DocumentKind,
+    /// This document's async highlight state (plan WP5) — spans, their
+    /// version tag, and the in-flight/pending bookkeeping that bounds a
+    /// document to at most one running highlight `Cmd` at a time.
+    pub highlight: HighlightState,
 }
 
 impl Document {
@@ -161,6 +185,7 @@ impl Document {
             db: None,
             display_name: None,
             kind: DocumentKind::Markdown,
+            highlight: HighlightState::default(),
         }
     }
 
