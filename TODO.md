@@ -219,7 +219,43 @@ edit-commit chokepoint, not just the primary. Out of scope for the table plan.
 - **Root cause, part 2:** `crates/rune-md/src/emit/table.rs`'s `emit_table` always stored the Grid layout's natural `widths` into `TableRowInfo::col_widths`, the value `DisplaySnapshot::expand_tables` uses to build a synthesised border's own text — even when the layout actually chosen for that table was Wrapped, which renders at `constrained_widths` instead. Fixed: `col_widths` now stores `constrained_widths` when the layout is Wrapped.
 - **Regression test:** `crates/rune-md/tests/table_render.rs`'s `wrapped_table_gets_exactly_one_top_and_one_bottom_border_at_the_constrained_width`.
 
-## rust port — PRE-EXISTING: `reapply`'s STRICT_INVARIANTS check fires on multicursor + CRLF (recorded 2026-07-28, markdown-table plan)
+## ~~rust port — PRE-EXISTING: `reapply`'s STRICT_INVARIANTS check fires on multicursor + CRLF (recorded 2026-07-28, markdown-table plan)~~
+
+**RESOLVED (2026-07-29, `tbl-cursor-fix`).** The CRLF/BOM framing below was
+this entry's best guess at the trigger, not the actual root cause — it was
+wrong. Instrumented `reapply`/`apply_edit_batch_with_cursors` directly and
+reproduced with `make test-fuzz` (a fresh, simpler catch,
+`no-panic-c33c6055`, now checked in as `crates/rune-fuzz/repros/
+no-panic-01.rune`): the real trigger is Backspace (also Delete/DeleteWord/
+outdent/delete-line), not CRLF or a BOM. `CursorSet::merge` coalesces
+cursors correctly on their own PRE-edit *selection* ranges — for a
+caretless cursor that's the zero-width point `[position, position)` — but
+Backspace's per-cursor `bare` edit range reaches ONE RUNE LEFT of that
+point (Delete reaches right; DeleteWord/outdent/delete-line reach further
+still). Two cursors one rune apart never touch by `merge`'s own rule (their
+points differ), so both legitimately survive as separate cursors — but the
+two Backspace EDITS those cursors' commands generate DO touch
+(`[start-1,start)` and `[start,start+1)`). `Buffer::apply_edits` accepts
+touching, non-overlapping edits; since the earlier one is a pure deletion,
+its negative shift lands the later edit's POST-edit `start` on the exact
+same offset as the earlier one's — the state `reapply`'s invariant exists
+to catch. So the mismatch is real (pre-edit selection space vs. post-edit
+`start` space, as this entry originally said) but the boundary that
+diverges is Backspace-family "reach past the cursor's own point," not
+CRLF/BOM pairing (`CursorSet::merge` itself was never touched).
+Fix: `crates/rune-tui/src/commands/edit_core.rs`'s new
+`coalesce_touching_edits`, called from the one shared chokepoint
+(`apply_edit_batch_with_cursors`) every editing command funnels through —
+it unions any two edits in a batch whose `[start,end)` ranges touch or
+overlap into one BEFORE the batch ever reaches `Buffer::apply_edits`,
+survivor id = the lower of the two (mirroring `CursorSet::merge`'s own
+tie-break). This makes "two edits share a post-edit start" unrepresentable
+for every command through this chokepoint, not just Backspace. Proof:
+`crates/rune-tui/src/commands/edit_core.rs`'s
+`two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo`
+(reverting the fix makes it fail, confirmed).
+
+Original entry preserved below for the record.
 
 Surfaced by the markdown-table plan's fuzz work — **not caused by it**. Verified by
 replaying the script below at `a1fe09d^` (immediately before this plan's only
@@ -255,7 +291,9 @@ tied sort produced, a possible buffer-corruption path during redo.
 
 **Not committed to `repros/` while red** (standing convention: a repro belongs
 there only in the same commit as its fix). The script above is the verbatim
-copy. **`make test-fuzz` stays red until this is fixed** — every other gate
-(`fmt`/`lint`/`build`/`test`/`perf-guard`/`parity-grid`/`replay`) is green.
-Fix: make `CursorSet::merge` coalesce on post-edit start, not only on
-pre-edit selection range. Out of scope for the table plan.
+copy. ~~**`make test-fuzz` stays red until this is fixed**~~ — see the
+RESOLVED note above: `make test-fuzz` is green again as of `tbl-cursor-fix`.
+~~Fix: make `CursorSet::merge` coalesce on post-edit start, not only on
+pre-edit selection range.~~ (That was this entry's guess at the fix, before
+root-causing it — see above for what the fix actually was.) Out of scope for
+the table plan.

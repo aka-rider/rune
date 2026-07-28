@@ -21,6 +21,74 @@ use crate::db;
 use crate::document::DocumentId;
 use crate::save;
 
+/// Coalesces edits in `infos` whose `[start, end)` ranges touch or overlap
+/// into one, before the batch ever reaches `Buffer::apply_edits`.
+///
+/// `CursorSet::merge` only ever coalesces cursors whose own selection
+/// ranges touch — for a caretless cursor that is the zero-width point
+/// `[position, position)`. Several commands' per-cursor edit generators
+/// (Backspace/Delete/DeleteWord's `bare` closures in `commands::edit`, and
+/// `commands::edit_lines`' outdent/delete-line) deliberately reach past
+/// that point — one rune left, one rune right, one word, one whole line —
+/// so two cursors close enough together can each still survive `merge`
+/// (their own selection points never touch) while the EDITS their commands
+/// produce do. `Buffer::apply_edits` accepts touching, non-overlapping
+/// edits, but when the earlier one is a pure deletion its negative shift
+/// can land the later edit's post-edit `start` on the exact same offset as
+/// the earlier one's — the state `undo::reapply`'s invariant exists to
+/// catch (redo would then replay the tied pair in an unspecified order).
+///
+/// Coalescing on the actual byte ranges here, rather than trusting the
+/// cursor selections that produced them, makes that state unrepresentable
+/// for every command that funnels through this chokepoint — not just the
+/// one command that happened to surface it. Every edit whose range can
+/// extend past its own cursor's selection in this codebase is a pure
+/// deletion (`insert` empty): an inserting edit's `bare` range is always
+/// the cursor's own zero-width point, and two distinct cursors — already
+/// deduplicated by `merge` — can never share one. So the combined edit's
+/// `insert` is simply the two, concatenated in ascending-`start` order:
+/// empty + empty for every edit this actually coalesces today, and still
+/// well-defined (never silently dropping or reordering text) should a
+/// future command ever hand this chokepoint a non-empty one.
+fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
+    if infos.len() <= 1 {
+        return infos;
+    }
+    let mut sorted = infos;
+    sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
+
+    let mut iter = sorted.into_iter();
+    let mut current = match iter.next() {
+        Some(first) => first,
+        None => return Vec::new(),
+    };
+    let mut out: Vec<(Edit, u32)> = Vec::with_capacity(iter.len());
+
+    for next in iter {
+        if current.0.end >= next.0.start {
+            let start = current.0.start.min(next.0.start);
+            let end = current.0.end.max(next.0.end);
+            let mut insert = current.0.insert;
+            insert.push_str(&next.0.insert);
+            let id = current.1.min(next.1);
+            current = (
+                Edit {
+                    start,
+                    end,
+                    insert,
+                    cursor_id: 0,
+                },
+                id,
+            );
+        } else {
+            out.push(current);
+            current = next;
+        }
+    }
+    out.push(current);
+    out
+}
+
 /// Shared low-level chokepoint underneath `commit_edit_batch`: sort the
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
 /// replica, and recompute dirty — everything except how the post-edit
@@ -75,6 +143,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     if doc.read_only || infos.is_empty() {
         return;
     }
+    infos = coalesce_touching_edits(infos);
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
 
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
@@ -142,4 +211,152 @@ pub(crate) fn commit_edit_batch(
             })
             .collect()
     });
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+    use crate::commands::edit;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_with(content: &str) -> App {
+        let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
+        let id = app.active;
+        app.doc_mut(id)
+            .expect("fixture doc must exist")
+            .viewport
+            .set_size(80, 23);
+        app
+    }
+
+    #[test]
+    fn coalesce_touching_edits_merges_two_adjacent_pure_deletions() {
+        let infos = vec![
+            (
+                Edit {
+                    start: 4,
+                    end: 5,
+                    insert: String::new(),
+                    cursor_id: 0,
+                },
+                1,
+            ),
+            (
+                Edit {
+                    start: 3,
+                    end: 4,
+                    insert: String::new(),
+                    cursor_id: 0,
+                },
+                2,
+            ),
+        ];
+        let merged = coalesce_touching_edits(infos);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].0,
+            Edit {
+                start: 3,
+                end: 5,
+                insert: String::new(),
+                cursor_id: 0
+            }
+        );
+        assert_eq!(
+            merged[0].1, 1,
+            "lower id survives, mirroring CursorSet::merge's own tie-break"
+        );
+    }
+
+    #[test]
+    fn coalesce_touching_edits_leaves_non_touching_edits_apart() {
+        let infos = vec![
+            (
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                    cursor_id: 0,
+                },
+                1,
+            ),
+            (
+                Edit {
+                    start: 5,
+                    end: 6,
+                    insert: String::new(),
+                    cursor_id: 0,
+                },
+                2,
+            ),
+        ];
+        let merged = coalesce_touching_edits(infos);
+        assert_eq!(merged.len(), 2);
+    }
+
+    /// The regression this fix exists for (root-caused via `make
+    /// test-fuzz`'s `no-panic-c33c6055` artifact — see `repros/no-panic-01.
+    /// rune` and the `TODO.md` entry it resolves): two cursors, one rune
+    /// apart, neither with a selection, both Backspace. Neither cursor's
+    /// own selection touches the other's, so `CursorSet::merge` correctly
+    /// leaves them as two separate cursors — but Backspace's `bare` range
+    /// reaches one rune LEFT of each cursor's position, so the two EDITS
+    /// those cursors' commands produce DO touch (`[0,1)` and `[1,2)`).
+    ///
+    /// Without `coalesce_touching_edits` above, this batch would reach
+    /// `Buffer::apply_edits` as two separate touching edits — this test's
+    /// own `step.edits.len() == 1` assertion below catches that directly.
+    /// Redoing that same two-edit `Step` is what actually trips
+    /// `undo::reapply`'s `STRICT_INVARIANTS`-gated assertion in production
+    /// (the earlier pure-deletion edit's negative shift collapses the
+    /// later edit's post-edit `start` onto it) — not reproduced by THIS
+    /// test, since `rune-tui`'s own test build does not compile `rune-core`
+    /// with `cfg(test)` or the `strict-invariants` feature (only
+    /// `rune-fuzz`'s `Cargo.toml` opts into that, deliberately, per
+    /// `rune-core/src/lib.rs`'s module docs); `crates/rune-fuzz/repros/
+    /// no-panic-01.rune` (via `cargo test -p rune-fuzz --test replay`, and
+    /// `make test-fuzz`) is what proves the reapply panic itself is gone.
+    /// Verified by temporarily reverting the `coalesce_touching_edits`
+    /// call in `apply_edit_batch_with_cursors` and re-running this test: it
+    /// then fails at the `step.edits.len()` assertion below.
+    #[test]
+    fn two_adjacent_cursors_backspacing_coalesce_into_one_edit_and_survive_redo() {
+        let mut app = app_with("ab");
+        let id = app.active;
+        let doc = app.doc_mut(id).expect("fixture doc must exist");
+        doc.cursors = CursorSet::new(1).add(Cursor {
+            position: 2,
+            anchor: 2,
+            desired_col: 0,
+            id: 0,
+        });
+        assert_eq!(
+            doc.cursors.len(),
+            2,
+            "fixture must hold two cursors, one rune apart, for merge() to legitimately leave separate"
+        );
+
+        edit::delete_left(&mut app, id);
+        assert_eq!(app.doc(id).expect("doc").buffer.content(), "");
+        let step = app
+            .doc(id)
+            .expect("doc")
+            .journal
+            .undo_peek()
+            .expect("one step to undo")
+            .0;
+        assert_eq!(
+            step.edits.len(),
+            1,
+            "the two cursors' touching Backspace ranges must coalesce into one edit"
+        );
+
+        edit::undo(&mut app, id);
+        assert_eq!(app.doc(id).expect("doc").buffer.content(), "ab");
+        edit::redo(&mut app, id);
+        assert_eq!(app.doc(id).expect("doc").buffer.content(), "");
+    }
 }
