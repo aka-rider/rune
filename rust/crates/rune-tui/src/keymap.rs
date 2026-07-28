@@ -154,8 +154,23 @@ pub enum Command {
     SelectAll,
     DeleteLeft,
     DeleteRight,
+    /// Plan WP9.S2 — `⌥⌫`/`⌥⌦` (Option+Backspace/Delete).
+    DeleteWordLeft,
+    DeleteWordRight,
+    /// Plan WP9.S2 — `⌘⇧K`, unbound in the Go original (see
+    /// `editor_bindings.rs`'s module doc).
+    DeleteLine,
     Indent,
     Outdent,
+    /// Plan WP9.S2 — `⌥↑`/`⌥↓`, matching Go's own `keymap.go` bindings.
+    MoveLineUp,
+    MoveLineDown,
+    /// Plan WP9.S2 — `⌥⇧↑`/`⌥⇧↓`, unbound in the Go original.
+    CloneLineUp,
+    CloneLineDown,
+    /// Plan WP9.S3 — `⌥⌘↑`/`⌥⌘↓`, matching Go's own `keymap.go` bindings.
+    AddCursorAbove,
+    AddCursorBelow,
     Copy,
     Cut,
     Paste,
@@ -241,12 +256,26 @@ pub fn resolve(key: KeyInput) -> Option<Command> {
         ),
         // `ctrl+Up`/`ctrl+Down` (plan WP7.S2/S7): viewport-only line scroll
         // — VS Code's own default binding for "Scroll Line Up"/"Scroll Line
-        // Down". Free: `resolve_plain_or_shift` only ever matches NONE/
-        // SHIFT.
+        // Down". Free: `resolve_vertical` never matches a combination with
+        // CTRL set.
         KeyCode::Up if m == CTRL_ONLY => Some(Command::ScrollLineUp),
-        KeyCode::Up => resolve_plain_or_shift(m, Command::LineUp, Command::SelectLineUp),
+        KeyCode::Up => resolve_vertical(
+            m,
+            Command::LineUp,
+            Command::SelectLineUp,
+            Command::MoveLineUp,
+            Command::CloneLineUp,
+            Command::AddCursorAbove,
+        ),
         KeyCode::Down if m == CTRL_ONLY => Some(Command::ScrollLineDown),
-        KeyCode::Down => resolve_plain_or_shift(m, Command::LineDown, Command::SelectLineDown),
+        KeyCode::Down => resolve_vertical(
+            m,
+            Command::LineDown,
+            Command::SelectLineDown,
+            Command::MoveLineDown,
+            Command::CloneLineDown,
+            Command::AddCursorBelow,
+        ),
         // `ctrl+Home`/`ctrl+End`: scroll the cursor's row to the top/bottom
         // of the viewport (vim/Helix `zt`/`zb`) — free of `Home`/`End`'s
         // own NONE/SHIFT-only arms.
@@ -263,7 +292,11 @@ pub fn resolve(key: KeyInput) -> Option<Command> {
         KeyCode::PageDown if m == CTRL_ONLY => Some(Command::ScrollHalfPageDown),
         KeyCode::PageDown => resolve_plain_or_shift(m, Command::PageDown, Command::SelectPageDown),
         KeyCode::Backspace if m == Mods::NONE => Some(Command::DeleteLeft),
+        KeyCode::Backspace if m.alt && !m.ctrl && !m.sup && !m.shift => {
+            Some(Command::DeleteWordLeft)
+        }
         KeyCode::Delete if m == Mods::NONE => Some(Command::DeleteRight),
+        KeyCode::Delete if m.alt && !m.ctrl && !m.sup && !m.shift => Some(Command::DeleteWordRight),
         KeyCode::Tab if m == Mods::NONE => Some(Command::Indent),
         KeyCode::Tab if m.shift && !m.alt && !m.ctrl && !m.sup => Some(Command::Outdent),
         KeyCode::BackTab => Some(Command::Outdent),
@@ -291,8 +324,8 @@ fn resolve_directional(
     }
 }
 
-/// Plain vs. shift (select) only — no alt/word variant (Up/Down/Home/End/
-/// PageUp/PageDown).
+/// Plain vs. shift (select) only — no alt/word variant (Home/End/PageUp/
+/// PageDown).
 fn resolve_plain_or_shift(m: Mods, plain: Command, select: Command) -> Option<Command> {
     match (m.shift, m.alt, m.ctrl, m.sup) {
         (false, false, false, false) => Some(plain),
@@ -301,10 +334,32 @@ fn resolve_plain_or_shift(m: Mods, plain: Command, select: Command) -> Option<Co
     }
 }
 
+/// `Up`/`Down`: plain, shift (select), alt (move-line), shift+alt
+/// (clone-line), alt+super (add-cursor) — plan WP9.S2/S3's five-way
+/// mirror of `resolve_directional`'s word variant, using vertical-motion
+/// commands instead of word motion.
+fn resolve_vertical(
+    m: Mods,
+    plain: Command,
+    select: Command,
+    alt: Command,
+    shift_alt: Command,
+    alt_sup: Command,
+) -> Option<Command> {
+    match (m.shift, m.alt, m.ctrl, m.sup) {
+        (false, false, false, false) => Some(plain),
+        (true, false, false, false) => Some(select),
+        (false, true, false, false) => Some(alt),
+        (true, true, false, false) => Some(shift_alt),
+        (false, true, false, true) => Some(alt_sup),
+        _ => None,
+    }
+}
+
 /// The `Char(c)`-keyed chords: word motion (`alt+b`/`alt+f`), page motion
-/// (`ctrl+u`), select-all, clipboard, undo/redo, save. Quit chords
-/// are handled by the `QuitKey::from_key` short-circuit in `resolve` above,
-/// not here.
+/// (`ctrl+u`), select-all, clipboard, undo/redo, save, delete-line
+/// (`sup+shift+k`, plan WP9.S2). Quit chords are handled by the
+/// `QuitKey::from_key` short-circuit in `resolve` above, not here.
 fn resolve_char(c: char, m: Mods) -> Option<Command> {
     match c {
         'b' if m.alt && !m.ctrl && !m.sup => Some(Command::WordLeft),
@@ -324,6 +379,7 @@ fn resolve_char(c: char, m: Mods) -> Option<Command> {
         'z' if m.sup && m.shift && !m.ctrl => Some(Command::Redo),
         'y' if m.ctrl && !m.shift && !m.sup => Some(Command::Redo),
         's' if m.sup && !m.ctrl => Some(Command::Save),
+        'k' if m.sup && m.shift && !m.ctrl && !m.alt => Some(Command::DeleteLine),
         _ => None,
     }
 }

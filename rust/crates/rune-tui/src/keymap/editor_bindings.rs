@@ -62,6 +62,12 @@ const SUP_SHIFT: Mods = Mods {
     ctrl: false,
     sup: true,
 };
+const ALT_SUP: Mods = Mods {
+    shift: false,
+    alt: true,
+    ctrl: false,
+    sup: true,
+};
 
 /// One row per chord `keymap::resolve` binds (Save/quit chords excepted —
 /// see this module's doc comment). Every entry's `when` is `""`
@@ -140,6 +146,42 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         when: "",
     },
     Binding {
+        keys: &[KeyPattern::new(KeyCode::Up, ALT)],
+        cmd: Command::MoveLineUp,
+        help: "move line up",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Down, ALT)],
+        cmd: Command::MoveLineDown,
+        help: "move line down",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Up, SHIFT_ALT)],
+        cmd: Command::CloneLineUp,
+        help: "clone line up",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Down, SHIFT_ALT)],
+        cmd: Command::CloneLineDown,
+        help: "clone line down",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Up, ALT_SUP)],
+        cmd: Command::AddCursorAbove,
+        help: "cursor above",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Down, ALT_SUP)],
+        cmd: Command::AddCursorBelow,
+        help: "cursor below",
+        when: "",
+    },
+    Binding {
         keys: &[KeyPattern::new(KeyCode::Home, NONE)],
         cmd: Command::LineStart,
         help: "line start",
@@ -200,9 +242,21 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         when: "",
     },
     Binding {
+        keys: &[KeyPattern::new(KeyCode::Backspace, ALT)],
+        cmd: Command::DeleteWordLeft,
+        help: "delete word left",
+        when: "",
+    },
+    Binding {
         keys: &[KeyPattern::new(KeyCode::Delete, NONE)],
         cmd: Command::DeleteRight,
         help: "delete right",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Delete, ALT)],
+        cmd: Command::DeleteWordRight,
+        help: "delete word right",
         when: "",
     },
     Binding {
@@ -293,6 +347,12 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         keys: &[KeyPattern::new(KeyCode::Char('y'), CTRL)],
         cmd: Command::Redo,
         help: "redo",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('k'), SUP_SHIFT)],
+        cmd: Command::DeleteLine,
+        help: "delete line",
         when: "",
     },
     // WP7.S2/S7: viewport-only scroll commands — vim/Helix parity, see
