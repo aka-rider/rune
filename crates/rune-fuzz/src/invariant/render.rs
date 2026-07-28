@@ -139,3 +139,70 @@ pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
     }
     None
 }
+
+/// `TABLE-ROW-WIDTH` (L0, sampled per G19; plan WP5.S3) — within one
+/// `table_group`, every row (a content row or a synthesised border) has
+/// the same summed cell width. `Snapshot.cells`/`Snapshot.row_meta` are
+/// index-aligned (`rune_tui::row_meta::row_meta` windows the exact same
+/// `viewport.scroll_row`/`height` `render::build_rows` does), so pairing
+/// `cells[i]` with `row_meta[i]` is always the SAME row. A border row
+/// whose width disagrees with its content rows is exactly the defect
+/// class the Go implementation had (plan WP5's own docs).
+pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
+    let mut first_of_group: std::collections::HashMap<usize, (usize, usize)> =
+        std::collections::HashMap::new();
+    for (i, m) in snap.row_meta.iter().enumerate() {
+        let Some(group) = m.table_group else {
+            continue;
+        };
+        let Some(row) = snap.cells.get(i) else {
+            continue;
+        };
+        let width: usize = row.iter().map(|c| c.width as usize).sum();
+        match first_of_group.get(&group) {
+            Some(&(first_row, first_width)) if first_width != width => {
+                return Some(Violation {
+                    id: "TABLE-ROW-WIDTH",
+                    message: format!(
+                        "table_group {group}: row {i} has summed width {width}, but row \
+                         {first_row} (same group) has width {first_width}"
+                    ),
+                });
+            }
+            Some(_) => {}
+            None => {
+                first_of_group.insert(group, (i, width));
+            }
+        }
+    }
+    None
+}
+
+/// `TABLE-SYNTHETIC-DECORATIVE` (L0, sampled per G19; plan WP5.S4) — every
+/// cell of a row whose `RowMeta.synthetic` is `true` carries `buf_offset
+/// == -1`: a synthesised border row has no source line at all
+/// (`DisplaySnapshot::expand_tables`'s docs), so none of its cells may
+/// claim a real buffer byte.
+pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
+    for (i, m) in snap.row_meta.iter().enumerate() {
+        if !m.synthetic {
+            continue;
+        }
+        let Some(row) = snap.cells.get(i) else {
+            continue;
+        };
+        for cell in row {
+            if cell.buf_offset != -1 {
+                return Some(Violation {
+                    id: "TABLE-SYNTHETIC-DECORATIVE",
+                    message: format!(
+                        "synthetic row {i} has a cell with buf_offset={} \
+                         (must be -1, decorative only)",
+                        cell.buf_offset
+                    ),
+                });
+            }
+        }
+    }
+    None
+}
