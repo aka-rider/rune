@@ -1924,6 +1924,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rune-nav"
+version = "0.1.0"
+dependencies = [
+ "rune-syntax",
+ "rune-vfs",
+]
+
+[[package]]
 name = "rune-syntax"
 version = "0.1.0"
 dependencies = [

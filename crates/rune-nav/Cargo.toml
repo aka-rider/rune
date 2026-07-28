@@ -1,0 +1,11 @@
+[package]
+name = "rune-nav"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+rune-syntax = { path = "../rune-syntax" }
+rune-vfs = { path = "../rune-vfs" }
+
+[lints]
+workspace = true
