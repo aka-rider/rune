@@ -7,6 +7,7 @@
 //! re-export shim `rune_md::wrap` used to carry is gone) — callers import
 //! it from there directly.
 
+pub mod catalogue;
 pub mod element;
 pub mod emit;
 pub mod parse;

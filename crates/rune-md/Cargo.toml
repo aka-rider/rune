@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 rune-core = { path = "../rune-core" }
 rune-syntax = { path = "../rune-syntax" }
+rune-nav = { path = "../rune-nav" }
 comrak = { workspace = true }
 unicode-width = { workspace = true }
 unicode-segmentation = { workspace = true }

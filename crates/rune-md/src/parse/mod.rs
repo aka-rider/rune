@@ -127,6 +127,7 @@ pub fn options() -> Options<'static> {
     opts.extension.table = true;
     opts.extension.wikilinks_title_after_pipe = true;
     opts.extension.front_matter_delimiter = Some("---".to_owned());
+    opts.extension.autolink = true;
     opts
 }
 
