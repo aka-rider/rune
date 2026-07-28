@@ -9,7 +9,7 @@ use rune_core::coords::SyntaxPoint;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
-use rune_md::wrap::WrapMap;
+use rune_syntax::wrap::WrapMap;
 
 fn arb_markdown_fragment() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -38,7 +38,7 @@ fn arb_content() -> impl Strategy<Value = String> {
 /// `SyntaxSpan::text` (mirrors Go's `display_test.go:syntaxColWidth` — §1.5,
 /// display width is runes, but `SyntaxPoint::col` itself is bytes, matching
 /// `WrapSnapshot`'s own byte-indexed `start_col`).
-fn syntax_line_byte_len(lines: &[rune_md::emit::SyntaxLine], line: usize, content: &str) -> usize {
+fn syntax_line_byte_len(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> usize {
     lines
         .get(line)
         .map(|l| l.spans.iter().map(|s| s.text(content).len()).sum())
@@ -115,7 +115,10 @@ proptest! {
 // Pinned CJK / emoji / tab cases for visual_col / byte_col_from_visual.
 // ---------------------------------------------------------------------
 
-fn wrap_for(content: &str, width: u16) -> (rune_core::buffer::Buffer, rune_md::wrap::WrapSnapshot) {
+fn wrap_for(
+    content: &str,
+    width: u16,
+) -> (rune_core::buffer::Buffer, rune_syntax::wrap::WrapSnapshot) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
     doc.set_focus(true);

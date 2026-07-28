@@ -15,7 +15,6 @@ use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{Effects, Msg};
-use rune_tui::styles;
 use rune_tui::testgrid;
 use rune_vfs::Mem;
 
@@ -70,7 +69,7 @@ fn left_pane_shows_two_bordered_blocks_with_focus_colored_borders() {
     let explorer_top_border = fg_at(&buf, 1, 0).expect("explorer top border cell has a style");
     assert_eq!(
         explorer_top_border,
-        styles::active_border().fg.unwrap(),
+        app.theme.chrome.active_border.fg.unwrap(),
         "focused Explorer's border must be the ACTIVE color"
     );
 
@@ -81,7 +80,7 @@ fn left_pane_shows_two_bordered_blocks_with_focus_colored_borders() {
         fg_at(&buf, 1, HEIGHT - 2).expect("tabs bottom border cell has a style");
     assert_eq!(
         tabs_bottom_border,
-        styles::inactive_border().fg.unwrap(),
+        app.theme.chrome.inactive_border.fg.unwrap(),
         "unfocused Open Tabs' border must be the INACTIVE color"
     );
 

@@ -1,36 +1,98 @@
 //! The emphasis-nesting resolver (plan Context, "Nested styling ... falls
 //! out of the tree via the Emitter's style stack — no `InlineMarks`
-//! bitfield"). `StyleId` itself moved to the producer-agnostic `rune-syntax`
-//! crate in WP3 (unchanged; WP4 replaces it with a `ScopeId`) — re-exported
-//! from `emit::mod` under its historical `rune_md::emit::StyleId` path.
+//! bitfield") plus WP4.S2's `StyleId` -> canonical scope name mapping: every
+//! markdown token this emitter tags resolves against
+//! [`rune_syntax::scope::MARKDOWN_TABLE`] (via [`SCOPES`] below) rather than
+//! a closed enum variant, so an unstyled scope degrades through
+//! longest-dotted-prefix fallback instead of failing to compile.
+
+use std::sync::LazyLock;
 
 use crate::element::inline::EmphasisKind;
-use rune_syntax::StyleId;
+use rune_syntax::ScopeId;
+use rune_syntax::scope::{ScopeTable, markdown_table};
 
-pub(crate) fn heading_style(level: u8) -> StyleId {
+/// The one canonical scope table this emitter resolves every markdown token
+/// against — built once (`rune_syntax::scope::markdown_table`, WP4.S1/S2),
+/// shared by every `sync` call. `rune-tui`'s `Theme` walks a table built
+/// from the exact same constructor to size and fill its `scopes: Vec<Style>`
+/// — the two sides agree on which `ScopeId` means which name without either
+/// depending on the other.
+pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(markdown_table);
+
+/// Resolves `name` against [`SCOPES`]. Every name passed below is drawn
+/// verbatim from `rune_syntax::scope::MARKDOWN_SCOPES`, so resolution
+/// always succeeds through `ScopeTable::resolve`'s exact-match branch —
+/// the `unwrap_or` fallback to `ScopeId(0)` (`"text"`, registered first)
+/// exists only so a future typo here degrades gracefully (§1.3) instead of
+/// panicking, never because it's expected to fire.
+fn scope(name: &str) -> ScopeId {
+    SCOPES.resolve(name).unwrap_or(ScopeId(0))
+}
+
+pub(crate) fn heading_style(level: u8) -> ScopeId {
     match level {
-        1 => StyleId::H1,
-        2 => StyleId::H2,
-        3 => StyleId::H3,
-        4 => StyleId::H4,
-        5 => StyleId::H5,
-        _ => StyleId::H6,
+        1 => scope("markup.heading.1"),
+        2 => scope("markup.heading.2"),
+        3 => scope("markup.heading.3"),
+        4 => scope("markup.heading.4"),
+        5 => scope("markup.heading.5"),
+        _ => scope("markup.heading.6"),
     }
 }
 
-pub(crate) fn list_marker_style(has_task: bool) -> StyleId {
+pub(crate) fn list_marker_style(has_task: bool) -> ScopeId {
     if has_task {
-        StyleId::TaskMarker
+        scope("markup.list.checked")
     } else {
-        StyleId::ListMarker
+        scope("markup.list")
     }
 }
 
-pub(crate) fn verbatim_style() -> StyleId {
-    StyleId::Verbatim
+pub(crate) fn verbatim_style() -> ScopeId {
+    scope("text")
 }
 
-/// Per-parent accumulator resolving nested emphasis to one `StyleId` at leaf
+/// The plain-text scope — `fill_gaps`' per-byte safety net (`emit::mod`)
+/// tags every gap-filled span with this, same as `verbatim_style` above.
+pub(crate) fn text_scope() -> ScopeId {
+    scope("text")
+}
+
+/// A fenced code block's body text (`walk.rs::emit_code_fence` pushes every
+/// content line at this one scope).
+pub(crate) fn code_fence_scope() -> ScopeId {
+    scope("markup.raw.block")
+}
+
+/// An inline code span (`` `like this` ``).
+pub(crate) fn code_scope() -> ScopeId {
+    scope("markup.raw.inline")
+}
+
+/// A link's visible label. `WikiLink` has no separate scope of its own —
+/// same as the pre-WP4 `StyleId` mapping, where `WikiLink` shared `Link`'s
+/// style — so it resolves through this same function too.
+pub(crate) fn link_scope() -> ScopeId {
+    scope("markup.link")
+}
+
+pub(crate) fn blockquote_scope() -> ScopeId {
+    scope("markup.quote")
+}
+
+pub(crate) fn hr_scope() -> ScopeId {
+    scope("punctuation.special")
+}
+
+/// No Go equivalent (Go doesn't style frontmatter separately) — kept at the
+/// pre-WP4 choice of a dim, de-emphasized tone, now expressed as the
+/// `comment` scope.
+pub(crate) fn frontmatter_scope() -> ScopeId {
+    scope("comment")
+}
+
+/// Per-parent accumulator resolving nested emphasis to one `ScopeId` at leaf
 /// emission time — the "style stack", kept only for the duration of the
 /// walk. A non-emphasis ancestor (`Link`/`WikiLink`/`Code`) overrides and
 /// ignores any accumulated emphasis (Phase-1 simplification: a link's own
@@ -42,7 +104,7 @@ pub(crate) enum StyleCtx {
         italic: bool,
         strike: bool,
     },
-    Override(StyleId),
+    Override(ScopeId),
 }
 
 impl Default for StyleCtx {
@@ -79,7 +141,18 @@ impl StyleCtx {
         }
     }
 
-    pub(crate) fn resolve(self) -> StyleId {
+    /// Resolves accumulated emphasis to one `ScopeId` (plan WP4.S2:
+    /// "Composite emphasis resolves to its strongest component with
+    /// modifiers carried on the theme entry") — the closed `StyleId` this
+    /// replaces had four dedicated composite variants
+    /// (`BoldItalic`/`BoldStrike`/`ItalicStrike`/`BoldItalicStrike`); the
+    /// open scope namespace has no such combinations, so a span nesting
+    /// more than one emphasis kind is tagged with its SINGLE strongest
+    /// component's scope (bold > italic > strikethrough) and nothing else —
+    /// an accepted, documented simplification, not a bug: a future scope
+    /// like `markup.strong.italic` could restore the distinction without
+    /// touching this resolver's shape.
+    pub(crate) fn resolve(self) -> ScopeId {
         match self {
             StyleCtx::Override(s) => s,
             StyleCtx::Emphasis {
@@ -87,14 +160,10 @@ impl StyleCtx {
                 italic,
                 strike,
             } => match (bold, italic, strike) {
-                (false, false, false) => StyleId::Text,
-                (true, false, false) => StyleId::Bold,
-                (false, true, false) => StyleId::Italic,
-                (false, false, true) => StyleId::Strike,
-                (true, true, false) => StyleId::BoldItalic,
-                (true, false, true) => StyleId::BoldStrike,
-                (false, true, true) => StyleId::ItalicStrike,
-                (true, true, true) => StyleId::BoldItalicStrike,
+                (false, false, false) => scope("text"),
+                (true, _, _) => scope("markup.strong"),
+                (false, true, _) => scope("markup.italic"),
+                (false, false, true) => scope("markup.strikethrough"),
             },
         }
     }

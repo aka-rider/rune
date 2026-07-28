@@ -6,7 +6,7 @@
 
 use std::ops::Range;
 
-use crate::style::StyleId;
+use crate::scope::ScopeId;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
 
 /// Mirrors `rune-md`'s own `STRICT_INVARIANTS`/`assert_invariant` chokepoint
@@ -43,13 +43,13 @@ pub enum SyntaxSpan {
     /// is always recoverable as `&content[range]` (see [`SyntaxSpan::text`]);
     /// no `cell_map` is needed since buffer position and visible position
     /// coincide one-to-one.
-    Identical { style: StyleId, range: Range<usize> },
+    Identical { scope: ScopeId, range: Range<usize> },
     /// The visible `text` differs from the buffer at `range` (concealed
     /// marker/delimiter bytes were dropped from what's shown), so it carries
     /// its own text plus a `cell_map` mapping each visible char back to its
     /// buffer offset.
     Substituted {
-        style: StyleId,
+        scope: ScopeId,
         text: String,
         range: Range<usize>,
         cell_map: CellMap,
@@ -57,9 +57,11 @@ pub enum SyntaxSpan {
 }
 
 impl SyntaxSpan {
-    pub fn style(&self) -> StyleId {
+    /// The scope this span is tagged with (WP4: replaces `StyleId`) — a
+    /// theme resolves it to a rendered `Style`; this crate never does.
+    pub fn scope(&self) -> ScopeId {
         match self {
-            SyntaxSpan::Identical { style, .. } | SyntaxSpan::Substituted { style, .. } => *style,
+            SyntaxSpan::Identical { scope, .. } | SyntaxSpan::Substituted { scope, .. } => *scope,
         }
     }
 

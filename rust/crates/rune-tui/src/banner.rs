@@ -431,7 +431,7 @@ fn scroll(app: &mut App, delta: isize) {
 /// selection overlay — the banner document's `CursorSet` is never driven by
 /// any command (stage 1 never touches it), so there is nothing meaningful
 /// to overlay.
-fn build_rows(doc: &Document, height: u16) -> Vec<Vec<Cell>> {
+fn build_rows(theme: &crate::theme::Theme, doc: &Document, height: u16) -> Vec<Vec<Cell>> {
     let Some(view) = &doc.view else {
         return Vec::new();
     };
@@ -441,7 +441,7 @@ fn build_rows(doc: &Document, height: u16) -> Vec<Vec<Cell>> {
         .iter()
         .skip(doc.viewport.scroll_row)
         .take(height as usize)
-        .map(|seg| render::segment_cells(content, seg))
+        .map(|seg| render::segment_cells(theme, content, seg))
         .collect()
 }
 
@@ -454,7 +454,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     };
     match modal {
         Modal::Error(state) => {
-            let rows = build_rows(&state.doc, area.height);
+            let rows = build_rows(&app.theme, &state.doc, area.height);
             render::blit(&rows, area, frame);
         }
         // No banner body to draw — the footer's Guard display mode carries

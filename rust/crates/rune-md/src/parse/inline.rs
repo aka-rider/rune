@@ -7,8 +7,8 @@ use super::{LineIndex, ScanHint, line_end_at, node_range};
 use crate::element::inline::{
     EmphasisKind, EmphasisM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
-use crate::element::{ByteRange, RevealSm, RevealState};
 use comrak::nodes::{AstNode, NodeValue};
+use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
 /// Delimiter ranges derived from the gap between a node's range and its
 /// first/last child's range (plan Context "Parse": "Delimiter ranges ...

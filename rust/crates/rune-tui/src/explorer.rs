@@ -25,7 +25,6 @@ use crate::app::App;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
-use crate::styles;
 use crate::workspace;
 
 /// One open Explorer's state (plan WP4.S3): the directory it's rooted at,
@@ -318,9 +317,9 @@ pub(crate) fn handle_dir_loaded(
 /// Draws the Explorer's content into `area` — the block's INNER rect
 /// (border already rendered by `render.rs::draw_left_pane`, plan WP4.S6):
 /// row 0 is the root path (truncated with a leading `…` when it doesn't
-/// fit, `styles::pane_title`); the remaining rows are the `listnav`-
-/// windowed entry slice, `>` prefixed and `styles::file_selected` on the
-/// cursor row, `/` suffixed for a directory.
+/// fit, `theme.chrome.pane_title`); the remaining rows are the `listnav`-
+/// windowed entry slice, `>` prefixed and `theme.chrome.file_selected` on
+/// the cursor row, `/` suffixed for a directory.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     if area.height == 0 {
         return;
@@ -328,7 +327,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let mut lines = Vec::with_capacity(area.height as usize);
     lines.push(Line::from(Span::styled(
         truncate_root(&app.explorer.root, area.width as usize),
-        styles::pane_title(),
+        app.theme.chrome.pane_title,
     )));
 
     let entry_rows = (area.height as usize).saturating_sub(1);
@@ -344,9 +343,9 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         let prefix = if selected { "\u{203a} " } else { "  " };
         let suffix = if entry.is_dir { "/" } else { "" };
         let style = if selected {
-            styles::file_selected()
+            app.theme.chrome.file_selected
         } else {
-            styles::file_normal()
+            app.theme.chrome.file_normal
         };
         lines.push(Line::from(Span::styled(
             format!("{prefix}{}{suffix}", entry.name),

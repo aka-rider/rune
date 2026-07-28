@@ -113,6 +113,18 @@ impl Guard {
         self.events.clone()
     }
 
+    /// `true` iff the real terminal behind this `Guard` claims truecolor
+    /// support (plan WP4.S5) — delegates to `theme::probe::supports_
+    /// truecolor` over the raw `termina::Terminal` this backend wraps
+    /// (`TerminaBackend::terminal_mut`, the one place in this module that
+    /// needs the `unstable-backend-writer` feature: every other method
+    /// here goes through plain `io::Write`). `runtime::run` calls this
+    /// once, right after construction, to decide which `Theme` to build —
+    /// never per frame.
+    pub fn probe_truecolor(&mut self) -> bool {
+        crate::theme::probe::supports_truecolor(self.terminal.backend_mut().terminal_mut())
+    }
+
     pub fn size(&self) -> io::Result<(u16, u16)> {
         let size = self.terminal.size()?;
         Ok((size.width, size.height))

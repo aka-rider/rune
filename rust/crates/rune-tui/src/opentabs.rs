@@ -18,7 +18,6 @@ use crate::document::DocumentId;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::pane::Pane;
-use crate::styles;
 use crate::workspace;
 
 /// The Open Tabs pane's own state (plan WP5.S1): the tab DISPLAY order
@@ -180,16 +179,16 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
         let name_style = if id == app.active {
-            styles::tab_active()
+            app.theme.chrome.tab_active
         } else {
-            styles::tab_normal()
+            app.theme.chrome.tab_normal
         };
 
         lines.push(Line::from(vec![
             Span::raw(prefix),
-            Span::styled(format!("{shortcut}:"), styles::tabs_divider()),
+            Span::styled(format!("{shortcut}:"), app.theme.chrome.tabs_divider),
             Span::raw(" "),
-            Span::styled(dirty_marker, styles::tab_dirty()),
+            Span::styled(dirty_marker, app.theme.chrome.tab_dirty),
             Span::raw(" "),
             Span::styled(doc.file_name().to_string(), name_style),
         ]));

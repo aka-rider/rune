@@ -3,7 +3,7 @@
 
 use super::{LineIndex, ScanHint, line_end_at};
 use crate::element::block::BlockquoteMarkerM;
-use crate::element::{ByteRange, RevealSm, RevealState};
+use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
 /// Derives one `"> "` marker range per source line covered by a blockquote's
 /// range — there is no dedicated comrak node for the marker itself, so this

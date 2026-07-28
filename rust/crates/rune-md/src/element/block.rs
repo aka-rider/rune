@@ -5,7 +5,7 @@
 //! `ctx` to its inlines unchanged.
 
 use crate::element::inline::Inline;
-use crate::element::{ByteRange, InheritCtx, RevealSm, RevealState};
+use rune_syntax::element::{ByteRange, InheritCtx, RevealSm, RevealState};
 
 /// A block with no delimiters of its own — plain prose. Forwards `ctx`
 /// straight through to its inline children (plan: "no markers -> no

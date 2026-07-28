@@ -15,13 +15,14 @@ use ratatui::widgets::{Block, BorderType};
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::ViewSnapshots;
+use rune_syntax::ScopeId;
+use rune_syntax::SyntaxSpan;
 use rune_syntax::wrap::{WrapSegment, control_aware_width, rune_width_with_tab};
-use rune_syntax::{StyleId, SyntaxSpan};
 
 use crate::app::App;
 use crate::banner;
 use crate::pane::Pane;
-use crate::styles;
+use crate::theme::Theme;
 
 /// One visible terminal cell, with its buffer-byte provenance. `-1` marks a
 /// cell with no direct buffer correspondence — decorative/synthetic (port of
@@ -38,13 +39,14 @@ pub struct Cell {
     pub buf_offset: i64,
 }
 
-/// Semantic `StyleId` -> `ratatui::style::Style` — delegates to
-/// `styles::markdown` (plan WP2.S2, critic R2: "exactly one style source").
-/// Kept as a thin wrapper (rather than calling `styles::markdown` directly
-/// from `segment_cells` below) so `render.rs` still owns the ONE call site
-/// `tests/tui_render.rs` documents itself against.
-pub fn style_for(id: StyleId) -> Style {
-    styles::markdown(id)
+/// Semantic `ScopeId` -> `ratatui::style::Style` — delegates to
+/// `Theme::scope_style` (plan WP4: the theme is the ONE style source,
+/// replacing `styles::markdown`'s pre-WP4 role). Kept as a thin wrapper
+/// (rather than calling `theme.scope_style` directly from `segment_cells`
+/// below) so `render.rs` still owns the ONE call site `tests/tui_render.rs`
+/// documents itself against.
+pub fn style_for(theme: &Theme, id: ScopeId) -> Style {
+    theme.scope_style(id)
 }
 
 /// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
@@ -139,11 +141,11 @@ fn push_char_cells(
 /// wrap row), reset to `0` at the segment's start — the same
 /// per-row-relative convention `wrap.rs`'s `wrap_line`/`visual_col` use, so
 /// a tab's width agrees with both regardless of which span it's in.
-pub fn segment_cells(content: &str, seg: &WrapSegment) -> Vec<Cell> {
+pub fn segment_cells(theme: &Theme, content: &str, seg: &WrapSegment) -> Vec<Cell> {
     let mut cells = Vec::new();
     let mut visual_col = 0usize;
     for sp in &seg.spans {
-        let style = style_for(sp.style());
+        let style = style_for(theme, sp.scope());
         match sp {
             SyntaxSpan::Substituted { text, cell_map, .. } => {
                 // A producer bug (cell_map built from different text than
@@ -188,7 +190,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         .iter()
         .skip(viewport.scroll_row)
         .take(height)
-        .map(|seg| segment_cells(content, seg))
+        .map(|seg| segment_cells(&app.theme, content, seg))
         .collect();
 
     apply_cursor_overlays(
@@ -197,6 +199,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         &doc.cursors,
         &doc.buffer,
         viewport.scroll_row,
+        &app.theme,
     );
     rows
 }
@@ -207,11 +210,12 @@ fn apply_cursor_overlays(
     cursors: &CursorSet,
     buf: &Buffer,
     scroll_row: usize,
+    theme: &Theme,
 ) {
     for cursor in cursors.all() {
         if cursor.has_selection() {
             let (start, end) = cursor.selection_range();
-            highlight_selection(rows, start, end);
+            highlight_selection(rows, start, end, theme);
         }
 
         let buffer_point = buf.offset_to_line_col(cursor.position);
@@ -230,14 +234,14 @@ fn apply_cursor_overlays(
     }
 }
 
-fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize) {
+fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: &Theme) {
     for row in rows.iter_mut() {
         for cell in row.iter_mut() {
             if cell.buf_offset >= 0 {
                 let offset = cell.buf_offset as usize;
                 if offset >= start && offset < end {
                     // Go `Selection` (`styles.go:196`, WP2.S2 migration).
-                    cell.style = cell.style.bg(styles::SELECTION_BG);
+                    cell.style = cell.style.bg(theme.chrome.selection_bg);
                 }
             }
         }
@@ -292,9 +296,9 @@ pub fn draw(app: &App, frame: &mut Frame) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(if app.focus == Pane::Editor {
-                styles::active_border()
+                app.theme.chrome.active_border
             } else {
-                styles::inactive_border()
+                app.theme.chrome.inactive_border
             });
         frame.render_widget(block, geo.center);
     }
@@ -335,9 +339,9 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
 
     let border_style = |pane: Pane| {
         if app.focus == pane {
-            styles::active_border()
+            app.theme.chrome.active_border
         } else {
-            styles::inactive_border()
+            app.theme.chrome.inactive_border
         }
     };
 

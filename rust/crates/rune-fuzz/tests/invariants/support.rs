@@ -135,10 +135,11 @@ pub(crate) fn base_ctx() -> StepCtx {
 }
 
 pub(crate) fn cell(ch: char, buf_offset: i64) -> Cell {
+    let theme = rune_tui::theme::Theme::catppuccin_mocha(false);
     Cell {
         ch,
         width: 1,
-        style: rune_tui::render::style_for(rune_syntax::StyleId::Text),
+        style: rune_tui::render::style_for(&theme, rune_syntax::ScopeId(0)),
         buf_offset,
     }
 }

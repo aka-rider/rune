@@ -196,6 +196,17 @@ pub struct App {
     /// reentrancy"); stage 1's `Esc`/`c` handling is the only other writer.
     pub modal: Option<Modal>,
     pub should_quit: bool,
+    /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
+    /// style and every markdown/code `ScopeId` in this app resolves
+    /// through; nothing in `render.rs`/`explorer.rs`/`footer.rs`/etc. reads
+    /// a raw indexed- or truecolor literal directly (those live only under
+    /// `theme/`). `App::new` defaults to truecolor (Catppuccin Mocha,
+    /// unquantized) — production
+    /// startup (`rune-cli`) overwrites it once `term::Guard` exists and
+    /// `theme::probe::supports_truecolor` can actually query the real
+    /// terminal; every test and the fuzzer keep this default, exactly like
+    /// `space_probe`'s `NullProbe` default above.
+    pub theme: crate::theme::Theme,
 }
 
 impl App {
@@ -245,6 +256,7 @@ impl App {
             speculative_space: None,
             modal: None,
             should_quit: false,
+            theme: crate::theme::Theme::catppuccin_mocha(false),
         }
     }
 

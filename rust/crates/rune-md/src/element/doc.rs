@@ -6,12 +6,11 @@
 //! version").
 
 use crate::element::block::Block;
-use crate::element::{CursorProbe, InheritCtx, RevealGrant};
-use crate::emit::SyntaxSnapshot;
 use crate::snapshot::DisplaySnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_syntax::element::{DocState, WrapState};
+use rune_syntax::SyntaxSnapshot;
+use rune_syntax::element::{CursorProbe, DocState, InheritCtx, RevealGrant, WrapState};
 use rune_syntax::wrap::WrapSnapshot;
 
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
@@ -190,7 +189,7 @@ mod tests {
         doc.sync_cursors(&buf, &cursors);
         assert_eq!(
             doc.blocks()[0].reveal_state(),
-            crate::element::RevealState::Revealed
+            rune_syntax::element::RevealState::Revealed
         );
 
         // Calling sync_content again with the SAME version must be a true
@@ -203,7 +202,7 @@ mod tests {
         doc.sync_content(&buf);
         assert_eq!(
             doc.blocks()[0].reveal_state(),
-            crate::element::RevealState::Revealed,
+            rune_syntax::element::RevealState::Revealed,
             "sync_content must not reparse when buf.version() is unchanged"
         );
     }
@@ -237,7 +236,7 @@ mod tests {
         for b in doc.blocks() {
             assert_eq!(
                 b.reveal_state(),
-                crate::element::RevealState::Rendered,
+                rune_syntax::element::RevealState::Rendered,
                 "unfocused doc must force every Decide-policy block Rendered"
             );
         }
@@ -266,7 +265,10 @@ mod tests {
                 ),
                 "unexpected block kind in this fixture: {b:?}"
             );
-            assert_eq!(b.reveal_state(), crate::element::RevealState::Revealed);
+            assert_eq!(
+                b.reveal_state(),
+                rune_syntax::element::RevealState::Revealed
+            );
         }
     }
 }

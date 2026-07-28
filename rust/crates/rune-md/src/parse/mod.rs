@@ -9,10 +9,10 @@ mod block;
 mod blockquote;
 mod inline;
 
-use crate::element::ByteRange;
 use crate::element::block::Block;
 use comrak::nodes::{AstNode, Sourcepos};
 use comrak::{Arena, Options, parse_document};
+use rune_syntax::element::ByteRange;
 
 /// Byte offset of the start of each BUFFER line — port of
 /// `pkg/editor/buffer/lineindex.go:computeLineStarts` (Go parity, §1.5):
@@ -318,9 +318,9 @@ pub fn parse(content: &str) -> Vec<Block> {
 )]
 mod tests {
     use super::*;
-    use crate::element::RevealState;
     use crate::element::block::Block;
     use crate::element::inline::{EmphasisKind, Inline};
+    use rune_syntax::element::RevealState;
 
     fn text_of(content: &str, r: ByteRange) -> &str {
         content.get(r.start..r.end).unwrap()

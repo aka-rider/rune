@@ -7,8 +7,8 @@ use crate::element::block::{
     Block, BlockquoteM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM, ListM, ParagraphM,
     VerbatimKind, VerbatimM,
 };
-use crate::element::{ByteRange, RevealSm, RevealState};
 use comrak::nodes::{AstNode, ListType, NodeValue};
+use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
 /// A block-node dispatch key extracted from `NodeValue` up front, so the
 /// borrow on `node.data` can be dropped before any recursive call re-borrows

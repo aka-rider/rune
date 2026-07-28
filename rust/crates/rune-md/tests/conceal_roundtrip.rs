@@ -8,9 +8,9 @@ use proptest::prelude::*;
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
 use rune_core::cursor::CursorSet;
-use rune_md::element::RevealState;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
+use rune_syntax::element::RevealState;
 
 fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
@@ -23,7 +23,7 @@ fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMac
     (buf, doc)
 }
 
-fn joined_line(lines: &[rune_md::emit::SyntaxLine], line: usize, content: &str) -> String {
+fn joined_line(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> String {
     lines
         .get(line)
         .map(|l| l.spans.iter().map(|s| s.text(content)).collect::<String>())
@@ -140,8 +140,8 @@ fn blockquote_marker_reveals_per_line_independently() {
 /// a partially-covered line from a fully-covered one; this checks BYTES.
 fn assert_full_line_coverage(
     buf: &Buffer,
-    lines: &[rune_md::emit::SyntaxLine],
-    snap: &rune_md::emit::SyntaxSnapshot,
+    lines: &[rune_syntax::SyntaxLine],
+    snap: &rune_syntax::SyntaxSnapshot,
 ) {
     for line in 0..buf.line_count() {
         let expected_len = buf.line(line).len();
@@ -1366,7 +1366,7 @@ proptest! {
         for line in &lines {
             for sp in &line.spans {
                 let range = sp.range();
-                if let rune_md::emit::SyntaxSpan::Substituted { cell_map, .. } = sp {
+                if let rune_syntax::SyntaxSpan::Substituted { cell_map, .. } = sp {
                     for &off in cell_map {
                         if off == -1 {
                             continue;

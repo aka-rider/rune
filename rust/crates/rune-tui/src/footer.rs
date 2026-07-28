@@ -18,7 +18,6 @@ use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
-use crate::styles;
 
 /// Which single visual state the footer's left side shows for this render
 /// — priority order highest-first (plan WP2.S6, WP3.S3): a modal (the
@@ -100,15 +99,15 @@ fn quit_hint(app: &App) -> &'static str {
 fn left_spans(app: &App) -> Vec<Span<'static>> {
     match mode(app) {
         Mode::Modal => vec![
-            Span::styled("[C]opy", styles::footer_key()),
-            Span::styled("  ", styles::footer_hint()),
-            Span::styled("[Esc] discard", styles::footer_hint()),
+            Span::styled("[C]opy", app.theme.chrome.footer_key),
+            Span::styled("  ", app.theme.chrome.footer_hint),
+            Span::styled("[Esc] discard", app.theme.chrome.footer_hint),
         ],
         Mode::Guard(kind) => guard_spans(app, kind),
-        Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), styles::error())],
-        Mode::ChordPending(text) => vec![Span::styled(text, styles::footer_key())],
-        Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
-        Mode::Status(msg) => vec![Span::styled(msg.to_string(), styles::footer_hint())],
+        Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.error)],
+        Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
+        Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
+        Mode::Status(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::DefaultHints => default_hint_spans(app),
     }
 }
@@ -128,7 +127,7 @@ fn guard_spans(app: &App, kind: &GuardKind) -> Vec<Span<'static>> {
         GuardKind::RenameCollision { target } => {
             spans.push(Span::styled(
                 format!("{target} already exists  "),
-                styles::footer_hint(),
+                app.theme.chrome.footer_hint,
             ));
             // §1.4.10: without a durable store there is nowhere to preserve
             // the replaced file's bytes, so the option is not offered at
@@ -142,12 +141,12 @@ fn guard_spans(app: &App, kind: &GuardKind) -> Vec<Span<'static>> {
     };
 
     for opt in options {
-        spans.push(Span::styled(opt.label, styles::footer_key()));
-        spans.push(Span::styled("  ", styles::footer_hint()));
+        spans.push(Span::styled(opt.label, app.theme.chrome.footer_key));
+        spans.push(Span::styled("  ", app.theme.chrome.footer_hint));
     }
     spans.push(Span::styled(
         banner::DIRTY_CLOSE_CANCEL_LABEL,
-        styles::footer_hint(),
+        app.theme.chrome.footer_hint,
     ));
     spans
 }
@@ -215,6 +214,7 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
 /// untruncated) and `draw`'s width-truncated renderer build from, so an
 /// entry can never render differently in the two paths (plan WP6.S3).
 fn hint_entry_spans(
+    theme: &crate::theme::Theme,
     index: usize,
     label: String,
     help: &'static str,
@@ -222,16 +222,16 @@ fn hint_entry_spans(
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     if index > 0 {
-        spans.push(Span::styled("  ", styles::footer_hint()));
+        spans.push(Span::styled("  ", theme.chrome.footer_hint));
     }
     let key_style = if active {
-        styles::footer_key()
+        theme.chrome.footer_key
     } else {
-        styles::footer_key_inactive()
+        theme.chrome.footer_key_inactive
     };
     spans.push(Span::styled(label, key_style));
-    spans.push(Span::styled(" ", styles::footer_hint()));
-    spans.push(Span::styled(help, styles::footer_hint()));
+    spans.push(Span::styled(" ", theme.chrome.footer_hint));
+    spans.push(Span::styled(help, theme.chrome.footer_hint));
     spans
 }
 
@@ -243,7 +243,7 @@ fn default_hint_spans(app: &App) -> Vec<Span<'static>> {
     default_hint_entries(app)
         .into_iter()
         .enumerate()
-        .flat_map(|(i, (label, help, active))| hint_entry_spans(i, label, help, active))
+        .flat_map(|(i, (label, help, active))| hint_entry_spans(&app.theme, i, label, help, active))
         .collect()
 }
 
@@ -260,7 +260,7 @@ fn truncated_default_hint_spans(
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut used = 0usize;
     for (i, (label, help, active)) in default_hint_entries(app).into_iter().enumerate() {
-        let entry = hint_entry_spans(i, label, help, active);
+        let entry = hint_entry_spans(&app.theme, i, label, help, active);
         let entry_width: usize = entry.iter().map(|s| s.content.chars().count()).sum();
         if used + entry_width + right_width > available {
             break;
@@ -290,7 +290,7 @@ pub fn position_text(app: &App) -> String {
 }
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
-    let bg = styles::footer();
+    let bg = app.theme.chrome.footer;
     let right_text = position_text(app);
     let right_width = right_text.chars().count();
     let available = area.width as usize;
@@ -310,7 +310,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             bg,
         ));
     }
-    spans.push(Span::styled(right_text, styles::footer_meta()));
+    spans.push(Span::styled(right_text, app.theme.chrome.footer_meta));
     frame.render_widget(Paragraph::new(Line::from(spans)).style(bg), area);
 }
 
@@ -367,10 +367,10 @@ mod tests {
     }
 
     /// Plan WP6.S6 — the span-level regression guard for assumption A2: the
-    /// `⌘S` label span carries `styles::footer_key_inactive()` on a clean
-    /// document and `styles::footer_key()` once an edit makes it dirty.
-    /// Reads `default_hint_spans` directly (private, but visible from this
-    /// descendant module) rather than re-deriving the span list.
+    /// `⌘S` label span carries `theme.chrome.footer_key_inactive` on a
+    /// clean document and `theme.chrome.footer_key` once an edit makes it
+    /// dirty. Reads `default_hint_spans` directly (private, but visible
+    /// from this descendant module) rather than re-deriving the span list.
     #[test]
     fn save_label_span_is_styled_inactive_when_clean_and_active_when_dirty() {
         let save_label = GLOBAL_BINDINGS
@@ -386,7 +386,7 @@ mod tests {
             .iter()
             .find(|s| s.content.as_ref() == save_label)
             .expect("save label span present");
-        assert_eq!(save_span.style, styles::footer_key_inactive());
+        assert_eq!(save_span.style, app.theme.chrome.footer_key_inactive);
 
         let mut app = app_with("hello");
         app.active_doc_mut().is_dirty_cached = true;
@@ -396,7 +396,7 @@ mod tests {
             .iter()
             .find(|s| s.content.as_ref() == save_label)
             .expect("save label span present");
-        assert_eq!(save_span.style, styles::footer_key());
+        assert_eq!(save_span.style, app.theme.chrome.footer_key);
     }
 
     /// The Guard mode's rendered labels are exactly `banner::DIRTY_CLOSE_

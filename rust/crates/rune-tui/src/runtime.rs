@@ -180,6 +180,14 @@ pub struct Effects {
 /// design (see module docs).
 pub fn run(app: &mut App) -> io::Result<()> {
     let mut guard = Guard::new()?;
+
+    // Plan WP4.S5: probe BEFORE `spawn_input_reader` starts consuming
+    // events on its own thread — the probe's own poll/read round trip
+    // over the DA1 query would otherwise race that thread for the same
+    // input stream (the "typed Csi response" it waits for could be
+    // delivered to either reader). One-shot, at startup, never per frame.
+    app.theme = crate::theme::Theme::catppuccin_mocha(!guard.probe_truecolor());
+
     let (tx, rx) = mpsc::channel::<Msg>();
     spawn_input_reader(guard.event_reader(), tx.clone());
 

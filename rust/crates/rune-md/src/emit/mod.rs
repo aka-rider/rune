@@ -40,12 +40,10 @@
 mod style;
 mod walk;
 
-pub use rune_syntax::{CellMap, StyleId, SyntaxLine, SyntaxSnapshot, SyntaxSpan};
-
 use crate::element::block::Block;
-use crate::element::{ByteRange, RevealState};
 use crate::parse::{line_at, line_end_at, line_starts};
-use rune_syntax::merge_overlapping;
+use rune_syntax::element::{ByteRange, RevealState};
+use rune_syntax::{CellMap, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping};
 
 /// See the module docs: `true` only in test builds or when the
 /// `strict-invariants` feature is explicitly enabled. `cfg!()` folds this
@@ -216,7 +214,7 @@ pub(crate) fn push_span_split_by_line(
     content: &str,
     starts: &[usize],
     range: ByteRange,
-    style: StyleId,
+    scope: ScopeId,
     state: RevealState,
     out: &mut [Vec<SyntaxSpan>],
     accounted: &mut Accounted,
@@ -264,13 +262,13 @@ pub(crate) fn push_span_split_by_line(
             };
             let span = if state == RevealState::Rendered {
                 SyntaxSpan::Substituted {
-                    style,
+                    scope,
                     text: text.to_string(),
                     range: s..e,
                     cell_map: build_cell_map(s, text),
                 }
             } else {
-                SyntaxSpan::Identical { style, range: s..e }
+                SyntaxSpan::Identical { scope, range: s..e }
             };
             if let Some(bucket) = out.get_mut(line) {
                 bucket.push(span);
@@ -354,7 +352,7 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
                 continue;
             }
             bucket.push(SyntaxSpan::Identical {
-                style: StyleId::Text,
+                scope: style::text_scope(),
                 range: s..e,
             });
         }

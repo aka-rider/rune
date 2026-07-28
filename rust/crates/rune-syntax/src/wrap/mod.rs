@@ -215,15 +215,15 @@ fn slice_spans(
         };
 
         let out = match s {
-            SyntaxSpan::Identical { style, range } => SyntaxSpan::Identical {
-                style: *style,
+            SyntaxSpan::Identical { scope, range } => SyntaxSpan::Identical {
+                scope: *scope,
                 range: (range.start + local_start)..(range.start + local_end),
             },
             // `range` intentionally left as the full original span range
             // (Go parity, module docs); `cell_map` is rune-sliced to match
             // `sliced` instead.
             SyntaxSpan::Substituted {
-                style,
+                scope,
                 range,
                 cell_map,
                 ..
@@ -234,7 +234,7 @@ fn slice_spans(
                     .unwrap_or(0);
                 let end_runes = start_runes + sliced.chars().count();
                 SyntaxSpan::Substituted {
-                    style: *style,
+                    scope: *scope,
                     text: sliced.to_string(),
                     range: range.clone(),
                     cell_map: cell_map
@@ -253,8 +253,11 @@ fn slice_spans(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use crate::style::StyleId;
+    use crate::scope::ScopeId;
     use crate::syntax::CellMap;
+
+    const TEXT: ScopeId = ScopeId(0);
+    const CODE: ScopeId = ScopeId(1);
 
     /// Splits `content` on `\n` into one `Identical`, whole-line `SyntaxLine`
     /// per line (dropping the line terminator from the visible range, an
@@ -283,7 +286,7 @@ mod tests {
                 if line_end > s {
                     SyntaxLine {
                         spans: vec![SyntaxSpan::Identical {
-                            style: StyleId::Text,
+                            scope: TEXT,
                             range: s..line_end,
                         }],
                     }
@@ -351,17 +354,17 @@ mod tests {
         let line0 = SyntaxLine {
             spans: vec![
                 SyntaxSpan::Identical {
-                    style: StyleId::Text,
+                    scope: TEXT,
                     range: 0..2,
                 },
                 SyntaxSpan::Substituted {
-                    style: StyleId::Code,
+                    scope: CODE,
                     text: code_text.to_string(),
                     range: 3..23,
                     cell_map,
                 },
                 SyntaxSpan::Identical {
-                    style: StyleId::Text,
+                    scope: TEXT,
                     range: 24..26,
                 },
             ],

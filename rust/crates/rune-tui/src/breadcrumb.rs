@@ -21,12 +21,11 @@ use ratatui::text::Span;
 use std::path::Component;
 
 use crate::app::App;
-use crate::styles;
-use rune_md::wrap::control_aware_width;
+use rune_syntax::wrap::control_aware_width;
 
 /// The display width of `s`, measured through the crate's ONE width
 /// chokepoint (`render::segment_cells`'s own `control_aware_width`, itself
-/// `rune_md::wrap`'s — see `render.rs`'s "ONE width chokepoint" note). Every
+/// `rune_syntax::wrap`'s — see `render.rs`'s "ONE width chokepoint" note). Every
 /// width in this module — the `bc` total, `build_crumb`'s per-part
 /// accounting, and `put`'s column advance — goes through it, so the dash
 /// fill can never be sized in one unit and drawn in another (§1.5: display
@@ -78,7 +77,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
         return;
     }
 
-    let segments = build_crumb(&parts, block.width as usize);
+    let segments = build_crumb(&parts, block.width as usize, &app.theme);
 
     let bc: usize = segments
         .iter()
@@ -94,9 +93,9 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     let dash = block.width as usize - bc - 6;
 
     let border_style = if focused {
-        styles::active_border()
+        app.theme.chrome.active_border
     } else {
-        styles::inactive_border()
+        app.theme.chrome.inactive_border
     };
     let plain = Style::new();
 
@@ -130,7 +129,11 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
 /// buffer — at which point an `ELLIPSIS` span is prepended and the loop
 /// stops. Index `0` (the leftmost/root-most component) is NEVER dropped —
 /// Go's `&& i > 0` guard on the truncation check.
-fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
+fn build_crumb(
+    parts: &[String],
+    max_width: usize,
+    theme: &crate::theme::Theme,
+) -> Vec<Span<'static>> {
     let n = parts.len();
     let mut segments: Vec<Span<'static>> = Vec::with_capacity(n * 2);
     let mut current_width = 0usize;
@@ -143,15 +146,18 @@ fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
         let (seg_width, seg): (usize, Vec<Span<'static>>) = if is_last {
             (
                 part_width,
-                vec![Span::styled(part_text, Style::new().fg(styles::SPECIAL))],
+                vec![Span::styled(
+                    part_text,
+                    Style::new().fg(theme.chrome.special),
+                )],
             )
         } else {
             let sep_width = text_width(SEP);
             (
                 part_width + sep_width,
                 vec![
-                    Span::styled(part_text, Style::new().fg(styles::SPECIAL)),
-                    Span::styled(SEP, Style::new().fg(styles::SUBTLE)),
+                    Span::styled(part_text, Style::new().fg(theme.chrome.special)),
+                    Span::styled(SEP, Style::new().fg(theme.chrome.subtle)),
                 ],
             )
         };
@@ -159,7 +165,10 @@ fn build_crumb(parts: &[String], max_width: usize) -> Vec<Span<'static>> {
         // Go's `6`: an arbitrary buffer for the ellipsis and some
         // breathing room (`breadcrumb.go:99-100`'s own comment).
         if current_width + seg_width + 6 > max_width && i > 0 {
-            segments.insert(0, Span::styled(ELLIPSIS, Style::new().fg(styles::SPECIAL)));
+            segments.insert(
+                0,
+                Span::styled(ELLIPSIS, Style::new().fg(theme.chrome.special)),
+            );
             return segments;
         }
 
@@ -298,10 +307,11 @@ mod tests {
     fn total_width_identity_holds() {
         // 1 (╰) + dash + (bc + 2 surrounding spaces) + 3 (──╯) == block.width,
         // for every width from the bail-out floor up to a generous ceiling.
+        let theme = crate::theme::Theme::catppuccin_mocha(false);
         for width in 30u16..80 {
             let block = Rect::new(0, 0, width, 3);
             let parts: Vec<String> = vec!["a".into(), "b".into(), "note.md".into()];
-            let segments = build_crumb(&parts, width as usize);
+            let segments = build_crumb(&parts, width as usize, &theme);
             let bc: usize = segments
                 .iter()
                 .map(|s| text_width(s.content.as_ref()))

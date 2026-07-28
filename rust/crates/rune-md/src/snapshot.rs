@@ -6,7 +6,7 @@
 //! "kept as a distinct type so Phase 5 slots `ExpandTableRows` between
 //! them").
 
-use crate::wrap::WrapSnapshot;
+use rune_syntax::wrap::WrapSnapshot;
 
 #[derive(Clone, Debug, Default)]
 pub struct DisplaySnapshot {
@@ -25,8 +25,8 @@ impl DisplaySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emit::SyntaxLine;
-    use crate::wrap::WrapMap;
+    use rune_syntax::SyntaxLine;
+    use rune_syntax::wrap::WrapMap;
 
     #[test]
     fn display_snapshot_row_count_matches_wrap_in_phase_one() {

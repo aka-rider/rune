@@ -36,7 +36,6 @@ use crate::keymap::{KeyCode, KeyInput, KeyOutcome};
 use crate::pane::Pane;
 use crate::rename;
 use crate::runtime::Effects;
-use crate::styles;
 
 /// The extension every rune document carries. The title field edits the
 /// stem; this is re-appended when the typed name becomes a real path.
@@ -233,22 +232,22 @@ fn commit(app: &mut App, effects: &mut Effects) {
     rename::begin(app, effects);
 }
 
-/// Renders `<name>` (styled `styles::title_text`) followed by ` •` when the
-/// active document is dirty, or — when the title has focus — the editable
-/// field with a block cursor. Pure function of `&App` in both modes: it
-/// reads `app.active_doc()`/`app.title` fresh every call and caches
-/// nothing, so drawing twice produces identical output.
+/// Renders `<name>` (styled `theme.chrome.title_text`) followed by ` •`
+/// when the active document is dirty, or — when the title has focus — the
+/// editable field with a block cursor. Pure function of `&App` in both
+/// modes: it reads `app.active_doc()`/`app.title` fresh every call and
+/// caches nothing, so drawing twice produces identical output.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let spans = if app.focus == Pane::Title {
-        field_spans(&app.title)
+        field_spans(&app.title, &app.theme)
     } else {
         let doc = app.active_doc();
         let mut spans = vec![Span::styled(
             doc.file_name().to_string(),
-            styles::title_text(),
+            app.theme.chrome.title_text,
         )];
         if doc.is_dirty() {
-            spans.push(Span::styled(" \u{2022}", styles::error()));
+            spans.push(Span::styled(" \u{2022}", app.theme.chrome.error));
         }
         spans
     };
@@ -259,8 +258,8 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
 /// character under it, or a space at end-of-text), then the remainder.
 /// Slicing is by BYTE offset — `cursor` is a byte offset and is always kept
 /// on a `char` boundary by the mutators above (§1.5).
-fn field_spans(field: &TitleField) -> Vec<Span<'static>> {
-    let base = styles::title_text();
+fn field_spans(field: &TitleField, theme: &crate::theme::Theme) -> Vec<Span<'static>> {
+    let base = theme.chrome.title_text;
     let cursor_style: Style = base.add_modifier(Modifier::REVERSED);
 
     let (before, rest) = field.text.split_at(field.cursor.min(field.text.len()));

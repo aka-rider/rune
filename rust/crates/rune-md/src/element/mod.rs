@@ -10,14 +10,10 @@
 //! `DocState`/`WrapState` types `InheritCtx` is typed by) moved to the
 //! producer-agnostic `rune-syntax` crate in WP3, so a future tree-sitter
 //! producer can emit and consume the same types without depending on this
-//! crate. This module re-exports them under their historical `crate::
-//! element::*` paths so `Block`/`Inline`/`DocMachine` — which stay here,
-//! being markdown-specific — don't need every internal call site rewritten.
+//! crate. `Block`/`Inline`/`DocMachine` — which stay here, being
+//! markdown-specific — import those types from `rune_syntax::element`
+//! directly (WP4: the WP3 re-export shim that used to live here is gone).
 
 pub mod block;
 pub mod doc;
 pub mod inline;
-
-pub use rune_syntax::element::{
-    ByteRange, CursorProbe, DocState, InheritCtx, RevealGrant, RevealSm, RevealState, WrapState,
-};

@@ -3,7 +3,7 @@
 //! emitter's style stack — there is no `InlineMarks` bitfield here, unlike
 //! Go's flat-span model (`pkg/editor/display/marks.go`).
 
-use crate::element::{ByteRange, InheritCtx, RevealSm, RevealState};
+use rune_syntax::element::{ByteRange, InheritCtx, RevealSm, RevealState};
 
 /// Plain, unconcealable text — no machine (plan: "Text(TextRun), // {
 /// range } — verbatim, no machine"). Also used for inline images (Phase-1

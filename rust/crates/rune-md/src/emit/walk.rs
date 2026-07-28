@@ -7,12 +7,15 @@
 //! root emit module docs for why this is a deliberate simplification of
 //! Go's split block/inline concealment model.
 
-use super::style::{StyleCtx, heading_style, list_marker_style, verbatim_style};
+use super::style::{
+    StyleCtx, blockquote_scope, code_fence_scope, code_scope, frontmatter_scope, heading_style,
+    hr_scope, link_scope, list_marker_style, verbatim_style,
+};
 use super::{Accounted, hide_range, push_span_split_by_line};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
-use crate::element::{ByteRange, RevealState};
-use rune_syntax::{StyleId, SyntaxSpan};
+use rune_syntax::SyntaxSpan;
+use rune_syntax::element::{ByteRange, RevealState};
 
 /// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
 /// is already exactly one physical line's range, computed container-aware
@@ -37,7 +40,7 @@ fn emit_code_fence(
                 content,
                 starts,
                 open,
-                StyleId::CodeFence,
+                code_fence_scope(),
                 RevealState::Revealed,
                 out,
                 accounted,
@@ -48,7 +51,7 @@ fn emit_code_fence(
                 content,
                 starts,
                 line,
-                StyleId::CodeFence,
+                code_fence_scope(),
                 RevealState::Revealed,
                 out,
                 accounted,
@@ -59,7 +62,7 @@ fn emit_code_fence(
                 content,
                 starts,
                 close,
-                StyleId::CodeFence,
+                code_fence_scope(),
                 RevealState::Revealed,
                 out,
                 accounted,
@@ -78,7 +81,7 @@ fn emit_code_fence(
             content,
             starts,
             line,
-            StyleId::CodeFence,
+            code_fence_scope(),
             RevealState::Rendered,
             out,
             accounted,
@@ -172,7 +175,7 @@ pub(crate) fn emit_block(
                         content,
                         starts,
                         m.marker,
-                        StyleId::Blockquote,
+                        blockquote_scope(),
                         RevealState::Revealed,
                         out,
                         accounted,
@@ -197,7 +200,7 @@ pub(crate) fn emit_block(
                     content,
                     starts,
                     hr.range,
-                    StyleId::Hr,
+                    hr_scope(),
                     RevealState::Revealed,
                     out,
                     accounted,
@@ -211,7 +214,7 @@ pub(crate) fn emit_block(
                 content,
                 starts,
                 fm.range,
-                StyleId::FrontmatterDim,
+                frontmatter_scope(),
                 RevealState::Revealed,
                 out,
                 accounted,
@@ -353,7 +356,7 @@ fn emit_inline(
                         content,
                         starts,
                         line,
-                        StyleId::Code,
+                        code_scope(),
                         RevealState::Revealed,
                         out,
                         accounted,
@@ -372,7 +375,7 @@ fn emit_inline(
                         content,
                         starts,
                         line,
-                        StyleId::Code,
+                        code_scope(),
                         RevealState::Rendered,
                         out,
                         accounted,
@@ -390,7 +393,7 @@ fn emit_inline(
                         content,
                         starts,
                         line,
-                        StyleId::Link,
+                        link_scope(),
                         RevealState::Revealed,
                         out,
                         accounted,
@@ -403,7 +406,7 @@ fn emit_inline(
                     content,
                     starts,
                     &m.text,
-                    StyleCtx::Override(StyleId::Link),
+                    StyleCtx::Override(link_scope()),
                     out,
                     hidden,
                     accounted,
@@ -417,7 +420,7 @@ fn emit_inline(
                     content,
                     starts,
                     m.range,
-                    StyleId::WikiLink,
+                    link_scope(),
                     RevealState::Revealed,
                     out,
                     accounted,
@@ -434,7 +437,7 @@ fn emit_inline(
                     content,
                     starts,
                     m.label,
-                    StyleId::WikiLink,
+                    link_scope(),
                     RevealState::Rendered,
                     out,
                     accounted,
