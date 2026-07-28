@@ -85,13 +85,35 @@ pub(super) fn build_table<'a>(
 
     let first_line = line_at(&idx.buffer, range.start);
     let last_line = line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
-    // The `|---|---|` delimiter row has no comrak node at all (Gotcha 10):
-    // derive it as the line right after the header row, clamped so a
-    // malformed/truncated table can never point past its own last line.
+    // The `|---|---|` delimiter row has no comrak node at all: derive it as
+    // the line right after the header row, clamped so a malformed/truncated
+    // table can never point past its own last line.
     let sep_line = header_line
         .unwrap_or(first_line)
         .saturating_add(1)
         .min(last_line);
+
+    // Every row and the delimiter must occupy a DISTINCT buffer line. That
+    // holds for well-formed markdown but not universally: row lines come from
+    // the buffer's `\n`-only line index while the delimiter's position is
+    // implied by comrak's CR/LF-aware one, and a lone `\r` inside a single
+    // buffer line desynchronises the two — comrak sees three markdown lines
+    // where the buffer has two, so a real body row and the synthetic
+    // delimiter land on the same line. Rendering that collision emits one
+    // display row carrying two rows' worth of cells, whose buffer offsets
+    // run backwards mid-row. Rather than let a `TableM` exist in that state,
+    // decline it here: the caller falls back to raw passthrough, so the
+    // user's bytes still reach the screen verbatim (§1.3 — unknown or
+    // undecidable syntax degrades to visible raw text, never lost).
+    let mut claimed: Vec<usize> = rows.iter().map(|r| r.line).collect();
+    claimed.push(sep_line);
+    claimed.sort_unstable();
+    let claimed_total = claimed.len();
+    claimed.dedup();
+    if claimed.len() != claimed_total {
+        return None;
+    }
+
     let content_lines = per_line_content(content, idx, range, hint);
 
     Some(Block::Table(TableM {

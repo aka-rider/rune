@@ -1,0 +1,8 @@
+content 
+key char:v ---u
+clip line1\r\nline2
+key end ----
+key up ----
+key char:s ---u
+type | :-: |
+key up ----
