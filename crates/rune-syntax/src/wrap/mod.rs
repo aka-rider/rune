@@ -356,6 +356,7 @@ mod tests {
                             scope: TEXT,
                             range: s..line_end,
                         }],
+                        table: None,
                     }
                 } else {
                     SyntaxLine::default()
@@ -435,6 +436,7 @@ mod tests {
                     range: 24..26,
                 },
             ],
+            table: None,
         };
         let wrap = WrapMap::new(6).sync(content, &[line0]);
 

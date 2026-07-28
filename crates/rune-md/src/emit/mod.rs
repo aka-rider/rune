@@ -402,7 +402,7 @@ pub fn emit(content: &str, blocks: &[Block]) -> (Vec<SyntaxLine>, SyntaxSnapshot
 
     let lines: Vec<SyntaxLine> = spans
         .into_iter()
-        .map(|spans| SyntaxLine { spans })
+        .map(|spans| SyntaxLine { spans, table: None })
         .collect();
     let snapshot = SyntaxSnapshot::build(&starts, &hidden);
     (lines, snapshot)
