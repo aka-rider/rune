@@ -1,75 +1,62 @@
-THIS_MAKEFILE_PATH := $(abspath $(lastword $(MAKEFILE_LIST)))
-RUNE := "$(dir $(THIS_MAKEFILE_PATH))rune"
-
-build:
-	CGO_ENABLED=1 go build -ldflags "-s -w" -o $(RUNE) ./cmd/rune
-
-run: build
-	$(RUNE) $(ARGS)
-rune: run
-
-clean:
-	rm -f $(RUNE)
-
-test:
-	go test -race -timeout 10m -coverprofile=coverage.out -covermode=atomic ./...
-	go vet ./...
-	go vet -tags fuzzing ./...
-
-T ?= 1m
+CARGO ?= cargo
+# Randomized sessions per `make test-fuzz` (PROPTEST_CASES). An EMPTY value is
+# not "unset" — proptest warns to stderr and silently falls back to 256
+# (config.rs parse_or_warn) — so this default has to be spelled out.
 RC ?= 512
+# Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
 RS ?=
 
+.PHONY: build test lint fmt bench perf-guard test-fuzz go-build \
+        parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
+
+build:
+	$(CARGO) build --workspace
+
+test:
+	$(CARGO) test --workspace
+	$(CARGO) test -p rune-md --features strict-invariants
+
+lint:
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+
+fmt:
+	$(CARGO) fmt --all --check
+
+bench:
+	$(CARGO) bench -p rune-md --bench parse_bench
+
+# `--test perf_guard` + `--exact` scope this to ONE test in ONE binary. Without
+# them, every other rune-md test binary prints `test result: ok. 0 passed ...
+# filtered out` and exits 0, so the target stays green even if the test is
+# renamed or deleted.
+perf-guard:
+	$(CARGO) test -p rune-md --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
+
+# `-p rune-fuzz` (NOT --workspace) is load-bearing: under --workspace, cargo
+# feature-unifies rune-md's dev-dependency on itself and compiles rune-md with
+# `strict-invariants`, whose known-open comrak sourcepos panics
+# (crates/rune-md/TODO.md) would drown the session fuzzer in non-bugs.
+# `--test human_session` + `--exact` for the same reason as perf-guard.
+# Debug profile on purpose: keeps the buffer/undo/render debug_asserts armed.
 test-fuzz:
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferSnapshotImmutability$$' -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferBatchEquivalence$$'      -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzBufferPointRoundtrip$$'        -fuzztime=$(T) ./pkg/editor/buffer
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSyntaxMapRoundtrip$$'          -fuzztime=$(T) ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWrapMapRoundtrip$$'            -fuzztime=$(T) ./pkg/editor/display
-	go test -tags fuzzing -count=1 -fuzz='^FuzzEvictionModel$$'               -fuzztime=$(T) ./pkg/ui/components/opentabs
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSession$$'                     -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSessionWithFile$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzWorkspaceTabOps$$'             -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzLoadReorder$$'                 -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzSaveRace$$'                    -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzDelayedViewResult$$'           -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzHumanSession$$'                -fuzztime=$(T) ./pkg/ui/pages/workspace
-	go test -tags fuzzing -count=1 -fuzz='^FuzzTwoSessionsSharedDoc$$'        -fuzztime=$(T) ./pkg/ui/pages/workspace
+	PROPTEST_CASES=$(RC) PROPTEST_RNG_SEED=$(RS) \
+	    $(CARGO) test -p rune-fuzz --test human_session -- \
+	    --ignored --exact --test-threads=1 human_session
 
-release-snapshot:
-	goreleaser release --snapshot --clean
-
-whisper.cpp-restart:
-	brew services restart whisper-cpp-server
-
-.PHONY: build run test clean test-fuzz release-snapshot whisper.cpp-restart rust-build rust-test rust-lint rust-fmt rust-bench rust-perf-guard rust-test-fuzz parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
-
-rust-build:
-	$(MAKE) -C rust build
-
-rust-test:
-	$(MAKE) -C rust test
-
-rust-lint:
-	$(MAKE) -C rust lint
-
-rust-fmt:
-	$(MAKE) -C rust fmt
-
-rust-bench:
-	$(MAKE) -C rust bench
-
-rust-perf-guard:
-	$(MAKE) -C rust perf-guard
-
-rust-test-fuzz:
-	$(MAKE) -C rust test-fuzz RC=$(RC) RS=$(RS)
+# ── Parity harness ────────────────────────────────────────────────────────────
+# Captures the same scenario from both implementations and diffs the screens.
+# The Go reference implementation lives in golang/ and builds with its own
+# Makefile; `go`/`rust` below are side NAMES the scripts dispatch on.
 
 PARITY_SCENARIO ?= 01-open-file
 
 parity: parity-capture parity-diff parity-assert
 
-parity-capture: build rust-build
+go-build:
+	$(MAKE) -C golang build
+
+parity-capture: build go-build
 	scripts/parity/capture.sh go   $(PARITY_SCENARIO)
 	scripts/parity/capture.sh rust $(PARITY_SCENARIO)
 
@@ -79,7 +66,7 @@ parity-diff:
 parity-assert:
 	scripts/parity/assert.sh
 
-parity-grid: build rust-build
+parity-grid: build go-build
 	scripts/parity/grid.sh
 
 parity-serve:
@@ -88,4 +75,3 @@ parity-serve:
 
 parity-clean:
 	scripts/parity/clean.sh
-

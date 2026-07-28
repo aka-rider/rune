@@ -57,17 +57,17 @@ fi
 
 case "$SIDE" in
     go)
-        BIN="$REPO_ROOT/rune"
+        BIN="$REPO_ROOT/golang/rune"
         if [[ ! -x "$BIN" ]]; then
-            echo "capture.sh: Go binary missing at $BIN — run 'make build' first" >&2
+            echo "capture.sh: Go binary missing at $BIN — run 'cd golang && make build' first" >&2
             exit 1
         fi
         CMD=(env TERM=xterm-256color "$BIN" -w "$WS" "$WS/$FIXTURE")
         ;;
     rust)
-        BIN="$REPO_ROOT/rust/target/debug/rune"
+        BIN="$REPO_ROOT/target/debug/rune"
         if [[ ! -x "$BIN" ]]; then
-            echo "capture.sh: Rust binary missing at $BIN — run 'make rust-build' first" >&2
+            echo "capture.sh: Rust binary missing at $BIN — run 'make build' first" >&2
             exit 1
         fi
         CMD=(env TERM=xterm-256color HOME="$RUN_ROOT/rust/home" "$BIN" "$WS/$FIXTURE")

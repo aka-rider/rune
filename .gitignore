@@ -1,7 +1,6 @@
-/dbg_keyboard
-/rune
-coverage.out
+target/
+crates/rune-fuzz/artifacts/
+crates/.claude/
 .scratch/
 .DS_Store
 .claude/worktrees
-rust/crates/.claude/

@@ -15,4 +15,8 @@ Run `/goal identify the root cause`. Then:
 
 Report your findings as your final message. Write nothing. Fix nothing.
 
-Env for go/make: `export GOPATH=/Users/xiii/Developer/go GOCACHE=/Users/xiii/Developer/go/build-cache GOFLAGS=-buildvcs=false TMPDIR=/Users/xiii/Developer/go/rune-tmp`
+The Rust session fuzzer at the repo root is the default (`make test-fuzz RC=<cases> RS=<seed>`); a
+pinned `RS` seed is how you reproduce one catch deterministically.
+
+If the failure came from the Go reference implementation under `golang/` instead, its fuzzer needs:
+`export GOPATH=/Users/xiii/Developer/go GOCACHE=/Users/xiii/Developer/go/build-cache GOFLAGS=-buildvcs=false TMPDIR=/Users/xiii/Developer/go/rune-tmp`

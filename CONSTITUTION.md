@@ -4,6 +4,8 @@ This is how we do things here. When designing a new feature or reviewing a chang
 
 Article numbers (§) are **frozen**: source comments and tests cite them (e.g. §1.4.8, §5.4). Amend an article in place via PR; never renumber or delete one. First time in the repo? `CLAUDE.md` orients you; this file is the law.
 
+Both implementations are bound by it: the Rust workspace at the repo root, and the Go reference implementation under `golang/`. Go package paths cited below (`pkg/…`, `cmd/rune`, `internal/…`) are relative to `golang/`.
+
 ---
 
 ## §0 Prime Directive — Protect the User's Words
