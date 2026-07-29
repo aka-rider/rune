@@ -164,8 +164,11 @@ fn guard_spans(app: &App, kind: &GuardKind) -> Vec<Span<'static>> {
 ///    nothing extra for the Editor, whose chords live in `keymap::resolve`,
 ///    a match rather than a table (the same asymmetry `help.rs` already
 ///    records).
-/// 4. `F1 help`, then the quit chords, from `GLOBAL_BINDINGS` — always
-///    last.
+/// 4. Every remaining non-alias `GLOBAL_BINDINGS` entry except `⌘S` (already
+///    placed at step 2, with its own dirty-state styling) — always last.
+///    Aliased ctrl fallbacks (a chord that duplicates a leader chord, or a
+///    second quit chord) are skipped: they still work, `help_markdown` still
+///    lists them, but the footer only needs to name a command once.
 ///
 /// One source read by both the untruncated renderer (`footer_text`,
 /// `rune-fuzz`'s snapshots) and the width-truncated one `draw` uses, so the
@@ -201,7 +204,7 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
     entries.extend(
         GLOBAL_BINDINGS
             .iter()
-            .filter(|b| matches!(b.cmd, GlobalCommand::Help | GlobalCommand::QuitChord(_)))
+            .filter(|b| !b.alias && !matches!(b.cmd, GlobalCommand::Save))
             .map(|b| (b.label(), b.help, true)),
     );
 
@@ -330,14 +333,18 @@ mod tests {
 
     #[test]
     fn default_mode_lists_every_global_binding_label() {
-        // Editor focus (`App::new`'s default) — every `GLOBAL_BINDINGS`
-        // help string must still appear, though `explorer`/`editor`/`tabs`
-        // now come from the leader table's own entries rather than
-        // `GLOBAL_BINDINGS` itself (plan WP6.S5).
+        // Editor focus (`App::new`'s default) — every non-alias
+        // `GLOBAL_BINDINGS` help string must still appear, though
+        // `explorer`/`editor`/`tabs` now come from the leader table's own
+        // entries rather than `GLOBAL_BINDINGS` itself. Aliased bindings
+        // (like `^d`'s "quit") are excluded on purpose: their help string is
+        // shared with a non-alias binding (`^c`'s "quit"), so iterating the
+        // full table would still pass even if the alias filter broke — this
+        // must walk only `!b.alias` entries to actually test that filter.
         let app = app_with("hello");
         assert_eq!(app.focus, Pane::Editor);
         let text = footer_text(&app);
-        for binding in GLOBAL_BINDINGS {
+        for binding in GLOBAL_BINDINGS.iter().filter(|b| !b.alias) {
             assert!(
                 text.contains(binding.help),
                 "expected {:?} in default footer text {text:?}",
