@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(word_right_offset(&buf, 0), 5); // end of "hello"
         // Starting mid-whitespace, Go's wordRightOffset skips the
         // whitespace run AND the following word class run in the same
-        // call (commands_nav.go:107-136) — it does not stop at the start
+        // call (commands_nav.go) — it does not stop at the start
         // of "world".
         assert_eq!(word_right_offset(&buf, 5), 13);
         // Starting mid-word only skips to the end of the CURRENT word,

@@ -12,7 +12,7 @@ use crate::cursor::Cursor;
 /// Build the inverse edit batch for an applied-edit batch (undo): each
 /// edit's insert becomes a delete range, and its deleted text becomes the
 /// new insert. Port of the edit construction in
-/// `edit_primitives.go:51-60` (`ApplyInverse`).
+/// `edit_primitives.go` (`ApplyInverse`).
 ///
 /// Returns `BufferError::OutOfBounds` instead of panicking if
 /// `ae.start + ae.insert.len()` would overflow `usize`. Unreachable from
@@ -43,8 +43,8 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
 
 /// Apply the inverse of `edits` to `buf` (undo). All-or-nothing: on error
 /// `buf` is untouched by the caller — the journal position must stay put
-/// too (§1.4.8, `workspace_undo.go:31-46`). Port of
-/// `edit_primitives.go:51-68`.
+/// too (§1.4.8, `workspace_undo.go`). Port of
+/// `edit_primitives.go`.
 pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     let inverse = inverse_edits(edits)?;
     let (new_buf, _) = buf.apply_edits(&inverse)?;
@@ -54,10 +54,10 @@ pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, Buff
 /// Reapply `edits` forward against `buf` (redo), one edit at a time,
 /// ascending by `start`, against a running copy. `AppliedEdit::start`
 /// carries a baked-in cumulative shift that is only valid one edit at a
-/// time against the running buffer — see `edit_primitives.go:70-79` for
+/// time against the running buffer — see `edit_primitives.go` for
 /// why batching them would be wrong. All-or-nothing: any edit's failure
 /// returns the error and the original `buf` is never touched. Port of
-/// `edit_primitives.go:86-110`.
+/// `edit_primitives.go`.
 ///
 /// Real invariant: no two edits in `edits` may share the same `start` (in
 /// the post-edit coordinate space `AppliedEdit::start` lives in) — a tie
@@ -120,7 +120,7 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
 
 /// One undo/redo unit: the edits applied plus cursor state before/after, so
 /// undo/redo restores selection alongside content. Shape implied by
-/// `workspace_undo.go:31-85` (`step.Edits`, `step.Cursors`).
+/// `workspace_undo.go` (`step.Edits`, `step.Cursors`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
@@ -156,7 +156,7 @@ impl Journal {
     /// Peek the step undo would apply and the position undo would commit
     /// to — does NOT move `pos`. Callers apply the buffer edit first
     /// (`apply_inverse`) and call `move_pos` only on success (§1.4.8;
-    /// `workspace_undo.go:31-46`).
+    /// `workspace_undo.go`).
     pub fn undo_peek(&self) -> Option<(&Step, usize)> {
         if self.pos == 0 {
             return None;
@@ -166,8 +166,8 @@ impl Journal {
     }
 
     /// Peek the step redo would apply and the position redo would commit
-    /// to — does NOT move `pos`. Mirrors `undo_peek`
-    /// (`workspace_undo.go:88-` `handleRedo`).
+    /// to — does NOT move `pos`. Mirrors `undo_peek` (`workspace_undo.go`,
+    /// `handleRedo`).
     pub fn redo_peek(&self) -> Option<(&Step, usize)> {
         let step = self.steps.get(self.pos)?;
         Some((step, self.pos + 1))

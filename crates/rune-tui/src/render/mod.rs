@@ -115,7 +115,7 @@ fn control_placeholder(ch: char) -> char {
 /// not two independently-written sums that merely happen to agree today.
 ///
 /// `\n`/`\r` are dropped entirely — zero cells, zero width — matching Go's
-/// `cell.go:79,106` (`if r == '\n' || r == '\r' { continue }`) and
+/// `cell.go` (`if r == '\n' || r == '\r' { continue }`) and
 /// `control_aware_width`'s own `0` for them. `\t` expands into `width`
 /// single-width space cells, ALL carrying the tab's own `buf_offset`, so
 /// the caret can land on any of the tab's columns and still map back to the
@@ -297,7 +297,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
 /// spans the WHOLE `geo.center` rect, including where the editor sits one
 /// cell in), and the breadcrumb overlay must run after both — it splices
 /// directly onto the border row the `Block` already painted, exactly the
-/// ordering Go documents at `workspace_view.go:327-330`.
+/// ordering Go documents at `workspace_view.go`.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);

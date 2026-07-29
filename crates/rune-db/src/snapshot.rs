@@ -25,7 +25,7 @@ use crate::session::format_rfc3339_nanos;
 /// two sessions editing the same `doc_id` keep entirely separate anchor
 /// chains. `seq` should be the most recently returned seq from
 /// `journal::append_edit` so `recover_document` can find this snapshot as
-/// the closest anchor for any replay. Port of `snapshot.go:74-103`.
+/// the closest anchor for any replay. Port of `snapshot.go`.
 pub fn create_snapshot(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -60,12 +60,12 @@ pub fn create_snapshot(
 ///    time, using `rune_core::undo::reapply`'s edit-application semantics
 ///    (ascending by `start` within a row, against a running buffer) — NOT
 ///    Go's `buffer.ReplayForward`, which silently clamps/skips an
-///    out-of-range edit instead of erroring (`replay.go:26-33`). Every row
+///    out-of-range edit instead of erroring (`replay.go`). Every row
 ///    here was produced by this crate's own `append_edit`, so a replay
 ///    failure means a genuinely corrupt/inconsistent journal, which §1.3
 ///    requires surfacing rather than silently reconstructing wrong content.
 ///
-/// Port of `snapshot.go:105-172` (`recoverAt`/`RecoverDocument`). Takes
+/// Port of `snapshot.go` (`recoverAt`/`RecoverDocument`). Takes
 /// `&Connection` rather than `&Transaction` — this is a pure read, so
 /// `rusqlite`'s `Transaction: Deref<Target=Connection>` lets writer-thread
 /// callers (inside `retry::with_retry`'s `&Transaction`) and read-only

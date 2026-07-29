@@ -281,7 +281,7 @@ pub fn footer_text(app: &App) -> String {
 }
 
 /// `Ln <line>, Col <col>` from the active document's primary cursor (plan
-/// WP8, port of Go `footer_view.go:176`'s `m.line+1, m.col+1`) — always
+/// WP8, port of Go `footer_view.go`'s `m.line+1, m.col+1`) — always
 /// shown, regardless of the left side's `Mode`. Col is a LINE-relative
 /// terminal-CELL column (§1.5, `rune_syntax::wrap::line_visual_col`), not a
 /// wrap-row-relative one: `line_visual_col` walks the cursor's own logical

@@ -411,9 +411,9 @@ impl App {
     /// `layout::geometry` would otherwise be asked to lay out a
     /// zero-by-something frame it never actually has to render).
     ///
-    /// Called as the first statement of `sync_view` below (`runtime.rs:189,
-    /// 216` call it immediately before every `render::draw` — verified this
-    /// session — so that's the one chokepoint no call site can forget) AND
+    /// Called as the first statement of `sync_view` below (the runtime
+    /// calls `sync_view` immediately before every `render::draw`, so that's
+    /// the one chokepoint no call site can forget) AND
     /// again from `Msg::Resize` itself, so tests that call `update` without
     /// a following `sync_view` still see a correctly-sized viewport;
     /// calling it twice in the same message batch is harmless (it's a pure

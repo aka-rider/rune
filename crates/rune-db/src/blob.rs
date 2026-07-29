@@ -7,7 +7,7 @@
 //!
 //! Deliberately `&[u8]`/`Vec<u8>`-typed, never `&str`/`String`: Go's `string`
 //! is just a byte sequence with no UTF-8 validity requirement (`PutBlob`
-//! there takes `string(data)` unconditionally, `load.go:49`), so disk-sourced
+//! there takes `string(data)` unconditionally, `load.go`), so disk-sourced
 //! content — including a swap-race's *displaced* bytes, which may come from
 //! ANY other writer and are captured under duress, never validated — must
 //! never be rejected here just because it fails to decode as UTF-8. A hard
@@ -36,7 +36,7 @@ use crate::Error;
 /// `INSERT OR IGNORE` (content-addressed — an existing row with the same
 /// hash is already byte-identical, so a duplicate insert is a deliberate
 /// no-op, not a conflict). Returns the hash either way. Port of
-/// `snapshot.go:18-43`.
+/// `snapshot.go`.
 pub(crate) fn put_blob(conn: &Connection, content: &[u8]) -> Result<String, Error> {
     let hash = hex_sha256(content);
     let compressed = zstd::encode_all(content, 0).map_err(Error::Io)?;
@@ -52,7 +52,7 @@ pub(crate) fn put_blob(conn: &Connection, content: &[u8]) -> Result<String, Erro
 /// re-verifying its SHA-256 against `hash` before returning — blob rot /
 /// bit-flip detection. A mismatch is a corrupt blob and is surfaced as
 /// [`Error::BlobHashMismatch`], never silently returned (port of
-/// `snapshot.go:49-71`). Never attempts a UTF-8 decode — that is each
+/// `snapshot.go`). Never attempts a UTF-8 decode — that is each
 /// caller's own concern, only where (and if) the bytes need to re-enter a
 /// `String`.
 pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> {
@@ -79,8 +79,8 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> 
 }
 
 /// Exposed `pub(crate)` (rather than kept private) so `observation.rs`
-/// (`hashBytes`, `observation.go:207-212`) and `sync.rs` (`emptyHash`,
-/// `sync.go:149-152`) share this ONE hex-SHA-256 implementation instead of a
+/// (`hashBytes`, `observation.go`) and `sync.rs` (`emptyHash`,
+/// `sync.go`) share this ONE hex-SHA-256 implementation instead of a
 /// second copy — the same hash space `blobs.hash`/`observations.blob_hash`
 /// both live in.
 pub(crate) fn hex_sha256(bytes: &[u8]) -> String {

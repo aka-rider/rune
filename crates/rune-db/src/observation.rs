@@ -31,12 +31,12 @@ use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
 /// Identifies a row in `observations`. AUTOINCREMENT ids start at 1 — the
-/// zero value is never a valid observation. Port of `observation.go:79-83`
+/// zero value is never a valid observation. Port of `observation.go`
 /// (`ObsID`).
 pub type ObsId = i64;
 
 /// One recorded sighting of a document's disk state. Port of
-/// `observation.go:85-117` (`Observation`). `inode`/`device`/`nlink` are
+/// `observation.go` (`Observation`). `inode`/`device`/`nlink` are
 /// `Option` (D13/§1.7): a stat failure or unusable identity is a genuine
 /// absence, never a literal `0` sharing the column with a real value.
 #[derive(Clone, Debug, PartialEq)]
@@ -80,7 +80,7 @@ impl Observation {
 
 /// The lowercase hex SHA-256 of `data` — the same hash space
 /// `blobs.hash`/`observations.blob_hash` both live in. Port of
-/// `observation.go:207-212` (`hashBytes`).
+/// `observation.go` (`hashBytes`).
 pub fn hash_bytes(data: &[u8]) -> String {
     crate::blob::hex_sha256(data)
 }
@@ -111,7 +111,7 @@ fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
 /// without resorting to `#[allow(clippy::too_many_arguments)]` (repo rule:
 /// no such allow outside test code). `None` identity fields mean the stat
 /// failed or exposed no usable identity, never a literal `0` (D12/D13/§1.7).
-/// Port of the facts `observation.go:244-265` (`statIdentity`) returns.
+/// Port of the facts `observation.go` (`statIdentity`) returns.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatFacts {
     pub size: i64,
@@ -139,7 +139,7 @@ pub fn stat_identity(vfs: &dyn Vfs, path: &Path) -> StatFacts {
 
 /// The non-stat facts describing what an observation records — bundled with
 /// [`StatFacts`] for the same argument-count reason. Port of the remaining
-/// (non-identity) fields `observation.go:228-242`/`267-290` take.
+/// (non-identity) fields `observation.go`/`267-290` take.
 #[derive(Clone, Copy, Debug)]
 pub struct ObservationMeta<'a> {
     pub blob_hash: &'a str,
@@ -152,7 +152,7 @@ pub struct ObservationMeta<'a> {
 
 /// Inserts a new `observations` row. Pure SQLite — the caller has already
 /// done any disk I/O and blob storage this observation reports on. Port of
-/// `observation.go:228-242` (`recordObservation`).
+/// `observation.go` (`recordObservation`).
 pub fn record_observation(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -250,7 +250,7 @@ pub(crate) fn observe_from_stat_tx(
 /// open (disk I/O never happens inside a DB transaction, plan binding rule
 /// I1) — the blob store and the observation insert that references its hash
 /// commit together right after, closing the window `snapshot::create_snapshot`
-/// already closes for its own blob+row pair. Port of `observation.go:267-290`
+/// already closes for its own blob+row pair. Port of `observation.go`
 /// (`observeFromStat`).
 pub fn observe_from_stat(
     conn: &mut Connection,
@@ -273,7 +273,7 @@ pub fn observe_from_stat(
 /// missing — Go's `getObservation` wraps `sql.ErrNoRows` as a genuine error
 /// since every caller expects `id` to be a real, already-recorded row (a
 /// dangling `expect`/`obs` reference IS a bug worth surfacing). Port of
-/// `observation.go:315-328` (`getObservation`). A decision-input read — must
+/// `observation.go` (`getObservation`). A decision-input read — must
 /// run inside the deciding `BEGIN IMMEDIATE` tx (plan decision 8), never on
 /// the read-only reader connection.
 pub fn get_observation(tx: &Transaction<'_>, id: ObsId) -> Result<Observation, Error> {
@@ -289,7 +289,7 @@ pub fn get_observation(tx: &Transaction<'_>, id: ObsId) -> Result<Observation, E
 /// `doc_id`'s newest recorded observation, by id, ANY origin, ANY session —
 /// the "Theirs" derivation (package doc comment). Deliberately session-
 /// UNSCOPED (B1): the ONE query in this module that stays that way. Port of
-/// `observation.go:330-349` (`newestObservation`). Decision-input (plan
+/// `observation.go` (`newestObservation`). Decision-input (plan
 /// decision 8).
 pub fn newest_observation(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<Observation>, Error> {
     tx.query_row(
@@ -308,7 +308,7 @@ pub fn newest_observation(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<Ob
 /// candidates IFF its own correlated seq equals `pos` exactly (the
 /// self-reference guard — narrower than excluding the id outright; an
 /// OLDER correlation for the same id is still a legitimate ancestor). Port
-/// of `sync.go:7-54` (`ancestorAt`). Decision-input (plan decision 8).
+/// of `sync.go` (`ancestorAt`). Decision-input (plan decision 8).
 pub fn ancestor_at(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -335,7 +335,7 @@ pub fn ancestor_at(
 /// (`session_documents.saved_obs`) — the observation `session_id` believes
 /// reflects what is physically on disk right now. `None` means `session_id`
 /// has never adopted anything for `doc_id` yet (even if a DIFFERENT session
-/// has). Port of `observation.go:351-386` (`SavedObs`/`savedObsFor`).
+/// has). Port of `observation.go` (`SavedObs`/`savedObsFor`).
 /// Decision-input — the ONE consumer is `Materialize`'s CAS expect (plan
 /// decision 8).
 pub fn saved_obs_for(

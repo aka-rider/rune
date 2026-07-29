@@ -34,7 +34,7 @@ pub struct DocRef {
 
 /// Real (inode, device) identity for `path` via `vfs`, or `None` when the
 /// stat failed or exposed no usable identity (`ino == 0`, matching Go's
-/// `!ok || inode == 0` fallback-to-name-keying guard, `store_documents.go:19`).
+/// `!ok || inode == 0` fallback-to-name-keying guard, `store_documents.go`).
 fn stat_id(vfs: &dyn Vfs, path: &Path) -> Option<(i64, i64)> {
     let stat = vfs.stat(path).ok()?;
     match (stat.identity.inode, stat.identity.device) {
@@ -46,7 +46,7 @@ fn stat_id(vfs: &dyn Vfs, path: &Path) -> Option<(i64, i64)> {
 /// Resolves the VFS document for a file that exists on disk. Must only be
 /// called after the file has been successfully read (so stat can obtain a
 /// real inode) — `load::load` satisfies this by reading before calling.
-/// Port of `store_documents.go:15-23` (`OpenPath`).
+/// Port of `store_documents.go` (`OpenPath`).
 pub fn open_path(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -64,7 +64,7 @@ pub fn open_path(
     }
 }
 
-/// Port of `store_documents.go:37-82` (`openPathByName`).
+/// Port of `store_documents.go` (`openPathByName`).
 fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRef, Error> {
     let existing: Option<i64> = tx
         .query_row(
@@ -98,7 +98,7 @@ fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRe
     }
 }
 
-/// Port of `store_documents.go:89-163` (`openPathByInode`).
+/// Port of `store_documents.go` (`openPathByInode`).
 fn open_path_by_inode(
     tx: &Transaction<'_>,
     path: &str,

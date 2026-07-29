@@ -206,7 +206,7 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
 /// Help virtual document the first time it's ever needed (`App.help_doc`,
 /// idempotent — a second press never mints a duplicate), then toggles
 /// between it and whatever was active before. Unlike Go's `toggleHelp`
-/// (`workspace_nav.go:152`, which CLOSES the help tab on the second press
+/// (`workspace_nav.go`, which CLOSES the help tab on the second press
 /// while focused there), this port keeps the Help document as an ordinary,
 /// closable tab and instead switches back to `App.help_return_to` — the
 /// document that was active right before Help was last activated. Falls

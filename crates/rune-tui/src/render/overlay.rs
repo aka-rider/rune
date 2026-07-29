@@ -153,7 +153,7 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
             if cell.buf_offset >= 0 {
                 let offset = cell.buf_offset as usize;
                 if offset >= start && offset < end {
-                    // Go `Selection` (`styles.go:196`, WP2.S2 migration).
+                    // Go `Selection` (`styles.go`, WP2.S2 migration).
                     cell.style = cell.style.bg(theme.chrome.selection_bg);
                 }
             }
@@ -163,7 +163,7 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
 
 /// Reverse-video the cell at `visual_col`, or — if the caret sits past the
 /// last visible char on this row — append a synthetic EOL cursor cell (port
-/// of Go `render.go:151-176`).
+/// of Go `render.go`).
 fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
     let mut col = 0usize;
     for cell in row.iter_mut() {

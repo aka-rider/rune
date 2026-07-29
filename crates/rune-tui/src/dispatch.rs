@@ -401,7 +401,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// reachable here too, though stage 2 above always intercepts those first.
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
     // Hardcoded fast paths outside the resolver, exactly as Go
-    // (`textedit/update.go:67-85`): Enter (mod 0) -> newline; Escape ->
+    // (`textedit/update.go`): Enter (mod 0) -> newline; Escape ->
     // collapse selection. Neither is a resolver-bound chord (plan Context,
     // "Keymap").
     if key.code == KeyCode::Enter && key.mods == Mods::NONE {
@@ -415,7 +415,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 
     let Some(command) = keymap::resolve(key) else {
         // Unmatched printable text -> insert fallthrough (plan Context,
-        // "Hardcoded fast paths outside the resolver": `update.go:134-158`).
+        // "Hardcoded fast paths outside the resolver": `update.go`).
         // Ctrl/Alt/Super chords that reach here are simply unbound, never an
         // insert — every bound Ctrl/Alt/Super chord is already caught by
         // `keymap::resolve` above.
@@ -514,9 +514,9 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 
 /// Guards the printable-insert fallthrough against control-byte leakage
 /// (data-integrity fix, review finding F1). Go's equivalent gate is
-/// `isPrintableChar` (`textedit.go:441-443`: `r >= ' ' && r <= '~'`), but
+/// `isPrintableChar` (`textedit.go`: `r >= ' ' && r <= '~'`), but
 /// that gate applies ONLY to Go's SYNTHESIZED-from-`BaseCode` case
-/// (`update.go:136-145`) — real decoded text (`msg.Text`, and everything
+/// (`update.go`) — real decoded text (`msg.Text`, and everything
 /// `Msg::Paste` carries here) flows unrestricted, including non-ASCII
 /// (CJK, emoji). This crate's termina-backed `KeyCode::Char(char)` has no
 /// such split: it is Go's `BaseCode` concept alone, never a separate

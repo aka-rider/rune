@@ -7,9 +7,9 @@
 //!   plus ` •` when dirty. Unchanged, a pure function of `&App`.
 //! - **Focused**: [`TitleField`]'s own `text` with a block cursor. The field
 //!   holds the file's **stem**, not its full name — Go's title does the
-//!   same (`workspace_view_switch.go:128`:
+//!   same (`workspace_view_switch.go`:
 //!   `TrimSuffix(Base(path), ".md")`), and the rename target is rebuilt as
-//!   `<parent>/<text>.md` (`workspace_update.go:82`). The extension is
+//!   `<parent>/<text>.md` (`workspace_update.go`). The extension is
 //!   managed, never typed, so it cannot be accidentally deleted into a file
 //!   rune would then refuse to reopen.
 //!

@@ -17,7 +17,7 @@
 //! the only place wall-clock nondeterminism can enter — sampled ONCE per
 //! `append_edit` call and reused for both the row's `at` timestamp and the
 //! coalescing elapsed-time check (Go samples `s.clock()` twice per call,
-//! `journal.go:92,108`; with the deterministic `fixedClock` test helper
+//! `journal.go`; with the deterministic `fixedClock` test helper
 //! both calls already return the identical instant, so sampling once here
 //! is behavior-preserving and removes a source of intra-call clock skew).
 
@@ -32,14 +32,14 @@ use crate::Error;
 use crate::payload::{cursors_from_json, cursors_to_json, edits_from_json, edits_to_json};
 use crate::session::format_rfc3339_nanos;
 
-/// The coalescing window (`journal.go:97-159`, plan Gotchas): a
+/// The coalescing window (`journal.go`, plan Gotchas): a
 /// single-rune pure insert is folded into the previous event only when it
 /// arrives within this long of it.
 const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// One undo/redo journal step: the edits to (re)apply to the buffer, the
 /// cursor state to restore, and the journal position `move_undo_pos` should
-/// commit to once the buffer reapply succeeds. Port of `journal.go:14-23`.
+/// commit to once the buffer reapply succeeds. Port of `journal.go`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
@@ -48,7 +48,7 @@ pub struct Step {
 }
 
 /// One edit row tagged with the journal seq it was recorded at. Port of
-/// `snapshot.go:190-193` (`EditRow`).
+/// `snapshot.go` (`EditRow`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditRow {
     pub seq: i64,
@@ -62,12 +62,12 @@ pub struct EditRow {
 /// the new one, and `current_seq` resets to NULL. Adjacent single-character
 /// inserts within 300ms of the previous event are coalesced into it in
 /// place — but only when all of `can_coalesce_into`'s guards hold, INCLUDING
-/// "no snapshot already anchors that seq" (`journal.go:110-130`) — an
+/// "no snapshot already anchors that seq" (`journal.go`) — an
 /// UPDATE coalesced into an already-snapshotted row would be invisible to a
 /// snapshot-anchored `recover_document` replay (CONSTITUTION §1.4.10-adjacent
 /// correctness: the row's bytes must never silently outrun what a
 /// recovery-anchor reconstruction can see). Returns the journal seq of the
-/// inserted (or coalesced) event. Port of `journal.go:39-194`.
+/// inserted (or coalesced) event. Port of `journal.go`.
 pub fn append_edit(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -83,7 +83,7 @@ pub fn append_edit(
 
     // Read this session's current undo position; NULL (or no row at all —
     // this session has never journaled anything for doc_id yet) means at
-    // head. Port of journal.go:49-55.
+    // head. Port of journal.go.
     let current_seq: Option<i64> = tx
         .query_row(
             "SELECT current_seq FROM session_documents WHERE session_id=?1 AND doc_id=?2",
@@ -94,7 +94,7 @@ pub fn append_edit(
         .flatten();
 
     // Truncate an abandoned future — events AND snapshots — scoped to this
-    // session's own rows only. Port of journal.go:60-89.
+    // session's own rows only. Port of journal.go.
     if let Some(cs) = current_seq {
         tx.execute(
             "DELETE FROM events WHERE doc_id=?1 AND session_id=?2 AND seq > ?3",
@@ -104,7 +104,7 @@ pub fn append_edit(
         // that only ever existed in the abandoned future; left alive it
         // becomes a zombie anchor recover_document could still pick,
         // resurrecting truncated bytes under a later edit
-        // (journal.go:68-78).
+        // (journal.go).
         tx.execute(
             "DELETE FROM snapshots WHERE doc_id=?1 AND session_id=?2 AND seq > ?3",
             params![doc_id, session_id, cs],
@@ -118,7 +118,7 @@ pub fn append_edit(
     let now_str = format_rfc3339_nanos(now);
 
     // Attempt coalescing with the previous event for this doc, scoped to
-    // this session's own rows. Port of journal.go:97-159.
+    // this session's own rows. Port of journal.go.
     if let Some(only) = as_single_char_insert(edits) {
         let last: Option<(i64, String, String)> = tx
             .query_row(
@@ -181,7 +181,7 @@ pub fn append_edit(
 /// after the buffer reapply succeeds (§1.4.8). `Ok(None)` means genuinely
 /// nothing to undo; `Err` means the read or an event's payload was corrupt
 /// — surfaced, never folded into `Ok(None)` (§1.3). Port of
-/// `journal.go:207-245`.
+/// `journal.go`.
 pub fn undo_peek(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -214,7 +214,7 @@ pub fn undo_peek(
 /// `doc_id`, plus the position the journal should advance to. Mirrors
 /// `undo_peek`: READ-ONLY, `Ok(None)` means genuinely nothing to redo, a
 /// corrupt payload is `Err`, never folded into `Ok(None)`. Port of
-/// `journal.go:247-291`.
+/// `journal.go`.
 pub fn redo_peek(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -249,7 +249,7 @@ pub fn redo_peek(
 /// (§1.4.8). The UPSERT creates this session's `session_documents` row on
 /// its very first undo/redo for `doc_id` — no read-then-write split; `pos`
 /// is always caller-supplied (from `undo_peek`/`redo_peek`), never derived
-/// from a value this call itself reads. Port of `journal.go:293-312`.
+/// from a value this call itself reads. Port of `journal.go`.
 pub fn move_undo_pos(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -267,7 +267,7 @@ pub fn move_undo_pos(
 /// The effective journal position for `doc_id` as seen by `session_id`:
 /// this session's own undo pointer if set, else `MAX(seq)` among only this
 /// session's own events for `doc_id`, else 0 if this session has no events
-/// for `doc_id` at all. Port of `dirty.go:38-59` (`CurrentSeq`).
+/// for `doc_id` at all. Port of `dirty.go` (`CurrentSeq`).
 pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<i64, Error> {
     let seq: i64 = tx.query_row(
         "SELECT COALESCE(
@@ -284,7 +284,7 @@ pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 /// with its seq, ordered ascending — the current TAIL row (`seq == to_seq`)
 /// is the only one `append_edit`'s coalescing UPDATE can still mutate in
 /// place. Session-scoped: only ever this session's own edits. Port of
-/// `snapshot.go:195-238` (`EditsInRange`). Read-only, so it takes
+/// `snapshot.go` (`EditsInRange`). Read-only, so it takes
 /// `&Connection` rather than `&Transaction` — callable from either the
 /// writer's own transaction (via `Transaction`'s `Deref<Target=Connection>`
 /// coercion) or a plain read connection.
@@ -315,7 +315,7 @@ pub fn edits_in_range(
 /// Returns `edits`' single edit if `edits` is a single character insertion
 /// (no deletion, a one-rune insert), else `None` — pattern-matched rather
 /// than indexed (`edits[0]`) so the single-element access is checked by the
-/// match itself, not a runtime bounds check. Port of `journal.go:358-365`
+/// match itself, not a runtime bounds check. Port of `journal.go`
 /// (`isInsertChar`).
 fn as_single_char_insert(edits: &[AppliedEdit]) -> Option<&AppliedEdit> {
     let [only] = edits else { return None };
@@ -329,7 +329,7 @@ fn as_single_char_insert(edits: &[AppliedEdit]) -> Option<&AppliedEdit> {
 /// while `apply_inverse`/`reapply` treat an event's edits as a SIMULTANEOUS
 /// batch; a typing run is exactly the shape where both readings agree), and
 /// must not itself end in whitespace (the word-boundary undo-stop rule).
-/// Port of `journal.go:367-402` (`canCoalesceInto`).
+/// Port of `journal.go` (`canCoalesceInto`).
 fn can_coalesce_into(edits_json: &str, next: &AppliedEdit) -> Result<bool, Error> {
     let edits = edits_from_json(edits_json)?;
     let Some(last) = edits.last() else {
@@ -352,7 +352,7 @@ fn can_coalesce_into(edits_json: &str, next: &AppliedEdit) -> Result<bool, Error
 }
 
 /// Appends `new_edits` to the edits stored in `existing_json`. Port of
-/// `journal.go:404-416` (`mergeEditsJSON`).
+/// `journal.go` (`mergeEditsJSON`).
 fn merge_edits_json(existing_json: &str, new_edits: &[AppliedEdit]) -> Result<String, Error> {
     let mut existing = edits_from_json(existing_json)?;
     existing.extend(new_edits.iter().cloned());
@@ -360,7 +360,7 @@ fn merge_edits_json(existing_json: &str, new_edits: &[AppliedEdit]) -> Result<St
 }
 
 /// `now - parse(last_at)`, or `None` if `last_at` doesn't parse (Go's
-/// `journal.go:106-108`: a parse failure on the previous event's own
+/// `journal.go`: a parse failure on the previous event's own
 /// timestamp silently skips coalescing rather than erroring the whole
 /// append — the previous row's `at` was written by this same crate, so a
 /// parse failure here only ever indicates a hand-seeded/corrupt test row,
@@ -401,7 +401,7 @@ mod tests {
         }]
     }
 
-    /// Port of `TestCoalescingWithinWindow` (`journal_test.go:120-152`): two
+    /// Port of `TestCoalescingWithinWindow` (`journal_test.go`): two
     /// single-char inserts 200ms apart (well within the 300ms window),
     /// continuing the typing run (each starts where the previous ended),
     /// coalesce into the SAME journal seq — one undo stop covers both.
@@ -443,7 +443,7 @@ mod tests {
     }
 
     /// A snapshot anchored at the seq a coalescing candidate would target
-    /// must prevent that coalesce (`journal.go:110-130`) — an UPDATE
+    /// must prevent that coalesce (`journal.go`) — an UPDATE
     /// coalesced in place after the snapshot exists would be invisible to a
     /// snapshot-anchored `recover_document` replay.
     #[test]
@@ -483,7 +483,7 @@ mod tests {
     }
 
     /// Port of `TestCoalescingWhitespaceBreaks`
-    /// (`journal_test.go:186-216`): a space coalesces into the preceding
+    /// (`journal_test.go`): a space coalesces into the preceding
     /// non-whitespace stop (same seq), but the event now ENDS in
     /// whitespace, which must break the NEXT coalesce attempt — a fresh
     /// stop.
@@ -518,7 +518,7 @@ mod tests {
     }
 
     /// Port of `TestCoalescingOutsideWindow`
-    /// (`journal_test.go:154-184`): adjacency alone does not coalesce once
+    /// (`journal_test.go`): adjacency alone does not coalesce once
     /// the 300ms window has elapsed — a fresh journal stop, two separate
     /// undo steps.
     #[test]
@@ -540,7 +540,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Port of `TestTruncateOnNewEdit` (`journal_test.go:263-314`): after
+    /// Port of `TestTruncateOnNewEdit` (`journal_test.go`): after
     /// undoing past some events, a fresh edit must truncate the abandoned
     /// future so redo is unavailable and undo never resurrects it.
     #[test]
@@ -586,7 +586,7 @@ mod tests {
     }
 
     /// Port of `TestUndoPeek_CorruptEditsSurfacesError`
-    /// (`journal_test.go:320-344`): a corrupt edits payload must be
+    /// (`journal_test.go`): a corrupt edits payload must be
     /// returned as a non-nil error, never silently folded into "nothing to
     /// undo".
     #[test]

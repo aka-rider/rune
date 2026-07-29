@@ -128,12 +128,12 @@ pub struct Document {
     /// mutating command can forget the guard (review finding F1: an earlier
     /// version checked this only in `commands::clipboard::handle_paste_
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
-    /// "read-only" document — the exact Go bug `commands_clipboard.go:142-
-    /// 152`'s comment describes, reintroduced by guarding the wrong layer).
+    /// "read-only" document — the exact Go bug `commands_clipboard.go`'s
+    /// comment describes, reintroduced by guarding the wrong layer).
     /// `commands::edit::undo`/`redo` deliberately do NOT check this field —
-    /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go:51,86`) bypass
+    /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass
     /// `m.readOnly` the same way, unlike `ReplaceRange`
-    /// (`edit_primitives.go:25`) which checks it first.
+    /// (`edit_primitives.go`) which checks it first.
     pub read_only: bool,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).
