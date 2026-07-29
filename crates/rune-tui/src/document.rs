@@ -76,6 +76,14 @@ pub struct HighlightState {
     /// uncoloured. Recorded so the state is observable and testable rather
     /// than silent; nothing surfaces it in the UI yet.
     pub truncated: bool,
+    /// Test-only instrumentation (plan WP16.S2): counts how many times
+    /// `highlight::resolve_highlight_source` actually built a
+    /// `HighlightSource` for this document — the full-buffer clone the
+    /// in-flight/version gates in `schedule_highlight` must skip whenever a
+    /// highlight is already running. Per-`Document`, not a shared global, so
+    /// parallel tests never interfere with each other's count.
+    #[cfg(test)]
+    pub resolve_calls: std::cell::Cell<usize>,
 }
 
 /// One open editing pane's complete state (plan WP1 decision 2): buffer,
