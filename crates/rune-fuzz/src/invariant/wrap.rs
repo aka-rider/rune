@@ -75,6 +75,11 @@ fn line_text(content: &str, wrap: &WrapSnapshot, line: usize) -> String {
 /// `line_lens[line]` itself even when a corrupted bound isn't
 /// boundary-aligned, so a deliberately-too-large bound still trips a
 /// violation (module docs).
+///
+/// Active-document-switch-safe: takes a single already-synced `WrapSnapshot`
+/// and `content` from `driver/checks.rs::wrap_rt_check`, both read off
+/// whichever document is active at that ONE point in time — never compared
+/// against a different step's document.
 pub fn wrap_rt(content: &str, wrap: &WrapSnapshot, line_lens: &[usize]) -> Option<Violation> {
     for (line, &len) in line_lens.iter().enumerate() {
         let text = line_text(content, wrap, line);

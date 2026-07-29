@@ -31,6 +31,11 @@ use crate::step::{MsgTag, StepCtx};
 /// refuses a read-only document by construction, so a paste there
 /// correctly inserts nothing, and asserting verbatim insertion anyway
 /// would be asserting a property production never claimed to begin with.
+///
+/// Active-document-switch-safe: `Msg::Paste`/`Msg::ClipboardRead` insert
+/// into `app.active` and never switch it (module docs above), so
+/// `prev.active == next.active` always holds on the message types this
+/// checker gates on — no explicit gate needed.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let text = match &ctx.msg {
         MsgTag::Paste(t) | MsgTag::ClipboardRead(t) => t,
@@ -85,6 +90,10 @@ fn decode_osc52(bytes: &[u8]) -> Option<Vec<u8>> {
 /// `commands::clipboard::extract_copy_text` does (`selection_start()` ..
 /// `nav::selection_end_inclusive`, which nudges a REVERSED selection's end
 /// past its anchor unless that byte is a newline).
+///
+/// Active-document-switch-safe: reads only `prev` plus `ctx.raw` from the
+/// SAME step — there is no `next` to compare against, so a document switch
+/// has nothing to disagree about here.
 pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let MsgTag::Key {
         command: Some(cmd), ..

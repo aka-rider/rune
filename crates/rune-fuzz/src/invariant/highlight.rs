@@ -27,6 +27,9 @@ use crate::step::{MsgTag, StepCtx};
 /// into a fresh document, one `Action::Highlight` reply describing the
 /// FULL typed content, then enough `⌘Z` presses to shrink the buffer back
 /// past where the stored span ends).
+///
+/// Active-document-switch-safe: L0, single `Snapshot`'s own
+/// `highlight_spans`/`highlight_version`/`content`/`version`.
 pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
     if next.highlight_version != next.version {
         return None;
@@ -57,6 +60,12 @@ pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
 /// reply describes content the buffer has since moved past, and
 /// `dispatch::handle_highlighted` must leave the previously stored spans
 /// untouched rather than adopting it.
+///
+/// Active-document-switch-safe: `dispatch::handle_highlighted` mutates only
+/// the document named by `Msg::Highlighted { doc, .. }` (via `app.doc_mut`)
+/// and never touches `app.active` itself, so `prev.active == next.active`
+/// always holds across a `MsgTag::Highlighted` step — no explicit gate
+/// needed.
 pub fn hl_stale_drop(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let MsgTag::Highlighted {
         delivered_version, ..
@@ -86,6 +95,10 @@ pub fn hl_stale_drop(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
 /// `journal_len`, or `is_dirty`, and — when cells were sampled on both
 /// steps — must never change any rendered cell's `buf_offset` or `width`
 /// (only `style` may differ).
+///
+/// Active-document-switch-safe: same reasoning as `hl_stale_drop` above —
+/// `Msg::Highlighted` never touches `app.active`, so `prev`/`next` always
+/// describe the same document across this step.
 pub fn hl_no_reflow(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::Highlighted { .. }) {
         return None;

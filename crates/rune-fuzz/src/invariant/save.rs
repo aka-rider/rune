@@ -11,6 +11,12 @@ use crate::step::{MsgTag, StepCtx};
 /// `SAVE-VERBATIM`) — on a successful `SaveDone`, the bytes actually on
 /// disk must byte-equal the bytes THAT save was constructed with. Byte
 /// comparison, no normalization.
+///
+/// Active-document-switch-safe: takes only `ctx`, whose `disk`/
+/// `delivered_save_bytes` are both bound to the fixed path the session was
+/// seeded with (`driver.rs`'s `State::path`), not to whichever document is
+/// currently active — there is no `Snapshot` field here for a switch to
+/// make ambiguous.
 pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::SaveDone { ok: true, .. }) {
         return None;
@@ -38,8 +44,31 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
 /// a save that reports success without actually persisting. Inert during
 /// the `UNDO-TOTAL` drive (G5 keeps `is_dirty` true there — correct, not a
 /// coverage hole).
+///
+/// `next.is_dirty`/`next.content` are doc-scoped (read off `app.active_
+/// doc()` at capture time), but `ctx.disk` is NOT — it's `mem.read` against
+/// the one fixed path the session was seeded and bound to (`driver.rs`'s
+/// `State::path`), which only ever holds the real, seeded document's bytes.
+/// `F1` (help toggle) swaps `app.active` to the virtual Help document,
+/// whose synthetic markdown and trivial `is_dirty == false` have nothing to
+/// do with that path — comparing them against `ctx.disk` misreports the
+/// checker's own doc-vs-path mismatch as a durability defect (this is what
+/// TODO-fuzz-save-clean-matches-disk-help-toggle.md's `Type("hello world")
+/// -> ⌘S -> A -> F1 -> A` repro actually hit). Gated on `!next.read_only`
+/// rather than the `prev.active == next.active` pattern `VERSION-MONOTONE`/
+/// `SAVE-INFLIGHT-SM` use: this driver never opens more than one non-Help
+/// document (`checks.rs::restore_editor_focus`'s own docs) and `read_only`
+/// is set on exactly that one virtual document (`workspace::toggle_help`,
+/// the only call site that ever sets it) — so "the active document is
+/// read-only" and "the active document is not the one `ctx.disk` describes"
+/// are the same condition here, without needing `StepCtx` to carry an
+/// active document id at all.
 pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
-    if next.is_dirty || ctx.saves_delivered_ok == 0 || ctx.pending_save_bytes.is_some() {
+    if next.read_only
+        || next.is_dirty
+        || ctx.saves_delivered_ok == 0
+        || ctx.pending_save_bytes.is_some()
+    {
         return None;
     }
     if ctx.disk.as_deref() == Some(next.content.as_bytes()) {

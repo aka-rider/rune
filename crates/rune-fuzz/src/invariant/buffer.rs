@@ -26,6 +26,10 @@ fn expected_line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
 /// (CODE-REVIEW.md rune-fuzz finding 2: a monotone-only check lets
 /// `line_starts=[0,1,2]` pass clean for `"a\nbb\nccc"`, whose real starts
 /// are `[0,2,5]` — the exact off-by-one this invariant is named for).
+///
+/// Active-document-switch-safe: L0, a single `Snapshot`'s own fields
+/// checked for internal self-consistency — there is no second document to
+/// compare against.
 pub fn buf_line_index(snap: &Snapshot) -> Option<Violation> {
     let (expected_starts, expected_ends) = expected_line_bounds(&snap.content);
     if snap.line_starts != expected_starts {

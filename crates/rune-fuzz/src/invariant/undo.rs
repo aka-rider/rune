@@ -58,6 +58,15 @@ pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
 /// a different comparison); `after` is the state once the drive stopped
 /// (either `journal_pos == 0` or the `journal_len + 8` bound was reached).
 /// Content-only per G5.
+///
+/// Active-document-switch-safe: `driver/checks.rs::restore_editor_focus`
+/// runs immediately before this drive begins and, whenever the Help
+/// document is active, presses `F1` again to switch back — `workspace::
+/// toggle_help`'s own contract guarantees that lands on whatever was active
+/// right before Help was last toggled on, which is always the one seeded
+/// document this driver ever opens (`checks.rs`'s own docs: "this driver
+/// never opens more than one non-Help document"). So `after` is always the
+/// seeded document by construction, never Help.
 pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != 0 {
         return Some(Violation {
@@ -96,6 +105,11 @@ pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
 /// for whatever `k` (and whatever starting `journal_pos`) the session
 /// happened to have; that symmetric round-trip is what this actually
 /// checks.
+///
+/// Active-document-switch-safe: same reasoning as `undo_total` above —
+/// `restore_editor_focus` guarantees the seeded document is active before
+/// EITHER drive begins, and neither drive's own keys (`⌘Z`/`⌘⇧Z`) switch
+/// `app.active`, so `pre_undo`/`after` always describe that same document.
 pub fn redo_total(pre_undo: &Snapshot, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != pre_undo.journal_pos {
         return Some(Violation {

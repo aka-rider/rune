@@ -25,6 +25,9 @@ use crate::snapshot::Snapshot;
 /// regardless of whether the underlying emit -> wrap -> display pass is
 /// actually a fixpoint (CODE-REVIEW.md rune-fuzz finding 1). Forcing a
 /// genuine second rebuild is what makes this check able to fail again.
+/// Active-document-switch-safe: both row sets come from the SAME already-
+/// synced active document (`driver/checks.rs::sync_idempotent_check`) with
+/// no message, let alone a document switch, between them.
 pub fn sync_idempotent_rebuild(
     production_rows: &[Vec<Cell>],
     rebuilt_rows: &[Vec<Cell>],
@@ -52,6 +55,9 @@ pub fn sync_idempotent_rebuild(
 /// the row comparison here vacuous; this pair still catches a
 /// non-settling `Viewport::reconcile` scroll, which memoization never
 /// masks (G6).
+/// Active-document-switch-safe: both halves are captured around a single,
+/// message-free `app.sync_view()` call (`driver/checks.rs`) — nothing can
+/// switch `app.active` in between.
 pub fn sync_idempotent(
     rows_before: &[Vec<Cell>],
     scroll_before: usize,
@@ -85,6 +91,9 @@ pub fn sync_idempotent(
 /// `Cell.buf_offset` is `-1` or a valid, in-bounds, char-boundary byte
 /// offset into `content`; a non-negative offset implies `width >= 1` (a
 /// real buffer byte always renders as at least one cell).
+///
+/// Active-document-switch-safe: L0, checks one `Snapshot`'s `cells` against
+/// its own `content`.
 pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
@@ -127,6 +136,8 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
 /// rendered cell (`push_grapheme_cells` drops them, `render.rs`). A
 /// grapheme cluster is never a bare `\n`/`\r` plus anything else (both
 /// break grapheme segmentation), so an exact string comparison is safe.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`.
 pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         for cell in row {
@@ -147,6 +158,8 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
 /// `CELL-ORDER` (L0, sampled per G19; Go `R3`) — within each row, cells
 /// with a real (non-negative) `buf_offset` are non-decreasing left to
 /// right.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`.
 pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
     for row in &snap.cells {
         let mut last: Option<i64> = None;
@@ -179,6 +192,8 @@ pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
 /// `cells[i]` with `row_meta[i]` is always the SAME row. A border row
 /// whose width disagrees with its content rows is exactly the defect
 /// class the Go implementation had (plan WP5's own docs).
+///
+/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
 pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
     let mut first_of_group: std::collections::HashMap<usize, (usize, usize)> =
         std::collections::HashMap::new();
@@ -222,6 +237,8 @@ pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {
 /// == -1`: a synthesised border row has no source line at all
 /// (`DisplaySnapshot::expand_tables`'s docs), so none of its cells may
 /// claim a real buffer byte.
+///
+/// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
 pub fn table_synthetic_decorative(snap: &Snapshot) -> Option<Violation> {
     for (i, m) in snap.row_meta.iter().enumerate() {
         if !m.synthetic {

@@ -85,3 +85,36 @@ fn save_clean_matches_disk_is_inert_while_dirty() {
     ctx.disk = Some(b"unrelated stale bytes".to_vec());
     assert_eq!(save_clean_matches_disk(&next, &ctx), None);
 }
+
+/// TODO-fuzz-save-clean-matches-disk-help-toggle.md's repro: `F1` makes the
+/// virtual Help document active — clean by construction, with synthetic
+/// content that has nothing to do with `ctx.disk` (the real, seeded
+/// document's on-disk bytes). Must not misreport that as a durability
+/// defect.
+#[test]
+fn save_clean_matches_disk_is_inert_on_the_read_only_help_document() {
+    let mut next = crate::support::base_snapshot("# Help\n\n## Global\n");
+    next.is_dirty = false;
+    next.read_only = true;
+    let mut ctx = base_ctx();
+    ctx.saves_delivered_ok = 1;
+    ctx.pending_save_bytes = None;
+    ctx.disk = Some(b"hello world".to_vec());
+    assert_eq!(save_clean_matches_disk(&next, &ctx), None);
+}
+
+/// Same-document coverage must survive the `read_only` gate above: a clean,
+/// NOT-read-only document whose disk bytes are stale is still caught.
+#[test]
+fn save_clean_matches_disk_still_catches_a_stale_disk_read_on_a_writable_document() {
+    let mut next = crate::support::base_snapshot("current content");
+    next.is_dirty = false;
+    next.read_only = false;
+    let mut ctx = base_ctx();
+    ctx.saves_delivered_ok = 1;
+    ctx.pending_save_bytes = None;
+    ctx.disk = Some(b"stale content".to_vec());
+    let v = save_clean_matches_disk(&next, &ctx)
+        .expect("a writable, clean document with a stale disk read must still trip the invariant");
+    assert_eq!(v.id, "SAVE-CLEAN-MATCHES-DISK");
+}

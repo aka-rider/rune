@@ -86,6 +86,12 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
 /// docs), since this headless driver can never construct one (CODE-REVIEW.md
 /// rune-fuzz finding 15: the previous `MsgTag::Quit => true` arm was
 /// unreachable outside its own unit test).
+///
+/// Active-document-switch-safe: `should_quit`/`pending_quit` are `App`-level
+/// fields (`app.should_quit`, `app.pending_quit`), never per-document — a
+/// document switch between `prev`/`next` cannot change which two documents'
+/// facts are being compared, because there's only ever one copy of either
+/// field to begin with.
 pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if prev.should_quit || !next.should_quit {
         return None;
@@ -115,6 +121,10 @@ pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vio
 /// `CONFIRM-GEN` — on `ConfirmTimeout{generation}`, `pending_quit` clears
 /// iff `generation` equals the currently armed one; a stale generation
 /// must leave it untouched.
+///
+/// Active-document-switch-safe: `pending_quit` is `App`-level (`app.
+/// pending_quit`), same reasoning as `quit_chord` above — no per-document
+/// scoping for a switch to make ambiguous.
 pub fn confirm_gen(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let MsgTag::ConfirmTimeout { generation } = &ctx.msg else {
         return None;

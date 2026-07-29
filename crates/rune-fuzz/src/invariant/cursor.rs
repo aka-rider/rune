@@ -6,6 +6,9 @@ use crate::snapshot::Snapshot;
 /// `CUR-BOUNDS` (L0, §1.3 clamp / §1.5 bytes) — every cursor's `position`/
 /// `anchor` is a valid byte offset into `content`: in range and on a char
 /// boundary.
+///
+/// Active-document-switch-safe: L0, checks one `Snapshot`'s cursors against
+/// its own `content` — never compared to another document.
 pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
     for c in &snap.cursors {
         if c.position > snap.content.len()
@@ -39,6 +42,9 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
 /// `>=` instead (CODE-REVIEW.md rune-fuzz finding 6: `cur_id` only checks
 /// id uniqueness, never position uniqueness, so two coincident collapsed
 /// cursors used to pass every cursor invariant clean).
+///
+/// Active-document-switch-safe: L0, compares cursors within one `Snapshot`
+/// only.
 pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
     for w in snap.cursors.windows(2) {
         if let [a, b] = w {
@@ -73,6 +79,9 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
 
 /// `CUR-ID` (L0, Go `C2`) — at least one cursor, every id non-zero, all
 /// ids distinct. Subsumes any separate cursor-count check.
+///
+/// Active-document-switch-safe: L0, checks one `Snapshot`'s cursor set in
+/// isolation.
 pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
     if snap.cursors.is_empty() {
         return Some(Violation {
