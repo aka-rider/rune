@@ -23,9 +23,9 @@ use rune_vfs::DirEntry;
 
 use crate::app::App;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
-use crate::width::truncate_tail_to_width;
 use crate::listnav;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
+use crate::width::truncate_tail_to_width;
 use crate::workspace;
 
 /// One open Explorer's state (plan WP4.S3): the directory it's rooted at,
@@ -575,9 +575,9 @@ mod tests {
         assert!(truncated.ends_with("components"));
     }
 
-    /// A CJK-heavy root must fit the CELL budget, not merely the char
-    /// count: each ideograph is 2 cells, so a naive `chars().count()` fit
-    /// check would pass twice as much text as the row can actually hold.
+    /// A CJK-heavy root must fit the CELL budget, not merely a per-`char`
+    /// count: each ideograph is 2 cells, so a naive per-`char` fit check
+    /// would pass twice as much text as the row can actually hold.
     #[test]
     fn truncate_root_respects_cell_width_for_cjk_components() {
         let root = Path::new("/\u{4e2d}\u{6587}/\u{4e2d}\u{6587}/\u{4e2d}\u{6587}");

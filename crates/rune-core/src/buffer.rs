@@ -479,7 +479,6 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
 mod tests {
     use super::*;
 
-
     /// Port of `TestBuffer_FromBytes`.
     #[test]
     fn from_bytes() {

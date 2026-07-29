@@ -16,9 +16,9 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
-use crate::width::{display_width, truncate_to_width};
 use crate::listnav;
 use crate::pane::Pane;
+use crate::width::{display_width, truncate_to_width};
 use crate::workspace;
 
 /// The Open Tabs pane's own state (plan WP5.S1): the tab DISPLAY order

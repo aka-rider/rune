@@ -66,7 +66,7 @@ pub fn truncate_tail_to_width(s: &str, max: usize) -> String {
         used += w;
         start = i;
     }
-    let tail: String = clusters[start..].concat();
+    let tail: String = clusters.get(start..).unwrap_or_default().concat();
     format!("{TAIL_ELLIPSIS}{tail}")
 }
 
@@ -88,7 +88,14 @@ mod tests {
     #[test]
     fn truncate_to_width_cuts_only_at_grapheme_boundaries() {
         let s = "\u{4e2d}\u{6587}ab";
-        assert_eq!(truncate_to_width(s, 3), "\u{4e2d}a");
+        // "中" (2 cells) fits a budget of 3, but appending "文" (2 more
+        // cells) would overrun it, so the walk stops there — the
+        // trailing ASCII is never reached, matching a real terminal's
+        // left-to-right fit check rather than skipping the oversized
+        // cluster to keep filling.
+        assert_eq!(truncate_to_width(s, 3), "\u{4e2d}");
+        assert_eq!(truncate_to_width(s, 2), "\u{4e2d}");
+        assert_eq!(truncate_to_width(s, 4), "\u{4e2d}\u{6587}");
     }
 
     #[test]
