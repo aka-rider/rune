@@ -108,7 +108,9 @@ fn visual_col_on_line(
     let byte_col = view
         .wrap
         .byte_col_from_visual(buf.content(), row, desired.0);
-    let sp = view.wrap.wrap_to_syntax(WrapPoint { row, col: byte_col });
+    let sp = view
+        .wrap
+        .wrap_to_syntax(buf.content(), WrapPoint { row, col: byte_col });
     view.syntax.syntax_to_buffer(sp)
 }
 

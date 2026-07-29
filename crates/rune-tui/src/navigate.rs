@@ -142,7 +142,7 @@ fn anchor_offset(catalogue: &[Ref], buffer: &Buffer, anchor: &Anchor) -> Option<
             } if rune_nav::anchor_matches(name, def_name) => Some(r.site.start),
             _ => None,
         }),
-        Anchor::Line(n) => Some(buffer.line_start(n.saturating_sub(1) as usize)),
+        Anchor::Line(n) => buffer.line_start(n.saturating_sub(1) as usize),
     }
 }
 

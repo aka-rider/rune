@@ -291,9 +291,10 @@ pub fn position_text(app: &App) -> String {
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position;
     let bp = doc.buffer.offset_to_line_col(offset);
-    let line_start = doc.buffer.line_start(bp.line);
-    let line_end = doc.buffer.line_end(bp.line);
-    let line_text = doc.buffer.slice(line_start, line_end).unwrap_or("");
+    let line_text = match (doc.buffer.line_start(bp.line), doc.buffer.line_end(bp.line)) {
+        (Some(start), Some(end)) => doc.buffer.slice(start, end).unwrap_or(""),
+        _ => "",
+    };
     let col = line_visual_col(line_text, bp.col);
     format!("Ln {}, Col {}", bp.line + 1, col + 1)
 }
