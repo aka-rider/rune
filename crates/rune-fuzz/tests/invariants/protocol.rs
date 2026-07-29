@@ -42,6 +42,57 @@ fn save_inflight_sm_detects_clearing_without_save_done() {
 }
 
 #[test]
+fn save_inflight_sm_accepts_arming_on_a_modal_captured_save_key() {
+    // `banner::handle_dirty_close_key`'s `s`/`S` option calls `trigger_save`
+    // directly — a modal captures the key at stage 1 of `dispatch::
+    // handle_key`, before `keymap::resolve` ever runs, so this tag never
+    // carries `Command::Save`.
+    let mut prev = base_snapshot("abc");
+    prev.modal_open = true;
+    let mut next = base_snapshot("abc");
+    next.modal_open = true;
+    next.save_in_flight = true;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('s'), Mods::NONE),
+        command: None,
+    };
+    assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn save_inflight_sm_detects_a_modal_captured_non_save_key_arming() {
+    let mut prev = base_snapshot("abc");
+    prev.modal_open = true;
+    let mut next = base_snapshot("abc");
+    next.modal_open = false; // e.g. `d`/`D` cleared the modal
+    next.save_in_flight = true;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('d'), Mods::NONE),
+        command: None,
+    };
+    let v = save_inflight_sm(&prev, &next, &ctx)
+        .expect("a modal-captured non-`s` key arming save_in_flight must still trip SAVE-INFLIGHT-SM");
+    assert_eq!(v.id, "SAVE-INFLIGHT-SM");
+}
+
+#[test]
+fn save_inflight_sm_detects_an_s_key_arming_with_no_modal_up() {
+    let prev = base_snapshot("abc");
+    let mut next = base_snapshot("abc");
+    next.save_in_flight = true;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Char('s'), Mods::NONE),
+        command: None,
+    };
+    let v = save_inflight_sm(&prev, &next, &ctx)
+        .expect("a plain `s` key with no modal up arming save_in_flight must trip SAVE-INFLIGHT-SM");
+    assert_eq!(v.id, "SAVE-INFLIGHT-SM");
+}
+
+#[test]
 fn save_inflight_sm_accepts_arming_on_a_save_command() {
     let prev = base_snapshot("abc");
     let mut next = base_snapshot("abc");

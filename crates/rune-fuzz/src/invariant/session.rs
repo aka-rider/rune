@@ -3,16 +3,28 @@
 //! alone can't express "what caused this transition" (plan Context,
 //! decision 7 `[fixes B3]`).
 
-use rune_tui::keymap::{Command, QuitKey};
+use rune_tui::keymap::{Command, KeyCode, QuitKey};
 
 use super::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
 /// `SAVE-INFLIGHT-SM` — `save_in_flight` goes false->true only on a
-/// `Command::Save` key, and true->false only on `SaveDone` (G9: at most
-/// one save `Cmd` is ever outstanding, so its `Msg::SaveDone` can never be
-/// ambiguous about which attempt it answers).
+/// `Command::Save` key OR a modal-captured `s`/`S` key while the dirty-close
+/// Guard is up, and true->false only on `SaveDone` (G9: at most one save
+/// `Cmd` is ever outstanding, so its `Msg::SaveDone` can never be ambiguous
+/// about which attempt it answers).
+///
+/// The Guard arm exists because `banner::handle_dirty_close_key`'s `s`/`S`
+/// option calls `trigger_save` directly — a modal captures every key at
+/// stage 1 of `dispatch::handle_key`, before `keymap::resolve` ever sees it,
+/// so this arming path never carries `Command::Save` in its tag. It only
+/// exists at all once a modal was already up on the PREVIOUS snapshot
+/// (`prev.modal_open`); no other modal kind (`Error`, `RenameCollision`)
+/// ever calls `trigger_save`, so requiring `prev.modal_open` here is not a
+/// loose stand-in for "was a DirtyClose Guard up" — it just doesn't need to
+/// be any tighter, since arming still only ever follows a genuine
+/// `trigger_save` call in production regardless of which modal was up.
 pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if !prev.save_in_flight && next.save_in_flight {
         let armed_by_save_key = matches!(
@@ -22,11 +34,18 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
                 ..
             }
         );
-        if !armed_by_save_key {
+        let armed_by_guard_save_key = prev.modal_open
+            && matches!(
+                ctx.msg,
+                MsgTag::Key { input, .. }
+                    if matches!(input.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&'s'))
+            );
+        if !armed_by_save_key && !armed_by_guard_save_key {
             return Some(Violation {
                 id: "SAVE-INFLIGHT-SM",
                 message: format!(
-                    "save_in_flight went false->true on {:?}, not a Command::Save key",
+                    "save_in_flight went false->true on {:?}, not a Command::Save key \
+                     (and no modal was up for a Guard save key either)",
                     ctx.msg
                 ),
             });
