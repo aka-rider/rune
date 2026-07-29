@@ -804,3 +804,10 @@ touching cursors collapse to one survivor (lower id), mirroring
 `CursorSet::merge`, but no test asserts the post-edit cursor count. Confirm the
 shrinking count is the intended editing UX rather than an unexamined side
 effect.
+
+**`crates/rune-tui/src/keymap/editor_bindings.rs` is 508 lines** (452 before),
+over §1.6. Adding the `alias` field to `Binding` cost one line per literal and
+this table holds 56 of them — the file crossed the budget on a purely
+mechanical change, with no new behaviour to justify a split. Split it when next
+touched; the motion, selection, editing and clipboard chords are four natural
+groups. `explorer.rs` grew the same way (588 -> 594) but was already tracked.
