@@ -365,6 +365,16 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         return;
     };
 
+    // The Explorer can now be collapsed independently of the column
+    // itself (its own vertical splitter dragged to the top): when it has
+    // no rows to draw into, titling the block " Files " would claim a
+    // pane that isn't there, so the block's title follows what's actually
+    // showing instead of assuming the Explorer always is.
+    let title = if geo.explorer_inner.height == 0 {
+        " Open "
+    } else {
+        " Files "
+    };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(if app.focus == Pane::Explorer {
@@ -372,10 +382,12 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         } else {
             app.theme.chrome.inactive_border
         })
-        .title(" Files ");
+        .title(title);
     frame.render_widget(block, left_area);
 
-    crate::explorer::draw(app, geo.explorer_inner, frame);
+    if geo.explorer_inner.height > 0 {
+        crate::explorer::draw(app, geo.explorer_inner, frame);
+    }
     if let Some(divider) = geo.tabs_divider {
         crate::opentabs::draw_divider(app, divider, frame);
     }

@@ -94,7 +94,7 @@ fn tabs_render_both_open_documents_with_digit_shortcuts() {
     open_second(&mut app);
     assert_eq!(app.tabs.order.len(), 2);
 
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Tabs;
     app.sync_view();
 
@@ -119,7 +119,7 @@ fn the_open_divider_row_precedes_the_tab_rows() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     open_second(&mut app);
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Tabs;
     app.sync_view();
 
@@ -173,7 +173,7 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     let second = open_second(&mut app);
-    app.left_visible = true;
+    app.splits.left.show();
     app.sync_view();
     assert!(
         !frame_text(&app).contains(" x "),

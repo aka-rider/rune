@@ -83,7 +83,7 @@ fn ctrl_b_populates_the_explorer_via_dir_loaded() {
 
     load_explorer(&mut app);
 
-    assert!(app.left_visible);
+    assert!(app.splits.left.is_shown());
     assert_eq!(app.focus, Pane::Explorer);
     assert!(!app.explorer.loading);
     assert_eq!(app.explorer.root, PathBuf::from("/root"));

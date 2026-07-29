@@ -25,7 +25,7 @@ fn app_for() -> App {
 #[test]
 fn left_column_inner_split_at_120x34() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let geo = layout::geometry(Rect::new(0, 0, 120, 34), &app);
 
     let left_block = geo.left_block.expect("left pane wide enough to show");
@@ -50,7 +50,7 @@ fn left_column_inner_split_at_120x34() {
 #[test]
 fn left_column_inner_split_at_80x24() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let geo = layout::geometry(Rect::new(0, 0, 80, 24), &app);
 
     let left_block = geo.left_block.expect("left pane wide enough to show");
@@ -65,7 +65,7 @@ fn left_column_inner_split_at_80x24() {
 #[test]
 fn left_column_inner_split_at_80x25() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let geo = layout::geometry(Rect::new(0, 0, 80, 25), &app);
 
     let left_block = geo.left_block.expect("left pane wide enough to show");

@@ -66,9 +66,9 @@ pub struct App {
     /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
     /// doesn't claim it (decision 7/8, `pane.rs`) — defaults to `Editor`.
     pub focus: Pane,
-    /// Whether the Explorer/Open-Tabs left column is showing (decision 7);
-    /// `false` by default (pre-WP2 geometry) until `^x` shows it.
-    pub left_visible: bool,
+    /// The draggable splitter positions sizing the left column and its
+    /// Explorer/Tabs division (decision 7); starts hidden.
+    pub splits: crate::layout::Splits,
     /// The terminal's last-known RAW row count, as reported by the most
     /// recent `Msg::Resize` — unlike the active document's own `viewport.
     /// height` (which `Msg::Resize` sets to `height - 1`, reserving the
@@ -255,7 +255,7 @@ impl App {
             next_doc_id: NonZeroU64::MIN.saturating_add(1),
             vfs,
             focus: Pane::Editor,
-            left_visible: false,
+            splits: crate::layout::Splits::default(),
             frame_height: 0,
             frame_width: 0,
             explorer: Explorer::default(),
