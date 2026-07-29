@@ -31,6 +31,7 @@
 
 use std::sync::Arc;
 
+use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::Cursor;
 use rune_fuzz::action::Action;
@@ -40,6 +41,7 @@ use rune_fuzz::snapshot::Snapshot;
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
 use rune_vfs::{Mem, Vfs};
 
@@ -367,6 +369,17 @@ fn base_active_id() -> DocumentId {
     App::new(Buffer::new(""), None, vfs, None).active
 }
 
+/// A well-formed baseline `Geometry` at an ordinary 80x24 frame, the left
+/// column hidden (a fresh `App`'s default) — `LAYOUT-FITS`'s well-formed
+/// companion state. Each test that exercises it overrides the field it's
+/// checking rather than hand-building a `Geometry` literal, since its
+/// fields are not all independently constructible (plan WP7).
+fn base_geometry() -> Geometry {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let app = App::new(Buffer::new(""), None, vfs, None);
+    layout::geometry(Rect::new(0, 0, 80, 24), &app)
+}
+
 /// A well-formed baseline `Snapshot` over `content`: one valid cursor at
 /// offset 0, a correctly derived line index, the editor focused with no
 /// modal up, and otherwise-quiescent fields. Each test overrides exactly
@@ -397,6 +410,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),
         highlight_version: 1,
+        geometry: base_geometry(),
     }
 }
 

@@ -3,8 +3,8 @@
 //! state lands in plain named `App` fields in WP4/WP5). Extracted out of
 //! `app.rs` to keep it under the §1.6 budget (plan WP2 Rules: "extract to
 //! pane.rs ... as needed") — `handle_global_command` lives here too since
-//! it's the sole reader/writer of `App::focus`/`App::left_visible` outside
-//! `app.rs` itself.
+//! it's the sole reader/writer of `App::focus`/the left column's `Split`
+//! state outside `app.rs` itself.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,20 +47,24 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     crate::title::finalize_if_focused(app, effects);
 
     match cmd {
-        GlobalCommand::ToggleExplorer => {
-            app.left_visible = !app.left_visible;
-            app.focus = if app.left_visible {
-                Pane::Explorer
-            } else {
-                Pane::Editor
-            };
+        GlobalCommand::FocusExplorer => {
+            // Always exposes and focuses the Explorer — never hides it, so
+            // the command a user reaches for to SEE the Explorer can never
+            // instead take it away (mirrors the Go reference's own
+            // show-plus-focus contract, and `FocusTabs`'s below).
+            app.splits.left.show();
+            app.splits.explorer.show();
+            app.focus = Pane::Explorer;
             // The Explorer's very first load (plan WP4.S4): "empty and not
             // already loading" is the no-shadow-state stand-in for "never
             // loaded" — `Explorer`'s exact field list (`explorer.rs`) has
             // no separate `loaded` flag, and a genuinely-empty directory
-            // re-triggering this on a later toggle is a harmless no-op
+            // re-triggering this on a later focus is a harmless no-op
             // reload, not an incorrect state.
-            if app.left_visible && app.explorer.entries.is_empty() && !app.explorer.loading {
+            if app.splits.left.is_shown()
+                && app.explorer.entries.is_empty()
+                && !app.explorer.loading
+            {
                 let root = explorer::initial_root(app);
                 app.explorer.loading = true;
                 app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
@@ -76,13 +80,29 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // the field must never present a stale name from a previous
         // document or a previously abandoned edit (no shadow state).
         GlobalCommand::FocusTitle => focus_title(app),
-        // Mirrors `ToggleExplorer`'s "show + focus" pairing (plan WP5): the
-        // Tabs pane's own cursor is meaningless to a user who can't see it.
-        // No dir-load side effect needed here — unlike Explorer, Tabs has
-        // nothing to lazily fetch off-thread.
+        // Mirrors `FocusExplorer`'s "show + focus" pairing: the Tabs pane's
+        // own cursor is meaningless to a user who can't see it. Also makes
+        // sure the tab rows themselves have room — a starved split from a
+        // dragged-down divider is raised back to its floor before focus
+        // lands there. No dir-load side effect needed here — unlike
+        // Explorer, Tabs has nothing to lazily fetch off-thread.
         GlobalCommand::FocusTabs => {
-            app.left_visible = true;
+            app.splits.left.show();
+            let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+            let geo = crate::layout::geometry(area, app);
+            if let Some(block) = geo.left_block {
+                let budget = crate::layout::explorer_budget(block);
+                app.splits
+                    .explorer
+                    .ensure_trail(budget, crate::layout::TABS_LIMITS);
+            }
             app.focus = Pane::Tabs;
+        }
+        GlobalCommand::CollapseLeft => {
+            app.splits.left.hide();
+            if matches!(app.focus, Pane::Explorer | Pane::Tabs) {
+                app.focus = Pane::Editor;
+            }
         }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
         // WP7.S2: mints/toggles the generated Help virtual document — a
@@ -185,33 +205,52 @@ mod tests {
     }
 
     #[test]
-    fn toggle_explorer_shows_the_left_pane_and_focuses_it() {
+    fn focus_explorer_shows_the_left_pane_and_focuses_it() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        assert!(app.left_visible);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        assert!(app.splits.left.is_shown());
         assert_eq!(app.focus, Pane::Explorer);
     }
 
+    /// The command that shows the Explorer must never be the one that hides
+    /// it again — pressing it a second time is a no-op on visibility, not a
+    /// toggle back off.
     #[test]
-    fn toggling_explorer_twice_hides_it_and_refocuses_the_editor() {
+    fn pressing_it_twice_keeps_the_explorer_shown_and_focused() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        assert!(!app.left_visible);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        assert!(app.splits.left.is_shown());
+        assert_eq!(app.focus, Pane::Explorer);
+    }
+
+    /// The collapse command hides the column and, only when it currently
+    /// owns focus, hands focus back to the Editor rather than leaving a
+    /// keystroke routed to a pane with no on-screen presence.
+    #[test]
+    fn collapse_left_hides_the_column_and_returns_focus_to_the_editor() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::CollapseLeft, &mut effects);
+        assert!(!app.splits.left.is_shown());
         assert_eq!(app.focus, Pane::Editor);
     }
 
     #[test]
-    fn focus_editor_returns_focus_regardless_of_left_visible() {
+    fn focus_editor_returns_focus_regardless_of_the_left_columns_visibility() {
         let mut app = app();
         app.focus = Pane::Explorer;
-        app.left_visible = true;
+        app.splits.left.show();
         let mut effects = Effects::default();
         handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
         assert_eq!(app.focus, Pane::Editor);
-        assert!(app.left_visible, "FocusEditor must not hide the left pane");
+        assert!(
+            app.splits.left.is_shown(),
+            "FocusEditor must not hide the left pane"
+        );
     }
 
     /// Review fix (plan WP5.S3): a dirty document with no live `db` binding

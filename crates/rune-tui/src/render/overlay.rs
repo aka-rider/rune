@@ -28,10 +28,8 @@ use super::Cell;
 /// earlier one, reproducing `tree-sitter-highlight`'s own innermost-and-
 /// last-wins resolution.
 ///
-/// 1. Scans `rows` for the visible byte window `lo..hi` (the min/max
-///    non-negative `buf_offset` seen, `hi` one past the max) — a decorative
-///    cell (`buf_offset < 0`, none produced yet, see `Cell`'s docs) is
-///    skipped. Returns early with `rows` untouched if no cell is real.
+/// 1. Derives the visible byte window `lo..hi` via [`visible_byte_range`].
+///    Returns early with `rows` untouched if no cell is real.
 /// 2. Allocates one scratch slot per VISIBLE byte, never per document byte —
 ///    `apply_cursor_overlays` (`build_rows`'s very next call) already
 ///    bounds render's own cost to the visible viewport the same way; a
@@ -54,22 +52,9 @@ pub(super) fn apply_highlight_spans(
     spans: &[(Range<usize>, ScopeId)],
     theme: &Theme,
 ) {
-    let mut lo: Option<usize> = None;
-    let mut hi: usize = 0;
-    for row in rows.iter() {
-        for cell in row.iter() {
-            if cell.buf_offset < 0 {
-                continue;
-            }
-            let offset = cell.buf_offset as usize;
-            lo = Some(lo.map_or(offset, |current| current.min(offset)));
-            hi = hi.max(offset + 1);
-        }
-    }
-    let Some(lo) = lo else { return };
-    if hi <= lo {
+    let Some(Range { start: lo, end: hi }) = visible_byte_range(rows) else {
         return;
-    }
+    };
 
     let mut window: Vec<Option<ScopeId>> = vec![None; hi - lo];
     // `spans` is painter-order (`range.start` ASC, per the doc comment
@@ -110,6 +95,32 @@ pub(super) fn apply_highlight_spans(
             }
         }
     }
+}
+
+/// Scans `rows` for the visible byte window `lo..hi` (the min/max
+/// non-negative `buf_offset` seen, `hi` one past the max) — a decorative
+/// cell (`buf_offset < 0`, none produced yet, see `Cell`'s docs) is skipped.
+/// `None` when no cell in `rows` is real (an empty document, or every cell
+/// decorative). Split out of `apply_highlight_spans` (the syntax-
+/// highlighting-latency plan's WP3, D6) so `render::build_rows` can reuse
+/// the identical window derivation to scope a per-frame `rune_ts::
+/// highlight_range` query to the same bytes the span overlay itself paints
+/// — one window, one definition, never re-derived.
+pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
+    let mut lo: Option<usize> = None;
+    let mut hi: usize = 0;
+    for row in rows.iter() {
+        for cell in row.iter() {
+            if cell.buf_offset < 0 {
+                continue;
+            }
+            let offset = cell.buf_offset as usize;
+            lo = Some(lo.map_or(offset, |current| current.min(offset)));
+            hi = hi.max(offset + 1);
+        }
+    }
+    let lo = lo?;
+    if hi <= lo { None } else { Some(lo..hi) }
 }
 
 pub(super) fn apply_cursor_overlays(

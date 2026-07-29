@@ -69,6 +69,11 @@ pub struct Binding<C: Copy + 'static> {
     pub cmd: C,
     pub help: &'static str,
     pub when: &'static str,
+    /// A secondary way to reach a command that already has a primary chord.
+    /// The footer's hint row skips an aliased binding so it does not
+    /// advertise two chords for the same action; the generated Help doc
+    /// still lists it, since it keeps working.
+    pub alias: bool,
 }
 
 impl<C: Copy + 'static> Binding<C> {
@@ -146,6 +151,7 @@ mod tests {
             cmd: TestCmd::Foo,
             help: "foo",
             when: "",
+            alias: false,
         }];
         let key = KeyInput {
             code: KeyCode::Char('k'),
@@ -161,6 +167,7 @@ mod tests {
             cmd: TestCmd::Foo,
             help: "foo",
             when: "",
+            alias: false,
         }];
         let key = KeyInput {
             code: KeyCode::Char('k'),
@@ -179,6 +186,7 @@ mod tests {
             cmd: TestCmd::Foo,
             help: "foo",
             when: "",
+            alias: false,
         }];
         assert_eq!(TABLE.first().expect("one entry").label(), "^K ^C");
     }

@@ -18,9 +18,10 @@ use rune_md::element::doc::ViewSnapshots;
 use crate::app::App;
 use crate::commands::nav::{line_range_incl_newline, word_range_at};
 use crate::commands::nav_scroll;
+use crate::commands::splitter;
 use crate::document::Document;
 use crate::navigate;
-use crate::pointer::{MouseButton, MouseInput, MouseKind};
+use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::render;
 use crate::runtime::Effects;
 
@@ -29,12 +30,40 @@ use crate::runtime::Effects;
 /// converge on this number).
 const WHEEL_ROWS: isize = 3;
 
-/// Routes one `Msg::Mouse` (plan WP7.S4). Mouse events outside the editor
-/// rect (the Explorer/Tabs columns, the footer, a banner) are dropped —
-/// this plan's mouse support is editor-only; no gesture is defined for
-/// chrome panes. Takes `effects` (plan WP5.S8) because a ctrl-click may
-/// follow an external link, which needs an `OpenExternal` `Cmd`.
+/// Routes one `Msg::Mouse`. Mouse support is no longer editor-only: the
+/// two splitter bands (the left column's grab band, the `Open` divider
+/// row) are live everywhere in the frame; the rest of the chrome still
+/// drops its events, same as before. Takes `effects` because a ctrl-click
+/// may follow an external link, which needs an `OpenExternal` `Cmd`.
 pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
+    // A splitter drag owns the pointer until the button comes up: it
+    // routinely leaves every rect mid-gesture, so this is decided before
+    // the editor-rect gate below would otherwise drop the event. A fresh
+    // press ends any latched gesture rather than being swallowed — mode
+    // 1002 reports no hover, so a release lost to a focus change or an
+    // out-of-window mouse-up has no second signal to recover from, and
+    // swallowing input forever is worse than ending the drag one event
+    // early.
+    if let Some(Drag::Splitter { .. }) = app.pointer.drag {
+        match input.kind {
+            MouseKind::Drag(MouseButton::Left) => {
+                splitter::drag(app, input);
+                return;
+            }
+            MouseKind::Up(MouseButton::Left) => {
+                app.pointer.drag = None;
+                return;
+            }
+            // Anything else (a wheel tick, a right-button press, a fresh
+            // left press) means the gesture is over. Clear it and let the
+            // event fall through to its normal handling below.
+            _ => app.pointer.drag = None,
+        }
+    }
+    if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && splitter::begin(app, input) {
+        return;
+    }
+
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     let editor = crate::layout::geometry(area, app).editor;
 
@@ -53,7 +82,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
         MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
         MouseKind::Drag(MouseButton::Left) => handle_left_drag(app, col, row),
-        MouseKind::Up(MouseButton::Left) => app.pointer.drag_anchor = None,
+        MouseKind::Up(MouseButton::Left) => app.pointer.drag = None,
         _ => {}
     }
 }
@@ -160,7 +189,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
             id: 0,
         };
         doc.cursors = CursorSet::new_from(&[placed]);
-        app.pointer.drag_anchor = None;
+        app.pointer.drag = None;
         navigate::follow(app, effects);
         return;
     }
@@ -178,7 +207,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
             id: 0,
         };
         doc.cursors = doc.cursors.add(added);
-        app.pointer.drag_anchor = None;
+        app.pointer.drag = None;
         return;
     }
 
@@ -196,7 +225,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
             id,
         };
         doc.cursors = CursorSet::new_from(&[extended]);
-        app.pointer.drag_anchor = Some(anchor);
+        app.pointer.drag = Some(Drag::Text { anchor });
         return;
     }
 
@@ -210,17 +239,17 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
                 id: 0,
             };
             doc.cursors = CursorSet::new_from(&[placed]);
-            app.pointer.drag_anchor = Some(offset);
+            app.pointer.drag = Some(Drag::Text { anchor: offset });
         }
         2 => {
             let (start, end) = word_range_at(&doc.buffer, offset);
             select_range(doc, start, end);
-            app.pointer.drag_anchor = None;
+            app.pointer.drag = None;
         }
         _ => {
             let (start, end) = line_range_incl_newline(&doc.buffer, offset);
             select_range(doc, start, end);
-            app.pointer.drag_anchor = None;
+            app.pointer.drag = None;
         }
     }
 }
@@ -237,7 +266,7 @@ fn select_range(doc: &mut Document, start: usize, end: usize) {
 }
 
 fn handle_left_drag(app: &mut App, col: u16, row: u16) {
-    let Some(anchor) = app.pointer.drag_anchor else {
+    let Some(Drag::Text { anchor }) = app.pointer.drag else {
         return;
     };
     let Some((offset, desired_col)) = hit_test(app.active_doc(), row, col) else {

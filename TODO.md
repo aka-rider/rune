@@ -926,3 +926,44 @@ silently skip it").
 None of these six are split in this work package — WP6's scope is the
 findings themselves, not the pre-existing (and self-inflicted) file-size
 churn; recording per house rule rather than silently skipping it.
+**`crates/rune-tui/src/keymap/editor_bindings.rs` is 508 lines** (452 before),
+over §1.6. Adding the `alias` field to `Binding` cost one line per literal and
+this table holds 56 of them — the file crossed the budget on a purely
+mechanical change, with no new behaviour to justify a split. Split it when next
+touched; the motion, selection, editing and clipboard chords are four natural
+groups. `explorer.rs` grew the same way (588 -> 594) but was already tracked.
+
+**Shrinking a pane's axis past a dragged split collapses the trailing pane,
+and that is deliberate.** Drag the Files/Open divider down, then shorten the
+terminal below what the drag asked for: the tab rows disappear. This is the
+stated collapse rule — below its floor, a collapsible pane goes — applied to a
+size the frame can no longer grant. It is transient: the dragged size is never
+written down, so restoring the height restores both sections untouched.
+
+The friendlier-looking alternative, sparing the trail whenever the request no
+longer fits, was implemented and then reverted. `allot` cannot tell a drag from
+a resize — both reach it only as `(desired, available)` — so sparing the trail
+on every over-ask also spares it on an *overshooting drag*, and overshoot is how
+the collapse gesture is actually performed: nobody lands the pointer on the one
+row that leaves the trail a single cell under its floor. The cost was losing
+drag-to-collapse for the tab rows entirely, while a unit test calling `allot`
+directly with a hand-picked value still passed and hid it.
+
+Doing it properly means recording the intent where it is known — at `request`
+time, reached only from a drag — instead of re-deriving it in `allot` on every
+read: give the splitter an explicit "trail collapsed by the user" state rather
+than inferring collapse from a transient `available`. That is a design change to
+`Split`'s API (`request` would need the axis length and the trail's limits), so
+it is recorded here rather than rushed.
+
+## syntax-highlighting-latency plan, WP3 — the per-frame viewport query joined the render budget
+
+`render::build_rows` now runs a `rune_ts::highlight_range` query, scoped to the visible byte window, on every frame for a code document with a retained tree — see `crates/rune-tui/src/render/mod.rs`. This is new per-frame cost with no dedicated gate (`make perf-guard` only covers `rune-md`'s parse pipeline). When the display-pipeline budget review already tracked elsewhere in this file happens, it must measure this query alongside the existing whole-document `build_rows`/snapshot recompute — not just the pre-existing cost.
+
+## syntax-highlighting-latency plan, WP3 — no fuzz invariant observes tree-backed rendering yet
+
+The session fuzzer's `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW` invariants (`crates/rune-fuzz/src/invariant/highlight.rs`) exercise the span path via `Msg::Highlighted`'s `Spans` payload — real coverage, since dispatch stores span payloads for any document (D6 of the plan). Nothing yet exercises the `Tree` payload / per-frame `highlight_range` viewport query path a real code document's background parse takes. Adding a fuzz action that delivers a synthetic `HighlightPayload::Tree` (or a real `rune_ts::parse` over a small fixture) is future work, not part of this change.
+
+## `crates/rune-tui/src/runtime/mod.rs` is 542 lines (§1.6 limit 500; recorded at the rr/integration merge)
+
+Already pre-existing-overage territory before this merge (531 lines on the integration side, which had grown `Msg` with `FileOpened`/`RenameDone`/`DirLoaded` and their `Cmd` constructors past the ceiling on its own). Folding in the instant-open highlight rework's `FIRST_PAINT_BUDGET` re-export and the `first_paint_highlight` bootstrap call added another ~11 lines. Split direction: the `Msg`/`Cmd`/`Effects` type definitions and the `run` main-loop function are two fairly separable concerns; the per-`Cmd`-kind constructors already live in sibling modules (`highlight_cmd.rs`, and similarly named ones for rename/save/dir-load) — moving the bootstrap sequence (`first_paint_highlight`'s call site plus its surrounding setup) into its own `bootstrap.rs` would recover most of the overage without touching the `Msg`/`Cmd` types themselves. Not split here — out of scope for a merge-conflict resolution.

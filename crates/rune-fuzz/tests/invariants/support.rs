@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_fuzz::snapshot::Snapshot;
@@ -12,6 +13,7 @@ use rune_fuzz::step::{MsgTag, StepCtx};
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
 use rune_tui::render::Cell;
 use rune_tui::row_meta::RowMeta;
@@ -89,6 +91,16 @@ pub(crate) fn other_doc_id() -> DocumentId {
     app.open_document(Buffer::new(""))
 }
 
+/// A well-formed baseline `Geometry` at an ordinary 80x24 frame, the left
+/// column hidden (a fresh `App`'s default) — `LAYOUT-FITS`'s well-formed
+/// companion state. `Geometry`'s fields are not all independently
+/// constructible, so tests build one this way rather than as a literal.
+pub(crate) fn base_geometry() -> Geometry {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let app = App::new(Buffer::new(""), None, vfs, None);
+    layout::geometry(Rect::new(0, 0, 80, 24), &app)
+}
+
 /// A well-formed baseline `Snapshot`: one valid collapsed cursor at offset
 /// 0, a correctly derived line index, the editor focused with no modal up
 /// (the precondition `PANE-NO-BLEED` and the undo/redo drive both assume),
@@ -123,6 +135,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         // `HL-CLAMPED` requires before it checks anything) — a test that
         // wants the STALE case overrides one or the other explicitly.
         highlight_version: 1,
+        geometry: base_geometry(),
     }
 }
 

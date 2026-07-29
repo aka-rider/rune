@@ -84,16 +84,17 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// an unfocused editor correctly ignores `⌘Z` (only `Editor`'s own keymap
 /// binds `Command::Undo`), and a modal correctly captures every key at
 /// stage 1 before any pane sees it. Three preconditions are reachable at
-/// session end today: `^b` (`ToggleExplorer`) leaves the Explorer focused;
-/// an Explorer `Enter` on a path missing from the fuzz `Mem` raises
-/// `Modal::Error`; and `F1` (`GlobalCommand::Help`, CODE-REVIEW.md
-/// rune-fuzz finding 9's fix) switches `app.active` itself to the virtual
-/// Help document — `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL
-/// seed content, which the Help document can never match (it isn't even
-/// the same document, let alone journaled the seed's edits). Each press
-/// runs through `step_and_check`, so every per-step invariant still
-/// applies and a violation here still stops the session, same as any
-/// other step.
+/// session end today: `^b` (`GlobalCommand::FocusExplorer`) leaves the
+/// Explorer focused — `^x` was retired as the explorer chord once the
+/// held-space leader took over as the primary way in — an Explorer
+/// `Enter` on a path missing from the fuzz `Mem` raises `Modal::Error`; and
+/// `F1` (`GlobalCommand::Help`, CODE-REVIEW.md rune-fuzz finding 9's fix)
+/// switches `app.active` itself to the virtual Help document —
+/// `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL seed content,
+/// which the Help document can never match (it isn't even the same
+/// document, let alone journaled the seed's edits). Each press runs
+/// through `step_and_check`, so every per-step invariant still applies
+/// and a violation here still stops the session, same as any other step.
 ///
 /// Order: `Escape` first, only while a modal is up — both `Modal::Error`
 /// and `Modal::Guard` clear on it without touching a buffer byte. Then

@@ -10,12 +10,35 @@ use rune_ts::{highlight, registry};
 #[test]
 fn every_language_loads_and_its_query_compiles() {
     let reg = registry();
+    // First, trigger compilation of all languages by requesting each one.
+    let names: Vec<_> = reg.names().collect();
+    for name in &names {
+        let _ = reg.get(name);
+    }
+    // Now assert that all languages compiled successfully.
     assert!(
         reg.failures().is_empty(),
         "language(s) failed to load or compile: {:?}",
         reg.failures()
     );
-    assert_eq!(reg.names().count(), 22);
+    assert_eq!(names.len(), 22);
+}
+
+#[test]
+fn registry_compiles_only_requested_language() {
+    let reg = registry::LanguageRegistry::new();
+    assert_eq!(
+        reg.compiled_count(),
+        0,
+        "a fresh registry must have compiled no languages"
+    );
+    let result = reg.get("rust");
+    assert!(result.is_some(), "rust language must compile successfully");
+    assert_eq!(
+        reg.compiled_count(),
+        1,
+        "after requesting rust, exactly one language must be compiled"
+    );
 }
 
 #[test]

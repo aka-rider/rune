@@ -76,7 +76,7 @@ fn left_column_rows(buf: &RtBuffer) -> Vec<String> {
 #[test]
 fn left_pane_shows_one_bordered_block_with_a_focus_colored_border() {
     let mut app = app_for("hello");
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Explorer;
     app.sync_view();
 
@@ -104,7 +104,7 @@ fn left_pane_shows_one_bordered_block_with_a_focus_colored_border() {
 #[test]
 fn the_left_column_has_no_interior_border_rule() {
     let mut app = app_for("hello");
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Explorer;
     app.sync_view();
 
@@ -134,7 +134,7 @@ fn the_left_column_has_no_interior_border_rule() {
 #[test]
 fn the_open_divider_row_renders_inside_the_single_border() {
     let mut app = app_for("hello");
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Explorer;
     app.sync_view();
 
@@ -158,7 +158,7 @@ fn the_open_divider_row_renders_inside_the_single_border() {
 #[test]
 fn tabs_focus_colors_the_divider_not_the_border() {
     let mut app = app_for("hello");
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Tabs;
     app.sync_view();
 
@@ -186,7 +186,7 @@ fn tabs_focus_colors_the_divider_not_the_border() {
 #[test]
 fn an_unfocused_tabs_pane_uses_the_subtle_divider_style() {
     let mut app = app_for("hello");
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Explorer;
     app.sync_view();
 
@@ -205,25 +205,24 @@ fn an_unfocused_tabs_pane_uses_the_subtle_divider_style() {
     );
 }
 
-/// The editor pane's geometry is unchanged when `left_visible` is false —
-/// no left column, no borders, full-width editor (plan WP2.S5).
+/// The editor pane's geometry is unchanged when the left column isn't
+/// shown — no left column, no borders, full-width editor (plan WP2.S5).
 #[test]
 fn left_pane_hidden_by_default_leaves_editor_geometry_unchanged() {
     let app = app_for("hello");
-    assert!(!app.left_visible);
+    assert!(!app.splits.left.is_shown());
     let buf = draw(&app);
     let top_row = row_text(&buf, 0, WIDTH);
     assert!(
         !top_row.contains("Files"),
-        "no left pane chrome expected when left_visible is false:\n{top_row}"
+        "no left pane chrome expected when the left column isn't shown:\n{top_row}"
     );
 }
 
-/// `^b` end-to-end through the real `app::update`: flips `left_visible`,
+/// `^b` end-to-end through the real `app::update`: shows the left column,
 /// focuses the Explorer, and the very next render shows the bordered
-/// blocks (plan WP2.S7: "ToggleExplorer flips left_visible+focus"; plan
-/// WP5.S1: `^b` is the always-works ctrl fallback for the Explorer, `^x`
-/// having retired in favor of the held-space leader's `␣x`).
+/// blocks (plan WP5.S1: `^b` is the always-works ctrl fallback for the
+/// Explorer, `^x` having retired in favor of the held-space leader's `␣x`).
 #[test]
 fn ctrl_b_toggles_the_explorer_through_update() {
     let mut app = app_for("hello");
@@ -239,7 +238,7 @@ fn ctrl_b_toggles_the_explorer_through_update() {
         }),
         &mut effects,
     );
-    assert!(app.left_visible);
+    assert!(app.splits.left.is_shown());
     assert_eq!(app.focus, Pane::Explorer);
 
     app.sync_view();
@@ -256,7 +255,7 @@ fn ctrl_b_toggles_the_explorer_through_update() {
 fn footer_position_readout_survives_truncation_at_narrow_widths() {
     for width in [80u16, 40u16] {
         let mut app = app_for("hello");
-        app.left_visible = true;
+        app.splits.left.show();
         app.focus = Pane::Explorer;
         app.sync_view();
 
@@ -288,5 +287,59 @@ fn footer_reports_cell_column_on_a_multiline_multibyte_buffer() {
     assert!(
         footer_row.contains("Ln 2, Col 5"),
         "expected 'Ln 2, Col 5' (cell column, not byte or char column) on the footer row:\n{footer_row}"
+    );
+}
+
+/// `^d` is a pure alias of `^c` for quitting: the footer's default hints
+/// must name the quit chord once, not twice, so the alias filter over
+/// `GLOBAL_BINDINGS` is doing its job end to end.
+#[test]
+fn default_footer_hints_omit_the_aliased_quit_chord() {
+    let app = app_for("hello");
+    assert_eq!(app.focus, Pane::Editor);
+    let text = rune_tui::footer::footer_text(&app);
+    assert!(
+        text.contains("^C"),
+        "expected the primary quit chord in {text:?}"
+    );
+    assert!(
+        !text.contains("^D"),
+        "the aliased quit chord must not appear in the footer: {text:?}"
+    );
+}
+
+/// The always-available global tail (`F1 help`, `^C quit`) must survive
+/// width truncation even once a focused pane's own hint table has grown the
+/// row past what fits — a stable position ahead of the pane-specific table
+/// is what keeps the row's most important entries from being the first
+/// thing dropped under pressure. Renders through `draw`, the TRUNCATED path
+/// (`footer_text` is untruncated and cannot observe this).
+#[test]
+fn footer_global_tail_survives_truncation_with_explorer_focused() {
+    let mut app = app_for("hello");
+    app.splits.left.show();
+    app.focus = Pane::Explorer;
+    app.sync_view();
+
+    let buf = draw_with_width(&app, 120);
+    let footer_row = row_text(&buf, HEIGHT - 1, 120);
+    assert!(
+        footer_row.contains("F1"),
+        "expected 'F1' (help) on the truncated footer row:\n{footer_row}"
+    );
+    assert!(
+        footer_row.contains("^C"),
+        "expected '^C' (quit) on the truncated footer row:\n{footer_row}"
+    );
+}
+
+/// Aliases stay discoverable in the generated Help doc even though the
+/// footer hides them — `^d` still works, so it must still be documented.
+#[test]
+fn help_markdown_still_lists_the_aliased_quit_chord() {
+    let markdown = rune_tui::help::help_markdown();
+    assert!(
+        markdown.contains("^D"),
+        "expected the aliased quit chord to remain documented in Help:\n{markdown}"
     );
 }

@@ -71,24 +71,28 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
         cmd: TabsCommand::Up,
         help: "up",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
         cmd: TabsCommand::Down,
         help: "down",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
         cmd: TabsCommand::Select,
         help: "open",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('w'), CTRL)],
         cmd: TabsCommand::Close,
         help: "close",
         when: "",
+        alias: false,
     },
 ];
 
