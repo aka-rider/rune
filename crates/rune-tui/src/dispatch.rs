@@ -146,9 +146,11 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         DbEvent::Err { id: op_id, error } => {
             app.db_ops.remove(&op_id);
             app.db_load_versions.remove(&op_id);
+            crate::rename::fail_op(app, op_id, error.clone(), effects);
             save::on_store_failure(app, error);
         }
         DbEvent::Fatal { error } => {
+            crate::rename::fail_all(app, error.clone(), effects);
             save::on_store_failure(app, error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`

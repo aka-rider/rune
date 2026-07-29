@@ -327,6 +327,26 @@ pub fn handle_rename_ack(app: &mut App, op_id: u64, outcome: RenameOutcome, effe
     apply_outcome(app, Ok(outcome), effects);
 }
 
+/// A `rune-db` op died (`DbEvent::Err`) — resolve the rename machine if
+/// `op_id` was the ticket it was waiting on. Without this, `RenameState`
+/// only ever advances on `Ok`, so a died op leaves `Committing`/`Capturing`
+/// wedged forever: `begin` refuses every later rename ("already in
+/// progress") for the rest of the process, and after a died `[R]eplace`
+/// the user never learns whether their destructive replace happened.
+pub fn fail_op(app: &mut App, op_id: u64, error: String, effects: &mut Effects) {
+    if app.rename.ticket() == Some(Ticket::Db(op_id)) {
+        apply_outcome(app, Err(error), effects);
+    }
+}
+
+/// The whole writer thread died (`DbEvent::Fatal`) — every `Db` ticket the
+/// rename machine could be holding is dead with it, regardless of op id.
+pub fn fail_all(app: &mut App, error: String, effects: &mut Effects) {
+    if matches!(app.rename.ticket(), Some(Ticket::Db(_))) {
+        apply_outcome(app, Err(error), effects);
+    }
+}
+
 /// The one place every reply — both routes, every variant — resolves.
 fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: &mut Effects) {
     let Some(doc_id) = app.rename.doc() else {
