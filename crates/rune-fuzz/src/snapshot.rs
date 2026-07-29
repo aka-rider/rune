@@ -8,11 +8,13 @@
 //! `CONFIRM-GEN` — added by a later work package) — that data lives in
 //! `crate::step::StepCtx` instead (plan Context, decision 7 `[fixes B3]`).
 
+use ratatui::layout::Rect;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
 use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
+use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
 use rune_tui::render::{self, Cell};
 use rune_tui::row_meta::{self, RowMeta};
@@ -82,6 +84,11 @@ pub struct Snapshot {
     /// boundary (`render::overlay::apply_highlight_spans`), not by
     /// `HighlightState` itself.
     pub highlight_version: u64,
+    /// `layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height),
+    /// app)` — every rect the frame is built from, captured once per step so
+    /// `LAYOUT-FITS` (`invariant/pane.rs`) can check it as a plain function
+    /// of `next` alone, with no live `App` reach-back.
+    pub geometry: Geometry,
 }
 
 impl Snapshot {
@@ -120,6 +127,7 @@ impl Snapshot {
             .map(|(range, _scope)| (range.start, range.end))
             .collect();
         let highlight_version = doc.highlight.version;
+        let geometry = layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app);
         Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
@@ -142,6 +150,7 @@ impl Snapshot {
             row_meta,
             highlight_spans,
             highlight_version,
+            geometry,
         }
     }
 }

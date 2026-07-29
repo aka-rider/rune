@@ -20,11 +20,11 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 27 invariants total, one domain per file (mirrors the Go fuzzer's
+//! 28 invariants total, one domain per file (mirrors the Go fuzzer's
 //! own per-domain split):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
-//! - `pane` — `PANE-NO-BLEED`
+//! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`
 //! - `render` — `SYNC-IDEMPOTENT`, `CELL-OFFSET`, `CELL-NO-EOL`,
 //!   `CELL-ORDER`, `TABLE-ROW-WIDTH`, `TABLE-SYNTHETIC-DECORATIVE`
 //! - `wrap` — `WRAP-RT`
@@ -49,7 +49,7 @@ pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
-pub use pane::pane_no_bleed;
+pub use pane::{layout_fits, pane_no_bleed};
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, table_row_width,
     table_synthetic_decorative,
@@ -107,6 +107,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| table_synthetic_decorative(next))
         .or_else(|| redo_clear(prev, next))
         .or_else(|| pane_no_bleed(prev, next, ctx))
+        .or_else(|| layout_fits(next))
         .or_else(|| save_inflight_sm(prev, next, ctx))
         .or_else(|| quit_chord(prev, next, ctx))
         .or_else(|| confirm_gen(prev, next, ctx))
