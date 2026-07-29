@@ -34,17 +34,19 @@ pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
 /// The paste-read `Cmd`: runs `/usr/bin/pbpaste` on its own thread (every
 /// `Cmd` runs off the main thread by runtime design — see `runtime.rs` —
 /// and never touches the terminal) and reports its stdout back as
-/// `Msg::ClipboardRead`. A failure to spawn pbpaste, or a non-zero exit,
-/// produces `Msg::Error` instead of silently dropping the paste, so the
-/// user sees why nothing happened rather than nothing at all.
+/// `Msg::ClipboardRead`. A failure to spawn pbpaste, a non-zero exit, or
+/// stdout that isn't valid UTF-8 all produce `Msg::Error` instead of
+/// silently dropping or mangling the paste, so the user sees why nothing
+/// happened rather than nothing at all.
 ///
-/// pbpaste's stdout is decoded LOSSILY rather than dropped whole on invalid
-/// UTF-8: the source is the external, user-controlled OS clipboard, not the
-/// user's own file on disk — CONSTITUTION §1.4.5's byte-verbatim guarantee
-/// governs what this app WRITES to the user's file, not arbitrary external
-/// input it reads. Replacing a stray invalid byte with U+FFFD and still
-/// pasting the rest of the text is strictly more useful than discarding an
-/// entire paste over one bad byte from some other application.
+/// pbpaste's stdout is decoded STRICTLY, not lossily: a lossy decode would
+/// silently substitute U+FFFD for invalid bytes and still hand the result
+/// to `Msg::ClipboardRead`, which reaches `commands::clipboard::paste` and,
+/// from there, the user's own buffer and eventually their file on
+/// materialize — the ONE swallowed failure in an otherwise error-surfacing
+/// path (`CODE-REVIEW.md` rune-tui B finding 8). Rejecting outright and
+/// inserting nothing is the same trade this crate makes everywhere else
+/// user-visible content could be silently altered.
 pub fn pbpaste_cmd() -> Cmd {
     Cmd::new(CmdKind::ClipboardRead, || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
@@ -57,9 +59,18 @@ pub fn pbpaste_cmd() -> Cmd {
                 output.status
             )));
         }
-        let text = String::from_utf8_lossy(&output.stdout).into_owned();
-        Some(Msg::ClipboardRead(text))
+        Some(decode_pbpaste_stdout(output.stdout))
     })
+}
+
+/// The strict-decode chokepoint `pbpaste_cmd` reduces to, pulled out as its
+/// own pure function so the invalid-UTF-8 path is unit-testable without
+/// shelling out to a real `pbpaste`.
+fn decode_pbpaste_stdout(stdout: Vec<u8>) -> Msg {
+    match String::from_utf8(stdout) {
+        Ok(text) => Msg::ClipboardRead(text),
+        Err(_) => Msg::Error("pbpaste produced bytes that are not valid UTF-8".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -78,5 +89,24 @@ mod tests {
     fn osc52_copy_of_empty_payload_still_wraps_valid_escape_bytes() {
         let bytes = osc52_copy(b"");
         assert_eq!(bytes, b"\x1b]52;c;\x07".to_vec());
+    }
+
+    #[test]
+    fn decode_pbpaste_stdout_passes_through_valid_utf8() {
+        let msg = decode_pbpaste_stdout(b"hello".to_vec());
+        let Msg::ClipboardRead(text) = msg else {
+            unreachable!("expected a ClipboardRead message, got {msg:?}");
+        };
+        assert_eq!(text, "hello");
+    }
+
+    /// Regression for `CODE-REVIEW.md` rune-tui B finding 8: invalid UTF-8
+    /// from the clipboard must surface as `Msg::Error` and insert nothing,
+    /// never silently substitute U+FFFD and still hand the mangled text to
+    /// `Msg::ClipboardRead`.
+    #[test]
+    fn decode_pbpaste_stdout_rejects_invalid_utf8_instead_of_substituting() {
+        let invalid = vec![0xff, 0xfe, 0xfd];
+        assert!(matches!(decode_pbpaste_stdout(invalid), Msg::Error(_)));
     }
 }
