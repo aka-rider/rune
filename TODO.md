@@ -804,3 +804,61 @@ touching cursors collapse to one survivor (lower id), mirroring
 `CursorSet::merge`, but no test asserts the post-edit cursor count. Confirm the
 shrinking count is the intended editing UX rather than an unexamined side
 effect.
+
+## rune-db — §1.6 file-size overages (recorded 2026-07-29, code-review WP6)
+
+Six files in `crates/rune-db/src` are over the §1.6 500-line ceiling. None of
+this is newly introduced by WP6 — all six were already over budget per
+`CODE-REVIEW.md`'s rune-db finding 10 — but WP6's own fixes (the `commit_save`/
+`record_fresh` transaction-merge, `capture_and_rebind`, the `paths.rs`
+chokepoint call sites, the `evict_path_claim_tx`/`set_identity_tx` extraction,
+and the new regression tests) grew four of the six further. Recording the
+current sizes and a split direction for each, per the house rule ("never
+silently skip it").
+
+- `crates/rune-db/src/writer.rs` is 988 lines — the writer thread's own op
+  dispatch (`OpKind` match), idle maintenance, shutdown/TRUNCATE sequencing,
+  and panic-guard machinery, plus its own substantial unit test module. Split
+  direction: the panic-guard/`fatal`/shutdown-sequencing trio is a
+  self-contained state machine that could move to a sibling
+  `writer_lifecycle.rs`, leaving `writer.rs` itself as just the `OpKind`
+  dispatch table.
+- `crates/rune-db/src/materialize.rs` is 954 lines (grown from 813 by WP6.S1's
+  transaction-merge, WP6.S4's path/row-agreement check, WP6.S6's
+  `evict_path_claim_tx`/`set_identity_tx` extraction, and three new
+  regression tests). The real coupling CODE-REVIEW.md already named: CAS
+  refusal, swap-race, `materialize_create`, `commit_save`, and the
+  rebind/evict chokepoints are separable units sharing only `DocSession`/
+  `WriteIntent`. Split direction: move `materialize_create` +
+  `rebind_document_tx`/`evict_path_claim_tx`/`set_identity_tx` to a sibling
+  `rebind.rs`, leaving `materialize.rs` as the CAS overwrite path
+  (`materialize`/`materialize_overwrite`/`record_fresh`/`commit_save`) plus
+  its own tests.
+- `crates/rune-db/src/rename.rs` is 685 lines (grown from 628 by WP6.S3's
+  `capture_and_rebind` transaction-merge and its expanded doc comment). Split
+  direction: `rename_bind`/`rename_replace` are the two public entry points;
+  the shared `rebind`/`capture_and_rebind` primitives plus their tests could
+  move to a sibling `rename_bind.rs`/`rename_replace.rs` pair, mirroring
+  `adopt.rs`'s tx-primitive/standalone-wrapper split.
+- `crates/rune-db/src/store.rs` is 657 lines (grown from 621 by WP6.S5's
+  fallible `reader_target` conversion in `open_ladder` and its new
+  corrupt-DB-file regression test). Split direction: `open_ladder`/
+  `open_file_backed`/`open_memory_backed`/`memory_uri` (the open-ladder
+  primitives) are already a fairly self-contained unit that could move to a
+  sibling `open_ladder.rs`, leaving `store.rs` as the `Store` type and its
+  op-enqueue methods.
+- `crates/rune-db/src/load.rs` is 668 lines (grown from 653 by WP6.S2's
+  reap-vs-hydration re-verification in `find_inheritable_draft`). Split
+  direction: `find_inheritable_draft`/`most_recent_session_for_doc`/
+  `is_session_alive` (the cross-session inheritance decision) are a
+  self-contained unit that could move to a sibling `inherit.rs`, leaving
+  `load.rs` as just `load` itself.
+- `crates/rune-db/src/journal.rs` is 611 lines — untouched by WP6. Split
+  direction unchanged from the review: `append_edit`'s coalescing/truncation
+  logic vs. the plain `undo_peek`/`redo_peek`/`move_undo_pos`/`current_seq`
+  readers are separable; the former could move to a sibling
+  `journal_append.rs`.
+
+None of these six are split in this work package — WP6's scope is the
+findings themselves, not the pre-existing (and self-inflicted) file-size
+churn; recording per house rule rather than silently skipping it.
