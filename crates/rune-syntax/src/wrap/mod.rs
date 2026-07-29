@@ -125,6 +125,40 @@ pub fn grapheme_width_with_tab(cluster: &str, current_width: usize) -> usize {
     grapheme_width(cluster)
 }
 
+/// The next grapheme cluster in a row's concatenated span text, starting at
+/// byte `pos`, clamped to never read past `bounds`' nearest entry greater
+/// than `pos` (each entry is one `SyntaxSpan`'s own end offset within the
+/// concatenation, ascending, last entry == `text.len()`).
+///
+/// This is the ONE place every width/column walk over a whole row's text
+/// draws its cluster boundaries — `wrap_line`'s greedy breaker below and
+/// the coordinate queries in this module's sibling all call it rather than
+/// re-deriving boundaries via a bare `graphemes(true)` over the
+/// concatenation. It exists because the code that actually decides what lands in
+/// which terminal `Cell` grapheme-segments each span's own text
+/// INDEPENDENTLY — a cluster's
+/// `buf_offset`/style/`cell_map` lookup comes from exactly one span, never
+/// two, so a cluster can never legitimately straddle a span boundary there.
+/// A bare `graphemes(true)` walk over spans concatenated first has no such
+/// boundary and will happily fuse characters across the seam: Unicode's own
+/// cluster-break rules join a ZWJ (or any combining/extending rune) to
+/// WHATEVER precedes it, span boundary or not (UAX #29 GB9 — unconditional,
+/// unlike the pictographic-specific GB11 continuation rule the ZWJ sequence
+/// itself relies on). Left unclamped, that fusion makes this module's width
+/// sum diverge from the row's actual cells by exactly the fused cluster's
+/// width whenever a span boundary happens to land right before such a rune
+/// — silently, since both sides still individually look correct — and the
+/// resulting column mismatch is what let a cursor's computed visual column
+/// fail to land on any real cell (`CELL-ORDER`, `rune-fuzz`).
+pub(super) fn next_grapheme<'a>(text: &'a str, bounds: &[usize], pos: usize) -> Option<&'a str> {
+    let limit = bounds
+        .iter()
+        .copied()
+        .find(|&b| b > pos)
+        .unwrap_or(text.len());
+    text.get(pos..limit)?.graphemes(true).next()
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WrapSegment {
     pub spans: Vec<SyntaxSpan>,
@@ -203,6 +237,12 @@ impl WrapMap {
             return;
         }
 
+        // Same coordinate space as `span_refs`' end offsets — the boundary
+        // list `next_grapheme` clamps cluster reads to, so this loop's width
+        // sum can never silently disagree with the row the renderer
+        // actually builds cells for (this function's own docs).
+        let bounds: Vec<usize> = span_refs.iter().map(|&(_, _, end)| end).collect();
+
         let mut start_col = 0usize;
         while start_col < text.len() {
             let Some(remain) = text.get(start_col..) else {
@@ -214,10 +254,7 @@ impl WrapMap {
             let mut last_space_bytes: Option<usize> = None;
 
             let mut i = 0usize;
-            while let Some(rest) = remain.get(i..) {
-                let Some(cluster) = rest.graphemes(true).next() else {
-                    break;
-                };
+            while let Some(cluster) = next_grapheme(&text, &bounds, start_col + i) {
                 let size = cluster.len();
                 let rw = grapheme_width_with_tab(cluster, curr_w);
                 if curr_w + rw > width && byte_len > 0 {
@@ -232,7 +269,9 @@ impl WrapMap {
             }
 
             if byte_len == 0 && !remain.is_empty() {
-                byte_len = remain.graphemes(true).next().map(str::len).unwrap_or(1);
+                byte_len = next_grapheme(&text, &bounds, start_col)
+                    .map(str::len)
+                    .unwrap_or(1);
             } else if byte_len < remain.len()
                 && let Some(sp) = last_space_bytes
                 && sp > 0
@@ -485,5 +524,64 @@ mod tests {
                 "the span's range must stay at the full original range on every slice"
             );
         }
+    }
+
+    /// `CELL-ORDER` regression: a `Substituted` span (a
+    /// concealed link's visible text, same shape `rune-md`'s emitter
+    /// produces) immediately followed by an `Identical` span whose text
+    /// starts with a LONE zero-width joiner — exactly what both
+    /// the two checked-in replay repros reduce to (a ZWJ family
+    /// emoji pasted right after concealed/marker text, then edited until
+    /// the emoji's own leading base codepoint is gone, leaving the visible
+    /// text starting on a bare ZWJ). The renderer's actual `Cell` layout
+    /// ALWAYS grapheme-segments each span's own text independently,
+    /// span by span: the substituted `"a"` never
+    /// joins to the ZWJ starting the next span, because that span's text
+    /// is segmented on its own, starting fresh — two single-width cells,
+    /// not one fused cluster (a lone ZWJ has nothing to join to at the
+    /// start of a string). `visual_col`/`byte_col_from_visual` must agree,
+    /// or a cursor's computed column stops lining up with any real `Cell`
+    /// — the caret placer's "no matching column" fallback then
+    /// appends a synthetic caret cell at the row's END, out of
+    /// `buf_offset` order, which is the actual `CELL-ORDER` failure both
+    /// repros hit.
+    #[test]
+    fn visual_col_does_not_fuse_a_zwj_across_a_span_boundary() {
+        let content = "a\u{200d}\u{1f469}"; // "a" + ZWJ + 👩
+        let spans = vec![
+            SyntaxSpan::Substituted {
+                scope: TEXT,
+                text: "a".to_string(),
+                range: 0..1,
+                cell_map: vec![0],
+            },
+            SyntaxSpan::Identical {
+                scope: TEXT,
+                range: 1..content.len(),
+            },
+        ];
+
+        // Per-span segmentation (what the renderer actually builds): "a"
+        // (width 1), then the SECOND span segmented on its own — its text
+        // starts fresh, so the ZWJ has no preceding char to join to and
+        // stands as its own cluster (width 1) — then the emoji (width 2).
+        // Total: 1 + 1 + 2 = 4. A concatenated-then-segmented walk instead
+        // fuses "a" and the ZWJ into one cluster (UAX #29 GB9 joins a ZWJ
+        // to WHATEVER precedes it, unconditionally) and undercounts: 1 + 2
+        // = 3.
+        let end = query::visual_col(content, &spans, content.len());
+        assert_eq!(
+            end, 4,
+            "a span boundary must force a grapheme-cluster break even \
+             before a ZWJ — got {end}, which is what fusing \"a\" and the \
+             ZWJ into one cluster produces instead of keeping them separate"
+        );
+
+        // Round-trips: the byte offset for that same visual column is the
+        // whole content, never somewhere mid-cluster.
+        assert_eq!(
+            query::byte_col_from_visual(content, &spans, end),
+            content.len()
+        );
     }
 }
