@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::banner::{self, GuardKind, GuardPrompt, Modal};
+use crate::document::DocumentId;
 use crate::explorer;
 use crate::keymap::{GlobalCommand, QuitKey};
 use crate::runtime::{Cmd, CmdKind, DirCause, Effects, Msg, load_dir_cmd};
@@ -108,6 +110,27 @@ pub(crate) fn focus_title(app: &mut App) {
 /// above is its only caller now that quit chords resolve at the global
 /// pipeline stage.
 pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
+    // §1.4.4: quit is a destructive transition on every dirty document at
+    // once, and the 2-press confirm above is only a safe shortcut BECAUSE
+    // §12 assumes quit preserves through the durable journal. That premise
+    // fails for any dirty document with no live `db` binding (the default
+    // untitled draft by construction, or an Explorer/CLI-opened document
+    // whose hydration never landed) — for those, quitting would discard
+    // work with no journal to recover it from. Raise the same Guard the
+    // ordinary close path (`workspace::request_close`) uses instead of
+    // arming or completing quit; the user resolves it exactly like any
+    // other dirty-close prompt, then presses the quit chord again.
+    if let Some(doc) = first_unpreserved_dirty_doc(app) {
+        let _ = banner::set_modal(
+            app,
+            Modal::Guard(GuardPrompt {
+                doc,
+                kind: GuardKind::DirtyClose,
+            }),
+        );
+        return;
+    }
+
     if let Some((pending_key, generation)) = app.pending_quit
         && pending_key == key
     {
@@ -120,6 +143,20 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     app.next_quit_gen = app.next_quit_gen.wrapping_add(1);
     app.pending_quit = Some((key, generation));
     effects.cmds.push(quit_confirm_timeout_cmd(generation));
+}
+
+/// The first (lowest `DocumentId`) open document that is both dirty and has
+/// no live recovery-store binding — quit preserves through the durable
+/// journal, so a dirty document without one is the exact case `handle_quit_
+/// key`'s Guard gate exists for. Deterministic ordering (`documents` is a
+/// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
+/// first" — repeated presses always raise the Guard for the same document
+/// until it's resolved.
+fn first_unpreserved_dirty_doc(app: &App) -> Option<DocumentId> {
+    app.documents
+        .iter()
+        .find(|(_, doc)| doc.is_dirty() && doc.db.is_none())
+        .map(|(id, _)| *id)
 }
 
 /// The 2s quit-confirm timer, carrying its generation so a stale timeout
@@ -175,5 +212,49 @@ mod tests {
         handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
         assert_eq!(app.focus, Pane::Editor);
         assert!(app.left_visible, "FocusEditor must not hide the left pane");
+    }
+
+    /// Review fix (plan WP5.S3): a dirty document with no live `db` binding
+    /// (the default for an untitled draft) must never be silently discarded
+    /// by the quit chord — `^C^C` (or `^D^D`) raises the same dirty-close
+    /// Guard `workspace::request_close` uses instead of quitting.
+    #[test]
+    fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
+        let mut app = app();
+        app.doc_mut(app.active).expect("active doc exists").is_dirty_cached = true;
+        assert!(app.active_doc().db.is_none(), "test setup: no db binding");
+
+        let mut effects = Effects::default();
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+
+        assert!(!app.should_quit, "quit must not complete while unpreserved dirty work exists");
+        assert!(
+            matches!(
+                app.modal,
+                Some(Modal::Guard(GuardPrompt {
+                    kind: GuardKind::DirtyClose,
+                    ..
+                }))
+            ),
+            "expected a DirtyClose Guard prompt to be raised"
+        );
+    }
+
+    /// The converse: a dirty document that IS preserved (has a live `db`
+    /// binding) doesn't trip the new gate — the ordinary two-press
+    /// quit-confirm still works exactly as before.
+    #[test]
+    fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
+        let mut app = app();
+        app.doc_mut(app.active).expect("active doc exists").is_dirty_cached = true;
+        app.doc_mut(app.active).expect("active doc exists").db =
+            Some(crate::db::DocDb::new(1, 0, true, 0));
+
+        let mut effects = Effects::default();
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        assert!(!app.should_quit, "the first press only arms the confirm");
+        handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
+        assert!(app.should_quit, "the second matching press quits");
     }
 }
