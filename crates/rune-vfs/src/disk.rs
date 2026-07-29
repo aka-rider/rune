@@ -32,10 +32,9 @@ impl Disk {
         }
     }
 
-    /// The only `unsafe` block in `rune-vfs` (`rune-db::session` has three
-    /// of its own, for `sysctl`/`kill`-based liveness checks). Wraps the
-    /// Darwin `renamex_np` syscall to atomically exchange or create files
-    /// with proper crash-safety semantics.
+    /// The only `unsafe` block in this crate. Wraps the Darwin
+    /// `renamex_np` syscall to atomically exchange or create files with
+    /// proper crash-safety semantics.
     fn renamex_np(src: &Path, dst: &Path, flags: libc::c_uint) -> io::Result<()> {
         let src_c = CString::new(src.as_os_str().as_bytes())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -56,19 +55,21 @@ impl Disk {
     /// ..."`.
     fn publish(src: &Path, dst: &Path, flags: libc::c_uint, label: &str) -> io::Result<()> {
         Self::renamex_np(src, dst, flags).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("{label} {} -> {}: {}", src.display(), dst.display(), e),
-            )
+            crate::wrap_io(e, format!("{label} {} -> {}", src.display(), dst.display()))
         })?;
         Self::fsync_dir(&Self::parent_to_fsync(dst)).map_err(|e| {
-            io::Error::new(
-                e.kind(),
+            // WP1.S1: the rename/swap above already succeeded — only the
+            // durability confirmation (parent fsync) failed. `dst` already
+            // holds the new content, and (for an exchange) `src` already
+            // holds whatever `dst` displaced: mark the error so a caller
+            // composing on top of `publish` (e.g. `save_atomic`) knows a
+            // temp file named by `src`/`dst` must not be discarded.
+            crate::wrap_io_published(
+                e,
                 format!(
-                    "{label} {} -> {}: fsync parent: {}",
+                    "{label} {} -> {}: fsync parent",
                     src.display(),
-                    dst.display(),
-                    e
+                    dst.display()
                 ),
             )
         })
@@ -83,10 +84,13 @@ impl Vfs for Disk {
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
         let temp = temp_name(path);
 
+        // `create_new(true)` alone guarantees a brand-new file (it errors
+        // `AlreadyExists` rather than opening one that's already there), so
+        // there is never an existing file for `truncate(true)` to act on —
+        // that option is deliberately absent.
         let mut temp_file = OpenOptions::new()
             .create_new(true)
             .write(true)
-            .truncate(true)
             .custom_flags(libc::O_CLOEXEC)
             .open(&temp)?;
 
@@ -120,8 +124,7 @@ impl Vfs for Disk {
     }
 
     fn remove(&self, path: &Path) -> io::Result<()> {
-        fs::remove_file(path)
-            .map_err(|e| io::Error::new(e.kind(), format!("remove {}: {}", path.display(), e)))
+        fs::remove_file(path).map_err(|e| crate::wrap_io(e, format!("remove {}", path.display())))
     }
 
     fn stat(&self, path: &Path) -> io::Result<Stat> {
@@ -153,25 +156,21 @@ impl Vfs for Disk {
     /// symlinked parent directory still canonicalizes correctly.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         if path.exists() {
-            return fs::canonicalize(path).map_err(|e| {
-                io::Error::new(e.kind(), format!("resolve {}: {}", path.display(), e))
-            });
+            return fs::canonicalize(path)
+                .map_err(|e| crate::wrap_io(e, format!("resolve {}", path.display())));
         }
         match path.parent() {
             Some(parent) if !parent.as_os_str().is_empty() => {
                 let canonical_parent = fs::canonicalize(parent).map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("resolve {}: resolve parent: {}", path.display(), e),
-                    )
+                    crate::wrap_io(e, format!("resolve {}: resolve parent", path.display()))
                 })?;
                 Ok(canonical_parent.join(path.file_name().unwrap_or_default()))
             }
             _ => {
                 let canonical_cwd = std::env::current_dir().map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!("resolve {}: get current directory: {}", path.display(), e),
+                    crate::wrap_io(
+                        e,
+                        format!("resolve {}: get current directory", path.display()),
                     )
                 })?;
                 Ok(canonical_cwd.join(path))

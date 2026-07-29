@@ -697,7 +697,11 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
     let mem = Arc::new(Mem::new());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
     let mut app = App::new(Buffer::new("draft body"), None, vfs, None);
-    let existing = Path::new("./taken.md");
+    // An absolute spelling: `Mem::resolve` now lexically normalizes
+    // (WP1.S6), so a bare relative/dotted spelling here would be published
+    // under a different key than this test's own closing `mem.read`
+    // (which never resolves) looks up.
+    let existing = Path::new("/taken.md");
     mem.save_atomic(existing, b"someone else's file")
         .expect("seed");
 
