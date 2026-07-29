@@ -169,15 +169,7 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
             let mut insert = current.0.insert;
             insert.push_str(&next.0.insert);
             let cursor_id = current.1.min(next.1);
-            current = (
-                Edit {
-                    start,
-                    end,
-                    insert,
-                    cursor_id,
-                },
-                cursor_id,
-            );
+            current = (Edit { start, end, insert }, cursor_id);
         } else {
             merged.push(current);
             current = next;
@@ -244,7 +236,6 @@ mod tests {
                     start: 1,
                     end: 2,
                     insert: String::new(),
-                    cursor_id: 2,
                 },
                 2,
             ),
@@ -253,7 +244,6 @@ mod tests {
                     start: 0,
                     end: 1,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             ),
@@ -271,7 +261,6 @@ mod tests {
                     start: 0,
                     end: 2,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             )),
@@ -292,7 +281,6 @@ mod tests {
                     start: 2,
                     end: 7,
                     insert: String::new(),
-                    cursor_id: 9,
                 },
                 9,
             ),
@@ -301,7 +289,6 @@ mod tests {
                     start: 0,
                     end: 5,
                     insert: String::new(),
-                    cursor_id: 3,
                 },
                 3,
             ),
@@ -321,7 +308,6 @@ mod tests {
                     start: 5,
                     end: 6,
                     insert: String::new(),
-                    cursor_id: 2,
                 },
                 2,
             ),
@@ -330,7 +316,6 @@ mod tests {
                     start: 0,
                     end: 1,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             ),

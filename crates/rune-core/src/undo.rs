@@ -3,8 +3,10 @@
 //! Ports Go's inverse/reapply edit-primitive formulas and its
 //! peek-then-commit journal discipline.
 
-use crate::assert_invariant;
-use crate::buffer::{AppliedEdit, Buffer, BufferError, Edit, clone_and_sort_edits_descending};
+use crate::buffer::{
+    AppliedEdit, Buffer, BufferError, Edit, clone_and_sort_edits_descending,
+    duplicate_applied_start,
+};
 use crate::cursor::Cursor;
 
 /// Build the inverse edit batch for an applied-edit batch (undo): each
@@ -34,7 +36,6 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
             start: ae.start,
             end,
             insert: ae.deleted.clone(),
-            cursor_id: 0,
         });
     }
     Ok(clone_and_sort_edits_descending(&raw))
@@ -58,30 +59,33 @@ pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, Buff
 /// returns the error and the original `buf` is never touched. Port of
 /// `edit_primitives.go:86-110`.
 ///
-/// Precondition: no two edits in `edits` share the same `start` (in the
-/// post-edit coordinate space `AppliedEdit::start` lives in). The ascending
-/// sort below ties on `start` alone, with no secondary key — this mirrors
-/// Go's `sort.Slice` in `edit_primitives.go:91-93`, which has the identical
-/// characteristic — so a tie's relative replay order is
-/// implementation-defined and can silently reorder an insert against an
-/// adjacent delete. The real editing pipeline never produces this:
-/// `CursorSet::merge` coalesces any two cursors whose selections touch into
-/// one before edits are ever generated, so two edits landing on the
-/// identical post-edit `start` cannot arise from a real multi-cursor batch.
-/// Checked via the `STRICT_INVARIANTS`-gated `assert_invariant` chokepoint
-/// (see `lib.rs`'s module docs) — a caller invariant to catch during
-/// development and testing, not user input this function should refuse at
-/// runtime; an ordinary build simply replays the batch in whatever order
-/// the tied sort produced.
+/// Real invariant: no two edits in `edits` may share the same `start` (in
+/// the post-edit coordinate space `AppliedEdit::start` lives in) — a tie
+/// makes the ascending sort's replay order depend on which edit the sort
+/// happened to place first, silently reordering an insert against an
+/// adjacent delete. This invariant is NOT guaranteed by `CursorSet::merge`
+/// alone: `merge` only coalesces cursors whose SELECTIONS touch, but two
+/// cursors can still produce two EDITS whose ranges touch without their
+/// selections doing so (two adjacent single-byte deletes), and
+/// `Buffer::apply_edits` is deliberately permissive of a touching,
+/// non-overlapping batch — see `apply_edits_descending_order_and_overlap`
+/// in `buffer.rs`. The one real enforcement point is `apply_edits` itself:
+/// `BufferError::DuplicateEditStart` refuses any batch whose computed
+/// `AppliedEdit`s would collide, so any `edits` that came from a live
+/// `apply_edits` call can never violate this precondition. What `reapply`
+/// guards here is edits it did NOT produce itself — a persisted journal row
+/// replayed from the recovery store, which predates that guard or was
+/// written by a build that didn't enforce it — by refusing to replay them
+/// rather than silently picking an order.
 pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     if edits.is_empty() {
         return Ok(buf.clone());
     }
     let mut sorted: Vec<&AppliedEdit> = edits.iter().collect();
     sorted.sort_by_key(|e| e.start);
-    assert_invariant(no_duplicate_starts(&sorted), || {
-        "reapply: two edits share a post-edit start; CursorSet::merge should have coalesced them upstream".to_string()
-    });
+    if let Some(start) = duplicate_applied_start(edits) {
+        return Err(BufferError::DuplicateEditStart { start });
+    }
 
     let mut work = buf.clone();
     for e in sorted {
@@ -107,21 +111,11 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
             start,
             end,
             insert: e.insert.clone(),
-            cursor_id: 0,
         };
         let (new_buf, _) = work.apply_edits(std::slice::from_ref(&edit))?;
         work = new_buf;
     }
     Ok(work)
-}
-
-/// Port of the `reapply` precondition check above: `true` iff no two
-/// (already start-ascending-sorted) edits share a `start`.
-fn no_duplicate_starts(sorted: &[&AppliedEdit]) -> bool {
-    sorted.windows(2).all(|w| match (w.first(), w.get(1)) {
-        (Some(a), Some(b)) => a.start != b.start,
-        _ => true,
-    })
 }
 
 /// One undo/redo unit: the edits applied plus cursor state before/after, so
@@ -135,8 +129,8 @@ pub struct Step {
 }
 
 /// In-memory undo/redo journal. `push` truncates any redo tail, matching a
-/// normal editor undo stack (Phase 2 gives this the same shape backed by
-/// SQLite — see plan Context, "Undo journal").
+/// normal editor undo stack (the durable store adds persistence behind the
+/// same peek-then-commit shape, not a new one).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Journal {
     steps: Vec<Step>,
@@ -213,7 +207,6 @@ mod tests {
                 start: 5,
                 end: 11,
                 insert: " rust".to_string(),
-                cursor_id: 0,
             }])
             .expect("edit should apply");
         assert_eq!(edited.content(), "hello rust");
@@ -225,82 +218,69 @@ mod tests {
         assert_eq!(redone.content(), "hello rust");
     }
 
-    /// Documents the exact illegal-edit-set mechanism `reapply`'s
-    /// precondition assert exists to catch, at the buffer-primitive
-    /// level: two INDEPENDENT zero-width byte positions (0 and 1 — not
-    /// touching as cursor points, so `cursor::CursorSet::merge` correctly
-    /// leaves them as two separate cursors) each deleting one byte
-    /// forward derive ADJACENT, touching ranges `[0,1)` and `[1,2)`.
-    /// `Buffer::apply_edits` is a low-level, Go-ported primitive
-    /// (ported from Go) that only refuses OVERLAPPING input — a
-    /// touching pair is valid input — so it hands back two `AppliedEdit`s
-    /// that both land on post-edit `start == 0`: the identical illegal
-    /// state.
-    ///
-    /// `Buffer::apply_edits` is deliberately NOT the fix location (it
-    /// must keep accepting a batch shaped like this one exactly as Go's
-    /// `ApplyEdits` does — see `apply_edits_descending_order_and_overlap`
-    /// pinning that a touching, non-overlapping batch is valid input).
-    /// The real fix — coalescing touching/overlapping edits BEFORE they
-    /// ever reach `apply_edits` — lives at the edit-CONSTRUCTION
-    /// chokepoint in `rune-tui`'s `commands::edit_core::
-    /// coalesce_touching_edits`, which this crate cannot see or depend on
-    /// (the dependency edge points the other way). This test instead
-    /// pins the underlying mechanism: an edit-construction step that does
-    /// NOT coalesce touching ranges can, and does, hand `reapply` exactly
-    /// the batch its precondition refuses.
+    /// Documents the exact illegal-edit-set mechanism `apply_edits`'
+    /// `DuplicateEditStart` rejection exists to catch, at the
+    /// buffer-primitive level: two INDEPENDENT zero-width byte positions (0
+    /// and 1 — not touching as cursor points, so `cursor::CursorSet::merge`
+    /// correctly leaves them as two separate cursors) each deleting one
+    /// byte forward derive ADJACENT, touching ranges `[0,1)` and `[1,2)`,
+    /// both landing on post-edit `start == 0`: the identical illegal state
+    /// `reapply` cannot safely order. `Buffer::apply_edits` refuses the
+    /// batch outright now (see `apply_edits_rejects_a_batch_whose_edits_
+    /// collide_on_post_edit_start` in `buffer.rs`) rather than handing the
+    /// colliding `AppliedEdit`s to a caller — this test pins that the
+    /// rejection fires for exactly the batch shape that used to slip
+    /// through: a touching, non-overlapping pair that
+    /// `coalesce_touching_edits` (in `rune-tui`, which this crate cannot see
+    /// or depend on) would have merged before it ever reached here.
     #[test]
     fn adjacent_bare_deletes_collide_on_the_same_post_edit_start() {
         let buf = Buffer::new("ab");
-        let (_, applied) = buf
-            .apply_edits(&[
-                Edit {
-                    start: 1,
-                    end: 2,
-                    insert: String::new(),
-                    cursor_id: 2,
-                },
-                Edit {
-                    start: 0,
-                    end: 1,
-                    insert: String::new(),
-                    cursor_id: 1,
-                },
-            ])
-            .expect("a touching, non-overlapping batch is valid input to apply_edits");
-        assert_eq!(applied.len(), 2);
+        let err = buf.apply_edits(&[
+            Edit {
+                start: 1,
+                end: 2,
+                insert: String::new(),
+            },
+            Edit {
+                start: 0,
+                end: 1,
+                insert: String::new(),
+            },
+        ]);
         assert_eq!(
-            applied[0].start, applied[1].start,
-            "two adjacent one-byte deletes collapse to the identical post-edit \
-             start — the illegal state reapply's precondition assert exists to catch"
+            err,
+            Err(BufferError::DuplicateEditStart { start: 0 }),
+            "two adjacent one-byte deletes would collapse to the identical \
+             post-edit start — apply_edits must refuse the batch outright"
         );
     }
 
-    /// The other half of the pin above: handed that exact colliding-start
-    /// batch, `reapply` refuses it via its documented precondition
-    /// `debug_assert!` rather than silently producing a wrong result.
+    /// The other half of the pin above, at `reapply`'s own boundary: a
+    /// hand-built `AppliedEdit` batch with colliding starts — the shape a
+    /// persisted journal row written before `apply_edits` enforced this
+    /// invariant could still carry — is refused with the same
+    /// `BufferError`, not replayed in whatever order the tied sort
+    /// produces.
     #[test]
-    #[should_panic(expected = "two edits share a post-edit start")]
     fn reapply_refuses_a_batch_with_colliding_starts() {
         let buf = Buffer::new("ab");
-        let (_, applied) = buf
-            .apply_edits(&[
-                Edit {
-                    start: 1,
-                    end: 2,
-                    insert: String::new(),
-                    cursor_id: 2,
-                },
-                Edit {
-                    start: 0,
-                    end: 1,
-                    insert: String::new(),
-                    cursor_id: 1,
-                },
-            ])
-            .expect("a touching, non-overlapping batch is valid input to apply_edits");
-
-        let _ = reapply(&Buffer::new(""), &applied);
+        let applied = vec![
+            AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: "b".to_string(),
+                insert: String::new(),
+            },
+            AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: "a".to_string(),
+                insert: String::new(),
+            },
+        ];
+        let err = reapply(&buf, &applied);
+        assert_eq!(err, Err(BufferError::DuplicateEditStart { start: 0 }));
     }
 
     #[test]

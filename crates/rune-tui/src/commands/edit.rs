@@ -72,14 +72,12 @@ fn per_cursor_selection_edits(
                 start,
                 end,
                 insert: text_for(i, c, buf),
-                cursor_id: c.id,
             }
         } else if let Some((start, end)) = bare(buf, c) {
             Edit {
                 start,
                 end,
                 insert: text_for(i, c, buf),
-                cursor_id: c.id,
             }
         } else {
             continue;
@@ -209,7 +207,6 @@ pub(crate) fn retract_space(app: &mut App, id: DocumentId) {
         start: pos - 1,
         end: pos,
         insert: String::new(),
-        cursor_id: cid,
     };
     commit_edit_batch(app, id, vec![(edit, cid)], cursors_before);
 }

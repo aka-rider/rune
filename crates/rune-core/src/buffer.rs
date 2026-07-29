@@ -11,10 +11,10 @@
 //!   has no reachable failure case to port.
 //! - Every access that would use `[]` indexing in the Go original goes
 //!   through `.get()`/`.get_mut()` here instead, per the workspace's
-//!   `clippy::indexing_slicing` lint (Gotchas: "every `&content[a..b]` must
-//!   come from validated/clamped ranges; use the buffer's clamping
-//!   helpers") — the buffer's own methods ARE those clamping helpers, so
-//!   nothing downstream ever indexes `content` directly.
+//!   `clippy::indexing_slicing` lint — every `&content[a..b]` must come
+//!   from a validated/clamped range, and the buffer's own methods ARE
+//!   those clamping helpers, so nothing downstream ever indexes `content`
+//!   directly.
 //! - `Slice`/`Byte` panic in Go on an out-of-range argument (a bare Go
 //!   slice/index expression). Per CONSTITUTION §1.3 ("halt, never panic")
 //!   and the workspace's `clippy::panic`/`unwrap_used` deny-lints, the Rust
@@ -25,15 +25,12 @@ use crate::coords::BufferPoint;
 use std::fmt;
 
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
-/// `cursor_id`, when non-zero, is the id of the `cursor::Cursor` whose
-/// command produced this edit (0 means no single owning cursor — e.g. a
-/// programmatic replace). Port of `buffer.go:18-23`.
+/// Port of `buffer.go:18-23`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
     pub start: usize,
     pub end: usize,
     pub insert: String,
-    pub cursor_id: u32,
 }
 
 /// The edit actually applied, in POST-edit coordinates, with the displaced
@@ -64,6 +61,14 @@ pub enum BufferError {
     },
     /// An edit's `start` or `end` falls inside a multi-byte UTF-8 character.
     SplitsRune { offset: usize },
+    /// Two edits in the batch computed the identical post-edit `start` —
+    /// the corruption path where a batch that is individually valid
+    /// (non-overlapping, sorted) still collapses two `AppliedEdit`s onto
+    /// one position once shifts are applied (e.g. two adjacent one-byte
+    /// deletes). Refused here — at the one place both the write path
+    /// (persisted journal rows) and the read-back path (`undo::reapply`)
+    /// share — rather than left for a replayer to silently misorder.
+    DuplicateEditStart { start: usize },
 }
 
 impl fmt::Display for BufferError {
@@ -78,6 +83,9 @@ impl fmt::Display for BufferError {
             }
             BufferError::SplitsRune { offset } => {
                 write!(f, "edit splits a rune at byte offset {offset}")
+            }
+            BufferError::DuplicateEditStart { start } => {
+                write!(f, "two edits collide on post-edit start {start}")
             }
         }
     }
@@ -124,8 +132,8 @@ impl Buffer {
         }
     }
 
-    /// Refuses non-UTF-8 bytes — the load-time refusal point (§0, plan
-    /// decision 4). Port of `buffer.go:46-51`.
+    /// Refuses non-UTF-8 bytes — the load-time refusal point. Port of
+    /// `buffer.go:46-51`.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffer, BufferError> {
         let content = String::from_utf8(bytes).map_err(|_| BufferError::InvalidUtf8)?;
         Ok(Buffer::new(content))
@@ -171,26 +179,27 @@ impl Buffer {
         Some((c, c.len_utf8()))
     }
 
-    pub fn insert(&self, offset: usize, text: &str) -> Buffer {
+    pub fn insert(&self, offset: usize, text: &str) -> Result<Buffer, BufferError> {
         self.replace(offset, offset, text)
     }
 
-    pub fn delete(&self, start: usize, end: usize) -> Buffer {
+    pub fn delete(&self, start: usize, end: usize) -> Result<Buffer, BufferError> {
         self.replace(start, end, "")
     }
 
     /// Convenience single-edit wrapper over `apply_edits`, used by
     /// `insert`/`delete`, tests, and programmatic edits that already know
-    /// the range is valid. Discards `apply_edits`' error and returns the
-    /// receiver's content unchanged on a rejected edit — `apply_edits` is
-    /// the primitive that surfaces the error (§1.3). Port of
-    /// `buffer.go:81-92`, EXCEPT the start/end swap-if-reversed below: Go's
-    /// `Buffer.Replace` has no such swap (it passes `start`/`end` straight
-    /// through to `ApplyEdits`, so a reversed range is simply rejected as
-    /// out-of-bounds) — the swap is ported from `textedit.ReplaceRange`
-    /// (`edit_primitives.go:28-30`), which this method's actual callers
-    /// (`insert`/`delete`, and arbitrary start/end from tests) rely on.
-    pub fn replace(&self, start: usize, end: usize, text: &str) -> Buffer {
+    /// the range is valid. Surfaces `apply_edits`' error instead of
+    /// silently returning the receiver unchanged — a caller that ignores
+    /// the rejection can no longer mistake "nothing happened" for success
+    /// (§1.3). Port of `buffer.go:81-92`, EXCEPT the start/end
+    /// swap-if-reversed below: Go's `Buffer.Replace` has no such swap (it
+    /// passes `start`/`end` straight through to `ApplyEdits`, so a reversed
+    /// range is simply rejected as out-of-bounds) — the swap is ported from
+    /// `textedit.ReplaceRange` (`edit_primitives.go:28-30`), which this
+    /// method's actual callers (`insert`/`delete`, and arbitrary start/end
+    /// from tests) rely on.
+    pub fn replace(&self, start: usize, end: usize, text: &str) -> Result<Buffer, BufferError> {
         let (start, end) = if start > end {
             (end, start)
         } else {
@@ -200,13 +209,10 @@ impl Buffer {
             start,
             end,
             insert: text.to_string(),
-            cursor_id: 0,
         };
         let sorted = clone_and_sort_edits_descending(std::slice::from_ref(&edit));
-        match self.apply_edits(&sorted) {
-            Ok((new_buf, _)) => new_buf,
-            Err(_) => self.clone(),
-        }
+        let (new_buf, _) = self.apply_edits(&sorted)?;
+        Ok(new_buf)
     }
 
     /// Apply a batch of edits atomically. `edits` must already be sorted
@@ -241,7 +247,7 @@ impl Buffer {
 
         let net_change: isize = edits
             .iter()
-            .map(|e| e.insert.len() as isize - (e.end - e.start) as isize)
+            .map(|e| edit_delta(e.end - e.start, e.insert.len()))
             .sum();
         let cap = (len as isize + net_change).max(0) as usize;
         let mut new_content = String::with_capacity(cap);
@@ -253,7 +259,7 @@ impl Buffer {
         for i in (0..edits.len()).rev() {
             if let (Some(e), Some(slot)) = (edits.get(i), shifts.get_mut(i)) {
                 *slot = current_shift;
-                current_shift += e.insert.len() as isize - (e.end - e.start) as isize;
+                current_shift += edit_delta(e.end - e.start, e.insert.len());
             }
         }
 
@@ -271,12 +277,28 @@ impl Buffer {
             };
             let shift = shifts.get(i).copied().unwrap_or(0);
 
-            new_content.push_str(self.content.get(last_end..e.start).unwrap_or(""));
+            let prefix = self
+                .content
+                .get(last_end..e.start)
+                .ok_or(BufferError::OutOfBounds {
+                    start: last_end,
+                    end: e.start,
+                    len,
+                })?;
+            new_content.push_str(prefix);
             new_content.push_str(&e.insert);
             last_end = e.end;
 
             let start = (e.start as isize + shift).max(0) as usize;
-            let deleted = self.content.get(e.start..e.end).unwrap_or("").to_string();
+            let deleted = self
+                .content
+                .get(e.start..e.end)
+                .ok_or(BufferError::OutOfBounds {
+                    start: e.start,
+                    end: e.end,
+                    len,
+                })?
+                .to_string();
             if let Some(slot) = applied.get_mut(i) {
                 *slot = AppliedEdit {
                     start,
@@ -286,7 +308,19 @@ impl Buffer {
                 };
             }
         }
-        new_content.push_str(self.content.get(last_end..).unwrap_or(""));
+        let tail = self
+            .content
+            .get(last_end..)
+            .ok_or(BufferError::OutOfBounds {
+                start: last_end,
+                end: len,
+                len,
+            })?;
+        new_content.push_str(tail);
+
+        if let Some(start) = duplicate_applied_start(&applied) {
+            return Err(BufferError::DuplicateEditStart { start });
+        }
 
         let new_line_starts = self.update_line_starts(edits);
 
@@ -304,28 +338,28 @@ impl Buffer {
         self.line_starts.len()
     }
 
-    pub fn line_start(&self, n: usize) -> usize {
-        self.line_starts.get(n).copied().unwrap_or(0)
+    /// `None` when `n` is not a valid line index — `0` used to double as
+    /// both "line 0 starts at byte 0" and "no such line" (§1.7 sentinel).
+    pub fn line_start(&self, n: usize) -> Option<usize> {
+        self.line_starts.get(n).copied()
     }
 
-    pub fn line_end(&self, n: usize) -> usize {
+    /// `None` when `n` is not a valid line index (see `line_start`).
+    pub fn line_end(&self, n: usize) -> Option<usize> {
         let count = self.line_starts.len();
         if n >= count {
-            return 0;
+            return None;
         }
         if n == count - 1 {
-            return self.content.len();
+            return Some(self.content.len());
         }
-        self.line_starts
-            .get(n + 1)
-            .copied()
-            .unwrap_or(0)
-            .saturating_sub(1)
+        Some(self.line_starts.get(n + 1).copied()?.saturating_sub(1))
     }
 
     pub fn line(&self, n: usize) -> &str {
-        let start = self.line_start(n);
-        let end = self.line_end(n);
+        let (Some(start), Some(end)) = (self.line_start(n), self.line_end(n)) else {
+            return "";
+        };
         if start <= end && end <= self.content.len() {
             self.content.get(start..end).unwrap_or("")
         } else {
@@ -344,17 +378,16 @@ impl Buffer {
     }
 
     /// Maps a byte OFFSET to a 1-indexed `(line, col)` DISPLAY position —
-    /// the `Ln <n>, Col <n>` footer convention (rune-tui `footer.rs`, plan
-    /// Assumption A3), ported from Go footer's `m.line+1, m.col+1`
-    /// (`footer_view.go:176`). Built on `offset_to_line_col` (0-indexed
-    /// line, BYTE col) plus a rune count over that line's leading byte span:
+    /// the `Ln <n>, Col <n>` footer convention, ported from Go footer's
+    /// `m.line+1, m.col+1`. Built on `offset_to_line_col` (0-indexed line,
+    /// BYTE col) plus a rune count over that line's leading byte span:
     /// display widths are RUNES, never bytes (§1.5) — a multibyte character
     /// before the cursor must count as one column, not `len_utf8()` of
-    /// them. The one small chokepoint Assumption A3 calls for rather than
-    /// re-deriving this at the call site.
+    /// them. The one small chokepoint for that rune count, rather than
+    /// re-deriving it at the call site.
     pub fn display_position(&self, offset: usize) -> (usize, usize) {
         let bp = self.offset_to_line_col(offset);
-        let line_start = self.line_start(bp.line);
+        let line_start = self.line_start(bp.line).unwrap_or(0);
         let byte_col_end = line_start + bp.col;
         let rune_col = self
             .content
@@ -374,7 +407,7 @@ impl Buffer {
         let end = if bp.line == count - 1 {
             self.content.len()
         } else {
-            self.line_end(bp.line)
+            self.line_end(bp.line).unwrap_or(self.content.len())
         };
         // Go's original has a redundant `if bp.Line < len(starts)-1 { return
         // end }; return end` — both arms return `end`; simplified here.
@@ -429,6 +462,31 @@ impl Buffer {
     }
 }
 
+/// The one place `insert_len - deleted_len` is computed — how many bytes a
+/// single edit adds (negative for a net deletion). Re-derived independently
+/// at five call sites before this chokepoint existed (`apply_edits` ×2,
+/// `CursorSet::adjust_after_edit`, `adjust_after_batch_edits` ×2), each free
+/// to make its own clamp decision. Takes plain lengths rather than an
+/// `Edit`/`AppliedEdit` so both crate-side derivations (a range's
+/// `end - start`, or an already-known `deleted.len()`) share it.
+pub fn edit_delta(deleted_len: usize, insert_len: usize) -> isize {
+    insert_len as isize - deleted_len as isize
+}
+
+/// The first `AppliedEdit::start` shared by more than one entry in
+/// `applied`, if any — the corruption shape `BufferError::DuplicateEditStart`
+/// exists to refuse: a batch that is individually valid (non-overlapping,
+/// sorted) can still collapse two edits onto the identical post-edit
+/// position (e.g. two adjacent one-byte deletes).
+pub(crate) fn duplicate_applied_start(applied: &[AppliedEdit]) -> Option<usize> {
+    let mut starts: Vec<usize> = applied.iter().map(|a| a.start).collect();
+    starts.sort_unstable();
+    starts
+        .windows(2)
+        .find(|w| w.first() == w.get(1))
+        .and_then(|w| w.first().copied())
+}
+
 /// Port of `buffer.go:94-101`.
 pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     edits.windows(2).all(|w| match (w.first(), w.get(1)) {
@@ -463,10 +521,10 @@ fn compute_line_starts(content: &str) -> Vec<usize> {
 /// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
 /// rebuilt (`compute_line_starts`, `update_line_starts`) rather than only
 /// documented — via the `STRICT_INVARIANTS`-gated `assert_invariant`
-/// chokepoint (see `lib.rs`'s module docs), so a future change that
-/// reintroduces the empty-index state finding 1 fixed (`Buffer::default()`
-/// used to derive `line_starts: vec![]`) is caught in tests without an
-/// ordinary build ever paying for it.
+/// chokepoint, so a future change that reintroduces the malformed-empty
+/// state (a derived `Default` producing `line_starts: vec![]`, the exact
+/// shape `Buffer`'s manual `Default` above exists to prevent) is caught in
+/// tests without an ordinary build ever paying for it.
 fn assert_line_starts_invariant(line_starts: &[usize]) {
     assert_invariant(line_starts.first().copied() == Some(0), || {
         "line_starts must be non-empty and start with 0".to_string()
@@ -500,9 +558,9 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Assumption A3: `display_position` counts RUNES within the line, not
-    /// bytes — a multibyte char before the offset must advance the column
-    /// by exactly one, never by its `len_utf8()`.
+    /// `display_position` counts RUNES within the line, not bytes — a
+    /// multibyte char before the offset must advance the column by exactly
+    /// one, never by its `len_utf8()`.
     #[test]
     fn display_position_counts_runes_not_bytes_within_the_line() {
         let b = Buffer::new("ab\u{6c49}cd\nsecond");
@@ -550,13 +608,11 @@ mod tests {
                 start: 0,
                 end: 5,
                 insert: "a".to_string(),
-                cursor_id: 0,
             },
             Edit {
                 start: 6,
                 end: 11,
                 insert: "b".to_string(),
-                cursor_id: 0,
             },
         ]);
         assert_eq!(err, Err(BufferError::EditsNotSortedOrOverlapping));
@@ -567,13 +623,11 @@ mod tests {
                 start: 5,
                 end: 10,
                 insert: "a".to_string(),
-                cursor_id: 0,
             },
             Edit {
                 start: 0,
                 end: 6,
                 insert: "b".to_string(),
-                cursor_id: 0,
             },
         ]);
         assert_eq!(err, Err(BufferError::EditsNotSortedOrOverlapping));
@@ -584,13 +638,11 @@ mod tests {
                 start: 6,
                 end: 11,
                 insert: "b".to_string(),
-                cursor_id: 0,
             },
             Edit {
                 start: 0,
                 end: 5,
                 insert: "a".to_string(),
-                cursor_id: 0,
             },
         ]);
         assert!(ok.is_ok());
@@ -604,13 +656,11 @@ mod tests {
                 start: 0,
                 end: 5,
                 insert: "a".to_string(),
-                cursor_id: 0,
             },
             Edit {
                 start: 6,
                 end: 11,
                 insert: "b".to_string(),
-                cursor_id: 0,
             },
         ];
         let sorted = clone_and_sort_edits_descending(&edits);
@@ -632,5 +682,56 @@ mod tests {
 
         let offset = b.line_col_to_offset(bp);
         assert_eq!(offset, 10);
+    }
+
+    #[test]
+    fn line_start_and_end_are_none_past_the_last_line() {
+        let b = Buffer::new("only line");
+        assert_eq!(b.line_count(), 1);
+        assert_eq!(b.line_start(1), None);
+        assert_eq!(b.line_end(1), None);
+        assert_eq!(b.line_start(0), Some(0));
+        assert_eq!(b.line_end(0), Some(9));
+    }
+
+    /// [rune-core 1]: a batch that is individually valid (non-overlapping,
+    /// sorted descending) but whose two edits compute the identical
+    /// post-edit `start` — two adjacent one-byte deletes — is rejected by
+    /// `apply_edits` itself rather than handed to a caller (`undo::reapply`,
+    /// a replayed journal row) that would have to notice on its own.
+    #[test]
+    fn apply_edits_rejects_a_batch_whose_edits_collide_on_post_edit_start() {
+        let b = Buffer::new("ab");
+        let err = b.apply_edits(&[
+            Edit {
+                start: 1,
+                end: 2,
+                insert: String::new(),
+            },
+            Edit {
+                start: 0,
+                end: 1,
+                insert: String::new(),
+            },
+        ]);
+        assert_eq!(err, Err(BufferError::DuplicateEditStart { start: 0 }));
+    }
+
+    /// [rune-core 15]: the incremental `update_line_starts` rebuild has a
+    /// subtle boundary when an edit's `end` lands EXACTLY on an existing
+    /// `line_starts[m]` — `find_line` must treat that boundary consistently
+    /// on both sides of the edit so no line start is duplicated or dropped.
+    #[test]
+    fn update_line_starts_when_edit_end_lands_on_a_line_start_boundary() {
+        let b = Buffer::new("aa\nbb\ncc");
+        // line_starts == [0, 3, 6]. Replace exactly [0, 3) — end lands on
+        // the second line start — with a two-line replacement.
+        let replaced = b.replace(0, 3, "xx\nyy\n").expect("edit should apply");
+        assert_eq!(replaced.content(), "xx\nyy\nbb\ncc");
+        assert_eq!(replaced.line_count(), 4);
+        assert_eq!(replaced.line(0), "xx");
+        assert_eq!(replaced.line(1), "yy");
+        assert_eq!(replaced.line(2), "bb");
+        assert_eq!(replaced.line(3), "cc");
     }
 }

@@ -124,7 +124,9 @@ fn rendered_row_spans_tile_each_line_exactly() {
     let (buf, doc) = synced(NAME_AGE_TABLE, 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     for (line, l) in lines.iter().enumerate().take(buf.line_count()) {
-        let line_start = buf.line_start(line);
+        let line_start = buf
+            .line_start(line)
+            .expect("line is in-range: iterating up to buf.line_count()");
         let line_len = buf.line(line).len();
         let mut cursor = line_start;
         for span in &l.spans {

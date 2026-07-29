@@ -243,8 +243,10 @@ pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
 /// removes) so the two can never disagree about where a line-copy ends.
 pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, usize) {
     let bp = buf.offset_to_line_col(offset);
-    let line_start = buf.line_start(bp.line);
-    let mut line_end = buf.line_end(bp.line);
+    // `bp.line` comes from `offset_to_line_col`, which always yields a
+    // valid line index — both lookups are `Some` by construction.
+    let line_start = buf.line_start(bp.line).unwrap_or(0);
+    let mut line_end = buf.line_end(bp.line).unwrap_or(buf.len());
     if line_end < buf.len() {
         line_end += 1; // include the trailing '\n'
     }

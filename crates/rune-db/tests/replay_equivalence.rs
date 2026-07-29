@@ -136,7 +136,6 @@ proptest! {
                         start: at,
                         end: at,
                         insert: text,
-                        cursor_id: 0,
                     };
                     let (new_buf, applied) =
                         buf.apply_edits(std::slice::from_ref(&edit)).expect("insert must apply");
@@ -161,7 +160,6 @@ proptest! {
                         start,
                         end,
                         insert: String::new(),
-                        cursor_id: 0,
                     };
                     let (new_buf, applied) =
                         buf.apply_edits(std::slice::from_ref(&edit)).expect("delete must apply");

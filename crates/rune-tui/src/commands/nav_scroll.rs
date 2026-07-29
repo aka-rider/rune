@@ -245,7 +245,10 @@ mod tests {
     fn centre_cursor_puts_the_cursor_row_in_the_middle() {
         let mut doc = doc_with_lines(100, 20);
         // Move the cursor to line 50 directly.
-        let offset = doc.buffer.line_start(50);
+        let offset = doc
+            .buffer
+            .line_start(50)
+            .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         centre_cursor(&mut doc);
         assert_eq!(doc.viewport.scroll_row, 40); // 50 - 20/2
@@ -254,7 +257,10 @@ mod tests {
     #[test]
     fn cursor_to_top_scrolls_the_cursor_row_to_row_zero() {
         let mut doc = doc_with_lines(100, 20);
-        let offset = doc.buffer.line_start(50);
+        let offset = doc
+            .buffer
+            .line_start(50)
+            .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         cursor_to_top(&mut doc);
         assert_eq!(doc.viewport.scroll_row, 50);
@@ -263,7 +269,10 @@ mod tests {
     #[test]
     fn cursor_to_bottom_scrolls_the_cursor_row_to_the_last_visible_row() {
         let mut doc = doc_with_lines(100, 20);
-        let offset = doc.buffer.line_start(50);
+        let offset = doc
+            .buffer
+            .line_start(50)
+            .expect("line 50 exists in a 100-line fixture");
         doc.cursors = CursorSet::new(offset);
         cursor_to_bottom(&mut doc);
         assert_eq!(doc.viewport.scroll_row, 50 - 19);

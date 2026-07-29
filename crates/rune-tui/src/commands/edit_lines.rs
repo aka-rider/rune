@@ -64,12 +64,11 @@ fn per_line_edits(
 /// Port of `commands_edit_lines_indent.go:execIndentLine` (Tab).
 pub fn indent(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
-        let line_start = buf.line_start(line);
+        let line_start = buf.line_start(line)?;
         Some(Edit {
             start: line_start,
             end: line_start,
             insert: "\t".to_string(),
-            cursor_id: 0,
         })
     });
 }
@@ -82,8 +81,8 @@ pub fn outdent(app: &mut App, id: DocumentId) {
 }
 
 fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
-    let line_start = buf.line_start(line);
-    let line_end = buf.line_end(line);
+    let line_start = buf.line_start(line)?;
+    let line_end = buf.line_end(line)?;
     let line_text = buf.slice(line_start, line_end).unwrap_or("");
 
     let mut indent_end = 0usize;
@@ -113,7 +112,6 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
         start: line_start,
         end: line_start + remove,
         insert: String::new(),
-        cursor_id: 0,
     })
 }
 
@@ -131,22 +129,19 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
                 start: 0,
                 end: buf.len(),
                 insert: String::new(),
-                cursor_id: 0,
             });
         }
         if line < line_count - 1 {
             Some(Edit {
-                start: buf.line_start(line),
-                end: buf.line_start(line + 1),
+                start: buf.line_start(line)?,
+                end: buf.line_start(line + 1)?,
                 insert: String::new(),
-                cursor_id: 0,
             })
         } else {
             Some(Edit {
-                start: buf.line_end(line - 1),
-                end: buf.line_end(line),
+                start: buf.line_end(line - 1)?,
+                end: buf.line_end(line)?,
                 insert: String::new(),
-                cursor_id: 0,
             })
         }
     });
@@ -160,14 +155,13 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
         if line == 0 {
             return None;
         }
-        let line_start = buf.line_start(line);
-        let line_end = buf.line_end(line);
+        let line_start = buf.line_start(line)?;
+        let line_end = buf.line_end(line)?;
         let text = buf.slice(line_start, line_end).unwrap_or("");
         Some(Edit {
             start: line_start,
             end: line_start,
             insert: format!("{text}\n"),
-            cursor_id: 0,
         })
     });
 }
@@ -175,14 +169,13 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
 /// Port of `commands_edit_lines_multi.go:execCloneLineDown`.
 pub fn clone_line_down(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
-        let line_start = buf.line_start(line);
-        let line_end = buf.line_end(line);
+        let line_start = buf.line_start(line)?;
+        let line_end = buf.line_end(line)?;
         let text = buf.slice(line_start, line_end).unwrap_or("");
         Some(Edit {
             start: line_end,
             end: line_end,
             insert: format!("\n{text}"),
-            cursor_id: 0,
         })
     });
 }
@@ -206,10 +199,18 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         return;
     }
     let l = bp.line;
-    let prev_start = doc.buffer.line_start(l - 1);
-    let prev_end = doc.buffer.line_end(l - 1);
-    let line_start = doc.buffer.line_start(l);
-    let line_end = doc.buffer.line_end(l);
+    let Some(prev_start) = doc.buffer.line_start(l - 1) else {
+        return;
+    };
+    let Some(prev_end) = doc.buffer.line_end(l - 1) else {
+        return;
+    };
+    let Some(line_start) = doc.buffer.line_start(l) else {
+        return;
+    };
+    let Some(line_end) = doc.buffer.line_end(l) else {
+        return;
+    };
     let text_prev = doc
         .buffer
         .slice(prev_start, prev_end)
@@ -229,7 +230,6 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         start: prev_start,
         end: line_end,
         insert: format!("{text_l}\n{text_prev}"),
-        cursor_id: cid,
     };
 
     apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
@@ -256,10 +256,18 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         return;
     }
     let l = bp.line;
-    let line_start = doc.buffer.line_start(l);
-    let line_end = doc.buffer.line_end(l);
-    let next_start = doc.buffer.line_start(l + 1);
-    let next_end = doc.buffer.line_end(l + 1);
+    let Some(line_start) = doc.buffer.line_start(l) else {
+        return;
+    };
+    let Some(line_end) = doc.buffer.line_end(l) else {
+        return;
+    };
+    let Some(next_start) = doc.buffer.line_start(l + 1) else {
+        return;
+    };
+    let Some(next_end) = doc.buffer.line_end(l + 1) else {
+        return;
+    };
     let text_l = doc
         .buffer
         .slice(line_start, line_end)
@@ -279,7 +287,6 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         start: line_start,
         end: next_end,
         insert: format!("{text_next}\n{text_l}"),
-        cursor_id: cid,
     };
 
     apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
