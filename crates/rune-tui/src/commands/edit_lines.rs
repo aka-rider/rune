@@ -125,6 +125,13 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
         let line_count = buf.line_count();
         if line_count == 1 {
+            if buf.is_empty() {
+                // An empty buffer's one line has nothing to delete — a
+                // `0,0,""` edit would be a true no-op the user still has
+                // to ⌘Z through (matching `outdent`'s own `None` on its
+                // analogous no-op case, just below).
+                return None;
+            }
             return Some(Edit {
                 start: 0,
                 end: buf.len(),
@@ -374,6 +381,19 @@ mod tests {
     }
 
     #[test]
+    fn delete_line_on_an_empty_buffer_is_a_true_no_op_not_a_journaled_step() {
+        let mut app = app_with("", 0);
+        let id = app.active;
+        delete_line(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "");
+        assert_eq!(
+            app.doc(id).unwrap().journal.len(),
+            0,
+            "an empty buffer has nothing to delete — no Step, nothing to ⌘Z through"
+        );
+    }
+
+    #[test]
     fn delete_line_then_undo_restores_the_buffer() {
         let mut app = app_with("one\ntwo\nthree", "one\n".len());
         let id = app.active;
@@ -416,6 +436,40 @@ mod tests {
         clone_line_down(&mut app, id);
         undo(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), original);
+    }
+
+    #[test]
+    fn clone_line_down_with_two_cursors_on_the_same_line_clones_it_twice_and_keeps_both_cursors() {
+        // Two cursors sharing "two" derive byte-identical zero-width
+        // insert edits at the same point (`per_line_edits(dedupe=false)`
+        // keys on `line_start`, not on cursor identity) — the exact shape
+        // `edit_core::coalesce_touching_edits` used to wrongly collapse
+        // 2->1, silently dropping one cursor's own clone. Both edits must
+        // survive uncoalesced: the line clones once PER CURSOR, and the
+        // cursor set stays at 2.
+        let mut app = app_with("one\ntwo", 4);
+        let id = app.active;
+        let doc = app.doc_mut(id).unwrap();
+        doc.cursors = doc.cursors.clone().add(Cursor {
+            position: 7,
+            anchor: 7,
+            desired_col: 0,
+            id: 0,
+        });
+        assert_eq!(
+            doc.cursors.len(),
+            2,
+            "fixture must hold two cursors on the same line"
+        );
+
+        clone_line_down(&mut app, id);
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo\ntwo\ntwo");
+        assert_eq!(
+            app.doc(id).unwrap().cursors.len(),
+            2,
+            "neither cursor's clone may be silently dropped"
+        );
     }
 
     #[test]
