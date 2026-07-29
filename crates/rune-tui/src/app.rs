@@ -11,7 +11,7 @@
 //! handle, and UI chrome state that spans every document (status message,
 //! quit-confirm arming, the degraded-store banner).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use rune_vfs::Vfs;
 use crate::banner::Modal;
 use crate::db::Db;
 use crate::dispatch;
-use crate::document::{Document, DocumentId};
+use crate::document::{Document, DocumentId, DocumentMap};
 use crate::explorer::Explorer;
 use crate::keymap::QuitKey;
 use crate::opentabs::OpenTabs;
@@ -59,7 +59,7 @@ pub enum StatusSource {
 /// recovery store (app-level half), and app-wide UI state (status message,
 /// quit-confirm arming) that doesn't belong to any one document.
 pub struct App {
-    pub documents: BTreeMap<DocumentId, Document>,
+    pub documents: DocumentMap,
     pub active: DocumentId,
     next_doc_id: NonZeroU64,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
@@ -245,9 +245,8 @@ impl App {
             document.bind_path(path);
         }
 
-        let mut documents = BTreeMap::new();
         let id = DocumentId(NonZeroU64::MIN);
-        documents.insert(id, document);
+        let documents = DocumentMap::new(id, document);
 
         App {
             documents,
@@ -347,27 +346,20 @@ impl App {
         self.documents.get_mut(&id)
     }
 
-    /// `documents` is structurally non-empty (`App::new` inserts one;
-    /// nothing today ever removes an entry) — a future close feature must
-    /// reassign `active` to a survivor before removing the old entry, so
-    /// this floor-to-the-first-entry branch stays dead code rather than a
-    /// masked bug.
-    #[allow(clippy::unwrap_used)]
+    /// Infallible by construction, not by convention: `DocumentMap` (plan
+    /// WP5.S5) guarantees at least one entry always exists, so "`active`
+    /// names a removed document" falls back to that guaranteed entry
+    /// instead of needing a `#[allow(clippy::unwrap_used)]` escape hatch —
+    /// `workspace::close_now` still reassigns `active` to a real neighbor
+    /// before removing, so this fallback is never actually exercised in
+    /// practice, but it is real code with a real answer, not a masked
+    /// panic.
     pub fn active_doc(&self) -> &Document {
-        match self.documents.get(&self.active) {
-            Some(doc) => doc,
-            None => self.documents.values().next().unwrap(),
-        }
+        self.documents.get_or_anchor(&self.active)
     }
 
-    #[allow(clippy::unwrap_used)]
     pub fn active_doc_mut(&mut self) -> &mut Document {
-        let key = if self.documents.contains_key(&self.active) {
-            self.active
-        } else {
-            *self.documents.keys().next().unwrap()
-        };
-        self.documents.get_mut(&key).unwrap()
+        self.documents.get_or_anchor_mut(&self.active)
     }
 
     /// Convenience delegate to the active document's dirty cache

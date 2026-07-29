@@ -221,14 +221,19 @@ mod tests {
     #[test]
     fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
         let mut app = app();
-        app.doc_mut(app.active).expect("active doc exists").is_dirty_cached = true;
+        app.doc_mut(app.active)
+            .expect("active doc exists")
+            .is_dirty_cached = true;
         assert!(app.active_doc().db.is_none(), "test setup: no db binding");
 
         let mut effects = Effects::default();
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
 
-        assert!(!app.should_quit, "quit must not complete while unpreserved dirty work exists");
+        assert!(
+            !app.should_quit,
+            "quit must not complete while unpreserved dirty work exists"
+        );
         assert!(
             matches!(
                 app.modal,
@@ -247,7 +252,9 @@ mod tests {
     #[test]
     fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
         let mut app = app();
-        app.doc_mut(app.active).expect("active doc exists").is_dirty_cached = true;
+        app.doc_mut(app.active)
+            .expect("active doc exists")
+            .is_dirty_cached = true;
         app.doc_mut(app.active).expect("active doc exists").db =
             Some(crate::db::DocDb::new(1, 0, true, 0));
 

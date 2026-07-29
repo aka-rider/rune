@@ -422,10 +422,7 @@ pub fn handle_load_ack(
         }
     };
     if let Some(reason) = refusal {
-        app.set_status(
-            format!("crash recovery: {reason}"),
-            StatusSource::Other,
-        );
+        app.set_status(format!("crash recovery: {reason}"), StatusSource::Other);
     }
 
     let Some(doc) = app.doc_mut(id) else { return };

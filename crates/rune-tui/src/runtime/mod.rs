@@ -267,7 +267,13 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // one-off field write) so `Msg::Resize`'s effect on the viewport has
     // exactly one implementation, exercised the same way on every resize.
     let (width, height) = guard.size()?;
-    apply(app, Msg::Resize(width, height), &mut guard, &tx, &mut save_handles)?;
+    apply(
+        app,
+        Msg::Resize(width, height),
+        &mut guard,
+        &tx,
+        &mut save_handles,
+    )?;
 
     // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
