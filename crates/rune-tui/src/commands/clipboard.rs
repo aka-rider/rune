@@ -18,11 +18,34 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 
 use crate::app::App;
-use crate::clipboard::{osc52_copy, pbpaste_cmd};
+use crate::banner;
+use crate::clipboard::{OSC52_MAX_PAYLOAD_BYTES, osc52_copy, pbpaste_cmd};
 use crate::commands::edit;
 use crate::commands::nav;
 use crate::document::DocumentId;
 use crate::runtime::Effects;
+
+/// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
+/// OSC52_MAX_PAYLOAD_BYTES` — reports a banner instead of silently writing
+/// a sequence a terminal multiplexer would just drop (plan WP13.S4).
+/// Shared by `copy` and `cut` so the cap can never drift between them.
+fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
+    if text.is_empty() {
+        return;
+    }
+    if text.len() > OSC52_MAX_PAYLOAD_BYTES {
+        banner::report_error(
+            app,
+            format!(
+                "selection too large to copy to the system clipboard \
+                 ({} bytes, limit {OSC52_MAX_PAYLOAD_BYTES})",
+                text.len()
+            ),
+        );
+        return;
+    }
+    effects.raw.push(osc52_copy(text.as_bytes()));
+}
 
 /// Port of `commands_clipboard.go:extractCopyText`. Single cursor (Phase
 /// 1's only case): the selection text, or — with no selection — the whole
@@ -68,9 +91,7 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
-    if !text.is_empty() {
-        effects.raw.push(osc52_copy(text.as_bytes()));
-    }
+    write_to_clipboard_or_report(app, &text, effects);
 }
 
 /// Port of `commands_clipboard.go:clipboardCut`: the same copy text as
@@ -78,16 +99,19 @@ pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// removed), plus a journaled delete of the same range(s) via
 /// `commands::edit::delete_selection_or_line` — reusing the existing
 /// selection-replacing edit machinery rather than duplicating the batch-
-/// apply/journal logic here. The OSC 52 write is pushed unconditionally
-/// once there's text to send, independent of whether the delete itself
-/// succeeds (mirrors Go's `command.Result` returning `Cmd:
-/// clipboardWriteCmd(text)` alongside the edit operation unconditionally).
+/// apply/journal logic here. `write_to_clipboard_or_report` runs BEFORE
+/// the delete (plan WP13.S4, `rune-tui C 6`): an over-cap selection raises
+/// a banner instead of silently writing a sequence a terminal multiplexer
+/// would just drop, so the user learns the cut never reached the system
+/// clipboard before its bytes are gone from the buffer too — the delete
+/// itself always proceeds either way, since it's journaled/undoable
+/// regardless of what happened to the clipboard (mirrors Go's `command.
+/// Result` returning `Cmd: clipboardWriteCmd(text)` alongside the edit
+/// operation unconditionally).
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
-    if !text.is_empty() {
-        effects.raw.push(osc52_copy(text.as_bytes()));
-    }
+    write_to_clipboard_or_report(app, &text, effects);
     edit::delete_selection_or_line(app, id);
 }
 
@@ -210,6 +234,59 @@ mod tests {
             app.doc(id).unwrap().buffer.content(),
             "hello world",
             "undo must restore what cut removed"
+        );
+    }
+
+    /// WP13.S4 (`rune-tui C 6`): a selection over `OSC52_MAX_PAYLOAD_BYTES`
+    /// must not reach `effects.raw` at all — writing it would just be a
+    /// sequence a terminal multiplexer silently drops — and must instead
+    /// raise a banner so the user learns the copy never reached the
+    /// system clipboard.
+    #[test]
+    fn copy_over_the_osc52_cap_reports_a_banner_instead_of_writing_raw() {
+        let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
+        let mut app = app_with(&huge, 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, huge.len());
+        let mut effects = Effects::default();
+        copy(&mut app, id, &mut effects);
+
+        assert!(
+            effects.raw.is_empty(),
+            "an over-cap selection must never reach the OSC 52 raw output"
+        );
+        assert!(
+            app.modal.is_some(),
+            "an over-cap copy must raise a banner reporting the failure"
+        );
+    }
+
+    /// The cut half of the same cap (plan WP13.S4): the banner is raised
+    /// BEFORE the delete runs, but the delete still proceeds either way —
+    /// it's journaled/undoable regardless of what happened to the
+    /// clipboard, so refusing it too would trade one silent failure for a
+    /// second one.
+    #[test]
+    fn cut_over_the_osc52_cap_reports_a_banner_but_still_deletes() {
+        let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
+        let mut app = app_with(&huge, 0);
+        let id = app.active;
+        selecting(&mut app, id, 0, huge.len());
+        let mut effects = Effects::default();
+        cut(&mut app, id, &mut effects);
+
+        assert!(
+            effects.raw.is_empty(),
+            "an over-cap selection must never reach the OSC 52 raw output"
+        );
+        assert!(
+            app.modal.is_some(),
+            "an over-cap cut must raise a banner reporting the failure"
+        );
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            "",
+            "the delete must still proceed even when the clipboard write is refused"
         );
     }
 

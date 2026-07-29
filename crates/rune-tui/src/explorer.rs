@@ -124,9 +124,9 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 /// session falls back to `app.root` (the workspace root discovered at
 /// startup), and only when THAT is also unresolved (still empty) does this
 /// fall back to the literal `"."`. Resolved through `app.vfs` (§1.4.9) so
-/// `Disk` canonicalizes it exactly like every other filesystem entry point,
-/// and `Mem` (tests) returns it unchanged (`Vfs::resolve`'s identity
-/// behavior there).
+/// `Disk` canonicalizes it exactly like every other filesystem entry point;
+/// `Mem` (tests) normalizes it lexically to its own synthetic root (`Mem`
+/// has no real cwd to canonicalize `"."` against).
 pub fn initial_root(app: &App) -> PathBuf {
     let base = app
         .active_doc()
@@ -205,24 +205,28 @@ fn visible_rows(app: &App) -> usize {
 /// Opens the currently selected entry: a file activates it through
 /// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
 /// the Explorer into it (plan WP4.S3: "Open on a file → workspace::
-/// open_path; Open on a dir → dir load Cmd for the new root"). The
-/// directory branch resolves the candidate root through `app.vfs.resolve`
-/// first (§1.4.9), same as `initial_root`/`open_path` already do — a plain
-/// `join` would let an unresolved (e.g. symlinked) path become the
-/// Explorer's new root, unlike every other root-changing path in this
-/// module. Falls back to the unresolved path on a `resolve` error, mirroring
-/// `workspace::open_path`'s own `unwrap_or_else` fallback (Prime Directive:
-/// a resolve failure must never just strand the user mid-navigation).
+/// open_path; Open on a dir → dir load Cmd for the new root"). The target
+/// path comes straight from `entry.path` — the byte-exact path `Vfs::
+/// read_dir` returned (plan WP13.S1) — never rejoined from `entry.name`
+/// onto `app.explorer.root`: `name` is lossy-decoded for display, and
+/// rejoining it would let a byte the user's filename actually has silently
+/// become U+FFFD in the path the app opens (§0). The directory branch
+/// resolves the candidate root through `app.vfs.resolve` first (§1.4.9),
+/// same as `initial_root`/`open_path` already do — a plain `join` would let
+/// an unresolved (e.g. symlinked) path become the Explorer's new root,
+/// unlike every other root-changing path in this module. Falls back to the
+/// unresolved path on a `resolve` error, mirroring `workspace::open_path`'s
+/// own `unwrap_or_else` fallback (Prime Directive: a resolve failure must
+/// never just strand the user mid-navigation).
 fn open_selected(app: &mut App, effects: &mut Effects) {
-    let Some((name, is_dir)) = app
+    let Some((target, is_dir)) = app
         .explorer
         .entries
         .get(app.explorer.nav.cursor)
-        .map(|e| (e.name.clone(), e.is_dir))
+        .map(|e| (e.path.clone(), e.is_dir))
     else {
         return;
     };
-    let target = app.explorer.root.join(&name);
     if is_dir {
         let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
         request_dir(app, resolved, effects);
@@ -291,10 +295,10 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
 /// produced. `Nav` always adopts the new root/entries and resets the cursor
 /// to the top; `Refresh` keeps the currently selected entry selected BY
 /// NAME when it's still present in the new listing (falling back to the
-/// top otherwise), and is the shape a later fsnotify-driven reload would
-/// use — no production caller constructs `DirCause::Refresh` yet (plan Out
-/// of scope: "fsnotify/vfs-watch"), but the branch is exercised directly by
-/// `tests/explorer.rs`.
+/// top otherwise) — this is exactly what `refresh_for` (above) issues on
+/// every successful rename that lands inside the current Explorer root, so
+/// the branch has a real production caller, not just this file's own
+/// tests; it's also the shape a later fsnotify-driven reload would use.
 pub(crate) fn handle_dir_loaded(
     app: &mut App,
     root: PathBuf,
@@ -405,6 +409,7 @@ mod tests {
             .iter()
             .map(|(name, is_dir)| DirEntry {
                 name: (*name).to_string(),
+                path: PathBuf::from(*name),
                 is_dir: *is_dir,
             })
             .collect()
@@ -555,8 +560,13 @@ mod tests {
 
     #[test]
     fn initial_root_falls_back_to_dot_when_app_root_is_also_unresolved() {
+        // `initial_root` computes the literal `"."` fallback and then
+        // resolves it through `app.vfs`; against `Mem` (WP1.S6) that
+        // lexically normalizes to the synthetic root `"/"` rather than
+        // staying identity, the same way `Disk::resolve` would canonicalize
+        // `"."` to an absolute path rather than leaving it literal.
         let app = app();
-        assert_eq!(initial_root(&app), PathBuf::from("."));
+        assert_eq!(initial_root(&app), PathBuf::from("/"));
     }
 
     #[test]

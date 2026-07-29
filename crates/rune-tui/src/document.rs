@@ -23,7 +23,7 @@ use rune_syntax::{DocumentKind, ScopeId};
 use crate::db::DocDb;
 
 mod viewport;
-pub use viewport::{ScrollMode, Viewport};
+pub use viewport::{ScrollMode, Viewport, visible_rows};
 
 /// Derives the producer a path should use (plan WP4.S4): no path at all
 /// (an untitled draft) or a `.md` extension stays `Markdown`; an extension

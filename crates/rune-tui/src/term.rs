@@ -13,13 +13,12 @@
 //!
 //! Cooked-mode restoration is NOT this module's job: `termina::UnixTerminal`
 //! already runs `enter_cooked_mode()` unconditionally from its own `Drop`
-//! (`termina-0.3.3/src/terminal/unix.rs:236-242` — the skip condition,
-//! `has_panic_hook && thread::panicking()`, never applies here since this
-//! crate never installs a termina panic hook), so `Guard::drop` only needs
-//! to reverse the escape sequences it wrote by hand (alt screen, bracketed
-//! paste, Kitty flags, cursor visibility) — it never reaches into the
-//! wrapped `PlatformTerminal` at all, so no `unstable-backend-writer`
-//! feature is needed.
+//! (the one skip condition, `has_panic_hook && thread::panicking()`, never
+//! applies here since this crate never installs a termina panic hook), so
+//! `Guard::drop` only needs to reverse the escape sequences it wrote by
+//! hand (alt screen, bracketed paste, Kitty flags, cursor visibility) — it
+//! never reaches into the wrapped `PlatformTerminal` at all, so no
+//! `unstable-backend-writer` feature is needed.
 
 use std::io::{self, Write};
 

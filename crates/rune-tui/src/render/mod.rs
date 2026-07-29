@@ -57,16 +57,15 @@ pub fn style_for(theme: &Theme, id: ScopeId) -> Style {
 
 /// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
 /// "control picture" glyph (`U+2400..=U+2421`) so a raw control byte never
-/// reaches `ratatui::buffer::Cell::set_symbol`. ratatui-core's `cell_width()`
-/// `debug_assert!`s that a single-byte symbol is never
-/// `u8::is_ascii_control` (`cell_width.rs:36`) — feeding it a literal `\r`,
-/// `\x07`, `\x0c`, etc. panics a debug build the instant that cell is diffed
-/// (an unsaved buffer lost, with no recovery store in Phase 1) and silently
-/// corrupts the row in a release build. `\n`/`\r` and `\t` are handled
-/// separately in `push_grapheme_cells` below and never reach this function;
-/// any other Unicode control category (e.g. C1, `0x80..=0x9f`) has no
-/// assigned control-picture glyph and falls back to the replacement
-/// character.
+/// reaches `ratatui::buffer::Cell::set_symbol`. ratatui-core's own
+/// `cell_width()` asserts that a single-byte symbol is never
+/// `u8::is_ascii_control` — feeding it a literal `\r`, `\x07`, `\x0c`, etc.
+/// panics a debug build the instant that cell is diffed (an unsaved buffer
+/// lost, with no recovery store in Phase 1) and silently corrupts the row
+/// in a release build. `\n`/`\r` and `\t` are handled separately in
+/// `push_grapheme_cells` below and never reach this function; any other
+/// Unicode control category (e.g. C1, `0x80..=0x9f`) has no assigned
+/// control-picture glyph and falls back to the replacement character.
 fn control_placeholder(ch: char) -> char {
     match ch as u32 {
         0x00..=0x1f => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{FFFD}'),
@@ -108,7 +107,7 @@ fn control_placeholder(ch: char) -> char {
 /// assumption actually holds for cells THIS code writes directly via
 /// `cell_mut` (which, unlike `set_string`, does no such reset on its own).
 ///
-/// `visual_col` bookkeeping for a MULTI-rune cluster comes from `rune_md::
+/// `visual_col` bookkeeping for a MULTI-rune cluster comes from `rune_syntax::
 /// wrap::grapheme_width` — the exact same function `wrap_line`'s own greedy
 /// line-breaking and `WrapSnapshot::visual_col`/`byte_col_from_visual` call
 /// for the same cluster — so the shared-chokepoint property (wrap's width
@@ -262,13 +261,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let doc = app.active_doc();
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
-    let height = viewport.height as usize;
-    let mut rows: Vec<Vec<Cell>> = view
-        .display
-        .rows()
-        .iter()
-        .skip(viewport.scroll_row)
-        .take(height)
+    let mut rows: Vec<Vec<Cell>> = crate::document::visible_rows(view.display.rows(), viewport)
         .map(|row| segment_cells(&app.theme, content, &row.spans))
         .collect();
 
@@ -309,11 +302,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
 
-    // The left column is drawn only when geometry gave it a block this
-    // frame; `draw_left_pane` re-checks and no-ops on `None` anyway.
-    if geo.left_block.is_some() {
-        draw_left_pane(app, &geo, frame);
-    }
+    // `draw_left_pane` itself no-ops on `geo.left_block == None` (plan
+    // WP13.S6: the review-caught redundant guard used to re-check the same
+    // condition here first).
+    draw_left_pane(app, &geo, frame);
 
     if geo.center_bordered {
         let block = Block::bordered()
@@ -421,18 +413,33 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
             if x >= right {
                 break;
             }
+            let width = u16::from(cell.width.max(1));
+            // WP13.S2: a cell that *starts* inside `area` can still not
+            // *fit* — a double-width glyph landing on the last column
+            // would need a continuation cell past `right` that this loop
+            // never writes, leaving the border's own cell un-reset there
+            // (ratatui's diffing then never revisits it, so the gap
+            // persists across frames — the resize-race defect this guards
+            // against). Substitute a single blank cell instead of the
+            // glyph whenever it wouldn't fully fit.
+            let fits = x.saturating_add(width) <= right;
             if let Some(target) = buf.cell_mut((x, y)) {
-                target.set_symbol(&cell.text);
+                if fits {
+                    target.set_symbol(&cell.text);
+                } else {
+                    target.set_symbol(" ");
+                }
                 target.set_style(cell.style);
             }
-            let width = u16::from(cell.width.max(1));
-            for dx in 1..width {
-                let cx = x.saturating_add(dx);
-                if cx >= right {
-                    break;
-                }
-                if let Some(cont) = buf.cell_mut((cx, y)) {
-                    cont.reset();
+            if fits {
+                for dx in 1..width {
+                    let cx = x.saturating_add(dx);
+                    if cx >= right {
+                        break;
+                    }
+                    if let Some(cont) = buf.cell_mut((cx, y)) {
+                        cont.reset();
+                    }
                 }
             }
             x = x.saturating_add(width);

@@ -6,7 +6,7 @@
 //! `mkdir_all`. Unlike the Go interface (which is method-parity with
 //! `os.*`), the Rust shape is already split so a caller can capture
 //! displaced bytes before they're discarded (§1.4.10) — see the module docs
-//! on `Vfs::save_atomic` and the `capture_before_discard` test.
+//! on `Vfs::save_atomic` below.
 //!
 //! Two implementations: `Disk` (production, Darwin `renamex_np` atomic
 //! publish) and `Mem` (fully in-memory, for tests and — eventually — the
@@ -21,6 +21,76 @@ use std::{io, process};
 
 pub use disk::Disk;
 pub use mem::{Mem, OpKind};
+
+/// Error-wrap chokepoint (WP1.S4): wraps `e` with `context` while keeping
+/// `e` itself reachable as [`std::error::Error::source`] — so a caller can
+/// still classify the ORIGINAL failure (`kind()`, `raw_os_error()`) instead
+/// of that classification being erased into a display string, which is what
+/// the naive `io::Error::new(e.kind(), format!(...))` pattern this replaces
+/// used to do (`raw_os_error()` is only ever `Some` on an unwrapped OS
+/// error).
+#[derive(Debug)]
+struct WrappedIo {
+    context: String,
+    source: io::Error,
+    /// WP1.S1: set only when the underlying swap/rename already took effect
+    /// before this error occurred (a post-publish durability confirmation
+    /// failure, e.g. `Disk`'s parent fsync or a `Mem::fail_after`
+    /// injection) — see [`published_not_durable`].
+    published: bool,
+}
+
+impl std::fmt::Display for WrappedIo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for WrappedIo {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// See [`WrappedIo`]. Preserves `e`'s `kind()` on the outer `io::Error`.
+pub(crate) fn wrap_io(e: io::Error, context: impl Into<String>) -> io::Error {
+    let kind = e.kind();
+    io::Error::new(
+        kind,
+        WrappedIo {
+            context: context.into(),
+            source: e,
+            published: false,
+        },
+    )
+}
+
+/// Same as [`wrap_io`], additionally marking the error as
+/// [`published_not_durable`]: the publish (swap/rename) already took effect
+/// when this failure occurred.
+pub(crate) fn wrap_io_published(e: io::Error, context: impl Into<String>) -> io::Error {
+    let kind = e.kind();
+    io::Error::new(
+        kind,
+        WrappedIo {
+            context: context.into(),
+            source: e,
+            published: true,
+        },
+    )
+}
+
+/// True when `e` carries the [`wrap_io_published`] marker: an
+/// `exchange`/`rename_excl` publish already took effect before `e`
+/// occurred, so a temp file naming the operation's source path holds
+/// content (the sole surviving copy of whatever the publish displaced, or
+/// of the caller's own just-published bytes) that must not be discarded —
+/// `save_atomic` is the first caller (WP1.S1/S2).
+pub fn published_not_durable(e: &io::Error) -> bool {
+    e.get_ref()
+        .and_then(|inner| inner.downcast_ref::<WrappedIo>())
+        .is_some_and(|w| w.published)
+}
 
 /// The stable (inode, device) identity of a file. History is keyed to it
 /// rather than the path so a rename does not orphan history (CONSTITUTION
@@ -69,17 +139,33 @@ pub enum FileKind {
 }
 
 /// A single direct child of a directory, as returned by [`Vfs::read_dir`].
+///
+/// `name` and `path` are DELIBERATELY both carried, additively (plan
+/// WP13.S1 — this is not a "pick one" API): `name` is the lossy-decoded
+/// `String` display/sort form (`sort_dir_entries`'s `to_lowercase`, and
+/// `rune-fuzz`'s text script codec, both need a total, always-valid `str`
+/// that an `OsString` cannot give them without breaking script replay);
+/// `path` is the byte-exact full path to open — never lossy-decoded and
+/// never rebuilt by joining `name` back onto a parent (§0: joining a
+/// lossy-decoded name into a real path is what let the app mangle and then
+/// open a name the user never had). A caller that needs to OPEN the entry
+/// uses `path`; a caller that only displays or sorts uses `name`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
-    /// The entry's own name (not a full path) — the final component you'd
-    /// join onto the directory that was listed.
+    /// The entry's own name (not a full path) — lossy-decoded, display and
+    /// sort only. Never join this back onto a directory to build an
+    /// openable path; use `path` instead.
     pub name: String,
+    /// The entry's full, byte-exact path — what `Disk` read from the raw
+    /// `file_name()` `OsString` (never round-tripped through `String`) and
+    /// what `Mem` derived from its own key. Always safe to open.
+    pub path: PathBuf,
     pub is_dir: bool,
 }
 
-/// A virtual file system exposing the materialize-complete primitive set
-/// (plan decision 12), plus `read_dir` for directory enumeration.
-/// `Trash`/`Rename` are still deferred to the features that consume them.
+/// A virtual file system exposing the materialize-complete primitive set,
+/// plus `read_dir` for directory enumeration. `Trash`/`Rename` are still
+/// deferred to the features that consume them.
 ///
 /// All methods take `&self` (not `&mut self`) so implementations can use
 /// interior mutability — `Disk` is stateless, `Mem` uses `Mutex`.
@@ -167,7 +253,31 @@ pub trait Vfs {
                 }
                 Ok(())
             }
+            Err(e) if published_not_durable(&e) => {
+                // WP1.S1/S2: the publish already took effect — `dest` holds
+                // the new bytes and `temp` is now the SOLE surviving copy of
+                // whatever `dest` held before this call (the swap displaced
+                // it there, and nothing else ever reads `temp` back for the
+                // caller). Removing it here would be exactly the §1.4.10
+                // violation this type exists to prevent, so it is kept —
+                // the same deliberate keep-temp-on-error shape
+                // `rune-db::materialize` already uses around its own
+                // `exchange` call. The error message says so, and the
+                // marker is carried onto the re-wrapped error too, so a
+                // caller further up can still observe it.
+                Err(wrap_io_published(
+                    e,
+                    format!(
+                        "save published but durability could not be confirmed; \
+                         the prior content is preserved at {}",
+                        temp.display()
+                    ),
+                ))
+            }
             Err(e) => {
+                // The publish never took effect (`dest` is unchanged): the
+                // temp holds nothing that isn't also still safe on `dest`,
+                // so removing it is the original, non-destructive behavior.
                 let _ = self.remove(&temp);
                 Err(e)
             }
@@ -178,8 +288,7 @@ pub trait Vfs {
 /// The single chokepoint for `read_dir`'s ordering contract — shared by
 /// `Disk` and `Mem` so both backends sort identically instead of each
 /// re-implementing the comparator. Directories sort before files; within
-/// each group, the primary key is the LOWERCASED name (matching the Go
-/// reference's `strings.ToLower(a.Name) < strings.ToLower(b.Name)`), with the exact
+/// each group, the primary key is the LOWERCASED name, with the exact
 /// (original-case) name as a tie-break so two names differing only by case
 /// (`"File.md"` vs `"file.md"`) still sort deterministically rather than
 /// depending on `sort_by`'s stability + whatever order the caller happened

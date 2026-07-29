@@ -2,6 +2,8 @@
 //! split out of `generate` (§1.6 budget) — every one of these draws its
 //! fixed data from `palette.rs`.
 
+use std::path::PathBuf;
+
 use proptest::prelude::*;
 use proptest::sample::select;
 
@@ -153,7 +155,15 @@ fn cluster_async_deliver() -> impl Strategy<Value = Vec<Action>> {
 /// waste its shrink budget on absurdly long ones) plus an arbitrary
 /// `is_dir`.
 fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
-    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| DirEntry { name, is_dir })
+    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| {
+        // WP13.S1: the fuzzer's fixture names are always plain ASCII, so
+        // `path` derived straight from `name` round-trips exactly — the
+        // lossy-decode gap this field exists to close only ever opens on
+        // real, non-UTF-8 filenames, which `rune-vfs`'s own tests cover
+        // directly.
+        let path = PathBuf::from(&name);
+        DirEntry { name, path, is_dir }
+    })
 }
 
 fn arb_dir_cause() -> impl Strategy<Value = DirCause> {

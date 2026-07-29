@@ -148,6 +148,50 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
     assert_eq!(app.active_doc().buffer.content(), "b content");
 }
 
+/// WP13.S1 (finding `rune-tui C 1`): a directory entry whose filename is
+/// not valid UTF-8 must still open the RIGHT file. `entry.name` is
+/// necessarily lossy (may collapse to U+FFFD), so if `open_selected`
+/// rejoined `root.join(&entry.name)` — the pre-fix code — it would target
+/// a path the user's file was never actually saved at. Opening instead
+/// through `entry.path` (byte-exact, straight from `Mem`'s own key) must
+/// reach the real file and its real bytes.
+#[test]
+fn enter_on_a_non_utf8_named_file_opens_the_byte_exact_path() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mem = seeded_vfs();
+    let raw_name = OsStr::from_bytes(b"caf\xE9.md"); // invalid UTF-8
+    let raw_path = PathBuf::from("/root").join(raw_name);
+    mem.save_atomic(&raw_path, b"non-utf8-named content")
+        .expect("seed the non-UTF-8 named file");
+
+    let mut app = app_with(&mem);
+    load_explorer(&mut app);
+    let idx = app
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name.contains('\u{FFFD}'))
+        .expect("the non-UTF-8 name is listed, lossily, as containing U+FFFD");
+    assert_eq!(
+        app.explorer.entries[idx].path, raw_path,
+        "the entry's `path` must be the byte-exact key, not the lossy name"
+    );
+    app.explorer.nav.cursor = idx;
+
+    let mut effects = Effects::default();
+    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(raw_path.as_path()),
+        "the opened document's path must be the real, byte-exact path"
+    );
+    assert_eq!(app.active_doc().buffer.content(), "non-utf8-named content");
+}
+
 #[test]
 fn enter_on_a_directory_issues_a_read_dir_cmd() {
     let mem = seeded_vfs();
@@ -268,18 +312,22 @@ fn refresh_cause_preserves_the_selected_entry_by_name() {
             entries: vec![
                 rune_vfs::DirEntry {
                     name: "new.md".to_string(),
+                    path: PathBuf::from("/root/new.md"),
                     is_dir: false,
                 },
                 rune_vfs::DirEntry {
                     name: "a.md".to_string(),
+                    path: PathBuf::from("/root/a.md"),
                     is_dir: false,
                 },
                 rune_vfs::DirEntry {
                     name: "b.md".to_string(),
+                    path: PathBuf::from("/root/b.md"),
                     is_dir: false,
                 },
                 rune_vfs::DirEntry {
                     name: "sub".to_string(),
+                    path: PathBuf::from("/root/sub"),
                     is_dir: true,
                 },
             ],
@@ -322,6 +370,7 @@ fn an_out_of_order_stale_dir_loaded_reply_is_ignored() {
             root: PathBuf::from("/stale/should-not-apply"),
             entries: vec![rune_vfs::DirEntry {
                 name: "should-not-appear".to_string(),
+                path: PathBuf::from("/stale/should-not-appear"),
                 is_dir: false,
             }],
             cause: rune_tui::runtime::DirCause::Nav,

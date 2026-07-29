@@ -533,6 +533,53 @@ fn one_by_one_backend_does_not_panic() {
     let _buf = draw_into(&app, 1, 1);
 }
 
+/// WP13.S2 regression: `blit` must fits-check, not just start-check, a
+/// wide `Cell`. A double-width glyph placed so it STARTS inside the area
+/// but would need a column past `area`'s right edge (the border column,
+/// one past the last column blit owns) must not touch that column at all
+/// — `blit` should fall back to a blank single-width cell instead of
+/// writing the glyph and letting its continuation spill over.
+#[test]
+fn blit_does_not_overpaint_past_the_right_edge_with_a_wide_glyph() {
+    use ratatui::layout::Rect;
+
+    let area = Rect::new(0, 0, 3, 1); // columns 0,1,2 owned by blit
+    let narrow = |text: &str| render::Cell {
+        text: text.to_string(),
+        width: 1,
+        style: ratatui::style::Style::default(),
+        buf_offset: 0,
+    };
+    let wide = render::Cell {
+        text: "\u{1F600}".to_string(), // U+1F600, width 2
+        width: 2,
+        style: ratatui::style::Style::default(),
+        buf_offset: 0,
+    };
+    // "a" at x=0, "b" at x=1, wide glyph STARTS at x=2 (inside `area`, the
+    // last owned column) but needs x=2..4 — one column past `right`(3).
+    let rows = vec![vec![narrow("a"), narrow("b"), wide]];
+
+    // Backend is one column wider than `area`; column 3 stands in for the
+    // pane border blit must never touch.
+    let buf = testgrid::draw_with(4, 1, |frame| render::blit(&rows, area, frame));
+
+    assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("a"));
+    assert_eq!(buf.cell((1, 0)).map(|c| c.symbol()), Some("b"));
+    assert_eq!(
+        buf.cell((2, 0)).map(|c| c.symbol()),
+        Some(" "),
+        "the wide glyph doesn't fit in the last column of a 3-wide area — \
+         blit must substitute a blank cell rather than the glyph"
+    );
+    assert_eq!(
+        buf.cell((3, 0)).map(|c| c.symbol()),
+        Some(" "),
+        "column 3 is outside `area` entirely (the border column) and must \
+         stay untouched/blank"
+    );
+}
+
 /// WP2 Done-when: a table's Grid layout reaches the real terminal render
 /// through the full `App` pipeline, not just `rune-md`'s own `emit` unit
 /// tests. Cursor sits in the trailing "tail" paragraph, well outside the

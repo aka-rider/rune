@@ -10,9 +10,9 @@ use crate::app::App;
 
 /// One visible display row's table affiliation, index-aligned with
 /// `render::build_rows`'s own output (`row_meta` below windows
-/// `view.display.rows()` through the SAME `viewport.scroll_row`/`height`
-/// `build_rows` uses), so `Snapshot.cells[i]` and `Snapshot.row_meta[i]`
-/// always describe the same row.
+/// `view.display.rows()` through `document::visible_rows` — the SAME
+/// chokepoint `build_rows` uses), so `Snapshot.cells[i]` and
+/// `Snapshot.row_meta[i]` always describe the same row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowMeta {
     /// Mirrors `DisplayRow::synthetic` (`rune_md::snapshot`) — a
@@ -40,20 +40,13 @@ pub struct RowMeta {
 pub fn row_meta(view: &ViewSnapshots, app: &App) -> Vec<RowMeta> {
     let doc = app.active_doc();
     let viewport = &doc.viewport;
-    let height = viewport.height as usize;
     let segments = view.wrap.segments();
 
     let mut out = Vec::new();
     let mut current_group: Option<usize> = None;
     let mut next_id = 0usize;
 
-    for row in view
-        .display
-        .rows()
-        .iter()
-        .skip(viewport.scroll_row)
-        .take(height)
-    {
+    for row in crate::document::visible_rows(view.display.rows(), viewport) {
         let is_table = row.synthetic
             || segments
                 .get(row.wrap_row)

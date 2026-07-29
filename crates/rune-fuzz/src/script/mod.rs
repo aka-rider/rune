@@ -111,6 +111,7 @@ mod tests {
     use rune_tui::keymap::{KeyCode, KeyInput, Mods};
     use rune_tui::runtime::DirCause;
     use rune_vfs::DirEntry;
+    use std::path::PathBuf;
 
     /// Fails loudly on an unexpected `Err` without an infallible-unwrap call
     /// (keeps this whole file free of that family of call, tests included).
@@ -152,10 +153,12 @@ mod tests {
                 entries: vec![
                     DirEntry {
                         name: "sub dir".to_string(), // a literal space in the name
+                        path: PathBuf::from("sub dir"),
                         is_dir: true,
                     },
                     DirEntry {
                         name: "a.md".to_string(),
+                        path: PathBuf::from("a.md"),
                         is_dir: false,
                     },
                 ],
