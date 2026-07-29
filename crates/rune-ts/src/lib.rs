@@ -7,6 +7,6 @@ pub mod highlight;
 pub mod lang;
 pub mod registry;
 
-pub use highlight::{HighlightResult, MAX_SPANS, highlight};
+pub use highlight::{HighlightResult, MAX_SPANS, Reparser, highlight};
 pub use lang::resolve;
 pub use registry::registry;

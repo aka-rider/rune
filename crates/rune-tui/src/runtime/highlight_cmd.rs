@@ -5,6 +5,7 @@
 //! in `rune-tui` does (see `highlight_cmd`'s own doc comment).
 
 use std::ops::Range;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rune_syntax::ScopeId;
@@ -33,19 +34,35 @@ pub const HIGHLIGHT_RETRY_BUDGET: Duration = Duration::from_millis(750);
 /// [`super::load_dir_cmd`]'s owned `root`) since the `Cmd` closure is
 /// `FnOnce() -> Option<Msg> + Send + 'static` and cannot borrow the
 /// document's buffer across the thread boundary. Always replies with
-/// `Some(..)` — even a `None` result from `rune_ts::highlight` — so
-/// `in_flight` is guaranteed to clear on the UI thread; `rune_ts::highlight`
-/// itself never panics (§1.3: it surfaces a failed language load or query
-/// compile as `None`, never `ts_assert`'s `SIGABRT`, since every parse is a
-/// full parse — no incremental-reparse edit is ever fed back into it). This
-/// is the ONLY place `rune-tui` reaches `rune_ts::highlight` — a background
-/// thread, never the UI thread.
-pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: String) -> Cmd {
+/// `Some(..)` — even a `None` result from the parse — so `in_flight` is
+/// guaranteed to clear on the UI thread; the parse itself never panics
+/// (§1.3: it surfaces a failed language load or query compile as `None`,
+/// never `ts_assert`'s `SIGABRT`). This is the ONLY place `rune-tui` reaches
+/// tree-sitter parsing — a background thread, never the UI thread.
+///
+/// `reparser` is `id`'s own retained parse state (plan WP16.S3), shared —
+/// not cloned — from `Document::highlight::reparser`: reusing it lets
+/// tree-sitter reparse incrementally off the previous call's tree instead
+/// of from scratch on every keystroke. Locking it here never contends with
+/// the UI thread: `schedule_highlight`'s `in_flight` gate already bounds a
+/// document to at most one highlight `Cmd` running at a time, so no other
+/// thread touches this `Mutex` while this closure runs.
+pub fn highlight_cmd(
+    doc: DocumentId,
+    version: u64,
+    lang: &'static str,
+    source: String,
+    reparser: Arc<Mutex<rune_ts::Reparser>>,
+) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
+        let result = reparser
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .highlight(lang, &source, HIGHLIGHT_BUDGET);
         Some(Msg::Highlighted {
             doc,
             version,
-            result: rune_ts::highlight(lang, &source, HIGHLIGHT_BUDGET),
+            result,
         })
     })
 }
@@ -54,18 +71,24 @@ pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: 
 /// widened `HIGHLIGHT_RETRY_BUDGET` and replying `Msg::HighlightRetried`
 /// instead of `Msg::Highlighted` — see that variant's doc comment for why a
 /// distinct reply, not a second call into `highlight_cmd`, is what keeps
-/// this retry bounded at exactly one extra attempt.
+/// this retry bounded at exactly one extra attempt. Shares the same
+/// retained `reparser` for the same incremental-reparse benefit.
 pub fn highlight_retry_cmd(
     doc: DocumentId,
     version: u64,
     lang: &'static str,
     source: String,
+    reparser: Arc<Mutex<rune_ts::Reparser>>,
 ) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
+        let result = reparser
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .highlight(lang, &source, HIGHLIGHT_RETRY_BUDGET);
         Some(Msg::HighlightRetried {
             doc,
             version,
-            result: rune_ts::highlight(lang, &source, HIGHLIGHT_RETRY_BUDGET),
+            result,
         })
     })
 }

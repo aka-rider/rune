@@ -11,6 +11,7 @@
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::WrapPoint;
@@ -76,6 +77,20 @@ pub struct HighlightState {
     /// uncoloured. Recorded so the state is observable and testable rather
     /// than silent; nothing surfaces it in the UI yet.
     pub truncated: bool,
+    /// This document's retained tree-sitter parse state (plan WP16.S3):
+    /// shared (never cloned) into the highlight `Cmd` closure so a
+    /// whole-document (`DocumentKind::Code`) parse can reparse
+    /// incrementally off the previous tree instead of from scratch on every
+    /// keystroke. A `Mutex` only because the `Cmd` closure crosses the
+    /// thread boundary — never actually contended: `in_flight` already
+    /// bounds this document to at most one highlight `Cmd` running at a
+    /// time, so the UI thread and the background thread never touch it
+    /// concurrently. Unused (stays at its default, empty state) for a
+    /// markdown document's fenced-code path, which reparses each fence
+    /// fresh every call (`highlight::code_fence_sources` rebuilds the
+    /// reconstructed source from scratch regardless, so there is no stable
+    /// per-fence identity to key a retained tree on).
+    pub reparser: Arc<Mutex<rune_ts::Reparser>>,
     /// Test-only instrumentation (plan WP16.S2): counts how many times
     /// `highlight::resolve_highlight_source` actually built a
     /// `HighlightSource` for this document — the full-buffer clone the

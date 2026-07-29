@@ -62,7 +62,13 @@ impl From<Vec<(Range<usize>, ScopeId)>> for HighlightResult {
 /// new information" and keep whatever spans they already had, not erase
 /// them.
 ///
-/// Every call is a full parse — incremental reparse is never attempted.
+/// Always a full parse — no retained tree to reparse incrementally from.
+/// Callers that highlight the SAME document repeatedly (the whole-buffer
+/// path a typed keystroke re-triggers) should use [`Reparser`] instead; this
+/// function stays for one-shot callers with no document identity to key a
+/// retained tree on (each fence in a markdown document is reparsed fresh
+/// every time regardless, since a fence's reconstructed source is rebuilt
+/// from scratch on every call anyway).
 pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<HighlightResult> {
     let name = lang::resolve(lang)?;
     let (language, query) = registry().get(name)?;
@@ -70,6 +76,80 @@ pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<Highlight
     let mut parser = Parser::new();
     parser.set_language(language).ok()?;
 
+    let tree = parse(&mut parser, source, budget, None)?;
+    Some(spans_from_tree(&tree, query, source.as_bytes()))
+}
+
+/// Per-document incremental-reparse state (plan WP16.S3): retains the
+/// tree-sitter `Tree` and source text the last successful [`Reparser::
+/// highlight`] call built, so the NEXT call — if it names the same language
+/// — can feed tree-sitter a single `InputEdit` (the common-prefix/suffix
+/// diff against the retained source) instead of parsing from scratch.
+/// `HIGHLIGHT_BUDGET`/[`MAX_SPANS`] stay in force exactly as they do for the
+/// free [`highlight`] function; incremental reparse only changes how much
+/// WORK a parse within that budget has to redo, never the budget or cap
+/// themselves. One `Reparser` belongs to exactly one document — mixing
+/// documents (or a document that changes language) through the same
+/// instance just falls back to a full parse on the mismatch, it never
+/// produces a wrong result.
+#[derive(Debug, Default)]
+pub struct Reparser {
+    tree: Option<tree_sitter::Tree>,
+    source: String,
+    lang: Option<&'static str>,
+}
+
+impl Reparser {
+    pub fn new() -> Reparser {
+        Reparser::default()
+    }
+
+    /// Same contract as [`highlight`] (parses `source` as `lang` within
+    /// `budget`, `None` on an unrecognised language/query-compile failure/
+    /// timeout), but reuses the previous call's retained tree as the
+    /// reparse base when `lang` is unchanged and a diff against the
+    /// previous source can be computed — tree-sitter then only re-walks
+    /// the nodes the edit actually touched. Falls back to a full parse
+    /// (tree-sitter's own `old_tree: None` contract) on the first call, a
+    /// language change, or an identical source (`diff_edit` returning
+    /// `None`, nothing to feed as an edit). A timed-out call leaves the
+    /// retained tree/source as they were: the failed attempt never partakes
+    /// in a LATER call's diff, so one slow parse degrades that one call
+    /// only, not every call after it.
+    pub fn highlight(&mut self, lang: &str, source: &str, budget: Duration) -> Option<HighlightResult> {
+        let name = lang::resolve(lang)?;
+        let (language, query) = registry().get(name)?;
+
+        let mut parser = Parser::new();
+        parser.set_language(language).ok()?;
+
+        let old_tree = (self.lang == Some(name))
+            .then(|| self.tree.take())
+            .flatten()
+            .and_then(|mut tree| {
+                let edit = diff_edit(&self.source, source)?;
+                tree.edit(&edit);
+                Some(tree)
+            });
+
+        let tree = parse(&mut parser, source, budget, old_tree.as_ref())?;
+        let result = spans_from_tree(&tree, query, source.as_bytes());
+        self.tree = Some(tree);
+        self.source = source.to_string();
+        self.lang = Some(name);
+        Some(result)
+    }
+}
+
+/// The parse call itself, shared by [`highlight`] and [`Reparser::
+/// highlight`] — the only difference between a full and an incremental
+/// parse is whether `old_tree` is `Some`.
+fn parse(
+    parser: &mut Parser,
+    source: &str,
+    budget: Duration,
+    old_tree: Option<&tree_sitter::Tree>,
+) -> Option<tree_sitter::Tree> {
     // `Instant + Duration` panics on overflow; a public function taking an
     // arbitrary caller-supplied `Duration` must not trust it to stay in
     // range. `checked_add` returning `None` (a `budget` so large the
@@ -86,17 +166,22 @@ pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<Highlight
     };
 
     let bytes = source.as_bytes();
-    let tree = parser.parse_with_options(
+    parser.parse_with_options(
         // The tail slice at the given offset, never the whole buffer — see
         // this crate's module docs on why the callback must be shaped this
         // way. `.get` keeps this clear of the `indexing_slicing` lint and
         // `unwrap_or_default` yields the empty slice the end-of-input
         // contract requires, without being the denied `unwrap_used`.
         &mut |i, _| bytes.get(i..).unwrap_or_default(),
-        None,
+        old_tree,
         Some(ParseOptions::new().progress_callback(&mut on_progress)),
-    )?;
+    )
+}
 
+/// Walks `tree`'s query captures into painter-ordered, scope-resolved spans
+/// — the tail half of both [`highlight`] and [`Reparser::highlight`], once
+/// each has its own `Tree` (a fresh one or an incrementally reparsed one).
+fn spans_from_tree(tree: &tree_sitter::Tree, query: &tree_sitter::Query, bytes: &[u8]) -> HighlightResult {
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(query, tree.root_node(), bytes);
     let mut spans: Vec<(Range<usize>, ScopeId, usize)> = Vec::new();
@@ -131,11 +216,170 @@ pub fn highlight(lang: &str, source: &str, budget: Duration) -> Option<Highlight
             .then(a.2.cmp(&b.2))
     });
 
-    Some(HighlightResult {
+    HighlightResult {
         spans: spans
             .into_iter()
             .map(|(range, scope_id, _)| (range, scope_id))
             .collect(),
         truncated,
+    }
+}
+
+/// The single `InputEdit` tree-sitter needs to reparse incrementally,
+/// derived from the common byte prefix/suffix between `old` and `new` —
+/// `Reparser` has no access to the actual edit the user made (only the
+/// before/after whole-document text), so this reconstructs an equivalent
+/// edit rather than requiring one to be threaded through from the buffer's
+/// own edit machinery. `None` when `old == new` (nothing changed, no edit
+/// to feed). Byte-based throughout, never `char`-based: tree-sitter's
+/// `InputEdit`/`Point` are byte offsets, and prefix/suffix bytes are never
+/// sliced back out as `str`, so no UTF-8 boundary requirement applies.
+fn diff_edit(old: &str, new: &str) -> Option<tree_sitter::InputEdit> {
+    if old == new {
+        return None;
+    }
+    let old_bytes = old.as_bytes();
+    let new_bytes = new.as_bytes();
+    let max_common = old_bytes.len().min(new_bytes.len());
+
+    let mut prefix = 0usize;
+    while prefix < max_common && old_bytes[prefix] == new_bytes[prefix] {
+        prefix += 1;
+    }
+
+    let max_suffix = max_common - prefix;
+    let mut suffix = 0usize;
+    while suffix < max_suffix
+        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+
+    let start_byte = prefix;
+    let old_end_byte = old_bytes.len() - suffix;
+    let new_end_byte = new_bytes.len() - suffix;
+
+    Some(tree_sitter::InputEdit {
+        start_byte,
+        old_end_byte,
+        new_end_byte,
+        start_position: point_at(old, start_byte),
+        old_end_position: point_at(old, old_end_byte),
+        new_end_position: point_at(new, new_end_byte),
     })
+}
+
+/// The `tree_sitter::Point` (row, byte-column) of byte offset `byte` in
+/// `text` — a plain linear scan over `text[..byte]`, bounded by the edit
+/// position rather than the document length in the common case (an edit
+/// near the start or end of a large document), and cheap regardless
+/// compared to the parse it feeds into.
+fn point_at(text: &str, byte: usize) -> tree_sitter::Point {
+    let mut row = 0usize;
+    let mut last_newline: Option<usize> = None;
+    for (i, b) in text.as_bytes()[..byte].iter().enumerate() {
+        if *b == b'\n' {
+            row += 1;
+            last_newline = Some(i);
+        }
+    }
+    let column = match last_newline {
+        Some(nl) => byte - nl - 1,
+        None => byte,
+    };
+    tree_sitter::Point { row, column }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    const BUDGET: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn reparser_first_call_is_a_full_parse_and_matches_the_free_function() {
+        let source = "fn main() {\n    let a = 1;\n}\n";
+        let mut reparser = Reparser::new();
+        let incremental = reparser
+            .highlight("rust", source, BUDGET)
+            .expect("trivial rust source must parse");
+        let full = highlight("rust", source, BUDGET).expect("trivial rust source must parse");
+        assert_eq!(incremental, full);
+    }
+
+    #[test]
+    fn reparser_produces_the_same_spans_as_a_full_parse_after_an_edit() {
+        let before = "fn main() {\n    let a = 1;\n}\n";
+        let after = "fn main() {\n    let abcde = 1;\n}\n";
+
+        let mut reparser = Reparser::new();
+        reparser
+            .highlight("rust", before, BUDGET)
+            .expect("first parse must succeed");
+        let incremental = reparser
+            .highlight("rust", after, BUDGET)
+            .expect("incremental reparse must succeed");
+
+        let full = highlight("rust", after, BUDGET).expect("full parse of the edited text");
+        assert_eq!(
+            incremental, full,
+            "an incremental reparse must produce identical spans to a full parse of the same text"
+        );
+    }
+
+    #[test]
+    fn reparser_falls_back_to_a_full_parse_on_a_language_change() {
+        let rust_source = "fn main() {}\n";
+        let json_source = "{\"a\": 1}\n";
+
+        let mut reparser = Reparser::new();
+        reparser
+            .highlight("rust", rust_source, BUDGET)
+            .expect("rust parse must succeed");
+        let switched = reparser
+            .highlight("json", json_source, BUDGET)
+            .expect("json parse must succeed after a language switch");
+
+        let full = highlight("json", json_source, BUDGET).expect("full json parse");
+        assert_eq!(switched, full);
+    }
+
+    #[test]
+    fn reparser_handles_repeated_edits_at_growing_lengths() {
+        // A closer approximation of real typing: the same document, edited
+        // several times in a row, each building on the previous retained
+        // tree — not just a single before/after pair.
+        let mut reparser = Reparser::new();
+        let mut source = String::from("fn main() {\n    let a = 1;\n}\n");
+        let mut last = None;
+        for extra in ["a", "b", "c", "d"] {
+            // Insert right after the stable "let " prefix each time, so the
+            // anchor never depends on text a previous iteration changed.
+            let at = source.find("let ").expect("marker") + "let ".len();
+            source.insert_str(at, extra);
+            last = Some(
+                reparser
+                    .highlight("rust", &source, BUDGET)
+                    .expect("each incremental step must succeed"),
+            );
+        }
+        let full = highlight("rust", &source, BUDGET).expect("full parse of the final text");
+        assert_eq!(last.expect("looped at least once"), full);
+    }
+
+    #[test]
+    fn diff_edit_is_none_for_identical_text() {
+        assert!(diff_edit("same text\n", "same text\n").is_none());
+    }
+
+    #[test]
+    fn diff_edit_finds_the_minimal_common_prefix_and_suffix() {
+        let old = "abcXYZdef";
+        let new = "abc123456def";
+        let edit = diff_edit(old, new).expect("texts differ");
+        assert_eq!(edit.start_byte, 3);
+        assert_eq!(edit.old_end_byte, 6); // "XYZ" ends at byte 6
+        assert_eq!(edit.new_end_byte, 9); // "123456" ends at byte 9
+    }
 }

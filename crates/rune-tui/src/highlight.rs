@@ -66,18 +66,23 @@ fn resolve_highlight_source(app: &mut App, id: DocumentId) -> Option<HighlightSo
 /// turn a resolved `HighlightSource` into the right `Cmd` — `is_retry`
 /// picks `runtime::highlight_retry_cmd`/`fence_highlight_retry_cmd` (the
 /// widened budget, `Msg::HighlightRetried` reply) over the normal pair.
+/// `reparser` (plan WP16.S3) is `id`'s own retained incremental-parse
+/// state, shared into the `Whole` variant's `Cmd` — the `Fences` variant
+/// ignores it, since each fence is reparsed fresh from its reconstructed
+/// source every call regardless.
 fn dispatch_highlight_cmd(
     id: DocumentId,
     version: u64,
     source: HighlightSource,
     is_retry: bool,
+    reparser: std::sync::Arc<std::sync::Mutex<rune_ts::Reparser>>,
 ) -> runtime::Cmd {
     match (source, is_retry) {
         (HighlightSource::Whole(lang, text), false) => {
-            runtime::highlight_cmd(id, version, lang, text)
+            runtime::highlight_cmd(id, version, lang, text, reparser)
         }
         (HighlightSource::Whole(lang, text), true) => {
-            runtime::highlight_retry_cmd(id, version, lang, text)
+            runtime::highlight_retry_cmd(id, version, lang, text, reparser)
         }
         (HighlightSource::Fences(fences), false) => {
             runtime::fence_highlight_cmd(id, version, fences)
@@ -133,9 +138,10 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
     };
     let Some(doc) = app.doc_mut(id) else { return };
     doc.highlight.in_flight = Some(version);
+    let reparser = doc.highlight.reparser.clone();
     effects
         .cmds
-        .push(dispatch_highlight_cmd(id, version, source, false));
+        .push(dispatch_highlight_cmd(id, version, source, false, reparser));
 }
 
 /// Finding B's single bounded retry: called only from `dispatch::
@@ -160,9 +166,10 @@ pub(crate) fn retry_highlight(app: &mut App, id: DocumentId, version: u64, effec
     }
     let Some(doc) = app.doc_mut(id) else { return };
     doc.highlight.in_flight = Some(version);
+    let reparser = doc.highlight.reparser.clone();
     effects
         .cmds
-        .push(dispatch_highlight_cmd(id, version, source, true));
+        .push(dispatch_highlight_cmd(id, version, source, true, reparser));
 }
 
 /// Resolves a fenced code block's info string to a canonical language name
