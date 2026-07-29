@@ -258,8 +258,17 @@ impl Document {
     /// a new cursor position.
     pub fn view(&mut self) -> ViewSnapshots {
         self.doc.set_focus(self.focused);
+        let built_before = self.doc.built_version();
         self.doc.sync_content(&self.buffer);
-        self.catalogue = rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
+        // Same guard `DocMachine::snapshot` uses: the catalogue is derived
+        // solely from buffer content + blocks, so it only needs rebuilding
+        // when `sync_content` actually reparsed (a real content edit, or the
+        // very first call) — not on every `view()`, which commands may call
+        // several times per message batch for coordinate conversions alone.
+        if self.doc.built_version() != built_before {
+            self.catalogue =
+                rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
+        }
         self.doc.set_width(self.viewport.width);
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)

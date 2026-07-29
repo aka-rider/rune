@@ -23,6 +23,7 @@ use rune_syntax::wrap::WrapSnapshot;
 /// table borders synthesised in (WP3's `DisplaySnapshot::expand_tables`) —
 /// every display-space consumer (rendering, the viewport, mouse
 /// hit-testing) reads row geometry from `display`, never `wrap` directly.
+#[derive(Clone)]
 pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
@@ -36,6 +37,19 @@ pub struct DocMachine {
     built_version: u64,
     dirty: bool,
     kind: DocumentKind,
+    /// The memo `snapshot` returns a clone of when `dirty` is false —
+    /// `None` only before the first `snapshot` call. `dirty` is the single
+    /// guard: every setter that can change what `snapshot` would compute
+    /// (`sync_content` on a version change, `set_width`, `sync_cursors`/
+    /// `set_focus` on a reveal-relevant change) sets it, so a `view()` call
+    /// that changed none of those inputs gets the cached clone instead of
+    /// re-running emit + wrap + `expand_tables`.
+    cached: Option<ViewSnapshots>,
+    /// Counts actual `rebuild` calls (never memo hits) — test-only
+    /// instrumentation for asserting `snapshot`'s memoization, not a
+    /// production concern.
+    #[cfg(test)]
+    rebuild_count: std::cell::Cell<usize>,
 }
 
 impl Default for DocMachine {
@@ -56,7 +70,25 @@ impl DocMachine {
             built_version: 0,
             dirty: true,
             kind: DocumentKind::Markdown,
+            cached: None,
+            #[cfg(test)]
+            rebuild_count: std::cell::Cell::new(0),
         }
+    }
+
+    /// Test-only: the number of `rebuild` calls (memo misses) so far.
+    #[cfg(test)]
+    pub(crate) fn rebuild_count(&self) -> usize {
+        self.rebuild_count.get()
+    }
+
+    /// The buffer version `blocks` was last built from — `0` before the
+    /// first `sync_content` call (never a real `Buffer::version()`, which
+    /// starts at 1). `Document::view` reads this before/after `sync_content`
+    /// to decide whether the catalogue needs rebuilding, without needing its
+    /// own copy of the reparse guard.
+    pub fn built_version(&self) -> u64 {
+        self.built_version
     }
 
     /// The single writer of `state` for `DocMachine` — the crate's other
@@ -187,16 +219,48 @@ impl DocMachine {
     /// `emit` -> wrap (keyed off the root-owned `self.wrap`) ->
     /// `DisplaySnapshot`. The wrap pass runs only here — children never wrap
     /// themselves (plan Context, "Emit -> wrap -> snapshot").
+    ///
+    /// Memoized on `dirty`: a `view()` call that changed none of
+    /// `sync_content`/`set_width`/`sync_cursors`/`set_focus`'s inputs gets a
+    /// clone of the last computed `ViewSnapshots` instead of re-running
+    /// emit + `WrapMap::sync` + `expand_tables` — commands may call `view()`
+    /// (and so `snapshot`) several times per message batch by sanctioned
+    /// design, and a keystroke that only moved the cursor touches none of
+    /// those inputs.
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
+        if !self.dirty {
+            if let Some(cached) = &self.cached {
+                return cached.clone();
+            }
+        }
+        let view = self.rebuild(buf);
+        self.dirty = false;
+        self.cached = Some(view.clone());
+        view
+    }
+
+    fn rebuild(&self, buf: &Buffer) -> ViewSnapshots {
+        #[cfg(test)]
+        self.rebuild_count.set(self.rebuild_count.get() + 1);
         let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks, self.wrap.width);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
-        self.dirty = false;
         ViewSnapshots {
             syntax,
             wrap,
             display,
         }
+    }
+
+    /// Bypasses the `snapshot` memo entirely — for verifying
+    /// `SYNC-IDEMPOTENT` (a second sync produces the same display as the
+    /// first) against a genuine rebuild rather than a memo hit, which would
+    /// pass trivially now that `snapshot` caches. Gated on
+    /// `strict-invariants` (and test builds) because it exists only for that
+    /// verification; production code must always go through `snapshot`.
+    #[cfg(any(test, feature = "strict-invariants"))]
+    pub fn force_rebuild(&self, buf: &Buffer) -> ViewSnapshots {
+        self.rebuild(buf)
     }
 }
 
@@ -272,6 +336,49 @@ mod tests {
             doc.blocks()[0].reveal_state(),
             rune_syntax::element::RevealState::Revealed,
             "sync_content must not reparse when buf.version() is unchanged"
+        );
+    }
+
+    #[test]
+    fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
+        // The keystroke-latency regression this test guards: `view()` may be
+        // called several times per message batch by sanctioned design, and a
+        // cursor-only move changes none of `sync_content`/`set_width`/
+        // `sync_cursors`/`set_focus`'s inputs — the second `snapshot` call
+        // must be a memo hit, not a second emit + wrap + `expand_tables`.
+        let mut doc = DocMachine::new();
+        doc.set_focus(true);
+        let buf = Buffer::new("# hello\nworld\n");
+        let cursors = CursorSet::new(0);
+
+        doc.sync_content(&buf);
+        doc.set_width(80);
+        doc.sync_cursors(&buf, &cursors);
+        let first = doc.snapshot(&buf);
+        assert_eq!(doc.rebuild_count(), 1);
+
+        // Same version, same width, same cursor/reveal state: the whole
+        // per-message sync sequence again, exactly as `Document::view` would
+        // run it for a second call within the same batch.
+        doc.sync_content(&buf);
+        doc.set_width(80);
+        doc.sync_cursors(&buf, &cursors);
+        let second = doc.snapshot(&buf);
+        assert_eq!(
+            doc.rebuild_count(),
+            1,
+            "a second view() call with no changed input must be a memo hit"
+        );
+        assert_eq!(first.display.total_rows(), second.display.total_rows());
+
+        // Sanity: a real input change (width) still forces a rebuild.
+        doc.set_width(40);
+        doc.sync_cursors(&buf, &cursors);
+        doc.snapshot(&buf);
+        assert_eq!(
+            doc.rebuild_count(),
+            2,
+            "a genuine width change must still force a rebuild"
         );
     }
 
