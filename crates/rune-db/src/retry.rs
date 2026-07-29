@@ -102,6 +102,11 @@ pub fn with_retry<T>(
                 },
             },
             Err(err) => {
+                // `Transaction::drop` would roll back anyway if not
+                // committed; the explicit call just does it eagerly. A
+                // failure here leaves nothing uncommitted that wasn't
+                // already going to be discarded — `err` below is what
+                // actually gets surfaced.
                 let _ = tx.rollback();
                 let sqlite_err = match &err {
                     Error::Sqlite(e) => Some(e),

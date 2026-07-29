@@ -232,6 +232,9 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
         request_dir(app, resolved, effects);
     } else {
+        // `open_path` reports a read failure through `banner::report_error`
+        // itself before returning `None` — discarding the `Option` here
+        // drops only the opened id, never an unsurfaced error.
         let _ = workspace::open_path(app, &target);
     }
 }

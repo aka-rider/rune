@@ -109,6 +109,8 @@ fn reader_loop(conn: Connection, receiver: mpsc::Receiver<Request>) {
         // subsequent requests rather than parking the whole thread.
         let outcome = panic::catch_unwind(AssertUnwindSafe(|| execute(&conn, req.kind)))
             .unwrap_or_else(|_| Err(Error::ReaderGone));
+        // A send failure means the caller stopped waiting (dropped its
+        // receiver) — there is no one left to hand `outcome` to.
         let _ = req.reply.send(outcome);
     }
 }

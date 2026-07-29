@@ -55,7 +55,7 @@ use crate::workspace;
 const SAVE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The snapshot-autosave debounce window (plan WP5.S6, port of
-/// `workspace_timers.go:11`'s 2s debounce).
+/// `workspace_timers.go`'s 2s debounce).
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 
 /// WP7: the content/path/CAS facts `materialize_now`/`bind_new_now` capture
@@ -108,7 +108,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         // no-arg launch opens) has nothing to save yet — ⌘S here means
         // "name it", so route it into the same "pathless draft is a
         // CREATE" flow `rename::begin` already implements
-        // (`rename.rs:212-218` -> `bind_new`): focus the title field so the
+        // (`rename.rs` -> `bind_new`): focus the title field so the
         // user can type a name; Enter from there commits the create, and
         // `Document::bind_path` (routed through by both `bind_to` and
         // `handle_materialize_ack` below) is what actually switches the
@@ -535,6 +535,8 @@ fn run_materialize_vfs(
             resolved_path: resolved,
         };
     }
+    // Hash matched: `temp` has already been read and verified above, its
+    // job done — a failed cleanup here just leaks a scratch file.
     let _ = vfs.remove(&temp);
     MaterializeVfsOutcome::Committed {
         data: data.to_vec(),
