@@ -8,15 +8,16 @@
 //! iff version changed -> `set_width` -> `sync_cursors` -> `snapshot` ->
 //! scroll-to-cursor).
 
+use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use rune_core::buffer::Buffer;
+use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
-use rune_core::undo::Journal;
+use rune_core::undo::{Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_syntax::{DocumentKind, ScopeId};
 
@@ -197,6 +198,29 @@ pub struct Document {
     pub highlight: HighlightState,
 }
 
+/// The outcome of [`Document::hydrate`] — the shared hydration-adoption
+/// chokepoint (plan WP5.S2).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Hydration {
+    /// `recovered` was identical to `disk_content` — nothing to adopt.
+    NoChange,
+    /// `recovered` replaced the buffer, journaled as one synthetic bridge
+    /// `Step` so ⌘Z reaches `disk_content`, and the buffer is now dirty.
+    Adopted,
+    /// Adoption was refused; the buffer is unchanged. Carries the reason
+    /// for the caller to surface (a banner/status message).
+    Refused(&'static str),
+}
+
+/// A `recovered` far shorter than `disk_content` (or emptying it outright)
+/// is not a legitimate recovery — it is the CONSTITUTION §1.3 "destructive
+/// async edit" pattern (a watcher/IME/dictation reset caught mid-write), and
+/// adopting it would silently discard content the user can see on screen.
+/// `disk_content` empty has nothing to protect, so it never trips this.
+fn is_suspicious_shrink(disk_content: &str, recovered: &str) -> bool {
+    !disk_content.is_empty() && recovered.len() * 2 < disk_content.len()
+}
+
 impl Document {
     pub fn new(buffer: Buffer) -> Document {
         let saved_version = buffer.version();
@@ -229,12 +253,57 @@ impl Document {
         self.is_dirty_cached
     }
 
-    /// Marks the freshly constructed buffer dirty relative to the file it
-    /// was hydrated from — for `rune-cli::main`'s bootstrap ONLY, called (at
-    /// most once, before the runtime loop and thus before `update` has ever
-    /// run) when `rune-db`'s `Load` ack reports `recovered != disk_content`.
+    /// Marks the buffer dirty relative to the file it was hydrated from.
+    /// Called from [`Document::hydrate`] on every adoption — both the
+    /// bootstrap path (`rune-cli::main`, before the runtime loop) and the
+    /// live per-document hydration ack (`db::handle_load_ack`, from inside
+    /// `update`) reach this through that one chokepoint, never directly.
     pub fn mark_dirty_from_hydration(&mut self) {
         self.is_dirty_cached = true;
+    }
+
+    /// The one hydration-adoption chokepoint (plan WP5.S2): `self.buffer` is
+    /// assumed to hold exactly `disk_content` (the caller's job — the
+    /// bootstrap path just loaded it straight off disk; `db::handle_load_ack`
+    /// checks the buffer's version hasn't moved since `Load` was issued
+    /// first). Applies three things every hydration route must do
+    /// identically, so they cannot drift apart again:
+    ///
+    /// (a) the §1.3 destructive-async-reset suspicion check — refuses an
+    /// adoption that would empty or drastically shrink a non-empty buffer,
+    /// leaving `self` untouched;
+    /// (b) journals the adoption as one synthetic bridge `Step` (pushed
+    /// directly, never through `commands::edit::commit_edit_batch`/`db::
+    /// append_edit` — the durable side already has this content, only the
+    /// LOCAL undo journal needs the anchor) so ⌘Z reaches `disk_content`;
+    /// (c) surfaces an `apply_edits` failure as a refusal rather than an
+    /// unannotated no-op.
+    pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
+        if recovered == disk_content {
+            return Hydration::NoChange;
+        }
+        if is_suspicious_shrink(disk_content, recovered) {
+            return Hydration::Refused(
+                "recovered draft looked truncated relative to the file on disk — kept the on-disk version",
+            );
+        }
+        let edit = Edit {
+            start: 0,
+            end: self.buffer.len(),
+            insert: recovered.to_string(),
+        };
+        let Ok((new_buffer, applied)) = self.buffer.apply_edits(std::slice::from_ref(&edit)) else {
+            return Hydration::Refused("recovered draft failed to apply to the buffer");
+        };
+        self.cursors = self.cursors.adjust_after_batch_edits(&applied);
+        self.buffer = new_buffer;
+        self.journal.push(Step {
+            edits: applied,
+            cursors_before: Vec::new(),
+            cursors_after: Vec::new(),
+        });
+        self.mark_dirty_from_hydration();
+        Hydration::Adopted
     }
 
     pub fn file_name(&self) -> &str {
@@ -281,20 +350,32 @@ impl Document {
     /// a new cursor position.
     pub fn view(&mut self) -> ViewSnapshots {
         self.doc.set_focus(self.focused);
+        self.sync_catalogue();
+        self.doc.set_width(self.viewport.width);
+        self.doc.sync_cursors(&self.buffer, &self.cursors);
+        self.doc.snapshot(&self.buffer)
+    }
+
+    /// The narrower, WIDTH-FREE half of `view()`'s parse step (plan WP5.S6,
+    /// [rune-tui A 14]): re-syncs the comrak parse and rebuilds `catalogue`
+    /// from it, without `view()`'s width-dependent wrap pass or cursor/
+    /// snapshot work. `navigate::land_anchor` needs a just-opened target
+    /// document's catalogue to find an anchor's heading BEFORE that
+    /// document is necessarily ever on screen (no viewport width to wrap
+    /// against yet) — exposed here, the one chokepoint `view()` itself
+    /// calls into, rather than re-inlining these same two lines at that
+    /// call site where they'd be free to drift from this sequence.
+    pub fn sync_catalogue(&mut self) {
         let built_before = self.doc.built_version();
         self.doc.sync_content(&self.buffer);
-        // Same guard `DocMachine::snapshot` uses: the catalogue is derived
-        // solely from buffer content + blocks, so it only needs rebuilding
-        // when `sync_content` actually reparsed (a real content edit, or the
-        // very first call) — not on every `view()`, which commands may call
-        // several times per message batch for coordinate conversions alone.
+        // The catalogue is derived solely from buffer content + blocks, so
+        // it only needs rebuilding when `sync_content` actually reparsed (a
+        // real content edit, or the very first call) — not on every call,
+        // which commands may make several times per message batch.
         if self.doc.built_version() != built_before {
             self.catalogue =
                 rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
         }
-        self.doc.set_width(self.viewport.width);
-        self.doc.sync_cursors(&self.buffer, &self.cursors);
-        self.doc.snapshot(&self.buffer)
     }
 
     /// Scrolls the viewport so the PRIMARY cursor's current row is visible.
@@ -367,6 +448,132 @@ impl Document {
     }
 }
 
+/// `App::documents` — never empty, by CONSTRUCTION rather than by every
+/// caller remembering a floor check (review fix, [rune-tui A 6]: this used
+/// to be a plain `BTreeMap` plus a doc comment asserting "nothing removes an
+/// entry", which went false the moment `workspace::close_now` shipped,
+/// leaving `App::active_doc`/`active_doc_mut` reaching for `#[allow(clippy::
+/// unwrap_used)]` to paper over the fallback branch it then needed).
+/// `anchor` holds one guaranteed-present `(DocumentId, Document)` pair
+/// outside the `BTreeMap`, so "at least one entry exists" is a fact about
+/// this type's fields, not a runtime invariant something else could violate
+/// — [`DocumentMap::get_or_anchor`]/[`get_or_anchor_mut`] can therefore
+/// answer "the active document, or SOME live document" with a real
+/// reference, never a panic or an `#[allow]`.
+///
+/// `App::mint_doc_id` only ever hands out increasing ids, so every id ever
+/// inserted into `rest` is greater than `anchor.0` at the moment it's
+/// inserted, and removing `anchor` promotes `rest`'s lowest-keyed entry —
+/// itself still lower than everything left in `rest` — to take its place.
+/// `anchor.0` therefore stays the running minimum for the type's entire
+/// lifetime, which is what lets `keys`/`values`/`iter` below just chain
+/// `anchor` in front of `rest`'s already-sorted iteration instead of
+/// merging.
+pub struct DocumentMap {
+    anchor: (DocumentId, Document),
+    rest: BTreeMap<DocumentId, Document>,
+}
+
+impl DocumentMap {
+    pub fn new(id: DocumentId, doc: Document) -> DocumentMap {
+        DocumentMap {
+            anchor: (id, doc),
+            rest: BTreeMap::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        1 + self.rest.len()
+    }
+
+    /// Never `true` — the type's entire reason to exist — but spelled out
+    /// so this doesn't trip clippy's `len_without_is_empty`.
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    pub fn contains_key(&self, id: &DocumentId) -> bool {
+        *id == self.anchor.0 || self.rest.contains_key(id)
+    }
+
+    pub fn get(&self, id: &DocumentId) -> Option<&Document> {
+        if *id == self.anchor.0 {
+            Some(&self.anchor.1)
+        } else {
+            self.rest.get(id)
+        }
+    }
+
+    pub fn get_mut(&mut self, id: &DocumentId) -> Option<&mut Document> {
+        if *id == self.anchor.0 {
+            Some(&mut self.anchor.1)
+        } else {
+            self.rest.get_mut(id)
+        }
+    }
+
+    /// `id`, if live, else the anchor — always a real document, never a
+    /// panic. The chokepoint `App::active_doc` reads through: `id` not
+    /// (or no longer) naming a live entry is exactly the "shouldn't happen,
+    /// but `active` future callers must reassign before removing" case this
+    /// type exists to make survivable rather than merely documented.
+    pub fn get_or_anchor(&self, id: &DocumentId) -> &Document {
+        self.get(id).unwrap_or(&self.anchor.1)
+    }
+
+    /// The `get_mut` counterpart of [`get_or_anchor`]. Written against
+    /// `anchor`/`rest` directly, not `self.get_mut` + a fallback borrow —
+    /// two overlapping `&mut self` borrows from one match don't survive the
+    /// borrow checker cleanly, an early return does.
+    pub fn get_or_anchor_mut(&mut self, id: &DocumentId) -> &mut Document {
+        if *id == self.anchor.0 {
+            return &mut self.anchor.1;
+        }
+        match self.rest.get_mut(id) {
+            Some(doc) => doc,
+            None => &mut self.anchor.1,
+        }
+    }
+
+    pub fn insert(&mut self, id: DocumentId, doc: Document) -> Option<Document> {
+        if id == self.anchor.0 {
+            Some(std::mem::replace(&mut self.anchor.1, doc))
+        } else {
+            self.rest.insert(id, doc)
+        }
+    }
+
+    /// Removes `id`, refusing (returning `None`, leaving `self` unchanged)
+    /// when `id` is the anchor and `rest` is empty — the non-emptiness floor
+    /// `workspace::close_now`/`request_close` already check before calling
+    /// this, kept here too as this type's own structural guarantee rather
+    /// than trusting every future caller to remember it independently.
+    pub fn remove(&mut self, id: &DocumentId) -> Option<Document> {
+        if *id != self.anchor.0 {
+            return self.rest.remove(id);
+        }
+        let (&next_id, _) = self.rest.iter().next()?;
+        let next_doc = self.rest.remove(&next_id)?;
+        Some(std::mem::replace(&mut self.anchor, (next_id, next_doc)).1)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &DocumentId> {
+        std::iter::once(&self.anchor.0).chain(self.rest.keys())
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Document> {
+        std::iter::once(&self.anchor.1).chain(self.rest.values())
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Document> {
+        std::iter::once(&mut self.anchor.1).chain(self.rest.values_mut())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&DocumentId, &Document)> {
+        std::iter::once((&self.anchor.0, &self.anchor.1)).chain(self.rest.iter())
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -398,5 +605,52 @@ mod tests {
         let b = app.open_document(Buffer::new("b"));
         assert_ne!(a, b);
         assert!(a < b);
+    }
+
+    /// Review fix (plan WP5.S5): removing the id `DocumentMap`'s internal
+    /// anchor currently holds must promote a survivor rather than ever
+    /// leaving the map able to answer "empty" — `remove` on the LAST
+    /// document is refused outright.
+    #[test]
+    fn document_map_promotes_a_survivor_when_the_anchor_entry_is_removed() {
+        let mut app = crate::app::App::new(
+            Buffer::new("a"),
+            None,
+            std::sync::Arc::new(Mem::new()),
+            None,
+        );
+        let a = app.active; // the anchor: the lowest-minted id
+        let b = app.open_document(Buffer::new("b"));
+
+        assert_eq!(app.documents.len(), 2);
+        assert!(app.documents.remove(&a).is_some());
+        assert_eq!(app.documents.len(), 1);
+        assert!(app.documents.get(&a).is_none());
+        assert!(app.documents.get(&b).is_some());
+
+        // The map is never empty, by construction: removing its one
+        // remaining entry is refused rather than producing an empty map.
+        assert!(app.documents.remove(&b).is_none());
+        assert_eq!(app.documents.len(), 1);
+        assert!(app.documents.get(&b).is_some());
+    }
+
+    #[test]
+    fn document_map_get_or_anchor_falls_back_to_a_real_document_for_a_stale_id() {
+        let mut app = crate::app::App::new(
+            Buffer::new("a"),
+            None,
+            std::sync::Arc::new(Mem::new()),
+            None,
+        );
+        let a = app.active;
+        let b = app.open_document(Buffer::new("b"));
+        app.documents.remove(&b).expect("b removed");
+
+        // `b` no longer names a live document — `get_or_anchor` must still
+        // return a REAL document (the anchor, `a`) rather than panicking.
+        let fallback = app.documents.get_or_anchor(&b);
+        assert_eq!(fallback.buffer.content(), "a");
+        let _ = a;
     }
 }

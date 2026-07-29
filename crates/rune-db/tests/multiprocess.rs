@@ -149,6 +149,8 @@ fn helper_entrypoint() {
         "append_storm_checkpoint" => helper::append_storm_checkpoint(),
         "race_open" => helper::race_open(),
         "race_close" => helper::race_close(),
+        "gc_editor" => helper::gc_editor(),
+        "gc_sweeper" => helper::gc_sweeper(),
         other => {
             eprintln!("multiprocess helper: unknown role {other}");
             std::process::exit(2);
@@ -310,6 +312,113 @@ mod helper {
         wait_for_path(&go, Duration::from_secs(30));
 
         store.shutdown();
+        std::process::exit(0);
+    }
+
+    fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> i64 {
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(DbEvent::Ok {
+                id: got,
+                result: rune_db::OpOutcome::Seq(seq),
+            }) if got == id => seq,
+            Ok(other) => panic!("expected Ok(id:{id}, Seq(_)), got {other:?}"),
+            Err(e) => panic!("timed out waiting for ack of op {id}: {e}"),
+        }
+    }
+
+    /// Role (e): [rune-db 8]'s coverage gap — `sweep_unreferenced_blobs` had
+    /// never been exercised under real cross-process contention. This role
+    /// repeatedly orphans a blob via the SAME mechanism
+    /// `journal::new_edit_after_undo_truncates_the_abandoned_future` proves
+    /// in-process: snapshot a piece of content, undo back to the start,
+    /// then commit a DIVERGENT edit — the truncation deletes the snapshot
+    /// row anchored past the new position, orphaning the blob it referenced
+    /// (`snapshot.rs`'s module doc: journal truncation "deletes both
+    /// `events` and `snapshots` rows, but the blob a surviving snapshot
+    /// still points to is untouched" — an orphaned one is fair game for the
+    /// sibling `gc_sweeper` process racing this one). Every op's ack is
+    /// asserted `Ok` — the actual claim under test is that concurrent
+    /// sweeping from another process never causes a legitimate write here
+    /// to fail or corrupt.
+    pub fn gc_editor() {
+        let path = db_path();
+        let doc_id: i64 = env_var("RUNE_DB_DOC_ID").parse().expect("doc id");
+        let count: usize = env_var("RUNE_DB_COUNT").parse().expect("count");
+        let ready = PathBuf::from(env_var("RUNE_DB_READY_MARKER"));
+        let go = PathBuf::from(env_var("RUNE_DB_GO_MARKER"));
+
+        let (tx, rx) = mpsc::channel::<DbEvent>();
+        let on_event: OnEvent = Box::new(move |evt| {
+            let _ = tx.send(evt);
+        });
+        let store = open_store(&path, on_event);
+
+        touch(&ready);
+        wait_for_path(&go, Duration::from_secs(30));
+
+        for i in 0..count {
+            let content_a = format!("round-{i}-a");
+            let insert_a = AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: String::new(),
+                insert: content_a.clone(),
+            };
+            let id = store
+                .append_edit(doc_id, &[insert_a], &[], &[])
+                .expect("enqueue append a");
+            let seq_a = recv_seq(&rx, id);
+
+            let id = store
+                .create_snapshot(doc_id, &content_a, seq_a)
+                .expect("enqueue snapshot");
+            expect_ok(&rx, id);
+
+            let id = store
+                .move_undo_pos(doc_id, 0)
+                .expect("enqueue move_undo_pos");
+            expect_ok(&rx, id);
+
+            // Diverges from `content_a` — truncates the now-abandoned
+            // future, including the snapshot just created, orphaning its
+            // blob for the sibling sweeper to find.
+            let insert_b = AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: String::new(),
+                insert: format!("round-{i}-b"),
+            };
+            let id = store
+                .append_edit(doc_id, &[insert_b], &[], &[])
+                .expect("enqueue append b");
+            expect_ok(&rx, id);
+        }
+
+        store.shutdown();
+        std::process::exit(0);
+    }
+
+    /// Role (f): the sibling of [`gc_editor`] — repeatedly opens and closes
+    /// its OWN `Store` against the same shared path. Every `Store::open`
+    /// runs a best-effort startup blob sweep (`store.rs`'s doc: "One
+    /// startup blob-sweep batch ... after the reaper"), so this role's
+    /// open/close loop is what actually generates the real cross-process
+    /// `sweep_unreferenced_blobs` contention against `gc_editor`'s
+    /// concurrent orphaning — the exact gap [rune-db 8] names.
+    pub fn gc_sweeper() {
+        let path = db_path();
+        let count: usize = env_var("RUNE_DB_COUNT").parse().expect("count");
+        let ready = PathBuf::from(env_var("RUNE_DB_READY_MARKER"));
+        let go = PathBuf::from(env_var("RUNE_DB_GO_MARKER"));
+
+        touch(&ready);
+        wait_for_path(&go, Duration::from_secs(30));
+
+        for _ in 0..count {
+            let store = open_store(&path, Box::new(|_evt| {}));
+            store.shutdown();
+        }
+
         std::process::exit(0);
     }
 }
@@ -615,6 +724,80 @@ fn two_stores_closing_simultaneously_surface_no_error_despite_truncate_contentio
              expected and swallowed by design: {stderr}"
         );
     }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
+// Scenario (e): sweep_unreferenced_blobs under real cross-process
+// contention ([rune-db 8])
+// ---------------------------------------------------------------------
+
+#[test]
+fn gc_contention_never_drops_a_write_or_leaves_a_dangling_blob_reference() {
+    let dir = temp_dir("gc-contention");
+    let path = dir.join("rune-v1.db");
+    let doc_ids = seed_schema_and_docs(&path, 1);
+    let doc_id = doc_ids[0];
+    let count = 20usize;
+    let go = dir.join("go");
+    let editor_ready = dir.join("editor-ready");
+    let sweeper_ready = dir.join("sweeper-ready");
+
+    let editor = spawn_helper(
+        "gc_editor",
+        &[
+            ("RUNE_DB_PATH", path.display().to_string()),
+            ("RUNE_DB_DOC_ID", doc_id.to_string()),
+            ("RUNE_DB_COUNT", count.to_string()),
+            ("RUNE_DB_READY_MARKER", editor_ready.display().to_string()),
+            ("RUNE_DB_GO_MARKER", go.display().to_string()),
+        ],
+    );
+    let sweeper = spawn_helper(
+        "gc_sweeper",
+        &[
+            ("RUNE_DB_PATH", path.display().to_string()),
+            ("RUNE_DB_COUNT", count.to_string()),
+            ("RUNE_DB_READY_MARKER", sweeper_ready.display().to_string()),
+            ("RUNE_DB_GO_MARKER", go.display().to_string()),
+        ],
+    );
+
+    wait_for_all(
+        &[editor_ready.clone(), sweeper_ready.clone()],
+        Duration::from_secs(30),
+    );
+    touch(&go);
+
+    for (label, child) in [("gc_editor", editor), ("gc_sweeper", sweeper)] {
+        let output = child.wait_with_output().expect("wait child");
+        assert!(
+            output.status.success(),
+            "{label} child failed under concurrent GC contention: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // A concurrent sweep must never delete a blob a surviving
+    // snapshot/observation row still references — every reference must
+    // resolve.
+    let verify = Connection::open(&path).expect("open verify connection");
+    let dangling: i64 = verify
+        .query_row(
+            "SELECT COUNT(*) FROM ( \
+                SELECT blob_hash FROM snapshots    WHERE blob_hash NOT IN (SELECT hash FROM blobs) \
+                UNION ALL \
+                SELECT blob_hash FROM observations WHERE blob_hash NOT IN (SELECT hash FROM blobs) \
+             )",
+            [],
+            |r| r.get(0),
+        )
+        .expect("count dangling blob references");
+    assert_eq!(
+        dangling, 0,
+        "no live snapshot/observation may reference a blob a concurrent sweep removed"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

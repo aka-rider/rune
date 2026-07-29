@@ -377,7 +377,6 @@ impl Buffer {
         }
     }
 
-
     pub fn line_col_to_offset(&self, bp: BufferPoint) -> usize {
         let count = self.line_starts.len();
         if bp.line >= count {
@@ -538,7 +537,6 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-
 
     /// Port of `TestBuffer_FromBytes`.
     #[test]

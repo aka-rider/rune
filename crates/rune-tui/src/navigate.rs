@@ -16,6 +16,7 @@ use rune_core::cursor::CursorSet;
 use rune_nav::{Anchor, AnchorRole, DefRole, Destination, Ref, RefKind, Target, UseRole};
 
 use crate::app::{App, StatusSource};
+use crate::document::DocumentId;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::workspace;
 
@@ -53,7 +54,9 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
 
     match destination {
         Destination::Url(url) => effects.cmds.push(open_external_cmd(url)),
-        Destination::Location { path, anchor } => follow_location(app, &path, anchor),
+        Destination::Location { path, anchor } => {
+            follow_location(app, &path, anchor, effects);
+        }
         Destination::Unresolved => {
             app.set_status(
                 format!("could not follow link to \"{}\"", describe_target(&target)),
@@ -92,28 +95,38 @@ fn follow_same_doc(app: &mut App, anchor: &Anchor) {
 }
 
 /// Opens (or reactivates) the document at `path` and, if `anchor` is
-/// `Some`, lands the caret on the matching heading. `workspace::open_path`
-/// only ever inserts/switches to the document — parsing otherwise happens
-/// lazily in `App::sync_view`, which runs AFTER `update` returns and syncs
-/// only the (now) active document. Landing on an anchor needs the target's
-/// blocks and catalogue NOW, so this forces exactly the same parse
-/// `Document::view` would eventually do, without the width-dependent wrap
-/// pass `view` also runs (this document isn't necessarily on screen yet).
-fn follow_location(app: &mut App, path: &std::path::Path, anchor: Option<Anchor>) {
-    let Some(id) = workspace::open_path(app, path) else {
-        return;
-    };
-    let Some(anchor) = anchor else {
-        return;
-    };
+/// `Some`, lands the caret on the matching heading once it's open (plan
+/// WP5.S6, [rune-tui A 7]): `workspace::open_path_async` reads the file
+/// off-thread when it isn't already open, so landing the anchor can't
+/// happen inline here anymore — it moves into the `Msg::FileOpened` ack
+/// reaction ([`land_anchor`] below), reached via `workspace::
+/// handle_file_opened`. An already-open target still lands its anchor
+/// synchronously, right here, since no read is needed.
+fn follow_location(
+    app: &mut App,
+    path: &std::path::Path,
+    anchor: Option<Anchor>,
+    effects: &mut Effects,
+) {
+    workspace::open_path_async(app, path, anchor, effects);
+}
+
+/// Lands the caret on `anchor` in the just-opened (or just-reactivated)
+/// document `id` — the shared reaction `workspace::open_path_async`'s
+/// synchronous reactivation branch AND `workspace::handle_file_opened`'s
+/// async ack both call, so the two routes can't drift apart on how an
+/// anchor is resolved. Forces `id`'s catalogue to exist NOW through
+/// `Document::sync_catalogue` (plan WP5.S6, [rune-tui A 14]) rather than
+/// waiting for `App::sync_view`'s lazy per-active-document parse, since
+/// `id` isn't necessarily the active (or even the only) document yet.
+pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     let Some(doc) = app.doc_mut(id) else {
         return;
     };
-    doc.doc.sync_content(&doc.buffer);
-    doc.catalogue = rune_md::catalogue::catalogue(doc.buffer.content(), doc.doc.blocks());
-    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, &anchor) else {
+    doc.sync_catalogue();
+    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
         app.set_status(
-            format!("no match for anchor \"{}\"", anchor_label(&anchor)),
+            format!("no match for anchor \"{}\"", anchor_label(anchor)),
             StatusSource::Other,
         );
         return;

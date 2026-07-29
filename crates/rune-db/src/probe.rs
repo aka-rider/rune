@@ -69,16 +69,16 @@ pub fn probe(
     // Recorded as a raw-bytes blob regardless of UTF-8 validity — a probe is
     // a passive observation of whatever is actually on disk (blob.rs module
     // doc); it must never hard-fail just because the file isn't valid text.
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, &data))?;
-
+    // The blob put and its referencing observation insert commit as ONE
+    // transaction inside `observe_from_stat` — never two ([rune-db 2]).
     let fresh = observation::observe_from_stat(
         conn,
         vfs,
         session_id,
         doc_id,
         &resolved,
-        observation::ObservationMeta {
-            blob_hash: &hash,
+        observation::ObserveInput {
+            data: &data,
             seq: None,
             origin: "probe",
         },

@@ -54,7 +54,7 @@ pub fn open_path(
     now: SystemTime,
 ) -> Result<DocRef, Error> {
     let at = crate::session::format_rfc3339_nanos(now);
-    let path_str = path.to_string_lossy().into_owned();
+    let path_str = crate::paths::to_db_string(path)?;
 
     match stat_id(vfs, path) {
         None => retry::with_retry(conn, |tx| open_path_by_name(tx, &path_str, &at)),
@@ -132,13 +132,17 @@ fn open_path_by_inode(
         }
         Some((row_id, row_path)) => {
             if row_path != path {
-                tx.execute(
-                    "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-                    params![path, row_id],
-                )?;
-                tx.execute(
-                    "UPDATE documents SET path=?1, inode=?2, device=?3, last_seen_at=?4 WHERE id=?5",
-                    params![path, inode, device, at, row_id],
+                // Both statements route through `materialize`'s eviction/
+                // rebind chokepoints — the same two this module's own
+                // divergent copies used to drift from ([rune-db 13]).
+                crate::materialize::evict_path_claim_tx(tx, path, row_id)?;
+                crate::materialize::set_identity_tx(
+                    tx,
+                    row_id,
+                    path,
+                    Some(inode),
+                    Some(device),
+                    at,
                 )?;
                 Ok(DocRef {
                     id: row_id,
@@ -204,5 +208,25 @@ mod tests {
         let second = open_path(&mut conn, &vfs, new_path, SystemTime::now()).expect("second open");
         assert_eq!(second.id, first.id, "same inode, new path -> same doc id");
         assert_eq!(second.renamed_from.as_deref(), Some("/doc/old.md"));
+    }
+
+    /// A4/[rune-db 6]: a path that doesn't round-trip through UTF-8 must be
+    /// rejected loudly at bind — never silently mangled into a `documents.path`
+    /// TEXT column via `to_string_lossy`. Exercised through the name-keyed
+    /// branch (no real file present, so `stat_id` is `None`) since that is
+    /// the branch every never-yet-seen document path binds through first.
+    #[test]
+    fn open_path_rejects_a_non_utf8_path_at_bind() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let mut conn = open();
+        let vfs = Mem::new();
+        let bytes: &[u8] = &[0x2f, 0xff, 0xfe, 0x2e, 0x6d, 0x64]; // "/\xFF\xFE.md"
+        let path = Path::new(OsStr::from_bytes(bytes));
+
+        let err = open_path(&mut conn, &vfs, path, SystemTime::now())
+            .expect_err("a non-utf8 path must be refused, not silently mangled");
+        assert!(matches!(err, Error::Invalid(_)));
     }
 }

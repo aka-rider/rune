@@ -309,17 +309,22 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
 }
 
-/// Finding 5: a `materialize` enqueue failure (the store writer confirmed
-/// gone) must degrade the store and raise the sticky banner through the
-/// SAME `on_store_failure` chokepoint `append_edit`/`move_undo_pos` use —
-/// not a one-shot `SaveError` status that leaves `db.degraded` untouched
-/// and lets the next `super+s` silently retry against an already-dead
-/// writer. Deterministically waits for the writer to be CONFIRMED gone (a
-/// side-channel `probe` enqueue returning `Err`) before pressing save
-/// exactly once, rather than racing `super+s`'s own in-flight latch against
-/// the kill op's async dequeue.
+/// Finding 5 / [rune-db 1] (WP7): a `MaterializePrepare` enqueue failure
+/// (the store writer confirmed gone) must degrade the store and raise the
+/// sticky banner through the SAME `on_store_failure` chokepoint
+/// `append_edit`/`move_undo_pos` use — never a one-shot `SaveError` status
+/// that leaves `db.degraded` untouched. Distinct from the pre-WP7 bug this
+/// finding described: a dead writer must not ALSO make the save itself
+/// impossible — WP7's `materialize_now` falls back to the same
+/// uncoordinated direct-`vfs` `Cmd` a document with no store binding uses,
+/// so `save_in_flight` stays true (a real write is now in flight) and,
+/// once that `Cmd` runs, the user's bytes are actually on disk — "press
+/// ⌘S again to save anyway" must actually save. Deterministically waits
+/// for the writer to be CONFIRMED gone (a side-channel `probe` enqueue
+/// returning `Err`) before pressing save exactly once, rather than racing
+/// `super+s`'s own in-flight latch against the kill op's async dequeue.
 #[test]
-fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
+fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     let dir = temp_db_dir("kill-writer-materialize");
     let db_path = dir.join("rune-v1.db");
     let doc_path = Path::new("/doc.md");
@@ -335,7 +340,7 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
     let mut app = App::new(
         Buffer::new(load.recovered.clone()),
         Some(doc_path.to_path_buf()),
-        vfs,
+        Arc::clone(&vfs),
         Some(db),
     );
     let id = app.active;
@@ -390,8 +395,28 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
         "the store must be marked degraded via on_store_failure, not left untouched"
     );
     assert!(
+        app.doc(id).unwrap().save_in_flight,
+        "WP7: a dead writer must not also make the save itself impossible — the \
+         direct-vfs fallback Cmd is in flight, not silently skipped"
+    );
+
+    let cmd = effects
+        .cmds
+        .into_iter()
+        .find(|c| c.kind() == rune_tui::runtime::CmdKind::Save)
+        .expect("the dead-writer fallback must spawn a direct-vfs Save Cmd");
+    let msg = cmd.run().expect("the fallback Cmd must reply");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+
+    assert!(
         !app.doc(id).unwrap().save_in_flight,
-        "on_store_failure must clear save_in_flight on an enqueue failure"
+        "the fallback save's own ack must clear save_in_flight"
+    );
+    assert_eq!(
+        vfs.read(doc_path).expect("file still readable"),
+        b"hi!",
+        "the user's edit must have reached disk despite the dead writer thread"
     );
 }
 
@@ -673,6 +698,83 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
             .as_deref()
             .is_some_and(|s| s.contains("no baseline observation")),
         "a status message must explain why crash recovery wasn't bound (got {:?})",
+        app.status_message
+    );
+}
+
+/// Review fix (plan WP5.S2, [rune-tui A 3]): `handle_load_ack` must refuse
+/// to adopt recovered content that would empty (or drastically shrink) a
+/// non-empty on-disk file — the §1.3 destructive-async-reset suspicion
+/// check, run through the shared `Document::hydrate` chokepoint. The buffer
+/// stays exactly what was on disk, and a status message explains why.
+#[test]
+fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let disk_content = "a whole paragraph of real content that must not vanish";
+    let mut app = App::new(
+        Buffer::new(disk_content),
+        Some(PathBuf::from("/doc.md")),
+        vfs,
+        None,
+    );
+    let id = app.active;
+
+    let op_id = 1u64;
+    app.db_ops.insert(op_id, id);
+    app.db_load_versions
+        .insert(op_id, app.doc(id).unwrap().buffer.version());
+
+    let load_result = LoadResult {
+        doc_id: 1,
+        renamed_from: None,
+        disk_content: disk_content.to_string(),
+        // A suspicious "recovered" empty string — the exact destructive
+        // async-reset pattern §1.3 forbids adopting silently.
+        recovered: String::new(),
+        has_history: false,
+        sync: SyncState {
+            kind: SyncKind::Clean,
+            ancestor: None,
+            ours: Version {
+                hash: String::new(),
+                obs: None,
+            },
+            theirs: None,
+        },
+        nlink: 1,
+        saved_obs: Some(1),
+        bridge_seq: None,
+    };
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Db(DbEvent::Ok {
+            id: op_id,
+            result: OpOutcome::Load(Box::new(load_result)),
+        }),
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        disk_content,
+        "a refused hydration must leave the buffer exactly as it was on disk"
+    );
+    assert!(
+        !app.doc(id).unwrap().is_dirty(),
+        "a refused hydration must not mark the buffer dirty"
+    );
+    assert!(
+        app.doc(id).unwrap().db.is_some(),
+        "DocDb must still be installed even when the adopt is refused"
+    );
+    assert_eq!(app.status_source, StatusSource::Other);
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|s| s.contains("crash recovery")),
+        "a status message must explain the refusal (got {:?})",
         app.status_message
     );
 }

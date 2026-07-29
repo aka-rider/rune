@@ -289,29 +289,49 @@ impl Store {
         })
     }
 
-    /// Enqueues a `Materialize` op writing `content` to `doc_id`'s bound
-    /// file under the CAS contract described by `expect`/`seq`/`bind_new` —
-    /// both caller-captured at enqueue time, never re-derived once the op
-    /// runs (§1.4.2/§1.4.8). Port of `materialize.go:69` (`Materialize`).
-    pub fn materialize(
+    /// WP7 step (a): enqueues the bookkeeping-only `MaterializePrepare` op —
+    /// hands back the CAS decision data (`materialize::MaterializePrep`) the
+    /// caller needs before it does any `vfs` call itself. Never touches
+    /// `vfs`: a dead writer failing THIS enqueue means the caller falls
+    /// back to an uncoordinated direct write (same as a document with no
+    /// store binding at all) rather than being unable to save
+    /// ([rune-db 1]).
+    pub fn materialize_prepare(
         &self,
         doc_id: i64,
-        path: &Path,
-        content: &str,
         expect: ObsId,
-        seq: i64,
         bind_new: bool,
     ) -> Result<u64, Error> {
+        self.enqueue(OpKind::MaterializePrepare {
+            doc_id,
+            expect,
+            bind_new,
+        })
+    }
+
+    /// WP7 step (c): enqueues `MaterializeRecord`, recording what the
+    /// caller's own `vfs` work (steps a/b, performed entirely on the
+    /// caller's thread through its OWN `Vfs` handle) concluded.
+    /// `resolved_path`/`seq` are the caller's own enqueue-time-captured
+    /// facts (§1.4.2/§1.4.8), never re-derived once this op runs. A dead
+    /// writer failing THIS enqueue means the disk publish already
+    /// physically completed — only this session's CAS bookkeeping is lost,
+    /// which degrades the store, never the save.
+    pub fn materialize_record(
+        &self,
+        doc_id: i64,
+        resolved_path: &Path,
+        seq: i64,
+        outcome: crate::materialize::MaterializeOutcome,
+    ) -> Result<u64, Error> {
         let now = self.now();
-        self.enqueue(OpKind::Materialize {
+        self.enqueue(OpKind::MaterializeRecord {
             session_id: self.session_id,
             doc_id,
-            path: path.to_path_buf(),
-            content: content.to_string(),
-            expect,
+            resolved_path: resolved_path.to_path_buf(),
             seq,
-            bind_new,
             now,
+            outcome,
         })
     }
 
@@ -433,10 +453,19 @@ struct LadderResult {
 }
 
 fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
-    if let Ok(conn) = open_file_backed(path) {
+    // `reader_target` must round-trip through UTF-8 (A4/[rune-db 6] — the
+    // same checked conversion every persisted path goes through, not
+    // `to_string_lossy`): a mangled reader target would open the reader
+    // thread against a DIFFERENT path than the writer's, silently. A
+    // conversion failure here degrades to the next rung exactly like an
+    // open failure would — `open_ladder` never hard-fails except at the
+    // final in-memory rung.
+    if let Ok(conn) = open_file_backed(path)
+        && let Ok(reader_target) = crate::paths::to_db_string(path)
+    {
         return Ok(LadderResult {
             writer_conn: conn,
-            reader_target: path.to_string_lossy().into_owned(),
+            reader_target,
             degraded: false,
             warning: None,
         });
@@ -445,10 +474,11 @@ fn open_ladder(path: &Path) -> Result<LadderResult, Error> {
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()
         && let Ok(conn) = open_file_backed(path)
+        && let Ok(reader_target) = crate::paths::to_db_string(path)
     {
         return Ok(LadderResult {
             writer_conn: conn,
-            reader_target: path.to_string_lossy().into_owned(),
+            reader_target,
             degraded: false,
             warning: None,
         });
@@ -602,6 +632,32 @@ mod tests {
 
         // The degraded store must still be fully functional: writer and
         // reader threads are both alive.
+        let id = store.enqueue(OpKind::Noop).expect("enqueue must succeed");
+        assert!(id >= 1);
+
+        store.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Coverage gap [rune-db 9]: the open ladder's rungs were tested for an
+    /// unwritable parent, but never for the file existing and already being
+    /// corrupt (garbage bytes, not a valid SQLite database). That must
+    /// degrade to in-memory exactly like the unwritable-parent case, never
+    /// return an error and never panic — `open_ladder`'s only hard failure
+    /// is the final in-memory rung itself failing.
+    #[test]
+    fn corrupt_existing_db_file_degrades_to_in_memory_store_not_an_error() {
+        let dir = temp_dir("corrupt-db");
+        let path = dir.join("rune-v1.db");
+        std::fs::write(&path, b"not a sqlite database, just garbage bytes")
+            .expect("write corrupt file");
+
+        let (store, warning) =
+            Store::open(&path, test_vfs(), noop_on_event()).expect("open must not error");
+        assert!(store.degraded());
+        assert_eq!(warning.as_deref(), Some(DEGRADED_WARNING));
+
+        // The degraded store must still be fully functional.
         let id = store.enqueue(OpKind::Noop).expect("enqueue must succeed");
         assert!(id >= 1);
 

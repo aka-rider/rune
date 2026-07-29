@@ -78,6 +78,15 @@ pub enum Msg {
     /// A completion posted by `rune-db`'s writer thread, routed through
     /// `db::DbBridge` (plan WP5.S1).
     Db(rune_db::DbEvent),
+    /// WP7: the caller-side `vfs` `Cmd` a `MaterializePrepare` ack spawned
+    /// (`save::materialize_vfs_cmd`) has finished the ENTIRE disk dance —
+    /// resolve/read/hash-compare/publish/read-displaced — through this
+    /// app's own `Vfs` handle, never the writer thread's. Routed to
+    /// `save::handle_materialize_vfs_done`.
+    MaterializeVfsDone {
+        id: DocumentId,
+        outcome: crate::save::MaterializeVfsOutcome,
+    },
     /// `vfs.read_dir(root)` completed (plan WP4.S4) — the Explorer's own
     /// boundary Msg, delivered by [`load_dir_cmd`]. `Nav` (navigated into
     /// `root`) resets the Explorer's cursor to the top; `Refresh` (a future
@@ -103,6 +112,20 @@ pub enum Msg {
     RenameDone {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
+    },
+    /// A `ReadFile` `Cmd` completed (plan WP5.S6, [rune-tui A 7]) —
+    /// `workspace::open_path_async`'s reply, routed to `workspace::
+    /// handle_file_opened`. `anchor` is carried through unchanged from the
+    /// request so landing it (`navigate::land_anchor`) doesn't need a
+    /// second round trip once the document is open. No `generation`/
+    /// staleness echo: unlike rename/save, opening a file mutates no
+    /// shared single-slot machine state — `handle_file_opened` rechecks
+    /// `existing_document_for` itself, so two overlapping opens of the
+    /// same path just converge on one document rather than racing.
+    FileOpened {
+        path: PathBuf,
+        result: Result<Vec<u8>, String>,
+        anchor: Option<rune_nav::Anchor>,
     },
     /// A background `rune_ts::highlight` call completed (plan WP5.S2).
     /// `result: None` means NO RESULT — the parse budget elapsed, the
@@ -175,6 +198,12 @@ pub enum CmdKind {
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
+    /// `vfs.read` for a single FILE (plan WP5.S6, [rune-tui A 7]) —
+    /// `workspace::open_path_async`'s own off-thread read, the `ReadDir`
+    /// sibling for opening (rather than listing) a path: a slow or
+    /// degraded filesystem must never block the main loop just because the
+    /// target happens to be a file instead of a directory.
+    ReadFile,
     /// `/usr/bin/open` on an external link's URL (plan WP5.S6). Spawns a
     /// subprocess; never run it inline. The session fuzzer's driver keeps
     /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
@@ -258,12 +287,29 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // all (plan WP16.S5), so every test/fuzz `App` that never reaches this
     // `run` loop never spawns one either. This call starts its one thread.
     app.snapshot_timer.attach(tx.clone());
+    // Tracks the join handle of every no-store fallback save `Cmd`
+    // (`CmdKind::Save`) currently running, so quitting can join them instead
+    // of detaching them mid-write (review fix, [rune-tui A 5]): a
+    // store-backed materialize survives process exit via `Store::shutdown`'s
+    // own drain, but the no-store fallback is a plain detached thread doing
+    // its own `vfs.save_atomic` — `thread::spawn`'s `JoinHandle`, dropped,
+    // detaches and keeps running past `main` returning, but the atomic
+    // publish it's mid-write on has no other guarantee of finishing before
+    // the process actually exits. Pruned opportunistically so this never
+    // grows unbounded across a long session of saves.
+    let mut save_handles: Vec<thread::JoinHandle<()>> = Vec::new();
 
     // Seed the initial size through the ordinary `update` path (not a
     // one-off field write) so `Msg::Resize`'s effect on the viewport has
     // exactly one implementation, exercised the same way on every resize.
     let (width, height) = guard.size()?;
-    apply(app, Msg::Resize(width, height), &mut guard, &tx)?;
+    apply(
+        app,
+        Msg::Resize(width, height),
+        &mut guard,
+        &tx,
+        &mut save_handles,
+    )?;
 
     // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
@@ -278,7 +324,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
         for cmd in effects.cmds.drain(..) {
-            spawn_cmd(cmd, tx.clone());
+            spawn_cmd(cmd, tx.clone(), &mut save_handles);
         }
     }
 
@@ -302,7 +348,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         }
 
         for msg in batch {
-            apply(app, msg, &mut guard, &tx)?;
+            apply(app, msg, &mut guard, &tx, &mut save_handles)?;
         }
 
         if app.should_quit {
@@ -313,6 +359,14 @@ pub fn run(app: &mut App) -> io::Result<()> {
         guard.draw(|frame| crate::render::draw(app, frame))?;
     }
 
+    // Every fallback save `Cmd` spawned above is joined before `run` returns
+    // and `main` drains/shuts down the store: an in-flight one finishes its
+    // atomic publish; an already-finished one joins immediately. Quit is
+    // reported as complete only once this returns.
+    for handle in save_handles.drain(..) {
+        let _ = handle.join();
+    }
+
     Ok(())
 }
 
@@ -320,14 +374,20 @@ pub fn run(app: &mut App) -> io::Result<()> {
 /// raw bytes to the terminal, `Cmd`s to their own thread. Shared by the
 /// resize-seeding call above and the main loop so there is exactly one
 /// "apply a message" chokepoint.
-fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> io::Result<()> {
+fn apply(
+    app: &mut App,
+    msg: Msg,
+    guard: &mut Guard,
+    tx: &mpsc::Sender<Msg>,
+    save_handles: &mut Vec<thread::JoinHandle<()>>,
+) -> io::Result<()> {
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
     for raw in effects.raw.drain(..) {
         guard.write_raw(&raw)?;
     }
     for cmd in effects.cmds.drain(..) {
-        spawn_cmd(cmd, tx.clone());
+        spawn_cmd(cmd, tx.clone(), save_handles);
     }
     Ok(())
 }
@@ -338,8 +398,14 @@ fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> 
 /// unwind here and reporting it as `Msg::Error` keeps that impossible: every
 /// spawned `Cmd` thread sends SOMETHING back, success, `None`, or a caught
 /// panic.
-fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
-    thread::spawn(move || {
+///
+/// `CmdKind::Save`'s handle is retained in `save_handles` (pruning already-
+/// finished ones first) so `run` can join it on quit instead of letting
+/// `JoinHandle::drop` detach it — every other kind is fire-and-forget
+/// exactly as before.
+fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>, save_handles: &mut Vec<thread::JoinHandle<()>>) {
+    let is_save = cmd.kind() == CmdKind::Save;
+    let handle = thread::spawn(move || {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
             Ok(Some(msg)) => {
                 let _ = tx.send(msg);
@@ -350,6 +416,10 @@ fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
             }
         }
     });
+    if is_save {
+        save_handles.retain(|h| !h.is_finished());
+        save_handles.push(handle);
+    }
 }
 
 fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
@@ -405,6 +475,27 @@ pub fn load_dir_cmd(
             "could not list {}: {e}",
             root.display()
         ))),
+    })
+}
+
+/// Reads `path` off-thread via `vfs.read` (plan WP5.S6, [rune-tui A 7]) —
+/// `workspace::open_path_async`'s only `Cmd`, and `load_dir_cmd`'s single-
+/// file counterpart. `anchor` is opaque data here, just carried through to
+/// the `Msg::FileOpened` reply unchanged — this `Cmd` never resolves it
+/// itself (that needs the target's own catalogue, which doesn't exist
+/// until the document is open).
+pub fn read_file_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    anchor: Option<rune_nav::Anchor>,
+) -> Cmd {
+    Cmd::new(CmdKind::ReadFile, move || {
+        let result = vfs.read(&path).map_err(|e| e.to_string());
+        Some(Msg::FileOpened {
+            path,
+            result,
+            anchor,
+        })
     })
 }
 

@@ -66,6 +66,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
         Msg::Db(evt) => handle_db_event(app, evt, effects),
+        Msg::MaterializeVfsDone { id, outcome } => {
+            save::handle_materialize_vfs_done(app, id, outcome)
+        }
         Msg::DirLoaded {
             root,
             entries,
@@ -78,6 +81,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
+        Msg::FileOpened {
+            path,
+            result,
+            anchor,
+        } => crate::workspace::handle_file_opened(app, path, result, anchor),
         Msg::Highlighted {
             doc,
             version,
@@ -118,8 +126,17 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Ok {
             id: op_id,
+            result: rune_db::OpOutcome::MaterializePrep(prep),
+        } => {
+            if let Some(doc_id) = app.db_ops.remove(&op_id) {
+                save::handle_prepare_ack(app, doc_id, *prep, effects);
+            }
+        }
+        DbEvent::Ok {
+            id: op_id,
             result: rune_db::OpOutcome::Materialize(mat),
         } => {
+            app.published_ops.remove(&op_id);
             if let Some(doc_id) = app.db_ops.remove(&op_id) {
                 save::handle_materialize_ack(app, doc_id, *mat);
             }
@@ -146,9 +163,40 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         DbEvent::Err { id: op_id, error } => {
             app.db_ops.remove(&op_id);
             app.db_load_versions.remove(&op_id);
+            crate::rename::fail_op(app, op_id, error.clone(), effects);
+            // WP7: this exact op may be a `MaterializeRecord` whose disk
+            // write ALREADY physically completed before the writer died —
+            // report the save as successful FIRST, so `on_store_failure`'s
+            // in-flight sweep below never re-flags it as failed
+            // ([rune-db 1]).
+            if let Some(doc_id) = app.published_ops.remove(&op_id) {
+                save::handle_materialize_ack(
+                    app,
+                    doc_id,
+                    rune_db::MatResult {
+                        committed: true,
+                        ..Default::default()
+                    },
+                );
+            }
             save::on_store_failure(app, error);
         }
         DbEvent::Fatal { error } => {
+            crate::rename::fail_all(app, error.clone(), effects);
+            // WP7: same reasoning as the `Err` arm above, for every
+            // still-in-flight `MaterializeRecord` a `Fatal` tears down —
+            // each one's write already physically completed.
+            let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();
+            for doc_id in published {
+                save::handle_materialize_ack(
+                    app,
+                    doc_id,
+                    rune_db::MatResult {
+                        committed: true,
+                        ..Default::default()
+                    },
+                );
+            }
             save::on_store_failure(app, error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
@@ -337,9 +385,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    // Stage 3 + stage 4 (no further stage yet, so the `Ignored` outcome is
-    // captured but unused).
-    let _outcome = match app.focus {
+    // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
+    // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
+    // here rather than threaded anywhere further.
+    let _ = match app.focus {
         Pane::Editor => handle_editor_key(app, key, effects),
         Pane::Explorer => explorer::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key),

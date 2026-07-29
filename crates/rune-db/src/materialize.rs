@@ -1,27 +1,43 @@
 //! `Materialize` — the CAS write protocol that turns a buffer into the
-//! user's destination file. Ported from Go's `Materialize`, ported
-//! "verbatim in shape" (plan WP4.S4): every step below either does `vfs`
-//! I/O with no transaction open, or opens its own short
-//! `retry::with_retry` transaction — no DB transaction is EVER held open
-//! across a `vfs` call (plan binding rule, Go invariant I1).
+//! user's destination file. WP7 inverted this module's shape: it used to
+//! run the ENTIRE protocol — including the `vfs.write_durable`/`exchange`
+//! disk publish itself — as one op on the writer thread's single FIFO, so a
+//! dead writer thread made saving impossible even though the publish itself
+//! needs nothing from the database ([rune-db 1]). The disk publish now runs
+//! on the CALLER's own thread (`rune-tui`'s save `Cmd`, via its OWN `Vfs`
+//! handle), and this module is bookkeeping-only around it:
 //!
-//! `content`/`expect`/`seq` are caller-captured parameters (from
-//! `Store::materialize`'s enqueue-time snapshot of the buffer), never
-//! re-derived inside — a later edit advancing the head while this op is in
-//! flight must not silently claim the written bytes reflect edits they
-//! don't (§1.4.2/§1.4.8).
+//! - [`prepare_materialize`] — pure DB read, no `vfs` call at all: hands the
+//!   caller the CAS baseline (`expect`'s hash) and the bound path to check
+//!   its own target against, before it does any disk I/O.
+//! - The caller performs the actual `resolve`/read/hash-compare/
+//!   `write_durable`/`exchange`(or `rename_excl`)/read-displaced dance
+//!   itself, using [`rune_vfs::published_not_durable`] to tell "the swap
+//!   already took effect" apart from "it never happened" the same way
+//!   `Vfs::save_atomic` does.
+//! - [`record_materialize_outcome`] — records what the caller's vfs work
+//!   concluded (a conflict, a plain commit, or a swap-race commit) as the
+//!   same CAS bookkeeping `commit_save`/`record_fresh` always did, now fed
+//!   caller-supplied bytes/stat facts instead of calling `vfs` itself.
+//!
+//! A dead writer thread can still fail [`prepare_materialize`] or
+//! [`record_materialize_outcome`]'s enqueue (`Error::WriterGone`) — but by
+//! then the disk publish is either not yet attempted (prepare failed: the
+//! caller falls back to an uncoordinated direct write, same as a document
+//! with no store binding at all) or already physically complete (record
+//! failed: the user's bytes are safely on disk; only this session's CAS
+//! bookkeeping is lost, which degrades the store, not the save). Every
+//! `vfs` call this module used to make is gone; the sibling relation
+//! `lib.rs` documents is now structural, not just a convention two modules
+//! happen to follow.
 
-use std::io;
 use std::path::Path;
 use std::time::SystemTime;
 
 use rusqlite::{Connection, params};
 
-use rune_vfs::Vfs;
-
 use crate::Error;
-use crate::adopt;
-use crate::observation::{self, ObsId, Observation, ObservationMeta};
+use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
 use crate::retry;
 
 /// `doc_id`/`session_id` bundled together — every function in this module
@@ -35,35 +51,11 @@ pub struct DocSession {
     pub session_id: i64,
 }
 
-/// The bytes to write and the journal position they correspond to, bundled
-/// for the same argument-count reason — always passed together from
-/// [`materialize`] down through [`materialize_overwrite`]/
-/// [`materialize_create`]/[`commit_save`].
-#[derive(Clone, Copy, Debug)]
-struct WriteIntent<'a> {
-    data: &'a [u8],
-    seq: i64,
-}
-
-/// The caller-captured save intent [`materialize`] takes: `content` is what
-/// to write, `expect` is the observation the caller last read as the
-/// current disk fact (`SavedObs`, captured synchronously at save-start),
-/// `seq` is the journal position `content` corresponds to, and `bind_new`
-/// is the caller's explicit "a missing target is OK to create" intent.
-/// Never re-derived once the op is enqueued (§1.4.2/§1.4.8).
-#[derive(Clone, Copy, Debug)]
-pub struct MaterializeInput<'a> {
-    pub content: &'a str,
-    pub expect: ObsId,
-    pub seq: i64,
-    pub bind_new: bool,
-}
-
-/// The outcome of [`materialize`]. Port of `materialize.go:157-187`
-/// (`MatResult`) — Go's boolean-flagged always-present `Saved`/`Fresh`
-/// fields become `Option` here (this crate's "Options for absent facts"
-/// rule): `Missing`/`Fresh`-on-refusal/`Raced` stay mutually exclusive
-/// discriminants, never a shared sentinel.
+/// The outcome of a materialize attempt, assembled by
+/// [`record_materialize_outcome`] (`missing` is set directly by the caller
+/// instead — see `save.rs`'s dance): `Missing`/`Fresh`-on-refusal/`Raced`
+/// stay mutually exclusive discriminants, never a shared sentinel
+/// (this crate's "Options for absent facts" rule).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MatResult {
     pub committed: bool,
@@ -73,262 +65,254 @@ pub struct MatResult {
     /// displaced/conflicting observation).
     pub fresh: Option<Observation>,
     /// `true` when `!committed` because the target doesn't exist and
-    /// `bind_new` was `false` (§1.4.4 — never silently (re)create).
+    /// `bind_new` was `false` (§1.4.4 — never silently (re)create). The
+    /// caller decides this entirely on its own vfs read; it is never
+    /// constructed by anything in this module.
     pub missing: bool,
-    /// `true` when `committed` via a step-4 swap-race (F5): a writer raced
-    /// inside the atomic-swap window, so the displaced bytes differ from
-    /// `expect`, but OUR bytes are already physically at the target — this
-    /// write commits for real, and the raced writer's displaced bytes are
-    /// ALSO surfaced (`fresh`, `origin='swap'`).
+    /// `true` when `committed` via a swap-race (F5): a writer raced inside
+    /// the atomic-swap window the caller performed, so the displaced bytes
+    /// differ from `expect`, but OUR bytes are already physically at the
+    /// target — this write commits for real, and the raced writer's
+    /// displaced bytes are ALSO surfaced (`fresh`, `origin='swap'`).
     pub raced: bool,
 }
 
-/// Writes `input.content` to `doc_id`'s bound file under a CAS contract.
-/// Port of `materialize.go:69-146` (`Materialize`).
-pub fn materialize(
-    conn: &mut Connection,
-    vfs: &dyn Vfs,
-    ds: DocSession,
-    path: &Path,
-    input: MaterializeInput<'_>,
-    now: SystemTime,
-) -> Result<MatResult, Error> {
-    let data = input.content.as_bytes();
+/// Bookkeeping-only decision data [`prepare_materialize`] hands the caller
+/// before any `vfs` call happens — no `vfs` call is made to produce this,
+/// only DB reads. `Default` (both fields empty) is exactly what `bind_new`
+/// needs: there is no bound path to disagree with, and `materialize_create`
+/// never consulted `expect` in the first place.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MaterializePrep {
+    /// `documents.path`, unresolved — the caller resolves both this and its
+    /// own target through its own `vfs` and refuses on disagreement (a
+    /// caller bug, not an ordinary CAS race — was `materialize`'s own
+    /// path-parameter check, [rune-db 5]). `None` when `bind_new` (nothing
+    /// to disagree with).
+    pub bound_path: Option<String>,
+    /// `expect`'s `blob_hash` — the CAS baseline the caller compares the
+    /// live target's hash against before writing. Empty when `bind_new`
+    /// (the create path never had a CAS baseline to compare).
+    pub expect_hash: String,
+}
 
-    if input.bind_new {
-        let resolved = vfs.resolve(path).map_err(Error::Io)?;
-        if let Some(dir) = resolved.parent()
-            && !dir.as_os_str().is_empty()
-        {
-            vfs.mkdir_all(dir).map_err(Error::Io)?;
-        }
-        return materialize_create(
-            conn,
-            vfs,
-            ds,
-            &resolved,
-            WriteIntent {
-                data,
-                seq: input.seq,
-            },
-            now,
-        );
+/// Step 1 (now caller-facing): fetches the CAS decision data for a
+/// `!bind_new` materialize attempt — the bound path to check the caller's
+/// own target against, and the baseline hash to CAS-compare the live target
+/// against. Pure DB read, no `vfs` call ([rune-db 1]'s fix: this can run
+/// even while every disk in the workspace is unreachable, and the caller's
+/// OWN subsequent disk work never depends on the writer thread being alive
+/// a moment longer than it takes to answer this one query).
+pub fn prepare_materialize(
+    conn: &mut Connection,
+    doc_id: i64,
+    expect: ObsId,
+    bind_new: bool,
+) -> Result<MaterializePrep, Error> {
+    if bind_new {
+        return Ok(MaterializePrep::default());
     }
 
     let db_path: String = retry::with_retry(conn, |tx| {
         tx.query_row(
             "SELECT path FROM documents WHERE id=?1",
-            params![ds.doc_id],
+            params![doc_id],
             |r| r.get(0),
         )
         .map_err(Error::from)
     })?;
     if db_path.is_empty() {
         return Err(Error::Invalid(format!(
-            "materialize doc {}: no path bound (untitled document)",
-            ds.doc_id
+            "materialize doc {doc_id}: no path bound (untitled document)"
         )));
     }
-    let resolved = vfs.resolve(Path::new(&db_path)).map_err(Error::Io)?;
-
-    // Step 1: unconditional read+hash of the live target.
-    let live_data = match vfs.read(&resolved) {
-        Ok(d) => d,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            // §1.4.4: an ordinary overwrite-intent save must never silently
-            // (re)create a file the caller didn't explicitly ask to.
-            return Ok(MatResult {
-                missing: true,
-                ..Default::default()
-            });
-        }
-        Err(e) => return Err(Error::Io(e)),
-    };
-
-    let expect_obs = retry::with_retry(conn, |tx| observation::get_observation(tx, input.expect))?;
-
-    // Step 2: live hash != expect -> refuse, no write.
-    if observation::hash_bytes(&live_data) != expect_obs.blob_hash {
-        let fresh = record_fresh(conn, vfs, ds, &resolved, &live_data, "probe", now)?;
-        return Ok(MatResult {
-            fresh: Some(fresh),
-            ..Default::default()
-        });
-    }
-
-    materialize_overwrite(
-        conn,
-        vfs,
-        ds,
-        &resolved,
-        WriteIntent {
-            data,
-            seq: input.seq,
-        },
-        &expect_obs,
-        now,
-    )
-}
-
-/// Steps 3-5: once the pre-write hash confirmed the live target still
-/// matches `expect`. Port of `materialize.go:148-203`
-/// (`materializeOverwrite`).
-fn materialize_overwrite(
-    conn: &mut Connection,
-    vfs: &dyn Vfs,
-    ds: DocSession,
-    resolved: &Path,
-    write: WriteIntent<'_>,
-    expect_obs: &Observation,
-    now: SystemTime,
-) -> Result<MatResult, Error> {
-    let temp = vfs.write_durable(resolved, write.data).map_err(Error::Io)?;
-
-    if let Err(e) = vfs.exchange(&temp, resolved) {
-        // Deliberately NOT removed (a documented strengthening over Go's
-        // `materializeOverwrite`, which fire-and-forgets a cleanup here):
-        // the publish never happened, `saved_obs` never moved, and the
-        // temp is the ONLY place the user's just-written bytes still
-        // physically exist outside the in-memory buffer/journal — orphaned
-        // disk hygiene is a Tolerable cost, silently discarding a write
-        // this function is about to report as failed is not (§1.4.10's
-        // spirit, applied conservatively to the failure path too).
-        return Err(Error::Io(e));
-    }
-
-    // Step 4: temp now holds what USED TO be at `resolved` (the displaced
-    // bytes, never unlinked by the swap) — read+hash it.
-    let displaced = vfs.read(&temp).map_err(Error::Io)?;
-    if observation::hash_bytes(&displaced) != expect_obs.blob_hash {
-        // F5 swap-race: a writer raced us inside the atomic-swap window.
-        // The swap already physically happened — OUR bytes are what's
-        // sitting at `resolved` right now. Capture the displaced bytes,
-        // THEN commit our own write for real (the CAS record must match
-        // physical reality), and remove the temp only after BOTH commit.
-        let fresh = record_fresh(conn, vfs, ds, &temp, &displaced, "swap", now)?;
-        let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
-        let _ = vfs.remove(&temp); // disk hygiene, not data safety — both records already committed
-        return Ok(MatResult {
-            committed: true,
-            raced: true,
-            saved: Some(saved),
-            fresh: Some(fresh),
-            missing: false,
-        });
-    }
-
-    let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
-    // Only after the tx commits: remove the displaced-bytes temp (I1 —
-    // never discard before the record commits).
-    let _ = vfs.remove(&temp);
-    Ok(MatResult {
-        committed: true,
-        saved: Some(saved),
-        ..Default::default()
+    let expect_obs = retry::with_retry(conn, |tx| observation::get_observation(tx, expect))?;
+    Ok(MaterializePrep {
+        bound_path: Some(db_path),
+        expect_hash: expect_obs.blob_hash,
     })
 }
 
-/// Step 6: an atomic, no-clobber `rename_excl` for a bind-new or
-/// recreate-after-delete target. Port of `materialize.go:205-233`
-/// (`materializeCreate`).
-fn materialize_create(
+/// What the caller's own `vfs` work concluded, carrying every disk-sourced
+/// fact [`record_materialize_outcome`] needs — this module never calls
+/// `vfs` itself to re-derive any of it. A target that turned out `missing`
+/// (bind_new=false, `NotFound`) or a genuine I/O failure never reach this
+/// type at all: neither one has anything for the DB to record (see
+/// `save.rs`'s caller-side dance for both).
+pub enum MaterializeOutcome {
+    /// The live target's hash disagreed with `expect` (an ordinary CAS
+    /// refusal), or a concurrent creator won a `bind_new` race — no write
+    /// was attempted; `data`/`stat` describe whatever is actually on disk
+    /// now.
+    Conflict {
+        data: Vec<u8>,
+        origin: &'static str,
+        stat: StatFacts,
+    },
+    /// The write committed with no race.
+    Committed { data: Vec<u8>, stat: StatFacts },
+    /// The write committed AND a racer's displaced bytes were captured in
+    /// the same atomic-swap window (F5).
+    Raced {
+        data: Vec<u8>,
+        stat: StatFacts,
+        displaced: Vec<u8>,
+        displaced_stat: StatFacts,
+    },
+}
+
+/// Steps 4-5 (now caller-facing): records what the caller's own `vfs` work
+/// concluded — a CAS conflict, a plain commit, or a swap-race commit — as
+/// the same blob+observation(+rebind) bookkeeping `commit_save`/
+/// `record_fresh` always did, fed caller-supplied bytes/stat facts instead
+/// of calling `vfs`. `resolved_path`/`seq` are the caller's own
+/// enqueue-time-captured facts (§1.4.2/§1.4.8), never re-derived here.
+/// `resolved_path` is the caller's own already-`vfs.resolve`d destination —
+/// converted to the checked `TEXT`-column string here (A4, [rune-db 6]: a
+/// non-UTF-8 path is rejected loudly rather than mangled), the one place
+/// this module still needs a `Path` at all, and it never touches disk to
+/// produce it.
+pub fn record_materialize_outcome(
     conn: &mut Connection,
-    vfs: &dyn Vfs,
     ds: DocSession,
-    resolved: &Path,
-    write: WriteIntent<'_>,
+    resolved_path: &Path,
+    seq: i64,
     now: SystemTime,
+    outcome: MaterializeOutcome,
 ) -> Result<MatResult, Error> {
-    let temp = vfs.write_durable(resolved, write.data).map_err(Error::Io)?;
-    if let Err(e) = vfs.rename_excl(&temp, resolved) {
-        if e.kind() == io::ErrorKind::AlreadyExists {
-            // A concurrent creator raced us — our own temp is genuinely
-            // unneeded (the winner's bytes are what get recorded below),
-            // safe to discard.
-            let _ = vfs.remove(&temp);
-            let live_data = vfs.read(resolved).map_err(Error::Io)?;
-            let fresh = record_fresh(conn, vfs, ds, resolved, &live_data, "probe", now)?;
-            return Ok(MatResult {
+    match outcome {
+        MaterializeOutcome::Conflict { data, origin, stat } => {
+            let fresh = record_fresh_from_stat(conn, ds, &data, origin, &stat, now)?;
+            Ok(MatResult {
                 fresh: Some(fresh),
                 ..Default::default()
-            });
+            })
         }
-        // Deliberately NOT removed on a genuine I/O failure — see
-        // `materialize_overwrite`'s matching comment: the temp is the only
-        // place the user's bytes still physically exist.
-        return Err(Error::Io(e));
+        MaterializeOutcome::Committed { data, stat } => {
+            let resolved_str = crate::paths::to_db_string(resolved_path)?;
+            let facts = CommitFacts {
+                resolved_path: &resolved_str,
+                data: &data,
+                seq,
+                stat: &stat,
+            };
+            let saved = commit_save_from_stat(conn, ds, facts, now)?;
+            Ok(MatResult {
+                committed: true,
+                saved: Some(saved),
+                ..Default::default()
+            })
+        }
+        MaterializeOutcome::Raced {
+            data,
+            stat,
+            displaced,
+            displaced_stat,
+        } => {
+            let fresh = record_fresh_from_stat(conn, ds, &displaced, "swap", &displaced_stat, now)?;
+            let resolved_str = crate::paths::to_db_string(resolved_path)?;
+            let facts = CommitFacts {
+                resolved_path: &resolved_str,
+                data: &data,
+                seq,
+                stat: &stat,
+            };
+            let saved = commit_save_from_stat(conn, ds, facts, now)?;
+            Ok(MatResult {
+                committed: true,
+                raced: true,
+                saved: Some(saved),
+                fresh: Some(fresh),
+                missing: false,
+            })
+        }
     }
-    let saved = commit_save(conn, vfs, ds, resolved, write, now)?;
-    Ok(MatResult {
-        committed: true,
-        saved: Some(saved),
-        ..Default::default()
-    })
 }
 
-/// Puts `data`'s raw bytes as a blob and records an observation of it at
-/// `path`'s current stat, for the `Conflict{Fresh}` outcomes. `data` is
+/// Puts `data`'s raw bytes as a blob and records an observation of them at
+/// caller-supplied `stat`, for the `Conflict{Fresh}` outcomes. `data` is
 /// disk-sourced — the target's live content on a CAS refusal, or a racer's
 /// displaced bytes on a swap-race (§1.4.10 mandates this capture happens
 /// unconditionally, never gated on UTF-8 validity: see `blob.rs`'s module
-/// doc). Port of `materialize.go:235-243` (`recordFresh`).
-pub(crate) fn record_fresh(
+/// doc). The blob put and its referencing observation insert commit as ONE
+/// transaction (`observe_from_stat_tx`) — never two, closing the
+/// cross-process GC race [rune-db 2]. No `vfs` call: `stat` is the
+/// caller's own fact, gathered on the thread that did the actual disk work.
+pub(crate) fn record_fresh_from_stat(
     conn: &mut Connection,
-    vfs: &dyn Vfs,
     ds: DocSession,
-    path: &Path,
     data: &[u8],
     origin: &str,
+    stat: &StatFacts,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, data))?;
-    observation::observe_from_stat(
-        conn,
-        vfs,
-        ds.session_id,
-        ds.doc_id,
-        path,
-        ObservationMeta {
-            blob_hash: &hash,
-            seq: None,
-            origin,
-        },
-        now,
-    )
+    let at = crate::session::format_rfc3339_nanos(now);
+    retry::with_retry(conn, |tx| {
+        observation::observe_from_stat_tx(
+            tx,
+            ds.session_id,
+            ds.doc_id,
+            stat,
+            &at,
+            observation::ObserveInput {
+                data,
+                seq: None,
+                origin,
+            },
+        )
+    })
 }
 
-/// Step 5: ONE tx — observation(`origin='save'`, hash of the bytes WE
-/// WROTE) + `saved_obs` update + re-Bind (path/inode/device/`kind='file'`,
-/// post-swap stat). `write.seq` is the caller's save-start-captured journal
-/// position — NEVER re-read here. The post-write stat (disk I/O) happens
-/// BEFORE the tx opens; the tx itself is pure SQLite (I1's
-/// no-tx-across-disk-I/O contract). Port of `materialize.go:245-325`
-/// (`commitSave`).
-fn commit_save(
+/// The bytes/path/seq/stat a committed write is recorded against — bundled
+/// for the same argument-count reason as [`DocSession`].
+#[derive(Clone, Copy, Debug)]
+struct CommitFacts<'a> {
+    /// The destination path, already resolved+stringified by the caller.
+    resolved_path: &'a str,
+    /// The bytes actually written (used to `put_blob` under the hash of
+    /// what's now physically on disk).
+    data: &'a [u8],
+    /// The caller's save-start-captured journal position — NEVER re-read
+    /// here.
+    seq: i64,
+    /// The destination's post-publish stat, gathered by the caller.
+    stat: &'a StatFacts,
+}
+
+/// ONE tx — blob put (hash of the bytes actually written) + observation
+/// (`origin='save'`) + `saved_obs` update + re-Bind (path/inode/device/
+/// `kind='file'`, caller-supplied post-swap stat). No `vfs` call: every
+/// disk-sourced fact `facts` carries was already gathered by the caller on
+/// its own thread, before this op was ever enqueued (I1's "no DB tx across
+/// a vfs call" contract, now trivially true — this function makes no vfs
+/// call at all). The blob put and the observation that references its hash
+/// used to be two separate transactions — a cross-process GC sweep landing
+/// between them could delete the blob before the reference committed,
+/// failing the reference with no retry ([rune-db 2]); both commit
+/// atomically here, following the pattern `snapshot::create_snapshot`
+/// already uses.
+fn commit_save_from_stat(
     conn: &mut Connection,
-    vfs: &dyn Vfs,
     ds: DocSession,
-    resolved: &Path,
-    write: WriteIntent<'_>,
+    facts: CommitFacts<'_>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, write.data))?;
-
-    let stat = observation::stat_identity(vfs, resolved);
     let at = crate::session::format_rfc3339_nanos(now);
-    let resolved_str = resolved.to_string_lossy().into_owned();
+    let resolved_str = facts.resolved_path.to_string();
 
     retry::with_retry(conn, |tx| {
-        let obs = adopt::record_adoption_tx(
+        let hash = crate::blob::put_blob(tx, facts.data)?;
+
+        let obs = crate::adopt::record_adoption_tx(
             tx,
             ds.doc_id,
             ds.session_id,
             ObservationMeta {
                 blob_hash: &hash,
-                seq: Some(write.seq),
+                seq: Some(facts.seq),
                 origin: "save",
             },
-            &stat,
+            facts.stat,
             &at,
         )?;
 
@@ -337,7 +321,7 @@ fn commit_save(
             ds.doc_id,
             Rebind {
                 path: &resolved_str,
-                stat: &stat,
+                stat: facts.stat,
                 at: &at,
             },
         )?;
@@ -347,7 +331,7 @@ fn commit_save(
 }
 
 /// The path/identity half of a document rebind, bundled for the same
-/// argument-count reason as [`DocSession`]/[`WriteIntent`].
+/// argument-count reason as [`DocSession`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Rebind<'a> {
     /// The destination path, already `vfs.resolve`d and stringified.
@@ -365,10 +349,8 @@ pub(crate) struct Rebind<'a> {
 /// (inode, device) — §1.7's one-value-one-meaning applied to the
 /// path/identity columns: two rows must never both claim the same file.
 ///
-/// Extracted verbatim from [`commit_save`] (plan step 2, "zero behavior
-/// change") because a rename needs exactly this and nothing else around it.
-/// A rename must NOT go through `commit_save`: that also does
-/// `put_blob(write.data)` + `record_adoption_tx(origin='save')`, which after
+/// A rename must NOT go through [`commit_save_from_stat`]: that also does
+/// `put_blob(facts.data)` + `record_adoption_tx(origin='save')`, which after
 /// renaming a *dirty* document would move `saved_obs` to an observation
 /// claiming the disk holds the journal head. The next ⌘S would then CAS
 /// against a lie (§1.4.7).
@@ -376,16 +358,13 @@ pub(crate) struct Rebind<'a> {
 /// Caller-supplied transaction: this is pure SQLite with no `vfs` call
 /// inside, so it is safe to run under an open tx (invariant I1).
 pub(crate) fn rebind_document_tx(
-    tx: &Connection,
+    tx: &rusqlite::Connection,
     doc_id: i64,
     rebind: Rebind<'_>,
 ) -> Result<(), Error> {
     let stat = rebind.stat;
 
-    tx.execute(
-        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-        params![rebind.path, doc_id],
-    )?;
+    evict_path_claim_tx(tx, rebind.path, doc_id)?;
 
     if stat.inode.is_some() {
         tx.execute(
@@ -394,11 +373,45 @@ pub(crate) fn rebind_document_tx(
         )?;
     }
 
+    set_identity_tx(tx, doc_id, rebind.path, stat.inode, stat.device, rebind.at)
+}
+
+/// Evicts any OTHER row currently claiming `path` — §1.7's "two rows must
+/// never both claim the same file" applied to the `path` column, everywhere
+/// a document row is about to be pointed at a real path. The ONE eviction
+/// chokepoint for this exact statement: [`rebind_document_tx`] and
+/// `document::open_path_by_inode`'s rename-detected branch both route
+/// through this instead of each carrying their own copy — the two copies
+/// had already drifted once before this extraction ([rune-db 13]).
+pub(crate) fn evict_path_claim_tx(
+    tx: &rusqlite::Connection,
+    path: &str,
+    keep_id: i64,
+) -> Result<(), Error> {
+    tx.execute(
+        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
+        params![path, keep_id],
+    )?;
+    Ok(())
+}
+
+/// Points `doc_id`'s row at `path`'s real on-disk identity — the ONE "set
+/// this row's path/inode/device to a real file's identity" statement.
+/// Always sets `kind='file'`: every caller (a post-publish rebind, or
+/// `document::open_path_by_inode` discovering a path change) only ever
+/// calls this once a real, on-disk file is confirmed.
+pub(crate) fn set_identity_tx(
+    tx: &rusqlite::Connection,
+    doc_id: i64,
+    path: &str,
+    inode: Option<i64>,
+    device: Option<i64>,
+    at: &str,
+) -> Result<(), Error> {
     tx.execute(
         "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-        params![rebind.path, stat.inode, stat.device, rebind.at, doc_id],
+        params![path, inode, device, at, doc_id],
     )?;
-
     Ok(())
 }
 
@@ -406,7 +419,9 @@ pub(crate) fn rebind_document_tx(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
-    use rune_vfs::{Mem, OpKind as VfsOp};
+    use std::path::Path;
+
+    use rune_vfs::{Mem, Vfs};
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
@@ -443,14 +458,60 @@ mod tests {
         conn.last_insert_rowid()
     }
 
-    /// A live target that no longer matches `expect` must refuse the write
-    /// entirely — no `write_durable`/`exchange` call ever reaches the vfs
-    /// (proven via `Mem::fail_next`, which would only matter if the write
-    /// path were reached: if it were, this test would still pass with the
-    /// write silently landing — the real assertion is `committed==false`
-    /// with `fresh` populated and disk content unchanged).
+    fn stat_of(vfs: &Mem, path: &Path) -> StatFacts {
+        observation::stat_identity(vfs, path)
+    }
+
+    /// [`prepare_materialize`] is pure DB bookkeeping — it must never touch
+    /// `vfs` at all. Proven by never constructing a `Vfs` in this test:
+    /// there is nothing for it to call even if it tried.
     #[test]
-    fn cas_refusal_on_external_change_makes_no_write() {
+    fn prepare_materialize_is_vfs_free_and_returns_the_bound_path_and_expect_hash() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc_with_path(&conn, "/doc.md");
+        let expect = record_obs(&conn, doc_id, session_id, "original");
+
+        let prep = prepare_materialize(&mut conn, doc_id, expect, false).expect("prepare");
+        assert_eq!(prep.bound_path.as_deref(), Some("/doc.md"));
+        assert_eq!(prep.expect_hash, observation::hash_bytes(b"original"));
+    }
+
+    /// `bind_new=true` skips the bound-path/CAS-baseline lookup entirely —
+    /// `materialize_create`'s original shape never consulted `expect`.
+    #[test]
+    fn prepare_materialize_bind_new_is_a_pure_default_no_query() {
+        let mut conn = open();
+        // No document row at all — if `prepare_materialize` tried to read
+        // one for `bind_new`, this would error instead of returning
+        // cleanly.
+        let prep = prepare_materialize(&mut conn, 999, 0, true).expect("prepare bind_new");
+        assert_eq!(prep, MaterializePrep::default());
+    }
+
+    /// An untitled document (empty bound path) must refuse rather than
+    /// silently proceeding — the caller has nothing to CAS its target
+    /// against.
+    #[test]
+    fn prepare_materialize_refuses_an_untitled_document() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let doc_id = seed_doc_with_path(&conn, "");
+        let expect = record_obs(&conn, doc_id, session_id, "irrelevant");
+
+        let err = prepare_materialize(&mut conn, doc_id, expect, false)
+            .expect_err("untitled document must refuse");
+        assert!(matches!(err, Error::Invalid(_)));
+    }
+
+    /// A CAS conflict (the caller's own vfs read/hash-compare found the
+    /// live target disagreeing with `expect`) records the live bytes as a
+    /// fresh, `origin='probe'` observation and never marks the write
+    /// committed — using ONLY caller-supplied bytes/stat, no `vfs` call.
+    #[test]
+    fn record_materialize_outcome_conflict_records_fresh_and_never_commits() {
         let mut conn = open();
         let vfs = Mem::new();
         let session_id =
@@ -458,50 +519,36 @@ mod tests {
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"external content");
         let doc_id = seed_doc_with_path(&conn, "/doc.md");
-        let expect = record_obs(&conn, doc_id, session_id, "stale-hash-not-matching-disk");
+        let stat = stat_of(&vfs, path);
 
-        // Arm a failure on the next write_durable: if materialize somehow
-        // attempted a write despite the CAS mismatch, this test would fail
-        // loudly instead of silently succeeding.
-        vfs.fail_next(VfsOp::WriteDurable, io::ErrorKind::Other);
-
-        let result = materialize(
+        let result = record_materialize_outcome(
             &mut conn,
-            &vfs,
             DocSession { doc_id, session_id },
-            path,
-            MaterializeInput {
-                content: "our content",
-                expect,
-                seq: 1,
-                bind_new: false,
-            },
+            Path::new("/doc.md"),
+            1,
             SystemTime::now(),
+            MaterializeOutcome::Conflict {
+                data: b"external content".to_vec(),
+                origin: "probe",
+                stat,
+            },
         )
-        .expect("materialize must not error, only refuse");
+        .expect("record conflict");
 
         assert!(!result.committed);
-        assert!(result.fresh.is_some());
-        assert!(!result.missing);
-
-        let disk = vfs.read(path).expect("disk still has external content");
-        assert_eq!(disk, b"external content");
+        let fresh = result.fresh.expect("fresh observation recorded");
+        assert_eq!(fresh.origin, "probe");
+        assert_eq!(
+            fresh.blob_hash,
+            observation::hash_bytes(b"external content")
+        );
     }
 
-    /// A save-start CAS `expect` matching live disk AT THE TIME IT WAS
-    /// CAPTURED, but a racer landing different bytes at `resolved` in the
-    /// window before OUR `exchange` runs, must still commit OUR write (the
-    /// swap is atomic and already physically happened) AND capture the
-    /// raced writer's displaced bytes as a durable blob/observation
-    /// (`origin='swap'`). `Mem` is single-threaded/synchronous, so this
-    /// exercises `materialize_overwrite` (the private step-3-5 primitive)
-    /// directly rather than the public `materialize` entry point: it calls
-    /// in AFTER the racer has already landed its bytes at `resolved` but
-    /// with `expect_obs` still reflecting what `Materialize`'s own step 1-2
-    /// CAS check would have captured a moment earlier — precisely the
-    /// window F5 describes.
+    /// A plain committed write records the blob/observation and rebinds the
+    /// document's row to the resolved path — the same effect `commit_save`
+    /// always had, now driven by caller-supplied facts only.
     #[test]
-    fn swap_race_captures_displaced_bytes_as_a_blob_and_commits_raced() {
+    fn record_materialize_outcome_committed_records_save_and_rebinds() {
         let mut conn = open();
         let vfs = Mem::new();
         let session_id =
@@ -509,305 +556,107 @@ mod tests {
         let path = Path::new("/doc.md");
         publish(&vfs, path, b"original");
         let doc_id = seed_doc_with_path(&conn, "/doc.md");
+        let stat = stat_of(&vfs, path);
 
-        let expect_obs = Observation {
-            id: 0,
-            doc_id,
-            session_id,
-            blob_hash: observation::hash_bytes(b"original"),
-            seq: None,
-            size: 0,
-            mtime: String::new(),
-            inode: None,
-            device: None,
-            nlink: None,
-            origin: "load".to_string(),
-            supersedes: None,
-            at: String::new(),
-        };
-
-        // The racer lands its own bytes at `path` in the window between
-        // Materialize's CAS check and our own `exchange` call.
-        let racer_temp = vfs
-            .write_durable(path, b"racer bytes")
-            .expect("racer write_durable");
-        vfs.exchange(&racer_temp, path).expect("racer exchange");
-        vfs.remove(&racer_temp).ok();
-
-        let result = materialize_overwrite(
+        let result = record_materialize_outcome(
             &mut conn,
-            &vfs,
             DocSession { doc_id, session_id },
-            path,
-            WriteIntent {
-                data: b"our content",
-                seq: 1,
-            },
-            &expect_obs,
+            Path::new("/doc.md"),
+            7,
             SystemTime::now(),
+            MaterializeOutcome::Committed {
+                data: b"new content".to_vec(),
+                stat,
+            },
         )
-        .expect("materialize_overwrite");
+        .expect("record committed");
 
-        assert!(result.committed, "our write must commit despite the race");
-        assert!(result.raced, "must be flagged as a swap-race win");
-        let fresh = result.fresh.expect("displaced bytes must be captured");
+        assert!(result.committed);
+        let saved = result.saved.expect("saved observation recorded");
+        assert_eq!(saved.origin, "save");
+        assert_eq!(saved.seq, Some(7));
+        assert_eq!(saved.blob_hash, observation::hash_bytes(b"new content"));
+
+        let bound_path: String = conn
+            .query_row(
+                "SELECT path FROM documents WHERE id=?1",
+                params![doc_id],
+                |r| r.get(0),
+            )
+            .expect("read back bound path");
+        assert_eq!(bound_path, "/doc.md");
+    }
+
+    /// A swap-race outcome records BOTH the displaced bytes (`origin=
+    /// 'swap'`) and our own committed write — §1.4.10's unconditional
+    /// displaced-bytes capture, driven entirely by caller-supplied facts.
+    #[test]
+    fn record_materialize_outcome_raced_records_both_displaced_and_committed() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"our content");
+        let doc_id = seed_doc_with_path(&conn, "/doc.md");
+        let stat = stat_of(&vfs, path);
+
+        let result = record_materialize_outcome(
+            &mut conn,
+            DocSession { doc_id, session_id },
+            Path::new("/doc.md"),
+            3,
+            SystemTime::now(),
+            MaterializeOutcome::Raced {
+                data: b"our content".to_vec(),
+                stat,
+                displaced: b"racer bytes".to_vec(),
+                displaced_stat: StatFacts::default(),
+            },
+        )
+        .expect("record raced");
+
+        assert!(result.committed);
+        assert!(result.raced);
+        let fresh = result.fresh.expect("displaced bytes recorded");
         assert_eq!(fresh.origin, "swap");
         assert_eq!(fresh.blob_hash, observation::hash_bytes(b"racer bytes"));
+        let saved = result.saved.expect("our write recorded");
+        assert_eq!(saved.blob_hash, observation::hash_bytes(b"our content"));
 
-        // The blob is durably retrievable.
         let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
             .expect("racer bytes durably stored as a blob");
         assert_eq!(blob, b"racer bytes");
-
-        // OUR bytes are what's physically on disk now.
-        let disk = vfs.read(path).expect("read disk");
-        assert_eq!(disk, b"our content");
     }
 
     /// §1.4.10 mandates capturing displaced bytes unconditionally — even
-    /// when the racer's bytes are NOT valid UTF-8 (e.g. a binary file, or
-    /// another process's own in-progress non-text write landing in the
-    /// swap window). Before the blob layer was retyped to raw bytes, this
-    /// hit `std::str::from_utf8` inside `record_fresh` and hard-errored:
-    /// no blob, no `commit_save`, even though OUR bytes had already
-    /// physically swapped in — exactly the failure mode this test guards
-    /// against.
+    /// when they are NOT valid UTF-8 (a binary file, or another process's
+    /// own in-progress non-text write landing in the swap window).
     #[test]
-    fn swap_race_with_non_utf8_racer_bytes_commits_raced_and_captures_the_blob_byte_exact() {
+    fn record_materialize_outcome_conflict_with_non_utf8_bytes_captures_them_byte_exact() {
         let mut conn = open();
-        let vfs = Mem::new();
         let session_id =
             crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let path = Path::new("/doc.md");
-        publish(&vfs, path, b"original");
         let doc_id = seed_doc_with_path(&conn, "/doc.md");
-
-        let expect_obs = Observation {
-            id: 0,
-            doc_id,
-            session_id,
-            blob_hash: observation::hash_bytes(b"original"),
-            seq: None,
-            size: 0,
-            mtime: String::new(),
-            inode: None,
-            device: None,
-            nlink: None,
-            origin: "load".to_string(),
-            supersedes: None,
-            at: String::new(),
-        };
-
-        // Non-UTF-8 racer bytes land at `path` in the swap window (0xFF is
-        // never a valid UTF-8 lead byte).
         let racer_bytes: &[u8] = &[0xff, 0xfe, 0x00, 0x9f, 0x92, 0x96, 0x80];
-        let racer_temp = vfs
-            .write_durable(path, racer_bytes)
-            .expect("racer write_durable");
-        vfs.exchange(&racer_temp, path).expect("racer exchange");
-        vfs.remove(&racer_temp).ok();
 
-        let result = materialize_overwrite(
+        let result = record_materialize_outcome(
             &mut conn,
-            &vfs,
             DocSession { doc_id, session_id },
-            path,
-            WriteIntent {
-                data: b"our content",
-                seq: 1,
-            },
-            &expect_obs,
-            SystemTime::now(),
-        )
-        .expect("materialize_overwrite must commit, not hard-error, on non-utf8 displaced bytes");
-
-        assert!(result.committed, "our write must commit despite the race");
-        assert!(result.raced, "must be flagged as a swap-race win");
-        let fresh = result.fresh.expect("displaced bytes must be captured");
-        assert_eq!(fresh.origin, "swap");
-        assert_eq!(fresh.blob_hash, observation::hash_bytes(racer_bytes));
-
-        let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
-            .expect("non-utf8 racer bytes must still be durably stored as a blob");
-        assert_eq!(
-            blob, racer_bytes,
-            "displaced bytes must round-trip byte-exact, even though not valid UTF-8"
-        );
-
-        let disk = vfs.read(path).expect("read disk");
-        assert_eq!(disk, b"our content");
-    }
-
-    /// `Mem::fail_next(Exchange)` mid-materialize: the error must surface,
-    /// `saved_obs` must not move, and the temp file must still hold the
-    /// user's bytes (never silently lost).
-    #[test]
-    fn exchange_failure_surfaces_error_no_saved_obs_move_temp_keeps_bytes() {
-        let mut conn = open();
-        let vfs = Mem::new();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let path = Path::new("/doc.md");
-        publish(&vfs, path, b"original");
-        let doc_id = seed_doc_with_path(&conn, "/doc.md");
-        let expect = record_obs(&conn, doc_id, session_id, "original");
-
-        vfs.fail_next(VfsOp::Exchange, io::ErrorKind::Other);
-
-        let err = materialize(
-            &mut conn,
-            &vfs,
-            DocSession { doc_id, session_id },
-            path,
-            MaterializeInput {
-                content: "user bytes",
-                expect,
-                seq: 1,
-                bind_new: false,
-            },
-            SystemTime::now(),
-        )
-        .expect_err("exchange failure must surface");
-        assert!(matches!(err, Error::Io(_)));
-
-        let saved_obs_row_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM session_documents WHERE session_id=?1 AND doc_id=?2)",
-                params![session_id, doc_id],
-                |r| r.get(0),
-            )
-            .expect("check saved_obs existence");
-        assert!(
-            !saved_obs_row_exists,
-            "saved_obs must not move on a failed exchange"
-        );
-
-        // The temp write_durable produced must still physically hold the
-        // user's bytes — never silently discarded on this failure path.
-        let temps: Vec<_> = vfs
-            .debug_paths()
-            .into_iter()
-            .filter(|p| p.as_path() != path)
-            .collect();
-        assert_eq!(
-            temps.len(),
+            Path::new("/doc.md"),
             1,
-            "exactly one orphaned temp must remain: {temps:?}"
-        );
-        let temp_bytes = vfs.read(&temps[0]).expect("temp still readable");
-        assert_eq!(temp_bytes, b"user bytes");
-    }
-
-    /// A missing target with `bind_new=false` must refuse with `missing`,
-    /// never silently create the file.
-    #[test]
-    fn missing_target_without_bind_new_refuses_as_missing() {
-        let mut conn = open();
-        let vfs = Mem::new();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id = seed_doc_with_path(&conn, "/gone.md");
-        let expect = record_obs(&conn, doc_id, session_id, "irrelevant");
-
-        let result = materialize(
-            &mut conn,
-            &vfs,
-            DocSession { doc_id, session_id },
-            Path::new("/gone.md"),
-            MaterializeInput {
-                content: "content",
-                expect,
-                seq: 1,
-                bind_new: false,
-            },
             SystemTime::now(),
-        )
-        .expect("materialize must not error");
-        assert!(!result.committed);
-        assert!(result.missing);
-    }
-
-    /// `bind_new=true` on a brand-new path creates it atomically via
-    /// `rename_excl`.
-    #[test]
-    fn bind_new_creates_the_file_atomically() {
-        let mut conn = open();
-        let vfs = Mem::new();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id = seed_doc_with_path(&conn, "");
-
-        let result = materialize(
-            &mut conn,
-            &vfs,
-            DocSession { doc_id, session_id },
-            Path::new("/new.md"),
-            MaterializeInput {
-                content: "brand new content",
-                expect: 0,
-                seq: 1,
-                bind_new: true,
+            MaterializeOutcome::Conflict {
+                data: racer_bytes.to_vec(),
+                origin: "swap",
+                stat: StatFacts::default(),
             },
-            SystemTime::now(),
         )
-        .expect("materialize");
-        assert!(result.committed);
-        assert!(result.saved.is_some());
+        .expect("record conflict with non-utf8 bytes");
 
-        let disk = vfs.read(Path::new("/new.md")).expect("file created");
-        assert_eq!(disk, b"brand new content");
-    }
-
-    /// Port of Go `materialize_test.go:278-317` parity (finding 9): a
-    /// concurrent creator publishes the target BEFORE our own `bind_new`
-    /// materialize's `rename_excl` runs. We must refuse (never clobber the
-    /// winner), record a fresh `origin='probe'` observation of the winner's
-    /// actual bytes, and leave the winner's bytes on disk untouched.
-    #[test]
-    fn bind_new_create_race_refuses_and_records_winners_bytes() {
-        let mut conn = open();
-        let vfs = Mem::new();
-        let session_id =
-            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
-        let doc_id = seed_doc_with_path(&conn, "");
-        let path = Path::new("/new.md");
-
-        // A concurrent creator wins the race and publishes first.
-        publish(&vfs, path, b"winner's bytes");
-
-        let result = materialize(
-            &mut conn,
-            &vfs,
-            DocSession { doc_id, session_id },
-            path,
-            MaterializeInput {
-                content: "our content",
-                expect: 0,
-                seq: 1,
-                bind_new: true,
-            },
-            SystemTime::now(),
-        )
-        .expect("materialize must not error, only refuse");
-
-        assert!(!result.committed, "the create must be refused");
-        let fresh = result.fresh.expect("winner's bytes must be recorded");
-        assert_eq!(fresh.origin, "probe");
-        assert_eq!(fresh.blob_hash, observation::hash_bytes(b"winner's bytes"));
-
-        let saved_obs_row_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM session_documents WHERE session_id=?1 AND doc_id=?2)",
-                params![session_id, doc_id],
-                |r| r.get(0),
-            )
-            .expect("check saved_obs existence");
-        assert!(
-            !saved_obs_row_exists,
-            "a refused create must never move saved_obs"
-        );
-
-        let disk = vfs.read(path).expect("winner's file still on disk");
-        assert_eq!(disk, b"winner's bytes", "the winner's bytes must be intact");
+        let fresh = result.fresh.expect("fresh observation recorded");
+        let blob = retry::with_retry(&mut conn, |tx| crate::blob::get_blob(tx, &fresh.blob_hash))
+            .expect("non-utf8 bytes must still be durably stored as a blob");
+        assert_eq!(blob, racer_bytes);
     }
 }

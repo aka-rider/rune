@@ -40,7 +40,7 @@ use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
 use crate::load::LoadResult;
-use crate::materialize::MatResult;
+use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep};
 use crate::observation::{ObsId, Observation};
 use crate::rename::RenameOutcome;
 use crate::retry;
@@ -133,18 +133,28 @@ pub enum OpKind {
         doc_id: i64,
         now: SystemTime,
     },
-    /// Port of `materialize.go` (`Materialize`) — the CAS write protocol.
-    /// `content`/`expect`/`seq` are caller-captured at enqueue time
-    /// (`Store::materialize`), never re-derived inside (plan WP4.S4).
-    Materialize {
+    /// WP7 step (a): the bookkeeping-only half of `Materialize` that runs
+    /// BEFORE any `vfs` call — hands the caller the CAS decision data
+    /// (`materialize::prepare_materialize`) so the actual disk publish can
+    /// happen entirely off this thread, on the caller's own (`rune-tui`'s
+    /// save `Cmd`).
+    MaterializePrepare {
+        doc_id: i64,
+        expect: ObsId,
+        bind_new: bool,
+    },
+    /// WP7 step (c): records what the caller's own `vfs` work concluded
+    /// (`materialize::record_materialize_outcome`) — the ONLY other half of
+    /// `Materialize` left on this thread, and it makes no `vfs` call
+    /// either. `resolved_path`/`seq` are the caller's own
+    /// enqueue-time-captured facts (§1.4.2/§1.4.8), never re-derived here.
+    MaterializeRecord {
         session_id: i64,
         doc_id: i64,
-        path: PathBuf,
-        content: String,
-        expect: ObsId,
+        resolved_path: PathBuf,
         seq: i64,
-        bind_new: bool,
         now: SystemTime,
+        outcome: MaterializeOutcome,
     },
     /// Port of `load.go` (`Load`). `liveness_check` is this `Store`'s own
     /// injected liveness function (`Store::set_liveness_check`), threaded
@@ -224,7 +234,11 @@ pub enum OpOutcome {
     /// variants (`None`/`Seq`/`RowId`) shouldn't all pay for the rare, rich
     /// ones' size.
     Sync(Box<SyncState>),
-    /// `Materialize`'s [`MatResult`] (boxed — see `Sync`'s doc comment).
+    /// `MaterializePrepare`'s [`MaterializePrep`] — the CAS decision data
+    /// the caller needs before doing any `vfs` call (WP7 step a).
+    MaterializePrep(Box<MaterializePrep>),
+    /// `MaterializeRecord`'s [`MatResult`] (boxed — see `Sync`'s doc
+    /// comment) — WP7 step c.
     Materialize(Box<MatResult>),
     /// `Load`'s [`LoadResult`] (boxed — see `Sync`'s doc comment).
     Load(Box<LoadResult>),
@@ -607,28 +621,29 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             let state = crate::probe::probe(conn, vfs, session_id, doc_id, now)?;
             Ok(OpOutcome::Sync(Box::new(state)))
         }
-        OpKind::Materialize {
+        OpKind::MaterializePrepare {
+            doc_id,
+            expect,
+            bind_new,
+        } => {
+            let prep = crate::materialize::prepare_materialize(conn, doc_id, expect, bind_new)?;
+            Ok(OpOutcome::MaterializePrep(Box::new(prep)))
+        }
+        OpKind::MaterializeRecord {
             session_id,
             doc_id,
-            path,
-            content,
-            expect,
+            resolved_path,
             seq,
-            bind_new,
             now,
+            outcome,
         } => {
-            let result = crate::materialize::materialize(
+            let result = crate::materialize::record_materialize_outcome(
                 conn,
-                vfs,
                 crate::materialize::DocSession { doc_id, session_id },
-                &path,
-                crate::materialize::MaterializeInput {
-                    content: &content,
-                    expect,
-                    seq,
-                    bind_new,
-                },
+                &resolved_path,
+                seq,
                 now,
+                outcome,
             )?;
             Ok(OpOutcome::Materialize(Box::new(result)))
         }

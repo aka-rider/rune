@@ -1,17 +1,47 @@
 //! The save/ack/dirty flow (plan WP1.S5, extracted out of `app.rs` to keep
 //! it under the §1.6 line budget): `trigger_save`'s degraded-store confirm
-//! gate, `materialize_now`'s CAS-enqueue, the `Msg::SaveDone`/materialize-ack
-//! reactions, the dirty-cache recompute chokepoint (§1.4.8), the snapshot-
-//! autosave debounce, and `on_store_failure`'s whole-store degrade. Every
-//! function here is per-document except `on_store_failure`, which stays
-//! app-wide (plan decision 3/6: a hard write failure degrades the ONE
-//! shared `Store`, never just the document that happened to trigger it).
+//! gate, the store-backed materialize dance (WP7: `MaterializePrepare`'s
+//! ack -> the caller-side `vfs` `Cmd` -> `MaterializeRecord`'s ack),
+//! the `Msg::SaveDone`/materialize-ack reactions, the dirty-cache recompute
+//! chokepoint (§1.4.8), the snapshot-autosave debounce, and
+//! `on_store_failure`'s whole-store degrade. Every function here is
+//! per-document except `on_store_failure`, which stays app-wide (plan
+//! decision 3/6: a hard write failure degrades the ONE shared `Store`,
+//! never just the document that happened to trigger it).
+//!
+//! # WP7: the disk publish leaves the writer thread
+//!
+//! A store-backed save used to be a single `rune-db` op — enqueued here,
+//! executed entirely on the writer thread (`vfs` calls and all), acked back
+//! as one `MatResult`. That made `rune-db` the file write's caller, not its
+//! sibling: a dead writer thread made saving impossible ([rune-db 1]).
+//! `materialize_now` now drives three hops instead of one:
+//!
+//! 1. Enqueue `MaterializePrepare` (bookkeeping only, no `vfs` call) —
+//!    `handle_prepare_ack` reacts to its ack.
+//! 2. `handle_prepare_ack` spawns [`materialize_vfs_cmd`], which performs
+//!    the ENTIRE `vfs` dance (resolve/read/hash-compare/`write_durable`/
+//!    `exchange` or `rename_excl`/read-displaced) on its own thread, through
+//!    THIS app's own `Vfs` handle — never the writer thread's.
+//! 3. `handle_materialize_vfs_done` reacts to that `Cmd`'s result: a
+//!    `Missing`/`PathDisagreement`/`Error` outcome never touches `rune-db`
+//!    again; a `Conflict`/`Committed`/`Raced` outcome enqueues
+//!    `MaterializeRecord` so the bookkeeping (blob/observation/rebind) is
+//!    recorded, tagging the op in `App::published_ops` whenever the write
+//!    itself already physically committed — `dispatch::handle_db_event`
+//!    consults that map so a writer dying on THIS op still reports the
+//!    save as successful (only the store degrades).
+//!
+//! `App::pending_materialize` carries the caller-captured
+//! content/path/CAS facts between these hops (§1.4.2/§1.4.8: captured once,
+//! at trigger time, never re-derived).
 
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rune_db::MatResult;
+use rune_db::{MatResult, MaterializeOutcome, StatFacts};
 use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
@@ -27,6 +57,22 @@ const SAVE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 /// The snapshot-autosave debounce window (plan WP5.S6, port of
 /// `workspace_timers.go:11`'s 2s debounce).
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
+
+/// WP7: the content/path/CAS facts `materialize_now`/`bind_new_now` capture
+/// at trigger time, held in `App::pending_materialize` between
+/// `MaterializePrepare`'s ack (which carries no disk-sourced data of its
+/// own) and the caller-side `vfs` `Cmd` it spawns. Never re-derived once
+/// captured (§1.4.2/§1.4.8) — the eventual `vfs` work and `MaterializeRecord`
+/// enqueue both read only from this struct, never from the document's
+/// (possibly further-edited) live buffer.
+#[derive(Clone)]
+pub(crate) struct PendingMaterialize {
+    content: String,
+    path: PathBuf,
+    bind_new: bool,
+    db_id: i64,
+    seq: i64,
+}
 
 /// `super+s` (WP9, plan Context "Save"; WP5.S6 routes it through
 /// `rune-db`'s `materialize` on the writer FIFO when a store is present).
@@ -92,7 +138,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     if degraded {
         if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
             app.pending_save_confirm = None;
-            materialize_now(app, id, path, version);
+            materialize_now(app, id, path, version, effects);
         } else {
             let generation = app.next_save_confirm_gen;
             app.next_save_confirm_gen = app.next_save_confirm_gen.wrapping_add(1);
@@ -106,19 +152,22 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         return;
     }
 
-    materialize_now(app, id, path, version);
+    materialize_now(app, id, path, version, effects);
 }
 
-/// Enqueues `content` to `rune-db`'s writer FIFO via `Store::materialize`
-/// (plan WP5.S6). Not a `Cmd`: `Store::enqueue` is a plain, non-blocking
-/// channel send (never I/O that leaves this thread — the actual disk write
-/// happens on the writer thread, whose eventual `DbEvent::Ok{ result:
-/// OpOutcome::Materialize(..), .. }` ack arrives as `Msg::Db`, routed back
-/// to `id` via `app.db_ops`, handled by `handle_materialize_ack`), so §5.4
-/// lets `update` call it directly. `content`/`expect`/`seq`/`bind_new` are
-/// all captured HERE, synchronously — never re-derived once the op runs
-/// (§1.4.2/§1.4.8).
-fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
+/// WP7 step (a): enqueues `MaterializePrepare` — a plain, non-blocking
+/// channel send (never I/O that leaves this thread; the writer thread's
+/// reply carries no disk-sourced data at all, only DB bookkeeping), so
+/// §5.4 lets `update` call it directly. `content`/`path`/`seq`/`bind_new`
+/// are all captured HERE, synchronously, into `App::pending_materialize` —
+/// never re-derived once the round trip is under way (§1.4.2/§1.4.8).
+fn materialize_now(
+    app: &mut App,
+    id: DocumentId,
+    path: PathBuf,
+    version: u64,
+    effects: &mut Effects,
+) {
     let Some(doc) = app.doc(id) else { return };
     let Some((db_id, expect_obs, last_known_seq, bind_new)) = doc
         .db
@@ -129,9 +178,7 @@ fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
     };
     let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
-    let result = db
-        .store
-        .materialize(db_id, &path, &content, expect_obs, last_known_seq, bind_new);
+    let result = db.store.materialize_prepare(db_id, expect_obs, bind_new);
 
     if let Some(doc) = app.doc_mut(id) {
         doc.save_in_flight = true;
@@ -140,24 +187,43 @@ fn materialize_now(app: &mut App, id: DocumentId, path: PathBuf, version: u64) {
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, id);
+            app.pending_materialize.insert(
+                id,
+                PendingMaterialize {
+                    content,
+                    path,
+                    bind_new,
+                    db_id,
+                    seq: last_known_seq,
+                },
+            );
         }
         Err(e) => {
-            // A store enqueue-time failure is exactly the same class of
-            // event as an async `DbEvent::Err`/`Fatal` (plan decision 3) —
-            // degrade the store and raise the sticky banner via the same
-            // chokepoint `db::append_edit`/`move_undo_pos` use, not a
-            // one-shot `SaveError` status that leaves the store untouched
-            // and lets the next save silently retry against an already-
-            // wedged writer.
+            // WP7: nothing has touched disk yet — the store couldn't even
+            // perform the bookkeeping-only prepare step. Degrade the store
+            // (same signal `on_store_failure` always raised on an
+            // enqueue-time error) AND fall back to the uncoordinated
+            // direct-vfs write, exactly like a document with no store
+            // binding at all: "press ⌘S again to save anyway" must
+            // actually save ([rune-db 1]). `on_store_failure`'s in-flight
+            // sweep clears `save_in_flight` for every document (it has no
+            // way to know this ONE document's save is about to continue
+            // via the fallback `Cmd`) — re-arm it right after, or a second
+            // ⌘S could race the fallback write still in progress.
             on_store_failure(app, e.to_string());
+            if let Some(doc) = app.doc_mut(id) {
+                doc.save_in_flight = true;
+            }
+            let bytes = content.into_bytes();
+            let vfs = Arc::clone(&app.vfs);
+            effects.cmds.push(save_cmd(id, vfs, path, bytes, version));
         }
     }
 }
 
 /// The draft-naming route (`rename::bind_new`): materialize the buffer to
 /// `path` with `bind_new=true` — an atomic no-clobber `rename_excl` create
-/// whose EEXIST branch refuses and records the winner's bytes
-/// (`materialize_create`).
+/// whose EEXIST branch refuses and records the winner's bytes.
 ///
 /// `trigger_save` cannot be reused here: it reads `doc.file_path`, which is
 /// exactly what a draft does not have yet. And the document is deliberately
@@ -176,29 +242,53 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     };
     let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
-    // `expect` is unused on the create path (`materialize_create` never
-    // consults it) and `seq` is the live journal position, captured HERE
-    // (§1.4.2/§1.4.8).
+    // `expect`/CAS never applies on the create path — `prepare_materialize`
+    // returns an empty `MaterializePrep` for `bind_new` and the caller-side
+    // `vfs` work skips the read/hash-compare accordingly.
     let seq = app
         .doc(id)
         .and_then(|d| d.db.as_ref())
         .map(|d| d.last_known_seq)
         .unwrap_or(0);
-    let result = db.store.materialize(db_id, &path, &content, 0, seq, true);
+    let result = db.store.materialize_prepare(db_id, 0, true);
 
     if let Some(doc) = app.doc_mut(id) {
         doc.save_in_flight = true;
         doc.save_pending_version = Some(version);
         // Remembered so the ack can bind it — see `pending_bind_path`.
-        doc.pending_bind_path = Some(path);
+        doc.pending_bind_path = Some(path.clone());
     }
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, id);
+            app.pending_materialize.insert(
+                id,
+                PendingMaterialize {
+                    content,
+                    path,
+                    bind_new: true,
+                    db_id,
+                    seq,
+                },
+            );
         }
         Err(e) => {
+            // Unlike `materialize_now`'s overwrite path, there is no
+            // equivalent-safety direct-vfs fallback for a bind-new create:
+            // a plain `vfs.save_atomic` has no no-clobber guarantee, and
+            // `handle_save_done`'s success path never binds `file_path`
+            // (only `handle_materialize_ack`'s `pending_bind_path` dance
+            // does) — reusing it here would silently create the file
+            // without ever giving the draft its name. The buffer itself is
+            // never at risk (still safely in memory, `saved_version`
+            // untouched), just this ONE draft-naming attempt; the user can
+            // retry once a fresh store is available. Tracked as a narrower,
+            // pre-existing gap distinct from [rune-db 1] (which is about
+            // an ALREADY-bound document's overwrite, not draft creation) —
+            // see `TODO-wp7-bind-new-dead-writer.md`.
             if let Some(doc) = app.doc_mut(id) {
                 doc.save_in_flight = false;
+                doc.save_pending_version = None;
                 doc.pending_bind_path = None;
             }
             on_store_failure(app, e.to_string());
@@ -206,11 +296,429 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     }
 }
 
-/// The reaction to a `materialize` ack for `id` (plan WP5.S6): advances
-/// `saved_version`/`DocDb::expect_obs`/`bind_new` on a commit, surfaces each
-/// `MatResult` outcome as status text, and — either way — clears `id`'s
-/// `save_in_flight` and recomputes its dirty cache (trigger (b) of
-/// `recompute_dirty`'s doc comment).
+/// WP7 step (a)'s reaction: `prep` carries the CAS decision data
+/// (`rune_db::MaterializePrep`) — no disk-sourced fact of its own — so this
+/// only retrieves `id`'s captured [`PendingMaterialize`] and spawns the
+/// caller-side `vfs` `Cmd` that performs the ENTIRE disk dance.  A missing
+/// `pending_materialize` entry (the document closed mid-flight, or a stale
+/// ack) is a correct, silent no-op.
+pub(crate) fn handle_prepare_ack(
+    app: &mut App,
+    id: DocumentId,
+    prep: rune_db::MaterializePrep,
+    effects: &mut Effects,
+) {
+    let Some(pending) = app.pending_materialize.get(&id).cloned() else {
+        return;
+    };
+    let vfs = Arc::clone(&app.vfs);
+    effects.cmds.push(materialize_vfs_cmd(
+        id,
+        vfs,
+        pending.path,
+        pending.bind_new,
+        pending.content,
+        prep.expect_hash,
+        prep.bound_path,
+    ));
+}
+
+/// What the caller-side `vfs` work ([`run_materialize_vfs`]) concluded —
+/// every disk-sourced fact [`handle_materialize_vfs_done`] needs, carried
+/// so this module never has to call `vfs` a second time to re-derive any
+/// of it.
+#[derive(Debug)]
+pub enum MaterializeVfsOutcome {
+    /// The overwrite target no longer exists (`bind_new=false` only) —
+    /// §1.4.4: never silently (re)create.
+    Missing,
+    /// The caller's own target disagrees with the document's bound path —
+    /// a caller-bug guard ([rune-db 5]), not an ordinary CAS race. No `vfs`
+    /// write was attempted.
+    PathDisagreement,
+    /// A genuine `vfs` I/O failure. No `rune-db` op is ever enqueued for
+    /// this outcome — nothing happened worth recording, and the failure is
+    /// specific to this document's save, not the store.
+    Error(String),
+    /// The live target (or, for `bind_new`, a concurrent creator's file)
+    /// didn't match `expect` — no write was attempted; `data`/`stat`
+    /// describe whatever is actually on disk now.
+    Conflict {
+        data: Vec<u8>,
+        origin: &'static str,
+        stat: StatFacts,
+        resolved_path: PathBuf,
+    },
+    /// The write committed with no race.
+    Committed {
+        data: Vec<u8>,
+        stat: StatFacts,
+        resolved_path: PathBuf,
+    },
+    /// The write committed AND a racer's displaced bytes were captured in
+    /// the same atomic-swap window (F5).
+    Raced {
+        data: Vec<u8>,
+        stat: StatFacts,
+        displaced: Vec<u8>,
+        displaced_stat: StatFacts,
+        resolved_path: PathBuf,
+    },
+}
+
+/// WP7 step (b): the caller-side `vfs` `Cmd` — resolves the destination,
+/// CAS-checks it (`!bind_new`), publishes (`exchange`/`rename_excl`), and
+/// on a plain overwrite, reads back the displaced bytes to detect a
+/// swap-race — entirely through THIS app's own `Vfs` handle, never the
+/// writer thread's. Tagged `CmdKind::Save` (not a new kind) so quit's
+/// existing `save_handles` join covers it exactly like the no-store
+/// fallback save ([rune-tui A 5]).
+fn materialize_vfs_cmd(
+    id: DocumentId,
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    bind_new: bool,
+    content: String,
+    expect_hash: String,
+    bound_path: Option<String>,
+) -> Cmd {
+    Cmd::new(CmdKind::Save, move || {
+        let outcome = run_materialize_vfs(
+            vfs.as_ref(),
+            &path,
+            bind_new,
+            &content,
+            &expect_hash,
+            bound_path.as_deref(),
+        );
+        Some(Msg::MaterializeVfsDone { id, outcome })
+    })
+}
+
+/// The `vfs` dance itself, factored out of [`materialize_vfs_cmd`] so it is
+/// plain, synchronous, testable logic. Mirrors the steps the pre-WP7
+/// `rune-db::materialize`/`materialize_overwrite`/`materialize_create` used
+/// to run on the writer thread, verbatim in shape, just against the
+/// CALLER's own `vfs` instead.
+fn run_materialize_vfs(
+    vfs: &dyn Vfs,
+    path: &Path,
+    bind_new: bool,
+    content: &str,
+    expect_hash: &str,
+    bound_path: Option<&str>,
+) -> MaterializeVfsOutcome {
+    let data = content.as_bytes();
+
+    if bind_new {
+        let resolved = match vfs.resolve(path) {
+            Ok(r) => r,
+            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+        };
+        if let Some(dir) = resolved.parent()
+            && !dir.as_os_str().is_empty()
+            && let Err(e) = vfs.mkdir_all(dir)
+        {
+            return MaterializeVfsOutcome::Error(e.to_string());
+        }
+        let temp = match vfs.write_durable(&resolved, data) {
+            Ok(t) => t,
+            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+        };
+        return match vfs.rename_excl(&temp, &resolved) {
+            Ok(()) => {
+                let stat = rune_db::stat_identity(vfs, &resolved);
+                MaterializeVfsOutcome::Committed {
+                    data: data.to_vec(),
+                    stat,
+                    resolved_path: resolved,
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                // A concurrent creator won the race — our own temp is
+                // genuinely unneeded (the winner's bytes are what get
+                // recorded), safe to discard.
+                let _ = vfs.remove(&temp);
+                match vfs.read(&resolved) {
+                    Ok(live) => {
+                        let stat = rune_db::stat_identity(vfs, &resolved);
+                        MaterializeVfsOutcome::Conflict {
+                            data: live,
+                            origin: "probe",
+                            stat,
+                            resolved_path: resolved,
+                        }
+                    }
+                    Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
+                }
+            }
+            // Deliberately NOT removed on a genuine I/O failure: the temp
+            // is the only place the user's just-written bytes still
+            // physically exist.
+            Err(e) => MaterializeVfsOutcome::Error(e.to_string()),
+        };
+    }
+
+    let resolved = match vfs.resolve(path) {
+        Ok(r) => r,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+    if let Some(bound) = bound_path {
+        match vfs.resolve(Path::new(bound)) {
+            Ok(db_resolved) if db_resolved != resolved => {
+                return MaterializeVfsOutcome::PathDisagreement;
+            }
+            Ok(_) => {}
+            Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+        }
+    }
+
+    // Step 1: unconditional read+hash of the live target.
+    let live_data = match vfs.read(&resolved) {
+        Ok(d) => d,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            // §1.4.4: an ordinary overwrite-intent save must never silently
+            // (re)create a file the caller didn't explicitly ask to.
+            return MaterializeVfsOutcome::Missing;
+        }
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+
+    // Step 2: live hash != expect -> refuse, no write.
+    if rune_db::hash_bytes(&live_data) != expect_hash {
+        let stat = rune_db::stat_identity(vfs, &resolved);
+        return MaterializeVfsOutcome::Conflict {
+            data: live_data,
+            origin: "probe",
+            stat,
+            resolved_path: resolved,
+        };
+    }
+
+    let temp = match vfs.write_durable(&resolved, data) {
+        Ok(t) => t,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+
+    match vfs.exchange(&temp, &resolved) {
+        Ok(()) => {}
+        Err(e) if rune_vfs::published_not_durable(&e) => {
+            // WP1: the swap already physically took effect — only the
+            // durability CONFIRMATION (parent fsync) failed. `resolved`
+            // already holds our new bytes, so this is the same physical
+            // state as `Ok(())`; keep going rather than reporting a save
+            // that, on disk, actually succeeded.
+        }
+        Err(e) => {
+            // Deliberately NOT removed: the temp is the only place the
+            // user's just-written bytes still physically exist.
+            return MaterializeVfsOutcome::Error(e.to_string());
+        }
+    }
+
+    // Step 4: temp now holds what USED TO be at `resolved` (the displaced
+    // bytes, never unlinked by the swap) — read+hash it.
+    let displaced = match vfs.read(&temp) {
+        Ok(d) => d,
+        Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
+    };
+    let stat = rune_db::stat_identity(vfs, &resolved);
+    if rune_db::hash_bytes(&displaced) != expect_hash {
+        // F5 swap-race: a writer raced us inside the atomic-swap window.
+        let displaced_stat = rune_db::stat_identity(vfs, &temp);
+        let _ = vfs.remove(&temp);
+        return MaterializeVfsOutcome::Raced {
+            data: data.to_vec(),
+            stat,
+            displaced,
+            displaced_stat,
+            resolved_path: resolved,
+        };
+    }
+    let _ = vfs.remove(&temp);
+    MaterializeVfsOutcome::Committed {
+        data: data.to_vec(),
+        stat,
+        resolved_path: resolved,
+    }
+}
+
+/// WP7 step (b)'s reaction: reacts to [`MaterializeVfsOutcome`]. `Missing`
+/// finishes locally (no DB round-trip, matching the pre-WP7 behavior of
+/// never touching the DB for a missing target). `PathDisagreement` is a
+/// caller-bug signal — degrades the whole store, same as the pre-WP7
+/// `Error::Invalid` path did via `DbEvent::Err`. A plain `Error` fails only
+/// THIS document's save (a disk I/O hiccup is not a `rune-db` failure now
+/// that the write no longer runs through it). `Conflict`/`Committed`/
+/// `Raced` enqueue `MaterializeRecord` (WP7 step c).
+pub(crate) fn handle_materialize_vfs_done(
+    app: &mut App,
+    id: DocumentId,
+    outcome: MaterializeVfsOutcome,
+) {
+    let Some(pending) = app.pending_materialize.remove(&id) else {
+        return;
+    };
+    match outcome {
+        MaterializeVfsOutcome::Missing => {
+            handle_materialize_ack(
+                app,
+                id,
+                MatResult {
+                    missing: true,
+                    ..Default::default()
+                },
+            );
+        }
+        MaterializeVfsOutcome::PathDisagreement => {
+            on_store_failure(
+                app,
+                "materialize refused: caller-supplied path does not match the bound path"
+                    .to_string(),
+            );
+        }
+        MaterializeVfsOutcome::Error(e) => {
+            fail_materialize_locally(app, id, format!("save failed: {e}"));
+        }
+        MaterializeVfsOutcome::Conflict {
+            data,
+            origin,
+            stat,
+            resolved_path,
+        } => {
+            record_outcome(
+                app,
+                id,
+                &pending,
+                &resolved_path,
+                MaterializeOutcome::Conflict { data, origin, stat },
+                false,
+            );
+        }
+        MaterializeVfsOutcome::Committed {
+            data,
+            stat,
+            resolved_path,
+        } => {
+            record_outcome(
+                app,
+                id,
+                &pending,
+                &resolved_path,
+                MaterializeOutcome::Committed { data, stat },
+                true,
+            );
+        }
+        MaterializeVfsOutcome::Raced {
+            data,
+            stat,
+            displaced,
+            displaced_stat,
+            resolved_path,
+        } => {
+            record_outcome(
+                app,
+                id,
+                &pending,
+                &resolved_path,
+                MaterializeOutcome::Raced {
+                    data,
+                    stat,
+                    displaced,
+                    displaced_stat,
+                },
+                true,
+            );
+        }
+    }
+}
+
+/// WP7 step (c)'s enqueue: hands `outcome` to `rune-db`'s bookkeeping-only
+/// `MaterializeRecord`. `published` marks whether the disk write ALREADY
+/// physically completed (`Committed`/`Raced`) — when it did, the op id is
+/// ALSO recorded in `App::published_ops`, so a dead writer failing this
+/// exact op still reports the save as successful (only the store degrades,
+/// [rune-db 1]'s "the vfs publish still completes" guarantee).
+fn record_outcome(
+    app: &mut App,
+    id: DocumentId,
+    pending: &PendingMaterialize,
+    resolved_path: &Path,
+    outcome: MaterializeOutcome,
+    published: bool,
+) {
+    let Some(db) = app.db.as_ref() else {
+        // No store left at all — the write may have already committed
+        // (`published`); either way there is nothing left to record it
+        // against, so finish exactly as a committed/refused ack would.
+        if published {
+            handle_materialize_ack(
+                app,
+                id,
+                MatResult {
+                    committed: true,
+                    ..Default::default()
+                },
+            );
+        } else {
+            fail_materialize_locally(app, id, "save failed: recovery store unavailable");
+        }
+        return;
+    };
+    match db
+        .store
+        .materialize_record(pending.db_id, resolved_path, pending.seq, outcome)
+    {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, id);
+            if published {
+                app.published_ops.insert(op_id, id);
+            }
+        }
+        Err(e) => {
+            if published {
+                // WP7: the write already physically completed — only the
+                // DB bookkeeping is lost. Report the save as successful
+                // FIRST (clearing this document's in-flight/pending state)
+                // so the subsequent whole-store degrade doesn't also flag
+                // it as a failed save.
+                handle_materialize_ack(
+                    app,
+                    id,
+                    MatResult {
+                        committed: true,
+                        ..Default::default()
+                    },
+                );
+            }
+            on_store_failure(app, e.to_string());
+        }
+    }
+}
+
+/// A local (non-`rune-db`) materialize failure: a genuine `vfs` I/O error
+/// on the caller-side write, or a store having vanished entirely
+/// mid-flight. Fails only `id`'s save — never the whole store — since the
+/// write's own failure carries no `rune-db` signal at all.
+fn fail_materialize_locally(app: &mut App, id: DocumentId, message: impl Into<String>) {
+    if let Some(doc) = app.doc_mut(id) {
+        doc.save_in_flight = false;
+        doc.save_pending_version = None;
+        doc.pending_bind_path = None;
+    }
+    app.set_status(message.into(), StatusSource::SaveError);
+    recompute_dirty(app, id);
+}
+
+/// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
+/// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
+/// `bind_new` on a commit, surfaces each `MatResult` outcome as status text,
+/// and — either way — clears `id`'s `save_in_flight` and recomputes its
+/// dirty cache (trigger (b) of `recompute_dirty`'s doc comment). Also
+/// called synthetically (WP7, a `committed: true`, otherwise-default
+/// `MatResult`) when the disk write physically succeeded but the DB-side
+/// bookkeeping that would have supplied `saved`/`raced` was lost to a dead
+/// writer — see `record_outcome`'s doc comment.
 pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResult) {
     let Some(doc) = app.doc_mut(id) else { return };
     doc.save_in_flight = false;
@@ -385,7 +893,12 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
 /// too, so `trigger_save`'s in-flight guard can never wedge open on a lost
 /// ack — app-wide because one shared `Store`'s failure can strand any
 /// document currently mid-save on it, not just the one whose op happened
-/// to trigger this call.
+/// to trigger this call. A document whose write ALREADY physically
+/// completed (WP7's `published_ops`) must have been cleared of
+/// `save_in_flight` by its own synthetic `handle_materialize_ack` call
+/// BEFORE this runs — see `record_outcome`/`dispatch::handle_db_event` — so
+/// this loop never re-reports that document's already-successful save as
+/// failed.
 pub(crate) fn on_store_failure(app: &mut App, error: String) {
     if let Some(db) = app.db.as_mut() {
         db.degraded = true;
@@ -437,7 +950,11 @@ fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
 /// The off-thread save I/O itself: `vfs.save_atomic` (§1.4.1's durable
 /// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
 /// `bytes` — §1.4.5 byte-verbatim, no normalization anywhere on this path.
-/// Only reached when `id` has no store binding — see `trigger_save`'s docs.
+/// Reached when `id` has no store binding (see `trigger_save`'s docs), or
+/// as WP7's fallback when a store binding exists but its `MaterializePrepare`
+/// enqueue itself failed (the store couldn't even do the bookkeeping-only
+/// first step) — either way, the Prime Directive holds: the user can
+/// always save.
 fn save_cmd(
     id: DocumentId,
     vfs: Arc<dyn Vfs + Send + Sync>,

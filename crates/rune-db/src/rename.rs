@@ -53,8 +53,8 @@ use std::time::SystemTime;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
-use crate::materialize::{DocSession, Rebind, rebind_document_tx, record_fresh};
-use crate::observation::{self, Observation};
+use crate::materialize::{DocSession, Rebind, rebind_document_tx};
+use crate::observation::{self, Observation, ObserveInput};
 use crate::retry;
 
 /// The outcome of [`rename_bind`] / [`rename_replace`].
@@ -135,9 +135,19 @@ pub fn rename_bind(
 ///    inode travels, exactly as `rename_excl` would have moved it) and
 ///    `from` holds the displaced file. Neither path is unlinked.
 /// 3. `read(from)` → the displaced bytes.
-/// 4. `record_fresh(.., origin='swap')` → `put_blob` + observation. Commits.
-/// 5. `stat_identity(to)`, then one transaction: `rebind_document_tx`.
-/// 6. `remove(from)` — **only now**, after both records committed.
+/// 4. ONE transaction (`capture_and_rebind`): puts the displaced bytes as a
+///    blob, records the `origin='swap'` observation referencing it, AND
+///    rebinds the document row to `to` — all three commit together or none
+///    do. Previously the swap-observation and the rebind were two separate
+///    transactions, so a crash between them left the observation committed
+///    but the document row still naming `from` with the OLD identity —
+///    reopening `from` would then stat the now-foreign inode sitting there,
+///    miss the identity lookup, and blank our own row before minting a
+///    historyless one for the foreign file ([rune-db 4]). Collapsing both
+///    into one transaction makes that intermediate state unreachable: a
+///    crash here now either leaves NEITHER committed (rolled back, exactly
+///    as if step 4 had not started) or BOTH.
+/// 5. `remove(from)` — **only now**, after the transaction committed.
 ///
 /// `origin='swap'` is reused rather than a new `'displaced'` value on
 /// purpose: `schema.rs`'s `CHECK(origin IN (...))` would need a
@@ -182,22 +192,69 @@ pub fn rename_replace(
         ))
     })?;
 
-    // 4. Capture before discard, physically (§1.4.10). Observed at `from`,
-    //    which is where the displaced file object currently lives.
-    let displaced = record_fresh(conn, vfs, ds, from, &displaced_bytes, "swap", now)?;
+    // 4. Capture before discard, physically (§1.4.10), AND rebind — in ONE
+    //    transaction (see the doc comment above): if this fails, NEITHER the
+    //    observation nor the rebind took effect, our content is at `to`, the
+    //    database still says `from` with its OLD identity, and `from` holds
+    //    the foreign bytes untouched — a later ⌘S hashes those foreign
+    //    bytes, mismatches `expect_obs`, and refuses. So `from` is
+    //    deliberately NOT removed here.
+    let displaced = capture_and_rebind(conn, vfs, ds, from, to, &displaced_bytes, now)?;
 
-    // 5. Rebind. If this fails, our content is at `to`, the database still
-    //    says `from`, and `from` holds foreign bytes — a later ⌘S hashes
-    //    those foreign bytes, mismatches `expect_obs` and refuses. So
-    //    `from` is deliberately NOT removed here.
-    rebind(conn, vfs, ds, to, now)?;
-
-    // 6. The only lossy step in the design, strictly after both commits.
-    //    A failure here is disk hygiene, not data safety (§0.1 rung 3): the
-    //    blob is already durable.
+    // 5. The only lossy step in the design, strictly after the transaction
+    //    committed. A failure here is disk hygiene, not data safety
+    //    (§0.1 rung 3): the blob is already durable.
     let _ = vfs.remove(from);
 
     Ok(RenameOutcome::Replaced { displaced })
+}
+
+/// The step-4 primitive `rename_replace` calls: puts `displaced_bytes` as a
+/// blob, records the `origin='swap'` observation of them (captured at
+/// `from`, where the displaced file object now lives), and rebinds the
+/// document row to `to` — all inside ONE transaction, closing the crash
+/// window [rune-db 4] describes. Both stats (disk I/O) run BEFORE the
+/// transaction opens (invariant I1); the transaction itself is pure SQLite.
+fn capture_and_rebind(
+    conn: &mut rusqlite::Connection,
+    vfs: &dyn Vfs,
+    ds: DocSession,
+    from: &Path,
+    to: &Path,
+    displaced_bytes: &[u8],
+    now: SystemTime,
+) -> Result<Observation, Error> {
+    let from_stat = observation::stat_identity(vfs, from);
+    let to_stat = observation::stat_identity(vfs, to);
+    let at = crate::session::format_rfc3339_nanos(now);
+    let to_str = crate::paths::to_db_string(to)?;
+
+    retry::with_retry(conn, |tx| {
+        let displaced = observation::observe_from_stat_tx(
+            tx,
+            ds.session_id,
+            ds.doc_id,
+            &from_stat,
+            &at,
+            ObserveInput {
+                data: displaced_bytes,
+                seq: None,
+                origin: "swap",
+            },
+        )?;
+
+        rebind_document_tx(
+            tx,
+            ds.doc_id,
+            Rebind {
+                path: &to_str,
+                stat: &to_stat,
+                at: &at,
+            },
+        )?;
+
+        Ok(displaced)
+    })
 }
 
 /// Stat `to` (disk I/O, no transaction open) and point the document row at
@@ -211,7 +268,7 @@ fn rebind(
 ) -> Result<(), Error> {
     let stat = observation::stat_identity(vfs, to);
     let at = crate::session::format_rfc3339_nanos(now);
-    let to_str = to.to_string_lossy().into_owned();
+    let to_str = crate::paths::to_db_string(to)?;
 
     retry::with_retry(conn, |tx| {
         rebind_document_tx(
