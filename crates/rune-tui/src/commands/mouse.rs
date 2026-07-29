@@ -117,10 +117,13 @@ fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> Option
     }
 
     let seg_len = view.wrap.segment_len_at(wrap_row);
-    let syntax_point = view.wrap.wrap_to_syntax(WrapPoint {
-        row: wrap_row,
-        col: seg_len,
-    });
+    let syntax_point = view.wrap.wrap_to_syntax(
+        content,
+        WrapPoint {
+            row: wrap_row,
+            col: seg_len,
+        },
+    );
     let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
     Some(doc.buffer.line_col_to_offset(buffer_point))
 }

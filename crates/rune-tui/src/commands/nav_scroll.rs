@@ -61,7 +61,7 @@ fn move_row(
         WrapPoint { row, col }
     };
 
-    let sp2 = view.wrap.wrap_to_syntax(wp2);
+    let sp2 = view.wrap.wrap_to_syntax(buf.content(), wp2);
     let bp2 = view.syntax.syntax_to_buffer(sp2);
     let offset2 = buf.line_col_to_offset(bp2);
 

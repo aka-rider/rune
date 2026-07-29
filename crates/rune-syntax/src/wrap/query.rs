@@ -1,5 +1,5 @@
 //! The coordinate-query half of the wrap pass (CONSTITUTION §1.6 split of
-//! `wrap.rs`, plan Context "Emit -> wrap -> snapshot"): `WrapSnapshot`
+//! the wrap module, plan Context "Emit -> wrap -> snapshot"): `WrapSnapshot`
 //! answers buffer/syntax/wrap coordinate-conversion and visual-column
 //! questions about the segments `super::WrapMap` already computed. It
 //! stores no copy of the document — an `Identical` span's visible text is
@@ -73,6 +73,31 @@ fn cells_up_to(text: &str, bounds: &[usize], byte_col: usize) -> usize {
     visual
 }
 
+/// The largest grapheme-cluster boundary in `spans`' concatenated visible
+/// text at or before `byte_col` — the `wrap_to_syntax` counterpart of
+/// `cells_up_to`'s width walk, over the exact same `next_grapheme` chokepoint
+/// so the two can never disagree about where a cluster starts. Unlike
+/// `byte_col_from_visual` (which structurally can't return mid-cluster,
+/// since it only ever advances `bytes` by whole `cluster.len()`s),
+/// `wrap_to_syntax`'s `wp.col` arrives as an already-computed byte offset
+/// that a caller could hand in landing anywhere — this snaps it DOWN to the
+/// nearest cluster start rather than trusting it.
+fn snap_to_grapheme_boundary(content: &str, spans: &[SyntaxSpan], byte_col: usize) -> usize {
+    let (text, bounds) = spans_text_and_bounds(content, spans);
+    let mut bytes = 0usize;
+    while bytes < text.len() {
+        let Some(cluster) = next_grapheme(&text, &bounds, bytes) else {
+            break;
+        };
+        let next_bytes = bytes + cluster.len();
+        if next_bytes > byte_col {
+            break;
+        }
+        bytes = next_bytes;
+    }
+    bytes
+}
+
 /// A LINE-relative cell column: the terminal-cell width of `line_text` up
 /// to byte offset `byte_col`, measured over grapheme clusters through the
 /// same chokepoint `visual_col`/`wrap_line` use. Distinct from `visual_col`
@@ -114,11 +139,12 @@ pub(super) fn byte_col_from_visual(
 
 #[derive(Clone, Debug, Default)]
 pub struct WrapSnapshot {
-    // Phase 1 has no table/image row expansion, so `segments` IS the row
-    // index — row `i` is always `segments[i]` (no separate `row_to_segment`
-    // indirection; Go's original keeps one because post-expansion the two
-    // can diverge, but nothing here needs that yet — reintroduce it in
-    // Phase 5 alongside the expansion pass that actually requires it).
+    // `segments` IS the row index at THIS layer — row `i` is always
+    // `segments[i]`, no separate `row_to_segment` indirection. Border-row
+    // synthesis around a rendered table (`rune-md`'s `expand_tables`) is a
+    // one-layer-up DISPLAY-space concern: it inserts synthetic rows
+    // between wrap rows, so `segments` here stays exactly what the wrap
+    // pass itself produced, one entry per real wrap row.
     segments: Vec<WrapSegment>,
     line_to_first_row: Vec<usize>,
 }
@@ -194,12 +220,19 @@ impl WrapSnapshot {
         }
     }
 
-    pub fn wrap_to_syntax(&self, wp: WrapPoint) -> SyntaxPoint {
+    /// `content` is needed to snap `wp.col` down to a grapheme-cluster
+    /// boundary ([rune-syntax 3]): clamping to `seg_len` alone (as
+    /// `byte_col_from_visual`'s sibling used to) still lets a byte column
+    /// land mid-codepoint inside a multi-byte cluster, since a byte length
+    /// clamp knows nothing about where characters actually start. Every
+    /// current caller already has the buffer content in hand for the same
+    /// reason `byte_col_from_visual` takes it.
+    pub fn wrap_to_syntax(&self, content: &str, wp: WrapPoint) -> SyntaxPoint {
         let Some(seg) = self.segment_at(wp.row) else {
             return SyntaxPoint { line: 0, col: 0 };
         };
         let seg_len = Self::segment_len(seg);
-        let col = wp.col.min(seg_len);
+        let col = snap_to_grapheme_boundary(content, &seg.spans, wp.col.min(seg_len));
         SyntaxPoint {
             line: seg.model_line,
             col: seg.start_col + col,
