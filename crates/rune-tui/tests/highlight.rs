@@ -38,7 +38,7 @@ use rune_syntax::ScopeId;
 use rune_syntax::scope::scope_table;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{Effects, HighlightPayload, Msg};
 use rune_tui::testgrid;
 use rune_vfs::Mem;
 
@@ -121,7 +121,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
         Msg::Highlighted {
             doc: id,
             version: stale_version,
-            result: Some(vec![(0..3, keyword)].into()),
+            result: Some(HighlightPayload::Spans(vec![(0..3, keyword)].into())),
         },
         &mut effects,
     );
@@ -151,7 +151,7 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(
+            result: Some(HighlightPayload::Spans(
                 vec![
                     (0..1000, keyword), // past the end -> clamped to `len`
                     (5..3, keyword),    // inverted -> dropped
@@ -159,7 +159,7 @@ fn clamps_and_drops_out_of_bounds_and_off_char_boundary_ranges() {
                     (0..3, keyword),    // valid, char-boundary aligned
                 ]
                 .into(),
-            ),
+            )),
         },
         &mut effects,
     );
@@ -201,7 +201,7 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
         Msg::Highlighted {
             doc: id,
             version,
-            result,
+            result: result.map(HighlightPayload::Spans),
         },
         &mut effects,
     );
@@ -262,9 +262,10 @@ fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
     let Msg::Highlighted { result, .. } = &msg else {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
-    let spans = result
-        .clone()
-        .expect("the rust fence must parse within the budget");
+    let spans = match result {
+        Some(HighlightPayload::Spans(spans)) => spans.clone(),
+        other => panic!("expected a Spans payload, got {other:?}"),
+    };
     assert!(!spans.spans.is_empty());
 
     let fence_start = content.find("fn main").expect("fixture has a fence body");
@@ -385,7 +386,7 @@ fn fence_tagged_rust_comma_ignore_still_highlights() {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
     assert!(
-        result.as_ref().is_some_and(|r| !r.spans.is_empty()),
+        matches!(result, Some(HighlightPayload::Spans(r)) if !r.spans.is_empty()),
         "a rust,ignore fence must still produce spans"
     );
 }
@@ -506,9 +507,10 @@ fn fence_highlight_spans(content: &str, path: &str) -> Vec<(Range<usize>, ScopeI
     let Msg::Highlighted { result, .. } = msg else {
         panic!("expected a Msg::Highlighted reply, got {msg:?}");
     };
-    result
-        .expect("the fence must parse within the budget")
-        .spans
+    match result.expect("the fence must parse within the budget") {
+        HighlightPayload::Spans(spans) => spans.spans,
+        HighlightPayload::Tree(_) => panic!("a fence reply must never carry a Tree payload"),
+    }
 }
 
 /// Finding A: a fence nested in a blockquote must not feed the
@@ -644,18 +646,15 @@ fn nested_fence_spans_never_select_the_blockquote_prefix_bytes() {
     );
 }
 
-/// Finding B: a document that has NEVER been highlighted must not stay
-/// silently, permanently uncoloured just because its first parse alone
-/// exceeded `HIGHLIGHT_BUDGET` — `dispatch::handle_highlighted` gives it
-/// one bounded retry (`highlight::retry_highlight`) at a widened budget
-/// instead of doing nothing. This drives that path directly with a
-/// synthetic `None` reply (the same shape a real timed-out `Cmd` would
-/// deliver) rather than trying to force an actual 250ms timeout, and
-/// checks that the retry schedules a REAL, runnable highlight `Cmd` whose
-/// own reply is `Msg::HighlightRetried` — i.e. `in_flight` did not just
-/// silently clear with nothing further queued.
+/// D5: a `None` reply for a scheduled CODE document (a whole-document parse
+/// that timed out, hit an unresolvable language, or failed) surfaces the
+/// same status line finding B's exhausted-retry branch used to — in ONE
+/// attempt, since D5 replaces the whole retry chain with a single bounded
+/// `PARSE_BUDGET` parse. `doc.kind.language().is_some()` is the gate
+/// `handle_highlighted` uses to tell a code document's parse reply from a
+/// markdown document's fence reply.
 #[test]
-fn a_never_highlighted_document_gets_one_retry_after_a_timeout() {
+fn a_timed_out_code_document_surfaces_a_status_message() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
@@ -677,137 +676,84 @@ fn a_never_highlighted_document_gets_one_retry_after_a_timeout() {
         &mut effects,
     );
 
+    let doc = app.doc(id).expect("doc");
     assert!(
-        app.doc(id).expect("doc").highlight.spans.is_empty(),
-        "a None reply must never invent spans"
+        doc.highlight.spans.is_empty() && doc.highlight.tree.is_none(),
+        "a None reply must never invent spans or a tree"
     );
     assert_eq!(
-        effects.cmds.len(),
-        1,
-        "a timed-out first highlight must schedule exactly one retry cmd \
-         instead of leaving the document permanently uncoloured"
+        doc.highlight.in_flight, None,
+        "in_flight must still clear on a timed-out reply, or this document \
+         could never be highlighted again by any future edit"
     );
-
-    let retry_msg = effects
-        .cmds
-        .remove(0)
-        .run()
-        .expect("the retry cmd always replies with Some(..)");
-    let Msg::HighlightRetried {
-        doc, version: v, ..
-    } = &retry_msg
-    else {
-        panic!("expected a Msg::HighlightRetried reply, got {retry_msg:?}");
-    };
-    assert_eq!(*doc, id);
-    assert_eq!(*v, version);
+    assert!(
+        effects.cmds.is_empty(),
+        "a single-attempt timeout schedules no further cmd — there is no \
+         retry chain to continue"
+    );
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("syntax highlighting timed out for this document"),
+        "a timed-out CODE document's parse must surface a status line, not \
+         fail silently"
+    );
 }
 
-/// Finding B: applying the retry's reply must colour the document exactly
-/// like an ordinary first-time highlight would — the bounded-retry path is
-/// invisible to the end result on success.
+/// The sibling of the case above: a `None` reply for a MARKDOWN document
+/// (its fences failed/timed out, never a whole-document parse) must stay
+/// silent exactly as `[R2]` already requires for any other stale/failed
+/// reply — D6 leaves the fence pipeline's `None` handling untouched.
 #[test]
-fn a_successful_retry_colours_the_document_like_a_normal_first_highlight() {
+fn a_timed_out_markdown_fence_reply_stays_silent() {
+    let content = "```rust\nfn main() {}\n```\n";
+    let mut app = app_for(content, "/x/notes.md");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.status_message, None,
+        "a markdown document's fence timeout must not surface the \
+         code-document status line"
+    );
+}
+
+/// D6: a `Tree` payload applied to a live-version reply stores the tree and
+/// stamps `highlight.version`, mirroring what the old span-clamp path did
+/// for `Spans` — the field the render path (`render::build_rows`) and
+/// `highlight::schedule_highlight`'s already-current guard both read.
+#[test]
+fn a_tree_payload_populates_the_retained_tree() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
     let version = app.doc(id).expect("doc").buffer.version();
 
-    let result = rune_ts::highlight("rust", content, Duration::from_secs(5));
-    assert!(result.is_some(), "a trivial rust source must highlight");
+    let tree = rune_ts::parse("rust", content, Duration::from_secs(5))
+        .expect("a trivial rust source must parse within a generous budget");
 
     let mut effects = Effects::default();
     app::update(
         &mut app,
-        Msg::HighlightRetried {
+        Msg::Highlighted {
             doc: id,
             version,
-            result,
+            result: Some(HighlightPayload::Tree(tree)),
         },
         &mut effects,
     );
 
     let doc = app.doc(id).expect("doc");
-    assert!(
-        !doc.highlight.spans.is_empty(),
-        "a successful retry reply must populate spans"
-    );
+    assert!(doc.highlight.tree.is_some(), "the tree must be stored");
     assert_eq!(doc.highlight.version, version);
-}
-
-/// Finding B: the retry must be BOUNDED — a document whose parse never
-/// succeeds within any budget must settle (spans stay empty, no further
-/// cmd queued) rather than spin forever. `Msg::HighlightRetried` never
-/// re-arms another retry on its own `None`, so a second timeout is where
-/// the chain provably ends.
-#[test]
-fn a_second_timeout_stops_retrying_instead_of_looping() {
-    let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
-
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::HighlightRetried {
-            doc: id,
-            version,
-            result: None,
-        },
-        &mut effects,
-    );
-
-    assert!(
-        app.doc(id).expect("doc").highlight.spans.is_empty(),
-        "a second None reply must still never invent spans"
-    );
-    assert!(
-        effects.cmds.is_empty(),
-        "a second timeout must not schedule yet another retry — the retry \
-         chain must be bounded, not an unbounded loop"
-    );
-    assert_eq!(
-        app.doc(id).expect("doc").highlight.in_flight,
-        None,
-        "in_flight must still clear even on the terminal failure, or this \
-         document could never be highlighted again by any future edit"
-    );
-}
-
-/// The retry chain must end even when a further schedule request arrived
-/// while the retry was in flight. `schedule_highlight` arms `pending`
-/// whenever it is called during an in-flight highlight — including on a
-/// plain document switch, with no edit at all — so a `pending` that
-/// outlives the final timeout must not dispatch a fresh attempt whose own
-/// `None` reply would re-enter the retry arm and restart the chain.
-#[test]
-fn a_second_timeout_with_pending_armed_still_stops_retrying() {
-    let content = "fn main() {}\n";
-    let mut app = app_for(content, "/x/main.rs");
-    let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
-    app.doc_mut(id).expect("doc").highlight.pending = true;
-
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::HighlightRetried {
-            doc: id,
-            version,
-            result: None,
-        },
-        &mut effects,
-    );
-
-    assert!(
-        effects.cmds.is_empty(),
-        "an exhausted retry must be terminal even with `pending` armed — \
-         scheduling here restarts the one-retry chain without any edit"
-    );
-    assert_eq!(
-        app.doc(id).expect("doc").highlight.in_flight,
-        None,
-        "the exhausted reply must still clear in_flight"
-    );
 }

@@ -99,38 +99,35 @@ pub enum Msg {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
     },
-    /// A background `rune_ts::highlight` call completed (plan WP5.S2).
-    /// `result: None` means NO RESULT — the parse budget elapsed, the
-    /// language was unrecognised, or the parse failed — and is
-    /// distinguishable from `Some(vec![])`, a real empty result: `None`
-    /// must leave the document's previously stored spans untouched, or a
-    /// document whose parse is slower than the budget would lose its
+    /// A background highlight call completed (plan WP5.S2; payload split in
+    /// two by the syntax-highlighting-latency plan's WP3, D6). `result: None`
+    /// means NO RESULT — the parse budget elapsed, the language was
+    /// unrecognised, or the parse failed — and is distinguishable from
+    /// `Some(..)` carrying an empty span list, a real empty result: `None`
+    /// must leave the document's previously stored `tree`/`spans` untouched,
+    /// or a document whose parse is slower than the budget would lose its
     /// colours on every keystroke and never regain them. `version` is the
     /// buffer version the highlight ran against; a reply whose `version` no
     /// longer matches the live buffer is dropped the same way.
     Highlighted {
         doc: DocumentId,
         version: u64,
-        result: Option<rune_ts::HighlightResult>,
-    },
-    /// The reply to `highlight::retry_highlight`'s single bounded retry: a
-    /// document that has NEVER been highlighted (no previous spans to fall
-    /// back on under `[R2]`) degrades to permanently uncoloured rather than
-    /// merely stale if its first parse alone exceeds `HIGHLIGHT_BUDGET` —
-    /// see that constant's own doc comment (unmeasured against a real large
-    /// document). A distinct variant, not a second `Msg::Highlighted`,
-    /// because `dispatch::handle_highlight_retried` deliberately never
-    /// calls `schedule_highlight`/`retry_highlight` again on a further
-    /// `None`: its very existence as the only place that can fire a second
-    /// time is what keeps the retry bounded at exactly one extra attempt,
-    /// with no per-document counter to fall out of sync.
-    HighlightRetried {
-        doc: DocumentId,
-        version: u64,
-        result: Option<rune_ts::HighlightResult>,
+        result: Option<HighlightPayload>,
     },
     Error(String),
     Quit,
+}
+
+/// `Msg::Highlighted`'s payload (D6): a whole code document's background
+/// parse retains the `Tree` for per-frame viewport queries; a markdown
+/// document's fences (and the session fuzzer's injected hostile spans, which
+/// have no way to synthesize a `ParsedTree`) keep flowing through the
+/// existing span list. `dispatch::handle_highlighted` stores whichever arm
+/// arrived into the matching `HighlightState` field.
+#[derive(Debug)]
+pub enum HighlightPayload {
+    Tree(rune_ts::ParsedTree),
+    Spans(HighlightResult),
 }
 
 /// Why a `Msg::DirLoaded` was requested (plan WP4.S4) — `explorer::
@@ -178,12 +175,18 @@ pub enum CmdKind {
     /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
     /// be spawned from a fuzz run.
     OpenExternal,
-    /// `rune_ts::highlight` (plan WP5.S2) — a full tree-sitter parse plus
-    /// query run, bounded by [`HIGHLIGHT_BUDGET`]. Off-thread per §5.4: a
-    /// large document's parse must never block the main loop, and grammar
-    /// crashes (`ts_assert`) are architecturally avoided rather than caught
-    /// (CONSTITUTION §1.3) — every parse is a full parse, never an
-    /// incremental reparse fed a prior edit's location.
+    /// A tree-sitter parse (`rune_ts::parse`, whole code documents,
+    /// [`PARSE_BUDGET`]) or highlight query run (fences, [`HIGHLIGHT_BUDGET`])
+    /// — plan WP5.S2, budgets split by the syntax-highlighting-latency
+    /// plan's D5. Off-thread per §5.4: a large document's parse must never
+    /// block the main loop, and grammar crashes (`ts_assert`) are
+    /// architecturally avoided rather than caught (CONSTITUTION §1.3) —
+    /// every parse is a full parse, never an incremental reparse fed a
+    /// prior edit's location. The ONE sanctioned exception is a single
+    /// bounded synchronous attempt at the startup document, made from
+    /// `runtime::run`'s bootstrap strictly before the first draw — see
+    /// `highlight::first_paint_highlight` — where nothing is on screen yet
+    /// to block.
     Highlight,
 }
 
@@ -257,6 +260,14 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let (width, height) = guard.size()?;
     apply(app, Msg::Resize(width, height), &mut guard, &tx)?;
 
+    // D4 (syntax-highlighting-latency plan): one bounded synchronous parse
+    // attempt at the startup document, strictly before the first draw below
+    // — nothing is on screen yet, so even a full-budget miss blocks nothing
+    // visible. A hit means frame 1 renders already highlighted; a miss (or
+    // a non-code startup document) falls through to the ordinary background
+    // kick right after, unchanged.
+    crate::highlight::first_paint_highlight(app);
+
     // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
     // runtime, and before any `Msg` has ever reached `app::update`'s
@@ -265,7 +276,10 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // both an `App` and an `Effects` sink exist together, so it is the one
     // explicit kick this bootstrap path needs; every later document (an
     // edit, a tab switch, `workspace::open_path`) is already covered by
-    // `app::update`'s own before/after gate.
+    // `app::update`'s own before/after gate. When `first_paint_highlight`
+    // just succeeded for this document, `schedule_highlight`'s own
+    // already-current guard (`highlight.version == version`) makes this a
+    // no-op — see that function's doc comment.
     {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
@@ -401,15 +415,12 @@ pub fn load_dir_cmd(
 }
 
 // The tree-sitter highlight `Cmd` constructors (`highlight_cmd`, `fence_
-// highlight_cmd`, and finding B's bounded-retry counterparts, plus
-// `HIGHLIGHT_BUDGET`/`HIGHLIGHT_RETRY_BUDGET`) moved to `runtime::
-// highlight_cmd` (§1.6 budget) — re-exported below so every existing
-// `runtime::` call site keeps working unchanged.
+// highlight_cmd`, plus `HIGHLIGHT_BUDGET`/`PARSE_BUDGET`) moved to
+// `runtime::highlight_cmd` (§1.6 budget) — re-exported below so every
+// existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
-pub use highlight_cmd::{
-    HIGHLIGHT_BUDGET, HIGHLIGHT_RETRY_BUDGET, fence_highlight_cmd, fence_highlight_retry_cmd,
-    highlight_cmd, highlight_retry_cmd,
-};
+pub(crate) use highlight_cmd::FIRST_PAINT_BUDGET;
+pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, fence_highlight_cmd, highlight_cmd};
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {

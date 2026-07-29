@@ -11,69 +11,61 @@ use rune_syntax::ScopeId;
 
 use crate::document::DocumentId;
 
-use super::{Cmd, CmdKind, Msg};
+use super::{Cmd, CmdKind, HighlightPayload, Msg};
 
-/// The wall-clock budget one `rune_ts::highlight` call is allowed before it
-/// aborts and reports `None` (plan WP5.S2, Assumption A3) — unmeasured
-/// against a real large document (see `TODO.md`).
+/// The wall-clock budget one fence's `rune_ts::highlight` call is allowed
+/// before it aborts and reports `None` (plan WP5.S2, Assumption A3) —
+/// fence-only since D5: repurposing it for a whole-document parse would
+/// silently multiply the per-fence ceiling 20x. Unmeasured against a real
+/// large fence (see `TODO.md`).
 pub const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(250);
 
-/// Finding B's single bounded retry budget: the wider budget `retry_
-/// highlight` gives a document that has NEVER been highlighted (no
-/// previous spans for `[R2]` to fall back on) when its first parse alone
-/// exceeds `HIGHLIGHT_BUDGET`. 3x rather than a doubling ladder — the retry
-/// fires at most once (see `Msg::HighlightRetried`), so there is no later
-/// rung to climb to if a smaller step under-shoots, and the documented
-/// failure case (a large `.rs` file on first open) is a genuinely slow
-/// parse, not a transient scheduling hiccup an equal-size retry would fix.
-pub const HIGHLIGHT_RETRY_BUDGET: Duration = Duration::from_millis(750);
+/// The wall-clock budget one whole-document `rune_ts::parse` call is
+/// allowed before it aborts and reports `None` (D5, Assumption A2) — one
+/// attempt, no retry: a document exceeding this stays plain but now
+/// *surfaced* via the status message `dispatch::handle_highlighted` sets on
+/// a `None` reply for a scheduled code document, rather than silently
+/// uncoloured forever. Unmeasured against a real large document (see
+/// `TODO.md`).
+pub const PARSE_BUDGET: Duration = Duration::from_secs(5);
 
-/// Parses `source` as `lang` off-thread and replies with `Msg::Highlighted`
-/// (plan WP5.S2). Owns `source` (moved into the closure, exactly like
-/// [`super::load_dir_cmd`]'s owned `root`) since the `Cmd` closure is
+/// The wall-clock budget `highlight::first_paint_highlight` gives its single
+/// synchronous, pre-first-draw parse attempt at the startup document
+/// (Assumption A1) — small on purpose: it runs on the main thread before
+/// anything is drawn, so even a miss is invisible (the background `Cmd`
+/// picks the document up on the very next frame via the ordinary
+/// `schedule_highlight` bootstrap kick) while a hit means frame 1 is already
+/// highlighted.
+pub(crate) const FIRST_PAINT_BUDGET: Duration = Duration::from_millis(20);
+
+/// Parses `source` as `lang` off-thread — a whole-document parse whose
+/// retained `Tree` rides back on `Msg::Highlighted` (D2/D6) — and replies
+/// with `Msg::Highlighted`. Owns `source` (moved into the closure, exactly
+/// like [`super::load_dir_cmd`]'s owned `root`) since the `Cmd` closure is
 /// `FnOnce() -> Option<Msg> + Send + 'static` and cannot borrow the
 /// document's buffer across the thread boundary. Always replies with
-/// `Some(..)` — even a `None` result from `rune_ts::highlight` — so
-/// `in_flight` is guaranteed to clear on the UI thread; `rune_ts::highlight`
-/// itself never panics (§1.3: it surfaces a failed language load or query
-/// compile as `None`, never `ts_assert`'s `SIGABRT`, since every parse is a
-/// full parse — no incremental-reparse edit is ever fed back into it). This
-/// is the ONLY place `rune-tui` reaches `rune_ts::highlight` — a background
-/// thread, never the UI thread.
+/// `Some(..)` — even a `None` result from `rune_ts::parse` — so `in_flight`
+/// is guaranteed to clear on the UI thread; `rune_ts::parse` itself never
+/// panics (§1.3: it surfaces a failed language load or query compile as
+/// `None`, never `ts_assert`'s `SIGABRT`, since every parse is a full parse
+/// — no incremental-reparse edit is ever fed back into it). This is the
+/// ONLY off-thread place `rune-tui` reaches `rune_ts::parse` — the other,
+/// sanctioned exception is the single pre-first-draw synchronous attempt in
+/// `highlight::first_paint_highlight`.
 pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: String) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
+        let result = rune_ts::parse(lang, &source, PARSE_BUDGET).map(HighlightPayload::Tree);
         Some(Msg::Highlighted {
             doc,
             version,
-            result: rune_ts::highlight(lang, &source, HIGHLIGHT_BUDGET),
-        })
-    })
-}
-
-/// `highlight_cmd`'s finding-B counterpart: the identical parse, but at the
-/// widened `HIGHLIGHT_RETRY_BUDGET` and replying `Msg::HighlightRetried`
-/// instead of `Msg::Highlighted` — see that variant's doc comment for why a
-/// distinct reply, not a second call into `highlight_cmd`, is what keeps
-/// this retry bounded at exactly one extra attempt.
-pub fn highlight_retry_cmd(
-    doc: DocumentId,
-    version: u64,
-    lang: &'static str,
-    source: String,
-) -> Cmd {
-    Cmd::new(CmdKind::Highlight, move || {
-        Some(Msg::HighlightRetried {
-            doc,
-            version,
-            result: rune_ts::highlight(lang, &source, HIGHLIGHT_RETRY_BUDGET),
+            result,
         })
     })
 }
 
 /// Parses every fence of a markdown document off-thread and merges the
-/// results into one reply (plan WP6.S3) — `fence_highlight_cmd` and its
-/// finding-B counterpart `fence_highlight_retry_cmd` both funnel through
-/// this; only the budget and which `Msg` variant wraps the result differ.
+/// results into one reply (plan WP6.S3), wrapped in `Msg::Highlighted`'s
+/// `Spans` arm (D6: fences stay on the span path, never a retained tree).
 /// `budget` is split evenly across `fences` (`fences.len().max(1)`) so a
 /// document with many fences still respects one overall budget rather than
 /// running each fence at the full budget.
@@ -130,26 +122,11 @@ pub fn fence_highlight_cmd(
     fences: Vec<(&'static str, Vec<Range<usize>>, String)>,
 ) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
+        let result = run_fence_highlight(fences, HIGHLIGHT_BUDGET).map(HighlightPayload::Spans);
         Some(Msg::Highlighted {
             doc,
             version,
-            result: run_fence_highlight(fences, HIGHLIGHT_BUDGET),
-        })
-    })
-}
-
-/// `fence_highlight_cmd`'s finding-B counterpart — see `highlight_retry_
-/// cmd`'s doc comment; the same reasoning applies here, per fence.
-pub fn fence_highlight_retry_cmd(
-    doc: DocumentId,
-    version: u64,
-    fences: Vec<(&'static str, Vec<Range<usize>>, String)>,
-) -> Cmd {
-    Cmd::new(CmdKind::Highlight, move || {
-        Some(Msg::HighlightRetried {
-            doc,
-            version,
-            result: run_fence_highlight(fences, HIGHLIGHT_RETRY_BUDGET),
+            result,
         })
     })
 }

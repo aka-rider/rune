@@ -1,14 +1,14 @@
 //! Scheduling for the background tree-sitter highlight pass: decides when a
-//! document's stored spans no longer describe its buffer and dispatches the
-//! `Cmd` that recomputes them. Kept apart from the message dispatch so the
-//! "at most one in flight per document" rule has one owner. Plan WP6 adds
-//! this module's second source: a `Markdown` document's own fenced code
+//! document's stored tree/spans no longer describe its buffer and dispatches
+//! the `Cmd` that recomputes them. Kept apart from the message dispatch so
+//! the "at most one in flight per document" rule has one owner. Plan WP6
+//! adds this module's second source: a `Markdown` document's own fenced code
 //! blocks. Both sources flow into the SAME `Msg::Highlighted` and the SAME
 //! `HighlightState` — there is no second message and no second overlay
-//! (plan WP6, "reuse the existing message and state"). `retry_highlight`
-//! (finding B) is the one exception: its reply is the distinct `Msg::
-//! HighlightRetried`, deliberately not `Msg::Highlighted` again — see that
-//! variant's own doc comment for why.
+//! (plan WP6, "reuse the existing message and state"). A whole code
+//! document's parse is a single bounded attempt (D5) with no retry chain: a
+//! `None` reply is surfaced via `dispatch::handle_highlighted`'s status
+//! message instead of being retried at a widened budget.
 
 use std::ops::Range;
 
@@ -29,15 +29,12 @@ enum HighlightSource {
     Fences(Vec<(&'static str, Vec<Range<usize>>, String)>),
 }
 
-/// `schedule_highlight` and `retry_highlight` (finding B) share every step
-/// up to "what to dispatch and at what budget" — this resolves the former:
-/// `None` when `id` has no highlightable language and no resolvable fence,
-/// exactly `schedule_highlight`'s old inline early-return conditions.
-/// Rebuilds the block tree first (see `schedule_highlight`'s own doc
-/// comment for why) — a no-op via `DocMachine::sync_content`'s own version
-/// guard on every call after the first per buffer version, so `retry_
-/// highlight` calling this a second time against an unchanged buffer costs
-/// nothing.
+/// What `schedule_highlight` resolves before it can decide what to
+/// dispatch: `None` when `id` has no highlightable language and no
+/// resolvable fence, exactly `schedule_highlight`'s old inline early-return
+/// conditions. Rebuilds the block tree first (see `schedule_highlight`'s own
+/// doc comment for why) — a no-op via `DocMachine::sync_content`'s own
+/// version guard on every call after the first per buffer version.
 fn resolve_highlight_source(app: &mut App, id: DocumentId) -> Option<HighlightSource> {
     if let Some(doc) = app.doc_mut(id) {
         doc.doc.sync_content(&doc.buffer);
@@ -60,40 +57,30 @@ fn resolve_highlight_source(app: &mut App, id: DocumentId) -> Option<HighlightSo
     }
 }
 
-/// The chokepoint `schedule_highlight` and `retry_highlight` both use to
-/// turn a resolved `HighlightSource` into the right `Cmd` — `is_retry`
-/// picks `runtime::highlight_retry_cmd`/`fence_highlight_retry_cmd` (the
-/// widened budget, `Msg::HighlightRetried` reply) over the normal pair.
-fn dispatch_highlight_cmd(
-    id: DocumentId,
-    version: u64,
-    source: HighlightSource,
-    is_retry: bool,
-) -> runtime::Cmd {
-    match (source, is_retry) {
-        (HighlightSource::Whole(lang, text), false) => {
-            runtime::highlight_cmd(id, version, lang, text)
-        }
-        (HighlightSource::Whole(lang, text), true) => {
-            runtime::highlight_retry_cmd(id, version, lang, text)
-        }
-        (HighlightSource::Fences(fences), false) => {
-            runtime::fence_highlight_cmd(id, version, fences)
-        }
-        (HighlightSource::Fences(fences), true) => {
-            runtime::fence_highlight_retry_cmd(id, version, fences)
-        }
+/// The chokepoint `schedule_highlight` uses to turn a resolved
+/// `HighlightSource` into the right `Cmd` — a whole document parses through
+/// `highlight_cmd` (the retained-tree path, `PARSE_BUDGET`); a markdown
+/// document's fences parse through `fence_highlight_cmd` (the span path,
+/// `HIGHLIGHT_BUDGET`).
+fn dispatch_highlight_cmd(id: DocumentId, version: u64, source: HighlightSource) -> runtime::Cmd {
+    match source {
+        HighlightSource::Whole(lang, text) => runtime::highlight_cmd(id, version, lang, text),
+        HighlightSource::Fences(fences) => runtime::fence_highlight_cmd(id, version, fences),
     }
 }
 
-/// Requests a background highlight for `id` if its stored spans no longer
-/// describe its buffer (plan WP5.S3) — the sole `Cmd`-dispatching entry
-/// point for `rune_ts::highlight` (`Document::sync`/`App::sync_view` have
-/// no `&mut Effects`). A no-op for a document with no highlightable
-/// language and no resolvable fence. At most one highlight `Cmd` runs per
-/// document at a time — a second call while one is in flight only arms
-/// `pending`, consumed by `dispatch::handle_highlighted` once the reply
-/// lands.
+/// Requests a background highlight for `id` if its stored tree/spans no
+/// longer describe its buffer (plan WP5.S3) — the sole `Cmd`-dispatching
+/// entry point for a background `rune_ts::parse`/`highlight` call
+/// (`Document::sync`/`App::sync_view` have no `&mut Effects`). A no-op for a
+/// document with no highlightable language and no resolvable fence. At most
+/// one highlight `Cmd` runs per document at a time — a second call while one
+/// is in flight only arms `pending`, consumed by `dispatch::
+/// handle_highlighted` once the reply lands. Also the guard that makes the
+/// startup bootstrap kick a no-op once `highlight::first_paint_highlight`
+/// already populated a document's tree synchronously: `highlight.version ==
+/// version` is set by that success path exactly like any other completed
+/// highlight, so the early return below fires for it identically.
 pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Effects) {
     // Rebuild the block tree before reading fence ranges. The settle step
     // that normally does this runs AFTER the update loop returns, so without
@@ -122,34 +109,7 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
     doc.highlight.in_flight = Some(version);
     effects
         .cmds
-        .push(dispatch_highlight_cmd(id, version, source, false));
-}
-
-/// Finding B's single bounded retry: called only from `dispatch::
-/// handle_highlighted` when a `None` reply lands for a document that has
-/// never had spans (`doc.highlight.version == 0`, `Buffer::version` never
-/// being 0 itself). Reruns the SAME source at `HIGHLIGHT_RETRY_BUDGET`
-/// through `Msg::HighlightRetried`, a reply `dispatch::handle_highlight_
-/// retried` never re-arms — so this can only ever fire once per failed
-/// first attempt, without a per-document attempt counter to keep in sync.
-/// Re-checks that `version` still matches the live buffer before doing
-/// anything (a defensive mirror of `schedule_highlight`'s own version
-/// gate): if an edit landed in between, that edit's own `schedule_highlight`
-/// call already owns this document's `in_flight`, and retrying the stale
-/// version here would race it.
-pub(crate) fn retry_highlight(app: &mut App, id: DocumentId, version: u64, effects: &mut Effects) {
-    let Some(source) = resolve_highlight_source(app, id) else {
-        return;
-    };
-    let Some(doc) = app.doc(id) else { return };
-    if doc.buffer.version() != version {
-        return;
-    }
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.highlight.in_flight = Some(version);
-    effects
-        .cmds
-        .push(dispatch_highlight_cmd(id, version, source, true));
+        .push(dispatch_highlight_cmd(id, version, source));
 }
 
 /// Resolves a fenced code block's info string to a canonical language name
@@ -202,4 +162,107 @@ fn code_fence_sources(doc: &Document) -> Vec<(&'static str, Vec<Range<usize>>, S
             Some((lang, lines, text))
         })
         .collect()
+}
+
+/// The one sanctioned synchronous `rune_ts::parse` call on the main thread
+/// (D4 of the syntax-highlighting-latency plan) — bounded by
+/// `runtime::FIRST_PAINT_BUDGET` and made exactly once, from `runtime::run`'s
+/// bootstrap, strictly before the first draw: nothing is on screen yet, so
+/// even a full-budget miss blocks nothing a user can see. CONSTITUTION §5.3
+/// ("`Update()`/`Init()` stay non-blocking") is about `app::update`, which
+/// this deliberately never calls into and is never called from — the ONE
+/// caller is `runtime::run` itself, before its own event loop starts.
+///
+/// A no-op unless the startup document is a CODE document (`doc.kind.
+/// language()` resolves) with no tree yet (`doc.highlight.tree.is_none()`
+/// — an idempotent guard, so calling this twice, or after some other path
+/// already populated the tree, costs nothing). On a successful parse, the
+/// tree is stored and `doc.highlight.version` is stamped to the buffer's
+/// current version — exactly what a completed background `Msg::Highlighted`
+/// reply would do — so `schedule_highlight`'s own `version == version`
+/// early-return makes the runtime's bootstrap kick a no-op for this
+/// document; a failed or skipped attempt leaves `version` untouched, so that
+/// same kick still dispatches the ordinary background `Cmd` exactly as
+/// before this function existed.
+pub(crate) fn first_paint_highlight(app: &mut App) {
+    let id = app.active;
+    let Some(doc) = app.doc(id) else { return };
+    if doc.highlight.tree.is_some() {
+        return;
+    }
+    let Some(lang) = doc.kind.language() else {
+        return;
+    };
+    let source = doc.buffer.content().to_string();
+    let version = doc.buffer.version();
+
+    let Some(tree) = rune_ts::parse(lang, &source, runtime::FIRST_PAINT_BUDGET) else {
+        return;
+    };
+
+    if let Some(doc) = app.doc_mut(id) {
+        doc.highlight.tree = Some(tree);
+        doc.highlight.version = version;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+
+    use super::*;
+    use crate::app::App;
+
+    /// D4's success path: a small `.rs` startup document parses inside
+    /// `FIRST_PAINT_BUDGET` synchronously, populating `highlight.tree`
+    /// before any `Cmd` ever runs — and, since `first_paint_highlight`
+    /// stamps `highlight.version` on success exactly like a completed
+    /// background reply would, a subsequent `schedule_highlight` call finds
+    /// the document already current and pushes no `Cmd` at all (verifying
+    /// the plan's "the already-current guard suppresses the bootstrap Cmd"
+    /// claim rather than assuming it).
+    #[test]
+    fn first_paint_highlights_small_file_synchronously() {
+        let mut app = App::new(
+            Buffer::new("fn main() {}\n"),
+            Some(PathBuf::from("/x/main.rs")),
+            Arc::new(Mem::new()),
+            None,
+        );
+        let id = app.active;
+
+        first_paint_highlight(&mut app);
+
+        let doc = app.doc(id).expect("doc");
+        assert!(
+            doc.highlight.tree.is_some(),
+            "a trivial rust source must parse within the generous first-paint budget"
+        );
+        assert_eq!(doc.highlight.version, doc.buffer.version());
+
+        let mut effects = Effects::default();
+        schedule_highlight(&mut app, id, &mut effects);
+        assert!(
+            effects.cmds.is_empty(),
+            "the already-current guard must suppress the bootstrap Cmd once \
+             first_paint_highlight already populated this document's tree"
+        );
+    }
+
+    /// A markdown (non-code) startup document has no language to parse —
+    /// `first_paint_highlight` must be a clean no-op, never touching `tree`.
+    #[test]
+    fn first_paint_highlight_is_a_no_op_for_a_non_code_document() {
+        let mut app = App::new(Buffer::new("# hello\n"), None, Arc::new(Mem::new()), None);
+        let id = app.active;
+
+        first_paint_highlight(&mut app);
+
+        assert!(app.doc(id).expect("doc").highlight.tree.is_none());
+    }
 }
