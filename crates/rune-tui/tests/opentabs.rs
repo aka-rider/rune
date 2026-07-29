@@ -86,7 +86,7 @@ fn frame_text(app: &App) -> String {
 }
 
 /// Opening two documents populates `tabs.order`, and both render with their
-/// digit shortcut and name in the "Open" block (plan WP5.S1).
+/// digit shortcut and name below the `Open` divider row.
 #[test]
 fn tabs_render_both_open_documents_with_digit_shortcuts() {
     let mem = seeded_vfs();
@@ -109,6 +109,41 @@ fn tabs_render_both_open_documents_with_digit_shortcuts() {
     );
     assert!(text.contains("a.md"));
     assert!(text.contains("b.md"));
+}
+
+/// The Open Tabs section is introduced by a divider ROW inside the left
+/// column's single border — there is no separate titled block, so the tab
+/// rows follow immediately underneath it.
+#[test]
+fn the_open_divider_row_precedes_the_tab_rows() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    open_second(&mut app);
+    app.left_visible = true;
+    app.focus = Pane::Tabs;
+    app.sync_view();
+
+    let rows = testgrid::grid(&app, WIDTH, HEIGHT);
+    let divider = rows
+        .iter()
+        .position(|r| r.contains(" Open "))
+        .unwrap_or_else(|| panic!("expected an Open divider row in:\n{}", rows.join("\n")));
+
+    assert!(
+        rows[divider].contains('\u{2500}'),
+        "the divider row must be filled out with `\u{2500}`:\n{}",
+        rows[divider]
+    );
+    assert!(
+        rows[divider + 1].contains("a.md"),
+        "the first tab row must sit directly under the divider:\n{}",
+        rows[divider + 1]
+    );
+    assert!(
+        rows[divider + 2].contains("b.md"),
+        "the second tab row follows it:\n{}",
+        rows[divider + 2]
+    );
 }
 
 /// Enter on a cursor row switches the active document (plan WP5.S2) —
@@ -152,7 +187,7 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     let text = frame_text(&app);
     assert!(
         text.contains(" x "),
-        "expected the dirty marker somewhere in the Open block:\n{text}"
+        "expected the dirty marker somewhere in the tab rows:\n{text}"
     );
 }
 

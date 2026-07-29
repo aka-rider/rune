@@ -1,8 +1,14 @@
-//! WP2 "Done when" TestBackend integration tests: the left-pane geometry
-//! (bordered Explorer/Open blocks, focus-colored border), `^x` toggling it
-//! end-to-end through the real `app::update`, and the footer's `Ln n, Col
-//! n` on a multiline buffer with a multibyte character (col in runes).
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+//! TestBackend integration tests for the left column's chrome: ONE bordered
+//! block holding both panes, its focus-colored border and in-block `Open`
+//! divider, `^b` toggling the column end-to-end through the real
+//! `app::update`, and the footer's `Ln n, Col n` on a multiline buffer with
+//! a multibyte character (col in runes).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use std::sync::Arc;
 
@@ -20,6 +26,9 @@ use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
+/// The left column's default width, as `layout::DEFAULT_LEFT_PANE_W` sets
+/// it for a terminal this wide.
+const LEFT_W: u16 = 22;
 
 fn app_for(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
@@ -54,38 +63,146 @@ fn fg_at(buf: &RtBuffer, x: u16, y: u16) -> Option<Color> {
     buf.cell((x, y)).and_then(|c| c.style().fg)
 }
 
-/// `left_visible` with `focus == Explorer`: the top block's border (row 0,
-/// the block's top edge) is the ACTIVE color; the bottom (Open Tabs) block's
-/// border (the main area's last row, its own bottom edge) is INACTIVE.
+/// The left column's own text, row by row, cut to the column's width.
+fn left_column_rows(buf: &RtBuffer) -> Vec<String> {
+    (0..HEIGHT - 1)
+        .map(|y| row_text(buf, y, LEFT_W))
+        .collect::<Vec<_>>()
+}
+
+/// The left column is ONE bordered block: `focus == Explorer` colors that
+/// single border ACTIVE end to end — top edge AND the bottom edge on the
+/// main area's last row (HEIGHT - 2; HEIGHT - 1 is the footer).
 #[test]
-fn left_pane_shows_two_bordered_blocks_with_focus_colored_borders() {
+fn left_pane_shows_one_bordered_block_with_a_focus_colored_border() {
     let mut app = app_for("hello");
     app.left_visible = true;
     app.focus = Pane::Explorer;
     app.sync_view();
 
     let buf = draw(&app);
+    let active = app.theme.chrome.active_border.fg.unwrap();
 
-    let explorer_top_border = fg_at(&buf, 1, 0).expect("explorer top border cell has a style");
+    let top_border = fg_at(&buf, 1, 0).expect("top border cell has a style");
     assert_eq!(
-        explorer_top_border,
-        app.theme.chrome.active_border.fg.unwrap(),
+        top_border, active,
         "focused Explorer's border must be the ACTIVE color"
     );
 
-    // The Open Tabs block's own bottom border sits on the main area's last
-    // row (HEIGHT - 2: HEIGHT - 1 is the footer) regardless of exactly how
-    // the 50/50 vertical split rounds.
-    let tabs_bottom_border =
-        fg_at(&buf, 1, HEIGHT - 2).expect("tabs bottom border cell has a style");
+    let bottom_border = fg_at(&buf, 1, HEIGHT - 2).expect("bottom border cell has a style");
     assert_eq!(
-        tabs_bottom_border,
-        app.theme.chrome.inactive_border.fg.unwrap(),
-        "unfocused Open Tabs' border must be the INACTIVE color"
+        bottom_border, active,
+        "the SAME block's bottom edge must carry the same color"
     );
 
     let top_row = row_text(&buf, 0, WIDTH);
     assert!(top_row.contains("Files"), "expected the Files pane title");
+}
+
+/// Exactly one top edge and one bottom edge for the whole column — the two
+/// stacked blocks used to put a `╰…╯` / `╭…╮` pair in the middle of it.
+#[test]
+fn the_left_column_has_no_interior_border_rule() {
+    let mut app = app_for("hello");
+    app.left_visible = true;
+    app.focus = Pane::Explorer;
+    app.sync_view();
+
+    let buf = draw(&app);
+    let rows = left_column_rows(&buf);
+
+    let tops = rows.iter().filter(|r| r.starts_with('\u{256d}')).count();
+    let bottoms = rows.iter().filter(|r| r.starts_with('\u{2570}')).count();
+    let joined = rows.join("\n");
+    assert_eq!(tops, 1, "expected exactly ONE top border row in:\n{joined}");
+    assert_eq!(
+        bottoms, 1,
+        "expected exactly ONE bottom border row in:\n{joined}"
+    );
+    assert!(
+        rows.first().is_some_and(|r| r.starts_with('\u{256d}')),
+        "the one top border row must be the column's first row:\n{joined}"
+    );
+    assert!(
+        rows.last().is_some_and(|r| r.starts_with('\u{2570}')),
+        "the one bottom border row must be the column's last row:\n{joined}"
+    );
+}
+
+/// The Open Tabs section is introduced by an in-block divider row: side
+/// border, ` Open `, then a `─` fill to the column's other side border.
+#[test]
+fn the_open_divider_row_renders_inside_the_single_border() {
+    let mut app = app_for("hello");
+    app.left_visible = true;
+    app.focus = Pane::Explorer;
+    app.sync_view();
+
+    let buf = draw(&app);
+    let rows = left_column_rows(&buf);
+    let joined = rows.join("\n");
+    let divider = rows
+        .iter()
+        .find(|r| r.contains("Open"))
+        .unwrap_or_else(|| panic!("expected an Open divider row in:\n{joined}"));
+
+    let expected = format!(
+        "\u{2502} Open {}\u{2502}",
+        "\u{2500}".repeat(LEFT_W as usize - 8)
+    );
+    assert_eq!(divider, &expected, "in:\n{joined}");
+}
+
+/// Tabs focus is signalled by the divider row's color alone — the block's
+/// own border keeps tracking the Explorer.
+#[test]
+fn tabs_focus_colors_the_divider_not_the_border() {
+    let mut app = app_for("hello");
+    app.left_visible = true;
+    app.focus = Pane::Tabs;
+    app.sync_view();
+
+    let buf = draw(&app);
+    let rows = left_column_rows(&buf);
+    let divider_y = rows
+        .iter()
+        .position(|r| r.contains("Open"))
+        .map(|y| u16::try_from(y).unwrap_or(0))
+        .expect("an Open divider row");
+
+    assert_eq!(
+        fg_at(&buf, 2, divider_y),
+        app.theme.chrome.active_border.fg,
+        "a focused Tabs pane must color its divider with the ACTIVE color"
+    );
+    assert_eq!(
+        fg_at(&buf, 1, 0),
+        app.theme.chrome.inactive_border.fg,
+        "the border still tracks the Explorer, which is NOT focused here"
+    );
+}
+
+/// Unfocused, the divider wears the subtle divider style instead.
+#[test]
+fn an_unfocused_tabs_pane_uses_the_subtle_divider_style() {
+    let mut app = app_for("hello");
+    app.left_visible = true;
+    app.focus = Pane::Explorer;
+    app.sync_view();
+
+    let buf = draw(&app);
+    let rows = left_column_rows(&buf);
+    let divider_y = rows
+        .iter()
+        .position(|r| r.contains("Open"))
+        .map(|y| u16::try_from(y).unwrap_or(0))
+        .expect("an Open divider row");
+
+    assert_eq!(
+        fg_at(&buf, 2, divider_y),
+        app.theme.chrome.tabs_divider.fg,
+        "an unfocused Tabs pane's divider must use the subtle style"
+    );
 }
 
 /// The editor pane's geometry is unchanged when `left_visible` is false —
