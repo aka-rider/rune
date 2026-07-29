@@ -161,8 +161,14 @@ fn zwj_family_split_by_emphasis_and_cjk_row_widths_agree() {
     let w0 = per_span_display_width(&lines, 0, buf.content());
     let w1 = per_span_display_width(&lines, 1, buf.content());
     let w2 = per_span_display_width(&lines, 2, buf.content());
-    assert_eq!(w0, w1, "separator row must match header row's true rendered width");
-    assert_eq!(w1, w2, "body row must match header row's true rendered width");
+    assert_eq!(
+        w0, w1,
+        "separator row must match header row's true rendered width"
+    );
+    assert_eq!(
+        w1, w2,
+        "body row must match header row's true rendered width"
+    );
 
     let info = lines[0].table.as_ref().expect("rendered table row");
     assert_eq!(info.col_widths[0], 5);
