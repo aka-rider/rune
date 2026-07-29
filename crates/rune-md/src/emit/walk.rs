@@ -17,7 +17,9 @@ use super::style::{
     hr_scope, link_scope, list_marker_style, verbatim_style,
 };
 use super::table::emit_table;
-use super::{Accounted, EmitOut, hide_range, push_span_split_by_line};
+use super::{
+    Accounted, EmitOut, assert_invariant, claim_visible, hide_range, push_span_split_by_line,
+};
 use crate::element::block::{Block, CodeFenceM, ListItemM};
 use crate::element::inline::Inline;
 use crate::parse::line_at;
@@ -109,7 +111,7 @@ fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut E
         // a plain marker; only the checkbox itself substitutes.
         let before = ByteRange::new(item.marker.start, task.start);
         hide_range(out.hidden, out.accounted, content, starts, before);
-        push_task_checkbox(content, starts, task, out.spans, out.accounted);
+        push_task_checkbox(content, starts, task, out.spans, out.hidden, out.accounted);
         // Whatever sits between the checkbox and the item's own content
         // (normally exactly one space) is deliberately left UNCLAIMED here:
         // `fill_gaps` (`emit/mod.rs`) supplies it verbatim as an ordinary
@@ -134,33 +136,67 @@ fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut E
 /// content, it doesn't hide it — and deliberately NOT built via
 /// `push_span_split_by_line` (which only ever copies `content[range]`
 /// itself into `Substituted::text`, never a genuinely different string).
+/// Routes the claim itself through `claim_visible` — the same
+/// unclaimed-subranges-plus-assert chokepoint every other own-text
+/// producer in this crate uses — instead of writing `out`/`accounted`
+/// directly, so an overlapping claim here is clipped and reported instead
+/// of silently invented.
 ///
 /// Byte-length-preserving BY CONSTRUCTION, which is why this needs no
 /// extra hidden-range bookkeeping: `☐`/`☑` are each exactly 3 bytes in
 /// UTF-8 (codepoints `U+2610`/`U+2611`, the 3-byte range), the SAME length
-/// as the 3-byte ASCII `task` range they replace. `SyntaxSnapshot`'s
-/// buffer<->syntax coordinate model (`emit/syntax.rs`) only ever accounts
-/// for FULLY hidden byte ranges (`hide_range`) — it has no notion of a
-/// visible span whose substituted text is a different byte length than
-/// the buffer range it replaces — so a length-changing substitution here
-/// would desync every position later on the same line. Keeping this
-/// specific substitution exactly 3-for-3 bytes sidesteps that entirely: no
-/// hidden delta is needed, and `rune-md/src/wrap.rs`'s own byte-indexed
-/// `text.len()` math (built from `SyntaxSpan::text`, i.e. this span's own
-/// 3-byte `text`) stays consistent with it for free.
+/// as the 3-byte ASCII `task` range they replace. The buffer<->syntax
+/// coordinate model only ever accounts for FULLY hidden byte ranges
+/// (`hide_range`) — it has no notion of a visible span whose substituted
+/// text is a different byte length than the buffer range it replaces — so
+/// a length-changing substitution here would desync every position later
+/// on the same line. Keeping this specific substitution exactly 3-for-3
+/// bytes sidesteps that entirely: no hidden delta is needed, and every
+/// later byte-indexed width/column walk built from `SyntaxSpan::text`
+/// (i.e. this span's own 3-byte `text`) stays consistent with it for free
+/// — a precondition this function now checks rather than assumes:
+/// `assert_invariant` surfaces a producer that hands it a `task` range of
+/// any other length, and (in every build, not just a strict one) it falls
+/// through to hiding the range like a plain marker instead of emitting a
+/// glyph whose byte length would lie about the range it replaces.
 fn push_task_checkbox(
     content: &str,
     starts: &[usize],
     task: ByteRange,
     out: &mut [Vec<SyntaxSpan>],
+    hidden: &mut Accounted,
     accounted: &mut Accounted,
 ) {
     let Some(bytes) = content.get(task.start..task.end) else {
         return;
     };
+    assert_invariant(task.len() == 3, || {
+        format!(
+            "task checkbox range [{},{}) is {} bytes, not the 3-byte \"[ ]\"/\"[x]\" ListItemM::task's own docs promise — producer bug",
+            task.start,
+            task.end,
+            task.len()
+        )
+    });
+    if task.len() != 3 {
+        // Can't substitute a glyph whose byte length would disagree with
+        // the range it replaces (this function's own docs) — fall through
+        // to hiding it verbatim, exactly like a plain, non-task marker.
+        hide_range(hidden, accounted, content, starts, task);
+        return;
+    }
     let checked = bytes.as_bytes().get(1).is_some_and(|&b| b != b' ');
     let glyph = if checked { "\u{2611}" } else { "\u{2610}" };
     let line = line_at(starts, task.start);
+
+    let pieces = claim_visible(accounted, line, task.start, task.end);
+    if pieces != [(task.start, task.end)] {
+        // The whole range was not cleanly unclaimed (an overlap
+        // `claim_visible`'s own assert already flagged) — there is no
+        // half-glyph substitution, so skip rather than desync the
+        // byte-length-neutral invariant this function exists for.
+        return;
+    }
 
     let span = SyntaxSpan::Substituted {
         // Pre-WP4 this was `StyleId::TaskMarker`; WP4 folded that variant
@@ -172,9 +208,6 @@ fn push_task_checkbox(
     };
     if let Some(bucket) = out.get_mut(line) {
         bucket.push(span);
-    }
-    if let Some(bucket) = accounted.get_mut(line) {
-        bucket.push((task.start, task.end));
     }
 }
 
@@ -291,8 +324,8 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
 /// its end, which `hide_range`'s empty-range guard turns into a no-op) —
 /// fixing the double-counted delimiter BLOCKER (an empty link previously
 /// hid `[range.start, range.end)` twice, once as "open" and once as
-/// "close"). Same shape as `parse.rs`'s `child_gap_delims` for a childless
-/// emphasis node.
+/// "close"). Same shape as the parser's own `child_gap_delims` for a
+/// childless emphasis node.
 fn link_delims(range: ByteRange, children: &[Inline]) -> (ByteRange, ByteRange) {
     match (children.first(), children.last()) {
         (Some(first), Some(last)) => {

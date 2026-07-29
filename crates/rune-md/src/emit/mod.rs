@@ -141,14 +141,6 @@ fn for_each_line_slice(
     }
 }
 
-fn account(accounted: &mut Accounted, content: &str, starts: &[usize], range: ByteRange) {
-    for_each_line_slice(content, starts, range, |line, s, e| {
-        if let Some(bucket) = accounted.get_mut(line) {
-            bucket.push((s, e));
-        }
-    });
-}
-
 /// The out-params every `emit_block`/`emit_inline` call used to thread
 /// separately (`out`, `hidden`, `accounted`, plus WP2's new per-line table
 /// slot) — bundled so the walk's own recursive signatures stay under the
@@ -355,6 +347,22 @@ pub(crate) fn push_span_split_by_line(
 /// "delimiter" is not guaranteed single-line just because Phase-1 tokens
 /// usually are (see `for_each_line_slice`'s docs for the counterexample
 /// that proved this).
+///
+/// Routes through the SAME `claim_visible` (and therefore the same
+/// `unclaimed_subranges` + `assert_invariant` pair) the visible side uses,
+/// rather than pushing `(s, e)` into `hidden` unconditionally: before this,
+/// "every byte accounted exactly once" was only checked/clipped on the
+/// visible side — a visible-then-hidden overlap (the walk order
+/// `hide(open) -> emit children -> hide(close)` makes a later hidden claim
+/// landing on an already-emitted visible byte reachable) was recorded into
+/// `hidden` UNCONDITIONALLY, so the same byte ended up both still present
+/// in an emitted span AND subtracted by the hidden-range collapse — an
+/// unaccounted double-claim skewing every later buffer<->syntax offset on
+/// the line, with nothing to catch it. `claim_visible` already clips
+/// against, and asserts on, whatever `accounted` holds regardless of
+/// whether it got there via a visible span or an earlier hidden range, so
+/// reusing it here closes that gap by construction instead of adding a
+/// second, parallel guard.
 pub(crate) fn hide_range(
     hidden: &mut Accounted,
     accounted: &mut Accounted,
@@ -363,11 +371,11 @@ pub(crate) fn hide_range(
     range: ByteRange,
 ) {
     for_each_line_slice(content, starts, range, |line, s, e| {
+        let pieces = claim_visible(accounted, line, s, e);
         if let Some(bucket) = hidden.get_mut(line) {
-            bucket.push((s, e));
+            bucket.extend(pieces);
         }
     });
-    account(accounted, content, starts, range);
 }
 
 /// The per-byte safety net (fixes BLOCKER 1): whatever no element's own

@@ -546,27 +546,45 @@ heading whose name normalizes to empty rather than resolving by line number.
 Latent only: no producer emits `Anchor::Line` today. Fix it when the first one
 does, by giving line anchors their own lookup path instead of a name comparison.
 
-## rust port — TABLE-ROW-WIDTH: a table row with ZWJ emoji / CJK cells is wider than its own border (recorded 2026-07-29, markdown-table plan)
+## ~~rust port — TABLE-ROW-WIDTH: a table row with ZWJ emoji / CJK cells is wider than its own border (recorded 2026-07-29, markdown-table plan)~~
 
-**Status:** open. A defect in the markdown-table rendering work itself, not a
+**RESOLVED (WP9.S1, code-review defect-fix session).** Root cause: Grid's
+`col_widths` measured a column's width by grapheme-segmenting a cell's
+JOINED text in one pass, but `grid_row` renders a cell by grouping its
+per-char scope into `group_runs`' maximal same-scope runs FIRST, then
+grapheme-segmenting EACH run independently. A grapheme cluster straddling a
+scope change inside a cell (a ZWJ-joined emoji pair split across an
+emphasis-run boundary — the same class `e3238fa` fixed in
+`rune_syntax::wrap`) disagreed between the two: the joined pass can fuse the
+cluster across the run boundary (UAX #29 GB9/GB11 join a ZWJ to whatever
+precedes it, unconditionally, span/run boundary or not); the per-run render
+never can. Fix: `cell_display_width` builds the SAME `group_runs` grouping
+the renderer uses, then sums each run's own grapheme width — measurement and
+rendering now share one code path. Regression test:
+`crates/rune-md/tests/table_render.rs`'s
+`zwj_family_split_by_emphasis_and_cjk_row_widths_agree`, confirmed red
+against the pre-fix `col_widths` (asserted separator/header width mismatch,
+16 vs 13) before the fix landed.
+
+~~**Status:** open. A defect in the markdown-table rendering work itself, not a
 pre-existing one — `TABLE-ROW-WIDTH` is that work's own invariant over its own
 table layout. Surfaced by `make test-fuzz RC=5000` only after three earlier
-fuzz bugs stopped short-circuiting the run.
+fuzz bugs stopped short-circuiting the run.~~
 
-- **Symptom:** `TABLE-ROW-WIDTH: table_group 0: row 1 has summed width 123, but
+~~- **Symptom:** `TABLE-ROW-WIDTH: table_group 0: row 1 has summed width 123, but
   row 0 (same group) has width 79`. Row 0 is the synthesised top border, row 1
-  a content row — the box does not line up, by 44 cells.
-- **Verified not caused by the ZWJ span-boundary fix:** the shrunk script
-  replays identically at `bf3e7e0`, immediately before that fix.
-- **Likely area:** the table layout measures column widths from its own
+  a content row — the box does not line up, by 44 cells.~~
+~~- **Verified not caused by the ZWJ span-boundary fix:** the shrunk script
+  replays identically at `bf3e7e0`, immediately before that fix.~~
+~~- **Likely area:** the table layout measures column widths from its own
   rendered cell text, while the border row is built from the stored
   `col_widths`. A cell holding a ZWJ emoji or CJK is the divergence point — the
   same class as the already-fixed tab-in-a-cell mismatch, where measurement and
   rendering disagreed about one glyph's width. Note the span-boundary fix
   corrected the WRAP layer's walkers; table `col_widths` and the renderer's own
-  per-span segmentation were not touched and may still disagree.
-- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
-  replay):
+  per-span segmentation were not touched and may still disagree.~~
+~~- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
+  replay):~~
 
 ```
 content \u{feff}hello
@@ -611,10 +629,10 @@ key down ----
 paste hello world
 ```
 
-- **Not committed to `repros/` while red**, per the standing convention that a
+~~- **Not committed to `repros/` while red**, per the standing convention that a
   repro lands in the same commit as its fix. **`make test-fuzz` stays red until
   this is fixed**; every other gate (`fmt`/`lint`/`build`/`test`/`perf-guard`/
-  `replay`/`parity-grid`) is green.
+  `replay`/`parity-grid`) is green.~~
 ## rust port — `db_wiring` flakes under parallel test load (recorded 2026-07-28, tree-sitter plan, WP5.S5/S6 split)
 
 Observed three times now, twice while other work was compiling concurrently in
@@ -744,16 +762,24 @@ at capture-harness flakiness (terminal-size timing under the sandbox) rather
 than a Rust regression. `make parity-grid` passes. Needs its own investigation
 with polled evidence before anyone changes rendering code to chase it.
 
-## rust port — a second `TABLE-ROW-WIDTH` instance, zero-width-space flavoured (recorded 2026-07-28, found by the session fuzzer)
+## ~~rust port — a second `TABLE-ROW-WIDTH` instance, zero-width-space flavoured (recorded 2026-07-28, found by the session fuzzer)~~
 
-The lone-`\r` shadow-copy fix closed the CR-driven instance of this invariant.
+**RESOLVED (WP9.S1, code-review defect-fix session).** Same `TABLE-ROW-WIDTH`
+invariant, same architectural root cause as the ZWJ/CJK entry above (Grid's
+`col_widths` measuring a cell's JOINED text instead of its rendered
+per-scope runs) — closed by the same `cell_display_width` fix. Verified
+directly: decoding this entry's own shrunk script and driving it through
+`rune_fuzz::driver::run` no longer raises `TABLE-ROW-WIDTH` (or any other
+invariant) against the fixed tree.
+
+~~The lone-`\r` shadow-copy fix closed the CR-driven instance of this invariant.
 A fresh-seed `make test-fuzz` then found another: `table_group 0: row 3 has
 summed width 18, but row 2 (same group) has width 17`. Different mechanism —
 no CR anywhere; the script types two U+200B ZERO WIDTH SPACEs into a table
 cell. A zero-width character contributes 0 terminal cells but is 3 bytes, so
-this is a live §1.5 bytes-vs-cells hypothesis worth checking first.
+this is a live §1.5 bytes-vs-cells hypothesis worth checking first.~~
 
-`RS=1 make test-fuzz` passes; this needs fresh seeds to surface.
+~~`RS=1 make test-fuzz` passes; this needs fresh seeds to surface.~~
 
 Shrunk script (12 steps, decodable by `rune_fuzz::script::decode`):
 
@@ -772,9 +798,11 @@ paste
 key up ----
 ```
 
-**Deliberately NOT checked into `repros/`** — that directory's contract is that
+~~**Deliberately NOT checked into `repros/`** — that directory's contract is that
 every script in it replays clean, and this one does not until the bug is fixed.
-It belongs there in the same commit as its fix.
+It belongs there in the same commit as its fix.~~ (Checking the script itself
+into `repros/` is `rune-fuzz`'s call, outside this fix's crate — left to
+whichever WP next touches that crate.)
 
 ## rust port — open findings from the second code review (recorded 2026-07-29)
 

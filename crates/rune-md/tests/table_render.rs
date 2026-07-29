@@ -45,6 +45,21 @@ fn display_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_width).sum()
 }
 
+/// A row's rendered width, measured PER SPAN — each span's own text
+/// grapheme-segmented independently, then summed — rather than joining
+/// every span's text into one string first. This is the honest oracle
+/// (WP9.S2): the renderer itself grapheme-segments each `SyntaxSpan`'s text
+/// independently (never across a span boundary), so joining spans back into
+/// one string before measuring can silently re-fuse a grapheme cluster the
+/// render already tore apart at a span boundary, making the oracle agree
+/// with a wrong `col_widths` measurement instead of catching the disagreement.
+fn per_span_display_width(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> usize {
+    lines
+        .get(line)
+        .map(|l| l.spans.iter().map(|s| display_width(s.text(content))).sum())
+        .unwrap_or(0)
+}
+
 const NAME_AGE_TABLE: &str = "| Name | Age |\n| ---- | --- |\n| Alice | 30 |\n";
 
 /// Pins the exact header-row text: column 0 ("Name"/"Alice") is width 5,
@@ -109,11 +124,54 @@ fn bar_and_corner_columns_align_across_every_row() {
 fn all_three_rendered_rows_share_the_same_display_width() {
     let (buf, doc) = synced(NAME_AGE_TABLE, 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
-    let w0 = display_width(&joined_line(&lines, 0, buf.content()));
-    let w1 = display_width(&joined_line(&lines, 1, buf.content()));
-    let w2 = display_width(&joined_line(&lines, 2, buf.content()));
+    let w0 = per_span_display_width(&lines, 0, buf.content());
+    let w1 = per_span_display_width(&lines, 1, buf.content());
+    let w2 = per_span_display_width(&lines, 2, buf.content());
     assert_eq!(w0, w1);
     assert_eq!(w1, w2);
+}
+
+/// TABLE-ROW-WIDTH root cause (WP9.S1/S2): a grapheme cluster straddling a
+/// span boundary inside a cell (a ZWJ-joined emoji pair split by emphasis
+/// markup) must measure and render the SAME width. Joined-text measurement
+/// re-fuses the pair into one cluster across the boundary (GB11 joins a ZWJ
+/// to a following pictograph unconditionally, span boundary or not) and
+/// undercounts; the renderer can never do that — each span's text is
+/// grapheme-segmented on its own, so the pair renders as two separate
+/// clusters. A CJK cell sits in the other column so the fixture also pins
+/// the (already-correct) per-grapheme, not per-`char`, measurement for wide
+/// scalar values. This fails against the pre-fix `col_widths` (measures the
+/// cell's joined text in one grapheme pass) with a torn box: the content
+/// row renders wider than the border row it was sized against.
+#[test]
+fn zwj_family_split_by_emphasis_and_cjk_row_widths_agree() {
+    // The emphasis boundary falls right before the ZWJ (`👨` plain, `*` opens
+    // emphasis, then a LONE `\u{200d}` immediately starts the emphasised
+    // run): the renderer grapheme-segments each of those two runs
+    // independently, so the ZWJ (no preceding char in its OWN run) can never
+    // join to `👨` — it stands as its own single-width cluster, then `👩` as
+    // a second, separate cluster (2 + 1 + 2 = 5 cells). Joined-text
+    // measurement instead re-fuses `👨` + the ZWJ + `👩` into ONE cluster
+    // across the run boundary (UAX #29 GB9/GB11 join a ZWJ unconditionally
+    // to whatever precedes it when the text is walked as one string) and
+    // undercounts to 2.
+    let content = "| 👨*\u{200d}👩* | 世界 |\n| --- | --- |\n| x | y |\n";
+    let (buf, doc) = synced(content, 0, false);
+    let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
+    let w0 = per_span_display_width(&lines, 0, buf.content());
+    let w1 = per_span_display_width(&lines, 1, buf.content());
+    let w2 = per_span_display_width(&lines, 2, buf.content());
+    assert_eq!(
+        w0, w1,
+        "separator row must match header row's true rendered width"
+    );
+    assert_eq!(
+        w1, w2,
+        "body row must match header row's true rendered width"
+    );
+
+    let info = lines[0].table.as_ref().expect("rendered table row");
+    assert_eq!(info.col_widths[0], 5);
 }
 
 /// Every rendered table line's span ranges must tile `[line_start,
