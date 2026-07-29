@@ -22,9 +22,13 @@ fn fixtures() -> Vec<(String, Vec<u8>)> {
     ]
 }
 
-/// Run a round-trip test on both backends.
+/// Run a round-trip test on both backends. `name` is joined onto an
+/// absolute root: `save_atomic` resolves its argument before writing
+/// (`Mem::resolve` now lexically normalizes — WP1.S6), so a bare relative
+/// name would be written under a different key than the one `read` below
+/// looks up under (which never resolves).
 fn roundtrip(vfs: &impl Vfs, name: &str, bytes: &[u8]) {
-    let path = PathBuf::from(name);
+    let path = PathBuf::from(format!("/{name}"));
     vfs.save_atomic(&path, bytes).expect("save should succeed");
     let read_back = vfs.read(&path).expect("read should succeed");
     assert_eq!(
@@ -66,7 +70,7 @@ fn disk_roundtrip_all_fixtures() {
 #[test]
 fn mem_save_overwrites_existing() {
     let vfs = Mem::new();
-    let path = PathBuf::from("overwrite_test");
+    let path = PathBuf::from("/overwrite_test");
     let original = b"first content".to_vec();
     let replacement = b"second content".to_vec();
 
@@ -178,7 +182,7 @@ fn disk_no_temp_residue_swap_path() {
 #[test]
 fn mem_fail_next_save_once() {
     let vfs = Mem::new();
-    let path = PathBuf::from("fail_test");
+    let path = PathBuf::from("/fail_test");
 
     // First save should fail.
     vfs.fail_next_save(io::ErrorKind::Other);

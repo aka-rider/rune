@@ -124,9 +124,9 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 /// session falls back to `app.root` (the workspace root discovered at
 /// startup), and only when THAT is also unresolved (still empty) does this
 /// fall back to the literal `"."`. Resolved through `app.vfs` (§1.4.9) so
-/// `Disk` canonicalizes it exactly like every other filesystem entry point,
-/// and `Mem` (tests) returns it unchanged (`Vfs::resolve`'s identity
-/// behavior there).
+/// `Disk` canonicalizes it exactly like every other filesystem entry point;
+/// `Mem` (tests) normalizes it lexically to its own synthetic root (`Mem`
+/// has no real cwd to canonicalize `"."` against).
 pub fn initial_root(app: &App) -> PathBuf {
     let base = app
         .active_doc()
@@ -555,8 +555,13 @@ mod tests {
 
     #[test]
     fn initial_root_falls_back_to_dot_when_app_root_is_also_unresolved() {
+        // `initial_root` computes the literal `"."` fallback and then
+        // resolves it through `app.vfs`; against `Mem` (WP1.S6) that
+        // lexically normalizes to the synthetic root `"/"` rather than
+        // staying identity, the same way `Disk::resolve` would canonicalize
+        // `"."` to an absolute path rather than leaving it literal.
         let app = app();
-        assert_eq!(initial_root(&app), PathBuf::from("."));
+        assert_eq!(initial_root(&app), PathBuf::from("/"));
     }
 
     #[test]
