@@ -812,13 +812,25 @@ mechanical change, with no new behaviour to justify a split. Split it when next
 touched; the motion, selection, editing and clipboard chords are four natural
 groups. `explorer.rs` grew the same way (588 -> 594) but was already tracked.
 
-**The `␣Z hide panel` hint truncates `F1 help` off the footer at 120 columns
-with the Explorer focused.** The footer's priority truncation appends whole
-entries while they fit, and the Explorer's own five bindings already filled the
-row: before the new binding there were 15 free cells (enough for `F1 help`,
-not for `^C quit`); now there are 0. Editor focus — the common case — still fits
-everything with ~25 cells spare. Fix by giving the global tail (`F1 help`,
-`^C quit`) priority over the focused pane's own chords rather than by shortening
-the help text; `hide` instead of `hide panel` only recovers 6 of the 9 cells
-needed. Noticed via `make parity`, which the untruncated `footer_text` tests
-cannot see.
+**Shrinking a pane's axis past a dragged split collapses the trailing pane,
+and that is deliberate.** Drag the Files/Open divider down, then shorten the
+terminal below what the drag asked for: the tab rows disappear. This is the
+stated collapse rule — below its floor, a collapsible pane goes — applied to a
+size the frame can no longer grant. It is transient: the dragged size is never
+written down, so restoring the height restores both sections untouched.
+
+The friendlier-looking alternative, sparing the trail whenever the request no
+longer fits, was implemented and then reverted. `allot` cannot tell a drag from
+a resize — both reach it only as `(desired, available)` — so sparing the trail
+on every over-ask also spares it on an *overshooting drag*, and overshoot is how
+the collapse gesture is actually performed: nobody lands the pointer on the one
+row that leaves the trail a single cell under its floor. The cost was losing
+drag-to-collapse for the tab rows entirely, while a unit test calling `allot`
+directly with a hand-picked value still passed and hid it.
+
+Doing it properly means recording the intent where it is known — at `request`
+time, reached only from a drag — instead of re-deriving it in `allot` on every
+read: give the splitter an explicit "trail collapsed by the user" state rather
+than inferring collapse from a transient `available`. That is a design change to
+`Split`'s API (`request` would need the axis length and the trail's limits), so
+it is recorded here rather than rushed.
