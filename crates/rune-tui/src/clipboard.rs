@@ -15,6 +15,15 @@ use base64::engine::general_purpose::STANDARD;
 
 use crate::runtime::{Cmd, CmdKind, Msg};
 
+/// The largest raw (pre-base64) payload `osc52_copy` will encode (plan
+/// WP13.S4, `rune-tui C 6`). Terminal multiplexers (tmux, screen) cap how
+/// large an OSC 52 sequence they'll actually forward to the real terminal
+/// — far below 1 MiB — and silently drop anything over their own limit, so
+/// an unbounded copy/cut can write bytes into a sequence that never
+/// reaches the system clipboard at all, with no signal to the user. Kept
+/// comfortably under the smallest common multiplexer cap.
+pub const OSC52_MAX_PAYLOAD_BYTES: usize = 100_000;
+
 /// Builds the OSC 52 "set system clipboard" escape sequence for `payload`:
 /// `ESC ] 5 2 ; c ; <base64> BEL` (plan Context "Clipboard": "exact Go
 /// parity", `commands_clipboard.go:13-25`, mediated through Bubble Tea's
