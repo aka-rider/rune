@@ -1,4 +1,28 @@
-# TODO — SYNC-IDEMPOTENT catches a real reveal-state lag on a Link element
+# TODO — SYNC-IDEMPOTENT catches a real reveal/scroll-pipeline lag
+
+**Update:** a second, independent repro was found during the `make
+test-fuzz` soak (no Link, no `[a](b)`, just plain prose + a scroll key):
+
+```rune
+content Hello there. This is a short prose paragraph with a few sentences in it.\n
+key char:¡ ----
+key down --c-
+key char:¡ ----
+```
+
+Fails identically: `SYNC-IDEMPOTENT: a second sync_view() with no
+intervening message changed the rendered rows (1 rows before, 2 rows
+after)` — this time a ROW COUNT difference, not just cell content. Neither
+repro involves any WP14-added generator surface (`F1`, `^b`/`^t`,
+multicursor, `StaleConfirmTimeout`) — both use only pre-existing actions
+(`Type`, `Key`, a ctrl+arrow scroll command), confirming this is a
+pre-existing production defect that WP14.S1's SYNC-IDEMPOTENT fix now
+reliably surfaces, not something introduced by WP14's own changes. Given
+how easily both runs hit it (well under 200 generated cases each), `make
+test-fuzz RC=50000` cannot exit 0 until this is fixed — recorded as a
+Failure in WP14's own handoff, not papered over.
+
+## Original repro (kept below, still valid)
 
 **Found by:** WP14.S1's SYNC-IDEMPOTENT fix (`crates/rune-fuzz/src/driver/checks.rs::sync_idempotent_check`),
 which now compares the memoized production render against BOTH a cache-bypassed

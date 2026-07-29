@@ -16,19 +16,21 @@ use crate::step::{MsgTag, StepCtx};
 /// `PASTE-VERBATIM` (§1.4.5) — on a non-empty `Paste`/`ClipboardRead` into
 /// a single cursor, `next.content` must equal `prev.content` with exactly
 /// the pasted text's bytes substituted at the cursor: inserted at the
-/// caret when collapsed, or replacing `[selection_start, selection_end)`
-/// when there's a selection (CODE-REVIEW.md rune-fuzz finding 12 —
-/// `commands::edit::insert_text`'s `per_cursor_selection_edits` replaces
-/// the PLAIN selection range here, unlike `Copy`/`Cut`'s `selection_end_
-/// inclusive` newline nudge, which is a copy-extraction rule, not an edit
-/// rule) — `handle_paste_content` inserts unfiltered (`commands/
-/// clipboard.rs`), the ONE path that can carry control bytes at all (G3).
-/// Inert on a `read_only` document (the Help virtual document, reachable
-/// since `F1` joined `arb_any_keycode` — CODE-REVIEW.md rune-fuzz finding
-/// 9): every mutating command chokepoint refuses a read-only document by
-/// construction, so a paste there correctly inserts nothing, and asserting
-/// verbatim insertion anyway would be asserting a property production
-/// never claimed to begin with.
+/// caret when collapsed, or replacing `[selection_start, selection_end_
+/// inclusive)` when there's a selection (CODE-REVIEW.md rune-fuzz finding
+/// 12) — `commands::edit::insert_text`'s `per_cursor_selection_edits`
+/// (via `per_cursor_selection_edits`'s own `has_selection` arm) uses the
+/// SAME `nav::selection_end_inclusive` reversed-selection nudge
+/// `clip_osc52` below already accounts for; it is a shared selection-
+/// range convention for every selection-consuming command in this crate,
+/// not a copy-extraction-only rule. `handle_paste_content` inserts
+/// unfiltered (`commands/clipboard.rs`), the ONE path that can carry
+/// control bytes at all (G3). Inert on a `read_only` document (the Help
+/// virtual document, reachable since `F1` joined `arb_any_keycode` —
+/// CODE-REVIEW.md rune-fuzz finding 9): every mutating command chokepoint
+/// refuses a read-only document by construction, so a paste there
+/// correctly inserts nothing, and asserting verbatim insertion anyway
+/// would be asserting a property production never claimed to begin with.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let text = match &ctx.msg {
         MsgTag::Paste(t) | MsgTag::ClipboardRead(t) => t,
@@ -40,7 +42,9 @@ pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     let [cursor] = prev.cursors.as_slice() else {
         return None;
     };
-    let (start, end) = (cursor.selection_start(), cursor.selection_end());
+    let buf = Buffer::new(prev.content.clone());
+    let start = cursor.selection_start();
+    let end = nav::selection_end_inclusive(cursor, &buf);
     if end > prev.content.len()
         || !prev.content.is_char_boundary(start)
         || !prev.content.is_char_boundary(end)
