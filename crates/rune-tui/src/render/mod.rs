@@ -415,18 +415,33 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
             if x >= right {
                 break;
             }
+            let width = u16::from(cell.width.max(1));
+            // WP13.S2: a cell that *starts* inside `area` can still not
+            // *fit* — a double-width glyph landing on the last column
+            // would need a continuation cell past `right` that this loop
+            // never writes, leaving the border's own cell un-reset there
+            // (ratatui's diffing then never revisits it, so the gap
+            // persists across frames — the resize-race defect this guards
+            // against). Substitute a single blank cell instead of the
+            // glyph whenever it wouldn't fully fit.
+            let fits = x.saturating_add(width) <= right;
             if let Some(target) = buf.cell_mut((x, y)) {
-                target.set_symbol(&cell.text);
+                if fits {
+                    target.set_symbol(&cell.text);
+                } else {
+                    target.set_symbol(" ");
+                }
                 target.set_style(cell.style);
             }
-            let width = u16::from(cell.width.max(1));
-            for dx in 1..width {
-                let cx = x.saturating_add(dx);
-                if cx >= right {
-                    break;
-                }
-                if let Some(cont) = buf.cell_mut((cx, y)) {
-                    cont.reset();
+            if fits {
+                for dx in 1..width {
+                    let cx = x.saturating_add(dx);
+                    if cx >= right {
+                        break;
+                    }
+                    if let Some(cont) = buf.cell_mut((cx, y)) {
+                        cont.reset();
+                    }
                 }
             }
             x = x.saturating_add(width);
