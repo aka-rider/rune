@@ -143,8 +143,12 @@ impl Split {
             return (Some(want), Some(rest));
         }
         if trail.collapsible {
-            // Dragged past the trail's floor: it disappears and the lead
-            // takes the whole axis.
+            // Nothing is left for the trail, so it goes and the lead takes
+            // the whole axis. Two paths reach here and both are intended:
+            // a drag deliberately pushing the boundary past the trail's
+            // floor, and an axis that shrank underneath a size an earlier
+            // drag recorded. The second is transient — `desired` is never
+            // written back, so growing the axis again restores both panes.
             return (Some(available), None);
         }
         // The trail may not vanish, so the lead yields back to its own
@@ -238,9 +242,9 @@ mod tests {
         assert_eq!(split.allot(120, 22, HORIZ_TRAIL), (Some(30), Some(90)));
     }
 
-    // Horizontal axis: pins against the left column's old fixed-width
-    // query in `layout.rs`, which a later package deletes in favor of this
-    // allocator.
+    // Horizontal axis: pins the pre-drag fixed-width behaviour this
+    // allocator reproduces — the same default width and floors the left
+    // column always used before the divider became user-draggable.
     #[test]
     fn allot_horizontal_matches_the_old_fixed_left_width_query() {
         let never_dragged = Split::new(HORIZ_LEAD, true);
@@ -275,6 +279,22 @@ mod tests {
         let mut split = Split::new(VERT_LEAD, true);
         split.request(29);
         assert_eq!(split.allot(30, 3, VERT_TRAIL), (Some(30), None));
+    }
+
+    #[test]
+    fn allot_vertical_shrink_past_a_dragged_desired_collapses_the_trail_transiently() {
+        // An axis that shrinks below what an earlier drag asked for leaves
+        // the trail nothing, so it collapses — the collapse rule applied to
+        // a size the frame can no longer grant, not a special case. The
+        // collapse is transient: `desired` is never written back, so an axis
+        // restored to its old length restores both panes untouched. Pinned
+        // because a "spare the trail on shrink" variant of this rule reads
+        // as friendlier but silently costs the drag-to-collapse gesture,
+        // whose natural overshoot then clamps to the floor instead.
+        let mut split = Split::new(VERT_LEAD, true);
+        split.request(25);
+        assert_eq!(split.allot(10, 3, VERT_TRAIL), (Some(10), None));
+        assert_eq!(split.allot(30, 3, VERT_TRAIL), (Some(25), Some(5)));
     }
 
     #[test]

@@ -1,9 +1,10 @@
 //! Mouse-drag pane resizing: grabbing the left column's border band or
 //! the `Open` divider row and dragging moves the corresponding `Split`,
-//! same as the plain click/drag test helper in `navigate.rs`, extended to
-//! emit `Down` -> `Drag` -> `Up` runs at absolute frame coordinates (the
-//! splitter bands live outside the editor rect, so a gesture here can't
-//! be expressed relative to it the way a text-selection click can).
+//! same shape as the plain click/drag test helper used for text selection
+//! elsewhere, extended to emit `Down` -> `Drag` -> `Up` runs at absolute
+//! frame coordinates (the splitter bands live outside the editor rect, so a
+//! gesture here can't be expressed relative to it the way a text-selection
+//! click can).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
@@ -232,6 +233,11 @@ fn dragging_the_divider_to_the_top_collapses_the_explorer_but_keeps_the_divider(
     assert!(g1.tabs_divider.is_some());
 }
 
+/// Dragging the divider down to the block's bottom border collapses the tab
+/// rows and hands the Explorer the whole inner rect. Overshooting is the
+/// natural way to perform this gesture — nobody lands the pointer on the one
+/// exact row that leaves the trail just under its floor — so the collapse
+/// must survive a request larger than the axis, not only one that fits it.
 #[test]
 fn dragging_the_divider_to_the_bottom_collapses_the_tab_rows() {
     let mut app = app_for(100, 30);
@@ -260,7 +266,10 @@ fn dragging_the_divider_to_the_bottom_collapses_the_tab_rows() {
     );
 
     let g1 = geo(&app);
-    assert!(g1.tabs_divider.is_none());
+    assert!(
+        g1.tabs_divider.is_none(),
+        "dragging to the bottom border must collapse the tab rows outright"
+    );
     assert_eq!(
         g1.explorer_inner.height,
         left_block.height.saturating_sub(2)
@@ -307,6 +316,58 @@ fn shrinking_and_restoring_the_frame_preserves_the_dragged_width() {
     app.frame_width = 100;
     app.sync_view();
     assert_eq!(geo(&app).left_block.expect("restored").width, dragged_w);
+}
+
+/// The vertical counterpart of the width test above. Drag the tabs divider
+/// well down, then shrink the frame's HEIGHT past what that drag asked for:
+/// the tab rows collapse, because the collapse rule applies to whatever the
+/// frame can actually grant, not only to a fresh gesture. Restoring the
+/// height brings them back — the dragged size is never written down to fit a
+/// smaller frame, so nothing is lost.
+#[test]
+fn shrinking_the_frame_height_collapses_the_tab_rows_and_restoring_it_brings_them_back() {
+    let mut app = app_for(100, 30);
+    let g0 = geo(&app);
+    let divider = g0.tabs_divider.expect("divider is shown");
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        divider.x,
+        divider.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Drag(MouseButton::Left),
+        divider.x,
+        divider.y + 6,
+    );
+    send(
+        &mut app,
+        MouseKind::Up(MouseButton::Left),
+        divider.x,
+        divider.y + 6,
+    );
+    assert!(
+        geo(&app).tabs_divider.is_some(),
+        "divider must still be shown right after the drag"
+    );
+    let explorer_after_drag = geo(&app).explorer_inner.height;
+
+    app.frame_height = 15;
+    app.sync_view();
+    assert!(
+        geo(&app).tabs_divider.is_none(),
+        "a height that can no longer grant the dragged size collapses the tab rows"
+    );
+
+    app.frame_height = 30;
+    app.sync_view();
+    assert!(
+        geo(&app).tabs_divider.is_some(),
+        "restoring the height must bring the tab rows back"
+    );
+    assert_eq!(geo(&app).explorer_inner.height, explorer_after_drag);
 }
 
 #[test]
