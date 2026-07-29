@@ -13,7 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc;
 
 use rune_core::buffer::{AppliedEdit, Buffer};
 use rune_core::cursor::CursorSet;
@@ -56,20 +56,21 @@ fn open_and_load(
     vfs: Arc<dyn Vfs + Send + Sync>,
     doc_path: &Path,
 ) -> (Store, Arc<DbBridge>, LoadResult) {
-    let (bridge, rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let (store, _warning) =
         Store::open(db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
     let op_id = store.load(doc_path).expect("enqueue load");
-    let load_result = loop {
-        match rx.recv().expect("writer thread alive during hydration") {
-            DbEvent::Ok { id, result } if id == op_id => match result {
-                OpOutcome::Load(r) => break *r,
-                other => panic!("unexpected reply to Load: {other:?}"),
-            },
-            DbEvent::Err { id, error } if id == op_id => panic!("load failed: {error}"),
-            DbEvent::Fatal { error } => panic!("writer thread fatal during load: {error}"),
-            _ => continue,
-        }
+    let load_result = match bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok {
+            result: OpOutcome::Load(r),
+            ..
+        } => *r,
+        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
+        DbEvent::Err { error, .. } => panic!("load failed: {error}"),
+        DbEvent::Fatal { error } => panic!("writer thread fatal during load: {error}"),
     };
     (store, bridge, load_result)
 }
@@ -243,21 +244,22 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     // them apart — override it to report session A dead, the documented,
     // supported way to simulate a genuinely dead session
     // (`Store::set_liveness_check`).
-    let (bridge_b, rx_b) = DbBridge::bootstrap();
+    let bridge_b = DbBridge::bootstrap();
     let (store_b, _warning) =
         Store::open(&db_path, Arc::clone(&vfs), bridge_b.on_event()).expect("open store b");
     store_b.set_liveness_check(Arc::new(|_pid, _started_at| false));
     let op_id = store_b.load(doc_path).expect("enqueue load b");
-    let load_b = loop {
-        match rx_b.recv().expect("writer b alive during hydration") {
-            DbEvent::Ok { id, result } if id == op_id => match result {
-                OpOutcome::Load(r) => break *r,
-                other => panic!("unexpected reply to Load: {other:?}"),
-            },
-            DbEvent::Err { id, error } if id == op_id => panic!("load b failed: {error}"),
-            DbEvent::Fatal { error } => panic!("writer b fatal during load: {error}"),
-            _ => continue,
-        }
+    let load_b = match bridge_b.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok {
+            result: OpOutcome::Load(r),
+            ..
+        } => *r,
+        DbEvent::Ok { result, .. } => panic!("unexpected reply to Load: {result:?}"),
+        DbEvent::Err { error, .. } => panic!("load b failed: {error}"),
+        DbEvent::Fatal { error } => panic!("writer b fatal during load: {error}"),
     };
 
     assert_eq!(
@@ -418,7 +420,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
     let store = Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
         .expect("open in-memory store");
-    let (bridge, _rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let db = Db::new(store, bridge, true);
     let doc_db = DocDb::new(1, 0, true, 0);
 
@@ -467,31 +469,32 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
 /// `workspace::open_path`'s WP6 hydration runs against, since it only ever
 /// hydrates the document it opens, never the app's initial one. The
 /// returned bridge is left in its `Bootstrap` sink (never `attach`ed), so
-/// every `DbEvent` — including the `Load` ack `open_path` enqueues — lands
-/// on the returned receiver for the test to drive through `app::update`
-/// itself, exactly like `open_and_load` above does for bootstrap hydration.
-fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Receiver<DbEvent>) {
+/// every `DbEvent` — including the `Load` ack `open_path` enqueues — stays
+/// buffered on the bridge itself for the test to drain through
+/// `recv_ok`/`app::update`, exactly like `open_and_load` above does for
+/// bootstrap hydration.
+fn app_with_store(label: &str, vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Arc<DbBridge>) {
     let dir = temp_db_dir(label);
     let db_path = dir.join("rune-v1.db");
-    let (bridge, rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let (store, _warning) =
         Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
-    let db = Db::new(store, bridge, false);
+    let db = Db::new(store, Arc::clone(&bridge), false);
     let app = App::new(Buffer::new(""), None, vfs, Some(db));
-    (app, rx)
+    (app, bridge)
 }
 
-/// Blocks for the next `DbEvent::Ok` reply to `op_id` on `rx`, panicking on
-/// an `Err`/`Fatal`/mismatched-id reply — the same shape `open_and_load`
-/// above uses for bootstrap's own `Load` ack.
-fn recv_ok(rx: &Receiver<DbEvent>, op_id: u64) -> OpOutcome {
-    loop {
-        match rx.recv().expect("writer thread alive") {
-            DbEvent::Ok { id, result } if id == op_id => break result,
-            DbEvent::Err { id, error } if id == op_id => panic!("op {id} failed: {error}"),
-            DbEvent::Fatal { error } => panic!("writer thread fatal: {error}"),
-            _ => continue,
-        }
+/// Blocks for the next `DbEvent::Ok` reply to `op_id` buffered on `bridge`,
+/// panicking on an `Err`/`Fatal`/mismatched-id reply — the same shape
+/// `open_and_load` above uses for bootstrap's own `Load` ack.
+fn recv_ok(bridge: &DbBridge, op_id: u64) -> OpOutcome {
+    match bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok { result, .. } => result,
+        DbEvent::Err { id, error } => panic!("op {id} failed: {error}"),
+        DbEvent::Fatal { error } => panic!("writer thread fatal: {error}"),
     }
 }
 
@@ -671,5 +674,100 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
             .is_some_and(|s| s.contains("no baseline observation")),
         "a status message must explain why crash recovery wasn't bound (got {:?})",
         app.status_message
+    );
+}
+
+/// Plan WP3.S1/S4's regression test: a two-file CLI launch opens BOTH extra
+/// documents (`workspace::open_path`, exactly as `rune-cli::main`'s
+/// extra-positional loop does) before `DbBridge::attach` ever runs — the
+/// same bridge is still in its `Bootstrap` sink for the whole window. Before
+/// the fix, any `Load` ack landing in that window went to an `mpsc::Sender`
+/// whose paired receiver bootstrap hydration had already dropped, and was
+/// silently lost (`let _ = tx.send(evt)`): the tab kept `db: None` all
+/// session. Both documents here must still end up with `db: Some(..)` once
+/// `attach` finally runs and drains what accumulated.
+///
+/// Deterministic, no wall-clock sleep: a THIRD op (`probe` against an
+/// unrelated, already-hydrated document) is enqueued strictly AFTER both
+/// documents' `Load`s. The writer thread is a single ordered FIFO (`db.rs`'s
+/// own module doc) that posts each op's event before starting the next, so
+/// blocking on the probe's own ack (`wait_for_bootstrap_event`) is a
+/// genuine rendezvous proving both earlier `Load` acks are already sitting
+/// in the bridge's `Bootstrap` buffer — never a race, never a poll loop.
+#[test]
+fn two_file_launch_delivers_both_load_acks_once_attach_drains_the_bootstrap_buffer() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/marker.md"), b"marker");
+    publish(&mem, Path::new("/a.md"), b"a content");
+    publish(&mem, Path::new("/b.md"), b"b content");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let dir = temp_db_dir("two-file-handover");
+    let db_path = dir.join("rune-v1.db");
+    let bridge = DbBridge::bootstrap();
+    let (store, _warning) =
+        Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()).expect("open store");
+
+    // Synchronously hydrate an unrelated marker document — purely to mint a
+    // valid `doc_id` the FIFO-order probe below can target; not part of the
+    // two-file scenario under test.
+    let marker_op = store
+        .load(Path::new("/marker.md"))
+        .expect("enqueue marker load");
+    let marker_doc_id = match bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == marker_op,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok {
+            result: OpOutcome::Load(load),
+            ..
+        } => load.doc_id,
+        other => panic!("expected a Load ack for the marker doc, got {other:?}"),
+    };
+
+    // `App::new_untitled` mirrors the CLI's own no-positional-file shape —
+    // the bridge is still `Bootstrap` here, matching `rune-cli::main`'s
+    // window between `Store::open` and `runtime::run`'s `attach` call.
+    let mut app = App::new_untitled(Arc::clone(&vfs));
+    app.db = Some(Db::new(store, Arc::clone(&bridge), false));
+
+    // Exactly `rune-cli::main`'s extra-positional loop: every file after
+    // the first opens through `workspace::open_path`, enqueueing its own
+    // `Load` — both land in the still-`Bootstrap` bridge.
+    let id_a = workspace::open_path(&mut app, Path::new("/a.md")).expect("open a");
+    let id_b = workspace::open_path(&mut app, Path::new("/b.md")).expect("open b");
+    assert!(app.doc(id_a).unwrap().db.is_none(), "no ack has landed yet");
+    assert!(app.doc(id_b).unwrap().db.is_none(), "no ack has landed yet");
+
+    // Enqueued strictly after both Loads — see the FIFO-ordering doc
+    // comment above.
+    let probe_op = app
+        .db
+        .as_ref()
+        .expect("app has a store")
+        .store
+        .probe(marker_doc_id)
+        .expect("enqueue probe");
+    let _ = bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == probe_op,
+        DbEvent::Fatal { .. } => true,
+    });
+
+    // The handover itself: `runtime::run`'s one call site.
+    let (tx, rx) = mpsc::channel::<Msg>();
+    bridge.attach(tx);
+
+    let mut effects = Effects::default();
+    for msg in rx.try_iter() {
+        app::update(&mut app, msg, &mut effects);
+    }
+
+    assert!(
+        app.doc(id_a).unwrap().db.is_some(),
+        "doc a's Load ack, buffered before attach, must still be delivered"
+    );
+    assert!(
+        app.doc(id_b).unwrap().db.is_some(),
+        "doc b's Load ack, buffered before attach, must still be delivered"
     );
 }

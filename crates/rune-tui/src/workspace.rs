@@ -8,9 +8,10 @@
 //! cheap enough to run inline here, exactly as the pre-WP4 bootstrap load
 //! in `rune-cli::main::load_buffer` already does).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rune_core::buffer::{Buffer, BufferError};
+use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
@@ -19,16 +20,30 @@ use crate::document::DocumentId;
 use crate::help;
 use crate::pane::Pane;
 
-/// Opens `path`: normalizes it via `app.vfs.resolve`, then either
-/// re-activates an already-open `Document` with that resolved `file_path`
-/// or reads a fresh one. A read/decode failure is reported through the
-/// error Banner (`banner::report_error`) — the one chokepoint every error
-/// report funnels through (plan WP3.S4). Returns the opened/reactivated
+/// Normalizes `path` through the injected `Vfs` — the ONE resolution
+/// chokepoint every path that will ever bind a `Document` funnels through
+/// (`open_path` below, and `rune-cli::main`'s bootstrap open of the first
+/// CLI positional), so the same underlying file can never bind as two
+/// textually different documents (a symlink, a `..` segment, or a
+/// duplicated absolute-path spelling all collapse to one canonical form
+/// here instead of staying an unresolved, divergence-prone primitive).
+/// Falls back to `path` itself only when resolution itself fails (e.g.
+/// permission denied) — the caller's own subsequent read surfaces that
+/// same failure.
+pub fn resolve(vfs: &dyn Vfs, path: &Path) -> PathBuf {
+    vfs.resolve(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Opens `path`: normalizes it via [`resolve`], then either re-activates
+/// an already-open `Document` with that resolved `file_path` or reads a
+/// fresh one. A read/decode failure is reported through the error Banner
+/// (`banner::report_error`) — the one chokepoint every error report
+/// funnels through (plan WP3.S4). Returns the opened/reactivated
 /// document's id, or `None` on any of the error paths — `navigate::follow`
 /// (plan WP5) needs the id back to force-parse the target and land the
 /// caret on an anchor.
 pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
-    let resolved = app.vfs.resolve(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolve(app.vfs.as_ref(), path);
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Re-activation moves the Tabs cursor only — never reorders
