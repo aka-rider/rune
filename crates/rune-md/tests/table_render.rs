@@ -493,3 +493,38 @@ fn a_table_starting_mid_line_degrades_to_raw_text_instead_of_rendering_wrong() {
         "{rows2:#?}"
     );
 }
+/// A Wrapped table's synthesised borders are derived from `TableRowInfo::
+/// col_widths`, while its content rows are laid out at the proportionally
+/// shrunk widths. Those were once two separate vectors and the row info got
+/// the natural ones, so a table narrower than its content drew an 84-cell
+/// border around 38-cell rows. They are one vector now; this pins that.
+#[test]
+fn a_wrapped_table_borders_at_the_width_it_lays_its_content_out_at() {
+    let content = "| Alpha | Beta |\n| --- | --- |\n\
+                   | the quick brown fox jumps over the lazy dog | a second rather long cell of prose |\n";
+    let buf = Buffer::new(content);
+    let mut doc = DocMachine::new();
+    doc.set_focus(false);
+    doc.sync_content(&buf);
+    doc.set_width(40);
+    doc.sync_cursors(&buf, &CursorSet::new(0));
+
+    let (lines, _) = emit(content, doc.blocks(), 40);
+
+    let infos: Vec<usize> = lines
+        .iter()
+        .filter_map(|l| l.table.as_ref())
+        .map(|t| t.col_widths.iter().sum::<usize>() + 3 * t.col_widths.len() + 1)
+        .collect();
+    assert!(!infos.is_empty(), "the fixture must produce table row info");
+
+    for (line, _) in lines.iter().enumerate().filter(|(_, l)| l.table.is_some()) {
+        let text = joined_line(&lines, line, content);
+        let rendered = display_width(&text);
+        let border = infos[0];
+        assert_eq!(
+            rendered, border,
+            "row {line} renders {rendered} cells but its border is built at {border}: {text:?}"
+        );
+    }
+}

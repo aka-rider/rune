@@ -118,6 +118,11 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         active: base_active_id(),
         cells: Vec::new(),
         row_meta: Vec::new(),
+        highlight_spans: Vec::new(),
+        // Matches `version` by default (the "spans are current" case
+        // `HL-CLAMPED` requires before it checks anything) — a test that
+        // wants the STALE case overrides one or the other explicitly.
+        highlight_version: 1,
     }
 }
 

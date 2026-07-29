@@ -24,7 +24,7 @@ use ratatui::style::{Color, Modifier, Style};
 use catppuccin::Mocha;
 use quantize::to_ansi256;
 use rune_syntax::ScopeId;
-use rune_syntax::scope::markdown_table;
+use rune_syntax::scope::{CODE_SCOPES, MARKDOWN_SCOPES, scope_table};
 
 /// Every chrome (non-markdown/code) style the pre-WP4 `styles.rs` used to
 /// build from a raw `Color::Indexed` literal — one field per former
@@ -102,11 +102,20 @@ impl Theme {
             selection_bg: c(p.surface2),
         };
 
-        let table = markdown_table();
+        let table = scope_table();
         let mut scopes = vec![Style::default(); table.len()];
-        for (id, name) in table.iter() {
-            if let Some(slot) = scopes.get_mut(id.0 as usize) {
+        for name in MARKDOWN_SCOPES {
+            if let Some(id) = table.resolve(name)
+                && let Some(slot) = scopes.get_mut(id.0 as usize)
+            {
                 *slot = markdown_scope_style(name, &p, &c);
+            }
+        }
+        for name in CODE_SCOPES {
+            if let Some(id) = table.resolve(name)
+                && let Some(slot) = scopes.get_mut(id.0 as usize)
+            {
+                *slot = code_scope_style(name, &p, &c);
             }
         }
 
@@ -175,6 +184,39 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
     }
 }
 
+/// [`rune_syntax::scope::CODE_SCOPES`]'s canonical scope -> `Style` mapping
+/// (Catppuccin Mocha), for tokens a tree-sitter producer tags. Sets only
+/// `fg` and `Modifier` — never `bg` — because a later render pass
+/// `Style::patch`es this onto a cell that may already carry a
+/// `markup.raw.block` background, and a `bg` here would clobber it. Every
+/// colour goes through `c(..)` so the quantized (256-colour) construction
+/// path never surfaces a raw `Color::Rgb`.
+fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
+    let base = Style::default();
+    match name {
+        "keyword" => base.fg(c(p.mauve)),
+        "function" | "function.method" => base.fg(c(p.blue)),
+        "type" | "type.builtin" => base.fg(c(p.yellow)),
+        "constructor" => base.fg(c(p.sapphire)),
+        "variable" => base.fg(c(p.text)),
+        "variable.parameter" | "variable.member" | "property" => base.fg(c(p.lavender)),
+        "constant" | "constant.builtin" => base.fg(c(p.peach)),
+        "string" | "string.escape" | "string.regexp" => base.fg(c(p.green)),
+        "number" | "boolean" => base.fg(c(p.peach)),
+        "operator" => base.fg(c(p.sky)),
+        "punctuation" | "punctuation.bracket" | "punctuation.delimiter" => base.fg(c(p.overlay1)),
+        "attribute" => base.fg(c(p.yellow)),
+        "label" => base.fg(c(p.sapphire)),
+        "tag" => base.fg(c(p.blue)),
+        // Unreachable in practice: `name` is always drawn from this same
+        // table's own `CODE_SCOPES`, so every arm above is exhaustive over
+        // the names that ever reach here — a future scope this match
+        // hasn't been taught yet degrades to plain, unstyled text (§1.3)
+        // rather than panicking.
+        _ => base,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,7 +228,7 @@ mod tests {
         // construction paths.
         for quantized in [false, true] {
             let theme = Theme::catppuccin_mocha(quantized);
-            let table = markdown_table();
+            let table = scope_table();
             for (id, _name) in table.iter() {
                 let _ = theme.scope_style(id);
             }
@@ -207,7 +249,7 @@ mod tests {
             theme.chrome.active_border.fg,
             Some(Color::Indexed(_))
         ));
-        let table = markdown_table();
+        let table = scope_table();
         for (id, _name) in table.iter() {
             let style = theme.scope_style(id);
             if let Some(fg) = style.fg {
@@ -215,6 +257,22 @@ mod tests {
             }
             if let Some(bg) = style.bg {
                 assert!(matches!(bg, Color::Indexed(_)), "bg {bg:?} not quantized");
+            }
+        }
+    }
+
+    #[test]
+    fn code_scopes_never_carry_a_background() {
+        // decision 2: a later render pass `Style::patch`es a code-token
+        // style onto a cell that may already carry a `markup.raw.block`
+        // background — `code_scope_style` must never set `bg`, or it would
+        // clobber that background instead of layering over it.
+        let theme = Theme::catppuccin_mocha(false);
+        let table = scope_table();
+        for name in CODE_SCOPES {
+            if let Some(id) = table.resolve(name) {
+                let style = theme.scope_style(id);
+                assert_eq!(style.bg, None, "scope {name} unexpectedly carries a bg");
             }
         }
     }

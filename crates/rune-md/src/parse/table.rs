@@ -6,7 +6,7 @@
 //! second inline builder.
 
 use super::inline::build_inlines;
-use super::{LineIndex, ScanHint, line_at, node_range, per_line_content};
+use super::{ScanHint, line_at, node_range, per_line_content};
 use crate::element::block::Block;
 use crate::element::table::{TableAlign, TableCellM, TableM, TableRowM};
 use comrak::nodes::{AstNode, NodeValue, TableAlignment};
@@ -26,7 +26,7 @@ fn to_align(a: TableAlignment) -> TableAlign {
 /// construction (§1.3: degrade, never panic).
 pub(super) fn build_table<'a>(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     node: &'a AstNode<'a>,
     hint: &ScanHint,
     range: ByteRange,
@@ -53,8 +53,8 @@ pub(super) fn build_table<'a>(
             NodeValue::TableRow(h) => h,
             _ => continue,
         };
-        let row_range = node_range(content, idx, row_node);
-        let row_line = line_at(&idx.buffer, row_range.start);
+        let row_range = node_range(content, starts, row_node);
+        let row_line = line_at(starts, row_range.start);
         if is_header && header_line.is_none() {
             header_line = Some(row_line);
         }
@@ -64,8 +64,8 @@ pub(super) fn build_table<'a>(
             if !matches!(cell_node.data.borrow().value, NodeValue::TableCell) {
                 continue;
             }
-            let cell_range = node_range(content, idx, cell_node);
-            let inlines = build_inlines(content, idx, cell_node, hint);
+            let cell_range = node_range(content, starts, cell_node);
+            let inlines = build_inlines(content, starts, cell_node, hint);
             cells.push(TableCellM {
                 range: cell_range,
                 inlines,
@@ -83,8 +83,8 @@ pub(super) fn build_table<'a>(
         return None;
     }
 
-    let first_line = line_at(&idx.buffer, range.start);
-    let last_line = line_at(&idx.buffer, range.end.saturating_sub(1).max(range.start));
+    let first_line = line_at(starts, range.start);
+    let last_line = line_at(starts, range.end.saturating_sub(1).max(range.start));
     // The `|---|---|` delimiter row has no comrak node at all: derive it as
     // the line right after the header row, clamped so a malformed/truncated
     // table can never point past its own last line.
@@ -93,18 +93,23 @@ pub(super) fn build_table<'a>(
         .saturating_add(1)
         .min(last_line);
 
-    // Every row and the delimiter must occupy a DISTINCT buffer line. That
-    // holds for well-formed markdown but not universally: row lines come from
-    // the buffer's `\n`-only line index while the delimiter's position is
-    // implied by comrak's CR/LF-aware one, and a lone `\r` inside a single
-    // buffer line desynchronises the two — comrak sees three markdown lines
-    // where the buffer has two, so a real body row and the synthetic
-    // delimiter land on the same line. Rendering that collision emits one
-    // display row carrying two rows' worth of cells, whose buffer offsets
-    // run backwards mid-row. Rather than let a `TableM` exist in that state,
-    // decline it here: the caller falls back to raw passthrough, so the
-    // user's bytes still reach the screen verbatim (§1.3 — unknown or
-    // undecidable syntax degrades to visible raw text, never lost).
+    // Every row and the delimiter must occupy a DISTINCT buffer line — a
+    // defensive backstop, not something well-formed GFM tables ever
+    // violate: were it ever to happen (a comrak sourcepos quirk this
+    // crate hasn't seen yet), a real body row and the synthetic delimiter
+    // would land on the same line and render as one display row carrying
+    // two rows' worth of cells, with buffer offsets that run backwards
+    // mid-row. Rather than let a `TableM` exist in that state, decline it
+    // here: the caller falls back to raw passthrough, so the user's bytes
+    // still reach the screen verbatim (§1.3 — unknown or undecidable
+    // syntax degrades to visible raw text, never lost). This only ever
+    // guards the table's OWN rows against each other; a SIBLING block
+    // sharing a row's buffer line is a different hazard, ruled out
+    // upstream instead — CommonMark's own block parser assigns each
+    // physical line to exactly one block, and that invariant only holds
+    // for comrak's purposes when its line count agrees with `starts`
+    // (see `parse::cr_shadow`'s docs for the one case where it wouldn't).
+
     // The table's range must begin exactly where its first line's content
     // begins — at the line start, or after whatever container prefix the
     // scan hint accounts for (a blockquote's `"> "`, a list item's marker).
@@ -119,12 +124,10 @@ pub(super) fn build_table<'a>(
     // above rendering them prettily). A container-explained start is NOT
     // affected and still renders, so this doesn't disable tables in
     // blockquotes or list items.
-    let comrak_first = line_at(&idx.comrak, range.start);
-    let expected_start = hint.start_for_line(&idx.comrak, comrak_first);
-    if range.start != expected_start {
+    let first = line_at(starts, range.start);
+    if range.start != hint.start_for_line(starts, first) {
         return None;
     }
-
     let mut claimed: Vec<usize> = rows.iter().map(|r| r.line).collect();
     claimed.push(sep_line);
     claimed.sort_unstable();
@@ -134,7 +137,7 @@ pub(super) fn build_table<'a>(
         return None;
     }
 
-    let content_lines = per_line_content(content, idx, range, hint);
+    let content_lines = per_line_content(content, starts, range, hint);
 
     Some(Block::Table(TableM {
         sm: RevealSm::new(RevealState::Rendered),

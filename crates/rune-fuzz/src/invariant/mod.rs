@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 24 invariants total, one domain per file (mirrors the Go fuzzer's
+//! 27 invariants total, one domain per file (mirrors the Go fuzzer's
 //! own per-domain split):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
@@ -32,10 +32,12 @@
 //! - `session` — `SAVE-INFLIGHT-SM`, `QUIT-CHORD`, `CONFIRM-GEN`
 //! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
+//! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
 
 mod buffer;
 mod clipboard;
 mod cursor;
+mod highlight;
 mod pane;
 mod render;
 mod save;
@@ -46,6 +48,7 @@ mod wrap;
 pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_order};
+pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use pane::pane_no_bleed;
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, table_row_width,
@@ -111,4 +114,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| save_verbatim(ctx))
         .or_else(|| save_clean_matches_disk(next, ctx))
         .or_else(|| clip_osc52(prev, ctx))
+        .or_else(|| hl_clamped(next))
+        .or_else(|| hl_stale_drop(prev, next, ctx))
+        .or_else(|| hl_no_reflow(prev, next, ctx))
 }

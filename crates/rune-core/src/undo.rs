@@ -225,6 +225,84 @@ mod tests {
         assert_eq!(redone.content(), "hello rust");
     }
 
+    /// Documents the exact illegal-edit-set mechanism `reapply`'s
+    /// precondition assert exists to catch, at the buffer-primitive
+    /// level: two INDEPENDENT zero-width byte positions (0 and 1 — not
+    /// touching as cursor points, so `cursor::CursorSet::merge` correctly
+    /// leaves them as two separate cursors) each deleting one byte
+    /// forward derive ADJACENT, touching ranges `[0,1)` and `[1,2)`.
+    /// `Buffer::apply_edits` is a low-level, Go-ported primitive
+    /// (ported from Go) that only refuses OVERLAPPING input — a
+    /// touching pair is valid input — so it hands back two `AppliedEdit`s
+    /// that both land on post-edit `start == 0`: the identical illegal
+    /// state.
+    ///
+    /// `Buffer::apply_edits` is deliberately NOT the fix location (it
+    /// must keep accepting a batch shaped like this one exactly as Go's
+    /// `ApplyEdits` does — see `apply_edits_descending_order_and_overlap`
+    /// pinning that a touching, non-overlapping batch is valid input).
+    /// The real fix — coalescing touching/overlapping edits BEFORE they
+    /// ever reach `apply_edits` — lives at the edit-CONSTRUCTION
+    /// chokepoint in `rune-tui`'s `commands::edit_core::
+    /// coalesce_touching_edits`, which this crate cannot see or depend on
+    /// (the dependency edge points the other way). This test instead
+    /// pins the underlying mechanism: an edit-construction step that does
+    /// NOT coalesce touching ranges can, and does, hand `reapply` exactly
+    /// the batch its precondition refuses.
+    #[test]
+    fn adjacent_bare_deletes_collide_on_the_same_post_edit_start() {
+        let buf = Buffer::new("ab");
+        let (_, applied) = buf
+            .apply_edits(&[
+                Edit {
+                    start: 1,
+                    end: 2,
+                    insert: String::new(),
+                    cursor_id: 2,
+                },
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                    cursor_id: 1,
+                },
+            ])
+            .expect("a touching, non-overlapping batch is valid input to apply_edits");
+        assert_eq!(applied.len(), 2);
+        assert_eq!(
+            applied[0].start, applied[1].start,
+            "two adjacent one-byte deletes collapse to the identical post-edit \
+             start — the illegal state reapply's precondition assert exists to catch"
+        );
+    }
+
+    /// The other half of the pin above: handed that exact colliding-start
+    /// batch, `reapply` refuses it via its documented precondition
+    /// `debug_assert!` rather than silently producing a wrong result.
+    #[test]
+    #[should_panic(expected = "two edits share a post-edit start")]
+    fn reapply_refuses_a_batch_with_colliding_starts() {
+        let buf = Buffer::new("ab");
+        let (_, applied) = buf
+            .apply_edits(&[
+                Edit {
+                    start: 1,
+                    end: 2,
+                    insert: String::new(),
+                    cursor_id: 2,
+                },
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                    cursor_id: 1,
+                },
+            ])
+            .expect("a touching, non-overlapping batch is valid input to apply_edits");
+
+        let _ = reapply(&Buffer::new(""), &applied);
+    }
+
     #[test]
     fn journal_peek_does_not_move_position_until_committed() {
         let mut journal = Journal::new();

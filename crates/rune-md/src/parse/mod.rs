@@ -14,15 +14,17 @@ use crate::element::block::Block;
 use comrak::nodes::{AstNode, Sourcepos};
 use comrak::{Arena, Options, parse_document};
 use rune_syntax::element::ByteRange;
+use std::borrow::Cow;
 
 /// Byte offset of the start of each BUFFER line — port of Go's
 /// `computeLineStarts` (Go parity, §1.5):
-/// a line ends at `\n`, nothing else. This is the ONLY line model the
-/// buffer, the emitter, and every editor-facing concept (`ScanHint`'s
-/// container-prefix scanning, per-line marker/content clamping, cursor
-/// row math) ever uses — see `LineIndex`'s docs for why a SECOND,
-/// comrak-only line model also exists and why the two must never be
-/// swapped.
+/// a line ends at `\n`, nothing else. This is the ONLY line model this
+/// crate ever needs: `cr_shadow` makes comrak's own CommonMark line count
+/// agree with it by construction (see that function's docs), so `starts`
+/// derived here serves the buffer, the emitter, `ScanHint`'s container-
+/// prefix scanning, per-line marker/content clamping, AND every
+/// sourcepos-to-byte-range conversion alike — there is no second, comrak-
+/// only line model to keep in sync with this one.
 pub fn line_starts(src: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in src.bytes().enumerate() {
@@ -33,68 +35,46 @@ pub fn line_starts(src: &str) -> Vec<usize> {
     starts
 }
 
-/// Byte offset of the start of each line under CommonMark's own line-
-/// ending rule — CR, LF, or CRLF, with CRLF counted as ONE terminator —
-/// exactly how comrak itself counts lines when it assigns a node's
-/// `Sourcepos`. See `LineIndex`'s docs for why this must stay separate
-/// from the buffer's `\n`-only `line_starts`.
-pub fn comrak_line_starts(src: &str) -> Vec<usize> {
-    let bytes = src.as_bytes();
-    let mut starts = vec![0usize];
-    let mut i = 0;
-    while let Some(&b) = bytes.get(i) {
-        match b {
-            b'\r' => {
-                // CRLF is ONE terminator, not two: a "\r\n" pair advances
-                // past BOTH bytes to the next line's start; a lone "\r"
-                // (no paired "\n") advances past just itself.
-                let next = if bytes.get(i + 1) == Some(&b'\n') {
-                    i + 2
-                } else {
-                    i + 1
-                };
-                starts.push(next);
-                i = next;
-            }
-            b'\n' => {
-                i += 1;
-                starts.push(i);
-            }
-            _ => i += 1,
+/// A length-preserving PARSE-TIME view of `content`, fed to comrak
+/// instead of the real buffer: every LONE `\r` (a CR NOT immediately
+/// followed by `\n`) becomes a single space. CRLF is left alone — both
+/// this crate's `\n`-only line model and CommonMark's own CR/LF/CRLF rule
+/// already agree that a `"\r\n"` pair ends exactly one line, so nothing
+/// there needs changing. A lone `\r` is where they used to disagree:
+/// CommonMark (and so comrak's own `Sourcepos`) treats it as a line
+/// terminator, but this crate's buffer model does not (Go parity, §1.5 —
+/// a bare `\r` is ordinary mid-line content, matching
+/// `rune_core::buffer::Buffer` and Go's own buffer). Blanking it out here
+/// makes that disagreement unrepresentable: comrak can no longer end a
+/// line anywhere `line_starts` wouldn't, so every `Sourcepos` it hands
+/// back converts through `line_starts` alone, correctly, always.
+///
+/// One byte replaced by one byte, so every offset comrak reports against
+/// THIS view is already a valid offset into the REAL `content` — nothing
+/// downstream needs to translate between two coordinate spaces. This is
+/// strictly a view comrak parses: `parse()` is the only caller, the
+/// replaced bytes are never written back to `content`, the buffer, or the
+/// user's file (§1.4.5 stays untouched — this changes what comrak SEES,
+/// never what the user WROTE). `Cow::Borrowed` when no lone `\r` is
+/// present — the overwhelming common case — so this costs nothing for an
+/// ordinary document.
+pub(crate) fn cr_shadow(content: &str) -> Cow<'_, str> {
+    let bytes = content.as_bytes();
+    let is_lone_cr = |i: usize, b: u8| b == b'\r' && bytes.get(i + 1) != Some(&b'\n');
+    if !bytes.iter().enumerate().any(|(i, &b)| is_lone_cr(i, b)) {
+        return Cow::Borrowed(content);
+    }
+    let mut shadow = bytes.to_vec();
+    for (i, b) in shadow.iter_mut().enumerate() {
+        if is_lone_cr(i, *b) {
+            *b = b' ';
         }
     }
-    starts
-}
-
-/// Two line-boundary indexes over the SAME source text, each valid ONLY
-/// for its own purpose (verification round 5's CLASS A MAJOR): comrak
-/// follows CommonMark's line-ending rule internally (CR, LF, or CRLF all
-/// end a line) when it assigns a node's `Sourcepos` `(line, column)` —
-/// but this crate's BUFFER line model is `\n`-only (Go parity, §1.5: a
-/// bare `\r` is ordinary mid-line content, never a line break, matching
-/// `rune_core::buffer::Buffer` and Go's own buffer). Converting a
-/// comrak-assigned sourcepos through the `\n`-only index desyncs the
-/// moment content contains a lone `\r` — comrak's line N is this crate's
-/// line N-minus-something, and every byte offset downstream lands on the
-/// wrong physical position (§1.4.5 forbids normalizing the `\r` away to
-/// "fix" this; the fix is using the RIGHT index for each purpose, never
-/// changing the bytes). `.buffer` is what `ScanHint`, `line_at`,
-/// `line_end_at`, and the emitter's per-line splitting all use — the
-/// EDITOR's line concept. `.comrak` is read ONLY by `node_range`/
-/// `sourcepos_to_range` — the ONE place a raw comrak `Sourcepos` gets
-/// turned into an absolute byte offset.
-pub(crate) struct LineIndex {
-    pub buffer: Vec<usize>,
-    pub comrak: Vec<usize>,
-}
-
-impl LineIndex {
-    pub(crate) fn new(content: &str) -> LineIndex {
-        LineIndex {
-            buffer: line_starts(content),
-            comrak: comrak_line_starts(content),
-        }
-    }
+    // Every replaced byte is ASCII (`\r` -> `' '`), so this can never
+    // turn valid UTF-8 into invalid UTF-8; the fallback is unreachable in
+    // practice but keeps this function panic-free (§1.3) rather than
+    // relying on that invariant unchecked.
+    Cow::Owned(String::from_utf8(shadow).unwrap_or_else(|_| content.to_owned()))
 }
 
 /// The WP0-proven conversion: comrak `Sourcepos` (1-based, end-inclusive,
@@ -168,26 +148,27 @@ pub(crate) fn line_at(starts: &[usize], offset: usize) -> usize {
 }
 
 /// The ONLY place a raw comrak `Sourcepos` becomes an absolute byte
-/// range — always through `idx.comrak` (see `LineIndex`'s docs), never
-/// `idx.buffer`.
-pub(crate) fn node_range(content: &str, idx: &LineIndex, node: &AstNode) -> ByteRange {
+/// range — through `starts` (`line_starts(content)`, the SAME index the
+/// buffer, the emitter, and `ScanHint` all use). Safe by construction:
+/// `parse()` never hands comrak anything but its `cr_shadow` view, so
+/// comrak's own line count and `starts` can never disagree.
+pub(crate) fn node_range(content: &str, starts: &[usize], node: &AstNode) -> ByteRange {
     let sp = node.data.borrow().sourcepos;
-    sourcepos_to_range(&idx.comrak, sp).clamp(content.len())
+    sourcepos_to_range(starts, sp).clamp(content.len())
 }
 
-/// One `ByteRange` per physical line `range` spans, AS COMRAK PARSED
-/// THEM (`idx.comrak`) — the single chokepoint EVERY multi-line
-/// construct's own per-line, `hint`-aware breakdown routes through
-/// (`CodeFenceM`'s content lines, `HeadingM`'s setext content lines,
-/// `VerbatimM`'s table/HTML-block/unknown content lines, and a bare
-/// `TextRun`'s own content lines — verification round 9's exhaustive
-/// audit: ANY node whose OWN raw extent can span more than one physical
-/// line needs this, not just the block kinds already fixed in rounds
-/// 4-7). Pushing a multi-line `range` whole through the generic per-line
-/// splitter (`emit::for_each_line_slice`, which only knows BUFFER line
-/// boundaries) re-claims a container's own repeating prefix on any
-/// continuation line the range crosses — this derives each line's OWN
-/// range instead, explicitly excluding that prefix via `hint`.
+/// One `ByteRange` per physical line `range` spans — the single
+/// chokepoint EVERY multi-line construct's own per-line, `hint`-aware
+/// breakdown routes through (`CodeFenceM`'s content lines, `HeadingM`'s
+/// setext content lines, `VerbatimM`'s table/HTML-block/unknown content
+/// lines, and a bare `TextRun`'s own content lines — verification round
+/// 9's exhaustive audit: ANY node whose OWN raw extent can span more than
+/// one physical line needs this, not just the block kinds already fixed
+/// in rounds 4-7). Pushing a multi-line `range` whole through the generic
+/// per-line splitter (`emit::for_each_line_slice`, which only knows
+/// BUFFER line boundaries) re-claims a container's own repeating prefix
+/// on any continuation line the range crosses — this derives each line's
+/// OWN range instead, explicitly excluding that prefix via `hint`.
 ///
 /// The first line trusts `range.start` (a node's own sourcepos-derived
 /// first-line start is always reliable — see `CodeFenceM::fence_open`'s
@@ -198,22 +179,20 @@ pub(crate) fn node_range(content: &str, idx: &LineIndex, node: &AstNode) -> Byte
 /// for everything that doesn't need it.
 pub(crate) fn per_line_content(
     content: &str,
-    idx: &LineIndex,
+    starts: &[usize],
     range: ByteRange,
     hint: &ScanHint,
 ) -> Vec<ByteRange> {
-    let comrak_first_line = line_at(&idx.comrak, range.start);
-    let comrak_last_line = line_at(&idx.comrak, range.end.saturating_sub(1).max(range.start));
-    (comrak_first_line..=comrak_last_line)
+    let first_line = line_at(starts, range.start);
+    let last_line = line_at(starts, range.end.saturating_sub(1).max(range.start));
+    (first_line..=last_line)
         .map(|l| {
-            let s = if l == comrak_first_line {
+            let s = if l == first_line {
                 range.start
             } else {
-                hint.start_for_line(&idx.comrak, l)
+                hint.start_for_line(starts, l)
             };
-            let e = line_end_at(content.len(), &idx.comrak, l)
-                .min(range.end)
-                .max(s);
+            let e = line_end_at(content.len(), starts, l).min(range.end).max(s);
             ByteRange::new(s, e).clamp(content.len())
         })
         .collect()
@@ -278,10 +257,10 @@ impl ScanHint<'_> {
 /// `"---...---"` blob degrades to ordinary paragraphs/thematic breaks
 /// (§0: unknown syntax degrades to visible raw text, never lost), which
 /// this crate's other producers are already proven safe against.
-fn frontmatter_extension_is_safe(content: &str, idx: &LineIndex) -> bool {
+fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) -> bool {
     let arena = Arena::new();
     let opts = options();
-    let root = parse_document(&arena, content, &opts);
+    let root = parse_document(&arena, shadow, &opts);
     match root.first_child() {
         Some(first)
             if matches!(
@@ -289,7 +268,7 @@ fn frontmatter_extension_is_safe(content: &str, idx: &LineIndex) -> bool {
                 comrak::nodes::NodeValue::FrontMatter(_)
             ) =>
         {
-            let range = node_range(content, idx, first);
+            let range = node_range(content, starts, first);
             block::is_valid_frontmatter_close(content, range)
         }
         _ => true,
@@ -298,17 +277,21 @@ fn frontmatter_extension_is_safe(content: &str, idx: &LineIndex) -> bool {
 
 /// Parse `content` into the top-level `Block` tree. This is the ONLY entry
 /// point `DocMachine::sync_content` calls — every downstream module reaches
-/// comrak through here.
+/// comrak through here. Comrak itself only ever sees `shadow`
+/// (`cr_shadow(content)`, a lone-`\r`-blanked view — see that function's
+/// docs); every downstream `Block`/`Inline` still carries byte ranges into
+/// the REAL `content`, since the view is length-preserving.
 pub fn parse(content: &str) -> Vec<Block> {
-    let idx = LineIndex::new(content);
-    let opts = if frontmatter_extension_is_safe(content, &idx) {
+    let shadow = cr_shadow(content);
+    let starts = line_starts(content);
+    let opts = if frontmatter_extension_is_safe(content, &shadow, &starts) {
         options()
     } else {
         options_without_frontmatter()
     };
     let arena = Arena::new();
-    let root = parse_document(&arena, content, &opts);
-    block::build_blocks(content, &idx, root, &ScanHint::Root)
+    let root = parse_document(&arena, &shadow, &opts);
+    block::build_blocks(content, &starts, root, &ScanHint::Root)
 }
 
 #[cfg(test)]

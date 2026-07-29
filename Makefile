@@ -6,7 +6,7 @@ RC ?= 512
 # Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
 RS ?=
 
-.PHONY: build test lint fmt bench perf-guard test-fuzz go-build \
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars go-build \
         parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
 
 build:
@@ -43,6 +43,12 @@ test-fuzz:
 	PROPTEST_CASES=$(RC) PROPTEST_RNG_SEED=$(RS) \
 	    $(CARGO) test -p rune-fuzz --test human_session -- \
 	    --ignored --exact --test-threads=1 human_session
+
+# The heavy per-grammar property test: every one of the 22 tree-sitter
+# grammars against many arbitrary sources, not just the handful the
+# non-ignored smoke test runs on every `make test`.
+test-grammars:
+	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
 
 # ── Parity harness ────────────────────────────────────────────────────────────
 # Captures the same scenario from both implementations and diffs the screens.

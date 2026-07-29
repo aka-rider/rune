@@ -5,12 +5,15 @@
 //! touch `built_version` (Gotchas: "Reveal must never bump the buffer
 //! version").
 
+use std::ops::Range;
+
 use crate::element::block::Block;
 use crate::snapshot::DisplaySnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_syntax::SyntaxSnapshot;
 use rune_syntax::element::{CursorProbe, DocState, InheritCtx, RevealGrant, WrapState};
+use rune_syntax::kind::DocumentKind;
 use rune_syntax::wrap::WrapSnapshot;
 
 /// `emit` -> wrap (root-owned, keyed off `self.wrap`) -> `DisplaySnapshot`,
@@ -32,6 +35,7 @@ pub struct DocMachine {
     blocks: Vec<Block>,
     built_version: u64,
     dirty: bool,
+    kind: DocumentKind,
 }
 
 impl Default for DocMachine {
@@ -51,6 +55,7 @@ impl DocMachine {
             // always reparses without a separate "never built yet" flag.
             built_version: 0,
             dirty: true,
+            kind: DocumentKind::Markdown,
         }
     }
 
@@ -77,6 +82,24 @@ impl DocMachine {
 
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
+    }
+
+    /// Every fenced code block's language tag and per-line content byte
+    /// ranges (plan WP6.S1) — walked recursively into blockquotes and list
+    /// items so a fence nested inside either is found too, not only a
+    /// top-level one. Returns `CodeFenceM::content_lines` itself, ONE
+    /// `Range` per physical content line, never collapsed into a single
+    /// `first.start..last.end` span: a container's own repeating prefix
+    /// (`"> "`, a list marker's indent) sits in the GAP between two
+    /// consecutive lines' buffer ranges, so a single contiguous range
+    /// covering both would include it, while the per-line list lets the
+    /// caller reconstruct a prefix-free source and map spans back through
+    /// the gaps instead. A fence with an empty `language` or no content
+    /// lines contributes nothing.
+    pub fn code_fences(&self) -> Vec<(&str, Vec<Range<usize>>)> {
+        let mut out = Vec::new();
+        collect_code_fences(&self.blocks, &mut out);
+        out
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -108,14 +131,33 @@ impl DocMachine {
         }
     }
 
-    /// Rebuild the block/inline tree via comrak iff the buffer version
-    /// changed. A pure cursor move never bumps `buf.version()`, so this is a
-    /// no-op on every keystroke that isn't a content edit.
+    /// Selects which producer `sync_content` runs — comrak for `Markdown`,
+    /// no parse at all (verbatim per-line text, plan WP4 decision 6) for
+    /// `Code`/`Plain`. Marks dirty only when the kind actually changes, so
+    /// re-binding a document to the kind it already has (e.g. re-opening
+    /// the same path) doesn't force a needless reparse.
+    pub fn set_kind(&mut self, kind: DocumentKind) {
+        if kind != self.kind {
+            self.kind = kind;
+            self.dirty = true;
+        }
+    }
+
+    /// Rebuild the block/inline tree iff the buffer version changed. A pure
+    /// cursor move never bumps `buf.version()`, so this is a no-op on every
+    /// keystroke that isn't a content edit. For a non-markdown `kind`, no
+    /// comrak parse happens at all — `blocks` is emptied and `snapshot`'s
+    /// `emit` call turns an empty block list into one verbatim `Identical`
+    /// span per line (plan WP4 decision 6: no second plain-text producer).
     pub fn sync_content(&mut self, buf: &Buffer) {
         if buf.version() == self.built_version {
             return;
         }
-        self.blocks = crate::parse::parse(buf.content());
+        self.blocks = if self.kind.is_markdown() {
+            crate::parse::parse(buf.content())
+        } else {
+            Vec::new()
+        };
         self.built_version = buf.version();
         self.dirty = true;
     }
@@ -154,6 +196,30 @@ impl DocMachine {
             syntax,
             wrap,
             display,
+        }
+    }
+}
+
+/// `DocMachine::code_fences`'s own recursion — descends into `Blockquote`
+/// and `List` children (a fence can sit inside either), skipping every
+/// other block kind since none of them can contain a nested `CodeFence`.
+fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Vec<Range<usize>>)>) {
+    for block in blocks {
+        match block {
+            Block::CodeFence(cf) => {
+                if cf.language.is_empty() || cf.content_lines.is_empty() {
+                    continue;
+                }
+                let lines = cf.content_lines.iter().map(|l| l.start..l.end).collect();
+                out.push((cf.language.as_str(), lines));
+            }
+            Block::Blockquote(bq) => collect_code_fences(&bq.children, out),
+            Block::List(list) => {
+                for item in &list.items {
+                    collect_code_fences(&item.children, out);
+                }
+            }
+            _ => {}
         }
     }
 }

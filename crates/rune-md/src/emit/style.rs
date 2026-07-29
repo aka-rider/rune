@@ -1,8 +1,8 @@
 //! The emphasis-nesting resolver (plan Context, "Nested styling ... falls
 //! out of the tree via the Emitter's style stack — no `InlineMarks`
 //! bitfield") plus WP4.S2's `StyleId` -> canonical scope name mapping: every
-//! markdown token this emitter tags resolves against
-//! [`rune_syntax::scope::MARKDOWN_TABLE`] (via [`SCOPES`] below) rather than
+//! markdown token this emitter tags resolves against the shared
+//! [`rune_syntax::scope::scope_table`] (via [`SCOPES`] below) rather than
 //! a closed enum variant, so an unstyled scope degrades through
 //! longest-dotted-prefix fallback instead of failing to compile.
 
@@ -10,15 +10,15 @@ use std::sync::LazyLock;
 
 use crate::element::inline::EmphasisKind;
 use rune_syntax::ScopeId;
-use rune_syntax::scope::{ScopeTable, markdown_table};
+use rune_syntax::scope::{ScopeTable, scope_table};
 
 /// The one canonical scope table this emitter resolves every markdown token
-/// against — built once (`rune_syntax::scope::markdown_table`, WP4.S1/S2),
+/// against — built once (`rune_syntax::scope::scope_table`, WP4.S1/S2),
 /// shared by every `sync` call. `rune-tui`'s `Theme` walks a table built
 /// from the exact same constructor to size and fill its `scopes: Vec<Style>`
 /// — the two sides agree on which `ScopeId` means which name without either
 /// depending on the other.
-pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(markdown_table);
+pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 
 /// Resolves `name` against [`SCOPES`]. Every name passed below is drawn
 /// verbatim from `rune_syntax::scope::MARKDOWN_SCOPES`, so resolution

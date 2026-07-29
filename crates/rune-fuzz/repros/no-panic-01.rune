@@ -1,7 +1,8 @@
-content 
-type  \n\n\n 
-key escape ----
-key up -a-u
-key escape ---u
-key backtab ----
-key backspace ----
+content # Notes\n\n```rust\nfn main() {}\n```\n\n```python\ndef f():\n    return 1\n```\n\n```klingon\nQapla\'\n```\n\n```\nuntagged fence\n```\n\ntail\n
+path /fuzz/notes.md
+type 
+key down -a-u
+key char:b ----
+key char:\u{a1} ----
+type 
+key char:x ---u

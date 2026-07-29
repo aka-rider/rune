@@ -21,74 +21,6 @@ use crate::db;
 use crate::document::DocumentId;
 use crate::save;
 
-/// Coalesces edits in `infos` whose `[start, end)` ranges touch or overlap
-/// into one, before the batch ever reaches `Buffer::apply_edits`.
-///
-/// `CursorSet::merge` only ever coalesces cursors whose own selection
-/// ranges touch — for a caretless cursor that is the zero-width point
-/// `[position, position)`. Several commands' per-cursor edit generators
-/// (Backspace/Delete/DeleteWord's `bare` closures in `commands::edit`, and
-/// `commands::edit_lines`' outdent/delete-line) deliberately reach past
-/// that point — one rune left, one rune right, one word, one whole line —
-/// so two cursors close enough together can each still survive `merge`
-/// (their own selection points never touch) while the EDITS their commands
-/// produce do. `Buffer::apply_edits` accepts touching, non-overlapping
-/// edits, but when the earlier one is a pure deletion its negative shift
-/// can land the later edit's post-edit `start` on the exact same offset as
-/// the earlier one's — the state `undo::reapply`'s invariant exists to
-/// catch (redo would then replay the tied pair in an unspecified order).
-///
-/// Coalescing on the actual byte ranges here, rather than trusting the
-/// cursor selections that produced them, makes that state unrepresentable
-/// for every command that funnels through this chokepoint — not just the
-/// one command that happened to surface it. Every edit whose range can
-/// extend past its own cursor's selection in this codebase is a pure
-/// deletion (`insert` empty): an inserting edit's `bare` range is always
-/// the cursor's own zero-width point, and two distinct cursors — already
-/// deduplicated by `merge` — can never share one. So the combined edit's
-/// `insert` is simply the two, concatenated in ascending-`start` order:
-/// empty + empty for every edit this actually coalesces today, and still
-/// well-defined (never silently dropping or reordering text) should a
-/// future command ever hand this chokepoint a non-empty one.
-fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
-    if infos.len() <= 1 {
-        return infos;
-    }
-    let mut sorted = infos;
-    sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
-
-    let mut iter = sorted.into_iter();
-    let mut current = match iter.next() {
-        Some(first) => first,
-        None => return Vec::new(),
-    };
-    let mut out: Vec<(Edit, u32)> = Vec::with_capacity(iter.len());
-
-    for next in iter {
-        if current.0.end >= next.0.start {
-            let start = current.0.start.min(next.0.start);
-            let end = current.0.end.max(next.0.end);
-            let mut insert = current.0.insert;
-            insert.push_str(&next.0.insert);
-            let id = current.1.min(next.1);
-            current = (
-                Edit {
-                    start,
-                    end,
-                    insert,
-                    cursor_id: 0,
-                },
-                id,
-            );
-        } else {
-            out.push(current);
-            current = next;
-        }
-    }
-    out.push(current);
-    out
-}
-
 /// Shared low-level chokepoint underneath `commit_edit_batch`: sort the
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
 /// replica, and recompute dirty — everything except how the post-edit
@@ -135,7 +67,7 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
-    mut infos: Vec<(Edit, u32)>,
+    infos: Vec<(Edit, u32)>,
     cursors_before: CursorSet,
     cursors_after: impl FnOnce(&[AppliedEdit], &[u32]) -> Vec<Cursor>,
 ) {
@@ -143,7 +75,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     if doc.read_only || infos.is_empty() {
         return;
     }
-    infos = coalesce_touching_edits(infos);
+    let mut infos = coalesce_touching_edits(infos);
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
 
     let edits: Vec<Edit> = infos.iter().map(|(e, _)| e.clone()).collect();
@@ -180,6 +112,79 @@ pub(crate) fn apply_edit_batch_with_cursors(
             app.set_status(format!("edit failed: {e}"), StatusSource::Other);
         }
     }
+}
+
+/// Coalesces any two edits in the batch whose PRE-edit ranges touch or
+/// overlap into one, unioning the range and keeping the lower cursor id as
+/// survivor — the edit-CONSTRUCTION-level analogue of `CursorSet::merge`,
+/// and this function's real invariant-preserving chokepoint (every batch
+/// passes through here before it ever reaches `Buffer::apply_edits`).
+///
+/// `CursorSet::merge` only ever sees raw cursor positions/selections, and
+/// correctly leaves two cursors separate whenever those don't touch. But a
+/// per-cursor command (delete-right, delete-word-left/right, ...) then
+/// derives a byte RANGE from each cursor's position — extended forward or
+/// backward by a rune or a word — and two such derived ranges from
+/// perfectly legitimate, non-touching cursors can still end up touching or
+/// overlapping (e.g. cursor A at byte 0 and cursor B at byte 1, both
+/// pressing Delete: A's range is `[0,1)`, B's is `[1,2)`). `CursorSet::
+/// merge` has no visibility into that derived range, so it cannot catch
+/// this — the edit-building step is the only place that can, since it is
+/// the only place both ranges exist at once.
+///
+/// Left unmerged, a touching pair reaches `Buffer::apply_edits` as two
+/// "non-overlapping" edits that individually pass validation, but whose
+/// post-edit `AppliedEdit::start` collapse to the identical offset once
+/// the shift from applying the earlier one is accounted for — the exact
+/// illegal state `undo::reapply`'s precondition assert exists to catch. An
+/// overlapping (not just touching) pair is rejected outright by
+/// `Buffer::apply_edits` as `EditsNotSortedOrOverlapping`, surfacing a
+/// spurious "edit failed" to the user for an entirely ordinary multi-
+/// cursor action. Coalescing here removes both illegal states at their
+/// source instead of guarding against them downstream: two touching or
+/// overlapping ranges really are one edit over their union.
+///
+/// Every real caller's colliding ranges carry an empty `insert` (all of
+/// `delete_left`/`delete_right`/`delete_word_left`/`delete_word_right`'s
+/// bare closures are pure deletions) — `HasSelection()`-replacement edits
+/// can never collide, because `CursorSet::merge` already coalesces any two
+/// cursors whose SELECTIONS touch before their edits are ever built.
+/// Concatenating `insert` in range order keeps this correct even so.
+fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
+    if infos.len() <= 1 {
+        return infos;
+    }
+    let mut sorted = infos;
+    sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
+
+    let mut merged: Vec<(Edit, u32)> = Vec::with_capacity(sorted.len());
+    let mut iter = sorted.into_iter();
+    let Some(mut current) = iter.next() else {
+        return merged;
+    };
+    for next in iter {
+        if current.0.end >= next.0.start {
+            let start = current.0.start.min(next.0.start);
+            let end = current.0.end.max(next.0.end);
+            let mut insert = current.0.insert;
+            insert.push_str(&next.0.insert);
+            let cursor_id = current.1.min(next.1);
+            current = (
+                Edit {
+                    start,
+                    end,
+                    insert,
+                    cursor_id,
+                },
+                cursor_id,
+            );
+        } else {
+            merged.push(current);
+            current = next;
+        }
+    }
+    merged.push(current);
+    merged
 }
 
 /// The generic per-cursor rule every command except `edit_lines::
@@ -222,6 +227,118 @@ mod tests {
     use rune_vfs::Mem;
     use std::sync::Arc;
 
+    /// Two independent, non-touching CURSORS — `CursorSet::merge` correctly
+    /// leaves positions 0 and 1 separate, since neither's (zero-width)
+    /// selection touches the other's — each derive a one-byte Delete-
+    /// forward range from their own position: `[0,1)` and `[1,2)`. Those
+    /// two DERIVED ranges do touch. Left unmerged, `Buffer::apply_edits`
+    /// hands back two `AppliedEdit`s that both land on post-edit `start ==
+    /// 0` — the exact illegal state `undo::reapply`'s precondition assert
+    /// exists to catch (`crates/rune-fuzz` artifact `no-panic-7f29861c`,
+    /// checked in as `repros/no-panic-01.rune`).
+    #[test]
+    fn merges_two_adjacent_bare_deletes() {
+        let infos = vec![
+            (
+                Edit {
+                    start: 1,
+                    end: 2,
+                    insert: String::new(),
+                    cursor_id: 2,
+                },
+                2,
+            ),
+            (
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                    cursor_id: 1,
+                },
+                1,
+            ),
+        ];
+        let merged = coalesce_touching_edits(infos);
+        assert_eq!(
+            merged.len(),
+            1,
+            "touching ranges must collapse into one edit"
+        );
+        assert_eq!(
+            merged.first(),
+            Some(&(
+                Edit {
+                    start: 0,
+                    end: 2,
+                    insert: String::new(),
+                    cursor_id: 1,
+                },
+                1,
+            )),
+            "the lower cursor id survives, matching CursorSet::merge's own rule"
+        );
+    }
+
+    /// Two cursors sitting inside the same word: a delete-word-right from
+    /// each derives OVERLAPPING (not just touching) ranges `[0,5)` and
+    /// `[2,7)`. `Buffer::apply_edits` would otherwise reject this batch
+    /// outright as `EditsNotSortedOrOverlapping` — a spurious "edit
+    /// failed" for an entirely ordinary multi-cursor action.
+    #[test]
+    fn merges_overlapping_word_deletes() {
+        let infos = vec![
+            (
+                Edit {
+                    start: 2,
+                    end: 7,
+                    insert: String::new(),
+                    cursor_id: 9,
+                },
+                9,
+            ),
+            (
+                Edit {
+                    start: 0,
+                    end: 5,
+                    insert: String::new(),
+                    cursor_id: 3,
+                },
+                3,
+            ),
+        ];
+        let merged = coalesce_touching_edits(infos);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged.first().map(|(e, _)| (e.start, e.end)), Some((0, 7)));
+    }
+
+    /// A real gap between two cursors' ranges must survive untouched —
+    /// the common case (most multi-cursor edits do not collide at all).
+    #[test]
+    fn leaves_genuinely_separated_edits_alone() {
+        let infos = vec![
+            (
+                Edit {
+                    start: 5,
+                    end: 6,
+                    insert: String::new(),
+                    cursor_id: 2,
+                },
+                2,
+            ),
+            (
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                    cursor_id: 1,
+                },
+                1,
+            ),
+        ];
+        let merged = coalesce_touching_edits(infos);
+        assert_eq!(merged.len(), 2, "a real gap must not be merged away");
+    }
+
     fn app_with(content: &str) -> App {
         let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
         let id = app.active;
@@ -232,74 +349,8 @@ mod tests {
         app
     }
 
-    #[test]
-    fn coalesce_touching_edits_merges_two_adjacent_pure_deletions() {
-        let infos = vec![
-            (
-                Edit {
-                    start: 4,
-                    end: 5,
-                    insert: String::new(),
-                    cursor_id: 0,
-                },
-                1,
-            ),
-            (
-                Edit {
-                    start: 3,
-                    end: 4,
-                    insert: String::new(),
-                    cursor_id: 0,
-                },
-                2,
-            ),
-        ];
-        let merged = coalesce_touching_edits(infos);
-        assert_eq!(merged.len(), 1);
-        assert_eq!(
-            merged[0].0,
-            Edit {
-                start: 3,
-                end: 5,
-                insert: String::new(),
-                cursor_id: 0
-            }
-        );
-        assert_eq!(
-            merged[0].1, 1,
-            "lower id survives, mirroring CursorSet::merge's own tie-break"
-        );
-    }
-
-    #[test]
-    fn coalesce_touching_edits_leaves_non_touching_edits_apart() {
-        let infos = vec![
-            (
-                Edit {
-                    start: 0,
-                    end: 1,
-                    insert: String::new(),
-                    cursor_id: 0,
-                },
-                1,
-            ),
-            (
-                Edit {
-                    start: 5,
-                    end: 6,
-                    insert: String::new(),
-                    cursor_id: 0,
-                },
-                2,
-            ),
-        ];
-        let merged = coalesce_touching_edits(infos);
-        assert_eq!(merged.len(), 2);
-    }
-
     /// The regression this fix exists for (root-caused via `make
-    /// test-fuzz`'s `no-panic-c33c6055` artifact — see `repros/no-panic-01.
-    /// rune` and the `TODO.md` entry it resolves): two cursors, one rune
+    /// test-fuzz`, and pinned by the checked-in no-panic replay repro): two cursors, one rune
     /// apart, neither with a selection, both Backspace. Neither cursor's
     /// own selection touches the other's, so `CursorSet::merge` correctly
     /// leaves them as two separate cursors — but Backspace's `bare` range

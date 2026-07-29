@@ -19,6 +19,7 @@ crates/rune-syntax   Producer-agnostic syntax layer: reveal vocabulary, SyntaxSp
 crates/rune-md       Markdown pipeline over comrak: parse -> emit -> wrap -> snapshot. Terminal-free
 crates/rune-tui      Elm-style runtime, terminal lifecycle, keymap resolver, panes, editor UI
 crates/rune-fuzz     Headless session fuzzer: drives the real update loop, checks named invariants
+crates/rune-ts       Terminal-free tree-sitter layer: 22 grammars, compile-free language lookup, whole-document highlight
 ```
 
 ## Vocabulary
@@ -31,6 +32,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 - **draft** — untitled doc, recovery-backed, no file until named.
 - **pane** — a focusable region of the workspace (Editor, Explorer, Tabs); focus routing keys off it.
 - **snapshot (display)** — the `SyntaxSnapshot` a buffer parses to; distinct from a *document* snapshot in the recovery store. Say which one you mean.
+- **highlight overlay** — a `(Range<usize>, ScopeId)` list from `rune-ts` painted onto cell styles at render time, never emitted as a `SyntaxSpan`; distinct from *snapshot (display)* (the emitted syntax model) and from a *document* snapshot (the recovery store).
 - **help document** — virtual read-only tab generated from the keymap; never dirty.
 
 ## Build & Test
@@ -41,7 +43,7 @@ Cross-implementation screen parity: `make parity` (builds both sides, captures t
 
 ## House Rules
 
-- **Never cite a file path, line number, or symbol location in a code comment.** `foo/bar.rs:210` rots the moment either file moves — and it has, repeatedly. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
+- **Never cite a `path:line` location in a code comment.** `foo/bar.rs:210` rots the moment either file moves — and it has, repeatedly. A bare filename or module path (`cluster.rs`, `driver::checks`) is tolerated but discouraged — replace it with a description of the invariant when you touch the comment. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
 - Keep a source file under 500 lines (§1.6). When you push one over, record it in `TODO.md` with the reason.
 
 ## The Unbreakables (digest — full articles in CONSTITUTION.md)

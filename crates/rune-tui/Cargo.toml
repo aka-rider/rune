@@ -9,6 +9,7 @@ rune-db = { path = "../rune-db" }
 rune-md = { path = "../rune-md" }
 rune-nav = { path = "../rune-nav" }
 rune-syntax = { path = "../rune-syntax" }
+rune-ts = { path = "../rune-ts" }
 rune-vfs = { path = "../rune-vfs" }
 ratatui = { workspace = true, features = ["termina"] }
 # `unstable-backend-writer` (plan WP4.S5): `theme::probe::supports_truecolor`

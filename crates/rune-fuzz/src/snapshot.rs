@@ -66,6 +66,22 @@ pub struct Snapshot {
     /// `TABLE-SYNTHETIC-DECORATIVE` the table/border signal `cells` alone
     /// cannot express.
     pub row_meta: Vec<RowMeta>,
+    /// `doc.highlight.spans`, as plain `(start, end)` byte ranges — the
+    /// `ScopeId` tag isn't needed by any checker here, so it's dropped
+    /// rather than carried (plan WP7.S7). `HL-CLAMPED`/`HL-STALE-DROP` key
+    /// off this.
+    pub highlight_spans: Vec<(usize, usize)>,
+    /// `doc.highlight.version` — the buffer version `highlight_spans`
+    /// describes. Production's own `schedule_highlight` (`highlight.rs`)
+    /// uses `doc.highlight.version == doc.buffer.version()` as its "spans
+    /// still describe the live buffer" test; `HL-CLAMPED` uses the SAME
+    /// comparison against `Snapshot.version` — a stale (mismatched) tag
+    /// means the stored spans are KNOWN to describe a past version and are
+    /// deliberately left in place (WP5.S4's `[R2]`, "stale colours, never
+    /// no colours"), safely clamped only at the render layer's window
+    /// boundary (`render::overlay::apply_highlight_spans`), not by
+    /// `HighlightState` itself.
+    pub highlight_version: u64,
 }
 
 impl Snapshot {
@@ -97,6 +113,13 @@ impl Snapshot {
         };
 
         let doc = app.active_doc();
+        let highlight_spans = doc
+            .highlight
+            .spans
+            .iter()
+            .map(|(range, _scope)| (range.start, range.end))
+            .collect();
+        let highlight_version = doc.highlight.version;
         Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
@@ -117,6 +140,8 @@ impl Snapshot {
             active: app.active,
             cells,
             row_meta,
+            highlight_spans,
+            highlight_version,
         }
     }
 }

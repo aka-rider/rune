@@ -13,16 +13,16 @@
 //! no need for a totalizing `Msg -> MsgTag` conversion that would have to
 //! account for those two unreachable-here variants.
 
+mod checks;
+
 use std::io;
 use std::panic::AssertUnwindSafe;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyCode, KeyInput, Mods};
-use rune_tui::pane::Pane;
-use rune_tui::render::{self, Cell};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
@@ -30,15 +30,17 @@ use rune_vfs::{Mem, Vfs};
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-use crate::action::Action;
+use crate::action::{Action, HighlightVersion};
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// The one seeded file path every session opens. Seeded on `Mem` directly
-/// at bootstrap (WP3.S7 rule 1), so a save-less session still reads back
-/// its starting content via `Vfs::read`.
-const DOC_PATH: &str = "/fuzz/doc.md";
+/// The default seeded file path (plan WP7.S2): every `SEEDS` entry
+/// inherited from before this package pairs with this path, and the script
+/// codec's optional `path` line defaults to it when absent — so the
+/// checked-in `repros/tripwire-clean.rune` (written before sessions carried
+/// a path) still decodes unchanged.
+pub const DOC_PATH: &str = "/fuzz/doc.md";
 
 /// The result of driving one whole session. `final_snapshot`/`final_ctx`
 /// are frozen at the violating step (`None` on a clean run) — Go's driver
@@ -53,10 +55,14 @@ pub struct RunResult {
 
 /// Mutable driver state threaded through one session. `pending_save` is an
 /// `Option`, never a queue — G9 proves at most one save `Cmd` can ever be
-/// outstanding.
+/// outstanding. `path` is the document path this session opened (plan
+/// WP7.S2) — carried here (not re-derived from `DOC_PATH`) since a session
+/// can now open any path, and the post-step disk read needs to consult the
+/// SAME path the document was seeded and bound to.
 struct State {
     app: App,
     mem: Arc<Mem>,
+    path: PathBuf,
     pending_save: Option<(Cmd, Vec<u8>)>,
     saves_delivered_ok: usize,
     steps: usize,
@@ -70,20 +76,19 @@ struct Outcome {
     final_ctx: Option<StepCtx>,
 }
 
-/// Runs `actions` against a fresh session seeded with `content` at
-/// `/fuzz/doc.md`. Deterministic: same input, same result, always — zero
-/// wall-clock reads, zero threads, zero subprocesses (WP3.S7 rule 7).
-pub fn run(content: &str, actions: &[Action]) -> RunResult {
+/// Runs `actions` against a fresh session seeded with `content` at `path`
+/// (plan WP7.S2 — a session now opens an arbitrary path, so `DocumentKind`
+/// producer selection, including a code or plain document, is reachable
+/// from this driver, not just markdown). Deterministic: same input, same
+/// result, always — zero wall-clock reads, zero threads, zero subprocesses
+/// (WP3.S7 rule 7).
+pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
+    let path = PathBuf::from(path);
     let mem = Arc::new(Mem::new());
-    let _ = mem.save_atomic(Path::new(DOC_PATH), content.as_bytes());
+    let _ = mem.save_atomic(&path, content.as_bytes());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mut app = App::new(
-        Buffer::new(content),
-        Some(PathBuf::from(DOC_PATH)),
-        vfs,
-        None,
-    );
+    let mut app = App::new(Buffer::new(content), Some(path.clone()), vfs, None);
     app.active_doc_mut().focused = true;
     // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
     // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since
@@ -99,6 +104,7 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
     let mut state = State {
         app,
         mem,
+        path,
         pending_save: None,
         saves_delivered_ok: 0,
         steps: 0,
@@ -201,6 +207,33 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
                     break 'session;
                 }
             }
+            Action::Highlight { version, spans } => {
+                // Resolved against the LIVE buffer version at delivery
+                // time (`HighlightVersion`'s own docs) — never a fixed
+                // constant, mirroring `Action::ConfirmTimeout`'s rule.
+                let live = state.app.active_doc().buffer.version();
+                let delivered_version = match version {
+                    HighlightVersion::Live => live,
+                    HighlightVersion::Stale => live.saturating_sub(1),
+                    HighlightVersion::Future => live.saturating_add(1),
+                };
+                let doc = state.app.active;
+                let msg = Msg::Highlighted {
+                    doc,
+                    version: delivered_version,
+                    result: Some(rune_tui::runtime::HighlightResult {
+                        spans: crate::action::highlight_spans_from_raw(spans),
+                        truncated: false,
+                    }),
+                };
+                let tag = MsgTag::Highlighted {
+                    delivered_version,
+                    span_count: spans.len(),
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
             Action::Type(s) => {
                 for ch in s.chars() {
                     debug_assert!(
@@ -237,76 +270,10 @@ pub fn run(content: &str, actions: &[Action]) -> RunResult {
         step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome);
     }
 
-    // WP6.S4 end-of-session checks (once): drive `sup+z` down to
-    // `journal_pos == 0` (`UNDO-TOTAL`, content-only per G5), then
-    // `sup+shift+z` back up to the journal_pos the session was ACTUALLY at
-    // when this drive began (`REDO-TOTAL`) — not unconditionally
-    // `journal_len`: the session's own last action(s) can legitimately be
-    // an undo, leaving an intact, never-superseded redo tail past the
-    // point the session stopped at (`invariant::redo_total`'s docs).
-    // Skipped once a violation already stopped the session, or the session
-    // tore itself down via quit (G15: a torn-down model must not receive
-    // more input, same as Go's driver).
-    if outcome.violation.is_none()
-        && !state.app.should_quit
-        && !restore_editor_focus(&mut state, &mut prev, &mut outcome)
-    {
-        let pre_undo = prev.clone();
-        let bound = pre_undo.journal_len.saturating_add(8);
-
-        let mut presses = 0usize;
-        while outcome.violation.is_none()
-            && !state.app.should_quit
-            && prev.journal_pos != 0
-            && presses < bound
-        {
-            let (msg, tag) = key_step(KeyInput {
-                code: KeyCode::Char('z'),
-                mods: Mods {
-                    sup: true,
-                    ..Mods::NONE
-                },
-            });
-            if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
-                break;
-            }
-            presses += 1;
-        }
-        if outcome.violation.is_none()
-            && let Some(v) = invariant::undo_total(content, &prev)
-        {
-            outcome.violation = Some(v);
-            outcome.final_snapshot = Some(Snapshot::capture(&mut state.app, true));
-        }
-
-        if outcome.violation.is_none() && !state.app.should_quit {
-            let mut redo_presses = 0usize;
-            while outcome.violation.is_none()
-                && !state.app.should_quit
-                && prev.journal_pos != pre_undo.journal_pos
-                && redo_presses < bound
-            {
-                let (msg, tag) = key_step(KeyInput {
-                    code: KeyCode::Char('z'),
-                    mods: Mods {
-                        sup: true,
-                        shift: true,
-                        ..Mods::NONE
-                    },
-                });
-                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
-                    break;
-                }
-                redo_presses += 1;
-            }
-            if outcome.violation.is_none()
-                && let Some(v) = invariant::redo_total(&pre_undo, &prev)
-            {
-                outcome.violation = Some(v);
-                outcome.final_snapshot = Some(Snapshot::capture(&mut state.app, true));
-            }
-        }
-    }
+    // WP6.S4 end-of-session checks — `checks::drive_end_of_session_checks`'s
+    // own doc comment carries the full rationale (undo-then-redo drive,
+    // skip conditions, G15).
+    checks::drive_end_of_session_checks(&mut state, &mut prev, &mut outcome, content);
 
     RunResult {
         violation: outcome.violation,
@@ -326,51 +293,6 @@ fn key_step(key: KeyInput) -> (Msg, MsgTag) {
         command: keymap::resolve(key),
     };
     (Msg::Key(key), tag)
-}
-
-/// Hands the keyboard back to the editor before the end-of-session
-/// undo/redo drive begins, using the same keys a user would press — never
-/// by poking `App` directly. `⌘Z` reaching the document is a PRECONDITION
-/// `UNDO-TOTAL`/`REDO-TOTAL` need, not a property they assert: per-pane
-/// routing (plan Context, decision 8) means an unfocused editor correctly
-/// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`,
-/// `app.rs:539`), and a modal correctly captures every key at stage 1
-/// before any pane sees it (`app.rs:457-461`). Both are reachable at
-/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer
-/// focused, and an Explorer `Enter` on a path missing from the fuzz `Mem`
-/// raises `Modal::Error` (`workspace.rs:39/57`). Each press runs through
-/// `step_and_check`, so every per-step invariant still applies and a
-/// violation here still stops the session, same as any other step.
-///
-/// Order: `Escape` first, only while a modal is up — both `Modal::Error`
-/// and `Modal::Guard` clear on it without touching a buffer byte
-/// (`banner.rs:252-300`). Then `^E` (`GlobalCommand::FocusEditor`), only
-/// while focus isn't already `Pane::Editor` (`pane.rs:62`) — re-checked
-/// fresh rather than decided up front, since dismissing the modal can
-/// itself leave focus somewhere other than `Editor`.
-fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    if state.app.modal.is_some() {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Escape,
-            mods: Mods::NONE,
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    if state.app.focus != Pane::Editor {
-        let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Char('e'),
-            mods: Mods {
-                ctrl: true,
-                ..Mods::NONE
-            },
-        });
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    false
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
@@ -438,9 +360,9 @@ fn step_and_check(
         state.saves_delivered_ok += 1;
     }
 
-    let sampled = should_sample(step_index);
+    let sampled = checks::should_sample(step_index);
     let next = Snapshot::capture(&mut state.app, sampled);
-    let disk = state.mem.read(Path::new(DOC_PATH)).ok();
+    let disk = state.mem.read(&state.path).ok();
     let pending_save_bytes = state.pending_save.as_ref().map(|(_, b)| b.clone());
 
     let ctx = StepCtx {
@@ -459,8 +381,8 @@ fn step_and_check(
     // sampled steps (G19: the display pipeline dominates debug-build
     // runtime).
     if violation.is_none() && sampled {
-        violation = sync_idempotent_check(&mut state.app)
-            .or_else(|| wrap_rt_check(&state.app, next.line_count));
+        violation = checks::sync_idempotent_check(&mut state.app)
+            .or_else(|| checks::wrap_rt_check(&state.app, next.line_count));
     }
     *prev = next;
 
@@ -494,7 +416,7 @@ fn run_update_catching_panic(
 }
 
 /// The same downcast ladder proptest itself uses to render a caught panic's
-/// payload (`proptest-1.11.0/src/test_runner/runner.rs:255-264`).
+/// payload.
 fn downcast_panic(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         (*s).to_string()
@@ -505,46 +427,7 @@ fn downcast_panic(payload: &(dyn std::any::Any + Send)) -> String {
     }
 }
 
-/// `SYNC-IDEMPOTENT`/`CELL-*`/`WRAP-RT` sampling cadence (G19: the display
-/// pipeline — comrak parse -> emit -> wrap — runs on every `sync_view()`,
-/// dominating debug-build runtime): full check for the first 32 steps,
-/// then every 8th, mirroring Go's precedent.
-fn should_sample(step: usize) -> bool {
-    step <= 32 || step.is_multiple_of(8)
-}
-
-/// Builds the current visible rows, or an empty grid before the first
-/// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
-fn build_rows_or_empty(app: &App) -> Vec<Vec<Cell>> {
-    match &app.active_doc().view {
-        Some(view) => render::build_rows(view, app),
-        None => Vec::new(),
-    }
-}
-
-/// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::
-/// view` never reads `viewport.scroll_row`, and `Viewport::reconcile`
-/// converges in one call, plan WP7.S1). Calls `app.sync_view()` a SECOND
-/// time with no intervening message and compares the rendered rows and
-/// scroll position against the state just before that second call; a
-/// divergence is a real non-settling scroll or a non-memoized parse, never
-/// a false positive.
-fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
-    let scroll_before = app.active_doc().viewport.scroll_row;
-    let rows_before = build_rows_or_empty(app);
-    app.sync_view();
-    let scroll_after = app.active_doc().viewport.scroll_row;
-    let rows_after = build_rows_or_empty(app);
-    invariant::sync_idempotent(&rows_before, scroll_before, &rows_after, scroll_after)
-}
-
-/// `WRAP-RT` (G7): the forward composition `wrap_to_syntax(syntax_to_wrap(
-/// ..))` is an identity over the exact in-domain rectangle
-/// `invariant::wrap_line_lens` computes from the CURRENT `ViewSnapshots.
-/// wrap` — never a fixed/stale bound, so this can never false-positive
-/// against a legitimately re-wrapped document.
-fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
-    let view = app.active_doc().view.as_ref()?;
-    let line_lens = invariant::wrap_line_lens(&view.wrap, line_count);
-    invariant::wrap_rt(&view.wrap, &line_lens)
-}
+// `should_sample`, `sync_idempotent_check`, `wrap_rt_check` and the
+// end-of-session undo/redo drive (`drive_end_of_session_checks`, which
+// subsumes the former `restore_editor_focus`) moved to `checks.rs` (§1.6
+// budget) — `step_and_check`/`run` above reach them through `checks::`.

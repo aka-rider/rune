@@ -262,6 +262,41 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
     }
 }
 
+/// Sibling to the CRLF regression above, for the case CRLF does NOT cover:
+/// a LONE `\r` (no paired `\n`) is ordinary mid-line content to the buffer
+/// (CONSTITUTION §1.5 — never a line break), so `"ab\rcd\r"` is a single
+/// buffer line containing two literal `\r` bytes. This must render without
+/// panicking and without ever letting a raw `\r` reach a `Cell`, exactly
+/// like the CRLF case — the render-layer contract (§1.4.5: the user's
+/// bytes stay in the buffer verbatim; the control-safe cell builder maps
+/// a control byte to a placeholder glyph, never a raw `Cell`) does not
+/// distinguish a CR paired with LF from one that stands alone.
+#[test]
+fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_cells() {
+    let content = "ab\rcd\r";
+    let app = app_for(content, 0, true);
+
+    let buf = render_to_test_backend(&app);
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        !text.contains('\r'),
+        "a raw CR must never reach the terminal buffer:\n{text:?}"
+    );
+    assert!(text.contains("ab"), "expected 'ab' visible:\n{text}");
+    assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    for row in &rows {
+        for cell in row {
+            assert!(
+                !matches!(cell.text.as_str(), "\r" | "\n"),
+                "a raw CR/LF must never become a Cell: {cell:?}"
+            );
+        }
+    }
+}
+
 /// Regression for the unified width chokepoint: a tab mid-line must expand
 /// to the SAME next-4-stop column both `render::segment_cells` and
 /// `WrapSnapshot::visual_col` compute, so the caret lands on the character

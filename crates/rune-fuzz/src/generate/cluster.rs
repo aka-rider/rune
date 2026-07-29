@@ -1,0 +1,374 @@
+//! The `cluster_*` strategy functions and the weighted table over them,
+//! split out of `generate` (§1.6 budget) — every one of these draws its
+//! fixed data from `palette.rs`.
+
+use proptest::prelude::*;
+use proptest::sample::select;
+
+use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::runtime::DirCause;
+use rune_vfs::DirEntry;
+
+use crate::action::{Action, HighlightVersion};
+
+use super::palette::{
+    COPY_KEY, CTRL_C_KEY, CTRL_E_KEY, CTRL_R_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
+    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
+    SELECT_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+};
+
+fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
+    (1u16..=200, 2u16..=60)
+}
+
+/// Any of the 15 `KeyCode` variants; `Char` draws an arbitrary `char`.
+/// 15 arms exceeds `prop_oneof!`'s 10-arm threshold (G16), so every arm is
+/// `.boxed()`.
+fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
+    prop_oneof![
+        any::<char>().prop_map(KeyCode::Char).boxed(),
+        Just(KeyCode::Enter).boxed(),
+        Just(KeyCode::Backspace).boxed(),
+        Just(KeyCode::Tab).boxed(),
+        Just(KeyCode::BackTab).boxed(),
+        Just(KeyCode::Escape).boxed(),
+        Just(KeyCode::Left).boxed(),
+        Just(KeyCode::Right).boxed(),
+        Just(KeyCode::Up).boxed(),
+        Just(KeyCode::Down).boxed(),
+        Just(KeyCode::Home).boxed(),
+        Just(KeyCode::End).boxed(),
+        Just(KeyCode::PageUp).boxed(),
+        Just(KeyCode::PageDown).boxed(),
+        Just(KeyCode::Delete).boxed(),
+    ]
+}
+
+/// Any of the 16 `Mods` combinations (4 independent bools).
+fn arb_mods() -> impl Strategy<Value = Mods> {
+    (any::<bool>(), any::<bool>(), any::<bool>(), any::<bool>()).prop_map(
+        |(shift, alt, ctrl, sup)| Mods {
+            shift,
+            alt,
+            ctrl,
+            sup,
+        },
+    )
+}
+
+/// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
+/// 1-in-4 a `Paste` of a `PASTE_PALETTE` entry — the only path that can
+/// insert `\r`, `\t`, or other control bytes (G3), so this is what actually
+/// exercises the §1.4.5 byte-verbatim edge.
+fn cluster_type_prose() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        3 => proptest::collection::vec(select(TYPE_PALETTE), 1..=4)
+            .prop_map(|frags| vec![Action::Type(frags.join(" "))]),
+        1 => select(PASTE_PALETTE).prop_map(|s| vec![Action::Paste(s.to_string())]),
+    ]
+}
+
+/// 22 — 1-6 navigation keystrokes.
+fn cluster_navigate() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(select(NAV_KEYS), 1..=6)
+        .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
+}
+
+/// 10 — 1-5 shift-modified motions, or one `SelectAll` (`sup+a`).
+fn cluster_selection() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        proptest::collection::vec(select(SELECT_MOTION_KEYS), 1..=5)
+            .prop_map(|keys| keys.into_iter().map(Action::Key).collect()),
+        Just(vec![Action::Key(SELECT_ALL_KEY)]),
+    ]
+}
+
+/// 8 — 1-6 of {Backspace, Delete, Tab, BackTab}.
+fn cluster_delete() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(select(DELETE_KEYS), 1..=6)
+        .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
+}
+
+/// 7 — 1-4 `sup+z`, optionally then 1-3 `sup+shift+z`.
+fn cluster_undo_redo() -> impl Strategy<Value = Vec<Action>> {
+    (1usize..=4, proptest::option::of(1usize..=3)).prop_map(|(undo_n, redo_n)| {
+        let mut actions = vec![Action::Key(UNDO_KEY); undo_n];
+        if let Some(n) = redo_n {
+            actions.extend(std::iter::repeat_n(Action::Key(REDO_KEY), n));
+        }
+        actions
+    })
+}
+
+/// 6 — a structural markdown fragment, or the two-action code-fence form
+/// (`Type("```rust")` then `Key(Enter)` — a bare `"\n"` inside a `Type`
+/// payload is legal, but the fence reads more clearly as two actions).
+fn cluster_markdown_write() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        7 => select(MARKDOWN_FRAGMENTS).prop_map(|s| vec![Action::Type(s.to_string())]),
+        1 => Just(vec![Action::Type("```rust".to_string()), Action::Key(ENTER_KEY)]),
+    ]
+}
+
+/// 5 — `Key(sup+s)`, then 3-in-4 `Deliver`.
+fn cluster_save() -> impl Strategy<Value = Vec<Action>> {
+    proptest::bool::weighted(0.75).prop_map(|deliver| {
+        let mut actions = vec![Action::Key(SAVE_KEY)];
+        if deliver {
+            actions.push(Action::Deliver);
+        }
+        actions
+    })
+}
+
+/// 4 — one of `sup+c`, `sup+x`, or (`sup+v` then a `ClipboardReply` of a
+/// `PASTE_PALETTE` entry).
+fn cluster_clipboard() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        Just(vec![Action::Key(COPY_KEY)]),
+        Just(vec![Action::Key(CUT_KEY)]),
+        select(PASTE_PALETTE).prop_map(|s| vec![
+            Action::Key(PASTE_KEY),
+            Action::ClipboardReply(s.to_string())
+        ]),
+    ]
+}
+
+/// 3 — 3-12 arbitrary `KeyInput`s: any of the 15 `KeyCode`s x any of the 16
+/// `Mods` combinations.
+fn cluster_monkey_burst() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(
+        (arb_any_keycode(), arb_mods()).prop_map(|(code, mods)| KeyInput { code, mods }),
+        3..=12,
+    )
+    .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
+}
+
+/// 2 — a single `Deliver`.
+fn cluster_async_deliver() -> impl Strategy<Value = Vec<Action>> {
+    Just(vec![Action::Deliver])
+}
+
+/// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
+/// waste its shrink budget on absurdly long ones) plus an arbitrary
+/// `is_dir`.
+fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
+    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| DirEntry { name, is_dir })
+}
+
+fn arb_dir_cause() -> impl Strategy<Value = DirCause> {
+    prop_oneof![Just(DirCause::Nav), Just(DirCause::Refresh)]
+}
+
+/// A `DirLoaded` generation: a small bounded range, not `any::<u32>()` —
+/// `Explorer::request_generation` starts at 0 and increments by 1 per
+/// issued `ReadDir`, so a narrow range gives a real chance of landing
+/// exactly on the live value (exercising the "applied" path) while still
+/// mostly missing it (exercising the "ignored as stale" path the review fix
+/// added `handle_dir_loaded`'s guard for) — deliberately NOT pinned to the
+/// live generation the way `ConfirmTimeout` (G15) is.
+fn arb_dir_loaded_generation() -> impl Strategy<Value = u32> {
+    0u32..=4u32
+}
+
+fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
+    prop_oneof![
+        Just(HighlightVersion::Live),
+        Just(HighlightVersion::Stale),
+        Just(HighlightVersion::Future),
+    ]
+}
+
+/// One raw `(start, end, ScopeId)` triple, deliberately unvalidated —
+/// `Action::Highlight`'s own docs — drawn from four shapes: a small
+/// well-formed range, a range entirely past a short document's length, a
+/// deliberately inverted `start > end` pair, and a narrow 1-byte-wide range
+/// at a small odd offset, chosen to land mid-`char` inside a CJK seed's
+/// multi-byte code points (`SEEDS`, `palette.rs`) about as often as it lands
+/// on a real boundary. Every arm draws `ScopeId` from the same `SCOPE_ID`
+/// range — an out-of-range scope id isn't a shape under test here, just
+/// filler, so all four arms share it rather than repeating an unexplained
+/// `30` four times.
+///
+/// Readability-only split (finding B): each bound below is the exact
+/// literal the four `prop_oneof!` arms used inline before, just named —
+/// the generated distribution is unchanged.
+fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
+    /// Arm 1 — a small well-formed span: `start` fits inside every `SEEDS`
+    /// document, `len >= 1` keeps `start < end`.
+    const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
+    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
+
+    /// Arm 2 — a span entirely past the end of every `SEEDS` document (the
+    /// longest seed is well under 900 bytes), exercising the out-of-bounds
+    /// clamp/discard path with a WIDE span, not just a narrow overrun.
+    const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
+    const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
+
+    /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,
+    /// then a positive `gap` added to it to derive `start`, so `start` is
+    /// always strictly greater than `end`.
+    const INVERTED_GAP: std::ops::Range<usize> = 1..30;
+    const INVERTED_END: std::ops::Range<usize> = 0..30;
+
+    /// Arm 4 — a narrow 1-byte-wide span at a small offset, landing
+    /// mid-`char` inside a CJK seed's multi-byte code points about as often
+    /// as it lands on a real boundary.
+    const MID_CHAR_START: std::ops::Range<usize> = 0..24;
+
+    /// Shared by every arm — filler, not itself a shape under test.
+    const SCOPE_ID: std::ops::Range<u16> = 0..30;
+
+    prop_oneof![
+        (IN_BOUNDS_START, IN_BOUNDS_LEN, SCOPE_ID).prop_map(|(start, len, scope)| (
+            start,
+            start + len,
+            scope
+        )),
+        (FAR_OUT_OF_BOUNDS_START, FAR_OUT_OF_BOUNDS_LEN, SCOPE_ID)
+            .prop_map(|(start, len, scope)| (start, start + len, scope)),
+        (INVERTED_GAP, INVERTED_END, SCOPE_ID).prop_map(|(gap, end, scope)| (
+            end + gap,
+            end,
+            scope
+        )),
+        (MID_CHAR_START, SCOPE_ID).prop_map(|(start, scope)| (start, start + 1, scope)),
+    ]
+}
+
+/// 3 — one guaranteed edit (`Key('h')`, so the live buffer version is >= 1
+/// before the reply is delivered) followed by a synthesized
+/// `Msg::Highlighted` reply. The edit is mandatory: `HighlightVersion::
+/// Stale` resolves via `buffer.version().saturating_sub(1)`, which at
+/// version 0 is silently the SAME as `Live` — an edit first guarantees
+/// `Stale` is genuinely distinct (plan WP7.S6).
+///
+/// The guarantee is made TRUE by construction, not by assumption:
+/// `Action::Key` only reaches the buffer while `app.focus == Pane::Editor`
+/// (the ordinary four-stage key pipeline), and a preceding cluster can
+/// leave focus anywhere — `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks it
+/// on `Pane::Title` with no restore. So this cluster prepends the same
+/// two-key focus-restoring sequence `driver/checks.rs::
+/// restore_editor_focus` uses at end-of-session (`ESCAPE_KEY` to dismiss
+/// any modal, then `CTRL_E_KEY`/`GlobalCommand::FocusEditor` to reclaim
+/// focus regardless of which pane held it) BEFORE `Key('h')`, unconditional
+/// on generator-time state (there is none to condition on — this runs
+/// before any session exists). Both keys are no-ops from the editor's own
+/// perspective: `Esc` with no modal up either collapses a selection or is
+/// consumed by whichever pane owns focus, and `^e` is idempotent when focus
+/// is already `Editor`. See `cluster_highlight_edit_survives_focus_parked_
+/// off_editor` below for the regression this closes.
+fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
+    (
+        arb_highlight_version(),
+        proptest::collection::vec(arb_highlight_span(), 0..=6),
+    )
+        .prop_map(|(version, spans)| {
+            vec![
+                Action::Key(ESCAPE_KEY),
+                Action::Key(CTRL_E_KEY),
+                Action::Key(KeyInput {
+                    code: KeyCode::Char('h'),
+                    mods: Mods::NONE,
+                }),
+                Action::Highlight { version, spans },
+            ]
+        })
+}
+
+/// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`, or
+/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6).
+fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
+        Just(vec![Action::FailNextSave]),
+        Just(vec![Action::Key(CTRL_C_KEY)]),
+        Just(vec![Action::Key(CTRL_R_KEY)]),
+        Just(vec![Action::ConfirmTimeout]),
+        (
+            proptest::collection::vec(arb_dir_entry(), 0..=6),
+            arb_dir_cause(),
+            arb_dir_loaded_generation()
+        )
+            .prop_map(|(entries, cause, generation)| vec![Action::DirLoaded {
+                entries,
+                cause,
+                generation
+            }]),
+    ]
+}
+
+/// The user-approved weighted table, now over 12 clusters (plan WP7.S6
+/// added `cluster_highlight`). All arms are `.boxed()` — `prop_oneof!` with
+/// >10 arms expands to `Union::new_weighted(vec![…boxed…])` (G16).
+pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        35 => cluster_type_prose().boxed(),
+        22 => cluster_navigate().boxed(),
+        10 => cluster_selection().boxed(),
+        8 => cluster_delete().boxed(),
+        7 => cluster_undo_redo().boxed(),
+        6 => cluster_markdown_write().boxed(),
+        5 => cluster_save().boxed(),
+        4 => cluster_clipboard().boxed(),
+        3 => cluster_monkey_burst().boxed(),
+        3 => cluster_highlight().boxed(),
+        2 => cluster_async_deliver().boxed(),
+        1 => cluster_chrome().boxed(),
+    ]
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+mod tests {
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
+
+    use crate::driver;
+
+    use super::*;
+
+    /// FINDING A regression: `cluster_highlight`'s own doc comment claims
+    /// its `Key('h')` edit is mandatory, but `Action::Key` only reaches the
+    /// buffer while `focus == Pane::Editor` — and a preceding cluster can
+    /// leave focus elsewhere with no restore (`cluster_chrome`'s
+    /// `Key(CTRL_R_KEY)` arm parks it on `Pane::Title`). This test starts a
+    /// session with exactly that arm, THEN runs whatever `cluster_highlight`
+    /// itself generates — sampled from the real strategy, not a hand-copied
+    /// stand-in — and asserts the edit still lands. Run this with the
+    /// `Action::Key(ESCAPE_KEY)`/`Action::Key(CTRL_E_KEY)` prefix reverted
+    /// to confirm it fails first (recorded in the fix's commit/handoff, not
+    /// re-derivable from the test alone).
+    #[test]
+    fn cluster_highlight_edit_survives_focus_parked_off_editor() {
+        let mut runner = TestRunner::default();
+        let tree = cluster_highlight()
+            .new_tree(&mut runner)
+            .expect("cluster_highlight strategy generation failed");
+
+        // Mirrors `cluster_chrome`'s no-restore `Key(CTRL_R_KEY)` arm: parks
+        // focus on `Pane::Title` before `cluster_highlight`'s own actions
+        // run, with no subsequent focus restore of any kind.
+        let mut actions = vec![Action::Key(CTRL_R_KEY)];
+        actions.extend(tree.current());
+
+        let result = driver::run(driver::DOC_PATH, "", &actions);
+
+        assert_eq!(
+            result.violation.as_ref().map(|v| v.id),
+            None,
+            "session should settle with no invariant violation"
+        );
+        assert_eq!(
+            result.final_content, "h",
+            "cluster_highlight's guaranteed edit must land the 'h' keystroke in the buffer even \
+             when a preceding action parks focus off the editor; got {:?} instead",
+            result.final_content
+        );
+    }
+}
