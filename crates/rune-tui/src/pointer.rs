@@ -154,16 +154,34 @@ fn chebyshev(c1: u16, r1: u16, c2: u16, r2: u16) -> i32 {
     dc.max(dr)
 }
 
-/// The click-aggregation + drag-selection state a left-button gesture
-/// needs across messages (plan WP7.S5): `last_click`/`click_count` decide
-/// whether THIS click continues a double/triple-click run; `drag_anchor`
-/// is the selection start a `Drag` event extends from, `None` once the
-/// button is released.
+/// Which splitter a drag is moving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Splitter {
+    LeftColumn,
+    ExplorerTabs,
+}
+
+/// The in-flight drag. Text selection and splitter dragging are mutually
+/// exclusive by construction — one gesture owns the pointer at a time.
+#[derive(Clone, Copy, Debug)]
+pub enum Drag {
+    /// Extending a selection from this buffer byte offset.
+    Text { anchor: usize },
+    /// Moving a splitter. `grab_delta` is the offset between the grabbed
+    /// cell and the splitter's own edge, so the splitter never jumps to
+    /// the pointer on the first drag event.
+    Splitter { which: Splitter, grab_delta: i32 },
+}
+
+/// The click-aggregation + drag state a left-button gesture needs across
+/// messages (plan WP7.S5): `last_click`/`click_count` decide whether THIS
+/// click continues a double/triple-click run; `drag` is the in-flight
+/// gesture a `Drag` event extends, `None` once the button is released.
 #[derive(Debug, Default)]
 pub struct PointerState {
     pub last_click: Option<(Instant, u16, u16)>,
     pub click_count: u8,
-    pub drag_anchor: Option<usize>,
+    pub drag: Option<Drag>,
 }
 
 impl PointerState {
