@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 
-use rune_core::buffer::{AppliedEdit, Edit};
+use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_db::{DbEvent, LoadResult, ObsId, OnEvent, Store};
 
@@ -385,16 +385,17 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
 /// own doc comment) installs nothing and surfaces a status message instead
 /// of binding a document to a recovery row with no CAS baseline.
 ///
-/// Otherwise, `recovered` is adopted into the buffer ONLY when
-/// `issued_version` still equals the buffer's CURRENT version — `Load` is
-/// asynchronous, so the user may have typed into the buffer during the
-/// round trip, and clobbering those keystrokes to complete a recovery
-/// binding would violate the Prime Directive. When the version has moved
-/// on, `DocDb` is still installed (this document's own recovery journal is
-/// real and should be used going forward), but the buffer bytes are left
-/// exactly as the user last typed them — this session's baseline simply
-/// anchors from the disk content `load_document`'s caller already read,
-/// same as `recovered == disk_content` would.
+/// Otherwise, `recovered` is adopted into the buffer, through
+/// [`crate::document::Document::hydrate`], ONLY when `issued_version` still
+/// equals the buffer's CURRENT version — `Load` is asynchronous, so the
+/// user may have typed into the buffer during the round trip, and
+/// clobbering those keystrokes to complete a recovery binding would violate
+/// the Prime Directive. When the version has moved on, `DocDb` is still
+/// installed (this document's own recovery journal is real and should be
+/// used going forward), but the buffer bytes are left exactly as the user
+/// last typed them — this session's baseline simply anchors from the disk
+/// content `load_document`'s caller already read, same as `recovered ==
+/// disk_content` would.
 pub fn handle_load_ack(
     app: &mut App,
     id: DocumentId,
@@ -409,22 +410,25 @@ pub fn handle_load_ack(
         return;
     };
 
-    let Some(doc) = app.doc_mut(id) else { return };
-    if issued_version == Some(doc.buffer.version())
-        && load_result.recovered != load_result.disk_content
-    {
-        let edit = Edit {
-            start: 0,
-            end: doc.buffer.len(),
-            insert: load_result.recovered.clone(),
-            cursor_id: 0,
-        };
-        if let Ok((new_buffer, applied)) = doc.buffer.apply_edits(std::slice::from_ref(&edit)) {
-            doc.cursors = doc.cursors.adjust_after_batch_edits(&applied);
-            doc.buffer = new_buffer;
-            doc.mark_dirty_from_hydration();
+    let refusal = {
+        let Some(doc) = app.doc_mut(id) else { return };
+        if issued_version == Some(doc.buffer.version()) {
+            match doc.hydrate(&load_result.disk_content, &load_result.recovered) {
+                crate::document::Hydration::Refused(reason) => Some(reason),
+                crate::document::Hydration::NoChange | crate::document::Hydration::Adopted => None,
+            }
+        } else {
+            None
         }
+    };
+    if let Some(reason) = refusal {
+        app.set_status(
+            format!("crash recovery: {reason}"),
+            StatusSource::Other,
+        );
     }
+
+    let Some(doc) = app.doc_mut(id) else { return };
     doc.db = Some(DocDb::new(
         load_result.doc_id,
         expect_obs,

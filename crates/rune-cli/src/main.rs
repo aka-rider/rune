@@ -18,8 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use rune_core::buffer::{AppliedEdit, Buffer, BufferError};
-use rune_core::undo::Step;
+use rune_core::buffer::{Buffer, BufferError};
 use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
 use rune_tui::db::{Db, DbBridge, DocDb};
@@ -129,11 +128,12 @@ fn main() -> ExitCode {
             }
         };
 
-        let buffer = match &db_bootstrap.recovered_content {
-            Some(content) => Buffer::new(content.clone()),
-            None => buffer,
-        };
-
+        // The buffer stays exactly what `load_buffer` read off disk here —
+        // adopting `recovered_content` goes through the same hydration
+        // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
+        // uses, below, once `App::new` exists to hold it. Pre-replacing the
+        // buffer here (as this used to) would skip that chokepoint's §1.3
+        // suspicion check entirely.
         let app = App::new(buffer, Some(path), vfs, db_bootstrap.db.take());
         (app, db_bootstrap)
     } else {
@@ -195,25 +195,23 @@ fn main() -> ExitCode {
     if let Some(doc_db) = db_bootstrap.doc_db {
         app.active_doc_mut().db = Some(doc_db);
     }
-    if let Some(bridge_edit) = db_bootstrap.bridge_edit {
-        // Seeds the LOCAL in-memory undo journal with the ONE synthetic
-        // edit `rune_db::load` itself already journaled durably (its own
-        // `find_inheritable_draft` bridge, `load.rs`'s module doc) when
-        // this session inherited a dead session's unsaved content — so
-        // post-restart undo reaches the anchor (plan WP5.S4) in exactly one
-        // step, reverting straight back to `disk_content`. Pushed directly
-        // (never through `commands::edit::commit_edit_batch`/`db::
-        // append_edit`) — the durable side already has this edit recorded;
-        // re-enqueueing it here would duplicate it.
-        app.active_doc_mut().journal.push(Step {
-            edits: vec![bridge_edit],
-            cursors_before: Vec::new(),
-            cursors_after: Vec::new(),
-        });
-        // A direct fact from the `Load` op's own ack (`recovered !=
-        // disk_content`) — not a guess (§1.4.8's "baseline only ever from
-        // store acks").
-        app.mark_dirty_from_hydration();
+    if let Some(recovered) = db_bootstrap.recovered_content {
+        // Adopts a dead session's inherited draft content through the same
+        // chokepoint `db::handle_load_ack` uses for every later per-document
+        // hydration (plan WP5.S2): the §1.3 destructive-reset suspicion
+        // check, the synthetic bridge `Step` so post-restart undo reaches
+        // `disk_content` in one step, and a refusal surfaced rather than
+        // silently applied. The buffer here still holds exactly what
+        // `load_buffer` read off disk, so it IS `disk_content`.
+        let disk_content = app.active_doc_mut().buffer.content().to_string();
+        if let rune_tui::document::Hydration::Refused(reason) =
+            app.active_doc_mut().hydrate(&disk_content, &recovered)
+        {
+            app.set_status(
+                format!("crash recovery: {reason}"),
+                rune_tui::app::StatusSource::Other,
+            );
+        }
     }
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| rune_tui::runtime::run(&mut app)));
@@ -309,20 +307,12 @@ fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadError> {
 struct DbBootstrap {
     db: Option<Db>,
     doc_db: Option<DocDb>,
-    /// `Some` only when `rune-db`'s `Load` reconstructed content that
-    /// differs from the buffer `load_buffer` already read straight off
-    /// disk (a crash-recovered draft this session inherited) — `main`
-    /// replaces the plain disk buffer with this one when present.
+    /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
+    /// (which may or may not differ from the buffer `load_buffer` already
+    /// read straight off disk) — `main` runs this through the same
+    /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
+    /// `App::new` exists to hold the result.
     recovered_content: Option<String>,
-    /// The single synthetic whole-content-replace edit to seed the LOCAL
-    /// undo journal with — `Some` exactly when `recovered_content` differs
-    /// from what's on disk (the buffer should also open dirty, see
-    /// `App::mark_dirty_from_hydration`). Reconstructed identically to
-    /// `rune_db::load`'s own internal bridge edit (`disk_content` ->
-    /// `recovered`, see `load.rs`'s module doc) purely from the two
-    /// strings `LoadResult` already exposes, so post-restart undo reaches
-    /// the anchor (plan WP5.S4) without any new `rune-db` API surface.
-    bridge_edit: Option<AppliedEdit>,
     /// The persistent degraded-store status banner (plan WP5.S2), or
     /// `None` when the store opened clean.
     banner: Option<String>,
@@ -429,12 +419,6 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         };
     };
 
-    let bridge_edit = (load_result.recovered != load_result.disk_content).then(|| AppliedEdit {
-        start: 0,
-        end: load_result.disk_content.len(),
-        deleted: load_result.disk_content.clone(),
-        insert: load_result.recovered.clone(),
-    });
     let db = Db::new(store, bridge, degraded_at_open);
     let doc_db = DocDb::new(
         load_result.doc_id,
@@ -460,7 +444,6 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
         recovered_content: Some(load_result.recovered),
-        bridge_edit,
         banner,
     }
 }

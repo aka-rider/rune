@@ -12,10 +12,10 @@ use std::num::NonZeroU64;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use rune_core::buffer::Buffer;
+use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
-use rune_core::undo::Journal;
+use rune_core::undo::{Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_syntax::{DocumentKind, ScopeId};
 
@@ -174,6 +174,29 @@ pub struct Document {
     pub highlight: HighlightState,
 }
 
+/// The outcome of [`Document::hydrate`] — the shared hydration-adoption
+/// chokepoint (plan WP5.S2).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Hydration {
+    /// `recovered` was identical to `disk_content` — nothing to adopt.
+    NoChange,
+    /// `recovered` replaced the buffer, journaled as one synthetic bridge
+    /// `Step` so ⌘Z reaches `disk_content`, and the buffer is now dirty.
+    Adopted,
+    /// Adoption was refused; the buffer is unchanged. Carries the reason
+    /// for the caller to surface (a banner/status message).
+    Refused(&'static str),
+}
+
+/// A `recovered` far shorter than `disk_content` (or emptying it outright)
+/// is not a legitimate recovery — it is the CONSTITUTION §1.3 "destructive
+/// async edit" pattern (a watcher/IME/dictation reset caught mid-write), and
+/// adopting it would silently discard content the user can see on screen.
+/// `disk_content` empty has nothing to protect, so it never trips this.
+fn is_suspicious_shrink(disk_content: &str, recovered: &str) -> bool {
+    !disk_content.is_empty() && recovered.len() * 2 < disk_content.len()
+}
+
 impl Document {
     pub fn new(buffer: Buffer) -> Document {
         let saved_version = buffer.version();
@@ -206,12 +229,58 @@ impl Document {
         self.is_dirty_cached
     }
 
-    /// Marks the freshly constructed buffer dirty relative to the file it
-    /// was hydrated from — for `rune-cli::main`'s bootstrap ONLY, called (at
-    /// most once, before the runtime loop and thus before `update` has ever
-    /// run) when `rune-db`'s `Load` ack reports `recovered != disk_content`.
+    /// Marks the buffer dirty relative to the file it was hydrated from.
+    /// Called from [`Document::hydrate`] on every adoption — both the
+    /// bootstrap path (`rune-cli::main`, before the runtime loop) and the
+    /// live per-document hydration ack (`db::handle_load_ack`, from inside
+    /// `update`) reach this through that one chokepoint, never directly.
     pub fn mark_dirty_from_hydration(&mut self) {
         self.is_dirty_cached = true;
+    }
+
+    /// The one hydration-adoption chokepoint (plan WP5.S2): `self.buffer` is
+    /// assumed to hold exactly `disk_content` (the caller's job — the
+    /// bootstrap path just loaded it straight off disk; `db::handle_load_ack`
+    /// checks the buffer's version hasn't moved since `Load` was issued
+    /// first). Applies three things every hydration route must do
+    /// identically, so they cannot drift apart again:
+    ///
+    /// (a) the §1.3 destructive-async-reset suspicion check — refuses an
+    /// adoption that would empty or drastically shrink a non-empty buffer,
+    /// leaving `self` untouched;
+    /// (b) journals the adoption as one synthetic bridge `Step` (pushed
+    /// directly, never through `commands::edit::commit_edit_batch`/`db::
+    /// append_edit` — the durable side already has this content, only the
+    /// LOCAL undo journal needs the anchor) so ⌘Z reaches `disk_content`;
+    /// (c) surfaces an `apply_edits` failure as a refusal rather than an
+    /// unannotated no-op.
+    pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
+        if recovered == disk_content {
+            return Hydration::NoChange;
+        }
+        if is_suspicious_shrink(disk_content, recovered) {
+            return Hydration::Refused(
+                "recovered draft looked truncated relative to the file on disk — kept the on-disk version",
+            );
+        }
+        let edit = Edit {
+            start: 0,
+            end: self.buffer.len(),
+            insert: recovered.to_string(),
+            cursor_id: 0,
+        };
+        let Ok((new_buffer, applied)) = self.buffer.apply_edits(std::slice::from_ref(&edit)) else {
+            return Hydration::Refused("recovered draft failed to apply to the buffer");
+        };
+        self.cursors = self.cursors.adjust_after_batch_edits(&applied);
+        self.buffer = new_buffer;
+        self.journal.push(Step {
+            edits: applied,
+            cursors_before: Vec::new(),
+            cursors_after: Vec::new(),
+        });
+        self.mark_dirty_from_hydration();
+        Hydration::Adopted
     }
 
     pub fn file_name(&self) -> &str {
