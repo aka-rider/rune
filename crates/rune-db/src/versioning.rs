@@ -138,7 +138,9 @@ fn maybe_gc_one(path: &Path, is_alive: &dyn Fn(i64, &str) -> bool) {
     let sessions = match read_frozen_contract(path) {
         Ok(rows) => rows,
         Err(e) => {
-            background_note(&format!("gc: leaving {name} (frozen contract query failed: {e})"));
+            background_note(&format!(
+                "gc: leaving {name} (frozen contract query failed: {e})"
+            ));
             return;
         }
     };
@@ -179,7 +181,9 @@ fn delete_old_version_files(path: &Path, name: &str) {
     // gone and stop retrying it every launch).
     match std::fs::remove_file(path) {
         Ok(()) => {
-            background_note(&format!("gc: deleted stale {name} (every recorded session is dead)"));
+            background_note(&format!(
+                "gc: deleted stale {name} (every recorded session is dead)"
+            ));
         }
         Err(e) => {
             background_note(&format!("gc: failed to delete stale {name}: {e}"));
