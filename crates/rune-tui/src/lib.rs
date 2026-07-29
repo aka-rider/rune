@@ -30,6 +30,7 @@ pub mod render;
 pub mod row_meta;
 pub mod runtime;
 pub mod save;
+pub mod split;
 pub mod term;
 #[cfg(any(test, feature = "testgrid"))]
 pub mod testgrid;
