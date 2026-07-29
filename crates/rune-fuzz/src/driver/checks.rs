@@ -98,14 +98,20 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// Order: `Escape` first, only while a modal is up — both `Modal::Error`
 /// and `Modal::Guard` clear on it without touching a buffer byte. Then
 /// `F1` again, only while the Help document is active — `workspace::
-/// toggle_help`'s own docs guarantee this switches back to whatever was
-/// active right before Help was last activated, which is always the
-/// seeded document (this driver never opens more than one non-Help
-/// document). Then `^E` (`GlobalCommand::FocusEditor`), only
-/// while focus isn't already `Pane::Editor` — re-checked
-/// fresh rather than decided up front, since dismissing the modal (or
-/// toggling Help off) can itself leave focus somewhere other than
-/// `Editor`.
+/// toggle_help`'s own docs say this switches back to whatever was active
+/// right before Help was last activated, ORDINARILY the seeded document
+/// (this driver never OPENS more than one non-Help document). That is not
+/// an absolute guarantee, though: `TODO-fuzz-undo-total-dirty-close-
+/// discard.md` (found soaking the WP6.S5 checker set) shows the seeded
+/// document can be DISCARDED first (a quit-chord's dirty-close Guard,
+/// armed on a document other than the one currently active, followed by a
+/// `[D]iscard` key) — `toggle_help`'s own fallback then has nowhere else to
+/// switch to and lands back on Help, leaving `UNDO-TOTAL`/`REDO-TOTAL` to
+/// run against Help instead of the (now-gone) seed. Then `^E`
+/// (`GlobalCommand::FocusEditor`), only while focus isn't already
+/// `Pane::Editor` — re-checked fresh rather than decided up front, since
+/// dismissing the modal (or toggling Help off) can itself leave focus
+/// somewhere other than `Editor`.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.modal.is_some() {
         let (msg, tag) = key_step(KeyInput {

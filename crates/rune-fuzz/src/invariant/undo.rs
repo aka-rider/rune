@@ -59,14 +59,20 @@ pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
 /// (either `journal_pos == 0` or the `journal_len + 8` bound was reached).
 /// Content-only per G5.
 ///
-/// Active-document-switch-safe: `driver/checks.rs::restore_editor_focus`
-/// runs immediately before this drive begins and, whenever the Help
-/// document is active, presses `F1` again to switch back — `workspace::
-/// toggle_help`'s own contract guarantees that lands on whatever was active
-/// right before Help was last toggled on, which is always the one seeded
-/// document this driver ever opens (`checks.rs`'s own docs: "this driver
-/// never opens more than one non-Help document"). So `after` is always the
-/// seeded document by construction, never Help.
+/// Active-document-switch-safe AS FAR AS `F1` GOES:
+/// `driver/checks.rs::restore_editor_focus` runs immediately before this
+/// drive begins and, whenever the Help document is active, presses `F1`
+/// again to switch back — `workspace::toggle_help`'s own contract lands
+/// that on whatever was active right before Help was last toggled on.
+/// NOT a full guarantee, though: `TODO-fuzz-undo-total-dirty-close-
+/// discard.md` (found soaking this same checker set) shows the seeded
+/// document can be discarded entirely (a quit-chord's dirty-close Guard,
+/// armed on a document other than the one currently active, followed by a
+/// `[D]iscard` key) — `restore_editor_focus`'s `F1` press then lands back
+/// on Help itself (no other document is left to switch to), and `after`
+/// describes Help, not the seed. That is a distinct, tracked defect in the
+/// driver's own end-of-session precondition, not something this checker
+/// can detect or correct for.
 pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != 0 {
         return Some(Violation {
@@ -106,10 +112,13 @@ pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
 /// happened to have; that symmetric round-trip is what this actually
 /// checks.
 ///
-/// Active-document-switch-safe: same reasoning as `undo_total` above —
-/// `restore_editor_focus` guarantees the seeded document is active before
-/// EITHER drive begins, and neither drive's own keys (`⌘Z`/`⌘⇧Z`) switch
-/// `app.active`, so `pre_undo`/`after` always describe that same document.
+/// Active-document-switch-safe AS FAR AS `F1` GOES, same caveat as
+/// `undo_total` above: neither drive's own keys (`⌘Z`/`⌘⇧Z`) switch
+/// `app.active`, and `restore_editor_focus`'s `F1` press handles the
+/// ordinary help-toggle case before either drive begins — but not the
+/// seeded-document-discarded case `TODO-fuzz-undo-total-dirty-close-
+/// discard.md` tracks, where `pre_undo`/`after` both end up describing
+/// Help instead.
 pub fn redo_total(pre_undo: &Snapshot, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != pre_undo.journal_pos {
         return Some(Violation {
