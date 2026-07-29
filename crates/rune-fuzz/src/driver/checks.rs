@@ -65,9 +65,11 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`), and a modal
 /// correctly captures every key at stage 1 before any pane sees it.
 /// Both are reachable at
-/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer
-/// focused, and an Explorer `Enter` on a path missing from the fuzz `Mem`
-/// raises `Modal::Error`. Each press runs through
+/// session end today: `^b` (`GlobalCommand::FocusExplorer`) leaves the
+/// Explorer focused — `^x` was retired as the explorer chord once the
+/// held-space leader took over as the primary way in — and an Explorer
+/// `Enter` on a path missing from the fuzz `Mem` raises `Modal::Error`.
+/// Each press runs through
 /// `step_and_check`, so every per-step invariant still applies and a
 /// violation here still stops the session, same as any other step.
 ///

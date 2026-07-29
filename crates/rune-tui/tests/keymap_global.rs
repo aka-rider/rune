@@ -22,7 +22,7 @@ fn resolve_in_matches_the_exact_modifier_set() {
     );
     assert_eq!(
         resolve_in(GLOBAL_BINDINGS, ctrl_b),
-        Some(GlobalCommand::ToggleExplorer)
+        Some(GlobalCommand::FocusExplorer)
     );
 }
 
@@ -30,7 +30,7 @@ fn resolve_in_matches_the_exact_modifier_set() {
 fn resolve_in_rejects_an_extra_held_modifier() {
     // Same code+ctrl as `resolve_in_matches_the_exact_modifier_set`, plus
     // shift — `KeyPattern` matches the WHOLE `Mods` set, so this must NOT
-    // resolve to `ToggleExplorer`.
+    // resolve to `FocusExplorer`.
     let ctrl_shift_b = key(
         KeyCode::Char('b'),
         Mods {
