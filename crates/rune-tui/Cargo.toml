@@ -25,6 +25,12 @@ unicode-segmentation = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
+# Test-only: an INDEPENDENT width oracle for `breadcrumb.rs`'s gate tests
+# (plan WP8, [rune-tui C 14]) — computed straight from `unicode_width`
+# rather than by calling this crate's own `width`/`rune_syntax::wrap`
+# chokepoint, so a regression in the production width math can't pass a
+# test that merely re-invokes the same broken function.
+unicode-width = { workspace = true }
 # Self-dependency trick (Cargo permits it for dev-dependencies): pulls in
 # THIS crate again with `testgrid` turned on, so feature unification
 # enables `crate::testgrid` for every integration test in `tests/` without

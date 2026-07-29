@@ -343,27 +343,6 @@ impl Buffer {
         }
     }
 
-    /// Maps a byte OFFSET to a 1-indexed `(line, col)` DISPLAY position —
-    /// the `Ln <n>, Col <n>` footer convention (rune-tui `footer.rs`, plan
-    /// Assumption A3), ported from Go footer's `m.line+1, m.col+1`
-    /// (`footer_view.go:176`). Built on `offset_to_line_col` (0-indexed
-    /// line, BYTE col) plus a rune count over that line's leading byte span:
-    /// display widths are RUNES, never bytes (§1.5) — a multibyte character
-    /// before the cursor must count as one column, not `len_utf8()` of
-    /// them. The one small chokepoint Assumption A3 calls for rather than
-    /// re-deriving this at the call site.
-    pub fn display_position(&self, offset: usize) -> (usize, usize) {
-        let bp = self.offset_to_line_col(offset);
-        let line_start = self.line_start(bp.line);
-        let byte_col_end = line_start + bp.col;
-        let rune_col = self
-            .content
-            .get(line_start..byte_col_end)
-            .map(|s| s.chars().count())
-            .unwrap_or(0);
-        (bp.line + 1, rune_col + 1)
-    }
-
     pub fn line_col_to_offset(&self, bp: BufferPoint) -> usize {
         let count = self.line_starts.len();
         if bp.line >= count {
@@ -500,33 +479,6 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Assumption A3: `display_position` counts RUNES within the line, not
-    /// bytes — a multibyte char before the offset must advance the column
-    /// by exactly one, never by its `len_utf8()`.
-    #[test]
-    fn display_position_counts_runes_not_bytes_within_the_line() {
-        let b = Buffer::new("ab\u{6c49}cd\nsecond");
-        // Offset 5 sits right after "ab\u{6c49}" (1+1+3 bytes) — 3 runes
-        // precede it, so the display column is 4 (1-indexed).
-        assert_eq!(b.display_position(5), (1, 4));
-    }
-
-    #[test]
-    fn display_position_is_one_indexed_and_tracks_lines() {
-        let b = Buffer::new("first\nsecond");
-        assert_eq!(b.display_position(0), (1, 1));
-        let second_line_start = "first\n".len();
-        assert_eq!(b.display_position(second_line_start), (2, 1));
-        assert_eq!(b.display_position(second_line_start + 3), (2, 4));
-    }
-
-    /// An offset past the end of the content clamps to the last valid
-    /// position (`offset_to_line_col`'s own clamp) rather than panicking.
-    #[test]
-    fn display_position_clamps_an_out_of_range_offset() {
-        let b = Buffer::new("hi");
-        assert_eq!(b.display_position(100), (1, 3));
-    }
 
     /// Port of `TestBuffer_FromBytes`.
     #[test]

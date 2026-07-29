@@ -484,12 +484,12 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 /// `char::is_control()` (Unicode category Cc: `0x00..=0x1F` and
 /// `0x7F..=0x9F`) closes that exact hazard without narrowing what a human
 /// can actually type.
-/// Whether the active document's primary cursor sits on the FIRST display
-/// line — `display_position` is one-indexed, so line 1 is the top.
+/// Whether the active document's primary cursor sits on the FIRST buffer
+/// line — `offset_to_line_col`'s `line` is 0-indexed, so line 0 is the top.
 fn at_buffer_top(app: &App) -> bool {
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position;
-    doc.buffer.display_position(offset).0 == 1
+    doc.buffer.offset_to_line_col(offset).line == 0
 }
 
 fn is_insertable_key_char(ch: char) -> bool {

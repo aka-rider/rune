@@ -17,26 +17,25 @@
 //! Render order is load-bearing (plan gotcha 16): `render::draw` must have
 //! already painted the center `Block` over `block` before calling this, or
 //! `overlay`'s cells get painted over again.
+//!
+//! Every width in this module — the `bc` total, `build_crumb`'s per-part
+//! accounting, and `put`'s column advance — goes through the crate's ONE
+//! chrome-width chokepoint (`crate::width::display_width`, backed by
+//! `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per cell
+//! (§1.5), so the dash fill can never be sized in one unit and drawn in
+//! another: a CJK/emoji/NFD-accented path component makes the difference
+//! visible immediately if the two ever drift apart.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Span;
 use std::path::Component;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
-use rune_syntax::wrap::control_aware_width;
-
-/// The display width of `s`, measured through the crate's ONE width
-/// chokepoint (`rune_syntax::wrap`'s `control_aware_width`, the same one
-/// the renderer's cell segmentation uses). Every width in this module —
-/// the `bc` total, `build_crumb`'s per-part accounting, and `put`'s column
-/// advance — goes through it, so the dash fill can never be sized in one
-/// unit and drawn in another (§1.5: display widths are one system, and a
-/// CJK/emoji path component makes the difference visible immediately).
-fn text_width(s: &str) -> usize {
-    s.chars().map(control_aware_width).sum()
-}
+use crate::width::display_width;
+use rune_syntax::wrap::grapheme_width;
 
 /// Marks a crumb whose leading parts were dropped to fit the width. Two
 /// display columns; the trailing `/` reads as "…and more directories
@@ -81,7 +80,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
 
     let bc: usize = segments
         .iter()
-        .map(|s| text_width(s.content.as_ref()))
+        .map(|s| display_width(s.content.as_ref()))
         .sum();
     // The 7-column minimum overhead — leaves the
     // plain border row (already painted by `render::draw`'s `Block`)
@@ -103,19 +102,19 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     let mut x = block.x;
 
-    put(buf, &mut x, y, '╰', border_style);
+    put(buf, &mut x, y, "╰", border_style);
     for _ in 0..dash {
-        put(buf, &mut x, y, '─', border_style);
+        put(buf, &mut x, y, "─", border_style);
     }
-    put(buf, &mut x, y, ' ', plain);
+    put(buf, &mut x, y, " ", plain);
     for span in &segments {
-        for ch in span.content.chars() {
-            put(buf, &mut x, y, ch, span.style);
+        for cluster in span.content.graphemes(true) {
+            put(buf, &mut x, y, cluster, span.style);
         }
     }
-    put(buf, &mut x, y, ' ', plain);
-    for ch in "──╯".chars() {
-        put(buf, &mut x, y, ch, border_style);
+    put(buf, &mut x, y, " ", plain);
+    for cluster in "──╯".graphemes(true) {
+        put(buf, &mut x, y, cluster, border_style);
     }
 }
 
@@ -171,7 +170,7 @@ fn build_crumb(
     let mut current_width = 0usize;
 
     for (i, part) in parts.iter().enumerate().rev() {
-        let part_width = text_width(part);
+        let part_width = display_width(part);
         let is_last = i == n - 1;
 
         let (seg_width, seg): (usize, Vec<Span<'static>>) = if is_last {
@@ -187,7 +186,7 @@ fn build_crumb(
             // every directory above it is joined by a bare `/`.
             let sep = if i + 2 == n { LEAF_SEP } else { SEP };
             (
-                part_width + text_width(sep),
+                part_width + display_width(sep),
                 vec![
                     Span::styled(part.clone(), Style::new().fg(theme.chrome.special)),
                     Span::styled(sep, Style::new().fg(theme.chrome.subtle)),
@@ -213,21 +212,38 @@ fn build_crumb(
     segments
 }
 
-/// Writes one character at `(*x, y)` and advances `*x` by that character's
-/// DISPLAY width — the identical idiom `render::blit` uses
+/// Writes one whole GRAPHEME CLUSTER at `(*x, y)` and advances `*x` by that
+/// cluster's DISPLAY width — the identical idiom `render::blit` uses
 /// (`x.saturating_add(cell.width.max(1) as u16)`), and the reason this
-/// module can splice into a border row at all. Advancing by 1 per `char`
-/// while `overlay` sizes its dash fill in display columns would desync the
-/// two the moment a path component holds a CJK/emoji glyph: the `──╯` would
-/// land short of the right edge, leaving stale border cells behind it, and
-/// the cell ratatui reserves after a double-width glyph would be written
-/// into. Out-of-buffer writes are dropped by `cell_mut` returning `None`.
-fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, ch: char, style: Style) {
+/// module can splice into a border row at all. One cluster per `Cell`
+/// (`cell_mut().set_symbol`, not `set_char`) rather than one `char` per
+/// `Cell`: advancing/writing per-`char` while `overlay` sizes its dash fill
+/// per grapheme cluster would desync the two the moment a path component
+/// holds an NFD accent or a ZWJ emoji sequence — the accent/joiner runes
+/// would each claim their own (wrong) cell instead of riding along in the
+/// base character's cell, and the `──╯` would land short of the right
+/// edge, leaving stale border cells behind it.
+///
+/// A cluster whose width is more than 1 (a CJK ideograph, a wide emoji)
+/// claims MORE than one `Cell` on screen but this function only ever
+/// writes its symbol into the FIRST one: like `render::blit`, it resets
+/// every continuation cell the cluster covers, or whatever the buffer held
+/// there before (a border dash, a previous glyph's leftover) stays visible
+/// beside the new symbol — a real on-screen artifact, not just a test
+/// nicety, since two glyphs would then appear to occupy the same visual
+/// span. Out-of-buffer writes are dropped by `cell_mut` returning `None`.
+fn put(buf: &mut ratatui::buffer::Buffer, x: &mut u16, y: u16, cluster: &str, style: Style) {
     if let Some(cell) = buf.cell_mut((*x, y)) {
-        cell.set_char(ch);
+        cell.set_symbol(cluster);
         cell.set_style(style);
     }
-    *x = x.saturating_add(control_aware_width(ch).max(1) as u16);
+    let width = grapheme_width(cluster).max(1) as u16;
+    for dx in 1..width {
+        if let Some(cont) = buf.cell_mut((x.saturating_add(dx), y)) {
+            cont.reset();
+        }
+    }
+    *x = x.saturating_add(width);
 }
 
 #[cfg(test)]
@@ -261,10 +277,23 @@ mod tests {
             overlay(app, block, focused, frame)
         });
         let mut s = String::new();
-        for x in 0..width {
-            if let Some(cell) = buf.cell((x, height - 1)) {
-                s.push_str(cell.symbol());
-            }
+        // Mirrors ratatui's OWN diffing (`Buffer::diff`, `set_stringn`):
+        // a wide glyph's continuation cell is a reset (blank) `Cell` that
+        // real terminal output never reaches, because the renderer
+        // recomputes the PRECEDING cell's own display width and skips that
+        // many columns unconditionally — it never consults the
+        // continuation cell's content. Reading every raw cell symbol
+        // (including that skipped one) would double-count a column no
+        // terminal ever prints, so this walk skips ahead by each symbol's
+        // own width exactly like the real render path does.
+        let mut x = 0u16;
+        while x < width {
+            let Some(cell) = buf.cell((x, height - 1)) else {
+                break;
+            };
+            let sym = cell.symbol();
+            s.push_str(sym);
+            x = x.saturating_add(grapheme_width(sym).max(1) as u16);
         }
         s
     }
@@ -348,14 +377,33 @@ mod tests {
         );
     }
 
+    /// An independent width oracle (plan [rune-tui C 14]): computed
+    /// straight from `unicode_width`/`unicode_segmentation`, never by
+    /// calling this module's own `display_width`/`grapheme_width` — so a
+    /// regression in the production chokepoint can't pass a test that
+    /// merely re-invokes it. The old per-`char` `text_width` this module
+    /// used to have made its own width test "agree by construction" with
+    /// exactly the bug it existed to catch.
+    fn oracle_cell_width(s: &str) -> usize {
+        s.graphemes(true)
+            .map(|g| {
+                g.chars()
+                    .filter_map(unicode_width::UnicodeWidthChar::width)
+                    .max()
+                    .unwrap_or(0)
+                    .max(1)
+            })
+            .sum()
+    }
+
     /// The separator glyphs must be ONE display column each, or every width
     /// in this module (dash fill, `bc`, the truncation budget) is computed
     /// against a lie and the `──╯` drifts off the right edge (§1.5).
     #[test]
     fn the_separator_glyphs_are_single_column() {
-        assert_eq!(text_width(SEP), 1);
-        assert_eq!(text_width(LEAF_SEP), 3);
-        assert_eq!(text_width(ELLIPSIS), 2);
+        assert_eq!(oracle_cell_width(SEP), 1);
+        assert_eq!(oracle_cell_width(LEAF_SEP), 3);
+        assert_eq!(oracle_cell_width(ELLIPSIS), 2);
     }
 
     /// A one-component path is all leaf: no separator, no stray padding.
@@ -389,7 +437,49 @@ mod tests {
         let row = overlay_bottom_row(&app, W, 3, true);
         // "…/delta › note.md" is 17 wide, so dash = 28 - 17 - 6 = 5.
         assert_eq!(row, format!("╰{} …/delta › note.md ──╯", "─".repeat(5)));
-        assert_eq!(text_width(&row), W as usize, "the row must fill its width");
+        assert_eq!(
+            oracle_cell_width(&row),
+            W as usize,
+            "the row must fill its width"
+        );
+    }
+
+    /// An NFD-decomposed filename (`café.md` as `e` + combining acute,
+    /// macOS's own on-disk normalization) must render its accent riding
+    /// along in the base letter's cell, not claiming a stray cell of its
+    /// own — the exact class [rune-tui C 2] found broken. Measured against
+    /// the independent oracle, never `display_width` itself.
+    #[test]
+    fn an_nfd_accent_rides_along_in_its_base_letters_cell() {
+        const W: u16 = 40;
+        let nfd_name = "cafe\u{0301}.md"; // "café.md", e + combining acute
+        let app = app_for("hello", Some(&format!("/a/{nfd_name}")));
+        let row = overlay_bottom_row(&app, W, 3, true);
+        assert!(
+            row.contains(nfd_name),
+            "expected the NFD name verbatim in the row:\n{row}"
+        );
+        assert_eq!(
+            oracle_cell_width(&row),
+            W as usize,
+            "the row must still fill its width with the accent in one cell"
+        );
+    }
+
+    /// A ZWJ-joined emoji family in a path component is one grapheme
+    /// cluster, one cell — never torn into several cells the way a bare
+    /// `chars()` walk would.
+    #[test]
+    fn a_zwj_emoji_family_component_occupies_one_cell_per_cluster() {
+        const W: u16 = 40;
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}"; // 👨‍👩‍👧
+        let app = app_for("hello", Some(&format!("/a/{family}/note.md")));
+        let row = overlay_bottom_row(&app, W, 3, true);
+        assert_eq!(
+            oracle_cell_width(&row),
+            W as usize,
+            "the row must fill its width with the family as one wide cluster"
+        );
     }
 
     #[test]
@@ -452,7 +542,7 @@ mod tests {
             let segments = build_crumb(&parts, width as usize, &theme);
             let bc: usize = segments
                 .iter()
-                .map(|s| text_width(s.content.as_ref()))
+                .map(|s| display_width(s.content.as_ref()))
                 .sum();
             if bc + 7 > block.width as usize {
                 continue;

@@ -12,12 +12,11 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use rune_syntax::wrap::grapheme_width;
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::document::DocumentId;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
+use crate::width::{display_width, truncate_to_width};
 use crate::listnav;
 use crate::pane::Pane;
 use crate::workspace;
@@ -176,29 +175,6 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
         ])),
         row,
     );
-}
-
-/// `s`'s width in terminal cells, summed over whole grapheme clusters via
-/// the shared width chokepoint — the same number the renderer and the wrap
-/// pass agree on.
-fn display_width(s: &str) -> usize {
-    s.graphemes(true).map(grapheme_width).sum()
-}
-
-/// The longest prefix of `s` (cut only at grapheme boundaries) that fits in
-/// `max` terminal cells.
-fn truncate_to_width(s: &str, max: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0usize;
-    for cluster in s.graphemes(true) {
-        let w = grapheme_width(cluster);
-        if used + w > max {
-            break;
-        }
-        out.push_str(cluster);
-        used += w;
-    }
-    out
 }
 
 /// Draws the Tabs pane's content into `area` — the rows below the `Open`

@@ -36,5 +36,6 @@ pub mod testgrid;
 pub mod theme;
 pub mod title;
 pub mod when;
+pub mod width;
 pub mod workspace;
 pub mod workspaceroot;

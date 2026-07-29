@@ -18,6 +18,8 @@ use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
+use crate::width::display_width;
+use rune_syntax::wrap::line_visual_col;
 
 /// Which single visual state the footer's left side shows for this render
 /// — priority order highest-first (plan WP2.S6, WP3.S3): a modal (the
@@ -261,7 +263,7 @@ fn truncated_default_hint_spans(
     let mut used = 0usize;
     for (i, (label, help, active)) in default_hint_entries(app).into_iter().enumerate() {
         let entry = hint_entry_spans(&app.theme, i, label, help, active);
-        let entry_width: usize = entry.iter().map(|s| s.content.chars().count()).sum();
+        let entry_width: usize = entry.iter().map(|s| display_width(&s.content)).sum();
         if used + entry_width + right_width > available {
             break;
         }
@@ -279,20 +281,27 @@ pub fn footer_text(app: &App) -> String {
 }
 
 /// `Ln <line>, Col <col>` from the active document's primary cursor (plan
-/// Assumption A3, port of Go `footer_view.go:176`'s `m.line+1, m.col+1`) —
-/// always shown, regardless of the left side's `Mode`. Col counts RUNES
-/// within the line (§1.5), via `Buffer::display_position`.
+/// WP8, port of Go `footer_view.go:176`'s `m.line+1, m.col+1`) — always
+/// shown, regardless of the left side's `Mode`. Col is a LINE-relative
+/// terminal-CELL column (§1.5, `rune_syntax::wrap::line_visual_col`), not a
+/// wrap-row-relative one: `line_visual_col` walks the cursor's own logical
+/// line from its own start, so a wrapped line's second-and-later visual row
+/// never resets the readout back to `Col 1`.
 pub fn position_text(app: &App) -> String {
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position;
-    let (line, col) = doc.buffer.display_position(offset);
-    format!("Ln {line}, Col {col}")
+    let bp = doc.buffer.offset_to_line_col(offset);
+    let line_start = doc.buffer.line_start(bp.line);
+    let line_end = doc.buffer.line_end(bp.line);
+    let line_text = doc.buffer.slice(line_start, line_end).unwrap_or("");
+    let col = line_visual_col(line_text, bp.col);
+    format!("Ln {}, Col {}", bp.line + 1, col + 1)
 }
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let bg = app.theme.chrome.footer;
     let right_text = position_text(app);
-    let right_width = right_text.chars().count();
+    let right_width = display_width(&right_text);
     let available = area.width as usize;
     // Truncation (plan WP6.S3/risk R3) only applies to `DefaultHints` — the
     // one mode that grows with the focused pane's own hints; every other
@@ -303,7 +312,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         Mode::DefaultHints => truncated_default_hint_spans(app, available, right_width),
         _ => left_spans(app),
     };
-    let left_width: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    let left_width: usize = spans.iter().map(|s| display_width(&s.content)).sum();
     if available > left_width + right_width {
         spans.push(Span::styled(
             " ".repeat(available - left_width - right_width),
