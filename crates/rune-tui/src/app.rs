@@ -147,6 +147,21 @@ pub struct App {
     /// the ack's recovered content would silently clobber those keystrokes
     /// (never clobber keystrokes to complete a recovery binding).
     pub db_load_versions: HashMap<u64, u64>,
+    /// WP7: correlates an in-flight `MaterializeRecord` op id to the
+    /// document whose disk write ALREADY physically completed before this
+    /// op was even enqueued — the caller-side vfs work runs first, this
+    /// bookkeeping op runs after. A dead writer failing precisely THIS op
+    /// (`DbEvent::Err`/`Fatal`) must never be reported as a failed save
+    /// ([rune-db 1]): `handle_db_event` consults this map to react with a
+    /// synthetic committed ack instead of the ordinary failure path.
+    /// Cleared on both success and failure — never left stale.
+    pub published_ops: HashMap<u64, DocumentId>,
+    /// WP7: the content/path/CAS facts a `materialize` attempt captured at
+    /// trigger time, held here between `MaterializePrepare`'s ack (which
+    /// carries no disk-sourced data at all) and the caller-side `vfs` `Cmd`
+    /// it spawns — `save::PendingMaterialize`'s doc comment explains why
+    /// each field is captured once and never re-derived (§1.4.2/§1.4.8).
+    pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
     /// A persistent status banner independent of `status_message`'s
     /// provenance-cleared slot (plan WP5.S2/S3: "persistent status banner")
     /// — set once the store degrades (at open, or from a later
@@ -269,6 +284,8 @@ impl App {
             db,
             db_ops: HashMap::new(),
             db_load_versions: HashMap::new(),
+            published_ops: HashMap::new(),
+            pending_materialize: HashMap::new(),
             db_banner: None,
             pending_save_confirm: None,
             next_save_confirm_gen: 0,

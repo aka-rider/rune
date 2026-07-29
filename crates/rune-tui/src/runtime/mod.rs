@@ -73,6 +73,15 @@ pub enum Msg {
     /// A completion posted by `rune-db`'s writer thread, routed through
     /// `db::DbBridge` (plan WP5.S1).
     Db(rune_db::DbEvent),
+    /// WP7: the caller-side `vfs` `Cmd` a `MaterializePrepare` ack spawned
+    /// (`save::materialize_vfs_cmd`) has finished the ENTIRE disk dance —
+    /// resolve/read/hash-compare/publish/read-displaced — through this
+    /// app's own `Vfs` handle, never the writer thread's. Routed to
+    /// `save::handle_materialize_vfs_done`.
+    MaterializeVfsDone {
+        id: DocumentId,
+        outcome: crate::save::MaterializeVfsOutcome,
+    },
     /// `vfs.read_dir(root)` completed (plan WP4.S4) — the Explorer's own
     /// boundary Msg, delivered by [`load_dir_cmd`]. `Nav` (navigated into
     /// `root`) resets the Explorer's cursor to the top; `Refresh` (a future

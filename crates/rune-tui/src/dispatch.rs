@@ -66,6 +66,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
         Msg::Db(evt) => handle_db_event(app, evt, effects),
+        Msg::MaterializeVfsDone { id, outcome } => {
+            save::handle_materialize_vfs_done(app, id, outcome)
+        }
         Msg::DirLoaded {
             root,
             entries,
@@ -123,8 +126,17 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Ok {
             id: op_id,
+            result: rune_db::OpOutcome::MaterializePrep(prep),
+        } => {
+            if let Some(doc_id) = app.db_ops.remove(&op_id) {
+                save::handle_prepare_ack(app, doc_id, *prep, effects);
+            }
+        }
+        DbEvent::Ok {
+            id: op_id,
             result: rune_db::OpOutcome::Materialize(mat),
         } => {
+            app.published_ops.remove(&op_id);
             if let Some(doc_id) = app.db_ops.remove(&op_id) {
                 save::handle_materialize_ack(app, doc_id, *mat);
             }
@@ -152,10 +164,39 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             app.db_ops.remove(&op_id);
             app.db_load_versions.remove(&op_id);
             crate::rename::fail_op(app, op_id, error.clone(), effects);
+            // WP7: this exact op may be a `MaterializeRecord` whose disk
+            // write ALREADY physically completed before the writer died —
+            // report the save as successful FIRST, so `on_store_failure`'s
+            // in-flight sweep below never re-flags it as failed
+            // ([rune-db 1]).
+            if let Some(doc_id) = app.published_ops.remove(&op_id) {
+                save::handle_materialize_ack(
+                    app,
+                    doc_id,
+                    rune_db::MatResult {
+                        committed: true,
+                        ..Default::default()
+                    },
+                );
+            }
             save::on_store_failure(app, error);
         }
         DbEvent::Fatal { error } => {
             crate::rename::fail_all(app, error.clone(), effects);
+            // WP7: same reasoning as the `Err` arm above, for every
+            // still-in-flight `MaterializeRecord` a `Fatal` tears down —
+            // each one's write already physically completed.
+            let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();
+            for doc_id in published {
+                save::handle_materialize_ack(
+                    app,
+                    doc_id,
+                    rune_db::MatResult {
+                        committed: true,
+                        ..Default::default()
+                    },
+                );
+            }
             save::on_store_failure(app, error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`

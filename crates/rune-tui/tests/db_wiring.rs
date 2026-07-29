@@ -309,17 +309,22 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
     );
 }
 
-/// Finding 5: a `materialize` enqueue failure (the store writer confirmed
-/// gone) must degrade the store and raise the sticky banner through the
-/// SAME `on_store_failure` chokepoint `append_edit`/`move_undo_pos` use —
-/// not a one-shot `SaveError` status that leaves `db.degraded` untouched
-/// and lets the next `super+s` silently retry against an already-dead
-/// writer. Deterministically waits for the writer to be CONFIRMED gone (a
-/// side-channel `probe` enqueue returning `Err`) before pressing save
-/// exactly once, rather than racing `super+s`'s own in-flight latch against
-/// the kill op's async dequeue.
+/// Finding 5 / [rune-db 1] (WP7): a `MaterializePrepare` enqueue failure
+/// (the store writer confirmed gone) must degrade the store and raise the
+/// sticky banner through the SAME `on_store_failure` chokepoint
+/// `append_edit`/`move_undo_pos` use — never a one-shot `SaveError` status
+/// that leaves `db.degraded` untouched. Distinct from the pre-WP7 bug this
+/// finding described: a dead writer must not ALSO make the save itself
+/// impossible — WP7's `materialize_now` falls back to the same
+/// uncoordinated direct-`vfs` `Cmd` a document with no store binding uses,
+/// so `save_in_flight` stays true (a real write is now in flight) and,
+/// once that `Cmd` runs, the user's bytes are actually on disk — "press
+/// ⌘S again to save anyway" must actually save. Deterministically waits
+/// for the writer to be CONFIRMED gone (a side-channel `probe` enqueue
+/// returning `Err`) before pressing save exactly once, rather than racing
+/// `super+s`'s own in-flight latch against the kill op's async dequeue.
 #[test]
-fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
+fn killed_writer_makes_materialize_enqueue_degrade_the_store_but_still_save() {
     let dir = temp_db_dir("kill-writer-materialize");
     let db_path = dir.join("rune-v1.db");
     let doc_path = Path::new("/doc.md");
@@ -335,7 +340,7 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
     let mut app = App::new(
         Buffer::new(load.recovered.clone()),
         Some(doc_path.to_path_buf()),
-        vfs,
+        Arc::clone(&vfs),
         Some(db),
     );
     let id = app.active;
@@ -390,8 +395,28 @@ fn killed_writer_makes_materialize_enqueue_degrade_the_store_synchronously() {
         "the store must be marked degraded via on_store_failure, not left untouched"
     );
     assert!(
+        app.doc(id).unwrap().save_in_flight,
+        "WP7: a dead writer must not also make the save itself impossible — the \
+         direct-vfs fallback Cmd is in flight, not silently skipped"
+    );
+
+    let cmd = effects
+        .cmds
+        .into_iter()
+        .find(|c| c.kind() == rune_tui::runtime::CmdKind::Save)
+        .expect("the dead-writer fallback must spawn a direct-vfs Save Cmd");
+    let msg = cmd.run().expect("the fallback Cmd must reply");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+
+    assert!(
         !app.doc(id).unwrap().save_in_flight,
-        "on_store_failure must clear save_in_flight on an enqueue failure"
+        "the fallback save's own ack must clear save_in_flight"
+    );
+    assert_eq!(
+        vfs.read(doc_path).expect("file still readable"),
+        b"hi!",
+        "the user's edit must have reached disk despite the dead writer thread"
     );
 }
 

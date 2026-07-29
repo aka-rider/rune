@@ -760,8 +760,22 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
     type_text(&mut app, "fresh");
     send(&mut app, plain(KeyCode::Enter));
 
-    let evt = next_event(&rx);
-    send(&mut app, Msg::Db(evt));
+    // WP7: the store-backed create is now a three-hop round trip —
+    // `MaterializePrepare`'s ack spawns the caller-side `vfs` `Cmd`
+    // (`handle_prepare_ack`), which itself replies with a `Msg` that
+    // enqueues `MaterializeRecord`.
+    let prep_evt = next_event(&rx);
+    let mut effects = send(&mut app, Msg::Db(prep_evt));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done = cmd.run().expect("the vfs Cmd must reply");
+    send(&mut app, vfs_done);
+
+    let record_evt = next_event(&rx);
+    send(&mut app, Msg::Db(record_evt));
 
     assert_eq!(app.rename, RenameState::Idle);
     let path = active_path(&app).expect("the draft must now be bound");
