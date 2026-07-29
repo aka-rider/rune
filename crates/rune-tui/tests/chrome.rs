@@ -306,6 +306,31 @@ fn default_footer_hints_omit_the_aliased_quit_chord() {
     );
 }
 
+/// The always-available global tail (`F1 help`, `^C quit`) must survive
+/// width truncation even once a focused pane's own hint table has grown the
+/// row past what fits — a stable position ahead of the pane-specific table
+/// is what keeps the row's most important entries from being the first
+/// thing dropped under pressure. Renders through `draw`, the TRUNCATED path
+/// (`footer_text` is untruncated and cannot observe this).
+#[test]
+fn footer_global_tail_survives_truncation_with_explorer_focused() {
+    let mut app = app_for("hello");
+    app.splits.left.show();
+    app.focus = Pane::Explorer;
+    app.sync_view();
+
+    let buf = draw_with_width(&app, 120);
+    let footer_row = row_text(&buf, HEIGHT - 1, 120);
+    assert!(
+        footer_row.contains("F1"),
+        "expected 'F1' (help) on the truncated footer row:\n{footer_row}"
+    );
+    assert!(
+        footer_row.contains("^C"),
+        "expected '^C' (quit) on the truncated footer row:\n{footer_row}"
+    );
+}
+
 /// Aliases stay discoverable in the generated Help doc even though the
 /// footer hides them — `^d` still works, so it must still be documented.
 #[test]
