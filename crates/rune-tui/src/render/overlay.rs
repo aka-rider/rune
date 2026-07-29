@@ -72,8 +72,19 @@ pub(super) fn apply_highlight_spans(
     }
 
     let mut window: Vec<Option<ScopeId>> = vec![None; hi - lo];
-    for (range, scope) in spans {
-        if range.start >= range.end || range.end <= lo || range.start >= hi {
+    // `spans` is painter-order (`range.start` ASC, per the doc comment
+    // above), so a span whose `start` already sits at or past `hi` — and
+    // every span after it, since `start` only grows — cannot overlap the
+    // visible window at all (plan WP16.S4). `partition_point` finds that
+    // boundary in O(log n); the loop below then walks only the PREFIX up to
+    // it, never the full span list regardless of where in a large parsed
+    // document the current viewport happens to sit (`spans` is capped at
+    // `rune_ts::MAX_SPANS` but a full parse of a large file can still fill
+    // most of that cap while the viewport shows a small fraction of it).
+    let visible_end = spans.partition_point(|(range, _)| range.start < hi);
+    let visible = spans.get(..visible_end).unwrap_or(&[]);
+    for (range, scope) in visible {
+        if range.start >= range.end || range.end <= lo {
             continue;
         }
         let start = range.start.max(lo) - lo;
@@ -240,6 +251,49 @@ mod tests {
         for (b, a) in before.iter().zip(rows[0].iter()) {
             assert_eq!(b.buf_offset, a.buf_offset);
             assert_eq!(b.width, a.width);
+        }
+    }
+
+    /// Plan WP16.S4: a span whose `start` sits past the visible window
+    /// (`hi`) must still be excluded now that the window scan cuts off at
+    /// `partition_point(start < hi)` instead of scanning every span — this
+    /// pins that the cut doesn't accidentally paint (or panic on) a span
+    /// that used to just be skipped by the old `range.start >= hi` filter.
+    #[test]
+    fn a_span_starting_past_the_visible_window_is_excluded() {
+        let theme = Theme::catppuccin_mocha(false);
+        let plain = Style::default();
+        let mut rows = vec![(0..5).map(cell).collect::<Vec<Cell>>()];
+        // Sorted by `start` ASC (painter order): one span inside the
+        // window, one entirely past it.
+        let spans = vec![(1..3, scope("variable")), (100..200, scope("function"))];
+        apply_highlight_spans(&mut rows, &spans, &theme);
+
+        let row = &rows[0];
+        assert_eq!(row[0].style, plain);
+        assert_eq!(row[1].style, theme.scope_style(scope("variable")));
+        assert_eq!(row[2].style, theme.scope_style(scope("variable")));
+        for i in [3, 4] {
+            assert_eq!(row[i].style, plain, "cell {i} is outside every span");
+        }
+    }
+
+    /// A span that starts before the window's `hi` but extends past `lo`'s
+    /// window into the document tail must still paint its portion INSIDE
+    /// the window — the `partition_point` cut is on `start`, not `end`, so
+    /// a wide span isn't dropped just because it outlives the window.
+    #[test]
+    fn a_span_straddling_the_window_boundary_still_paints_its_visible_portion() {
+        let theme = Theme::catppuccin_mocha(false);
+        let mut rows = vec![(0..5).map(cell).collect::<Vec<Cell>>()];
+        let spans = vec![(2..1000, scope("function"))];
+        apply_highlight_spans(&mut rows, &spans, &theme);
+
+        let row = &rows[0];
+        assert_eq!(row[0].style, Style::default());
+        assert_eq!(row[1].style, Style::default());
+        for i in [2, 3, 4] {
+            assert_eq!(row[i].style, theme.scope_style(scope("function")));
         }
     }
 
