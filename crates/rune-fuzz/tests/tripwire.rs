@@ -217,6 +217,40 @@ fn driver_is_deterministic() {
     );
 }
 
+/// Regression for `TODO-fuzz-undo-total-dirty-close-discard.md`: a
+/// quit-chord's dirty-close Guard, armed on a document that is NOT the
+/// currently active one, discards the seeded document via its own
+/// `[D]iscard` key before the end-of-session undo/redo drive runs. That
+/// discard is production working exactly as designed (§1.4.4's Guard has
+/// no "but it's not the active document" exception) — the driver's own
+/// end-of-session drive must recognize the seed is gone and skip `UNDO-
+/// TOTAL`/`REDO-TOTAL` for the session, rather than running the drive
+/// against whatever document (Help, here) is left active. Pinned in
+/// `proptest-regressions/human_session.txt` too, so `make test-fuzz`
+/// replays this exact shape on every run.
+#[test]
+fn seed_discarded_by_dirty_close_guard_skips_undo_total() {
+    let actions = vec![
+        Action::Type("hello world".to_string()),
+        Action::Key(key(KeyCode::F1, Mods::NONE)),
+        Action::Key(key(KeyCode::Char('¡'), Mods::NONE)),
+        Action::Key(key(KeyCode::Char(' '), Mods::NONE)),
+        Action::Key(key(KeyCode::Char('c'), ctrl())),
+        Action::StaleConfirmTimeout(4294967295),
+        Action::Type("\"quoted\" 'text'".to_string()),
+    ];
+    let result = driver::run("/fuzz/doc.md", "", &actions);
+    assert!(
+        result.violation.is_none(),
+        "{}",
+        result
+            .violation
+            .as_ref()
+            .map(|v| format!("{}: {}", v.id, v.message))
+            .unwrap_or_default()
+    );
+}
+
 // ---------------------------------------------------------------------
 // Hand-constructible `Snapshot` helpers for WP4.S3/S4. `Snapshot`'s fields
 // are all `pub` (G16), so a checker's input is built directly with no need

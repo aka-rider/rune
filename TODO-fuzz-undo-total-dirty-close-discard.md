@@ -8,10 +8,24 @@ switch class, record it and finish — do not chase it"): traced far enough to
 confirm this is a genuinely DIFFERENT root cause, not a fourth instance of
 that class, then stopped.
 
-**Status:** open, out of scope for `fix-invariant-doc-switch` (that branch's
-scope is the active-document-switch checker class only). This regression is
-now pinned in `crates/rune-fuzz/proptest-regressions/human_session.txt`, so
-`make test-fuzz` will keep replaying and failing on it until fixed.
+**Status:** FIXED on `fix-undo-total-dirty-close-discard`. Confirmed by
+tracing `pane::handle_quit_key`/`first_unpreserved_dirty_doc` and
+`banner::handle_dirty_close_key`/`workspace::close_now`: the Guard firing
+for a non-active dirty document, and the discard permanently closing it, are
+both correct, intended behaviour (§1.4.4's per-document dirty gate has no
+"but it's not the active document" exception) — this was classification (b)
+from this file's own suggested-fix section: a fuzz-DRIVER precondition bug,
+not a production defect. Fixed per option (a): `driver::State` now carries
+`seed_doc`, the `DocumentId` `App::new` mints for the seeded document,
+captured once before any action runs; `checks::drive_end_of_session_checks`
+skips the whole end-of-session undo/redo drive (and, with it, `UNDO-TOTAL`/
+`REDO-TOTAL`) whenever `seed_doc` is no longer in `app.documents` — a
+discarded document has no undo history left to prove anything about, the
+same "inert by design" shape as the G5/G15 skip conditions already there.
+Regression test `seed_discarded_by_dirty_close_guard_skips_undo_total`
+(`crates/rune-fuzz/tests/tripwire.rs`) pins the exact repro below (not
+`#[ignore]`d, runs under `cargo test --workspace`). The pinned seed in
+`proptest-regressions/human_session.txt` (`cc b82c8617...`) replays clean.
 
 ## Minimal repro
 

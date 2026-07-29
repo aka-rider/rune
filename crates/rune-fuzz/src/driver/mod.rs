@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{self, KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
@@ -66,6 +67,17 @@ struct State {
     pending_save: Option<(Cmd, Vec<u8>)>,
     saves_delivered_ok: usize,
     steps: usize,
+    /// The `DocumentId` `App::new` minted for the seeded document below —
+    /// always the very first (and, at that point, only) document, so this
+    /// is captured once, before any action runs. `UNDO-TOTAL`/`REDO-TOTAL`
+    /// exist to prove undo/redo totality on THIS document; `checks::
+    /// drive_end_of_session_checks` consults it to tell "the seed is still
+    /// open, just not necessarily active" (F1 toggled to Help — recoverable
+    /// by pressing F1 again) apart from "the seed was discarded entirely"
+    /// (a dirty-close Guard's `[D]iscard`, per `TODO-fuzz-undo-total-dirty-
+    /// close-discard.md`) — the latter leaves no document for either
+    /// checker to say anything meaningful about.
+    seed_doc: DocumentId,
 }
 
 /// Accumulates the frozen state once a violation fires, so the driving loop
@@ -112,6 +124,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     app.relayout();
     app.sync_view();
 
+    let seed_doc = app.active;
     let mut state = State {
         app,
         mem,
@@ -119,6 +132,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         pending_save: None,
         saves_delivered_ok: 0,
         steps: 0,
+        seed_doc,
     };
     let mut prev = Snapshot::capture(&mut state.app, false);
     let mut outcome = Outcome {

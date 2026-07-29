@@ -101,17 +101,17 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// toggle_help`'s own docs say this switches back to whatever was active
 /// right before Help was last activated, ORDINARILY the seeded document
 /// (this driver never OPENS more than one non-Help document). That is not
-/// an absolute guarantee, though: `TODO-fuzz-undo-total-dirty-close-
-/// discard.md` (found soaking the WP6.S5 checker set) shows the seeded
-/// document can be DISCARDED first (a quit-chord's dirty-close Guard,
-/// armed on a document other than the one currently active, followed by a
-/// `[D]iscard` key) — `toggle_help`'s own fallback then has nowhere else to
-/// switch to and lands back on Help, leaving `UNDO-TOTAL`/`REDO-TOTAL` to
-/// run against Help instead of the (now-gone) seed. Then `^E`
-/// (`GlobalCommand::FocusEditor`), only while focus isn't already
-/// `Pane::Editor` — re-checked fresh rather than decided up front, since
-/// dismissing the modal (or toggling Help off) can itself leave focus
-/// somewhere other than `Editor`.
+/// an absolute guarantee: a quit-chord's dirty-close Guard, armed on a
+/// document other than the one currently active, can discard the seeded
+/// document entirely (`[D]iscard`) before this runs — `toggle_help`'s own
+/// fallback then has nowhere else to switch to and lands back on Help
+/// (`TODO-fuzz-undo-total-dirty-close-discard.md`, fixed: the caller,
+/// `drive_end_of_session_checks`, now checks `seed_doc` still exists BEFORE
+/// calling this function at all, so that case never reaches this `F1`
+/// press in the first place). Then `^E` (`GlobalCommand::FocusEditor`),
+/// only while focus isn't already `Pane::Editor` — re-checked fresh rather
+/// than decided up front, since dismissing the modal (or toggling Help
+/// off) can itself leave focus somewhere other than `Editor`.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.modal.is_some() {
         let (msg, tag) = key_step(KeyInput {
@@ -155,7 +155,18 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
 /// point the session stopped at (`invariant::redo_total`'s docs).
 /// Skipped once a violation already stopped the session, or the session
 /// tore itself down via quit (G15: a torn-down model must not receive
-/// more input, same as Go's driver).
+/// more input, same as Go's driver). Also skipped once the seeded document
+/// itself no longer exists (`TODO-fuzz-undo-total-dirty-close-discard.md`):
+/// a quit-chord's dirty-close Guard, armed on a document other than the one
+/// currently active, can legitimately discard the seed via its own
+/// `[D]iscard` key — production working exactly as designed (§1.4.4's
+/// per-document dirty gate has no "but it's not the active one" exception).
+/// A discarded document has no undo history left to prove anything about;
+/// driving `restore_editor_focus`'s `F1` press in that state would only
+/// land back on Help (its own fallback has nothing else to switch to), and
+/// `UNDO-TOTAL`/`REDO-TOTAL` would then be comparing the seed against a
+/// document that was never the seed to begin with. This is the driver's
+/// own precondition to maintain, not a relaxation of either checker.
 pub(super) fn drive_end_of_session_checks(
     state: &mut State,
     prev: &mut Snapshot,
@@ -164,6 +175,7 @@ pub(super) fn drive_end_of_session_checks(
 ) {
     if outcome.violation.is_none()
         && !state.app.should_quit
+        && state.app.documents.contains_key(&state.seed_doc)
         && !restore_editor_focus(state, prev, outcome)
     {
         let pre_undo = prev.clone();
