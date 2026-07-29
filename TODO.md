@@ -834,3 +834,11 @@ read: give the splitter an explicit "trail collapsed by the user" state rather
 than inferring collapse from a transient `available`. That is a design change to
 `Split`'s API (`request` would need the axis length and the trail's limits), so
 it is recorded here rather than rushed.
+
+## syntax-highlighting-latency plan, WP3 — the per-frame viewport query joined the render budget
+
+`render::build_rows` now runs a `rune_ts::highlight_range` query, scoped to the visible byte window, on every frame for a code document with a retained tree — see `crates/rune-tui/src/render/mod.rs`. This is new per-frame cost with no dedicated gate (`make perf-guard` only covers `rune-md`'s parse pipeline). When the display-pipeline budget review already tracked elsewhere in this file happens, it must measure this query alongside the existing whole-document `build_rows`/snapshot recompute — not just the pre-existing cost.
+
+## syntax-highlighting-latency plan, WP3 — no fuzz invariant observes tree-backed rendering yet
+
+The session fuzzer's `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW` invariants (`crates/rune-fuzz/src/invariant/highlight.rs`) exercise the span path via `Msg::Highlighted`'s `Spans` payload — real coverage, since dispatch stores span payloads for any document (D6 of the plan). Nothing yet exercises the `Tree` payload / per-frame `highlight_range` viewport query path a real code document's background parse takes. Adding a fuzz action that delivers a synthetic `HighlightPayload::Tree` (or a real `rune_ts::parse` over a small fixture) is future work, not part of this change.
