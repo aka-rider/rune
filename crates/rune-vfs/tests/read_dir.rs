@@ -118,12 +118,28 @@ fn disk_read_dir_missing_path_errors() {
 // Mem
 // ============================================================================
 
+/// WP1.S6 (finding 7): `Mem::read_dir` on a path with no exact key and no
+/// descendant key must error `NotFound`, matching `Disk`'s behavior for a
+/// genuinely nonexistent directory — it must not report an empty listing,
+/// which used to be indistinguishable from a real, existing, empty
+/// directory.
 #[test]
-fn mem_read_dir_empty_result_on_untouched_vfs() {
+fn mem_read_dir_errors_not_found_on_untouched_vfs() {
+    let vfs = Mem::new();
+    let err = vfs
+        .read_dir(&PathBuf::from("/a"))
+        .expect_err("read_dir on a path with no keys under it must error");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+}
+
+/// The synthetic root always exists, even on a completely untouched `Mem` —
+/// unlike any other path, it is never reported `NotFound`.
+#[test]
+fn mem_read_dir_root_always_exists() {
     let vfs = Mem::new();
     let entries = vfs
-        .read_dir(&PathBuf::from("/a"))
-        .expect("read_dir should succeed");
+        .read_dir(&PathBuf::from("/"))
+        .expect("the synthetic root always exists");
     assert!(entries.is_empty());
 }
 

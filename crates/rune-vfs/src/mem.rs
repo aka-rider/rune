@@ -13,7 +13,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::{DirEntry, FileKind, Identity, Stat, Vfs, sort_dir_entries, temp_name};
 
-/// The `Vfs` operation a `Mem::fail_next` injection targets.
+/// The `Vfs` operation a `Mem::fail_next`/`Mem::fail_after` injection
+/// targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OpKind {
     Read,
@@ -32,6 +33,11 @@ struct MemFile {
     inode: u64,
     device: u64,
     mod_tick: u64,
+    /// Hard-link count `Vfs::stat` reports. Defaults to 1 (Mem's own files
+    /// are never actually hard-linked); settable via `Mem::set_nlink` so the
+    /// hardlink-fork warning path (consumed by `rune-db` observation/load)
+    /// has a test double capable of exercising `nlink > 1` (WP1.S6).
+    nlink: u64,
 }
 
 struct MemState {
@@ -44,6 +50,14 @@ struct MemState {
 pub struct Mem {
     state: Mutex<MemState>,
     fail_next: Mutex<Option<(OpKind, io::Error)>>,
+    /// WP1.S5: the counterpart to `fail_next`. `fail_next` intercepts a call
+    /// before it touches `state`; `fail_after` lets a mutating op (currently
+    /// `Exchange`/`RenameExcl`, the two publish primitives) complete its
+    /// mutation and THEN fail, reproducing "the swap/rename already took
+    /// effect, but the operation still reported failure" — the phase
+    /// `WrappedIo::published` distinguishes, and which `fail_next` cannot
+    /// express at all.
+    fail_after: Mutex<Option<(OpKind, io::Error)>>,
 }
 
 impl Mem {
@@ -55,6 +69,7 @@ impl Mem {
                 tick: 0,
             }),
             fail_next: Mutex::new(None),
+            fail_after: Mutex::new(None),
         }
     }
 
@@ -74,6 +89,17 @@ impl Mem {
         self.fail_next(OpKind::WriteDurable, kind);
     }
 
+    /// Arms a one-shot failure for the next call to `op` that fires AFTER
+    /// `op`'s mutation has already taken effect, marked
+    /// [`crate::published_not_durable`] (only meaningful for `Exchange`/
+    /// `RenameExcl`, the publish primitives `Disk::publish` also marks this
+    /// way). See the field doc on `Mem::fail_after`.
+    pub fn fail_after(&self, op: OpKind, kind: io::ErrorKind) {
+        let err = io::Error::new(kind, format!("fail_after({op:?}) triggered"));
+        let mut guard = self.fail_after.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some((op, err));
+    }
+
     /// Consumes the armed failure if it targets `op`, returning it as an
     /// error. Otherwise leaves any differently-targeted armed failure
     /// untouched and returns `Ok`.
@@ -89,18 +115,47 @@ impl Mem {
         }
     }
 
+    /// Consumes the armed `fail_after` failure if it targets `op`, wrapping
+    /// it as `published_not_durable` since every current caller of this
+    /// (`exchange`/`rename_excl`) is a publish primitive.
+    fn take_after_failure(&self, op: OpKind, context: impl Into<String>) -> Option<io::Error> {
+        let mut guard = self.fail_after.lock().unwrap_or_else(|p| p.into_inner());
+        match guard.as_ref() {
+            Some((armed, _)) if *armed == op => {}
+            _ => return None,
+        }
+        guard
+            .take()
+            .map(|(_, err)| crate::wrap_io_published(err, context))
+    }
+
     fn lock_state(&self) -> MutexGuard<'_, MemState> {
         self.state.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Test/debug introspection only: every path currently stored,
-    /// including orphaned temps a caller never published or removed. Used
-    /// by `rune-db`'s materialize failure-path tests to prove a temp file
-    /// left behind by a failed publish still physically exists (§1.4.10's
-    /// "capture/never silently discard" spirit) without hand-computing
-    /// `temp_name`'s private naming scheme.
+    /// including orphaned temps a caller never published or removed —
+    /// lets a test prove a temp file left behind by a failed publish still
+    /// physically exists (§1.4.10's "capture/never silently discard"
+    /// spirit) without hand-computing `temp_name`'s private naming scheme.
     pub fn debug_paths(&self) -> Vec<PathBuf> {
         self.lock_state().files.keys().cloned().collect()
+    }
+
+    /// Sets the hard-link count `Vfs::stat` reports for `path` (WP1.S6):
+    /// lets a test drive the hardlink-fork data-safety warning path, which
+    /// a hardcoded `nlink: Some(1)` made otherwise untestable against
+    /// `Mem`. No-op (`Ok`) is not returned for a missing path — the caller
+    /// gets `NotFound`, matching every other Mem primitive's shape.
+    pub fn set_nlink(&self, path: &Path, nlink: u64) -> io::Result<()> {
+        let mut state = self.lock_state();
+        match state.files.get_mut(path) {
+            Some(f) => {
+                f.nlink = nlink;
+                Ok(())
+            }
+            None => Err(not_found(path, "set_nlink")),
+        }
     }
 }
 
@@ -108,6 +163,35 @@ impl Default for Mem {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// See `Mem::resolve`. Anchors `path` at a synthetic root and collapses
+/// `.`/`..` components against what came before, entirely lexically (no
+/// filesystem access — `Mem` has none). A `..` past the root has nowhere to
+/// go and is dropped, the same shape `Path::components()` already gives an
+/// absolute path.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.last(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            Component::RootDir => {
+                out.clear();
+                out.push(Component::RootDir);
+            }
+            Component::Normal(_) | Component::Prefix(_) => out.push(component),
+        }
+    }
+    if !matches!(out.first(), Some(Component::RootDir)) {
+        out.insert(0, Component::RootDir);
+    }
+    out.into_iter().collect()
 }
 
 fn not_found(path: &Path, op: &str) -> io::Error {
@@ -154,6 +238,7 @@ impl Vfs for Mem {
                 inode,
                 device: 1,
                 mod_tick,
+                nlink: 1,
             },
         );
         Ok(temp)
@@ -162,21 +247,40 @@ impl Vfs for Mem {
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()> {
         self.take_failure(OpKind::Exchange)?;
         let mut state = self.lock_state();
-        if !state.files.contains_key(a) {
+        if a == b {
+            // Matches `Disk`'s `renamex_np(RENAME_SWAP)` semantics: swapping
+            // a path with itself is a no-op success, never a delete (WP1.S3
+            // — the previous eager-double-remove below silently dropped the
+            // file in exactly this case, since the second `remove` of the
+            // SAME key always missed).
+            return if state.files.contains_key(a) {
+                Ok(())
+            } else {
+                Err(not_found(a, "exchange"))
+            };
+        }
+        // Every `remove` from here on is paired with an `insert` before the
+        // function returns on every path (the swap, or a restore on the
+        // second key's miss) — an un-reinserted removal is unrepresentable.
+        let Some(mut fa) = state.files.remove(a) else {
             return Err(not_found(a, "exchange"));
-        }
-        if !state.files.contains_key(b) {
+        };
+        let Some(mut fb) = state.files.remove(b) else {
+            state.files.insert(a.to_path_buf(), fa);
             return Err(not_found(b, "exchange"));
-        }
+        };
         state.tick += 1;
         let mod_tick = state.tick;
-        // Both keys were just confirmed present under the same lock, so
-        // these removes cannot miss.
-        if let (Some(mut fa), Some(mut fb)) = (state.files.remove(a), state.files.remove(b)) {
-            fa.mod_tick = mod_tick;
-            fb.mod_tick = mod_tick;
-            state.files.insert(a.to_path_buf(), fb);
-            state.files.insert(b.to_path_buf(), fa);
+        fa.mod_tick = mod_tick;
+        fb.mod_tick = mod_tick;
+        state.files.insert(a.to_path_buf(), fb);
+        state.files.insert(b.to_path_buf(), fa);
+        drop(state);
+        if let Some(e) = self.take_after_failure(
+            OpKind::Exchange,
+            format!("exchange {} <-> {}", a.display(), b.display()),
+        ) {
+            return Err(e);
         }
         Ok(())
     }
@@ -197,8 +301,18 @@ impl Vfs for Mem {
                 ),
             ));
         }
-        if let Some(f) = state.files.remove(old) {
-            state.files.insert(new.to_path_buf(), f);
+        // Confirmed present above under this same (still-held) lock, so
+        // this cannot miss.
+        let Some(f) = state.files.remove(old) else {
+            return Err(not_found(old, "renameexcl"));
+        };
+        state.files.insert(new.to_path_buf(), f);
+        drop(state);
+        if let Some(e) = self.take_after_failure(
+            OpKind::RenameExcl,
+            format!("renameexcl {} -> {}", old.display(), new.display()),
+        ) {
+            return Err(e);
         }
         Ok(())
     }
@@ -223,8 +337,11 @@ impl Vfs for Mem {
                     inode: Some(f.inode),
                     device: Some(f.device),
                 },
-                // Mem has no hardlink concept: every Mem file reports 1.
-                nlink: Some(1),
+                // Mem has no real hard-link mechanism; the count is just
+                // whatever `Mem::set_nlink` last set for this path
+                // (defaulting to 1), so a test can drive the hardlink-fork
+                // warning path (WP1.S6).
+                nlink: Some(f.nlink),
                 kind: FileKind::File,
             });
         }
@@ -249,10 +366,16 @@ impl Vfs for Mem {
         Err(not_found(path, "stat"))
     }
 
-    /// Identity: Mem has no symlinks.
+    /// Lexical normalization only — no symlinks, no real filesystem access
+    /// (WP1.S6). `Mem` has no directory tree to canonicalize against, so
+    /// this is the purely-textual half of what `Disk::resolve`'s
+    /// `fs::canonicalize` does: collapse `.`/`..` components and anchor a
+    /// relative path at Mem's own synthetic root, so two spellings of the
+    /// same target (`/a/./b.md`, `/a/x/../b.md`, `b.md` vs `/b.md`) become
+    /// the same `HashMap` key instead of two unrelated ones.
     fn resolve(&self, path: &Path) -> io::Result<PathBuf> {
         self.take_failure(OpKind::Resolve)?;
-        Ok(path.to_path_buf())
+        Ok(lexically_normalize(path))
     }
 
     /// No-op: Mem has no directory tree, only flat path->content keys.
@@ -285,6 +408,14 @@ impl Vfs for Mem {
         self.take_failure(OpKind::ReadDir)?;
         let state = self.lock_state();
         let mut by_name: HashMap<String, bool> = HashMap::new();
+        // WP1.S6: `Disk::read_dir` on a nonexistent path errors `NotFound`;
+        // `Mem` used to report an empty listing instead, since it derives
+        // everything from key shape and a path with zero matching keys
+        // looked identical to a genuinely empty (but existing) directory.
+        // The synthetic root always exists; any other path needs either an
+        // exact key (it's a stored file) or at least one key nested below
+        // it (it's a synthetic directory) to count as present.
+        let mut path_exists = path == Path::new("/") || state.files.contains_key(path);
         for key in state.files.keys() {
             let Ok(rest) = key.strip_prefix(path) else {
                 continue;
@@ -294,6 +425,7 @@ impl Vfs for Mem {
                 // `rest` is empty: `key == path`, not a child of it.
                 continue;
             };
+            path_exists = true;
             let name = first.as_os_str().to_string_lossy().to_string();
             // More components remain below `first`: `first` is a synthetic
             // directory, not the file itself.
@@ -302,6 +434,9 @@ impl Vfs for Mem {
             if is_dir {
                 *entry = true;
             }
+        }
+        if !path_exists {
+            return Err(not_found(path, "read_dir"));
         }
         let mut entries: Vec<DirEntry> = by_name
             .into_iter()
