@@ -260,6 +260,7 @@ mod tests {
                 cmd: TestCmd::Standalone,
                 help: "standalone",
                 when: "",
+                alias: false,
             },
             Binding {
                 keys: &[
@@ -269,6 +270,7 @@ mod tests {
                 cmd: TestCmd::Chord,
                 help: "chord",
                 when: "",
+                alias: false,
             },
         ];
         let err = validate(TABLE).expect_err("must reject the prefix collision");
@@ -287,12 +289,14 @@ mod tests {
             cmd: TestCmd::Standalone,
             help: "standalone",
             when: "",
+            alias: false,
         }];
         const CHORD_SET: &[Binding<TestCmd>] = &[Binding {
             keys: &[ctrl_k(), ctrl_c()],
             cmd: TestCmd::Chord,
             help: "chord",
             when: "",
+            alias: false,
         }];
         assert!(validate(STANDALONE_SET).is_ok());
         assert!(validate(CHORD_SET).is_ok());
@@ -306,12 +310,14 @@ mod tests {
                 cmd: TestCmd::Standalone,
                 help: "a",
                 when: "",
+                alias: false,
             },
             Binding {
                 keys: &[KeyPattern::new(KeyCode::Char('b'), Mods::NONE)],
                 cmd: TestCmd::Chord,
                 help: "b",
                 when: "",
+                alias: false,
             },
         ];
         assert!(validate(TABLE).is_ok());
@@ -324,6 +330,7 @@ mod tests {
             cmd: TestCmd::Chord,
             help: "chord",
             when: "",
+            alias: false,
         }];
         let ctx = Context::default();
 
@@ -342,6 +349,7 @@ mod tests {
             cmd: TestCmd::Chord,
             help: "chord",
             when: "",
+            alias: false,
         }];
         let ctx = Context::default();
         let pending = [ctrl_k()];
@@ -356,6 +364,7 @@ mod tests {
             cmd: TestCmd::Standalone,
             help: "standalone",
             when: "read_only",
+            alias: false,
         }];
         let ctx = Context::default(); // read_only: false
         let result = resolve(TABLE, &[], key(KeyCode::Char('k'), Mods::NONE), &ctx);
@@ -376,6 +385,7 @@ mod tests {
             cmd: TestCmd::Chord,
             help: "chord",
             when: "",
+            alias: false,
         }];
         let ctx = Context::default();
         let mut state = KeymapState::default();
@@ -396,6 +406,7 @@ mod tests {
             cmd: TestCmd::Chord,
             help: "chord",
             when: "",
+            alias: false,
         }];
         let ctx = Context::default();
         let mut state = KeymapState::default();

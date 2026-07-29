@@ -804,3 +804,33 @@ touching cursors collapse to one survivor (lower id), mirroring
 `CursorSet::merge`, but no test asserts the post-edit cursor count. Confirm the
 shrinking count is the intended editing UX rather than an unexamined side
 effect.
+
+**`crates/rune-tui/src/keymap/editor_bindings.rs` is 508 lines** (452 before),
+over §1.6. Adding the `alias` field to `Binding` cost one line per literal and
+this table holds 56 of them — the file crossed the budget on a purely
+mechanical change, with no new behaviour to justify a split. Split it when next
+touched; the motion, selection, editing and clipboard chords are four natural
+groups. `explorer.rs` grew the same way (588 -> 594) but was already tracked.
+
+**Shrinking a pane's axis past a dragged split collapses the trailing pane,
+and that is deliberate.** Drag the Files/Open divider down, then shorten the
+terminal below what the drag asked for: the tab rows disappear. This is the
+stated collapse rule — below its floor, a collapsible pane goes — applied to a
+size the frame can no longer grant. It is transient: the dragged size is never
+written down, so restoring the height restores both sections untouched.
+
+The friendlier-looking alternative, sparing the trail whenever the request no
+longer fits, was implemented and then reverted. `allot` cannot tell a drag from
+a resize — both reach it only as `(desired, available)` — so sparing the trail
+on every over-ask also spares it on an *overshooting drag*, and overshoot is how
+the collapse gesture is actually performed: nobody lands the pointer on the one
+row that leaves the trail a single cell under its floor. The cost was losing
+drag-to-collapse for the tab rows entirely, while a unit test calling `allot`
+directly with a hand-picked value still passed and hid it.
+
+Doing it properly means recording the intent where it is known — at `request`
+time, reached only from a drag — instead of re-deriving it in `allot` on every
+read: give the splitter an explicit "trail collapsed by the user" state rather
+than inferring collapse from a transient `available`. That is a design change to
+`Split`'s API (`request` would need the axis length and the trail's limits), so
+it is recorded here rather than rushed.

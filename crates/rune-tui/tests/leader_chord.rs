@@ -53,8 +53,8 @@ fn press_sup(app: &mut App, code: KeyCode) {
     );
 }
 
-/// Case 1: space held + `x` -> `left_visible` true, focus Explorer, and the
-/// typed space is gone from the buffer.
+/// Case 1: space held + `x` -> the left column shows, focus Explorer, and
+/// the typed space is gone from the buffer.
 #[test]
 fn space_held_and_x_opens_the_explorer_and_retracts_the_space() {
     let mut app = app_for("hello");
@@ -65,13 +65,44 @@ fn space_held_and_x_opens_the_explorer_and_retracts_the_space() {
 
     press(&mut app, KeyCode::Char('x'));
 
-    assert!(app.left_visible);
+    assert!(app.splits.left.is_shown());
     assert_eq!(app.focus, Pane::Explorer);
     assert_eq!(
         app.active_doc().buffer.content(),
         "hello",
         "the speculative space must be retracted"
     );
+}
+
+/// `␣X` pressed twice must never toggle the Explorer back off — the second
+/// press is a no-op on visibility, leaving it exactly as shown and focused
+/// as the first press left it.
+#[test]
+fn space_held_and_x_pressed_twice_leaves_the_explorer_shown_and_focused() {
+    let mut app = app_for("hello");
+    app.space_probe = Box::new(FixedSpaceProbe(true));
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Char('x'));
+
+    assert!(app.splits.left.is_shown());
+    assert_eq!(app.focus, Pane::Explorer);
+}
+
+/// `␣Z` collapses the left column and, since the Explorer owned focus,
+/// hands focus back to the Editor.
+#[test]
+fn space_held_and_z_collapses_the_left_column_and_returns_focus_to_the_editor() {
+    let mut app = app_for("hello");
+    app.space_probe = Box::new(FixedSpaceProbe(true));
+
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.splits.left.is_shown());
+
+    press(&mut app, KeyCode::Char('z'));
+
+    assert!(!app.splits.left.is_shown());
+    assert_eq!(app.focus, Pane::Editor);
 }
 
 /// Case 2 ("typing must still work"): space NOT held + `x` typed after a
@@ -86,7 +117,7 @@ fn space_not_held_then_x_just_types_both_characters() {
 
     assert_eq!(app.active_doc().buffer.content(), "hello x");
     assert_eq!(app.focus, Pane::Editor);
-    assert!(!app.left_visible);
+    assert!(!app.splits.left.is_shown());
 }
 
 /// Case 3: a lone space press -> the buffer gains exactly one `' '` and
@@ -128,7 +159,7 @@ fn space_held_and_x_fires_the_chord_without_deleting_when_the_left_byte_is_not_a
     // chord must still fire (space is physically down) but retract nothing.
     press(&mut app, KeyCode::Char('x'));
 
-    assert!(app.left_visible);
+    assert!(app.splits.left.is_shown());
     assert_eq!(app.focus, Pane::Explorer);
     assert_eq!(app.active_doc().buffer.content(), "hello");
 }
@@ -160,7 +191,7 @@ fn space_held_and_x_with_an_active_selection_leaves_the_selection_intact() {
 
     press(&mut app, KeyCode::Char('x'));
 
-    assert!(app.left_visible);
+    assert!(app.splits.left.is_shown());
     assert_eq!(app.focus, Pane::Explorer);
     assert_eq!(
         app.active_doc().buffer.content(),
@@ -187,7 +218,10 @@ fn cmd_x_while_space_is_held_is_still_cut_not_a_leader_completion() {
 
     press_sup(&mut app, KeyCode::Char('x'));
 
-    assert!(!app.left_visible, "⌘X must never be mistaken for ␣X");
+    assert!(
+        !app.splits.left.is_shown(),
+        "⌘X must never be mistaken for ␣X"
+    );
     assert_eq!(app.focus, Pane::Editor);
     assert_eq!(
         app.active_doc().buffer.content(),

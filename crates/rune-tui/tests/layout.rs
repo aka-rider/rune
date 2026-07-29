@@ -35,7 +35,7 @@ fn hidden_left_pane_at_120x34_gives_the_center_the_whole_main_area() {
 #[test]
 fn visible_left_pane_at_120x34_gives_it_the_default_width() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let geo = layout::geometry(Rect::new(0, 0, 120, 34), &app);
 
     let left_block = geo.left_block.expect("left pane wide enough to show");
@@ -55,7 +55,7 @@ fn visible_left_pane_at_120x34_gives_it_the_default_width() {
 #[test]
 fn the_tabs_divider_sits_between_the_two_inner_sections() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let geo = layout::geometry(Rect::new(0, 0, 120, 34), &app);
 
     let left_block = geo.left_block.expect("left pane wide enough to show");
@@ -87,22 +87,24 @@ fn the_tabs_divider_sits_between_the_two_inner_sections() {
     );
 }
 
-/// At a height that leaves the block's inner rect a single row, there is no
-/// room to spend one on the divider: the Explorer takes it all and the Tabs
-/// section is absent for that frame.
+/// At a height that leaves the block's inner rect a single row, that one row
+/// is under BOTH sections' floors (`MIN_EXPLORER_H` 3, `MIN_TABS_H` 2), and
+/// both are collapsible — so, unlike the pre-drag layout this replaces, the
+/// column doesn't squeeze a useless one-row file list into a border. It
+/// yields the space entirely and lets the editor have it instead.
 #[test]
-fn a_one_row_inner_rect_has_no_divider() {
+fn a_one_row_inner_rect_collapses_the_whole_column() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
 
     // 3 main-area rows + 1 footer row: the block's border eats two of the
-    // three, leaving exactly one inner row.
+    // three, leaving exactly one inner row — one short of even the smaller
+    // floor, so neither section can be shown.
     let geo = layout::geometry(Rect::new(0, 0, 120, 4), &app);
 
-    assert!(geo.left_block.is_some());
-    assert_eq!(geo.explorer_inner.height, 1);
+    assert!(geo.left_block.is_none());
     assert!(geo.tabs_divider.is_none());
-    assert_eq!(geo.tabs_inner.height, 0);
+    assert_eq!(geo.center.width, 120);
 }
 
 #[test]
@@ -130,7 +132,7 @@ fn zero_and_one_by_one_areas_never_panic_and_stay_within_bounds() {
 #[test]
 fn too_narrow_for_both_minimums_drops_the_left_pane() {
     let mut app = app_for();
-    app.left_visible = true;
+    app.splits.left.show();
     let width = MIN_LEFT_PANE_W + MIN_CENTER_W - 10; // 30, well under the 40 floor
     let geo = layout::geometry(Rect::new(0, 0, width, 34), &app);
 

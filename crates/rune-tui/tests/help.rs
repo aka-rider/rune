@@ -180,7 +180,7 @@ fn help_tab_renders_in_open_tabs_pane_with_the_name_help() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
 
-    app.left_visible = true;
+    app.splits.left.show();
     app.focus = Pane::Tabs;
     app.sync_view();
 

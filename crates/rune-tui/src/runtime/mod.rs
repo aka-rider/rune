@@ -373,7 +373,7 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
 /// Explorer's own boundary Msg, called from `explorer::handle_key` (Open on
 /// a directory, Backspace to the parent) and from `pane::handle_global_
-/// command`'s `ToggleExplorer` arm (the very first load). §1.4.9: the
+/// command`'s `FocusExplorer` arm (the very first load). §1.4.9: the
 /// filesystem is reached only through the injected `Vfs`; §5.4: this I/O
 /// never runs inline in `update`, only inside a spawned `Cmd`. `generation`
 /// is echoed back verbatim on the `Msg::DirLoaded` reply — every call site
