@@ -728,6 +728,97 @@ fn a_timed_out_markdown_fence_reply_stays_silent() {
     );
 }
 
+/// A document that has already been highlighted once must never re-surface
+/// the timeout status on a later reparse-after-edit that overruns the
+/// budget: its existing spans/tree are still good, so the reply degrades to
+/// STALE colours per `[R2]` and stays silent rather than spamming the
+/// status on every settled edit of a large file.
+#[test]
+fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+
+    let keyword = scope_table().resolve("keyword").expect("known scope");
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: Some(HighlightPayload::Spans(vec![(0..2, keyword)].into())),
+        },
+        &mut effects,
+    );
+
+    let doc = app.doc(id).expect("doc");
+    assert_eq!(
+        doc.highlight.version, version,
+        "the first successful reply must stamp highlight.version"
+    );
+    let spans_before = doc.highlight.spans.clone();
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    let doc = app.doc(id).expect("doc");
+    assert_eq!(
+        app.status_message, None,
+        "a reparse timeout on an already-highlighted document must stay \
+         silent, not surface the timed-out status a second time"
+    );
+    assert_eq!(
+        doc.highlight.spans, spans_before,
+        "the stale-but-good spans from the first successful reply must be \
+         left untouched"
+    );
+}
+
+/// A terminal timeout must never re-dispatch a further parse when `pending`
+/// was armed only by a document switch (no edit): an edit-armed `pending`
+/// carries a different version and lands in the stale `_` arm instead, so
+/// `pending` and a live-version `None` can coincide only in this no-edit
+/// case, where re-scheduling would just repeat the same doomed parse.
+#[test]
+fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    app.doc_mut(id).expect("doc").highlight.pending = true;
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert!(
+        effects.cmds.is_empty(),
+        "a terminal timeout must schedule no further cmd even with \
+         `pending` armed by a mere document switch"
+    );
+    assert_eq!(
+        app.doc(id).expect("doc").highlight.in_flight,
+        None,
+        "the timed-out reply must still clear in_flight"
+    );
+}
+
 /// D6: a `Tree` payload applied to a live-version reply stores the tree and
 /// stamps `highlight.version`, mirroring what the old span-clamp path did
 /// for `Spans` — the field the render path (`render::build_rows`) and
