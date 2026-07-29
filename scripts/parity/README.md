@@ -180,6 +180,16 @@ of how each side renders:
   (`^t tabs`, `⌘s save`, `^c`/`^⌥d` quit) instead. Expected — chat/dictation
   and mouse support are both out of scope for the Rust port at this stage
   (plan Out of scope), and the two keymaps were never meant to match.
+- **Footer `Ln n, Col n` units (CONSTITUTION §1.5, deliberate).** Go
+  counts the column in RUNES (`utf8.RuneCountInString`); the Rust port
+  counts it in terminal CELLS (`unicode-width` over grapheme clusters) —
+  a considered decision, not parity drift (see CONSTITUTION §1.5's
+  "Deliberate implementation divergence" note). On a line with any
+  CJK/emoji/combining-mark content before the cursor the two sides'
+  `Col` numbers will differ; this is out of `parity-grid`'s scope already
+  (the footer row is excluded from the editor-content comparison it
+  runs), so no gate needed updating for it, but a screenshot comparison
+  of a CJK/emoji fixture will show it.
 - **Heading concealment inside a heading's own inline spans
   (`headings.md`, excluded from `parity-grid`).** Go's inline-emphasis
   concealment does not recurse into a heading line's own text: `## A
