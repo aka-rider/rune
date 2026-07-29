@@ -11,10 +11,44 @@ different action shape (typing, opening the generated Help document via
 NOT chased, per that task's own scope: "if it surfaces yet another
 DISTINCT finding, pin+TODO it with repro and report rather than chasing."
 
-**Status:** open. Auto-pinned by proptest in `crates/rune-fuzz/
-proptest-regressions/human_session.txt` (seed
-`cc 2ae76ac56c2d03560131a47bf630317671b738c7d2c77ea04eab1dddc5b9c3d2`), so
-`make test-fuzz` will keep replaying and failing on it until fixed.
+**Status:** FIXED. Confirmed classification (b): production is correct here
+— `Msg::SaveDone` already carries the `DocumentId` the save was actually
+FOR (`save::save_cmd`'s closure captures `id`; `dispatch` forwards it
+untouched to `save::handle_save_done(app, id, ...)`, doc-scoped, never
+`app.active`). The dirty-close Guard's own `s`/`S` hotkey
+(`banner::handle_dirty_close_key`) calls `trigger_save(app, prompt.doc,
+...)` — `prompt.doc`, not `app.active` — precisely because the Guard can be
+armed (via `pane::handle_quit_key`/`first_unpreserved_dirty_doc`) on a
+document OTHER than whichever one is active. That's exactly what happened
+here: `F1` made Help active; `Ctrl+C` (the quit chord) found the real
+"hello world" document dirty and raised the Guard on IT, not Help; the
+final `Cmd+S` (any `s`/`S`, modifiers unchecked by the Guard's key handler)
+saved the real document correctly. Disk really did hold "hello world" —
+no data was lost or misattributed in production.
+
+The bug was in `crates/rune-fuzz` itself: `driver::step_and_check` used to
+capture "the bytes this save `Cmd` was constructed with" as `prev.content`
+— the Tier-1 `Snapshot`'s content field, which is always the ACTIVE
+document's — rather than the actual target document's bytes. Since the
+Guard's save targeted a non-active document, the driver captured the WRONG
+document's bytes (Help's generated keymap table) and `SAVE-VERBATIM` then
+compared disk (correctly "hello world") against that wrong capture,
+misfiring a false positive. `MsgTag::SaveDone` also used to discard the
+`Msg::SaveDone`'s own `id` field entirely (`..` in the destructure), so
+there was no way to recover the right document short of the fix below.
+
+Fixed in `crates/rune-fuzz`: `MsgTag::SaveDone` now carries `id:
+DocumentId`; `driver::State::pending_save` snapshots every open document's
+content (keyed by `DocumentId`) at the instant a save `Cmd` is constructed,
+not just the active one; `discharge_pending_save` looks the correct entry
+up by the ack's own `id` once it lands. `invariant/save.rs::save_verbatim`'s
+doc comment (which had claimed switch-safety unconditionally) is corrected.
+Regression tests
+`stale_save_ack_after_help_toggle_is_attributed_to_its_own_document` and
+`ordinary_same_document_save_still_clean` (`crates/rune-fuzz/tests/
+tripwire.rs`) pin the exact repro below plus a same-document control (not
+`#[ignore]`d, run under `cargo test --workspace`). The pinned seed in
+`proptest-regressions/human_session.txt` (`cc 2ae76ac5...`) replays clean.
 
 ## Minimal repro (frozen artifact)
 

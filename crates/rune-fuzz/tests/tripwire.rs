@@ -251,6 +251,66 @@ fn seed_discarded_by_dirty_close_guard_skips_undo_total() {
     );
 }
 
+/// Regression for `TODO-fuzz-save-verbatim-help-doc-stale-ack.md`: `F1`
+/// makes the virtual Help document active, then the quit chord's dirty-
+/// close Guard arms on the REAL seeded document (still dirty, not the
+/// active one) via `first_unpreserved_dirty_doc`. Pressing the Guard's own
+/// `s` hotkey (`banner::handle_dirty_close_key`) saves THAT document, not
+/// whichever one is active — production is correct here (`Msg::SaveDone`
+/// already carries the right `id`). The bug was in this very fuzz driver:
+/// it used to snapshot `Snapshot::content` (the ACTIVE document, Help) as
+/// "the bytes this save Cmd was constructed with" instead of the target
+/// document's own bytes, so `SAVE-VERBATIM` compared disk (correctly
+/// holding "hello world") against the wrong document's content and misfired
+/// a false positive. Pinned in `proptest-regressions/human_session.txt`
+/// too, so `make test-fuzz` replays this exact shape on every run.
+#[test]
+fn stale_save_ack_after_help_toggle_is_attributed_to_its_own_document() {
+    let actions = vec![
+        Action::Type("hello world".to_string()),
+        Action::Key(key(KeyCode::F1, Mods::NONE)),
+        Action::Key(key(KeyCode::Char('a'), Mods::NONE)),
+        Action::Key(key(KeyCode::Char('a'), Mods::NONE)),
+        Action::Key(key(KeyCode::Char('c'), ctrl())),
+        Action::StaleConfirmTimeout(4294967295),
+        Action::Key(key(KeyCode::Char('s'), sup())),
+    ];
+    let result = driver::run("/fuzz/doc.md", "", &actions);
+    assert!(
+        result.violation.is_none(),
+        "{}",
+        result
+            .violation
+            .as_ref()
+            .map(|v| format!("{}: {}", v.id, v.message))
+            .unwrap_or_default()
+    );
+}
+
+/// Same-document control for the fix above: an ordinary ⌘S on the SAME
+/// document that stays active the whole time (no Help toggle, no
+/// Guard-modal detour, so the per-document snapshot lookup degenerates to
+/// exactly one candidate) must still deliver cleanly — the id-scoped
+/// lookup must not regress the ordinary, non-switching case.
+#[test]
+fn ordinary_same_document_save_still_clean() {
+    let actions = vec![
+        Action::Type("hello world".to_string()),
+        Action::Key(key(KeyCode::Char('s'), sup())),
+        Action::Deliver,
+    ];
+    let result = driver::run("/fuzz/doc.md", "", &actions);
+    assert!(
+        result.violation.is_none(),
+        "{}",
+        result
+            .violation
+            .as_ref()
+            .map(|v| format!("{}: {}", v.id, v.message))
+            .unwrap_or_default()
+    );
+}
+
 // ---------------------------------------------------------------------
 // Hand-constructible `Snapshot` helpers for WP4.S3/S4. `Snapshot`'s fields
 // are all `pub` (G16), so a checker's input is built directly with no need

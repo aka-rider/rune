@@ -3,7 +3,7 @@
 use rune_fuzz::invariant::{save_clean_matches_disk, save_verbatim};
 use rune_fuzz::step::MsgTag;
 
-use crate::support::base_ctx;
+use crate::support::{base_active_id, base_ctx};
 
 // ---------------------------------------------------------------------
 // SAVE-VERBATIM
@@ -13,6 +13,7 @@ use crate::support::base_ctx;
 fn save_verbatim_detects_a_disk_mismatch() {
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::SaveDone {
+        id: base_active_id(),
         version: 2,
         ok: true,
     };
@@ -27,6 +28,7 @@ fn save_verbatim_detects_a_disk_mismatch() {
 fn save_verbatim_accepts_matching_bytes() {
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::SaveDone {
+        id: base_active_id(),
         version: 2,
         ok: true,
     };
@@ -39,6 +41,7 @@ fn save_verbatim_accepts_matching_bytes() {
 fn save_verbatim_ignores_a_failed_save_done() {
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::SaveDone {
+        id: base_active_id(),
         version: 2,
         ok: false,
     };

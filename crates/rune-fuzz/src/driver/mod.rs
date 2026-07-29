@@ -56,15 +56,22 @@ pub struct RunResult {
 
 /// Mutable driver state threaded through one session. `pending_save` is an
 /// `Option`, never a queue — G9 proves at most one save `Cmd` can ever be
-/// outstanding. `path` is the document path this session opened (plan
-/// WP7.S2) — carried here (not re-derived from `DOC_PATH`) since a session
-/// can now open any path, and the post-step disk read needs to consult the
-/// SAME path the document was seeded and bound to.
+/// outstanding. Its byte snapshot is keyed by `DocumentId`, not a single
+/// `Vec<u8>`: a save `Cmd` can be constructed for a document OTHER than
+/// whichever one is active at that instant (a Guard modal's own `s`/`S`
+/// hotkey saves ITS prompt's document — `banner::handle_dirty_close_key`
+/// — never necessarily `app.active`), so the driver snapshots every open
+/// document's content at Cmd-construction time and looks the right one up
+/// by `id` once the ack names it (`discharge_pending_save`). `path` is the
+/// document path this session opened (plan WP7.S2) — carried here (not
+/// re-derived from `DOC_PATH`) since a session can now open any path, and
+/// the post-step disk read needs to consult the SAME path the document was
+/// seeded and bound to.
 struct State {
     app: App,
     mem: Arc<Mem>,
     path: PathBuf,
-    pending_save: Option<(Cmd, Vec<u8>)>,
+    pending_save: Option<(Cmd, std::collections::BTreeMap<DocumentId, Vec<u8>>)>,
     saves_delivered_ok: usize,
     steps: usize,
     /// The `DocumentId` `App::new` minted for the seeded document below —
@@ -351,25 +358,38 @@ fn key_step(key: KeyInput) -> (Msg, MsgTag) {
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
-/// produced together with its tag and the bytes it was constructed with.
-/// `save_cmd` (`app.rs`) only ever constructs a `Msg::SaveDone` reply and
-/// never returns `None` — the `None` arms below are defensive against
-/// `Cmd`'s general contract, not reachable from any real save `Cmd` this
-/// driver stores. Never synthesizes `Msg::SaveDone` itself (G14) — it only
-/// ever forwards what `cmd.run()` actually returned.
+/// produced together with its tag and the bytes it was constructed with —
+/// looked up in the per-document snapshot by the ack's OWN `id`, never by
+/// whichever document is active at delivery time (see `MsgTag::SaveDone`'s
+/// docs; `TODO-fuzz-save-verbatim-help-doc-stale-ack.md`). The snapshot is
+/// guaranteed to have an entry for `id`: it was built from every open
+/// document at the moment THIS save `Cmd` was constructed, and `id` names
+/// exactly the document `trigger_save` built the `Cmd` for — which must
+/// have existed then (`trigger_save` bails out before constructing any
+/// `Cmd` if its target document doesn't). `save_cmd` (`app.rs`) only ever
+/// constructs a `Msg::SaveDone` reply and never returns `None` — the `None`
+/// arms below are defensive against `Cmd`'s general contract, not reachable
+/// from any real save `Cmd` this driver stores. Never synthesizes
+/// `Msg::SaveDone` itself (G14) — it only ever forwards what `cmd.run()`
+/// actually returned.
 fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Vec<u8>)> {
-    let (cmd, bytes) = state.pending_save.take()?;
+    let (cmd, per_doc_bytes) = state.pending_save.take()?;
     let msg = cmd.run()?;
     let Msg::SaveDone {
-        version, result, ..
+        id,
+        version,
+        result,
+        ..
     } = &msg
     else {
         return None;
     };
     let tag = MsgTag::SaveDone {
+        id: *id,
         version: *version,
         ok: result.is_ok(),
     };
+    let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
     Some((msg, tag, bytes))
 }
 
@@ -425,7 +445,21 @@ fn step_and_check(
                 outcome.final_ctx = None;
                 return true;
             }
-            state.pending_save = Some((cmd, prev.content.clone().into_bytes()));
+            // Snapshot EVERY open document's content now, at the instant
+            // the `Cmd` is constructed — never just `prev.content` (the
+            // ACTIVE document's `Snapshot`): `trigger_save` can be called
+            // with an id other than `app.active` (a Guard modal's `s`
+            // hotkey saves its own prompt's document), so the only
+            // reliable way to recover "what bytes was this Cmd actually
+            // built with" is to have all candidates on hand and pick the
+            // right one once the ack names its `id`.
+            let per_doc_bytes = state
+                .app
+                .documents
+                .iter()
+                .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
+                .collect();
+            state.pending_save = Some((cmd, per_doc_bytes));
         }
     }
 
@@ -436,7 +470,13 @@ fn step_and_check(
     let sampled = checks::should_sample(step_index);
     let next = Snapshot::capture(&mut state.app, sampled);
     let disk = state.mem.read(&state.path).ok();
-    let pending_save_bytes = state.pending_save.as_ref().map(|(_, b)| b.clone());
+    // `SAVE-CLEAN-MATCHES-DISK` only ever tests this field for `.is_some()`
+    // (a save is still outstanding), never its content — any one entry
+    // from the per-document snapshot signals that correctly.
+    let pending_save_bytes = state
+        .pending_save
+        .as_ref()
+        .and_then(|(_, per_doc)| per_doc.values().next().cloned());
 
     let ctx = StepCtx {
         step: step_index,

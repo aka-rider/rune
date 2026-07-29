@@ -5,7 +5,7 @@ use rune_fuzz::invariant::{confirm_gen, quit_chord, save_inflight_sm};
 use rune_fuzz::step::MsgTag;
 use rune_tui::keymap::{Command, KeyCode, Mods, QuitKey};
 
-use crate::support::{base_ctx, base_snapshot, key, other_doc_id, sup};
+use crate::support::{base_active_id, base_ctx, base_snapshot, key, other_doc_id, sup};
 
 // ---------------------------------------------------------------------
 // SAVE-INFLIGHT-SM
@@ -156,6 +156,7 @@ fn save_inflight_sm_accepts_clearing_on_save_done() {
     let next = base_snapshot("abc");
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::SaveDone {
+        id: base_active_id(),
         version: 2,
         ok: true,
     };

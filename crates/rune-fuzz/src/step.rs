@@ -9,6 +9,7 @@
 //! Mirrors how Go's driver passes `(rs, m, msg, prev, snap)` to its L2
 //! checks.
 
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::{Command, KeyInput};
 
 /// Which message the driver just settled, tagged with everything a checker
@@ -26,6 +27,14 @@ pub enum MsgTag {
     Resize(u16, u16),
     ClipboardRead(String),
     SaveDone {
+        /// The document `Msg::SaveDone` was actually FOR (`save::save_cmd`
+        /// closes over it, `dispatch` forwards it untouched) — never
+        /// assume this is whichever document happens to be `active` right
+        /// now: a Guard modal's own `s`/`S` hotkey (`banner::handle_
+        /// dirty_close_key`) can save a document OTHER than the active one
+        /// (its own prompt's `doc`), and by the time this ack lands the
+        /// active document may have changed again besides.
+        id: DocumentId,
         version: u64,
         ok: bool,
     },
@@ -68,8 +77,9 @@ pub struct StepCtx {
     /// deferred right now.
     pub pending_save_bytes: Option<Vec<u8>>,
     /// Bytes the save that JUST completed was handed — set only on a
-    /// `MsgTag::SaveDone` step. Pins `SAVE-VERBATIM` (a later work
-    /// package).
+    /// `MsgTag::SaveDone` step, looked up by THAT ack's own `id`, never by
+    /// whichever document happens to be active when the ack lands (see
+    /// `MsgTag::SaveDone`'s own docs). Pins `SAVE-VERBATIM`.
     pub delivered_save_bytes: Option<Vec<u8>>,
     pub saves_delivered_ok: usize,
 }

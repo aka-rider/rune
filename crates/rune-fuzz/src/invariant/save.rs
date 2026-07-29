@@ -12,11 +12,17 @@ use crate::step::{MsgTag, StepCtx};
 /// disk must byte-equal the bytes THAT save was constructed with. Byte
 /// comparison, no normalization.
 ///
-/// Active-document-switch-safe: takes only `ctx`, whose `disk`/
-/// `delivered_save_bytes` are both bound to the fixed path the session was
-/// seeded with (`driver.rs`'s `State::path`), not to whichever document is
-/// currently active — there is no `Snapshot` field here for a switch to
-/// make ambiguous.
+/// Active-document-switch-safe: takes only `ctx`. `disk` is bound to the
+/// fixed path the session was seeded with (`driver.rs`'s `State::path`),
+/// never to whichever document is currently active. `delivered_save_bytes`
+/// is doc-scoped too, but NOT by construction the way this comment used to
+/// claim — the driver looks it up by the `SaveDone` ack's own `id` (see
+/// `MsgTag::SaveDone`'s docs), precisely because a naive "whatever's
+/// active" capture is exactly what TODO-fuzz-save-verbatim-help-doc-stale-
+/// ack.md's repro broke: a Guard modal's own `s` hotkey can save a
+/// document other than the active one, and the driver used to snapshot
+/// `Snapshot::content` (the ACTIVE document) instead of the document the
+/// save `Cmd` was actually constructed for.
 pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::SaveDone { ok: true, .. }) {
         return None;
