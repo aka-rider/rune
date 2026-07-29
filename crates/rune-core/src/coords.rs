@@ -17,6 +17,16 @@ pub struct BufferPoint {
     pub col: usize,
 }
 
+/// A terminal-CELL column (§1.5: display width is CELLS via `unicode-width`
+/// over grapheme clusters, never bytes) — distinct from a `BufferPoint.col`
+/// (a BYTE column) so a value measured in one unit can never be replayed as
+/// the other by mixing up a plain `usize`. Exists because a cell count
+/// measured on one line is not portable to a different line's bytes without
+/// a `next_grapheme`/`byte_col_from_visual`-style walk first (a different
+/// line can hold different-width characters at the same cell column).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VisualCol(pub usize);
+
 /// Syntax Space — positions after markdown tokens are folded/expanded.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SyntaxOffset(pub usize);
@@ -70,6 +80,9 @@ mod tests {
         assert_eq!(bo, BufferOffset(10));
         assert_eq!(bp.line, 1);
         assert_eq!(bp.col, 5);
+
+        let vc = VisualCol(7);
+        assert_eq!(vc, VisualCol(7));
 
         let so = SyntaxOffset(20);
         let sp = SyntaxPoint { line: 2, col: 10 };
