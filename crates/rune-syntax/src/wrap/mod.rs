@@ -29,7 +29,7 @@
 mod query;
 mod table;
 
-pub use query::WrapSnapshot;
+pub use query::{WrapSnapshot, line_visual_col};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -56,10 +56,15 @@ pub fn control_aware_width(r: char) -> usize {
     }
 }
 
-/// `runeWidthWithTab`: a tab expands to the next multiple-of-4 stop.
+/// The one tab stop every width walker expands against — `rune_width_with_tab`
+/// and `grapheme_width_with_tab` both delegate to it rather than each
+/// hardcoding `% 4`, so the two can never drift apart.
+pub const TAB_STOP: usize = 4;
+
+/// `runeWidthWithTab`: a tab expands to the next multiple-of-`TAB_STOP` stop.
 pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
     if r == '\t' {
-        return 4 - (current_width % 4);
+        return TAB_STOP - (current_width % TAB_STOP);
     }
     control_aware_width(r)
 }
@@ -120,7 +125,7 @@ pub fn grapheme_width(cluster: &str) -> usize {
 /// tab-expansion case on top.
 pub fn grapheme_width_with_tab(cluster: &str, current_width: usize) -> usize {
     if cluster == "\t" {
-        return 4 - (current_width % 4);
+        return TAB_STOP - (current_width % TAB_STOP);
     }
     grapheme_width(cluster)
 }
