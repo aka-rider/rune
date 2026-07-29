@@ -1,15 +1,18 @@
-//! Typed `Command` enum + a stateless resolver table (plan Context,
-//! "Keymap"). `resolve` never consults any state and stays hand-written —
-//! it's still the LIVE dispatch path `app::handle_editor_key` calls; WP6
-//! adds `editor_bindings::EDITOR_BINDINGS`, a data table mirroring the same
-//! chords, purely so the generated Help doc (`help.rs`) and the startup
-//! collision index (`index.rs`) have something to read without a hand-
-//! maintained second copy — it does not replace `resolve` as the thing that
-//! actually executes a keystroke. The held-space leader (`global::
-//! LEADER_BINDINGS`) is a separate, already-live stateful mechanism (see
-//! `keystate.rs`/`app::handle_key`'s stage 1.5); `index::KeymapState` below
-//! is a second, general-purpose sequence tracker for a future binding-table-
-//! driven chord, not a replacement for it.
+//! Typed `Command` enum + a stateless resolver (plan Context, "Keymap").
+//! `resolve` never consults any state; it IS the LIVE dispatch path
+//! `app::handle_editor_key` calls (plan WP10.S3), and it is now a thin
+//! wrapper around `resolve_in(editor_bindings::EDITOR_BINDINGS, key)` —
+//! the data table is the one source of truth, not a mirror kept in sync by
+//! hand. `resolve_in`'s whole-`Mods` matching (`KeyPattern::matches`) is
+//! load-bearing: a hand-written `match` guard can check a subset of a
+//! chord's modifiers and let something else through by accident (the
+//! defect this replaced — `CODE-REVIEW.md`'s rune-tui B finding 3: a loose
+//! `'s' if m.sup && !m.ctrl` arm let `⌘⇧S` perform a real save); a table
+//! lookup cannot. The held-space leader (`global::LEADER_BINDINGS`) is a
+//! separate, already-live stateful mechanism (see `keystate.rs`/
+//! `app::handle_key`'s stage 1.5); `index::KeymapState` below is a second,
+//! general-purpose sequence tracker for a future binding-table-driven
+//! chord, not a replacement for it.
 
 // The generic binding machinery now lives in `crate::binding` and the
 // global chord table in `crate::global` (§1.6: this file was over the
@@ -228,171 +231,19 @@ impl QuitKey {
     }
 }
 
-/// The stateless resolver table (plan Context, "Keymap"). `None` means this
-/// exact chord isn't bound — the caller's own hardcoded fast paths (Enter,
-/// Escape, printable fallthrough — plan: "Hardcoded fast paths outside the
-/// resolver") handle everything this function doesn't.
+/// The stateless resolver (plan Context, "Keymap"; plan WP10.S3). `None`
+/// means this exact chord isn't bound — the caller's own hardcoded fast
+/// paths (Enter, Escape, printable fallthrough — plan: "Hardcoded fast
+/// paths outside the resolver") handle everything this function doesn't.
+/// The quit chords are the one exception kept outside the table: they are
+/// identity-bearing (`QuitKey`, threaded through `App::pending_quit`) in a
+/// way a plain `Command` isn't, so `QuitKey::from_key` stays the single
+/// source of truth for them, same as before.
 pub fn resolve(key: KeyInput) -> Option<Command> {
     if QuitKey::from_key(key).is_some() {
         return Some(Command::QuitConfirm);
     }
-
-    let m = key.mods;
-    const CTRL_ONLY: Mods = Mods {
-        shift: false,
-        alt: false,
-        ctrl: true,
-        sup: false,
-    };
-    match key.code {
-        // ⌘Enter / ^Enter: follow the link under the cursor (plan WP5.S7).
-        // Free of the hardcoded plain-Enter fast path (`app::
-        // handle_editor_key` matches `Mods::NONE` only, never reaching
-        // `resolve` at all for that chord).
-        KeyCode::Enter if m.sup && !m.ctrl && !m.alt && !m.shift => Some(Command::FollowLink),
-        KeyCode::Enter if m == CTRL_ONLY => Some(Command::FollowLink),
-        KeyCode::Left => resolve_directional(
-            m,
-            Command::CharLeft,
-            Command::SelectCharLeft,
-            Command::WordLeft,
-            Command::SelectWordLeft,
-        ),
-        KeyCode::Right => resolve_directional(
-            m,
-            Command::CharRight,
-            Command::SelectCharRight,
-            Command::WordRight,
-            Command::SelectWordRight,
-        ),
-        // `ctrl+Up`/`ctrl+Down` (plan WP7.S2/S7): viewport-only line scroll
-        // — VS Code's own default binding for "Scroll Line Up"/"Scroll Line
-        // Down". Free: `resolve_vertical` never matches a combination with
-        // CTRL set.
-        KeyCode::Up if m == CTRL_ONLY => Some(Command::ScrollLineUp),
-        KeyCode::Up => resolve_vertical(
-            m,
-            Command::LineUp,
-            Command::SelectLineUp,
-            Command::MoveLineUp,
-            Command::CloneLineUp,
-            Command::AddCursorAbove,
-        ),
-        KeyCode::Down if m == CTRL_ONLY => Some(Command::ScrollLineDown),
-        KeyCode::Down => resolve_vertical(
-            m,
-            Command::LineDown,
-            Command::SelectLineDown,
-            Command::MoveLineDown,
-            Command::CloneLineDown,
-            Command::AddCursorBelow,
-        ),
-        // `ctrl+Home`/`ctrl+End`: scroll the cursor's row to the top/bottom
-        // of the viewport (vim/Helix `zt`/`zb`) — free of `Home`/`End`'s
-        // own NONE/SHIFT-only arms.
-        KeyCode::Home if m == CTRL_ONLY => Some(Command::CursorToTop),
-        KeyCode::Home => resolve_plain_or_shift(m, Command::LineStart, Command::SelectLineStart),
-        KeyCode::End if m == CTRL_ONLY => Some(Command::CursorToBottom),
-        KeyCode::End => resolve_plain_or_shift(m, Command::LineEnd, Command::SelectLineEnd),
-        // `ctrl+PageUp`/`ctrl+PageDown`: half-page viewport-only scroll
-        // (vim/Helix `ctrl+u`/`ctrl+d`) — distinct from the plain `ctrl+u`
-        // `Char` chord below, which stays bound to the full-page CURSOR
-        // motion `Command::PageUp`.
-        KeyCode::PageUp if m == CTRL_ONLY => Some(Command::ScrollHalfPageUp),
-        KeyCode::PageUp => resolve_plain_or_shift(m, Command::PageUp, Command::SelectPageUp),
-        KeyCode::PageDown if m == CTRL_ONLY => Some(Command::ScrollHalfPageDown),
-        KeyCode::PageDown => resolve_plain_or_shift(m, Command::PageDown, Command::SelectPageDown),
-        KeyCode::Backspace if m == Mods::NONE => Some(Command::DeleteLeft),
-        KeyCode::Backspace if m.alt && !m.ctrl && !m.sup && !m.shift => {
-            Some(Command::DeleteWordLeft)
-        }
-        KeyCode::Delete if m == Mods::NONE => Some(Command::DeleteRight),
-        KeyCode::Delete if m.alt && !m.ctrl && !m.sup && !m.shift => Some(Command::DeleteWordRight),
-        KeyCode::Tab if m == Mods::NONE => Some(Command::Indent),
-        KeyCode::Tab if m.shift && !m.alt && !m.ctrl && !m.sup => Some(Command::Outdent),
-        KeyCode::BackTab => Some(Command::Outdent),
-        KeyCode::Char(c) => resolve_char(c, m),
-        _ => None,
-    }
-}
-
-/// `Left`/`Right`: plain, shift (select), alt (word), shift+alt (select
-/// word) — the four-way mirror every other directional-with-word chord
-/// shares (plan Keymap table: "alt+left, alt+b / alt+right, alt+f").
-fn resolve_directional(
-    m: Mods,
-    plain: Command,
-    select: Command,
-    word: Command,
-    select_word: Command,
-) -> Option<Command> {
-    match (m.shift, m.alt, m.ctrl, m.sup) {
-        (false, false, false, false) => Some(plain),
-        (true, false, false, false) => Some(select),
-        (false, true, false, false) => Some(word),
-        (true, true, false, false) => Some(select_word),
-        _ => None,
-    }
-}
-
-/// Plain vs. shift (select) only — no alt/word variant (Home/End/PageUp/
-/// PageDown).
-fn resolve_plain_or_shift(m: Mods, plain: Command, select: Command) -> Option<Command> {
-    match (m.shift, m.alt, m.ctrl, m.sup) {
-        (false, false, false, false) => Some(plain),
-        (true, false, false, false) => Some(select),
-        _ => None,
-    }
-}
-
-/// `Up`/`Down`: plain, shift (select), alt (move-line), shift+alt
-/// (clone-line), alt+super (add-cursor) — plan WP9.S2/S3's five-way
-/// mirror of `resolve_directional`'s word variant, using vertical-motion
-/// commands instead of word motion.
-fn resolve_vertical(
-    m: Mods,
-    plain: Command,
-    select: Command,
-    alt: Command,
-    shift_alt: Command,
-    alt_sup: Command,
-) -> Option<Command> {
-    match (m.shift, m.alt, m.ctrl, m.sup) {
-        (false, false, false, false) => Some(plain),
-        (true, false, false, false) => Some(select),
-        (false, true, false, false) => Some(alt),
-        (true, true, false, false) => Some(shift_alt),
-        (false, true, false, true) => Some(alt_sup),
-        _ => None,
-    }
-}
-
-/// The `Char(c)`-keyed chords: word motion (`alt+b`/`alt+f`), page motion
-/// (`ctrl+u`), select-all, clipboard, undo/redo, save, delete-line
-/// (`sup+shift+k`, plan WP9.S2). Quit chords are handled by the
-/// `QuitKey::from_key` short-circuit in `resolve` above, not here.
-fn resolve_char(c: char, m: Mods) -> Option<Command> {
-    match c {
-        'b' if m.alt && !m.ctrl && !m.sup => Some(Command::WordLeft),
-        'f' if m.alt && !m.ctrl && !m.sup => Some(Command::WordRight),
-        'u' if m.ctrl && !m.alt && !m.sup => Some(Command::PageUp),
-        // vim/Helix `zz` (plan WP7.S2/S7) — re-centre the viewport on the
-        // cursor's row; Emacs's own `C-l` "recenter" precedent for the
-        // chord itself.
-        'l' if m.ctrl && !m.alt && !m.shift && !m.sup => Some(Command::CentreCursor),
-        'a' if (m.sup || m.ctrl) && !m.alt => Some(Command::SelectAll),
-        'c' if m.sup && !m.ctrl && !m.shift => Some(Command::Copy),
-        'c' if m.ctrl && m.shift && !m.sup => Some(Command::Copy),
-        'x' if m.sup && !m.ctrl => Some(Command::Cut),
-        'v' if m.sup && !m.ctrl => Some(Command::Paste),
-        'z' if m.sup && !m.shift && !m.ctrl => Some(Command::Undo),
-        'z' if m.ctrl && !m.shift && !m.sup => Some(Command::Undo),
-        'z' if m.sup && m.shift && !m.ctrl => Some(Command::Redo),
-        'y' if m.ctrl && !m.shift && !m.sup => Some(Command::Redo),
-        's' if m.sup && !m.ctrl => Some(Command::Save),
-        'k' if m.sup && m.shift && !m.ctrl && !m.alt => Some(Command::DeleteLine),
-        _ => None,
-    }
+    resolve_in(editor_bindings::EDITOR_BINDINGS, key)
 }
 
 #[cfg(test)]
@@ -575,6 +426,99 @@ mod tests {
                 }
             )),
             None
+        );
+    }
+
+    /// Regression for `CODE-REVIEW.md` rune-tui B finding 3: a loose
+    /// `resolve_char` arm (`'s' if m.sup && !m.ctrl`, never checking
+    /// `shift`/`alt`) let `⌘⇧S` and `⌘⌥S` perform a real in-place save via
+    /// `Command::Save`. `EDITOR_BINDINGS` has a row for the EXACT `sup`-only
+    /// chord (see its own doc comment for why), but `resolve_in`'s
+    /// whole-`Mods` matching means no chord holding `shift` or `alt`
+    /// alongside `sup+s` can match that row or any other.
+    #[test]
+    fn save_requires_exact_mods_and_shifted_variants_resolve_to_none() {
+        let sup_shift = key(
+            KeyCode::Char('s'),
+            Mods {
+                sup: true,
+                shift: true,
+                ..Mods::NONE
+            },
+        );
+        let sup_alt = key(
+            KeyCode::Char('s'),
+            Mods {
+                sup: true,
+                alt: true,
+                ..Mods::NONE
+            },
+        );
+        assert_eq!(resolve(sup_shift), None, "⌘⇧S must not resolve to a save");
+        assert_eq!(resolve(sup_alt), None, "⌘⌥S must not resolve to a save");
+    }
+
+    /// Regression for `CODE-REVIEW.md` rune-tui B finding 3's other half:
+    /// `⌥⇧B`/`⌥⇧F` must SELECT word-left/right, not collapse a selection
+    /// by silently falling back to plain word motion (the old
+    /// `resolve_char` guard didn't check `shift` on the ALT arm either).
+    #[test]
+    fn shift_alt_bf_selects_word_not_moves() {
+        let shift_alt = Mods {
+            shift: true,
+            alt: true,
+            ..Mods::NONE
+        };
+        assert_eq!(
+            resolve(key(KeyCode::Char('b'), shift_alt)),
+            Some(Command::SelectWordLeft)
+        );
+        assert_eq!(
+            resolve(key(KeyCode::Char('f'), shift_alt)),
+            Some(Command::SelectWordRight)
+        );
+    }
+
+    /// The converse of `editor_bindings`'s own
+    /// `every_row_resolves_through_the_live_dispatch_path`: every chord
+    /// `resolve` DOES accept must have a matching `EDITOR_BINDINGS` row —
+    /// otherwise a chord could resolve live yet vanish from the generated
+    /// Help doc and the startup collision index, both of which only ever
+    /// read the table (`CODE-REVIEW.md` rune-tui B finding 4). Sweeps
+    /// every printable ASCII `Char` against all 16 `Mods` combinations
+    /// (~1500 cases) — cheap at this table's size, and it is what would
+    /// have caught finding 3 directly, since a resolving-but-tableless
+    /// chord is exactly what a loose `resolve_char` arm produced.
+    #[test]
+    fn every_resolving_char_chord_has_an_editor_bindings_row() {
+        let mod_combos: Vec<Mods> = (0u8..16)
+            .map(|bits| Mods {
+                shift: bits & 0b0001 != 0,
+                alt: bits & 0b0010 != 0,
+                ctrl: bits & 0b0100 != 0,
+                sup: bits & 0b1000 != 0,
+            })
+            .collect();
+
+        let mut checked = 0usize;
+        for c in ' '..='~' {
+            for &m in &mod_combos {
+                checked += 1;
+                let k = key(KeyCode::Char(c), m);
+                if QuitKey::from_key(k).is_some() {
+                    continue; // Quit chords deliberately have no table row.
+                }
+                let Some(cmd) = resolve(k) else { continue };
+                assert_eq!(
+                    resolve_in(editor_bindings::EDITOR_BINDINGS, k),
+                    Some(cmd),
+                    "{c:?} with {m:?} resolves to {cmd:?} live but has no EDITOR_BINDINGS row"
+                );
+            }
+        }
+        assert!(
+            checked >= 1500,
+            "sweep should cover roughly 1500 cases, covered {checked}"
         );
     }
 
