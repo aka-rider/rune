@@ -3,15 +3,17 @@
 //! `workspace::close_now` removes, `workspace::switch_to` only moves the
 //! cursor, never reorders), its own `listnav::List` cursor/scroll, and its
 //! key handling (`Pane::Tabs`-focused, dispatched from `app::handle_key`'s
-//! stage 3). Row layout lives here too (`draw`, delegated to from
-//! `render.rs::draw_left_pane`'s "Open" block, mirroring `explorer.rs`'s
-//! own delegation pattern).
+//! stage 3). Row layout lives here too — the `Open` divider row and the tab
+//! rows beneath it, both drawn inside the left column's single bordered
+//! block, whose border is not this pane's to paint.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use rune_syntax::wrap::grapheme_width;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
 use crate::document::DocumentId;
@@ -134,17 +136,73 @@ fn ensure_visible(app: &mut App) {
     app.tabs.nav.follow(len, height, margin, 0);
 }
 
-/// The Tabs pane's visible row count — same derivation as
-/// `explorer::visible_rows` (plan WP3.S7: read straight from
-/// `layout::geometry`'s `tabs_inner`), without the `-1`: no title row here
-/// (unlike Explorer's root-path row).
+/// The Tabs pane's visible row count — same derivation as the Explorer's,
+/// read straight from `layout::geometry`'s `tabs_inner`, without the `-1`:
+/// the `Open` divider is its own rect outside `tabs_inner`, and there's no
+/// title row here (unlike Explorer's root-path row).
 fn visible_rows(app: &App) -> usize {
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
     (crate::layout::geometry(area, app).tabs_inner.height as usize).max(1)
 }
 
-/// Draws the Tabs pane's content into `area` — the block's INNER rect
-/// (border rendered by `render.rs::draw_left_pane`, plan WP5.S1): one row
+/// The one-row `Open` divider that introduces the tab rows inside the left
+/// column's single bordered block — the Tabs pane has no border of its own,
+/// so this row is also where its FOCUS is signalled (the active-border
+/// color while `Pane::Tabs` holds focus, the subtle divider style
+/// otherwise), alongside the cursor prefix `draw` puts on the rows below.
+///
+/// The `─` fill is measured in DISPLAY COLUMNS through the shared width
+/// chokepoint, never in bytes (§1.5), and the label is truncated rather
+/// than allowed to overflow when the column is narrower than the label.
+pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let style = if app.focus == Pane::Tabs {
+        app.theme.chrome.active_border
+    } else {
+        app.theme.chrome.tabs_divider
+    };
+
+    let total = area.width as usize;
+    let label = truncate_to_width(" Open ", total);
+    let fill = "\u{2500}".repeat(total.saturating_sub(display_width(&label)));
+
+    let row = Rect::new(area.x, area.y, area.width, 1);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(label, style),
+            Span::styled(fill, style),
+        ])),
+        row,
+    );
+}
+
+/// `s`'s width in terminal cells, summed over whole grapheme clusters via
+/// the shared width chokepoint — the same number the renderer and the wrap
+/// pass agree on.
+fn display_width(s: &str) -> usize {
+    s.graphemes(true).map(grapheme_width).sum()
+}
+
+/// The longest prefix of `s` (cut only at grapheme boundaries) that fits in
+/// `max` terminal cells.
+fn truncate_to_width(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    let mut used = 0usize;
+    for cluster in s.graphemes(true) {
+        let w = grapheme_width(cluster);
+        if used + w > max {
+            break;
+        }
+        out.push_str(cluster);
+        used += w;
+    }
+    out
+}
+
+/// Draws the Tabs pane's content into `area` — the rows below the `Open`
+/// divider, inside the left column's single bordered block: one row
 /// per open tab, in `order`: a `>` cursor prefix (shown only while the
 /// Tabs pane itself has focus — unlike Explorer's cursor, which is always
 /// shown regardless of `app.focus`, this pane's cursor is meaningless
@@ -209,6 +267,55 @@ mod tests {
         let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
         app.active_doc_mut().viewport.set_size(80, 23);
         app
+    }
+
+    /// Renders just the divider into a `width`-wide, 1-row terminal and
+    /// returns the row's text.
+    fn divider_row(app: &App, width: u16) -> String {
+        let backend = ratatui::backend::TestBackend::new(width, 1);
+        let mut terminal = ratatui::Terminal::new(backend).expect("TestBackend terminal");
+        terminal
+            .draw(|frame| draw_divider(app, Rect::new(0, 0, width, 1), frame))
+            .expect("draw the divider");
+        let buf = terminal.backend().buffer();
+        (0..width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn the_divider_fills_its_whole_width_after_the_label() {
+        let app = app();
+        assert_eq!(
+            divider_row(&app, 20),
+            format!(" Open {}", "\u{2500}".repeat(14))
+        );
+    }
+
+    /// Narrower than the label: the label is truncated at a grapheme
+    /// boundary rather than overflowing the column.
+    #[test]
+    fn a_narrow_divider_truncates_the_label_instead_of_overflowing() {
+        let app = app();
+        for width in 1u16..=6 {
+            let row = divider_row(&app, width);
+            assert_eq!(
+                row.chars().count(),
+                width as usize,
+                "width {width} must render exactly {width} cells: {row:?}"
+            );
+            assert!(
+                " Open ".starts_with(&row) || row.chars().all(|c| c == '\u{2500}' || c == ' '),
+                "width {width} must render a prefix of the label: {row:?}"
+            );
+        }
+        assert_eq!(divider_row(&app, 6), " Open ");
+    }
+
+    #[test]
+    fn a_zero_width_divider_draws_nothing() {
+        let app = app();
+        assert_eq!(divider_row(&app, 0), "");
     }
 
     #[test]
