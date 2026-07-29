@@ -6,7 +6,8 @@
 //! that used to live directly on `App`). `Document::sync` is the fixed
 //! per-message sync sequence (plan Context, "Msg/Cmd runtime": `sync_content`
 //! iff version changed -> `set_width` -> `sync_cursors` -> `snapshot` ->
-//! scroll-to-cursor).
+//! scroll-to-cursor -> re-`view` once more, since a scroll command can move
+//! the cursor itself — see `sync`'s own docs).
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -403,7 +404,10 @@ impl Document {
         let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
         let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
         let display_row = view.display.wrap_to_display(wrap_point.row);
-        if let Some(target_row) = self.viewport.reconcile(display_row) {
+        if let Some(target_row) = self
+            .viewport
+            .reconcile(display_row, view.display.total_rows())
+        {
             let wrap_row = view.display.display_to_wrap(target_row);
             self.snap_cursor_to_row(view, wrap_row);
         }
@@ -441,10 +445,29 @@ impl Document {
     /// once per whole message batch by the runtime (`runtime::run`) and by
     /// tests that need the settled state — is the only caller; movement/
     /// editing commands call `view()` alone (see its docs).
+    ///
+    /// Re-views once more AFTER `scroll_to_cursor`, not before: reveal state
+    /// is a function of `self.cursors` (`RevealGrant::Decide`'s cursor-probe
+    /// policies), and `scroll_to_cursor` can itself move `self.cursors` — a
+    /// `commands::nav_scroll` command's `Independent`-mode scroll leaves the
+    /// viewport where it put it and instead snaps the cursor onto the
+    /// now-settled window (`Viewport::reconcile`'s docs). The first `view()`
+    /// above necessarily samples reveal against the PRE-scroll cursor —
+    /// `scroll_to_cursor` needs that view's coordinate maps to decide where
+    /// the cursor should land in the first place, so the two can't run in
+    /// the other order. Returning that first view anyway would hand back
+    /// (and let `DocMachine` cache) a snapshot decided against a cursor
+    /// position `self.cursors` no longer holds; a later message-free
+    /// `App::sync_view` would then be the FIRST call ever to view the
+    /// settled cursor, changing the rendered rows with nothing in between
+    /// (`SYNC-IDEMPOTENT`). This second call closes that gap in the same
+    /// settle: `DocMachine::snapshot`'s own dirty-flag memo makes it free
+    /// whenever the cursor didn't actually move, so the common case (no
+    /// scroll command this batch) pays nothing extra.
     pub fn sync(&mut self) -> ViewSnapshots {
         let view = self.view();
         self.scroll_to_cursor(&view);
-        view
+        self.view()
     }
 }
 
