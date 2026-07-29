@@ -163,3 +163,106 @@ fn code_fence_sources(doc: &Document) -> Vec<(&'static str, Vec<Range<usize>>, S
         })
         .collect()
 }
+
+/// The one sanctioned synchronous `rune_ts::parse` call on the main thread
+/// (D4 of the syntax-highlighting-latency plan) — bounded by
+/// `runtime::FIRST_PAINT_BUDGET` and made exactly once, from `runtime::run`'s
+/// bootstrap, strictly before the first draw: nothing is on screen yet, so
+/// even a full-budget miss blocks nothing a user can see. CONSTITUTION §5.3
+/// ("`Update()`/`Init()` stay non-blocking") is about `app::update`, which
+/// this deliberately never calls into and is never called from — the ONE
+/// caller is `runtime::run` itself, before its own event loop starts.
+///
+/// A no-op unless the startup document is a CODE document (`doc.kind.
+/// language()` resolves) with no tree yet (`doc.highlight.tree.is_none()`
+/// — an idempotent guard, so calling this twice, or after some other path
+/// already populated the tree, costs nothing). On a successful parse, the
+/// tree is stored and `doc.highlight.version` is stamped to the buffer's
+/// current version — exactly what a completed background `Msg::Highlighted`
+/// reply would do — so `schedule_highlight`'s own `version == version`
+/// early-return makes the runtime's bootstrap kick a no-op for this
+/// document; a failed or skipped attempt leaves `version` untouched, so that
+/// same kick still dispatches the ordinary background `Cmd` exactly as
+/// before this function existed.
+pub(crate) fn first_paint_highlight(app: &mut App) {
+    let id = app.active;
+    let Some(doc) = app.doc(id) else { return };
+    if doc.highlight.tree.is_some() {
+        return;
+    }
+    let Some(lang) = doc.kind.language() else {
+        return;
+    };
+    let source = doc.buffer.content().to_string();
+    let version = doc.buffer.version();
+
+    let Some(tree) = rune_ts::parse(lang, &source, runtime::FIRST_PAINT_BUDGET) else {
+        return;
+    };
+
+    if let Some(doc) = app.doc_mut(id) {
+        doc.highlight.tree = Some(tree);
+        doc.highlight.version = version;
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+
+    use super::*;
+    use crate::app::App;
+
+    /// D4's success path: a small `.rs` startup document parses inside
+    /// `FIRST_PAINT_BUDGET` synchronously, populating `highlight.tree`
+    /// before any `Cmd` ever runs — and, since `first_paint_highlight`
+    /// stamps `highlight.version` on success exactly like a completed
+    /// background reply would, a subsequent `schedule_highlight` call finds
+    /// the document already current and pushes no `Cmd` at all (verifying
+    /// the plan's "the already-current guard suppresses the bootstrap Cmd"
+    /// claim rather than assuming it).
+    #[test]
+    fn first_paint_highlights_small_file_synchronously() {
+        let mut app = App::new(
+            Buffer::new("fn main() {}\n"),
+            Some(PathBuf::from("/x/main.rs")),
+            Arc::new(Mem::new()),
+            None,
+        );
+        let id = app.active;
+
+        first_paint_highlight(&mut app);
+
+        let doc = app.doc(id).expect("doc");
+        assert!(
+            doc.highlight.tree.is_some(),
+            "a trivial rust source must parse within the generous first-paint budget"
+        );
+        assert_eq!(doc.highlight.version, doc.buffer.version());
+
+        let mut effects = Effects::default();
+        schedule_highlight(&mut app, id, &mut effects);
+        assert!(
+            effects.cmds.is_empty(),
+            "the already-current guard must suppress the bootstrap Cmd once \
+             first_paint_highlight already populated this document's tree"
+        );
+    }
+
+    /// A markdown (non-code) startup document has no language to parse —
+    /// `first_paint_highlight` must be a clean no-op, never touching `tree`.
+    #[test]
+    fn first_paint_highlight_is_a_no_op_for_a_non_code_document() {
+        let mut app = App::new(Buffer::new("# hello\n"), None, Arc::new(Mem::new()), None);
+        let id = app.active;
+
+        first_paint_highlight(&mut app);
+
+        assert!(app.doc(id).expect("doc").highlight.tree.is_none());
+    }
+}

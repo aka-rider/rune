@@ -29,6 +29,15 @@ pub const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(250);
 /// `TODO.md`).
 pub const PARSE_BUDGET: Duration = Duration::from_secs(5);
 
+/// The wall-clock budget `highlight::first_paint_highlight` gives its single
+/// synchronous, pre-first-draw parse attempt at the startup document
+/// (Assumption A1) — small on purpose: it runs on the main thread before
+/// anything is drawn, so even a miss is invisible (the background `Cmd`
+/// picks the document up on the very next frame via the ordinary
+/// `schedule_highlight` bootstrap kick) while a hit means frame 1 is already
+/// highlighted.
+pub(crate) const FIRST_PAINT_BUDGET: Duration = Duration::from_millis(20);
+
 /// Parses `source` as `lang` off-thread — a whole-document parse whose
 /// retained `Tree` rides back on `Msg::Highlighted` (D2/D6) — and replies
 /// with `Msg::Highlighted`. Owns `source` (moved into the closure, exactly

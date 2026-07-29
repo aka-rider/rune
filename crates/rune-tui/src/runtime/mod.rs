@@ -260,6 +260,14 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let (width, height) = guard.size()?;
     apply(app, Msg::Resize(width, height), &mut guard, &tx)?;
 
+    // D4 (syntax-highlighting-latency plan): one bounded synchronous parse
+    // attempt at the startup document, strictly before the first draw below
+    // — nothing is on screen yet, so even a full-budget miss blocks nothing
+    // visible. A hit means frame 1 renders already highlighted; a miss (or
+    // a non-code startup document) falls through to the ordinary background
+    // kick right after, unchanged.
+    crate::highlight::first_paint_highlight(app);
+
     // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
     // runtime, and before any `Msg` has ever reached `app::update`'s
@@ -268,7 +276,10 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // both an `App` and an `Effects` sink exist together, so it is the one
     // explicit kick this bootstrap path needs; every later document (an
     // edit, a tab switch, `workspace::open_path`) is already covered by
-    // `app::update`'s own before/after gate.
+    // `app::update`'s own before/after gate. When `first_paint_highlight`
+    // just succeeded for this document, `schedule_highlight`'s own
+    // already-current guard (`highlight.version == version`) makes this a
+    // no-op — see that function's doc comment.
     {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
@@ -408,6 +419,7 @@ pub fn load_dir_cmd(
 // `runtime::highlight_cmd` (§1.6 budget) — re-exported below so every
 // existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
+pub(crate) use highlight_cmd::FIRST_PAINT_BUDGET;
 pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, fence_highlight_cmd, highlight_cmd};
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
