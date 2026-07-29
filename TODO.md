@@ -498,3 +498,73 @@ and heading lookup compares normalized names — so a line anchor would match a
 heading whose name normalizes to empty rather than resolving by line number.
 Latent only: no producer emits `Anchor::Line` today. Fix it when the first one
 does, by giving line anchors their own lookup path instead of a name comparison.
+
+## rust port — TABLE-ROW-WIDTH: a table row with ZWJ emoji / CJK cells is wider than its own border (recorded 2026-07-29, markdown-table plan)
+
+**Status:** open. A defect in the markdown-table rendering work itself, not a
+pre-existing one — `TABLE-ROW-WIDTH` is that work's own invariant over its own
+table layout. Surfaced by `make test-fuzz RC=5000` only after three earlier
+fuzz bugs stopped short-circuiting the run.
+
+- **Symptom:** `TABLE-ROW-WIDTH: table_group 0: row 1 has summed width 123, but
+  row 0 (same group) has width 79`. Row 0 is the synthesised top border, row 1
+  a content row — the box does not line up, by 44 cells.
+- **Verified not caused by the ZWJ span-boundary fix:** the shrunk script
+  replays identically at `bf3e7e0`, immediately before that fix.
+- **Likely area:** the table layout measures column widths from its own
+  rendered cell text, while the border row is built from the stored
+  `col_widths`. A cell holding a ZWJ emoji or CJK is the divergence point — the
+  same class as the already-fixed tab-in-a-cell mismatch, where measurement and
+  rendering disagreed about one glyph's width. Note the span-boundary fix
+  corrected the WRAP layer's walkers; table `col_widths` and the renderer's own
+  per-span segmentation were not touched and may still disagree.
+- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
+  replay):
+
+```
+content \u{feff}hello
+type \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family aA1! \u{4f60}\u{597d} \u{1f642} mix
+paste 
+key char:z ---u
+key char:z ---u
+key char:z s--u
+key char:z s--u
+type \n\n\n
+key left ----
+key left ----
+key left ----
+key home ----
+key down ----
+paste 
+key up ----
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+type hello world \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+paste line1\r\nline2
+key pageup s---
+key end s---
+paste hello world
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d}
+type 
+type \u{e9} \u{e0} \u{f4} hello world
+key left ----
+key left ----
+key left ----
+key left ----
+key left ----
+key left ----
+key left ----
+type \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+key up ----
+key down ----
+key down ----
+type | :-: |
+key left ----
+key left ----
+key down ----
+paste hello world
+```
+
+- **Not committed to `repros/` while red**, per the standing convention that a
+  repro lands in the same commit as its fix. **`make test-fuzz` stays red until
+  this is fixed**; every other gate (`fmt`/`lint`/`build`/`test`/`perf-guard`/
+  `replay`/`parity-grid`) is green.
