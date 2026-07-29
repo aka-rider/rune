@@ -811,3 +811,14 @@ this table holds 56 of them — the file crossed the budget on a purely
 mechanical change, with no new behaviour to justify a split. Split it when next
 touched; the motion, selection, editing and clipboard chords are four natural
 groups. `explorer.rs` grew the same way (588 -> 594) but was already tracked.
+
+**The `␣Z hide panel` hint truncates `F1 help` off the footer at 120 columns
+with the Explorer focused.** The footer's priority truncation appends whole
+entries while they fit, and the Explorer's own five bindings already filled the
+row: before the new binding there were 15 free cells (enough for `F1 help`,
+not for `^C quit`); now there are 0. Editor focus — the common case — still fits
+everything with ~25 cells spare. Fix by giving the global tail (`F1 help`,
+`^C quit`) priority over the focused pane's own chords rather than by shortening
+the help text; `hide` instead of `hide panel` only recovers 6 of the 9 cells
+needed. Noticed via `make parity`, which the untruncated `footer_text` tests
+cannot see.
