@@ -57,54 +57,68 @@ const SUP: Mods = Mods {
 /// guard (which also tolerated shift/alt held) to the one precise combo
 /// below — the loosely-matched variants were never a documented,
 /// intentional binding.
+///
+/// A ctrl chord that duplicates a leader chord (or, for `^d`, another quit
+/// chord) is marked `alias: true` so the footer's hint row skips it, since
+/// showing both would just repeat the same action twice. `F1` has no leader
+/// equivalent, so it is not one — hiding it would remove it from the footer
+/// entirely rather than leave a shorter, still-complete hint row.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
         cmd: GlobalCommand::ToggleExplorer,
         help: "explorer",
         when: "",
+        alias: true,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('e'), CTRL)],
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
         when: "",
+        alias: true,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('t'), CTRL)],
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
         when: "",
+        alias: true,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('r'), CTRL)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
         when: "",
+        alias: true,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('s'), SUP)],
         cmd: GlobalCommand::Save,
         help: "save",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::F1, Mods::NONE)],
         cmd: GlobalCommand::Help,
         help: "help",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('c'), CTRL)],
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlC),
         help: "quit",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('d'), CTRL)],
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlD),
         help: "quit",
         when: "",
+        alias: true,
     },
 ];
 
@@ -127,24 +141,28 @@ pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
         cmd: GlobalCommand::ToggleExplorer,
         help: "explorer",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('e'), Mods::NONE)],
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('t'), Mods::NONE)],
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('r'), Mods::NONE)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
         when: "",
+        alias: false,
     },
 ];
 

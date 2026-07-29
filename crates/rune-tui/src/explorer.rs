@@ -84,36 +84,42 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         cmd: ExplorerCommand::Up,
         help: "up",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
         cmd: ExplorerCommand::Down,
         help: "down",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Home, Mods::NONE)],
         cmd: ExplorerCommand::Top,
         help: "top",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::End, Mods::NONE)],
         cmd: ExplorerCommand::Bottom,
         help: "bottom",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
         cmd: ExplorerCommand::Open,
         help: "open",
         when: "",
+        alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
         cmd: ExplorerCommand::ParentDir,
         help: "up dir",
         when: "",
+        alias: false,
     },
 ];
 

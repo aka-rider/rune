@@ -288,3 +288,32 @@ fn footer_reports_rune_column_on_a_multiline_multibyte_buffer() {
         "expected 'Ln 2, Col 4' (rune column, not byte column) on the footer row:\n{footer_row}"
     );
 }
+
+/// `^d` is a pure alias of `^c` for quitting: the footer's default hints
+/// must name the quit chord once, not twice, so the alias filter over
+/// `GLOBAL_BINDINGS` is doing its job end to end.
+#[test]
+fn default_footer_hints_omit_the_aliased_quit_chord() {
+    let app = app_for("hello");
+    assert_eq!(app.focus, Pane::Editor);
+    let text = rune_tui::footer::footer_text(&app);
+    assert!(
+        text.contains("^C"),
+        "expected the primary quit chord in {text:?}"
+    );
+    assert!(
+        !text.contains("^D"),
+        "the aliased quit chord must not appear in the footer: {text:?}"
+    );
+}
+
+/// Aliases stay discoverable in the generated Help doc even though the
+/// footer hides them — `^d` still works, so it must still be documented.
+#[test]
+fn help_markdown_still_lists_the_aliased_quit_chord() {
+    let markdown = rune_tui::help::help_markdown();
+    assert!(
+        markdown.contains("^D"),
+        "expected the aliased quit chord to remain documented in Help:\n{markdown}"
+    );
+}
