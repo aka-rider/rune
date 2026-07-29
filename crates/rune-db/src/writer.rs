@@ -38,6 +38,8 @@ use rune_core::buffer::AppliedEdit;
 use rune_core::cursor::Cursor;
 use rune_vfs::{Stat, Vfs};
 
+use crate::diag::background_note;
+
 use crate::Error;
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep};
@@ -99,7 +101,7 @@ pub enum OpKind {
     /// crate, where this crate's `cfg(test)` is never enabled) need this to
     /// exercise the degraded-mode banner end-to-end (plan WP5 "Done when").
     KillWriterForTest,
-    /// Port of `journal.go:39-194` (`AppendEdit`). On success, the
+    /// Port of `journal.go` (`AppendEdit`). On success, the
     /// completion's `DbEvent::Ok.result` carries the journal seq of the
     /// inserted (or coalesced) event.
     AppendEdit {
@@ -110,13 +112,13 @@ pub enum OpKind {
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
     },
-    /// Port of `journal.go:293-312` (`MoveUndoPos`).
+    /// Port of `journal.go` (`MoveUndoPos`).
     MoveUndoPos {
         session_id: i64,
         doc_id: i64,
         pos: i64,
     },
-    /// Port of `snapshot.go:74-103` (`CreateSnapshot`). On success, the
+    /// Port of `snapshot.go` (`CreateSnapshot`). On success, the
     /// completion's `DbEvent::Ok.result` carries the new `snapshots.id`.
     CreateSnapshot {
         session_id: i64,
@@ -125,7 +127,7 @@ pub enum OpKind {
         content: String,
         seq: i64,
     },
-    /// Port of `probe.go:38-102` (`Probe`). Disk I/O (`vfs.resolve`/`stat`/
+    /// Port of `probe.go` (`Probe`). Disk I/O (`vfs.resolve`/`stat`/
     /// `read`) happens between this op's own internal transactions, never
     /// inside one (plan WP4.S3) — see `probe::probe`.
     Probe {
@@ -191,7 +193,7 @@ pub enum OpKind {
         seen: Stat,
         now: SystemTime,
     },
-    /// Port of `adopt.go:9-31` (`ResolveAdopt`).
+    /// Port of `adopt.go` (`ResolveAdopt`).
     ResolveAdopt {
         session_id: i64,
         doc_id: i64,
@@ -199,7 +201,7 @@ pub enum OpKind {
         edit_seq: i64,
         now: SystemTime,
     },
-    /// Port of `adopt.go:33-99` (`ResolveAbandon`).
+    /// Port of `adopt.go` (`ResolveAbandon`).
     ResolveAbandon { session_id: i64, doc_id: i64 },
     /// WP6.S2: the writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
@@ -452,10 +454,10 @@ fn fatal(receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent, context: String) 
 /// to run — logged, never surfaced.
 fn run_idle_maintenance(conn: &mut Connection) {
     if let Err(e) = checkpoint(conn, "PASSIVE") {
-        eprintln!("rune-db: idle wal_checkpoint(PASSIVE) failed: {e}");
+        background_note(&format!("idle wal_checkpoint(PASSIVE) failed: {e}"));
     }
     if let Err(e) = retry::with_retry(conn, crate::gc::sweep_unreferenced_blobs) {
-        eprintln!("rune-db: idle blob sweep failed: {e}");
+        background_note(&format!("idle blob sweep failed: {e}"));
     }
 }
 
@@ -475,9 +477,9 @@ fn run_shutdown_maintenance(
     if is_last_live_session(conn, session_id, is_alive) {
         match checkpoint(conn, "TRUNCATE") {
             Ok(busy) if busy != 0 => {
-                eprintln!(
-                    "rune-db: wal_checkpoint(TRUNCATE) could not fully complete at \
-                     shutdown (busy) — expected under dual-exit, proceeding"
+                background_note(
+                    "wal_checkpoint(TRUNCATE) could not fully complete at \
+                     shutdown (busy) — expected under dual-exit, proceeding",
                 );
             }
             Ok(_) => {}
@@ -487,18 +489,18 @@ fn run_shutdown_maintenance(
                     retry::Classification::RestartTransaction | retry::Classification::Backoff
                 );
                 if expected {
-                    eprintln!(
-                        "rune-db: wal_checkpoint(TRUNCATE) busy at shutdown \
+                    background_note(&format!(
+                        "wal_checkpoint(TRUNCATE) busy at shutdown \
                          (expected under dual-exit): {e}"
-                    );
+                    ));
                 } else {
-                    eprintln!("rune-db: wal_checkpoint(TRUNCATE) failed at shutdown: {e}");
+                    background_note(&format!("wal_checkpoint(TRUNCATE) failed at shutdown: {e}"));
                 }
             }
         }
     }
     if let Err(e) = conn.execute_batch("PRAGMA optimize") {
-        eprintln!("rune-db: PRAGMA optimize failed at shutdown: {e}");
+        background_note(&format!("PRAGMA optimize failed at shutdown: {e}"));
     }
 }
 
@@ -522,7 +524,9 @@ fn is_last_live_session(
         }) {
         Ok(rows) => rows,
         Err(e) => {
-            eprintln!("rune-db: shutdown: could not read sessions, skipping TRUNCATE: {e}");
+            background_note(&format!(
+                "shutdown: could not read sessions, skipping TRUNCATE: {e}"
+            ));
             return false;
         }
     };
