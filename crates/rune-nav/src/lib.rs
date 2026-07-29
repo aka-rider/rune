@@ -1,13 +1,18 @@
 //! `rune-nav`: the producer-agnostic navigation vocabulary shared by every
 //! kind of jump-to-target — markdown links today, tree-sitter go-to-
-//! definition and imports later. Uses (links, embeds, imports) are graph
-//! edges; Defs (headings, blocks, symbols) are graph nodes. A future
-//! headless vault indexer depends on this crate alone, so it must never
-//! depend on `rune-md` or `rune-tui`.
+//! definition and imports later. Uses (links, embeds) are graph edges;
+//! Defs (headings) are graph nodes. A future headless vault indexer
+//! depends on this crate alone, so it must never depend on `rune-md` or
+//! `rune-tui`. The vocabulary here is deliberately closed to variants with
+//! a live producer: an unconstructed enum variant is a match arm no one
+//! can ever prove correct, so a future producer needing a new `UseRole`,
+//! `DefRole` or `Anchor` shape adds it (and the resolution logic it needs)
+//! in the same change, rather than finding a half-wired one already
+//! sitting here.
 
-pub mod percent;
+pub(crate) mod percent;
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub use rune_syntax::element::ByteRange;
 use rune_vfs::{FileKind, Vfs};
@@ -32,14 +37,11 @@ pub enum RefKind {
 pub enum UseRole {
     Link,
     Embed,
-    Import,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DefRole {
     Heading(u8),
-    Block,
-    Symbol,
 }
 
 /// What a `Use` points at, before resolution against the filesystem.
@@ -57,10 +59,26 @@ pub enum Target {
     SameDoc(Anchor),
 }
 
+/// What kind of def an `Anchor::Named` matches against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorRole {
+    Heading,
+}
+
+/// An anchor is either name-based (matched against a `Def`'s name via
+/// `anchor_matches`) or positional (a source line number, independent of
+/// any def). The two shapes cannot be fused into one `name: String` field
+/// without a positional anchor losing its number — a `Named` anchor's
+/// `role` says which kind of def it searches for; a `Line` anchor never
+/// touches a document's defs at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Anchor {
-    Heading(String),
-    Block(String),
+    Named {
+        role: AnchorRole,
+        name: String,
+    },
+    /// A 1-based source line number, matching the user-facing `Ln`
+    /// convention (footer readout, editor tools' `#L<n>` links).
     Line(u32),
 }
 
@@ -81,18 +99,38 @@ pub enum Destination {
 /// THIS IS A SECURITY BOUNDARY: it is the allowlist gating a later `open(1)`
 /// process spawn, so only these three schemes may ever pass — `file://`,
 /// `javascript:`, `data:` and `ftp://` must never be treated as external.
-pub fn is_external(raw: &str) -> bool {
-    let trimmed = raw.trim().to_ascii_lowercase();
-    trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
-        || trimmed.starts_with("mailto:")
+/// Returns the exact string that was approved (trimmed, original case
+/// preserved) so a caller can never accidentally dispatch some other,
+/// unapproved spelling of the same target — the predicate and the value
+/// that reaches `/usr/bin/open` are the same value.
+pub fn is_external(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered.starts_with("http://")
+        || lowered.starts_with("https://")
+        || lowered.starts_with("mailto:")
+    {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
 }
 
 /// Resolve `target` against the filesystem. `doc_dir` is the directory the
 /// referencing document lives in (checked before `root`); `root` is the
-/// vault/workspace root. Every existence check goes through the injected
-/// `Vfs` (§1.4.9).
-pub fn resolve(vfs: &dyn Vfs, target: &Target, doc_dir: Option<&Path>, root: &Path) -> Destination {
+/// vault/workspace root. `name_extension` is the file extension (without a
+/// leading dot, e.g. `"md"`) a `Target::Name` candidate gets when it has
+/// none of its own — supplied by the producer's resolution policy (e.g.
+/// rune-md's catalogue), never hardcoded here, so a non-markdown producer
+/// resolving symbol names against `.py` files needs no change to this
+/// crate. Every existence check goes through the injected `Vfs` (§1.4.9).
+pub fn resolve(
+    vfs: &dyn Vfs,
+    target: &Target,
+    doc_dir: Option<&Path>,
+    root: &Path,
+    name_extension: &str,
+) -> Destination {
     match target {
         // The allowlist is re-checked HERE, not trusted from whichever
         // producer classified the target. `Destination::Url` is the only
@@ -101,79 +139,112 @@ pub fn resolve(vfs: &dyn Vfs, target: &Target, doc_dir: Option<&Path>, root: &Pa
         // tree-sitter language, a vault indexer) then cannot smuggle a
         // `javascript:`/`file://` target through to it, however it builds
         // its `Target`s.
-        Target::Url(u) if is_external(u) => Destination::Url(u.clone()),
-        Target::Url(_) => Destination::Unresolved,
+        Target::Url(u) => match is_external(u) {
+            Some(approved) => Destination::Url(approved),
+            None => Destination::Unresolved,
+        },
         // The caller handles same-document anchors without touching the
         // filesystem.
         Target::SameDoc(_) => Destination::Unresolved,
         Target::Path { path, anchor } => {
-            resolve_candidates(vfs, path, false, doc_dir, root, anchor)
+            resolve_candidate(vfs, path, false, doc_dir, root, anchor, name_extension)
         }
-        Target::Name { name, anchor } => resolve_candidates(vfs, name, true, doc_dir, root, anchor),
+        Target::Name { name, anchor } => {
+            resolve_candidate(vfs, name, true, doc_dir, root, anchor, name_extension)
+        }
     }
 }
 
-/// Build the candidate list (`[percent::decode(raw), Some(raw)]`,
-/// deduplicated, decoded first), process each (trim, strip leading `./`,
-/// append `.md` for a `Target::Name` with no extension), and return the
-/// first candidate that resolves to a regular file — absolute candidates
-/// checked directly, relative ones joined onto `doc_dir` then `root`.
-fn resolve_candidates(
+/// Decode `raw` (infallibly — a malformed escape passes through verbatim,
+/// so there is exactly one candidate string, never two), process it (trim,
+/// strip a leading `./`, append `name_extension` for an extension-less
+/// `Target::Name`), and return the first location that resolves to a
+/// regular file: an absolute candidate is checked directly against the
+/// filesystem, with NO vault-containment check — an absolute path is the
+/// user explicitly naming a location outside the vault, a deliberate
+/// escape hatch, not the accidental one the relative branch below closes.
+/// A relative candidate is joined onto `doc_dir` then `root` (locality
+/// wins, per the module's contract), lexically normalized, and must lie
+/// within `root` or it is skipped, never even checked against the `Vfs`.
+fn resolve_candidate(
     vfs: &dyn Vfs,
     raw: &str,
     is_name: bool,
     doc_dir: Option<&Path>,
     root: &Path,
     anchor: &Option<Anchor>,
+    name_extension: &str,
 ) -> Destination {
-    let mut raw_candidates: Vec<String> = Vec::new();
-    if let Some(decoded) = percent::decode(raw) {
-        raw_candidates.push(decoded);
-    }
-    if !raw_candidates.iter().any(|c| c == raw) {
-        raw_candidates.push(raw.to_string());
-    }
+    let decoded = percent::decode(raw);
+    let candidate = process_candidate(&decoded, is_name, name_extension);
+    let path = Path::new(&candidate);
 
-    let candidates: Vec<String> = raw_candidates
-        .into_iter()
-        .map(|c| process_candidate(&c, is_name))
-        .collect();
-
-    for candidate in &candidates {
-        let path = Path::new(candidate);
-        if path.is_absolute() {
-            if is_regular(vfs, path) {
-                return Destination::Location {
-                    path: path.to_path_buf(),
-                    anchor: anchor.clone(),
-                };
+    if path.is_absolute() {
+        return if is_regular(vfs, path) {
+            Destination::Location {
+                path: path.to_path_buf(),
+                anchor: anchor.clone(),
             }
+        } else {
+            Destination::Unresolved
+        };
+    }
+
+    for base in [doc_dir, Some(root)].into_iter().flatten() {
+        if base.as_os_str().is_empty() {
             continue;
         }
-        for base in [doc_dir, Some(root)].into_iter().flatten() {
-            if base.as_os_str().is_empty() {
-                continue;
-            }
-            let joined = base.join(candidate);
-            if is_regular(vfs, &joined) {
-                return Destination::Location {
-                    path: joined,
-                    anchor: anchor.clone(),
-                };
-            }
+        // Normalize BEFORE the containment check and before it ever reaches
+        // the `Vfs` — checking containment against the raw, `..`-bearing
+        // join and then stat-ing (or returning) that same raw join would
+        // both defeat the check (a raw `/root/sub/../../etc/hosts` string
+        // literally starts with `/root/sub`) and hand the `Vfs` a path it
+        // can't look up (`Mem` has no filesystem to collapse `..` for it).
+        let joined = lexically_normalize(&base.join(&candidate));
+        if !joined.starts_with(root) {
+            continue;
+        }
+        if is_regular(vfs, &joined) {
+            return Destination::Location {
+                path: joined,
+                anchor: anchor.clone(),
+            };
         }
     }
     Destination::Unresolved
 }
 
-fn process_candidate(raw: &str, is_name: bool) -> String {
+fn process_candidate(raw: &str, is_name: bool, name_extension: &str) -> String {
     let trimmed = raw.trim();
     let stripped = trimmed.strip_prefix("./").unwrap_or(trimmed);
     if is_name && Path::new(stripped).extension().is_none() {
-        format!("{stripped}.md")
+        format!("{stripped}.{name_extension}")
     } else {
         stripped.to_string()
     }
+}
+
+/// Lexically collapses `.` and `..` components with no filesystem access
+/// and no symlink resolution, so it behaves identically whether the
+/// injected `Vfs`'s own `resolve` is an identity (`Mem`) or canonicalizes
+/// (`Disk`) — the vault-root containment check (plan Assumption A2) needs
+/// this collapse to happen BEFORE the `starts_with(root)` comparison,
+/// since a leading `..` cannot pop past the path's own root component: a
+/// decoded `../../../etc/hosts` candidate joined onto `root` normalizes to
+/// somewhere outside `root` and so is rejected by the caller, before it is
+/// ever stat'd.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Only a regular file resolves as a link target. A directory cannot be
@@ -214,6 +285,8 @@ mod tests {
     use super::*;
     use rune_vfs::Mem;
 
+    const MD: &str = "md";
+
     fn mem_with(paths: &[&str]) -> Mem {
         let vfs = Mem::new();
         for p in paths {
@@ -241,7 +314,7 @@ mod tests {
     fn percent_decoded_target_resolves_to_the_percent_containing_file() {
         let vfs = mem_with(&["/root/archive/Canary tokens.md"]);
         let target = path_target("archive/Canary%20tokens.md");
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(
             dest,
             Destination::Location {
@@ -252,10 +325,10 @@ mod tests {
     }
 
     #[test]
-    fn a_literal_percent_that_is_not_a_valid_escape_resolves_via_the_raw_fallback() {
+    fn a_literal_percent_that_is_not_a_valid_escape_resolves_via_the_verbatim_passthrough() {
         let vfs = mem_with(&["/root/100%.md"]);
         let target = path_target("100%.md");
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(
             dest,
             Destination::Location {
@@ -269,7 +342,7 @@ mod tests {
     fn md_extension_is_appended_only_for_name_targets() {
         let vfs = mem_with(&["/root/Setup.md"]);
 
-        let name_dest = resolve(&vfs, &name_target("Setup"), None, Path::new("/root"));
+        let name_dest = resolve(&vfs, &name_target("Setup"), None, Path::new("/root"), MD);
         assert_eq!(
             name_dest,
             Destination::Location {
@@ -278,10 +351,42 @@ mod tests {
             }
         );
 
-        // A Path target never gets `.md` appended, so the same bare name
-        // does NOT resolve.
-        let path_dest = resolve(&vfs, &path_target("Setup"), None, Path::new("/root"));
+        // A Path target never gets an extension appended, so the same bare
+        // name does NOT resolve.
+        let path_dest = resolve(&vfs, &path_target("Setup"), None, Path::new("/root"), MD);
         assert_eq!(path_dest, Destination::Unresolved);
+    }
+
+    #[test]
+    fn name_extension_is_a_caller_supplied_policy_not_a_hardcoded_choice() {
+        let vfs = mem_with(&["/root/utils.py"]);
+        let dest = resolve(&vfs, &name_target("utils"), None, Path::new("/root"), "py");
+        assert_eq!(
+            dest,
+            Destination::Location {
+                path: PathBuf::from("/root/utils.py"),
+                anchor: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_name_target_that_already_has_an_extension_gets_no_second_one_appended() {
+        let vfs = mem_with(&["/root/notes.txt"]);
+        let dest = resolve(
+            &vfs,
+            &name_target("notes.txt"),
+            None,
+            Path::new("/root"),
+            MD,
+        );
+        assert_eq!(
+            dest,
+            Destination::Location {
+                path: PathBuf::from("/root/notes.txt"),
+                anchor: None,
+            }
+        );
     }
 
     #[test]
@@ -293,6 +398,7 @@ mod tests {
             &target,
             Some(Path::new("/root/sub")),
             Path::new("/root"),
+            MD,
         );
         assert_eq!(
             dest,
@@ -304,11 +410,41 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_doc_dir_is_skipped_and_root_is_still_tried() {
+        let vfs = mem_with(&["/root/note.md"]);
+        let target = path_target("note.md");
+        let dest = resolve(&vfs, &target, Some(Path::new("")), Path::new("/root"), MD);
+        assert_eq!(
+            dest,
+            Destination::Location {
+                path: PathBuf::from("/root/note.md"),
+                anchor: None,
+            }
+        );
+    }
+
+    #[test]
     fn an_absolute_target_that_does_not_exist_is_unresolved() {
         let vfs = Mem::new();
         let target = path_target("/nowhere/ghost.md");
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(dest, Destination::Unresolved);
+    }
+
+    #[test]
+    fn an_absolute_target_outside_the_vault_root_still_resolves_deliberately() {
+        // Assumption A2: the absolute-path branch is a documented escape
+        // hatch, not subject to the containment check below.
+        let vfs = mem_with(&["/elsewhere/ghost.md"]);
+        let target = path_target("/elsewhere/ghost.md");
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+        assert_eq!(
+            dest,
+            Destination::Location {
+                path: PathBuf::from("/elsewhere/ghost.md"),
+                anchor: None,
+            }
+        );
     }
 
     #[test]
@@ -317,15 +453,63 @@ mod tests {
         // as a synthetic directory (WP1).
         let vfs = mem_with(&["/root/sub/nested.md"]);
         let target = path_target("sub");
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(dest, Destination::Unresolved);
+    }
+
+    #[test]
+    fn a_percent_encoded_relative_escape_above_root_is_rejected() {
+        // The crate's own containment policy (A2): even though
+        // `/etc/hosts` exists in this Mem, the decoded `../../etc/hosts`
+        // candidate lexically escapes `/root` and must never be tried.
+        let vfs = mem_with(&["/etc/hosts"]);
+        let target = path_target("%2e%2e/%2e%2e/etc/hosts");
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+        assert_eq!(dest, Destination::Unresolved);
+    }
+
+    #[test]
+    fn a_relative_escape_through_doc_dir_above_root_is_rejected() {
+        let vfs = mem_with(&["/etc/hosts"]);
+        let target = path_target("../../../etc/hosts");
+        let dest = resolve(
+            &vfs,
+            &target,
+            Some(Path::new("/root/a/b")),
+            Path::new("/root"),
+            MD,
+        );
+        assert_eq!(dest, Destination::Unresolved);
+    }
+
+    #[test]
+    fn a_relative_traversal_that_stays_inside_root_still_resolves() {
+        let vfs = mem_with(&["/root/note.md"]);
+        let target = path_target("../note.md");
+        let dest = resolve(
+            &vfs,
+            &target,
+            Some(Path::new("/root/sub")),
+            Path::new("/root"),
+            MD,
+        );
+        assert_eq!(
+            dest,
+            Destination::Location {
+                path: PathBuf::from("/root/note.md"),
+                anchor: None,
+            }
+        );
     }
 
     #[test]
     fn same_doc_target_is_unresolved_without_touching_the_filesystem() {
         let vfs = Mem::new();
-        let target = Target::SameDoc(Anchor::Heading("setup".to_string()));
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let target = Target::SameDoc(Anchor::Named {
+            role: AnchorRole::Heading,
+            name: "setup".to_string(),
+        });
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(dest, Destination::Unresolved);
     }
 
@@ -333,24 +517,44 @@ mod tests {
     fn url_target_resolves_without_touching_the_filesystem() {
         let vfs = Mem::new();
         let target = Target::Url("https://example.com".to_string());
-        let dest = resolve(&vfs, &target, None, Path::new("/root"));
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
         assert_eq!(dest, Destination::Url("https://example.com".to_string()));
     }
 
     #[test]
+    fn resolve_returns_the_is_external_approved_value_not_the_raw_target() {
+        let vfs = Mem::new();
+        let target = Target::Url("  HTTPS://Example.com  ".to_string());
+        let dest = resolve(&vfs, &target, None, Path::new("/root"), MD);
+        assert_eq!(dest, Destination::Url("HTTPS://Example.com".to_string()));
+    }
+
+    #[test]
     fn is_external_accepts_the_three_allowed_schemes_case_insensitively() {
-        assert!(is_external("http://example.com"));
-        assert!(is_external("https://example.com"));
-        assert!(is_external("mailto:someone@example.com"));
-        assert!(is_external("HTTP://example.com"));
+        assert_eq!(
+            is_external("http://example.com"),
+            Some("http://example.com".to_string())
+        );
+        assert_eq!(
+            is_external("https://example.com"),
+            Some("https://example.com".to_string())
+        );
+        assert_eq!(
+            is_external("mailto:someone@example.com"),
+            Some("mailto:someone@example.com".to_string())
+        );
+        assert_eq!(
+            is_external("HTTP://example.com"),
+            Some("HTTP://example.com".to_string())
+        );
     }
 
     #[test]
     fn is_external_rejects_every_other_scheme() {
-        assert!(!is_external("file:///etc/passwd"));
-        assert!(!is_external("javascript:alert(1)"));
-        assert!(!is_external("data:text/plain;base64,aGk="));
-        assert!(!is_external("ftp://example.com"));
+        assert_eq!(is_external("file:///etc/passwd"), None);
+        assert_eq!(is_external("javascript:alert(1)"), None);
+        assert_eq!(is_external("data:text/plain;base64,aGk="), None);
+        assert_eq!(is_external("ftp://example.com"), None);
     }
 
     /// The allowlist is a property of `resolve` itself, not of whichever
@@ -367,7 +571,7 @@ mod tests {
         ] {
             let target = Target::Url(hostile.to_string());
             assert_eq!(
-                resolve(&vfs, &target, None, Path::new("/root")),
+                resolve(&vfs, &target, None, Path::new("/root"), MD),
                 Destination::Unresolved,
                 "{hostile} must not resolve to a Url destination"
             );
