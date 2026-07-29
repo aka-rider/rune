@@ -45,7 +45,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     crate::title::finalize_if_focused(app, effects);
 
     match cmd {
-        GlobalCommand::ToggleExplorer => {
+        GlobalCommand::FocusExplorer => {
             // Always exposes and focuses the Explorer — never hides it, so
             // the command a user reaches for to SEE the Explorer can never
             // instead take it away (mirrors the Go reference's own
@@ -78,13 +78,29 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // the field must never present a stale name from a previous
         // document or a previously abandoned edit (no shadow state).
         GlobalCommand::FocusTitle => focus_title(app),
-        // Mirrors `ToggleExplorer`'s "show + focus" pairing (plan WP5): the
-        // Tabs pane's own cursor is meaningless to a user who can't see it.
-        // No dir-load side effect needed here — unlike Explorer, Tabs has
-        // nothing to lazily fetch off-thread.
+        // Mirrors `FocusExplorer`'s "show + focus" pairing: the Tabs pane's
+        // own cursor is meaningless to a user who can't see it. Also makes
+        // sure the tab rows themselves have room — a starved split from a
+        // dragged-down divider is raised back to its floor before focus
+        // lands there. No dir-load side effect needed here — unlike
+        // Explorer, Tabs has nothing to lazily fetch off-thread.
         GlobalCommand::FocusTabs => {
             app.splits.left.show();
+            let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+            let geo = crate::layout::geometry(area, app);
+            if let Some(block) = geo.left_block {
+                let budget = crate::layout::explorer_budget(block);
+                app.splits
+                    .explorer
+                    .ensure_trail(budget, crate::layout::TABS_LIMITS);
+            }
             app.focus = Pane::Tabs;
+        }
+        GlobalCommand::CollapseLeft => {
+            app.splits.left.hide();
+            if matches!(app.focus, Pane::Explorer | Pane::Tabs) {
+                app.focus = Pane::Editor;
+            }
         }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
         // WP7.S2: mints/toggles the generated Help virtual document — a
@@ -152,10 +168,10 @@ mod tests {
     }
 
     #[test]
-    fn toggle_explorer_shows_the_left_pane_and_focuses_it() {
+    fn focus_explorer_shows_the_left_pane_and_focuses_it() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         assert!(app.splits.left.is_shown());
         assert_eq!(app.focus, Pane::Explorer);
     }
@@ -167,10 +183,23 @@ mod tests {
     fn pressing_it_twice_keeps_the_explorer_shown_and_focused() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         assert!(app.splits.left.is_shown());
         assert_eq!(app.focus, Pane::Explorer);
+    }
+
+    /// The collapse command hides the column and, only when it currently
+    /// owns focus, hands focus back to the Editor rather than leaving a
+    /// keystroke routed to a pane with no on-screen presence.
+    #[test]
+    fn collapse_left_hides_the_column_and_returns_focus_to_the_editor() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::CollapseLeft, &mut effects);
+        assert!(!app.splits.left.is_shown());
+        assert_eq!(app.focus, Pane::Editor);
     }
 
     #[test]

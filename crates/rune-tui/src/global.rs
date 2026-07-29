@@ -13,15 +13,22 @@ use crate::keymap::{KeyCode, Mods, QuitKey};
 /// stub panes own it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlobalCommand {
-    ToggleExplorer,
+    /// Always exposes and focuses the Explorer — never hides it, mirroring
+    /// the Go reference and matching `FocusTabs`'s own show-plus-focus
+    /// contract below.
+    FocusExplorer,
     FocusEditor,
-    /// Focuses the Open Tabs pane (plan WP5: Explorer/Tabs are separate
-    /// panes — decision 7 — so, unlike Go's single shared `FocusExplorer`
-    /// chord, this needs its own binding; `ToggleExplorer` only ever
-    /// focuses Explorer). Shows the left column too (mirroring
-    /// `ToggleExplorer`'s own "show + focus" pairing) so the tab list is
-    /// actually visible the moment it's focused.
+    /// Focuses the Open Tabs pane. Explorer/Tabs are separate panes, so,
+    /// unlike Go's single shared explorer chord, this needs its own binding.
+    /// Shows the left column too, pairing show with focus exactly like
+    /// `FocusExplorer` does, so the tab list is actually visible the moment
+    /// it's focused.
     FocusTabs,
+    /// Hides the left column, undoing whichever of `FocusExplorer`/
+    /// `FocusTabs` last showed it. The collapse counterpart to those two:
+    /// where they always show and focus, this always hides and, if the
+    /// column currently owns focus, hands it back to the Editor.
+    CollapseLeft,
     /// Focuses the title field so the active document can be renamed (`^r`
     /// — free across `GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `resolve_char`,
     /// `TABS_BINDINGS` and `EXPLORER_BINDINGS`). Global rather than
@@ -66,7 +73,7 @@ const SUP: Mods = Mods {
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
-        cmd: GlobalCommand::ToggleExplorer,
+        cmd: GlobalCommand::FocusExplorer,
         help: "explorer",
         when: "",
         alias: true,
@@ -138,7 +145,7 @@ pub const LEADER_GLYPH: char = '␣';
 pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('x'), Mods::NONE)],
-        cmd: GlobalCommand::ToggleExplorer,
+        cmd: GlobalCommand::FocusExplorer,
         help: "explorer",
         when: "",
         alias: false,
@@ -161,6 +168,13 @@ pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
         keys: &[KeyPattern::new(KeyCode::Char('r'), Mods::NONE)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('z'), Mods::NONE)],
+        cmd: GlobalCommand::CollapseLeft,
+        help: "hide panel",
         when: "",
         alias: false,
     },

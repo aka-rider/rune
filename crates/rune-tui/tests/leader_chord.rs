@@ -74,6 +74,37 @@ fn space_held_and_x_opens_the_explorer_and_retracts_the_space() {
     );
 }
 
+/// `␣X` pressed twice must never toggle the Explorer back off — the second
+/// press is a no-op on visibility, leaving it exactly as shown and focused
+/// as the first press left it.
+#[test]
+fn space_held_and_x_pressed_twice_leaves_the_explorer_shown_and_focused() {
+    let mut app = app_for("hello");
+    app.space_probe = Box::new(FixedSpaceProbe(true));
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Char('x'));
+
+    assert!(app.splits.left.is_shown());
+    assert_eq!(app.focus, Pane::Explorer);
+}
+
+/// `␣Z` collapses the left column and, since the Explorer owned focus,
+/// hands focus back to the Editor.
+#[test]
+fn space_held_and_z_collapses_the_left_column_and_returns_focus_to_the_editor() {
+    let mut app = app_for("hello");
+    app.space_probe = Box::new(FixedSpaceProbe(true));
+
+    press(&mut app, KeyCode::Char('x'));
+    assert!(app.splits.left.is_shown());
+
+    press(&mut app, KeyCode::Char('z'));
+
+    assert!(!app.splits.left.is_shown());
+    assert_eq!(app.focus, Pane::Editor);
+}
+
 /// Case 2 ("typing must still work"): space NOT held + `x` typed after a
 /// space -> the buffer contains `" x"` and focus is unchanged.
 #[test]
