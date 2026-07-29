@@ -9,6 +9,7 @@
 //! in `rune-cli::main::load_buffer` already does).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, BufferError};
 use rune_vfs::Vfs;
@@ -19,6 +20,7 @@ use crate::db;
 use crate::document::DocumentId;
 use crate::help;
 use crate::pane::Pane;
+use crate::runtime::Effects;
 
 /// Normalizes `path` through the injected `Vfs` — the ONE resolution
 /// chokepoint every path that will ever bind a `Document` funnels through
@@ -59,7 +61,85 @@ pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
             return None;
         }
     };
+    open_bytes(app, &resolved, bytes)
+}
 
+/// Opens `path` off-thread (plan WP5.S6, [rune-tui A 7]: "synchronous
+/// `vfs.read` inside `update` blocks the Elm loop") — the interactive-
+/// navigation counterpart of [`open_path`] above. An already-open document
+/// still reactivates synchronously (no I/O to wait on); a fresh path spawns
+/// a `ReadFile` `Cmd` and returns immediately with nothing landed yet — the
+/// eventual `Msg::FileOpened` ack ([`handle_file_opened`], routed via
+/// `dispatch::update_inner`) finishes opening the document and lands
+/// `anchor`, if given, through `navigate::land_anchor`.
+///
+/// The pre-runtime CLI bootstrap (`rune-cli::main`'s multi-file launch —
+/// no `Effects` sink or `Msg` loop exists yet to reply into) and the
+/// Explorer's own Open-on-a-file path still call the synchronous
+/// [`open_path`] directly; this is `navigate::follow`'s entry point only.
+pub fn open_path_async(
+    app: &mut App,
+    path: &Path,
+    anchor: Option<rune_nav::Anchor>,
+    effects: &mut Effects,
+) {
+    let resolved = resolve(app.vfs.as_ref(), path);
+
+    if let Some(id) = existing_document_for(app, &resolved) {
+        switch_to(app, id);
+        if let Some(anchor) = anchor {
+            crate::navigate::land_anchor(app, id, &anchor);
+        }
+        return;
+    }
+
+    let vfs = Arc::clone(&app.vfs);
+    effects
+        .cmds
+        .push(crate::runtime::read_file_cmd(vfs, resolved, anchor));
+}
+
+/// The reaction to a `ReadFile` `Cmd`'s completion (`Msg::FileOpened`) — the
+/// async counterpart of `open_path`'s own inline read-then-insert tail.
+/// Rechecks `existing_document_for` before inserting: a second navigation to
+/// the same path issued while this read was in flight may have already
+/// opened it by some other route, and inserting again would duplicate the
+/// document rather than reactivating it.
+pub(crate) fn handle_file_opened(
+    app: &mut App,
+    path: PathBuf,
+    result: Result<Vec<u8>, String>,
+    anchor: Option<rune_nav::Anchor>,
+) {
+    if let Some(id) = existing_document_for(app, &path) {
+        switch_to(app, id);
+        if let Some(anchor) = anchor {
+            crate::navigate::land_anchor(app, id, &anchor);
+        }
+        return;
+    }
+
+    let bytes = match result {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            crate::banner::report_error(app, format!("could not open {}: {e}", path.display()));
+            return;
+        }
+    };
+    let Some(id) = open_bytes(app, &path, bytes) else {
+        return;
+    };
+    if let Some(anchor) = anchor {
+        crate::navigate::land_anchor(app, id, &anchor);
+    }
+}
+
+/// The decode-then-insert tail shared by [`open_path`]'s inline read and
+/// [`handle_file_opened`]'s async one: decode `bytes` as a `Buffer`, insert
+/// a new `Document` bound to `resolved`, hydrate it through the recovery
+/// store, and switch to it. Reports and returns `None` on a decode failure
+/// — the caller's own read already succeeded by this point.
+fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
     let buffer = match Buffer::from_bytes(bytes) {
         Ok(buffer) => buffer,
         Err(BufferError::InvalidUtf8) => {
@@ -80,14 +160,14 @@ pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
 
     let id = app.open_document(buffer);
     if let Some(doc) = app.doc_mut(id) {
-        doc.bind_path(resolved.clone());
+        doc.bind_path(resolved.to_path_buf());
     }
     // Hydrates `id` through the app-wide recovery store (plan WP6, closing
     // the gap TODO.md's "per-doc recovery hydration for explorer-opened
     // documents" entry records): non-blocking, ack-driven via
     // `app::handle_db_event`'s `Load` arm — `Document::db` stays `None`
     // until that ack lands (or forever, if this store is absent/degraded).
-    db::load_document(app, id, &resolved);
+    db::load_document(app, id, resolved);
     switch_to(app, id);
     Some(id)
 }

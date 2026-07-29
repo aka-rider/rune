@@ -78,6 +78,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
+        Msg::FileOpened {
+            path,
+            result,
+            anchor,
+        } => crate::workspace::handle_file_opened(app, path, result, anchor),
         Msg::Highlighted {
             doc,
             version,

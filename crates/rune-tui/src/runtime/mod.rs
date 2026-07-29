@@ -99,6 +99,20 @@ pub enum Msg {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
     },
+    /// A `ReadFile` `Cmd` completed (plan WP5.S6, [rune-tui A 7]) —
+    /// `workspace::open_path_async`'s reply, routed to `workspace::
+    /// handle_file_opened`. `anchor` is carried through unchanged from the
+    /// request so landing it (`navigate::land_anchor`) doesn't need a
+    /// second round trip once the document is open. No `generation`/
+    /// staleness echo: unlike rename/save, opening a file mutates no
+    /// shared single-slot machine state — `handle_file_opened` rechecks
+    /// `existing_document_for` itself, so two overlapping opens of the
+    /// same path just converge on one document rather than racing.
+    FileOpened {
+        path: PathBuf,
+        result: Result<Vec<u8>, String>,
+        anchor: Option<rune_nav::Anchor>,
+    },
     /// A background `rune_ts::highlight` call completed (plan WP5.S2).
     /// `result: None` means NO RESULT — the parse budget elapsed, the
     /// language was unrecognised, or the parse failed — and is
@@ -173,6 +187,12 @@ pub enum CmdKind {
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
+    /// `vfs.read` for a single FILE (plan WP5.S6, [rune-tui A 7]) —
+    /// `workspace::open_path_async`'s own off-thread read, the `ReadDir`
+    /// sibling for opening (rather than listing) a path: a slow or
+    /// degraded filesystem must never block the main loop just because the
+    /// target happens to be a file instead of a directory.
+    ReadFile,
     /// `/usr/bin/open` on an external link's URL (plan WP5.S6). Spawns a
     /// subprocess; never run it inline. The session fuzzer's driver keeps
     /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
@@ -439,6 +459,27 @@ pub fn load_dir_cmd(
             "could not list {}: {e}",
             root.display()
         ))),
+    })
+}
+
+/// Reads `path` off-thread via `vfs.read` (plan WP5.S6, [rune-tui A 7]) —
+/// `workspace::open_path_async`'s only `Cmd`, and `load_dir_cmd`'s single-
+/// file counterpart. `anchor` is opaque data here, just carried through to
+/// the `Msg::FileOpened` reply unchanged — this `Cmd` never resolves it
+/// itself (that needs the target's own catalogue, which doesn't exist
+/// until the document is open).
+pub fn read_file_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    anchor: Option<rune_nav::Anchor>,
+) -> Cmd {
+    Cmd::new(CmdKind::ReadFile, move || {
+        let result = vfs.read(&path).map_err(|e| e.to_string());
+        Some(Msg::FileOpened {
+            path,
+            result,
+            anchor,
+        })
     })
 }
 

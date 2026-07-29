@@ -677,6 +677,83 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
     );
 }
 
+/// Review fix (plan WP5.S2, [rune-tui A 3]): `handle_load_ack` must refuse
+/// to adopt recovered content that would empty (or drastically shrink) a
+/// non-empty on-disk file — the §1.3 destructive-async-reset suspicion
+/// check, run through the shared `Document::hydrate` chokepoint. The buffer
+/// stays exactly what was on disk, and a status message explains why.
+#[test]
+fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let disk_content = "a whole paragraph of real content that must not vanish";
+    let mut app = App::new(
+        Buffer::new(disk_content),
+        Some(PathBuf::from("/doc.md")),
+        vfs,
+        None,
+    );
+    let id = app.active;
+
+    let op_id = 1u64;
+    app.db_ops.insert(op_id, id);
+    app.db_load_versions
+        .insert(op_id, app.doc(id).unwrap().buffer.version());
+
+    let load_result = LoadResult {
+        doc_id: 1,
+        renamed_from: None,
+        disk_content: disk_content.to_string(),
+        // A suspicious "recovered" empty string — the exact destructive
+        // async-reset pattern §1.3 forbids adopting silently.
+        recovered: String::new(),
+        has_history: false,
+        sync: SyncState {
+            kind: SyncKind::Clean,
+            ancestor: None,
+            ours: Version {
+                hash: String::new(),
+                obs: None,
+            },
+            theirs: None,
+        },
+        nlink: 1,
+        saved_obs: Some(1),
+        bridge_seq: None,
+    };
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Db(DbEvent::Ok {
+            id: op_id,
+            result: OpOutcome::Load(Box::new(load_result)),
+        }),
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        disk_content,
+        "a refused hydration must leave the buffer exactly as it was on disk"
+    );
+    assert!(
+        !app.doc(id).unwrap().is_dirty(),
+        "a refused hydration must not mark the buffer dirty"
+    );
+    assert!(
+        app.doc(id).unwrap().db.is_some(),
+        "DocDb must still be installed even when the adopt is refused"
+    );
+    assert_eq!(app.status_source, StatusSource::Other);
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|s| s.contains("crash recovery")),
+        "a status message must explain the refusal (got {:?})",
+        app.status_message
+    );
+}
+
 /// Plan WP3.S1/S4's regression test: a two-file CLI launch opens BOTH extra
 /// documents (`workspace::open_path`, exactly as `rune-cli::main`'s
 /// extra-positional loop does) before `DbBridge::attach` ever runs — the

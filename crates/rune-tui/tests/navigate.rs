@@ -97,6 +97,46 @@ fn click(app: &mut App, col: u16, row: u16, ctrl: bool) -> Effects {
     effects
 }
 
+/// Runs every `ReadFile` `Cmd` `effects` carries inline and feeds its
+/// `Msg::FileOpened` reply straight back through `update` — models one
+/// whole runtime cycle for `workspace::open_path_async` (plan WP5.S6)
+/// without spawning a real thread. Panics on any OTHER `Cmd` kind: a test
+/// using this helper is asserting "this key opens a file", and a surprise
+/// second kind of `Cmd` would mean the assertion no longer describes what
+/// actually happened.
+fn settle_file_opens(app: &mut App, mut effects: Effects) {
+    for cmd in effects.cmds.drain(..) {
+        assert_eq!(
+            cmd.kind(),
+            CmdKind::ReadFile,
+            "expected only a ReadFile Cmd"
+        );
+        if let Some(msg) = cmd.run() {
+            let mut inner = Effects::default();
+            app::update(app, msg, &mut inner);
+            assert!(
+                inner.cmds.is_empty(),
+                "Msg::FileOpened must not itself spawn a Cmd"
+            );
+        }
+    }
+    app.sync_view();
+}
+
+/// `press` + [`settle_file_opens`] — the async counterpart of a plain
+/// `press` for keys expected to open a file off-thread.
+fn press_and_open(app: &mut App, key: KeyInput) {
+    let effects = press(app, key);
+    settle_file_opens(app, effects);
+}
+
+/// `click` + [`settle_file_opens`] — the async counterpart of a plain
+/// `click` for gestures expected to open a file off-thread.
+fn click_and_open(app: &mut App, col: u16, row: u16, ctrl: bool) {
+    let effects = click(app, col, row, ctrl);
+    settle_file_opens(app, effects);
+}
+
 /// Ground truth for a heading's own byte offset: parses `content` through
 /// the real production pipeline (`rune_md::parse`/`catalogue`) rather than
 /// hardcoding a byte count that would silently rot if the fixture changed.
@@ -122,7 +162,7 @@ fn super_enter_follows_a_wikilink_into_a_new_tab() {
     let before = app.documents.len();
     place_cursor(&mut app, content.find("note").expect("fixture has note"));
 
-    press(&mut app, sup_enter());
+    press_and_open(&mut app, sup_enter());
 
     assert_eq!(app.documents.len(), before + 1);
     assert_eq!(
@@ -141,7 +181,7 @@ fn ctrl_enter_follows_a_wikilink_into_a_new_tab() {
     let before = app.documents.len();
     place_cursor(&mut app, content.find("note").expect("fixture has note"));
 
-    press(&mut app, ctrl_enter());
+    press_and_open(&mut app, ctrl_enter());
 
     assert_eq!(app.documents.len(), before + 1);
     assert_eq!(
@@ -160,7 +200,7 @@ fn ctrl_click_follows_a_link_while_a_plain_double_click_still_selects_a_word() {
     let original = app.active;
     let note_col = content.find("note").expect("fixture has note") as u16;
 
-    click(&mut app, note_col, 0, true);
+    click_and_open(&mut app, note_col, 0, true);
     assert_eq!(app.documents.len(), 2, "ctrl-click must open the target");
     assert_eq!(
         app.active_doc().file_path.as_deref(),
@@ -189,7 +229,7 @@ fn wikilink_with_anchor_lands_the_caret_on_the_headings_byte_offset() {
     let mut app = app_with(&mem, "/root/a.md", content);
     place_cursor(&mut app, content.find("note").expect("fixture has note"));
 
-    press(&mut app, sup_enter());
+    press_and_open(&mut app, sup_enter());
 
     assert_eq!(
         app.active_doc().file_path.as_deref(),

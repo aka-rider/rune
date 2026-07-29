@@ -328,11 +328,24 @@ impl Document {
     /// a new cursor position.
     pub fn view(&mut self) -> ViewSnapshots {
         self.doc.set_focus(self.focused);
-        self.doc.sync_content(&self.buffer);
-        self.catalogue = rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
+        self.sync_catalogue();
         self.doc.set_width(self.viewport.width);
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)
+    }
+
+    /// The narrower, WIDTH-FREE half of `view()`'s parse step (plan WP5.S6,
+    /// [rune-tui A 14]): re-syncs the comrak parse and rebuilds `catalogue`
+    /// from it, without `view()`'s width-dependent wrap pass or cursor/
+    /// snapshot work. `navigate::land_anchor` needs a just-opened target
+    /// document's catalogue to find an anchor's heading BEFORE that
+    /// document is necessarily ever on screen (no viewport width to wrap
+    /// against yet) — exposed here, the one chokepoint `view()` itself
+    /// calls into, rather than re-inlining these same two lines at that
+    /// call site where they'd be free to drift from this sequence.
+    pub fn sync_catalogue(&mut self) {
+        self.doc.sync_content(&self.buffer);
+        self.catalogue = rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
     }
 
     /// Scrolls the viewport so the PRIMARY cursor's current row is visible.
