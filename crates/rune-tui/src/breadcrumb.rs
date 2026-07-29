@@ -1,13 +1,18 @@
-//! The breadcrumb: a direct port of Go's `overlayBreadcrumb` plus its
-//! `buildCrumb` text —
-//! plan WP4.S4, replacing the pre-WP4 `draw(app, area, frame)` (which gave
-//! the breadcrumb its OWN reserved row) now that the center pane has a real
-//! `Block::bordered()` (WP4.S2) to splice onto instead. `overlay` writes
-//! cells directly into `frame.buffer_mut()` on the block's own BOTTOM
-//! border row — the same cell-writing idiom `render::blit` uses — rather
-//! than depending on ratatui's `Block` title-placement semantics, so the
-//! arithmetic can match Go's exactly (the 2-dash right margin, the `+7`
-//! bail-out, the `... / ` ellipsis) cell for cell.
+//! The breadcrumb: the active document's path spliced onto the center
+//! pane's bottom border row — plan WP4.S4, replacing the pre-WP4
+//! `draw(app, area, frame)` (which gave the breadcrumb its OWN reserved
+//! row) now that the center pane has a real `Block::bordered()` (WP4.S2)
+//! to splice onto instead. `overlay` writes cells directly into
+//! `frame.buffer_mut()` on the block's own BOTTOM border row — the same
+//! cell-writing idiom `render::blit` uses — rather than depending on
+//! ratatui's `Block` title-placement semantics, so the arithmetic (the
+//! 2-dash right margin, the `+7` bail-out, the `…/` ellipsis) is exact
+//! cell for cell.
+//!
+//! The rendered shape is `dir/dir/dir › leaf`: directories run together
+//! separated by a bare `/`, and a wider ` › ` sets the leaf file name off
+//! from the directory chain. Parts themselves carry no padding — the one
+//! space on each side of the whole crumb comes from `overlay`.
 //!
 //! Render order is load-bearing (plan gotcha 16): `render::draw` must have
 //! already painted the center `Block` over `block` before calling this, or
@@ -23,26 +28,28 @@ use crate::app::App;
 use rune_syntax::wrap::control_aware_width;
 
 /// The display width of `s`, measured through the crate's ONE width
-/// chokepoint (`render::segment_cells`'s own `control_aware_width`, itself
-/// `rune_syntax::wrap`'s — see `render.rs`'s "ONE width chokepoint" note). Every
-/// width in this module — the `bc` total, `build_crumb`'s per-part
-/// accounting, and `put`'s column advance — goes through it, so the dash
-/// fill can never be sized in one unit and drawn in another (§1.5: display
-/// widths are one system, and a CJK/emoji path component makes the
-/// difference visible immediately).
+/// chokepoint (`rune_syntax::wrap`'s `control_aware_width`, the same one
+/// the renderer's cell segmentation uses). Every width in this module —
+/// the `bc` total, `build_crumb`'s per-part accounting, and `put`'s column
+/// advance — goes through it, so the dash fill can never be sized in one
+/// unit and drawn in another (§1.5: display widths are one system, and a
+/// CJK/emoji path component makes the difference visible immediately).
 fn text_width(s: &str) -> usize {
     s.chars().map(control_aware_width).sum()
 }
 
-/// Go's `Padding(0, 1)`-rendered ellipsis (`st.Breadcrumb.Render("... / ")`,
-/// `breadcrumb.go:90`): the padding adds one space on EACH side of the
-/// already-trailing-spaced `"... / "` literal, giving `" ... /  "` — two
-/// trailing spaces, not one.
-const ELLIPSIS: &str = " ... /  ";
+/// Marks a crumb whose leading parts were dropped to fit the width. Two
+/// display columns; the trailing `/` reads as "…and more directories
+/// above", continuing the bare-slash directory chain that follows it.
+const ELLIPSIS: &str = "…/";
 
-/// Go's padding-free separator (`st.BreadcrumbSep.Render(" / ")`,
-/// `breadcrumb.go:87`).
-const SEP: &str = " / ";
+/// Between two directories: a bare slash, no padding.
+const SEP: &str = "/";
+
+/// Between the LAST directory and the leaf file name only — the one place
+/// the crumb breathes, so the file name reads as the subject and the
+/// directory chain as its address.
+const LEAF_SEP: &str = " › ";
 
 /// Splices the active document's breadcrumb onto `block`'s bottom border
 /// row (`block.y + block.height - 1`), left to right: `╰` · a `─` dash
@@ -76,7 +83,7 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
         .iter()
         .map(|s| text_width(s.content.as_ref()))
         .sum();
-    // Go's `minOverhead := 7` (`workspace_view.go`'s bail-out) — leaves the
+    // The 7-column minimum overhead — leaves the
     // plain border row (already painted by `render::draw`'s `Block`)
     // completely untouched rather than splicing a crumb that would collide
     // with the corner glyphs.
@@ -145,14 +152,15 @@ fn crumb_parts(path: &std::path::Path, root: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-/// A direct port of Go's `buildCrumb`: builds the
-/// `Normal` path components right-to-left, each as `" part "` (fg
-/// `SPECIAL`, Go's `Breadcrumb` style) followed by `" / "` (fg `SUBTLE`,
-/// Go's `BreadcrumbSep`) for every part except the rightmost (leaf), until
-/// adding the next part would overflow `max_width` by Go's 6-column
-/// buffer — at which point an `ELLIPSIS` span is prepended and the loop
-/// stops. Index `0` (the leftmost/root-most component) is NEVER dropped —
-/// Go's `&& i > 0` guard on the truncation check.
+/// Builds the crumb's spans right-to-left: each part verbatim (fg
+/// `SPECIAL`, no padding of its own) followed — for every part except the
+/// rightmost (the leaf) — by a `SUBTLE` separator span, `LEAF_SEP` when
+/// the part is the last directory (index `n - 2`) and `SEP` between any
+/// two directories above it. The walk stops as soon as adding the next
+/// part would overflow `max_width` by the 6-column buffer, at which point
+/// an `ELLIPSIS` span is prepended. Index `0` (the leftmost/root-most
+/// component) is NEVER dropped — the `&& i > 0` guard on the truncation
+/// check. A single-component path renders as just that leaf.
 fn build_crumb(
     parts: &[String],
     max_width: usize,
@@ -163,31 +171,31 @@ fn build_crumb(
     let mut current_width = 0usize;
 
     for (i, part) in parts.iter().enumerate().rev() {
-        let part_text = format!(" {part} ");
-        let part_width = text_width(part_text.as_str());
+        let part_width = text_width(part);
         let is_last = i == n - 1;
 
         let (seg_width, seg): (usize, Vec<Span<'static>>) = if is_last {
             (
                 part_width,
                 vec![Span::styled(
-                    part_text,
+                    part.clone(),
                     Style::new().fg(theme.chrome.special),
                 )],
             )
         } else {
-            let sep_width = text_width(SEP);
+            // The part directly left of the leaf gets the wider ` › `;
+            // every directory above it is joined by a bare `/`.
+            let sep = if i + 2 == n { LEAF_SEP } else { SEP };
             (
-                part_width + sep_width,
+                part_width + text_width(sep),
                 vec![
-                    Span::styled(part_text, Style::new().fg(theme.chrome.special)),
-                    Span::styled(SEP, Style::new().fg(theme.chrome.subtle)),
+                    Span::styled(part.clone(), Style::new().fg(theme.chrome.special)),
+                    Span::styled(sep, Style::new().fg(theme.chrome.subtle)),
                 ],
             )
         };
 
-        // Go's `6`: an arbitrary buffer for the ellipsis and some
-        // breathing room (`breadcrumb.go:99-100`'s own comment).
+        // An arbitrary buffer for the ellipsis and some breathing room.
         if current_width + seg_width + 6 > max_width && i > 0 {
             segments.insert(
                 0,
@@ -301,25 +309,87 @@ mod tests {
         // parts = ["vault", "notes", "note.md"] instead of the full
         // ["Users", "xiii", "vault", "notes", "note.md"].
         let row = overlay_bottom_row(&app, 60, 3, true);
-        assert!(row.contains("vault  /  notes  /  note.md"));
+        assert!(row.contains("vault/notes › note.md"));
         assert!(!row.contains("Users"));
+    }
+
+    /// The crumb is root-relative for a document opened WITHOUT the
+    /// Explorer pane ever being shown: the root comes from startup's
+    /// `workspaceroot::resolve` → `App::set_root`, which runs
+    /// unconditionally, so the Explorer's own state can't be a
+    /// precondition for relativizing. `left_visible` stays `false`
+    /// throughout — the pane is never toggled on.
+    #[test]
+    fn the_crumb_is_root_relative_without_the_explorer_ever_being_shown() {
+        let mut app = app_for("hello", Some("/Users/xiii/vault/notes/note.md"));
+        app.set_root(PathBuf::from("/Users/xiii/vault"));
+        assert!(!app.left_visible, "the Explorer pane must not be shown");
+
+        let row = overlay_bottom_row(&app, 60, 3, true);
+        assert!(
+            row.contains("vault/notes › note.md"),
+            "expected a root-relative crumb:\n{row}"
+        );
+        assert!(!row.contains("Users"), "the path above root must be cut");
+    }
+
+    /// The boundary the relativizing must NOT cross: a sibling directory
+    /// sharing root's name as a string prefix is outside root, so its
+    /// document falls back to the absolute path.
+    #[test]
+    fn a_sibling_sharing_the_root_name_prefix_is_not_relativized() {
+        let mut app = app_for("hello", Some("/a/vault2/notes.md"));
+        app.set_root(PathBuf::from("/a/vault"));
+
+        let row = overlay_bottom_row(&app, 60, 3, true);
+        assert!(
+            row.contains("a/vault2 › notes.md"),
+            "expected the absolute-path fallback:\n{row}"
+        );
+    }
+
+    /// The separator glyphs must be ONE display column each, or every width
+    /// in this module (dash fill, `bc`, the truncation budget) is computed
+    /// against a lie and the `──╯` drifts off the right edge (§1.5).
+    #[test]
+    fn the_separator_glyphs_are_single_column() {
+        assert_eq!(text_width(SEP), 1);
+        assert_eq!(text_width(LEAF_SEP), 3);
+        assert_eq!(text_width(ELLIPSIS), 2);
+    }
+
+    /// A one-component path is all leaf: no separator, no stray padding.
+    #[test]
+    fn a_single_component_path_renders_just_the_leaf() {
+        let theme = crate::theme::Theme::catppuccin_mocha(false);
+        let segments = build_crumb(&["note.md".to_string()], 40, &theme);
+        let text: String = segments.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "note.md");
     }
 
     #[test]
     fn renders_the_exact_row_at_a_known_width() {
         let app = app_for("hello", Some("/a/b/note.md"));
-        // parts = ["a", "b", "note.md"]; crumb = " a  /  b  /  note.md "
-        // (21 wide, itself already one-space-padded on each end from its
-        // own leftmost/rightmost part's Padding(0,1) — Go's `buildCrumb`).
-        // `overlay` wraps that in its OWN plain leading/trailing space
-        // (Go's `content := " " + crumb + " "`), so the actual row has a
-        // DOUBLE space on each side of the crumb, not a single one.
-        // At width 40, dash = 40 - 21 - 6 = 13.
+        // parts = ["a", "b", "note.md"]; crumb = "a/b › note.md" — the
+        // directories run together on a bare `/`, the leaf is set off by
+        // ` › `, and no part carries padding of its own: 1 + 1 + 1 + 3 + 7
+        // = 13 columns. `overlay` adds the ONE plain space on each side.
+        // At width 40, dash = 40 - 13 - 6 = 21.
         let row = overlay_bottom_row(&app, 40, 3, true);
-        assert_eq!(
-            row,
-            format!("╰{}  a  /  b  /  note.md  ──╯", "─".repeat(13))
-        );
+        assert_eq!(row, format!("╰{} a/b › note.md ──╯", "─".repeat(21)));
+    }
+
+    /// Once the parts no longer fit, the dropped leading directories are
+    /// replaced by `…/` — and the row must still end flush at the right
+    /// edge, since the ellipsis is part of `bc` like any other span.
+    #[test]
+    fn a_too_long_path_is_truncated_with_an_ellipsis_prefix() {
+        const W: u16 = 28;
+        let app = app_for("hello", Some("/alpha/bravo/charlie/delta/note.md"));
+        let row = overlay_bottom_row(&app, W, 3, true);
+        // "…/delta › note.md" is 17 wide, so dash = 28 - 17 - 6 = 5.
+        assert_eq!(row, format!("╰{} …/delta › note.md ──╯", "─".repeat(5)));
+        assert_eq!(text_width(&row), W as usize, "the row must fill its width");
     }
 
     #[test]

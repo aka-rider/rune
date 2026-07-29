@@ -127,16 +127,12 @@ fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
     let app = app_for("hello", Some("/notes/vault/todo.md"));
     let breadcrumb_row = row_text(&app, HEIGHT - 2, WIDTH);
     assert!(
-        breadcrumb_row.contains("notes"),
-        "expected a path segment on the breadcrumb row:\n{breadcrumb_row}"
+        breadcrumb_row.contains("notes/vault"),
+        "expected the directory chain joined by a bare slash:\n{breadcrumb_row}"
     );
     assert!(
-        breadcrumb_row.contains("vault"),
-        "expected a path segment on the breadcrumb row:\n{breadcrumb_row}"
-    );
-    assert!(
-        breadcrumb_row.contains("todo.md"),
-        "expected the file name segment on the breadcrumb row:\n{breadcrumb_row}"
+        breadcrumb_row.contains("vault › todo.md"),
+        "expected the leaf set off from its directory by ' › ':\n{breadcrumb_row}"
     );
     assert!(
         breadcrumb_row.trim_end().ends_with("──╯"),
