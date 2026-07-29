@@ -3,8 +3,8 @@
 //! state lands in plain named `App` fields in WP4/WP5). Extracted out of
 //! `app.rs` to keep it under the §1.6 budget (plan WP2 Rules: "extract to
 //! pane.rs ... as needed") — `handle_global_command` lives here too since
-//! it's the sole reader/writer of `App::focus`/`App::left_visible` outside
-//! `app.rs` itself.
+//! it's the sole reader/writer of `App::focus`/the left column's `Split`
+//! state outside `app.rs` itself.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,19 +46,23 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
 
     match cmd {
         GlobalCommand::ToggleExplorer => {
-            app.left_visible = !app.left_visible;
-            app.focus = if app.left_visible {
-                Pane::Explorer
-            } else {
-                Pane::Editor
-            };
+            // Always exposes and focuses the Explorer — never hides it, so
+            // the command a user reaches for to SEE the Explorer can never
+            // instead take it away (mirrors the Go reference's own
+            // show-plus-focus contract, and `FocusTabs`'s below).
+            app.splits.left.show();
+            app.splits.explorer.show();
+            app.focus = Pane::Explorer;
             // The Explorer's very first load (plan WP4.S4): "empty and not
             // already loading" is the no-shadow-state stand-in for "never
             // loaded" — `Explorer`'s exact field list (`explorer.rs`) has
             // no separate `loaded` flag, and a genuinely-empty directory
-            // re-triggering this on a later toggle is a harmless no-op
+            // re-triggering this on a later focus is a harmless no-op
             // reload, not an incorrect state.
-            if app.left_visible && app.explorer.entries.is_empty() && !app.explorer.loading {
+            if app.splits.left.is_shown()
+                && app.explorer.entries.is_empty()
+                && !app.explorer.loading
+            {
                 let root = explorer::initial_root(app);
                 app.explorer.loading = true;
                 app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
@@ -79,7 +83,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // No dir-load side effect needed here — unlike Explorer, Tabs has
         // nothing to lazily fetch off-thread.
         GlobalCommand::FocusTabs => {
-            app.left_visible = true;
+            app.splits.left.show();
             app.focus = Pane::Tabs;
         }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
@@ -152,28 +156,34 @@ mod tests {
         let mut app = app();
         let mut effects = Effects::default();
         handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        assert!(app.left_visible);
+        assert!(app.splits.left.is_shown());
+        assert_eq!(app.focus, Pane::Explorer);
+    }
+
+    /// The command that shows the Explorer must never be the one that hides
+    /// it again — pressing it a second time is a no-op on visibility, not a
+    /// toggle back off.
+    #[test]
+    fn pressing_it_twice_keeps_the_explorer_shown_and_focused() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
+        assert!(app.splits.left.is_shown());
         assert_eq!(app.focus, Pane::Explorer);
     }
 
     #[test]
-    fn toggling_explorer_twice_hides_it_and_refocuses_the_editor() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        handle_global_command(&mut app, GlobalCommand::ToggleExplorer, &mut effects);
-        assert!(!app.left_visible);
-        assert_eq!(app.focus, Pane::Editor);
-    }
-
-    #[test]
-    fn focus_editor_returns_focus_regardless_of_left_visible() {
+    fn focus_editor_returns_focus_regardless_of_the_left_columns_visibility() {
         let mut app = app();
         app.focus = Pane::Explorer;
-        app.left_visible = true;
+        app.splits.left.show();
         let mut effects = Effects::default();
         handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
         assert_eq!(app.focus, Pane::Editor);
-        assert!(app.left_visible, "FocusEditor must not hide the left pane");
+        assert!(
+            app.splits.left.is_shown(),
+            "FocusEditor must not hide the left pane"
+        );
     }
 }

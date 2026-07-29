@@ -317,13 +317,16 @@ mod tests {
     /// Explorer pane ever being shown: the root comes from startup's
     /// `workspaceroot::resolve` → `App::set_root`, which runs
     /// unconditionally, so the Explorer's own state can't be a
-    /// precondition for relativizing. `left_visible` stays `false`
-    /// throughout — the pane is never toggled on.
+    /// precondition for relativizing. The left column stays hidden
+    /// throughout — it is never shown.
     #[test]
     fn the_crumb_is_root_relative_without_the_explorer_ever_being_shown() {
         let mut app = app_for("hello", Some("/Users/xiii/vault/notes/note.md"));
         app.set_root(PathBuf::from("/Users/xiii/vault"));
-        assert!(!app.left_visible, "the Explorer pane must not be shown");
+        assert!(
+            !app.splits.left.is_shown(),
+            "the Explorer pane must not be shown"
+        );
 
         let row = overlay_bottom_row(&app, 60, 3, true);
         assert!(

@@ -238,10 +238,11 @@ mod tests {
         assert_eq!(split.allot(120, 22, HORIZ_TRAIL), (Some(30), Some(90)));
     }
 
-    // Horizontal axis: pins against `left_pane_width` in `layout.rs`, which
-    // a later package deletes in favor of this allocator.
+    // Horizontal axis: pins against the left column's old fixed-width
+    // query in `layout.rs`, which a later package deletes in favor of this
+    // allocator.
     #[test]
-    fn allot_horizontal_matches_left_pane_width() {
+    fn allot_horizontal_matches_the_old_fixed_left_width_query() {
         let never_dragged = Split::new(HORIZ_LEAD, true);
         assert_eq!(
             never_dragged.allot(120, 22, HORIZ_TRAIL),
