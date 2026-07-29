@@ -351,19 +351,19 @@ these needs a redesign:
 - **Reference-style links** `[text][ref]` and link reference definitions are
   not modelled.
 
-## rust port — CELL-ORDER violation pasting a ZWJ emoji into a list item (recorded 2026-07-28, navigation plan verification)
+## ~~rust port — CELL-ORDER violation pasting a ZWJ emoji into a list item (recorded 2026-07-28, navigation plan verification)~~
 
-**Status:** open; PRE-EXISTING, proven not caused by the navigation work.
+~~**Status:** open; PRE-EXISTING, proven not caused by the navigation work.~~
 
-- **Symptom:** `make test-fuzz` at `RC=3000` catches
+~~- **Symptom:** `make test-fuzz` at `RC=3000` catches
   `CELL-ORDER: row cell buf_offsets go backwards: 29 then 9`. Not caught at the
-  default `RC=512`, so this is a low-frequency case the default gate misses.
-- **Proven pre-existing:** the shrunk script replays identically on `f3e837d6`,
+  default `RC=512`, so this is a low-frequency case the default gate misses.~~
+~~- **Proven pre-existing:** the shrunk script replays identically on `f3e837d6`,
   the base commit this plan branched from, via the `replay` harness — the
   navigation work is not implicated. It is recorded here rather than ignored
-  because "not caused by my changes" is never a reason to skip a failure.
-- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
-  replay with `cargo test -p rune-fuzz --test replay`):
+  because "not caused by my changes" is never a reason to skip a failure.~~
+~~- **Repro** (verbatim shrunk script; paste into `crates/rune-fuzz/repros/` to
+  replay with `cargo test -p rune-fuzz --test replay`):~~
 
 ```
 content 
@@ -377,19 +377,82 @@ key right ----
 key right ----
 ```
 
-- **Resulting buffer:** `"- \u{200d}👩\u{200d}👧\u{200d}👦 family"` — note the
+~~- **Resulting buffer:** `"- \u{200d}👩\u{200d}👧\u{200d}👦 family"` — note the
   leading `👨` was already consumed by the backspace, leaving the content
   starting on a bare ZWJ joiner. The cell builder then emits a row whose cell
-  `buf_offset`s are not monotonic.
-- **Likely area:** grapheme-cluster segmentation in the cell/render path when a
+  `buf_offset`s are not monotonic.~~
+~~- **Likely area:** grapheme-cluster segmentation in the cell/render path when a
   cluster begins with a lone ZWJ. Adjacent to the previously-fixed ZWJ
   grapheme-corruption entry in this file, so treat that fix as incomplete
-  rather than unrelated.
-- **Not committed to `repros/` while red**, per the standing convention that a
+  rather than unrelated.~~
+~~- **Not committed to `repros/` while red**, per the standing convention that a
   repro lands in the same commit as its fix. The proptest regression seed was
   likewise not committed, so the default gate stays green rather than
-  deterministically red for unrelated work.
-- **Out of scope** for the navigation plan.
+  deterministically red for unrelated work.~~
+~~- **Out of scope** for the navigation plan.~~
+
+**RESOLVED (2026-07-29, defect-fix session).** A second, independently-found
+repro (`content Hello there...`, pasting the same ZWJ family emoji into
+prose, then `[a](b)` + CJK text) hit the identical invariant
+(`buf_offsets go backwards: 110 then 105`), confirming one shared root
+cause rather than two bugs.
+
+**Root cause was NOT "a cluster begins with a lone ZWJ" mishandling** — a
+lone ZWJ's own cell (width clamped to 1 so it still gets a reachable caret
+column) was already correct. The real defect: `rune-tui::render::
+segment_cells_with` grapheme-segments each `SyntaxSpan`'s own text
+INDEPENDENTLY (so a cluster can never straddle two spans — a `Substituted`
+span's `cell_map` only indexes its own chars), but `rune-syntax::wrap`'s
+width/coordinate math — `wrap_line`'s greedy breaker and `query.rs`'s
+`visual_col`/`byte_col_from_visual` — concatenated every span's text into
+ONE string before grapheme-segmenting it, letting a cluster join ACROSS a
+span boundary. A ZWJ makes this land reliably: Unicode's own grapheme rule
+(UAX #29 GB9) joins a ZWJ to WHATEVER character precedes it, unconditionally
+— span boundary or not — so whenever a span boundary happened to sit right
+before a lone ZWJ (a concealed link's visible text or a list marker span
+followed immediately by pasted ZWJ-emoji content), the wrap-computed visual
+column undercounted by exactly that fused cluster's width and diverged from
+the row's real cells. `render::place_caret` then couldn't find any cell at
+the (wrong) computed column and fell back to appending a synthetic caret
+cell at the row's END — with the cursor's real, smaller `buf_offset`,
+landing after already-emitted higher `buf_offset` cells: the `CELL-ORDER`
+violation.
+
+**Fix:** `crates/rune-syntax/src/wrap/mod.rs` adds `next_grapheme`, the one
+shared chokepoint every cross-span text walk in this crate now calls: it
+clamps a cluster read to never cross a span's own end boundary, matching
+`render.rs`'s per-span segmentation exactly. `wrap_line`'s greedy breaker and
+`query.rs`'s `visual_col`/`byte_col_from_visual` (`spans_text_and_bounds`,
+replacing the old `spans_text`) were rewritten to use it instead of a bare
+`graphemes(true)` walk over the concatenated text.
+
+- Regression test: `crates/rune-syntax/src/wrap/mod.rs`'s
+  `visual_col_does_not_fuse_a_zwj_across_a_span_boundary` — builds a
+  `Substituted` span immediately followed by an `Identical` span starting
+  on a lone ZWJ and asserts `visual_col` computes the per-span total (4),
+  not the fused-cluster undercount (3). Verified failing (asserting 3) with
+  the fix reverted, passing with it restored.
+- Repros landed: `crates/rune-fuzz/repros/cell-order-02.rune` (prose +
+  link + CJK) and `cell-order-03.rune` (list item), alongside the fix.
+
+## rust port — §1.6 budget: `rune-syntax/src/wrap/mod.rs` grew past the ceiling fixing CELL-ORDER (recorded 2026-07-29)
+
+- `crates/rune-syntax/src/wrap/mod.rs` is 587 lines (§1.6 limit 500; was 489
+  before this fix) — grown ~98 lines by the CELL-ORDER fix above: the
+  `next_grapheme` chokepoint (with its doc comment explaining why every
+  cross-span text walk needs it) plus the new
+  `visual_col_does_not_fuse_a_zwj_across_a_span_boundary` regression test
+  and its doc comment. The unit tests are the larger share of the growth
+  and already follow this crate's own established pattern (`WrapMap`'s
+  other hand-built-`SyntaxLine` tests live in this same `mod tests` block);
+  moving them to a `tests/` integration file would need `WrapSegment`,
+  `slice_spans`, and the `query::visual_col`/`byte_col_from_visual`
+  `pub(super)` free functions exposed more widely than this crate wants
+  today. Split when next touched, mirroring this file's own prior
+  `wrap/table.rs` extraction: `next_grapheme` plus `grapheme_width`/
+  `grapheme_width_with_tab`/`control_aware_width`/`rune_width_with_tab`
+  (the whole shared width/cluster-boundary chokepoint, used by both this
+  file and `query.rs`) could move to a sibling `wrap/width.rs`.
 
 ## rust port — §1.6 budget: `rune-cli/src/main.rs` and `explorer.rs` grew in the navigation plan (recorded 2026-07-29)
 

@@ -7,9 +7,7 @@
 //! needs it (`visual_col`/`byte_col_from_visual`), never cached here, so a
 //! `WrapSnapshot` never owns an O(document) allocation of its own.
 
-use unicode_segmentation::UnicodeSegmentation;
-
-use super::{WrapSegment, grapheme_width_with_tab};
+use super::{WrapSegment, grapheme_width_with_tab, next_grapheme};
 use crate::syntax::SyntaxSpan;
 use rune_core::coords::{SyntaxPoint, WrapPoint};
 
@@ -27,31 +25,35 @@ pub(super) fn span_visible_len(span: &SyntaxSpan) -> usize {
     }
 }
 
-/// Concatenates every span's own visible text — the shared building block
-/// behind `WrapSnapshot::segment_text` and the free-function width walkers
-/// below, so both take a plain `&[SyntaxSpan]` rather than needing a whole
-/// `WrapSegment` to key off (WP3: a `DisplayRow`'s synthesised border spans
-/// have no backing `WrapSegment` at all, only their own `spans`).
-fn spans_text(content: &str, spans: &[SyntaxSpan]) -> String {
-    if let [only] = spans {
-        return only.text(content).to_string();
-    }
-    let mut s = String::new();
+/// Concatenates every span's own visible text, alongside where each span
+/// ENDS within that concatenation (ascending, last entry == the
+/// concatenation's own length) — the shared building block behind the
+/// free-function width walkers below, so both take a plain `&[SyntaxSpan]`
+/// rather than needing a whole `WrapSegment` to key off (WP3: a
+/// `DisplayRow`'s synthesised border spans have no backing `WrapSegment` at
+/// all, only their own `spans`). The bounds feed straight into
+/// `next_grapheme` so these walkers draw cluster boundaries
+/// at the exact same byte positions the row's actual `Cell`s do — see that
+/// function's docs for why a bare concatenated-string walk would disagree.
+fn spans_text_and_bounds(content: &str, spans: &[SyntaxSpan]) -> (String, Vec<usize>) {
+    let mut text = String::new();
+    let mut bounds = Vec::with_capacity(spans.len());
     for sp in spans {
-        s.push_str(sp.text(content));
+        text.push_str(sp.text(content));
+        bounds.push(text.len());
     }
-    s
+    (text, bounds)
 }
 
 /// The width-walking core of `WrapSnapshot::visual_col` — moved to a free
 /// function over a plain `&[SyntaxSpan]` (WP3.S3) so any span slice can be
 /// walked identically, not only one already indexed by wrap row.
 pub(super) fn visual_col(content: &str, spans: &[SyntaxSpan], byte_col: usize) -> usize {
-    let text = spans_text(content, spans);
+    let (text, bounds) = spans_text_and_bounds(content, spans);
     let mut visual = 0usize;
     let mut bytes = 0usize;
     while bytes < text.len() && bytes < byte_col {
-        let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
+        let Some(cluster) = next_grapheme(&text, &bounds, bytes) else {
             break;
         };
         visual += grapheme_width_with_tab(cluster, visual);
@@ -67,11 +69,11 @@ pub(super) fn byte_col_from_visual(
     spans: &[SyntaxSpan],
     visual_col: usize,
 ) -> usize {
-    let text = spans_text(content, spans);
+    let (text, bounds) = spans_text_and_bounds(content, spans);
     let mut visual = 0usize;
     let mut bytes = 0usize;
     while bytes < text.len() {
-        let Some(cluster) = text.get(bytes..).and_then(|s| s.graphemes(true).next()) else {
+        let Some(cluster) = next_grapheme(&text, &bounds, bytes) else {
             break;
         };
         let rw = grapheme_width_with_tab(cluster, visual);
