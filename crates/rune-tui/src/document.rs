@@ -55,21 +55,33 @@ fn kind_for(path: Option<&Path>) -> DocumentKind {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DocumentId(pub(crate) NonZeroU64);
 
-/// The async highlight state for one document (plan WP5): the last spans a
-/// background `rune_ts::highlight` call actually delivered, tagged with the
-/// buffer `version` they describe. `in_flight` carries the version a
-/// currently-running highlight `Cmd` was spawned against — at most one may
-/// be in flight per document (`spawn_cmd` has no thread pool or
-/// cancellation); `pending` records that a further edit landed while that
-/// `Cmd` was still running, so its completion re-schedules instead of the
-/// document going stale until the next keystroke. A completion carrying
-/// `result: None` (budget elapsed, unknown language, parse failure) leaves
-/// `spans` untouched — see `Msg::Highlighted`'s doc comment: a slow document
-/// degrades to STALE colours, never to NO colours.
+/// The async highlight state for one document (plan WP5, extended by the
+/// syntax-highlighting-latency plan's WP3): the last spans a background
+/// highlight call actually delivered, tagged with the buffer `version` they
+/// describe. `in_flight` carries the version a currently-running highlight
+/// `Cmd` was spawned against — at most one may be in flight per document
+/// (`spawn_cmd` has no thread pool or cancellation); `pending` records that a
+/// further edit landed while that `Cmd` was still running, so its completion
+/// re-schedules instead of the document going stale until the next
+/// keystroke. A completion carrying `result: None` (budget elapsed, unknown
+/// language, parse failure) leaves both `tree` and `spans` untouched — see
+/// `Msg::Highlighted`'s doc comment: a slow document degrades to STALE
+/// colours, never to NO colours.
+///
+/// `tree` (D6) is the retained whole-document parse a code document's
+/// background `Cmd` delivers — the render path queries it per frame,
+/// restricted to the visible byte range, rather than replaying a
+/// whole-document span list. `spans` stays alongside it: a markdown
+/// document's fences never populate `tree` (D6 keeps the fence pipeline on
+/// the span path), and the session fuzzer's hostile span injection has no
+/// way to synthesize a `ParsedTree` either. Both fields share the same
+/// `version`/`in_flight`/`pending` discipline — whichever payload a reply
+/// carries, the bookkeeping is identical.
 #[derive(Debug, Default)]
 pub struct HighlightState {
     pub version: u64,
     pub spans: Vec<(Range<usize>, ScopeId)>,
+    pub tree: Option<rune_ts::ParsedTree>,
     pub in_flight: Option<u64>,
     pub pending: bool,
     /// The producer hit its span cap and the tail of this document is

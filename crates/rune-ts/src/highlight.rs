@@ -75,6 +75,7 @@ impl From<Vec<(Range<usize>, ScopeId)>> for HighlightResult {
 /// landing is the same staleness class the rest of the highlight pipeline
 /// already tolerates, and is inert at paint time (a stale span simply
 /// matches no cell it wasn't meant to).
+#[derive(Debug)]
 pub struct ParsedTree {
     tree: Tree,
     lang: &'static str,

@@ -221,10 +221,17 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 let msg = Msg::Highlighted {
                     doc,
                     version: delivered_version,
-                    result: Some(rune_tui::runtime::HighlightResult {
-                        spans: crate::action::highlight_spans_from_raw(spans),
-                        truncated: false,
-                    }),
+                    // Hostile span injection, never a `ParsedTree` — the
+                    // fuzzer has no way to synthesize one, and shouldn't:
+                    // dispatch still stores a `Spans` payload for any
+                    // document (D6), so this keeps exercising the same
+                    // clamp/stale-drop invariants it always has.
+                    result: Some(rune_tui::runtime::HighlightPayload::Spans(
+                        rune_tui::runtime::HighlightResult {
+                            spans: crate::action::highlight_spans_from_raw(spans),
+                            truncated: false,
+                        },
+                    )),
                 };
                 let tag = MsgTag::Highlighted {
                     delivered_version,
