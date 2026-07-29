@@ -1,9 +1,10 @@
 //! Mouse-drag pane resizing: grabbing the left column's border band or
 //! the `Open` divider row and dragging moves the corresponding `Split`,
-//! same as the plain click/drag test helper in `navigate.rs`, extended to
-//! emit `Down` -> `Drag` -> `Up` runs at absolute frame coordinates (the
-//! splitter bands live outside the editor rect, so a gesture here can't
-//! be expressed relative to it the way a text-selection click can).
+//! same shape as the plain click/drag test helper used for text selection
+//! elsewhere, extended to emit `Down` -> `Drag` -> `Up` runs at absolute
+//! frame coordinates (the splitter bands live outside the editor rect, so a
+//! gesture here can't be expressed relative to it the way a text-selection
+//! click can).
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
