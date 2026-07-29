@@ -251,11 +251,23 @@ pub fn run(app: &mut App) -> io::Result<()> {
         db.bridge.attach(tx.clone());
     }
 
+    // Tracks the join handle of every no-store fallback save `Cmd`
+    // (`CmdKind::Save`) currently running, so quitting can join them instead
+    // of detaching them mid-write (review fix, [rune-tui A 5]): a
+    // store-backed materialize survives process exit via `Store::shutdown`'s
+    // own drain, but the no-store fallback is a plain detached thread doing
+    // its own `vfs.save_atomic` — `thread::spawn`'s `JoinHandle`, dropped,
+    // detaches and keeps running past `main` returning, but the atomic
+    // publish it's mid-write on has no other guarantee of finishing before
+    // the process actually exits. Pruned opportunistically so this never
+    // grows unbounded across a long session of saves.
+    let mut save_handles: Vec<thread::JoinHandle<()>> = Vec::new();
+
     // Seed the initial size through the ordinary `update` path (not a
     // one-off field write) so `Msg::Resize`'s effect on the viewport has
     // exactly one implementation, exercised the same way on every resize.
     let (width, height) = guard.size()?;
-    apply(app, Msg::Resize(width, height), &mut guard, &tx)?;
+    apply(app, Msg::Resize(width, height), &mut guard, &tx, &mut save_handles)?;
 
     // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
     // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
@@ -270,7 +282,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
         for cmd in effects.cmds.drain(..) {
-            spawn_cmd(cmd, tx.clone());
+            spawn_cmd(cmd, tx.clone(), &mut save_handles);
         }
     }
 
@@ -294,7 +306,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
         }
 
         for msg in batch {
-            apply(app, msg, &mut guard, &tx)?;
+            apply(app, msg, &mut guard, &tx, &mut save_handles)?;
         }
 
         if app.should_quit {
@@ -305,6 +317,14 @@ pub fn run(app: &mut App) -> io::Result<()> {
         guard.draw(|frame| crate::render::draw(app, frame))?;
     }
 
+    // Every fallback save `Cmd` spawned above is joined before `run` returns
+    // and `main` drains/shuts down the store: an in-flight one finishes its
+    // atomic publish; an already-finished one joins immediately. Quit is
+    // reported as complete only once this returns.
+    for handle in save_handles.drain(..) {
+        let _ = handle.join();
+    }
+
     Ok(())
 }
 
@@ -312,14 +332,20 @@ pub fn run(app: &mut App) -> io::Result<()> {
 /// raw bytes to the terminal, `Cmd`s to their own thread. Shared by the
 /// resize-seeding call above and the main loop so there is exactly one
 /// "apply a message" chokepoint.
-fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> io::Result<()> {
+fn apply(
+    app: &mut App,
+    msg: Msg,
+    guard: &mut Guard,
+    tx: &mpsc::Sender<Msg>,
+    save_handles: &mut Vec<thread::JoinHandle<()>>,
+) -> io::Result<()> {
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
     for raw in effects.raw.drain(..) {
         guard.write_raw(&raw)?;
     }
     for cmd in effects.cmds.drain(..) {
-        spawn_cmd(cmd, tx.clone());
+        spawn_cmd(cmd, tx.clone(), save_handles);
     }
     Ok(())
 }
@@ -330,8 +356,14 @@ fn apply(app: &mut App, msg: Msg, guard: &mut Guard, tx: &mpsc::Sender<Msg>) -> 
 /// unwind here and reporting it as `Msg::Error` keeps that impossible: every
 /// spawned `Cmd` thread sends SOMETHING back, success, `None`, or a caught
 /// panic.
-fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
-    thread::spawn(move || {
+///
+/// `CmdKind::Save`'s handle is retained in `save_handles` (pruning already-
+/// finished ones first) so `run` can join it on quit instead of letting
+/// `JoinHandle::drop` detach it — every other kind is fire-and-forget
+/// exactly as before.
+fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>, save_handles: &mut Vec<thread::JoinHandle<()>>) {
+    let is_save = cmd.kind() == CmdKind::Save;
+    let handle = thread::spawn(move || {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
             Ok(Some(msg)) => {
                 let _ = tx.send(msg);
@@ -342,6 +374,10 @@ fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>) {
             }
         }
     });
+    if is_save {
+        save_handles.retain(|h| !h.is_finished());
+        save_handles.push(handle);
+    }
 }
 
 fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
