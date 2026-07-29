@@ -130,21 +130,32 @@ impl Split {
             };
         }
 
-        // Both floors fit. Honour the lead's desired size against the WHOLE
-        // axis — not a cap that pre-reserves the trail's floor, which would
-        // make the trail impossible to collapse by dragging.
-        let want = self
-            .desired
-            .unwrap_or(fallback)
-            .max(lead.min)
-            .min(available);
+        // Both floors fit. `asked` is what was actually requested — either a
+        // drag's exact `desired`, or the fallback when the user has never
+        // dragged. When it fits inside `available` it is honoured against
+        // the WHOLE axis, not a cap that pre-reserves the trail's floor —
+        // that is what lets a drag past the trail's floor collapse it below.
+        // When it does NOT fit, `available` itself has shrunk underneath a
+        // previously-recorded `desired` (a plain frame resize, not a fresh
+        // drag), and a shrink must clamp back to what still fits without
+        // reaching through the trail's own floor — otherwise a resize alone,
+        // with no drag involved, could squeeze the trail out of existence.
+        let asked = self.desired.unwrap_or(fallback);
+        let want = if asked <= available {
+            asked.max(lead.min)
+        } else {
+            available.saturating_sub(trail.min).max(lead.min)
+        };
         let rest = available.saturating_sub(want);
         if rest >= trail.min {
             return (Some(want), Some(rest));
         }
         if trail.collapsible {
-            // Dragged past the trail's floor: it disappears and the lead
-            // takes the whole axis.
+            // `want` was still too big for the trail's floor even after the
+            // clamp above — only reachable via the `asked <= available`
+            // arm, i.e. a genuine drag past the trail's floor (the clamp arm
+            // already subtracts `trail.min` and so can never land here). The
+            // trail disappears and the lead takes the whole axis.
             return (Some(available), None);
         }
         // The trail may not vanish, so the lead yields back to its own
@@ -275,6 +286,18 @@ mod tests {
         let mut split = Split::new(VERT_LEAD, true);
         split.request(29);
         assert_eq!(split.allot(30, 3, VERT_TRAIL), (Some(30), None));
+    }
+
+    #[test]
+    fn allot_vertical_shrink_below_a_dragged_desired_spares_the_trail() {
+        // A frame shrink (no drag) must clamp `desired` back to what fits
+        // without reaching through the trail's floor — distinct from
+        // `allot_vertical_desired_29_collapses_trail_not_capped` below, where
+        // the SAME `desired` value is honoured in full because it was asked
+        // for against an axis large enough to grant it.
+        let mut split = Split::new(VERT_LEAD, true);
+        split.request(25);
+        assert_eq!(split.allot(10, 3, VERT_TRAIL), (Some(8), Some(2)));
     }
 
     #[test]

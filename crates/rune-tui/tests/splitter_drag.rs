@@ -232,8 +232,20 @@ fn dragging_the_divider_to_the_top_collapses_the_explorer_but_keeps_the_divider(
     assert!(g1.tabs_divider.is_some());
 }
 
+/// Dragging past the block's own bottom border asks for more than the
+/// Explorer/Tabs split has room for at all (not just more than the trail's
+/// floor leaves) — `request`'s cursor-to-cells math has no upper bound of
+/// its own. That used to fully collapse the tab rows, the same as a plain
+/// height shrink underneath a dragged divider did; now that a shrink is
+/// required to spare the trail (`allot_vertical_shrink_below_a_dragged_
+/// desired_spares_the_trail`), an overshooting drag is spared identically
+/// — the tab rows are pinned at their floor rather than disappearing. A
+/// drag can still collapse them outright by landing exactly on a position
+/// that fits the axis but leaves the trail less than its floor (see
+/// `dragging_the_divider_to_the_top_collapses_the_explorer_but_keeps_the_
+/// divider` for the Explorer side of that same mechanism).
 #[test]
-fn dragging_the_divider_to_the_bottom_collapses_the_tab_rows() {
+fn dragging_the_divider_past_the_bottom_border_pins_the_tab_rows_to_their_floor() {
     let mut app = app_for(100, 30);
     let g0 = geo(&app);
     let divider = g0.tabs_divider.expect("divider is shown");
@@ -260,11 +272,11 @@ fn dragging_the_divider_to_the_bottom_collapses_the_tab_rows() {
     );
 
     let g1 = geo(&app);
-    assert!(g1.tabs_divider.is_none());
-    assert_eq!(
-        g1.explorer_inner.height,
-        left_block.height.saturating_sub(2)
+    assert!(
+        g1.tabs_divider.is_some(),
+        "the tab rows must survive an overshooting drag, pinned at their floor"
     );
+    assert_eq!(g1.tabs_inner.height, layout::MIN_TABS_H);
 }
 
 #[test]
@@ -307,6 +319,49 @@ fn shrinking_and_restoring_the_frame_preserves_the_dragged_width() {
     app.frame_width = 100;
     app.sync_view();
     assert_eq!(geo(&app).left_block.expect("restored").width, dragged_w);
+}
+
+/// The vertical counterpart of `shrinking_and_restoring_the_frame_preserves_
+/// the_dragged_width`: drag the tabs divider well down (so the tab rows are
+/// left small but still shown), then shrink the frame's HEIGHT with no drag
+/// involved. A plain resize must not be able to do what only a drag past the
+/// trail's floor is allowed to do — collapse the tab rows entirely.
+#[test]
+fn shrinking_the_frame_height_does_not_collapse_the_dragged_tabs_divider() {
+    let mut app = app_for(100, 30);
+    let g0 = geo(&app);
+    let divider = g0.tabs_divider.expect("divider is shown");
+
+    send(
+        &mut app,
+        MouseKind::Down(MouseButton::Left),
+        divider.x,
+        divider.y,
+    );
+    send(
+        &mut app,
+        MouseKind::Drag(MouseButton::Left),
+        divider.x,
+        divider.y + 6,
+    );
+    send(
+        &mut app,
+        MouseKind::Up(MouseButton::Left),
+        divider.x,
+        divider.y + 6,
+    );
+    assert!(
+        geo(&app).tabs_divider.is_some(),
+        "divider must still be shown right after the drag"
+    );
+
+    app.frame_height = 15;
+    app.sync_view();
+
+    assert!(
+        geo(&app).tabs_divider.is_some(),
+        "a plain height shrink must not collapse the tab rows the drag left shown"
+    );
 }
 
 #[test]
