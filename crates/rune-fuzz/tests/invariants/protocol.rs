@@ -5,7 +5,7 @@ use rune_fuzz::invariant::{confirm_gen, quit_chord, save_inflight_sm};
 use rune_fuzz::step::MsgTag;
 use rune_tui::keymap::{Command, KeyCode, Mods, QuitKey};
 
-use crate::support::{base_ctx, base_snapshot, key, sup};
+use crate::support::{base_ctx, base_snapshot, key, other_doc_id, sup};
 
 // ---------------------------------------------------------------------
 // SAVE-INFLIGHT-SM
@@ -105,6 +105,48 @@ fn save_inflight_sm_accepts_arming_on_a_save_command() {
         command: Some(Command::Save),
     };
     assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn save_inflight_sm_accepts_clearing_on_an_active_document_switch() {
+    // Repro: type into a doc, `⌘S` (arms save_in_flight on that document),
+    // keep typing with the save still outstanding, then `F1` — which
+    // swaps `app.active` to the virtual Help document. `save_in_flight`
+    // is doc-scoped (`Snapshot::capture` reads it off `app.active_doc()`),
+    // so the freshly-active Help document naturally reports no save in
+    // flight; that's not a state-machine transition of the document the
+    // save was actually issued against, and must NOT trip SAVE-INFLIGHT-SM.
+    let mut prev = base_snapshot("hello world");
+    prev.save_in_flight = true;
+    let mut next = base_snapshot("hello world");
+    next.active = other_doc_id();
+    next.save_in_flight = false;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::F1, Mods::NONE),
+        command: None,
+    };
+    assert_eq!(save_inflight_sm(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn save_inflight_sm_still_detects_a_same_document_false_flip() {
+    // Same false-clear as above, but WITHOUT an active-document switch:
+    // the gate must not swallow a genuine same-document violation.
+    let mut prev = base_snapshot("hello world");
+    prev.save_in_flight = true;
+    let mut next = base_snapshot("hello world");
+    next.save_in_flight = false;
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::F1, Mods::NONE),
+        command: None,
+    };
+    let v = save_inflight_sm(&prev, &next, &ctx).expect(
+        "save_in_flight clearing on a non-SaveDone message with the SAME active document \
+         must still trip SAVE-INFLIGHT-SM",
+    );
+    assert_eq!(v.id, "SAVE-INFLIGHT-SM");
 }
 
 #[test]

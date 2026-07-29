@@ -25,7 +25,20 @@ use crate::step::{MsgTag, StepCtx};
 /// loose stand-in for "was a DirtyClose Guard up" — it just doesn't need to
 /// be any tighter, since arming still only ever follows a genuine
 /// `trigger_save` call in production regardless of which modal was up.
+///
+/// `save_in_flight` is doc-scoped (`Document::save_in_flight`, read off
+/// `app.active_doc()` at capture time), so it is only meaningful across two
+/// snapshots of the SAME active document. Scoped to `prev.active ==
+/// next.active` for exactly the reason `VERSION-MONOTONE`/`REDO-CLEAR`
+/// already are (those invariants' own docs): switching the active document
+/// (e.g. `F1` toggling to the Help virtual document) makes `prev`/`next`
+/// describe two UNRELATED documents, and the freshly-active one having no
+/// save in flight is not a state-machine transition of the document the
+/// save was actually issued against.
 pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
+    if prev.active != next.active {
+        return None;
+    }
     if !prev.save_in_flight && next.save_in_flight {
         let armed_by_save_key = matches!(
             ctx.msg,
