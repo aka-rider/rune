@@ -265,9 +265,9 @@ fn line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
 /// `DocumentId`'s inner field is `pub(crate)` to `rune_tui` (G16), so the
 /// only way a test outside that crate can obtain a value is through its
 /// public API. `App::new` always mints its first (and here, only)
-/// document as `DocumentId(NonZeroU64::MIN)` (`app.rs:170`), so this is a
-/// deterministic constant in practice — a fresh in-memory `App` exists
-/// only long enough to read `.active` back out of it.
+/// document as `DocumentId(NonZeroU64::MIN)`, so this is a deterministic
+/// constant in practice — a fresh in-memory `App` exists only long enough
+/// to read `.active` back out of it.
 fn base_active_id() -> DocumentId {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     App::new(Buffer::new(""), None, vfs, None).active

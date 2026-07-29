@@ -31,10 +31,9 @@ use crate::step::{MsgTag, StepCtx};
 /// here too.
 ///
 /// Scoped to `MsgTag::Key` deliberately: `Msg::Paste`/`Msg::ClipboardRead`
-/// insert into `app.active` regardless of focus (`app.rs:347-356`), and
-/// the driver synthesizes `ClipboardRead` unprompted — async replies are
-/// out of this invariant's domain, same reasoning as `clip_osc52`'s own
-/// module docs.
+/// insert into `app.active` regardless of focus, and the driver
+/// synthesizes `ClipboardRead` unprompted — async replies are out of this
+/// invariant's domain, same reasoning as `clip_osc52`'s own module docs.
 pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::Key { .. }) {
         return None;

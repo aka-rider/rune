@@ -58,17 +58,18 @@
 //!   `REDO-CLEAR`).
 //! - `SAVE-INFLIGHT-SM` — `save_in_flight` flips false->true only on a
 //!   `Command::Save` key, and true->false only on `SaveDone` (G9).
-//! - `QUIT-CHORD` — `should_quit` flips false->true only on `Msg::Quit` or
-//!   the SAME quit chord already armed (protocol only, NOT a dirty check —
-//!   G15).
+//! - `QUIT-CHORD` — `should_quit` flips false->true only on the SAME quit
+//!   chord already armed (protocol only, NOT a dirty check — G15);
+//!   `Msg::Quit` is out of this checker's domain entirely — this headless
+//!   driver never constructs one (`step::MsgTag`'s own docs).
 //! - `CONFIRM-GEN` — a `ConfirmTimeout` clears `pending_quit` iff its
 //!   generation matches the armed one.
 //! - `PASTE-VERBATIM` — a paste into a collapsed cursor inserts exactly the
 //!   pasted bytes at the caret, unfiltered (§1.4.5; the only path that can
 //!   carry control bytes, G3).
 //! - `SAVE-VERBATIM` — a successful save's on-disk bytes byte-equal the
-//!   bytes it was constructed with (§1.4.5; Go `SAVE-VERBATIM`,
-//!   `driver_verbatim.go:78-109`).
+//!   bytes it was constructed with (§1.4.5; Go's fuzzer names the same
+//!   invariant `SAVE-VERBATIM`).
 //! - `SAVE-CLEAN-MATCHES-DISK` — once clean with a delivered save and none
 //!   pending, disk bytes byte-equal the current content (§1.4.8).
 //! - `CLIP-OSC52` — a `Copy`/`Cut` over a non-empty selection emits an OSC

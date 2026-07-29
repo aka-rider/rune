@@ -14,16 +14,21 @@ use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
 /// `PASTE-VERBATIM` (§1.4.5) — on a non-empty `Paste`/`ClipboardRead` into
-/// a collapsed (no-selection) single cursor, `next.content` must equal
-/// `prev.content` with exactly the pasted text's bytes inserted at the
-/// cursor offset — `handle_paste_content` inserts unfiltered
-/// (`commands/clipboard.rs`), the ONE path that can carry control bytes at
-/// all (G3). Inert on a `read_only` document (the Help virtual document,
-/// reachable since `F1` joined `arb_any_keycode` — CODE-REVIEW.md
-/// rune-fuzz finding 9): every mutating command chokepoint refuses a
-/// read-only document by construction, so a paste there correctly inserts
-/// nothing, and asserting verbatim insertion anyway would be asserting a
-/// property production never claimed to begin with.
+/// a single cursor, `next.content` must equal `prev.content` with exactly
+/// the pasted text's bytes substituted at the cursor: inserted at the
+/// caret when collapsed, or replacing `[selection_start, selection_end)`
+/// when there's a selection (CODE-REVIEW.md rune-fuzz finding 12 —
+/// `commands::edit::insert_text`'s `per_cursor_selection_edits` replaces
+/// the PLAIN selection range here, unlike `Copy`/`Cut`'s `selection_end_
+/// inclusive` newline nudge, which is a copy-extraction rule, not an edit
+/// rule) — `handle_paste_content` inserts unfiltered (`commands/
+/// clipboard.rs`), the ONE path that can carry control bytes at all (G3).
+/// Inert on a `read_only` document (the Help virtual document, reachable
+/// since `F1` joined `arb_any_keycode` — CODE-REVIEW.md rune-fuzz finding
+/// 9): every mutating command chokepoint refuses a read-only document by
+/// construction, so a paste there correctly inserts nothing, and asserting
+/// verbatim insertion anyway would be asserting a property production
+/// never claimed to begin with.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let text = match &ctx.msg {
         MsgTag::Paste(t) | MsgTag::ClipboardRead(t) => t,
@@ -35,18 +40,18 @@ pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     let [cursor] = prev.cursors.as_slice() else {
         return None;
     };
-    if cursor.has_selection() {
-        return None;
-    }
-    let offset = cursor.position;
-    if offset > prev.content.len() || !prev.content.is_char_boundary(offset) {
+    let (start, end) = (cursor.selection_start(), cursor.selection_end());
+    if end > prev.content.len()
+        || !prev.content.is_char_boundary(start)
+        || !prev.content.is_char_boundary(end)
+    {
         return None; // a malformed cursor is CUR-BOUNDS's job to report
     }
 
     let mut expected = String::with_capacity(prev.content.len() + text.len());
-    expected.push_str(&prev.content[..offset]);
+    expected.push_str(&prev.content[..start]);
     expected.push_str(text);
-    expected.push_str(&prev.content[offset..]);
+    expected.push_str(&prev.content[end..]);
 
     if next.content == expected {
         return None;
@@ -54,7 +59,7 @@ pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     Some(Violation {
         id: "PASTE-VERBATIM",
         message: format!(
-            "pasted text not inserted verbatim at offset {offset}: expected={:?} got={:?}",
+            "pasted text not substituted verbatim at [{start}, {end}): expected={:?} got={:?}",
             trunc(&expected, 120),
             trunc(&next.content, 120)
         ),

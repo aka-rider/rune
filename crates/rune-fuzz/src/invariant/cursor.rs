@@ -71,9 +71,8 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-ID` (L0, Go `C2` at `textedit.go:269-287`) — at least one cursor,
-/// every id non-zero, all ids distinct. Subsumes any separate cursor-count
-/// check.
+/// `CUR-ID` (L0, Go `C2`) — at least one cursor, every id non-zero, all
+/// ids distinct. Subsumes any separate cursor-count check.
 pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
     if snap.cursors.is_empty() {
         return Some(Violation {

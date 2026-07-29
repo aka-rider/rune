@@ -66,14 +66,18 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
 /// `QUIT-CHORD` (protocol only, NOT a dirty check — G15: `handle_quit_key`
 /// sets `should_quit` regardless of `is_dirty()`; asserting a dirty check
 /// here would be an instant false catch on intended Phase-1 behaviour) —
-/// `should_quit` goes false->true only on `Msg::Quit`, or on the SAME quit
-/// chord armed in `prev.pending_quit`.
+/// `should_quit` goes false->true only on the SAME quit chord armed in
+/// `prev.pending_quit`. `Msg::Quit` (a real terminal's input stream ending)
+/// is out of this checker's domain entirely, not merely an inert arm —
+/// `MsgTag` carries no `Quit` variant at all (`step.rs`'s own module
+/// docs), since this headless driver can never construct one (CODE-REVIEW.md
+/// rune-fuzz finding 15: the previous `MsgTag::Quit => true` arm was
+/// unreachable outside its own unit test).
 pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if prev.should_quit || !next.should_quit {
         return None;
     }
     let ok = match &ctx.msg {
-        MsgTag::Quit => true,
         MsgTag::Key {
             input,
             command: Some(Command::QuitConfirm),
@@ -97,7 +101,7 @@ pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vio
 
 /// `CONFIRM-GEN` — on `ConfirmTimeout{generation}`, `pending_quit` clears
 /// iff `generation` equals the currently armed one; a stale generation
-/// must leave it untouched (`app.rs:166-174`).
+/// must leave it untouched.
 pub fn confirm_gen(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let MsgTag::ConfirmTimeout { generation } = &ctx.msg else {
         return None;

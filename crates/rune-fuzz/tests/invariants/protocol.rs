@@ -183,16 +183,6 @@ fn quit_chord_accepts_the_same_chord_pressed_twice() {
     assert_eq!(quit_chord(&prev, &next, &ctx), None);
 }
 
-#[test]
-fn quit_chord_accepts_msg_quit() {
-    let prev = base_snapshot("abc");
-    let mut next = base_snapshot("abc");
-    next.should_quit = true;
-    let mut ctx = base_ctx();
-    ctx.msg = MsgTag::Quit;
-    assert_eq!(quit_chord(&prev, &next, &ctx), None);
-}
-
 // ---------------------------------------------------------------------
 // CONFIRM-GEN
 // ---------------------------------------------------------------------

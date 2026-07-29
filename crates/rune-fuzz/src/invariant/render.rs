@@ -1,6 +1,6 @@
 //! Cell-model invariants: `CELL-OFFSET`/`CELL-NO-EOL`/`CELL-ORDER` (Go
 //! `R4`/`R5`, `R8`, `R3`) over `Snapshot.cells`, plus the pure comparator
-//! half of `SYNC-IDEMPOTENT` (§8 "Render Purity", `CONSTITUTION.md:238`).
+//! half of `SYNC-IDEMPOTENT` (§8 "Render Purity").
 //!
 //! `SYNC-IDEMPOTENT` itself needs a SECOND live `app.sync_view()` call with
 //! no intervening message — it is a comparison of two consecutive renders

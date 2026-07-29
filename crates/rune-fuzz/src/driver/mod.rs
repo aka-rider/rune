@@ -89,6 +89,17 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
     let mut app = App::new(Buffer::new(content), Some(path.clone()), vfs, None);
+    // WP14.S2 (CODE-REVIEW.md rune-fuzz finding 17): `App::new`'s default
+    // `pointer_clock` is the real wall clock (`SystemClock`) — harmless
+    // today only because this driver never delivers `Msg::Mouse`, so
+    // `PointerState`'s multi-click window never actually reads it. Swapped
+    // for `ManualClock` (already `pub`, built for exactly this — mirrors
+    // `keystate::FixedSpaceProbe`) BEFORE any mouse action exists, so a
+    // future `Action::Mouse` never has to retrofit determinism onto a
+    // driver that spent real wall-clock time all along — replay would
+    // silently stop reproducing the moment a click sequence straddled a
+    // click-window boundary at real, non-reproducible speed.
+    app.pointer_clock = Box::new(rune_tui::pointer::ManualClock::new());
     app.active_doc_mut().focused = true;
     // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
     // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since

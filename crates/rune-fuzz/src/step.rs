@@ -47,7 +47,6 @@ pub enum MsgTag {
         delivered_version: u64,
         span_count: usize,
     },
-    Quit,
 }
 
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,

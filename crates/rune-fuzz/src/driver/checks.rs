@@ -84,7 +84,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// an unfocused editor correctly ignores `⌘Z` (only `Editor`'s own keymap
 /// binds `Command::Undo`), and a modal correctly captures every key at
 /// stage 1 before any pane sees it. Three preconditions are reachable at
-/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer focused;
+/// session end today: `^b` (`ToggleExplorer`) leaves the Explorer focused;
 /// an Explorer `Enter` on a path missing from the fuzz `Mem` raises
 /// `Modal::Error`; and `F1` (`GlobalCommand::Help`, CODE-REVIEW.md
 /// rune-fuzz finding 9's fix) switches `app.active` itself to the virtual

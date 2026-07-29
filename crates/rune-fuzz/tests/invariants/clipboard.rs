@@ -39,6 +39,43 @@ fn paste_verbatim_accepts_a_crlf_clipboard_read_verbatim() {
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
 }
 
+#[test]
+fn paste_verbatim_accepts_a_paste_over_a_selection() {
+    // CODE-REVIEW.md rune-fuzz finding 12: a paste over a selection is the
+    // byte-displacing path §1.4.10 governs, previously skipped entirely.
+    let mut prev = base_snapshot("hello world");
+    prev.cursors = vec![selection_cursor(1, 0, 5)]; // "hello" selected
+    let next = base_snapshot("bye world");
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("bye".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn paste_verbatim_detects_a_mismatched_selection_replace() {
+    let mut prev = base_snapshot("hello world");
+    prev.cursors = vec![selection_cursor(1, 0, 5)]; // "hello" selected
+    let next = base_snapshot("hello world"); // wrong: selection never replaced
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("bye".to_string());
+    let v = paste_verbatim(&prev, &next, &ctx)
+        .expect("a paste that fails to replace the selection must trip PASTE-VERBATIM");
+    assert_eq!(v.id, "PASTE-VERBATIM");
+}
+
+#[test]
+fn paste_verbatim_ignores_a_paste_on_a_read_only_document() {
+    // The Help virtual document (reachable since F1 joined arb_any_keycode,
+    // CODE-REVIEW.md rune-fuzz finding 9) refuses every mutating command,
+    // including paste, by construction.
+    let mut prev = base_snapshot("ac");
+    prev.read_only = true;
+    let next = base_snapshot("ac"); // correctly untouched
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
 // ---------------------------------------------------------------------
 // CLIP-OSC52
 // ---------------------------------------------------------------------

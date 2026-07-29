@@ -4,9 +4,8 @@
 //! plan's "Explicitly out of scope").
 //!
 //! There is no `DeliverMode` enum: G9 proves at most one save `Cmd` can ever
-//! be outstanding (`trigger_save` guards on `save_in_flight`, `app.rs:328-
-//! 330`), so a mode enum would just be three names for one behaviour
-//! `[fixes R1]`.
+//! be outstanding (`trigger_save` guards on `save_in_flight`), so a mode
+//! enum would just be three names for one behaviour `[fixes R1]`.
 
 use rune_syntax::ScopeId;
 use rune_tui::keymap::KeyInput;
@@ -29,9 +28,8 @@ pub enum HighlightVersion {
 /// or more `Msg`s (`Type` expands per character) and delivers them through
 /// the real `rune_tui::app::update`.
 ///
-/// `Debug` is required — proptest demands `Strategy::Value: fmt::Debug`
-/// (`proptest-1.11.0/src/strategy/traits.rs:37-46`), so a shrunk failing
-/// case can be printed.
+/// `Debug` is required — proptest's `Strategy` trait bounds its associated
+/// `Value` type on `fmt::Debug`, so a shrunk failing case can be printed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     /// One keystroke, delivered as `Msg::Key`.
@@ -39,9 +37,8 @@ pub enum Action {
     /// Typed text. Expanded per char by the driver: `'\n'` -> `KeyCode::
     /// Enter` (mods NONE), everything else -> `KeyCode::Char(c)`. Other
     /// control characters are UNREPRESENTABLE here — `is_insertable_key_
-    /// char` would silently drop them (`app.rs:279-281`, plan Gotcha G3) —
-    /// and the generator never emits them. Use `Paste` for byte-hostile
-    /// payloads.
+    /// char` would silently drop them (plan Gotcha G3) — and the generator
+    /// never emits them. Use `Paste` for byte-hostile payloads.
     Type(String),
     /// A bracketed paste, delivered as `Msg::Paste`. The ONLY path that
     /// inserts control bytes verbatim (G3).

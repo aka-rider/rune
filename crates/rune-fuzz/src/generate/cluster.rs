@@ -138,6 +138,29 @@ fn cluster_clipboard() -> impl Strategy<Value = Vec<Action>> {
             Action::Key(PASTE_KEY),
             Action::ClipboardReply(s.to_string())
         ]),
+        // Selects 1-3 chars first, THEN pastes over that selection —
+        // CODE-REVIEW.md rune-fuzz finding 12: `PASTE-VERBATIM` used to
+        // skip selections entirely, so a paste-over-selection (the
+        // byte-displacing path §1.4.10 governs) had no fuzz-time guard
+        // while the byte-safe collapsed-caret half did. Relying on
+        // `cluster_selection` happening to run immediately before this one
+        // would leave it to chance; this arm is self-contained.
+        (1u8..=3, select(PASTE_PALETTE)).prop_map(|(n, s)| {
+            let mut actions: Vec<Action> = std::iter::repeat_n(
+                Action::Key(KeyInput {
+                    code: KeyCode::Right,
+                    mods: Mods {
+                        shift: true,
+                        ..Mods::NONE
+                    },
+                }),
+                n as usize,
+            )
+            .collect();
+            actions.push(Action::Key(PASTE_KEY));
+            actions.push(Action::ClipboardReply(s.to_string()));
+            actions
+        }),
     ]
 }
 

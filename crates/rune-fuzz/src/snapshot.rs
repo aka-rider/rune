@@ -46,8 +46,8 @@ pub struct Snapshot {
     pub focus: Pane,
     /// `app.modal.is_some()` — a modal (`Modal::Error`/`Modal::Guard`)
     /// captures every key at stage 1 of the pipeline regardless of
-    /// `focus` (`app.rs:457-461`), so `PANE-NO-BLEED` and the undo/redo
-    /// drive precondition both need this in addition to `focus`.
+    /// `focus`, so `PANE-NO-BLEED` and the undo/redo drive precondition
+    /// both need this in addition to `focus`.
     pub modal_open: bool,
     /// `app.active` — which document the OTHER fields in this `Snapshot`
     /// describe. `PANE-NO-BLEED` needs it to tell a chrome key that

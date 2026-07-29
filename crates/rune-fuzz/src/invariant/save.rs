@@ -7,10 +7,10 @@ use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `SAVE-VERBATIM` (§1.4.5; Go `SAVE-VERBATIM` at `driver_verbatim.go:78-
-/// 109`) — on a successful `SaveDone`, the bytes actually on disk must
-/// byte-equal the bytes THAT save was constructed with. Byte comparison,
-/// no normalization.
+/// `SAVE-VERBATIM` (§1.4.5; Go's fuzzer names the same invariant
+/// `SAVE-VERBATIM`) — on a successful `SaveDone`, the bytes actually on
+/// disk must byte-equal the bytes THAT save was constructed with. Byte
+/// comparison, no normalization.
 pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     if !matches!(ctx.msg, MsgTag::SaveDone { ok: true, .. }) {
         return None;

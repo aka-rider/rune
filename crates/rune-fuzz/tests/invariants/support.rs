@@ -69,9 +69,9 @@ fn line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
 /// `DocumentId`'s inner field is `pub(crate)` to `rune_tui` (G16), so the
 /// only way a test outside that crate can obtain a value is through its
 /// public API. `App::new` always mints its first (and here, only)
-/// document as `DocumentId(NonZeroU64::MIN)` (`app.rs:170`), so this is a
-/// deterministic constant in practice — a fresh in-memory `App` exists
-/// only long enough to read `.active` back out of it.
+/// document as `DocumentId(NonZeroU64::MIN)`, so this is a deterministic
+/// constant in practice — a fresh in-memory `App` exists only long enough
+/// to read `.active` back out of it.
 pub(crate) fn base_active_id() -> DocumentId {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     App::new(Buffer::new(""), None, vfs, None).active
@@ -79,11 +79,10 @@ pub(crate) fn base_active_id() -> DocumentId {
 
 /// A second, definitely-different `DocumentId` from `base_active_id()`'s
 /// value — `App::open_document` mints ids strictly increasing from
-/// `NonZeroU64::MIN.saturating_add(1)` (`app.rs:176/207-208`), so calling
-/// it once on a fresh `App` always returns something distinct from the
-/// bootstrap document's own id. `PANE-NO-BLEED`'s "active document
-/// changed" negative case (`tests/invariants/pane.rs`) needs exactly one
-/// such value.
+/// `NonZeroU64::MIN.saturating_add(1)`, so calling it once on a fresh
+/// `App` always returns something distinct from the bootstrap document's
+/// own id. `PANE-NO-BLEED`'s "active document changed" negative case
+/// (`tests/invariants/pane.rs`) needs exactly one such value.
 pub(crate) fn other_doc_id() -> DocumentId {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let mut app = App::new(Buffer::new(""), None, vfs, None);
