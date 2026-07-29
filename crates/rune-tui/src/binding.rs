@@ -90,6 +90,15 @@ impl<C: Copy + 'static> Binding<C> {
 /// table, no allocation) for nothing. A binding whose `keys` is a sequence
 /// longer than one never matches here — callers that need sequences use
 /// `crate::keymap::index::resolve`/`resolve_stateful` instead.
+///
+/// Precedence is FIRST-MATCH-WINS: the earliest row in table order whose
+/// pattern matches is the one returned, and any later row binding the
+/// identical sequence is unreachable dead weight (`crate::keymap::index::
+/// validate` rejects that shape outright, so it can only happen inside a
+/// table that skipped validation). This is the opposite of VS Code's own
+/// `keybindings.json`, which resolves LAST-match — a deliberate choice
+/// here, not an oversight, so state it once rather than leave it
+/// undocumented for whoever next reaches for the VS Code precedent.
 pub fn resolve_in<C: Copy>(table: &[Binding<C>], key: KeyInput) -> Option<C> {
     table
         .iter()

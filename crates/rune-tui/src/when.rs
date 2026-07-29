@@ -5,7 +5,9 @@
 //! comparison. That floor is what VS Code's whole `keybindings.json` needs
 //! and what Zed's entire vim keymap is expressed in.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
 
 use crate::focus::FocusTarget;
 
@@ -285,10 +287,33 @@ pub fn eval(expr: &Expr, ctx: &Context) -> bool {
     }
 }
 
-/// Parses then evaluates in one call — the shape `crate::keymap::index`
-/// actually needs at resolution time.
+/// Parses then evaluates in one call — the shape a one-off caller (tests,
+/// `evaluate_cached`'s own cache-miss path) needs.
 pub fn evaluate(src: &str, ctx: &Context) -> Result<bool, ParseError> {
     Ok(eval(&parse(src)?, ctx))
+}
+
+/// Parses `src` at most ONCE for the process's lifetime, then reuses the
+/// cached `Expr` on every later call with the same clause (plan WP10.S7):
+/// `crate::keymap::index::resolve` used to tokenize and parse every
+/// binding's `when` clause on every keystroke it walked — allocating, and
+/// wasted work the moment the same clause is checked twice. Keyed by the
+/// clause's own text (every real `when` is a `&'static str` literal baked
+/// into a binding table, so the key space is small and stable); a
+/// malformed clause is cached as `Err` too, so a typo still costs exactly
+/// one parse rather than one per keystroke. `crate::keymap::index::
+/// validate` is what actually surfaces a malformed clause as a build-time
+/// failure (plan WP10.S4) — this cache exists for the hot, already-valid
+/// path.
+pub fn evaluate_cached(src: &'static str, ctx: &Context) -> Result<bool, ParseError> {
+    static CACHE: OnceLock<Mutex<HashMap<&'static str, Result<Expr, ParseError>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let parsed = guard.entry(src).or_insert_with(|| parse(src)).clone();
+    parsed.map(|expr| eval(&expr, ctx))
 }
 
 #[cfg(test)]
@@ -380,5 +405,28 @@ mod tests {
     fn evaluate_parses_and_evals_in_one_call() {
         assert_eq!(evaluate("has_selection", &Context::default()), Ok(false));
         assert!(evaluate("focus ==", &Context::default()).is_err());
+    }
+
+    #[test]
+    fn evaluate_cached_agrees_with_evaluate_and_reuses_across_calls() {
+        let with_selection = Context {
+            has_selection: true,
+            ..Context::default()
+        };
+        assert_eq!(
+            evaluate_cached("has_selection", &Context::default()),
+            Ok(false)
+        );
+        assert_eq!(evaluate_cached("has_selection", &with_selection), Ok(true));
+        // Same clause, different `Context` each time — proves the cached
+        // `Expr` is re-evaluated fresh against its `ctx` argument rather
+        // than memoizing a stale boolean answer.
+        assert_eq!(evaluate("has_selection", &with_selection), Ok(true));
+    }
+
+    #[test]
+    fn evaluate_cached_surfaces_a_malformed_clause_every_time_not_just_the_first() {
+        assert!(evaluate_cached("focus ==", &Context::default()).is_err());
+        assert!(evaluate_cached("focus ==", &Context::default()).is_err());
     }
 }

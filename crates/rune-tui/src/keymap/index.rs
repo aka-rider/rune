@@ -40,28 +40,92 @@ impl std::fmt::Display for PrefixCollision {
 
 impl std::error::Error for PrefixCollision {}
 
-/// Rejects, at startup, any binding whose key sequence is a strict prefix
-/// of another's WITHIN `table` (plan WP6.S4) — e.g. `["ctrl+k"]` can never
-/// coexist with `["ctrl+k", "ctrl+c"]` in the same table: the moment
-/// `ctrl+k` alone is pressed there is no way to tell "fire the standalone
-/// binding" from "wait for a possible `ctrl+c`" apart. Two DIFFERENT tables
-/// never collide against each other — call this once per table (each
-/// binding-table module's own test does, in lieu of a real process-startup
-/// hook this library crate has no place to install).
-pub fn validate<C: Copy>(table: &[Binding<C>]) -> Result<(), PrefixCollision> {
+/// Every way `validate` can reject a table (plan WP10.S4): a strict-prefix
+/// collision (see `PrefixCollision`); two DIFFERENT bindings sharing the
+/// exact same key sequence, where first-match-wins (`resolve_in`'s docs)
+/// makes the second silently dead; or a `when` clause that fails to parse,
+/// which — left uncaught — would make that binding permanently inert with
+/// nothing to catch it (`crate::when::evaluate_cached`'s `Err` path is
+/// treated as "never matches", the same as a clause that legitimately
+/// evaluates false).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingConflict {
+    Prefix(PrefixCollision),
+    /// `first`/`second` are the colliding bindings' own `help` labels, in
+    /// table order — `second` is the one first-match-wins would silence.
+    Duplicate {
+        first: &'static str,
+        second: &'static str,
+    },
+    MalformedWhen {
+        label: &'static str,
+        err: crate::when::ParseError,
+    },
+}
+
+impl std::fmt::Display for BindingConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BindingConflict::Prefix(p) => p.fmt(f),
+            BindingConflict::Duplicate { first, second } => write!(
+                f,
+                "{first:?} and {second:?} bind the identical key sequence — \
+                 {second:?} can never fire (first-match-wins)"
+            ),
+            BindingConflict::MalformedWhen { label, err } => {
+                write!(f, "{label:?}'s `when` clause fails to parse: {err}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BindingConflict {}
+
+/// Rejects, at startup, three ways a binding table can be self-inconsistent
+/// (plan WP6.S4, WP10.S4): a strict-prefix collision (e.g. `["ctrl+k"]`
+/// can never coexist with `["ctrl+k", "ctrl+c"]` in the same table — the
+/// moment `ctrl+k` alone is pressed there is no way to tell "fire the
+/// standalone binding" from "wait for a possible `ctrl+c`" apart); two
+/// bindings sharing the exact same sequence (the second is silently dead,
+/// undocumented `resolve_in` first-match-wins precedence); or a `when`
+/// clause that fails to parse (caught here, at validation time, rather
+/// than silently going inert at keystroke time — see `BindingConflict`'s
+/// docs). Two DIFFERENT tables never collide against each other — call
+/// this once per table (each binding-table module's own test does, in
+/// lieu of a real process-startup hook this library crate has no place to
+/// install; the registry-walking test below covers every table this crate
+/// defines in one place, so a new table can no longer ship unvalidated by
+/// omission).
+pub fn validate<C: Copy>(table: &[Binding<C>]) -> Result<(), BindingConflict> {
+    for binding in table {
+        if !binding.when.is_empty()
+            && let Err(err) = crate::when::parse(binding.when)
+        {
+            return Err(BindingConflict::MalformedWhen {
+                label: binding.help,
+                err,
+            });
+        }
+    }
     for (i, a) in table.iter().enumerate() {
         for b in table.iter().skip(i + 1) {
-            if is_strict_prefix(a.keys, b.keys) {
-                return Err(PrefixCollision {
-                    shorter: a.help,
-                    longer: b.help,
+            if a.keys == b.keys {
+                return Err(BindingConflict::Duplicate {
+                    first: a.help,
+                    second: b.help,
                 });
             }
+            if is_strict_prefix(a.keys, b.keys) {
+                return Err(BindingConflict::Prefix(PrefixCollision {
+                    shorter: a.help,
+                    longer: b.help,
+                }));
+            }
             if is_strict_prefix(b.keys, a.keys) {
-                return Err(PrefixCollision {
+                return Err(BindingConflict::Prefix(PrefixCollision {
                     shorter: b.help,
                     longer: a.help,
-                });
+                }));
             }
         }
     }
@@ -95,11 +159,15 @@ pub enum Resolution<C: Copy + 'static> {
 
 /// A binding whose `when` is non-empty but fails to parse is treated as
 /// inactive (never matches, never keeps a sequence pending) rather than a
-/// panic — CONSTITUTION §1.3. Each real table's own test asserts its own
-/// `when` strings parse (see `editor_bindings`/`vim`), so this is a safety
-/// net for a table that skipped that test, not the primary enforcement.
-fn when_holds(when: &str, ctx: &Context) -> bool {
-    when.is_empty() || crate::when::evaluate(when, ctx).unwrap_or(false)
+/// panic — CONSTITUTION §1.3. `validate` (this module) rejects a malformed
+/// clause at validation time, so reaching a parse failure HERE means some
+/// table's own test skipped calling it — this remains a safety net for
+/// that case, not the primary enforcement. Routes through `evaluate_cached`
+/// (plan WP10.S7) rather than `evaluate` so a binding's clause is
+/// tokenized/parsed once for the process's lifetime, not once per binding
+/// per keystroke.
+fn when_holds(when: &'static str, ctx: &Context) -> bool {
+    when.is_empty() || crate::when::evaluate_cached(when, ctx).unwrap_or(false)
 }
 
 /// Resolves one physical keystroke against `table`, given the sequence
@@ -272,8 +340,73 @@ mod tests {
             },
         ];
         let err = validate(TABLE).expect_err("must reject the prefix collision");
-        assert_eq!(err.shorter, "standalone");
-        assert_eq!(err.longer, "chord");
+        match &err {
+            BindingConflict::Prefix(p) => {
+                assert_eq!(p.shorter, "standalone");
+                assert_eq!(p.longer, "chord");
+            }
+            _ => unreachable!("expected a prefix collision, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_equal_length_duplicate_sequences() {
+        const TABLE: &[Binding<TestCmd>] = &[
+            Binding {
+                keys: &[ctrl_k()],
+                cmd: TestCmd::Standalone,
+                help: "first",
+                when: "",
+            },
+            Binding {
+                keys: &[ctrl_k()],
+                cmd: TestCmd::Standalone,
+                help: "second",
+                when: "",
+            },
+        ];
+        let err = validate(TABLE).expect_err("must reject the duplicate sequence");
+        match &err {
+            BindingConflict::Duplicate { first, second } => {
+                assert_eq!(*first, "first");
+                assert_eq!(*second, "second");
+            }
+            _ => unreachable!("expected a duplicate-sequence conflict, got {err:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_a_malformed_when_clause() {
+        const TABLE: &[Binding<TestCmd>] = &[Binding {
+            keys: &[ctrl_k()],
+            cmd: TestCmd::Standalone,
+            help: "malformed",
+            when: "focus ==",
+        }];
+        let err = validate(TABLE).expect_err("must reject the malformed `when` clause");
+        match &err {
+            BindingConflict::MalformedWhen { label, .. } => assert_eq!(*label, "malformed"),
+            _ => unreachable!("expected a malformed-when conflict, got {err:?}"),
+        }
+    }
+
+    /// Plan WP10.S4's coverage-gap fix: `validate` was only ever called by
+    /// each table's own hand-written test — `global::GLOBAL_BINDINGS`,
+    /// `global::LEADER_BINDINGS`, `opentabs::TABS_BINDINGS`, and
+    /// `explorer::EXPLORER_BINDINGS` shipped with none, so a shadowed
+    /// chord in any of them could never fire and nothing would catch it.
+    /// One registry-walking test, listing every binding table this crate
+    /// defines, closes that gap structurally: a new table now has to be
+    /// added HERE to be validated at all, so its absence is conspicuous
+    /// rather than silent.
+    #[test]
+    fn every_registered_binding_table_validates() {
+        assert!(validate(crate::global::GLOBAL_BINDINGS).is_ok());
+        assert!(validate(crate::global::LEADER_BINDINGS).is_ok());
+        assert!(validate(crate::keymap::editor_bindings::EDITOR_BINDINGS).is_ok());
+        assert!(validate(crate::keymap::vim::VIM_BINDINGS).is_ok());
+        assert!(validate(crate::opentabs::TABS_BINDINGS).is_ok());
+        assert!(validate(crate::explorer::EXPLORER_BINDINGS).is_ok());
     }
 
     #[test]
