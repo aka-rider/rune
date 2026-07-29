@@ -24,6 +24,36 @@ pub(crate) fn display_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_width).sum()
 }
 
+/// A cell's rendered display width, measured the SAME way [`grid_row`]
+/// renders it: group the cell's own chars into [`group_runs`]' maximal
+/// same-scope runs FIRST (a run never straddles a scope change, exactly
+/// what the row builder groups into spans), then grapheme-segment and sum
+/// EACH run's own width independently, rather than grapheme-segmenting the
+/// cell's joined text in one pass. The two only disagree when a grapheme
+/// cluster (e.g. a ZWJ-joined emoji family) straddles a scope change inside
+/// the cell (part plain, part emphasised) — joined-text segmentation fuses
+/// it into one cluster, but the row builder can never do that: `group_runs`
+/// already split the run there, so each half is grapheme-segmented on its
+/// own and renders as separate, wider clusters. Measuring per-run here means
+/// the width this function reports is the width the row actually renders,
+/// by construction, instead of by coincidence.
+pub(crate) fn cell_display_width(cell: &RenderedCell) -> usize {
+    let flat: Vec<FlatChar> = cell
+        .text
+        .chars()
+        .zip(cell.src.iter())
+        .map(|(ch, src)| FlatChar {
+            ch,
+            buf: src.buf,
+            scope: src.scope,
+        })
+        .collect();
+    group_runs(&flat)
+        .iter()
+        .map(|(text, _, _)| display_width(text))
+        .sum()
+}
+
 /// Per column, the max rendered display width over every row's own cell
 /// (`rows`, one `Vec<RenderedCell>` per non-separator row — the delimiter
 /// row has no `RenderedCell`s of its own to contribute, Gotcha 10), sized
@@ -38,7 +68,7 @@ pub fn col_widths(rows: &[Vec<RenderedCell>], n_cols: usize) -> (Vec<usize>, Vec
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
             if let Some(w) = widths.get_mut(i) {
-                *w = (*w).max(display_width(&cell.text));
+                *w = (*w).max(cell_display_width(cell));
             }
             if let Some(mw) = min_widths.get_mut(i) {
                 *mw = (*mw).max(longest_atomic_unit_width(&cell.text));
@@ -119,7 +149,7 @@ fn push_padded_content(
     align: TableAlign,
     role_scope: ScopeId,
 ) {
-    let content_w = display_width(&cell.text);
+    let content_w = cell_display_width(cell);
     let fill = w.saturating_sub(content_w);
     let (left_fill, right_fill) = match align {
         TableAlign::Right => (fill, 0),
