@@ -39,12 +39,18 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
     let area = Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = layout::geometry(area, app);
 
+    // Both grab bands only exist while the column itself is shown, but
+    // `Geometry`'s type doesn't tie `left_block` to `tabs_divider`/
+    // `left_splitter` — so this guard stays a `let ... else` (never
+    // `unwrap`/`expect`, §1.3) even though it's the same check either band
+    // needs.
+    let Some(left_block) = geo.left_block else {
+        return false;
+    };
+
     if let Some(divider) = geo.tabs_divider
         && contains(divider, input.column, input.row)
     {
-        let Some(left_block) = geo.left_block else {
-            return false;
-        };
         let explorer_h = divider.y.saturating_sub(left_block.y.saturating_add(1));
         let grab_delta = explorer_h as i32 - (input.row as i32 - (left_block.y as i32 + 1));
         app.pointer.drag = Some(Drag::Splitter {
@@ -57,9 +63,6 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
     if let Some(splitter) = geo.left_splitter
         && contains(splitter, input.column, input.row)
     {
-        let Some(left_block) = geo.left_block else {
-            return false;
-        };
         let grab_delta = left_block.width as i32 - (input.column as i32 + 1);
         app.pointer.drag = Some(Drag::Splitter {
             which: Splitter::LeftColumn,
