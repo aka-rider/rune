@@ -16,8 +16,10 @@
 //! it onto `move_row` would silently make it wrap-aware, a behavior Go
 //! does not have and this plan did not ask for.
 
-use rune_core::coords::BufferPoint;
+use rune_core::buffer::Buffer;
+use rune_core::coords::{BufferPoint, VisualCol, WrapPoint};
 use rune_core::cursor::Cursor;
+use rune_md::element::doc::ViewSnapshots;
 
 use crate::document::Document;
 
@@ -49,29 +51,65 @@ fn add_cursor(doc: &mut Document, dir: isize) {
     }
 
     let target_line = if dir < 0 { bp.line - 1 } else { bp.line + 1 };
-    let desired_col = if extreme.desired_col == 0 {
-        bp.col
-    } else {
-        extreme.desired_col
-    };
 
-    // Through the buffer's own (line, byte-col) chokepoint rather than raw
-    // `line_start + col` arithmetic: `desired_col` is a byte column measured
-    // on a DIFFERENT line, so replaying it here can land mid-UTF-8 when the
-    // target line holds wide characters. The chokepoint clamps to the line
-    // end and snaps to a char boundary in one place.
-    let new_offset = doc.buffer.line_col_to_offset(BufferPoint {
-        line: target_line,
-        col: desired_col,
-    });
+    // `desired_col` is a terminal-CELL count (§1.5), never a byte column —
+    // it is measured on ONE line and only ever meaningful when replayed
+    // through the same cell->byte conversion `commands::nav_scroll::
+    // move_row` uses (`byte_col_from_visual`), never as a raw `BufferPoint.
+    // col`: a cell count replayed as bytes lands mid-character the moment
+    // the target line's bytes-per-cell ratio differs from the source
+    // line's (e.g. CJK on one line, ASCII on the other).
+    let view = doc.view();
+    let desired = if extreme.desired_col == 0 {
+        cell_col_at(&view, &doc.buffer, bp)
+    } else {
+        VisualCol(extreme.desired_col)
+    };
+    let new_bp = visual_col_on_line(&view, &doc.buffer, target_line, desired);
+    let new_offset = doc.buffer.line_col_to_offset(new_bp);
+
     let new_cursor = Cursor {
         position: new_offset,
         anchor: new_offset,
-        desired_col,
+        desired_col: desired.0,
         id: 0,
     };
 
     doc.cursors = doc.cursors.add(new_cursor);
+}
+
+/// Converts a full buffer point to its terminal-CELL visual column — the
+/// same buffer->syntax->wrap walk `commands::nav::update_horizontal` uses
+/// when a horizontal motion recomputes `desired_col` from a landed
+/// position. Used here only as the `desired_col == 0` sentinel's fallback
+/// (a cursor that has never had a real `desired_col` established yet), so
+/// that fallback carries the same unit as every other `desired_col`
+/// instead of smuggling a byte column in under the same field.
+fn cell_col_at(view: &ViewSnapshots, buf: &Buffer, bp: BufferPoint) -> VisualCol {
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wp = view.wrap.syntax_to_wrap(sp);
+    VisualCol(view.wrap.visual_col(buf.content(), wp.row, wp.col))
+}
+
+/// Places a terminal-CELL visual column onto a DIFFERENT logical line's own
+/// first wrap row — the exact `byte_col_from_visual` conversion
+/// `commands::nav_scroll::move_row` performs for vertical motion, reused
+/// here so add-cursor-above/below (which targets the next LOGICAL line,
+/// ignoring soft-wrap — see this module's doc comment) still converts the
+/// cell column correctly rather than replaying it as a byte offset.
+fn visual_col_on_line(
+    view: &ViewSnapshots,
+    buf: &Buffer,
+    line: usize,
+    desired: VisualCol,
+) -> BufferPoint {
+    let line_start_sp = view.syntax.buffer_to_syntax(BufferPoint { line, col: 0 });
+    let row = view.wrap.syntax_to_wrap(line_start_sp).row;
+    let byte_col = view
+        .wrap
+        .byte_col_from_visual(buf.content(), row, desired.0);
+    let sp = view.wrap.wrap_to_syntax(WrapPoint { row, col: byte_col });
+    view.syntax.syntax_to_buffer(sp)
 }
 
 /// Port of `commands_multi.go:execMulticursorAddAbove`.
@@ -138,6 +176,37 @@ mod tests {
         let mut doc = doc_with("one\ntwo", "one\n".len() + 1);
         add_cursor_below(&mut doc);
         assert_eq!(doc.cursors.len(), 1);
+    }
+
+    #[test]
+    fn add_cursor_below_converts_desired_col_from_cells_not_raw_bytes() {
+        // line1 packs two double-width CJK glyphs before six single-byte
+        // ASCII characters, so a CELL column and the SAME NUMBER used as a
+        // raw BYTE column land on different characters — the exact defect
+        // class this guards: `desired_col` is always a cell count, and
+        // feeding it straight into a byte-column buffer API silently lands
+        // the cursor mid-character (or on the wrong character entirely).
+        let mut doc = doc_with("x\n日本CDEFGH", 0);
+        let cursor = Cursor {
+            position: 0,
+            anchor: 0,
+            // 5 CELLS: "日"(2) + "本"(2) + "C"(1).
+            desired_col: 5,
+            id: 1,
+        };
+        doc.cursors = CursorSet::new_from(&[cursor]);
+
+        add_cursor_below(&mut doc);
+
+        assert_eq!(doc.cursors.len(), 2);
+        let new_cursor = doc.cursors.all()[1];
+        let line1_start = doc.buffer.line_start(1).expect("line 1 exists");
+        // Correct: cell column 5 on "日本CDEFGH" lands right after "日本C"
+        // (2+2+1 = 5 cells), byte offset 7 (3+3+1) into that line, on 'D'.
+        // Treating `5` as a raw byte column instead (the pre-fix behavior)
+        // lands inside "本" (bytes 3..6) and snaps down to its start (byte
+        // 3) — a different, wrong character.
+        assert_eq!(new_cursor.position, line1_start + 7);
     }
 
     #[test]

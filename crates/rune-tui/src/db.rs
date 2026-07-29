@@ -371,7 +371,6 @@ pub fn handle_load_ack(
             start: 0,
             end: doc.buffer.len(),
             insert: load_result.recovered.clone(),
-            cursor_id: 0,
         };
         if let Ok((new_buffer, applied)) = doc.buffer.apply_edits(std::slice::from_ref(&edit)) {
             doc.cursors = doc.cursors.adjust_after_batch_edits(&applied);

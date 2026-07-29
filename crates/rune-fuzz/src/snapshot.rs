@@ -99,8 +99,9 @@ impl Snapshot {
         let mut line_starts = Vec::with_capacity(line_count);
         let mut line_ends = Vec::with_capacity(line_count);
         for n in 0..line_count {
-            line_starts.push(buf.line_start(n));
-            line_ends.push(buf.line_end(n));
+            // `n` ranges over `0..line_count`, so both are always `Some`.
+            line_starts.push(buf.line_start(n).unwrap_or(0));
+            line_ends.push(buf.line_end(n).unwrap_or(0));
         }
 
         let (cells, row_meta) = if with_cells {

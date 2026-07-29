@@ -112,7 +112,10 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
     // fields (`cursors`, `viewport`).
     {
         let doc = app.doc_mut(id).expect("doc");
-        doc.buffer = doc.buffer.insert(0, "x");
+        doc.buffer = doc
+            .buffer
+            .insert(0, "x")
+            .expect("in-bounds insert should apply");
     }
 
     let mut effects = Effects::default();

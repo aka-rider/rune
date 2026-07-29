@@ -144,12 +144,23 @@ pub(crate) fn apply_edit_batch_with_cursors(
 /// source instead of guarding against them downstream: two touching or
 /// overlapping ranges really are one edit over their union.
 ///
-/// Every real caller's colliding ranges carry an empty `insert` (all of
-/// `delete_left`/`delete_right`/`delete_word_left`/`delete_word_right`'s
-/// bare closures are pure deletions) — `HasSelection()`-replacement edits
-/// can never collide, because `CursorSet::merge` already coalesces any two
-/// cursors whose SELECTIONS touch before their edits are ever built.
-/// Concatenating `insert` in range order keeps this correct even so.
+/// Coalescing is restricted to PURE DELETIONS (`insert.is_empty()` on both
+/// sides) — the only shape where two touching ranges are genuinely the
+/// same edit. Two cursors that legitimately share a line (clone-line's
+/// `per_line_edits(dedupe=false)` keys edits on `line_start`, not on
+/// selection, so this is reachable any time an edit joins two cursor-
+/// bearing lines) each build their OWN insert at the identical point —
+/// `Buffer::apply_edits` gives each one a distinct post-edit `start`
+/// (whichever insert the shift walk processes first lands before the
+/// other's in the final text), so leaving them uncoalesced does not
+/// collide; concatenating their inserts here instead would have silently
+/// dropped one cursor's own edit (the bug this replaces — see
+/// `edit_lines`'s clone-line-two-cursors-one-line test). A pure deletion
+/// pair (empty insert on both sides) has no such distinguishing content:
+/// `Buffer::apply_edits` would hand both the SAME post-edit start (nothing
+/// inserted to separate them), the exact illegal state `undo::reapply`'s
+/// precondition assert exists to catch — coalescing those two ranges into
+/// one is the only correct outcome.
 fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
     if infos.len() <= 1 {
         return infos;
@@ -163,18 +174,16 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
         return merged;
     };
     for next in iter {
-        if current.0.end >= next.0.start {
+        let both_pure_deletes = current.0.insert.is_empty() && next.0.insert.is_empty();
+        if both_pure_deletes && current.0.end >= next.0.start {
             let start = current.0.start.min(next.0.start);
             let end = current.0.end.max(next.0.end);
-            let mut insert = current.0.insert;
-            insert.push_str(&next.0.insert);
             let cursor_id = current.1.min(next.1);
             current = (
                 Edit {
                     start,
                     end,
-                    insert,
-                    cursor_id,
+                    insert: String::new(),
                 },
                 cursor_id,
             );
@@ -244,7 +253,6 @@ mod tests {
                     start: 1,
                     end: 2,
                     insert: String::new(),
-                    cursor_id: 2,
                 },
                 2,
             ),
@@ -253,7 +261,6 @@ mod tests {
                     start: 0,
                     end: 1,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             ),
@@ -271,7 +278,6 @@ mod tests {
                     start: 0,
                     end: 2,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             )),
@@ -292,7 +298,6 @@ mod tests {
                     start: 2,
                     end: 7,
                     insert: String::new(),
-                    cursor_id: 9,
                 },
                 9,
             ),
@@ -301,7 +306,6 @@ mod tests {
                     start: 0,
                     end: 5,
                     insert: String::new(),
-                    cursor_id: 3,
                 },
                 3,
             ),
@@ -321,7 +325,6 @@ mod tests {
                     start: 5,
                     end: 6,
                     insert: String::new(),
-                    cursor_id: 2,
                 },
                 2,
             ),
@@ -330,7 +333,6 @@ mod tests {
                     start: 0,
                     end: 1,
                     insert: String::new(),
-                    cursor_id: 1,
                 },
                 1,
             ),

@@ -2,7 +2,8 @@
 //! Ported from Go's cursor package. Phase 1 runs a single cursor;
 //! `CursorSet` is the Go-parity seam for the multi-cursor future.
 
-use crate::buffer::AppliedEdit;
+use crate::assert_invariant;
+use crate::buffer::{AppliedEdit, edit_delta};
 
 /// One cursor: `position` is the head (blinks), `anchor` is the tail
 /// (`position == anchor` means no selection). Port of `cursor.go:9-14`.
@@ -53,35 +54,31 @@ impl Cursor {
             id: self.id,
         }
     }
-
-    pub fn collapse_to_start(&self) -> Cursor {
-        let start = self.selection_start();
-        Cursor {
-            position: start,
-            anchor: start,
-            desired_col: self.desired_col,
-            id: self.id,
-        }
-    }
-
-    pub fn collapse_to_end(&self) -> Cursor {
-        let end = self.selection_end();
-        Cursor {
-            position: end,
-            anchor: end,
-            desired_col: self.desired_col,
-            id: self.id,
-        }
-    }
 }
 
 /// An ordered, non-overlapping set of cursors. Port of
 /// `cursor.go:74-77`; `merge()` is the invariant-preserving chokepoint
 /// every constructor and mutator routes through.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Invariant: `cursors` is never empty — every public constructor produces
+/// at least one cursor, and `merge` only ever coalesces cursors together,
+/// never down to zero. A derived `#[derive(Default)]` would produce
+/// `cursors: vec![]` with `next_id: 0` instead — the same malformed-empty
+/// shape `Buffer`'s manual `Default` exists to prevent, and a `next_id` of
+/// 0 would additionally hand the first cursor `add`s onto the set an id
+/// of 0, colliding with `Cursor::id`'s own "no real cursor" meaning.
+/// `CursorSet` gets a manual `Default` below that routes through
+/// `CursorSet::new(0)` so no `CursorSet` can ever exist empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorSet {
     cursors: Vec<Cursor>,
     next_id: u32,
+}
+
+impl Default for CursorSet {
+    fn default() -> Self {
+        CursorSet::new(0)
+    }
 }
 
 impl CursorSet {
@@ -145,8 +142,22 @@ impl CursorSet {
         cs.merge()
     }
 
+    /// The first (lowest-`selection_start`) cursor. `cursors` is never
+    /// empty (see the struct invariant above) — checked here rather than
+    /// silently falling back to a defaulted `Cursor` (whose derived `id: 0`
+    /// would collide with the "no real cursor" sentinel) so a future change
+    /// that breaks the invariant is caught in tests instead of handing back
+    /// a look-alike cursor.
     pub fn primary(&self) -> Cursor {
-        self.cursors.first().copied().unwrap_or_default()
+        assert_invariant(!self.cursors.is_empty(), || {
+            "CursorSet::cursors must never be empty".to_string()
+        });
+        self.cursors.first().copied().unwrap_or(Cursor {
+            position: 0,
+            anchor: 0,
+            desired_col: 0,
+            id: 1,
+        })
     }
 
     pub fn all(&self) -> Vec<Cursor> {
@@ -209,16 +220,19 @@ impl CursorSet {
             a.id.cmp(&b.id)
         });
 
+        // `cp` holds `self.cursors.len()` elements and the guard above
+        // already returned for `len() <= 1`, so at least 2 remain here —
+        // `iter.next()` always yields `Some`.
+        assert_invariant(!cp.is_empty(), || {
+            "CursorSet::merge: cp must be non-empty past the len()<=1 guard".to_string()
+        });
         let mut iter = cp.into_iter();
-        let mut current = match iter.next() {
-            Some(c) => c,
-            None => {
-                return CursorSet {
-                    cursors: Vec::new(),
-                    next_id: self.next_id,
-                };
-            }
-        };
+        let mut current = iter.next().unwrap_or(Cursor {
+            position: 0,
+            anchor: 0,
+            desired_col: 0,
+            id: 1,
+        });
         let mut merged: Vec<Cursor> = Vec::new();
 
         for next in iter {
@@ -267,24 +281,10 @@ impl CursorSet {
         res.merge()
     }
 
-    pub fn map_with_index(&self, mut f: impl FnMut(usize, Cursor) -> Cursor) -> CursorSet {
-        let cp: Vec<Cursor> = self
-            .cursors
-            .iter()
-            .enumerate()
-            .map(|(i, &c)| f(i, c))
-            .collect();
-        let res = CursorSet {
-            cursors: cp,
-            next_id: self.next_id,
-        };
-        res.merge()
-    }
-
     /// Port of `cursor.go:274-289`: shift cursor offsets after a single
     /// `[start, end)` -> `insert_len`-byte replace.
     pub fn adjust_after_edit(&self, start: usize, end: usize, insert_len: usize) -> CursorSet {
-        let net: isize = insert_len as isize - (end as isize - start as isize);
+        let net: isize = edit_delta(end - start, insert_len);
         self.map(move |c| {
             let adjust = |pos: usize| -> usize {
                 if pos < start {
@@ -322,7 +322,7 @@ impl CursorSet {
                     if pos_i < old_end {
                         return ae.start + ae.insert.len();
                     }
-                    shift += ae.insert.len() as isize - ae.deleted.len() as isize;
+                    shift += edit_delta(ae.deleted.len(), ae.insert.len());
                 }
                 (pos as isize + shift).max(0) as usize
             };
@@ -373,5 +373,128 @@ mod tests {
         let cs = CursorSet::new(10);
         let adjusted = cs.adjust_after_edit(2, 4, 6);
         assert_eq!(adjusted.primary().position, 14); // 10 + (6 - 2)
+    }
+
+    /// [rune-core 14]: `adjust_after_batch_edits` is the one production
+    /// path with the subtle pre-edit-coordinate reconstruction (each
+    /// `AppliedEdit::start` already carries a cumulative shift baked in).
+    /// Drive it from a REAL `apply_edits` output — not a hand-guessed
+    /// `AppliedEdit` batch — so the test can't share a wrong assumption
+    /// with the code under test: a cursor before, inside each edit, and
+    /// past both.
+    #[test]
+    fn adjust_after_batch_edits_shifts_cursors_by_position() {
+        use crate::buffer::{Buffer, Edit};
+
+        let buf = Buffer::new("abcdefgh");
+        let (new_buf, applied) = buf
+            .apply_edits(&[
+                Edit {
+                    start: 6,
+                    end: 8,
+                    insert: String::new(),
+                },
+                Edit {
+                    start: 2,
+                    end: 4,
+                    insert: "XYZ".to_string(),
+                },
+            ])
+            .expect("edit should apply");
+        assert_eq!(new_buf.content(), "abXYZef");
+
+        let cs = CursorSet::new_from_positions(&[0, 3, 7, 8]);
+        let adjusted = cs.adjust_after_batch_edits(&applied);
+        let positions: Vec<usize> = adjusted.all().iter().map(|c| c.position).collect();
+        // 0 precedes both edits: unchanged.
+        // 3 falls inside the "cd" replace ([2,4)): snaps to that edit's
+        // post-edit end (byte 5, right after "XYZ").
+        // 7 falls inside the "gh" delete ([6,8)): snaps to that edit's
+        // post-edit end (byte 7, the delete's own empty-insert end).
+        // 8 (buffer's own length) follows both edits: shifted by both
+        // deltas (+1 for "cd"->"XYZ", -2 for deleting "gh" — net -1), also
+        // landing on byte 7 — `map`'s `merge()` then coalesces this
+        // now-identical zero-width cursor with the previous one, so only
+        // 3 cursors survive.
+        assert_eq!(positions, vec![0, 5, 7]);
+        assert_eq!(adjusted.len(), 3);
+    }
+
+    /// [rune-core 14]: when two overlapping cursors merge, the survivor's
+    /// `reversed()` flag must come from whichever of the two carries the
+    /// surviving (lower) id — not always the earlier-sorted cursor.
+    #[test]
+    fn merge_survivor_keeps_the_reversed_flag_of_the_lower_id_cursor() {
+        // `a` (id 1, survivor) is NOT reversed: position is its selection end.
+        let a = Cursor {
+            position: 8,
+            anchor: 0,
+            desired_col: 0,
+            id: 1,
+        };
+        // `b` (id 2) IS reversed and sorts first by selection_start.
+        let b = Cursor {
+            position: 3,
+            anchor: 6,
+            desired_col: 0,
+            id: 2,
+        };
+        let merged = CursorSet::new_from(&[a, b]).primary();
+        assert_eq!(merged.id, 1, "lower id survives");
+        assert!(
+            !merged.reversed(),
+            "the survivor's own reversed flag (id 1, not reversed) must win, \
+             not the other cursor's"
+        );
+        assert_eq!((merged.selection_start(), merged.selection_end()), (0, 8));
+    }
+
+    /// [rune-core 14]: `new_from` assigns fresh ids to any cursor with
+    /// `id == 0`, past the highest id already present.
+    #[test]
+    fn new_from_assigns_fresh_ids_to_zero_id_cursors() {
+        let a = Cursor {
+            position: 0,
+            anchor: 0,
+            desired_col: 0,
+            id: 5,
+        };
+        let b = Cursor {
+            position: 20,
+            anchor: 20,
+            desired_col: 0,
+            id: 0,
+        };
+        let cs = CursorSet::new_from(&[a, b]);
+        assert_eq!(cs.len(), 2);
+        let ids: Vec<u32> = cs.all().iter().map(|c| c.id).collect();
+        assert!(ids.contains(&5));
+        assert!(
+            ids.iter().all(|&id| id != 0),
+            "id 0 must be reassigned: {ids:?}"
+        );
+    }
+
+    /// [rune-core 14]: `new_from` does not itself deduplicate ids — two
+    /// cursors sharing a non-zero id both survive `new_from` unless their
+    /// selections happen to touch (`merge`'s job, not id assignment's).
+    #[test]
+    fn new_from_does_not_dedupe_non_touching_duplicate_ids() {
+        let a = Cursor {
+            position: 0,
+            anchor: 0,
+            desired_col: 0,
+            id: 7,
+        };
+        let b = Cursor {
+            position: 50,
+            anchor: 50,
+            desired_col: 0,
+            id: 7,
+        };
+        let cs = CursorSet::new_from(&[a, b]);
+        assert_eq!(cs.len(), 2, "non-touching cursors are not merged by id");
+        let ids: Vec<u32> = cs.all().iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![7, 7]);
     }
 }

@@ -101,7 +101,12 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
 fn save_done_err_surfaces_status_and_keeps_dirty() {
     let mut app = test_app();
     let id = app.active;
-    app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x");
+    app.doc_mut(id).unwrap().buffer = app
+        .doc(id)
+        .unwrap()
+        .buffer
+        .insert(0, "x")
+        .expect("in-bounds insert should apply");
     let before_saved = app.doc(id).unwrap().saved_version;
     let version = app.doc(id).unwrap().buffer.version();
     let mut effects = Effects::default();
@@ -210,7 +215,12 @@ fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().buffer = app.doc(id).unwrap().buffer.insert(0, "x"); // makes it dirty
+    app.doc_mut(id).unwrap().buffer = app
+        .doc(id)
+        .unwrap()
+        .buffer
+        .insert(0, "x")
+        .expect("in-bounds insert should apply"); // makes it dirty
 
     let effects = press_save(&mut app);
     assert_eq!(effects.cmds.len(), 1);

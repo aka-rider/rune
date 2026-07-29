@@ -1,20 +1,34 @@
-//! `EDITOR_BINDINGS` — a tabled MIRROR of `keymap::resolve`'s hand-written
-//! match (plan WP6.S1/S7). `resolve` stays the live dispatch path
-//! (`app::handle_editor_key` calls it directly, never this table); this
-//! table exists purely so `help.rs`'s reflection pass and the startup
-//! collision index (`index::validate`) have real data to walk, closing the
-//! recorded exception `help.rs` used to carry — a hand-maintained editor
-//! key list, kept in sync by hand, which CONSTITUTION §12 says may not
-//! exist.
+//! `EDITOR_BINDINGS` — the ONE source of truth for every editor-pane chord
+//! (plan WP6.S1/S7, WP10.S3). `keymap::resolve` no longer hand-matches
+//! these chords itself; it delegates straight to `resolve_in(EDITOR_
+//! BINDINGS, key)`, so a chord either has a row here or it does not
+//! resolve — `help.rs`'s reflection pass and the startup collision index
+//! (`index::validate`) read the exact same data the live dispatch path
+//! uses, closing the recorded exception `help.rs` used to carry (a hand-
+//! maintained editor key list, kept in sync by hand, which CONSTITUTION
+//! §12 says may not exist) AND the drift a second, hand-written match
+//! used to allow (a loose modifier guard here once let `⌘⇧S` fall through
+//! to a real save — see the crate's `CODE-REVIEW.md`, rune-tui B finding
+//! 3 — since a hand-written `match` arm can check less than its whole
+//! `Mods`, while `KeyPattern::matches` never can).
 //!
-//! `Save` and the quit chords are deliberately OMITTED here, exactly as the
-//! hand-written section it replaces omitted them: they already have their
-//! own `## Global` rows (`global::GLOBAL_BINDINGS`) — stage 2 of
-//! `app::handle_key`'s pipeline resolves them before the editor's own
-//! resolver ever sees them. In particular `ctrl+d` is NOT a `PageDown` row
-//! here: on this binding table `QuitKey::from_key` claims plain `ctrl+d` as
-//! the second quit chord, so `keymap::resolve_char` has no `'d'` arm at all
-//! — only `ctrl+u` reaches `Command::PageUp` from a `Char` chord.
+//! The quit chords are deliberately OMITTED here: `QuitKey::from_key`
+//! claims them before `resolve_in` is ever consulted (`keymap::resolve`
+//! above), so `ctrl+d` is NOT a `PageDown` row here — only `ctrl+u` reaches
+//! `Command::PageUp` from a `Char` chord.
+//!
+//! `Save`'s EXACT `sup`-only chord DOES have a row here, even though
+//! `global::GLOBAL_BINDINGS` already resolves the identical chord one
+//! stage earlier (`app::handle_key`'s stage 2, before any pane — including
+//! the editor's own resolver — ever sees the key): the row below is dead
+//! code on that live path, kept anyway because `keymap::resolve` is also
+//! called directly by things that never go through the layered
+//! `app::handle_key` pipeline (e.g. `rune-fuzz`'s driver tags each
+//! keystroke with `keymap::resolve(key)` for its `SAVE-INFLIGHT-SM`
+//! invariant) — those callers still need the EXACT chord to identify as
+//! `Command::Save`. Only the exact chord: no shift/alt variant gets a row,
+//! which is the actual fix (`CODE-REVIEW.md` rune-tui B finding 3) — a
+//! loose `resolve_char` arm here once let `⌘⇧S`/`⌘⌥S` through too.
 
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{Command, KeyCode, Mods};
@@ -117,6 +131,24 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Right, SHIFT_ALT)],
+        cmd: Command::SelectWordRight,
+        help: "select word right",
+        when: "",
+    },
+    // The `Char('b')`/`Char('f')` word-motion mirror of the rows above:
+    // plain ALT is already covered further down (`WordLeft`/`WordRight`),
+    // these two complete the four-way mirror with the SHIFT+ALT "select"
+    // variant — previously only reachable through a loose `resolve_char`
+    // arm that didn't check `shift`, so `⌥⇧B`/`⌥⇧F` silently collapsed a
+    // selection (moved) instead of extending it.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('b'), SHIFT_ALT)],
+        cmd: Command::SelectWordLeft,
+        help: "select word left",
+        when: "",
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('f'), SHIFT_ALT)],
         cmd: Command::SelectWordRight,
         help: "select word right",
         when: "",
@@ -355,6 +387,12 @@ pub const EDITOR_BINDINGS: &[Binding<Command>] = &[
         help: "delete line",
         when: "",
     },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('s'), SUP)],
+        cmd: Command::Save,
+        help: "save",
+        when: "",
+    },
     // WP7.S2/S7: viewport-only scroll commands — vim/Helix parity, see
     // `keymap::resolve`'s doc comments on each arm for the exact rationale.
     Binding {
@@ -429,10 +467,14 @@ mod tests {
     }
 
     #[test]
-    fn every_row_resolves_through_the_hand_written_matcher_too() {
-        // Tabling `resolve`'s chords must never silently drift from
-        // `resolve` itself — each row's single key, fed through `resolve`
-        // directly, must produce that same row's `cmd`.
+    fn every_row_resolves_through_the_live_dispatch_path() {
+        // `resolve` delegates to this table directly (WP10.S3), so this is
+        // now near-tautological for the forward direction — kept as a
+        // cheap sanity check that a future change to `resolve` doesn't
+        // reintroduce a second, hand-written match that drifts from this
+        // table. The CONVERSE direction (every chord `resolve` accepts has
+        // a row here) is the real anti-drift gate — see the exhaustive
+        // sweep test in `keymap.rs`.
         use crate::keymap::{KeyInput, resolve};
 
         for binding in EDITOR_BINDINGS {

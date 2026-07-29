@@ -64,12 +64,11 @@ fn per_line_edits(
 /// Port of `commands_edit_lines_indent.go:execIndentLine` (Tab).
 pub fn indent(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
-        let line_start = buf.line_start(line);
+        let line_start = buf.line_start(line)?;
         Some(Edit {
             start: line_start,
             end: line_start,
             insert: "\t".to_string(),
-            cursor_id: 0,
         })
     });
 }
@@ -82,8 +81,8 @@ pub fn outdent(app: &mut App, id: DocumentId) {
 }
 
 fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
-    let line_start = buf.line_start(line);
-    let line_end = buf.line_end(line);
+    let line_start = buf.line_start(line)?;
+    let line_end = buf.line_end(line)?;
     let line_text = buf.slice(line_start, line_end).unwrap_or("");
 
     let mut indent_end = 0usize;
@@ -113,7 +112,6 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
         start: line_start,
         end: line_start + remove,
         insert: String::new(),
-        cursor_id: 0,
     })
 }
 
@@ -127,26 +125,30 @@ pub fn delete_line(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
         let line_count = buf.line_count();
         if line_count == 1 {
+            if buf.is_empty() {
+                // An empty buffer's one line has nothing to delete — a
+                // `0,0,""` edit would be a true no-op the user still has
+                // to ⌘Z through (matching `outdent`'s own `None` on its
+                // analogous no-op case, just below).
+                return None;
+            }
             return Some(Edit {
                 start: 0,
                 end: buf.len(),
                 insert: String::new(),
-                cursor_id: 0,
             });
         }
         if line < line_count - 1 {
             Some(Edit {
-                start: buf.line_start(line),
-                end: buf.line_start(line + 1),
+                start: buf.line_start(line)?,
+                end: buf.line_start(line + 1)?,
                 insert: String::new(),
-                cursor_id: 0,
             })
         } else {
             Some(Edit {
-                start: buf.line_end(line - 1),
-                end: buf.line_end(line),
+                start: buf.line_end(line - 1)?,
+                end: buf.line_end(line)?,
                 insert: String::new(),
-                cursor_id: 0,
             })
         }
     });
@@ -160,14 +162,13 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
         if line == 0 {
             return None;
         }
-        let line_start = buf.line_start(line);
-        let line_end = buf.line_end(line);
+        let line_start = buf.line_start(line)?;
+        let line_end = buf.line_end(line)?;
         let text = buf.slice(line_start, line_end).unwrap_or("");
         Some(Edit {
             start: line_start,
             end: line_start,
             insert: format!("{text}\n"),
-            cursor_id: 0,
         })
     });
 }
@@ -175,14 +176,13 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
 /// Port of `commands_edit_lines_multi.go:execCloneLineDown`.
 pub fn clone_line_down(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
-        let line_start = buf.line_start(line);
-        let line_end = buf.line_end(line);
+        let line_start = buf.line_start(line)?;
+        let line_end = buf.line_end(line)?;
         let text = buf.slice(line_start, line_end).unwrap_or("");
         Some(Edit {
             start: line_end,
             end: line_end,
             insert: format!("\n{text}"),
-            cursor_id: 0,
         })
     });
 }
@@ -206,10 +206,18 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         return;
     }
     let l = bp.line;
-    let prev_start = doc.buffer.line_start(l - 1);
-    let prev_end = doc.buffer.line_end(l - 1);
-    let line_start = doc.buffer.line_start(l);
-    let line_end = doc.buffer.line_end(l);
+    let Some(prev_start) = doc.buffer.line_start(l - 1) else {
+        return;
+    };
+    let Some(prev_end) = doc.buffer.line_end(l - 1) else {
+        return;
+    };
+    let Some(line_start) = doc.buffer.line_start(l) else {
+        return;
+    };
+    let Some(line_end) = doc.buffer.line_end(l) else {
+        return;
+    };
     let text_prev = doc
         .buffer
         .slice(prev_start, prev_end)
@@ -229,7 +237,6 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         start: prev_start,
         end: line_end,
         insert: format!("{text_l}\n{text_prev}"),
-        cursor_id: cid,
     };
 
     apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
@@ -256,10 +263,18 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         return;
     }
     let l = bp.line;
-    let line_start = doc.buffer.line_start(l);
-    let line_end = doc.buffer.line_end(l);
-    let next_start = doc.buffer.line_start(l + 1);
-    let next_end = doc.buffer.line_end(l + 1);
+    let Some(line_start) = doc.buffer.line_start(l) else {
+        return;
+    };
+    let Some(line_end) = doc.buffer.line_end(l) else {
+        return;
+    };
+    let Some(next_start) = doc.buffer.line_start(l + 1) else {
+        return;
+    };
+    let Some(next_end) = doc.buffer.line_end(l + 1) else {
+        return;
+    };
     let text_l = doc
         .buffer
         .slice(line_start, line_end)
@@ -279,7 +294,6 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         start: line_start,
         end: next_end,
         insert: format!("{text_next}\n{text_l}"),
-        cursor_id: cid,
     };
 
     apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
@@ -367,6 +381,19 @@ mod tests {
     }
 
     #[test]
+    fn delete_line_on_an_empty_buffer_is_a_true_no_op_not_a_journaled_step() {
+        let mut app = app_with("", 0);
+        let id = app.active;
+        delete_line(&mut app, id);
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "");
+        assert_eq!(
+            app.doc(id).unwrap().journal.len(),
+            0,
+            "an empty buffer has nothing to delete — no Step, nothing to ⌘Z through"
+        );
+    }
+
+    #[test]
     fn delete_line_then_undo_restores_the_buffer() {
         let mut app = app_with("one\ntwo\nthree", "one\n".len());
         let id = app.active;
@@ -409,6 +436,40 @@ mod tests {
         clone_line_down(&mut app, id);
         undo(&mut app, id);
         assert_eq!(app.doc(id).unwrap().buffer.content(), original);
+    }
+
+    #[test]
+    fn clone_line_down_with_two_cursors_on_the_same_line_clones_it_twice_and_keeps_both_cursors() {
+        // Two cursors sharing "two" derive byte-identical zero-width
+        // insert edits at the same point (`per_line_edits(dedupe=false)`
+        // keys on `line_start`, not on cursor identity) — the exact shape
+        // `edit_core::coalesce_touching_edits` used to wrongly collapse
+        // 2->1, silently dropping one cursor's own clone. Both edits must
+        // survive uncoalesced: the line clones once PER CURSOR, and the
+        // cursor set stays at 2.
+        let mut app = app_with("one\ntwo", 4);
+        let id = app.active;
+        let doc = app.doc_mut(id).unwrap();
+        doc.cursors = doc.cursors.clone().add(Cursor {
+            position: 7,
+            anchor: 7,
+            desired_col: 0,
+            id: 0,
+        });
+        assert_eq!(
+            doc.cursors.len(),
+            2,
+            "fixture must hold two cursors on the same line"
+        );
+
+        clone_line_down(&mut app, id);
+
+        assert_eq!(app.doc(id).unwrap().buffer.content(), "one\ntwo\ntwo\ntwo");
+        assert_eq!(
+            app.doc(id).unwrap().cursors.len(),
+            2,
+            "neither cursor's clone may be silently dropped"
+        );
     }
 
     #[test]
