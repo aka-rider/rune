@@ -1931,6 +1931,7 @@ version = "0.1.0"
 dependencies = [
  "rune-syntax",
  "rune-vfs",
+ "serde_json",
 ]
 
 [[package]]
