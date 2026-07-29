@@ -68,14 +68,32 @@ pub fn pane_no_bleed(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
     })
 }
 
-/// True when `inner` lies entirely inside `outer` (a zero-area `inner` at
-/// the origin, the placeholder every hidden pane rect uses, is trivially
-/// inside any frame that itself starts at the origin).
+/// True when `inner` lies entirely inside `outer`. A zero-area `inner` is
+/// the placeholder every collapsed pane rect uses (`layout::geometry` hands
+/// back `Rect::new(0, 0, 0, 0)` for a section that isn't shown) and is
+/// nowhere, not somewhere out of bounds — a plain corner comparison would
+/// only pass it by the coincidence of `outer` itself starting at the
+/// origin, so it is excluded from the containment check outright rather
+/// than relying on that coincidence.
 fn within(inner: Rect, outer: Rect) -> bool {
+    if inner.width == 0 || inner.height == 0 {
+        return true;
+    }
     inner.x >= outer.x
         && inner.y >= outer.y
         && inner.right() <= outer.right()
         && inner.bottom() <= outer.bottom()
+}
+
+/// True when `a` and `b` overlap. A zero-area rect never overlaps anything
+/// — it is nowhere, not somewhere on top of another pane — so this must be
+/// checked ahead of `Rect::intersects`, which (like `within`) only treats a
+/// zero-area rect at the origin as harmless by coincidence.
+fn overlaps(a: Rect, b: Rect) -> bool {
+    if a.width == 0 || a.height == 0 || b.width == 0 || b.height == 0 {
+        return false;
+    }
+    a.intersects(b)
 }
 
 /// `LAYOUT-FITS` — every rect `layout::geometry` hands `render::draw` must
@@ -133,7 +151,7 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     }
 
     if let Some(left_block) = geo.left_block
-        && left_block.intersects(geo.center)
+        && overlaps(left_block, geo.center)
     {
         return Some(Violation {
             id: "LAYOUT-FITS",
@@ -154,7 +172,7 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     }
     for (i, (name_a, rect_a)) in column_rects.iter().enumerate() {
         for (name_b, rect_b) in column_rects.iter().skip(i + 1) {
-            if rect_a.intersects(*rect_b) {
+            if overlaps(*rect_a, *rect_b) {
                 return Some(Violation {
                     id: "LAYOUT-FITS",
                     message: format!(
@@ -183,4 +201,34 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `layout::geometry` always hands back the zero rect for a collapsed
+    /// section, regardless of where the frame itself starts. Today the
+    /// outer frame always starts at the origin too, which is exactly why the
+    /// old plain corner comparison got away with treating the zero rect as
+    /// contained — this pins the containment/overlap checks against a
+    /// left column placed at a NON-zero origin, so the zero-rect placeholder
+    /// is never mistaken for one that's merely out of bounds.
+    #[test]
+    fn collapsed_section_at_a_non_zero_origin_frame_reports_no_violation() {
+        let frame = Rect::new(5, 3, 40, 20);
+        let left_block = Rect::new(5, 3, 22, 20);
+        let collapsed = Rect::new(0, 0, 0, 0);
+
+        assert!(
+            within(collapsed, frame),
+            "a collapsed rect is nowhere, not out of bounds"
+        );
+        assert!(within(collapsed, left_block));
+        assert!(
+            !overlaps(collapsed, left_block),
+            "a collapsed rect can never overlap a real one"
+        );
+        assert!(!overlaps(left_block, collapsed));
+    }
 }
