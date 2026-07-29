@@ -14,18 +14,22 @@ use rune_vfs::DirEntry;
 use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
-    COPY_KEY, CTRL_C_KEY, CTRL_E_KEY, CTRL_R_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
-    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
-    SELECT_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
+    CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, MARKDOWN_FRAGMENTS,
+    NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS,
+    TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
     (1u16..=200, 2u16..=60)
 }
 
-/// Any of the 15 `KeyCode` variants; `Char` draws an arbitrary `char`.
-/// 15 arms exceeds `prop_oneof!`'s 10-arm threshold (G16), so every arm is
-/// `.boxed()`.
+/// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary
+/// `char`. 16 arms exceeds `prop_oneof!`'s 10-arm threshold (G16), so every
+/// arm is `.boxed()`. `F1` (`GlobalCommand::Help`) was the one omission
+/// (CODE-REVIEW.md rune-fuzz finding 9: a stale "15 variants" doc comment
+/// was true of the arms below but false of the enum, hiding that Help was
+/// structurally unreachable through this generator) — now included.
 fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
     prop_oneof![
         any::<char>().prop_map(KeyCode::Char).boxed(),
@@ -43,6 +47,7 @@ fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
         Just(KeyCode::PageUp).boxed(),
         Just(KeyCode::PageDown).boxed(),
         Just(KeyCode::Delete).boxed(),
+        Just(KeyCode::F1).boxed(),
     ]
 }
 
@@ -286,14 +291,19 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
         })
 }
 
-/// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`, or
-/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6).
+/// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`,
+/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6), or the named
+/// `^b`/`^t` Explorer/Tabs toggle chords (CODE-REVIEW.md rune-fuzz finding
+/// 10: without these, `DirLoaded` always landed in a never-opened
+/// Explorer).
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
         Just(vec![Action::FailNextSave]),
         Just(vec![Action::Key(CTRL_C_KEY)]),
         Just(vec![Action::Key(CTRL_R_KEY)]),
+        Just(vec![Action::Key(CTRL_B_KEY)]),
+        Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
         (
             proptest::collection::vec(arb_dir_entry(), 0..=6),
@@ -308,9 +318,67 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// The user-approved weighted table, now over 12 clusters (plan WP7.S6
-/// added `cluster_highlight`). All arms are `.boxed()` — `prop_oneof!` with
-/// >10 arms expands to `Union::new_weighted(vec![…boxed…])` (G16).
+/// 1-3 `AddCursorAbove`/`AddCursorBelow` presses (building a real
+/// multi-cursor set), then a couple of ordinary edits/motions so the new
+/// cursors actually do something observable — `CUR-ORDER`/the clipboard
+/// invariants only ever see a `let [cursor]` single-cursor session
+/// otherwise (CODE-REVIEW.md rune-fuzz finding 11: the entire multi-cursor
+/// surface was monkey-burst-only at ~0.42%/key). Uses the chord actually
+/// bound in `keymap/editor_bindings.rs` (`alt+sup+Up`/`Down`, `ALT_SUP`) —
+/// not literally "alt+shift" as the plan text names it, which binds
+/// `CloneLineUp`/`CloneLineDown` instead.
+fn cluster_multicursor() -> impl Strategy<Value = Vec<Action>> {
+    (
+        proptest::collection::vec(
+            prop_oneof![
+                Just(Action::Key(ADD_CURSOR_ABOVE_KEY)),
+                Just(Action::Key(ADD_CURSOR_BELOW_KEY)),
+            ],
+            1..=3,
+        ),
+        select(TYPE_PALETTE),
+    )
+        .prop_map(|(cursor_adds, frag)| {
+            let mut actions = cursor_adds;
+            actions.push(Action::Type(frag.to_string()));
+            actions.push(Action::Key(COPY_KEY));
+            actions
+        })
+}
+
+/// Presses `^C` (may arm the quit-confirm at whatever generation is
+/// currently next, OR — on a dirty, unpreserved document, which this
+/// no-`db` fuzz harness always has — raise the dirty-close Guard instead;
+/// either is a legitimate, already-handled outcome), then unconditionally
+/// delivers `Action::StaleConfirmTimeout` for a generation guaranteed to
+/// mismatch whatever (if anything) ended up armed — exercising
+/// `CONFIRM-GEN`'s `!should_clear` branch (CODE-REVIEW.md rune-fuzz
+/// finding 5), which `Action::ConfirmTimeout` structurally cannot reach
+/// (it always echoes the LIVE armed generation).
+///
+/// Deliberately does NOT chain a second, DIFFERENT quit chord (`^D`) to
+/// re-arm a new generation the way a real "arm -> re-arm -> old-timer-
+/// fires" race would: `banner::handle_dirty_close_key`'s `d`/`D` option
+/// matches on bare `KeyCode::Char` regardless of mods, so `^D` while the
+/// dirty-close Guard from `^C` is already up (routine in a generated
+/// session, since SOME earlier cluster has almost always dirtied the
+/// document by the time this one runs) would DISCARD AND CLOSE the
+/// session's only document — corrupting every later `UNDO-TOTAL`/
+/// `REDO-TOTAL` check with a false, unrelated violation. A generation
+/// picked far outside any realistic `next_quit_gen` range needs no real
+/// re-arm to be guaranteed stale.
+fn cluster_confirm_stale() -> impl Strategy<Value = Vec<Action>> {
+    Just(vec![
+        Action::Key(CTRL_C_KEY),
+        Action::StaleConfirmTimeout(u32::MAX),
+    ])
+}
+
+/// The user-approved weighted table, now over 14 clusters (plan WP7.S6
+/// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
+/// WP14.S3 added `cluster_multicursor`). All arms are `.boxed()` —
+/// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
+/// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -321,10 +389,12 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         6 => cluster_markdown_write().boxed(),
         5 => cluster_save().boxed(),
         4 => cluster_clipboard().boxed(),
+        4 => cluster_multicursor().boxed(),
         3 => cluster_monkey_burst().boxed(),
         3 => cluster_highlight().boxed(),
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
+        1 => cluster_confirm_stale().boxed(),
     ]
 }
 

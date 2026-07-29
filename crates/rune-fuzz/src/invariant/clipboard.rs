@@ -18,13 +18,18 @@ use crate::step::{MsgTag, StepCtx};
 /// `prev.content` with exactly the pasted text's bytes inserted at the
 /// cursor offset — `handle_paste_content` inserts unfiltered
 /// (`commands/clipboard.rs`), the ONE path that can carry control bytes at
-/// all (G3).
+/// all (G3). Inert on a `read_only` document (the Help virtual document,
+/// reachable since `F1` joined `arb_any_keycode` — CODE-REVIEW.md
+/// rune-fuzz finding 9): every mutating command chokepoint refuses a
+/// read-only document by construction, so a paste there correctly inserts
+/// nothing, and asserting verbatim insertion anyway would be asserting a
+/// property production never claimed to begin with.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let text = match &ctx.msg {
         MsgTag::Paste(t) | MsgTag::ClipboardRead(t) => t,
         _ => return None,
     };
-    if text.is_empty() {
+    if text.is_empty() || prev.read_only {
         return None;
     }
     let [cursor] = prev.cursors.as_slice() else {

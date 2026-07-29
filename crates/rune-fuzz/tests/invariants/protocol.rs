@@ -72,8 +72,9 @@ fn save_inflight_sm_detects_a_modal_captured_non_save_key_arming() {
         input: key(KeyCode::Char('d'), Mods::NONE),
         command: None,
     };
-    let v = save_inflight_sm(&prev, &next, &ctx)
-        .expect("a modal-captured non-`s` key arming save_in_flight must still trip SAVE-INFLIGHT-SM");
+    let v = save_inflight_sm(&prev, &next, &ctx).expect(
+        "a modal-captured non-`s` key arming save_in_flight must still trip SAVE-INFLIGHT-SM",
+    );
     assert_eq!(v.id, "SAVE-INFLIGHT-SM");
 }
 
@@ -87,8 +88,9 @@ fn save_inflight_sm_detects_an_s_key_arming_with_no_modal_up() {
         input: key(KeyCode::Char('s'), Mods::NONE),
         command: None,
     };
-    let v = save_inflight_sm(&prev, &next, &ctx)
-        .expect("a plain `s` key with no modal up arming save_in_flight must trip SAVE-INFLIGHT-SM");
+    let v = save_inflight_sm(&prev, &next, &ctx).expect(
+        "a plain `s` key with no modal up arming save_in_flight must trip SAVE-INFLIGHT-SM",
+    );
     assert_eq!(v.id, "SAVE-INFLIGHT-SM");
 }
 

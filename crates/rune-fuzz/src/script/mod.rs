@@ -73,6 +73,17 @@ pub enum ScriptError {
     InvalidMods { line: usize, mods: String },
     /// A numeric field did not parse as its expected integer type.
     InvalidNumber { line: usize, reason: String },
+    /// A `type` line's payload decoded to a control char `driver::run`
+    /// cannot deliver as a keystroke (CODE-REVIEW.md rune-fuzz finding 4):
+    /// `Action::Type` expands one `char` per `Msg::Key`, and
+    /// `is_insertable_key_char` silently drops any control byte other than
+    /// `\n` (plan Gotcha G3) — a byte-hostile payload belongs in
+    /// `Action::Paste` instead, which delivers verbatim. Rejected here,
+    /// at decode time, rather than left for the driver's own
+    /// `debug_assert!` to catch: that assert sits outside `catch_unwind`,
+    /// so a repro carrying one would abort the whole replay harness
+    /// instead of producing a named violation.
+    UndeliverableTypeChar { line: usize, ch: char },
 }
 
 impl fmt::Display for ScriptError {
@@ -91,6 +102,11 @@ impl fmt::Display for ScriptError {
                 write!(f, "line {line}: invalid mods field {mods:?}")
             }
             ScriptError::InvalidNumber { line, reason } => write!(f, "line {line}: {reason}"),
+            ScriptError::UndeliverableTypeChar { line, ch } => write!(
+                f,
+                "line {line}: `type` payload contains undeliverable control char {ch:?} \
+                 (use `paste` instead)"
+            ),
         }
     }
 }
@@ -147,6 +163,7 @@ mod tests {
             Action::Resize(80, 24),
             Action::ClipboardReply("clipboard text".to_string()),
             Action::ConfirmTimeout,
+            Action::StaleConfirmTimeout(3),
             Action::Deliver,
             Action::FailNextSave,
             Action::DirLoaded {
@@ -218,6 +235,11 @@ mod tests {
 
     #[test]
     fn escapes_newline_carriage_return_tab_quote_nul_and_emoji() {
+        // `Action::Paste` carries arbitrary bytes verbatim (unlike `Type`,
+        // which expands one `char` per keystroke and so can never deliver a
+        // control char other than `\n` — see the `type`-specific case
+        // below), so it exercises the escaper's fidelity for every one of
+        // these chars via a full round trip.
         let cases: &[(char, &str)] = &[
             ('\n', "\\n"),
             ('\r', "\\r"),
@@ -227,13 +249,41 @@ mod tests {
             ('😀', "\\u{1f600}"),
         ];
         for &(ch, want_fragment) in cases {
-            let actions = vec![Action::Type(format!("x{ch}y"))];
+            let actions = vec![Action::Paste(format!("x{ch}y"))];
             let encoded = encode(DOC_PATH, "", &actions);
             assert!(
                 encoded.contains(want_fragment),
                 "encoding {ch:?} should contain {want_fragment:?}, got {encoded:?}"
             );
             assert_eq!(must_decode(&encoded).2, actions);
+        }
+    }
+
+    #[test]
+    fn type_round_trips_the_chars_it_can_actually_deliver() {
+        // `\n` (a hardcoded `KeyCode::Enter` in `driver::run`), an ordinary
+        // quote, and a non-control emoji all round-trip through `type`.
+        for ch in ['\n', '"', '😀'] {
+            let actions = vec![Action::Type(format!("x{ch}y"))];
+            let encoded = encode(DOC_PATH, "", &actions);
+            assert_eq!(must_decode(&encoded).2, actions);
+        }
+    }
+
+    #[test]
+    fn decode_rejects_a_control_char_in_a_type_payload() {
+        // CODE-REVIEW.md rune-fuzz finding 4: `\r`/`\t`/NUL can never reach
+        // a real keystroke through `Action::Type` (`is_insertable_key_char`
+        // drops every control char but `\n`) — `decode` must refuse these
+        // at the codec boundary instead of letting `driver::run`'s own
+        // debug_assert! abort the whole harness on a replay.
+        for ch in ['\r', '\t', '\0'] {
+            let text = format!("content hi\ntype x{}y\n", ch.escape_default());
+            let err = decode(&text).unwrap_err();
+            assert!(
+                matches!(err, ScriptError::UndeliverableTypeChar { ch: got, .. } if got == ch),
+                "expected UndeliverableTypeChar({ch:?}), got {err:?}"
+            );
         }
     }
 

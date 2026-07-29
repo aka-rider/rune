@@ -55,6 +55,11 @@ fn encode_action(out: &mut String, action: &Action) {
             out.push('\n');
         }
         Action::ConfirmTimeout => out.push_str("confirm-timeout\n"),
+        Action::StaleConfirmTimeout(generation) => {
+            out.push_str("stale-confirm-timeout ");
+            out.push_str(&generation.to_string());
+            out.push('\n');
+        }
         Action::Deliver => out.push_str("deliver\n"),
         Action::FailNextSave => out.push_str("fail-next-save\n"),
         Action::DirLoaded {

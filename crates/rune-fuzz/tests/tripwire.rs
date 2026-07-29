@@ -298,6 +298,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         focus: Pane::Editor,
         modal_open: false,
         active: base_active_id(),
+        read_only: false,
         cells: Vec::new(),
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),
@@ -333,6 +334,19 @@ fn cur_order_detects_overlap() {
         selection_cursor(2, 2, 2), // starts inside the first cursor's selection
     ];
     let v = cur_order(&snap).expect("overlapping cursor selections must trip CUR-ORDER");
+    assert_eq!(v.id, "CUR-ORDER");
+}
+
+#[test]
+fn cur_order_detects_two_coincident_collapsed_cursors() {
+    // CODE-REVIEW.md rune-fuzz finding 6: two collapsed cursors sharing the
+    // same position is the canonical multi-cursor defect (every edit
+    // double-applies), but `cur_id` only checks id uniqueness -- distinct
+    // ids at the same position used to pass every cursor invariant clean.
+    let mut snap = base_snapshot("abcdefgh");
+    snap.cursors = vec![collapsed_cursor(1, 3), collapsed_cursor(2, 3)];
+    let v =
+        cur_order(&snap).expect("two collapsed cursors at the same position must trip CUR-ORDER");
     assert_eq!(v.id, "CUR-ORDER");
 }
 
@@ -439,6 +453,19 @@ fn cur_id_accepts_nonempty() {
         collapsed_cursor(3, 6),
     ];
     assert_eq!(cur_id(&snap), None);
+}
+
+#[test]
+fn buf_line_index_detects_the_named_off_by_one() {
+    // CODE-REVIEW.md rune-fuzz finding 2: a monotone-only check let
+    // line_starts=[0,1,2] (wrong) pass clean for "a\nbb\nccc", whose real
+    // starts are [0,2,5] -- monotone (0<1<2) but not what the content says.
+    let mut snap = base_snapshot("a\nbb\nccc");
+    snap.line_starts = vec![0, 1, 2];
+    snap.line_ends = vec![0, 1, 2];
+    let v =
+        buf_line_index(&snap).expect("the exact off-by-one line_starts must trip BUF-LINE-INDEX");
+    assert_eq!(v.id, "BUF-LINE-INDEX");
 }
 
 #[test]

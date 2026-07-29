@@ -29,23 +29,43 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-ORDER` (L0, Go `C1`) — cursors are ordered and non-overlapping: each cursor's
-/// selection ends at or before the next cursor's selection starts.
+/// `CUR-ORDER` (L0, Go `C1`) — cursors are ordered and non-overlapping: each
+/// cursor's selection ends at or before the next cursor's selection
+/// starts. Two REAL (non-collapsed) selections may legally touch (one
+/// ends exactly where the next begins), so that pairing still uses `>`.
+/// Two COLLAPSED cursors (bare carets, `position == anchor`) can never
+/// legitimately coincide — a shared position is the canonical multi-cursor
+/// defect (every edit double-applies at that byte) — so that pairing uses
+/// `>=` instead (CODE-REVIEW.md rune-fuzz finding 6: `cur_id` only checks
+/// id uniqueness, never position uniqueness, so two coincident collapsed
+/// cursors used to pass every cursor invariant clean).
 pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
     for w in snap.cursors.windows(2) {
-        if let [a, b] = w
-            && a.selection_end() > b.selection_start()
-        {
-            return Some(Violation {
-                id: "CUR-ORDER",
-                message: format!(
-                    "cursor id={} ends at {} but cursor id={} starts at {}",
-                    a.id,
-                    a.selection_end(),
-                    b.id,
-                    b.selection_start()
-                ),
-            });
+        if let [a, b] = w {
+            let both_collapsed = a.selection_start() == a.selection_end()
+                && b.selection_start() == b.selection_end();
+            let violates = if both_collapsed {
+                a.selection_end() >= b.selection_start()
+            } else {
+                a.selection_end() > b.selection_start()
+            };
+            if violates {
+                return Some(Violation {
+                    id: "CUR-ORDER",
+                    message: format!(
+                        "cursor id={} ends at {} but cursor id={} starts at {}{}",
+                        a.id,
+                        a.selection_end(),
+                        b.id,
+                        b.selection_start(),
+                        if both_collapsed {
+                            " (two collapsed cursors sharing the same position)"
+                        } else {
+                            ""
+                        }
+                    ),
+                });
+            }
         }
     }
     None

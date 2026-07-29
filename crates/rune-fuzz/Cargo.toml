@@ -14,8 +14,12 @@ rune-core = { path = "../rune-core", features = ["strict-invariants"] }
 # NOT strict-invariants: rune-md's known-open comrak sourcepos panics
 # (crates/rune-md/TODO.md) would drown the fuzzer in non-bugs — see the
 # Makefile's test-fuzz target comment for why this crate is deliberately
-# excluded from --workspace strict builds.
-rune-md = { path = "../rune-md" }
+# excluded from --workspace strict builds. `fuzz-hooks` is a separate,
+# narrower feature that exposes ONLY `DocMachine::force_rebuild` (no
+# `assert_invariant` consequences) — `SYNC-IDEMPOTENT` (`driver/checks.rs`)
+# needs a cache-bypassed rebuild to check WP16's memoized `snapshot()`
+# against a genuine one, not a memo hit.
+rune-md = { path = "../rune-md", features = ["fuzz-hooks"] }
 rune-syntax = { path = "../rune-syntax" }
 rune-tui = { path = "../rune-tui" }
 rune-vfs = { path = "../rune-vfs" }

@@ -116,6 +116,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         focus: Pane::Editor,
         modal_open: false,
         active: base_active_id(),
+        read_only: false,
         cells: Vec::new(),
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),

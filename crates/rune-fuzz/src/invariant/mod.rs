@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 27 invariants total, one domain per file (mirrors the Go fuzzer's
+//! 28 invariants total, one domain per file (mirrors the Go fuzzer's
 //! own per-domain split):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
@@ -33,6 +33,10 @@
 //! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
 //! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
+//! - `SAVE-SINGLE-FLIGHT` — constructed directly by `driver.rs`, not a
+//!   checker function here (like `NO-PANIC`): a second in-flight save
+//!   `Cmd` arriving while one is already pending is itself the violation
+//!   (CODE-REVIEW.md rune-fuzz finding 3).
 
 mod buffer;
 mod clipboard;
@@ -51,8 +55,8 @@ pub use cursor::{cur_bounds, cur_id, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use pane::pane_no_bleed;
 pub use render::{
-    cell_no_eol, cell_offset, cell_order, sync_idempotent, table_row_width,
-    table_synthetic_decorative,
+    cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
+    table_row_width, table_synthetic_decorative,
 };
 pub use save::{save_clean_matches_disk, save_verbatim};
 pub use session::{confirm_gen, quit_chord, save_inflight_sm};

@@ -5,7 +5,7 @@
 //! action model -> driver -> snapshot/step-context -> pure invariant
 //! checkers.
 //!
-//! # Invariant roster (27 total)
+//! # Invariant roster (28 total)
 //!
 //! Mirrors the Go fuzzer's roster convention: id,
 //! one-line meaning, Go provenance where the plan names one. See
@@ -18,6 +18,9 @@
 //! - `NO-PANIC` — the driver caught an unwind (a `debug_assert!` tripping,
 //!   or any other panic) while settling a message. Constructed directly by
 //!   `driver.rs`, not a checker function.
+//! - `SAVE-SINGLE-FLIGHT` — a second in-flight save `Cmd` never arrives
+//!   while one is already pending (G9: at most one save `Cmd` is ever
+//!   outstanding). Also constructed directly by `driver.rs`.
 //! - `CUR-BOUNDS` — every cursor's `position`/`anchor` is a valid,
 //!   in-bounds, char-boundary byte offset (§1.3, §1.5).
 //! - `CUR-ORDER` — cursors are ordered and non-overlapping (Go `C1`).

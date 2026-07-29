@@ -133,6 +133,22 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                     }
                 }
             }
+            Action::StaleConfirmTimeout(generation) => {
+                // Deliberately no `pending_quit` precondition (unlike
+                // `ConfirmTimeout` above) -- a stale timer firing after
+                // `pending_quit` already cleared entirely, or after a
+                // DIFFERENT generation re-armed it, is exactly the
+                // production race this variant exists to exercise.
+                let msg = Msg::ConfirmTimeout {
+                    generation: *generation,
+                };
+                let tag = MsgTag::ConfirmTimeout {
+                    generation: *generation,
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
             Action::Deliver => {
                 if let Some((msg, tag, bytes)) = discharge_pending_save(&mut state)
                     && step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome)
@@ -236,6 +252,20 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
             }
             Action::Type(s) => {
                 for ch in s.chars() {
+                    // Demoted (CODE-REVIEW.md rune-fuzz finding 4): this
+                    // used to be the ONLY thing standing between a
+                    // control-char `Action::Type` payload and an abort of
+                    // the whole replay harness — it sits outside
+                    // `run_update_catching_panic`'s `catch_unwind`, and the
+                    // script codec happily round-tripped exactly the input
+                    // that would trip it. Both real sources are closed now:
+                    // `script::decode`'s `parse_action_line` rejects a
+                    // control-char `type` payload at decode time (a typed
+                    // `ScriptError`, never reaching this loop), and every
+                    // generator draws `Action::Type` payloads only from
+                    // `TYPE_PALETTE`/`MARKDOWN_FRAGMENTS`, already control-
+                    // char-free by construction. This is left as
+                    // defense-in-depth documentation, not a live guard.
                     debug_assert!(
                         ch == '\n' || !ch.is_control(),
                         "Action::Type payload contains an undeliverable control char {ch:?}; \
@@ -349,9 +379,27 @@ fn step_and_check(
     // Classify every Cmd this step produced (WP3.S7 rule 3): Save is
     // deferred (there can only ever be one, G9); QuitTimeout/ClipboardRead
     // are dropped — a headless driver must never sleep 2 real seconds or
-    // fork `/usr/bin/pbpaste`.
+    // fork `/usr/bin/pbpaste`. `state.pending_save` is an `Option`, never a
+    // queue, PRECISELY because G9 claims at most one save `Cmd` is ever
+    // outstanding — silently overwriting a still-pending one here would
+    // drop the first save's `Cmd` on the floor (never delivered, `SAVE-
+    // CLEAN-MATCHES-DISK` never even sampling it) and make this driver
+    // blind to the exact G9 violation it exists to catch (CODE-REVIEW.md
+    // rune-fuzz finding 3). A second in-flight save `Cmd` is therefore a
+    // violation in its own right, not a silent overwrite.
     for cmd in effects.cmds {
         if cmd.kind() == CmdKind::Save {
+            if state.pending_save.is_some() {
+                outcome.violation = Some(Violation {
+                    id: "SAVE-SINGLE-FLIGHT",
+                    message: "a second save Cmd arrived while one was already pending \
+                              (G9: at most one save Cmd may ever be outstanding)"
+                        .to_string(),
+                });
+                outcome.final_snapshot = Some(prev.clone());
+                outcome.final_ctx = None;
+                return true;
+            }
             state.pending_save = Some((cmd, prev.content.clone().into_bytes()));
         }
     }

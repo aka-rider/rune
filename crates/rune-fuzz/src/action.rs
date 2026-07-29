@@ -57,6 +57,18 @@ pub enum Action {
     /// real value (`next_quit_gen` starts at 0), so it must never be
     /// synthesized as a fixed constant (G15).
     ConfirmTimeout,
+    /// Delivers `Msg::ConfirmTimeout` for an EXPLICIT, caller-chosen
+    /// generation, regardless of what (if anything) is currently armed on
+    /// `app.pending_quit` — models the ordinary production race
+    /// `ConfirmTimeout` above structurally cannot reach: arm gen 0 -> a
+    /// SECOND quit chord re-arms gen 1 before the first timer fires ->
+    /// gen 0's now-stale timer finally fires. `ConfirmTimeout` always
+    /// echoes the LIVE armed generation, so `CONFIRM-GEN`'s `!should_clear`
+    /// branch (a stale generation must leave `pending_quit` untouched) was
+    /// unreachable by construction through this driver (CODE-REVIEW.md
+    /// rune-fuzz finding 5) even though it is an everyday production
+    /// sequence.
+    StaleConfirmTimeout(u32),
     /// Run the one deferred `CmdKind::Save`, if any, and feed back its
     /// `Msg::SaveDone`. A no-op when no save is pending.
     Deliver,

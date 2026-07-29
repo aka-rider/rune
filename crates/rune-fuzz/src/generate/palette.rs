@@ -397,6 +397,60 @@ pub(super) const ESCAPE_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `^b` (`GlobalCommand::ToggleExplorer`) — CODE-REVIEW.md rune-fuzz
+/// finding 10: without this, `DirLoaded` always lands in a never-opened
+/// Explorer (the cursor-preserving Refresh path is only ever exercised
+/// against empty state), and the whole Explorer pane was reachable only by
+/// the ~1e-10-probability monkey-burst cluster.
+pub(super) const CTRL_B_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('b'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+/// `^t` (`GlobalCommand::FocusTabs`) — the Tabs pane's own equivalent of
+/// `CTRL_B_KEY` above (CODE-REVIEW.md rune-fuzz finding 10).
+pub(super) const CTRL_T_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('t'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+/// `alt+sup+Up` (`Command::AddCursorAbove`, `keymap/editor_bindings.rs`'s
+/// `ALT_SUP` row) — CODE-REVIEW.md rune-fuzz finding 11: the entire
+/// multi-cursor surface was monkey-burst-only at ~0.42%/key, so
+/// `cluster_multicursor` (`cluster.rs`) can actually build a session with
+/// more than one cursor to check `CUR-ORDER`/clipboard against.
+pub(super) const ADD_CURSOR_ABOVE_KEY: KeyInput = KeyInput {
+    code: KeyCode::Up,
+    mods: Mods {
+        shift: false,
+        alt: true,
+        ctrl: false,
+        sup: true,
+    },
+};
+
+/// `alt+sup+Down` (`Command::AddCursorBelow`) — the downward twin of
+/// `ADD_CURSOR_ABOVE_KEY` above.
+pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
+    code: KeyCode::Down,
+    mods: Mods {
+        shift: false,
+        alt: true,
+        ctrl: false,
+        sup: true,
+    },
+};
+
 /// `^e` (`GlobalCommand::FocusEditor`) — fires at stage 2, regardless of
 /// which pane currently has focus (`pane::handle_global_command`'s own
 /// docs: "every `GlobalCommand` fires regardless of which pane"), so this

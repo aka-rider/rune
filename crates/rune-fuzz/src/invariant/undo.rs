@@ -28,8 +28,15 @@ use crate::snapshot::Snapshot;
 /// `move_pos`), the journal's redo tail must already be gone:
 /// `journal_pos == journal_len`. `Journal::push` truncates the tail before
 /// pushing (`rune-core/src/undo.rs`), so this can only fail if some path
-/// pushed a step without going through it.
+/// pushed a step without going through it. Scoped to `prev.active ==
+/// next.active` for the same reason `PANE-NO-BLEED`/`VERSION-MONOTONE` are:
+/// switching the active document (`F1` toggling to/from the Help virtual
+/// document) makes a "version went up, journal grew" comparison meaningless
+/// — it's two different documents' journals, not one growing.
 pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
+    if prev.active != next.active {
+        return None;
+    }
     if next.version > prev.version
         && next.journal_len > prev.journal_len
         && next.journal_pos != next.journal_len

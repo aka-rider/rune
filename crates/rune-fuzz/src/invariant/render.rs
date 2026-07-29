@@ -16,11 +16,42 @@ use rune_tui::render::Cell;
 use super::Violation;
 use crate::snapshot::Snapshot;
 
-/// `SYNC-IDEMPOTENT` — `rows_before`/`scroll_before` are captured
-/// immediately before a second, message-free `app.sync_view()`;
-/// `rows_after`/`scroll_after` immediately after. A firing here is a real
-/// non-settling scroll or a non-memoized parse, never a false positive
-/// (G6).
+/// `SYNC-IDEMPOTENT`'s display-pipeline half — compares the production
+/// (WP16-memoized) render already cached on `Document` against a
+/// cache-BYPASSED rebuild from the exact same already-synced inputs
+/// (`DocMachine::force_rebuild`, `driver/checks.rs`). Once `snapshot()`
+/// memoizes on a `dirty` flag, comparing two ordinary `sync_view()` calls
+/// would only ever compare a memo hit against itself — trivially equal
+/// regardless of whether the underlying emit -> wrap -> display pass is
+/// actually a fixpoint (CODE-REVIEW.md rune-fuzz finding 1). Forcing a
+/// genuine second rebuild is what makes this check able to fail again.
+pub fn sync_idempotent_rebuild(
+    production_rows: &[Vec<Cell>],
+    rebuilt_rows: &[Vec<Cell>],
+) -> Option<Violation> {
+    if production_rows != rebuilt_rows {
+        return Some(Violation {
+            id: "SYNC-IDEMPOTENT",
+            message: format!(
+                "a cache-bypassed rebuild from the same synced inputs produced different rows \
+                 than the memoized production render ({} rows production, {} rows rebuilt)",
+                production_rows.len(),
+                rebuilt_rows.len()
+            ),
+        });
+    }
+    None
+}
+
+/// `SYNC-IDEMPOTENT`'s scroll half — `rows_before`/`scroll_before` are
+/// captured immediately before a second, message-free `app.sync_view()`;
+/// `rows_after`/`scroll_after` immediately after. `rows_before`/
+/// `rows_after` are both ordinary (memoized) production renders here — a
+/// genuine display-pipeline regression is caught by
+/// [`sync_idempotent_rebuild`] above instead, since a memo hit would make
+/// the row comparison here vacuous; this pair still catches a
+/// non-settling `Viewport::reconcile` scroll, which memoization never
+/// masks (G6).
 pub fn sync_idempotent(
     rows_before: &[Vec<Cell>],
     scroll_before: usize,

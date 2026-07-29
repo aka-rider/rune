@@ -43,6 +43,13 @@ harness = false
 # arm both crates' asserts together, or this crate's own test suite would
 # stop seeing a violation it still causes.
 strict-invariants = ["rune-syntax/strict-invariants"]
+# `DocMachine::force_rebuild` alone, with none of `strict-invariants`'
+# assert_invariant consequences (see that feature's own docs, and
+# `crates/rune-md/TODO.md`'s known-open comrak sourcepos panics): a
+# consumer that only needs a cache-bypassed rebuild for its own testing
+# (rune-fuzz's `SYNC-IDEMPOTENT`, WP14.S1) must not also be forced to eat
+# unrelated known-bug panics just to reach it.
+fuzz-hooks = []
 
 [lints]
 workspace = true

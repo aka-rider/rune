@@ -255,10 +255,15 @@ impl DocMachine {
     /// Bypasses the `snapshot` memo entirely — for verifying
     /// `SYNC-IDEMPOTENT` (a second sync produces the same display as the
     /// first) against a genuine rebuild rather than a memo hit, which would
-    /// pass trivially now that `snapshot` caches. Gated on
-    /// `strict-invariants` (and test builds) because it exists only for that
-    /// verification; production code must always go through `snapshot`.
-    #[cfg(any(test, feature = "strict-invariants"))]
+    /// pass trivially now that `snapshot` caches. Gated on `strict-
+    /// invariants`/`fuzz-hooks` (and test builds) because it exists only
+    /// for that verification; production code must always go through
+    /// `snapshot`. `fuzz-hooks` is a SEPARATE feature from `strict-
+    /// invariants` (not implied by it either way) precisely so a consumer
+    /// like rune-fuzz can reach this hook without also inheriting this
+    /// crate's known-open comrak-sourcepos `assert_invariant` panics
+    /// (`strict-invariants`'s own docs, `TODO.md`).
+    #[cfg(any(test, feature = "strict-invariants", feature = "fuzz-hooks"))]
     pub fn force_rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         self.rebuild(buf)
     }

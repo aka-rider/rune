@@ -32,18 +32,36 @@ fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
 
 /// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::
 /// view` never reads `viewport.scroll_row`, and `Viewport::reconcile`
-/// converges in one call, plan WP7.S1). Calls `app.sync_view()` a SECOND
-/// time with no intervening message and compares the rendered rows and
-/// scroll position against the state just before that second call; a
-/// divergence is a real non-settling scroll or a non-memoized parse, never
-/// a false positive.
+/// converges in one call, plan WP7.S1). Two independent halves, both
+/// against the SAME already-synced state (nothing between them mutates the
+/// document):
+///
+/// 1. Display-pipeline idempotence, bypassing WP16's `dirty`-flag memo via
+///    `DocMachine::force_rebuild`: a naive second `app.sync_view()` call
+///    would just hit the memo and trivially equal the first render
+///    regardless of whether the underlying pipeline is actually a
+///    fixpoint (CODE-REVIEW.md rune-fuzz finding 1) — so this compares the
+///    cached production render against a genuinely-rebuilt one instead.
+/// 2. Scroll idempotence: a real second, message-free `app.sync_view()`
+///    call must not move `scroll_row` — `Viewport::reconcile`'s own
+///    fixpoint claim, independent of whatever the display pipeline memo
+///    does.
 pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
+    let production_rows = build_rows_or_empty(app);
+    let rebuilt_rows = {
+        let doc = app.active_doc();
+        let forced = doc.doc.force_rebuild(&doc.buffer);
+        render::build_rows(&forced, app)
+    };
+    if let Some(v) = invariant::sync_idempotent_rebuild(&production_rows, &rebuilt_rows) {
+        return Some(v);
+    }
+
     let scroll_before = app.active_doc().viewport.scroll_row;
-    let rows_before = build_rows_or_empty(app);
     app.sync_view();
     let scroll_after = app.active_doc().viewport.scroll_row;
     let rows_after = build_rows_or_empty(app);
-    invariant::sync_idempotent(&rows_before, scroll_before, &rows_after, scroll_after)
+    invariant::sync_idempotent(&production_rows, scroll_before, &rows_after, scroll_after)
 }
 
 /// `WRAP-RT` (G7): the forward composition `wrap_to_syntax(syntax_to_wrap(
@@ -60,28 +78,47 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 
 /// Hands the keyboard back to the editor before the end-of-session
 /// undo/redo drive begins, using the same keys a user would press — never
-/// by poking `App` directly. `⌘Z` reaching the document is a PRECONDITION
-/// `UNDO-TOTAL`/`REDO-TOTAL` need, not a property they assert: per-pane
-/// routing (plan Context, decision 8) means an unfocused editor correctly
-/// ignores `⌘Z` (only `Editor`'s own keymap binds `Command::Undo`), and a modal
-/// correctly captures every key at stage 1 before any pane sees it.
-/// Both are reachable at
-/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer
-/// focused, and an Explorer `Enter` on a path missing from the fuzz `Mem`
-/// raises `Modal::Error`. Each press runs through
-/// `step_and_check`, so every per-step invariant still applies and a
-/// violation here still stops the session, same as any other step.
+/// by poking `App` directly. `⌘Z` reaching the SEEDED document (not just
+/// `Pane::Editor`) is a PRECONDITION `UNDO-TOTAL`/`REDO-TOTAL` need, not a
+/// property they assert: per-pane routing (plan Context, decision 8) means
+/// an unfocused editor correctly ignores `⌘Z` (only `Editor`'s own keymap
+/// binds `Command::Undo`), and a modal correctly captures every key at
+/// stage 1 before any pane sees it. Three preconditions are reachable at
+/// session end today: `^x` (`ToggleExplorer`) leaves the Explorer focused;
+/// an Explorer `Enter` on a path missing from the fuzz `Mem` raises
+/// `Modal::Error`; and `F1` (`GlobalCommand::Help`, CODE-REVIEW.md
+/// rune-fuzz finding 9's fix) switches `app.active` itself to the virtual
+/// Help document — `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL
+/// seed content, which the Help document can never match (it isn't even
+/// the same document, let alone journaled the seed's edits). Each press
+/// runs through `step_and_check`, so every per-step invariant still
+/// applies and a violation here still stops the session, same as any
+/// other step.
 ///
 /// Order: `Escape` first, only while a modal is up — both `Modal::Error`
-/// and `Modal::Guard` clear on it without touching a buffer byte
-/// Then `^E` (`GlobalCommand::FocusEditor`), only
+/// and `Modal::Guard` clear on it without touching a buffer byte. Then
+/// `F1` again, only while the Help document is active — `workspace::
+/// toggle_help`'s own docs guarantee this switches back to whatever was
+/// active right before Help was last activated, which is always the
+/// seeded document (this driver never opens more than one non-Help
+/// document). Then `^E` (`GlobalCommand::FocusEditor`), only
 /// while focus isn't already `Pane::Editor` — re-checked
-/// fresh rather than decided up front, since dismissing the modal can
-/// itself leave focus somewhere other than `Editor`.
+/// fresh rather than decided up front, since dismissing the modal (or
+/// toggling Help off) can itself leave focus somewhere other than
+/// `Editor`.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.modal.is_some() {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Escape,
+            mods: Mods::NONE,
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    if state.app.help_doc == Some(state.app.active) {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::F1,
             mods: Mods::NONE,
         });
         if step_and_check(state, prev, msg, tag, None, outcome) {

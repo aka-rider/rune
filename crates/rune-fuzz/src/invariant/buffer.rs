@@ -4,66 +4,74 @@
 use super::Violation;
 use crate::snapshot::Snapshot;
 
-/// `BUF-LINE-INDEX` (L0, Go `B1`) — the line index is internally
-/// consistent: `line_count` matches the number of `\n`-delimited lines,
-/// `line_starts` begins at 0 and strictly increases, and every `line_
-/// start`/`line_end` is in bounds and on a char boundary.
+/// The line index `line_starts`/`line_ends` MUST equal, derived
+/// independently from `\n` byte positions in `content` — line `n` starts
+/// right after the `n`th `\n` (or at 0 for the first line) and ends right
+/// before the next `\n` (or at `content.len()` for the last line).
+fn expected_line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
+    let mut starts = vec![0usize];
+    let mut ends = Vec::new();
+    for (i, b) in content.bytes().enumerate() {
+        if b == b'\n' {
+            ends.push(i);
+            starts.push(i + 1);
+        }
+    }
+    ends.push(content.len());
+    (starts, ends)
+}
+
+/// `BUF-LINE-INDEX` (L0, Go `B1`) — the line index is EXACTLY the one
+/// `\n` positions in `content` imply, not merely monotone/in-bounds
+/// (CODE-REVIEW.md rune-fuzz finding 2: a monotone-only check lets
+/// `line_starts=[0,1,2]` pass clean for `"a\nbb\nccc"`, whose real starts
+/// are `[0,2,5]` — the exact off-by-one this invariant is named for).
 pub fn buf_line_index(snap: &Snapshot) -> Option<Violation> {
-    let expected_line_count = snap.content.matches('\n').count() + 1;
-    if snap.line_count != expected_line_count {
+    let (expected_starts, expected_ends) = expected_line_bounds(&snap.content);
+    if snap.line_starts != expected_starts {
         return Some(Violation {
             id: "BUF-LINE-INDEX",
             message: format!(
-                "line_count={} but content implies {expected_line_count} lines",
-                snap.line_count
+                "line_starts={:?} but content's `\\n` positions imply {:?}",
+                snap.line_starts, expected_starts
             ),
         });
     }
-    if snap.line_starts.first().copied() != Some(0) {
+    if snap.line_ends != expected_ends {
         return Some(Violation {
             id: "BUF-LINE-INDEX",
             message: format!(
-                "line_starts[0]={:?}, want Some(0)",
-                snap.line_starts.first()
+                "line_ends={:?} but content's `\\n` positions imply {:?}",
+                snap.line_ends, expected_ends
             ),
         });
     }
-    for w in snap.line_starts.windows(2) {
-        if let [a, b] = w
-            && b <= a
-        {
-            return Some(Violation {
-                id: "BUF-LINE-INDEX",
-                message: format!("line_starts not strictly increasing: {a} then {b}"),
-            });
-        }
-    }
-    for (n, (&start, &end)) in snap
-        .line_starts
-        .iter()
-        .zip(snap.line_ends.iter())
-        .enumerate()
-    {
-        let in_bounds = start <= snap.content.len() && end <= snap.content.len();
-        let on_boundary =
-            snap.content.is_char_boundary(start) && snap.content.is_char_boundary(end);
-        if !in_bounds || !on_boundary || end < start {
-            return Some(Violation {
-                id: "BUF-LINE-INDEX",
-                message: format!(
-                    "line {n}: start={start} end={end} content.len()={} in_bounds={in_bounds} \
-                     on_boundary={on_boundary}",
-                    snap.content.len()
-                ),
-            });
-        }
+    if snap.line_count != expected_starts.len() {
+        return Some(Violation {
+            id: "BUF-LINE-INDEX",
+            message: format!(
+                "line_count={} but content implies {} lines",
+                snap.line_count,
+                expected_starts.len()
+            ),
+        });
     }
     None
 }
 
 /// `VERSION-MONOTONE` (L1, Go `B2`) — neither `Buffer::version()` nor
-/// `saved_version` ever goes backwards across a step.
+/// `saved_version` ever goes backwards across a step, for the SAME
+/// document. Scoped to `prev.active == next.active` for exactly the reason
+/// `PANE-NO-BLEED` already is (that invariant's own docs): switching the
+/// active document (e.g. `F1` toggling to/from the Help virtual document,
+/// reachable since CODE-REVIEW.md rune-fuzz finding 9's fix) makes `prev`/
+/// `next` describe two UNRELATED buffers, whose version numbers have no
+/// ordering relationship at all — a fresh document's low version is not a
+/// regression of the one it replaced as the active document.
 pub fn version_monotone(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
+    if prev.active != next.active {
+        return None;
+    }
     if next.version < prev.version {
         return Some(Violation {
             id: "VERSION-MONOTONE",

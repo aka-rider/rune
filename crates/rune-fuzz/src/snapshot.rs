@@ -54,11 +54,19 @@ pub struct Snapshot {
     /// switched the active document (Explorer/Tabs `Enter`, `^w`) apart
     /// from one that left it alone but still shouldn't touch its content.
     pub active: DocumentId,
+    /// `app.active_doc().read_only` — the virtual Help document
+    /// (`workspace::toggle_help`, reachable now that `F1` is in
+    /// `arb_any_keycode`, CODE-REVIEW.md rune-fuzz finding 9) is the one
+    /// live `read_only` document Phase 1 actually mints; `PASTE-VERBATIM`
+    /// needs this to tell "production correctly refused the edit" apart
+    /// from "production silently dropped it" (a paste into a read-only
+    /// document is the former, by design — `Document::read_only` is no
+    /// longer dead code once Help exists).
+    pub read_only: bool,
     /// `render::build_rows(view, app)`. Empty when not sampled (G19: the
     /// display pipeline runs on every `sync_view()`, dominating debug-build
     /// runtime — later work packages sample this rather than paying for it
-    /// every step). Deliberately NOT `read_only` (`Editor::read_only` is
-    /// dead in Phase 1 — G18).
+    /// every step).
     pub cells: Vec<Vec<Cell>>,
     /// `row_meta::row_meta(view, app)` (plan WP5.S1) — table membership for
     /// each of `cells`' own rows, same index, same sampling (empty
@@ -85,15 +93,18 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Captures the current `App` state after re-running `app.sync_view()`
-    /// — idempotent and cheap when nothing changed (`Editor::sync`'s own
-    /// docs; G6 proves it's a genuine fixpoint), so calling it again here
-    /// even when the driver already synced this step costs nothing and
-    /// guarantees `app.view` is fresh before `cells` is built from it.
-    /// `&mut App`, not `&App`, because `sync_view` requires it.
+    /// Captures the current `App` state. Deliberately does NOT call
+    /// `app.sync_view()` itself (CODE-REVIEW.md rune-fuzz finding 1): every
+    /// caller already synced immediately beforehand (`driver::run`'s setup,
+    /// or `step_and_check`'s `run_update_catching_panic`, both of which end
+    /// in exactly one `sync_view()` call) — an extra unconditional sync
+    /// here used to put `SYNC-IDEMPOTENT`'s own later re-sync a call too
+    /// late to ever see the state right after `update`, three syncs deep
+    /// before the checker's comparison ever ran. `&mut App` is kept (not
+    /// `&App`) only because `with_cells`'s `render::build_rows` call
+    /// borrows through the same active-document access pattern as the rest
+    /// of this function.
     pub fn capture(app: &mut App, with_cells: bool) -> Snapshot {
-        app.sync_view();
-
         let buf = &app.active_doc().buffer;
         let line_count = buf.line_count();
         let mut line_starts = Vec::with_capacity(line_count);
@@ -139,6 +150,7 @@ impl Snapshot {
             focus: app.focus,
             modal_open: app.modal.is_some(),
             active: app.active,
+            read_only: doc.read_only,
             cells,
             row_meta,
             highlight_spans,

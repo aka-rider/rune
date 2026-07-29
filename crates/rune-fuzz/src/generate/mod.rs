@@ -1,6 +1,10 @@
-//! The session generator. WP3 shipped a UNIFORM `prop_oneof!` over the eight
-//! `Action` variants. WP6 replaces it with the user-approved "normal human
-//! session" weighted table (a `prop_oneof!` over 11 clusters instead of bare
+//! The session generator. WP3 shipped a UNIFORM `prop_oneof!` over every
+//! `Action` variant that existed then (a stale "eight" here used to claim a
+//! fixed count for a growing enum — CODE-REVIEW.md rune-fuzz finding 16;
+//! never restate the count, since `Action` has grown every time a later
+//! work package added a synthesized-reply shape). WP6 replaces it with the
+//! user-approved "normal human session" weighted table (a `prop_oneof!`
+//! over the `cluster_*` strategies in `cluster.rs` instead of bare
 //! actions) without changing `arb_session`'s signature — every caller (the
 //! fuzz target, the tripwire round-trip test, the replay test) keeps
 //! working unmodified.

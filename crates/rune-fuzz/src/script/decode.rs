@@ -279,6 +279,16 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if raw == "confirm-timeout" {
         return Ok(Action::ConfirmTimeout);
     }
+    if let Some(rest) = raw.strip_prefix("stale-confirm-timeout ") {
+        let generation: u32 = rest
+            .trim()
+            .parse()
+            .map_err(|_| ScriptError::InvalidNumber {
+                line,
+                reason: "expected a u32 generation".to_string(),
+            })?;
+        return Ok(Action::StaleConfirmTimeout(generation));
+    }
     if raw == "deliver" {
         return Ok(Action::Deliver);
     }
@@ -286,7 +296,15 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
         return Ok(Action::FailNextSave);
     }
     if let Some(rest) = raw.strip_prefix("type ") {
-        return Ok(Action::Type(unescape(rest, line)?));
+        let text = unescape(rest, line)?;
+        // Reject any control char other than `\n` (CODE-REVIEW.md rune-fuzz
+        // finding 4): `Action::Type` can only ever deliver these one `char`
+        // at a time as a `Msg::Key`, unlike `Action::Paste`, which carries
+        // arbitrary bytes verbatim.
+        if let Some(ch) = text.chars().find(|&ch| ch != '\n' && ch.is_control()) {
+            return Err(ScriptError::UndeliverableTypeChar { line, ch });
+        }
+        return Ok(Action::Type(text));
     }
     if let Some(rest) = raw.strip_prefix("paste ") {
         return Ok(Action::Paste(unescape(rest, line)?));
