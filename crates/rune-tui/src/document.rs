@@ -6,8 +6,10 @@
 //! that used to live directly on `App`). `Document::sync` is the fixed
 //! per-message sync sequence (plan Context, "Msg/Cmd runtime": `sync_content`
 //! iff version changed -> `set_width` -> `sync_cursors` -> `snapshot` ->
-//! scroll-to-cursor -> re-`view` once more, since a scroll command can move
-//! the cursor itself — see `sync`'s own docs).
+//! scroll-to-cursor -> re-`view` -> scroll-to-cursor again -> re-`view` once
+//! more, since a scroll command can move the cursor itself, and that move
+//! can itself change reveal-driven display geometry the first reconcile
+//! already settled against — see `sync`'s own docs).
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
@@ -440,33 +442,57 @@ impl Document {
         self.cursors = self.cursors.collapse_to(snapped);
     }
 
-    /// The fixed per-BATCH settle sequence: rebuild the view, then scroll to
-    /// the (by now final) cursor exactly once. `App::sync_view` — called
-    /// once per whole message batch by the runtime (`runtime::run`) and by
-    /// tests that need the settled state — is the only caller; movement/
-    /// editing commands call `view()` alone (see its docs).
+    /// The fixed per-BATCH settle sequence: rebuild the view, scroll to the
+    /// (by now final) cursor, then reconcile the viewport a SECOND time
+    /// against whatever that scroll itself settled. `App::sync_view` —
+    /// called once per whole message batch by the runtime (`runtime::run`)
+    /// and by tests that need the settled state — is the only caller;
+    /// movement/editing commands call `view()` alone (see its docs).
     ///
     /// Re-views once more AFTER `scroll_to_cursor`, not before: reveal state
     /// is a function of `self.cursors` (`RevealGrant::Decide`'s cursor-probe
-    /// policies), and `scroll_to_cursor` can itself move `self.cursors` — a
-    /// `commands::nav_scroll` command's `Independent`-mode scroll leaves the
-    /// viewport where it put it and instead snaps the cursor onto the
-    /// now-settled window (`Viewport::reconcile`'s docs). The first `view()`
-    /// above necessarily samples reveal against the PRE-scroll cursor —
-    /// `scroll_to_cursor` needs that view's coordinate maps to decide where
-    /// the cursor should land in the first place, so the two can't run in
-    /// the other order. Returning that first view anyway would hand back
-    /// (and let `DocMachine` cache) a snapshot decided against a cursor
-    /// position `self.cursors` no longer holds; a later message-free
-    /// `App::sync_view` would then be the FIRST call ever to view the
-    /// settled cursor, changing the rendered rows with nothing in between
-    /// (`SYNC-IDEMPOTENT`). This second call closes that gap in the same
-    /// settle: `DocMachine::snapshot`'s own dirty-flag memo makes it free
-    /// whenever the cursor didn't actually move, so the common case (no
-    /// scroll command this batch) pays nothing extra.
+    /// policies) — a boxed table's OWN reveal state is exactly such a
+    /// policy (`emit_table`: a table is rendered as its full bordered Grid/
+    /// Wrapped/Pivoted layout, or (cursor inside it) as bare verbatim source
+    /// lines, one whole-table `RevealSm` decision) — and `scroll_to_cursor`
+    /// can itself move `self.cursors`: a `commands::nav_scroll` command's
+    /// `Independent`-mode scroll leaves the viewport where it put it and
+    /// instead snaps the cursor onto the now-settled window (`Viewport::
+    /// reconcile`'s docs). The first `view()` above necessarily samples
+    /// reveal against the PRE-scroll cursor — `scroll_to_cursor` needs that
+    /// view's coordinate maps to decide where the cursor should land in the
+    /// first place, so the two can't run in the other order.
+    ///
+    /// That first `scroll_to_cursor` call reconciles the viewport against
+    /// THAT pre-final view's row geometry (`total_rows`, the wrap<->display
+    /// maps) — geometry a table's own reveal transition can change out from
+    /// under it: snapping the cursor INTO a boxed table collapses it from
+    /// its bordered layout to bare source lines (fewer rows entirely), so
+    /// the `scroll_row`/band `reconcile` just computed can land outside the
+    /// scrolloff band the MOMENT the settled, reveal-updated `total_rows`
+    /// replaces the stale one it was computed against — the exact "8 rows
+    /// before, 9 after" `SYNC-IDEMPOTENT` shape, caught only by a later,
+    /// message-free `App::sync_view` first discovering the un-reconciled
+    /// mismatch. Re-viewing without reconciling again would still hand back
+    /// (and let `DocMachine` cache) a snapshot whose viewport was settled
+    /// against stale geometry.
+    ///
+    /// The second `scroll_to_cursor` call closes that gap: `mode` was
+    /// already consumed back to `FollowCursor` by the first call, so this
+    /// pass only ever ADJUSTS `scroll_row` to keep the (unchanged, already-
+    /// settled) cursor row inside the band of the NOW-final geometry — it
+    /// never moves the cursor again (`Viewport::reconcile`'s `FollowCursor`
+    /// arm), so reveal cannot re-trigger from this second pass, and the
+    /// final `view()` is guaranteed a `DocMachine::snapshot` memo hit. Both
+    /// extra passes are free whenever nothing this batch actually triggered
+    /// a reveal-driven geometry change (the common case: no scroll command,
+    /// or a scroll command whose target lies outside any reveal-sensitive
+    /// element).
     pub fn sync(&mut self) -> ViewSnapshots {
         let view = self.view();
         self.scroll_to_cursor(&view);
+        let settled = self.view();
+        self.scroll_to_cursor(&settled);
         self.view()
     }
 }
@@ -612,6 +638,42 @@ mod tests {
         assert_eq!(first.display.total_rows(), 3);
         let second = doc.sync();
         assert_eq!(second.display.total_rows(), first.display.total_rows());
+    }
+
+    /// The `TODO-fuzz-sync-idempotent-table-scroll.md` regression, pinned
+    /// directly against `Document::sync` rather than only through the
+    /// checked-in fuzz replay (`crates/rune-fuzz/repros/sync-idempotent-
+    /// 04.rune`): `scroll_line_down` (Independent-mode `ctrl+down`) snaps
+    /// the cursor INTO a boxed table, which is itself a `RevealGrant::
+    /// Decide` policy (`rune_md::emit::table::emit_table`) — collapsing the
+    /// table from its bordered layout to bare source lines shrinks
+    /// `total_rows` out from under the `Viewport::reconcile` call that just
+    /// ran against the PRE-collapse geometry, leaving `scroll_row` outside
+    /// the settled scrolloff band. A second, message-free `sync()` must not
+    /// see this catch up on its own — `sync()` itself must already be a
+    /// fixpoint.
+    #[test]
+    fn sync_reconciles_the_viewport_again_after_a_reveal_driven_geometry_shrink() {
+        let content = "# Doc\n\n| Name | Age |\n| :--- | ---: |\n\
+                        | Alice | 30 |\n| Bob | 25 |\n\ntail\n";
+        let mut doc = Document::new(Buffer::new(content));
+        doc.viewport.set_size(80, 24);
+        doc.focused = true;
+
+        crate::commands::nav_scroll::scroll_line_down(&mut doc);
+        let first = doc.sync();
+        let scroll_after_first_sync = doc.viewport.scroll_row;
+
+        let second = doc.sync();
+        assert_eq!(
+            second.display.total_rows(),
+            first.display.total_rows(),
+            "a second, message-free sync() changed the rendered row count"
+        );
+        assert_eq!(
+            doc.viewport.scroll_row, scroll_after_first_sync,
+            "a second, message-free sync() moved scroll_row"
+        );
     }
 
     #[test]
