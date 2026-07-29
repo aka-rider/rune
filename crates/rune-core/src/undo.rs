@@ -9,6 +9,61 @@ use crate::buffer::{
 };
 use crate::cursor::Cursor;
 
+/// Merge every pair of adjacent/overlapping PURE-DELETE edits (`insert`
+/// empty on BOTH) into one covering their union — the one shape
+/// `Buffer::apply_edits`' `DuplicateEditStart` guard exists to refuse
+/// downstream: two touching one-byte deletes are individually valid,
+/// non-overlapping edits, but collapse to the identical post-edit `start`
+/// once the earlier one's shift is accounted for. Merging first removes
+/// the illegal state at its source instead of asking a caller to
+/// disambiguate an already-collided pair. Chokepoint shared by
+/// `inverse_edits` below (where two touching PURE-INSERT `AppliedEdit`s —
+/// deliberately left un-merged going forward, in `rune-tui`'s own
+/// `edit_core::coalesce_touching_edits`, so per-cursor identity survives a
+/// clone-line-style batch — invert into two touching PURE DELETES, which
+/// DO need merging: undo restores cursors from the step's own recorded
+/// `cursors_before`, never from the inverse batch, so there is no cursor
+/// identity left to lose here) and by that same `rune-tui` function, so
+/// the merge rule itself is defined exactly once. `meta` rides along each
+/// edit — a cursor id in `rune-tui`, `()` here — and `merge_meta` decides
+/// how two merged edits' metadata combine.
+pub fn coalesce_touching_deletes<T>(
+    edits: Vec<(Edit, T)>,
+    merge_meta: impl Fn(T, T) -> T,
+) -> Vec<(Edit, T)> {
+    if edits.len() <= 1 {
+        return edits;
+    }
+    let mut sorted = edits;
+    sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
+
+    let mut merged = Vec::with_capacity(sorted.len());
+    let mut iter = sorted.into_iter();
+    let Some(mut current) = iter.next() else {
+        return merged;
+    };
+    for next in iter {
+        let both_pure_deletes = current.0.insert.is_empty() && next.0.insert.is_empty();
+        if both_pure_deletes && current.0.end >= next.0.start {
+            let start = current.0.start.min(next.0.start);
+            let end = current.0.end.max(next.0.end);
+            current = (
+                Edit {
+                    start,
+                    end,
+                    insert: String::new(),
+                },
+                merge_meta(current.1, next.1),
+            );
+        } else {
+            merged.push(current);
+            current = next;
+        }
+    }
+    merged.push(current);
+    merged
+}
+
 /// Build the inverse edit batch for an applied-edit batch (undo): each
 /// edit's insert becomes a delete range, and its deleted text becomes the
 /// new insert. Port of the edit construction in
@@ -21,6 +76,19 @@ use crate::cursor::Cursor;
 /// -reachable data — Phase 2 will feed it back from SQLite — and §1.3
 /// forbids panicking on adversarial input regardless of how unreachable it
 /// is today.
+///
+/// Runs `coalesce_touching_deletes` on the raw inverse batch before
+/// sorting/returning it: a forward step recording two touching PURE
+/// INSERTS (legitimate — e.g. two multicursor `clone-line` edits on
+/// adjacent lines, each landing at its own distinct post-edit `start`, so
+/// the forward apply never collides) inverts into two touching PURE
+/// DELETES, which — left separate — WOULD collide on `apply_edits`'
+/// `DuplicateEditStart` check the moment this batch is applied. Merging
+/// here means undo is total for exactly the batches the forward path
+/// legitimately allowed to be recorded, without weakening
+/// `DuplicateEditStart` itself: any batch that still collides after this
+/// merge (e.g. a corrupted/adversarial persisted journal row) is still
+/// refused by `apply_edits`, unchanged.
 pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
     let mut raw = Vec::with_capacity(edits.len());
     for ae in edits {
@@ -32,13 +100,18 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
                 end: usize::MAX,
                 len: usize::MAX,
             })?;
-        raw.push(Edit {
-            start: ae.start,
-            end,
-            insert: ae.deleted.clone(),
-        });
+        raw.push((
+            Edit {
+                start: ae.start,
+                end,
+                insert: ae.deleted.clone(),
+            },
+            (),
+        ));
     }
-    Ok(clone_and_sort_edits_descending(&raw))
+    let merged = coalesce_touching_deletes(raw, |(), ()| ());
+    let plain: Vec<Edit> = merged.into_iter().map(|(e, ())| e).collect();
+    Ok(clone_and_sort_edits_descending(&plain))
 }
 
 /// Apply the inverse of `edits` to `buf` (undo). All-or-nothing: on error
@@ -281,6 +354,59 @@ mod tests {
         ];
         let err = reapply(&buf, &applied);
         assert_eq!(err, Err(BufferError::DuplicateEditStart { start: 0 }));
+    }
+
+    /// Pins the `UNDO-TOTAL` multi-cursor regression this fix closes,
+    /// reduced to `Buffer`/`AppliedEdit` primitives: two cursors sharing
+    /// ONE line (the `clone-line` shape — `rune-tui`'s
+    /// `edit_lines::per_line_edits(dedupe=false)` lets both build an edit
+    /// for the same line) each clone that line, so BOTH forward edits are
+    /// pure inserts at the IDENTICAL pre-edit `start`. `Buffer::apply_edits`
+    /// accepts that batch — the two `AppliedEdit`s land on DISTINCT
+    /// post-edit starts (one clone's insert shifts the other's), so this
+    /// is a perfectly legal, undoable step, never `DuplicateEditStart`.
+    ///
+    /// Undoing it is a different story: `inverse_edits` turns each pure
+    /// INSERT into a pure DELETE at the SAME post-edit start/end the
+    /// forward apply computed — and those two deletes are exactly
+    /// touching (one's end is the other's start), which — left
+    /// unmerged — would themselves collide once shifted, tripping
+    /// `DuplicateEditStart` on the very undo the forward edit legitimately
+    /// earned. `coalesce_touching_deletes` (called from `inverse_edits`)
+    /// exists to merge exactly this touching-pure-delete pair before the
+    /// buffer ever sees it, so `apply_inverse` here must succeed and
+    /// restore the pre-clone content exactly.
+    #[test]
+    fn apply_inverse_undoes_a_two_cursor_same_line_clone() {
+        let buf = Buffer::new("\nhello world");
+        let line = "hello world";
+        // Both cursors are on line 1 (`per_line_edits(dedupe=false)`), so
+        // both clone edits share the SAME pre-edit `start`/`end` — the
+        // line's own start — exactly like `edit_lines::clone_line_up`'s
+        // real construction.
+        let clone_edit = || Edit {
+            start: 1,
+            end: 1,
+            insert: format!("{line}\n"),
+        };
+        let (cloned, applied) = buf
+            .apply_edits(&[clone_edit(), clone_edit()])
+            .expect("two same-line pure-insert clones must not collide going forward");
+        assert_eq!(cloned.content(), "\nhello world\nhello world\nhello world");
+        assert_eq!(applied.len(), 2, "one AppliedEdit per cursor's clone");
+        assert_ne!(
+            applied[0].start, applied[1].start,
+            "the two clones must land on distinct post-edit starts, or the \
+             forward apply itself should have refused the batch"
+        );
+
+        let restored = apply_inverse(&cloned, &applied)
+            .expect("undo must succeed: the forward step it inverts was itself legal");
+        assert_eq!(
+            restored.content(),
+            buf.content(),
+            "undo must restore the exact pre-clone content"
+        );
     }
 
     #[test]

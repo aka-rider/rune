@@ -1,0 +1,10 @@
+content 
+paste \n\n\n
+key up -a-u
+key up -a-u
+type hello world
+key char:c ---u
+key delete ----
+key up sa--
+key char:\u{a1} ----
+

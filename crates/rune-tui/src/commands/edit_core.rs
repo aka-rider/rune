@@ -161,39 +161,15 @@ pub(crate) fn apply_edit_batch_with_cursors(
 /// inserted to separate them), the exact illegal state `undo::reapply`'s
 /// precondition assert exists to catch — coalescing those two ranges into
 /// one is the only correct outcome.
+///
+/// Delegates the actual merge rule to `rune_core::undo::
+/// coalesce_touching_deletes` — the same chokepoint `inverse_edits` uses
+/// to fix up undo's own construction of a touching-pure-insert step's
+/// inverse — rather than a second copy of the pure-delete merge condition.
+/// The surviving cursor id is the lower of the two merged edits' ids,
+/// matching this function's own doc above.
 fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
-    if infos.len() <= 1 {
-        return infos;
-    }
-    let mut sorted = infos;
-    sorted.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
-
-    let mut merged: Vec<(Edit, u32)> = Vec::with_capacity(sorted.len());
-    let mut iter = sorted.into_iter();
-    let Some(mut current) = iter.next() else {
-        return merged;
-    };
-    for next in iter {
-        let both_pure_deletes = current.0.insert.is_empty() && next.0.insert.is_empty();
-        if both_pure_deletes && current.0.end >= next.0.start {
-            let start = current.0.start.min(next.0.start);
-            let end = current.0.end.max(next.0.end);
-            let cursor_id = current.1.min(next.1);
-            current = (
-                Edit {
-                    start,
-                    end,
-                    insert: String::new(),
-                },
-                cursor_id,
-            );
-        } else {
-            merged.push(current);
-            current = next;
-        }
-    }
-    merged.push(current);
-    merged
+    rune_core::undo::coalesce_touching_deletes(infos, u32::min)
 }
 
 /// The generic per-cursor rule every command except `edit_lines::
