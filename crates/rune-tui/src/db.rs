@@ -23,8 +23,8 @@
 
 use std::collections::VecDeque;
 use std::path::Path;
-use std::sync::mpsc::{self, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Condvar, Mutex};
 
 use rune_core::buffer::{AppliedEdit, Edit};
 use rune_core::cursor::Cursor;
@@ -36,8 +36,11 @@ use crate::runtime::Msg;
 
 /// Where a `DbEvent` goes before vs after the runtime loop exists. See
 /// [`DbBridge`]'s doc comment for why this indirection is necessary at all.
+/// `Bootstrap` buffers every event it's handed, in arrival order — it is
+/// never a channel to something that might already have stopped listening,
+/// so a `DbEvent` delivered in this state cannot be lost, only queued.
 enum Sink {
-    Bootstrap(Sender<DbEvent>),
+    Bootstrap(VecDeque<DbEvent>),
     Live(Sender<Msg>),
 }
 
@@ -50,28 +53,35 @@ enum Sink {
 /// their `on_event` callback fixed at construction, with no way to swap it
 /// afterward.
 ///
-/// Bootstrap hydration polls the paired [`mpsc::Receiver<DbEvent>`]
-/// directly with a blocking `recv`, filtering for the `Load` op's own id;
-/// `runtime::run` then calls [`DbBridge::attach`] exactly once, at the very
-/// top of the loop (mirroring how it seeds the initial `Msg::Resize`
-/// through the ordinary `update` path rather than a one-off field write —
-/// this is WP5.S1's "App-held setter"), so every LATER `DbEvent` is
-/// delivered as `Msg::Db` through the normal Elm loop instead.
+/// Between that construction and [`DbBridge::attach`] there is a whole
+/// window — hydrating the first file, then opening every extra CLI
+/// positional through `workspace::open_path` — during which the writer
+/// thread may post acks for MORE than just the one op bootstrap hydration
+/// is synchronously waiting on (every extra file's own `Load`). Those acks
+/// have nowhere else to go yet: `runtime::run` hasn't built its `Sender
+/// <Msg>` and may not for a while (opening N tabs, then constructing the
+/// terminal). A design routing them through an external channel whose
+/// receiving end could already be gone (bootstrap hydration's own blocking
+/// wait finishes and drops it well before those tabs are even opened) is
+/// exactly how they used to go missing. Instead, `Bootstrap` buffers
+/// directly on `self` — nothing outside this type has to stay alive for a
+/// `DbEvent` to survive the handover, and `attach` drains that buffer into
+/// the live `Msg` channel before switching over, so nothing posted during
+/// the window is ever lost.
 pub struct DbBridge {
     sink: Mutex<Sink>,
+    /// Wakes [`DbBridge::wait_for_bootstrap_event`] whenever `deliver`
+    /// pushes onto a still-`Bootstrap` sink.
+    arrived: Condvar,
 }
 
 impl DbBridge {
-    /// Constructs a bridge in its `Bootstrap` state, returning the paired
-    /// receiver bootstrap hydration blocks on.
-    pub fn bootstrap() -> (Arc<DbBridge>, mpsc::Receiver<DbEvent>) {
-        let (tx, rx) = mpsc::channel();
-        (
-            Arc::new(DbBridge {
-                sink: Mutex::new(Sink::Bootstrap(tx)),
-            }),
-            rx,
-        )
+    /// Constructs a bridge in its `Bootstrap` state.
+    pub fn bootstrap() -> Arc<DbBridge> {
+        Arc::new(DbBridge {
+            sink: Mutex::new(Sink::Bootstrap(VecDeque::new())),
+            arrived: Condvar::new(),
+        })
     }
 
     /// The `Store::open`/`open_in_memory` `on_event` callback.
@@ -81,21 +91,57 @@ impl DbBridge {
     }
 
     fn deliver(&self, evt: DbEvent) {
-        let sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
-        match &*sink {
-            Sink::Bootstrap(tx) => {
-                let _ = tx.send(evt);
+        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        match &mut *sink {
+            Sink::Bootstrap(buf) => {
+                buf.push_back(evt);
+                self.arrived.notify_all();
             }
             Sink::Live(tx) => {
+                // The runtime loop's `Receiver<Msg>` outlives every `Db`
+                // this bridge can still receive events for — it drops only
+                // after `Store::shutdown` has drained the writer thread
+                // (`rune-cli::main`'s exit sequence) — so a send failure
+                // here means there is no loop left to act on the event
+                // either way.
                 let _ = tx.send(Msg::Db(evt));
             }
         }
     }
 
+    /// Blocks the CALLING thread — bootstrap hydration, before any runtime
+    /// loop or `Msg` channel exists — until an event matching `pred`
+    /// arrives, then removes and returns exactly that one. Any OTHER event
+    /// delivered in the meantime (an extra file's own `Load` ack racing
+    /// ahead of the one hydration is waiting on) stays in the buffer for
+    /// [`DbBridge::attach`] to drain later, so this synchronous wait can
+    /// never consume or discard a sibling document's event.
+    pub fn wait_for_bootstrap_event(&self, mut pred: impl FnMut(&DbEvent) -> bool) -> DbEvent {
+        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            if let Sink::Bootstrap(buf) = &mut *sink
+                && let Some(pos) = buf.iter().position(&mut pred)
+                && let Some(evt) = buf.remove(pos)
+            {
+                return evt;
+            }
+            sink = self.arrived.wait(sink).unwrap_or_else(|p| p.into_inner());
+        }
+    }
+
     /// Switches the bridge to `Live`: every subsequent `DbEvent` is wrapped
-    /// as `Msg::Db(...)` and delivered through `tx` instead.
+    /// as `Msg::Db(...)` and delivered through `tx` instead. Drains
+    /// whatever accumulated in the `Bootstrap` buffer first, in arrival
+    /// order, so an ack that arrived before this call is still delivered
+    /// rather than left stranded once the sink switches over.
     pub fn attach(&self, tx: Sender<Msg>) {
-        *self.sink.lock().unwrap_or_else(|p| p.into_inner()) = Sink::Live(tx);
+        let mut sink = self.sink.lock().unwrap_or_else(|p| p.into_inner());
+        if let Sink::Bootstrap(buf) = &mut *sink {
+            for evt in buf.drain(..) {
+                let _ = tx.send(Msg::Db(evt));
+            }
+        }
+        *sink = Sink::Live(tx);
     }
 }
 
@@ -412,7 +458,7 @@ mod tests {
         let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
         let clock: ClockFn = Arc::new(std::time::SystemTime::now);
         let store = Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
-        let (bridge, _rx) = DbBridge::bootstrap();
+        let bridge = DbBridge::bootstrap();
         Db::new(store, bridge, false)
     }
 

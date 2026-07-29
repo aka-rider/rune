@@ -14,8 +14,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use std::sync::mpsc;
-
 use rune_db::{ClockFn, DbEvent, OpOutcome, Store};
 use rune_tui::app::{self, App};
 use rune_tui::banner::{self, GuardKind, Modal};
@@ -54,25 +52,35 @@ fn app_with(mem: &Arc<Mem>) -> App {
     app
 }
 
+/// Blocks for whatever `DbEvent` the writer thread delivers next, buffered
+/// on `bridge`'s own `Bootstrap` sink: nothing calls `DbBridge::attach` in
+/// these tests, so every ack — the seed `Load` here, a later rename/replace/
+/// materialize ack at the call sites below — lands there instead. A genuine
+/// rendezvous with the writer, not a paced wait; each call site is only
+/// ever waiting on the one op it just enqueued, so "the next event" is
+/// unambiguous.
+fn next_event(bridge: &DbBridge) -> DbEvent {
+    bridge.wait_for_bootstrap_event(|_| true)
+}
+
 /// The same `App`, but bound to a REAL in-memory `Store` sharing `mem` as
 /// its filesystem — so the store's own rename ops act on the very files
 /// these tests seeded and assert on.
 ///
-/// The returned `Receiver` is the bridge's own bootstrap sink: nothing
-/// calls `DbBridge::attach` in a test, so every `DbEvent` the writer thread
-/// posts lands there. `recv()` on it is a genuine rendezvous with the
-/// writer, not a paced wait.
-fn app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
+/// The returned bridge is left in its `Bootstrap` sink (never `attach`ed),
+/// so every later `DbEvent` the writer thread posts stays buffered there
+/// for `next_event` to drain.
+fn app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-    let (bridge, rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
 
     // Seed a real `documents` row for the bootstrap document through the
     // ordinary `Load` op, so the store's rename ops have something to
     // rebind — no hand-written SQL from outside the crate.
     store.load(Path::new("/root/a.md")).expect("enqueue load");
-    let load = match rx.recv().expect("a load ack") {
+    let load = match next_event(&bridge) {
         DbEvent::Ok {
             result: OpOutcome::Load(load),
             ..
@@ -84,7 +92,7 @@ fn app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
         Buffer::new("a content"),
         Some(PathBuf::from("/root/a.md")),
         vfs,
-        Some(Db::new(store, bridge, false)),
+        Some(Db::new(store, Arc::clone(&bridge), false)),
     );
     app.active_doc_mut().db = Some(DocDb::new(
         load.doc_id,
@@ -94,7 +102,7 @@ fn app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
     ));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
-    (app, rx)
+    (app, bridge)
 }
 
 /// A pathless draft bound to a real `Store` — not the CLI's own shape today
@@ -104,10 +112,10 @@ fn app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
 /// `rename::bind_new`'s store branch and `save::handle_materialize_ack`'s
 /// bind — does not care how the store binding was acquired, only that one
 /// exists.
-fn draft_app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
+fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(mem) as Arc<dyn Vfs + Send + Sync>;
     let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-    let (bridge, rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let store = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event()).expect("store");
 
     // Mints a real `doc_id` the same way `app_with_store` does — a fresh
@@ -116,7 +124,7 @@ fn draft_app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
     store
         .load(Path::new("/root/seed.md"))
         .expect("enqueue load");
-    let load = match rx.recv().expect("a load ack") {
+    let load = match next_event(&bridge) {
         DbEvent::Ok {
             result: OpOutcome::Load(load),
             ..
@@ -128,7 +136,7 @@ fn draft_app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
         Buffer::new("draft body"),
         None,
         vfs,
-        Some(Db::new(store, bridge, false)),
+        Some(Db::new(store, Arc::clone(&bridge), false)),
     );
     // The default untitled document's own shape (`App::new_untitled`).
     app.active_doc_mut().display_name = Some("Untitled 1".to_string());
@@ -140,7 +148,7 @@ fn draft_app_with_store(mem: &Arc<Mem>) -> (App, mpsc::Receiver<DbEvent>) {
     ));
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
     app.sync_view();
-    (app, rx)
+    (app, bridge)
 }
 
 fn key(code: KeyCode, mods: Mods) -> Msg {
@@ -618,7 +626,7 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
     // Drive the collision through the store route.
     rename_to(&mut app, "b");
     assert!(matches!(app.rename, RenameState::Committing { .. }));
-    let evt = rx.recv().expect("a rename ack");
+    let evt = next_event(&rx);
     send(&mut app, Msg::Db(evt));
 
     assert!(
@@ -641,7 +649,7 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
     assert_eq!(app.db_ops.len(), ops_before + 1, "one replace op enqueued");
     assert!(app.modal.is_none(), "the prompt is resolved");
 
-    let evt = rx.recv().expect("a replace ack");
+    let evt = next_event(&rx);
     send(&mut app, Msg::Db(evt));
 
     assert_eq!(app.rename, RenameState::Idle);
@@ -748,7 +756,7 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
     type_text(&mut app, "fresh");
     send(&mut app, plain(KeyCode::Enter));
 
-    let evt = rx.recv().expect("a materialize ack");
+    let evt = next_event(&rx);
     send(&mut app, Msg::Db(evt));
 
     assert_eq!(app.rename, RenameState::Idle);

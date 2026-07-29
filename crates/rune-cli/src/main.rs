@@ -313,8 +313,8 @@ struct DbBootstrap {
 /// Opens the recovery store at `versioning::production_db_path()` and
 /// hydrates `path` through it (plan WP5.S2/S4), BEFORE the TUI ever starts
 /// (`runtime::run` hasn't been called yet — no `Sender<Msg>` exists; see
-/// `db::DbBridge`'s doc comment for why hydration blocks on its OWN
-/// receiver instead). Never fatal to the editor: any failure here is
+/// `db::DbBridge`'s doc comment for why hydration blocks on the bridge's
+/// OWN buffer instead). Never fatal to the editor: any failure here is
 /// reported to stderr and this returns `DbBootstrap::default()` — the
 /// editor still opens and runs fully, just without recovery journaling for
 /// this launch (CONSTITUTION Prime Directive: the user's words come before
@@ -328,7 +328,7 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
         };
     };
 
-    let (bridge, rx) = DbBridge::bootstrap();
+    let bridge = DbBridge::bootstrap();
     let (store, open_warning) = match Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()) {
         Ok(pair) => pair,
         Err(e) => {
@@ -356,15 +356,18 @@ fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path) -> DbBootstrap {
     // Blocks main() — there is no runtime loop yet to be blocked instead
     // (`db::DbBridge`'s doc comment). Any event for a DIFFERENT op id can't
     // arrive yet (this is the very first op this `Store` has been asked to
-    // run), but the match stays defensive rather than assuming it.
-    let load_outcome = loop {
-        match rx.recv() {
-            Ok(DbEvent::Ok { id, result }) if id == load_op_id => break Ok(result),
-            Ok(DbEvent::Err { id, error }) if id == load_op_id => break Err(error),
-            Ok(DbEvent::Fatal { error }) => break Err(error),
-            Ok(_) => continue,
-            Err(_) => break Err("recovery store writer thread is gone".to_string()),
-        }
+    // run) — the predicate stays defensive rather than assuming it, and
+    // leaves any such event buffered for `attach` rather than consuming it.
+    // The writer thread always posts a `Fatal` before parking on a panic
+    // (`writer.rs`'s own guarantee), so there is no "sender disconnected"
+    // case left to handle here the way an `mpsc::Receiver` would need to.
+    let load_outcome = match bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == load_op_id,
+        DbEvent::Fatal { .. } => true,
+    }) {
+        DbEvent::Ok { result, .. } => Ok(result),
+        DbEvent::Err { error, .. } => Err(error),
+        DbEvent::Fatal { error } => Err(error),
     };
 
     let load_result = match load_outcome {
