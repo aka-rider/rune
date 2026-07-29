@@ -139,11 +139,27 @@ pub enum FileKind {
 }
 
 /// A single direct child of a directory, as returned by [`Vfs::read_dir`].
+///
+/// `name` and `path` are DELIBERATELY both carried, additively (plan
+/// WP13.S1 — this is not a "pick one" API): `name` is the lossy-decoded
+/// `String` display/sort form (`sort_dir_entries`'s `to_lowercase`, and
+/// `rune-fuzz`'s text script codec, both need a total, always-valid `str`
+/// that an `OsString` cannot give them without breaking script replay);
+/// `path` is the byte-exact full path to open — never lossy-decoded and
+/// never rebuilt by joining `name` back onto a parent (§0: joining a
+/// lossy-decoded name into a real path is what let the app mangle and then
+/// open a name the user never had). A caller that needs to OPEN the entry
+/// uses `path`; a caller that only displays or sorts uses `name`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
-    /// The entry's own name (not a full path) — the final component you'd
-    /// join onto the directory that was listed.
+    /// The entry's own name (not a full path) — lossy-decoded, display and
+    /// sort only. Never join this back onto a directory to build an
+    /// openable path; use `path` instead.
     pub name: String,
+    /// The entry's full, byte-exact path — what `Disk` read from the raw
+    /// `file_name()` `OsString` (never round-tripped through `String`) and
+    /// what `Mem` derived from its own key. Always safe to open.
+    pub path: PathBuf,
     pub is_dir: bool,
 }
 

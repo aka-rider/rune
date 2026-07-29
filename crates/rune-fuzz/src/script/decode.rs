@@ -4,6 +4,7 @@
 //! in this file.
 
 use std::iter::Peekable;
+use std::path::PathBuf;
 
 use super::ScriptError;
 use crate::action::{Action, HighlightVersion};
@@ -180,10 +181,13 @@ fn parse_dir_entry(rest: &str, line: usize) -> Result<DirEntry, ScriptError> {
         "f" => false,
         _ => return Err(malformed()),
     };
-    Ok(DirEntry {
-        name: unescape(name_field, line)?,
-        is_dir,
-    })
+    // WP13.S1: the script codec is text-only (its whole point is a
+    // human-readable, round-trippable session log), so `path` is derived
+    // straight from the decoded `name` — never lossy, since the codec
+    // never carries anything but valid Unicode.
+    let name = unescape(name_field, line)?;
+    let path = PathBuf::from(&name);
+    Ok(DirEntry { name, path, is_dir })
 }
 
 /// Parses a `highlight <live|stale|future> <n>` line plus its `n`

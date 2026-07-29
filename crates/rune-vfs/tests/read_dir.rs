@@ -37,18 +37,22 @@ fn disk_read_dir_lists_children_sorted_dirs_first() {
         vec![
             DirEntry {
                 name: "Aardvark".to_string(),
+                path: tmp.join("Aardvark"),
                 is_dir: true
             },
             DirEntry {
                 name: "beta".to_string(),
+                path: tmp.join("beta"),
                 is_dir: true
             },
             DirEntry {
                 name: "alpha.md".to_string(),
+                path: tmp.join("alpha.md"),
                 is_dir: false
             },
             DirEntry {
                 name: "zeta.md".to_string(),
+                path: tmp.join("zeta.md"),
                 is_dir: false
             },
         ]
@@ -89,10 +93,12 @@ fn disk_read_dir_not_recursive() {
         vec![
             DirEntry {
                 name: "sub".to_string(),
+                path: tmp.join("sub"),
                 is_dir: true
             },
             DirEntry {
                 name: "top.md".to_string(),
+                path: tmp.join("top.md"),
                 is_dir: false
             },
         ],
@@ -159,10 +165,12 @@ fn mem_read_dir_files_at_root() {
         vec![
             DirEntry {
                 name: "one.md".to_string(),
+                path: PathBuf::from("/one.md"),
                 is_dir: false
             },
             DirEntry {
                 name: "two.md".to_string(),
+                path: PathBuf::from("/two.md"),
                 is_dir: false
             },
         ]
@@ -188,10 +196,12 @@ fn mem_read_dir_synthetic_dir_from_nested_key() {
         vec![
             DirEntry {
                 name: "b".to_string(),
+                path: PathBuf::from("/a/b"),
                 is_dir: true
             },
             DirEntry {
                 name: "d.md".to_string(),
+                path: PathBuf::from("/a/d.md"),
                 is_dir: false
             },
         ]
@@ -217,6 +227,7 @@ fn mem_read_dir_dedups_synthetic_dir_from_multiple_keys() {
         entries,
         vec![DirEntry {
             name: "b".to_string(),
+            path: PathBuf::from("/a/b"),
             is_dir: true
         }],
         "one synthetic `b` entry, deduplicated across all keys under it"
@@ -248,18 +259,22 @@ fn mem_read_dir_sort_order_dirs_first_then_case_insensitive_name() {
         vec![
             DirEntry {
                 name: "Aardvark".to_string(),
+                path: PathBuf::from("/r/Aardvark"),
                 is_dir: true
             },
             DirEntry {
                 name: "beta".to_string(),
+                path: PathBuf::from("/r/beta"),
                 is_dir: true
             },
             DirEntry {
                 name: "alpha.md".to_string(),
+                path: PathBuf::from("/r/alpha.md"),
                 is_dir: false
             },
             DirEntry {
                 name: "zeta.md".to_string(),
+                path: PathBuf::from("/r/zeta.md"),
                 is_dir: false
             },
         ]
@@ -292,18 +307,22 @@ fn mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak() {
         vec![
             DirEntry {
                 name: "apple".to_string(),
+                path: PathBuf::from("/r/apple"),
                 is_dir: false
             },
             DirEntry {
                 name: "Banana".to_string(),
+                path: PathBuf::from("/r/Banana"),
                 is_dir: false
             },
             DirEntry {
                 name: "File.md".to_string(),
+                path: PathBuf::from("/r/File.md"),
                 is_dir: false
             },
             DirEntry {
                 name: "file.md".to_string(),
+                path: PathBuf::from("/r/file.md"),
                 is_dir: false
             },
         ],
@@ -328,6 +347,7 @@ fn mem_read_dir_excludes_the_queried_path_itself() {
         entries,
         vec![DirEntry {
             name: "b.md".to_string(),
+            path: PathBuf::from("/a/b.md"),
             is_dir: false
         }],
         "the key `/a` itself must not appear as a child of `/a`"
@@ -356,8 +376,46 @@ fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
         entries,
         vec![DirEntry {
             name: "a".to_string(),
+            path: PathBuf::from("/a"),
             is_dir: true
         }],
         "`a` must appear exactly once, as a directory — the directory claim wins"
+    );
+}
+
+/// WP13.S1 (finding `rune-tui C 1`): a name that isn't valid UTF-8 gets a
+/// lossy `name` (display-only, may contain U+FFFD) but `path` must still
+/// be the byte-exact key — round-tripping it back through `Vfs::stat`
+/// (rather than rebuilding a path from `name`, which is exactly the §0
+/// mangling this field exists to make unrepresentable) must find the same
+/// file.
+#[test]
+fn mem_read_dir_path_is_byte_exact_for_a_non_utf8_name() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let vfs = Mem::new();
+    let raw_name = OsStr::from_bytes(b"caf\xE9.md"); // invalid UTF-8 (Latin-1 'é')
+    let raw_path = PathBuf::from("/").join(raw_name);
+    vfs.save_atomic(&raw_path, b"content")
+        .expect("save non-UTF-8 named file");
+
+    let entries = vfs
+        .read_dir(&PathBuf::from("/"))
+        .expect("read_dir should succeed");
+    assert_eq!(entries.len(), 1);
+    let entry = entries.first().expect("exactly one entry");
+    assert!(
+        entry.name.contains('\u{FFFD}'),
+        "the lossy display name must show the replacement character, got {:?}",
+        entry.name
+    );
+    assert_eq!(
+        entry.path, raw_path,
+        "`path` must be the byte-exact key, never rebuilt from the lossy `name`"
+    );
+    assert_eq!(
+        vfs.read(&entry.path).expect("read via the exact path"),
+        b"content"
     );
 }

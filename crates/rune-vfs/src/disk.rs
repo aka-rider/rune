@@ -201,6 +201,7 @@ impl Vfs for Disk {
             };
             entries.push(DirEntry {
                 name: entry.file_name().to_string_lossy().to_string(),
+                path: entry.path(),
                 is_dir,
             });
         }
