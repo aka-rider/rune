@@ -344,9 +344,10 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
-    // Stage 3 + stage 4 (no further stage yet, so the `Ignored` outcome is
-    // captured but unused).
-    let _outcome = match app.focus {
+    // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
+    // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
+    // here rather than threaded anywhere further.
+    let _ = match app.focus {
         Pane::Editor => handle_editor_key(app, key, effects),
         Pane::Explorer => explorer::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key),
@@ -470,6 +471,14 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     keymap::KeyOutcome::Consumed
 }
 
+/// Whether the active document's primary cursor sits on the FIRST display
+/// line — `display_position` is one-indexed, so line 1 is the top.
+fn at_buffer_top(app: &App) -> bool {
+    let doc = app.active_doc();
+    let offset = doc.cursors.primary().position;
+    doc.buffer.display_position(offset).0 == 1
+}
+
 /// Guards the printable-insert fallthrough against control-byte leakage
 /// (data-integrity fix, review finding F1). Go's equivalent gate is
 /// `isPrintableChar` (`textedit.go:441-443`: `r >= ' ' && r <= '~'`), but
@@ -491,14 +500,6 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 /// `char::is_control()` (Unicode category Cc: `0x00..=0x1F` and
 /// `0x7F..=0x9F`) closes that exact hazard without narrowing what a human
 /// can actually type.
-/// Whether the active document's primary cursor sits on the FIRST display
-/// line — `display_position` is one-indexed, so line 1 is the top.
-fn at_buffer_top(app: &App) -> bool {
-    let doc = app.active_doc();
-    let offset = doc.cursors.primary().position;
-    doc.buffer.display_position(offset).0 == 1
-}
-
 fn is_insertable_key_char(ch: char) -> bool {
     !ch.is_control()
 }
