@@ -25,6 +25,7 @@ use crate::app::App;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
+use crate::width::truncate_tail_to_width;
 use crate::workspace;
 
 /// One open Explorer's state (plan WP4.S3): the directory it's rooted at,
@@ -370,24 +371,18 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Truncates `root`'s displayed path to fit `width` columns, keeping the
-/// TAIL and marking the cut with a leading `…` (plan WP4.S3: "root-path
-/// title row truncated with leading `…`") — the tail (the directory's own
-/// name and its nearest ancestors) is what a user navigating a deep tree
-/// actually needs to see, not the common prefix every row would otherwise
-/// share.
+/// Truncates `root`'s displayed path to fit `width` terminal CELLS (§1.5),
+/// keeping the TAIL and marking the cut with a leading `…` (plan WP4.S3:
+/// "root-path title row truncated with leading `…`") — the tail (the
+/// directory's own name and its nearest ancestors) is what a user
+/// navigating a deep tree actually needs to see, not the common prefix
+/// every row would otherwise share. Delegates to the crate's one chrome-
+/// width chokepoint (`width::truncate_tail_to_width`) so a CJK root
+/// component can't pass the fit check on a char count and then overrun the
+/// cell budget it was supposed to respect.
 fn truncate_root(root: &Path, width: usize) -> String {
     let text = root.display().to_string();
-    if width == 0 {
-        return String::new();
-    }
-    let char_count = text.chars().count();
-    if char_count <= width {
-        return text;
-    }
-    let keep = width.saturating_sub(1);
-    let tail: String = text.chars().skip(char_count - keep).collect();
-    format!("\u{2026}{tail}")
+    truncate_tail_to_width(&text, width)
 }
 
 #[cfg(test)]
@@ -585,9 +580,19 @@ mod tests {
     fn truncate_root_keeps_the_tail_behind_a_leading_ellipsis() {
         let root = Path::new("/very/deeply/nested/project/src/components");
         let truncated = truncate_root(root, 20);
-        assert_eq!(truncated.chars().count(), 20);
+        assert_eq!(crate::width::display_width(&truncated), 20);
         assert!(truncated.starts_with('\u{2026}'));
         assert!(truncated.ends_with("components"));
+    }
+
+    /// A CJK-heavy root must fit the CELL budget, not merely a per-`char`
+    /// count: each ideograph is 2 cells, so a naive per-`char` fit check
+    /// would pass twice as much text as the row can actually hold.
+    #[test]
+    fn truncate_root_respects_cell_width_for_cjk_components() {
+        let root = Path::new("/\u{4e2d}\u{6587}/\u{4e2d}\u{6587}/\u{4e2d}\u{6587}");
+        let truncated = truncate_root(root, 8);
+        assert!(crate::width::display_width(&truncated) <= 8);
     }
 
     #[test]

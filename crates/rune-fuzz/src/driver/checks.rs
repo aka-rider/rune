@@ -53,8 +53,9 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
 /// against a legitimately re-wrapped document.
 pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
     let view = app.active_doc().view.as_ref()?;
+    let content = app.active_doc().buffer.content();
     let line_lens = invariant::wrap_line_lens(&view.wrap, line_count);
-    invariant::wrap_rt(&view.wrap, &line_lens)
+    invariant::wrap_rt(content, &view.wrap, &line_lens)
 }
 
 /// Hands the keyboard back to the editor before the end-of-session

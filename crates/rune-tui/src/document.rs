@@ -341,7 +341,9 @@ impl Document {
         let col = view
             .wrap
             .byte_col_from_visual(self.buffer.content(), row, primary.desired_col);
-        let syntax_point = view.wrap.wrap_to_syntax(WrapPoint { row, col });
+        let syntax_point = view
+            .wrap
+            .wrap_to_syntax(self.buffer.content(), WrapPoint { row, col });
         let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
         let offset = self.buffer.line_col_to_offset(buffer_point);
         let snapped = Cursor {

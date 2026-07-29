@@ -1,17 +1,17 @@
 //! The producer-agnostic reveal vocabulary (WP3): `RevealState`/`RevealSm`/
 //! `RevealGrant`/`InheritCtx`/`ByteRange`/`CursorProbe`, moved out of
-//! `rune-md/src/element/mod.rs` so a future tree-sitter producer can emit
+//! `rune-md`'s own element module so a future tree-sitter producer can emit
 //! and consume the same types without depending on `rune-md`. `Block`,
 //! `Inline` and `DocMachine` stay in `rune-md` — they're markdown-specific.
 //!
 //! `DocState` and `WrapState` move here too (not in the plan's original
-//! five-type list, which named only the types textually defined in
-//! `element/mod.rs`): `InheritCtx::focus`/`wrap` are typed by them, and
-//! `InheritCtx` cannot compile standalone in this crate without its own
-//! field types coming along. Both are producer-agnostic — focus and wrap
-//! width aren't markdown concepts — so this is the smallest move that
-//! actually unblocks the extraction. `rune-md`'s `DocMachine` (which stays
-//! put) imports them back from here.
+//! five-type list, which named only the types textually defined
+//! alongside them in `rune-md`): `InheritCtx::focus`/`wrap` are typed by
+//! them, and `InheritCtx` cannot compile standalone in this crate without
+//! its own field types coming along. Both are producer-agnostic — focus
+//! and wrap width aren't markdown concepts — so this is the smallest move
+//! that actually unblocks the extraction. `rune-md`'s `DocMachine` (which
+//! stays put) imports them back from here.
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;

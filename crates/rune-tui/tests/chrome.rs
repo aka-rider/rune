@@ -270,13 +270,15 @@ fn footer_position_readout_survives_truncation_at_narrow_widths() {
 }
 
 /// `Ln n, Col n` on a multiline buffer with a multibyte character before
-/// the cursor: the column counts RUNES, not bytes (§1.5, Assumption A3).
+/// the cursor: the column counts terminal CELLS, not bytes and not chars
+/// (§1.5) — a CJK ideograph before the cursor counts as 2 columns, not 1.
 #[test]
-fn footer_reports_rune_column_on_a_multiline_multibyte_buffer() {
+fn footer_reports_cell_column_on_a_multiline_multibyte_buffer() {
     let mut app = app_for("first\nab\u{6c49}cd");
     let id = app.active;
-    // Byte offset right after "first\nab\u{6c49}" — 3 runes into line 2
-    // ('a','b','\u{6c49}'), so the display column is 4.
+    // Byte offset right after "first\nab\u{6c49}" — 'a'(1) + 'b'(1) +
+    // '\u{6c49}'(2 cells, CJK) precede it, so the display column is 4
+    // cells, 1-indexed as 5.
     let offset = "first\nab\u{6c49}".len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(offset);
     app.sync_view();
@@ -284,7 +286,7 @@ fn footer_reports_rune_column_on_a_multiline_multibyte_buffer() {
     let buf = draw(&app);
     let footer_row = row_text(&buf, HEIGHT - 1, WIDTH);
     assert!(
-        footer_row.contains("Ln 2, Col 4"),
-        "expected 'Ln 2, Col 4' (rune column, not byte column) on the footer row:\n{footer_row}"
+        footer_row.contains("Ln 2, Col 5"),
+        "expected 'Ln 2, Col 5' (cell column, not byte or char column) on the footer row:\n{footer_row}"
     );
 }

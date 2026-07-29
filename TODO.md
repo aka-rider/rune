@@ -820,3 +820,24 @@ touching cursors collapse to one survivor (lower id), mirroring
 `CursorSet::merge`, but no test asserts the post-edit cursor count. Confirm the
 shrinking count is the intended editing UX rather than an unexamined side
 effect.
+
+**`rune-syntax`'s `ScopeTable`/`scope_table()` vocabulary is open by API,
+closed in practice — decide before a third producer lands.** Every current
+producer (`rune-md`'s comrak emitter, `rune-ts`'s tree-sitter one) builds its
+table from the single `scope_table()` constructor over the fixed
+`MARKDOWN_SCOPES`/`CODE_SCOPES` lists, never calling `ScopeTable::register`
+with a name of its own; `rune-ts`'s `highlight.rs` silently drops (via
+`continue`, no span emitted) any capture whose name doesn't resolve against
+that shared table — a grammar with legitimate captures outside both lists
+loses them with no signal to the user, not even a truncation-style flag.
+This was flagged as a same-producer-vector-index-collision risk before the
+rune-ts merge landed; that specific risk is now moot (both producers agree
+on ids by construction, pinned by `markdown_scopes_still_start_at_id_zero`).
+The open question that remains: should an unresolvable capture register
+itself into a per-call table instead of being dropped (truly open
+vocabulary, but then a theme's `scopes: Vec<Style>` built from the shared
+`scope_table()` no longer covers every id in play), or should the closed
+list simply grow to include whatever `rune-ts`'s actual grammars need
+(simpler, but ties this crate's vocabulary to tree-sitter capture-naming
+conventions)? Needs a decision, not a silent default, before wiring up a
+grammar whose captures actually exceed today's list.

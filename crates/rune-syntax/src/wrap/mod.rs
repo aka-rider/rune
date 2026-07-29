@@ -20,22 +20,22 @@
 //! `Substituted` span from here on.
 //!
 //! Split in two (CONSTITUTION §1.6) along the seam the wrap pass already
-//! has: this file computes wrap segments (`WrapMap`, `wrap_line`,
-//! `slice_spans`); `query.rs` answers coordinate questions about them
-//! (`WrapSnapshot`'s `syntax_to_wrap`/`wrap_to_syntax`/`visual_col`/
-//! `byte_col_from_visual`/etc). `WrapSegment` is defined here, where it's
-//! produced, and read by both halves.
+//! has: this module computes wrap segments (`WrapMap`, `wrap_line`,
+//! `slice_spans`); the sibling `query` submodule answers coordinate
+//! questions about them (`WrapSnapshot`'s `syntax_to_wrap`/`wrap_to_syntax`/
+//! `visual_col`/`byte_col_from_visual`/etc). `WrapSegment` is defined here,
+//! where it's produced, and read by both halves.
 
 mod query;
 mod table;
 
-pub use query::WrapSnapshot;
+pub use query::{WrapSnapshot, line_visual_col};
 
 use unicode_segmentation::UnicodeSegmentation;
 
 pub use table::TableSegInfo;
 
-use crate::syntax::{SyntaxLine, SyntaxSpan};
+use crate::syntax::{SyntaxLine, SyntaxSpan, assert_invariant};
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared (in the Go original) by the wrap/coordinate layer and the
@@ -56,10 +56,15 @@ pub fn control_aware_width(r: char) -> usize {
     }
 }
 
-/// `runeWidthWithTab`: a tab expands to the next multiple-of-4 stop.
+/// The one tab stop every width walker expands against — `rune_width_with_tab`
+/// and `grapheme_width_with_tab` both delegate to it rather than each
+/// hardcoding `% 4`, so the two can never drift apart.
+pub const TAB_STOP: usize = 4;
+
+/// `runeWidthWithTab`: a tab expands to the next multiple-of-`TAB_STOP` stop.
 pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
     if r == '\t' {
-        return 4 - (current_width % 4);
+        return TAB_STOP - (current_width % TAB_STOP);
     }
     control_aware_width(r)
 }
@@ -68,10 +73,10 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// graphemes`) — the second half of the shared width chokepoint alongside
 /// `control_aware_width`/`rune_width_with_tab` above, used by BOTH
 /// `wrap_line`'s greedy line-breaking (below) and `rune-tui`'s
-/// `render::push_grapheme_cells`/`WrapSnapshot::visual_col`/
-/// `byte_col_from_visual` (`query.rs`) — every place that walks text one
-/// visual unit at a time, not one rune at a time, must agree on this
-/// number or the caret lands on the wrong cell (this module's own
+/// `render::push_grapheme_cells`/the sibling `query` submodule's
+/// `WrapSnapshot::visual_col`/`byte_col_from_visual` — every place that
+/// walks text one visual unit at a time, not one rune at a time, must
+/// agree on this number or the caret lands on the wrong cell (this module's own
 /// load-bearing property).
 ///
 /// A single-rune cluster (plain ASCII, CJK, an isolated control char — the
@@ -120,7 +125,7 @@ pub fn grapheme_width(cluster: &str) -> usize {
 /// tab-expansion case on top.
 pub fn grapheme_width_with_tab(cluster: &str, current_width: usize) -> usize {
     if cluster == "\t" {
-        return 4 - (current_width % 4);
+        return TAB_STOP - (current_width % TAB_STOP);
     }
     grapheme_width(cluster)
 }
@@ -351,12 +356,36 @@ fn slice_spans(
                     .map(|p| p.chars().count())
                     .unwrap_or(0);
                 let end_runes = start_runes + sliced.chars().count();
+                // Clamp rather than discard the whole map on a length
+                // mismatch ([rune-syntax 2]): a one-entry-short `cell_map`
+                // used to cost the entire span (`unwrap_or_default()` ->
+                // every char in it became caret-unreachable via the `-1`
+                // no-correspondence sentinel). Clamping keeps every
+                // in-bounds mapping the producer DID supply; only the
+                // genuinely missing tail is lost, and the mismatch itself
+                // still surfaces via `assert_invariant` (test-only, §1.3).
+                let cm_len = cell_map.len();
+                let clamped_start = start_runes.min(cm_len);
+                let clamped_end = end_runes.min(cm_len).max(clamped_start);
+                assert_invariant(
+                    clamped_start == start_runes && clamped_end == end_runes,
+                    || {
+                        format!(
+                            "cell_map length {cm_len} disagrees with the sliced text's rune range [{start_runes},{end_runes}) — producer bug; clamped to [{clamped_start},{clamped_end})"
+                        )
+                    },
+                );
                 SyntaxSpan::Substituted {
                     scope: *scope,
                     text: sliced.to_string(),
                     range: range.clone(),
+                    // `get` + `unwrap_or_default` rather than a raw index:
+                    // the clamp above guarantees this `Some`s, but the
+                    // fallback stays as defense-in-depth rather than an
+                    // indexing panic (§1.3) if that guarantee is ever
+                    // violated.
                     cell_map: cell_map
-                        .get(start_runes..end_runes)
+                        .get(clamped_start..clamped_end)
                         .map(<[i64]>::to_vec)
                         .unwrap_or_default(),
                 }

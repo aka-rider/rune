@@ -20,9 +20,15 @@ use std::collections::HashMap;
 pub struct ScopeId(pub u16);
 
 /// Dotted-name -> `ScopeId` registry with longest-dotted-prefix resolution.
-/// Open (any producer can `register` a name it needs at configure time —
-/// today only `rune-md`'s emitter does, `rune-ts`'s tree-sitter producer
-/// will later), unlike the closed enum it replaces.
+/// Open (any producer can `register` a name it needs at configure time),
+/// unlike the closed enum it replaces — but every producer today
+/// (`rune-md`'s comrak-driven emitter, `rune-ts`'s tree-sitter one) builds
+/// its table from the one shared [`scope_table`] constructor below rather
+/// than calling `register` with names of its own choosing, so the
+/// vocabulary is open in principle but closed in practice: a producer
+/// whose capture names fall outside [`MARKDOWN_SCOPES`]/[`CODE_SCOPES`]
+/// has no way to extend the table it's handed, and `resolve` silently
+/// drops such a capture down to `None` rather than registering it.
 #[derive(Debug, Default)]
 pub struct ScopeTable {
     names: Vec<String>,

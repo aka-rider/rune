@@ -9,6 +9,7 @@ use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 use rune_md::emit::emit;
 use rune_syntax::wrap::WrapMap;
+use unicode_segmentation::UnicodeSegmentation;
 
 fn arb_markdown_fragment() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -33,15 +34,27 @@ fn arb_content() -> impl Strategy<Value = String> {
     proptest::collection::vec(arb_markdown_fragment(), 0..8).prop_map(|frags| frags.join("\n"))
 }
 
-/// RUNE-count width of a syntax line, built from the emitter's own
-/// `SyntaxSpan::text` (mirrors Go's `display_test.go:syntaxColWidth` — §1.5,
-/// display width is runes, but `SyntaxPoint::col` itself is bytes, matching
-/// `WrapSnapshot`'s own byte-indexed `start_col`).
-fn syntax_line_byte_len(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> usize {
-    lines
+/// Every grapheme-cluster boundary in a syntax line's own concatenated
+/// visible text, plus the line's own end — the domain `wrap_to_syntax`
+/// ([rune-syntax 3]) is now allowed to promise round-trip identity over.
+/// A byte offset landing MID-cluster (e.g. inside the 3-byte checkbox
+/// glyph `push_task_checkbox` substitutes) is not a position any real
+/// cursor movement can ever produce, and `wrap_to_syntax` now snaps such
+/// an offset down to the nearest cluster start rather than passing it
+/// through unchanged — the fix this test's old `0..=syntax_len` domain
+/// (every byte offset, boundary or not) was accidentally asserting AGAINST.
+fn syntax_line_grapheme_bounds(
+    lines: &[rune_syntax::SyntaxLine],
+    line: usize,
+    content: &str,
+) -> Vec<usize> {
+    let text: String = lines
         .get(line)
-        .map(|l| l.spans.iter().map(|s| s.text(content).len()).sum())
-        .unwrap_or(0)
+        .map(|l| l.spans.iter().map(|s| s.text(content)).collect())
+        .unwrap_or_default();
+    let mut bounds: Vec<usize> = text.grapheme_indices(true).map(|(i, _)| i).collect();
+    bounds.push(text.len());
+    bounds
 }
 
 proptest! {
@@ -65,11 +78,10 @@ proptest! {
         let wrap_snap = WrapMap::new(raw_width).sync(buf.content(), &lines);
 
         for line in 0..buf.line_count() {
-            let syntax_len = syntax_line_byte_len(&lines, line, buf.content());
-            for col in 0..=syntax_len {
+            for col in syntax_line_grapheme_bounds(&lines, line, buf.content()) {
                 let sp = SyntaxPoint { line, col };
                 let wp = wrap_snap.syntax_to_wrap(sp);
-                let sp2 = wrap_snap.wrap_to_syntax(wp);
+                let sp2 = wrap_snap.wrap_to_syntax(buf.content(), wp);
                 prop_assert_eq!(sp, sp2, "SyntaxToWrap/WrapToSyntax roundtrip failed: sp={:?} wp={:?} sp2={:?} width={}", sp, wp, sp2, raw_width);
             }
         }

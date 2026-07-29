@@ -67,14 +67,16 @@ Implementation-agnostic laws; symbols in parentheses are today's grep-resolvable
 - **§1.4.9 Reach the filesystem only through the injected `vfs.FS`.** `cmd/rune` constructs exactly ONE `vfs.FS` and injects it via `workspace.WithFS`, which propagates it to `docstate.UseFS` and the editor's `SetFS`; a `nil` shim defaults to `vfs.Disk{}` only where nothing was injected. Real `os.*` lives at a single boundary — `pkg/vfs` (`Disk` wraps os, `Mem` is in-memory) — plus two documented exceptions: launch bootstrap (`os.Getwd`, `-w` validation, the SQLite DB path), and test/fuzz tooling. The fsnotify directory watcher is a separate OS resource (not file *content* I/O, so outside `vfs.FS` itself) with its own mirrored seam — `workspace.Watcher`, injected via `WithWatcher`; a `nil` watcher defaults to `FSNotifyWatcher`, and every test constructor plus the session fuzzer inject `NoopWatcher` so no real fsnotify goroutine is ever spawned outside production.
 - **§1.4.10 Capture before discard — physically.** Bytes a write path displaces are captured as a durable blob BEFORE they're gone, guaranteed by mechanism, not by careful ordering: `Materialize` swaps via `vfs.Exchange` (atomic), re-reads and re-hashes what the swap displaced, and on any mismatch with the CAS expectation commits those bytes as a blob before the temp file is removed. No window exists for a race to land in. The in-memory analogue is §1.3's clamp-or-drop rule.
 
-### §1.5 Two Coordinate Systems — Bytes vs Runes
+### §1.5 Two Coordinate Systems — Bytes vs Cells
 - **Buffer / edit / cursor offsets are BYTES.** Compute with `len(...)`; never split a UTF-8 rune.
-- **Display width is RUNES.** Column, wrap boundary, cell width use `utf8.RuneCountInString`.
+- **Display width is TERMINAL CELLS.** Column, wrap boundary, and every on-screen width are measured over grapheme clusters (one cluster's `unicode-width` sum, never a bare rune/char count) — a single cluster occupies the terminal columns it actually paints with, whether that is a combining-mark cluster collapsing to one cell or a wide CJK/emoji cluster spanning two. Each implementation owns exactly one chokepoint that performs this measurement; every column/width computation routes through it.
 ```go
-end := start + len(insertedText)                 // edit offset — BYTES ✓
-col := utf8.RuneCountInString(line[:cursorByte]) // display column — RUNES ✓
+end := start + len(insertedText) // edit offset — BYTES ✓
+col := cellWidth(line[:cursorByte]) // display column — CELLS, via the one grapheme/width chokepoint ✓
 ```
-If a number indexes the buffer it's bytes; if it positions something on screen it's runes. A `len()` in rendering code is almost certainly a bug; a `RuneCountInString` used as a buffer offset is almost certainly a corruption.
+If a number indexes the buffer it's bytes; if it positions something on screen it's cells. A `len()` in rendering code is almost certainly a bug; a rune/char count used as a display width is almost certainly wrong the moment a combining mark or wide glyph appears.
+
+**Deliberate implementation divergence:** the Rust port measures display width in terminal cells (`unicode-width` over `unicode-segmentation` grapheme clusters) as stated above; this is a considered choice, not parity drift, and does not apply retroactively to the Go reference implementation, which continues to measure in runes (`utf8.RuneCountInString`) per its own `pkg/` chokepoints. `make parity` scenarios that assert Ln/Col or char-counted chrome are expected to diverge between the two implementations for exactly this reason.
 
 ### §1.6 Project Organization
 - Name a package for its domain — never `types`/`utils`/`helpers`/`common`/`misc`.

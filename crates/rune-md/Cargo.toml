@@ -36,7 +36,13 @@ harness = false
 # developer wants to run with strict checking on. Never enabled by
 # default: §1.3 requires an ordinary shipped build to degrade gracefully
 # on a producer-bug invariant violation, never panic on a user's document.
-strict-invariants = []
+# Also turns on `rune-syntax/strict-invariants`: `SyntaxSpan::identical`'s
+# own checked-construction assert ([rune-syntax 1]) now owns the
+# char-boundary invariant this crate's `push_span_split_by_line` used to
+# assert locally for the `Identical` branch — one feature flip has to
+# arm both crates' asserts together, or this crate's own test suite would
+# stop seeing a violation it still causes.
+strict-invariants = ["rune-syntax/strict-invariants"]
 
 [lints]
 workspace = true
