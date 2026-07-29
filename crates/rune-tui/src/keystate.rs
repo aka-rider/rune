@@ -57,9 +57,13 @@ unsafe extern "C" {
     fn CFRelease(cf: *const core::ffi::c_void);
 }
 
-/// `kCGEventSourceStateHIDSystemState` (CGEventTypes.h:480-484).
+/// `kCGEventSourceStateHIDSystemState` — the HID system's live key/button
+/// state, as opposed to the state at the time the current event tap
+/// callback fired (`CGEventTypes.h`). Its numeric value is stable across
+/// SDK versions (part of the public C enum's ABI).
 const HID_SYSTEM_STATE: i32 = 1;
-/// `kVK_Space` (HIToolbox Events.h:268).
+/// `kVK_Space` — the physical spacebar's virtual keycode (`HIToolbox
+/// Events.h`). Stable across SDK versions for the same reason.
 const VK_SPACE: u16 = 0x31;
 
 /// Answers "is the spacebar physically down right now?".
@@ -119,7 +123,20 @@ impl SpaceProbe for FixedSpaceProbe {
 /// session dictionary returns before that call is ever reached.
 ///
 /// Call this once at startup (`rune-cli::main` does) so the answer is already
-/// cached before the first keystroke.
+/// cached before the first keystroke — already off the keystroke path by
+/// construction, since the `OnceLock` only ever runs the real probe once.
+///
+/// ACCEPTED RISK (`CODE-REVIEW.md` rune-tui B finding 7, plan WP10.S8): this
+/// caches window-server reachability for the whole process lifetime, on the
+/// assumption that reachability cannot change mid-session (e.g. a window
+/// server that becomes available after a sandboxed/headless launch). No
+/// transition has ever been demonstrated on this platform, and there is no
+/// notification this module could subscribe to for one — a periodic re-probe
+/// would itself reintroduce the very hazard this caching exists to avoid
+/// (the query blocks ~45s with no window server, so polling it on any
+/// schedule risks doing that blocking wait again). `leader_available_caches_
+/// its_answer_across_repeated_calls` below is the tested claim: the constancy
+/// assumption is documented and pinned, not silently relied upon.
 pub fn leader_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| window_server_session_exists() && probe_key_state_once())
@@ -146,4 +163,39 @@ fn window_server_session_exists() -> bool {
 fn probe_key_state_once() -> bool {
     let _ = unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE) };
     true
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// The tested half of `leader_available`'s ACCEPTED constancy
+    /// assumption (see its doc comment): whatever the real hardware probe
+    /// answers on this machine, repeated calls within one process must
+    /// keep returning that SAME answer — proving the `OnceLock` really
+    /// does keep the query off the keystroke path, rather than merely
+    /// documenting an intention nothing pins.
+    #[test]
+    fn leader_available_caches_its_answer_across_repeated_calls() {
+        let first = leader_available();
+        for _ in 0..1000 {
+            assert_eq!(
+                leader_available(),
+                first,
+                "a cached OnceLock answer must never change within one process"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_space_probe_reports_exactly_what_it_was_constructed_with() {
+        assert!(FixedSpaceProbe(true).space_is_down());
+        assert!(!FixedSpaceProbe(false).space_is_down());
+    }
+
+    #[test]
+    fn null_probe_never_reports_the_leader_as_down() {
+        assert!(!NullProbe.space_is_down());
+    }
 }
