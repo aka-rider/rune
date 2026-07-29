@@ -9,26 +9,51 @@ use std::ops::Range;
 use crate::scope::ScopeId;
 use rune_core::coords::{BufferPoint, SyntaxPoint};
 
-/// Mirrors `rune-md`'s own `STRICT_INVARIANTS`/`assert_invariant` chokepoint
-/// (`emit/mod.rs`'s module docs): `true` only in test builds or when this
+/// Mirrors `rune-md`'s own `STRICT_INVARIANTS`/`assert_invariant`
+/// chokepoint: `true` only in test builds or when this
 /// crate's own `strict-invariants` feature is explicitly enabled. Kept as a
 /// local copy rather than a shared helper — each crate's gate governs only
 /// its own producer-bug invariants, and `rune-syntax` must stand alone
 /// without depending back on `rune-md`.
 const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
-fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
+pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
     if STRICT_INVARIANTS {
         assert!(cond, "{}", msg());
     }
 }
 
+/// The nearest char boundary at or BEFORE `idx` — a safe, stable-Rust
+/// equivalent of the nightly-only `str::floor_char_boundary`. Never panics:
+/// `is_char_boundary` is a plain byte-position check, and a UTF-8 char is at
+/// most 4 bytes, so the loop always terminates within a few iterations. A
+/// private copy rather than a shared helper: this crate must stand alone
+/// without depending back on `rune-md`, which needs the identical logic for
+/// its own producer-side snapping.
+fn floor_char_boundary(s: &str, idx: usize) -> usize {
+    let mut idx = idx.min(s.len());
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
+/// The nearest char boundary at or AFTER `idx` — the stable-Rust equivalent
+/// of the nightly-only `str::ceil_char_boundary`.
+fn ceil_char_boundary(s: &str, idx: usize) -> usize {
+    let mut idx = idx.min(s.len());
+    while idx < s.len() && !s.is_char_boundary(idx) {
+        idx += 1;
+    }
+    idx
+}
+
 /// Per-visual-char buffer offset, `-1` for decorative/padding cells with no
-/// buffer correspondence — port of Go's `CellMapping`.
-/// Phase 1 never produces `-1` (no decorative padding in this
-/// crate yet); the type still carries it so the proptest invariant
-/// ("entries are -1 or valid char boundaries") is meaningful, and so a
-/// future decorative producer doesn't need a type change.
+/// buffer correspondence — port of Go's `CellMapping`. `rune-md`'s
+/// synthesized table-border rows already produce all-`-1` maps (a border
+/// row's text is decorative, with no buffer position to point back to);
+/// this crate itself never constructs one, but must accept whatever a
+/// producer hands it.
 pub type CellMap = Vec<i64>;
 
 /// Port of Go's per-run syntax-map span, reshaped into
@@ -57,6 +82,38 @@ pub enum SyntaxSpan {
 }
 
 impl SyntaxSpan {
+    /// Checked constructor for the `Identical` variant: clamps `range` to
+    /// `content`'s length and to the nearest char boundaries at
+    /// construction time, so `range` is always a valid slice of `content`
+    /// — making it structurally impossible for `span_visible_len`
+    /// (`range.end - range.start`) to disagree with `text()`
+    /// (`content.get(range)`, whose `unwrap_or("")` fallback this
+    /// guarantees never actually fires) the way an externally-guarded
+    /// convention could still get wrong. A producer handing back an
+    /// out-of-bounds or mid-codepoint range is a bug; this degrades it to a
+    /// clamped (never panicking, §1.3) range in every build, surfaced via
+    /// `assert_invariant` in tests.
+    pub fn identical(content: &str, scope: ScopeId, range: Range<usize>) -> SyntaxSpan {
+        let len = content.len();
+        let start = range.start.min(len);
+        let end = range.end.min(len).max(start);
+        let snapped_start = floor_char_boundary(content, start);
+        let snapped_end = ceil_char_boundary(content, end).max(snapped_start);
+        assert_invariant(
+            snapped_start == range.start && snapped_end == range.end,
+            || {
+                format!(
+                    "Identical span {:?} is out of bounds or not on a char boundary for a {len}-byte buffer — clamped to [{snapped_start},{snapped_end})",
+                    range
+                )
+            },
+        );
+        SyntaxSpan::Identical {
+            scope,
+            range: snapped_start..snapped_end,
+        }
+    }
+
     /// The scope this span is tagged with (WP4: replaces `StyleId`) — a
     /// theme resolves it to a rendered `Style`; this crate never does.
     pub fn scope(&self) -> ScopeId {
@@ -78,9 +135,13 @@ impl SyntaxSpan {
     }
 
     /// The span's visible text. `Identical` recovers it verbatim from
-    /// `content` at `range`; `Substituted` returns its own stored `text`
-    /// (which is not, in general, `content[range]` — that range may still
-    /// cover dropped delimiter bytes, module docs in `wrap.rs`).
+    /// `content` at `range` — a range built through [`SyntaxSpan::identical`]
+    /// is always a valid slice of `content` by construction, so the
+    /// `unwrap_or("")` fallback below is defense-in-depth, never the live
+    /// path; `Substituted` returns its own stored `text` (which is not, in
+    /// general, `content[range]` — a wrap break can narrow that text
+    /// without narrowing `range`, the wrap pass's own doing, not this
+    /// module's).
     pub fn text<'a>(&'a self, content: &'a str) -> &'a str {
         match self {
             SyntaxSpan::Identical { range, .. } => content.get(range.clone()).unwrap_or(""),
@@ -113,8 +174,10 @@ pub enum RowBoundary {
 /// Table geometry a rendered row's source `SyntaxLine` carries directly
 /// (architectural decision 7: "one explicit field removes the illegal
 /// state instead of guarding it" — no consumer has to sniff every span's
-/// scope to tell a table row from prose). Not yet populated by any producer
-/// — this step only defines its shape.
+/// scope to tell a table row from prose). Populated by `rune-md`'s table
+/// producer for every Rendered table line (Grid/Wrapped/Pivoted layout);
+/// `None` for a Revealed table line, which has raw markup, not rendered
+/// geometry, to describe.
 #[derive(Clone, Debug)]
 pub struct TableRowInfo {
     pub col_widths: Vec<usize>,
@@ -269,36 +332,46 @@ fn clamp_col(col: usize, hidden: &[HiddenRange]) -> usize {
     col
 }
 
-/// `true` iff `sorted` (already ordered by start) contains a genuine
-/// overlap — two ranges sharing at least one byte. Adjacent-but-touching
-/// ranges (`end == next.start`) are NOT an overlap. Used only by the
-/// `STRICT_INVARIANTS`-gated assert in `build_line_conversions`: every
-/// hidden-range producer in this crate is expected to already emit
-/// disjoint ranges, so an overlap here means a producer bug (the exact
-/// shape two separate findings on this branch turned out to be — a
-/// fence's ranges colliding with its container's marker ranges) — this
+/// `true` iff `intervals` (any order) contains a genuine overlap — two
+/// ranges sharing at least one byte. Adjacent-but-touching ranges
+/// (`end == next.start`) are NOT an overlap. Sorts a local copy rather than
+/// requiring the caller to hand back ordered input — this runs only behind
+/// the `STRICT_INVARIANTS`-gated assert in `build_line_conversions`
+/// (test-only cost), so the extra sort is free in every shipped build.
+/// Used only there: every hidden-range producer in this crate is expected
+/// to already emit disjoint ranges, so an overlap here means a producer bug
+/// (the exact shape two separate findings on this branch turned out to be
+/// — a fence's ranges colliding with its container's marker ranges) — this
 /// makes it surface in tests instead of being silently absorbed by the
 /// merge below.
-fn has_overlap(sorted: &[(usize, usize)]) -> bool {
+fn has_overlap(intervals: &[(usize, usize)]) -> bool {
+    let mut sorted: Vec<(usize, usize)> = intervals.to_vec();
+    sorted.sort_by_key(|&(s, _)| s);
     sorted.windows(2).any(|w| match w {
         [(_, prev_end), (next_start, _)] => prev_end > next_start,
         _ => false,
     })
 }
 
-/// Merges overlapping or touching-adjacent intervals in `sorted` (already
-/// ordered by start) into the minimal disjoint set covering the same
-/// bytes. The chokepoint that makes "a byte is hidden at most once"
+/// Merges overlapping or touching-adjacent intervals in `input` (any
+/// order) into the minimal disjoint set covering the same bytes, sorted by
+/// start. The chokepoint that makes "a byte is hidden at most once"
 /// structural rather than every producer's responsibility: even if some
 /// future producer reintroduces an overlapping-range bug (the class two
 /// separate findings on this branch belonged to), the delta accumulation
 /// below can no longer double-count it — merging happens UNCONDITIONALLY
 /// in every build (§1.3 graceful degradation); the `STRICT_INVARIANTS`
-/// assert above is what surfaces the producer bug, in tests only. Also
-/// reused by `rune-md`'s `emit::unclaimed_subranges` for the visible-side
-/// counterpart of this same collapse — `pub`, not `pub(crate)`, for exactly
-/// that cross-crate reuse (WP3).
-pub fn merge_overlapping(sorted: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+/// assert above is what surfaces the producer bug, in tests only. Sorting
+/// lives HERE (not in each caller) so "unsorted intervals" can't
+/// legitimately reach a caller that forgot to sort first — both current
+/// callers (this module's own `build_line_conversions` and `rune-md`'s
+/// `emit::unclaimed_subranges`, the visible-side counterpart of this same
+/// collapse) used to sort before calling; that duplicated precondition is
+/// gone now that the function enforces it itself. `pub`, not `pub(crate)`,
+/// for that cross-crate reuse (WP3).
+pub fn merge_overlapping(input: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    let mut sorted = input;
+    sorted.sort_by_key(|&(s, _)| s);
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
     for (s, e) in sorted {
         if e <= s {
@@ -331,12 +404,11 @@ pub(crate) fn build_line_conversions(
     let mut convs = Vec::with_capacity(hidden.len());
     for (line, ranges) in hidden.iter().enumerate() {
         let line_start = starts.get(line).copied().unwrap_or(0);
-        let mut rel: Vec<(usize, usize)> = ranges
+        let rel: Vec<(usize, usize)> = ranges
             .iter()
             .filter(|&&(s, e)| e > s)
             .map(|&(s, e)| (s.saturating_sub(line_start), e.saturating_sub(line_start)))
             .collect();
-        rel.sort_by_key(|&(s, _)| s);
 
         // §1.3: never panics in an ordinary shipped build — only in tests
         // (or a build that opts in via the `strict-invariants` feature),

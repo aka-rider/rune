@@ -226,10 +226,8 @@ fn unclaimed_subranges(
     if end <= start {
         return Vec::new();
     }
-    let mut sorted: Vec<(usize, usize)> =
-        existing.iter().copied().filter(|&(s, e)| e > s).collect();
-    sorted.sort_by_key(|&(s, _)| s);
-    let merged = merge_overlapping(sorted);
+    let unsorted: Vec<(usize, usize)> = existing.iter().copied().filter(|&(s, e)| e > s).collect();
+    let merged = merge_overlapping(unsorted);
 
     let mut result = Vec::new();
     let mut cursor = start;
@@ -294,34 +292,39 @@ pub(crate) fn push_span_split_by_line(
         let pieces = claim_visible(accounted, line, seg_start, seg_end);
 
         for (s, e) in pieces {
-            // A producer's range arithmetic (e.g. a delimiter derived by
-            // subtracting a fixed byte count from a multibyte-char-
-            // adjacent position) can land inside a char instead of on its
-            // boundary — `content.get` then returns `None`. These are the
-            // user's own bytes (§0/§1.4.5): snapping the range OUTWARD to
-            // the nearest valid boundaries and emitting verbatim is always
-            // safe (worst case: a little more context shown than the
-            // producer intended), whereas silently dropping the span would
-            // vanish real content from the display. The producer bug
-            // itself still needs fixing — `assert_invariant` surfaces it.
-            let (s, e, text) = match content.get(s..e) {
-                Some(text) => (s, e, text),
-                None => {
-                    let snapped_s = floor_char_boundary(content, s);
-                    let snapped_e = ceil_char_boundary(content, e);
-                    let snapped_ok = snapped_s == s && snapped_e == e;
-                    assert_invariant(snapped_ok, || {
-                        format!(
-                            "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
-                        )
-                    });
-                    let Some(text) = content.get(snapped_s..snapped_e) else {
-                        continue; // unreachable in practice: floor/ceil always land in-bounds on a valid &str
-                    };
-                    (snapped_s, snapped_e, text)
-                }
-            };
             let span = if state == RevealState::Rendered {
+                // A producer's range arithmetic (e.g. a delimiter derived by
+                // subtracting a fixed byte count from a multibyte-char-
+                // adjacent position) can land inside a char instead of on
+                // its boundary — `content.get` then returns `None`. These
+                // are the user's own bytes (§0/§1.4.5): snapping the range
+                // OUTWARD to the nearest valid boundaries and emitting
+                // verbatim is always safe (worst case: a little more
+                // context shown than the producer intended), whereas
+                // silently dropping the span would vanish real content from
+                // the display. The producer bug itself still needs fixing
+                // — `assert_invariant` surfaces it. `Substituted` owns its
+                // text, so it still needs an actual `&str` extracted here;
+                // `Identical` (the `else` arm below) instead delegates its
+                // own equivalent clamping to `SyntaxSpan::identical`'s
+                // checked constructor, which needs no local guard.
+                let (s, e, text) = match content.get(s..e) {
+                    Some(text) => (s, e, text),
+                    None => {
+                        let snapped_s = floor_char_boundary(content, s);
+                        let snapped_e = ceil_char_boundary(content, e);
+                        let snapped_ok = snapped_s == s && snapped_e == e;
+                        assert_invariant(snapped_ok, || {
+                            format!(
+                                "line {line}: span [{s},{e}) is not on a char boundary — producer bug; snapped outward to [{snapped_s},{snapped_e})"
+                            )
+                        });
+                        let Some(text) = content.get(snapped_s..snapped_e) else {
+                            continue; // unreachable in practice: floor/ceil always land in-bounds on a valid &str
+                        };
+                        (snapped_s, snapped_e, text)
+                    }
+                };
                 SyntaxSpan::Substituted {
                     scope,
                     text: text.to_string(),
@@ -329,7 +332,7 @@ pub(crate) fn push_span_split_by_line(
                     cell_map: build_cell_map(s, text),
                 }
             } else {
-                SyntaxSpan::Identical { scope, range: s..e }
+                SyntaxSpan::identical(content, scope, s..e)
             };
             if let Some(bucket) = out.get_mut(line) {
                 bucket.push(span);
@@ -410,13 +413,10 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
             if e <= s {
                 continue;
             }
-            if content.get(s..e).is_none() {
-                continue;
-            }
-            bucket.push(SyntaxSpan::Identical {
-                scope: style::text_scope(),
-                range: s..e,
-            });
+            // No local char-boundary guard needed: `SyntaxSpan::identical`
+            // clamps a bad range at construction instead of this call site
+            // having to check and skip it first.
+            bucket.push(SyntaxSpan::identical(content, style::text_scope(), s..e));
         }
         // Gap-fill spans are appended out of buffer order relative to
         // whatever spans already sit in `bucket` — restore document order
