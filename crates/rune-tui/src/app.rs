@@ -356,13 +356,12 @@ impl App {
         id
     }
 
-    /// Looks up `id` — `None` if it doesn't reference a live document
-    /// (never true today, since nothing removes a `documents` entry, but
-    /// once WP5 adds close this is exactly the shape a stale id from
-    /// `App::db_ops` racing a close must produce: a plain, honest "not
-    /// found" a caller can drop, never a silent write to some OTHER
-    /// document). Callers that specifically want the active document use
-    /// `active_doc`/`active_doc_mut` instead, which are infallible.
+    /// Looks up `id` — `None` if it doesn't reference a live document.
+    /// `workspace::close_now` removes entries, so this is exactly the shape
+    /// a stale id from `App::db_ops` racing a close must produce: a plain,
+    /// honest "not found" a caller can drop, never a silent write to some
+    /// OTHER document. Callers that specifically want the active document
+    /// use `active_doc`/`active_doc_mut` instead, which are infallible.
     pub fn doc(&self, id: DocumentId) -> Option<&Document> {
         self.documents.get(&id)
     }
