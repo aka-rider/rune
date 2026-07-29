@@ -128,6 +128,23 @@ impl Viewport {
     }
 }
 
+/// The ONE row-window slice both `render::build_rows` and `row_meta::
+/// row_meta` walk (plan WP13.S3) — `[viewport.scroll_row, viewport.
+/// scroll_row + viewport.height)` over `display`'s rows. Before this
+/// chokepoint existed the two call sites each wrote the same `skip`/`take`
+/// pair independently, with only a comment (not the compiler) keeping them
+/// aligned; a change to one without the other would silently misalign
+/// `Snapshot.cells[i]` and `Snapshot.row_meta[i]` for the session fuzzer's
+/// TABLE-* invariants.
+pub fn visible_rows<'a>(
+    rows: &'a [rune_md::snapshot::DisplayRow],
+    viewport: &Viewport,
+) -> impl Iterator<Item = &'a rune_md::snapshot::DisplayRow> {
+    rows.iter()
+        .skip(viewport.scroll_row)
+        .take(viewport.height as usize)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
