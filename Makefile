@@ -25,13 +25,17 @@ fmt:
 bench:
 	$(CARGO) bench -p rune-md --bench parse_bench
 
-# `--test perf_guard` + `--exact` scope this to ONE test in ONE binary. Without
-# them, every other rune-md test binary prints `test result: ok. 0 passed ...
-# filtered out` and exits 0, so the target stays green even if the test is
-# renamed or deleted.
+# `--test perf_guard` + `--exact` scope each invocation to ONE test in ONE
+# binary. Without them, every other test binary prints `test result: ok. 0
+# passed ... filtered out` and exits 0, so the target stays green even if the
+# test is renamed or deleted — this is why the WP16 keystroke-latency guard
+# below needs its OWN invocation rather than widening the `--exact` filter on
+# this one, which by definition can never pick up a second test name.
 perf-guard:
 	$(CARGO) test -p rune-md --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 keystroke_view_cost_under_budget_on_a_5k_line_code_document
 
 # `-p rune-fuzz` (NOT --workspace) is load-bearing: under --workspace, cargo
 # feature-unifies rune-md's dev-dependency on itself and compiles rune-md with

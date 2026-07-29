@@ -42,7 +42,9 @@ fn resolve_highlight_source(app: &mut App, id: DocumentId) -> Option<HighlightSo
     if let Some(doc) = app.doc_mut(id) {
         doc.doc.sync_content(&doc.buffer);
         #[cfg(test)]
-        doc.highlight.resolve_calls.set(doc.highlight.resolve_calls.get() + 1);
+        doc.highlight
+            .resolve_calls
+            .set(doc.highlight.resolve_calls.get() + 1);
     }
     let doc = app.doc(id)?;
     if let Some(lang) = doc.kind.language() {

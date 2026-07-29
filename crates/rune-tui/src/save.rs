@@ -356,8 +356,8 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
 }
 
 /// Bumps `id`'s snapshot-autosave generation and (re)arms its 2s debounce
-/// deadline on `app`'s one rearmable timer thread (plan WP5.S6, port of
-/// `workspace_timers.go:11`; plan WP16.S5 replaced the previous per-call
+/// deadline on `app`'s one rearmable timer thread (plan WP5.S6, porting the
+/// Go reference's own debounce; plan WP16.S5 replaced the previous per-call
 /// `Cmd` spawn with `App::snapshot_timer` — see that type's own doc
 /// comment) — called once per message batch that mutated the ACTIVE
 /// document's journal, from `app::update`'s wrapper. No `Effects` involved

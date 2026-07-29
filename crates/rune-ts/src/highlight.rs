@@ -116,7 +116,12 @@ impl Reparser {
     /// retained tree/source as they were: the failed attempt never partakes
     /// in a LATER call's diff, so one slow parse degrades that one call
     /// only, not every call after it.
-    pub fn highlight(&mut self, lang: &str, source: &str, budget: Duration) -> Option<HighlightResult> {
+    pub fn highlight(
+        &mut self,
+        lang: &str,
+        source: &str,
+        budget: Duration,
+    ) -> Option<HighlightResult> {
         let name = lang::resolve(lang)?;
         let (language, query) = registry().get(name)?;
 
@@ -181,7 +186,11 @@ fn parse(
 /// Walks `tree`'s query captures into painter-ordered, scope-resolved spans
 /// — the tail half of both [`highlight`] and [`Reparser::highlight`], once
 /// each has its own `Tree` (a fresh one or an incrementally reparsed one).
-fn spans_from_tree(tree: &tree_sitter::Tree, query: &tree_sitter::Query, bytes: &[u8]) -> HighlightResult {
+fn spans_from_tree(
+    tree: &tree_sitter::Tree,
+    query: &tree_sitter::Query,
+    bytes: &[u8],
+) -> HighlightResult {
     let mut cursor = QueryCursor::new();
     let mut captures = cursor.captures(query, tree.root_node(), bytes);
     let mut spans: Vec<(Range<usize>, ScopeId, usize)> = Vec::new();
