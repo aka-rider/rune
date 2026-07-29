@@ -11,8 +11,9 @@
 
 use std::process::Command as ProcessCommand;
 
+use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_nav::{Anchor, DefRole, Destination, Ref, RefKind, Target, UseRole};
+use rune_nav::{Anchor, AnchorRole, DefRole, Destination, Ref, RefKind, Target, UseRole};
 
 use crate::app::{App, StatusSource};
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
@@ -42,7 +43,13 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
         .and_then(|p| p.parent())
         .map(std::path::Path::to_path_buf);
     let root = app.root.clone();
-    let destination = rune_nav::resolve(app.vfs.as_ref(), &target, doc_dir.as_deref(), &root);
+    let destination = rune_nav::resolve(
+        app.vfs.as_ref(),
+        &target,
+        doc_dir.as_deref(),
+        &root,
+        rune_md::catalogue::NAME_RESOLUTION_EXTENSION,
+    );
 
     match destination {
         Destination::Url(url) => effects.cmds.push(open_external_cmd(url)),
@@ -71,11 +78,12 @@ fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
 
 /// `Target::SameDoc` never touches `resolve`/the filesystem (plan WP5.S5):
 /// the anchor is searched for directly in the ACTIVE document's own
-/// catalogue.
+/// catalogue (`Anchor::Named`) or its buffer (`Anchor::Line`).
 fn follow_same_doc(app: &mut App, anchor: &Anchor) {
-    let Some(offset) = heading_def_offset(&app.active_doc().catalogue, anchor) else {
+    let doc = app.active_doc();
+    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
         app.set_status(
-            format!("no heading matching \"{}\"", anchor_name(anchor)),
+            format!("no match for anchor \"{}\"", anchor_label(anchor)),
             StatusSource::Other,
         );
         return;
@@ -103,9 +111,9 @@ fn follow_location(app: &mut App, path: &std::path::Path, anchor: Option<Anchor>
     };
     doc.doc.sync_content(&doc.buffer);
     doc.catalogue = rune_md::catalogue::catalogue(doc.buffer.content(), doc.doc.blocks());
-    let Some(offset) = heading_def_offset(&doc.catalogue, &anchor) else {
+    let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, &anchor) else {
         app.set_status(
-            format!("no heading matching \"{}\"", anchor_name(&anchor)),
+            format!("no match for anchor \"{}\"", anchor_label(&anchor)),
             StatusSource::Other,
         );
         return;
@@ -116,23 +124,32 @@ fn follow_location(app: &mut App, path: &std::path::Path, anchor: Option<Anchor>
     doc.cursors = CursorSet::new(offset);
 }
 
-/// The byte offset of the heading `Def` in `catalogue` whose name satisfies
-/// `rune_nav::anchor_matches` against `anchor`, if any.
-fn heading_def_offset(catalogue: &[Ref], anchor: &Anchor) -> Option<usize> {
-    let name = anchor_name(anchor);
-    catalogue.iter().find_map(|r| match &r.kind {
-        RefKind::Def {
-            role: DefRole::Heading(_),
-            name: def_name,
-        } if rune_nav::anchor_matches(name, def_name) => Some(r.site.start),
-        _ => None,
-    })
+/// The byte offset `anchor` refers to: a `Named` anchor is name-based and
+/// is searched for against `catalogue`'s heading `Def`s via
+/// `rune_nav::anchor_matches`; a `Line` anchor is positional — its
+/// (1-based) number converts directly to the start of that line in
+/// `buffer` and never touches the catalogue at all, so its number can
+/// never be silently discarded the way a name-only lookup would force.
+fn anchor_offset(catalogue: &[Ref], buffer: &Buffer, anchor: &Anchor) -> Option<usize> {
+    match anchor {
+        Anchor::Named {
+            role: AnchorRole::Heading,
+            name,
+        } => catalogue.iter().find_map(|r| match &r.kind {
+            RefKind::Def {
+                role: DefRole::Heading(_),
+                name: def_name,
+            } if rune_nav::anchor_matches(name, def_name) => Some(r.site.start),
+            _ => None,
+        }),
+        Anchor::Line(n) => Some(buffer.line_start(n.saturating_sub(1) as usize)),
+    }
 }
 
-fn anchor_name(anchor: &Anchor) -> &str {
+fn anchor_label(anchor: &Anchor) -> String {
     match anchor {
-        Anchor::Heading(name) | Anchor::Block(name) => name,
-        Anchor::Line(_) => "",
+        Anchor::Named { name, .. } => name.clone(),
+        Anchor::Line(n) => format!("line {n}"),
     }
 }
 
@@ -144,7 +161,7 @@ fn describe_target(target: &Target) -> String {
         Target::Url(u) => u.clone(),
         Target::Path { path, .. } => path.clone(),
         Target::Name { name, .. } => name.clone(),
-        Target::SameDoc(anchor) => anchor_name(anchor).to_string(),
+        Target::SameDoc(anchor) => anchor_label(anchor),
     }
 }
 

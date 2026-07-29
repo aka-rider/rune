@@ -7,7 +7,21 @@
 
 use crate::element::block::{Block, HeadingM};
 use crate::element::inline::Inline;
-use rune_nav::{Anchor, DefRole, Ref, RefKind, Target, UseRole};
+use rune_nav::{Anchor, AnchorRole, DefRole, Ref, RefKind, Target, UseRole};
+
+/// The extension `rune_nav::resolve` appends to an extension-less
+/// `Target::Name` candidate — this producer's resolution policy (plan
+/// WP12.S1): rune-nav owns no file-type opinion of its own, so the
+/// producer supplies it.
+pub const NAME_RESOLUTION_EXTENSION: &str = "md";
+
+/// Build a name-based `Anchor` from a markdown heading fragment.
+fn heading_anchor(name: String) -> Anchor {
+    Anchor::Named {
+        role: AnchorRole::Heading,
+        name,
+    }
+}
 
 /// Walk `blocks` in document order, recursing into every inline child, and
 /// return every navigable `Ref` found, sorted by `site.start`.
@@ -98,15 +112,15 @@ fn walk_inline(content: &str, inline: &Inline, out: &mut Vec<Ref>) {
 /// anything else is a path, with a trailing `#fragment` split off.
 fn classify_link_url(url: &str) -> Target {
     if let Some(rest) = url.strip_prefix('#') {
-        return Target::SameDoc(Anchor::Heading(rest.to_string()));
+        return Target::SameDoc(heading_anchor(rest.to_string()));
     }
-    if rune_nav::is_external(url) {
-        return Target::Url(url.to_string());
+    if let Some(approved) = rune_nav::is_external(url) {
+        return Target::Url(approved);
     }
     match url.split_once('#') {
         Some((path, fragment)) => Target::Path {
             path: path.to_string(),
-            anchor: Some(Anchor::Heading(fragment.to_string())),
+            anchor: Some(heading_anchor(fragment.to_string())),
         },
         None => Target::Path {
             path: url.to_string(),
@@ -122,7 +136,7 @@ fn split_wikilink_target(target: &str) -> (String, Option<Anchor>) {
     match target.rfind('#') {
         Some(idx) => (
             target[..idx].to_string(),
-            Some(Anchor::Heading(target[idx + 1..].to_string())),
+            Some(heading_anchor(target[idx + 1..].to_string())),
         ),
         None => (target.to_string(), None),
     }
@@ -221,7 +235,7 @@ mod tests {
             refs[0].kind,
             RefKind::Use {
                 role: UseRole::Link,
-                target: Target::SameDoc(Anchor::Heading("Setup".to_string())),
+                target: Target::SameDoc(heading_anchor("Setup".to_string())),
             }
         );
     }
@@ -236,7 +250,7 @@ mod tests {
                 role: UseRole::Link,
                 target: Target::Name {
                     name: "note".to_string(),
-                    anchor: Some(Anchor::Heading("Setup".to_string())),
+                    anchor: Some(heading_anchor("Setup".to_string())),
                 },
             }
         );
