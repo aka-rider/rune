@@ -31,7 +31,7 @@ use crate::sync::{self, SyncKind, SyncState, Version};
 /// A `documents.path` of `""` (untitled/scratch/chat) has nothing on disk
 /// to probe and degrades to a pure [`sync::sync`]. A target that has gone
 /// missing surfaces [`Error::NotFound`] — the workspace layer's
-/// deleted-guard trigger (WP5). Port of `probe.go:38-102`.
+/// deleted-guard trigger (WP5). Port of `probe.go`.
 pub fn probe(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -96,7 +96,7 @@ pub fn probe(
     if state.kind == SyncKind::Clean {
         // Auto-adopt only when there is something to heal: stacking a fresh
         // 'resolve' adoption on every clean probe tick would grow
-        // observations/supersedes unboundedly (probe.go:80-100).
+        // observations/supersedes unboundedly (probe.go).
         let should_adopt = retry::with_retry(conn, |tx| {
             let cur = observation::saved_obs_for(tx, session_id, doc_id)?;
             Ok::<bool, Error>(match cur {

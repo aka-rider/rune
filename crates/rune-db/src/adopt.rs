@@ -21,7 +21,7 @@ use crate::retry;
 /// this directly inside its own save tx (observation + saved_obs + re-Bind
 /// must commit atomically together there); [`record_adoption`] below wraps
 /// it in its own transaction for standalone callers. Port of
-/// `adopt.go:101-150` (`recordAdoptionTx`).
+/// `adopt.go` (`recordAdoptionTx`).
 pub(crate) fn record_adoption_tx(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -85,7 +85,7 @@ pub(crate) fn record_adoption_tx(
 /// The shared one-tx primitive behind every STANDALONE path that moves
 /// `saved_obs` to a newly-inserted observation — [`adopt_equal`],
 /// [`resolve_adopt`], and `load::load`'s own first-sighting/heal-adopt
-/// cases. Port of `adopt.go:152-177` (`recordAdoption`).
+/// cases. Port of `adopt.go` (`recordAdoption`).
 pub(crate) fn record_adoption(
     conn: &mut Connection,
     doc_id: i64,
@@ -106,7 +106,7 @@ pub(crate) fn record_adoption(
 /// observation is inserted, correlated to `head_seq` (making it
 /// ancestor-eligible, unlike the bare sighting it promotes), and
 /// `saved_obs` advances to it. The crash-between-swap-and-ack recovery
-/// path — never used for an ordinary divergence. Port of `adopt.go:179-198`
+/// path — never used for an ordinary divergence. Port of `adopt.go`
 /// (`AdoptEqual`).
 pub fn adopt_equal(
     conn: &mut Connection,
@@ -138,7 +138,7 @@ pub fn adopt_equal(
 /// it), and advances `saved_obs` to it. Undo past `edit_seq` moves the
 /// journal position below this resolve observation, so `ancestor_at`
 /// automatically stops finding it and `sync` reports `Diverged` again — the
-/// guard re-raises with no bespoke unwind logic. Port of `adopt.go:9-31`
+/// guard re-raises with no bespoke unwind logic. Port of `adopt.go`
 /// (`ResolveAdopt`).
 pub fn resolve_adopt(
     conn: &mut Connection,
@@ -174,7 +174,7 @@ pub fn resolve_adopt(
 /// is not itself an `origin='resolve'` row — abandon unwinds a RESOLUTION
 /// and nothing else; deleting a genuine `'save'`/`'load'` baseline would
 /// destroy real observation history. A doc with no `saved_obs` at all is a
-/// safe no-op. Port of `adopt.go:33-99` (`ResolveAbandon`).
+/// safe no-op. Port of `adopt.go` (`ResolveAbandon`).
 pub fn resolve_abandon(conn: &mut Connection, session_id: i64, doc_id: i64) -> Result<(), Error> {
     retry::with_retry(conn, |tx| {
         let current: Option<i64> = tx

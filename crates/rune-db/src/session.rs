@@ -202,7 +202,7 @@ pub(crate) fn format_rfc3339_nanos(t: SystemTime) -> String {
 /// check than a lenient one. Returns `None` on any deviation (wrong length,
 /// non-numeric field, out-of-range component) rather than panicking — used
 /// by `journal::append_edit`'s coalescing elapsed-time check
-/// (`journal.go:106-108`), where a parse failure just means "don't
+/// (`journal.go`), where a parse failure just means "don't
 /// coalesce", not a hard error.
 pub(crate) fn parse_rfc3339_nanos(s: &str) -> Option<SystemTime> {
     if s.len() != 30 || s.as_bytes().get(29) != Some(&b'Z') {

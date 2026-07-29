@@ -28,7 +28,7 @@ use crate::sync::SyncState;
 /// The outcome of [`load`]: the raw disk bytes, the journal-reconstructed
 /// content (identical to `disk_content` when the document has no history),
 /// and the [`SyncState`] that follows from recording this sighting. Port of
-/// `observation.go:189-205` (`LoadResult`).
+/// `observation.go` (`LoadResult`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadResult {
     pub doc_id: i64,
@@ -66,7 +66,7 @@ pub struct LoadResult {
 }
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
-/// `session_id`. Port of `snapshot.go:240-260` (`HasHistory`).
+/// `session_id`. Port of `snapshot.go` (`HasHistory`).
 pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<bool, Error> {
     tx.query_row(
         "SELECT EXISTS( \
@@ -84,7 +84,7 @@ pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 /// snapshots together — carries the highest seq. Ties break by higher
 /// `session_id`. `None` means `doc_id` has no session-scoped activity
 /// recorded at all. Shared by [`find_inheritable_draft`] and
-/// `reaper::session_is_reapable`. Port of `load.go:202-235`
+/// `reaper::session_is_reapable`. Port of `load.go`
 /// (`mostRecentSessionForDoc`).
 pub(crate) fn most_recent_session_for_doc(
     tx: &Transaction<'_>,
@@ -128,7 +128,7 @@ fn is_session_alive(
 /// disk content unchanged for every "nothing to inherit" case: no other
 /// session ever touched this doc, the most recent one is still alive, disk
 /// moved since that dead session's own last-known baseline, or its content
-/// happens to hash-equal disk anyway. Port of `load.go:237-302`
+/// happens to hash-equal disk anyway. Port of `load.go`
 /// (`findInheritableDraft`).
 fn find_inheritable_draft(
     conn: &mut Connection,
@@ -186,7 +186,7 @@ fn find_inheritable_draft(
 
 /// Reads `path` fresh from disk, resolves its document identity, records
 /// the sighting, and returns everything the caller needs to decide how to
-/// display it. Port of `load.go:38-200` (`Load`). `liveness_check` is
+/// display it. Port of `load.go` (`Load`). `liveness_check` is
 /// threaded in per-call (this `Store`'s injected liveness function) rather
 /// than read from shared state — `OpKind::Load` carries it.
 pub fn load(

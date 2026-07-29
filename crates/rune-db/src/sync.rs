@@ -12,7 +12,7 @@ use crate::observation::{self, ObsId};
 
 /// A comparable fact for the Sync/Probe three-way comparison: a content
 /// hash, optionally correlated to the [`crate::observation::Observation`]
-/// it came from. Port of `observation.go:119-128` (`Version`) — the Go
+/// it came from. Port of `observation.go` (`Version`) — the Go
 /// struct's out-of-band `Valid` bit is instead modeled as `Option<Version>`
 /// at the call site (this crate's own "Options for absent facts" rule).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub struct Version {
 }
 
 /// Discriminates the outcome of comparing buffer/saved/ancestor state for a
-/// document. Port of `observation.go:130-147` (`SyncKind`).
+/// document. Port of `observation.go` (`SyncKind`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncKind {
     /// The buffer matches what we believe is on disk (or there is no disk
@@ -41,7 +41,7 @@ pub enum SyncKind {
 
 /// The result of comparing three hashes for a document: the buffer head
 /// (`ours`), the freshest disk knowledge (`theirs`), and the derived
-/// 3-way-merge ancestor. Port of `observation.go:149-155` (`SyncState`).
+/// 3-way-merge ancestor. Port of `observation.go` (`SyncState`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SyncState {
     pub kind: SyncKind,
@@ -51,7 +51,7 @@ pub struct SyncState {
 }
 
 /// The SHA-256 of the empty string — the "nothing to save yet" baseline for
-/// a document with no disk fact at all. Port of `sync.go:149-152`
+/// a document with no disk fact at all. Port of `sync.go`
 /// (`emptyHash`).
 fn empty_hash() -> &'static str {
     use std::sync::OnceLock;
@@ -59,7 +59,7 @@ fn empty_hash() -> &'static str {
     EMPTY.get_or_init(|| observation::hash_bytes(b""))
 }
 
-/// The Conflict lifecycle comparison. Port of `sync.go:154-189`
+/// The Conflict lifecycle comparison. Port of `sync.go`
 /// (`classifySync`).
 pub fn classify_sync(
     ancestor: Option<&Version>,
@@ -90,7 +90,7 @@ pub fn classify_sync(
 
 /// Compares the journal reconstruction, the newest recorded observation
 /// (ANY origin, ANY session — "theirs"), and the derived ancestor for
-/// `doc_id`, AS SEEN BY `session_id`. Port of `sync.go:69-79` (`Sync`).
+/// `doc_id`, AS SEEN BY `session_id`. Port of `sync.go` (`Sync`).
 pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncState, Error> {
     let newest = observation::newest_observation(tx, doc_id)?;
     let theirs = newest.map(|o| Version {
@@ -102,8 +102,8 @@ pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncSt
 
 /// The ours/ancestor reconstruction shared by [`sync`] (theirs = the newest
 /// recorded observation) and `probe::probe` (theirs = a just-recorded fresh
-/// observation). Port of `sync.go:81-147` (`syncWithTheirs`), including the
-/// undo-unwind override (`sync.go:105-144`): a `DiskAhead` classification
+/// observation). Port of `sync.go` (`syncWithTheirs`), including the
+/// undo-unwind override (`sync.go`): a `DiskAhead` classification
 /// upgrades to `Diverged` when this session has recorded ANY correlated
 /// observation past `pos` — a resolution the buffer has since been undone
 /// past.
@@ -151,7 +151,7 @@ pub fn sync_with_theirs(
 /// Dirty ⟺ ours differs from ancestor (`BufferAhead` or `Diverged`) — NEVER
 /// `kind != Clean`, which would also flag `DiskAhead` (a pure external
 /// change with nothing of the user's unsaved) as phantom-dirty. Port of
-/// `dirty.go:5-17` (`IsDirty`).
+/// `dirty.go` (`IsDirty`).
 pub fn is_dirty(kind: SyncKind) -> bool {
     matches!(kind, SyncKind::BufferAhead | SyncKind::Diverged)
 }
@@ -253,7 +253,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Undo-unwind override (`sync.go:105-144`): a resolve observation
+    /// Undo-unwind override (`sync.go`): a resolve observation
     /// correlates `theirs` to the edit seq that resolved it. Undoing the
     /// buffer back BELOW that seq makes `ancestor_at` recompute an OLDER
     /// ancestor the wound-back buffer coincidentally matches — plain

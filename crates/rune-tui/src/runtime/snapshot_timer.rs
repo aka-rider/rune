@@ -102,6 +102,8 @@ impl SnapshotTimer {
             if !due.is_empty() {
                 if let Some(tx) = state.tx.clone() {
                     drop(state);
+                    // A closed `tx` means the main loop already exited —
+                    // nothing left to schedule a snapshot for.
                     for (id, generation) in due {
                         let _ = tx.send(Msg::SnapshotDue { id, generation });
                     }

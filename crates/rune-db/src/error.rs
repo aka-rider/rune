@@ -46,11 +46,11 @@ pub enum Error {
     /// surface a corrupt payload as an error, NEVER silently fold it into
     /// `ok=false` ("nothing to undo/redo") — a corrupt row is a Tolerable
     /// halt with the buffer kept, not an empty journal
-    /// (`journal.go:203-206`).
+    /// (`journal.go`).
     CorruptPayload(String),
     /// `get_blob` decompressed a row whose SHA-256 does not match its own
     /// `hash` key — blob rot / bit-flip detection (port of
-    /// `snapshot.go:67-70`). Surfaced, never silently returned as if it were
+    /// `snapshot.go`). Surfaced, never silently returned as if it were
     /// the original content.
     BlobHashMismatch { hash: String, got: String },
     /// A replay (`snapshot::recover_document`) attempted to apply an
@@ -62,7 +62,7 @@ pub enum Error {
     ReplayFailed(String),
     /// A lookup that Go wraps `sql.ErrNoRows` into a genuine error for
     /// (rather than a silent zero value) — e.g. `getObservation`
-    /// (`observation.go:315-328`) on an id with no row. Never used for a
+    /// (`observation.go`) on an id with no row. Never used for a
     /// legitimate "not found" outcome a caller treats as ordinary control
     /// flow (those stay `Option`/`bool`, per this crate's own
     /// Options-for-absent-facts rule) — only for a caller-supplied

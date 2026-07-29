@@ -8,7 +8,7 @@
 //! aligned to its BUFFER `range` (delimiters were dropped), so a
 //! `Substituted` span's `range` cannot be narrowed when the greedy break
 //! lands inside it — but its `text` and `cell_map` CAN be, and are: this is
-//! Go's actual behavior (`wrap_map.go:411-424`), not the "include whole,
+//! Go's actual behavior (`wrap_map.go`), not the "include whole,
 //! never split" reading its own comment there suggests. The comment
 //! describes why `BufferStart`/`BufferEnd` stay untouched; the code two
 //! lines below it still does `s.Text[localStart:localEnd]` and
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn long_line_breaks_before_width_limit_at_the_last_space_seen() {
-        // Go's greedy loop (wrap_map.go:316-343) always backs off to the
+        // Go's greedy loop (wrap_map.go) always backs off to the
         // last space it has seen so far whenever more text remains past the
         // width-fitting cutoff — even when the width-fitting cutoff itself
         // lands cleanly at a word boundary. width=11 fits "hello world"

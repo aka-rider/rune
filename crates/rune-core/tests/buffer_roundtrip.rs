@@ -178,7 +178,7 @@ proptest! {
         // exactly at another edit's boundary produces AppliedEdit.start
         // ties in the post-edit coordinate space (even when the *original*
         // starts differ), and `Reapply`/`reapply`'s ascending start-only
-        // sort (`edit_primitives.go:91-93`) has no tie-break to order them
+        // sort (`edit_primitives.go`) has no tie-break to order them
         // correctly. The real pipeline never produces touching edits in one
         // batch: `CursorSet::merge` coalesces any two cursors whose
         // selections touch into one before edits are ever generated, so

@@ -236,6 +236,12 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
         let line_start = content_line.start;
         let line_len = content_line.len();
         let spans = row_spans(line_start, line_len, &row1_runs);
+        // The returned pieces are discarded deliberately: this call exists
+        // to register the claim in `out.accounted` so no OTHER producer can
+        // re-claim these bytes, not to clip `spans` — the row layout above
+        // already owns this line's content in full, and `claim_visible`'s
+        // own `assert_invariant` (strict-invariants builds) is what catches
+        // an actual overlap, the same accounting failure `hide_range` guards.
         let _ = claim_visible(out.accounted, line, line_start, line_start + line_len);
         if let Some(bucket) = out.spans.get_mut(line) {
             bucket.extend(spans);

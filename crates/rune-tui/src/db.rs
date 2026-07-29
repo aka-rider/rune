@@ -47,7 +47,7 @@ enum Sink {
 /// Adapts every `DbEvent` the `rune-db` writer thread posts into this
 /// crate's `Msg` channel. Constructed once at bootstrap (`rune-cli::main`),
 /// BEFORE `runtime::run` creates its own `Sender<Msg>` (plan Gotchas: "the
-/// runtime never exposes its `Sender<Msg>`" — `runtime.rs:66` creates it
+/// runtime never exposes its `Sender<Msg>`" — `runtime.rs` creates it
 /// privately) — `Store::open`/`open_in_memory` (also bootstrap-time, so
 /// hydration, WP5.S4, can finish before the TUI ever draws a frame) take
 /// their `on_event` callback fixed at construction, with no way to swap it
@@ -219,7 +219,7 @@ pub struct DocDb {
     pub pending_seq_acks: VecDeque<usize>,
     /// Bumped on every journal mutation; the debounce token for the 2s
     /// snapshot-autosave timer (plan WP5.S6, port of
-    /// `workspace_timers.go:11`) — a `Msg::SnapshotDue` arriving with a
+    /// `workspace_timers.go`) — a `Msg::SnapshotDue` arriving with a
     /// stale generation means a later edit already superseded it, so it's
     /// ignored.
     pub snapshot_generation: u32,

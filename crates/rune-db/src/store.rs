@@ -4,7 +4,7 @@
 //! escapes the crate (plan decision 11); domain verbs land here as WP3+
 //! grows `OpKind` and the reader's request enum.
 //!
-//! # Open ladder (port of `store.go:199-231`)
+//! # Open ladder (port of `store.go`)
 //!
 //! 1. Open `path` directly (creating it if missing).
 //! 2. On failure: `mkdir_all(path.parent())`, retry step 1.
@@ -111,7 +111,7 @@ impl Store {
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         // Best-effort dead-session reaper (plan WP4.S6): never blocks open
         // — a failure here is swallowed, not surfaced, exactly like Go's
-        // `openStoreAt` (`liveness.go:93` doc comment).
+        // `openStoreAt` (`liveness.go` doc comment).
         let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
         // One startup blob-sweep batch (WP6.S1), after the reaper — best
         // effort, never blocks open.
@@ -141,7 +141,7 @@ impl Store {
 
         // Best-effort dead-session reaper (plan WP4.S6): never blocks open
         // — a failure here is swallowed, not surfaced, exactly like Go's
-        // `openStoreAt` (`liveness.go:93` doc comment).
+        // `openStoreAt` (`liveness.go` doc comment).
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
         // One startup blob-sweep batch (WP6.S1), after the reaper — best
@@ -229,7 +229,7 @@ impl Store {
     /// produced arrives asynchronously as `DbEvent::Ok.result` on the
     /// `on_event` callback this `Store` was constructed with; this method
     /// only returns the op id used to correlate that completion. Port of
-    /// `journal.go:39` (`AppendEdit`) — see `journal::append_edit` for the
+    /// `journal.go` (`AppendEdit`) — see `journal::append_edit` for the
     /// transaction itself.
     pub fn append_edit(
         &self,
@@ -252,7 +252,7 @@ impl Store {
     /// Enqueues a `MoveUndoPos` op committing this session's undo position
     /// for `doc_id` to `pos` — call only after the corresponding buffer
     /// edit has already succeeded (§1.4.8; see `journal::move_undo_pos`).
-    /// Port of `journal.go:303` (`MoveUndoPos`).
+    /// Port of `journal.go` (`MoveUndoPos`).
     pub fn move_undo_pos(&self, doc_id: i64, pos: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
@@ -262,7 +262,7 @@ impl Store {
     }
 
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
-    /// `doc_id` at journal position `seq`. Port of `snapshot.go:83`
+    /// `doc_id` at journal position `seq`. Port of `snapshot.go`
     /// (`CreateSnapshot`) — see `snapshot::create_snapshot` for the
     /// transaction itself.
     pub fn create_snapshot(&self, doc_id: i64, content: &str, seq: i64) -> Result<u64, Error> {
@@ -277,7 +277,7 @@ impl Store {
     }
 
     /// Enqueues a `Probe` op refreshing `doc_id`'s disk fact. Port of
-    /// `probe.go:38` (`Probe`) — see `probe::probe` for the transaction
+    /// `probe.go` (`Probe`) — see `probe::probe` for the transaction
     /// sequence. The resulting `SyncState` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::Sync`).
     pub fn probe(&self, doc_id: i64) -> Result<u64, Error> {
@@ -376,7 +376,7 @@ impl Store {
     /// Enqueues a `Load` op reading `path` fresh from disk. This `Store`'s
     /// currently-installed liveness check (`set_liveness_check`) travels
     /// with the op so the writer thread never needs to touch `Store`'s own
-    /// mutex. Port of `load.go:38` (`Load`).
+    /// mutex. Port of `load.go` (`Load`).
     pub fn load(&self, path: &Path) -> Result<u64, Error> {
         let now = self.now();
         let liveness_check = self.liveness_check();
@@ -389,7 +389,7 @@ impl Store {
     }
 
     /// Enqueues a `ResolveAdopt` op — a user-driven [D]iscard/[M]erge
-    /// resolution. Port of `adopt.go:20` (`ResolveAdopt`).
+    /// resolution. Port of `adopt.go` (`ResolveAdopt`).
     pub fn resolve_adopt(&self, doc_id: i64, obs: ObsId, edit_seq: i64) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::ResolveAdopt {
@@ -402,7 +402,7 @@ impl Store {
     }
 
     /// Enqueues a `ResolveAbandon` op — the Esc-abort-out-of-the-merge-
-    /// resolver counterpart to `resolve_adopt`. Port of `adopt.go:47`
+    /// resolver counterpart to `resolve_adopt`. Port of `adopt.go`
     /// (`ResolveAbandon`).
     pub fn resolve_abandon(&self, doc_id: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::ResolveAbandon {

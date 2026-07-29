@@ -183,7 +183,7 @@ pub fn delete_left(app: &mut App, id: DocumentId) {
 /// Accepted trade (decision 5 / risk note): this leaves an insert+delete
 /// pair in the undo journal, so ⌘Z after a chord restores the retracted
 /// space. Popping the just-journaled insert instead would desynchronise
-/// the recovery-store replica, since `db::append_edit` (`db.rs:247-277`)
+/// the recovery-store replica, since `db::append_edit` (`db.rs`)
 /// has already enqueued it via `commit_edit_batch` above.
 pub(crate) fn retract_space(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };

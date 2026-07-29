@@ -8,8 +8,8 @@
 //! local-mirror approach ... keeps rune-core dependency-free by default") —
 //! these mirror structs, not `serde` derives on the domain types themselves,
 //! carry the `Serialize`/`Deserialize` impls. Field names are renamed to
-//! match Go's unadorned `encoding/json` output (`buffer.go:18-30`,
-//! `cursor.go:9-14` have no json tags, so Go serializes the bare
+//! match Go's unadorned `encoding/json` output (`buffer.go`,
+//! `cursor.go` have no json tags, so Go serializes the bare
 //! capitalized field names) — a Rust-written row and a Go-written row of the
 //! same shape read identically under `sqlite3 rune-v1.db 'SELECT edits FROM
 //! events'`.
@@ -22,7 +22,7 @@ use rune_core::cursor::Cursor;
 use crate::Error;
 
 /// Mirrors `rune_core::buffer::AppliedEdit` (port of Go's
-/// `buffer.AppliedEdit`, `buffer.go:25-30`).
+/// `buffer.AppliedEdit`, `buffer.go`).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EditPayload {
     #[serde(rename = "Start")]
@@ -58,7 +58,7 @@ impl From<EditPayload> for AppliedEdit {
 }
 
 /// Mirrors `rune_core::cursor::Cursor` (port of Go's `cursor.Cursor`,
-/// `cursor.go:9-14`).
+/// `cursor.go`).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct CursorPayload {
     #[serde(rename = "Position")]

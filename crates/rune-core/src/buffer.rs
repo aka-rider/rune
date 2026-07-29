@@ -25,7 +25,7 @@ use crate::coords::BufferPoint;
 use std::fmt;
 
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
-/// Port of `buffer.go:18-23`.
+/// Port of `buffer.go`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
     pub start: usize,
@@ -34,7 +34,7 @@ pub struct Edit {
 }
 
 /// The edit actually applied, in POST-edit coordinates, with the displaced
-/// text kept for inversion (undo). Port of `buffer.go:25-30`.
+/// text kept for inversion (undo). Port of `buffer.go`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppliedEdit {
     pub start: usize,
@@ -45,13 +45,13 @@ pub struct AppliedEdit {
 
 /// Why an edit batch was rejected. `ApplyEdits` never panics — every
 /// rejected edit surfaces one of these instead (§1.3). Port of the error
-/// cases in `buffer.go:115-137`.
+/// cases in `buffer.go`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BufferError {
     /// `Buffer::from_bytes` was given bytes that are not valid UTF-8.
     InvalidUtf8,
     /// The edit batch was not sorted descending by `start` and
-    /// non-overlapping (`buffer.go:94-101`).
+    /// non-overlapping (`buffer.go`).
     EditsNotSortedOrOverlapping,
     /// An edit's range does not fit the live buffer.
     OutOfBounds {
@@ -96,12 +96,12 @@ impl std::error::Error for BufferError {}
 /// An immutable snapshot of document content. Every mutation returns a new
 /// `Buffer`; the receiver is untouched (fuzz-proven in
 /// `tests/buffer_roundtrip.rs`, port of `FuzzBufferSnapshotImmutability`).
-/// Port of `buffer.go:32-36`.
+/// Port of `buffer.go`.
 ///
 /// Invariant: `line_starts` is never empty and `line_starts[0] == 0` —
 /// every method below assumes it (`line_start`/`line_end`/`find_line`/
 /// `update_line_starts` all read `line_starts` under this assumption). Go's
-/// `getLineStarts()` (`lineindex.go:15-20`) nil-guards a zero-valued
+/// `getLineStarts()` (`lineindex.go`) nil-guards a zero-valued
 /// `Buffer{}` back to `[0]` for exactly this reason. A derived
 /// `#[derive(Default)]` would produce `line_starts: vec![]` instead — an
 /// unrepresentable-by-construction fix: `Buffer` gets a manual `Default`
@@ -121,7 +121,7 @@ impl Default for Buffer {
 }
 
 impl Buffer {
-    /// Port of `buffer.go:38-44`.
+    /// Port of `buffer.go`.
     pub fn new(content: impl Into<String>) -> Buffer {
         let content = content.into();
         let line_starts = compute_line_starts(&content);
@@ -133,7 +133,7 @@ impl Buffer {
     }
 
     /// Refuses non-UTF-8 bytes — the load-time refusal point. Port of
-    /// `buffer.go:46-51`.
+    /// `buffer.go`.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffer, BufferError> {
         let content = String::from_utf8(bytes).map_err(|_| BufferError::InvalidUtf8)?;
         Ok(Buffer::new(content))
@@ -192,11 +192,11 @@ impl Buffer {
     /// the range is valid. Surfaces `apply_edits`' error instead of
     /// silently returning the receiver unchanged — a caller that ignores
     /// the rejection can no longer mistake "nothing happened" for success
-    /// (§1.3). Port of `buffer.go:81-92`, EXCEPT the start/end
+    /// (§1.3). Port of `buffer.go`, EXCEPT the start/end
     /// swap-if-reversed below: Go's `Buffer.Replace` has no such swap (it
     /// passes `start`/`end` straight through to `ApplyEdits`, so a reversed
     /// range is simply rejected as out-of-bounds) — the swap is ported from
-    /// `textedit.ReplaceRange` (`edit_primitives.go:28-30`), which this
+    /// `textedit.ReplaceRange` (`edit_primitives.go`), which this
     /// method's actual callers (`insert`/`delete`, and arbitrary start/end
     /// from tests) rely on.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> Result<Buffer, BufferError> {
@@ -218,7 +218,7 @@ impl Buffer {
     /// Apply a batch of edits atomically. `edits` must already be sorted
     /// descending by `start` and non-overlapping (see
     /// `clone_and_sort_edits_descending`) — validated, never assumed. Port
-    /// of `buffer.go:115-181`.
+    /// of `buffer.go`.
     pub fn apply_edits(&self, edits: &[Edit]) -> Result<(Buffer, Vec<AppliedEdit>), BufferError> {
         if edits.is_empty() {
             return Ok((self.clone(), Vec::new()));
@@ -412,7 +412,7 @@ impl Buffer {
         o
     }
 
-    /// Port of `lineindex.go:22-49`: an incremental `line_starts` rebuild
+    /// Port of `lineindex.go`: an incremental `line_starts` rebuild
     /// scanning `edits` right-to-left (descending `start`), so each edit
     /// only touches the portion of `line_starts` it actually displaces.
     fn update_line_starts(&self, edits: &[Edit]) -> Vec<usize> {
@@ -467,7 +467,7 @@ pub(crate) fn duplicate_applied_start(applied: &[AppliedEdit]) -> Option<usize> 
         .and_then(|w| w.first().copied())
 }
 
-/// Port of `buffer.go:94-101`.
+/// Port of `buffer.go`.
 pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     edits.windows(2).all(|w| match (w.first(), w.get(1)) {
         (Some(a), Some(b)) => a.start >= b.end,
@@ -475,7 +475,7 @@ pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     })
 }
 
-/// Port of `buffer.go:103-113`. Rust's `sort_by` is stable (matches Go's
+/// Port of `buffer.go`. Rust's `sort_by` is stable (matches Go's
 /// `sort.Slice` intent, though Go's is not itself guaranteed stable — this
 /// is a strictly more deterministic tie-break, not a behavior change for
 /// any distinguishable `(start, end)` pair).
@@ -485,7 +485,7 @@ pub fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
     cloned
 }
 
-/// Port of `lineindex.go:5-13`.
+/// Port of `lineindex.go`.
 fn compute_line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in content.bytes().enumerate() {
@@ -511,7 +511,7 @@ fn assert_line_starts_invariant(line_starts: &[usize]) {
     });
 }
 
-/// Port of `lineindex.go:51-59`.
+/// Port of `lineindex.go`.
 fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {
     let mut starts = Vec::new();
     for (i, b) in text.bytes().enumerate() {
@@ -522,7 +522,7 @@ fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {
     starts
 }
 
-/// Port of `lineindex.go:61-69`: the line index `i` such that
+/// Port of `lineindex.go`: the line index `i` such that
 /// `starts[i] <= offset < starts[i+1]` (or the last line if `offset` is at
 /// or past the final line start).
 fn find_line(starts: &[usize], offset: usize) -> usize {

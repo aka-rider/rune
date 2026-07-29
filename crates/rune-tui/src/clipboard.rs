@@ -26,7 +26,7 @@ pub const OSC52_MAX_PAYLOAD_BYTES: usize = 100_000;
 
 /// Builds the OSC 52 "set system clipboard" escape sequence for `payload`:
 /// `ESC ] 5 2 ; c ; <base64> BEL` (plan Context "Clipboard": "exact Go
-/// parity", `commands_clipboard.go:13-25`, mediated through Bubble Tea's
+/// parity", `commands_clipboard.go`, mediated through Bubble Tea's
 /// `tea.SetClipboard` there — the `c` selector targets the system
 /// clipboard, not a primary/selection buffer). Pure and terminal-free: the
 /// caller (`commands::clipboard::copy`/`cut`) pushes the returned bytes into

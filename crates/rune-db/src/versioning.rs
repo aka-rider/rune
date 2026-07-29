@@ -48,6 +48,8 @@ use std::time::{Duration, SystemTime};
 
 use rusqlite::{Connection, OpenFlags};
 
+use crate::diag::background_note;
+
 /// The current schema version. Bump on any shape change (new table, column,
 /// index, or constraint) and never in place — see the module doc.
 pub const SCHEMA_VERSION: u32 = 1;
@@ -136,7 +138,9 @@ fn maybe_gc_one(path: &Path, is_alive: &dyn Fn(i64, &str) -> bool) {
     let sessions = match read_frozen_contract(path) {
         Ok(rows) => rows,
         Err(e) => {
-            eprintln!("rune-db: gc: leaving {name} (frozen contract query failed: {e})");
+            background_note(&format!(
+                "gc: leaving {name} (frozen contract query failed: {e})"
+            ));
             return;
         }
     };
@@ -177,10 +181,12 @@ fn delete_old_version_files(path: &Path, name: &str) {
     // gone and stop retrying it every launch).
     match std::fs::remove_file(path) {
         Ok(()) => {
-            eprintln!("rune-db: gc: deleted stale {name} (every recorded session is dead)");
+            background_note(&format!(
+                "gc: deleted stale {name} (every recorded session is dead)"
+            ));
         }
         Err(e) => {
-            eprintln!("rune-db: gc: failed to delete stale {name}: {e}");
+            background_note(&format!("gc: failed to delete stale {name}: {e}"));
         }
     }
     // Sidecars are best-effort cleanup only, ignored deliberately: the main

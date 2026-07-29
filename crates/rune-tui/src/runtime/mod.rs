@@ -69,7 +69,7 @@ pub enum Msg {
         generation: u32,
     },
     /// The 2s snapshot-autosave debounce timer (plan WP5.S6, port of
-    /// `workspace_timers.go:11`) — a stale generation (a later journal
+    /// `workspace_timers.go`) — a stale generation (a later journal
     /// mutation already rescheduled) is ignored.
     SnapshotDue {
         id: DocumentId,
@@ -406,6 +406,9 @@ fn apply(
 fn spawn_cmd(cmd: Cmd, tx: mpsc::Sender<Msg>, save_handles: &mut Vec<thread::JoinHandle<()>>) {
     let is_save = cmd.kind() == CmdKind::Save;
     let handle = thread::spawn(move || {
+        // Both sends below discard a closed-channel failure the same way
+        // `spawn_input_reader` does: `tx` only closes once the main loop
+        // has exited, so there is nothing left to notify either way.
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cmd.run())) {
             Ok(Some(msg)) => {
                 let _ = tx.send(msg);

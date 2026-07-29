@@ -269,8 +269,8 @@ fn read_only_blocks_typing_backspace_and_newline() {
 
 /// Regression for F1 (Go parity): `undo`/`redo` are deliberately NOT
 /// gated by `read_only` — Go's own `ApplyInverse`/`Reapply`
-/// (`edit_primitives.go:51,86`) bypass `m.readOnly` the same way
-/// `ReplaceRange` (`edit_primitives.go:25`) does not. A document that
+/// (`edit_primitives.go`) bypass `m.readOnly` the same way
+/// `ReplaceRange` (`edit_primitives.go`) does not. A document that
 /// became read-only after edits were already journaled (e.g. Go's Help
 /// view is generated fresh and never has journal history, but this
 /// property must hold regardless) must still let undo/redo walk that

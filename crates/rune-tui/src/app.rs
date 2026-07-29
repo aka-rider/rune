@@ -356,13 +356,12 @@ impl App {
         id
     }
 
-    /// Looks up `id` — `None` if it doesn't reference a live document
-    /// (never true today, since nothing removes a `documents` entry, but
-    /// once WP5 adds close this is exactly the shape a stale id from
-    /// `App::db_ops` racing a close must produce: a plain, honest "not
-    /// found" a caller can drop, never a silent write to some OTHER
-    /// document). Callers that specifically want the active document use
-    /// `active_doc`/`active_doc_mut` instead, which are infallible.
+    /// Looks up `id` — `None` if it doesn't reference a live document.
+    /// `workspace::close_now` removes entries, so this is exactly the shape
+    /// a stale id from `App::db_ops` racing a close must produce: a plain,
+    /// honest "not found" a caller can drop, never a silent write to some
+    /// OTHER document. Callers that specifically want the active document
+    /// use `active_doc`/`active_doc_mut` instead, which are infallible.
     pub fn doc(&self, id: DocumentId) -> Option<&Document> {
         self.documents.get(&id)
     }
@@ -411,9 +410,9 @@ impl App {
     /// `layout::geometry` would otherwise be asked to lay out a
     /// zero-by-something frame it never actually has to render).
     ///
-    /// Called as the first statement of `sync_view` below (`runtime.rs:189,
-    /// 216` call it immediately before every `render::draw` — verified this
-    /// session — so that's the one chokepoint no call site can forget) AND
+    /// Called as the first statement of `sync_view` below (the runtime
+    /// calls `sync_view` immediately before every `render::draw`, so that's
+    /// the one chokepoint no call site can forget) AND
     /// again from `Msg::Resize` itself, so tests that call `update` without
     /// a following `sync_view` still see a correctly-sized viewport;
     /// calling it twice in the same message batch is harmless (it's a pure

@@ -95,6 +95,9 @@ impl Vfs for Disk {
             .open(&temp)?;
 
         use std::io::Write;
+        // Best-effort cleanup of a never-published temp on a write failure:
+        // the destination file is untouched either way, so a failed remove
+        // here just leaks a scratch file (disk hygiene), never user bytes.
         temp_file.write_all(bytes).inspect_err(|_| {
             let _ = fs::remove_file(&temp);
         })?;

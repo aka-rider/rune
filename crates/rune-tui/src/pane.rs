@@ -103,7 +103,7 @@ pub(crate) fn focus_title(app: &mut App) {
 }
 
 /// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
-/// mirroring Go `footer.go:230-237`): the SAME chord pressed twice quits;
+/// mirroring Go `footer.go`): the SAME chord pressed twice quits;
 /// pressing a quit chord while a DIFFERENT one is pending re-arms with the
 /// new chord and a fresh generation, restarting the 2s window. `pub(crate)`
 /// — WP2 moved this out of `app.rs` (§1.6 budget); `handle_global_command`

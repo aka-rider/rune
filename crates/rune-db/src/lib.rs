@@ -33,6 +33,7 @@
 
 mod adopt;
 mod blob;
+mod diag;
 mod document;
 mod error;
 mod gc;
