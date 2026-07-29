@@ -158,3 +158,78 @@ fn caret_row_below_a_table_matches_wrap_to_display_of_its_wrap_row() {
          scroll_row {scroll_row}, editor top row {EDITOR_TOP_ROW})"
     );
 }
+
+/// A body row with MORE `|`-delimited cells than the table's own header
+/// count (2): comrak's own table parser silently drops the extra cells
+/// (Gotcha, `crates/rune-md/src/table/layout.rs`'s `col_widths` docs) —
+/// they contribute no rendered content at all — but the raw SOURCE line
+/// still carries all of them, so the row's raw byte length runs well past
+/// the substituted box text's own length.
+const RAGGED_ROW_TABLE: &str =
+    "| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 | a | b |\n\ntail\n";
+
+/// Regression for the `TABLE-ROW-WIDTH` fuzz catch (`crates/rune-fuzz/
+/// proptest-regressions/human_session.txt`, seed `cc 5f23e392...`):
+/// placing the caret inside a ragged row's DROPPED cells (bytes comrak's
+/// table parser never turned into a real column, past every visible cell
+/// the row's own box actually renders) used to fall through
+/// `place_caret`'s "caret sits past the last visible char" branch, which
+/// appended a synthetic one-cell-wide EOL cursor cell — making that ONE
+/// row a cell wider than the rest of its table group. The fix clamps a
+/// BOXED row's caret onto its own last cell instead of ever growing it.
+/// Cursor sits at the very end of the `Bob` row's raw source line (deep in
+/// the dropped `"| a | b |"` tail), the exact position the fuzz seed's
+/// typing landed on.
+///
+/// Measures the same quantity the fuzzer's own `TABLE-ROW-WIDTH` invariant
+/// does — each row's own `Cell::width` values, summed — via
+/// `render::build_rows` directly, NOT the backend terminal grid: a
+/// synthetic EOL cursor cell appended after a row's closing `│`/`┤` reads
+/// as ordinary editor-background padding on the terminal grid (indistinct
+/// from any other trailing space), so only the underlying cell count
+/// actually catches the regression.
+#[test]
+fn caret_inside_a_ragged_rows_dropped_cells_never_widens_that_rows_box() {
+    let cursor = RAGGED_ROW_TABLE
+        .find(" a | b |\n")
+        .map(|i| i + " a | b |".len())
+        .expect("fixture has the ragged row's dropped tail");
+    // `focused: false` forces the table's Decide-policy `RevealSm` to
+    // `Rendered` regardless of the cursor sitting inside its own lines
+    // (`DocMachine::sync_cursors`'s `RevealGrant::ForceRendered` root
+    // grant) — the same reason `table_render.rs`'s own `synced` helper
+    // always passes `focused: false` when checking Rendered content with
+    // the cursor inside a table. Matches the fuzz seed's own end state:
+    // that session's cursor sat inside the table too, yet the table
+    // stayed boxed there because a dirty-close guard modal (from the
+    // seed's `Ctrl+C`) made `App::sync_view` treat the editor as
+    // unfocused for that step, the same net effect.
+    let app = app_for(RAGGED_ROW_TABLE, cursor, false);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = rune_tui::render::build_rows(view, &app);
+
+    // Display rows 0..7: synthesised top border, header, separator,
+    // Alice, the synthesised inter-row border between Alice and Bob (two
+    // Body rows from different source lines), Bob (the ragged row),
+    // synthesised bottom border — the table sits at the very start of the
+    // document (`RAGGED_ROW_TABLE`), so these are the first 7 rows
+    // `build_rows` returns (`scroll_row` is 0).
+    let widths: Vec<usize> = rows
+        .iter()
+        .take(7)
+        .map(|row| row.iter().map(|c| c.width as usize).sum())
+        .collect();
+    let first = widths.first().copied().unwrap_or(0);
+    assert!(
+        widths.iter().all(|&w| w == first),
+        "every row in the table's own box must share the same summed cell \
+         width, got {widths:?}"
+    );
+
+    let buf = testgrid::draw(&app, WIDTH, HEIGHT);
+    assert!(
+        caret_row(&buf, HEIGHT, WIDTH).is_some(),
+        "the caret must still render somewhere, clamped rather than dropped"
+    );
+}

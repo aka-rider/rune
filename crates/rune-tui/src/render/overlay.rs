@@ -143,7 +143,34 @@ pub(super) fn apply_cursor_overlays(
         let visual_col = view
             .wrap
             .visual_col(buf.content(), wrap_point.row, wrap_point.col);
-        place_caret(row, visual_col, cursor.position);
+        // A boxed (Grid/Wrapped) table row's rendered width is a hard
+        // invariant (`TABLE-ROW-WIDTH`): every content/border row in the
+        // same group carries the SAME summed cell width, always — never
+        // conditionally. `visual_col` is derived from `buffer_to_syntax`'s
+        // generic hidden-range delta scheme, which only ever accounts for
+        // CONCEALED inline markup (`emit`'s `hidden` bookkeeping); a table
+        // row's raw source line is instead wholly SUBSTITUTED for a
+        // rendered box, and a ragged row (more `|`-delimited cells than the
+        // table's own column count, silently dropped by comrak's table
+        // parser rather than rejected) can carry raw bytes far past the
+        // substituted text's own length. Nothing narrows `visual_col` back
+        // down to the row's real width in that case, so it can land AT or
+        // PAST `row.len()` even though every visible cell has already been
+        // walked — exactly the case `place_caret`'s below-EOL fallback
+        // exists for on an ordinary (unboxed) line, where appending one
+        // decorative cell is harmless. On a BOXED row it is never harmless:
+        // it grows that one row a cell wider than every other row in its
+        // group, tripping the invariant. So a boxed row never takes that
+        // fallback at all — the caret clamps onto the row's own last cell
+        // instead, the same way a caret can never be visually "past" a
+        // closed box's own right border.
+        let boxed = view
+            .wrap
+            .segments()
+            .get(wrap_point.row)
+            .and_then(|seg| seg.table.as_ref())
+            .is_some_and(|t| t.boxed);
+        place_caret(row, visual_col, cursor.position, boxed);
     }
 }
 
@@ -163,8 +190,16 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
 
 /// Reverse-video the cell at `visual_col`, or — if the caret sits past the
 /// last visible char on this row — append a synthetic EOL cursor cell (port
-/// of Go `render.go`).
-fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
+/// of Go `render.go`). `boxed` rows (a Grid/Wrapped table's own content and
+/// border rows) never take that append branch: appending would make this
+/// ONE row a cell wider than every other row in its table group, violating
+/// `TABLE-ROW-WIDTH` (every row in a boxed group shares one summed width,
+/// unconditionally). Reversing the row's own last cell instead keeps the
+/// row's width exactly what every sibling row's width already is, by
+/// construction — the caret still lands visibly inside the box, just
+/// clamped to its last real column instead of stepping past the closing
+/// border.
+fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed: bool) {
     let mut col = 0usize;
     for cell in row.iter_mut() {
         if col == visual_col {
@@ -172,6 +207,12 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize) {
             return;
         }
         col += cell.width.max(1) as usize;
+    }
+    if boxed {
+        if let Some(last) = row.last_mut() {
+            last.style = last.style.add_modifier(RtModifier::REVERSED);
+        }
+        return;
     }
     row.push(Cell {
         text: " ".to_string(),
