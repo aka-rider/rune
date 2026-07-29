@@ -74,7 +74,14 @@ fn main() -> ExitCode {
     }
 
     let (mut app, db_bootstrap) = if let Some(path) = launch.files.first() {
-        let path = path.clone();
+        // The SAME resolution chokepoint every other open path (every
+        // extra positional below, and the Explorer) already funnels
+        // through — `workspace::resolve` — so the first positional can
+        // never bind as an unresolved spelling that a later open of the
+        // identical underlying file (a symlink, a `..` segment, a
+        // duplicated absolute path) would fail to recognize as the same
+        // document (plan [rune-cli 2]).
+        let path = workspace::resolve(vfs.as_ref(), path);
 
         let file_existed = vfs.stat(&path).is_ok();
 
@@ -104,11 +111,22 @@ fn main() -> ExitCode {
         // reason (CONSTITUTION Prime Directive: protect the user's words over
         // every other feature) — it is reported to stderr, not to the TUI
         // (which hasn't started yet), and the editor proceeds with `app.db =
-        // None`.
+        // None`. This launch mode is otherwise silent about running with zero
+        // crash protection (plan [rune-cli 3]) — every OTHER way this session
+        // can end up without a recovery journal (a degraded open ladder, a
+        // failed `Load`) already sets `app.db_banner`, so this one does too,
+        // rather than leaving the user with no indication at all.
         let mut db_bootstrap = if file_existed {
             bootstrap_db(Arc::clone(&vfs), &path)
         } else {
-            DbBootstrap::default()
+            DbBootstrap {
+                banner: Some(
+                    "recovery disabled: this file doesn't exist yet — no crash protection until \
+                     it's first saved"
+                        .to_string(),
+                ),
+                ..DbBootstrap::default()
+            }
         };
 
         let buffer = match &db_bootstrap.recovered_content {
