@@ -1,13 +1,14 @@
 //! Shared `TestBackend` -> glyph-grid extractor for headless render tests
-//! (plan WP1.S1). Seven test files plus `src/breadcrumb.rs`'s own test
-//! module each hand-rolled the same draw-into-a-`TestBackend`-then-read-
-//! cells-back boilerplate (`tests/tui_render.rs:59-85` was the reference
-//! this module generalises); every one of them now goes through here
-//! instead of constructing its own `TestBackend` — `rg -c
-//! 'TestBackend::new'` over `tests/` and this crate's `src/breadcrumb.rs`
-//! is the enforced invariant (plan Done-when). `src/title.rs` keeps its own
-//! copy: a locked sibling worktree (`worktree-kind-inventing-marshmallow`)
-//! rewrites that file, so it is deliberately left untouched (plan Context).
+//! (plan WP1.S1). Every test module that used to hand-roll its own draw-
+//! into-a-`TestBackend`-then-read-cells-back boilerplate (`tests/
+//! tui_render.rs:59-85` was the reference this module generalises) now
+//! goes through here instead — including `src/opentabs.rs`'s and
+//! `src/title.rs`'s own test modules (plan WP13.S5: both had grown a
+//! second, independent copy of the same construction, the coverage gap
+//! that let the "one place" claim below silently rot). `tests/
+//! testgrid_inventory.rs` makes the claim self-checking rather than a
+//! comment nobody re-verifies: it asserts `TestBackend::new` appears
+//! exactly once crate-wide, right here.
 //!
 //! `draw_with` is the actual common denominator; `draw`/`grid`/`row` are
 //! thin convenience wrappers over it. Most callers only need the two named

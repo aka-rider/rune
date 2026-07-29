@@ -270,14 +270,13 @@ mod tests {
     }
 
     /// Renders just the divider into a `width`-wide, 1-row terminal and
-    /// returns the row's text.
+    /// returns the row's text — through `testgrid::draw_with` (plan
+    /// WP13.S5), the crate's one `TestBackend` construction site, rather
+    /// than rolling a tenth hand-written copy here.
     fn divider_row(app: &App, width: u16) -> String {
-        let backend = ratatui::backend::TestBackend::new(width, 1);
-        let mut terminal = ratatui::Terminal::new(backend).expect("TestBackend terminal");
-        terminal
-            .draw(|frame| draw_divider(app, Rect::new(0, 0, width, 1), frame))
-            .expect("draw the divider");
-        let buf = terminal.backend().buffer();
+        let buf = crate::testgrid::draw_with(width, 1, |frame| {
+            draw_divider(app, Rect::new(0, 0, width, 1), frame)
+        });
         (0..width)
             .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
             .collect()

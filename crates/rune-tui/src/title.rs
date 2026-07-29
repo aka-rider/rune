@@ -280,8 +280,6 @@ fn field_spans(field: &TitleField, theme: &crate::theme::Theme) -> Vec<Span<'sta
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -290,13 +288,15 @@ mod tests {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
     }
 
+    /// Draws just the title row into a `width`-wide, 1-row terminal —
+    /// through `testgrid::draw_with` (plan WP13.S5), the crate's one
+    /// `TestBackend` construction site, rather than this file's own
+    /// hand-rolled copy (the `worktree-kind-inventing-marshmallow` lock
+    /// that used to keep this file untouched has long since landed).
     fn draw_line(app: &App, width: u16) -> String {
-        let backend = TestBackend::new(width, 1);
-        let mut terminal = Terminal::new(backend).expect("terminal construction");
-        terminal
-            .draw(|frame| draw(app, frame.area(), frame))
-            .expect("draw");
-        let buf = terminal.backend().buffer().clone();
+        let buf = crate::testgrid::draw_with(width, 1, |frame| {
+            draw(app, frame.area(), frame);
+        });
         let mut s = String::new();
         for x in 0..width {
             if let Some(cell) = buf.cell((x, 0)) {
