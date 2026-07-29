@@ -1,8 +1,8 @@
 //! Shared `TestBackend` -> glyph-grid extractor for headless render tests
 //! (plan WP1.S1). Every test module that used to hand-roll its own draw-
 //! into-a-`TestBackend`-then-read-cells-back boilerplate (`tests/
-//! tui_render.rs:59-85` was the reference this module generalises) now
-//! goes through here instead — including `src/opentabs.rs`'s and
+//! tui_render.rs` was the reference this module generalises) now goes
+//! through here instead — including `src/opentabs.rs`'s and
 //! `src/title.rs`'s own test modules (plan WP13.S5: both had grown a
 //! second, independent copy of the same construction, the coverage gap
 //! that let the "one place" claim below silently rot). `tests/

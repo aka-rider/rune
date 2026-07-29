@@ -57,16 +57,15 @@ pub fn style_for(theme: &Theme, id: ScopeId) -> Style {
 
 /// Maps a C0 control code (`0x00..=0x1f`) or DEL (`0x7f`) to its Unicode
 /// "control picture" glyph (`U+2400..=U+2421`) so a raw control byte never
-/// reaches `ratatui::buffer::Cell::set_symbol`. ratatui-core's `cell_width()`
-/// `debug_assert!`s that a single-byte symbol is never
-/// `u8::is_ascii_control` (`cell_width.rs:36`) — feeding it a literal `\r`,
-/// `\x07`, `\x0c`, etc. panics a debug build the instant that cell is diffed
-/// (an unsaved buffer lost, with no recovery store in Phase 1) and silently
-/// corrupts the row in a release build. `\n`/`\r` and `\t` are handled
-/// separately in `push_grapheme_cells` below and never reach this function;
-/// any other Unicode control category (e.g. C1, `0x80..=0x9f`) has no
-/// assigned control-picture glyph and falls back to the replacement
-/// character.
+/// reaches `ratatui::buffer::Cell::set_symbol`. ratatui-core's own
+/// `cell_width()` asserts that a single-byte symbol is never
+/// `u8::is_ascii_control` — feeding it a literal `\r`, `\x07`, `\x0c`, etc.
+/// panics a debug build the instant that cell is diffed (an unsaved buffer
+/// lost, with no recovery store in Phase 1) and silently corrupts the row
+/// in a release build. `\n`/`\r` and `\t` are handled separately in
+/// `push_grapheme_cells` below and never reach this function; any other
+/// Unicode control category (e.g. C1, `0x80..=0x9f`) has no assigned
+/// control-picture glyph and falls back to the replacement character.
 fn control_placeholder(ch: char) -> char {
     match ch as u32 {
         0x00..=0x1f => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{FFFD}'),
@@ -108,7 +107,7 @@ fn control_placeholder(ch: char) -> char {
 /// assumption actually holds for cells THIS code writes directly via
 /// `cell_mut` (which, unlike `set_string`, does no such reset on its own).
 ///
-/// `visual_col` bookkeeping for a MULTI-rune cluster comes from `rune_md::
+/// `visual_col` bookkeeping for a MULTI-rune cluster comes from `rune_syntax::
 /// wrap::grapheme_width` — the exact same function `wrap_line`'s own greedy
 /// line-breaking and `WrapSnapshot::visual_col`/`byte_col_from_visual` call
 /// for the same cluster — so the shared-chokepoint property (wrap's width
@@ -303,11 +302,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
 
-    // The left column is drawn only when geometry gave it a block this
-    // frame; `draw_left_pane` re-checks and no-ops on `None` anyway.
-    if geo.left_block.is_some() {
-        draw_left_pane(app, &geo, frame);
-    }
+    // `draw_left_pane` itself no-ops on `geo.left_block == None` (plan
+    // WP13.S6: the review-caught redundant guard used to re-check the same
+    // condition here first).
+    draw_left_pane(app, &geo, frame);
 
     if geo.center_bordered {
         let block = Block::bordered()
