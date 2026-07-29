@@ -242,18 +242,22 @@ fn diff_edit(old: &str, new: &str) -> Option<tree_sitter::InputEdit> {
     let new_bytes = new.as_bytes();
     let max_common = old_bytes.len().min(new_bytes.len());
 
-    let mut prefix = 0usize;
-    while prefix < max_common && old_bytes[prefix] == new_bytes[prefix] {
-        prefix += 1;
-    }
+    // Iterator-driven, never indexed: `zip` alone already bounds this to
+    // `max_common`, and `take_while` stops at the first mismatching byte.
+    let prefix = old_bytes
+        .iter()
+        .zip(new_bytes.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
 
     let max_suffix = max_common - prefix;
-    let mut suffix = 0usize;
-    while suffix < max_suffix
-        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
+    let suffix = old_bytes
+        .iter()
+        .rev()
+        .zip(new_bytes.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
 
     let start_byte = prefix;
     let old_end_byte = old_bytes.len() - suffix;
@@ -277,7 +281,16 @@ fn diff_edit(old: &str, new: &str) -> Option<tree_sitter::InputEdit> {
 fn point_at(text: &str, byte: usize) -> tree_sitter::Point {
     let mut row = 0usize;
     let mut last_newline: Option<usize> = None;
-    for (i, b) in text.as_bytes()[..byte].iter().enumerate() {
+    // `.get(..byte)` degrades to the whole slice rather than panicking if
+    // `byte` somehow exceeds `text`'s length (never expected — every caller
+    // passes an offset derived from `old`/`new` themselves).
+    for (i, b) in text
+        .as_bytes()
+        .get(..byte)
+        .unwrap_or(text.as_bytes())
+        .iter()
+        .enumerate()
+    {
         if *b == b'\n' {
             row += 1;
             last_newline = Some(i);

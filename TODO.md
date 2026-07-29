@@ -42,6 +42,21 @@ The Go reference implementation keeps its own list in `golang/TODO.md`.
   file, never by deleting the comments that make the split navigable. Move
   `set_root` and the workspace-root field onto a small `workspaceroot` state
   struct when next touched.
+
+### recorded 2026-07-29 by the keystroke-latency plan (WP16.S5)
+
+- `crates/rune-tui/src/app.rs` is 509 lines (§1.6 limit 500; was 501 immediately
+  before this work — see the `ts-int` entry above) — grown 8 lines by the
+  `snapshot_timer: Arc<runtime::SnapshotTimer>` field, its doc comment, and its
+  `App::new` initializer (WP16.S5 replaced the per-message thread-per-keystroke
+  snapshot-autosave debounce `Cmd` spawn with one rearmable timer thread per
+  app, which `App` now has to hold a handle to). The new logic itself lives
+  entirely in the new `runtime/snapshot_timer.rs` (236 lines, its own budget);
+  `app.rs` gained only the one field a struct necessarily needs. Same
+  deferred fix every `app.rs` entry above names: extract the four-stage
+  `handle_key`/`handle_editor_key`/`handle_db_event` trio into their own
+  module; out of scope for this plan (WP16 is the keystroke-latency package,
+  not the `app.rs` split).
 - `crates/rune-md/tests/table_render.rs` is 530 lines (§1.6 limit 500; was 470
   on `rr` and 425 on `ts-int`) — both branches independently found and pinned
   the SAME Wrapped-table border-width bug with complementary tests, and the

@@ -355,11 +355,15 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     }
 }
 
-/// Bumps `id`'s snapshot-autosave generation and (re)schedules its 2s
-/// debounce timer (plan WP5.S6, port of `workspace_timers.go:11`) — called
-/// once per message batch that mutated the ACTIVE document's journal, from
-/// `app::update`'s wrapper.
-pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId, effects: &mut Effects) {
+/// Bumps `id`'s snapshot-autosave generation and (re)arms its 2s debounce
+/// deadline on `app`'s one rearmable timer thread (plan WP5.S6, port of
+/// `workspace_timers.go:11`; plan WP16.S5 replaced the previous per-call
+/// `Cmd` spawn with `App::snapshot_timer` — see that type's own doc
+/// comment) — called once per message batch that mutated the ACTIVE
+/// document's journal, from `app::update`'s wrapper. No `Effects` involved
+/// any more: arming the timer is a direct, synchronous call, not I/O that
+/// needs a spawned thread of its own.
+pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId) {
     if app.db.is_none() {
         return;
     }
@@ -369,14 +373,8 @@ pub(crate) fn schedule_snapshot_debounce(app: &mut App, id: DocumentId, effects:
     };
     doc_db.snapshot_generation = doc_db.snapshot_generation.wrapping_add(1);
     let generation = doc_db.snapshot_generation;
-    effects.cmds.push(snapshot_timeout_cmd(id, generation));
-}
-
-fn snapshot_timeout_cmd(id: DocumentId, generation: u32) -> Cmd {
-    Cmd::new(CmdKind::SnapshotDebounce, move || {
-        std::thread::sleep(SNAPSHOT_DEBOUNCE);
-        Some(Msg::SnapshotDue { id, generation })
-    })
+    let deadline = std::time::Instant::now() + SNAPSHOT_DEBOUNCE;
+    app.snapshot_timer.arm(id, generation, deadline);
 }
 
 /// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed

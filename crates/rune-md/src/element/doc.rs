@@ -228,10 +228,10 @@ impl DocMachine {
     /// design, and a keystroke that only moved the cursor touches none of
     /// those inputs.
     pub fn snapshot(&mut self, buf: &Buffer) -> ViewSnapshots {
-        if !self.dirty {
-            if let Some(cached) = &self.cached {
-                return cached.clone();
-            }
+        if !self.dirty
+            && let Some(cached) = &self.cached
+        {
+            return cached.clone();
         }
         let view = self.rebuild(buf);
         self.dirty = false;

@@ -231,6 +231,13 @@ pub struct App {
     /// initial-root fallback, the breadcrumb's relativization) skips it
     /// rather than treating it as a real path.
     pub root: PathBuf,
+    /// The snapshot-autosave debounce's one rearmable timer (plan WP16.S5)
+    /// — `pub(crate)`, not private: `save::schedule_snapshot_debounce` (a
+    /// different module) is the sole caller of `arm`. No background thread
+    /// exists until `runtime::run` calls `attach` on it, so a test/fuzz
+    /// `App` that never reaches that loop never spawns one (mirrors
+    /// `db.bridge`'s own bootstrap/live split).
+    pub(crate) snapshot_timer: Arc<crate::runtime::SnapshotTimer>,
 }
 
 impl App {
@@ -285,6 +292,7 @@ impl App {
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             root: PathBuf::new(),
+            snapshot_timer: crate::runtime::SnapshotTimer::new(),
         }
     }
 
@@ -479,7 +487,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     dispatch::update_inner(app, msg, effects);
     if app.active_doc().journal.pos() != journal_pos_before {
         let id = app.active;
-        save::schedule_snapshot_debounce(app, id, effects);
+        save::schedule_snapshot_debounce(app, id);
     }
     // Plan WP5.S3: the active buffer changed shape, or the active document
     // itself did (a tab switch) — either way it may still need a highlight.

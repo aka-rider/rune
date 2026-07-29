@@ -1,8 +1,11 @@
-//! The Elm-style runtime: `Msg`, `Cmd`, `Effects`, and the three-thread main
-//! loop (plan Context, "Msg/Cmd runtime"). Exactly three threads: this
-//! module's `run` (main: recv -> drain `try_iter` -> `update` per message ->
-//! drain `Effects.raw` to the terminal -> spawn `Effects.cmds` -> draw once),
-//! the input reader spawned by `run`, and one `std::thread` per `Cmd`.
+//! The Elm-style runtime: `Msg`, `Cmd`, `Effects`, and the main loop (plan
+//! Context, "Msg/Cmd runtime"). This module's `run` (main: recv -> drain
+//! `try_iter` -> `update` per message -> drain `Effects.raw` to the terminal
+//! -> spawn `Effects.cmds` -> draw once), the input reader spawned by `run`,
+//! one `std::thread` per `Cmd`, and `App::snapshot_timer`'s own single
+//! long-lived rearmable timer thread (plan WP16.S5) — the one background
+//! thread NOT spawned fresh per `Cmd`, since re-arming it is a plain state
+//! update rather than new off-thread work.
 //!
 //! `update` mutates `App` synchronously (CONSTITUTION §5.4: "mutate
 //! synchronous state directly in `update`; a Cmd is exclusively for I/O that
@@ -32,14 +35,16 @@ pub use rune_ts::HighlightResult;
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
-/// `SaveConfirmTimeout`/`SnapshotDue` originate from a spawned `Cmd`'s
-/// return value; `Db` originates from the `rune-db` writer thread via
-/// `db::DbBridge` (plan WP5.S1); `Error`/`Quit` can be synthesized by
-/// `update` itself. `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan
-/// WP1.S3) so multi-document acks route back to the document that
-/// triggered them; `ConfirmTimeout`/`SaveConfirmTimeout` stay doc-agnostic
-/// — `pending_quit` is app-wide and `pending_save_confirm`'s doc tag lives
-/// in the `Option` tuple itself, not in the `Msg`.
+/// `SaveConfirmTimeout` originate from a spawned `Cmd`'s return value;
+/// `SnapshotDue` originates from `App::snapshot_timer`'s one long-lived
+/// rearmable timer thread (plan WP16.S5), not a per-message spawned `Cmd`;
+/// `Db` originates from the `rune-db` writer thread via `db::DbBridge`
+/// (plan WP5.S1); `Error`/`Quit` can be synthesized by `update` itself.
+/// `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan WP1.S3) so multi-
+/// document acks route back to the document that triggered them;
+/// `ConfirmTimeout`/`SaveConfirmTimeout` stay doc-agnostic — `pending_quit`
+/// is app-wide and `pending_save_confirm`'s doc tag lives in the `Option`
+/// tuple itself, not in the `Msg`.
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
@@ -161,9 +166,6 @@ pub enum CmdKind {
     /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6). Sleeps;
     /// never run it inline.
     SaveConfirmTimeout,
-    /// The 2s snapshot-autosave debounce timer (plan WP5.S6). Sleeps; never
-    /// run it inline.
-    SnapshotDebounce,
     /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
     /// draft create) for the no-store route — the §1.4.1 no-clobber atomic
     /// publish. Off-thread per §5.4.
@@ -250,6 +252,12 @@ pub fn run(app: &mut App) -> io::Result<()> {
     if let Some(db) = &app.db {
         db.bridge.attach(tx.clone());
     }
+
+    // Same "App-held setter" pattern as `db.bridge.attach` right above:
+    // `App::new` constructs `snapshot_timer` with no background thread at
+    // all (plan WP16.S5), so every test/fuzz `App` that never reaches this
+    // `run` loop never spawns one either. This call starts its one thread.
+    app.snapshot_timer.attach(tx.clone());
 
     // Seed the initial size through the ordinary `update` path (not a
     // one-off field write) so `Msg::Resize`'s effect on the viewport has
@@ -410,6 +418,13 @@ pub use highlight_cmd::{
     HIGHLIGHT_BUDGET, HIGHLIGHT_RETRY_BUDGET, fence_highlight_cmd, fence_highlight_retry_cmd,
     highlight_cmd, highlight_retry_cmd,
 };
+
+// The snapshot-autosave debounce's one rearmable timer thread (plan
+// WP16.S5) — split out for the same reason `highlight_cmd` was: a distinct
+// concern with its own `#[cfg(test)]` module, kept out of this file's own
+// §1.6 budget.
+mod snapshot_timer;
+pub use snapshot_timer::SnapshotTimer;
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {
