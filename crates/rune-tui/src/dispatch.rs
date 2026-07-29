@@ -205,9 +205,20 @@ fn apply_highlight_spans(doc: &mut Document, version: u64, spans: Vec<(Range<usi
 /// for one — at the live version, meaning the parse itself genuinely failed
 /// or overran rather than having been superseded — surfaces the same status
 /// line finding B's exhausted-retry branch used to, in ONE attempt instead
-/// of two. A markdown document's fences stay silent on `None` exactly as
-/// before (`doc.kind.language()` is `None` for `Markdown`): fences are
-/// still on the span path and D6 leaves that pipeline unchanged.
+/// of two. That status line is further narrowed to a document that has
+/// never once been successfully highlighted (`doc.highlight.version == 0`,
+/// which `Buffer::version` itself never produces): once a document has
+/// existing spans or a tree, a reparse-after-edit that overruns the budget
+/// degrades to STALE colours per `[R2]` and stays silent instead of
+/// spamming the status on every settled edit of a large file. A markdown
+/// document's fences stay silent on `None` exactly as before
+/// (`doc.kind.language()` is `None` for `Markdown`): fences are still on
+/// the span path and D6 leaves that pipeline unchanged. A terminal timeout
+/// must never re-dispatch a further parse for a no-edit `pending`: an
+/// edit-armed `pending` carries a version that differs from the reply's,
+/// landing in the stale `_` arm below, so `pending` and `timed_out` can
+/// coincide only when nothing but a document switch armed `pending` — in
+/// that case re-scheduling would just repeat the same doomed parse.
 fn handle_highlighted(
     app: &mut App,
     id: DocumentId,
@@ -231,7 +242,10 @@ fn handle_highlighted(
                 doc.highlight.truncated = spans.truncated;
                 apply_highlight_spans(doc, version, spans.spans);
             }
-            None if version == live_version && doc.kind.language().is_some() => {
+            None if version == live_version
+                && doc.kind.language().is_some()
+                && doc.highlight.version == 0 =>
+            {
                 timed_out = true;
             }
             // `result: None` on a fence-only document, or `Some`/`None` at a
@@ -247,7 +261,7 @@ fn handle_highlighted(
         );
     }
 
-    if pending {
+    if pending && !timed_out {
         crate::highlight::schedule_highlight(app, id, effects);
     }
 }
