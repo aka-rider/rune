@@ -1,8 +1,8 @@
 //! The compiling half — parser and query construction. Grammar queries are
 //! compiled per-language on first request via [`LanguageRegistry::get`], not
 //! eagerly. The [`registry()`] function provides a lazily-initialized shared
-//! instance that may be touched from any thread; thread-local compilation
-//! occurs on first access to each language.
+//! instance that may be touched from any thread; whichever thread first
+//! requests a language pays that language's one-time compile.
 
 use std::sync::{LazyLock, OnceLock};
 

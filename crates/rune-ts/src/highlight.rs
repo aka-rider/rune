@@ -71,7 +71,7 @@ impl From<Vec<(Range<usize>, ScopeId)>> for HighlightResult {
 /// newer live buffer would resolve those predicates against bytes that no
 /// longer correspond to the tree's node boundaries. Every query in this
 /// module runs against the retained snapshot, never the live buffer;
-/// whatever offset drift accumulates between a parse and the next reparve
+/// whatever offset drift accumulates between a parse and the next reparse
 /// landing is the same staleness class the rest of the highlight pipeline
 /// already tolerates, and is inert at paint time (a stale span simply
 /// matches no cell it wasn't meant to).
