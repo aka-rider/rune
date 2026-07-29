@@ -145,21 +145,20 @@ fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut E
 /// Byte-length-preserving BY CONSTRUCTION, which is why this needs no
 /// extra hidden-range bookkeeping: `☐`/`☑` are each exactly 3 bytes in
 /// UTF-8 (codepoints `U+2610`/`U+2611`, the 3-byte range), the SAME length
-/// as the 3-byte ASCII `task` range they replace. `SyntaxSnapshot`'s
-/// buffer<->syntax coordinate model (`emit/syntax.rs`) only ever accounts
-/// for FULLY hidden byte ranges (`hide_range`) — it has no notion of a
-/// visible span whose substituted text is a different byte length than
-/// the buffer range it replaces — so a length-changing substitution here
-/// would desync every position later on the same line. Keeping this
-/// specific substitution exactly 3-for-3 bytes sidesteps that entirely: no
-/// hidden delta is needed, and `rune-md/src/wrap.rs`'s own byte-indexed
-/// `text.len()` math (built from `SyntaxSpan::text`, i.e. this span's own
-/// 3-byte `text`) stays consistent with it for free — a precondition this
-/// function now checks rather than assumes: `assert_invariant` surfaces a
-/// producer that hands it a `task` range of any other length, and (in every
-/// build, not just a strict one) it falls through to hiding the range like
-/// a plain marker instead of emitting a glyph whose byte length would lie
-/// about the range it replaces.
+/// as the 3-byte ASCII `task` range they replace. The buffer<->syntax
+/// coordinate model only ever accounts for FULLY hidden byte ranges
+/// (`hide_range`) — it has no notion of a visible span whose substituted
+/// text is a different byte length than the buffer range it replaces — so
+/// a length-changing substitution here would desync every position later
+/// on the same line. Keeping this specific substitution exactly 3-for-3
+/// bytes sidesteps that entirely: no hidden delta is needed, and every
+/// later byte-indexed width/column walk built from `SyntaxSpan::text`
+/// (i.e. this span's own 3-byte `text`) stays consistent with it for free
+/// — a precondition this function now checks rather than assumes:
+/// `assert_invariant` surfaces a producer that hands it a `task` range of
+/// any other length, and (in every build, not just a strict one) it falls
+/// through to hiding the range like a plain marker instead of emitting a
+/// glyph whose byte length would lie about the range it replaces.
 fn push_task_checkbox(
     content: &str,
     starts: &[usize],
@@ -325,8 +324,8 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
 /// its end, which `hide_range`'s empty-range guard turns into a no-op) —
 /// fixing the double-counted delimiter BLOCKER (an empty link previously
 /// hid `[range.start, range.end)` twice, once as "open" and once as
-/// "close"). Same shape as `parse.rs`'s `child_gap_delims` for a childless
-/// emphasis node.
+/// "close"). Same shape as the parser's own `child_gap_delims` for a
+/// childless emphasis node.
 fn link_delims(range: ByteRange, children: &[Inline]) -> (ByteRange, ByteRange) {
     match (children.first(), children.last()) {
         (Some(first), Some(last)) => {

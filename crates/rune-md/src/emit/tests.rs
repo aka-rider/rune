@@ -279,3 +279,28 @@ fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
         "the clamped position must be stable under a second round-trip"
     );
 }
+
+/// `CellMap` is per-CHAR (one entry per `char`, `chars().count()` entries)
+/// despite the name — easy to conflate with a terminal CELL (§1.5) in a
+/// module where finding 1 (`table::layout`'s width bug) proves those two
+/// units genuinely diverge. Pins the length against BOTH a combining-mark
+/// cluster (two `char`s, one grapheme cluster) and a double-width CJK char
+/// (one `char`, two display cells): the map has one entry per `char` in
+/// every case, never one per grapheme cluster and never one per display
+/// cell.
+#[test]
+fn build_cell_map_has_one_entry_per_char_not_per_grapheme_or_display_cell() {
+    // "é" as `e` + COMBINING ACUTE ACCENT: 2 `char`s, ONE grapheme cluster.
+    let combining = "e\u{0301}";
+    let cm = build_cell_map(10, combining);
+    assert_eq!(cm.len(), combining.chars().count());
+    assert_eq!(cm, vec![10, 11]); // 'e' is 1 byte; the combining mark starts at 11
+
+    // "世界": each char is ONE 3-byte codepoint but TWO display cells
+    // (§1.5) — the map still has exactly one entry per char, at each
+    // char's own byte start, never per display cell.
+    let cjk = "世界";
+    let cm = build_cell_map(0, cjk);
+    assert_eq!(cm.len(), cjk.chars().count());
+    assert_eq!(cm, vec![0, 3]);
+}
