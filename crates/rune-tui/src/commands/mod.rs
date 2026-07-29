@@ -15,3 +15,4 @@ pub mod mouse;
 pub mod multi;
 pub mod nav;
 pub mod nav_scroll;
+pub mod splitter;
