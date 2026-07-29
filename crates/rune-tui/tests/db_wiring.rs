@@ -324,7 +324,7 @@ fn restart_hydrates_content_and_undo_reaches_the_anchor() {
 /// returning `Err`) before pressing save exactly once, rather than racing
 /// `super+s`'s own in-flight latch against the kill op's async dequeue.
 #[test]
-fn killed_writer_makes_materialize_enqueue_degrade_the_store_but_still_save() {
+fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     let dir = temp_db_dir("kill-writer-materialize");
     let db_path = dir.join("rune-v1.db");
     let doc_path = Path::new("/doc.md");
