@@ -10,12 +10,14 @@
 //! `stat_identity`/`observe_from_stat` are the ONE place `vfs.stat` results
 //! turn into `Option`-shaped identity facts (D12/D13/§1.7 — NULL, never a
 //! literal 0, when the stat failed or exposed no usable identity).
-//! `observe_from_stat` itself is NOT a single-tx primitive: the stat (disk
-//! I/O) happens first with no transaction open, then a fresh
-//! `retry::with_retry` transaction inserts the row — matching the plan's
-//! "no DB tx is ever held open across a vfs call" rule for every caller
-//! (`probe`/`materialize::record_fresh`) that already did their own
-//! disk I/O before calling in.
+//! `observe_from_stat` itself is NOT a single-tx primitive end to end: the
+//! stat (disk I/O) happens first with no transaction open, matching the
+//! plan's "no DB tx is ever held open across a vfs call" rule for every
+//! caller (`probe`/`materialize::record_fresh`) that already did its own
+//! disk I/O before calling in. But the blob store and the observation row
+//! that references it DO commit as one transaction (`retry::with_retry`
+//! wraps both `blob::put_blob` and `record_observation`) — a cross-process
+//! GC sweep can never land between the two and orphan the reference.
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -179,11 +181,76 @@ pub fn record_observation(
     Ok(tx.last_insert_rowid())
 }
 
-/// Stats `path` and records an observation of `meta.blob_hash` at that
-/// metadata. NOT a single transaction: the stat (disk I/O) runs with no tx
-/// open, then a fresh `retry::with_retry` inserts the row — the caller
-/// (`probe`/`materialize::record_fresh`) is trusted to already have done its
-/// own read/blob-store before calling in. Port of `observation.go:267-290`
+/// Bundles the disk-sourced payload with the correlation/origin facts that
+/// travel together at every "hash it, then record it" call site
+/// (`materialize::record_fresh`, `probe::probe`) — [`observe_from_stat`]
+/// puts the blob AND inserts the referencing observation row inside the
+/// SAME transaction, so a cross-process blob GC sweep can never land in the
+/// gap between the two and starve the insert ([rune-db 2]).
+#[derive(Clone, Copy, Debug)]
+pub struct ObserveInput<'a> {
+    /// Disk-sourced bytes to store as a blob — see `blob.rs`'s module doc
+    /// on why this is never gated on UTF-8 validity.
+    pub data: &'a [u8],
+    /// The journal position this sighting correlates to; `None` means
+    /// uncorrelated (never ancestor-eligible).
+    pub seq: Option<i64>,
+    /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
+    pub origin: &'a str,
+}
+
+/// The tx-scoped body of [`observe_from_stat`]: puts `input.data` as a blob
+/// and records the referencing observation, both against the CALLER's
+/// already-open transaction. Exposed `pub(crate)` so a caller that needs
+/// MORE than just this observation to commit atomically — `rename::
+/// rename_replace`'s swap-capture-and-rebind, which must never let the
+/// displaced-bytes observation commit without the document rebind that
+/// follows it also committing ([rune-db 4]) — can fold this in alongside
+/// its own statements instead of opening a second transaction.
+pub(crate) fn observe_from_stat_tx(
+    tx: &Transaction<'_>,
+    session_id: i64,
+    doc_id: i64,
+    stat: &StatFacts,
+    at: &str,
+    input: ObserveInput<'_>,
+) -> Result<Observation, Error> {
+    let hash = crate::blob::put_blob(tx, input.data)?;
+    let id = record_observation(
+        tx,
+        doc_id,
+        session_id,
+        ObservationMeta {
+            blob_hash: &hash,
+            seq: input.seq,
+            origin: input.origin,
+        },
+        stat,
+        at,
+    )?;
+    Ok(Observation {
+        id,
+        doc_id,
+        session_id,
+        blob_hash: hash,
+        seq: input.seq,
+        size: stat.size,
+        mtime: stat.mtime.clone(),
+        inode: stat.inode,
+        device: stat.device,
+        nlink: stat.nlink,
+        origin: input.origin.to_string(),
+        supersedes: None,
+        at: at.to_string(),
+    })
+}
+
+/// Stats `path`, then puts `input.data` as a blob and records an observation
+/// of it, both in ONE transaction. The stat itself runs first with no tx
+/// open (disk I/O never happens inside a DB transaction, plan binding rule
+/// I1) — the blob store and the observation insert that references its hash
+/// commit together right after, closing the window `snapshot::create_snapshot`
+/// already closes for its own blob+row pair. Port of `observation.go:267-290`
 /// (`observeFromStat`).
 pub fn observe_from_stat(
     conn: &mut Connection,
@@ -191,32 +258,14 @@ pub fn observe_from_stat(
     session_id: i64,
     doc_id: i64,
     path: &Path,
-    meta: ObservationMeta<'_>,
+    input: ObserveInput<'_>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let stat = stat_identity(vfs, path);
     let at = format_rfc3339_nanos(now);
-    let blob_hash = meta.blob_hash.to_string();
-    let origin = meta.origin.to_string();
 
-    let id = retry::with_retry(conn, |tx| {
-        record_observation(tx, doc_id, session_id, meta, &stat, &at)
-    })?;
-
-    Ok(Observation {
-        id,
-        doc_id,
-        session_id,
-        blob_hash,
-        seq: meta.seq,
-        size: stat.size,
-        mtime: stat.mtime,
-        inode: stat.inode,
-        device: stat.device,
-        nlink: stat.nlink,
-        origin,
-        supersedes: None,
-        at,
+    retry::with_retry(conn, |tx| {
+        observe_from_stat_tx(tx, session_id, doc_id, &stat, &at, input)
     })
 }
 

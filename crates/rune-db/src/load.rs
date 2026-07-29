@@ -160,9 +160,24 @@ fn find_inheritable_draft(
         return Ok((disk_content.to_string(), false));
     }
 
+    // Re-verify `other_session_id` is STILL the eligible candidate inside the
+    // SAME transaction that reads its snapshot/events: a reap racing between
+    // the checks above and here can delete `other_session_id`'s entire
+    // footprint (`reaper::reap_session_footprint` clears `events`/
+    // `snapshots`), and `recover_document` finding zero rows would
+    // reconstruct "" — silently presenting an empty buffer for a document
+    // with real content ([rune-db 3]). A raced reap must yield "not
+    // eligible", never empty content.
     let recovered_draft = retry::with_retry(conn, |tx| {
-        crate::snapshot::recover_document(tx, other_session_id, doc_id)
+        let still_candidate = most_recent_session_for_doc(tx, doc_id)?;
+        if still_candidate != Some(other_session_id) {
+            return Ok(None);
+        }
+        crate::snapshot::recover_document(tx, other_session_id, doc_id).map(Some)
     })?;
+    let Some(recovered_draft) = recovered_draft else {
+        return Ok((disk_content.to_string(), false));
+    };
     if observation::hash_bytes(recovered_draft.as_bytes()) == disk_hash {
         return Ok((disk_content.to_string(), false)); // never actually diverged from disk
     }

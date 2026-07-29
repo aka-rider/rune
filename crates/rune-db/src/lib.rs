@@ -1,24 +1,21 @@
 //! `rune-db`: the multiprocess-safe SQLite recovery store over one global
-//! WAL database (plan Goal). This crate is `rune-vfs`'s sibling, never its
-//! caller: rune-db is "an observer beside the file path, never in it" (plan
-//! decision 5) — it journals/snapshots/observes alongside the user's `.md`
-//! file, and losing this database must never damage that file.
+//! WAL database. This crate is `rune-vfs`'s sibling, never its caller: it is
+//! "an observer beside the file path, never in it" — it journals, snapshots,
+//! and observes alongside the user's `.md` file, and losing this database
+//! must never damage that file.
 //!
-//! WP2 shipped the skeleton: schema, open ladder, session/liveness
-//! identity, the writer/reader thread topology, and the busy/contention
-//! retry classifier. WP3 added the durable journal, content-addressed
-//! blobs, and recovery snapshots (`append_edit`, `undo_peek`/`redo_peek`/
-//! `move_undo_pos`, `create_snapshot`, `recover_document`,
-//! `edits_in_range`). WP4 adds observations (`observation.rs`), the
-//! conflict-lifecycle comparison (`sync.rs`), `probe`, `materialize` (the
-//! CAS write protocol), the Adoption Contract (`adopt.rs`), `load`, and the
-//! dead-session reaper (`reaper.rs`). Wiring into `rune-tui` lands in WP5.
-//! WP6 (this work package) adds lifecycle: the writer's idle
-//! checkpoint/blob-sweep timer and clean-shutdown `TRUNCATE` (`writer.rs`),
-//! unreferenced-blob GC (`gc.rs`), old-schema-version file GC
-//! (`versioning.rs`), and the multiprocess integration tests
-//! (`tests/multiprocess.rs`) that exercise all of it against real, separate
-//! OS processes.
+//! The pieces: schema/open-ladder/session-liveness identity and the
+//! writer/reader thread topology with its busy/contention retry classifier
+//! (`schema.rs`/`store.rs`/`session.rs`/`retry.rs`); the durable journal,
+//! content-addressed blobs, and recovery snapshots (`journal.rs`/`blob.rs`/
+//! `snapshot.rs`); disk-state observations and the conflict-lifecycle
+//! comparison (`observation.rs`/`sync.rs`); the CAS write protocol and the
+//! Adoption Contract (`materialize.rs`/`adopt.rs`); document identity
+//! resolution and cross-session crash recovery (`document.rs`/`load.rs`);
+//! rename/replace (`rename.rs`); the dead-session reaper and unreferenced-
+//! blob/old-schema-version GC (`reaper.rs`/`gc.rs`/`versioning.rs`); and the
+//! multiprocess integration tests (`tests/multiprocess.rs`) that exercise
+//! all of it against real, separate OS processes.
 //!
 //! Darwin-only, matching the rest of this workspace (`CLAUDE.md`): no
 //! portability shims, no `!darwin` build tags.
@@ -32,6 +29,7 @@ mod journal;
 mod load;
 mod materialize;
 mod observation;
+mod paths;
 mod payload;
 mod probe;
 mod reader;

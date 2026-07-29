@@ -84,7 +84,15 @@ pub struct MatResult {
 }
 
 /// Writes `input.content` to `doc_id`'s bound file under a CAS contract.
-/// Port of `materialize.go:69-146` (`Materialize`).
+/// `path` is the caller's own enqueue-time-captured target (`Store::
+/// materialize`'s doc comment: "never re-derived once the op runs") — on the
+/// overwrite path (`bind_new == false`) it is checked against the `documents`
+/// row's own bound path (both resolved, so a spelling difference alone can
+/// never trip this) and a disagreement is refused rather than silently
+/// honoring whichever one the caller didn't mean: this used to re-derive the
+/// destination from the DB row and ignore `path` outright, contradicting the
+/// caller's own documented invariant ([rune-db 5]). Port of
+/// `materialize.go:69-146` (`Materialize`).
 pub fn materialize(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -129,7 +137,17 @@ pub fn materialize(
             ds.doc_id
         )));
     }
-    let resolved = vfs.resolve(Path::new(&db_path)).map_err(Error::Io)?;
+    let resolved = vfs.resolve(path).map_err(Error::Io)?;
+    let db_resolved = vfs.resolve(Path::new(&db_path)).map_err(Error::Io)?;
+    if resolved != db_resolved {
+        return Err(Error::Invalid(format!(
+            "materialize doc {}: caller-supplied path {} does not match the bound path {} — \
+             refusing rather than silently picking one (a caller bug, not an ordinary CAS race)",
+            ds.doc_id,
+            resolved.display(),
+            db_resolved.display()
+        )));
+    }
 
     // Step 1: unconditional read+hash of the live target.
     let live_data = match vfs.read(&resolved) {
@@ -271,7 +289,9 @@ fn materialize_create(
 /// disk-sourced — the target's live content on a CAS refusal, or a racer's
 /// displaced bytes on a swap-race (§1.4.10 mandates this capture happens
 /// unconditionally, never gated on UTF-8 validity: see `blob.rs`'s module
-/// doc). Port of `materialize.go:235-243` (`recordFresh`).
+/// doc). The blob put and its referencing observation insert commit as ONE
+/// transaction (`observe_from_stat`) — never two, closing the cross-process
+/// GC race [rune-db 2]. Port of `materialize.go:235-243` (`recordFresh`).
 pub(crate) fn record_fresh(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -281,15 +301,14 @@ pub(crate) fn record_fresh(
     origin: &str,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, data))?;
     observation::observe_from_stat(
         conn,
         vfs,
         ds.session_id,
         ds.doc_id,
         path,
-        ObservationMeta {
-            blob_hash: &hash,
+        observation::ObserveInput {
+            data,
             seq: None,
             origin,
         },
@@ -297,13 +316,18 @@ pub(crate) fn record_fresh(
     )
 }
 
-/// Step 5: ONE tx — observation(`origin='save'`, hash of the bytes WE
-/// WROTE) + `saved_obs` update + re-Bind (path/inode/device/`kind='file'`,
-/// post-swap stat). `write.seq` is the caller's save-start-captured journal
-/// position — NEVER re-read here. The post-write stat (disk I/O) happens
-/// BEFORE the tx opens; the tx itself is pure SQLite (I1's
-/// no-tx-across-disk-I/O contract). Port of `materialize.go:245-325`
-/// (`commitSave`).
+/// Step 5: ONE tx — blob put (hash of the bytes WE WROTE) + observation
+/// (`origin='save'`) + `saved_obs` update + re-Bind
+/// (path/inode/device/`kind='file'`, post-swap stat). `write.seq` is the
+/// caller's save-start-captured journal position — NEVER re-read here. The
+/// post-write stat (disk I/O) happens BEFORE the tx opens; the tx itself is
+/// pure SQLite (I1's no-tx-across-disk-I/O contract). The blob put and the
+/// observation that references its hash used to be two separate
+/// transactions — a cross-process GC sweep landing between them could
+/// delete the blob before the reference committed, failing the reference
+/// with no retry ([rune-db 2]); now both commit atomically, following the
+/// pattern `snapshot::create_snapshot` already uses. Port of
+/// `materialize.go:245-325` (`commitSave`).
 fn commit_save(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -312,13 +336,13 @@ fn commit_save(
     write: WriteIntent<'_>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
-    let hash = retry::with_retry(conn, |tx| crate::blob::put_blob(tx, write.data))?;
-
     let stat = observation::stat_identity(vfs, resolved);
     let at = crate::session::format_rfc3339_nanos(now);
-    let resolved_str = resolved.to_string_lossy().into_owned();
+    let resolved_str = crate::paths::to_db_string(resolved)?;
 
     retry::with_retry(conn, |tx| {
+        let hash = crate::blob::put_blob(tx, write.data)?;
+
         let obs = adopt::record_adoption_tx(
             tx,
             ds.doc_id,
@@ -382,10 +406,7 @@ pub(crate) fn rebind_document_tx(
 ) -> Result<(), Error> {
     let stat = rebind.stat;
 
-    tx.execute(
-        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-        params![rebind.path, doc_id],
-    )?;
+    evict_path_claim_tx(tx, rebind.path, doc_id)?;
 
     if stat.inode.is_some() {
         tx.execute(
@@ -394,11 +415,44 @@ pub(crate) fn rebind_document_tx(
         )?;
     }
 
+    set_identity_tx(tx, doc_id, rebind.path, stat.inode, stat.device, rebind.at)
+}
+
+/// Evicts any OTHER row currently claiming `path` — §1.7's "two rows must
+/// never both claim the same file" applied to the `path` column, everywhere
+/// a document row is about to be pointed at a real path. The ONE eviction
+/// chokepoint for this exact statement: [`rebind_document_tx`] and
+/// `document::open_path_by_inode`'s rename-detected branch both route
+/// through this instead of each carrying their own copy — the two copies
+/// had already drifted once before this extraction ([rune-db 13]).
+pub(crate) fn evict_path_claim_tx(tx: &Connection, path: &str, keep_id: i64) -> Result<(), Error> {
+    tx.execute(
+        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
+        params![path, keep_id],
+    )?;
+    Ok(())
+}
+
+/// Points `doc_id`'s row at `path`'s real on-disk identity — the ONE "set
+/// this row's path/inode/device to a real file's identity" statement.
+/// Always sets `kind='file'`: every caller (a post-publish rebind, or
+/// `document::open_path_by_inode` discovering a path change) only ever
+/// calls this once a real, on-disk file is confirmed. Before this
+/// extraction, `rebind_document_tx`'s copy of this statement set
+/// `kind='file'` and `document.rs`'s did not — a silent divergence between
+/// two copies of what should have been one statement ([rune-db 13]).
+pub(crate) fn set_identity_tx(
+    tx: &Connection,
+    doc_id: i64,
+    path: &str,
+    inode: Option<i64>,
+    device: Option<i64>,
+    at: &str,
+) -> Result<(), Error> {
     tx.execute(
         "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-        params![rebind.path, stat.inode, stat.device, rebind.at, doc_id],
+        params![path, inode, device, at, doc_id],
     )?;
-
     Ok(())
 }
 
@@ -809,5 +863,95 @@ mod tests {
 
         let disk = vfs.read(path).expect("winner's file still on disk");
         assert_eq!(disk, b"winner's bytes", "the winner's bytes must be intact");
+    }
+
+    /// Coverage gap [rune-db 7]: every failure test above hits a PRE-publish
+    /// path. This one forces the failure to land AFTER the atomic publish
+    /// already committed to disk — `commit_save`'s own transaction fails
+    /// (simulated by dropping `session_documents`, a table only its
+    /// `record_adoption_tx` touches, never the earlier CAS-check read), so
+    /// the file physically holds the NEW bytes while the DB-side commit
+    /// that would have advanced `saved_obs` to reflect that never lands —
+    /// exactly the degrade-and-self-heal window findings 1 and 2 describe,
+    /// previously asserted nowhere.
+    #[test]
+    fn post_publish_db_only_failure_leaves_new_bytes_on_disk_with_the_error_surfaced() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"original");
+        let doc_id = seed_doc_with_path(&conn, "/doc.md");
+        let expect = record_obs(&conn, doc_id, session_id, "original");
+
+        conn.execute("DROP TABLE session_documents", [])
+            .expect("drop table to force a post-publish DB-only failure");
+
+        let err = materialize(
+            &mut conn,
+            &vfs,
+            DocSession { doc_id, session_id },
+            path,
+            MaterializeInput {
+                content: "our new content",
+                expect,
+                seq: 1,
+                bind_new: false,
+            },
+            SystemTime::now(),
+        )
+        .expect_err("the post-publish DB-only failure must surface, not be swallowed");
+        assert!(matches!(err, Error::Sqlite(_)));
+
+        // The publish itself is unaffected by the DB-side failure that
+        // comes after it — the write already committed to disk.
+        let disk = vfs.read(path).expect("read disk");
+        assert_eq!(
+            disk, b"our new content",
+            "the file must hold the new bytes despite the DB commit failing"
+        );
+    }
+
+    /// [rune-db 5]: `materialize`'s `path` parameter must be honored, not
+    /// silently ignored in favor of re-deriving the destination from the
+    /// `documents` row. A caller-supplied path that disagrees with the
+    /// bound row is refused — a caller bug, not an ordinary CAS race.
+    #[test]
+    fn overwrite_refuses_when_caller_path_disagrees_with_the_bound_row() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        publish(&vfs, Path::new("/bound.md"), b"content");
+        publish(&vfs, Path::new("/other.md"), b"unrelated");
+        let doc_id = seed_doc_with_path(&conn, "/bound.md");
+        let expect = record_obs(&conn, doc_id, session_id, "content");
+
+        let err = materialize(
+            &mut conn,
+            &vfs,
+            DocSession { doc_id, session_id },
+            Path::new("/other.md"),
+            MaterializeInput {
+                content: "clobber attempt",
+                expect,
+                seq: 1,
+                bind_new: false,
+            },
+            SystemTime::now(),
+        )
+        .expect_err("a path/row disagreement must be refused, not silently resolved");
+        assert!(matches!(err, Error::Invalid(_)));
+
+        // Neither file was touched.
+        assert_eq!(
+            vfs.read(Path::new("/bound.md")).expect("bound intact"),
+            b"content"
+        );
+        assert_eq!(
+            vfs.read(Path::new("/other.md")).expect("other intact"),
+            b"unrelated"
+        );
     }
 }
