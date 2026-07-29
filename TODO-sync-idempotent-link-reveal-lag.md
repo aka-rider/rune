@@ -17,10 +17,26 @@ repro involves any WP14-added generator surface (`F1`, `^b`/`^t`,
 multicursor, `StaleConfirmTimeout`) — both use only pre-existing actions
 (`Type`, `Key`, a ctrl+arrow scroll command), confirming this is a
 pre-existing production defect that WP14.S1's SYNC-IDEMPOTENT fix now
-reliably surfaces, not something introduced by WP14's own changes. Given
-how easily both runs hit it (well under 200 generated cases each), `make
-test-fuzz RC=50000` cannot exit 0 until this is fixed — recorded as a
-Failure in WP14's own handoff, not papered over.
+reliably surfaces, not something introduced by WP14's own changes.
+
+**Third repro**, from the actual `make test-fuzz RC=50000` Done-when soak
+run, on a richer markdown fixture (list, blockquote, fence, link):
+
+```rune
+content # Title\n\n- item one\n- item two\n\n> a quote\n\n```rust\nfn main() {}\n```\n\n[a link](https://example.com)\n
+key home --c-
+key char:A ----
+key char:  ----
+```
+
+Same violation, 13 rows both times (a content mismatch within the rows
+this time, not a count mismatch) — 48 successful cases generated first,
+so this is not a first-case degenerate fluke either.
+
+Given how easily all three runs hit it (under 200 generated cases each,
+and the RC=50000 soak's own first failure), `make test-fuzz RC=50000`
+cannot exit 0 until this is fixed — recorded as a Failure in WP14's own
+handoff, not papered over.
 
 ## Original repro (kept below, still valid)
 
