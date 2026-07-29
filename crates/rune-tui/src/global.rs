@@ -174,7 +174,7 @@ pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('z'), Mods::NONE)],
         cmd: GlobalCommand::CollapseLeft,
-        help: "hide panel",
+        help: "hide pane",
         when: "",
         alias: false,
     },
