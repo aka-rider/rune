@@ -369,10 +369,9 @@ pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
 
-    // `explorer_block.is_some()` iff `tabs_block.is_some()` (plan WP3.S1:
-    // both come from the same `left_pane_width` branch) — `draw_left_pane`
-    // itself re-checks both and no-ops if either is `None`.
-    if geo.explorer_block.is_some() {
+    // The left column is drawn only when geometry gave it a block this
+    // frame; `draw_left_pane` re-checks and no-ops on `None` anyway.
+    if geo.left_block.is_some() {
         draw_left_pane(app, &geo, frame);
     }
 
@@ -408,39 +407,38 @@ pub fn draw(app: &App, frame: &mut Frame) {
     crate::footer::draw(app, geo.footer, frame);
 }
 
-/// The left column's two titled, bordered blocks (plan WP2.S5): Explorer on
-/// top ("Files"), Open Tabs below ("Open" — its own content lands in WP5).
-/// This owns only the border and the focus-colored border style; its two
-/// block rects and their inner rects all come from `Geometry` (plan
-/// WP3.S8) rather than computing its own `Layout::split`. The Explorer's
-/// own row content (root path, entries) is delegated to `explorer::draw`
-/// at the block's INNER rect (plan WP4.S6) — the one content-owning call
-/// this function makes.
+/// The left column: ONE titled, bordered block (" Files ") holding both
+/// panes, with the Open Tabs section introduced by an in-block divider row
+/// rather than a second border. This owns only that border and its
+/// focus-colored style; every rect it paints into comes from `Geometry`
+/// rather than a `Layout::split` of its own.
+///
+/// The single border's color tracks the EXPLORER's focus, since the block
+/// is titled for it; the Tabs pane signals its own focus through the
+/// divider row's color and the cursor prefix on its rows instead.
+///
+/// Render order is load-bearing: the block paints first — its border spans
+/// the whole rect, including the columns the inner content sits inside —
+/// then the Explorer rows, the divider, and the tab rows go on top.
 fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
-    let (Some(explorer_area), Some(tabs_area)) = (geo.explorer_block, geo.tabs_block) else {
+    let Some(left_area) = geo.left_block else {
         return;
     };
 
-    let border_style = |pane: Pane| {
-        if app.focus == pane {
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(if app.focus == Pane::Explorer {
             app.theme.chrome.active_border
         } else {
             app.theme.chrome.inactive_border
-        }
-    };
+        })
+        .title(" Files ");
+    frame.render_widget(block, left_area);
 
-    let explorer_block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(border_style(Pane::Explorer))
-        .title("Files");
-    frame.render_widget(explorer_block, explorer_area);
     crate::explorer::draw(app, geo.explorer_inner, frame);
-
-    let tabs_block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(border_style(Pane::Tabs))
-        .title("Open");
-    frame.render_widget(tabs_block, tabs_area);
+    if let Some(divider) = geo.tabs_divider {
+        crate::opentabs::draw_divider(app, divider, frame);
+    }
     crate::opentabs::draw(app, geo.tabs_inner, frame);
 }
 

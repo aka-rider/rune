@@ -16,11 +16,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 use crate::app::App;
 use crate::banner;
 
-/// Left-pane geometry (moved here from `render.rs`, plan WP3.S1): the
-/// DEFAULT column width, the smallest it may shrink to, and the smallest
-/// the editor pane may shrink to in exchange. `left_pane_width` below is
-/// the pure query both `geometry` and any test asserting on the split use,
-/// so they can never disagree on the number.
+/// Left-pane geometry: the DEFAULT column width, the smallest it may
+/// shrink to, and the smallest the editor pane may shrink to in exchange.
+/// `left_pane_width` below is the pure query both `geometry` and any test
+/// asserting on the split use, so they can never disagree on the number.
 pub const DEFAULT_LEFT_PANE_W: u16 = 22;
 pub const MIN_LEFT_PANE_W: u16 = 16;
 pub const MIN_CENTER_W: u16 = 24;
@@ -38,19 +37,29 @@ pub fn left_pane_width(total_width: u16) -> Option<u16> {
 }
 
 /// Every rect `render::draw` blits into, computed once, read by every
-/// consumer that used to guess its own. `explorer_inner`/`tabs_inner` are
-/// `Rect`, not `Option<Rect>` — when the left pane isn't shown at all
-/// (`explorer_block`/`tabs_block` both `None`), they're the zero rect
-/// `Rect::new(0, 0, 0, 0)`; nothing reads them in that state except
-/// `explorer`/`opentabs`'s own `visible_rows`; whose callers only run while
+/// consumer that used to guess its own.
+///
+/// The left column is ONE bordered block (`left_block`), not two stacked
+/// ones: the Explorer's rows fill its upper half (`explorer_inner`), a
+/// one-row in-block `Open` divider (`tabs_divider`) introduces the Open
+/// Tabs section, and the tab rows fill the rest (`tabs_inner`). All three
+/// are carved out of the block's single inner rect, so no interior border
+/// rule ever splits the column.
+///
+/// `explorer_inner`/`tabs_inner` are `Rect`, not `Option<Rect>` — when the
+/// left pane isn't shown at all (`left_block` `None`), they're the zero
+/// rect `Rect::new(0, 0, 0, 0)`; nothing reads them in that state except
+/// `explorer`/`opentabs`'s own `visible_rows`, whose callers only run while
 /// the corresponding pane can actually be focused, i.e. while it's visible.
+/// `tabs_divider` is additionally `None` when the block's inner rect is too
+/// short to spare a row for it.
 #[derive(Clone, Copy, Debug)]
 pub struct Geometry {
     pub footer: Rect,
     pub banner: Option<Rect>,
-    pub explorer_block: Option<Rect>,
+    pub left_block: Option<Rect>,
     pub explorer_inner: Rect,
-    pub tabs_block: Option<Rect>,
+    pub tabs_divider: Option<Rect>,
     pub tabs_inner: Rect,
     pub center: Rect,
     /// Whether the center pane got a `Block::bordered()` this frame (plan
@@ -61,16 +70,15 @@ pub struct Geometry {
     pub editor: Rect,
 }
 
-/// Pure — `&App` only, no `Frame`, no `&mut`. Reproduces, in order, exactly
-/// what `render::draw` used to compute inline: (1) the footer split; (2)
-/// the banner carve-out, if a modal is up; (3) the left pane's two blocks,
-/// if `app.left_visible` and the terminal is wide enough; (4) the
-/// remainder as `center`; (5) center's own title/editor split.
+/// Pure — `&App` only, no `Frame`, no `&mut`. Computes, in order: (1) the
+/// footer split; (2) the banner carve-out, if a modal is up; (3) the left
+/// column's single bordered block and the Explorer/divider/Tabs split of
+/// its inner rect, if `app.left_visible` and the terminal is wide enough;
+/// (4) the remainder as `center`; (5) center's own title/editor split.
 ///
 /// Every subtraction saturates — `geometry` never panics, however small
-/// `area` is (plan gotchas 13/14: the fuzzer drives `Resize` down to
-/// `1..=200 x 2..=60`, and `tests/tui_render.rs` calls `draw_into` at
-/// `(0, 0)` and `(1, 1)`).
+/// `area` is (the fuzzer drives `Resize` down to a 1-column, 2-row
+/// terminal, and the render tests draw at `(0, 0)` and `(1, 1)`).
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -97,7 +105,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     };
 
     let zero = Rect::new(0, 0, 0, 0);
-    let (explorer_block, explorer_inner, tabs_block, tabs_inner, center) = if app.left_visible {
+    let (left_block, explorer_inner, tabs_divider, tabs_inner, center) = if app.left_visible {
         match left_pane_width(main_area.width) {
             Some(left_w) => {
                 let cols = Layout::default()
@@ -107,26 +115,33 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
                 let left_area = cols.first().copied().unwrap_or(main_area);
                 let center = cols.get(1).copied().unwrap_or(main_area);
 
-                let rows = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(left_area);
-                let explorer_area = rows.first().copied().unwrap_or(left_area);
-                let tabs_area = rows.get(1).copied().unwrap_or(Rect::new(
-                    left_area.x,
-                    left_area.y,
-                    left_area.width,
-                    0,
-                ));
-
-                let margin = Margin::new(1, 1);
-                (
-                    Some(explorer_area),
-                    explorer_area.inner(margin),
-                    Some(tabs_area),
-                    tabs_area.inner(margin),
-                    center,
-                )
+                // The ONE border's inner rect, carved once: everything the
+                // left column draws lives inside it, so the Explorer rows,
+                // the divider and the tab rows can never disagree about
+                // where the border is.
+                let inner = left_area.inner(Margin::new(1, 1));
+                if inner.height < 2 {
+                    // No room to spend a row on the divider — the Explorer
+                    // takes what little there is and the Tabs section is
+                    // simply absent this frame.
+                    (Some(left_area), inner, None, zero, center)
+                } else {
+                    let rows = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Percentage(50),
+                            Constraint::Length(1),
+                            Constraint::Min(0),
+                        ])
+                        .split(inner);
+                    (
+                        Some(left_area),
+                        rows.first().copied().unwrap_or(inner),
+                        rows.get(1).copied(),
+                        rows.get(2).copied().unwrap_or(zero),
+                        center,
+                    )
+                }
             }
             None => (None, zero, None, zero, main_area),
         }
@@ -162,9 +177,9 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     Geometry {
         footer,
         banner,
-        explorer_block,
+        left_block,
         explorer_inner,
-        tabs_block,
+        tabs_divider,
         tabs_inner,
         center,
         center_bordered,
