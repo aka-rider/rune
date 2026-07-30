@@ -9,7 +9,7 @@
 use std::ops::Range;
 
 use crate::app::App;
-use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
+use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_line, nav_scroll};
 use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
@@ -437,8 +437,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::LineDown => nav_scroll::line_down(app.active_doc_mut(), false),
         Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
         Command::WordRight => nav::word_right(app.active_doc_mut(), false),
-        Command::LineStart => nav::line_start(app.active_doc_mut(), false),
-        Command::LineEnd => nav::line_end(app.active_doc_mut(), false),
+        Command::LineStart => nav_line::line_start(app.active_doc_mut(), false),
+        Command::LineEnd => nav_line::line_end(app.active_doc_mut(), false),
         Command::PageUp => nav_scroll::page_up(app.active_doc_mut(), false),
         Command::PageDown => nav_scroll::page_down(app.active_doc_mut(), false),
         Command::SelectCharLeft => nav::char_left(app.active_doc_mut(), true),
@@ -447,8 +447,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::SelectLineDown => nav_scroll::line_down(app.active_doc_mut(), true),
         Command::SelectWordLeft => nav::word_left(app.active_doc_mut(), true),
         Command::SelectWordRight => nav::word_right(app.active_doc_mut(), true),
-        Command::SelectLineStart => nav::line_start(app.active_doc_mut(), true),
-        Command::SelectLineEnd => nav::line_end(app.active_doc_mut(), true),
+        Command::SelectLineStart => nav_line::line_start(app.active_doc_mut(), true),
+        Command::SelectLineEnd => nav_line::line_end(app.active_doc_mut(), true),
         Command::SelectPageUp => nav_scroll::page_up(app.active_doc_mut(), true),
         Command::SelectPageDown => nav_scroll::page_down(app.active_doc_mut(), true),
         Command::SelectAll => nav::select_all(app.active_doc_mut()),

@@ -3,7 +3,11 @@
 //!
 //! Vertical/page motion and the WP7.S2 viewport-only scroll commands live
 //! in the sibling `nav_scroll` module (plan WP7.S7, §1.6: this file was
-//! already over the 500-line budget before WP7 added anything).
+//! already over the 500-line budget before WP7 added anything). Line/
+//! document motion (line start/end, and the `handle_move_to` driver) lives
+//! in the sibling `nav_line` module for the same reason (§1.6); that module
+//! reaches back into this one for the shared `move_cursors`/
+//! `update_horizontal` cursor-stepping infrastructure.
 //!
 //! Doc-local (plan WP1 decision 4): every function here takes `&mut
 //! Document` directly — motion/selection never touches `App`-level state
@@ -188,78 +192,13 @@ pub fn word_right_offset(buf: &Buffer, offset: usize) -> usize {
     offset
 }
 
-/// Port of `commands_nav.go:lineStartOffset` — toggles between the line's
-/// first non-whitespace column and column 0 (a "smart home").
-pub fn line_start_offset(buf: &Buffer, offset: usize) -> usize {
-    let bp = buf.offset_to_line_col(offset);
-    let line_start = buf.line_col_to_offset(BufferPoint {
-        line: bp.line,
-        col: 0,
-    });
-
-    let mut first_non_ws = line_start;
-    while first_non_ws < buf.len() {
-        let Some((r, size)) = buf.rune_at(first_non_ws) else {
-            break;
-        };
-        if r == '\n' || (r != ' ' && r != '\t') {
-            break;
-        }
-        first_non_ws += size;
-    }
-
-    if offset == first_non_ws {
-        line_start
-    } else {
-        first_non_ws
-    }
-}
-
-/// Port of `commands_nav.go:lineEndOffset`.
-pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
-    let bp = buf.offset_to_line_col(offset);
-    let mut end = buf.line_col_to_offset(BufferPoint {
-        line: bp.line,
-        col: 0,
-    });
-    while end < buf.len() {
-        let Some((r, size)) = buf.rune_at(end) else {
-            break;
-        };
-        if r == '\n' {
-            break;
-        }
-        end += size;
-    }
-    end
-}
-
-/// The byte range `[line_start, line_end)` of the line containing `offset`,
-/// extended to include the line's trailing `\n` unless it's the buffer's
-/// last line. The shared chokepoint for "whole current line" ranges: port
-/// of `commands_clipboard.go:copyEntireLine`'s range arithmetic, used
-/// identically by `commands::clipboard::copy_entire_line` (what gets
-/// copied) and `commands::edit::delete_selection_or_line` (what cut
-/// removes) so the two can never disagree about where a line-copy ends.
-pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, usize) {
-    let bp = buf.offset_to_line_col(offset);
-    // `bp.line` comes from `offset_to_line_col`, which always yields a
-    // valid line index — both lookups are `Some` by construction.
-    let line_start = buf.line_start(bp.line).unwrap_or(0);
-    let mut line_end = buf.line_end(bp.line).unwrap_or(buf.len());
-    if line_end < buf.len() {
-        line_end += 1; // include the trailing '\n'
-    }
-    (line_start, line_end)
-}
-
 /// The `[start, end)` byte range of the word (or whitespace/punctuation
 /// run) touching `offset` — the double-click "select word" gesture
 /// (`commands::mouse`, plan WP7.S6). Class-based like `word_left_offset`/
 /// `word_right_offset` above, but expands outward from a single anchor
 /// rather than walking motion-by-motion, since a click can land anywhere
-/// inside the run, not just at its start. `line_range_incl_newline` above is
-/// the equivalent chokepoint for the triple-click "select the whole
+/// inside the run, not just at its start. `nav_line::line_range_incl_newline`
+/// is the equivalent chokepoint for the triple-click "select the whole
 /// logical line" gesture — it already spans every wrapped row of the
 /// buffer line, since it works in buffer-line space, not wrap-row space.
 pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
@@ -311,7 +250,7 @@ pub fn selection_end_inclusive(c: &Cursor, buf: &Buffer) -> usize {
 /// from the NEW position's visual column — every horizontal/line-start-end
 /// motion resets `desired_col` this way (only vertical row motion preserves
 /// the caller's `desired_col`, see `move_row` below).
-fn update_horizontal(
+pub(crate) fn update_horizontal(
     view: &ViewSnapshots,
     buf: &Buffer,
     c: Cursor,
@@ -360,21 +299,9 @@ fn handle_right(
     update_horizontal(view, buf, c, offset, select)
 }
 
-/// Port of `commands_nav.go:handleMoveTo`.
-fn handle_move_to(
-    view: &ViewSnapshots,
-    buf: &Buffer,
-    c: Cursor,
-    select: bool,
-    step: impl Fn(&Buffer, usize) -> usize,
-) -> Cursor {
-    let offset = step(buf, c.position);
-    update_horizontal(view, buf, c, offset, select)
-}
-
 /// Shared horizontal/line-start-end driver — port of `handleCursorCmd`
 /// applied to every cursor in the set.
-fn move_cursors(
+pub(crate) fn move_cursors(
     doc: &mut Document,
     select: bool,
     step: impl Fn(&ViewSnapshots, &Buffer, Cursor, bool) -> Cursor,
@@ -410,18 +337,6 @@ pub fn word_left(doc: &mut Document, select: bool) {
 pub fn word_right(doc: &mut Document, select: bool) {
     move_cursors(doc, select, |view, buf, c, select| {
         handle_right(view, buf, c, select, word_right_offset)
-    });
-}
-
-pub fn line_start(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_move_to(view, buf, c, select, line_start_offset)
-    });
-}
-
-pub fn line_end(doc: &mut Document, select: bool) {
-    move_cursors(doc, select, |view, buf, c, select| {
-        handle_move_to(view, buf, c, select, line_end_offset)
     });
 }
 
@@ -502,24 +417,6 @@ mod tests {
         let buf = Buffer::new("foo_bar привіт1");
         assert_eq!(word_right_offset(&buf, 0), "foo_bar".len());
         assert_eq!(word_right_offset(&buf, "foo_bar ".len()), buf.len());
-    }
-
-    #[test]
-    fn line_start_offset_toggles_first_non_ws_and_column_zero() {
-        let buf = Buffer::new("   indented\n");
-        // Cursor already at the first non-whitespace column: toggling goes
-        // to column 0.
-        assert_eq!(line_start_offset(&buf, 3), 0);
-        // Cursor elsewhere on the line: goes to the first non-whitespace
-        // column.
-        assert_eq!(line_start_offset(&buf, 7), 3);
-    }
-
-    #[test]
-    fn line_end_offset_stops_before_the_newline() {
-        let buf = Buffer::new("hello\nworld\n");
-        assert_eq!(line_end_offset(&buf, 0), 5);
-        assert_eq!(line_end_offset(&buf, 3), 5);
     }
 
     #[test]

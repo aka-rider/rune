@@ -40,6 +40,7 @@ use rune_core::cursor::{Cursor, CursorSet};
 use crate::app::{App, StatusSource};
 use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav;
+use crate::commands::nav_line;
 use crate::db;
 use crate::document::DocumentId;
 use crate::materialize_ack;
@@ -139,15 +140,15 @@ pub fn newline(app: &mut App, id: DocumentId) {
 /// Port of `commands_clipboard.go:buildDeleteEdits`, reused by
 /// `commands::clipboard::cut` (WP8): deletes each cursor's selection, or —
 /// with no selection — its whole current line including the trailing `\n`
-/// (`nav::line_range_incl_newline`, the same range `copy_entire_line` used
-/// to build the text cut just copied — so cut always removes precisely
+/// (`nav_line::line_range_incl_newline`, the same range `copy_entire_line`
+/// used to build the text cut just copied — so cut always removes precisely
 /// what it captured).
 pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
         id,
         |_i, _c, _buf| String::new(),
-        |buf, c| Some(nav::line_range_incl_newline(buf, c.position)),
+        |buf, c| Some(nav_line::line_range_incl_newline(buf, c.position)),
     );
 }
 
