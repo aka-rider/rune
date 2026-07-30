@@ -270,6 +270,27 @@ fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
         .push(load_dir_cmd(vfs, root, DirCause::Nav, generation));
 }
 
+/// Requests the Explorer's very first listing if it has none yet. The one
+/// chokepoint for that first load, so every route that can put the pane in
+/// front of the user — focusing it with a chord, or launching with no file
+/// to edit, which shows the column before any key is pressed — fills it the
+/// same way. Without this, a column shown at startup would render an empty
+/// box with a blank root row until the user happened to press the focus
+/// chord.
+///
+/// "Empty and not already loading" is the no-shadow-state stand-in for
+/// "never loaded": `Explorer` carries no separate `loaded` flag, and a
+/// genuinely empty directory re-triggering this is a harmless reload, not
+/// an incorrect state. A hidden column is left alone — nothing is on screen
+/// to fill.
+pub fn ensure_loaded(app: &mut App, effects: &mut Effects) {
+    if !app.splits.left.is_shown() || !app.explorer.entries.is_empty() || app.explorer.loading {
+        return;
+    }
+    let root = initial_root(app);
+    request_dir(app, root, effects);
+}
+
 /// Re-lists the Explorer when `path`'s parent IS its current root — the
 /// post-rename side effect (a `pub(crate)` sibling of the private
 /// `request_dir`). Uses `DirCause::Refresh` so the user's selected entry is

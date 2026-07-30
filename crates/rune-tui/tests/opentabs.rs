@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
-use rune_tui::app::{self, App};
+use rune_tui::app::{self, App, StatusSource};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
@@ -410,7 +410,7 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
 
     assert_eq!(app.status_message.as_deref(), Some("close cancelled"));
-    assert_eq!(app.status_source, rune_tui::app::StatusSource::Other);
+    assert_eq!(app.status_source, StatusSource::Other);
 }
 
 /// Closing the last remaining document is refused outright — rune always
@@ -588,4 +588,32 @@ fn an_out_of_range_tab_digit_is_a_no_op() {
         app.active, before,
         "^9 with only 2 tabs open must be a no-op"
     );
+}
+
+/// A cancellation ack must never cost the user an unacknowledged save
+/// failure. The footer ranks a `SaveError` above ordinary status precisely
+/// because it is the user's only notice that their bytes did not reach
+/// disk; cancelling an unrelated Guard is the least important thing the
+/// status row can say, so it yields rather than overwriting.
+#[test]
+fn escape_on_a_guard_does_not_clobber_an_unacknowledged_save_failure() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let second = open_second(&mut app);
+    edit::insert_char(&mut app, second, '!');
+    app.set_status("save failed: disk full", StatusSource::SaveError);
+
+    workspace::request_close(&mut app, second);
+    assert!(app.modal.is_some(), "a dirty close arms the Guard");
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
+
+    assert!(app.modal.is_none(), "Escape still cancels the Guard");
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("save failed: disk full"),
+        "the save failure must survive an unrelated cancellation"
+    );
+    assert_eq!(app.status_source, StatusSource::SaveError);
 }

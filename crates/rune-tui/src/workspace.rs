@@ -202,6 +202,18 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     }
 }
 
+/// Switches to the tab sitting at `idx` in the current tab order, if there
+/// is one. Positional rather than by id, for the callers that only know a
+/// row or a typed digit; an index past the end is a silent no-op, so a
+/// digit chord naming a tab that isn't open simply does nothing. Funnels
+/// into [`switch_to`], so a positional switch can never skip the title
+/// reseed or the cursor move.
+pub fn switch_to_index(app: &mut App, idx: usize) {
+    if let Some(&id) = app.tabs.order.get(idx) {
+        switch_to(app, id);
+    }
+}
+
 /// `F1` (plan WP7.S2, `keymap::GlobalCommand::Help`): mints the read-only
 /// Help virtual document the first time it's ever needed (`App.help_doc`,
 /// idempotent — a second press never mints a duplicate), then toggles

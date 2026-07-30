@@ -458,3 +458,66 @@ fn open_path_on_an_already_open_document_reactivates_instead_of_duplicating() {
     assert_eq!(app.active, first_active);
     assert_eq!(app.focus, Pane::Editor);
 }
+
+/// The launch-mode gap the "Explorer visible on untitled launch" work left
+/// open: showing the left column is not the same as filling it. A pathless
+/// launch shows the column before any key is pressed, so the first listing
+/// has to be requested from the bootstrap window rather than from the focus
+/// chord — otherwise the user meets an empty box with a blank root row and
+/// no way to guess that `^b` would populate it.
+#[test]
+fn an_untitled_app_requests_its_first_listing_without_any_keypress() {
+    let mem = seeded_vfs();
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
+    let mut app = App::new_untitled(vfs);
+    assert!(
+        app.splits.left.is_shown(),
+        "a pathless launch shows the left column"
+    );
+    assert!(app.explorer.entries.is_empty(), "nothing listed yet");
+
+    let mut effects = Effects::default();
+    explorer::ensure_loaded(&mut app, &mut effects);
+
+    assert_eq!(effects.cmds.len(), 1, "the first listing must be requested");
+    assert_eq!(effects.cmds[0].kind(), CmdKind::ReadDir);
+    let msg = effects.cmds.remove(0).run().expect("ReadDir replies");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+    assert!(
+        !app.explorer.entries.is_empty(),
+        "the pane the user can see must actually list something"
+    );
+}
+
+/// A file-backed launch keeps the column collapsed, so there is nothing on
+/// screen to fill and no listing should be requested — the load stays lazy
+/// for exactly the launch mode that hides the pane.
+#[test]
+fn a_hidden_left_column_requests_no_listing() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    assert!(!app.splits.left.is_shown());
+
+    let mut effects = Effects::default();
+    explorer::ensure_loaded(&mut app, &mut effects);
+
+    assert!(effects.cmds.is_empty(), "nothing visible, nothing to load");
+}
+
+/// `ensure_loaded` is reached from both the focus chord and the bootstrap
+/// window, so it must not re-request a listing the Explorer already has —
+/// otherwise every `^b` after the first would spend a filesystem round trip
+/// re-reading a directory that is already on screen.
+#[test]
+fn ensure_loaded_is_a_no_op_once_the_explorer_has_entries() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    load_explorer(&mut app);
+    assert!(!app.explorer.entries.is_empty());
+
+    let mut effects = Effects::default();
+    explorer::ensure_loaded(&mut app, &mut effects);
+
+    assert!(effects.cmds.is_empty(), "already listed; no reload");
+}

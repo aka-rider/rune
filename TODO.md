@@ -6,7 +6,7 @@
 ## File-size budget (§1.6)
 
 - [ ] `crates/rune-tui/src/explorer.rs` is over the 500-line budget — it was already at 613 lines before the `..` parent-row change pushed it to 650. Splitting it was deliberately out of scope for that change, so the split is deferred here.
-- [ ] `crates/rune-tui/tests/opentabs.rs` is now 571 lines, over the budget — the global `^w`/`^1`-`^0` binding tests were appended to the existing tabs test file rather than split out. Decompose it (e.g. a separate `opentabs_global.rs`) next time it is touched.
+- [ ] `crates/rune-tui/tests/opentabs.rs` is now 591 lines, over the budget — the global `^w`/`^1`-`^0` binding tests were appended to the existing tabs test file rather than split out. Decompose it (e.g. a separate `opentabs_global.rs`) next time it is touched.
 
 ## Parked tickets
 

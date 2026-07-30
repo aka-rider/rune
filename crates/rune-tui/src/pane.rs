@@ -6,7 +6,6 @@
 //! it's the sole reader/writer of `App::focus`/the left column's `Split`
 //! state outside `app.rs` itself.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
@@ -14,7 +13,7 @@ use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
 use crate::explorer;
 use crate::keymap::{GlobalCommand, QuitKey};
-use crate::runtime::{Cmd, CmdKind, DirCause, Effects, Msg, load_dir_cmd};
+use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::save;
 
 /// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
@@ -55,25 +54,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.splits.left.show();
             app.splits.explorer.show();
             app.focus = Pane::Explorer;
-            // The Explorer's very first load (plan WP4.S4): "empty and not
-            // already loading" is the no-shadow-state stand-in for "never
-            // loaded" — `Explorer`'s exact field list (`explorer.rs`) has
-            // no separate `loaded` flag, and a genuinely-empty directory
-            // re-triggering this on a later focus is a harmless no-op
-            // reload, not an incorrect state.
-            if app.splits.left.is_shown()
-                && app.explorer.entries.is_empty()
-                && !app.explorer.loading
-            {
-                let root = explorer::initial_root(app);
-                app.explorer.loading = true;
-                app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
-                let generation = app.explorer.request_generation;
-                let vfs = Arc::clone(&app.vfs);
-                effects
-                    .cmds
-                    .push(load_dir_cmd(vfs, root, DirCause::Nav, generation));
-            }
+            // Shared with the startup path that shows this column before
+            // any key is pressed, so both fill the pane identically.
+            explorer::ensure_loaded(app, effects);
         }
         GlobalCommand::FocusEditor => app.focus = Pane::Editor,
         // Reseed from the document that is actually showing, every time:
@@ -113,13 +96,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
         GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active),
-        // Out-of-range is a silent no-op — the same tolerance `TabsCommand::
-        // Select`'s own `.get` already had for a cursor past the end.
-        GlobalCommand::TabSwitch(idx) => {
-            if let Some(&id) = app.tabs.order.get(idx) {
-                crate::workspace::switch_to(app, id);
-            }
-        }
+        // Out-of-range is a silent no-op, so a digit naming a tab that
+        // isn't open does nothing rather than guessing at a neighbour.
+        GlobalCommand::TabSwitch(idx) => crate::workspace::switch_to_index(app, idx),
     }
 }
 

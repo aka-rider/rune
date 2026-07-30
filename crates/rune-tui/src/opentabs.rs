@@ -99,11 +99,7 @@ pub fn handle_key(app: &mut App, key: KeyInput) -> KeyOutcome {
     match cmd {
         TabsCommand::Up => move_selection(app, -1),
         TabsCommand::Down => move_selection(app, 1),
-        TabsCommand::Select => {
-            if let Some(&id) = app.tabs.order.get(app.tabs.nav.cursor) {
-                workspace::switch_to(app, id);
-            }
-        }
+        TabsCommand::Select => workspace::switch_to_index(app, app.tabs.nav.cursor),
     }
     KeyOutcome::Consumed
 }

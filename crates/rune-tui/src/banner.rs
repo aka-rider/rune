@@ -359,7 +359,15 @@ fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     if key.code == KeyCode::Escape {
         let msg = cancel_status(&prompt.kind);
         clear_modal(app);
-        app.set_status(msg, crate::app::StatusSource::Other);
+        // A cancellation ack is the least important thing the status row can
+        // say. An unacknowledged save failure is the most important, and the
+        // footer already ranks it above ordinary status, so overwriting it
+        // here would drop the user's only notice that their bytes did not
+        // reach disk. Cancelling an unrelated Guard must never cost them
+        // that; the save failure stays until its own success clears it.
+        if app.status_source != crate::app::StatusSource::SaveError {
+            app.set_status(msg, crate::app::StatusSource::Other);
+        }
         return;
     }
     match &prompt.kind {

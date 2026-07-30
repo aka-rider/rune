@@ -334,9 +334,16 @@ pub fn run(app: &mut App) -> io::Result<()> {
     // just succeeded for this document, `schedule_highlight`'s own
     // already-current guard (`highlight.version == version`) makes this a
     // no-op — see that function's doc comment.
+    // Same bootstrap-window reasoning as the highlight kick above, for the
+    // same reason: a launch with no file to edit shows the left column
+    // before any key is pressed, but the constructor had no `Effects` to
+    // request the listing with, so without this the pane would render as an
+    // empty box until the user pressed the focus chord. A no-op whenever the
+    // column starts hidden or the Explorer already has entries.
     {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
+        crate::explorer::ensure_loaded(app, &mut effects);
         for cmd in effects.cmds.drain(..) {
             spawn_cmd(cmd, tx.clone(), &mut save_handles);
         }
