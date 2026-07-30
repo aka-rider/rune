@@ -3,7 +3,7 @@
 //! own key handling can never drift apart: `## Global`/`## Leader`/
 //! `## Explorer`/`## Open Tabs`/`## Editor` are each built by iterating
 //! `keymap::GLOBAL_BINDINGS`/`global::LEADER_BINDINGS`/
-//! `explorer::EXPLORER_BINDINGS`/`opentabs::TABS_BINDINGS`/
+//! `explorer_keys::EXPLORER_BINDINGS`/`opentabs::TABS_BINDINGS`/
 //! `keymap::editor_bindings::EDITOR_BINDINGS` — the SAME tables
 //! `footer::default_hint_spans` and each pane's `resolve_in` call already
 //! read (one source of truth, `Binding::label`/`global::leader_label` the
@@ -16,7 +16,7 @@
 //! table to reflect over — CONSTITUTION §12: "a hand-maintained key list may
 //! not exist".
 
-use crate::explorer::EXPLORER_BINDINGS;
+use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::keymap::{Binding, GLOBAL_BINDINGS};

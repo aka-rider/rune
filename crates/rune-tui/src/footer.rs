@@ -13,7 +13,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::{App, StatusSource};
 use crate::banner;
 use crate::banner::{GuardKind, Modal};
-use crate::explorer::EXPLORER_BINDINGS;
+use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;

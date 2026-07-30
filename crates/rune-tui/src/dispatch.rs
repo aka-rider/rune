@@ -15,7 +15,7 @@ use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, HighlightPayload, Msg};
-use crate::{explorer, materialize_ack, opentabs, save};
+use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
 use rune_db::DbEvent;
 use rune_syntax::ScopeId;
 
@@ -368,7 +368,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     // here rather than threaded anywhere further.
     let _ = match app.focus {
         Pane::Editor => handle_editor_key(app, key, effects),
-        Pane::Explorer => explorer::handle_key(app, key, effects),
+        Pane::Explorer => explorer_keys::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key),
         Pane::Title => crate::title::handle_key(app, key, effects),
     };

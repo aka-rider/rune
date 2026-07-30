@@ -473,7 +473,7 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
 
 /// Reads `root`'s children off-thread via `vfs.read_dir` (plan WP4.S4) and
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
-/// Explorer's own boundary Msg, called from `explorer::handle_key` (Open on
+/// Explorer's own boundary Msg, called from `explorer_keys::handle_key` (Open on
 /// a directory, Backspace to the parent) and from `pane::handle_global_
 /// command`'s `FocusExplorer` arm (the very first load). §1.4.9: the
 /// filesystem is reached only through the injected `Vfs`; §5.4: this I/O
