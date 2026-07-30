@@ -128,11 +128,12 @@ pub const MARKDOWN_SCOPES: &[&str] = &[
     "markup.table.border",
     "punctuation.special",
     "comment",
+    "markup.quote.marker",
 ];
 
 /// The canonical code-token scope vocabulary a tree-sitter producer resolves
 /// its grammar captures against, appended after [`MARKDOWN_SCOPES`] so
-/// markdown ids stay fixed at `0..=17`. `"comment"` is deliberately absent —
+/// markdown ids stay fixed at `0..=22`. `"comment"` is deliberately absent —
 /// it is already registered by `MARKDOWN_SCOPES` and a code capture landing
 /// on `@comment` resolves to that shared id instead of a duplicate.
 pub const CODE_SCOPES: &[&str] = &[
@@ -249,5 +250,18 @@ mod tests {
         let table = scope_table();
         let first = MARKDOWN_SCOPES.first().copied().unwrap_or_default();
         assert_eq!(table.resolve(first), Some(ScopeId(0)));
+    }
+
+    #[test]
+    fn quote_marker_scope_is_registered_and_distinct_from_its_prefix_fallback() {
+        let table = scope_table();
+        // A half-done append would leave "markup.quote.marker" unregistered,
+        // in which case longest-dotted-prefix resolution would silently
+        // fall back to "markup.quote" instead of failing loudly — this
+        // guards that the append actually registered the more specific name.
+        assert_ne!(
+            table.resolve("markup.quote.marker"),
+            table.resolve("markup.quote")
+        );
     }
 }

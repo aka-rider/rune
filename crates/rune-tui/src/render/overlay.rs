@@ -41,9 +41,11 @@ use super::Cell;
 ///    resolution rule.
 /// 4. Walks `rows` once more, patching (`Style::patch`, never plain
 ///    assignment — decision 2) each real cell whose byte fell in the
-///    window and painted `Some`. `patch` only sets `fg`/modifiers
-///    (`code_scope_style` never sets a `bg`), so a fence's `markup.raw.
-///    block` background survives underneath a token's foreground colour.
+///    window and painted `Some`, through `Theme::overlay_scope_style`
+///    rather than `Theme::scope_style` — that variant always strips `bg`,
+///    so a fence's own background survives underneath a token's foreground
+///    colour regardless of whether the overlaid scope would otherwise
+///    carry one.
 ///
 /// Every index into `window` goes through `.get`/`.get_mut` (`indexing_
 /// slicing` is a hard `deny` under `make lint`), never `[]`.
@@ -91,7 +93,7 @@ pub(super) fn apply_highlight_spans(
                 continue;
             }
             if let Some(Some(id)) = window.get(offset - lo) {
-                cell.style = cell.style.patch(theme.scope_style(*id));
+                cell.style = cell.style.patch(theme.overlay_scope_style(*id));
             }
         }
     }
