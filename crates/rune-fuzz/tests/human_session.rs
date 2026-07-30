@@ -25,8 +25,12 @@ fn human_session() {
         // Direct, not the default SourceParallel: SourceParallel cannot resolve
         // a path for a source file under tests/ (it looks for a sibling
         // lib.rs/main.rs and gives up). CWD for `cargo test` is the package root.
+        // The path lives under the gitignored artifacts tree, not version
+        // control: a random-seed fuzz failure must not dirty the working tree,
+        // or the checked-in gate list stops being idempotent. Proptest creates
+        // any missing intermediate directories itself before writing.
         failure_persistence: Some(Box::new(FileFailurePersistence::Direct(
-            "proptest-regressions/human_session.txt",
+            "artifacts/proptest-regressions/human_session.txt",
         ))),
         ..Config::default() // PROPTEST_CASES read here, once (LazyLock)
     };

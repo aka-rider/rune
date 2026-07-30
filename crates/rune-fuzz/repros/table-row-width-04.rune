@@ -1,0 +1,12 @@
+content # Doc\n\n| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |\n\ntail\n
+type 
+key backspace ----
+key down ----
+key right -a--
+key left s---
+type  \u{200b}\u{200b}  
+key char:z ---u
+type 
+type 
+paste 
+key up ----
