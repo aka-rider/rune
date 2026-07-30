@@ -10,7 +10,7 @@ use crate::app::App;
 
 /// One visible display row's table affiliation, index-aligned with
 /// `render::build_rows`'s own output (`row_meta` below windows
-/// `view.display.rows()` through `document::visible_rows` — the SAME
+/// `view.display.rows()` through `viewport::visible_rows` — the SAME
 /// chokepoint `build_rows` uses), so `Snapshot.cells[i]` and
 /// `Snapshot.row_meta[i]` always describe the same row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub fn row_meta(view: &ViewSnapshots, app: &App) -> Vec<RowMeta> {
     let mut current_group: Option<usize> = None;
     let mut next_id = 0usize;
 
-    for row in crate::document::visible_rows(view.display.rows(), viewport) {
+    for row in crate::viewport::visible_rows(view.display.rows(), viewport) {
         let is_table = row.synthetic
             || segments
                 .get(row.wrap_row)

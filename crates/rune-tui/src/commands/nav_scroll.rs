@@ -21,7 +21,8 @@ use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
-use crate::document::{Document, ScrollMode};
+use crate::document::Document;
+use crate::viewport::ScrollMode;
 
 /// Port of `commands_nav.go:moveRow`: visual-line up/down via the wrap
 /// conversions, preserving `c.desired_col` across the move (the property
@@ -205,7 +206,6 @@ pub fn cursor_to_bottom(doc: &mut Document) {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-    use crate::document::ScrollMode;
     use rune_core::buffer::Buffer;
 
     fn doc_with_lines(n: usize, height: u16) -> Document {
