@@ -1,12 +1,10 @@
 //! WP1.S5: the concealed-heading styling fix (`markup.heading.N` reaching a
 //! Rendered heading's own cells, not just a Revealed one's) pinned end to
-//! end through the real render pipeline. New file rather than an addition
-//! to `tests/tui_render.rs` (§1.6: that file is already over the 500-line
-//! budget and recorded as such) — reuses its `testgrid`/`app_for`
-//! conventions, duplicated locally per this crate's own established
-//! per-test-file pattern (`tests/chrome.rs`, `tests/tui_render_tables.rs`
-//! each keep their own copy of the same small helpers rather than sharing
-//! one across separate test binaries).
+//! end through the real render pipeline. Lives in its own file because the
+//! main render test file is already over the §1.6 size budget; the small
+//! `testgrid`/`app_for` helpers are duplicated locally, following this
+//! crate's established pattern of each integration-test binary keeping its
+//! own copy rather than sharing helpers across binaries.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::sync::Arc;
@@ -24,8 +22,8 @@ use rune_vfs::Mem;
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
-/// See `tests/tui_render.rs`'s own copy of this constant for the chrome-row
-/// accounting this pins against.
+/// First editor content row: the rows above it are pane chrome (title and
+/// breadcrumb), the same accounting the other render tests pin.
 const EDITOR_TOP_ROW: u16 = 2;
 
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
