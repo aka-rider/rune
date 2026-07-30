@@ -558,6 +558,42 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
     );
 }
 
+/// Plan WP6 regression: closing a document with a `Load` op still in flight
+/// must sweep its entire `PendingOp` — routing fact and issued-version fact
+/// together — out of `db_ops`, not just the routing half. Before the merge
+/// into one map, `workspace::close_now`'s sweep only touched the routing
+/// map, leaking the issued-version entry for every document closed while a
+/// load was outstanding.
+#[test]
+fn closing_a_document_sweeps_its_pending_load_version() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (mut app, _rx) = app_with_store("close-sweeps-load-version", vfs);
+    let initial_id = app.active;
+
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+    let opened_id = app.active;
+    assert_eq!(
+        app.db_ops.len(),
+        1,
+        "test setup: one Load op in flight for the opened document"
+    );
+
+    // Switch back to the untitled draft before closing the opened document
+    // — `close_now` only reassigns `active` away from `id` when `id` is
+    // currently active, which is not what this test is exercising.
+    app.active = initial_id;
+    workspace::close_now(&mut app, opened_id);
+
+    assert!(
+        app.db_ops.is_empty(),
+        "closing a document must sweep every fact about its in-flight ops, \
+         not just the routing half of a still-pending Load"
+    );
+}
+
 /// The `Load` ack installs `Document::db` as `Some` once it lands.
 #[test]
 fn load_ack_installs_document_db_as_some() {
