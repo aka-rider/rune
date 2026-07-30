@@ -51,6 +51,7 @@ fn wrap_line_expands_tabs_before_greedy_breaking_and_never_exceeds_the_width() {
     let line = SyntaxLine {
         spans: vec![SyntaxSpan::identical(content, SCOPE, 0..content.len())],
         table: None,
+        decor: None,
     };
     let width = 5u16;
     let wrap = WrapMap::new(width).sync(content, &[line]);

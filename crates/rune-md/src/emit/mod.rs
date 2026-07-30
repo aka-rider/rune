@@ -42,16 +42,20 @@
 // (`style::table_scope`/`table_header_scope`/`table_separator_scope`/
 // `table_border_scope`/`text_scope`/`code_scope`/`link_scope`) — one
 // canonical scope resolver, not a second one reimplemented in `table::`.
+mod decor;
 pub(crate) mod style;
 mod table;
 mod walk;
 mod walk_inline;
 
 use crate::element::block::Block;
+use crate::icons::IconSet;
 use crate::parse::{line_at, line_end_at, line_starts};
 use rune_syntax::element::{ByteRange, RevealState};
 use rune_syntax::syntax::TableRowInfo;
-use rune_syntax::{CellMap, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping};
+use rune_syntax::{
+    CellMap, LineDecor, ScopeId, SyntaxLine, SyntaxSnapshot, SyntaxSpan, merge_overlapping,
+};
 
 /// See the module docs: `true` only in test builds or when the
 /// `strict-invariants` feature is explicitly enabled. `cfg!()` folds this
@@ -161,6 +165,15 @@ pub(crate) struct EmitOut<'a> {
     pub accounted: &'a mut Accounted,
     pub tables: &'a mut [Option<TableRowInfo>],
     pub width: u16,
+    /// The glyph tier decor producers (`emit::decor`) draw from — threaded
+    /// alongside `width` rather than a global, so `emit_with` stays the one
+    /// place a caller controls it (plan WP2.S4/B2 resolution).
+    pub icons: &'a IconSet,
+    /// One slot per buffer line, written only by a Rendered block's decor
+    /// producer (heading icon, list bullet/number, quote bar, hr rule);
+    /// zipped into `SyntaxLine::decor` at assembly. Table lines are never
+    /// decorated (`table` already describes their geometry).
+    pub decors: &'a mut [Option<LineDecor>],
 }
 
 /// Claims `[start, end)` on `line` as visible: runs the SAME
@@ -445,11 +458,25 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
 /// without a second breaking change to this signature or every one of its
 /// callers; every other producer ignores the field entirely.
 pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
+    emit_with(content, blocks, width, &IconSet::unicode())
+}
+
+/// `emit`'s full form (plan WP2.S4/B2 resolution): identical to `emit`
+/// except decor producers draw their glyphs from `icons` instead of the
+/// unicode-tier default. `emit` is a thin wrapper over this so the ~90
+/// existing 3-arg call sites across the workspace keep compiling unchanged.
+pub fn emit_with(
+    content: &str,
+    blocks: &[Block],
+    width: u16,
+    icons: &IconSet,
+) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
     let starts = line_starts(content);
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new(); starts.len()];
     let mut hidden: Accounted = vec![Vec::new(); starts.len()];
     let mut accounted: Accounted = vec![Vec::new(); starts.len()];
     let mut tables: Vec<Option<TableRowInfo>> = (0..starts.len()).map(|_| None).collect();
+    let mut decors: Vec<Option<LineDecor>> = (0..starts.len()).map(|_| None).collect();
 
     let mut out = EmitOut {
         spans: &mut spans,
@@ -457,9 +484,11 @@ pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, Sy
         accounted: &mut accounted,
         tables: &mut tables,
         width,
+        icons,
+        decors: &mut decors,
     };
     for b in blocks {
-        walk::emit_block(content, &starts, b, &mut out);
+        walk::emit_block(content, &starts, b, 0, &mut out);
     }
     fill_gaps(content, &starts, &accounted, &mut spans);
 
@@ -490,11 +519,18 @@ pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, Sy
     let lines: Vec<SyntaxLine> = spans
         .into_iter()
         .zip(tables)
-        .map(|(spans, table)| SyntaxLine { spans, table })
+        .zip(decors)
+        .map(|((spans, table), decor)| SyntaxLine {
+            spans,
+            table,
+            decor,
+        })
         .collect();
     let snapshot = SyntaxSnapshot::build(&starts, &hidden);
     (lines, snapshot)
 }
 
+#[cfg(test)]
+mod decor_tests;
 #[cfg(test)]
 mod tests;

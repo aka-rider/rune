@@ -81,6 +81,14 @@ pub(crate) fn blockquote_scope() -> ScopeId {
     scope("markup.quote")
 }
 
+/// A blockquote marker's DECOR bar (plan WP2.S5) — distinct from
+/// `blockquote_scope`, which styles the quote's own concealed-marker span
+/// when Revealed; the bar is the decor-channel glyph a Rendered quote line
+/// carries instead.
+pub(crate) fn quote_marker_scope() -> ScopeId {
+    scope("markup.quote.marker")
+}
+
 /// A rendered table's body-row base scope (WP2.S1's `markup.table`) —
 /// `table::render::render_cell`'s substitute for plain (non-emphasized)
 /// cell text, and `table::layout::grid_row`'s padding scope for a body row.

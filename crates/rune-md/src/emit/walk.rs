@@ -91,7 +91,14 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
     }
 }
 
-fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut EmitOut) {
+fn emit_list_item(
+    content: &str,
+    starts: &[usize],
+    item: &ListItemM,
+    ordered: bool,
+    depth: u8,
+    out: &mut EmitOut,
+) {
     if item.sm.state() == RevealState::Revealed {
         push_span_split_by_line(
             content,
@@ -122,9 +129,17 @@ fn emit_list_item(content: &str, starts: &[usize], item: &ListItemM, out: &mut E
         // second hidden-range delta for the difference.
     } else {
         hide_range(out.hidden, out.accounted, content, starts, item.marker);
+        // Task items keep their `☐`/`☑` checkbox substitution (the `if let
+        // Some(task)` arm above) and get NO bullet decor on top of it — the
+        // checkbox already communicates the marker.
+        let line = line_at(starts, item.marker.start);
+        let marker_text = content
+            .get(item.marker.start..item.marker.end)
+            .unwrap_or("");
+        super::decor::push_list_marker_decor(out, line, ordered, depth, marker_text);
     }
     for c in &item.children {
-        emit_block(content, starts, c, out);
+        emit_block(content, starts, c, depth + 1, out);
     }
 }
 
@@ -211,7 +226,13 @@ fn push_task_checkbox(
     }
 }
 
-pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &mut EmitOut) {
+pub(crate) fn emit_block(
+    content: &str,
+    starts: &[usize],
+    block: &Block,
+    depth: u8,
+    out: &mut EmitOut,
+) {
     match block {
         Block::Paragraph(p) => {
             emit_inlines(content, starts, &p.inlines, StyleCtx::default(), out);
@@ -245,6 +266,7 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
                     StyleCtx::Override(heading_style(h.level)),
                     out,
                 );
+                super::decor::push_heading_decor(out, h.line, h.level);
             }
         }
         Block::Blockquote(bq) => {
@@ -261,16 +283,17 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
                     );
                 } else {
                     hide_range(out.hidden, out.accounted, content, starts, m.marker);
+                    super::decor::push_quote_marker_decor(out, m.line);
                 }
             }
             for c in &bq.children {
-                emit_block(content, starts, c, out);
+                emit_block(content, starts, c, depth, out);
             }
         }
         Block::CodeFence(cf) => emit_code_fence(content, starts, cf, out),
         Block::List(list) => {
             for item in &list.items {
-                emit_list_item(content, starts, item, out);
+                emit_list_item(content, starts, item, list.ordered, depth, out);
             }
         }
         Block::ThematicBreak(hr) => {
@@ -286,6 +309,7 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
                 );
             } else {
                 hide_range(out.hidden, out.accounted, content, starts, hr.range);
+                super::decor::push_hr_decor(out, hr.line);
             }
         }
         Block::Frontmatter(fm) => {
