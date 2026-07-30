@@ -38,6 +38,16 @@ pub enum GlobalCommand {
     Save,
     Help,
     QuitChord(QuitKey),
+    /// Closes the active document from any pane focus — routed through the
+    /// one close chokepoint (`workspace::request_close`) so a dirty document
+    /// still arms its Guard regardless of which pane the chord was pressed
+    /// from, exactly like `Save` already does for materialize.
+    CloseFile,
+    /// Switches to the tab at this zero-based position; out of range is a
+    /// silent no-op. The digit is already resolved into the payload by
+    /// `GLOBAL_BINDINGS` below, so the digit-to-index mapping lives in
+    /// exactly one place rather than being re-derived at the call site.
+    TabSwitch(usize),
 }
 
 const CTRL: Mods = Mods {
@@ -124,6 +134,89 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         keys: &[KeyPattern::new(KeyCode::Char('d'), CTRL)],
         cmd: GlobalCommand::QuitChord(QuitKey::CtrlD),
         help: "quit",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('w'), CTRL)],
+        cmd: GlobalCommand::CloseFile,
+        help: "close",
+        when: "",
+        alias: false,
+    },
+    // `^1`-`^9` switch to the tab at that position; `^0` is the TENTH tab,
+    // matching what the tab strip itself prints for the first ten tabs
+    // (`opentabs::draw`'s `(idx + 1) % 10` shortcut digit). Ten near-identical
+    // hints would flood the footer's hint row, so all ten stay `alias: true`
+    // — still fully discoverable through the F1 Help doc, just not repeated
+    // ten times in the footer.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('1'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(0),
+        help: "tab 1",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('2'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(1),
+        help: "tab 2",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('3'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(2),
+        help: "tab 3",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('4'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(3),
+        help: "tab 4",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('5'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(4),
+        help: "tab 5",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('6'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(5),
+        help: "tab 6",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('7'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(6),
+        help: "tab 7",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('8'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(7),
+        help: "tab 8",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('9'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(8),
+        help: "tab 9",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('0'), CTRL)],
+        cmd: GlobalCommand::TabSwitch(9),
+        help: "tab 10",
         when: "",
         alias: true,
     },

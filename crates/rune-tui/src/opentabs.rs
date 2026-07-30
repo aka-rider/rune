@@ -51,20 +51,14 @@ pub enum TabsCommand {
     Up,
     Down,
     Select,
-    Close,
 }
-
-const CTRL: Mods = Mods {
-    shift: false,
-    alt: false,
-    ctrl: true,
-    sup: false,
-};
 
 /// Arrow keys move the cursor; Enter opens the selected tab
 /// (`workspace::switch_to`, plan WP5.S2 — Select is the ONLY way to switch
-/// tabs in this MVP, digit shortcuts are deferred); `^w` closes it — the
-/// same chord Go binds for `CloseFile` (`ctrl+w`, help "close").
+/// tabs from a cursor row; jumping straight to a tab by digit, and closing
+/// the active document, both now resolve at the global pipeline stage
+/// (`^1`-`^0`, `^w` — `keymap::GLOBAL_BINDINGS`) so they work from any pane,
+/// not just this one.
 pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
@@ -87,22 +81,17 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
         when: "",
         alias: false,
     },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('w'), CTRL)],
-        cmd: TabsCommand::Close,
-        help: "close",
-        when: "",
-        alias: false,
-    },
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
 /// `app.focus == Pane::Tabs`. Unlike `explorer::handle_key`, no arm here
-/// ever needs `Effects`: `Select`/`Close` are same-tick direct calls
-/// (`workspace::switch_to`/`request_close`, decision 10) — a dirty tab's
-/// eventual save-then-close I/O is triggered later, from the Guard modal's
-/// OWN stage-1 key handling (`banner::handle_key`), which already carries
-/// its own `Effects`.
+/// ever needs `Effects`: `Select` is a same-tick direct call
+/// (`workspace::switch_to`, decision 10). Closing the active document now
+/// resolves at the global pipeline stage (`GlobalCommand::CloseFile`)
+/// instead of here, so it works from any pane, not just this one — a dirty
+/// tab's eventual save-then-close I/O is triggered later, from the Guard
+/// modal's OWN stage-1 key handling (`banner::handle_key`), which already
+/// carries its own `Effects`.
 pub fn handle_key(app: &mut App, key: KeyInput) -> KeyOutcome {
     let Some(cmd) = resolve_in(TABS_BINDINGS, key) else {
         return KeyOutcome::Ignored;
@@ -113,11 +102,6 @@ pub fn handle_key(app: &mut App, key: KeyInput) -> KeyOutcome {
         TabsCommand::Select => {
             if let Some(&id) = app.tabs.order.get(app.tabs.nav.cursor) {
                 workspace::switch_to(app, id);
-            }
-        }
-        TabsCommand::Close => {
-            if let Some(&id) = app.tabs.order.get(app.tabs.nav.cursor) {
-                workspace::request_close(app, id);
             }
         }
     }
@@ -187,9 +171,9 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
 /// Tabs pane itself has focus — unlike Explorer's cursor, which is always
 /// shown regardless of `app.focus`, this pane's cursor is meaningless
 /// until the user has actually tabbed into it), a `(i+1)%10:` digit
-/// shortcut (display-only in this MVP — plan WP5.S2 defers the actual
-/// `⌘1..⌘0` chords), a dirty marker, and the document's display name
-/// (`tab_active` for `app.active`, `tab_normal` otherwise).
+/// shortcut (matching the `^1`-`^0` chords `GLOBAL_BINDINGS` binds to jump
+/// straight to that tab from any pane), a dirty marker, and the document's
+/// display name (`tab_active` for `app.active`, `tab_normal` otherwise).
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     if area.height == 0 {
         return;
