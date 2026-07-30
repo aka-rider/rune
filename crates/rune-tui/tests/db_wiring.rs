@@ -21,7 +21,7 @@ use rune_core::undo::Step;
 use rune_db::{ClockFn, DbEvent, LoadResult, OpOutcome, Store, SyncKind, SyncState, Version};
 use rune_tui::app::{self, App, StatusSource};
 use rune_tui::commands::edit;
-use rune_tui::db::{Db, DbBridge, DocDb};
+use rune_tui::db::{Db, DbBridge, DocDb, PendingOp};
 use rune_tui::footer;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
@@ -548,7 +548,7 @@ fn open_path_enqueues_exactly_one_load_op_and_records_it_in_db_ops() {
         "open_path must enqueue exactly one op (the Load)"
     );
     assert_eq!(
-        app.db_ops.values().next().copied(),
+        app.db_ops.values().next().map(|pending| pending.doc),
         Some(opened_id),
         "the enqueued op must be routed to the opened document, not the initial draft"
     );
@@ -653,9 +653,8 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
     let id = app.active;
 
     let op_id = 1u64;
-    app.db_ops.insert(op_id, id);
-    app.db_load_versions
-        .insert(op_id, app.doc(id).unwrap().buffer.version());
+    let issued_version = app.doc(id).unwrap().buffer.version();
+    app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
 
     let load_result = LoadResult {
         doc_id: 1,
@@ -720,9 +719,8 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
     let id = app.active;
 
     let op_id = 1u64;
-    app.db_ops.insert(op_id, id);
-    app.db_load_versions
-        .insert(op_id, app.doc(id).unwrap().buffer.version());
+    let issued_version = app.doc(id).unwrap().buffer.version();
+    app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
 
     let load_result = LoadResult {
         doc_id: 1,

@@ -17,9 +17,10 @@
 //! each document binds its own row via `DocDb::db_id` (formerly `doc_id`).
 //! Because the writer thread processes one ordered FIFO across ALL
 //! documents, a `DbEvent` ack's `id` alone doesn't say which document it
-//! belongs to — `App::db_ops: HashMap<u64, DocumentId>` records that
-//! mapping at every successful enqueue (plan decision 6) and is consulted/
-//! popped by `app::handle_db_event`.
+//! belongs to — `App::db_ops: HashMap<u64, PendingOp>` records that mapping,
+//! plus (for a `Load` op) the buffer version it was issued against, at every
+//! successful enqueue (plan decision 6) and is consulted/popped by
+//! `app::handle_db_event`.
 
 use std::collections::VecDeque;
 use std::path::Path;
@@ -142,6 +143,34 @@ impl DbBridge {
             }
         }
         *sink = Sink::Live(tx);
+    }
+}
+
+/// The document a recovery-store op belongs to, and — for a `Load` op only —
+/// the buffer version it was issued against. These two facts are always
+/// inserted and removed together for the same op id; carrying them in one
+/// value (rather than two maps keyed by the same id) makes it impossible for
+/// a sweep to drop one fact while leaving the other behind.
+pub struct PendingOp {
+    pub doc: DocumentId,
+    /// The issuing document's `buffer.version()` at the moment a `Load` op
+    /// was enqueued — `None` for every other op kind, which never needs it.
+    pub issued_version: Option<u64>,
+}
+
+impl PendingOp {
+    pub fn new(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+        }
+    }
+
+    pub fn load(doc: DocumentId, issued_version: u64) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: Some(issued_version),
+        }
     }
 }
 
@@ -314,7 +343,7 @@ pub fn append_edit(
         .append_edit(db_id, edits, cursors_before, cursors_after);
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, PendingOp::new(id));
             if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
                 doc_db.note_pending_append(local_pos);
             }
@@ -343,7 +372,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
     let result = db.store.move_undo_pos(db_id, target_seq);
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, PendingOp::new(id));
         }
         Err(e) => crate::save::on_store_failure(app, e.to_string()),
     }
@@ -353,8 +382,8 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// existing file just read straight off disk — `workspace::open_path`'s one
 /// call site) through the app-wide recovery store, closing the "Explorer-
 /// opened documents get no recovery journal" gap (plan WP6). Records `id`'s
-/// buffer version at the moment the load is ISSUED (`app.db_load_versions`)
-/// alongside the routing entry in `app.db_ops` — `app::handle_db_event`'s
+/// buffer version at the moment the load is ISSUED, alongside the routing
+/// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
 /// recovered content is still safe (see `handle_load_ack`'s docs). A
 /// degraded store enqueues nothing — there is no trustworthy recovery
@@ -368,8 +397,7 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
     let Some(db) = app.db.as_ref() else { return };
     match db.store.load(path) {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
-            app.db_load_versions.insert(op_id, issued_version);
+            app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
         }
         Err(e) => crate::save::on_store_failure(app, e.to_string()),
     }
@@ -378,8 +406,9 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
 /// The reaction to a `Load` op's ack (plan WP6.S2/S3) — routed from
 /// `app::handle_db_event` once `app.db_ops` has resolved the ack's op id to
 /// `id`. `issued_version` is `id`'s buffer version recorded by
-/// `load_document` at ENQUEUE time (`app.db_load_versions`), `None` only if
-/// this ack's routing entry was somehow already consumed.
+/// `load_document` at ENQUEUE time, on the same `PendingOp` that resolved
+/// `id`, `None` only if this ack's routing entry was somehow already
+/// consumed.
 ///
 /// A `None` `saved_obs` (should not occur — see `LoadResult::saved_obs`'s
 /// own doc comment) installs nothing and surfaces a status message instead
@@ -488,22 +517,22 @@ mod tests {
         let op_for_a = *app
             .db_ops
             .iter()
-            .find(|(_, doc)| **doc == id_a)
+            .find(|(_, pending)| pending.doc == id_a)
             .expect("op recorded for doc a")
             .0;
         let op_for_b = *app
             .db_ops
             .iter()
-            .find(|(_, doc)| **doc == id_b)
+            .find(|(_, pending)| pending.doc == id_b)
             .expect("op recorded for doc b")
             .0;
         assert_ne!(op_for_a, op_for_b);
 
         // Simulate the acks arriving in reverse enqueue order — routing
         // must key off the op id, not arrival order.
-        let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b");
+        let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b").doc;
         resolve_append_ack(&mut app, doc_for_b, 42);
-        let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a");
+        let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a").doc;
         resolve_append_ack(&mut app, doc_for_a, 7);
 
         assert_eq!(
@@ -544,7 +573,7 @@ mod tests {
         let op_for_a = *app
             .db_ops
             .iter()
-            .find(|(_, doc)| **doc == id_a)
+            .find(|(_, pending)| pending.doc == id_a)
             .expect("op recorded for doc a")
             .0;
 
