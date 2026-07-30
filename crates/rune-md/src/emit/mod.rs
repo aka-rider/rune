@@ -45,6 +45,7 @@
 pub(crate) mod style;
 mod table;
 mod walk;
+mod walk_inline;
 
 use crate::element::block::Block;
 use crate::parse::{line_at, line_end_at, line_starts};
