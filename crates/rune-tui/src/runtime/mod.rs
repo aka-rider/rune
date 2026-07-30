@@ -528,8 +528,14 @@ pub fn read_file_cmd(
 // `runtime::highlight_cmd` (§1.6 budget) — re-exported below so every
 // existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
-pub(crate) use highlight_cmd::FIRST_PAINT_BUDGET;
-pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, fence_highlight_cmd, highlight_cmd};
+pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, fence_highlight_cmd};
+pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, highlight_cmd};
+
+// The comrak reveal-emit reuse path a ```markdown fence highlights through
+// (plan WP6.S3) — its own file since it pulls in `rune_md::parse`/`emit`,
+// a dependency `highlight_cmd` itself has no other reason to carry. Reached
+// only from `highlight_cmd::run_fence_highlight`, never re-exported.
+mod md_fence;
 
 // The snapshot-autosave debounce's one rearmable timer thread (plan
 // WP16.S5) — split out for the same reason `highlight_cmd` was: a distinct
