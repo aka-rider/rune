@@ -296,6 +296,29 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
         .push(load_dir_cmd(vfs, root, DirCause::Refresh, generation));
 }
 
+/// Prepends a synthetic `..` row to `entries` when `root` has a parent — a
+/// REAL `DirEntry` carrying the real parent path, not a render-time overlay.
+/// Because it's a genuine list element, `open_selected`'s existing
+/// directory branch (resolve, then `request_dir`) already does exactly what
+/// `go_to_parent` does when the user presses Enter on it — no `".."`
+/// special case anywhere, and `listnav::List`'s cursor keeps addressing the
+/// one real list it's always addressed, never an N+1 rendered one. A root
+/// with no parent (a filesystem root) gets no such row.
+fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
+    let Some(parent) = root.parent() else {
+        return entries;
+    };
+    entries.insert(
+        0,
+        DirEntry {
+            name: "..".to_string(),
+            path: parent.to_path_buf(),
+            is_dir: true,
+        },
+    );
+    entries
+}
+
 /// Reacts to `Msg::DirLoaded` (plan WP4.S4), routed from `app::update_
 /// inner`. A `generation` that no longer matches `app.explorer.request_
 /// generation` is a reply to a SUPERSEDED request (a later `ReadDir` was
@@ -319,6 +342,8 @@ pub(crate) fn handle_dir_loaded(
     if generation != app.explorer.request_generation {
         return;
     }
+
+    let entries = with_parent_entry(&root, entries);
 
     let preserve_name = match cause {
         DirCause::Nav => None,
@@ -431,7 +456,8 @@ mod tests {
             0,
         );
         assert_eq!(app.explorer.nav.cursor, 0);
-        assert_eq!(app.explorer.entries.len(), 2);
+        // "/root" has a parent ("/"), so a synthetic ".." row is prepended.
+        assert_eq!(app.explorer.entries.len(), 3);
     }
 
     #[test]
@@ -444,7 +470,7 @@ mod tests {
             DirCause::Nav,
             0,
         );
-        app.explorer.nav.cursor = 2; // "c"
+        app.explorer.nav.cursor = 3; // "c", shifted one place by the leading ".." row
 
         handle_dir_loaded(
             &mut app,
@@ -466,7 +492,7 @@ mod tests {
             DirCause::Nav,
             0,
         );
-        app.explorer.nav.cursor = 1; // "gone"
+        app.explorer.nav.cursor = 2; // "gone", shifted one place by the leading ".." row
 
         handle_dir_loaded(
             &mut app,
@@ -520,7 +546,17 @@ mod tests {
         );
 
         assert_eq!(app.explorer.root, PathBuf::from("/fresh"));
-        assert_eq!(app.explorer.entries, entries(&[("fresh", false)]));
+        // "/fresh" has a parent ("/"), so a synthetic ".." row leads the list.
+        let mut expected = entries(&[("fresh", false)]);
+        expected.insert(
+            0,
+            DirEntry {
+                name: "..".to_string(),
+                path: PathBuf::from("/"),
+                is_dir: true,
+            },
+        );
+        assert_eq!(app.explorer.entries, expected);
     }
 
     #[test]
@@ -552,7 +588,9 @@ mod tests {
                 KeyOutcome::Consumed
             );
         }
-        assert_eq!(app.explorer.nav.cursor, 2, "clamped at the bottom");
+        // Entries are [.., a, b, c] now that "/root" has a parent — index 3
+        // is the bottom, one past where it was before the leading ".." row.
+        assert_eq!(app.explorer.nav.cursor, 3, "clamped at the bottom");
     }
 
     #[test]

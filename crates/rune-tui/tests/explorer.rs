@@ -94,7 +94,11 @@ fn ctrl_b_populates_the_explorer_via_dir_loaded() {
         .iter()
         .map(|e| e.name.as_str())
         .collect();
-    assert_eq!(names, vec!["sub", "a.md", "b.md"], "dirs first, then names");
+    assert_eq!(
+        names,
+        vec!["..", "sub", "a.md", "b.md"],
+        "leading '..' row (root has a parent), then dirs, then names"
+    );
 }
 
 #[test]
@@ -217,6 +221,60 @@ fn enter_on_a_directory_issues_a_read_dir_cmd() {
         app.documents.len(),
         before_docs,
         "opening a dir must not create a Document"
+    );
+}
+
+/// The leading ".." row is a REAL `DirEntry` carrying the real parent path
+/// (`with_parent_entry`, `explorer.rs`) — so Enter on it needs no special
+/// case: it flows through `open_selected`'s ordinary directory branch, which
+/// issues a `ReadDir` `Cmd` for the parent, exactly like Backspace's
+/// `go_to_parent` does.
+#[test]
+fn enter_on_the_parent_row_loads_the_parent_directory() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    load_explorer(&mut app);
+
+    assert_eq!(app.explorer.entries[0].name, "..");
+    assert_eq!(app.explorer.nav.cursor, 0);
+
+    let mut effects = Effects::default();
+    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    assert_eq!(effects.cmds.len(), 1);
+    assert_eq!(effects.cmds[0].kind(), CmdKind::ReadDir);
+    assert!(app.explorer.loading);
+
+    let cmd = effects.cmds.remove(0);
+    let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+    assert_eq!(app.explorer.root, PathBuf::from("/"));
+}
+
+/// A root with no parent (a filesystem root) gets no synthetic ".." row —
+/// `with_parent_entry`'s `root.parent() == None` branch.
+#[test]
+fn a_root_without_a_parent_gets_no_dotdot_row() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    load_explorer(&mut app);
+
+    // Navigate up to the vfs's own synthetic root ("/"), which has no parent.
+    let mut effects = Effects::default();
+    let outcome = explorer::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    assert_eq!(outcome, KeyOutcome::Consumed);
+    let cmd = effects.cmds.remove(0);
+    let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
+    let mut effects2 = Effects::default();
+    app::update(&mut app, msg, &mut effects2);
+    assert_eq!(app.explorer.root, PathBuf::from("/"));
+
+    assert_ne!(
+        app.explorer.entries.first().map(|e| e.name.as_str()),
+        Some(".."),
+        "the filesystem root has no parent, so no '..' row is injected"
     );
 }
 
