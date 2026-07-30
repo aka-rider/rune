@@ -131,22 +131,22 @@ pub struct App {
     /// has a live, if untrusted, store).
     pub db: Option<Db>,
     /// Correlates an in-flight `rune-db` op id to the `DocumentId` that
-    /// enqueued it (plan WP1 decision 6) — inserted at every successful
-    /// `Store` enqueue (`db::append_edit`/`move_undo_pos`/`db::
+    /// enqueued it, plus — for a `Load` op — the issuing document's
+    /// `buffer.version()` at the moment it was enqueued (plan WP1 decision
+    /// 6) — inserted as one `PendingOp` at every successful `Store` enqueue
+    /// (`db::append_edit`/`move_undo_pos`/`db::
     /// load_document`/`save::materialize_now`/`save::handle_snapshot_due`),
     /// removed by `handle_db_event` once its ack lands. Needed because the
     /// writer thread's single FIFO ack stream has no per-document identity
-    /// of its own once more than one document can enqueue.
-    pub db_ops: HashMap<u64, DocumentId>,
-    /// The issuing document's `buffer.version()` at the moment a `Load` op
-    /// was enqueued (`db::load_document`), keyed by that op's id — popped
-    /// alongside `db_ops` by `handle_db_event`'s `Load` arm. `Load` is
+    /// of its own once more than one document can enqueue. `Load` is
     /// asynchronous, so the user may type into the buffer during the round
-    /// trip; comparing this recorded version against the buffer's version
-    /// AT ACK TIME is how `db::handle_load_ack` decides whether adopting
-    /// the ack's recovered content would silently clobber those keystrokes
-    /// (never clobber keystrokes to complete a recovery binding).
-    pub db_load_versions: HashMap<u64, u64>,
+    /// trip; comparing the recorded version against the buffer's version AT
+    /// ACK TIME is how `db::handle_load_ack` decides whether adopting the
+    /// ack's recovered content would silently clobber those keystrokes
+    /// (never clobber keystrokes to complete a recovery binding). Carrying
+    /// both facts in one value, rather than two maps keyed by the same op
+    /// id, means a sweep can never drop one and keep the other.
+    pub db_ops: HashMap<u64, crate::db::PendingOp>,
     /// WP7: correlates an in-flight `MaterializeRecord` op id to the
     /// document whose disk write ALREADY physically completed before this
     /// op was even enqueued — the caller-side vfs work runs first, this
@@ -290,7 +290,6 @@ impl App {
             status_source: StatusSource::Other,
             db,
             db_ops: HashMap::new(),
-            db_load_versions: HashMap::new(),
             published_ops: HashMap::new(),
             pending_materialize: HashMap::new(),
             db_banner: None,

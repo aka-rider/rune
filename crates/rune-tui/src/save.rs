@@ -186,7 +186,7 @@ fn materialize_now(
     }
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
             app.pending_materialize.insert(
                 id,
                 PendingMaterialize {
@@ -260,7 +260,7 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     }
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
             app.pending_materialize.insert(
                 id,
                 PendingMaterialize {
@@ -672,7 +672,7 @@ fn record_outcome(
         .materialize_record(pending.db_id, resolved_path, pending.seq, outcome)
     {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
             if published {
                 app.published_ops.insert(op_id, id);
             }
@@ -859,7 +859,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     let result = db.store.create_snapshot(db_id, &content, last_known_seq);
     match result {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, id);
+            app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
         }
         Err(e) => on_store_failure(app, e.to_string()),
     }

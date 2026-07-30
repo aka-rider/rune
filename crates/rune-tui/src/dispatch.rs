@@ -115,16 +115,16 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Seq(seq),
         } => {
-            if let Some(doc_id) = app.db_ops.remove(&op_id) {
-                crate::db::resolve_append_ack(app, doc_id, seq);
+            if let Some(pending) = app.db_ops.remove(&op_id) {
+                crate::db::resolve_append_ack(app, pending.doc, seq);
             }
         }
         DbEvent::Ok {
             id: op_id,
             result: rune_db::OpOutcome::MaterializePrep(prep),
         } => {
-            if let Some(doc_id) = app.db_ops.remove(&op_id) {
-                save::handle_prepare_ack(app, doc_id, *prep, effects);
+            if let Some(pending) = app.db_ops.remove(&op_id) {
+                save::handle_prepare_ack(app, pending.doc, *prep, effects);
             }
         }
         DbEvent::Ok {
@@ -132,8 +132,8 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             result: rune_db::OpOutcome::Materialize(mat),
         } => {
             app.published_ops.remove(&op_id);
-            if let Some(doc_id) = app.db_ops.remove(&op_id) {
-                save::handle_materialize_ack(app, doc_id, *mat);
+            if let Some(pending) = app.db_ops.remove(&op_id) {
+                save::handle_materialize_ack(app, pending.doc, *mat);
             }
         }
         DbEvent::Ok {
@@ -147,9 +147,8 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Load(load_result),
         } => {
-            let issued_version = app.db_load_versions.remove(&op_id);
-            if let Some(doc_id) = app.db_ops.remove(&op_id) {
-                crate::db::handle_load_ack(app, doc_id, *load_result, issued_version);
+            if let Some(pending) = app.db_ops.remove(&op_id) {
+                crate::db::handle_load_ack(app, pending.doc, *load_result, pending.issued_version);
             }
         }
         DbEvent::Ok { id: op_id, .. } => {
@@ -157,7 +156,6 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Err { id: op_id, error } => {
             app.db_ops.remove(&op_id);
-            app.db_load_versions.remove(&op_id);
             crate::rename::fail_op(app, op_id, error.clone(), effects);
             // WP7: this exact op may be a `MaterializeRecord` whose disk
             // write ALREADY physically completed before the writer died —
@@ -206,7 +204,6 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // ack that *did* somehow still land, so no real ack is ever
             // silently dropped by this.
             app.db_ops.clear();
-            app.db_load_versions.clear();
         }
     }
 }

@@ -262,7 +262,7 @@ fn enqueue_rename(
     {
         return match db.store.rename_file(db_id, from, to) {
             Ok(op_id) => {
-                app.db_ops.insert(op_id, id);
+                app.db_ops.insert(op_id, crate::db::PendingOp::new(id));
                 Some(Ticket::Db(op_id))
             }
             Err(e) => {
@@ -488,7 +488,7 @@ pub fn replace_confirmed(app: &mut App) {
 
     match db.store.rename_replace(db_id, &from, &to, seen) {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, doc);
+            app.db_ops.insert(op_id, crate::db::PendingOp::new(doc));
             app.rename = RenameState::Capturing {
                 doc,
                 from,

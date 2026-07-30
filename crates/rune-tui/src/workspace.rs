@@ -296,7 +296,10 @@ pub fn request_close(app: &mut App, id: DocumentId) {
 /// Sweeps `db_ops` of any entry still pointing at `id` — a stale ack would
 /// already be a correct no-op via `App::doc_mut` returning `None` (see its
 /// docs), but leaving the entry forever would make `db_ops` an unbounded
-/// leak over a long session of open/close cycles. Clears `pending_close_on_
+/// leak over a long session of open/close cycles. Because each entry is one
+/// `PendingOp` carrying both the routing fact and (for a `Load` op) the
+/// issued-version fact, this single sweep drops both together — there is no
+/// second map that could still be holding a leaked version. Clears `pending_close_on_
 /// save`/`pending_save_confirm` when either still targets `id` (review fix
 /// for the latter — it was left dangling): both are doc-tagged `Option`s
 /// that would otherwise point at a document that no longer exists, e.g. a
@@ -313,7 +316,7 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     }
     app.documents.remove(&id);
     app.tabs.order.retain(|&t| t != id);
-    app.db_ops.retain(|_, doc_id| *doc_id != id);
+    app.db_ops.retain(|_, pending| pending.doc != id);
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
     }
