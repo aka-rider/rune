@@ -399,4 +399,151 @@ mod tests {
         edit::redo(&mut app, id);
         assert_eq!(app.doc(id).expect("doc").buffer.content(), "");
     }
+
+    /// The bug this WP fixes: `delete_selection_or_line` (cut's own
+    /// deletion path, with no selection) on an EMPTY buffer derives a
+    /// zero-width `Edit { start: 0, end: 0, insert: "" }` from `nav::
+    /// line_range_incl_newline` — a legal no-op at the buffer layer, but
+    /// committing it used to still bump `version`, push a `Step`, and mark
+    /// a clean document dirty.
+    #[test]
+    fn zero_width_edit_batch_on_an_empty_buffer_does_not_journal_or_dirty() {
+        let mut app = app_with("");
+        let id = app.active;
+        let version_before = app.doc(id).expect("doc").buffer.version();
+        let journal_len_before = app.doc(id).expect("doc").journal.len();
+        assert!(!app.doc(id).expect("doc").is_dirty());
+
+        edit::delete_selection_or_line(&mut app, id);
+
+        let doc = app.doc(id).expect("doc");
+        assert_eq!(
+            doc.buffer.version(),
+            version_before,
+            "a zero-width no-op must not bump the buffer version"
+        );
+        assert_eq!(
+            doc.journal.len(),
+            journal_len_before,
+            "a zero-width no-op must not journal a step"
+        );
+        assert!(
+            !doc.is_dirty(),
+            "a zero-width no-op must not mark a clean document dirty"
+        );
+    }
+
+    /// Same bug, on the empty LAST line of an otherwise non-empty buffer:
+    /// the cursor sits at EOF on a line with nothing after it, so
+    /// `nav::line_range_incl_newline` derives `[len, len)` — again
+    /// zero-width, since there is no trailing newline past the buffer's
+    /// final byte to include.
+    #[test]
+    fn zero_width_edit_batch_on_an_empty_last_line_does_not_journal_or_dirty() {
+        let mut app = app_with("a\n");
+        let id = app.active;
+        let doc = app.doc_mut(id).expect("doc");
+        doc.cursors = CursorSet::new(2);
+        let version_before = app.doc(id).expect("doc").buffer.version();
+        let journal_len_before = app.doc(id).expect("doc").journal.len();
+        assert!(!app.doc(id).expect("doc").is_dirty());
+
+        edit::delete_selection_or_line(&mut app, id);
+
+        let doc = app.doc(id).expect("doc");
+        assert_eq!(doc.buffer.content(), "a\n", "the buffer must be untouched");
+        assert_eq!(
+            doc.buffer.version(),
+            version_before,
+            "a zero-width no-op must not bump the buffer version"
+        );
+        assert_eq!(
+            doc.journal.len(),
+            journal_len_before,
+            "a zero-width no-op must not journal a step"
+        );
+        assert!(
+            !doc.is_dirty(),
+            "a zero-width no-op must not mark a clean document dirty"
+        );
+    }
+
+    /// A batch mixing one real edit with one zero-width no-op must still
+    /// apply the real edit — the filter drops only the no-op entries, not
+    /// the whole batch — and the version must bump exactly once (one
+    /// `apply_edits` call, whatever survives the filter).
+    #[test]
+    fn mixed_batch_keeps_its_real_edits_and_drops_the_no_ops() {
+        let mut app = app_with("ab");
+        let id = app.active;
+        let version_before = app.doc(id).expect("doc").buffer.version();
+        let cursors_before = app.doc(id).expect("doc").cursors.clone();
+
+        let infos = vec![
+            (
+                Edit {
+                    start: 0,
+                    end: 1,
+                    insert: String::new(),
+                },
+                0,
+            ),
+            (
+                Edit {
+                    start: 2,
+                    end: 2,
+                    insert: String::new(),
+                },
+                1,
+            ),
+        ];
+        commit_edit_batch(&mut app, id, infos, cursors_before);
+
+        let doc = app.doc(id).expect("doc");
+        assert_eq!(
+            doc.buffer.content(),
+            "b",
+            "the real edit must still apply"
+        );
+        assert_eq!(
+            doc.buffer.version(),
+            version_before + 1,
+            "the surviving batch must bump the version exactly once"
+        );
+    }
+
+    /// Pins `coalesce_touching_edits`'s cursor-survivor rule (review
+    /// finding this test closes: nothing previously asserted the post-edit
+    /// cursor COUNT, only the merged edit's range): two touching per-cursor
+    /// deletes must collapse the cursor set down to the lower-id survivor,
+    /// mirroring `CursorSet::merge`. This pins current behaviour; it does
+    /// not change `coalesce_touching_edits` itself.
+    #[test]
+    fn touching_per_cursor_edits_collapse_to_one_surviving_cursor() {
+        let mut app = app_with("ab");
+        let id = app.active;
+        let doc = app.doc_mut(id).expect("doc");
+        doc.cursors = CursorSet::new(1).add(Cursor {
+            position: 2,
+            anchor: 2,
+            desired_col: 0,
+            id: 0,
+        });
+        assert_eq!(doc.cursors.len(), 2, "fixture must hold two cursors");
+
+        edit::delete_left(&mut app, id);
+
+        let doc = app.doc(id).expect("doc");
+        assert_eq!(doc.buffer.content(), "");
+        let cursors = doc.cursors.all();
+        assert_eq!(
+            cursors.len(),
+            1,
+            "the touching pair must collapse to a single surviving cursor"
+        );
+        assert_eq!(
+            cursors[0].id, 1,
+            "the lower cursor id must be the survivor, matching CursorSet::merge's own rule"
+        );
+    }
 }
