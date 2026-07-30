@@ -39,6 +39,7 @@ mod error;
 mod gc;
 mod inherit;
 mod journal;
+mod journal_append;
 mod load;
 mod materialize;
 mod observation;
