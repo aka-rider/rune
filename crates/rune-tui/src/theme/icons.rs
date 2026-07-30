@@ -2,7 +2,7 @@
 //! a session paints line decorations with — a nerd-font tier that needs a
 //! Nerd Font or system font fallback for its private-use-area glyphs, or a
 //! plain-Unicode tier that renders in any terminal font. `rune-md` only
-//! ever holds the two `IconSet` VALUES (`icons.rs`'s module doc: "choosing
+//! ever holds the two `IconSet` VALUES (its own module doc: "choosing
 //! WHICH set applies is the caller's job") — this is that caller's
 //! decision, made once at startup from the same kind of environment
 //! signal `theme::probe`'s `COLORTERM` check reads, never re-decided per

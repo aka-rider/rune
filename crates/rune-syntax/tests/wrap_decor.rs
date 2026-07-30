@@ -1,6 +1,6 @@
 //! WP3.S5: `LineDecor` -> `SegDecor` integration over the wrap pass.
-//! Hand-builds its own `SyntaxLine`s (mirroring `wrap/mod.rs`'s own inline
-//! tests and `wrap_query_edges.rs`'s `one_span_line`) rather than routing
+//! Hand-builds its own `SyntaxLine`s (the same convention the wrap
+//! module's inline tests and the wrap-query edge tests use) rather than routing
 //! through `rune-md`'s emitter — the wrap pass is producer-agnostic (module
 //! docs), so these five checks exercise `WrapMap`'s decor contract on its
 //! own, no markdown involved.

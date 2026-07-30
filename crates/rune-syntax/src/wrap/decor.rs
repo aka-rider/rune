@@ -1,6 +1,6 @@
 //! `WrapSegment`-level decoration (CONSTITUTION §1.6 split of the wrap
-//! module — `wrap/mod.rs` is already over budget, so this file carries the
-//! attachment logic and `wrap/mod.rs` keeps only the call sites): turns a
+//! module, which is already over budget — this file carries the
+//! attachment logic; the wrap module keeps only the call sites): turns a
 //! `SyntaxLine`'s `LineDecor` (plan Context, "line decoration at the
 //! display layer") into the per-segment `SegDecor` that rides alongside a
 //! `WrapSegment`, resolving the two width questions the wrap pass owns —
