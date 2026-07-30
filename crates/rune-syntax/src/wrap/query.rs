@@ -7,7 +7,8 @@
 //! needs it (`visual_col`/`byte_col_from_visual`), never cached here, so a
 //! `WrapSnapshot` never owns an O(document) allocation of its own.
 
-use super::{WrapSegment, grapheme_width_with_tab, next_grapheme};
+use super::WrapSegment;
+use super::width::{grapheme_width_with_tab, next_grapheme};
 use crate::syntax::SyntaxSpan;
 use rune_core::coords::{SyntaxPoint, WrapPoint};
 
