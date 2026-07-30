@@ -67,12 +67,25 @@ use crate::save;
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
-    infos: Vec<(Edit, u32)>,
+    mut infos: Vec<(Edit, u32)>,
     cursors_before: CursorSet,
     cursors_after: impl FnOnce(&[AppliedEdit], &[u32]) -> Vec<Cursor>,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.read_only || infos.is_empty() {
+    if doc.read_only {
+        return;
+    }
+    // A zero-width, insert-nothing edit (`start == end && insert.is_empty()`)
+    // is a legal no-op at the buffer layer — `Buffer::apply_edits` accepts
+    // it correctly, since nothing about the range or the insert is
+    // ill-formed. But committing one here anyway would still push a `Step`
+    // onto the journal and bump the buffer version for a batch that changed
+    // nothing, marking a clean document dirty (e.g. cut on an empty
+    // selection). Per CONSTITUTION §1.3 this belongs at the single
+    // chokepoint every mutating command already funnels through, not as a
+    // per-command spot check duplicated at every call site.
+    infos.retain(|(edit, _)| !(edit.start == edit.end && edit.insert.is_empty()));
+    if infos.is_empty() {
         return;
     }
     let mut infos = coalesce_touching_edits(infos);
