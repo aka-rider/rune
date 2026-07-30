@@ -5,8 +5,28 @@
 
 ## File-size budget (§1.6)
 
-- [ ] `crates/rune-tui/src/explorer.rs` is over the 500-line budget — it was already at 613 lines before the `..` parent-row change pushed it to 650. Splitting it was deliberately out of scope for that change, so the split is deferred here.
-- [ ] `crates/rune-tui/tests/opentabs.rs` is now 591 lines, over the budget — the global `^w`/`^1`-`^0` binding tests were appended to the existing tabs test file rather than split out. Decompose it (e.g. a separate `opentabs_global.rs`) next time it is touched.
+A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
+`save.rs`/`document.rs`/`explorer.rs`, `tests/opentabs.rs`, and the two worst
+test files (`conceal_roundtrip.rs` at 1453 lines and `tests/highlight.rs`).
+`explorer.rs` and `opentabs.rs` — the two previously recorded here — are done.
+
+Twenty-seven files remain over the ceiling. None was introduced by that batch;
+they are the residue of the same long-running debt, listed here so the campaign
+is visible rather than rediscovered file by file.
+
+- [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (804), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
+- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (632), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (524), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
+
+Two of those grew slightly in this batch and are recorded per the house rule:
+`dispatch.rs` 513 → 527 (the span-cap truncation status branch) and
+`db_wiring.rs` 875 → 909 (the pending-op sweep regression test). Both were
+already over budget beforehand. `commands/edit_core.rs` did cross the ceiling
+when its no-op-filter tests landed and was split the same day, so it is not on
+the list.
+
+The single most-deferred item remains `app.rs`'s `handle_key` /
+`handle_editor_key` / `handle_db_event` extraction, deferred across nine
+consecutive work packages.
 
 ## Parked tickets
 
@@ -14,6 +34,17 @@ Groomed, verified against the tree, and deliberately not worked — each needs i
 
 - **`ticket-use-verbatim-editor-title.md`** — the title field should reuse a verbatim text-editing component (selection, word movement, copy/paste, select-all), the way Go's `title.Model` wraps `textedit.Model`. Parked because no such abstraction exists anywhere in the Rust workspace: it means extracting a reusable editable core (buffer + cursor set + command dispatch + a sanitize seam) out of `Document`, plus its own minimal render path and clipboard-message routing. Not a batch-sized change.
 - **`ticket-split-title-extension-edit.md`** — make the file extension a separately focusable part of the title field. Parked because it is blocked on the verbatim-editor work above (the ticket's own open questions concede this). Building it first would add a second hand-rolled two-field cursor model to `title.rs` — exactly the debt the other ticket removes.
+
+## Recently closed
+
+- **Zero-width edit batches no longer dirty a clean file** — the commit chokepoint drops edits that change nothing, in both the Rust and Go implementations.
+- **`build_5k_doc` has one source of truth** — the bench and perf-guard copies had already silently diverged (the guard measured a table-bearing document the bench did not).
+- **`Mem::stat` and `read_dir` share one synthetic-directory predicate.**
+- **Span-cap truncation surfaces a status line**, with timeout outranking it when both hold.
+- **`make test-fuzz` no longer dirties a tracked file** — proptest persistence moved under the gitignored artifacts directory, so the gate list is idempotent.
+- **`db_ops`/`db_load_versions` merged into one `PendingOp`** — the two maps were swept separately, leaking load versions on document close; one value makes that unreachable.
+- **Rename displaced-bytes attribution audited: NOT reachable.** The observation is attributed to the renaming document and carries `origin='swap'`, which ancestor selection's `origin IN ('load','save','resolve')` filter excludes outright. Pinned by a test seeded to fail if either guard were removed.
+- **Two of the three comrak strict-invariants repros are closed** by the lone-`\r` shadow-copy parse, re-verified under the feature flag. The third still panics, isolating the surviving cause to tab-stop expansion alone.
 
 ## Closed without action
 
