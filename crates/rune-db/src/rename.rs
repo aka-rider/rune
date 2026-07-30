@@ -682,4 +682,72 @@ mod tests {
             "the displaced document's row must no longer claim /b.md"
         );
     }
+
+    /// The recorded risk this test pins down: a `rename_replace` displacing
+    /// a bound document's file must never disturb THAT document's own merge
+    /// ancestor. `other` (bound to `/b.md`, the destination) already has an
+    /// ancestor-eligible observation of its own before the replace; the
+    /// swap-captured displaced-bytes observation the replace records must
+    /// not become — or replace — that ancestor.
+    #[test]
+    fn rename_replace_over_a_bound_document_leaves_the_displaced_documents_ancestor_unchanged() {
+        let mut f = fixture(b"ours");
+        publish(&f.vfs, Path::new("/b.md"), b"theirs");
+        let other = seed_doc_with_path(&f.conn, "/b.md");
+        let other_session = crate::session::establish_session(&f.conn, SystemTime::now())
+            .expect("establish other session");
+
+        // Give `other` its own ancestor-eligible observation — the merge
+        // ancestor a later 3-way merge on `other` would use.
+        retry::with_retry(&mut f.conn, |tx| {
+            let blob_hash = crate::blob::put_blob(tx, b"theirs")?;
+            observation::record_observation(
+                tx,
+                other,
+                other_session,
+                observation::ObservationMeta {
+                    blob_hash: &blob_hash,
+                    seq: Some(0),
+                    origin: "load",
+                },
+                &observation::StatFacts {
+                    size: 6,
+                    mtime: "t".to_string(),
+                    ..Default::default()
+                },
+                "t",
+            )
+        })
+        .expect("seed other's ancestor observation");
+
+        let before = retry::with_retry(&mut f.conn, |tx| {
+            observation::ancestor_at(tx, other, other_session, 0, None)
+        })
+        .expect("ancestor before")
+        .expect("other must have an ancestor before the replace");
+
+        let seen = f.vfs.stat(Path::new("/b.md")).expect("stat b");
+        rename_replace(
+            &mut f.conn,
+            &f.vfs,
+            f.ds,
+            Path::new("/a.md"),
+            Path::new("/b.md"),
+            seen,
+            SystemTime::now(),
+        )
+        .expect("rename_replace");
+
+        let after = retry::with_retry(&mut f.conn, |tx| {
+            observation::ancestor_at(tx, other, other_session, 0, None)
+        })
+        .expect("ancestor after")
+        .expect("other must still have an ancestor after the replace");
+
+        assert_eq!(
+            after, before,
+            "the displaced document's merge ancestor must be byte-identical \
+             after a rename_replace swapped its path away"
+        );
+    }
 }
