@@ -40,7 +40,6 @@
 //! `Document::sync`/`App::sync_view` — never from inside a single command.
 
 use rune_core::buffer::Buffer;
-use rune_core::coords::BufferPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 use unicode_segmentation::UnicodeSegmentation;

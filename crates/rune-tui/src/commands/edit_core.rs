@@ -25,7 +25,7 @@ use crate::materialize_ack;
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
 /// replica, and recompute dirty — everything except how the post-edit
 /// cursor SET is derived from the applied edits. Factored out (rather than
-/// inlined in `commit_edit_batch`) so `edit_lines::move_line_up`/`down`
+/// inlined in `commit_edit_batch`) so `edit_lines_move::move_line_up`/`down`
 /// (Go's `execMoveLineUp`/`execMoveLineDown`, which are NOT built on
 /// `buildEditResultFromInfos` and compute their own single resulting
 /// cursor — a column-preserving placement WITHIN the moved line, not at
@@ -185,7 +185,7 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
     rune_core::undo::coalesce_touching_deletes(infos, u32::min)
 }
 
-/// The generic per-cursor rule every command except `edit_lines::
+/// The generic per-cursor rule every command except `edit_lines_move::
 /// move_line_up`/`down` uses: each surviving cursor lands at its own
 /// edit's `AppliedEdit::end` (`start + insert.len()`, already in POST-edit
 /// coordinates per `buffer.rs`'s own docs) — using it directly is simpler
