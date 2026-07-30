@@ -27,11 +27,15 @@
 //! never lets a keystroke fall through to the buffer, which is what the
 //! fuzzer's `PANE-NO-BLEED` invariant asserts.
 
+use std::ops::Range;
+
 use crate::app::App;
-use crate::keymap::{self, KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::clipboard::pbpaste_cmd;
+use crate::commands::clipboard::write_to_clipboard_or_report;
+use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
 use crate::rename;
-use crate::runtime::Effects;
+use crate::runtime::{Effects, PasteTarget};
 
 use super::{INVALID_NAME_CHARS, TitleField, ext_split};
 
@@ -62,7 +66,27 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
 
     let window = app.title.window();
     if let Some(cmd) = keymap::resolve_in(keymap::editor_bindings::EDITOR_BINDINGS, key) {
-        let _ = app.title.field_mut().apply(cmd, window);
+        match cmd {
+            // Copy and cut both operate on the selection, or — with no
+            // selection — on `window` (assumption A2), so the two ranges
+            // can never disagree: taking the whole name for copy while cut
+            // could only delete the window would leave the extension
+            // behind and paste back a doubled one.
+            Command::Copy => {
+                let text = copy_range_text(app);
+                write_to_clipboard_or_report(app, &text, effects);
+            }
+            Command::Cut => {
+                let text = copy_range_text(app);
+                write_to_clipboard_or_report(app, &text, effects);
+                let range = selection_or_window(app);
+                let _ = app.title.field_mut().delete_range(range);
+            }
+            Command::Paste => effects.cmds.push(pbpaste_cmd(PasteTarget::Title)),
+            _ => {
+                let _ = app.title.field_mut().apply(cmd, window);
+            }
+        }
     } else if let KeyCode::Char(ch) = key.code
         && !key.mods.ctrl
         && !key.mods.alt
@@ -73,6 +97,65 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         let _ = app.title.field_mut().insert(&ch.to_string(), window);
     }
     KeyOutcome::Consumed
+}
+
+/// The range copy/cut both act on: the live selection when there is one,
+/// else the currently-editable `window` — never the whole name, so a
+/// locked gate never lets ⌘C/⌘X reach the fenced-off extension (assumption
+/// A2).
+fn selection_or_window(app: &App) -> Range<usize> {
+    let cursor = app.title.field().cursor();
+    if cursor.has_selection() {
+        let (start, end) = cursor.selection_range();
+        start..end
+    } else {
+        app.title.window()
+    }
+}
+
+fn copy_range_text(app: &App) -> String {
+    let range = selection_or_window(app);
+    app.title
+        .field()
+        .text()
+        .get(range)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Handles a paste routed to the title — a title-focused `Msg::Paste`
+/// (bracketed paste) or a `Msg::ClipboardRead` carrying `PasteTarget::
+/// Title` (`dispatch::update_inner`). No-ops unless the title STILL has
+/// focus: `pbpaste` runs on its own thread and can take a while, and a
+/// late reply must not write into a field the user has since left.
+/// Sanitizes through [`sanitize_name_input`] — a pasted file name is
+/// filtered exactly like a typed one, first line only, so a multi-line or
+/// control-byte-laden clipboard payload can never leave the field holding
+/// something `is_valid_name` would refuse anyway. A sanitized result that
+/// comes out empty is a no-op rather than an insert of nothing.
+pub fn paste(app: &mut App, text: &str) {
+    if app.focus() != Pane::Title {
+        return;
+    }
+    let sanitized = sanitize_name_input(text);
+    if sanitized.is_empty() {
+        return;
+    }
+    let window = app.title.window();
+    let _ = app.title.field_mut().insert(&sanitized, window);
+}
+
+/// First line only, control characters and [`INVALID_NAME_CHARS`] dropped —
+/// the same restrictions ordinary character-at-a-time typing enforces in
+/// `handle_key`'s tier 3, applied at once to a pasted string instead of
+/// one `char` at a time.
+fn sanitize_name_input(text: &str) -> String {
+    text.lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|ch| !ch.is_control() && !INVALID_NAME_CHARS.contains(ch))
+        .collect()
 }
 
 /// The Right-at-end-of-stem gesture. Unlocks the gate without moving the
