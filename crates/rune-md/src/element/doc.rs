@@ -1,9 +1,10 @@
 //! The root machine: owns focus state and the wrap width every downstream
 //! element inherits (plan Context, "Root machine"). `DocMachine::sync_cursors`
-//! is the ONLY place child `RevealSm::transition` calls fire; `sync_content`
-//! reparses iff the buffer version changed, and reveal transitions never
-//! touch `built_version` (Gotchas: "Reveal must never bump the buffer
-//! version").
+//! is the only place child `RevealSm::transition` calls fire during normal
+//! editing (`reveal_all` below drives the same recursion off-editor, for the
+//! markdown-fence emitter); `sync_content` reparses iff the buffer version
+//! changed, and reveal transitions never touch `built_version` (Gotchas:
+//! "Reveal must never bump the buffer version").
 
 use std::ops::Range;
 
@@ -28,6 +29,29 @@ pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
     pub display: DisplaySnapshot,
+}
+
+/// Force every block (and, transitively, every nested block/inline) into
+/// `RevealState::Revealed`, for the WP6 markdown-fence emitter: fence
+/// bodies always emit at full reveal regardless of any cursor, so the
+/// overlay carries real syntax colors rather than the folded form. Reuses
+/// `DocMachine::sync_cursors`'s own recursion (a root `ForceRevealed` grant
+/// with an empty cursor probe, `InheritCtx::child` propagating the force to
+/// every descendant) instead of writing `RevealState` fields directly —
+/// `RevealSm::transition` stays the sole writer of reveal state in the
+/// crate.
+pub fn reveal_all(blocks: &mut [Block]) {
+    let wrap = WrapState::default();
+    let cursors = CursorProbe::default();
+    let ctx = InheritCtx {
+        focus: DocState::Focused,
+        wrap: &wrap,
+        grant: RevealGrant::ForceRevealed,
+        cursors: &cursors,
+    };
+    for b in blocks {
+        b.sync(&ctx);
+    }
 }
 
 pub struct DocMachine {
@@ -458,5 +482,58 @@ mod tests {
                 rune_syntax::element::RevealState::Revealed
             );
         }
+    }
+
+    /// Every block reached by `reveal_all` (including nested ones, which
+    /// `Block::reveal_state` alone can't see through a `Blockquote`'s or
+    /// `List`'s own composite `reveal_state`) reports `Revealed` — this is
+    /// what makes fence-body emission (WP6.S3) always render at full
+    /// reveal regardless of the fixture's own Decide policies.
+    fn assert_all_revealed(blocks: &[crate::element::block::Block]) {
+        use crate::element::block::Block;
+        use rune_syntax::element::RevealState;
+        for b in blocks {
+            // `Paragraph` carries no marker of its own — `Block::reveal_state`
+            // always reports it `Rendered` by design (it is never itself a
+            // conceal target); skip it here rather than assert on a report
+            // that can never be anything else.
+            if !matches!(b, Block::Paragraph(_)) {
+                assert_eq!(
+                    b.reveal_state(),
+                    RevealState::Revealed,
+                    "block not revealed: {b:?}"
+                );
+            }
+            match b {
+                Block::Blockquote(m) => {
+                    for marker in &m.markers {
+                        assert_eq!(marker.sm.state(), RevealState::Revealed);
+                    }
+                    assert_all_revealed(&m.children);
+                }
+                Block::List(m) => {
+                    for item in &m.items {
+                        assert_eq!(item.sm.state(), RevealState::Revealed);
+                        assert_all_revealed(&item.children);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn reveal_all_forces_every_block_revealed_with_no_cursor_input() {
+        // Deliberately unfocused-shaped input (no `DocMachine`, no
+        // `CursorSet` at all): a heading, a blockquote wrapping a nested
+        // list, a fenced code block, and frontmatter — every one of these
+        // has cursor-line/cursor-range Decide policies that would normally
+        // stay Rendered with the cursor elsewhere, plus a pinned-Revealed
+        // Frontmatter block to confirm `reveal_all` doesn't disturb it.
+        let content = "---\ntitle: x\n---\n\n# Heading\n\n> quote line\n> - item one\n> - item two\n\n```rust\nfn f() {}\n```\n";
+        let mut blocks = crate::parse::parse(content);
+        reveal_all(&mut blocks);
+        assert!(!blocks.is_empty(), "fixture must produce parsed blocks");
+        assert_all_revealed(&blocks);
     }
 }
