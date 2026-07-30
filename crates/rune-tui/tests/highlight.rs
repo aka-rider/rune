@@ -38,7 +38,7 @@ use rune_syntax::ScopeId;
 use rune_syntax::scope::scope_table;
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, HighlightPayload, Msg};
+use rune_tui::runtime::{Effects, HighlightPayload, HighlightResult, Msg};
 use rune_tui::testgrid;
 use rune_vfs::Mem;
 
@@ -850,4 +850,72 @@ fn a_tree_payload_populates_the_retained_tree() {
     let doc = app.doc(id).expect("doc");
     assert!(doc.highlight.tree.is_some(), "the tree must be stored");
     assert_eq!(doc.highlight.version, version);
+}
+
+/// The sibling of `a_timed_out_code_document_surfaces_a_status_message`:
+/// a `Spans` reply whose payload carries `truncated: true` (the producer
+/// hit its span cap) must surface a status line telling the user the tail
+/// of the document is uncoloured, just as a timed-out reply already does
+/// for the "nothing coloured at all" case.
+#[test]
+fn span_cap_truncation_surfaces_a_status_line() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    let keyword = scope_table().resolve("keyword").expect("known scope");
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: Some(HighlightPayload::Spans(HighlightResult {
+                spans: vec![(0..2, keyword)],
+                truncated: true,
+            })),
+        },
+        &mut effects,
+    );
+
+    let doc = app.doc(id).expect("doc");
+    assert!(doc.highlight.truncated, "the truncated flag must be stored");
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("syntax highlighting was truncated; the tail of this document is uncoloured"),
+        "a truncated reply must surface a status line, not fail silently"
+    );
+}
+
+/// Pins the WP4.S2 decision: when a reply's `truncated` state (sticky on
+/// `Document::highlight` from an earlier `Spans` reply) and this reply's
+/// own `timed_out` outcome (freshly decided on a `None` result) both hold,
+/// exactly one status line is shown, and it is the timeout message — a
+/// timed-out reply means nothing was coloured this round at all, which is
+/// more actionable than "coloured, but the tail is missing".
+#[test]
+fn timeout_outranks_truncation_in_the_status_line() {
+    let content = "fn main() {}\n";
+    let mut app = app_for(content, "/x/main.rs");
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    app.doc_mut(id).expect("doc").highlight.truncated = true;
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: None,
+        },
+        &mut effects,
+    );
+
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("syntax highlighting timed out for this document"),
+        "the timeout message must win over a sticky truncated flag"
+    );
 }
