@@ -13,7 +13,7 @@ use std::process::Command as ProcessCommand;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use crate::runtime::{Cmd, CmdKind, Msg};
+use crate::runtime::{Cmd, CmdKind, Msg, PasteTarget};
 
 /// The largest raw (pre-base64) payload `osc52_copy` will encode (plan
 /// WP13.S4, `rune-tui C 6`). Terminal multiplexers (tmux, screen) cap how
@@ -43,10 +43,12 @@ pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
 /// The paste-read `Cmd`: runs `/usr/bin/pbpaste` on its own thread (every
 /// `Cmd` runs off the main thread by runtime design — see `runtime.rs` —
 /// and never touches the terminal) and reports its stdout back as
-/// `Msg::ClipboardRead`. A failure to spawn pbpaste, a non-zero exit, or
-/// stdout that isn't valid UTF-8 all produce `Msg::Error` instead of
-/// silently dropping or mangling the paste, so the user sees why nothing
-/// happened rather than nothing at all.
+/// `Msg::ClipboardRead`, tagged with `target` so the reply routes to
+/// wherever the paste was requested FROM, not wherever focus/the active
+/// document happen to be when it lands. A failure to spawn pbpaste, a
+/// non-zero exit, or stdout that isn't valid UTF-8 all produce `Msg::Error`
+/// instead of silently dropping or mangling the paste, so the user sees why
+/// nothing happened rather than nothing at all.
 ///
 /// pbpaste's stdout is decoded STRICTLY, not lossily: a lossy decode would
 /// silently substitute U+FFFD for invalid bytes and still hand the result
@@ -56,8 +58,8 @@ pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {
 /// path (`CODE-REVIEW.md` rune-tui B finding 8). Rejecting outright and
 /// inserting nothing is the same trade this crate makes everywhere else
 /// user-visible content could be silently altered.
-pub fn pbpaste_cmd() -> Cmd {
-    Cmd::new(CmdKind::ClipboardRead, || {
+pub fn pbpaste_cmd(target: PasteTarget) -> Cmd {
+    Cmd::new(CmdKind::ClipboardRead, move || {
         let output = match ProcessCommand::new("/usr/bin/pbpaste").output() {
             Ok(output) => output,
             Err(e) => return Some(Msg::Error(format!("pbpaste failed to run: {e}"))),
@@ -68,16 +70,16 @@ pub fn pbpaste_cmd() -> Cmd {
                 output.status
             )));
         }
-        Some(decode_pbpaste_stdout(output.stdout))
+        Some(decode_pbpaste_stdout(output.stdout, target))
     })
 }
 
 /// The strict-decode chokepoint `pbpaste_cmd` reduces to, pulled out as its
 /// own pure function so the invalid-UTF-8 path is unit-testable without
 /// shelling out to a real `pbpaste`.
-fn decode_pbpaste_stdout(stdout: Vec<u8>) -> Msg {
+fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
     match String::from_utf8(stdout) {
-        Ok(text) => Msg::ClipboardRead(text),
+        Ok(text) => Msg::ClipboardRead { text, target },
         Err(_) => Msg::Error("pbpaste produced bytes that are not valid UTF-8".to_string()),
     }
 }
@@ -102,11 +104,12 @@ mod tests {
 
     #[test]
     fn decode_pbpaste_stdout_passes_through_valid_utf8() {
-        let msg = decode_pbpaste_stdout(b"hello".to_vec());
-        let Msg::ClipboardRead(text) = msg else {
+        let msg = decode_pbpaste_stdout(b"hello".to_vec(), PasteTarget::Title);
+        let Msg::ClipboardRead { text, target } = msg else {
             unreachable!("expected a ClipboardRead message, got {msg:?}");
         };
         assert_eq!(text, "hello");
+        assert_eq!(target, PasteTarget::Title);
     }
 
     /// Regression for `CODE-REVIEW.md` rune-tui B finding 8: invalid UTF-8
@@ -116,6 +119,9 @@ mod tests {
     #[test]
     fn decode_pbpaste_stdout_rejects_invalid_utf8_instead_of_substituting() {
         let invalid = vec![0xff, 0xfe, 0xfd];
-        assert!(matches!(decode_pbpaste_stdout(invalid), Msg::Error(_)));
+        assert!(matches!(
+            decode_pbpaste_stdout(invalid, PasteTarget::Title),
+            Msg::Error(_)
+        ));
     }
 }
