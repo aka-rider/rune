@@ -72,7 +72,20 @@ pub struct HighlightState {
 /// and survive past the `app.doc_mut(id)` call below.
 enum HighlightSource {
     Whole(&'static str, String),
-    Fences(Vec<(&'static str, Vec<Range<usize>>, String)>),
+    Fences(Vec<(FenceLang, Vec<Range<usize>>, String)>),
+}
+
+/// Which highlighter a fence's info string resolves to (plan WP6.S2): a
+/// tree-sitter grammar name (`rune_ts::lang::resolve`'s own output), or the
+/// markdown reveal-emit reuse path for a ```` ```markdown ````/```` ```md ````
+/// fence — `rune_ts::lang::resolve` never registers either spelling
+/// ("markdown stays comrak's", `rune_ts::lang`'s own doc comment), so the two
+/// resolutions are mutually exclusive and `fence_language` never has to pick
+/// between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FenceLang {
+    Ts(&'static str),
+    Markdown,
 }
 
 /// What `schedule_highlight` resolves before it can decide what to
@@ -181,18 +194,24 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
         .push(dispatch_highlight_cmd(id, version, source));
 }
 
-/// Resolves a fenced code block's info string to a canonical language name
-/// (plan WP6.S2): the first token after splitting on whitespace AND `,` (a
-/// fence may be tagged ```` ```rust,ignore ```` or ```` ```rust title=x ````),
-/// looked up through the compile-free `rune_ts::lang::resolve` — safe here
-/// on the UI thread `[B5]`, never the query-compiling registry getter. A
-/// tag that doesn't resolve (an unknown language, or no tag at all)
-/// contributes nothing and is not an error.
-fn fence_language(info: &str) -> Option<&'static str> {
+/// Resolves a fenced code block's info string to a `FenceLang` (plan
+/// WP6.S2): the first token after splitting on whitespace AND `,` (a fence
+/// may be tagged ```` ```rust,ignore ```` or ```` ```rust title=x ````).
+/// `markdown`/`md` resolve to `FenceLang::Markdown` (the comrak reveal-emit
+/// reuse path); every other token is looked up through the compile-free
+/// `rune_ts::lang::resolve` — safe here on the UI thread `[B5]`, never the
+/// query-compiling registry getter, and which never registers either
+/// markdown spelling itself ("markdown stays comrak's"). A tag that doesn't
+/// resolve (an unknown language, or no tag at all) contributes nothing and
+/// is not an error.
+fn fence_language(info: &str) -> Option<FenceLang> {
     let token = info
         .split(|c: char| c.is_whitespace() || c == ',')
         .find(|s| !s.is_empty())?;
-    rune_ts::lang::resolve(token)
+    if token.eq_ignore_ascii_case("markdown") || token.eq_ignore_ascii_case("md") {
+        return Some(FenceLang::Markdown);
+    }
+    rune_ts::lang::resolve(token).map(FenceLang::Ts)
 }
 
 /// Collects every fence in a markdown document whose info string resolves
@@ -219,7 +238,7 @@ fn fence_language(info: &str) -> Option<&'static str> {
 /// the current buffer (should not happen — `code_fences` derives its
 /// ranges from the buffer's own parse — but `.get` degrades to "skip the
 /// whole fence" rather than a panic, per §1.3) is silently skipped.
-fn code_fence_sources(doc: &Document) -> Vec<(&'static str, Vec<Range<usize>>, String)> {
+fn code_fence_sources(doc: &Document) -> Vec<(FenceLang, Vec<Range<usize>>, String)> {
     let content = doc.buffer.content();
     doc.doc
         .code_fences()

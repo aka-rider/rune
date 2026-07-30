@@ -15,6 +15,7 @@ they are the residue of the same long-running debt, listed here so the campaign
 is visible rather than rediscovered file by file.
 
 - [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (804), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
+- [ ] `rune-tui/tests/highlight_fence.rs` crossed the ceiling in this batch, 367 → 522 (plan WP6.S5's markdown-fence-highlighting integration test, plus its `find_needle_style` cell-search helper). Split out rather than squeezed under next time it's touched.
 - [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (632), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (524), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
 
 Two of those grew slightly in this batch and are recorded per the house rule:
