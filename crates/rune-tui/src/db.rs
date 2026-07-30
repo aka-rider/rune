@@ -2,14 +2,14 @@
 //! writer-thread `Store` (plan WP5, re-split in WP1 for multi-document
 //! support — plan WP1 decision 5): the `DbEvent` -> `Msg::Db` bridge, the
 //! app-level `Db` handle (the `Store` itself + the bridge + the sticky
-//! degraded flag), and the per-document `DocDb` handle (this doc's bound row
-//! + its async-replica bookkeeping). CONSTITUTION §1.4.8/§5.4: the in-memory
-//! `rune_core::undo::Journal` stays the synchronous, authoritative source
-//! of truth for the running session — nothing here ever waits on a `Store`
-//! ack before mutating the buffer (plan decision 3), and every call is a
-//! plain, non-blocking channel send (`Store::enqueue`'s `try_send`), never
-//! I/O — so these are called directly from `update`, not from a spawned
-//! `Cmd`.
+//! degraded flag), and the per-document `DocDb` handle (this doc's bound
+//! row plus its async-replica bookkeeping). CONSTITUTION §1.4.8/§5.4: the
+//! in-memory `rune_core::undo::Journal` stays the synchronous, authoritative
+//! source of truth for the running session — nothing here ever waits on a
+//! `Store` ack before mutating the buffer (plan decision 3), and every call
+//! is a plain, non-blocking channel send (`Store::enqueue`'s `try_send`),
+//! never I/O — so these are called directly from `update`, not from a
+//! spawned `Cmd`.
 //!
 //! One `Store` is shared by every open document (`App::db: Option<Db>`);
 //! each document binds its own row via `DocDb::db_id` (formerly `doc_id`).
