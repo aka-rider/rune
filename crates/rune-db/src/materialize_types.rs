@@ -8,11 +8,11 @@
 
 use crate::observation::{Observation, StatFacts};
 
-/// `doc_id`/`session_id` bundled together — every function in
-/// `materialize.rs` needs both, and threading them as a pair (rather than
-/// two separate parameters at every call site) is what keeps each
-/// signature under clippy's argument-count lint without an `#[allow]`
-/// (repo rule: no such allow outside test code).
+/// `doc_id`/`session_id` bundled together — every materialize operation
+/// needs both, and threading them as a pair (rather than two separate
+/// parameters at every call site) is what keeps each signature under
+/// clippy's argument-count lint without an `#[allow]` (repo rule: no such
+/// allow outside test code).
 #[derive(Clone, Copy, Debug)]
 pub struct DocSession {
     pub doc_id: i64,
