@@ -1913,6 +1913,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rune-image"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "rune-md"
 version = "0.1.0"
 dependencies = [
