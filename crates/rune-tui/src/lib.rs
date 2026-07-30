@@ -10,6 +10,7 @@ pub mod breadcrumb;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
+mod db_dispatch;
 mod dispatch;
 pub mod document;
 pub mod document_map;
