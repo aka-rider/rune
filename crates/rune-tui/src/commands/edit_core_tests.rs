@@ -185,8 +185,9 @@ use super::*;
 
     /// The bug this WP fixes: `delete_selection_or_line` (cut's own
     /// deletion path, with no selection) on an EMPTY buffer derives a
-    /// zero-width `Edit { start: 0, end: 0, insert: "" }` from `nav::
-    /// line_range_incl_newline` — a legal no-op at the buffer layer, but
+    /// zero-width `Edit { start: 0, end: 0, insert: "" }` from
+    /// `nav_line::line_range_incl_newline` — a legal no-op at the buffer
+    /// layer, but
     /// committing it used to still bump `version`, push a `Step`, and mark
     /// a clean document dirty.
     #[test]
@@ -218,7 +219,7 @@ use super::*;
 
     /// Same bug, on the empty LAST line of an otherwise non-empty buffer:
     /// the cursor sits at EOF on a line with nothing after it, so
-    /// `nav::line_range_incl_newline` derives `[len, len)` — again
+    /// `nav_line::line_range_incl_newline` derives `[len, len)` — again
     /// zero-width, since there is no trailing newline past the buffer's
     /// final byte to include.
     #[test]

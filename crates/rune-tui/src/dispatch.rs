@@ -9,7 +9,9 @@
 use std::ops::Range;
 
 use crate::app::App;
-use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
+use crate::commands::{
+    clipboard, edit, edit_lines, edit_lines_move, mouse, multi, nav, nav_line, nav_scroll,
+};
 use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
@@ -330,8 +332,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::LineDown => nav_scroll::line_down(app.active_doc_mut(), false),
         Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
         Command::WordRight => nav::word_right(app.active_doc_mut(), false),
-        Command::LineStart => nav::line_start(app.active_doc_mut(), false),
-        Command::LineEnd => nav::line_end(app.active_doc_mut(), false),
+        Command::LineStart => nav_line::line_start(app.active_doc_mut(), false),
+        Command::LineEnd => nav_line::line_end(app.active_doc_mut(), false),
         Command::PageUp => nav_scroll::page_up(app.active_doc_mut(), false),
         Command::PageDown => nav_scroll::page_down(app.active_doc_mut(), false),
         Command::SelectCharLeft => nav::char_left(app.active_doc_mut(), true),
@@ -340,8 +342,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::SelectLineDown => nav_scroll::line_down(app.active_doc_mut(), true),
         Command::SelectWordLeft => nav::word_left(app.active_doc_mut(), true),
         Command::SelectWordRight => nav::word_right(app.active_doc_mut(), true),
-        Command::SelectLineStart => nav::line_start(app.active_doc_mut(), true),
-        Command::SelectLineEnd => nav::line_end(app.active_doc_mut(), true),
+        Command::SelectLineStart => nav_line::line_start(app.active_doc_mut(), true),
+        Command::SelectLineEnd => nav_line::line_end(app.active_doc_mut(), true),
         Command::SelectPageUp => nav_scroll::page_up(app.active_doc_mut(), true),
         Command::SelectPageDown => nav_scroll::page_down(app.active_doc_mut(), true),
         Command::SelectAll => nav::select_all(app.active_doc_mut()),
@@ -359,10 +361,10 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::DeleteLine => edit_lines::delete_line(app, app.active),
         Command::Indent => edit_lines::indent(app, app.active),
         Command::Outdent => edit_lines::outdent(app, app.active),
-        Command::MoveLineUp => edit_lines::move_line_up(app, app.active),
-        Command::MoveLineDown => edit_lines::move_line_down(app, app.active),
-        Command::CloneLineUp => edit_lines::clone_line_up(app, app.active),
-        Command::CloneLineDown => edit_lines::clone_line_down(app, app.active),
+        Command::MoveLineUp => edit_lines_move::move_line_up(app, app.active),
+        Command::MoveLineDown => edit_lines_move::move_line_down(app, app.active),
+        Command::CloneLineUp => edit_lines_move::clone_line_up(app, app.active),
+        Command::CloneLineDown => edit_lines_move::clone_line_down(app, app.active),
         Command::AddCursorAbove => multi::add_cursor_above(app.active_doc_mut()),
         Command::AddCursorBelow => multi::add_cursor_below(app.active_doc_mut()),
         Command::Undo => edit::undo(app, app.active),

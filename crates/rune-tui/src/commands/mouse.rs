@@ -16,7 +16,8 @@ use rune_core::cursor::{Cursor, CursorSet};
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::app::App;
-use crate::commands::nav::{line_range_incl_newline, word_range_at};
+use crate::commands::nav::word_range_at;
+use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
 use crate::commands::splitter;
 use crate::document::Document;
