@@ -194,6 +194,16 @@ fn lexically_normalize(path: &Path) -> PathBuf {
     out.into_iter().collect()
 }
 
+/// `Mem` has no directory nodes (`MemState.files` is a flat
+/// `HashMap<PathBuf, MemFile>`), so a directory exists at `path` iff some
+/// stored key sits strictly below it — i.e. `key` starts with `path` plus at
+/// least one more component.
+fn sits_strictly_below(key: &Path, path: &Path) -> bool {
+    key.strip_prefix(path)
+        .map(|rest| rest.components().next().is_some())
+        .unwrap_or(false)
+}
+
 fn not_found(path: &Path, op: &str) -> io::Error {
     io::Error::new(
         io::ErrorKind::NotFound,
@@ -345,15 +355,13 @@ impl Vfs for Mem {
                 kind: FileKind::File,
             });
         }
-        // No exact file at `path` — `Mem` has no directory nodes (flat
-        // `HashMap<PathBuf, MemFile>`), so a directory is synthesized the
-        // same way `read_dir` derives one: `path` is a directory iff some
-        // stored key sits strictly below it.
-        let is_synthetic_dir = state.files.keys().any(|key| {
-            key.strip_prefix(path)
-                .map(|rest| rest.components().next().is_some())
-                .unwrap_or(false)
-        });
+        // No exact file at `path` — `Mem` has no directory nodes, so a
+        // directory is synthesized: `path` is a directory iff some stored
+        // key sits strictly below it.
+        let is_synthetic_dir = state
+            .files
+            .keys()
+            .any(|key| sits_strictly_below(key, path));
         if is_synthetic_dir {
             return Ok(Stat {
                 size: 0,
@@ -424,17 +432,16 @@ impl Vfs for Mem {
             let Ok(rest) = key.strip_prefix(path) else {
                 continue;
             };
-            let mut components = rest.components();
-            let Some(first) = components.next() else {
+            let Some(first) = rest.components().next() else {
                 // `rest` is empty: `key == path`, not a child of it.
                 continue;
             };
             path_exists = true;
             let name = first.as_os_str().to_string_lossy().to_string();
-            // More components remain below `first`: `first` is a synthetic
-            // directory, not the file itself.
-            let is_dir = components.next().is_some();
             let child_path = path.join(first.as_os_str());
+            // A key sits strictly below `child_path` itself: `first` is a
+            // synthetic directory, not the file itself.
+            let is_dir = sits_strictly_below(key, &child_path);
             let entry = by_name.entry(name).or_insert((is_dir, child_path));
             if is_dir {
                 entry.0 = true;
@@ -449,5 +456,42 @@ impl Vfs for Mem {
             .collect();
         sort_dir_entries(&mut entries);
         Ok(entries)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// `stat` and `read_dir` derive "is this a synthetic directory" from the
+    /// same predicate (`sits_strictly_below`); this exercises both entry
+    /// points against the same fixture to prove they agree at every level —
+    /// the file itself, its immediate parent, and an ancestor two levels up.
+    #[test]
+    fn stat_and_read_dir_agree_on_synthetic_directories() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a/b/c.md"), b"content")
+            .unwrap();
+
+        let stat_a = vfs.stat(Path::new("/a")).unwrap();
+        assert_eq!(stat_a.kind, FileKind::Dir);
+        assert!(vfs.read_dir(Path::new("/a")).is_ok());
+
+        let stat_ab = vfs.stat(Path::new("/a/b")).unwrap();
+        assert_eq!(stat_ab.kind, FileKind::Dir);
+        assert!(vfs.read_dir(Path::new("/a/b")).is_ok());
+
+        let stat_file = vfs.stat(Path::new("/a/b/c.md")).unwrap();
+        assert_eq!(stat_file.kind, FileKind::File);
+        // A file key with no descendants below it lists no children — same
+        // shape `mem_read_dir_excludes_the_queried_path_itself` already
+        // relies on — rather than erroring the way `Disk::read_dir` would
+        // on a real non-directory path (`Mem` has no directory nodes to
+        // distinguish "file" from "empty directory" by).
+        assert_eq!(
+            vfs.read_dir(Path::new("/a/b/c.md")).unwrap(),
+            Vec::<DirEntry>::new()
+        );
     }
 }
