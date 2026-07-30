@@ -19,7 +19,7 @@ use rune_core::undo::Step;
 use crate::app::{App, StatusSource};
 use crate::db;
 use crate::document::DocumentId;
-use crate::save;
+use crate::materialize_ack;
 
 /// Shared low-level chokepoint underneath `commit_edit_batch`: sort the
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
@@ -119,7 +119,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
                 &cursors_before.all(),
                 &cursors_after,
             );
-            save::recompute_dirty(app, id);
+            materialize_ack::recompute_dirty(app, id);
         }
         Err(e) => {
             app.set_status(format!("edit failed: {e}"), StatusSource::Other);

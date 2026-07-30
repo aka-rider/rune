@@ -12,9 +12,55 @@
 
 use std::ops::Range;
 
+use rune_syntax::ScopeId;
+
 use crate::app::App;
 use crate::document::{Document, DocumentId};
 use crate::runtime::{self, Effects};
+
+/// The async highlight state for one document (plan WP5, extended by the
+/// syntax-highlighting-latency plan's WP3): the last spans a background
+/// highlight call actually delivered, tagged with the buffer `version` they
+/// describe. `in_flight` carries the version a currently-running highlight
+/// `Cmd` was spawned against — at most one may be in flight per document
+/// (`spawn_cmd` has no thread pool or cancellation); `pending` records that a
+/// further edit landed while that `Cmd` was still running, so its completion
+/// re-schedules instead of the document going stale until the next
+/// keystroke. A completion carrying `result: None` (budget elapsed, unknown
+/// language, parse failure) leaves both `tree` and `spans` untouched — see
+/// `Msg::Highlighted`'s doc comment: a slow document degrades to STALE
+/// colours, never to NO colours.
+///
+/// `tree` (D6) is the retained whole-document parse a code document's
+/// background `Cmd` delivers — the render path queries it per frame,
+/// restricted to the visible byte range, rather than replaying a
+/// whole-document span list. `spans` stays alongside it: a markdown
+/// document's fences never populate `tree` (D6 keeps the fence pipeline on
+/// the span path), and the session fuzzer's hostile span injection has no
+/// way to synthesize a `ParsedTree` either. Both fields share the same
+/// `version`/`in_flight`/`pending` discipline — whichever payload a reply
+/// carries, the bookkeeping is identical.
+#[derive(Debug, Default)]
+pub struct HighlightState {
+    pub version: u64,
+    pub spans: Vec<(Range<usize>, ScopeId)>,
+    pub tree: Option<rune_ts::ParsedTree>,
+    pub in_flight: Option<u64>,
+    pub pending: bool,
+    /// The producer hit its span cap and the tail of this document is
+    /// uncoloured. Read back after storing a `Spans` reply to drive a
+    /// status line telling the user the tail is uncoloured, unless that
+    /// same reply also timed out (timeout wins and is shown instead).
+    pub truncated: bool,
+    /// Test-only instrumentation (plan WP16.S2): counts how many times
+    /// `highlight::resolve_highlight_source` actually built a
+    /// `HighlightSource` for this document — the full-buffer clone the
+    /// in-flight/version gates in `schedule_highlight` must skip whenever a
+    /// highlight is already running. Per-`Document`, not a shared global, so
+    /// parallel tests never interfere with each other's count.
+    #[cfg(test)]
+    pub resolve_calls: std::cell::Cell<usize>,
+}
 
 /// What `schedule_highlight` found to highlight this call (plan WP6.S3) —
 /// a whole-buffer language (`DocumentKind::Code`) or a markdown document's

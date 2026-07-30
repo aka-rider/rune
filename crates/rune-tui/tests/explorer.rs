@@ -11,7 +11,7 @@ use rune_tui::app::{self, App};
 use rune_tui::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
-use rune_tui::{explorer, workspace};
+use rune_tui::{explorer, explorer_keys, workspace};
 use rune_vfs::{Mem, Vfs};
 
 /// Seeds a `Mem` vfs with `/root/a.md`, `/root/b.md`, and `/root/sub/c.md`
@@ -109,13 +109,13 @@ fn up_and_down_clamp_at_the_list_bounds() {
     let mut effects = Effects::default();
 
     assert_eq!(
-        explorer::handle_key(&mut app, key(KeyCode::Up), &mut effects),
+        explorer_keys::handle_key(&mut app, key(KeyCode::Up), &mut effects),
         KeyOutcome::Consumed
     );
     assert_eq!(app.explorer.nav.cursor, 0, "clamped at the top");
 
     for _ in 0..10 {
-        let outcome = explorer::handle_key(&mut app, key(KeyCode::Down), &mut effects);
+        let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Down), &mut effects);
         assert_eq!(outcome, KeyOutcome::Consumed);
     }
     assert_eq!(
@@ -140,7 +140,7 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
     let before_docs = app.documents.len();
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(app.documents.len(), before_docs + 1);
@@ -185,7 +185,7 @@ fn enter_on_a_non_utf8_named_file_opens_the_byte_exact_path() {
     app.explorer.nav.cursor = idx;
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(
@@ -211,7 +211,7 @@ fn enter_on_a_directory_issues_a_read_dir_cmd() {
     let before_docs = app.documents.len();
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(effects.cmds.len(), 1);
@@ -239,7 +239,7 @@ fn enter_on_the_parent_row_loads_the_parent_directory() {
     assert_eq!(app.explorer.nav.cursor, 0);
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(effects.cmds.len(), 1);
@@ -263,7 +263,7 @@ fn a_root_without_a_parent_gets_no_dotdot_row() {
 
     // Navigate up to the vfs's own synthetic root ("/"), which has no parent.
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     let cmd = effects.cmds.remove(0);
     let msg = cmd.run().expect("ReadDir Cmd replies with a Msg");
@@ -305,7 +305,7 @@ fn open_selected_on_a_directory_falls_back_when_resolve_fails() {
     mem.fail_next(rune_vfs::OpKind::Resolve, std::io::ErrorKind::Other);
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(
         effects.cmds.len(),
@@ -331,7 +331,7 @@ fn go_to_parent_falls_back_when_resolve_fails() {
     mem.fail_next(rune_vfs::OpKind::Resolve, std::io::ErrorKind::Other);
 
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(
         effects.cmds.len(),
@@ -411,7 +411,7 @@ fn an_out_of_order_stale_dir_loaded_reply_is_ignored() {
     // Issue a second `ReadDir` (Backspace to the parent) — bumps the
     // generation without yet delivering a reply.
     let mut effects = Effects::default();
-    let outcome = explorer::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
+    let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Backspace), &mut effects);
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(effects.cmds.len(), 1);
     let fresh_root = app.explorer.root.clone();

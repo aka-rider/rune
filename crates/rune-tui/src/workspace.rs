@@ -2,7 +2,7 @@
 //! WP4.S5): re-activates a `Document` already bound to the resolved path,
 //! or reads a fresh one SYNCHRONOUSLY through the injected `Vfs` (§1.4.9).
 //! Directory navigation is the Explorer's own job instead
-//! (`explorer::handle_key`'s `Open`/`ParentDir` arms build a `runtime::
+//! (`explorer_keys::handle_key`'s `Open`/`ParentDir` arms build a `runtime::
 //! load_dir_cmd` `Cmd` directly) — this module only ever opens FILES, so
 //! unlike that path it needs no `Cmd`/`Effects` (a single `vfs.read` is
 //! cheap enough to run inline here, exactly as the pre-WP4 bootstrap load

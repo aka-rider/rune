@@ -348,7 +348,7 @@ pub fn append_edit(
                 doc_db.note_pending_append(local_pos);
             }
         }
-        Err(e) => crate::save::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
 }
 
@@ -374,7 +374,7 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(id));
         }
-        Err(e) => crate::save::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
 }
 
@@ -399,7 +399,7 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
         }
-        Err(e) => crate::save::on_store_failure(app, e.to_string()),
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
 }
 

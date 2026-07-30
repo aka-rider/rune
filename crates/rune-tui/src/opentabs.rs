@@ -84,7 +84,7 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus == Pane::Tabs`. Unlike `explorer::handle_key`, no arm here
+/// `app.focus == Pane::Tabs`. Unlike `explorer_keys::handle_key`, no arm here
 /// ever needs `Effects`: `Select` is a same-tick direct call
 /// (`workspace::switch_to`, decision 10). Closing the active document now
 /// resolves at the global pipeline stage (`GlobalCommand::CloseFile`)

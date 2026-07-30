@@ -1,9 +1,9 @@
 //! The Explorer pane: a `Vfs::read_dir`-backed file/directory list (plan
-//! WP4.S3), navigable via `listnav::List` and its own binding table.
-//! `Pane::Explorer`-focused key handling lives here (`handle_key`, called
-//! from `app::handle_key`'s stage-3 dispatch); row layout lives here too
-//! (`draw`, delegated to from `render.rs::draw_left_pane` — the bordered
-//! `Block`/focus-colored border stays render.rs's job, plan WP4.S6).
+//! WP4.S3), navigable via `listnav::List`. `Pane::Explorer`-focused key
+//! handling lives in the sibling `explorer_keys` module (split out per
+//! §1.6); row layout lives here (`draw`, delegated to from
+//! `render.rs::draw_left_pane` — the bordered `Block`/focus-colored border
+//! stays render.rs's job, plan WP4.S6).
 //!
 //! Directory loading is a boundary `Msg` (plan WP4.S4, decision 10:
 //! same-tick pane actions are direct calls, but crossing a thread to read
@@ -22,11 +22,9 @@ use ratatui::widgets::Paragraph;
 use rune_vfs::DirEntry;
 
 use crate::app::App;
-use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
 use crate::width::truncate_tail_to_width;
-use crate::workspace;
 
 /// One open Explorer's state (plan WP4.S3): the directory it's rooted at,
 /// its direct children (dirs-first, `Vfs::read_dir`'s own sort contract),
@@ -63,67 +61,6 @@ impl Default for Explorer {
     }
 }
 
-/// The Explorer's own commands (plan WP4.S3) — resolved via `EXPLORER_
-/// BINDINGS`, mirroring `keymap::GlobalCommand`'s shape.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExplorerCommand {
-    Up,
-    Down,
-    Top,
-    Bottom,
-    Open,
-    ParentDir,
-}
-
-/// Arrow keys move one entry; Home/End jump to the ends; Enter opens the
-/// selected entry (a file activates it, a directory navigates into it);
-/// Backspace navigates to the parent of the CURRENT root (not the selected
-/// entry) — mirroring Go filetree's `..`-less parent-dir chord.
-pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
-        cmd: ExplorerCommand::Up,
-        help: "up",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
-        cmd: ExplorerCommand::Down,
-        help: "down",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Home, Mods::NONE)],
-        cmd: ExplorerCommand::Top,
-        help: "top",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::End, Mods::NONE)],
-        cmd: ExplorerCommand::Bottom,
-        help: "bottom",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
-        cmd: ExplorerCommand::Open,
-        help: "open",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
-        cmd: ExplorerCommand::ParentDir,
-        help: "up dir",
-        when: "",
-        alias: false,
-    },
-];
-
 /// The Explorer's starting root the first time it's ever shown (plan
 /// WP4.S4's "`^x` triggers the initial load"): the active document's own
 /// directory takes priority (deliberate, and different from Go, which
@@ -151,45 +88,14 @@ pub fn initial_root(app: &App) -> PathBuf {
     app.vfs.resolve(&base).unwrap_or(base)
 }
 
-/// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus == Pane::Explorer`. `effects` is needed (unlike the plan's
-/// literal `handle_key(app, key) -> KeyOutcome` sketch) because `Open`/
-/// `ParentDir` must enqueue a `ReadDir` `Cmd` — a Vfs read can never run
-/// inline in `update` (§5.4) — the same reason `app::handle_editor_key`
-/// this mirrors already threads `effects` through for `Save`/clipboard.
-pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
-    let Some(cmd) = resolve_in(EXPLORER_BINDINGS, key) else {
-        return KeyOutcome::Ignored;
-    };
-    match cmd {
-        ExplorerCommand::Up => move_selection(app, -1),
-        ExplorerCommand::Down => move_selection(app, 1),
-        ExplorerCommand::Top => {
-            app.explorer.nav.first();
-            ensure_visible(app);
-        }
-        ExplorerCommand::Bottom => {
-            let len = app.explorer.entries.len();
-            app.explorer.nav.last(len);
-            ensure_visible(app);
-        }
-        ExplorerCommand::Open => open_selected(app, effects),
-        ExplorerCommand::ParentDir => go_to_parent(app, effects),
-    }
-    KeyOutcome::Consumed
-}
-
-fn move_selection(app: &mut App, delta: isize) {
-    let len = app.explorer.entries.len();
-    app.explorer.nav.move_by(delta, len);
-    ensure_visible(app);
-}
-
 /// Scrolls the Explorer's window to keep the cursor visible (plan WP4.S3:
 /// "follow, margin = min(4, visible/4) like Go filetree" — Go's own
 /// `ensureVisible`, jump
 /// buffer 0 since Go's own `Follow` call has no jump argument either).
-fn ensure_visible(app: &mut App) {
+/// `pub(crate)`, not private: `explorer_keys::handle_key`'s Top/Bottom
+/// commands and `move_selection` call this from the sibling module the key
+/// handling lives in.
+pub(crate) fn ensure_visible(app: &mut App) {
     let len = app.explorer.entries.len();
     let height = visible_rows(app);
     let margin = (height / 4).min(4);
@@ -209,58 +115,11 @@ fn visible_rows(app: &App) -> usize {
         .max(1)
 }
 
-/// Opens the currently selected entry: a file activates it through
-/// `workspace::open_path`; a directory issues a `ReadDir` `Cmd` navigating
-/// the Explorer into it (plan WP4.S3: "Open on a file → workspace::
-/// open_path; Open on a dir → dir load Cmd for the new root"). The target
-/// path comes straight from `entry.path` — the byte-exact path `Vfs::
-/// read_dir` returned (plan WP13.S1) — never rejoined from `entry.name`
-/// onto `app.explorer.root`: `name` is lossy-decoded for display, and
-/// rejoining it would let a byte the user's filename actually has silently
-/// become U+FFFD in the path the app opens (§0). The directory branch
-/// resolves the candidate root through `app.vfs.resolve` first (§1.4.9),
-/// same as `initial_root`/`open_path` already do — a plain `join` would let
-/// an unresolved (e.g. symlinked) path become the Explorer's new root,
-/// unlike every other root-changing path in this module. Falls back to the
-/// unresolved path on a `resolve` error, mirroring `workspace::open_path`'s
-/// own `unwrap_or_else` fallback (Prime Directive: a resolve failure must
-/// never just strand the user mid-navigation).
-fn open_selected(app: &mut App, effects: &mut Effects) {
-    let Some((target, is_dir)) = app
-        .explorer
-        .entries
-        .get(app.explorer.nav.cursor)
-        .map(|e| (e.path.clone(), e.is_dir))
-    else {
-        return;
-    };
-    if is_dir {
-        let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
-        request_dir(app, resolved, effects);
-    } else {
-        // `open_path` reports a read failure through `banner::report_error`
-        // itself before returning `None` — discarding the `Option` here
-        // drops only the opened id, never an unsurfaced error.
-        let _ = workspace::open_path(app, &target);
-    }
-}
-
-/// Backspace navigates to the CURRENT root's own parent — a no-op at a
-/// filesystem root (`Path::parent` returns `None`), never a Cmd for a
-/// nonexistent target. Resolved through `app.vfs.resolve` before use (see
-/// `open_selected`'s docs) — a plain `Path::parent` is pure path arithmetic
-/// that never consults the filesystem, unlike `initial_root`'s own root
-/// resolution.
-fn go_to_parent(app: &mut App, effects: &mut Effects) {
-    let Some(parent) = app.explorer.root.parent() else {
-        return;
-    };
-    let parent = parent.to_path_buf();
-    let resolved = app.vfs.resolve(&parent).unwrap_or_else(|_| parent.clone());
-    request_dir(app, resolved, effects);
-}
-
-fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
+/// Issues the `ReadDir` `Cmd` that (re)lists `root`. `pub(crate)`, not
+/// private: `explorer_keys::open_selected`/`go_to_parent` call this from
+/// the sibling module the key handling lives in, exactly like
+/// `ensure_loaded`/`refresh_for` below do from this one.
+pub(crate) fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
     app.explorer.loading = true;
     app.explorer.request_generation = app.explorer.request_generation.wrapping_add(1);
     let generation = app.explorer.request_generation;
@@ -578,40 +437,6 @@ mod tests {
             },
         );
         assert_eq!(app.explorer.entries, expected);
-    }
-
-    #[test]
-    fn up_and_down_clamp_at_the_list_bounds() {
-        let mut app = app();
-        handle_dir_loaded(
-            &mut app,
-            PathBuf::from("/root"),
-            entries(&[("a", false), ("b", false), ("c", false)]),
-            DirCause::Nav,
-            0,
-        );
-        let mut effects = Effects::default();
-
-        let up = KeyInput {
-            code: KeyCode::Up,
-            mods: Mods::NONE,
-        };
-        assert_eq!(handle_key(&mut app, up, &mut effects), KeyOutcome::Consumed);
-        assert_eq!(app.explorer.nav.cursor, 0, "clamped at the top");
-
-        let down = KeyInput {
-            code: KeyCode::Down,
-            mods: Mods::NONE,
-        };
-        for _ in 0..10 {
-            assert_eq!(
-                handle_key(&mut app, down, &mut effects),
-                KeyOutcome::Consumed
-            );
-        }
-        // Entries are [.., a, b, c] now that "/root" has a parent — index 3
-        // is the bottom, one past where it was before the leading ".." row.
-        assert_eq!(app.explorer.nav.cursor, 3, "clamped at the bottom");
     }
 
     #[test]

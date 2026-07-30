@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
-use rune_tui::explorer::EXPLORER_BINDINGS;
+use rune_tui::explorer_keys::EXPLORER_BINDINGS;
 use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
 use rune_tui::opentabs::TABS_BINDINGS;
 use rune_tui::pane::Pane;

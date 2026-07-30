@@ -263,7 +263,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let doc = app.active_doc();
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
-    let mut rows: Vec<Vec<Cell>> = crate::document::visible_rows(view.display.rows(), viewport)
+    let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| segment_cells(&app.theme, content, &row.spans))
         .collect();
 
