@@ -131,6 +131,19 @@ impl Theme {
     pub fn scope_style(&self, id: ScopeId) -> Style {
         self.scopes.get(id.0 as usize).copied().unwrap_or_default()
     }
+
+    /// [`Theme::scope_style`] with `bg` stripped. An overlay cell's style is
+    /// merged onto the render buffer field-wise (`Style::patch` only
+    /// touches fields the patching style actually sets), so a scope that
+    /// carries a background here would silently overwrite whatever the base
+    /// cell had — a markdown-fence body's own background, for one. Every
+    /// overlay consumer routes through this instead of `scope_style`.
+    pub fn overlay_scope_style(&self, id: ScopeId) -> Style {
+        Style {
+            bg: None,
+            ..self.scope_style(id)
+        }
+    }
 }
 
 /// WP4.S2's canonical scope -> `Style` mapping (Catppuccin Mocha). Heading
@@ -255,6 +268,21 @@ mod tests {
             }
             if let Some(bg) = style.bg {
                 assert!(matches!(bg, Color::Indexed(_)), "bg {bg:?} not quantized");
+            }
+        }
+    }
+
+    #[test]
+    fn overlay_scope_style_never_carries_a_background() {
+        // decision (WP1.S4): an overlay cell's style is merged onto the
+        // render buffer field-wise, so a scope carrying a bg here would
+        // clobber whatever background the base cell already had.
+        for quantized in [false, true] {
+            let theme = Theme::catppuccin_mocha(quantized);
+            let table = scope_table();
+            for (id, name) in table.iter() {
+                let style = theme.overlay_scope_style(id);
+                assert_eq!(style.bg, None, "scope {name} unexpectedly carries a bg");
             }
         }
     }
