@@ -18,63 +18,7 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_md::element::doc::DocMachine;
 
-/// Build a deterministic 5,000-line markdown document.
-fn build_5k_doc() -> String {
-    let mut doc = String::with_capacity(5_000 * 40);
-
-    // Pattern: 31 lines per cycle, repeated 161 times (4,991 lines) + 9
-    // extra lines = 5,000 total.
-    let pattern: [&str; 31] = [
-        "# Heading One",
-        "## Heading Two",
-        "### Heading Three",
-        "#### Heading Four",
-        "##### Heading Five",
-        "###### Heading Six",
-        "A paragraph with **bold**, *italic*, [a link](https://example.com), [[wikilink]], and `inline code`.",
-        "```rust",
-        "fn main() {",
-        "    println!(\"hello\");",
-        "}",
-        "```",
-        "> This is a blockquote line.",
-        "- [ ] unchecked task",
-        "\u{1f525} \u{65e5} \u{1f389} \u{4e2d}\u{6587} \u{d55c}\u{ad6d}\u{c5b4}",
-        "",
-        "1. ordered item alpha",
-        "- unordered item beta",
-        "---",
-        "This is a continuation paragraph with **bold** and *italic* text.",
-        "Another paragraph line with a [link](https://rust-lang.org) and `code`.",
-        "> Blockquote continuation on a second line.",
-        "Some ~~strikethrough~~ and **bold** inline formatting here.",
-        "[Another link](https://doc.rust-lang.org) on its own line.",
-        "[[target|label]] wikilink on its own line.",
-        "```",
-        "simple code block",
-        "```",
-        "- [x] completed task",
-        "\u{1f680} \u{1f30d} \u{1f3af} CJK mixed content line",
-        "",
-    ];
-
-    let pattern_len = pattern.len(); // 31
-    let full_cycles = 5_000 / pattern_len; // 161
-    let remainder = 5_000 % pattern_len; // 9
-
-    for _ in 0..full_cycles {
-        for line in &pattern {
-            doc.push_str(line);
-            doc.push('\n');
-        }
-    }
-    for line in &pattern[..remainder] {
-        doc.push_str(line);
-        doc.push('\n');
-    }
-
-    doc
-}
+include!("../tests/shared_doc.rs.inc");
 
 fn full_pipeline_benchmark(c: &mut Criterion) {
     let doc = build_5k_doc();
