@@ -26,14 +26,18 @@
 //! `visual_col`/`byte_col_from_visual`/etc). `WrapSegment` is defined here,
 //! where it's produced, and read by both halves.
 
+mod decor;
 mod query;
 mod table;
 mod width;
 
+pub use decor::{SegDecor, SegDecorPiece};
 pub use query::{WrapSnapshot, line_visual_col};
 
 pub use table::TableSegInfo;
-pub use width::{TAB_STOP, control_aware_width, grapheme_width, grapheme_width_with_tab, rune_width_with_tab};
+pub use width::{
+    TAB_STOP, control_aware_width, grapheme_width, grapheme_width_with_tab, rune_width_with_tab,
+};
 
 use width::next_grapheme;
 
@@ -50,6 +54,13 @@ pub struct WrapSegment {
     /// `Some` only for a segment that came from a table source line —
     /// `None` for every other segment, prose included.
     pub table: Option<TableSegInfo>,
+    /// This segment's own rendered decoration (heading icon, list bullet,
+    /// quote bar, hr rule) — sibling to `table`, never inside `spans`, so
+    /// the query submodule's byte-exact span walks never have to know decor
+    /// exists. `None` for a line with no `SyntaxLine::decor`, or when the
+    /// decor didn't fit and (not being a rule) was dropped — see
+    /// `decor::attach`.
+    pub decor: Option<SegDecor>,
 }
 
 pub struct WrapMap {
@@ -76,11 +87,16 @@ impl WrapMap {
     }
 
     fn push_whole_line(&self, line_idx: usize, line: &SyntaxLine, segments: &mut Vec<WrapSegment>) {
+        // The only path an hr's `LineDecor` (no visible spans of its own)
+        // ever takes — module docs, WP3.S3 — so decor must attach here too,
+        // not just in `wrap_line`'s greedy loop below.
+        let seg_decor = decor::attach(line.decor.as_ref(), true, self.width as usize);
         segments.push(WrapSegment {
             spans: line.spans.clone(),
             model_line: line_idx,
             start_col: 0,
             table: None,
+            decor: seg_decor,
         });
     }
 
@@ -123,7 +139,15 @@ impl WrapMap {
         // actually builds cells for (this function's own docs).
         let bounds: Vec<usize> = span_refs.iter().map(|&(_, _, end)| end).collect();
 
+        // How much of `width` the greedy breaker below actually has to lay
+        // content out in — reduced when `line.decor` reserves cells for
+        // itself (heading icon / bullet / quote bar), unchanged when there
+        // is none, when it doesn't fit and will be dropped, or when it's a
+        // rule (which has no competing content, module docs).
+        let content_width = decor::content_budget(line.decor.as_ref(), width);
+
         let mut start_col = 0usize;
+        let mut seg_index = 0usize;
         while start_col < text.len() {
             let Some(remain) = text.get(start_col..) else {
                 break;
@@ -137,7 +161,7 @@ impl WrapMap {
             while let Some(cluster) = next_grapheme(&text, &bounds, start_col + i) {
                 let size = cluster.len();
                 let rw = grapheme_width_with_tab(cluster, curr_w);
-                if curr_w + rw > width && byte_len > 0 {
+                if curr_w + rw > content_width && byte_len > 0 {
                     break;
                 }
                 if cluster == " " || cluster == "\t" {
@@ -165,14 +189,17 @@ impl WrapMap {
             let seg_end = (start_col + byte_len).min(text.len());
 
             let seg_spans = slice_spans(content, &line.spans, &span_refs, seg_start, seg_end);
+            let seg_decor = decor::attach(line.decor.as_ref(), seg_index == 0, width);
             segments.push(WrapSegment {
                 spans: seg_spans,
                 model_line: line_idx,
                 start_col: seg_start,
                 table: None,
+                decor: seg_decor,
             });
 
             start_col = seg_end;
+            seg_index += 1;
         }
     }
 }
