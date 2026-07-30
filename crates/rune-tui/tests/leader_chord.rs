@@ -66,7 +66,7 @@ fn space_held_and_x_opens_the_explorer_and_retracts_the_space() {
     press(&mut app, KeyCode::Char('x'));
 
     assert!(app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Explorer);
+    assert_eq!(app.focus(), Pane::Explorer);
     assert_eq!(
         app.active_doc().buffer.content(),
         "hello",
@@ -86,7 +86,7 @@ fn space_held_and_x_pressed_twice_leaves_the_explorer_shown_and_focused() {
     press(&mut app, KeyCode::Char('x'));
 
     assert!(app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Explorer);
+    assert_eq!(app.focus(), Pane::Explorer);
 }
 
 /// `␣Z` collapses the left column and, since the Explorer owned focus,
@@ -102,7 +102,7 @@ fn space_held_and_z_collapses_the_left_column_and_returns_focus_to_the_editor() 
     press(&mut app, KeyCode::Char('z'));
 
     assert!(!app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
 }
 
 /// Case 2 ("typing must still work"): space NOT held + `x` typed after a
@@ -116,7 +116,7 @@ fn space_not_held_then_x_just_types_both_characters() {
     press(&mut app, KeyCode::Char('x'));
 
     assert_eq!(app.active_doc().buffer.content(), "hello x");
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
     assert!(!app.splits.left.is_shown());
 }
 
@@ -160,7 +160,7 @@ fn space_held_and_x_fires_the_chord_without_deleting_when_the_left_byte_is_not_a
     press(&mut app, KeyCode::Char('x'));
 
     assert!(app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Explorer);
+    assert_eq!(app.focus(), Pane::Explorer);
     assert_eq!(app.active_doc().buffer.content(), "hello");
 }
 
@@ -192,7 +192,7 @@ fn space_held_and_x_with_an_active_selection_leaves_the_selection_intact() {
     press(&mut app, KeyCode::Char('x'));
 
     assert!(app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Explorer);
+    assert_eq!(app.focus(), Pane::Explorer);
     assert_eq!(
         app.active_doc().buffer.content(),
         "hello world",
@@ -222,7 +222,7 @@ fn cmd_x_while_space_is_held_is_still_cut_not_a_leader_completion() {
         !app.splits.left.is_shown(),
         "⌘X must never be mistaken for ␣X"
     );
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(
         app.active_doc().buffer.content(),
         " world",

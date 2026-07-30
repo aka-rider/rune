@@ -185,12 +185,24 @@ fn type_text(app: &mut App, text: &str) {
 /// `^r` then select-all-equivalent: clear the field, then type `name`.
 fn rename_to(app: &mut App, name: &str) -> Effects {
     send(app, ctrl('r'));
-    assert_eq!(app.focus, Pane::Title);
+    assert_eq!(app.focus(), Pane::Title);
     while !app.title.text.is_empty() {
         send(app, plain(KeyCode::Backspace));
     }
     type_text(app, name);
     send(app, plain(KeyCode::Enter))
+}
+
+/// `^r`, clear the field, then type `name` — WITHOUT pressing Enter, so the
+/// caller can drive a DIFFERENT blur gesture and observe what it does with
+/// the still-uncommitted name.
+fn type_new_name(app: &mut App, name: &str) {
+    send(app, ctrl('r'));
+    assert_eq!(app.focus(), Pane::Title);
+    while !app.title.text.is_empty() {
+        send(app, plain(KeyCode::Backspace));
+    }
+    type_text(app, name);
 }
 
 fn active_path(app: &App) -> Option<PathBuf> {
@@ -209,7 +221,7 @@ fn ctrl_r_focuses_the_title_and_typing_never_touches_the_buffer() {
     let before = app.active_doc().buffer.content().to_string();
 
     send(&mut app, ctrl('r'));
-    assert_eq!(app.focus, Pane::Title);
+    assert_eq!(app.focus(), Pane::Title);
     assert_eq!(app.title.text, "a", "seeded with the stem, not 'a.md'");
 
     type_text(&mut app, "xyz");
@@ -233,7 +245,7 @@ fn escape_reverts_the_field_and_renames_nothing() {
     send(&mut app, plain(KeyCode::Escape));
 
     assert_eq!(app.title.text, "a");
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(active_path(&app).as_deref(), Some(Path::new("/root/a.md")));
     assert!(mem.read(Path::new("/root/a.md")).is_ok());
 }
@@ -245,7 +257,7 @@ fn up_at_the_top_of_the_editor_focuses_the_title() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     send(&mut app, plain(KeyCode::Up));
-    assert_eq!(app.focus, Pane::Title);
+    assert_eq!(app.focus(), Pane::Title);
 }
 
 // ── Refusals ────────────────────────────────────────────────────────────
@@ -262,6 +274,12 @@ fn assert_refused(app: &App, effects: &Effects, before_content: &str) {
     );
 }
 
+/// Decision 12: a read-only document's title cannot be focused AT ALL — the
+/// refusal now happens at `^r` itself (`App::focus_title`), before there is
+/// ever anything to type. Focusing the Help document's title would
+/// otherwise hold the user in a field describing a document they can never
+/// rename; removing the illegal state beats guarding it later inside
+/// `rename::begin`.
 #[test]
 fn a_read_only_document_refuses_to_rename() {
     let mem = seeded_vfs();
@@ -269,8 +287,14 @@ fn a_read_only_document_refuses_to_rename() {
     app.active_doc_mut().read_only = true;
     let before = app.active_doc().buffer.content().to_string();
 
-    let effects = rename_to(&mut app, "b");
-    assert_refused(&app, &effects, &before);
+    send(&mut app, ctrl('r'));
+
+    assert_eq!(app.focus(), Pane::Editor, "the title must never gain focus");
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("this document is read-only")
+    );
+    assert_eq!(app.active_doc().buffer.content(), before);
 }
 
 /// The no-store `save_cmd` captures `path` in its closure and would
@@ -326,7 +350,7 @@ fn an_unchanged_name_refuses_to_rename() {
     send(&mut app, ctrl('r'));
     let effects = send(&mut app, plain(KeyCode::Enter));
 
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
     assert_refused(&app, &effects, &before);
 }
 
@@ -503,7 +527,7 @@ fn an_error_displacing_the_guard_also_cancels_the_collision() {
     banner::report_error(&mut app, "boom");
 
     assert_eq!(app.rename, RenameState::Idle);
-    assert_eq!(app.focus, Pane::Title);
+    assert_eq!(app.focus(), Pane::Title);
     assert_eq!(app.title.text, "b", "the TYPED name must still be there");
 }
 
@@ -520,7 +544,7 @@ fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
 
     assert_eq!(app.rename, RenameState::Idle);
     assert!(app.modal.is_none());
-    assert_eq!(app.focus, Pane::Title);
+    assert_eq!(app.focus(), Pane::Title);
     assert_eq!(app.title.text, "b");
 }
 
@@ -800,5 +824,373 @@ fn store_bound_draft_create_ack_clears_the_untitled_display_name() {
         app.active_doc().file_name(),
         "fresh.md",
         "a store-bound create ack must clear the untitled display_name override"
+    );
+}
+
+// ── WP2: focus loss is the single commit chokepoint ─────────────────────
+
+/// Leaving the title for the Explorer (`^b`) must commit the pending rename
+/// exactly like Enter does — the hoisted blur gate at the top of
+/// `pane::handle_global_command` runs before the `FocusExplorer` arm.
+#[test]
+fn leaving_the_title_for_the_explorer_commits_the_rename() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    type_new_name(&mut app, "b");
+
+    let mut effects = send(&mut app, ctrl('b'));
+
+    assert_eq!(app.focus(), Pane::Explorer);
+    let cmds: Vec<_> = effects
+        .cmds
+        .drain(..)
+        .filter(|c| c.kind() == CmdKind::Rename)
+        .collect();
+    assert_eq!(
+        cmds.len(),
+        1,
+        "leaving the title must commit the pending rename"
+    );
+    assert!(matches!(app.rename, RenameState::Committing { .. }));
+}
+
+/// Escape is an unconditional exit even while the typed name is invalid
+/// (here, empty): it reverts FIRST, so there is nothing left for `on_blur`
+/// to veto, and focus always releases.
+#[test]
+fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    type_new_name(&mut app, "");
+
+    let effects = send(&mut app, plain(KeyCode::Escape));
+
+    assert_eq!(app.focus(), Pane::Editor);
+    assert_eq!(app.title.text, "a", "reverted to the committed name");
+    assert!(
+        !effects.cmds.iter().any(|c| c.kind() == CmdKind::Rename),
+        "Escape must never fire a rename"
+    );
+}
+
+/// An invalid name (here, empty) vetoes the FOCUS change on Enter — the
+/// user stays in the title with the reason already in the footer (decision
+/// 7), rather than being bounced back to the Editor with an unresolved
+/// name.
+#[test]
+fn an_invalid_name_vetoes_the_focus_change() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    type_new_name(&mut app, "");
+
+    send(&mut app, plain(KeyCode::Enter));
+
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "a refused commit must not release focus"
+    );
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("that name can't be used for a file")
+    );
+}
+
+/// Gotcha 5: a vetoed blur must never block a global command reaching its
+/// own arm — ⌘S still triggers a save, and `^c` twice still quits, even
+/// while the title holds an unusable (empty) name.
+#[test]
+fn an_invalid_name_still_lets_the_user_quit_and_save() {
+    let mem = seeded_vfs();
+    let (mut app, _rx) = app_with_store(&mem);
+    // A real edit, not `mark_dirty_from_hydration` — `trigger_save` gates on
+    // `buffer.version() != saved_version`, which only an actual edit moves.
+    send(&mut app, plain(KeyCode::Char('!')));
+    type_new_name(&mut app, "");
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "test setup: the veto leaves focus in the title"
+    );
+
+    // ⌘S must still reach `Save`'s own arm rather than being swallowed by
+    // the title: the hoisted gate only ever vetoes the FOCUS transition,
+    // never the command itself.
+    let cmd_s = Mods {
+        sup: true,
+        ..Mods::NONE
+    };
+    send(&mut app, key(KeyCode::Char('s'), cmd_s));
+    assert!(
+        app.active_doc().save_in_flight,
+        "\u{2318}S must still trigger a save even with an unusable name pending"
+    );
+
+    // `^c` twice must still reach the quit chord's own arm and complete
+    // quit — this document is store-bound, so the unpreserved-dirty Guard
+    // gate never intercepts it.
+    send(&mut app, ctrl('c'));
+    send(&mut app, ctrl('c'));
+    assert!(app.should_quit, "^c^c must still be able to quit");
+}
+
+/// WP2.S8 did not strand focus: both the Explorer's `Enter`
+/// (`workspace::open_path`, wrapped by `explorer_keys::open_selected`) and
+/// the Tabs pane's `Enter` (`opentabs::handle_key`'s `Select` arm) still
+/// land focus on the Editor now that `switch_to` itself no longer writes
+/// it.
+#[test]
+fn explorer_enter_and_tabs_enter_both_land_focus_on_the_editor() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+
+    let mut effects = send(&mut app, ctrl('b'));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::ReadDir)
+        .expect("a ReadDir Cmd");
+    let msg = cmd.run().expect("a reply");
+    send(&mut app, msg);
+    assert_eq!(app.focus(), Pane::Explorer);
+    let idx = app
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == "b.md")
+        .expect("b.md listed");
+    app.explorer.nav.cursor = idx;
+
+    send(&mut app, plain(KeyCode::Enter));
+    assert_eq!(
+        app.focus(),
+        Pane::Editor,
+        "Explorer Enter must land focus on the Editor"
+    );
+
+    send(&mut app, ctrl('t'));
+    assert_eq!(app.focus(), Pane::Tabs);
+    app.tabs.nav.cursor = 0;
+
+    send(&mut app, plain(KeyCode::Enter));
+    assert_eq!(
+        app.focus(),
+        Pane::Editor,
+        "Tabs Enter must land focus on the Editor"
+    );
+}
+
+/// Gotcha 6: `^1`-`^0` and `F1` fired from Explorer focus must land focus on
+/// the Editor too — the hoisted blur gate at `pane.rs` fires only for
+/// `Pane::Title`, so without WP2.S8's explicit `set_focus` in the
+/// `TabSwitch`/`Help` arms, the document would switch while focus stayed
+/// stranded on the chrome list.
+#[test]
+fn ctrl_1_and_f1_from_explorer_focus_land_focus_on_the_editor() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+    workspace::open_path(&mut app, Path::new("/root/b.md"));
+
+    send(&mut app, ctrl('b'));
+    assert_eq!(app.focus(), Pane::Explorer);
+    send(&mut app, ctrl('1'));
+    assert_eq!(
+        app.focus(),
+        Pane::Editor,
+        "^1 from Explorer focus must land focus on the Editor"
+    );
+
+    send(&mut app, ctrl('b'));
+    assert_eq!(app.focus(), Pane::Explorer);
+    send(&mut app, plain(KeyCode::F1));
+    assert_eq!(
+        app.focus(),
+        Pane::Editor,
+        "F1 from Explorer focus must land focus on the Editor"
+    );
+}
+
+/// The ordering guard for decision 8: an uncommitted rename must target the
+/// OUTGOING document, never the one about to become active. A different
+/// document opening asynchronously (`workspace::open_path_async`, e.g. a
+/// ctrl-click on a link) blurs the title — and so fires the pending rename
+/// — BEFORE its `Msg::FileOpened` reply reassigns `app.active`.
+#[test]
+fn an_uncommitted_title_renames_the_outgoing_document_not_the_incoming_one() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/other.md"), b"other content")
+        .expect("seed other.md");
+    let mut app = app_with(&mem);
+
+    type_new_name(&mut app, "renamed");
+
+    let mut effects = Effects::default();
+    workspace::open_path_async(&mut app, Path::new("/root/other.md"), None, &mut effects);
+    let read_cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::ReadFile)
+        .expect("a ReadFile Cmd");
+    let file_opened = read_cmd.run().expect("a reply");
+    let mut effects2 = send(&mut app, file_opened);
+
+    // The active document is now the newly opened one...
+    assert_eq!(
+        app.active_doc().file_path.as_deref(),
+        Some(Path::new("/root/other.md"))
+    );
+    // ...but the rename Cmd the blur fired targeted the OLD document's own
+    // directory and old name, never the new one.
+    let rename_cmd = effects2
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("the blur must have fired a rename Cmd for the outgoing document");
+    let reply = rename_cmd.run().expect("a reply");
+    send(&mut app, reply);
+
+    assert_eq!(
+        mem.read(Path::new("/root/renamed.md")).unwrap(),
+        b"a content"
+    );
+    assert!(
+        mem.read(Path::new("/root/a.md")).is_err(),
+        "the OLD name must be gone"
+    );
+    assert_eq!(
+        mem.read(Path::new("/root/other.md")).unwrap(),
+        b"other content",
+        "the newly-opened document's own file must be untouched"
+    );
+}
+
+/// Decision 8's conditional half: a failed Explorer open raises the error
+/// banner and must NOT steal the keyboard — focus stays on the Explorer so
+/// the user can try a different entry.
+#[test]
+fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+
+    let mut effects = send(&mut app, ctrl('b'));
+    let cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::ReadDir)
+        .expect("a ReadDir Cmd");
+    let msg = cmd.run().expect("a reply");
+    send(&mut app, msg);
+    assert_eq!(app.focus(), Pane::Explorer);
+
+    let idx = app
+        .explorer
+        .entries
+        .iter()
+        .position(|e| e.name == "b.md")
+        .expect("b.md listed");
+    app.explorer.nav.cursor = idx;
+    mem.fail_next(rune_vfs::OpKind::Read, std::io::ErrorKind::PermissionDenied);
+
+    send(&mut app, plain(KeyCode::Enter));
+
+    assert_eq!(
+        app.focus(),
+        Pane::Explorer,
+        "a failed open must not steal the keyboard from the Explorer"
+    );
+    assert!(
+        app.modal.is_some(),
+        "the read failure must raise the error banner"
+    );
+}
+
+/// The first half of WP2.S8c's guard: closing the active document reseeds
+/// the title from the document that becomes active in its place.
+#[test]
+fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+    let first = app.active;
+    workspace::open_path(&mut app, Path::new("/root/b.md"));
+    let second = app.active;
+    assert_ne!(first, second, "test setup: two distinct documents");
+
+    workspace::close_now(&mut app, second);
+
+    assert_eq!(app.active, first);
+    assert_eq!(
+        app.title.text, "a",
+        "the title must reseed from the new active document"
+    );
+}
+
+/// The second half of WP2.S8c's guard: `close_now` is the one active-
+/// document reseed with no blur in front of it — an async close landing for
+/// the very document being renamed must leave the typed name alone rather
+/// than silently overwrite it.
+#[test]
+fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+    // A second document, so the last-document floor doesn't refuse.
+    workspace::open_path(&mut app, Path::new("/root/b.md"));
+    let first_tab = app.tabs.order[0];
+    workspace::switch_to(&mut app, first_tab);
+    let victim = app.active;
+
+    type_new_name(&mut app, "zzz");
+
+    // An async close for the very document being renamed lands with no
+    // blur in front of it (mirrors `materialize_ack::close_if_pending`'s own
+    // shape) — the typed name must survive untouched.
+    workspace::close_now(&mut app, victim);
+
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "focus must not be silently displaced"
+    );
+    assert_eq!(
+        app.title.text, "zzz",
+        "the typed name must survive an async close of the document being renamed"
+    );
+}
+
+/// Decision 12: the Help document is read-only, so its title can never gain
+/// focus at all — `^r` refuses with a status instead, and the title row
+/// still reads "Help".
+#[test]
+fn the_help_document_refuses_title_focus() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+
+    send(&mut app, plain(KeyCode::F1));
+    assert_eq!(app.active_doc().file_name(), "Help");
+
+    send(&mut app, ctrl('r'));
+
+    assert_eq!(
+        app.focus(),
+        Pane::Editor,
+        "a read-only document's title must never gain focus"
+    );
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("this document is read-only")
+    );
+    assert_eq!(
+        app.active_doc().file_name(),
+        "Help",
+        "the title row must still read Help"
     );
 }

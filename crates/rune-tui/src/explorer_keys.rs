@@ -8,6 +8,7 @@
 use crate::app::App;
 use crate::explorer::{self, ensure_visible};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
+use crate::pane::Pane;
 use crate::runtime::Effects;
 use crate::workspace;
 
@@ -73,7 +74,7 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus == Pane::Explorer`. `effects` is needed (unlike the plan's
+/// `app.focus() == Pane::Explorer`. `effects` is needed (unlike the plan's
 /// literal `handle_key(app, key) -> KeyOutcome` sketch) because `Open`/
 /// `ParentDir` must enqueue a `ReadDir` `Cmd` — a Vfs read can never run
 /// inline in `update` (§5.4) — the same reason `app::handle_editor_key`
@@ -122,6 +123,13 @@ fn move_selection(app: &mut App, delta: isize) {
 /// unresolved path on a `resolve` error, mirroring `workspace::open_path`'s
 /// own `unwrap_or_else` fallback (Prime Directive: a resolve failure must
 /// never just strand the user mid-navigation).
+///
+/// The file branch blurs the title BEFORE calling `open_path` (decision 8:
+/// `open_path`'s own reactivation branch switches synchronously, and
+/// `rename::begin` resolves its subject from the live `app.active`), then
+/// lands focus on the Editor only when `open_path` actually returns an id —
+/// a read failure raises the error banner instead and must not ALSO steal
+/// the keyboard from a user still arrowing the Explorer list.
 fn open_selected(app: &mut App, effects: &mut Effects) {
     let Some((target, is_dir)) = app
         .explorer
@@ -135,10 +143,13 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
         explorer::request_dir(app, resolved, effects);
     } else {
+        app.blur_title(effects);
         // `open_path` reports a read failure through `banner::report_error`
         // itself before returning `None` — discarding the `Option` here
         // drops only the opened id, never an unsurfaced error.
-        let _ = workspace::open_path(app, &target);
+        if workspace::open_path(app, &target).is_some() {
+            app.set_focus(Pane::Editor, effects);
+        }
     }
 }
 

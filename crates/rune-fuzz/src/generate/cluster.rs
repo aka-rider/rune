@@ -282,7 +282,7 @@ fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
 /// `Stale` is genuinely distinct (plan WP7.S6).
 ///
 /// The guarantee is made TRUE by construction, not by assumption:
-/// `Action::Key` only reaches the buffer while `app.focus == Pane::Editor`
+/// `Action::Key` only reaches the buffer while `app.focus() == Pane::Editor`
 /// (the ordinary four-stage key pipeline), and a preceding cluster can
 /// leave focus anywhere — `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks it
 /// on `Pane::Title` with no restore. So this cluster prepends the same

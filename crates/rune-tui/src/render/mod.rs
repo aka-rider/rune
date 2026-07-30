@@ -334,7 +334,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
     if geo.center_bordered {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(if app.focus == Pane::Editor {
+            .border_style(if app.focus() == Pane::Editor {
                 app.theme.chrome.active_border
             } else {
                 app.theme.chrome.inactive_border
@@ -352,7 +352,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 
     if geo.center_bordered {
-        crate::breadcrumb::overlay(app, geo.center, app.focus == Pane::Editor, frame);
+        crate::breadcrumb::overlay(app, geo.center, app.focus() == Pane::Editor, frame);
     }
 
     // (b) The one banner delegation (plan WP3.S3) — all of its own cell
@@ -393,7 +393,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(if app.focus == Pane::Explorer {
+        .border_style(if app.focus() == Pane::Explorer {
             app.theme.chrome.active_border
         } else {
             app.theme.chrome.inactive_border

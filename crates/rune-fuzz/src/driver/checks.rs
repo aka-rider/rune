@@ -132,7 +132,7 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
             return true;
         }
     }
-    if state.app.focus != Pane::Editor {
+    if state.app.focus() != Pane::Editor {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Char('e'),
             mods: Mods {

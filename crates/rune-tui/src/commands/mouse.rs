@@ -47,7 +47,7 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     if let Some(Drag::Splitter { .. }) = app.pointer.drag {
         match input.kind {
             MouseKind::Drag(MouseButton::Left) => {
-                splitter::drag(app, input);
+                splitter::drag(app, input, effects);
                 return;
             }
             MouseKind::Up(MouseButton::Left) => {

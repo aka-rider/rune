@@ -42,8 +42,14 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     // ONE hoisted gate, deliberately before the match (plan "Keybinding"):
     // a global chord pressed while the title is focused commits the typed
     // name FIRST, so ⌘S can never save under the old name and the edit is
-    // never silently discarded. A no-op when the title isn't focused.
-    crate::title::finalize_if_focused(app, effects);
+    // never silently discarded. A no-op when the title isn't focused. NEVER
+    // an early return: a refused commit leaves focus on the title with the
+    // reason already in the footer, but every arm below must stay reachable
+    // regardless — quit, save and close would otherwise be unreachable for a
+    // user holding an unusable name. Decision 7 is what keeps a repeated,
+    // idempotent blur (each arm's own `set_focus` re-entering `on_blur`)
+    // harmless.
+    app.blur_title(effects);
 
     match cmd {
         GlobalCommand::FocusExplorer => {
@@ -53,16 +59,18 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             // show-plus-focus contract, and `FocusTabs`'s below).
             app.splits.left.show();
             app.splits.explorer.show();
-            app.focus = Pane::Explorer;
+            app.set_focus(Pane::Explorer, effects);
             // Shared with the startup path that shows this column before
             // any key is pressed, so both fill the pane identically.
             explorer::ensure_loaded(app, effects);
         }
-        GlobalCommand::FocusEditor => app.focus = Pane::Editor,
-        // Reseed from the document that is actually showing, every time:
-        // the field must never present a stale name from a previous
-        // document or a previously abandoned edit (no shadow state).
-        GlobalCommand::FocusTitle => focus_title(app),
+        GlobalCommand::FocusEditor => app.set_focus(Pane::Editor, effects),
+        // Entering the title needs no `Effects` — it can never itself leave
+        // it (decision 5). Reseeds from the document that is actually
+        // showing, every time: the field must never present a stale name
+        // from a previous document or a previously abandoned edit (no
+        // shadow state).
+        GlobalCommand::FocusTitle => app.focus_title(),
         // Mirrors `FocusExplorer`'s "show + focus" pairing: the Tabs pane's
         // own cursor is meaningless to a user who can't see it. Also makes
         // sure the tab rows themselves have room — a starved split from a
@@ -79,37 +87,38 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                     .explorer
                     .ensure_trail(budget, crate::layout::TABS_LIMITS);
             }
-            app.focus = Pane::Tabs;
+            app.set_focus(Pane::Tabs, effects);
         }
         GlobalCommand::CollapseLeft => {
             app.splits.left.hide();
-            if matches!(app.focus, Pane::Explorer | Pane::Tabs) {
-                app.focus = Pane::Editor;
+            if matches!(app.focus(), Pane::Explorer | Pane::Tabs) {
+                app.set_focus(Pane::Editor, effects);
             }
         }
         GlobalCommand::Save => save::trigger_save(app, app.active, effects),
         // WP7.S2: mints/toggles the generated Help virtual document — a
-        // direct, same-tick call (decision 10), no I/O involved.
-        GlobalCommand::Help => crate::workspace::toggle_help(app),
+        // direct, same-tick call (decision 10), no I/O involved. The hoisted
+        // gate above already blurred, but that gate fires only for
+        // `Pane::Title` — without moving focus here too, `F1` pressed from
+        // the Explorer or Tabs pane would switch the active document while
+        // focus stayed stranded on the chrome list (WP2.S8).
+        GlobalCommand::Help => {
+            app.set_focus(Pane::Editor, effects);
+            crate::workspace::toggle_help(app);
+        }
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
         GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active),
         // Out-of-range is a silent no-op, so a digit naming a tab that
-        // isn't open does nothing rather than guessing at a neighbour.
-        GlobalCommand::TabSwitch(idx) => crate::workspace::switch_to_index(app, idx),
+        // isn't open does nothing rather than guessing at a neighbour. Same
+        // pre-switch focus move as `Help` above, and for the same reason.
+        GlobalCommand::TabSwitch(idx) => {
+            app.set_focus(Pane::Editor, effects);
+            crate::workspace::switch_to_index(app, idx);
+        }
     }
-}
-
-/// Focuses the title field, reseeding it from the active document's own
-/// stem and landing the cursor at the end. The single entry point for
-/// gaining title focus — `^r` and the Up-at-editor-top gesture both route
-/// here, so the seed can never be skipped by one of them.
-pub(crate) fn focus_title(app: &mut App) {
-    let stem = crate::title::stem_for(app.active_doc());
-    app.title.seed(&stem);
-    app.focus = Pane::Title;
 }
 
 /// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
@@ -200,7 +209,7 @@ mod tests {
         let mut effects = Effects::default();
         handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         assert!(app.splits.left.is_shown());
-        assert_eq!(app.focus, Pane::Explorer);
+        assert_eq!(app.focus(), Pane::Explorer);
     }
 
     /// The command that shows the Explorer must never be the one that hides
@@ -213,7 +222,7 @@ mod tests {
         handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         assert!(app.splits.left.is_shown());
-        assert_eq!(app.focus, Pane::Explorer);
+        assert_eq!(app.focus(), Pane::Explorer);
     }
 
     /// The collapse command hides the column and, only when it currently
@@ -226,17 +235,17 @@ mod tests {
         handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
         handle_global_command(&mut app, GlobalCommand::CollapseLeft, &mut effects);
         assert!(!app.splits.left.is_shown());
-        assert_eq!(app.focus, Pane::Editor);
+        assert_eq!(app.focus(), Pane::Editor);
     }
 
     #[test]
     fn focus_editor_returns_focus_regardless_of_the_left_columns_visibility() {
         let mut app = app();
-        app.focus = Pane::Explorer;
-        app.splits.left.show();
         let mut effects = Effects::default();
+        app.set_focus(Pane::Explorer, &mut effects);
+        app.splits.left.show();
         handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
-        assert_eq!(app.focus, Pane::Editor);
+        assert_eq!(app.focus(), Pane::Editor);
         assert!(
             app.splits.left.is_shown(),
             "FocusEditor must not hide the left pane"
