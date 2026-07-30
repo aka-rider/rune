@@ -17,7 +17,7 @@ use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::Step;
 
 use crate::app::{App, StatusSource};
-use crate::db;
+use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::materialize_ack;
 
