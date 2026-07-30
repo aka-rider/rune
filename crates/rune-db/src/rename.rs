@@ -215,6 +215,17 @@ pub fn rename_replace(
 /// document row to `to` — all inside ONE transaction, closing the crash
 /// window [rune-db 4] describes. Both stats (disk I/O) run BEFORE the
 /// transaction opens (invariant I1); the transaction itself is pure SQLite.
+///
+/// Audited invariant: the displaced-bytes observation can never become the
+/// merge ancestor for the document that used to be bound to `to`, let alone
+/// for any other document. Two facts hold this shut independently. First,
+/// this observation is recorded under the RENAMING document's own id, never
+/// under the id of whichever row used to claim `to` — ancestor selection is
+/// scoped by document id, so an observation captured here can never be
+/// selected as a *different* document's ancestor even in principle. Second,
+/// it is unconditionally recorded with `origin='swap'`, and ancestor
+/// selection only considers `origin IN ('load','save','resolve')` — so it is
+/// never ancestor-eligible for ANY document, including the renaming one.
 fn capture_and_rebind(
     conn: &mut rusqlite::Connection,
     vfs: &dyn Vfs,
