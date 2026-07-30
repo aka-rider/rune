@@ -38,63 +38,10 @@ use rusqlite::{Connection, params};
 
 use crate::Error;
 use crate::observation::{self, ObsId, Observation, ObservationMeta, StatFacts};
+use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
 
-/// `doc_id`/`session_id` bundled together — every function in this module
-/// needs both, and threading them as a pair (rather than two separate
-/// parameters at every call site) is what keeps each signature under
-/// clippy's argument-count lint without an `#[allow]` (repo rule: no such
-/// allow outside test code).
-#[derive(Clone, Copy, Debug)]
-pub struct DocSession {
-    pub doc_id: i64,
-    pub session_id: i64,
-}
-
-/// The outcome of a materialize attempt, assembled by
-/// [`record_materialize_outcome`] (`missing` is set directly by the caller
-/// instead — see `save.rs`'s dance): `Missing`/`Fresh`-on-refusal/`Raced`
-/// stay mutually exclusive discriminants, never a shared sentinel
-/// (this crate's "Options for absent facts" rule).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MatResult {
-    pub committed: bool,
-    /// Meaningful when `committed` (an ordinary save OR a `raced` win).
-    pub saved: Option<Observation>,
-    /// Meaningful when `!committed && !missing`, OR `raced` (the
-    /// displaced/conflicting observation).
-    pub fresh: Option<Observation>,
-    /// `true` when `!committed` because the target doesn't exist and
-    /// `bind_new` was `false` (§1.4.4 — never silently (re)create). The
-    /// caller decides this entirely on its own vfs read; it is never
-    /// constructed by anything in this module.
-    pub missing: bool,
-    /// `true` when `committed` via a swap-race (F5): a writer raced inside
-    /// the atomic-swap window the caller performed, so the displaced bytes
-    /// differ from `expect`, but OUR bytes are already physically at the
-    /// target — this write commits for real, and the raced writer's
-    /// displaced bytes are ALSO surfaced (`fresh`, `origin='swap'`).
-    pub raced: bool,
-}
-
-/// Bookkeeping-only decision data [`prepare_materialize`] hands the caller
-/// before any `vfs` call happens — no `vfs` call is made to produce this,
-/// only DB reads. `Default` (both fields empty) is exactly what `bind_new`
-/// needs: there is no bound path to disagree with, and `materialize_create`
-/// never consulted `expect` in the first place.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct MaterializePrep {
-    /// `documents.path`, unresolved — the caller resolves both this and its
-    /// own target through its own `vfs` and refuses on disagreement (a
-    /// caller bug, not an ordinary CAS race — was `materialize`'s own
-    /// path-parameter check, [rune-db 5]). `None` when `bind_new` (nothing
-    /// to disagree with).
-    pub bound_path: Option<String>,
-    /// `expect`'s `blob_hash` — the CAS baseline the caller compares the
-    /// live target's hash against before writing. Empty when `bind_new`
-    /// (the create path never had a CAS baseline to compare).
-    pub expect_hash: String,
-}
+pub use crate::materialize_types::{DocSession, MatResult, MaterializeOutcome, MaterializePrep};
 
 /// Step 1 (now caller-facing): fetches the CAS decision data for a
 /// `!bind_new` materialize attempt — the bound path to check the caller's
@@ -131,34 +78,6 @@ pub fn prepare_materialize(
         bound_path: Some(db_path),
         expect_hash: expect_obs.blob_hash,
     })
-}
-
-/// What the caller's own `vfs` work concluded, carrying every disk-sourced
-/// fact [`record_materialize_outcome`] needs — this module never calls
-/// `vfs` itself to re-derive any of it. A target that turned out `missing`
-/// (bind_new=false, `NotFound`) or a genuine I/O failure never reach this
-/// type at all: neither one has anything for the DB to record (see
-/// `save.rs`'s caller-side dance for both).
-pub enum MaterializeOutcome {
-    /// The live target's hash disagreed with `expect` (an ordinary CAS
-    /// refusal), or a concurrent creator won a `bind_new` race — no write
-    /// was attempted; `data`/`stat` describe whatever is actually on disk
-    /// now.
-    Conflict {
-        data: Vec<u8>,
-        origin: &'static str,
-        stat: StatFacts,
-    },
-    /// The write committed with no race.
-    Committed { data: Vec<u8>, stat: StatFacts },
-    /// The write committed AND a racer's displaced bytes were captured in
-    /// the same atomic-swap window (F5).
-    Raced {
-        data: Vec<u8>,
-        stat: StatFacts,
-        displaced: Vec<u8>,
-        displaced_stat: StatFacts,
-    },
 }
 
 /// Steps 4-5 (now caller-facing): records what the caller's own `vfs` work
@@ -328,91 +247,6 @@ fn commit_save_from_stat(
 
         Ok(obs)
     })
-}
-
-/// The path/identity half of a document rebind, bundled for the same
-/// argument-count reason as [`DocSession`].
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Rebind<'a> {
-    /// The destination path, already `vfs.resolve`d and stringified.
-    pub path: &'a str,
-    /// The destination's post-publish stat. `inode.is_some()` is what gates
-    /// the identity-steal statement — a backend that exposes no inode must
-    /// not blank every other row's `NULL` identity as if it matched.
-    pub stat: &'a observation::StatFacts,
-    /// RFC3339-nanos timestamp for `last_seen_at`.
-    pub at: &'a str,
-}
-
-/// Points `doc_id`'s `documents` row at `rebind.path` + its on-disk
-/// identity, evicting any OTHER row that currently claims that path or that
-/// (inode, device) — §1.7's one-value-one-meaning applied to the
-/// path/identity columns: two rows must never both claim the same file.
-///
-/// A rename must NOT go through [`commit_save_from_stat`]: that also does
-/// `put_blob(facts.data)` + `record_adoption_tx(origin='save')`, which after
-/// renaming a *dirty* document would move `saved_obs` to an observation
-/// claiming the disk holds the journal head. The next ⌘S would then CAS
-/// against a lie (§1.4.7).
-///
-/// Caller-supplied transaction: this is pure SQLite with no `vfs` call
-/// inside, so it is safe to run under an open tx (invariant I1).
-pub(crate) fn rebind_document_tx(
-    tx: &rusqlite::Connection,
-    doc_id: i64,
-    rebind: Rebind<'_>,
-) -> Result<(), Error> {
-    let stat = rebind.stat;
-
-    evict_path_claim_tx(tx, rebind.path, doc_id)?;
-
-    if stat.inode.is_some() {
-        tx.execute(
-            "UPDATE documents SET inode=NULL, device=NULL WHERE inode=?1 AND device=?2 AND id!=?3",
-            params![stat.inode, stat.device, doc_id],
-        )?;
-    }
-
-    set_identity_tx(tx, doc_id, rebind.path, stat.inode, stat.device, rebind.at)
-}
-
-/// Evicts any OTHER row currently claiming `path` — §1.7's "two rows must
-/// never both claim the same file" applied to the `path` column, everywhere
-/// a document row is about to be pointed at a real path. The ONE eviction
-/// chokepoint for this exact statement: [`rebind_document_tx`] and
-/// `document::open_path_by_inode`'s rename-detected branch both route
-/// through this instead of each carrying their own copy — the two copies
-/// had already drifted once before this extraction ([rune-db 13]).
-pub(crate) fn evict_path_claim_tx(
-    tx: &rusqlite::Connection,
-    path: &str,
-    keep_id: i64,
-) -> Result<(), Error> {
-    tx.execute(
-        "UPDATE documents SET path='' WHERE path=?1 AND id!=?2",
-        params![path, keep_id],
-    )?;
-    Ok(())
-}
-
-/// Points `doc_id`'s row at `path`'s real on-disk identity — the ONE "set
-/// this row's path/inode/device to a real file's identity" statement.
-/// Always sets `kind='file'`: every caller (a post-publish rebind, or
-/// `document::open_path_by_inode` discovering a path change) only ever
-/// calls this once a real, on-disk file is confirmed.
-pub(crate) fn set_identity_tx(
-    tx: &rusqlite::Connection,
-    doc_id: i64,
-    path: &str,
-    inode: Option<i64>,
-    device: Option<i64>,
-    at: &str,
-) -> Result<(), Error> {
-    tx.execute(
-        "UPDATE documents SET path=?1, inode=?2, device=?3, kind='file', last_seen_at=?4 WHERE id=?5",
-        params![path, inode, device, at, doc_id],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]
