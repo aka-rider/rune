@@ -29,26 +29,12 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
-use ratatui::text::Span;
-use std::path::Component;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::App;
+use crate::breadcrumb_layout::{build_crumb, crumb_parts};
 use crate::width::display_width;
 use rune_syntax::wrap::grapheme_width;
-
-/// Marks a crumb whose leading parts were dropped to fit the width. Two
-/// display columns; the trailing `/` reads as "…and more directories
-/// above", continuing the bare-slash directory chain that follows it.
-const ELLIPSIS: &str = "…/";
-
-/// Between two directories: a bare slash, no padding.
-const SEP: &str = "/";
-
-/// Between the LAST directory and the leaf file name only — the one place
-/// the crumb breathes, so the file name reads as the subject and the
-/// directory chain as its address.
-const LEAF_SEP: &str = " › ";
 
 /// Splices the active document's breadcrumb onto `block`'s bottom border
 /// row (`block.y + block.height - 1`), left to right: `╰` · a `─` dash
@@ -118,100 +104,6 @@ pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     }
 }
 
-/// Relativizes `path` against `root` (plan WP4.S6, Go's own `buildCrumb`
-/// `root` argument), returning the ordered list of path components the
-/// crumb renders. When `root` is non-empty and `path` is under it (`Path::
-/// starts_with` compares whole components, so this can never mistake
-/// `/a/vault2` for being under `/a/vault` the way a bare string-prefix
-/// check would), the result is root's own base name followed by the
-/// remaining components below it — e.g. root `/Users/xiii/vault`, path
-/// `/Users/xiii/vault/notes/note.md` yields `["vault", "notes",
-/// "note.md"]`, not `["Users", "xiii", "vault", "notes", "note.md"]`.
-/// Falls back to every `Normal` component of the absolute path otherwise
-/// (`root` empty — not yet resolved — or `path` outside it).
-fn crumb_parts(path: &std::path::Path, root: &std::path::Path) -> Vec<String> {
-    if !root.as_os_str().is_empty()
-        && let Ok(remainder) = path.strip_prefix(root)
-    {
-        let mut parts = Vec::new();
-        if let Some(name) = root.file_name() {
-            parts.push(name.to_string_lossy().into_owned());
-        }
-        parts.extend(remainder.components().filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            _ => None,
-        }));
-        return parts;
-    }
-    path.components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Builds the crumb's spans right-to-left: each part verbatim (fg
-/// `SPECIAL`, no padding of its own) followed — for every part except the
-/// rightmost (the leaf) — by a `SUBTLE` separator span, `LEAF_SEP` when
-/// the part is the last directory (index `n - 2`) and `SEP` between any
-/// two directories above it. The walk stops as soon as adding the next
-/// part would overflow `max_width` by the 6-column buffer, at which point
-/// an `ELLIPSIS` span is prepended. Index `0` (the leftmost/root-most
-/// component) is NEVER dropped — the `&& i > 0` guard on the truncation
-/// check. A single-component path renders as just that leaf.
-fn build_crumb(
-    parts: &[String],
-    max_width: usize,
-    theme: &crate::theme::Theme,
-) -> Vec<Span<'static>> {
-    let n = parts.len();
-    let mut segments: Vec<Span<'static>> = Vec::with_capacity(n * 2);
-    let mut current_width = 0usize;
-
-    for (i, part) in parts.iter().enumerate().rev() {
-        let part_width = display_width(part);
-        let is_last = i == n - 1;
-
-        let (seg_width, seg): (usize, Vec<Span<'static>>) = if is_last {
-            (
-                part_width,
-                vec![Span::styled(
-                    part.clone(),
-                    Style::new().fg(theme.chrome.special),
-                )],
-            )
-        } else {
-            // The part directly left of the leaf gets the wider ` › `;
-            // every directory above it is joined by a bare `/`.
-            let sep = if i + 2 == n { LEAF_SEP } else { SEP };
-            (
-                part_width + display_width(sep),
-                vec![
-                    Span::styled(part.clone(), Style::new().fg(theme.chrome.special)),
-                    Span::styled(sep, Style::new().fg(theme.chrome.subtle)),
-                ],
-            )
-        };
-
-        // An arbitrary buffer for the ellipsis and some breathing room.
-        if current_width + seg_width + 6 > max_width && i > 0 {
-            segments.insert(
-                0,
-                Span::styled(ELLIPSIS, Style::new().fg(theme.chrome.special)),
-            );
-            return segments;
-        }
-
-        for span in seg.into_iter().rev() {
-            segments.insert(0, span);
-        }
-        current_width += seg_width;
-    }
-
-    segments
-}
-
 /// Writes one whole GRAPHEME CLUSTER at `(*x, y)` and advances `*x` by that
 /// cluster's DISPLAY width — the identical idiom `render::blit` uses
 /// (`x.saturating_add(cell.width.max(1) as u16)`), and the reason this
@@ -253,7 +145,7 @@ mod tests {
     use crate::testgrid;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     fn app_for(content: &str, path: Option<&str>) -> App {
@@ -296,39 +188,6 @@ mod tests {
             x = x.saturating_add(grapheme_width(sym).max(1) as u16);
         }
         s
-    }
-
-    #[test]
-    fn crumb_parts_relativizes_against_a_set_root() {
-        let parts = crumb_parts(
-            Path::new("/Users/xiii/vault/notes/note.md"),
-            Path::new("/Users/xiii/vault"),
-        );
-        assert_eq!(parts, vec!["vault", "notes", "note.md"]);
-    }
-
-    #[test]
-    fn crumb_parts_falls_back_to_the_absolute_path_outside_root() {
-        let parts = crumb_parts(
-            Path::new("/Users/xiii/other/note.md"),
-            Path::new("/Users/xiii/vault"),
-        );
-        assert_eq!(parts, vec!["Users", "xiii", "other", "note.md"]);
-    }
-
-    #[test]
-    fn crumb_parts_falls_back_to_the_absolute_path_when_root_is_unresolved() {
-        let parts = crumb_parts(Path::new("/Users/xiii/vault/note.md"), Path::new(""));
-        assert_eq!(parts, vec!["Users", "xiii", "vault", "note.md"]);
-    }
-
-    /// `/a/vault2` must never be treated as under root `/a/vault` —
-    /// `Path::starts_with` compares whole components, unlike a bare string
-    /// prefix check (the bug Go's own `buildCrumb` comment calls out).
-    #[test]
-    fn crumb_parts_does_not_mistake_a_sibling_with_a_shared_prefix_for_being_under_root() {
-        let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Path::new("/a/vault"));
-        assert_eq!(parts, vec!["a", "vault2", "notes.md"]);
     }
 
     #[test]
@@ -397,25 +256,6 @@ mod tests {
                     .max(1)
             })
             .sum()
-    }
-
-    /// The separator glyphs must be ONE display column each, or every width
-    /// in this module (dash fill, `bc`, the truncation budget) is computed
-    /// against a lie and the `──╯` drifts off the right edge (§1.5).
-    #[test]
-    fn the_separator_glyphs_are_single_column() {
-        assert_eq!(oracle_cell_width(SEP), 1);
-        assert_eq!(oracle_cell_width(LEAF_SEP), 3);
-        assert_eq!(oracle_cell_width(ELLIPSIS), 2);
-    }
-
-    /// A one-component path is all leaf: no separator, no stray padding.
-    #[test]
-    fn a_single_component_path_renders_just_the_leaf() {
-        let theme = crate::theme::Theme::catppuccin_mocha(false);
-        let segments = build_crumb(&["note.md".to_string()], 40, &theme);
-        let text: String = segments.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(text, "note.md");
     }
 
     #[test]
@@ -532,26 +372,5 @@ mod tests {
             }
         }
         assert_eq!(touched, expected);
-    }
-
-    #[test]
-    fn total_width_identity_holds() {
-        // 1 (╰) + dash + (bc + 2 surrounding spaces) + 3 (──╯) == block.width,
-        // for every width from the bail-out floor up to a generous ceiling.
-        let theme = crate::theme::Theme::catppuccin_mocha(false);
-        for width in 30u16..80 {
-            let block = Rect::new(0, 0, width, 3);
-            let parts: Vec<String> = vec!["a".into(), "b".into(), "note.md".into()];
-            let segments = build_crumb(&parts, width as usize, &theme);
-            let bc: usize = segments
-                .iter()
-                .map(|s| display_width(s.content.as_ref()))
-                .sum();
-            if bc + 7 > block.width as usize {
-                continue;
-            }
-            let dash = block.width as usize - bc - 6;
-            assert_eq!(1 + dash + (bc + 2) + 3, block.width as usize);
-        }
     }
 }

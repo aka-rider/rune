@@ -6,6 +6,7 @@ pub mod app;
 pub mod banner;
 pub mod binding;
 pub mod breadcrumb;
+pub mod breadcrumb_layout;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
