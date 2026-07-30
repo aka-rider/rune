@@ -387,6 +387,26 @@ fn escape_cancels_the_guard() {
     );
 }
 
+/// Escape used to leave the user with no feedback at all — the modal just
+/// vanished. Pin that cancelling the dirty-close Guard now names what it
+/// cancelled via a status message.
+#[test]
+fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let second = open_second(&mut app);
+    edit::insert_char(&mut app, second, '!');
+
+    workspace::request_close(&mut app, second);
+    assert!(app.modal.is_some());
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
+
+    assert_eq!(app.status_message.as_deref(), Some("close cancelled"));
+    assert_eq!(app.status_source, rune_tui::app::StatusSource::Other);
+}
+
 /// Closing the last remaining document is refused outright — rune always
 /// shows one document.
 #[test]
