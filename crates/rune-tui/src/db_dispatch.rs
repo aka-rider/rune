@@ -26,7 +26,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             result: rune_db::OpOutcome::Seq(seq),
         } => {
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db::resolve_append_ack(app, pending.doc, seq);
+                crate::db_ack::resolve_append_ack(app, pending.doc, seq);
             }
         }
         DbEvent::Ok {
@@ -58,7 +58,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             result: rune_db::OpOutcome::Load(load_result),
         } => {
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db::handle_load_ack(app, pending.doc, *load_result, pending.issued_version);
+                crate::db_ack::handle_load_ack(app, pending.doc, *load_result, pending.issued_version);
             }
         }
         DbEvent::Ok { id: op_id, .. } => {

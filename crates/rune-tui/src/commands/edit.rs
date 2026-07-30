@@ -41,7 +41,7 @@ use crate::app::{App, StatusSource};
 use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav;
 use crate::commands::nav_line;
-use crate::db;
+use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::materialize_ack;
 
