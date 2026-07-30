@@ -16,7 +16,7 @@
 //! `app.status_message`/the dirty cache, so unlike `commands::nav` this
 //! module can't work off a bare `&mut Document`. Internally, functions
 //! borrow `app.doc_mut(id)` SEQUENTIALLY — mutate the doc, let that borrow
-//! end, then call `db::append_edit(app, id, ...)`/`save::recompute_dirty(
+//! end, then call `db::append_edit(app, id, ...)`/`materialize_ack::recompute_dirty(
 //! app, id)` — never a split-borrow context type.
 //!
 //! Backspace/delete-right are RUNE-aware, not grapheme-cluster-aware —
@@ -42,7 +42,7 @@ use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav;
 use crate::db;
 use crate::document::DocumentId;
-use crate::save;
+use crate::materialize_ack;
 
 /// Port of `commands_edit_lines.go:perCursorSelectionEdits`: one edit per
 /// cursor, replacing its selection when it has one, or `bare`'s caller-
@@ -285,7 +285,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
             doc.cursors = CursorSet::new_from(&cursors_before);
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
-            save::recompute_dirty(app, id);
+            materialize_ack::recompute_dirty(app, id);
         }
         Err(e) => {
             app.set_status(format!("undo failed: {e}"), StatusSource::Other);
@@ -311,7 +311,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
             doc.cursors = CursorSet::new_from(&cursors_after);
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
-            save::recompute_dirty(app, id);
+            materialize_ack::recompute_dirty(app, id);
         }
         Err(e) => {
             app.set_status(format!("redo failed: {e}"), StatusSource::Other);

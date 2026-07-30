@@ -15,7 +15,7 @@ use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, HighlightPayload, Msg};
-use crate::{explorer, opentabs, save};
+use crate::{explorer, materialize_ack, opentabs, save};
 use rune_db::DbEvent;
 use rune_syntax::ScopeId;
 
@@ -46,7 +46,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             id,
             version,
             result,
-        } => save::handle_save_done(app, id, version, result),
+        } => materialize_ack::handle_save_done(app, id, version, result),
         Msg::ConfirmTimeout { generation } => {
             if let Some((_, pending_gen)) = app.pending_quit
                 && pending_gen == generation
@@ -64,10 +64,12 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 app.pending_save_confirm = None;
             }
         }
-        Msg::SnapshotDue { id, generation } => save::handle_snapshot_due(app, id, generation),
+        Msg::SnapshotDue { id, generation } => {
+            materialize_ack::handle_snapshot_due(app, id, generation)
+        }
         Msg::Db(evt) => handle_db_event(app, evt, effects),
         Msg::MaterializeVfsDone { id, outcome } => {
-            save::handle_materialize_vfs_done(app, id, outcome)
+            materialize_ack::handle_materialize_vfs_done(app, id, outcome)
         }
         Msg::DirLoaded {
             root,
@@ -124,7 +126,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             result: rune_db::OpOutcome::MaterializePrep(prep),
         } => {
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                save::handle_prepare_ack(app, pending.doc, *prep, effects);
+                materialize_ack::handle_prepare_ack(app, pending.doc, *prep, effects);
             }
         }
         DbEvent::Ok {
@@ -133,7 +135,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         } => {
             app.published_ops.remove(&op_id);
             if let Some(pending) = app.db_ops.remove(&op_id) {
-                save::handle_materialize_ack(app, pending.doc, *mat);
+                materialize_ack::handle_materialize_ack(app, pending.doc, *mat);
             }
         }
         DbEvent::Ok {
@@ -163,7 +165,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // in-flight sweep below never re-flags it as failed
             // ([rune-db 1]).
             if let Some(doc_id) = app.published_ops.remove(&op_id) {
-                save::handle_materialize_ack(
+                materialize_ack::handle_materialize_ack(
                     app,
                     doc_id,
                     rune_db::MatResult {
@@ -172,7 +174,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                     },
                 );
             }
-            save::on_store_failure(app, error);
+            materialize_ack::on_store_failure(app, error);
         }
         DbEvent::Fatal { error } => {
             crate::rename::fail_all(app, error.clone(), effects);
@@ -181,7 +183,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // each one's write already physically completed.
             let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();
             for doc_id in published {
-                save::handle_materialize_ack(
+                materialize_ack::handle_materialize_ack(
                     app,
                     doc_id,
                     rune_db::MatResult {
@@ -190,7 +192,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                     },
                 );
             }
-            save::on_store_failure(app, error);
+            materialize_ack::on_store_failure(app, error);
             // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
             // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
             // all bail out once `db.degraded`), but does nothing about

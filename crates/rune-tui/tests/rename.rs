@@ -109,7 +109,7 @@ fn app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {
 /// (the default untitled document opens with `db: None`, see
 /// `crates/rune-tui/TODO.md`, "no recovery journal for the default
 /// untitled document"), but the routing this exercises —
-/// `rename::bind_new`'s store branch and `save::handle_materialize_ack`'s
+/// `rename::bind_new`'s store branch and `materialize_ack::handle_materialize_ack`'s
 /// bind — does not care how the store binding was acquired, only that one
 /// exists.
 fn draft_app_with_store(mem: &Arc<Mem>) -> (App, Arc<DbBridge>) {

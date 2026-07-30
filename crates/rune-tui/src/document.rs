@@ -158,7 +158,7 @@ pub struct Document {
     pub pending_bind_path: Option<PathBuf>,
     /// The render-only dirty cache (CONSTITUTION §1.4.8): `is_dirty` reads
     /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
-    /// two trigger points — see `save::recompute_dirty`'s doc comment.
+    /// two trigger points — see `materialize_ack::recompute_dirty`'s doc comment.
     /// `pub(crate)` (not private) because the recompute chokepoint now lives
     /// in a different module (`save.rs`).
     pub(crate) is_dirty_cached: bool,
@@ -261,7 +261,7 @@ impl Document {
         }
     }
 
-    /// Reads the render-only dirty cache — see `save::recompute_dirty`'s
+    /// Reads the render-only dirty cache — see `materialize_ack::recompute_dirty`'s
     /// doc comment for the two points that keep it current.
     pub fn is_dirty(&self) -> bool {
         self.is_dirty_cached

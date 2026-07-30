@@ -266,7 +266,7 @@ fn enqueue_rename(
                 Some(Ticket::Db(op_id))
             }
             Err(e) => {
-                crate::save::on_store_failure(app, e.to_string());
+                crate::materialize_ack::on_store_failure(app, e.to_string());
                 None
             }
         };
@@ -319,7 +319,7 @@ pub fn handle_rename_done(
 }
 
 /// A `rune-db` rename ack, routed from `app::handle_db_event` (mirroring
-/// `save::handle_materialize_ack`).
+/// `materialize_ack::handle_materialize_ack`).
 pub fn handle_rename_ack(app: &mut App, op_id: u64, outcome: RenameOutcome, effects: &mut Effects) {
     if app.rename.ticket() != Some(Ticket::Db(op_id)) {
         return; // stale ticket, dropped silently
@@ -502,7 +502,7 @@ pub fn replace_confirmed(app: &mut App) {
         Err(e) => {
             app.rename = RenameState::Idle;
             banner::clear_modal(app);
-            crate::save::on_store_failure(app, e.to_string());
+            crate::materialize_ack::on_store_failure(app, e.to_string());
         }
     }
 }

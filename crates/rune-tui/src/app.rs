@@ -135,7 +135,7 @@ pub struct App {
     /// `buffer.version()` at the moment it was enqueued (plan WP1 decision
     /// 6) — inserted as one `PendingOp` at every successful `Store` enqueue
     /// (`db::append_edit`/`move_undo_pos`/`db::
-    /// load_document`/`save::materialize_now`/`save::handle_snapshot_due`),
+    /// load_document`/`save::materialize_now`/`materialize_ack::handle_snapshot_due`),
     /// removed by `handle_db_event` once its ack lands. Needed because the
     /// writer thread's single FIFO ack stream has no per-document identity
     /// of its own once more than one document can enqueue. `Load` is
@@ -179,7 +179,7 @@ pub struct App {
     /// The document a Guard modal's `[S]ave` armed a save-then-close for
     /// (plan WP5.S3) — `None` when no close is waiting on a save ack.
     /// `banner::handle_key`'s Guard arm sets this immediately before
-    /// calling `save::trigger_save`; `save::handle_materialize_ack`/
+    /// calling `save::trigger_save`; `materialize_ack::handle_materialize_ack`/
     /// `handle_save_done`'s success paths are the only readers, closing
     /// the document (`workspace::close_now`) only when the id still
     /// matches AND the save actually committed — a failed save leaves the
