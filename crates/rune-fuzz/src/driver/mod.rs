@@ -24,7 +24,7 @@ use rune_core::buffer::Buffer;
 use rune_tui::app::App;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Cmd, Msg};
+use rune_tui::runtime::{Cmd, Msg, PasteTarget};
 use rune_vfs::{Mem, Vfs};
 
 use step_exec::{discharge_pending_save, key_step, step_and_check};
@@ -224,14 +224,17 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
             }
             Action::ClipboardReply(s) => {
                 let tag = MsgTag::ClipboardRead(s.clone());
-                if step_and_check(
-                    &mut state,
-                    &mut prev,
-                    Msg::ClipboardRead(s.clone()),
-                    tag,
-                    None,
-                    &mut outcome,
-                ) {
+                // WP4 mechanical fix: `PasteTarget::Document(state.app.
+                // active)` matches this driver's pre-existing semantics —
+                // every `ClipboardReply` this crate synthesizes today
+                // lands on whatever document is active. Threading a title-
+                // aware target (and widening `MsgTag` to carry it) is
+                // WP5's job, not this one's.
+                let msg = Msg::ClipboardRead {
+                    text: s.clone(),
+                    target: PasteTarget::Document(state.app.active),
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
                 }
             }
