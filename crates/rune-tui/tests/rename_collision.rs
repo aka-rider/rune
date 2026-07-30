@@ -1,0 +1,219 @@
+//! Rename "Done when" tests: the collision guard and both halves of
+//! hazard 1 (a prompt that is never raised, and one that is displaced
+//! later), the stale-ticket drop, and the close-while-colliding cleanup —
+//! TODO.md's §1.6 split of the original `rename.rs`. Focus/typing, the
+//! refusals, the no-store end-to-end rename, and draft naming live in the
+//! sibling `rename_bind.rs`; the store-backed `[R]eplace` path lives in
+//! `rename_replace.rs`; the WP2 focus-loss-is-the-commit-chokepoint suite
+//! lives in `rename_focus.rs`. All four pull shared fixtures from
+//! `rename_common`.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+
+mod rename_common;
+
+use std::path::Path;
+
+use rune_tui::banner::{self, GuardKind, Modal};
+use rune_tui::keymap::KeyCode;
+use rune_tui::pane::Pane;
+use rune_tui::rename::RenameState;
+use rune_tui::runtime::CmdKind;
+use rune_tui::{app, footer, workspace};
+
+use rune_vfs::Vfs;
+
+use rename_common::{app_with, collide, plain, rename_to, send, seeded_vfs};
+
+/// A collision with no modal up raises the guard, enters `Collision`, and
+/// the footer names the target.
+#[test]
+fn a_collision_raises_the_guard_and_the_footer_names_the_target() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+
+    assert!(matches!(app.rename, RenameState::Collision { .. }));
+    assert!(matches!(
+        app.modal,
+        Some(Modal::Guard(ref p)) if matches!(p.kind, GuardKind::RenameCollision { .. })
+    ));
+    let text = footer::footer_text(&app);
+    assert!(
+        text.contains("b.md"),
+        "footer must name the target: {text:?}"
+    );
+    assert!(text.contains(banner::DIRTY_CLOSE_CANCEL_LABEL));
+
+    // Both files are still intact — a collision writes nothing.
+    assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
+    assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"theirs");
+}
+
+/// **Hazard 1a**: an `Error` is up when the collision reply lands, so
+/// `set_modal` returns false and the prompt is never raised. The machine
+/// must stay `Idle` rather than wait on an invisible prompt.
+#[test]
+fn a_collision_suppressed_by_a_live_error_leaves_the_machine_idle() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+
+    banner::report_error(&mut app, "something else went wrong");
+    send(&mut app, reply);
+
+    assert_eq!(
+        app.rename,
+        RenameState::Idle,
+        "never wait on a prompt that was never raised"
+    );
+    assert!(
+        matches!(app.modal, Some(Modal::Error(_))),
+        "the unread error must survive"
+    );
+}
+
+/// **Hazard 1b**: an `Error` raised LATER displaces a live collision guard.
+/// `clear_modal`'s dismissal hook must return the machine to `Idle` and put
+/// the user back in the title field with the typed name.
+#[test]
+fn an_error_displacing_the_guard_also_cancels_the_collision() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+    assert!(matches!(app.rename, RenameState::Collision { .. }));
+
+    banner::report_error(&mut app, "boom");
+
+    assert_eq!(app.rename, RenameState::Idle);
+    assert_eq!(app.focus(), Pane::Title);
+    assert_eq!(app.title.text, "b", "the TYPED name must still be there");
+}
+
+/// `Esc` on the guard clears it, returns to `Idle`, and leaves the field
+/// holding the typed name (not the old committed one).
+#[test]
+fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+
+    send(&mut app, plain(KeyCode::Escape));
+
+    assert_eq!(app.rename, RenameState::Idle);
+    assert!(app.modal.is_none());
+    assert_eq!(app.focus(), Pane::Title);
+    assert_eq!(app.title.text, "b");
+}
+
+/// Escape used to leave the user with no feedback at all — the modal just
+/// vanished. Pin that cancelling the rename-collision Guard now names what
+/// it cancelled via a status message.
+#[test]
+fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+
+    send(&mut app, plain(KeyCode::Escape));
+
+    assert_eq!(app.status_message.as_deref(), Some("rename cancelled"));
+    assert_eq!(app.status_source, app::StatusSource::Other);
+}
+
+/// `r` on the guard for a `db: None` document cannot capture the displaced
+/// bytes (§1.4.10), so the prompt stays up with an explanation and the disk
+/// is untouched. The footer must not offer `[R]eplace` either.
+#[test]
+fn replace_is_refused_and_unoffered_without_a_store() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+
+    assert!(
+        !footer::footer_text(&app).contains(banner::RENAME_REPLACE.label),
+        "an option the app would refuse must not be offered"
+    );
+
+    send(&mut app, plain(KeyCode::Char('r')));
+
+    assert!(matches!(app.rename, RenameState::Collision { .. }));
+    assert!(app.modal.is_some(), "the prompt must stay up");
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("cannot replace")),
+        "got {:?}",
+        app.status_message
+    );
+    assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
+    assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"theirs");
+}
+
+/// A stale-generation `Msg::RenameDone` (dismissed, then restarted) must
+/// leave the fresh state alone.
+#[test]
+fn a_stale_rename_reply_is_dropped() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+
+    let mut first = rename_to(&mut app, "b");
+    let stale = first
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("a Rename Cmd");
+
+    // Abandon it and start a fresh one under a new generation.
+    app.rename = RenameState::Idle;
+    let mut second = rename_to(&mut app, "c");
+    assert!(matches!(app.rename, RenameState::Committing { .. }));
+    let fresh_state = app.rename.clone();
+    let _fresh_cmd = second
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("a Rename Cmd");
+
+    // The FIRST cmd's reply lands late.
+    send(&mut app, stale.run().expect("a reply"));
+
+    assert_eq!(
+        app.rename, fresh_state,
+        "a stale reply must not disturb the fresh rename"
+    );
+}
+
+/// `close_now` on the renaming document while `Collision` clears both the
+/// machine and its prompt.
+#[test]
+fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/c.md"), b"c content")
+        .expect("seed c.md");
+    let mut app = app_with(&mem);
+    // A second document, so the last-document floor doesn't refuse.
+    workspace::open_path(&mut app, Path::new("/root/c.md"));
+    let first_tab = app.tabs.order[0];
+    workspace::switch_to(&mut app, first_tab);
+    let victim = app.active;
+
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+    assert!(matches!(app.rename, RenameState::Collision { .. }));
+
+    workspace::close_now(&mut app, victim);
+
+    assert_eq!(app.rename, RenameState::Idle);
+    assert!(app.modal.is_none());
+}

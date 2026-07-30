@@ -16,7 +16,7 @@ use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
-use crate::db;
+use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::help;
 use crate::pane::Pane;

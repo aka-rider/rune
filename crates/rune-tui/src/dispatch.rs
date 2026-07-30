@@ -9,14 +9,15 @@
 use std::ops::Range;
 
 use crate::app::App;
-use crate::commands::{clipboard, edit, edit_lines, mouse, multi, nav, nav_scroll};
+use crate::commands::{
+    clipboard, edit, edit_lines, edit_lines_move, mouse, multi, nav, nav_line, nav_scroll,
+};
 use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
 use crate::runtime::{Effects, HighlightPayload, Msg};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
-use rune_db::DbEvent;
 use rune_syntax::ScopeId;
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
@@ -67,7 +68,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::SnapshotDue { id, generation } => {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
-        Msg::Db(evt) => handle_db_event(app, evt, effects),
+        Msg::Db(evt) => crate::db_dispatch::handle_db_event(app, evt, effects),
         Msg::MaterializeVfsDone { id, outcome } => {
             materialize_ack::handle_materialize_vfs_done(app, id, outcome)
         }
@@ -100,115 +101,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     }
 }
 
-/// Routes a `rune-db` writer-thread completion (plan WP5.S1, re-routed in
-/// WP1 via `App::db_ops` — plan decision 6): the ack's own op id is popped
-/// from `db_ops` to find which `DocumentId` enqueued it; an id with no
-/// entry (already resolved, or from a `Load` op handled during bootstrap
-/// hydration instead — see `db::DbBridge`'s doc comment) is ignored. Only
-/// `Materialize` acks (the save path, WP5.S6), `AppendEdit` acks (seq
-/// bookkeeping, `db::resolve_append_ack`), and `Load` acks (per-document
-/// hydration, `db::handle_load_ack`) need a per-document reaction on
-/// success; `MoveUndoPos`/`CreateSnapshot`/adoption acks are fire-and-
-/// forget. Any `Err`/`Fatal` degrades the WHOLE store (plan decision 3) —
-/// never a buffer rollback.
-pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects) {
-    match evt {
-        DbEvent::Ok {
-            id: op_id,
-            result: rune_db::OpOutcome::Seq(seq),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db::resolve_append_ack(app, pending.doc, seq);
-            }
-        }
-        DbEvent::Ok {
-            id: op_id,
-            result: rune_db::OpOutcome::MaterializePrep(prep),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_prepare_ack(app, pending.doc, *prep, effects);
-            }
-        }
-        DbEvent::Ok {
-            id: op_id,
-            result: rune_db::OpOutcome::Materialize(mat),
-        } => {
-            app.published_ops.remove(&op_id);
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                materialize_ack::handle_materialize_ack(app, pending.doc, *mat);
-            }
-        }
-        DbEvent::Ok {
-            id: op_id,
-            result: rune_db::OpOutcome::Rename(outcome),
-        } => {
-            app.db_ops.remove(&op_id);
-            crate::rename::handle_rename_ack(app, op_id, *outcome, effects);
-        }
-        DbEvent::Ok {
-            id: op_id,
-            result: rune_db::OpOutcome::Load(load_result),
-        } => {
-            if let Some(pending) = app.db_ops.remove(&op_id) {
-                crate::db::handle_load_ack(app, pending.doc, *load_result, pending.issued_version);
-            }
-        }
-        DbEvent::Ok { id: op_id, .. } => {
-            app.db_ops.remove(&op_id);
-        }
-        DbEvent::Err { id: op_id, error } => {
-            app.db_ops.remove(&op_id);
-            crate::rename::fail_op(app, op_id, error.clone(), effects);
-            // WP7: this exact op may be a `MaterializeRecord` whose disk
-            // write ALREADY physically completed before the writer died —
-            // report the save as successful FIRST, so `on_store_failure`'s
-            // in-flight sweep below never re-flags it as failed
-            // ([rune-db 1]).
-            if let Some(doc_id) = app.published_ops.remove(&op_id) {
-                materialize_ack::handle_materialize_ack(
-                    app,
-                    doc_id,
-                    rune_db::MatResult {
-                        committed: true,
-                        ..Default::default()
-                    },
-                );
-            }
-            materialize_ack::on_store_failure(app, error);
-        }
-        DbEvent::Fatal { error } => {
-            crate::rename::fail_all(app, error.clone(), effects);
-            // WP7: same reasoning as the `Err` arm above, for every
-            // still-in-flight `MaterializeRecord` a `Fatal` tears down —
-            // each one's write already physically completed.
-            let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();
-            for doc_id in published {
-                materialize_ack::handle_materialize_ack(
-                    app,
-                    doc_id,
-                    rune_db::MatResult {
-                        committed: true,
-                        ..Default::default()
-                    },
-                );
-            }
-            materialize_ack::on_store_failure(app, error);
-            // Degraded mode gates every FUTURE enqueue (`db::append_edit`/
-            // `move_undo_pos`/`save::materialize_now`/`handle_snapshot_due`
-            // all bail out once `db.degraded`), but does nothing about
-            // in-flight entries already sitting in `db_ops` — a `Fatal`
-            // tears the whole writer thread down, so none of them will
-            // EVER receive their ack. Left alone, they'd carry dead weight
-            // forward for the rest of the session (an unbounded leak across
-            // a long-running degrade-then-keep-editing session); clearing
-            // them here is correct, not just tidy — `App::doc_mut` already
-            // treats a missing `db_ops` entry as a plain no-op for any
-            // ack that *did* somehow still land, so no real ack is ever
-            // silently dropped by this.
-            app.db_ops.clear();
-        }
-    }
-}
+// `handle_db_event` (the `rune-db` ack router) moved to `db_dispatch.rs`
+// (§1.6 budget) — `update_inner`'s `Msg::Db` arm above calls it through
+// `db_dispatch::`.
 
 /// The single span-clamp chokepoint every accepted highlight reply passes
 /// through: each range is clamped to the live byte length, ranges that are
@@ -437,8 +332,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::LineDown => nav_scroll::line_down(app.active_doc_mut(), false),
         Command::WordLeft => nav::word_left(app.active_doc_mut(), false),
         Command::WordRight => nav::word_right(app.active_doc_mut(), false),
-        Command::LineStart => nav::line_start(app.active_doc_mut(), false),
-        Command::LineEnd => nav::line_end(app.active_doc_mut(), false),
+        Command::LineStart => nav_line::line_start(app.active_doc_mut(), false),
+        Command::LineEnd => nav_line::line_end(app.active_doc_mut(), false),
         Command::PageUp => nav_scroll::page_up(app.active_doc_mut(), false),
         Command::PageDown => nav_scroll::page_down(app.active_doc_mut(), false),
         Command::SelectCharLeft => nav::char_left(app.active_doc_mut(), true),
@@ -447,8 +342,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::SelectLineDown => nav_scroll::line_down(app.active_doc_mut(), true),
         Command::SelectWordLeft => nav::word_left(app.active_doc_mut(), true),
         Command::SelectWordRight => nav::word_right(app.active_doc_mut(), true),
-        Command::SelectLineStart => nav::line_start(app.active_doc_mut(), true),
-        Command::SelectLineEnd => nav::line_end(app.active_doc_mut(), true),
+        Command::SelectLineStart => nav_line::line_start(app.active_doc_mut(), true),
+        Command::SelectLineEnd => nav_line::line_end(app.active_doc_mut(), true),
         Command::SelectPageUp => nav_scroll::page_up(app.active_doc_mut(), true),
         Command::SelectPageDown => nav_scroll::page_down(app.active_doc_mut(), true),
         Command::SelectAll => nav::select_all(app.active_doc_mut()),
@@ -466,10 +361,10 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::DeleteLine => edit_lines::delete_line(app, app.active),
         Command::Indent => edit_lines::indent(app, app.active),
         Command::Outdent => edit_lines::outdent(app, app.active),
-        Command::MoveLineUp => edit_lines::move_line_up(app, app.active),
-        Command::MoveLineDown => edit_lines::move_line_down(app, app.active),
-        Command::CloneLineUp => edit_lines::clone_line_up(app, app.active),
-        Command::CloneLineDown => edit_lines::clone_line_down(app, app.active),
+        Command::MoveLineUp => edit_lines_move::move_line_up(app, app.active),
+        Command::MoveLineDown => edit_lines_move::move_line_down(app, app.active),
+        Command::CloneLineUp => edit_lines_move::clone_line_up(app, app.active),
+        Command::CloneLineDown => edit_lines_move::clone_line_down(app, app.active),
         Command::AddCursorAbove => multi::add_cursor_above(app.active_doc_mut()),
         Command::AddCursorBelow => multi::add_cursor_below(app.active_doc_mut()),
         Command::Undo => edit::undo(app, app.active),

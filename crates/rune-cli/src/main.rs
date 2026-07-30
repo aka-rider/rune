@@ -29,17 +29,18 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use rune_core::buffer::{Buffer, BufferError};
-use rune_db::{DbEvent, OpOutcome, Store};
 use rune_tui::app::App;
-use rune_tui::banner;
-use rune_tui::db::{Db, DbBridge, DocDb};
-use rune_tui::{workspace, workspaceroot};
-use rune_vfs::{Disk, FileKind, Vfs};
+use rune_tui::workspace;
+use rune_vfs::{Disk, Vfs};
 
-use cli::{CliAction, CliError};
+use cli::CliAction;
+use db_bootstrap::{DbBootstrap, bootstrap_db};
+use loader::{LoadError, load_buffer};
 
 mod cli;
+mod db_bootstrap;
+mod loader;
+mod open;
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (a malformed command line —
 /// an unrecognised flag, a missing `-w` value, or `-w` pointing somewhere
@@ -48,11 +49,11 @@ mod cli;
 /// couldn't be read, or the current directory itself couldn't be read),
 /// `EX_SOFTWARE` (an internal error — a recovered panic or a runtime I/O
 /// failure).
-mod exit_code {
-    pub const USAGE: u8 = 64;
-    pub const DATA_ERR: u8 = 65;
-    pub const IO_ERR: u8 = 74;
-    pub const SOFTWARE: u8 = 70;
+pub(crate) mod exit_code {
+    pub(crate) const USAGE: u8 = 64;
+    pub(crate) const DATA_ERR: u8 = 65;
+    pub(crate) const IO_ERR: u8 = 74;
+    pub(crate) const SOFTWARE: u8 = 70;
 }
 
 fn main() -> ExitCode {
@@ -142,7 +143,7 @@ fn launch(
 /// a panic unwinding through it (plan WP4.S3/[rune-cli 5]). The sole writer
 /// of `App.db = None` from this point on; nothing past [`bootstrap`] calls
 /// `Db::shutdown` directly.
-struct AppGuard(App);
+pub(crate) struct AppGuard(App);
 
 impl Deref for AppGuard {
     type Target = App;
@@ -188,16 +189,16 @@ fn bootstrap(
             return Err(ExitCode::SUCCESS);
         }
         Ok(CliAction::Run(launch)) => launch,
-        Err(e) => return Err(usage_error(&e)),
+        Err(e) => return Err(open::usage_error(&e)),
     };
 
     // `-w`'s existence/directory-ness check is the documented §1.4.9
     // launch-bootstrap exception, same class as `workspaceroot::resolve`'s
     // own `read_dir` walk below (WP7.S4).
     if let Some(dir) = &launch.work_dir
-        && let Err(e) = validate_work_dir(vfs.as_ref(), dir)
+        && let Err(e) = open::validate_work_dir(vfs.as_ref(), dir)
     {
-        return Err(usage_error(&e));
+        return Err(open::usage_error(&e));
     }
 
     let (app, db_bootstrap) = if let Some(path) = launch.files.first() {
@@ -282,40 +283,17 @@ fn bootstrap(
     // `-w` wins outright; otherwise walk up from `cwd` (falling back to the
     // first file's parent) for a `.git`/`.obsidian` marker. Every actual
     // directory read during the walk goes through `app.vfs`.
-    let root = match &launch.work_dir {
-        Some(dir) => dir.clone(),
-        None => workspaceroot::resolve(
-            app.vfs.as_ref(),
-            &cwd,
-            home.as_deref(),
-            launch.files.first().map(|p| p.as_path()),
-        ),
-    };
+    let root = open::resolve_root(
+        app.vfs.as_ref(),
+        &cwd,
+        home.as_deref(),
+        launch.work_dir.as_deref(),
+        launch.files.first().map(|p| p.as_path()),
+    );
     app.set_root(root);
 
-    // The first positional is already open (above) and stays the active,
-    // displayed document (Go treats it as the awaited display document and
-    // the rest as tabs) — every REMAINING file opens as its own tab through
-    // the same path the Explorer uses (WP7.S6). A failure there reports
-    // into the error banner instead of aborting startup; every failure
-    // across the whole batch is accumulated and reported ONCE (plan
-    // WP4.S6/[rune-cli 7]) rather than letting only the last one survive a
-    // string of "the modal replaces on ties" overwrites.
     let first_doc_id = app.active;
-    let mut open_errors: Vec<String> = Vec::new();
-    for extra in launch.files.iter().skip(1) {
-        if workspace::open_path(&mut app, extra).is_none()
-            && let Some(text) = take_error_banner(&mut app)
-        {
-            open_errors.push(text);
-        }
-    }
-    if launch.files.len() > 1 {
-        workspace::switch_to(&mut app, first_doc_id);
-    }
-    if !open_errors.is_empty() {
-        banner::report_error(&mut app, combine_open_errors(&open_errors));
-    }
+    open::open_extra_files(&mut app, &launch.files, first_doc_id);
 
     app.db_banner = db_bootstrap.banner;
     // The DocDb half of the old combined AppDb (plan WP1 decision 5)
@@ -346,42 +324,6 @@ fn bootstrap(
     Ok(app)
 }
 
-/// Peeks the modal `workspace::open_path` just raised on a failed open and,
-/// if it's an error banner, clears it and returns its rendered text — so
-/// the caller can accumulate several failures into one combined banner
-/// instead of letting each overwrite the last (plan WP4.S6/[rune-cli 7]).
-/// Only ever sees `Modal::Error` in this bootstrap window: nothing raises a
-/// `Guard` prompt before the interactive run loop starts.
-fn take_error_banner(app: &mut App) -> Option<String> {
-    let text = match &app.modal {
-        Some(banner::Modal::Error(state)) => Some(state.doc.buffer.content().to_string()),
-        _ => None,
-    };
-    if text.is_some() {
-        banner::clear_modal(app);
-    }
-    text
-}
-
-/// Combines the accumulated per-file open failures into one banner body
-/// (plan WP4.S6/[rune-cli 7]): a single failure's own text verbatim, or a
-/// count-prefixed list when more than one file failed to open.
-fn combine_open_errors(errors: &[String]) -> String {
-    if let [only] = errors {
-        return only.clone();
-    }
-    let mut combined = format!(
-        "{} of the requested files could not be opened:\n",
-        errors.len()
-    );
-    for err in errors {
-        combined.push_str("- ");
-        combined.push_str(err);
-        combined.push('\n');
-    }
-    combined
-}
-
 /// Extracts a human-readable message from a `catch_unwind` payload. `panic!`
 /// with a string literal or `format!` produces `&'static str` or `String`
 /// respectively — the two shapes the standard panic machinery actually
@@ -397,188 +339,6 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
     "non-string panic payload".to_string()
 }
 
-#[derive(Debug)]
-enum LoadError {
-    InvalidUtf8,
-    Io(std::io::Error),
-}
-
-/// A nonexistent path opens an empty buffer — it's created on first save via
-/// `RENAME_EXCL` (plan Assumptions, A3). Any other read failure (permission
-/// denied, a directory, ...) is fatal. Invalid UTF-8 is refused here, before
-/// the TUI is ever entered. Reads through `vfs` (CONSTITUTION §1.4.9:
-/// "Reach the filesystem only through the injected `vfs.FS`") rather than
-/// `std::fs` directly, so this whole load path is exercisable against `Mem`
-/// in tests, not just against a real disk.
-fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadError> {
-    let bytes = match vfs.read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(LoadError::Io(e)),
-    };
-    Buffer::from_bytes(bytes).map_err(|e| match e {
-        BufferError::InvalidUtf8 => LoadError::InvalidUtf8,
-        // `from_bytes` only ever returns `InvalidUtf8` (see rune-core) — the
-        // other `BufferError` variants come from `apply_edits`, never from
-        // loading raw bytes. Still handled explicitly rather than assumed,
-        // per CONSTITUTION §1.3 ("surface invalid input — no silent
-        // fallback").
-        other => LoadError::Io(std::io::Error::other(other.to_string())),
-    })
-}
-
-/// The result of [`bootstrap_db`] — everything [`bootstrap`] needs to finish
-/// constructing `App` with a hydrated recovery store (plan WP5.S2/S4,
-/// re-split in WP1 alongside `AppDb` -> `Db`/`DocDb`, plan decision 5):
-/// `db` wires onto `App` directly (`App::new`'s 4th argument); `doc_db`
-/// installs on the initial document afterward, since `App::new` only knows
-/// about the app-wide half.
-#[derive(Default)]
-struct DbBootstrap {
-    db: Option<Db>,
-    doc_db: Option<DocDb>,
-    /// `Some` whenever `rune-db`'s `Load` returned reconstructed content
-    /// (which may or may not differ from the buffer `load_buffer` already
-    /// read straight off disk) — `main` runs this through the same
-    /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
-    /// `App::new` exists to hold the result.
-    recovered_content: Option<String>,
-    /// The persistent degraded-store status banner (plan WP5.S2), or
-    /// `None` when the store opened clean.
-    banner: Option<String>,
-}
-
-/// One exit path for every "recovery store bootstrap failed after a `Store`
-/// was actually opened" branch below (plan WP4.S5/[rune-cli 11] — these
-/// used to be written out four times near-verbatim): prints the reason,
-/// drains the writer thread, and returns the all-`None`/banner-set
-/// bootstrap the editor runs with when recovery is unavailable.
-fn degrade(store: Store, msg: impl Into<String>) -> DbBootstrap {
-    let msg = msg.into();
-    eprintln!("rune: recovery store degraded: {msg}");
-    store.shutdown();
-    DbBootstrap {
-        banner: Some(format!("recovery disabled: {msg}")),
-        ..DbBootstrap::default()
-    }
-}
-
-/// Opens the recovery store at `$HOME/Library/Application Support/rune/
-/// rune-v{SCHEMA_VERSION}.db` and hydrates `path` through it (plan
-/// WP5.S2/S4), BEFORE the TUI ever starts (`runtime::run` hasn't been
-/// called yet — no `Sender<Msg>` exists; see `db::DbBridge`'s doc comment
-/// for why hydration blocks on the bridge's OWN buffer instead). Never
-/// fatal to the editor: any failure here is reported to stderr and this
-/// returns `DbBootstrap::default()` — the editor still opens and runs
-/// fully, just without recovery journaling for this launch (CONSTITUTION
-/// Prime Directive: the user's words come before every other feature, plan
-/// decision 5: "losing the DB never damages a user file").
-///
-/// `home` is threaded in rather than read from `$HOME` directly (unlike
-/// `rune_db::production_db_path`) so this whole path is exercisable
-/// against a temp directory in tests (plan WP4.S1/S7) without touching the
-/// real machine's recovery store.
-fn bootstrap_db(vfs: Arc<dyn Vfs + Send + Sync>, path: &Path, home: Option<&Path>) -> DbBootstrap {
-    let db_path = match home {
-        Some(home) if !home.as_os_str().is_empty() => home
-            .join("Library")
-            .join("Application Support")
-            .join("rune")
-            .join(rune_db::db_file_name(rune_db::SCHEMA_VERSION)),
-        _ => {
-            return DbBootstrap {
-                banner: Some("recovery disabled: $HOME not set".to_string()),
-                ..DbBootstrap::default()
-            };
-        }
-    };
-
-    let bridge = DbBridge::bootstrap();
-    let (store, open_warning) = match Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("rune: recovery store unavailable: {e}");
-            return DbBootstrap {
-                banner: Some(format!("recovery disabled: {e}")),
-                ..DbBootstrap::default()
-            };
-        }
-    };
-    let degraded_at_open = store.degraded();
-
-    let load_op_id = match store.load(path) {
-        Ok(id) => id,
-        Err(e) => return degrade(store, format!("load failed: {e}")),
-    };
-
-    // Blocks main() — there is no runtime loop yet to be blocked instead
-    // (`db::DbBridge`'s doc comment). Any event for a DIFFERENT op id can't
-    // arrive yet (this is the very first op this `Store` has been asked to
-    // run) — the predicate stays defensive rather than assuming it, and
-    // leaves any such event buffered for `attach` rather than consuming it.
-    // The writer thread always posts a `Fatal` before parking on a panic
-    // (`writer.rs`'s own guarantee), so there is no "sender disconnected"
-    // case left to handle here the way an `mpsc::Receiver` would need to.
-    let load_outcome = match bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == load_op_id,
-        DbEvent::Fatal { .. } => true,
-    }) {
-        DbEvent::Ok { result, .. } => Ok(result),
-        DbEvent::Err { error, .. } => Err(error),
-        DbEvent::Fatal { error } => Err(error),
-    };
-
-    let load_result = match load_outcome {
-        Ok(OpOutcome::Load(load_result)) => *load_result,
-        Ok(_) => {
-            return degrade(store, "internal error: unexpected reply to Load");
-        }
-        Err(e) => return degrade(store, format!("load failed: {e}")),
-    };
-
-    // §1.7: `saved_obs` is `None` here only if `load` itself failed to
-    // adopt anything for this session/doc pair — "should not occur" per
-    // `LoadResult::saved_obs`'s own doc comment, but a `0` fallback would be
-    // a fabricated `ObsId` (AUTOINCREMENT ids start at 1, so `0` is never a
-    // real row) silently handed to every later CAS `materialize` as if it
-    // were a genuine baseline. Treat it as the loud internal error it is —
-    // degrade rather than fake a baseline no observation backs.
-    let Some(expect_obs) = load_result.saved_obs else {
-        return degrade(
-            store,
-            "internal error: load did not adopt a saved_obs baseline",
-        );
-    };
-
-    let db = Db::new(store, bridge, degraded_at_open);
-    let doc_db = DocDb::new(
-        load_result.doc_id,
-        expect_obs,
-        false, // bind_new: `file_existed` at the call site guarantees the target exists
-        // last_known_seq: `load` may have already durably journaled a
-        // cross-session-inheritance bridge edit under THIS session's own
-        // id — `bridge_seq` is that edit's own seq when it happened, and
-        // this session's true durable journal head either way (a fresh
-        // session journals nothing else during `load`). `0` would silently
-        // regress behind it for any `move_undo_pos`/`materialize` issued
-        // before the first ordinary `AppendEdit` ack lands (finding 8).
-        load_result.bridge_seq.unwrap_or(0),
-    );
-
-    let banner = if degraded_at_open {
-        Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
-    } else {
-        None
-    };
-
-    DbBootstrap {
-        db: Some(db),
-        doc_db: Some(doc_db),
-        recovered_content: Some(load_result.recovered),
-        banner,
-    }
-}
-
 fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {
     let path = PathBuf::from(input);
     if path.is_absolute() {
@@ -588,88 +348,11 @@ fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {
     }
 }
 
-/// `-w`'s own validation (WP7.S4): `dir` (already absolutized by
-/// `cli::parse`) must `stat` successfully as a directory. Distinguishes
-/// WHY it didn't (plan WP4.S6/[rune-cli 9]) — a nonexistent path, an
-/// existing non-directory, or some other `stat` failure (permission
-/// denied, an I/O error) each get their own [`CliError`] instead of one
-/// wildcard "not a directory" collapsing all three. Split out from
-/// `bootstrap` so it's exercisable against `Mem` in tests, exactly like
-/// `load_buffer` above.
-fn validate_work_dir(vfs: &dyn Vfs, dir: &Path) -> Result<(), CliError> {
-    match vfs.stat(dir) {
-        Ok(stat) if stat.kind == FileKind::Dir => Ok(()),
-        Ok(_) => Err(CliError::NotADirectory(dir.to_path_buf())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(CliError::WorkDirNotFound(dir.to_path_buf()))
-        }
-        Err(e) => Err(CliError::WorkDirUnreadable(
-            dir.to_path_buf(),
-            e.to_string(),
-        )),
-    }
-}
-
-/// The one exit path for every [`CliError`] — from `cli::parse` itself or
-/// from `validate_work_dir` afterward: the specific message, then
-/// [`cli::USAGE_TEXT`], both to stderr (WP7.S3).
-fn usage_error(e: &CliError) -> ExitCode {
-    eprintln!("rune: {e}");
-    eprintln!("{}", cli::USAGE_TEXT);
-    ExitCode::from(exit_code::USAGE)
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use rune_vfs::Mem;
-
-    #[test]
-    fn load_buffer_reads_existing_file_through_the_vfs() {
-        let vfs = Mem::new();
-        let path = Path::new("/doc.md");
-        vfs.save_atomic(path, b"hello").expect("seed the mem vfs");
-
-        let buffer = load_buffer(&vfs, path).expect("existing file should load");
-        assert_eq!(buffer.content(), "hello");
-    }
-
-    #[test]
-    fn load_buffer_opens_empty_for_a_nonexistent_path() {
-        let vfs = Mem::new();
-        let buffer = load_buffer(&vfs, Path::new("/missing.md")).expect("missing path opens empty");
-        assert!(buffer.is_empty());
-    }
-
-    #[test]
-    fn load_buffer_refuses_invalid_utf8() {
-        let vfs = Mem::new();
-        let path = Path::new("/bad.md");
-        vfs.save_atomic(path, &[0xff, 0xfe])
-            .expect("seed the mem vfs");
-
-        let err = load_buffer(&vfs, path).expect_err("invalid utf-8 must error");
-        assert!(matches!(err, LoadError::InvalidUtf8));
-    }
-
-    #[test]
-    fn validate_work_dir_rejects_a_regular_file() {
-        let vfs = Mem::new();
-        let path = Path::new("/not/a/dir.md");
-        vfs.save_atomic(path, b"hi").expect("seed the mem vfs");
-
-        let err = validate_work_dir(&vfs, path).expect_err("a regular file is not a directory");
-        assert!(matches!(err, CliError::NotADirectory(p) if p == path));
-    }
-
-    #[test]
-    fn validate_work_dir_distinguishes_a_missing_directory() {
-        let vfs = Mem::new();
-        let err = validate_work_dir(&vfs, Path::new("/nope"))
-            .expect_err("a missing directory must error");
-        assert!(matches!(err, CliError::WorkDirNotFound(p) if p == Path::new("/nope")));
-    }
 
     /// A real, throwaway `$HOME` under the OS temp dir — `Store::open`
     /// talks to the sqlite file directly via `rusqlite`, bypassing the

@@ -2,13 +2,11 @@
 //! writer-thread `Store` (plan WP5, re-split in WP1 for multi-document
 //! support — plan WP1 decision 5): the `DbEvent` -> `Msg::Db` bridge, the
 //! app-level `Db` handle (the `Store` itself + the bridge + the sticky
-//! degraded flag), the per-document `DocDb` handle (this doc's bound row +
-//! its async-replica bookkeeping), and the small functions the three
-//! journal call sites (`commands::edit::commit_edit_batch`/`undo`/`redo`)
-//! need to talk to them. CONSTITUTION §1.4.8/§5.4: the in-memory
-//! `rune_core::undo::Journal` stays the synchronous, authoritative source
-//! of truth for the running session — nothing here ever waits on a `Store`
-//! ack before mutating the buffer (plan decision 3), and every call below
+//! degraded flag), and the per-document `DocDb` handle (this doc's bound
+//! row plus its async-replica bookkeeping). CONSTITUTION §1.4.8/§5.4: the
+//! in-memory `rune_core::undo::Journal` stays the synchronous, authoritative
+//! source of truth for the running session — nothing here ever waits on a
+//! `Store` ack before mutating the buffer (plan decision 3), and every call
 //! is a plain, non-blocking channel send (`Store::enqueue`'s `try_send`),
 //! never I/O — so these are called directly from `update`, not from a
 //! spawned `Cmd`.
@@ -21,17 +19,19 @@
 //! plus (for a `Load` op) the buffer version it was issued against, at every
 //! successful enqueue (plan decision 6) and is consulted/popped by
 //! `app::handle_db_event`.
+//!
+//! The functions building and submitting ops into `db_ops`
+//! (`commands::edit::commit_edit_batch`/`undo`/`redo`'s call sites) live in
+//! [`crate::db_enqueue`]; the reaction to their eventual acks lives in
+//! [`crate::db_ack`]. This module owns only the shared types both sides
+//! need.
 
 use std::collections::VecDeque;
-use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 
-use rune_core::buffer::AppliedEdit;
-use rune_core::cursor::Cursor;
-use rune_db::{DbEvent, LoadResult, ObsId, OnEvent, Store};
+use rune_db::{DbEvent, ObsId, OnEvent, Store};
 
-use crate::app::{App, StatusSource};
 use crate::document::DocumentId;
 use crate::runtime::Msg;
 
@@ -272,7 +272,7 @@ impl DocDb {
     /// `AppendEdit` — reserves its slot in `seq_by_local_pos` so a LATER ack
     /// (which may arrive after several more local pushes) fills in the
     /// right index.
-    fn note_pending_append(&mut self, local_pos: usize) {
+    pub(crate) fn note_pending_append(&mut self, local_pos: usize) {
         if self.seq_by_local_pos.len() < local_pos {
             self.seq_by_local_pos.resize(local_pos, None);
         }
@@ -283,7 +283,7 @@ impl DocDb {
     /// seq. A `DbEvent::Ok` `AppendEdit` ack with no matching pending entry
     /// (shouldn't happen — every enqueue notes one first) is ignored rather
     /// than indexing out of bounds.
-    fn resolve_append_ack(&mut self, seq: i64) {
+    pub(crate) fn resolve_append_ack(&mut self, seq: i64) {
         self.last_known_seq = self.last_known_seq.max(seq);
         if let Some(idx) = self.pending_seq_acks.pop_front()
             && let Some(slot) = self.seq_by_local_pos.get_mut(idx)
@@ -298,7 +298,7 @@ impl DocDb {
     /// known, else `last_known_seq` as a conservative approximation for a
     /// still-in-flight ack (acks arrive in enqueue order, so this never
     /// OVERestimates in practice).
-    fn seq_for_local_pos(&self, local_pos: usize) -> i64 {
+    pub(crate) fn seq_for_local_pos(&self, local_pos: usize) -> i64 {
         if local_pos == 0 {
             return 0;
         }
@@ -310,336 +310,3 @@ impl DocDb {
     }
 }
 
-/// Enqueues an `AppendEdit` replica of a batch this session just committed
-/// to `id`'s LOCAL in-memory journal (plan WP5.S3) — called immediately
-/// after `Journal::push` at `commands::edit::commit_edit_batch`'s one call
-/// site. `local_pos` is `doc.journal.pos()` AFTER that push. A failure here
-/// (enqueue-time `Error`, never an async one — that lands via `Msg::Db`
-/// instead) only ever marks the whole store degraded
-/// (`app::on_store_failure`) — the buffer/journal mutation already
-/// happened and is never rolled back (plan decision 3). Every successful
-/// enqueue records `id` in `app.db_ops` (plan decision 6) so the eventual
-/// ack routes back to the right document.
-pub fn append_edit(
-    app: &mut App,
-    id: DocumentId,
-    local_pos: usize,
-    edits: &[AppliedEdit],
-    cursors_before: &[Cursor],
-    cursors_after: &[Cursor],
-) {
-    if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
-    }
-    // `id` not (or no longer) live is a plain, correct no-op — see
-    // `App::doc`'s docs.
-    let Some(doc) = app.doc(id) else { return };
-    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
-        return;
-    };
-    let Some(db) = app.db.as_ref() else { return };
-    let result = db
-        .store
-        .append_edit(db_id, edits, cursors_before, cursors_after);
-    match result {
-        Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::new(id));
-            if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
-                doc_db.note_pending_append(local_pos);
-            }
-        }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
-    }
-}
-
-/// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
-/// locally (plan WP5.S3) — called immediately after `Journal::move_pos` at
-/// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
-/// position just committed (`Journal::move_pos`'s own argument).
-pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
-    if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
-    }
-    let Some(doc) = app.doc(id) else { return };
-    let Some((target_seq, db_id)) = doc
-        .db
-        .as_ref()
-        .map(|d| (d.seq_for_local_pos(local_pos), d.db_id))
-    else {
-        return;
-    };
-    let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.move_undo_pos(db_id, target_seq);
-    match result {
-        Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::new(id));
-        }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
-    }
-}
-
-/// Enqueues a `Load` op hydrating `id` (already bound to `path`, an
-/// existing file just read straight off disk — `workspace::open_path`'s one
-/// call site) through the app-wide recovery store, closing the "Explorer-
-/// opened documents get no recovery journal" gap (plan WP6). Records `id`'s
-/// buffer version at the moment the load is ISSUED, alongside the routing
-/// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
-/// `Load` arm needs both to decide, on the ack, whether adopting the
-/// recovered content is still safe (see `handle_load_ack`'s docs). A
-/// degraded store enqueues nothing — there is no trustworthy recovery
-/// journal to bind this document to either way.
-pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
-    if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
-    }
-    let Some(doc) = app.doc(id) else { return };
-    let issued_version = doc.buffer.version();
-    let Some(db) = app.db.as_ref() else { return };
-    match db.store.load(path) {
-        Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
-        }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
-    }
-}
-
-/// The reaction to a `Load` op's ack (plan WP6.S2/S3) — routed from
-/// `app::handle_db_event` once `app.db_ops` has resolved the ack's op id to
-/// `id`. `issued_version` is `id`'s buffer version recorded by
-/// `load_document` at ENQUEUE time, on the same `PendingOp` that resolved
-/// `id`, `None` only if this ack's routing entry was somehow already
-/// consumed.
-///
-/// A `None` `saved_obs` (should not occur — see `LoadResult::saved_obs`'s
-/// own doc comment) installs nothing and surfaces a status message instead
-/// of binding a document to a recovery row with no CAS baseline.
-///
-/// Otherwise, `recovered` is adopted into the buffer, through
-/// [`crate::document::Document::hydrate`], ONLY when `issued_version` still
-/// equals the buffer's CURRENT version — `Load` is asynchronous, so the
-/// user may have typed into the buffer during the round trip, and
-/// clobbering those keystrokes to complete a recovery binding would violate
-/// the Prime Directive. When the version has moved on, `DocDb` is still
-/// installed (this document's own recovery journal is real and should be
-/// used going forward), but the buffer bytes are left exactly as the user
-/// last typed them — this session's baseline simply anchors from the disk
-/// content `load_document`'s caller already read, same as `recovered ==
-/// disk_content` would.
-pub fn handle_load_ack(
-    app: &mut App,
-    id: DocumentId,
-    load_result: LoadResult,
-    issued_version: Option<u64>,
-) {
-    let Some(expect_obs) = load_result.saved_obs else {
-        app.set_status(
-            "crash recovery unavailable for this tab: load returned no baseline observation",
-            StatusSource::Other,
-        );
-        return;
-    };
-
-    let refusal = {
-        let Some(doc) = app.doc_mut(id) else { return };
-        if issued_version == Some(doc.buffer.version()) {
-            match doc.hydrate(&load_result.disk_content, &load_result.recovered) {
-                crate::document::Hydration::Refused(reason) => Some(reason),
-                crate::document::Hydration::NoChange | crate::document::Hydration::Adopted => None,
-            }
-        } else {
-            None
-        }
-    };
-    if let Some(reason) = refusal {
-        app.set_status(format!("crash recovery: {reason}"), StatusSource::Other);
-    }
-
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.db = Some(DocDb::new(
-        load_result.doc_id,
-        expect_obs,
-        false, // bind_new: `id` is already bound to a path read straight off disk
-        load_result.bridge_seq.unwrap_or(0),
-    ));
-}
-
-/// Records that `seq` was durably committed for `id`'s oldest still-pending
-/// `AppendEdit` — called from `app::handle_db_event`'s `Msg::Db` handler on
-/// `DbEvent::Ok { result: OpOutcome::Seq(seq), .. }`, after `app.db_ops` has
-/// already resolved the ack's op id to `id`. `id` no longer live (an ack
-/// racing a future close) is a correct, silent drop — the document it would
-/// have updated is already gone.
-pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    if let Some(doc_db) = doc.db.as_mut() {
-        doc_db.resolve_append_ack(seq);
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use rune_core::buffer::Buffer;
-    use rune_db::{ClockFn, OpOutcome};
-    use rune_vfs::{Mem, Vfs};
-
-    fn in_memory_db() -> Db {
-        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
-        let store = Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
-        let bridge = DbBridge::bootstrap();
-        Db::new(store, bridge, false)
-    }
-
-    /// Plan WP1.S8: two documents each enqueue an `AppendEdit`; delivering
-    /// their `DbEvent::Ok` acks (identified only by op id, via `app.db_ops`)
-    /// must route each `Seq` result to the CORRECT document's `DocDb`, never
-    /// crossing them.
-    #[test]
-    fn db_event_acks_route_to_the_correct_document_via_db_ops() {
-        let mut app = App::new(
-            Buffer::new("a"),
-            None,
-            Arc::new(Mem::new()),
-            Some(in_memory_db()),
-        );
-        let id_a = app.active;
-        let id_b = app.open_document(Buffer::new("b"));
-
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
-
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
-        append_edit(&mut app, id_b, 1, &[], &[], &[]);
-
-        assert_eq!(app.db_ops.len(), 2);
-        let op_for_a = *app
-            .db_ops
-            .iter()
-            .find(|(_, pending)| pending.doc == id_a)
-            .expect("op recorded for doc a")
-            .0;
-        let op_for_b = *app
-            .db_ops
-            .iter()
-            .find(|(_, pending)| pending.doc == id_b)
-            .expect("op recorded for doc b")
-            .0;
-        assert_ne!(op_for_a, op_for_b);
-
-        // Simulate the acks arriving in reverse enqueue order — routing
-        // must key off the op id, not arrival order.
-        let doc_for_b = app.db_ops.remove(&op_for_b).expect("routes to doc b").doc;
-        resolve_append_ack(&mut app, doc_for_b, 42);
-        let doc_for_a = app.db_ops.remove(&op_for_a).expect("routes to doc a").doc;
-        resolve_append_ack(&mut app, doc_for_a, 7);
-
-        assert_eq!(
-            app.doc(id_a)
-                .expect("doc a exists")
-                .db
-                .as_ref()
-                .expect("doc a has a DocDb")
-                .last_known_seq,
-            7
-        );
-        assert_eq!(
-            app.doc(id_b)
-                .expect("doc b exists")
-                .db
-                .as_ref()
-                .expect("doc b has a DocDb")
-                .last_known_seq,
-            42
-        );
-        assert!(app.db_ops.is_empty());
-    }
-
-    #[test]
-    fn handle_db_event_ok_seq_pops_db_ops_and_routes_to_the_right_document() {
-        let mut app = App::new(
-            Buffer::new("a"),
-            None,
-            Arc::new(Mem::new()),
-            Some(in_memory_db()),
-        );
-        let id_a = app.active;
-        let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
-
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
-        let op_for_a = *app
-            .db_ops
-            .iter()
-            .find(|(_, pending)| pending.doc == id_a)
-            .expect("op recorded for doc a")
-            .0;
-
-        let mut effects = crate::runtime::Effects::default();
-        crate::app::update(
-            &mut app,
-            crate::runtime::Msg::Db(DbEvent::Ok {
-                id: op_for_a,
-                result: OpOutcome::Seq(99),
-            }),
-            &mut effects,
-        );
-
-        assert!(
-            !app.db_ops.contains_key(&op_for_a),
-            "a resolved ack must be popped from db_ops"
-        );
-        assert_eq!(
-            app.doc(id_a)
-                .expect("doc a exists")
-                .db
-                .as_ref()
-                .expect("doc a has a DocDb")
-                .last_known_seq,
-            99
-        );
-    }
-
-    /// Review fix: a `DbEvent::Fatal` tears the whole writer thread down —
-    /// every `db_ops` entry still in flight will never receive its ack, so
-    /// `handle_db_event`'s `Fatal` arm must clear the map outright rather
-    /// than leaving those entries as dead weight for the rest of the
-    /// session.
-    #[test]
-    fn handle_db_event_fatal_clears_every_in_flight_db_op() {
-        let mut app = App::new(
-            Buffer::new("a"),
-            None,
-            Arc::new(Mem::new()),
-            Some(in_memory_db()),
-        );
-        let id_a = app.active;
-        let id_b = app.open_document(Buffer::new("b"));
-        app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
-        app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
-
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
-        append_edit(&mut app, id_b, 1, &[], &[], &[]);
-        assert_eq!(app.db_ops.len(), 2, "test setup: two ops in flight");
-
-        let mut effects = crate::runtime::Effects::default();
-        crate::app::update(
-            &mut app,
-            crate::runtime::Msg::Db(DbEvent::Fatal {
-                error: "writer thread died".to_string(),
-            }),
-            &mut effects,
-        );
-
-        assert!(
-            app.db_ops.is_empty(),
-            "a Fatal event must clear every in-flight db_ops entry"
-        );
-        assert!(
-            app.db.as_ref().expect("store still present").degraded,
-            "a Fatal event must still degrade the store via on_store_failure"
-        );
-    }
-}

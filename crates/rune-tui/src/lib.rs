@@ -3,12 +3,17 @@
 //! workspace that talks to a real terminal (`term::Guard`).
 
 pub mod app;
+mod app_view;
 pub mod banner;
 pub mod binding;
 pub mod breadcrumb;
+pub mod breadcrumb_layout;
 pub mod clipboard;
 pub mod commands;
 pub mod db;
+pub mod db_ack;
+mod db_dispatch;
+pub mod db_enqueue;
 mod dispatch;
 pub mod document;
 pub mod document_map;
@@ -18,6 +23,7 @@ pub mod explorer_keys;
 pub mod field;
 pub mod focus;
 pub mod footer;
+pub mod footer_hints;
 pub mod global;
 pub mod help;
 pub mod highlight;
@@ -31,6 +37,7 @@ pub mod opentabs;
 pub mod pane;
 pub mod pointer;
 pub mod rename;
+pub mod rename_create;
 pub mod render;
 pub mod row_meta;
 pub mod runtime;

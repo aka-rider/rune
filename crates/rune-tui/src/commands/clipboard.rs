@@ -22,6 +22,7 @@ use crate::banner;
 use crate::clipboard::{OSC52_MAX_PAYLOAD_BYTES, osc52_copy, pbpaste_cmd};
 use crate::commands::edit;
 use crate::commands::nav;
+use crate::commands::nav_line;
 use crate::document::DocumentId;
 use crate::runtime::Effects;
 
@@ -80,7 +81,7 @@ fn copy_text_for_cursor(buf: &Buffer, c: &Cursor) -> String {
 /// `offset`, including its trailing `\n` unless it's the buffer's last
 /// line.
 fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
-    let (start, end) = nav::line_range_incl_newline(buf, offset);
+    let (start, end) = nav_line::line_range_incl_newline(buf, offset);
     buf.slice(start, end).unwrap_or("").to_string()
 }
 

@@ -1,13 +1,15 @@
 //! The root machine: owns focus state and the wrap width every downstream
 //! element inherits (plan Context, "Root machine"). `DocMachine::sync_cursors`
-//! is the ONLY place child `RevealSm::transition` calls fire; `sync_content`
-//! reparses iff the buffer version changed, and reveal transitions never
-//! touch `built_version` (Gotchas: "Reveal must never bump the buffer
-//! version").
+//! is the only place child `RevealSm::transition` calls fire during normal
+//! editing (`reveal_all` below drives the same recursion off-editor, for the
+//! markdown-fence emitter); `sync_content` reparses iff the buffer version
+//! changed, and reveal transitions never touch `built_version` (Gotchas:
+//! "Reveal must never bump the buffer version").
 
 use std::ops::Range;
 
 use crate::element::block::Block;
+use crate::icons::IconSet;
 use crate::snapshot::DisplaySnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
@@ -30,6 +32,29 @@ pub struct ViewSnapshots {
     pub display: DisplaySnapshot,
 }
 
+/// Force every block (and, transitively, every nested block/inline) into
+/// `RevealState::Revealed`, for the WP6 markdown-fence emitter: fence
+/// bodies always emit at full reveal regardless of any cursor, so the
+/// overlay carries real syntax colors rather than the folded form. Reuses
+/// `DocMachine::sync_cursors`'s own recursion (a root `ForceRevealed` grant
+/// with an empty cursor probe, `InheritCtx::child` propagating the force to
+/// every descendant) instead of writing `RevealState` fields directly —
+/// `RevealSm::transition` stays the sole writer of reveal state in the
+/// crate.
+pub fn reveal_all(blocks: &mut [Block]) {
+    let wrap = WrapState::default();
+    let cursors = CursorProbe::default();
+    let ctx = InheritCtx {
+        focus: DocState::Focused,
+        wrap: &wrap,
+        grant: RevealGrant::ForceRevealed,
+        cursors: &cursors,
+    };
+    for b in blocks {
+        b.sync(&ctx);
+    }
+}
+
 pub struct DocMachine {
     state: DocState,
     wrap: WrapState,
@@ -37,6 +62,10 @@ pub struct DocMachine {
     built_version: u64,
     dirty: bool,
     kind: DocumentKind,
+    /// Which glyph tier decor producers draw from — set once by the runtime
+    /// (plan WP5) via `set_icons`, mirrored here because `Document` (the
+    /// caller) holds no reference back to `App`'s theme/terminal state.
+    icons: IconSet,
     /// The memo `snapshot` returns a clone of when `dirty` is false —
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
@@ -70,6 +99,7 @@ impl DocMachine {
             built_version: 0,
             dirty: true,
             kind: DocumentKind::Markdown,
+            icons: IconSet::unicode(),
             cached: None,
             #[cfg(test)]
             rebuild_count: std::cell::Cell::new(0),
@@ -163,6 +193,17 @@ impl DocMachine {
         }
     }
 
+    /// Icon-tier change (plan WP5); marks dirty but fires NO reveal
+    /// transitions, mirroring `set_width`'s memoization shape exactly — a
+    /// terminal-capability change is neither a content edit nor a
+    /// focus/reveal change.
+    pub fn set_icons(&mut self, icons: IconSet) {
+        if self.icons != icons {
+            self.icons = icons;
+            self.dirty = true;
+        }
+    }
+
     /// Selects which producer `sync_content` runs — comrak for `Markdown`,
     /// no parse at all (verbatim per-line text, plan WP4 decision 6) for
     /// `Code`/`Plain`. Marks dirty only when the kind actually changes, so
@@ -242,7 +283,8 @@ impl DocMachine {
     fn rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         #[cfg(test)]
         self.rebuild_count.set(self.rebuild_count.get() + 1);
-        let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks, self.wrap.width);
+        let (lines, syntax) =
+            crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
         ViewSnapshots {
@@ -294,169 +336,5 @@ fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Vec<Rang
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-    use rune_core::cursor::CursorSet;
-
-    #[test]
-    fn set_focus_is_idempotent_and_marks_dirty_only_on_change() {
-        let mut doc = DocMachine::new();
-        assert_eq!(doc.state(), DocState::Unfocused);
-        doc.clear_dirty();
-        doc.set_focus(false);
-        assert!(!doc.is_dirty(), "no-op focus change must not dirty");
-        doc.set_focus(true);
-        assert!(doc.is_dirty());
-        assert_eq!(doc.state(), DocState::Focused);
-    }
-
-    #[test]
-    fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
-        let mut doc = DocMachine::new();
-        doc.set_focus(true); // Decide policies only fire when focused.
-        let buf = Buffer::new("# hello\n");
-        doc.sync_content(&buf);
-        assert_eq!(doc.built_version, buf.version());
-        assert!(!doc.blocks().is_empty());
-
-        // Reveal the heading (cursor on its line), so its `RevealSm` is now
-        // `Revealed` — a state that lives ONLY on the current `blocks` Vec.
-        let cursors = CursorSet::new(0);
-        doc.sync_cursors(&buf, &cursors);
-        assert_eq!(
-            doc.blocks()[0].reveal_state(),
-            rune_syntax::element::RevealState::Revealed
-        );
-
-        // Calling sync_content again with the SAME version must be a true
-        // no-op: if it silently reparsed, the freshly-built Heading machine
-        // would reset to its default Rendered state, discarding the reveal
-        // transition above without ever bumping `built_version` — a `Vec`
-        // identity check can't catch this (a Vec can get a new backing
-        // allocation with byte-identical contents), but the reveal state
-        // survives if and only if no reparse actually happened.
-        doc.sync_content(&buf);
-        assert_eq!(
-            doc.blocks()[0].reveal_state(),
-            rune_syntax::element::RevealState::Revealed,
-            "sync_content must not reparse when buf.version() is unchanged"
-        );
-    }
-
-    #[test]
-    fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
-        // The keystroke-latency regression this test guards: `view()` may be
-        // called several times per message batch by sanctioned design, and a
-        // cursor-only move changes none of `sync_content`/`set_width`/
-        // `sync_cursors`/`set_focus`'s inputs — the second `snapshot` call
-        // must be a memo hit, not a second emit + wrap + `expand_tables`.
-        let mut doc = DocMachine::new();
-        doc.set_focus(true);
-        let buf = Buffer::new("# hello\nworld\n");
-        let cursors = CursorSet::new(0);
-
-        doc.sync_content(&buf);
-        doc.set_width(80);
-        doc.sync_cursors(&buf, &cursors);
-        let first = doc.snapshot(&buf);
-        assert_eq!(doc.rebuild_count(), 1);
-
-        // Same version, same width, same cursor/reveal state: the whole
-        // per-message sync sequence again, exactly as `Document::view` would
-        // run it for a second call within the same batch.
-        doc.sync_content(&buf);
-        doc.set_width(80);
-        doc.sync_cursors(&buf, &cursors);
-        let second = doc.snapshot(&buf);
-        assert_eq!(
-            doc.rebuild_count(),
-            1,
-            "a second view() call with no changed input must be a memo hit"
-        );
-        assert_eq!(first.display.total_rows(), second.display.total_rows());
-
-        // Sanity: a real input change (width) still forces a rebuild.
-        doc.set_width(40);
-        doc.sync_cursors(&buf, &cursors);
-        doc.snapshot(&buf);
-        assert_eq!(
-            doc.rebuild_count(),
-            2,
-            "a genuine width change must still force a rebuild"
-        );
-    }
-
-    #[test]
-    fn sync_cursors_never_bumps_built_version() {
-        let mut doc = DocMachine::new();
-        let buf = Buffer::new("# hello\nworld\n");
-        doc.sync_content(&buf);
-        let before = doc.built_version;
-        let cursors = CursorSet::new(0);
-        doc.sync_cursors(&buf, &cursors);
-        assert_eq!(doc.built_version, before, "reveal must never bump version");
-    }
-
-    #[test]
-    fn unfocused_forces_every_decide_policy_block_rendered() {
-        // This fixture has only a Heading — a `Decide`-policy block, whose
-        // reveal follows `ctx.grant`. It does NOT cover Frontmatter/
-        // Verbatim, which are pinned Revealed by design regardless of
-        // focus (the reveal-policy table: "Frontmatter, Verbatim | pinned
-        // Revealed (no Decide)") — see
-        // `frontmatter_and_verbatim_survive_unfocused_as_revealed` below
-        // for that intentional exception.
-        let mut doc = DocMachine::new();
-        let buf = Buffer::new("# hello\n");
-        doc.sync_content(&buf);
-        // cursor sits on the heading line, which WOULD reveal if focused.
-        let cursors = CursorSet::new(2);
-        doc.sync_cursors(&buf, &cursors);
-        for b in doc.blocks() {
-            assert_eq!(
-                b.reveal_state(),
-                rune_syntax::element::RevealState::Rendered,
-                "unfocused doc must force every Decide-policy block Rendered"
-            );
-        }
-    }
-
-    #[test]
-    fn frontmatter_and_verbatim_survive_unfocused_as_revealed() {
-        // The reveal-policy table's declared exception to "Unfocused ->
-        // ForceRendered": Frontmatter and Verbatim (HTML/math/any other
-        // unmodeled construct) have no Decide policy at all — they ignore
-        // `ctx.grant` entirely and stay pinned Revealed even when the
-        // document is unfocused.
-        //
-        // A table is no longer part of this exception (plan: markdown
-        // table rendering, WP1): `Block::Table` now has a real Decide
-        // policy (`cursors.any_in_lines(first_line, last_line)`, mirroring
-        // `CodeFenceM`), so an unfocused document forces it Rendered like
-        // every other Decide-policy block. The fixture below therefore uses
-        // an HTML block, which is still a pinned-Revealed `Verbatim`.
-        let mut doc = DocMachine::new();
-        let buf = Buffer::new("---\ntitle: x\n---\n\n<div>\nraw\n</div>\n");
-        doc.sync_content(&buf);
-        doc.sync_cursors(&buf, &CursorSet::new(0));
-        assert!(
-            doc.blocks().len() >= 2,
-            "expected a Frontmatter block and a Verbatim (html) block"
-        );
-        for b in doc.blocks() {
-            assert!(
-                matches!(
-                    b,
-                    crate::element::block::Block::Frontmatter(_)
-                        | crate::element::block::Block::Verbatim(_)
-                ),
-                "unexpected block kind in this fixture: {b:?}"
-            );
-            assert_eq!(
-                b.reveal_state(),
-                rune_syntax::element::RevealState::Revealed
-            );
-        }
-    }
-}
+#[path = "doc_tests.rs"]
+mod tests;

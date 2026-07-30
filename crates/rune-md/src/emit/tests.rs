@@ -127,7 +127,7 @@ fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
     }
 }
 
-fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
+pub(crate) fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
     doc.set_focus(focused);
@@ -303,4 +303,38 @@ fn build_cell_map_has_one_entry_per_char_not_per_grapheme_or_display_cell() {
     let cm = build_cell_map(0, cjk);
     assert_eq!(cm.len(), cjk.chars().count());
     assert_eq!(cm, vec![0, 3]);
+}
+
+/// WP2.S6 fixture, run BEFORE wiring list decor: settles whether comrak's
+/// `ListItemM::marker` range for a NESTED item includes its leading indent
+/// bytes. It does not — `"  - nested"`'s marker is `[8,10)` = `"- "`, two
+/// bytes AFTER the two-space indent at `[6,8)`, which is why the indent is
+/// never hidden and always rides through as an ordinary visible span. A
+/// bullet-decor piece therefore needs no indent folded into it: the indent
+/// stays in the line's own spans, unaffected by which glyph the decor
+/// channel prefixes.
+#[test]
+fn nested_list_item_marker_excludes_leading_indent() {
+    let content = "- top\n  - nested\n";
+    let blocks = crate::parse::parse(content);
+
+    fn find_list(blocks: &[crate::element::block::Block]) -> Option<&crate::element::block::ListM> {
+        blocks.iter().find_map(|b| match b {
+            crate::element::block::Block::List(l) => Some(l),
+            _ => None,
+        })
+    }
+
+    let top_list = find_list(&blocks).expect("top-level list");
+    let top_item = &top_list.items[0];
+    assert_eq!(&content[top_item.marker.start..top_item.marker.end], "- ");
+
+    let nested_list = find_list(&top_item.children).expect("nested list");
+    let nested_item = &nested_list.items[0];
+    // The marker starts at the "-", not at the indent two bytes earlier.
+    assert_eq!(
+        &content[nested_item.marker.start..nested_item.marker.end],
+        "- "
+    );
+    assert_eq!(content.as_bytes()[nested_item.marker.start], b'-');
 }

@@ -131,6 +131,19 @@ impl Theme {
     pub fn scope_style(&self, id: ScopeId) -> Style {
         self.scopes.get(id.0 as usize).copied().unwrap_or_default()
     }
+
+    /// [`Theme::scope_style`] with `bg` stripped. An overlay cell's style is
+    /// merged onto the render buffer field-wise (`Style::patch` only
+    /// touches fields the patching style actually sets), so a scope that
+    /// carries a background here would silently overwrite whatever the base
+    /// cell had — a markdown-fence body's own background, for one. Every
+    /// overlay consumer routes through this instead of `scope_style`.
+    pub fn overlay_scope_style(&self, id: ScopeId) -> Style {
+        Style {
+            bg: None,
+            ..self.scope_style(id)
+        }
+    }
 }
 
 /// WP4.S2's canonical scope -> `Style` mapping (Catppuccin Mocha). Heading
@@ -145,10 +158,7 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
     let base = Style::default();
     match name {
         "text" => base.fg(c(p.text)),
-        "markup.heading.1" => base
-            .fg(c(p.crust))
-            .bg(c(p.red))
-            .add_modifier(Modifier::BOLD),
+        "markup.heading.1" => base.fg(c(p.red)).add_modifier(Modifier::BOLD),
         "markup.heading.2" => base.fg(c(p.peach)).add_modifier(Modifier::BOLD),
         "markup.heading.3" => base.fg(c(p.yellow)).add_modifier(Modifier::BOLD),
         "markup.heading.4" => base.fg(c(p.green)),
@@ -157,10 +167,11 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.strong" => base.add_modifier(Modifier::BOLD),
         "markup.italic" => base.add_modifier(Modifier::ITALIC),
         "markup.strikethrough" => base.add_modifier(Modifier::CROSSED_OUT),
-        "markup.raw.inline" => base.fg(c(p.peach)).bg(c(p.surface0)),
-        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.mantle)),
+        "markup.raw.inline" => base.fg(c(p.peach)).bg(c(p.surface1)),
+        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.surface0)),
         "markup.link" => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
+        "markup.quote.marker" => base.fg(c(p.overlay0)),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
         // Raw ANSI-256 indices, deliberately NOT routed through the
@@ -257,6 +268,21 @@ mod tests {
             }
             if let Some(bg) = style.bg {
                 assert!(matches!(bg, Color::Indexed(_)), "bg {bg:?} not quantized");
+            }
+        }
+    }
+
+    #[test]
+    fn overlay_scope_style_never_carries_a_background() {
+        // decision (WP1.S4): an overlay cell's style is merged onto the
+        // render buffer field-wise, so a scope carrying a bg here would
+        // clobber whatever background the base cell already had.
+        for quantized in [false, true] {
+            let theme = Theme::catppuccin_mocha(quantized);
+            let table = scope_table();
+            for (id, name) in table.iter() {
+                let style = theme.overlay_scope_style(id);
+                assert_eq!(style.bg, None, "scope {name} unexpectedly carries a bg");
             }
         }
     }

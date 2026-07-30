@@ -263,94 +263,12 @@ pub struct Effects {
 /// `termina::Terminal`, single-owner and main-thread-only by the crate's own
 /// design (see module docs).
 pub fn run(app: &mut App) -> io::Result<()> {
-    let mut guard = Guard::new()?;
-
-    // Plan WP4.S5: probe BEFORE `spawn_input_reader` starts consuming
-    // events on its own thread — the probe's own poll/read round trip
-    // over the DA1 query would otherwise race that thread for the same
-    // input stream (the "typed Csi response" it waits for could be
-    // delivered to either reader). One-shot, at startup, never per frame.
-    app.theme = crate::theme::Theme::catppuccin_mocha(!guard.probe_truecolor());
-
-    let (tx, rx) = mpsc::channel::<Msg>();
-    spawn_input_reader(guard.event_reader(), tx.clone());
-
-    // Hand the runtime's own `Sender<Msg>` to the DB bridge (plan WP5.S1's
-    // "App-held setter" — `Store::open`, at bootstrap in `rune-cli::main`,
-    // ran before this `Sender<Msg>` ever existed, see `db::DbBridge`'s doc
-    // comment) so every `DbEvent` from here on is delivered as `Msg::Db`
-    // through the ordinary Elm loop below, exactly like the initial
-    // `Msg::Resize` seed right after it.
-    if let Some(db) = &app.db {
-        db.bridge.attach(tx.clone());
-    }
-
-    // Same "App-held setter" pattern as `db.bridge.attach` right above:
-    // `App::new` constructs `snapshot_timer` with no background thread at
-    // all (plan WP16.S5), so every test/fuzz `App` that never reaches this
-    // `run` loop never spawns one either. This call starts its one thread.
-    app.snapshot_timer.attach(tx.clone());
-    // Tracks the join handle of every no-store fallback save `Cmd`
-    // (`CmdKind::Save`) currently running, so quitting can join them instead
-    // of detaching them mid-write (review fix, [rune-tui A 5]): a
-    // store-backed materialize survives process exit via `Store::shutdown`'s
-    // own drain, but the no-store fallback is a plain detached thread doing
-    // its own `vfs.save_atomic` — `thread::spawn`'s `JoinHandle`, dropped,
-    // detaches and keeps running past `main` returning, but the atomic
-    // publish it's mid-write on has no other guarantee of finishing before
-    // the process actually exits. Pruned opportunistically so this never
-    // grows unbounded across a long session of saves.
-    let mut save_handles: Vec<thread::JoinHandle<()>> = Vec::new();
-
-    // Seed the initial size through the ordinary `update` path (not a
-    // one-off field write) so `Msg::Resize`'s effect on the viewport has
-    // exactly one implementation, exercised the same way on every resize.
-    let (width, height) = guard.size()?;
-    apply(
-        app,
-        Msg::Resize(width, height),
-        &mut guard,
-        &tx,
-        &mut save_handles,
-    )?;
-
-    // D4 (syntax-highlighting-latency plan): one bounded synchronous parse
-    // attempt at the startup document, strictly before the first draw below
-    // — nothing is on screen yet, so even a full-budget miss blocks nothing
-    // visible. A hit means frame 1 renders already highlighted; a miss (or
-    // a non-code startup document) falls through to the ordinary background
-    // kick right after, unchanged.
-    crate::highlight::first_paint_highlight(app);
-
-    // Plan WP5.S3, "App::new's bootstrap path": `App::new` itself has no
-    // `&mut Effects` to dispatch a highlight `Cmd` with (it runs before this
-    // runtime, and before any `Msg` has ever reached `app::update`'s
-    // before/after gate), so the document it opened with never gets its
-    // first highlight kicked from there. This is the earliest point that
-    // both an `App` and an `Effects` sink exist together, so it is the one
-    // explicit kick this bootstrap path needs; every later document (an
-    // edit, a tab switch, `workspace::open_path`) is already covered by
-    // `app::update`'s own before/after gate. When `first_paint_highlight`
-    // just succeeded for this document, `schedule_highlight`'s own
-    // already-current guard (`highlight.version == version`) makes this a
-    // no-op — see that function's doc comment.
-    // Same bootstrap-window reasoning as the highlight kick above, for the
-    // same reason: a launch with no file to edit shows the left column
-    // before any key is pressed, but the constructor had no `Effects` to
-    // request the listing with, so without this the pane would render as an
-    // empty box until the user pressed the focus chord. A no-op whenever the
-    // column starts hidden or the Explorer already has entries.
-    {
-        let mut effects = Effects::default();
-        crate::highlight::schedule_highlight(app, app.active, &mut effects);
-        crate::explorer::ensure_loaded(app, &mut effects);
-        for cmd in effects.cmds.drain(..) {
-            spawn_cmd(cmd, tx.clone(), &mut save_handles);
-        }
-    }
-
-    app.sync_view();
-    guard.draw(|frame| crate::render::draw(app, frame))?;
+    let bootstrap::Bootstrap {
+        mut guard,
+        tx,
+        rx,
+        mut save_handles,
+    } = bootstrap::bootstrap(app)?;
 
     // The normal exit is `app.should_quit` becoming true, set either by
     // `Msg::Quit` (quit-confirm) or synthesized by `spawn_input_reader`
@@ -523,13 +441,25 @@ pub fn read_file_cmd(
     })
 }
 
+// `run`'s startup sequence (theme probe, background-thread wiring, the
+// initial size seed, the first-paint parse, the first draw) moved to
+// `runtime::bootstrap` (§1.6 budget) — `run` above calls it through
+// `bootstrap::`.
+mod bootstrap;
+
 // The tree-sitter highlight `Cmd` constructors (`highlight_cmd`, `fence_
 // highlight_cmd`, plus `HIGHLIGHT_BUDGET`/`PARSE_BUDGET`) moved to
 // `runtime::highlight_cmd` (§1.6 budget) — re-exported below so every
 // existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
-pub(crate) use highlight_cmd::FIRST_PAINT_BUDGET;
-pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, fence_highlight_cmd, highlight_cmd};
+pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, fence_highlight_cmd};
+pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, highlight_cmd};
+
+// The comrak reveal-emit reuse path a ```markdown fence highlights through
+// (plan WP6.S3) — its own file since it pulls in `rune_md::parse`/`emit`,
+// a dependency `highlight_cmd` itself has no other reason to carry. Reached
+// only from `highlight_cmd::run_fence_highlight`, never re-exported.
+mod md_fence;
 
 // The snapshot-autosave debounce's one rearmable timer thread (plan
 // WP16.S5) — split out for the same reason `highlight_cmd` was: a distinct

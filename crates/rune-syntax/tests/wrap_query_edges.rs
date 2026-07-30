@@ -16,6 +16,7 @@ fn one_span_line(content: &str) -> SyntaxLine {
     SyntaxLine {
         spans: vec![SyntaxSpan::identical(content, SCOPE, 0..content.len())],
         table: None,
+        decor: None,
     }
 }
 

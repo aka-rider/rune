@@ -10,35 +10,65 @@ A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
 test files (`conceal_roundtrip.rs` at 1453 lines and `tests/highlight.rs`).
 `explorer.rs` and `opentabs.rs` — the two previously recorded here — are done.
 
-Twenty-seven files remain over the ceiling. None was introduced by that batch;
-they are the residue of the same long-running debt, listed here so the campaign
-is visible rather than rediscovered file by file.
+A second, much larger batch (the `split(...)`/`refactor(...)` work packages
+that followed, WP A through H) then split every remaining test file and
+most remaining sources that used to be listed here: `db_wiring.rs`,
+`rename.rs`, `tui_render.rs`, `explorer.rs` (test), `multiprocess.rs`,
+`tripwire.rs`, `table_render.rs`, `main.rs`, `buffer.rs`, `wrap/mod.rs`,
+`nav/lib.rs`, `keymap/index.rs`, `breadcrumb.rs`, `editor_bindings.rs`,
+`driver/mod.rs`, `runtime/mod.rs`, `commands/nav.rs`, `commands/edit_lines.rs`,
+`keymap.rs`, `dispatch.rs`, `footer.rs`, and `table/layout.rs` are all under
+the ceiling again. Four files remain over it — none introduced by that
+batch, the residue of the same long-running debt:
 
-- [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (1196), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
-- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (663), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (588), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
+- [ ] `rune-tui/src/app.rs` (538), `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (523), `rune-syntax/src/syntax.rs` (505).
 
 Two of those grew slightly in an earlier batch and are recorded per the house
-rule: `dispatch.rs` 513 → 527 (the span-cap truncation status branch) and
-`db_wiring.rs` 875 → 909 (the pending-op sweep regression test). Both were
-already over budget beforehand. `commands/edit_core.rs` did cross the ceiling
-when its no-op-filter tests landed and was split the same day, so it is not on
-the list.
+rule: `dispatch.rs` 513 → 527 (the span-cap truncation status branch, since
+brought back under budget by the later split that moved `handle_db_event`
+into `db_dispatch.rs`) and `db_wiring.rs` 875 → 909 (the pending-op sweep
+regression test, since split into `db_wiring_degraded.rs`/`_hydrate.rs`/
+`_lifecycle.rs`). Both were already over budget beforehand.
+`commands/edit_core.rs` did cross the ceiling when its no-op-filter tests
+landed and was split the same day, so it was never on the list.
 
-Three more grew in the WP2 focus-chokepoint refactor (title-editing plan),
-all already over budget beforehand: `app.rs` 524 → 588 (the private `focus`
-field plus its three writers — `focus_title`/`refocus_title`/`set_focus`/
-`blur_title` — the whole point of the change, so splitting them out defeats
-the "one writer" invariant they exist to enforce); `rename.rs` 632 → 663
-(`begin`'s six-way refusal enumeration now returns `Commit` instead of
-`bool`, each arm's reasoning spelled out per decision 7); and
-`tests/rename.rs` 804 → 1196 (eleven new regression tests the plan's own
-WP2.S11 asks for, including the ordering guard for decision 8). None of the
-three was a candidate for splitting mid-refactor — the coherence of the
-change would have suffered more than the ledger does.
+The WP2 focus-chokepoint refactor (title-editing plan) grew `app.rs` and
+`rename.rs` further, both already over budget beforehand: `app.rs` 524 → 588
+(the private `focus` field plus its three writers —
+`focus_title`/`refocus_title`/`set_focus`/`blur_title` — the whole point of
+the change, so splitting them out defeats the "one writer" invariant they
+exist to enforce) and `rename.rs` 632 → 663 (`begin`'s six-way refusal
+enumeration now returns `Commit` instead of `bool`, each arm's reasoning
+spelled out per decision 7). Integrating that work alongside `rr`'s own
+`rename.rs` split (`rename_bind.rs`/`rename_collision.rs`/`rename_replace.rs`)
+pulled `bind_new`/`create_cmd` out into the pre-existing `rename_create.rs`
+sibling, landing `rename.rs` at 523 — still over, but the smallest it has
+been since WP2 started, and not a candidate for a second split mid-merge
+(the `begin`/`apply_outcome`/`replace_confirmed` state-machine drive is one
+coherent unit). `app.rs` stays at 538: the four focus methods are the single
+chokepoint decision 8 exists to create, and splitting them apart would
+recreate the multiple-writer hazard this refactor removes. `tests/rename.rs`'s
+own eleven new regression tests (WP2.S11, including the ordering guard for
+decision 8) were never written into a 1196-line monolith — this integration
+merge relocated them straight into `rr`'s already-split `rename_bind.rs`
+(the read-only-title refusal) and a new sibling `rename_focus.rs` (the
+other ten), both comfortably under the ceiling.
 
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine
 consecutive work packages.
+
+WP2 (`LineDecor` model + emit population, plan "markdown line decoration")
+pushed three more files over or further over the ceiling: `rune-md/src/emit/
+walk.rs` 515 → 539, since brought back under budget by its own later split
+into `walk_inline.rs`; `rune-md/src/emit/mod.rs` 499 → 535 (the new
+`emit_with`/`EmitOut::icons`/`EmitOut::decors` plumbing the 3-arg `emit` now
+wraps); and `rune-syntax/src/syntax.rs` 499 → 505 (the new
+`SyntaxLine::decor` field and its doc comment). New logic went into new
+sibling files (`emit/decor.rs`, `emit/decor_tests.rs`, `rune-syntax/src/
+decor.rs`) per the plan's own instruction; only wire-up lines touched
+`emit/mod.rs` and `syntax.rs`, but that was still enough to cross or extend
+the ceiling, and neither has been split since.
 
 - [ ] Two files landed within a few lines of the ceiling and will breach on the next small edit: `rune-db/src/writer.rs` (497) and `rune-db/src/materialize.rs` (496). Whoever touches either next should take the split rather than squeeze under.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.
@@ -63,4 +93,4 @@ Groomed, verified against the tree, and deliberately not worked — each needs i
 
 ## Closed without action
 
-- **`ticket-hide-cursor-unfocused-editor.md`** — the end goal already holds. `Document::shows_caret()` is the single predicate, `apply_cursor_overlays` early-returns on it (gating the caret *and* the selection highlight together), the fuzz snapshot carries `caret_visible`, the `CUR-NO-CARET-HIDDEN` invariant fails any REVERSED cell rendered while the caret is hidden, and `crates/rune-tui/tests/tui_render.rs` pins all three cases.
+- **`ticket-hide-cursor-unfocused-editor.md`** — the end goal already holds. `Document::shows_caret()` is the single predicate, `apply_cursor_overlays` early-returns on it (gating the caret *and* the selection highlight together), the fuzz snapshot carries `caret_visible`, the `CUR-NO-CARET-HIDDEN` invariant fails any REVERSED cell rendered while the caret is hidden, and `crates/rune-tui/tests/tui_render_focus.rs` pins all three cases.

@@ -10,7 +10,9 @@ use std::time::Duration;
 use rune_syntax::ScopeId;
 
 use crate::document::DocumentId;
+use crate::highlight::FenceLang;
 
+use super::md_fence::markdown_fence_spans;
 use super::{Cmd, CmdKind, HighlightPayload, Msg};
 
 /// The wall-clock budget one fence's `rune_ts::highlight` call is allowed
@@ -90,7 +92,7 @@ pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: 
 /// and `None` iff none did `[R2]` — an all-timed-out document must not
 /// flash to unstyled.
 fn run_fence_highlight(
-    fences: Vec<(&'static str, Vec<Range<usize>>, String)>,
+    fences: Vec<(FenceLang, Vec<Range<usize>>, String)>,
     budget: Duration,
 ) -> Option<rune_ts::HighlightResult> {
     let per_fence_budget = budget / (fences.len().max(1) as u32);
@@ -100,14 +102,27 @@ fn run_fence_highlight(
     // the document's colours are incomplete either way, and the flag says so.
     let mut truncated = false;
     for (lang, lines, text) in fences {
-        let Some(fence) = rune_ts::highlight(lang, &text, per_fence_budget) else {
-            continue;
+        // `FenceLang::Markdown` (plan WP6.S4) reuses the comrak emitter
+        // instead of `rune_ts::highlight` — a synchronous, bounded parse of
+        // the fence's own (typically short) reconstructed text, so it never
+        // needs `per_fence_budget`'s timeout; it can only ever add spans, so
+        // it never trips `truncated` either.
+        let fence_spans = match lang {
+            FenceLang::Ts(lang) => {
+                let Some(fence) = rune_ts::highlight(lang, &text, per_fence_budget) else {
+                    continue;
+                };
+                any_parsed = true;
+                truncated |= fence.truncated;
+                fence.spans
+            }
+            FenceLang::Markdown => {
+                any_parsed = true;
+                markdown_fence_spans(&text)
+            }
         };
-        any_parsed = true;
-        truncated |= fence.truncated;
         spans.extend(
-            fence
-                .spans
+            fence_spans
                 .into_iter()
                 .filter_map(|(r, scope)| map_reconstructed_span(&lines, r).map(|r| (r, scope))),
         );
@@ -116,10 +131,10 @@ fn run_fence_highlight(
     any_parsed.then_some(rune_ts::HighlightResult { spans, truncated })
 }
 
-pub fn fence_highlight_cmd(
+pub(crate) fn fence_highlight_cmd(
     doc: DocumentId,
     version: u64,
-    fences: Vec<(&'static str, Vec<Range<usize>>, String)>,
+    fences: Vec<(FenceLang, Vec<Range<usize>>, String)>,
 ) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
         let result = run_fence_highlight(fences, HIGHLIGHT_BUDGET).map(HighlightPayload::Spans);
