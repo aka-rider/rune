@@ -14,15 +14,27 @@ Twenty-seven files remain over the ceiling. None was introduced by that batch;
 they are the residue of the same long-running debt, listed here so the campaign
 is visible rather than rediscovered file by file.
 
-- [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (804), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
-- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (632), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (524), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
+- [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (1196), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
+- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (663), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (588), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
 
-Two of those grew slightly in this batch and are recorded per the house rule:
-`dispatch.rs` 513 → 527 (the span-cap truncation status branch) and
+Two of those grew slightly in an earlier batch and are recorded per the house
+rule: `dispatch.rs` 513 → 527 (the span-cap truncation status branch) and
 `db_wiring.rs` 875 → 909 (the pending-op sweep regression test). Both were
 already over budget beforehand. `commands/edit_core.rs` did cross the ceiling
 when its no-op-filter tests landed and was split the same day, so it is not on
 the list.
+
+Three more grew in the WP2 focus-chokepoint refactor (title-editing plan),
+all already over budget beforehand: `app.rs` 524 → 588 (the private `focus`
+field plus its three writers — `focus_title`/`refocus_title`/`set_focus`/
+`blur_title` — the whole point of the change, so splitting them out defeats
+the "one writer" invariant they exist to enforce); `rename.rs` 632 → 663
+(`begin`'s six-way refusal enumeration now returns `Commit` instead of
+`bool`, each arm's reasoning spelled out per decision 7); and
+`tests/rename.rs` 804 → 1196 (eleven new regression tests the plan's own
+WP2.S11 asks for, including the ordering guard for decision 8). None of the
+three was a candidate for splitting mid-refactor — the coherence of the
+change would have suffered more than the ledger does.
 
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine

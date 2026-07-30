@@ -86,7 +86,13 @@ pub fn open_path_async(
     let resolved = resolve(app.vfs.as_ref(), path);
 
     if let Some(id) = existing_document_for(app, &resolved) {
+        // Decision 8: blur BEFORE the switch — `switch_to` is about to
+        // reassign `app.active`, and `rename::begin` resolves its subject
+        // from the live `app.active`, so blurring after would rename the
+        // document just reactivated, not the one the user was renaming.
+        app.blur_title(effects);
         switch_to(app, id);
+        app.set_focus(Pane::Editor, effects);
         if let Some(anchor) = anchor {
             crate::navigate::land_anchor(app, id, &anchor);
         }
@@ -105,14 +111,25 @@ pub fn open_path_async(
 /// the same path issued while this read was in flight may have already
 /// opened it by some other route, and inserting again would duplicate the
 /// document rather than reactivating it.
+///
+/// Blurs the title FIRST, unconditionally (decision 8) — this is an async
+/// ack, so the title can genuinely be focused when it lands, and the switch
+/// below (whichever branch reaches it) must never fire against the wrong
+/// document. Only lands focus on the Editor on the paths that actually open
+/// something; a read/decode failure raises the error banner instead and must
+/// not steal the keyboard from wherever it already was.
 pub(crate) fn handle_file_opened(
     app: &mut App,
     path: PathBuf,
     result: Result<Vec<u8>, String>,
     anchor: Option<rune_nav::Anchor>,
+    effects: &mut Effects,
 ) {
+    app.blur_title(effects);
+
     if let Some(id) = existing_document_for(app, &path) {
         switch_to(app, id);
+        app.set_focus(Pane::Editor, effects);
         if let Some(anchor) = anchor {
             crate::navigate::land_anchor(app, id, &anchor);
         }
@@ -129,6 +146,7 @@ pub(crate) fn handle_file_opened(
     let Some(id) = open_bytes(app, &path, bytes) else {
         return;
     };
+    app.set_focus(Pane::Editor, effects);
     if let Some(anchor) = anchor {
         crate::navigate::land_anchor(app, id, &anchor);
     }
@@ -179,19 +197,25 @@ fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
         .map(|(id, _)| *id)
 }
 
-/// Switches the active document to `id` and focuses the editor — the
-/// chokepoint plan WP5.S2 asks for (Open Tabs' `Select`), reused by
-/// `open_path`'s re-activation path above. A no-op if `id` doesn't
-/// reference a live document (a stale id from some racing close). Also
-/// moves — never reorders — the Tabs pane's own cursor to `id`'s position
-/// in `tabs.order`, so the next Up/Down there starts from the tab that's
-/// actually now showing.
+/// Switches the active document to `id` — the chokepoint plan WP5.S2 asks
+/// for (Open Tabs' `Select`), reused by `open_path`'s re-activation path
+/// above. A no-op if `id` doesn't reference a live document (a stale id from
+/// some racing close). Also moves — never reorders — the Tabs pane's own
+/// cursor to `id`'s position in `tabs.order`, so the next Up/Down there
+/// starts from the tab that's actually now showing.
+///
+/// Writes no focus of its own (plan decision 6): this is the one function
+/// that could blur the title without an `Effects` sink, so every caller now
+/// does that itself, in prefix position, BEFORE calling this — `rename::
+/// begin` resolves its subject from the live `app.active`, so blurring
+/// AFTER this assignment would rename the newly-opened document, not the
+/// outgoing one. Every caller then decides separately (and conditionally,
+/// wherever the switch itself can fail) where focus should land afterwards.
 pub fn switch_to(app: &mut App, id: DocumentId) {
     if app.doc(id).is_none() {
         return;
     }
     app.active = id;
-    app.focus = Pane::Editor;
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding
     // the previous document's name (no shadow state).
@@ -309,10 +333,12 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     if app.documents.len() <= 1 || !app.documents.contains_key(&id) {
         return;
     }
+    let mut active_changed = false;
     if app.active == id
         && let Some(neighbor) = neighbor_of(app, id)
     {
         app.active = neighbor;
+        active_changed = true;
     }
     app.documents.remove(&id);
     app.tabs.order.retain(|&t| t != id);
@@ -326,6 +352,20 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     // The rename machine is one more doc-tagged pending slot to sweep
     // (plan's transition table: "any | close_now(doc) | Idle").
     crate::rename::forget_document(app, id);
+
+    // WP2.S8c: `close_now` is the one active-document reseed with no blur in
+    // front of it — reached from an async materialize ack
+    // (`materialize_ack::close_if_pending`) and from the Guard's `[D]iscard`,
+    // neither of which threads an `Effects` here. Guarded twice: only when
+    // the active document actually just changed (the branch above), and only
+    // when the title isn't currently focused — an async close landing for
+    // the very document being renamed must never silently overwrite the
+    // typed name (or, after WP3, discard its undo history) out from under
+    // the user.
+    if active_changed && app.focus() != Pane::Title {
+        let stem = crate::title::stem_for(app.active_doc());
+        app.title.seed(&stem);
+    }
 
     app.tabs.nav.cursor = app
         .tabs
@@ -375,7 +415,7 @@ mod tests {
         open_path(&mut app, Path::new("/root/a.md"));
 
         assert_eq!(app.documents.len(), before + 1);
-        assert_eq!(app.focus, Pane::Editor);
+        assert_eq!(app.focus(), Pane::Editor);
         assert_eq!(
             app.active_doc().file_path.as_deref(),
             Some(Path::new("/root/a.md"))
@@ -392,13 +432,15 @@ mod tests {
         let after_first_open = app.documents.len();
         let first_active = app.active;
 
-        // Switch focus elsewhere so re-activation is actually observable.
-        app.focus = Pane::Explorer;
+        // `open_path` itself no longer moves focus (plan WP2 decision 6:
+        // `switch_to` lost that write, and this function has no `Effects`
+        // sink to run `App::set_focus` through) — this test's own re-
+        // activation contract is `documents.len()`/`active` staying put, not
+        // a focus assertion this change removes (plan gotcha 7).
         open_path(&mut app, Path::new("/root/a.md"));
 
         assert_eq!(app.documents.len(), after_first_open, "must not duplicate");
         assert_eq!(app.active, first_active);
-        assert_eq!(app.focus, Pane::Editor);
     }
 
     #[test]

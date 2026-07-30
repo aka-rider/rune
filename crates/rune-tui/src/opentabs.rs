@@ -18,6 +18,7 @@ use crate::document::DocumentId;
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::listnav;
 use crate::pane::Pane;
+use crate::runtime::Effects;
 use crate::width::{display_width, truncate_to_width};
 use crate::workspace;
 
@@ -84,22 +85,29 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
-/// `app.focus == Pane::Tabs`. Unlike `explorer_keys::handle_key`, no arm here
-/// ever needs `Effects`: `Select` is a same-tick direct call
-/// (`workspace::switch_to`, decision 10). Closing the active document now
-/// resolves at the global pipeline stage (`GlobalCommand::CloseFile`)
-/// instead of here, so it works from any pane, not just this one — a dirty
-/// tab's eventual save-then-close I/O is triggered later, from the Guard
-/// modal's OWN stage-1 key handling (`banner::handle_key`), which already
-/// carries its own `Effects`.
-pub fn handle_key(app: &mut App, key: KeyInput) -> KeyOutcome {
+/// `app.focus() == Pane::Tabs`. `Select` now needs `Effects` (WP2.S8):
+/// blurs the title BEFORE the switch — `switch_to` reassigns `app.active`,
+/// and `rename::begin` resolves its subject from the live `app.active`, so
+/// blurring after would rename the tab just switched TO, not the one being
+/// renamed — then lands focus on the Editor unconditionally, since the
+/// target tab already exists (nothing here can fail). Closing the active
+/// document resolves at the global pipeline stage (`GlobalCommand::
+/// CloseFile`) instead of here, so it works from any pane, not just this
+/// one — a dirty tab's eventual save-then-close I/O is triggered later,
+/// from the Guard modal's OWN stage-1 key handling (`banner::handle_key`),
+/// which already carries its own `Effects`.
+pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     let Some(cmd) = resolve_in(TABS_BINDINGS, key) else {
         return KeyOutcome::Ignored;
     };
     match cmd {
         TabsCommand::Up => move_selection(app, -1),
         TabsCommand::Down => move_selection(app, 1),
-        TabsCommand::Select => workspace::switch_to_index(app, app.tabs.nav.cursor),
+        TabsCommand::Select => {
+            app.blur_title(effects);
+            workspace::switch_to_index(app, app.tabs.nav.cursor);
+            app.set_focus(Pane::Editor, effects);
+        }
     }
     KeyOutcome::Consumed
 }
@@ -141,7 +149,7 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
     if area.width == 0 || area.height == 0 {
         return;
     }
-    let style = if app.focus == Pane::Tabs {
+    let style = if app.focus() == Pane::Tabs {
         app.theme.chrome.active_border
     } else {
         app.theme.chrome.tabs_divider
@@ -181,7 +189,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         .window(app.tabs.order.len(), area.height as usize);
     let start = window.start;
     let visible = app.tabs.order.get(window).unwrap_or(&[]);
-    let show_cursor = app.focus == Pane::Tabs;
+    let show_cursor = app.focus() == Pane::Tabs;
 
     for (i, &id) in visible.iter().enumerate() {
         let idx = start + i;
@@ -297,7 +305,8 @@ mod tests {
             code: KeyCode::Up,
             mods: Mods::NONE,
         };
-        assert_eq!(handle_key(&mut app, up), KeyOutcome::Consumed);
+        let mut effects = Effects::default();
+        assert_eq!(handle_key(&mut app, up, &mut effects), KeyOutcome::Consumed);
         assert_eq!(app.tabs.nav.cursor, 0, "clamped at the top");
 
         let down = KeyInput {
@@ -305,7 +314,10 @@ mod tests {
             mods: Mods::NONE,
         };
         for _ in 0..10 {
-            assert_eq!(handle_key(&mut app, down), KeyOutcome::Consumed);
+            assert_eq!(
+                handle_key(&mut app, down, &mut effects),
+                KeyOutcome::Consumed
+            );
         }
         assert_eq!(app.tabs.nav.cursor, 2, "clamped at the bottom");
     }
@@ -316,16 +328,18 @@ mod tests {
         let second = app.open_document(Buffer::new("b"));
         app.tabs.nav.cursor = 1;
 
+        let mut effects = Effects::default();
         let outcome = handle_key(
             &mut app,
             KeyInput {
                 code: KeyCode::Enter,
                 mods: Mods::NONE,
             },
+            &mut effects,
         );
 
         assert_eq!(outcome, KeyOutcome::Consumed);
         assert_eq!(app.active, second);
-        assert_eq!(app.focus, Pane::Editor);
+        assert_eq!(app.focus(), Pane::Editor);
     }
 }

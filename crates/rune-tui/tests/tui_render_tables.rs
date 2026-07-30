@@ -23,6 +23,7 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_tui::app::App;
 use rune_tui::pane::Pane;
+use rune_tui::runtime::Effects;
 use rune_tui::testgrid;
 use rune_vfs::Mem;
 
@@ -41,7 +42,7 @@ const EDITOR_LEFT_COL: usize = 1;
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     if !focused {
-        app.focus = Pane::Explorer;
+        app.set_focus(Pane::Explorer, &mut Effects::default());
     }
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));

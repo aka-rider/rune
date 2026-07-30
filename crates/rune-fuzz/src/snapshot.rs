@@ -160,7 +160,7 @@ impl Snapshot {
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
             status: footer::footer_text(app),
-            focus: app.focus,
+            focus: app.focus(),
             modal_open: app.modal.is_some(),
             active: app.active,
             read_only: doc.read_only,

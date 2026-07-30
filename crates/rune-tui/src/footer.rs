@@ -185,7 +185,7 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
         .map(|b| (global::leader_label(b), b.help, true))
         .collect();
 
-    if app.focus == Pane::Editor
+    if app.focus() == Pane::Editor
         && let Some(save) = GLOBAL_BINDINGS
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
@@ -200,7 +200,7 @@ fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
             .map(|b| (b.label(), b.help, true)),
     );
 
-    match app.focus {
+    match app.focus() {
         Pane::Explorer => {
             entries.extend(EXPLORER_BINDINGS.iter().map(|b| (b.label(), b.help, true)))
         }
@@ -356,7 +356,7 @@ mod tests {
         // full table would still pass even if the alias filter broke — this
         // must walk only `!b.alias` entries to actually test that filter.
         let app = app_with("hello");
-        assert_eq!(app.focus, Pane::Editor);
+        assert_eq!(app.focus(), Pane::Editor);
         let text = footer_text(&app);
         for binding in GLOBAL_BINDINGS.iter().filter(|b| !b.alias) {
             assert!(
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn explorer_focus_shows_its_own_keys_and_omits_save() {
         let mut app = app_with("hello");
-        app.focus = Pane::Explorer;
+        app.set_focus(Pane::Explorer, &mut crate::runtime::Effects::default());
         let text = footer_text(&app);
         assert!(text.contains("up dir"), "footer text: {text:?}");
         assert!(!text.contains("save"), "footer text: {text:?}");
@@ -382,7 +382,7 @@ mod tests {
     #[test]
     fn tabs_focus_shows_its_own_keys() {
         let mut app = app_with("hello");
-        app.focus = Pane::Tabs;
+        app.set_focus(Pane::Tabs, &mut crate::runtime::Effects::default());
         let text = footer_text(&app);
         assert!(text.contains("close"), "footer text: {text:?}");
     }

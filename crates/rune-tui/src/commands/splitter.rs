@@ -11,6 +11,7 @@ use crate::app::App;
 use crate::layout;
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseInput, Splitter};
+use crate::runtime::Effects;
 
 /// Whether `(col, row)` lands inside `rect`, saturating so a rect pinned at
 /// the frame's far edge never wraps.
@@ -79,7 +80,7 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
 /// it. Without that handoff, keystrokes keep routing to a pane with no
 /// on-screen presence: both `visible_rows` helpers `.max(1)`, so they
 /// report a visible row for a zero-height rect and hide the problem.
-pub fn drag(app: &mut App, input: MouseInput) {
+pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let Some(Drag::Splitter { which, grab_delta }) = app.pointer.drag else {
         return;
     };
@@ -103,9 +104,9 @@ pub fn drag(app: &mut App, input: MouseInput) {
     }
 
     let geo = layout::geometry(area, app);
-    let explorer_just_collapsed = app.focus == Pane::Explorer && geo.explorer_inner.height == 0;
-    let tabs_just_collapsed = app.focus == Pane::Tabs && geo.tabs_divider.is_none();
+    let explorer_just_collapsed = app.focus() == Pane::Explorer && geo.explorer_inner.height == 0;
+    let tabs_just_collapsed = app.focus() == Pane::Tabs && geo.tabs_divider.is_none();
     if explorer_just_collapsed || tabs_just_collapsed {
-        app.focus = Pane::Editor;
+        app.set_focus(Pane::Editor, effects);
     }
 }

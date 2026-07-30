@@ -90,7 +90,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         // `Document::bind_path` (routed through by both `bind_to` and
         // `handle_materialize_ack` below) is what actually switches the
         // title off the placeholder once the file exists.
-        crate::pane::focus_title(app);
+        app.focus_title();
         app.set_status(
             "name this document to save it \u{2014} press Enter when done",
             StatusSource::Other,

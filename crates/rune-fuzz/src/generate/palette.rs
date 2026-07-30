@@ -454,7 +454,7 @@ pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
 /// `^e` (`GlobalCommand::FocusEditor`) — fires at stage 2, regardless of
 /// which pane currently has focus (`pane::handle_global_command`'s own
 /// docs: "every `GlobalCommand` fires regardless of which pane"), so this
-/// unconditionally lands `app.focus == Pane::Editor` once any modal is
+/// unconditionally lands `app.focus() == Pane::Editor` once any modal is
 /// already cleared. The other half of `restore_editor_focus`'s two-key
 /// sequence, alongside `ESCAPE_KEY`.
 pub(super) const CTRL_E_KEY: KeyInput = KeyInput {

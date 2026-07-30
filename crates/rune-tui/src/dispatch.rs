@@ -87,7 +87,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             path,
             result,
             anchor,
-        } => crate::workspace::handle_file_opened(app, path, result, anchor),
+        } => crate::workspace::handle_file_opened(app, path, result, anchor, effects),
         Msg::Highlighted {
             doc,
             version,
@@ -369,16 +369,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
     // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
     // here rather than threaded anywhere further.
-    let _ = match app.focus {
+    let _ = match app.focus() {
         Pane::Editor => handle_editor_key(app, key, effects),
         Pane::Explorer => explorer_keys::handle_key(app, key, effects),
-        Pane::Tabs => opentabs::handle_key(app, key),
+        Pane::Tabs => opentabs::handle_key(app, key, effects),
         Pane::Title => crate::title::handle_key(app, key, effects),
     };
 }
 
 /// The editor pane's own key handling — the pre-WP2 `handle_key` body,
-/// reached only when `app.focus == Pane::Editor`. `Save`/`QuitConfirm` stay
+/// reached only when `app.focus() == Pane::Editor`. `Save`/`QuitConfirm` stay
 /// reachable here too, though stage 2 above always intercepts those first.
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
     // Hardcoded fast paths outside the resolver, exactly as Go
@@ -429,7 +429,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         // cursor move.
         Command::LineUp => {
             if at_buffer_top(app) {
-                pane::focus_title(app);
+                app.focus_title();
             } else {
                 nav_scroll::line_up(app.active_doc_mut(), false);
             }

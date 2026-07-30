@@ -84,7 +84,7 @@ fn ctrl_b_populates_the_explorer_via_dir_loaded() {
     load_explorer(&mut app);
 
     assert!(app.splits.left.is_shown());
-    assert_eq!(app.focus, Pane::Explorer);
+    assert_eq!(app.focus(), Pane::Explorer);
     assert!(!app.explorer.loading);
     assert_eq!(app.explorer.root, PathBuf::from("/root"));
 
@@ -144,7 +144,7 @@ fn enter_on_a_file_opens_a_second_document_and_focuses_editor() {
 
     assert_eq!(outcome, KeyOutcome::Consumed);
     assert_eq!(app.documents.len(), before_docs + 1);
-    assert_eq!(app.focus, Pane::Editor);
+    assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(
         app.active_doc().file_path.as_deref(),
         Some(Path::new("/root/b.md"))
@@ -450,13 +450,16 @@ fn open_path_on_an_already_open_document_reactivates_instead_of_duplicating() {
     let mut app = app_with(&mem);
     let before = app.documents.len();
     let first_active = app.active;
-    app.focus = Pane::Explorer;
 
+    // `open_path` itself no longer moves focus (plan WP2 decision 6:
+    // `switch_to` lost that write, and this function has no `Effects` sink
+    // to run `App::set_focus` through) — this test's own re-activation
+    // contract is `documents.len()`/`active` staying put, not a focus
+    // assertion this change removes (plan gotcha 7).
     workspace::open_path(&mut app, Path::new("/root/a.md"));
 
     assert_eq!(app.documents.len(), before, "must not duplicate");
     assert_eq!(app.active, first_active);
-    assert_eq!(app.focus, Pane::Editor);
 }
 
 /// The launch-mode gap the "Explorer visible on untitled launch" work left

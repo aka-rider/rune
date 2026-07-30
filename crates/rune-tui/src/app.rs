@@ -66,7 +66,11 @@ pub struct App {
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
     /// doesn't claim it (decision 7/8, `pane.rs`) — defaults to `Editor`.
-    pub focus: Pane,
+    /// Private: exactly three functions may change it — `focus_title`/
+    /// `refocus_title` (entering the title, below) and `set_focus` (every
+    /// other transition, below) — so leaving the title always runs through
+    /// the one commit chokepoint (`title::on_blur`). Read through `focus()`.
+    focus: Pane,
     /// The draggable splitter positions sizing the left column and its
     /// Explorer/Tabs division (decision 7); starts hidden.
     pub splits: crate::layout::Splits,
@@ -108,7 +112,7 @@ pub struct App {
     pub help_return_to: Option<DocumentId>,
     /// The editable title field (`title.rs`) — the file name a rename types
     /// into. Reseeded at every document switch (`workspace::switch_to`) and
-    /// at every focus gain (`pane::focus_title`), so it always describes
+    /// at every focus gain (`App::focus_title`), so it always describes
     /// the document actually showing. Unjournaled (§12).
     pub title: crate::title::TitleField,
     /// The rename workflow's state (`rename.rs`) — a typed machine rather
@@ -478,6 +482,66 @@ impl App {
     /// are available.
     pub fn set_root(&mut self, root: PathBuf) {
         self.root = root;
+    }
+
+    /// Which chrome region owns the next keystroke — the sole read of
+    /// `focus` from outside this module.
+    pub fn focus(&self) -> Pane {
+        self.focus
+    }
+
+    /// Gains title focus, reseeding the field from the active document's own
+    /// name and landing the cursor at the end. Needs no `Effects`: entering
+    /// the title can never itself leave it, so there is nothing to commit on
+    /// the way in. Refuses on a read-only document — there is nothing to
+    /// rename, and under decision 7 a refusal there would otherwise hold
+    /// focus hostage in a field that can never commit (the Help document is
+    /// the case this removes rather than guards against).
+    pub fn focus_title(&mut self) {
+        if self.active_doc().read_only {
+            self.set_status("this document is read-only", StatusSource::Other);
+            return;
+        }
+        let stem = crate::title::stem_for(self.active_doc());
+        self.title.seed(&stem);
+        self.focus = Pane::Title;
+    }
+
+    /// Returns to the title WITHOUT reseeding — the failed-rename/dismissed-
+    /// collision path, where the field already holds what the user typed and
+    /// reseeding would resurrect the old name and discard their in-progress
+    /// undo history.
+    pub fn refocus_title(&mut self) {
+        self.focus = Pane::Title;
+    }
+
+    /// The one writer for every focus transition OTHER than gaining the
+    /// title (`focus_title`/`refocus_title` above). Leaving the title runs
+    /// `title::on_blur` first: a `Refused` commit vetoes the transition
+    /// (focus stays put, the reason is already in the footer) but the caller
+    /// is never blocked from doing whatever it was about to do next —
+    /// decision 7 is what makes a repeated, idempotent blur safe here.
+    pub fn set_focus(&mut self, next: Pane, effects: &mut crate::runtime::Effects) {
+        if self.focus == next {
+            return;
+        }
+        if self.focus == Pane::Title
+            && crate::title::on_blur(self, effects) == crate::rename::Commit::Refused
+        {
+            return;
+        }
+        self.focus = next;
+    }
+
+    /// The blur chokepoint in PREFIX position (decision 8's one spelling):
+    /// every site that changes the active document calls this BEFORE the
+    /// switch, then decides separately (and conditionally, wherever the
+    /// switch itself can fail) where focus should land afterwards. A no-op
+    /// unless the title actually holds focus.
+    pub fn blur_title(&mut self, effects: &mut crate::runtime::Effects) {
+        if self.focus == Pane::Title {
+            self.set_focus(Pane::Editor, effects);
+        }
     }
 }
 

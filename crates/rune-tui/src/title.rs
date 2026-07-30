@@ -3,7 +3,7 @@
 //!
 //! Two rendering modes, one function:
 //!
-//! - **Unfocused** (`app.focus != Pane::Title`): `Document::file_name()`
+//! - **Unfocused** (`app.focus() != Pane::Title`): `Document::file_name()`
 //!   plus ` •` when dirty. Unchanged, a pure function of `&App`.
 //! - **Focused**: [`TitleField`]'s own `text` with a block cursor. The field
 //!   holds the file's **stem**, not its full name — Go's title does the
@@ -169,12 +169,18 @@ pub fn is_valid_stem(name: &str) -> bool {
 /// insert after filtering. Anything else is a consumed no-op.
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     match key.code {
+        // Enter/Down do nothing but move focus — the blur commits (decision
+        // 4: DRY, one commit chokepoint). Matches ANY modifiers, exactly as
+        // before: ⌘Enter and ⇧Down commit too.
         KeyCode::Enter | KeyCode::Down => {
-            commit(app, effects);
+            app.set_focus(Pane::Editor, effects);
         }
+        // Escape reverts FIRST, then releases focus — reversed, it would
+        // commit the abandoned name, and it is what keeps Escape an
+        // unconditional exit even when `on_blur` would otherwise veto.
         KeyCode::Escape => {
             app.title.revert();
-            app.focus = Pane::Editor;
+            app.set_focus(Pane::Editor, effects);
         }
         KeyCode::Left => {
             if let Some(prev) = app.title.prev_boundary() {
@@ -204,32 +210,26 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     KeyOutcome::Consumed
 }
 
-/// Commits the typed name if the title is focused, then returns focus to
-/// the editor. `pane::handle_global_command` calls this as its FIRST
-/// statement — one hoisted gate, so ⌘S (or any other global chord) pressed
-/// mid-rename commits the name first rather than saving under the old one
-/// or silently discarding the edit.
-pub fn finalize_if_focused(app: &mut App, effects: &mut Effects) {
-    if app.focus == Pane::Title {
-        commit(app, effects);
-    }
-}
-
-/// A commit with an unchanged name is a plain refocus, never a rename of a
-/// file onto its own path.
+/// The single commit chokepoint (decision 4/8): whether the title may
+/// release focus. Called from exactly one place, `App::set_focus`, whenever
+/// the title currently holds focus and something else wants it — every
+/// site that changes the active document, every chrome-focus command, and
+/// the hoisted gate in `pane::handle_global_command` all reach this
+/// indirectly through `set_focus`/`blur_title`, never directly.
 ///
+/// A commit with an unchanged name is `Accepted` outright — a plain
+/// refocus, never a rename of a file onto its own path. Otherwise
 /// `rename::begin` decides every refusal (read-only, a save in flight, an
 /// invalid name, a rename already in progress) and owns the whole workflow
 /// from here. `committed` is deliberately NOT advanced on the way out: it
 /// is the name the file actually has, and it moves only once a rename has
 /// really landed (`rename::bind_to` reseeds the field). Advancing it
 /// optimistically here would make `Esc` revert to a name no file has.
-fn commit(app: &mut App, effects: &mut Effects) {
+pub fn on_blur(app: &mut App, effects: &mut Effects) -> rename::Commit {
     if app.title.text == app.title.committed {
-        app.focus = Pane::Editor;
-        return;
+        return rename::Commit::Accepted;
     }
-    rename::begin(app, effects);
+    rename::begin(app, effects)
 }
 
 /// Renders `<name>` (styled `theme.chrome.title_text`) followed by ` •`
@@ -238,7 +238,7 @@ fn commit(app: &mut App, effects: &mut Effects) {
 /// modes: it reads `app.active_doc()`/`app.title` fresh every call and
 /// caches nothing, so drawing twice produces identical output.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
-    let spans = if app.focus == Pane::Title {
+    let spans = if app.focus() == Pane::Title {
         field_spans(&app.title, &app.theme)
     } else {
         let doc = app.active_doc();
@@ -326,7 +326,7 @@ mod tests {
     fn focused_field_renders_the_typed_text() {
         let mut app = app_for("hello");
         app.title.seed("notes");
-        app.focus = Pane::Title;
+        app.refocus_title();
         assert!(draw_line(&app, 40).starts_with("notes"));
     }
 
@@ -335,7 +335,7 @@ mod tests {
     fn drawing_a_focused_field_twice_is_identical() {
         let mut app = app_for("hello");
         app.title.seed("notes");
-        app.focus = Pane::Title;
+        app.refocus_title();
         assert_eq!(draw_line(&app, 40), draw_line(&app, 40));
     }
 

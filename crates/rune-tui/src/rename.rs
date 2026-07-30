@@ -63,7 +63,6 @@ use rune_vfs::{Stat, Vfs};
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
-use crate::pane::Pane;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::title;
 
@@ -137,6 +136,16 @@ impl RenameState {
     }
 }
 
+/// Whether the title may release focus. `Refused` keeps the user in the
+/// field with the reason already in the footer (decision 7); the caller is
+/// never blocked from proceeding regardless of which variant comes back —
+/// only the FOCUS transition is vetoed, never the command that asked for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Commit {
+    Accepted,
+    Refused,
+}
+
 /// Whether `[R]eplace` can be offered: it needs a durable store to capture
 /// the displaced bytes into BEFORE they are destroyed (§1.4.10). A
 /// degraded store still counts — it is a live, if untrusted, connection,
@@ -172,25 +181,39 @@ fn display_name(path: &Path) -> String {
 
 /// Starts a rename of `app.active` to the title field's typed stem.
 ///
-/// Returns whether a rename was actually started. Every refusal below
-/// leaves the state `Idle`, the buffer byte-identical, `file_path`
-/// unchanged, and the journal untouched — a refused rename must be
-/// indistinguishable from never having asked.
-pub fn begin(app: &mut App, effects: &mut Effects) -> bool {
+/// Returns whether the title may now release focus (`Commit`) — NOT whether
+/// a rename was actually started: the draft-create route, an unchanged
+/// name, a successful enqueue, and an enqueue failure that has already been
+/// reported through `on_store_failure` all return `Accepted`, because none
+/// of them leaves the user needing to fix anything in the field. Every
+/// `Refused` path's SOLE side effect is `app.set_status` (decision 7) — that
+/// is what makes a refused blur running this twice in one keystroke
+/// harmless, since the second run just re-reports the same status. Every
+/// refusal below leaves the state `Idle`, the buffer byte-identical,
+/// `file_path` unchanged, and the journal untouched — a refused rename must
+/// be indistinguishable from never having asked. Focus itself is never
+/// written here: the caller (`App::set_focus`) decides where it lands once
+/// it has this verdict.
+pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // A second commit while one is in flight is refused, never queued: the
     // in-flight op captured its own `from`, and letting a second one race
     // it would mean two ops disagreeing about where the file is.
     if app.rename.in_flight() {
         app.set_status("a rename is already in progress", StatusSource::Other);
-        return false;
+        return Commit::Refused;
     }
 
     let id = app.active;
-    let Some(doc) = app.doc(id) else { return false };
+    // No status is set on this branch — `app.active` naming a document that
+    // isn't there is unreachable in practice, and `Refused` here would trap
+    // the user in the title with an empty footer and no way to learn why.
+    let Some(doc) = app.doc(id) else {
+        return Commit::Accepted;
+    };
 
     if doc.read_only {
         app.set_status("this document is read-only", StatusSource::Other);
-        return false;
+        return Commit::Refused;
     }
     // The no-store `save_cmd` captures `path` in its closure and would
     // republish at the OLD name after the rename landed — a save that
@@ -200,13 +223,13 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> bool {
             "can't rename while a save is in flight",
             StatusSource::Other,
         );
-        return false;
+        return Commit::Refused;
     }
 
     let typed = app.title.text.clone();
     if !title::is_valid_stem(&typed) {
         app.set_status("that name can't be used for a file", StatusSource::Other);
-        return false;
+        return Commit::Refused;
     }
 
     // A pathless draft is a CREATE, not a rename: `materialize`'s bind-new
@@ -215,29 +238,27 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> bool {
     // have never observed — §1.4.7 forbids it (no CAS baseline exists).
     let Some(from) = doc.file_path.clone() else {
         bind_new(app, id, &typed, effects);
-        return false;
+        return Commit::Accepted;
     };
 
     let to = target_path(&from, &typed);
     if to == from {
-        app.focus = Pane::Editor;
-        return false;
+        return Commit::Accepted;
     }
 
-    let ticket = enqueue_rename(app, id, &from, &to, effects);
-    match ticket {
-        Some(ticket) => {
-            app.rename = RenameState::Committing {
-                doc: id,
-                from,
-                to,
-                ticket,
-            };
-            app.focus = Pane::Editor;
-            true
-        }
-        None => false,
+    // A `None` ticket means the store already reported the failure through
+    // `on_store_failure` — a `Refused` here would let a doubled blur report
+    // the same failure twice for no benefit; nothing about the TITLE itself
+    // was wrong, so this still returns `Accepted`.
+    if let Some(ticket) = enqueue_rename(app, id, &from, &to, effects) {
+        app.rename = RenameState::Committing {
+            doc: id,
+            from,
+            to,
+            ticket,
+        };
     }
+    Commit::Accepted
 }
 
 /// `<parent-of-from>/<stem>.md` — the rename stays in the file's own
@@ -386,7 +407,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
             // buffer has no CAS baseline against a file we never observed).
             if from.as_os_str().is_empty() {
                 draft_collision_refusal(app, &to);
-                refocus_title_with_typed(app, &to);
+                return_to_title(app);
                 return;
             }
             // Enter `Collision` ONLY if the prompt is really on screen: an
@@ -430,17 +451,22 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                 app,
                 format!("could not {what} {}: {e}", display_name(&from)),
             );
-            refocus_title_with_typed(app, &to);
+            return_to_title(app);
         }
     }
 }
 
-/// Binds `doc_id` to its new path and refocuses the editor. Dirty state and
-/// `saved_version` are deliberately **unchanged**: §1.4.2 names the only two
-/// acts that touch the destination (⌘S, save-on-close) and a rename is
-/// neither, so a dirty document renames and stays dirty. §1.4.6 keys
-/// history to inode+device, which `renamex_np` preserves, so nothing is
-/// orphaned.
+/// Binds `doc_id` to its new path. Dirty state and `saved_version` are
+/// deliberately **unchanged**: §1.4.2 names the only two acts that touch the
+/// destination (⌘S, save-on-close) and a rename is neither, so a dirty
+/// document renames and stays dirty. §1.4.6 keys history to inode+device,
+/// which `renamex_np` preserves, so nothing is orphaned.
+///
+/// Writes no focus of its own: this ack lands strictly after the blur that
+/// fired the rename already moved focus off the title (`App::set_focus`'s
+/// `next` is always the Editor on every path that can reach `begin`, and
+/// this reply arrives later than that synchronous transition), so there is
+/// nothing left for this function to move.
 fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) {
     if let Some(doc) = app.doc_mut(doc_id) {
         doc.bind_path(to.to_path_buf());
@@ -449,24 +475,28 @@ fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) 
         let stem = app.doc(doc_id).map(title::stem_for).unwrap_or_default();
         app.title.seed(&stem);
     }
-    app.focus = Pane::Editor;
     crate::explorer::refresh_for(app, to, effects);
 }
 
-/// A failed rename returns the user to the field holding what they TYPED —
-/// never the old committed name. The typed name is the thing worth keeping;
-/// the old one is one `Esc` away.
-fn refocus_title_with_typed(app: &mut App, to: &Path) {
-    let typed = to
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    app.title.set_text(&typed);
-    app.focus = Pane::Title;
+/// A failed rename (or a dismissed collision prompt) returns the user to the
+/// title field holding what they TYPED — never the old committed name.
+/// Per gotcha 1: the field already holds the typed name on every failure
+/// path (the only production reseeders are `switch_to`, `focus_title`,
+/// `bind_to` and `handle_materialize_ack`, and the last two run on success
+/// only), so this needs a focus change and nothing else — reseeding here
+/// would resurrect the old name and discard the undo history the user just
+/// built.
+fn return_to_title(app: &mut App) {
+    app.refocus_title();
 }
 
 /// `[R]eplace` was pressed and allowed. Clears the prompt, mints a fresh
 /// ticket, and enqueues the one non-cancellable capture-then-swap op.
+///
+/// Writes no focus of its own — same reasoning as `bind_to`: by the time the
+/// Collision Guard is even reachable, the blur that fired the original
+/// commit already moved focus to the Editor, so there is nothing left here
+/// to move.
 pub fn replace_confirmed(app: &mut App) {
     let RenameState::Collision {
         doc,
@@ -497,7 +527,6 @@ pub fn replace_confirmed(app: &mut App) {
                 ticket: Ticket::Db(op_id),
             };
             banner::clear_modal(app);
-            app.focus = Pane::Editor;
         }
         Err(e) => {
             app.rename = RenameState::Idle;
@@ -515,11 +544,11 @@ pub fn replace_confirmed(app: &mut App) {
 /// Returns the user to the title field with the name they typed still in
 /// it, so a cancelled collision is one keystroke from a different name.
 pub fn on_prompt_dismissed(app: &mut App) {
-    let RenameState::Collision { to, .. } = app.rename.clone() else {
+    if !matches!(app.rename, RenameState::Collision { .. }) {
         return;
-    };
+    }
     app.rename = RenameState::Idle;
-    refocus_title_with_typed(app, &to);
+    return_to_title(app);
 }
 
 /// Clears the machine when `doc` is closed out from under it
@@ -548,6 +577,10 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
 /// refusal, **never** a `RenameCollision` guard: offering `[R]eplace` here
 /// would overwrite a foreign file with a buffer that has no CAS baseline
 /// (§1.4.7).
+///
+/// Writes no focus of its own: `begin` (the only caller) always runs inside
+/// `App::set_focus`'s blur of the title to the Editor, which assigns the
+/// focus itself once this returns — see that function's docs.
 fn bind_new(app: &mut App, id: DocumentId, stem: &str, effects: &mut Effects) {
     let dir = crate::explorer::initial_root(app);
     let path = dir.join(format!("{stem}.{}", title::MARKDOWN_EXT));
@@ -558,7 +591,6 @@ fn bind_new(app: &mut App, id: DocumentId, stem: &str, effects: &mut Effects) {
         // winner's bytes. `save::trigger_save` cannot be reused — it reads
         // `doc.file_path`, which is exactly what does not exist yet.
         crate::save::bind_new_now(app, id, path);
-        app.focus = Pane::Editor;
         return;
     }
 
@@ -583,7 +615,6 @@ fn bind_new(app: &mut App, id: DocumentId, stem: &str, effects: &mut Effects) {
         to: path_for_state,
         ticket: Ticket::Cmd(generation),
     };
-    app.focus = Pane::Editor;
 }
 
 /// The no-store draft-create `Cmd`: durable temp write, then a no-clobber
