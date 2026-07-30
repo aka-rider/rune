@@ -219,6 +219,23 @@ fn left_pane_hidden_by_default_leaves_editor_geometry_unchanged() {
     );
 }
 
+/// The two `App` constructors are the launch-mode seam for the left
+/// column's initial visibility: `App::new_untitled` (no file argument) shows
+/// it so the user has somewhere to navigate from, while `App::new` (a file
+/// argument, exercised here through `app_for`) leaves it hidden so the
+/// editor gets the full width for the document the user asked to open.
+#[test]
+fn an_untitled_app_starts_with_the_left_column_visible() {
+    let app = App::new_untitled(Arc::new(Mem::new()));
+    assert!(app.splits.left.is_shown());
+}
+
+#[test]
+fn a_file_backed_app_starts_with_the_left_column_hidden() {
+    let app = app_for("hello");
+    assert!(!app.splits.left.is_shown());
+}
+
 /// `^b` end-to-end through the real `app::update`: shows the left column,
 /// focuses the Explorer, and the very next render shows the bordered
 /// blocks (plan WP5.S1: `^b` is the always-works ctrl fallback for the

@@ -324,9 +324,16 @@ impl App {
     /// Always opens with `db: None` — a brand-new document has no
     /// `documents` row for `rune-db` to hydrate yet (see `crates/rune-tui/
     /// TODO.md`, "no recovery journal for the default untitled document").
+    ///
+    /// Also shows the left column: launched with no file to edit, the user
+    /// needs somewhere to navigate from, so the Explorer/Open Tabs pane
+    /// starts visible. A launch that names a file goes through `App::new`
+    /// directly and keeps the default hidden left column instead, so the
+    /// editor gets the full width for the document the user asked for.
     pub fn new_untitled(vfs: Arc<dyn Vfs + Send + Sync>) -> App {
         let mut app = App::new(Buffer::new(""), None, vfs, None);
         app.active_doc_mut().display_name = Some("Untitled 1".to_string());
+        app.splits.left.show();
         app
     }
 
