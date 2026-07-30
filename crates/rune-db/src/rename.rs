@@ -56,8 +56,9 @@ use std::time::SystemTime;
 use rune_vfs::{Stat, Vfs};
 
 use crate::Error;
-use crate::materialize::{DocSession, Rebind, rebind_document_tx};
+use crate::materialize::DocSession;
 use crate::observation::{self, Observation, ObserveInput};
+use crate::rebind::{Rebind, rebind_document_tx};
 use crate::retry;
 
 /// The outcome of `rename_bind` / `rename_replace`.

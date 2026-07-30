@@ -132,11 +132,11 @@ fn open_path_by_inode(
         }
         Some((row_id, row_path)) => {
             if row_path != path {
-                // Both statements route through `materialize`'s eviction/
+                // Both statements route through `rebind`'s eviction/
                 // rebind chokepoints — the same two this module's own
                 // divergent copies used to drift from ([rune-db 13]).
-                crate::materialize::evict_path_claim_tx(tx, path, row_id)?;
-                crate::materialize::set_identity_tx(
+                crate::rebind::evict_path_claim_tx(tx, path, row_id)?;
+                crate::rebind::set_identity_tx(
                     tx,
                     row_id,
                     path,
