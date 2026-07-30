@@ -87,7 +87,11 @@ pub fn attach(decor: Option<&LineDecor>, is_first_segment: bool, width: usize) -
         .pieces
         .iter()
         .map(|p| SegDecorPiece {
-            text: if is_first_segment { p.first.clone() } else { p.cont.clone() },
+            text: if is_first_segment {
+                p.first.clone()
+            } else {
+                p.cont.clone()
+            },
             scope: p.scope,
         })
         .collect();
@@ -108,7 +112,11 @@ fn clamp_to_width(decor: &LineDecor, is_first_segment: bool, width: usize) -> Se
         if remaining == 0 {
             break;
         }
-        let raw = if is_first_segment { &piece.first } else { &piece.cont };
+        let raw = if is_first_segment {
+            &piece.first
+        } else {
+            &piece.cont
+        };
         let (clamped, used) = clamp_text_to_cells(raw, remaining);
         if used > 0 {
             pieces.push(SegDecorPiece {
@@ -119,7 +127,10 @@ fn clamp_to_width(decor: &LineDecor, is_first_segment: bool, width: usize) -> Se
             remaining -= used;
         }
     }
-    SegDecor { pieces, cells: total }
+    SegDecor {
+        pieces,
+        cells: total,
+    }
 }
 
 /// Truncate `text` to at most `max_cells` of display width, breaking only

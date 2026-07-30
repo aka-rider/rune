@@ -194,10 +194,16 @@ fn hr_at_width_ten_carries_a_ten_cell_rule_decor() {
 
     assert_eq!(wrap.total_rows(), 1);
     let seg = &wrap.segments()[0];
-    let d = seg.decor.as_ref().expect("hr must always carry its rule decor");
+    let d = seg
+        .decor
+        .as_ref()
+        .expect("hr must always carry its rule decor");
     assert_eq!(d.cells, 10);
     assert_eq!(
-        d.pieces.iter().map(|p| p.text.chars().count()).sum::<usize>(),
+        d.pieces
+            .iter()
+            .map(|p| p.text.chars().count())
+            .sum::<usize>(),
         10
     );
 }

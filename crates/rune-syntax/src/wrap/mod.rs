@@ -35,7 +35,9 @@ pub use decor::{SegDecor, SegDecorPiece};
 pub use query::{WrapSnapshot, line_visual_col};
 
 pub use table::TableSegInfo;
-pub use width::{TAB_STOP, control_aware_width, grapheme_width, grapheme_width_with_tab, rune_width_with_tab};
+pub use width::{
+    TAB_STOP, control_aware_width, grapheme_width, grapheme_width_with_tab, rune_width_with_tab,
+};
 
 use width::next_grapheme;
 
