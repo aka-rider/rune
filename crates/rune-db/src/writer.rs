@@ -265,7 +265,7 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             to,
             now,
         } => {
-            let outcome = crate::rename::rename_bind(
+            let outcome = crate::rename_bind::rename_bind(
                 conn,
                 vfs,
                 crate::materialize::DocSession { doc_id, session_id },
@@ -283,7 +283,7 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             seen,
             now,
         } => {
-            let outcome = crate::rename::rename_replace(
+            let outcome = crate::rename_replace::rename_replace(
                 conn,
                 vfs,
                 crate::materialize::DocSession { doc_id, session_id },
