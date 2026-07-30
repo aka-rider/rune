@@ -55,6 +55,8 @@ mod store;
 mod sync;
 mod versioning;
 mod writer;
+mod writer_lifecycle;
+mod writer_ops;
 
 pub use adopt::{adopt_equal, resolve_abandon, resolve_adopt};
 pub use document::{DocRef, open_path};
