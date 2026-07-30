@@ -127,7 +127,7 @@ fn floor_and_ceil_char_boundary_snap_outward_never_split_a_char() {
     }
 }
 
-fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
+pub(crate) fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
     doc.set_focus(focused);

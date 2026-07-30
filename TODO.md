@@ -15,7 +15,7 @@ they are the residue of the same long-running debt, listed here so the campaign
 is visible rather than rediscovered file by file.
 
 - [ ] Test files: `rune-tui/tests/db_wiring.rs` (909), `rune-tui/tests/rename.rs` (804), `rune-db/tests/multiprocess.rs` (803), `rune-tui/tests/tui_render.rs` (698), `rune-fuzz/tests/tripwire.rs` (595), `rune-md/tests/table_render.rs` (590), `rune-tui/tests/explorer.rs` (523).
-- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (632), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (524), `rune-md/src/emit/walk.rs` (509), `rune-tui/src/footer.rs` (506), `rune-md/src/table/layout.rs` (501).
+- [ ] Sources: `rune-cli/src/main.rs` (801), `rune-core/src/buffer.rs` (689), `rune-tui/src/db.rs` (645), `rune-tui/src/rename.rs` (632), `rune-syntax/src/wrap/mod.rs` (616), `rune-nav/src/lib.rs` (595), `rune-tui/src/keymap/index.rs` (572), `rune-tui/src/breadcrumb.rs` (557), `rune-tui/src/keymap/editor_bindings.rs` (553), `rune-fuzz/src/driver/mod.rs` (553), `rune-tui/src/runtime/mod.rs` (549), `rune-tui/src/commands/nav.rs` (546), `rune-tui/src/commands/edit_lines.rs` (543), `rune-md/src/emit/walk.rs` (539), `rune-md/src/emit/mod.rs` (535), `rune-tui/src/keymap.rs` (528), `rune-tui/src/dispatch.rs` (527), `rune-tui/src/app.rs` (524), `rune-tui/src/footer.rs` (506), `rune-syntax/src/syntax.rs` (505), `rune-md/src/table/layout.rs` (501).
 
 Two of those grew slightly in this batch and are recorded per the house rule:
 `dispatch.rs` 513 → 527 (the span-cap truncation status branch) and
@@ -27,6 +27,17 @@ the list.
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine
 consecutive work packages.
+
+WP2 (`LineDecor` model + emit population, plan "markdown line decoration")
+pushed three more files over or further over the ceiling: `rune-md/src/emit/
+walk.rs` 515 → 539 (threading a `depth: u8` list-nesting parameter through
+`emit_block`/`emit_list_item`, plus the four decor call sites), `rune-md/src/
+emit/mod.rs` 499 → 535 (the new `emit_with`/`EmitOut::icons`/`EmitOut::decors`
+plumbing the 3-arg `emit` now wraps), and `rune-syntax/src/syntax.rs` 499 → 505
+(the new `SyntaxLine::decor` field and its doc comment). New logic went into
+new sibling files (`emit/decor.rs`, `emit/decor_tests.rs`, `rune-syntax/src/
+decor.rs`) per the plan's own instruction; only wire-up lines touched the
+three files above, but that was still enough to cross or extend the ceiling.
 
 - [ ] Two files landed within a few lines of the ceiling and will breach on the next small edit: `rune-db/src/writer.rs` (497) and `rune-db/src/materialize.rs` (496). Whoever touches either next should take the split rather than squeeze under.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.

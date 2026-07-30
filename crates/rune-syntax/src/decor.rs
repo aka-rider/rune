@@ -10,8 +10,8 @@
 //! is finally prefixed as cells with no buffer position at render time — the
 //! same `-1`-sentinel convention table chrome already uses.
 
-use crate::wrap::grapheme_width;
 use crate::ScopeId;
+use crate::wrap::grapheme_width;
 use unicode_segmentation::UnicodeSegmentation;
 
 /// One decorative glyph run. `first` is what a line's FIRST visual row

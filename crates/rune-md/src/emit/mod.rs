@@ -42,6 +42,7 @@
 // (`style::table_scope`/`table_header_scope`/`table_separator_scope`/
 // `table_border_scope`/`text_scope`/`code_scope`/`link_scope`) — one
 // canonical scope resolver, not a second one reimplemented in `table::`.
+mod decor;
 pub(crate) mod style;
 mod table;
 mod walk;
@@ -486,7 +487,7 @@ pub fn emit_with(
         decors: &mut decors,
     };
     for b in blocks {
-        walk::emit_block(content, &starts, b, &mut out);
+        walk::emit_block(content, &starts, b, 0, &mut out);
     }
     fill_gaps(content, &starts, &accounted, &mut spans);
 
@@ -528,5 +529,7 @@ pub fn emit_with(
     (lines, snapshot)
 }
 
+#[cfg(test)]
+mod decor_tests;
 #[cfg(test)]
 mod tests;
