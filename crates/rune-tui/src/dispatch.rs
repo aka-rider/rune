@@ -276,6 +276,7 @@ fn handle_highlighted(
 ) {
     let mut timed_out = false;
     let mut pending = false;
+    let mut truncated = false;
     if let Some(doc) = app.doc_mut(id) {
         doc.highlight.in_flight = None;
         pending = doc.highlight.pending;
@@ -300,11 +301,22 @@ fn handle_highlighted(
             // stale version, leaves `tree`/`spans` untouched — `[R2]`.
             _ => {}
         }
+        truncated = doc.highlight.truncated;
     }
 
+    // Timeout and truncation can coincide (truncation is sticky state from
+    // an earlier reply, timeout is decided fresh above) — only one status
+    // line is ever shown per reply, and timeout wins: it means NOTHING
+    // coloured this round, which is more actionable than a coloured-but-
+    // incomplete tail.
     if timed_out {
         app.set_status(
             "syntax highlighting timed out for this document",
+            crate::app::StatusSource::Other,
+        );
+    } else if truncated {
+        app.set_status(
+            "syntax highlighting was truncated; the tail of this document is uncoloured",
             crate::app::StatusSource::Other,
         );
     }
