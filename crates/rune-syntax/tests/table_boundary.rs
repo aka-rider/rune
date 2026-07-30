@@ -36,6 +36,7 @@ fn table_line(content: &str, boundary: RowBoundary, extra_rows: usize) -> Syntax
             extra_rows: extra,
             boxed: true,
         }),
+        decor: None,
     }
 }
 

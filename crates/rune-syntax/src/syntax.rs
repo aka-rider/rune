@@ -204,6 +204,12 @@ pub struct SyntaxLine {
     /// every other line, including a Revealed table line (raw markdown,
     /// no rendered geometry to describe).
     pub table: Option<TableRowInfo>,
+    /// Decorative glyphs (heading icon, list bullet/number, quote bar, hr
+    /// rule) a Rendered line carries out-of-band from its spans — see
+    /// `crate::decor::LineDecor`. `None` for a Revealed line (raw markup is
+    /// already visible, nothing to decorate) and for a table line (table
+    /// geometry is described by `table`, never by decor).
+    pub decor: Option<crate::decor::LineDecor>,
 }
 
 #[derive(Clone, Copy, Debug)]

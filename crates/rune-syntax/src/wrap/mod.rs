@@ -437,6 +437,7 @@ mod tests {
                             range: s..line_end,
                         }],
                         table: None,
+                        decor: None,
                     }
                 } else {
                     SyntaxLine::default()
@@ -517,6 +518,7 @@ mod tests {
                 },
             ],
             table: None,
+            decor: None,
         };
         let wrap = WrapMap::new(6).sync(content, &[line0]);
 

@@ -9,6 +9,7 @@
 use std::ops::Range;
 
 use crate::element::block::Block;
+use crate::icons::IconSet;
 use crate::snapshot::DisplaySnapshot;
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
@@ -61,6 +62,10 @@ pub struct DocMachine {
     built_version: u64,
     dirty: bool,
     kind: DocumentKind,
+    /// Which glyph tier decor producers draw from — set once by the runtime
+    /// (plan WP5) via `set_icons`, mirrored here because `Document` (the
+    /// caller) holds no reference back to `App`'s theme/terminal state.
+    icons: IconSet,
     /// The memo `snapshot` returns a clone of when `dirty` is false —
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
@@ -94,6 +99,7 @@ impl DocMachine {
             built_version: 0,
             dirty: true,
             kind: DocumentKind::Markdown,
+            icons: IconSet::unicode(),
             cached: None,
             #[cfg(test)]
             rebuild_count: std::cell::Cell::new(0),
@@ -187,6 +193,17 @@ impl DocMachine {
         }
     }
 
+    /// Icon-tier change (plan WP5); marks dirty but fires NO reveal
+    /// transitions, mirroring `set_width`'s memoization shape exactly — a
+    /// terminal-capability change is neither a content edit nor a
+    /// focus/reveal change.
+    pub fn set_icons(&mut self, icons: IconSet) {
+        if self.icons != icons {
+            self.icons = icons;
+            self.dirty = true;
+        }
+    }
+
     /// Selects which producer `sync_content` runs — comrak for `Markdown`,
     /// no parse at all (verbatim per-line text, plan WP4 decision 6) for
     /// `Code`/`Plain`. Marks dirty only when the kind actually changes, so
@@ -266,7 +283,8 @@ impl DocMachine {
     fn rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         #[cfg(test)]
         self.rebuild_count.set(self.rebuild_count.get() + 1);
-        let (lines, syntax) = crate::emit::emit(buf.content(), &self.blocks, self.wrap.width);
+        let (lines, syntax) =
+            crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
         ViewSnapshots {
