@@ -22,8 +22,8 @@ use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_syntax::DocumentKind;
 
 use crate::db::DocDb;
-use crate::document_support::{is_suspicious_shrink, kind_for};
 pub use crate::document_support::Hydration;
+use crate::document_support::{is_suspicious_shrink, kind_for};
 use crate::highlight::HighlightState;
 use crate::viewport::Viewport;
 

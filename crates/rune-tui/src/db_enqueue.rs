@@ -100,7 +100,8 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
     let Some(db) = app.db.as_ref() else { return };
     match db.store.load(path) {
         Ok(op_id) => {
-            app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
+            app.db_ops
+                .insert(op_id, PendingOp::load(id, issued_version));
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }

@@ -333,7 +333,6 @@ impl Buffer {
             applied,
         ))
     }
-
 }
 
 /// The one place `insert_len - deleted_len` is computed — how many bytes a

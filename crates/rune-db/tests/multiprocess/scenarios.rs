@@ -12,7 +12,9 @@ use rusqlite::{Connection, params};
 use rune_core::buffer::AppliedEdit;
 use rune_db::{DbEvent, OnEvent, Store};
 
-use crate::support::{seed_schema_and_docs, spawn_helper, temp_dir, touch, wait_for_all, wait_for_path};
+use crate::support::{
+    seed_schema_and_docs, spawn_helper, temp_dir, touch, wait_for_all, wait_for_path,
+};
 
 // ---------------------------------------------------------------------
 // Scenario (a): 4 children append-storm one doc each concurrently

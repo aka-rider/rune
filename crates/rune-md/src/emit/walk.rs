@@ -346,4 +346,3 @@ pub(crate) fn emit_block(
         Block::Table(t) => emit_table(content, starts, t, out),
     }
 }
-

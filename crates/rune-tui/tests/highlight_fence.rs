@@ -365,4 +365,3 @@ fn nested_fence_spans_never_select_the_blockquote_prefix_bytes() {
         "no span selects the `child` mapping key exactly; spans selected {sliced:?}"
     );
 }
-

@@ -309,4 +309,3 @@ impl DocDb {
             .unwrap_or(self.last_known_seq)
     }
 }
-
