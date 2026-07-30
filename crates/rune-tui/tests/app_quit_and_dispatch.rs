@@ -12,7 +12,7 @@ use rune_core::buffer::Buffer;
 use rune_tui::app::{App, update};
 use rune_tui::commands::clipboard;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods, QuitKey};
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
 use rune_vfs::{Mem, Vfs};
 
 fn test_app() -> App {
@@ -234,7 +234,7 @@ fn every_cmd_is_tagged_with_its_kind() {
     assert_eq!(e2.cmds[0].kind(), CmdKind::QuitTimeout);
 
     let mut e3 = Effects::default();
-    clipboard::paste(&mut e3);
+    clipboard::paste(&mut e3, PasteTarget::Document(app2.active));
     assert_eq!(e3.cmds.len(), 1);
     assert_eq!(e3.cmds[0].kind(), CmdKind::ClipboardRead);
 }

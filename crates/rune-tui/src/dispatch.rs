@@ -16,7 +16,7 @@ use crate::document::{Document, DocumentId};
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
-use crate::runtime::{Effects, HighlightPayload, Msg};
+use crate::runtime::{Effects, HighlightPayload, Msg, PasteTarget};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
 use rune_syntax::ScopeId;
 
@@ -34,15 +34,18 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             app.relayout();
         }
         Msg::Paste(text) => {
-            // Bracketed paste and pbpaste (`Msg::ClipboardRead` below) both
-            // funnel through the same `handle_paste_content` (plan Gotchas:
-            // "Bracketed paste vs pbpaste double-paste" — never handle one
-            // event twice, never insert through two different paths).
-            clipboard::handle_paste_content(app, app.active, &text);
+            // Bracketed paste has no request to attach a target to, so it
+            // routes by LIVE focus — unlike `Msg::ClipboardRead` below,
+            // whose `target` was captured when the paste was requested.
+            match app.focus() {
+                Pane::Title => crate::title::keys::paste(app, &text),
+                _ => clipboard::handle_paste_content(app, app.active, &text),
+            }
         }
-        Msg::ClipboardRead(text) => {
-            clipboard::handle_paste_content(app, app.active, &text);
-        }
+        Msg::ClipboardRead { text, target } => match target {
+            PasteTarget::Title => crate::title::keys::paste(app, &text),
+            PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),
+        },
         Msg::SaveDone {
             id,
             version,
@@ -371,7 +374,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::Redo => edit::redo(app, app.active),
         Command::Copy => clipboard::copy(app, app.active, effects),
         Command::Cut => clipboard::cut(app, app.active, effects),
-        Command::Paste => clipboard::paste(effects),
+        Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
         Command::Save => save::trigger_save(app, app.active, effects),
         Command::FollowLink => navigate::follow(app, effects),
         Command::QuitConfirm => {
