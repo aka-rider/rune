@@ -3,11 +3,11 @@
 //! `TABLE-SYNTHETIC-DECORATIVE`.
 
 use rune_fuzz::invariant::{
-    cell_no_eol, cell_offset, cell_order, sync_idempotent, table_row_width,
+    cell_no_eol, cell_offset, cell_order, cur_no_caret_hidden, sync_idempotent, table_row_width,
     table_synthetic_decorative,
 };
 
-use crate::support::{base_snapshot, cell, cell_w, meta, meta_unboxed};
+use crate::support::{base_snapshot, cell, cell_w, meta, meta_unboxed, reversed_cell};
 
 // ---------------------------------------------------------------------
 // SYNC-IDEMPOTENT
@@ -196,4 +196,34 @@ fn table_row_width_ignores_a_ragged_unboxed_pivot_group() {
         table_row_width(&snap).is_none(),
         "an unboxed (Pivoted) table's ragged rows must not trip TABLE-ROW-WIDTH"
     );
+}
+
+// ---------------------------------------------------------------------
+// CUR-NO-CARET-HIDDEN
+// ---------------------------------------------------------------------
+
+#[test]
+fn cur_no_caret_hidden_detects_a_reversed_cell_while_hidden() {
+    let mut snap = base_snapshot("abc");
+    snap.caret_visible = false;
+    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    let v = cur_no_caret_hidden(&snap)
+        .expect("a REVERSED cell while caret_visible=false must trip CUR-NO-CARET-HIDDEN");
+    assert_eq!(v.id, "CUR-NO-CARET-HIDDEN");
+}
+
+#[test]
+fn cur_no_caret_hidden_accepts_reversed_cells_while_visible() {
+    let mut snap = base_snapshot("abc");
+    snap.caret_visible = true;
+    snap.cells = vec![vec![cell('a', 0), reversed_cell('b', 1)]];
+    assert_eq!(cur_no_caret_hidden(&snap), None);
+}
+
+#[test]
+fn cur_no_caret_hidden_accepts_no_reversed_cells_while_hidden() {
+    let mut snap = base_snapshot("abc");
+    snap.caret_visible = false;
+    snap.cells = vec![vec![cell('a', 0), cell('b', 1)]];
+    assert_eq!(cur_no_caret_hidden(&snap), None);
 }

@@ -123,7 +123,16 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
     if hi <= lo { None } else { Some(lo..hi) }
 }
 
+/// Paints the caret and, per-cursor, its selection background — gated on
+/// `show_overlays` (`Document::shows_caret`, folding in both focus and
+/// read-only). Early-returning before the cursor loop, rather than a
+/// caller-side `if`, covers both overlay kinds in one place (the selection
+/// highlight is painted from inside this same loop) and means no future
+/// caller can paint either without deciding whether this document may show
+/// them — matching Go's `applyOverlays` gate (`textedit/render.go`), which
+/// covers cursors and selections together.
 pub(super) fn apply_cursor_overlays(
+    show_overlays: bool,
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
     cursors: &CursorSet,
@@ -131,6 +140,9 @@ pub(super) fn apply_cursor_overlays(
     scroll_row: usize,
     theme: &Theme,
 ) {
+    if !show_overlays {
+        return;
+    }
     for cursor in cursors.all() {
         if cursor.has_selection() {
             let (start, end) = cursor.selection_range();
@@ -201,7 +213,11 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
 
 /// Reverse-video the cell at `visual_col`, or — if the caret sits past the
 /// last visible char on this row — append a synthetic EOL cursor cell (port
-/// of Go `render.go`). `boxed` rows (a Grid/Wrapped table's own content and
+/// of Go `render.go`). Only ever reached when the caller has already
+/// decided overlays are shown (`apply_cursor_overlays`'s `show_overlays`
+/// gate) — none of its three REVERSED paths (this cell, the boxed-row last
+/// cell below, or the synthetic EOL push) runs on an unfocused or
+/// read-only document. `boxed` rows (a Grid/Wrapped table's own content and
 /// border rows) never take that append branch: appending would make this
 /// ONE row a cell wider than every other row in its table group, violating
 /// `TABLE-ROW-WIDTH` (every row in a boxed group shares one summed width,
@@ -358,5 +374,58 @@ mod tests {
         let before = rows.clone();
         apply_highlight_spans(&mut rows, &[(0..2, scope("function"))], &theme);
         assert_eq!(rows, before);
+    }
+
+    /// The `TABLE-ROW-WIDTH` regression `place_caret`'s `boxed` branch
+    /// exists for (`crates/rune-fuzz/proptest-regressions/human_session.txt`,
+    /// seed `cc 5f23e392...`), exercised directly rather than through the
+    /// full `App`/`DocMachine` pipeline: the caret gate this file's
+    /// `apply_cursor_overlays` now applies (`show_overlays`, this ticket)
+    /// and a table's `RevealGrant::ForceRendered`/`Decide` split
+    /// (`rune_md::element::doc::DocMachine`) key off the exact same
+    /// `Document::focused` bit — a table containing the cursor is only ever
+    /// BOXED while unfocused, and the caret gate now suppresses painting
+    /// entirely while unfocused, so a full-pipeline test can no longer
+    /// reach this branch with a caret actually on screen. The clamp logic
+    /// itself is still real (a non-markdown pathway, or a future Decide
+    /// policy change, could still reach a boxed row with the caret
+    /// visible), so it keeps its own direct coverage here instead.
+    #[test]
+    fn place_caret_clamps_onto_a_boxed_rows_last_cell_instead_of_appending() {
+        let mut row: Vec<Cell> = (0..3).map(cell).collect();
+        let before_len = row.len();
+        // Far past the row's own rendered width (3 cells) — the ragged-row
+        // case's dropped trailing `|`-cells produce exactly this: a
+        // `visual_col` past every real cell on a boxed row.
+        place_caret(&mut row, 100, 0, true);
+        assert_eq!(
+            row.len(),
+            before_len,
+            "a boxed row must never grow a cell wider from the caret clamp"
+        );
+        assert!(
+            row.last()
+                .is_some_and(|c| c.style.add_modifier.contains(RtModifier::REVERSED)),
+            "the clamp must still reverse-video the row's own last cell"
+        );
+    }
+
+    /// The unboxed counterpart: an ordinary (non-table) row past its last
+    /// visible char DOES grow by one synthetic EOL cursor cell — the
+    /// `TABLE-ROW-WIDTH` exemption is boxed-rows-only.
+    #[test]
+    fn place_caret_appends_a_synthetic_eol_cell_on_an_unboxed_row() {
+        let mut row: Vec<Cell> = (0..3).map(cell).collect();
+        place_caret(&mut row, 100, 7, false);
+        assert_eq!(
+            row.len(),
+            4,
+            "an unboxed row past its last cell must grow by one"
+        );
+        assert!(
+            row.last()
+                .is_some_and(|c| c.style.add_modifier.contains(RtModifier::REVERSED)),
+            "the appended synthetic cell must carry the caret's reverse-video"
+        );
     }
 }

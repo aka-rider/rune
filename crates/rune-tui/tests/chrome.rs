@@ -333,6 +333,35 @@ fn footer_global_tail_survives_truncation_with_explorer_focused() {
     );
 }
 
+/// The user-reported "blank last column" defect: the centre block's right
+/// border must land on the FRAME's actual last column — `width - 1` — not
+/// one short of it. Checked against the non-trimming `row_text` (unlike
+/// `title_breadcrumb.rs`'s old `trim_end()`, which would have masked a
+/// short row here) at both the top border row and an ordinary editor row,
+/// across a couple of widths so the check isn't pinned to one accidental
+/// size.
+#[test]
+fn the_center_blocks_right_border_reaches_the_last_frame_column() {
+    for width in [WIDTH, 120] {
+        let app = app_for("hello");
+        let buf = draw_with_width(&app, width);
+
+        let top_row = row_text(&buf, 0, width);
+        assert_eq!(
+            top_row.chars().last(),
+            Some('\u{256e}'),
+            "width {width}: expected the top-right border glyph on the LAST column of:\n{top_row}"
+        );
+
+        let editor_row = row_text(&buf, 1, width);
+        assert_eq!(
+            editor_row.chars().last(),
+            Some('\u{2502}'),
+            "width {width}: expected the right border glyph on the LAST column of:\n{editor_row}"
+        );
+    }
+}
+
 /// Aliases stay discoverable in the generated Help doc even though the
 /// footer hides them — `^d` still works, so it must still be documented.
 #[test]

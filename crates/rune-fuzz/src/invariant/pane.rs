@@ -202,6 +202,46 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     None
 }
 
+/// `LAYOUT-TILES` — the defect class `LAYOUT-FITS` above cannot see: a
+/// frame column inside `main` that neither `left_block` nor `center` (each
+/// including its own border columns — `geo.center`/`geo.left_block` are the
+/// WHOLE block rect, not its inner content) ever paints. Containment and
+/// overlap checks are blind to this by construction — nothing overlaps a
+/// hole, it is simply missing — which is exactly how a wasted column
+/// between the centre block's right border and the frame edge slipped
+/// past every existing check. Checked on every step, same as `LAYOUT-FITS`,
+/// so the fuzzer's `Action::Resize` storm exercises it at every width.
+pub fn layout_tiles(next: &Snapshot) -> Option<Violation> {
+    let geo = &next.geometry;
+    let main = geo.main;
+    if main.width == 0 {
+        return None;
+    }
+
+    // `left_block` is `None` exactly when the left column isn't shown at
+    // all — an empty, un-covering span rather than the zero rect (which
+    // would wrongly read as covering column 0 of `main`).
+    let left_span = geo.left_block.map(|b| (b.x, b.right()));
+    let center_span = (geo.center.x, geo.center.right());
+
+    for col in main.x..main.right() {
+        let in_left = left_span.is_some_and(|(lo, hi)| col >= lo && col < hi);
+        let in_center = col >= center_span.0 && col < center_span.1;
+        if !in_left && !in_center {
+            return Some(Violation {
+                id: "LAYOUT-TILES",
+                message: format!(
+                    "frame column {col} inside main {main:?} is covered by neither \
+                     left_block {:?} nor center {:?}",
+                    geo.left_block, geo.center
+                ),
+            });
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

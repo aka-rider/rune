@@ -17,6 +17,25 @@ use crate::app::App;
 use crate::banner;
 use crate::split::{PaneLimits, Split};
 
+/// Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
+/// `STRICT_INVARIANTS`/`assert_invariant` chokepoint: `true` only in test
+/// builds or when this crate's own `strict-invariants` feature is
+/// explicitly enabled. Kept as a local copy rather than a shared helper —
+/// each crate's gate governs only its own producer-bug invariants.
+const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
+
+/// The chokepoint every "this should never happen, but let's be sure"
+/// geometry check in this module routes through — CONSTITUTION §1.3 forbids
+/// `panic!`/`assert!`/`unwrap` in production code paths, so an ordinary
+/// build (including a plain `cargo run`) must degrade gracefully on a
+/// geometry-invariant violation rather than take down the user's session;
+/// only a test run or an explicit opt-in feature treats it as fatal.
+fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
+    if STRICT_INVARIANTS {
+        assert!(cond, "{}", msg());
+    }
+}
+
 /// Left-pane geometry: the DEFAULT column width, and the smallest the left
 /// column and the editor pane may each shrink to before one of them gives
 /// way. These feed `LEFT_LIMITS`/`CENTER_LIMITS` below, which `Split::allot`
@@ -272,6 +291,42 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         content.width,
         content.height.saturating_sub(1),
     );
+
+    // The defect class this guards against: "a frame column nobody owns" —
+    // a gap between a pane's rect and its neighbour that no `Block` border
+    // and no content actually paints, invisible to any containment/overlap
+    // check because nothing OVERLAPS a hole, it's just missing. Every
+    // comparison goes through `Rect::right()`/`saturating_add` rather than
+    // bare subtraction so a degenerate frame (the fuzzer drives `Resize`
+    // down to 1 column, 2 rows) hits a saturated equality instead of an
+    // underflow panic.
+    assert_invariant(footer.right() == area.right(), || {
+        format!(
+            "footer {footer:?} does not reach the frame's right edge {}",
+            area.right()
+        )
+    });
+    assert_invariant(center.right() == area.right(), || {
+        format!(
+            "center {center:?} does not reach the frame's right edge {}",
+            area.right()
+        )
+    });
+    if center_bordered {
+        assert_invariant(
+            editor.right().saturating_add(1) == center.right()
+                && editor.x == center.x.saturating_add(1),
+            || {
+                format!(
+                    "editor {editor:?} is not inset exactly one column inside bordered center {center:?}"
+                )
+            },
+        );
+    } else {
+        assert_invariant(editor.right() == center.right(), || {
+            format!("editor {editor:?} does not reach unbordered center {center:?}'s right edge")
+        });
+    }
 
     Geometry {
         footer,

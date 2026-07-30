@@ -134,9 +134,21 @@ fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
         breadcrumb_row.contains("vault › todo.md"),
         "expected the leaf set off from its directory by ' › ':\n{breadcrumb_row}"
     );
+    // Compares against the FULL width, not `trim_end()`'s trimmed one — a
+    // trimmed comparison would pass even if the border stopped one (or
+    // more) columns short of the frame's actual right edge, trailing blank
+    // columns and all. This is exactly the "blank last column" defect
+    // class (see `chrome.rs`'s dedicated test and `layout.rs`'s own
+    // `assert_invariant` checks): the row's LAST character, at index
+    // `WIDTH - 1`, must be the border corner.
+    assert_eq!(
+        breadcrumb_row.chars().count(),
+        WIDTH as usize,
+        "expected the breadcrumb row to span the full frame width with no short tail:\n{breadcrumb_row:?}"
+    );
     assert!(
-        breadcrumb_row.trim_end().ends_with("──╯"),
-        "expected the breadcrumb row to end in the border's bottom-right corner:\n{breadcrumb_row}"
+        breadcrumb_row.ends_with("──╯"),
+        "expected the breadcrumb row to end in the border's bottom-right corner ON THE LAST COLUMN:\n{breadcrumb_row}"
     );
 }
 
@@ -149,8 +161,16 @@ fn breadcrumb_row_shows_path_segments_for_a_file_backed_doc() {
 fn pathless_doc_has_no_breadcrumb_content() {
     let app = app_for("hello", None);
     let breadcrumb_row = row_text(&app, HEIGHT - 2, WIDTH);
+    // Full-width comparison (see the sibling test above for why
+    // `trim_end()` would mask a short row): the border's own closing
+    // corner must land ON the last column, not somewhere before it.
+    assert_eq!(
+        breadcrumb_row.chars().count(),
+        WIDTH as usize,
+        "expected the border row to span the full frame width with no short tail:\n{breadcrumb_row:?}"
+    );
     assert!(
-        breadcrumb_row.starts_with('╰') && breadcrumb_row.trim_end().ends_with('╯'),
+        breadcrumb_row.starts_with('╰') && breadcrumb_row.ends_with('╯'),
         "expected the plain border row (no crumb spliced in):\n{breadcrumb_row:?}"
     );
     assert!(

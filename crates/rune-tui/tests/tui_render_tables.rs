@@ -176,34 +176,38 @@ const RAGGED_ROW_TABLE: &str =
 /// `place_caret`'s "caret sits past the last visible char" branch, which
 /// appended a synthetic one-cell-wide EOL cursor cell — making that ONE
 /// row a cell wider than the rest of its table group. The fix clamps a
-/// BOXED row's caret onto its own last cell instead of ever growing it.
+/// BOXED row's caret onto its own last cell instead of ever growing it —
+/// `render::overlay`'s own unit tests
+/// (`place_caret_clamps_onto_a_boxed_rows_last_cell_instead_of_appending`)
+/// now cover that clamp directly, for the reason explained below.
+///
 /// Cursor sits at the very end of the `Bob` row's raw source line (deep in
 /// the dropped `"| a | b |"` tail), the exact position the fuzz seed's
-/// typing landed on.
+/// typing landed on. `focused: false` forces the table's Decide-policy
+/// `RevealSm` to `Rendered` regardless of the cursor sitting inside its own
+/// lines (`DocMachine::sync_cursors`'s `RevealGrant::ForceRendered` root
+/// grant) — matching the fuzz seed's own end state, where a dirty-close
+/// guard modal (from the seed's `Ctrl+C`) made `App::sync_view` treat the
+/// editor as unfocused for that step while the cursor still sat inside the
+/// table.
 ///
-/// Measures the same quantity the fuzzer's own `TABLE-ROW-WIDTH` invariant
-/// does — each row's own `Cell::width` values, summed — via
-/// `render::build_rows` directly, NOT the backend terminal grid: a
-/// synthetic EOL cursor cell appended after a row's closing `│`/`┤` reads
-/// as ordinary editor-background padding on the terminal grid (indistinct
-/// from any other trailing space), so only the underlying cell count
-/// actually catches the regression.
+/// Once the caret is gated on `Document::shows_caret` (this ticket, Go
+/// parity: an unfocused pane must show no caret, matching a modal's own
+/// keystroke-capture), that same unfocused state ALSO means no caret is
+/// ever painted here — `focused` is the one bit both the table's
+/// `ForceRendered` grant and the caret gate key off, so a table can only be
+/// BOXED with the cursor inside it while the caret itself is suppressed.
+/// This test therefore now pins the CURRENT, correct end state — no caret
+/// anywhere, and the row-width invariant holding trivially because nothing
+/// painted onto the rows at all — while the boxed-clamp behaviour itself
+/// (unreachable from here, but still real defensive code) gets its own
+/// direct coverage in `render::overlay`'s unit tests.
 #[test]
-fn caret_inside_a_ragged_rows_dropped_cells_never_widens_that_rows_box() {
+fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
     let cursor = RAGGED_ROW_TABLE
         .find(" a | b |\n")
         .map(|i| i + " a | b |".len())
         .expect("fixture has the ragged row's dropped tail");
-    // `focused: false` forces the table's Decide-policy `RevealSm` to
-    // `Rendered` regardless of the cursor sitting inside its own lines
-    // (`DocMachine::sync_cursors`'s `RevealGrant::ForceRendered` root
-    // grant) — the same reason `table_render.rs`'s own `synced` helper
-    // always passes `focused: false` when checking Rendered content with
-    // the cursor inside a table. Matches the fuzz seed's own end state:
-    // that session's cursor sat inside the table too, yet the table
-    // stayed boxed there because a dirty-close guard modal (from the
-    // seed's `Ctrl+C`) made `App::sync_view` treat the editor as
-    // unfocused for that step, the same net effect.
     let app = app_for(RAGGED_ROW_TABLE, cursor, false);
 
     let view = app.active_doc().view.as_ref().expect("synced view");
@@ -228,8 +232,9 @@ fn caret_inside_a_ragged_rows_dropped_cells_never_widens_that_rows_box() {
     );
 
     let buf = testgrid::draw(&app, WIDTH, HEIGHT);
-    assert!(
-        caret_row(&buf, HEIGHT, WIDTH).is_some(),
-        "the caret must still render somewhere, clamped rather than dropped"
+    assert_eq!(
+        caret_row(&buf, HEIGHT, WIDTH),
+        None,
+        "an unfocused editor must show no caret at all, per Document::shows_caret"
     );
 }

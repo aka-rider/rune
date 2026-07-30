@@ -65,6 +65,11 @@ pub struct Snapshot {
     /// document is the former, by design — `Document::read_only` is no
     /// longer dead code once Help exists).
     pub read_only: bool,
+    /// `app.active_doc().shows_caret()` — the production predicate itself,
+    /// not a re-derivation from `focus`/`modal_open`/`read_only`, so
+    /// `CUR-NO-CARET-HIDDEN` cannot pass by duplicating the very logic it is
+    /// meant to police.
+    pub caret_visible: bool,
     /// `render::build_rows(view, app)`. Empty when not sampled (G19: the
     /// display pipeline runs on every `sync_view()`, dominating debug-build
     /// runtime — later work packages sample this rather than paying for it
@@ -159,6 +164,7 @@ impl Snapshot {
             modal_open: app.modal.is_some(),
             active: app.active,
             read_only: doc.read_only,
+            caret_visible: doc.shows_caret(),
             cells,
             row_meta,
             highlight_spans,

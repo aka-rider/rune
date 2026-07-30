@@ -32,16 +32,27 @@ rune-core = { path = "../rune-core" }
 # test that merely re-invokes the same broken function.
 unicode-width = { workspace = true }
 # Self-dependency trick (Cargo permits it for dev-dependencies): pulls in
-# THIS crate again with `testgrid` turned on, so feature unification
-# enables `crate::testgrid` for every integration test in `tests/` without
-# needing `--features testgrid` on the command line — `cargo test
-# --workspace` (the Makefile's `test` target) sees it automatically.
-rune-tui = { path = ".", features = ["testgrid"] }
+# THIS crate again with `testgrid` and `strict-invariants` turned on, so
+# feature unification enables `crate::testgrid` and `layout::geometry`'s
+# strict asserts for every integration test in `tests/` without needing
+# `--features` on the command line — `cargo test --workspace` (the
+# Makefile's `test` target) sees both automatically. Without this,
+# `cfg(test)` alone would only arm `layout.rs`'s asserts for its own
+# `#[cfg(test)] mod tests`, never for `tests/layout.rs`, which links the
+# library as an ordinary (non-test) dependency.
+rune-tui = { path = ".", features = ["testgrid", "strict-invariants"] }
 
 [features]
 # Exposes `testgrid` (plan WP1.S1) to integration tests, which link the
 # library WITHOUT `cfg(test)` — see the dev-dependency self-reference above.
 testgrid = []
+# Opts a non-test build into the same horizontal-tiling invariant checks
+# test builds always run (`layout::geometry`'s module docs) — e.g. a debug
+# binary a developer wants to run with strict checking on, or the fuzzer
+# (never enabled by default: CONSTITUTION §1.3 requires an ordinary shipped
+# build to degrade gracefully on a producer-bug invariant violation, never
+# panic on a user's session).
+strict-invariants = []
 
 [lints]
 workspace = true

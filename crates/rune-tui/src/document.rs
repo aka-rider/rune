@@ -198,6 +198,19 @@ pub struct Document {
     pub highlight: HighlightState,
 }
 
+impl Document {
+    /// Whether the caret and selection background may be painted onto this
+    /// document's cells. Go's three overlay gates (`textedit/render.go`) are
+    /// all `focused && !readOnly`: an unfocused pane must not show a caret
+    /// that would mislead about where keystrokes land, and a read-only
+    /// document (the virtual Help tab, the error-banner document) has no
+    /// insertion point to point at. `focused` itself already folds in
+    /// `modal.is_none()` — see `App::sync_view`.
+    pub fn shows_caret(&self) -> bool {
+        self.focused && !self.read_only
+    }
+}
+
 /// The outcome of [`Document::hydrate`] — the shared hydration-adoption
 /// chokepoint (plan WP5.S2).
 #[derive(Debug, PartialEq, Eq)]

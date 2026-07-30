@@ -406,6 +406,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         modal_open: false,
         active: base_active_id(),
         read_only: false,
+        caret_visible: true,
         cells: Vec::new(),
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),

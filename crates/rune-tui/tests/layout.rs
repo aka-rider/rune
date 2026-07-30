@@ -7,6 +7,7 @@ use std::sync::Arc;
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
 use rune_tui::app::App;
+use rune_tui::banner::{ErrorState, Modal, set_modal};
 use rune_tui::layout::{self, MIN_CENTER_W, MIN_LEFT_PANE_W};
 use rune_vfs::Mem;
 
@@ -139,4 +140,71 @@ fn too_narrow_for_both_minimums_drops_the_left_pane() {
     assert!(geo.left_block.is_none());
     assert!(geo.tabs_divider.is_none());
     assert_eq!(geo.center.width, width);
+}
+
+/// The test that would have caught the "blank last column" defect (a real
+/// user-reported bug, traced but NOT reproduced against `layout::geometry`
+/// itself — see the plan this test came from): sweep widths, left-column
+/// visibility, and modal state, and pin the exact right-edge identities
+/// `layout.rs`'s own `assert_invariant` calls now also check in production.
+/// Duplicated here deliberately rather than trusted to that internal
+/// assert alone — this test still fails on a regression even if a future
+/// edit weakens or removes the in-module check.
+#[test]
+fn every_width_tiles_the_frame_with_no_wasted_column() {
+    let height = 34;
+    let widths: Vec<u16> = (1..=200).chain([250, 400, 1000]).collect();
+
+    for &show_left in &[false, true] {
+        for &show_modal in &[false, true] {
+            for &width in &widths {
+                let mut app = app_for();
+                if show_left {
+                    app.splits.left.show();
+                }
+                if show_modal {
+                    let _ = set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
+                }
+                let area = Rect::new(0, 0, width, height);
+                let geo = layout::geometry(area, &app);
+
+                assert_eq!(
+                    geo.footer.right(),
+                    area.right(),
+                    "footer {:?} vs area {area:?} (width={width}, left={show_left}, modal={show_modal})",
+                    geo.footer
+                );
+                assert_eq!(
+                    geo.center.right(),
+                    area.right(),
+                    "center {:?} vs area {area:?} (width={width}, left={show_left}, modal={show_modal})",
+                    geo.center
+                );
+                if geo.center_bordered {
+                    assert_eq!(
+                        geo.editor.right() + 1,
+                        geo.center.right(),
+                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        geo.editor,
+                        geo.center
+                    );
+                    assert_eq!(
+                        geo.editor.x,
+                        geo.center.x + 1,
+                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        geo.editor,
+                        geo.center
+                    );
+                } else {
+                    assert_eq!(
+                        geo.editor.right(),
+                        geo.center.right(),
+                        "unbordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        geo.editor,
+                        geo.center
+                    );
+                }
+            }
+        }
+    }
 }

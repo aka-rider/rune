@@ -294,6 +294,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     overlay::apply_highlight_spans(&mut rows, spans, &app.theme);
 
     overlay::apply_cursor_overlays(
+        doc.shows_caret(),
         &mut rows,
         view,
         &doc.cursors,

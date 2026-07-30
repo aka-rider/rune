@@ -21,7 +21,13 @@ rune-core = { path = "../rune-core", features = ["strict-invariants"] }
 # against a genuine one, not a memo hit.
 rune-md = { path = "../rune-md", features = ["fuzz-hooks"] }
 rune-syntax = { path = "../rune-syntax" }
-rune-tui = { path = "../rune-tui" }
+# strict-invariants on purpose (mirrors rune-core above): `LAYOUT-TILES`
+# (`invariant/pane.rs`) exercises `layout::geometry` at every width the
+# fuzzer resizes to, and without this feature `layout.rs`'s own
+# `assert_invariant` horizontal-tiling checks silently compile out of the
+# fuzzer binary — `cfg(test)` covers only rune-tui's own `cargo test`, not
+# a normal dependency link like this one.
+rune-tui = { path = "../rune-tui", features = ["strict-invariants"] }
 rune-vfs = { path = "../rune-vfs" }
 base64 = { workspace = true }
 unicode-segmentation = { workspace = true }

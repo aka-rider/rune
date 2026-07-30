@@ -128,6 +128,7 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         modal_open: false,
         active: base_active_id(),
         read_only: false,
+        caret_visible: true,
         cells: Vec::new(),
         row_meta: Vec::new(),
         highlight_spans: Vec::new(),
@@ -175,6 +176,15 @@ pub(crate) fn cell_w(ch: char, buf_offset: i64, width: u8) -> Cell {
         style: rune_tui::render::style_for(&theme, rune_syntax::ScopeId(0)),
         buf_offset,
     }
+}
+
+/// Same as `cell` but carrying `Modifier::REVERSED` — the exact modifier
+/// `render::overlay::place_caret` sets, and the one `CUR-NO-CARET-HIDDEN`'s
+/// tests build a hidden-caret snapshot's offending cell out of.
+pub(crate) fn reversed_cell(ch: char, buf_offset: i64) -> Cell {
+    let mut c = cell(ch, buf_offset);
+    c.style = c.style.add_modifier(ratatui::style::Modifier::REVERSED);
+    c
 }
 
 /// A `RowMeta` literal, named to read at the call site as "this row is

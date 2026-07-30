@@ -1,4 +1,7 @@
-//! Cursor invariants (WP3): `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`.
+//! Cursor invariants (WP3): `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`,
+//! `CUR-NO-CARET-HIDDEN`.
+
+use ratatui::style::Modifier;
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
@@ -104,6 +107,39 @@ pub fn cur_id(snap: &Snapshot) -> Option<Violation> {
             id: "CUR-ID",
             message: format!("duplicate cursor id among {ids:?}"),
         });
+    }
+    None
+}
+
+/// `CUR-NO-CARET-HIDDEN` (L0, sampled per G19) — when `caret_visible` is
+/// false, NO rendered cell carries `Modifier::REVERSED`. Inside
+/// `Snapshot.cells` that modifier is set by exactly one thing,
+/// `render::overlay::place_caret` (title-bar chrome sets it too, but chrome
+/// is not in the editor cell grid), so a reversed cell in a hidden-caret
+/// snapshot is a caret that leaked past the gate.
+///
+/// Deliberately one-directional: the converse (caret visible => exactly one
+/// reversed cell per cursor) is NOT asserted, because a cursor scrolled
+/// above the viewport is legitimately never painted, and concealment can
+/// collapse two cursors onto one cell.
+///
+/// Active-document-switch-safe: L0, one `Snapshot`'s own `cells` against
+/// its own `caret_visible`.
+pub fn cur_no_caret_hidden(snap: &Snapshot) -> Option<Violation> {
+    if snap.caret_visible {
+        return None;
+    }
+    for row in &snap.cells {
+        for cell in row {
+            if cell.style.add_modifier.contains(Modifier::REVERSED) {
+                return Some(Violation {
+                    id: "CUR-NO-CARET-HIDDEN",
+                    message: format!(
+                        "a REVERSED cell rendered while caret_visible=false: cell={cell:?}"
+                    ),
+                });
+            }
+        }
     }
     None
 }
