@@ -6,3 +6,4 @@
 - [ ] The file has been changed on disk guard with SaveDiscard escape. sense user in limbo becausecause this card works the same as escape.
 - [ ] Explorer pane is missing parent directory, so it's impossible to go up.
 - [ ] [Control W doesn't work (close tab) also ^1..9,0 (switch to tab) don't work.](.claude/tickets/close-tab-and-switch-tab-bindings.md)
+- [ ] (WP4) `crates/rune-tui/tests/opentabs.rs` is now 571 lines, over the §1.6 500-line budget — the WP4 ^w/^1-^0 global-binding tests were added to the existing WP5 file rather than splitting it out; decompose it (e.g. a separate `opentabs_global.rs` test file) next time it's touched.

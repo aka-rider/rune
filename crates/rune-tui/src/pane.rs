@@ -109,6 +109,17 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // direct, same-tick call (decision 10), no I/O involved.
         GlobalCommand::Help => crate::workspace::toggle_help(app),
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
+        // Routes through the one close chokepoint regardless of which pane
+        // held focus when `^w` was pressed, so a dirty document still arms
+        // its Guard exactly like the Tabs-pane-local close it replaces.
+        GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active),
+        // Out-of-range is a silent no-op — the same tolerance `TabsCommand::
+        // Select`'s own `.get` already had for a cursor past the end.
+        GlobalCommand::TabSwitch(idx) => {
+            if let Some(&id) = app.tabs.order.get(idx) {
+                crate::workspace::switch_to(app, id);
+            }
+        }
     }
 }
 
