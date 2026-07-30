@@ -20,6 +20,7 @@ pub mod explorer;
 pub mod explorer_keys;
 pub mod focus;
 pub mod footer;
+pub mod footer_hints;
 pub mod global;
 pub mod help;
 pub mod highlight;
