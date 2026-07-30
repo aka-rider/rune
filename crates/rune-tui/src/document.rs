@@ -89,8 +89,9 @@ pub struct HighlightState {
     pub in_flight: Option<u64>,
     pub pending: bool,
     /// The producer hit its span cap and the tail of this document is
-    /// uncoloured. Recorded so the state is observable and testable rather
-    /// than silent; nothing surfaces it in the UI yet.
+    /// uncoloured. Read back after storing a `Spans` reply to drive a
+    /// status line telling the user the tail is uncoloured, unless that
+    /// same reply also timed out (timeout wins and is shown instead).
     pub truncated: bool,
     /// Test-only instrumentation (plan WP16.S2): counts how many times
     /// `highlight::resolve_highlight_source` actually built a
