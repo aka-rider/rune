@@ -16,6 +16,7 @@
 //! default terminal on the only OS this app supports) is 256-colour only.
 
 pub mod catppuccin;
+pub mod icons;
 pub mod probe;
 pub mod quantize;
 
