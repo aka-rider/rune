@@ -371,7 +371,24 @@ func (m Model) applyOperation(result command.Result) Model {
 		return m
 	}
 
-	if len(result.Operation.Edits) > 0 {
+	// A zero-width, insert-nothing edit (Start == End, Insert == "") is a
+	// legal no-op at the buffer layer — ApplyEdits accepts it correctly,
+	// since nothing about the range or the insert is ill-formed. But
+	// committing one anyway would still bump rev and append to
+	// pendingEdits for an operation that changed nothing (e.g. cut with no
+	// selection on an empty buffer, or on an empty last line). This is the
+	// single funnel every edit-producing command's Operation.Edits passes
+	// through, so filtering here — rather than in each command — closes
+	// the no-op case for all of them at once.
+	var realEdits []buffer.Edit
+	for _, e := range result.Operation.Edits {
+		if e.Start == e.End && e.Insert == "" {
+			continue
+		}
+		realEdits = append(realEdits, e)
+	}
+
+	if len(realEdits) > 0 {
 		// A failed ApplyEdits (stale/out-of-bounds positions) leaves buf/
 		// pendingEdits/rev/lastEdits untouched — D13 tightening (T3): rev is
 		// the ONLY sanctioned content-changed signal, and nothing actually
@@ -379,8 +396,8 @@ func (m Model) applyOperation(result command.Result) Model {
 		// prior behavior; markdownedit's reconcile funnel then sees rev
 		// unchanged and correctly takes its cursor-move branch, not a
 		// content-change one.
-		if newBuf, applied, err := m.buf.ApplyEdits(result.Operation.Edits); err == nil {
-			m = m.commitEdits(newBuf, applied, true, result.Operation.Edits)
+		if newBuf, applied, err := m.buf.ApplyEdits(realEdits); err == nil {
+			m = m.commitEdits(newBuf, applied, true, realEdits)
 		}
 	}
 
