@@ -29,8 +29,7 @@ use rune_core::buffer::Buffer;
 use rune_vfs::{Mem, Vfs};
 
 use rename_common::{
-    active_path, app_with, assert_refused, ctrl, key, plain, rename_to, seeded_vfs, send,
-    type_text,
+    active_path, app_with, assert_refused, ctrl, key, plain, rename_to, seeded_vfs, send, type_text,
 };
 
 // ── Focus and typing ────────────────────────────────────────────────────
@@ -98,7 +97,10 @@ fn right_at_the_end_of_the_stem_unlocks_the_extension_without_moving_the_cursor(
     let mut app = app_with(&mem);
 
     send(&mut app, ctrl('r'));
-    assert!(!app.title.ext_unlocked(), "seeded with a stem: starts locked");
+    assert!(
+        !app.title.ext_unlocked(),
+        "seeded with a stem: starts locked"
+    );
     let cursor_before = app.title.field().cursor().position;
 
     send(&mut app, plain(KeyCode::Right));

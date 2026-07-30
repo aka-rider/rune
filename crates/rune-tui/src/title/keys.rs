@@ -55,9 +55,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         _ => {}
     }
 
-    if key.code == KeyCode::Right
-        && key.mods == Mods::NONE
-        && try_unlock_extension(&mut app.title)
+    if key.code == KeyCode::Right && key.mods == Mods::NONE && try_unlock_extension(&mut app.title)
     {
         return KeyOutcome::Consumed;
     }

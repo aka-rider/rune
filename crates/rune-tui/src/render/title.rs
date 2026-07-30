@@ -85,7 +85,7 @@ fn build_spans(
 
     let mut spans = Vec::new();
     for pair in bounds.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
+        let &[a, b] = pair else { continue };
         let text = name.get(a..b).unwrap_or("");
         if text.is_empty() {
             continue;
@@ -107,7 +107,8 @@ fn build_spans(
     if let Some((_, _, cursor)) = selection
         && cursor == len
     {
-        let style = base_style(cursor, split, always_bright, theme).add_modifier(Modifier::REVERSED);
+        let style =
+            base_style(cursor, split, always_bright, theme).add_modifier(Modifier::REVERSED);
         spans.push(Span::styled(" ", style));
     }
 

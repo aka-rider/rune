@@ -94,7 +94,11 @@ fn an_error_displacing_the_guard_also_cancels_the_collision() {
 
     assert_eq!(app.rename, RenameState::Idle);
     assert_eq!(app.focus(), Pane::Title);
-    assert_eq!(app.title.text(), "b.md", "the TYPED name must still be there");
+    assert_eq!(
+        app.title.text(),
+        "b.md",
+        "the TYPED name must still be there"
+    );
 }
 
 /// `Esc` on the guard clears it, returns to `Idle`, and leaves the field
