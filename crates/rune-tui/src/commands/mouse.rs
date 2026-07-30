@@ -131,15 +131,44 @@ fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> Option
     let wrap_row = view.display.display_to_wrap(display_row);
     let content = doc.buffer.content();
 
+    // WP4.S4: the clicked row may carry a decoration prefix (heading icon /
+    // bullet / quote bar / hr rule, `build_rows` prepends it before this
+    // same `render::segment_geometry` content the cell walk below reads) —
+    // subtract its width from `col` before walking so a click's column
+    // still lines up with the CONTENT cells `segment_geometry` returns
+    // (which carry no decor prefix of their own). Clamped at 0 rather than
+    // subtracting past it: a click landing ON the decor prefix itself
+    // degrades to column 0 of the content, i.e. the line's own first
+    // content cell, per the fallback below.
+    let decor_width = view
+        .display
+        .rows()
+        .get(display_row)
+        .map(crate::render::decor::decor_cell_width)
+        .unwrap_or(0) as usize;
+    let col = (col as usize).saturating_sub(decor_width) as u16;
+
     let mut acc = 0usize;
+    let mut first_content_offset: Option<i64> = None;
     if let Some(seg) = view.wrap.segments().get(wrap_row) {
         for cell in render::segment_geometry(content, &seg.spans) {
+            if first_content_offset.is_none() && cell.buf_offset >= 0 {
+                first_content_offset = Some(cell.buf_offset);
+            }
             let width = cell.width.max(1) as usize;
             if (col as usize) < acc + width {
                 return Some(if cell.buf_offset >= 0 {
                     cell.buf_offset as usize
                 } else {
-                    0
+                    // A click resolving onto a decorative cell (should only
+                    // ever be a table's synthetic border padding, since the
+                    // line-decoration prefix was already subtracted above)
+                    // falls back to the row's own first REAL cell rather
+                    // than jumping to document offset 0 — no test pinned
+                    // the old `Some(0)` behaviour (plan Gotchas), and it
+                    // silently sent an unrelated click to the document
+                    // start.
+                    first_content_offset.unwrap_or(0) as usize
                 });
             }
             acc += width;
