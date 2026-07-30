@@ -94,7 +94,7 @@ fn an_error_displacing_the_guard_also_cancels_the_collision() {
 
     assert_eq!(app.rename, RenameState::Idle);
     assert_eq!(app.focus(), Pane::Title);
-    assert_eq!(app.title.text, "b", "the TYPED name must still be there");
+    assert_eq!(app.title.text(), "b.md", "the TYPED name must still be there");
 }
 
 /// `Esc` on the guard clears it, returns to `Idle`, and leaves the field
@@ -111,7 +111,7 @@ fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
     assert_eq!(app.rename, RenameState::Idle);
     assert!(app.modal.is_none());
     assert_eq!(app.focus(), Pane::Title);
-    assert_eq!(app.title.text, "b");
+    assert_eq!(app.title.text(), "b.md");
 }
 
 /// Escape used to leave the user with no feedback at all — the modal just

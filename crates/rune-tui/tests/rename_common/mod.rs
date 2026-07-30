@@ -178,26 +178,27 @@ pub fn type_text(app: &mut App, text: &str) {
     }
 }
 
-/// `^r` then select-all-equivalent: clear the field, then type `name`.
+/// `^r` then select-all-equivalent: clear the STEM (the extension is fenced
+/// off by the gate — see `title.rs`'s `TitleField::window` — so a plain
+/// backspace loop to an empty overall TEXT would spin forever once the
+/// stem itself is gone), then type `name`.
 pub fn rename_to(app: &mut App, name: &str) -> Effects {
     send(app, ctrl('r'));
     assert_eq!(app.focus(), Pane::Title);
-    while !app.title.text.is_empty() {
-        send(app, plain(KeyCode::Backspace));
-    }
+    send(app, ctrl('a'));
+    send(app, plain(KeyCode::Backspace));
     type_text(app, name);
     send(app, plain(KeyCode::Enter))
 }
 
-/// `^r`, clear the field, then type `name` — WITHOUT pressing Enter, so the
+/// `^r`, clear the stem, then type `name` — WITHOUT pressing Enter, so the
 /// caller can drive a DIFFERENT blur gesture and observe what it does with
 /// the still-uncommitted name.
 pub fn type_new_name(app: &mut App, name: &str) {
     send(app, ctrl('r'));
     assert_eq!(app.focus(), Pane::Title);
-    while !app.title.text.is_empty() {
-        send(app, plain(KeyCode::Backspace));
-    }
+    send(app, ctrl('a'));
+    send(app, plain(KeyCode::Backspace));
     type_text(app, name);
 }
 

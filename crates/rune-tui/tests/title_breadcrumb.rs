@@ -86,6 +86,33 @@ fn title_row_shows_untitled_1_for_the_default_untitled_document() {
     );
 }
 
+/// WP3: focused, the title now shows the WHOLE file name, extension
+/// included — before, the field held only the stem while editing, so a
+/// focused row never showed `.md` at all.
+#[test]
+fn focused_title_row_shows_the_extension_too() {
+    let mut app = app_for("hello", Some("/notes/todo.md"));
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('r'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut effects,
+    );
+    app.sync_view();
+
+    let title_row = row_text(&app, 1, WIDTH);
+    assert!(
+        title_row.contains("todo.md"),
+        "the focused title must show the extension too:\n{title_row}"
+    );
+}
+
 /// The dirty dot appears on the title row after a real edit is driven
 /// through `app::update` (plan WP6.S2: "drive a real key Msg through
 /// update"; the disappears-on-save case is deliberately NOT covered here —

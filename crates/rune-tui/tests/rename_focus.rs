@@ -57,18 +57,24 @@ fn leaving_the_title_for_the_explorer_commits_the_rename() {
 }
 
 /// Escape is an unconditional exit even while the typed name is invalid
-/// (here, empty): it reverts FIRST, so there is nothing left for `on_blur`
-/// to veto, and focus always releases.
+/// (here, empty — reached by unlocking the gate and clearing everything,
+/// since a locked stem always leaves a valid dotfile-shaped name behind):
+/// it reverts FIRST, so there is nothing left for `on_blur` to veto, and
+/// focus always releases.
 #[test]
 fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
-    type_new_name(&mut app, "");
+    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::Right));
+    send(&mut app, ctrl('a'));
+    send(&mut app, plain(KeyCode::Backspace));
+    assert_eq!(app.title.text(), "");
 
     let effects = send(&mut app, plain(KeyCode::Escape));
 
     assert_eq!(app.focus(), Pane::Editor);
-    assert_eq!(app.title.text, "a", "reverted to the committed name");
+    assert_eq!(app.title.text(), "a.md", "reverted to the committed name");
     assert!(
         !effects.cmds.iter().any(|c| c.kind() == CmdKind::Rename),
         "Escape must never fire a rename"
@@ -83,7 +89,11 @@ fn escape_releases_focus_even_when_the_typed_name_is_invalid() {
 fn an_invalid_name_vetoes_the_focus_change() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
-    type_new_name(&mut app, "");
+    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::Right));
+    send(&mut app, ctrl('a'));
+    send(&mut app, plain(KeyCode::Backspace));
+    assert_eq!(app.title.text(), "");
 
     send(&mut app, plain(KeyCode::Enter));
 
@@ -108,7 +118,11 @@ fn an_invalid_name_still_lets_the_user_quit_and_save() {
     // A real edit, not `mark_dirty_from_hydration` — `trigger_save` gates on
     // `buffer.version() != saved_version`, which only an actual edit moves.
     send(&mut app, plain(KeyCode::Char('!')));
-    type_new_name(&mut app, "");
+    send(&mut app, ctrl('r'));
+    send(&mut app, plain(KeyCode::Right));
+    send(&mut app, ctrl('a'));
+    send(&mut app, plain(KeyCode::Backspace));
+    assert_eq!(app.title.text(), "");
     assert_eq!(
         app.focus(),
         Pane::Title,
@@ -329,7 +343,8 @@ fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
 
     assert_eq!(app.active, first);
     assert_eq!(
-        app.title.text, "a",
+        app.title.text(),
+        "a.md",
         "the title must reseed from the new active document"
     );
 }
@@ -363,7 +378,8 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
         "focus must not be silently displaced"
     );
     assert_eq!(
-        app.title.text, "zzz",
+        app.title.text(),
+        "zzz.md",
         "the typed name must survive an async close of the document being renamed"
     );
 }
