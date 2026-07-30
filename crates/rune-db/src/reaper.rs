@@ -3,10 +3,10 @@
 //! swallowed by the caller, not surfaced as an open failure): for every
 //! `sessions` row confirmed dead, deletes its `session_documents`/`events`/
 //! `snapshots` footprint — but ONLY once it is no longer
-//! [`crate::load::most_recent_session_for_doc`] for any `doc_id` it ever
+//! [`crate::inherit::most_recent_session_for_doc`] for any `doc_id` it ever
 //! touched. Reaping the currently-most-recent dead session for a doc would
 //! destroy the exact unsaved content the next opener still needs to
-//! inherit (`load::find_inheritable_draft`).
+//! inherit (`inherit::find_inheritable_draft`).
 //!
 //! The `sessions` row itself is deliberately NEVER deleted here:
 //! `observations.session_id` has no cascade, by design, since a dead
@@ -16,7 +16,7 @@
 use rusqlite::{Connection, Transaction, params};
 
 use crate::Error;
-use crate::load::most_recent_session_for_doc;
+use crate::inherit::most_recent_session_for_doc;
 use crate::retry;
 
 /// Runs once per `Store::open`. `is_alive` decides whether a recorded

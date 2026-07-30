@@ -37,6 +37,7 @@ mod diag;
 mod document;
 mod error;
 mod gc;
+mod inherit;
 mod journal;
 mod load;
 mod materialize;
