@@ -458,3 +458,40 @@ impl Vfs for Mem {
         Ok(entries)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// `stat` and `read_dir` derive "is this a synthetic directory" from the
+    /// same predicate (`sits_strictly_below`); this exercises both entry
+    /// points against the same fixture to prove they agree at every level —
+    /// the file itself, its immediate parent, and an ancestor two levels up.
+    #[test]
+    fn stat_and_read_dir_agree_on_synthetic_directories() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a/b/c.md"), b"content")
+            .unwrap();
+
+        let stat_a = vfs.stat(Path::new("/a")).unwrap();
+        assert_eq!(stat_a.kind, FileKind::Dir);
+        assert!(vfs.read_dir(Path::new("/a")).is_ok());
+
+        let stat_ab = vfs.stat(Path::new("/a/b")).unwrap();
+        assert_eq!(stat_ab.kind, FileKind::Dir);
+        assert!(vfs.read_dir(Path::new("/a/b")).is_ok());
+
+        let stat_file = vfs.stat(Path::new("/a/b/c.md")).unwrap();
+        assert_eq!(stat_file.kind, FileKind::File);
+        // A file key with no descendants below it lists no children — same
+        // shape `mem_read_dir_excludes_the_queried_path_itself` already
+        // relies on — rather than erroring the way `Disk::read_dir` would
+        // on a real non-directory path (`Mem` has no directory nodes to
+        // distinguish "file" from "empty directory" by).
+        assert_eq!(
+            vfs.read_dir(Path::new("/a/b/c.md")).unwrap(),
+            Vec::<DirEntry>::new()
+        );
+    }
+}
