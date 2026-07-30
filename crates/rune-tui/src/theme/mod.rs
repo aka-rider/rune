@@ -145,10 +145,7 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
     let base = Style::default();
     match name {
         "text" => base.fg(c(p.text)),
-        "markup.heading.1" => base
-            .fg(c(p.crust))
-            .bg(c(p.red))
-            .add_modifier(Modifier::BOLD),
+        "markup.heading.1" => base.fg(c(p.red)).add_modifier(Modifier::BOLD),
         "markup.heading.2" => base.fg(c(p.peach)).add_modifier(Modifier::BOLD),
         "markup.heading.3" => base.fg(c(p.yellow)).add_modifier(Modifier::BOLD),
         "markup.heading.4" => base.fg(c(p.green)),
@@ -157,10 +154,11 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.strong" => base.add_modifier(Modifier::BOLD),
         "markup.italic" => base.add_modifier(Modifier::ITALIC),
         "markup.strikethrough" => base.add_modifier(Modifier::CROSSED_OUT),
-        "markup.raw.inline" => base.fg(c(p.peach)).bg(c(p.surface0)),
-        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.mantle)),
+        "markup.raw.inline" => base.fg(c(p.peach)).bg(c(p.surface1)),
+        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.surface0)),
         "markup.link" => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
+        "markup.quote.marker" => base.fg(c(p.overlay0)),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
         // Raw ANSI-256 indices, deliberately NOT routed through the
