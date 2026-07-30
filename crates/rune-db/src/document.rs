@@ -136,14 +136,7 @@ fn open_path_by_inode(
                 // rebind chokepoints — the same two this module's own
                 // divergent copies used to drift from ([rune-db 13]).
                 crate::rebind::evict_path_claim_tx(tx, path, row_id)?;
-                crate::rebind::set_identity_tx(
-                    tx,
-                    row_id,
-                    path,
-                    Some(inode),
-                    Some(device),
-                    at,
-                )?;
+                crate::rebind::set_identity_tx(tx, row_id, path, Some(inode), Some(device), at)?;
                 Ok(DocRef {
                     id: row_id,
                     renamed_from: Some(row_path),

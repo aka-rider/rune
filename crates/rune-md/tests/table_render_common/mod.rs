@@ -51,7 +51,11 @@ pub fn display_width(text: &str) -> usize {
 /// one string before measuring can silently re-fuse a grapheme cluster the
 /// render already tore apart at a span boundary, making the oracle agree
 /// with a wrong `col_widths` measurement instead of catching the disagreement.
-pub fn per_span_display_width(lines: &[rune_syntax::SyntaxLine], line: usize, content: &str) -> usize {
+pub fn per_span_display_width(
+    lines: &[rune_syntax::SyntaxLine],
+    line: usize,
+    content: &str,
+) -> usize {
     lines
         .get(line)
         .map(|l| l.spans.iter().map(|s| display_width(s.text(content))).sum())

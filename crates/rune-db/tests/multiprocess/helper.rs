@@ -102,8 +102,7 @@ pub(crate) fn append_storm_checkpoint() {
         let _ = tx.send(evt);
     });
     let store = open_store(&path, on_event);
-    std::fs::write(&session_marker, store.session_id().to_string())
-        .expect("write session marker");
+    std::fs::write(&session_marker, store.session_id().to_string()).expect("write session marker");
 
     for i in 0..count {
         let edit = AppliedEdit {
@@ -141,8 +140,7 @@ pub(crate) fn race_open() {
     wait_for_path(&go, Duration::from_secs(30));
 
     let store = open_store(&path, Box::new(|_evt| {}));
-    std::fs::write(&opened_marker, store.session_id().to_string())
-        .expect("write opened marker");
+    std::fs::write(&opened_marker, store.session_id().to_string()).expect("write opened marker");
     store.shutdown();
     std::process::exit(0);
 }

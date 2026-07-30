@@ -133,7 +133,12 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, stem: &str, effects: &mut 
 /// `rename_excl` publish (§1.4.1). On `AlreadyExists` the temp is genuinely
 /// unneeded — the existing file is untouched and stays the winner — so it
 /// is removed and the create refused.
-fn create_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, bytes: Vec<u8>, generation: u32) -> Cmd {
+fn create_cmd(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    bytes: Vec<u8>,
+    generation: u32,
+) -> Cmd {
     Cmd::new(CmdKind::Rename, move || {
         let result = (|| {
             let temp = vfs

@@ -27,7 +27,7 @@ use rune_tui::{app, footer, workspace};
 
 use rune_vfs::Vfs;
 
-use rename_common::{app_with, collide, plain, rename_to, send, seeded_vfs};
+use rename_common::{app_with, collide, plain, rename_to, seeded_vfs, send};
 
 /// A collision with no modal up raises the guard, enters `Collision`, and
 /// the footer names the target.

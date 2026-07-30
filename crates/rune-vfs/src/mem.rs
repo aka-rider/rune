@@ -358,10 +358,7 @@ impl Vfs for Mem {
         // No exact file at `path` — `Mem` has no directory nodes, so a
         // directory is synthesized: `path` is a directory iff some stored
         // key sits strictly below it.
-        let is_synthetic_dir = state
-            .files
-            .keys()
-            .any(|key| sits_strictly_below(key, path));
+        let is_synthetic_dir = state.files.keys().any(|key| sits_strictly_below(key, path));
         if is_synthetic_dir {
             return Ok(Stat {
                 size: 0,
@@ -471,8 +468,7 @@ mod tests {
     #[test]
     fn stat_and_read_dir_agree_on_synthetic_directories() {
         let vfs = Mem::new();
-        vfs.save_atomic(Path::new("/a/b/c.md"), b"content")
-            .unwrap();
+        vfs.save_atomic(Path::new("/a/b/c.md"), b"content").unwrap();
 
         let stat_a = vfs.stat(Path::new("/a")).unwrap();
         assert_eq!(stat_a.kind, FileKind::Dir);

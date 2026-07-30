@@ -37,7 +37,9 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::retry;
-use crate::writer_lifecycle::{IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance};
+use crate::writer_lifecycle::{
+    IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance,
+};
 pub use crate::writer_ops::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH};
 
 /// One write operation queued to the writer thread.
@@ -493,5 +495,4 @@ mod tests {
         drop(block_tx);
         handle.shutdown(1, Arc::new(|_pid, _started_at| false));
     }
-
 }

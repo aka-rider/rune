@@ -27,7 +27,7 @@ use rune_core::buffer::Buffer;
 use rune_vfs::{Mem, Vfs};
 
 use rename_common::{
-    active_path, app_with, assert_refused, ctrl, plain, rename_to, send, seeded_vfs, type_text,
+    active_path, app_with, assert_refused, ctrl, plain, rename_to, seeded_vfs, send, type_text,
 };
 
 // ── Focus and typing ────────────────────────────────────────────────────
@@ -212,10 +212,7 @@ fn a_rename_io_failure_raises_the_error_modal_and_changes_nothing() {
     send(&mut app, cmd.run().expect("a reply"));
 
     assert_eq!(app.rename, RenameState::Idle);
-    assert!(matches!(
-        app.modal,
-        Some(rune_tui::banner::Modal::Error(_))
-    ));
+    assert!(matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))));
     assert_eq!(active_path(&app).as_deref(), Some(Path::new("/root/a.md")));
     assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
 }

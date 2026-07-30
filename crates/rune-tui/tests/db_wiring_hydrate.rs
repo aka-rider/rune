@@ -245,7 +245,8 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
 
     let op_id = 1u64;
     let issued_version = app.doc(id).unwrap().buffer.version();
-    app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
+    app.db_ops
+        .insert(op_id, PendingOp::load(id, issued_version));
 
     let load_result = LoadResult {
         doc_id: 1,
@@ -311,7 +312,8 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
 
     let op_id = 1u64;
     let issued_version = app.doc(id).unwrap().buffer.version();
-    app.db_ops.insert(op_id, PendingOp::load(id, issued_version));
+    app.db_ops
+        .insert(op_id, PendingOp::load(id, issued_version));
 
     let load_result = LoadResult {
         doc_id: 1,
