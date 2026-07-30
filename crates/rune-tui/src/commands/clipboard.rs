@@ -8,11 +8,14 @@
 //! content` bottom out in `commands::edit`, which touches `app.db`/dirty
 //! bookkeeping.
 //!
-//! `Msg::Paste` (bracketed paste) and `Msg::ClipboardRead` (pbpaste) both
-//! funnel through `handle_paste_content` — the single function every paste
-//! source calls, so a terminal ⌘V and an in-app `super+v` can never double-
-//! insert the same text (plan Gotchas: "Bracketed paste vs pbpaste double-
-//! paste").
+//! `Msg::Paste` (bracketed paste) and a `Msg::ClipboardRead` targeting a
+//! document both funnel through `handle_paste_content` — the single
+//! function every DOCUMENT paste source calls, so a terminal ⌘V and an
+//! in-app `super+v` can never double-insert the same text (plan Gotchas:
+//! "Bracketed paste vs pbpaste double-paste"). A paste routed to the title
+//! (`PasteTarget::Title`) never reaches this function at all — it goes
+//! through `title::keys::paste` instead (`dispatch::update_inner`'s
+//! `Msg::Paste`/`Msg::ClipboardRead` arms decide which).
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
@@ -24,13 +27,14 @@ use crate::commands::edit;
 use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::document::DocumentId;
-use crate::runtime::Effects;
+use crate::runtime::{Effects, PasteTarget};
 
 /// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
 /// OSC52_MAX_PAYLOAD_BYTES` — reports a banner instead of silently writing
 /// a sequence a terminal multiplexer would just drop (plan WP13.S4).
-/// Shared by `copy` and `cut` so the cap can never drift between them.
-fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
+/// Shared by `copy`/`cut` and the title's own `Command::Copy`/`Command::Cut`
+/// handling (`title::keys`) so the cap can never drift between call sites.
+pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
     if text.is_empty() {
         return;
     }
@@ -117,16 +121,18 @@ pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
 }
 
 /// Port of `commands_clipboard.go:clipboardPaste`: no buffer mutation
-/// here — just spawns the pbpaste `Cmd`; the actual insertion happens
-/// later, when its `Msg::ClipboardRead` reply reaches
-/// `handle_paste_content`.
-pub fn paste(effects: &mut Effects) {
-    effects.cmds.push(pbpaste_cmd());
+/// here — just spawns the pbpaste `Cmd`, tagged with `target` so its
+/// `Msg::ClipboardRead` reply routes back to wherever the paste was
+/// requested from (`dispatch::update_inner`'s `ClipboardRead` arm) rather
+/// than wherever focus/the active document happen to be when it lands.
+pub fn paste(effects: &mut Effects, target: PasteTarget) {
+    effects.cmds.push(pbpaste_cmd(target));
 }
 
 /// Port of `commands_clipboard.go:handlePasteContent` (:153-181), the
-/// single funnel `Msg::Paste` (bracketed paste) and `Msg::ClipboardRead`
-/// (pbpaste) both call — see module docs. Read-only documents are NOT
+/// single funnel `Msg::Paste` (bracketed paste, when focus isn't the title)
+/// and a document-targeted `Msg::ClipboardRead` both call — see module
+/// docs. Read-only documents are NOT
 /// guarded here (review finding F1): `edit::insert_text` bottoms out in
 /// `commands::edit::commit_edit_batch`, the single chokepoint that rejects
 /// every mutating command against a read-only `Document` — see its docs and
@@ -325,8 +331,9 @@ mod tests {
 
     #[test]
     fn paste_spawns_exactly_one_pbpaste_cmd_and_never_touches_the_buffer_or_raw() {
+        let app = app_with("ac", 1);
         let mut effects = Effects::default();
-        paste(&mut effects);
+        paste(&mut effects, PasteTarget::Document(app.active));
 
         assert_eq!(effects.cmds.len(), 1);
         assert!(effects.raw.is_empty(), "paste must never emit raw bytes");
@@ -358,7 +365,10 @@ mod tests {
         let mut effects2 = Effects::default();
         app::update(
             &mut read_app,
-            Msg::ClipboardRead("b".to_string()),
+            Msg::ClipboardRead {
+                text: "b".to_string(),
+                target: PasteTarget::Document(read_id),
+            },
             &mut effects2,
         );
 
