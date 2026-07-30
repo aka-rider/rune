@@ -1,279 +1,197 @@
-//! The title row: the active document's display name plus a dirty dot, and
-//! — new here — the editable [`TitleField`] that a rename types into.
+//! The editable title: the [`TitleField`] a rename types into, and the
+//! derived stem/extension split every other module in this family reads
+//! through `window()`/`ext_unlocked()`.
 //!
-//! Two rendering modes, one function:
+//! Three modules share this concern, split along what each one owns:
+//! - **This file** — the field's own shape: what it holds, how it is
+//!   seeded/reverted, and `ext_split`/`is_valid_name`/`name_for`, the pure
+//!   functions everything else is built from.
+//! - [`keys`] (`title/keys.rs`) — keystroke handling (`handle_key`) and the
+//!   blur commit chokepoint (`on_blur`); re-exported here so every existing
+//!   `title::handle_key`/`title::on_blur` call site keeps working.
+//! - `render::title` — every span the title row ever paints. A sibling of
+//!   this module, not a descendant, so it reads `TitleField` only through
+//!   the public accessors below.
 //!
-//! - **Unfocused** (`app.focus() != Pane::Title`): `Document::file_name()`
-//!   plus ` •` when dirty. Unchanged, a pure function of `&App`.
-//! - **Focused**: [`TitleField`]'s own `text` with a block cursor. The field
-//!   holds the file's **stem**, not its full name — Go's title does the
-//!   same (`workspace_view_switch.go`:
-//!   `TrimSuffix(Base(path), ".md")`), and the rename target is rebuilt as
-//!   `<parent>/<text>.md` (`workspace_update.go`). The extension is
-//!   managed, never typed, so it cannot be accidentally deleted into a file
-//!   rune would then refuse to reopen.
+//! The field is unjournaled at the DOCUMENT level (§12: "the title field is
+//! unjournaled — a rename is one atomic bind"): typing here never touches
+//! the document buffer, never appends to the document's own journal, and
+//! never marks the document dirty. Its own [`crate::field::TextField`] DOES
+//! keep an in-memory undo history (⌘Z/⇧⌘Z) — that history is private to the
+//! field, never replicated to the recovery store (§12 again), and discarded
+//! outright by every [`TitleField::seed`]/[`TitleField::set_text`].
 //!
-//! `TitleField` is the only state this module owns, and it is genuinely
-//! this component's own: `text`/`cursor`/`committed` are exactly what
-//! `draw` below renders (§2.1). The rename *workflow* it kicks off lives in
-//! `rename.rs` — a multi-step I/O sequence with three different renderers
-//! (this module the name, `footer` the prompt, `banner` the modal slot), so
-//! it belongs to no single child.
-//!
-//! The field is **unjournaled** (§12: "the title field is unjournaled — a
-//! rename is one atomic bind"): typing here never touches the document
-//! buffer, never appends a journal event, and never marks anything dirty.
+//! `TitleField` holds the FULL file name, extension included, in one
+//! `TextField` rather than two separately-tracked strings (decision 1):
+//! `lessrc.md` -> `lessrc` requires the dot itself to be editable, which a
+//! separately-tracked stem/extension pair cannot express. The boundary
+//! between the two is *derived* on every call by [`ext_split`], never
+//! stored, so it can never drift out of sync with an edit that moved the
+//! dot.
 
-use ratatui::Frame;
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use std::ops::Range;
 
-use crate::app::App;
 use crate::document::Document;
-use crate::keymap::{KeyCode, KeyInput, KeyOutcome};
-use crate::pane::Pane;
-use crate::rename;
-use crate::runtime::Effects;
 
-/// The extension every rune document carries. The title field edits the
-/// stem; this is re-appended when the typed name becomes a real path.
-pub const MARKDOWN_EXT: &str = "md";
+pub mod keys;
+
+pub use keys::{handle_key, on_blur};
+
+/// The extension a pathless draft seeds with: an empty stem plus the
+/// extension every rune document gets, so a draft reads as immediately
+/// editable and ⌘S still creates a `.md` file even if the user never
+/// touches the extension. Used only by [`name_for`]'s draft fallback — a
+/// typed name is never re-appended with this once it reaches `rename.rs`
+/// (decision 10: the rename target is the typed name, verbatim).
+const MARKDOWN_EXT: &str = "md";
 
 /// Characters a file name may never contain. `/` is the path separator (a
 /// typed `a/b` would silently rename into a different directory — or fail
 /// confusingly); the rest are rejected because they are hostile on the
 /// network volumes and archive formats a `.md` vault routinely crosses,
 /// matching Go's `invalidFileNameChars` (`title.go`). `\0` and every other
-/// control character are rejected via `char::is_control` below.
+/// control character are rejected via `char::is_control` at every call
+/// site.
 const INVALID_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>'];
 
 /// The editable title. One field on `App`, reseeded at every document
-/// switch so it always describes whatever document is actually showing.
-///
-/// `cursor` is a **byte** offset into `text` (§1.5) — every mutation below
-/// moves it by `ch.len_utf8()` or to a `char_indices` boundary, never by a
-/// rune count, so a multi-byte name can never be split mid-codepoint.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// switch and every focus gain so it always describes whatever document is
+/// actually showing.
 pub struct TitleField {
-    /// What the user has typed — the file's stem, without its extension.
-    pub text: String,
-    /// Byte offset of the insertion point within `text`.
-    pub cursor: usize,
+    field: crate::field::TextField,
     /// The last committed name. `Esc` reverts to it, and a commit that
     /// doesn't change it is a no-op rather than a rename of a file to its
     /// own name.
-    pub committed: String,
+    committed: String,
+    /// Whether this focus session has entered the extension. Starts
+    /// UNLOCKED whenever the seeded name has an empty stem (decision 9): a
+    /// dotfile or a fresh draft has nothing to fence off, and a locked
+    /// zero-width window would make Home, End, Backspace, ⌥← and ⌘A all
+    /// silently inert. Otherwise latches true for the rest of the focus
+    /// session on the Right-at-end-of-stem gesture (`keys::handle_key`).
+    ext_unlocked: bool,
 }
 
 impl TitleField {
-    /// Points the field at `name` (a stem) and puts the cursor at the end —
-    /// the natural place to start editing an existing name. Called at every
-    /// document switch (`workspace::switch_to`) so the field can never
-    /// describe a document that is no longer showing.
+    /// Points the field at `name` (the full file name) and commits it —
+    /// the file actually has this name. Puts the cursor at the stem/
+    /// extension split, the natural place to start editing an existing
+    /// name, and recomputes the gate from `name` itself. Called at every
+    /// document switch (`workspace::switch_to`) and every focus gain
+    /// (`App::focus_title`).
     pub fn seed(&mut self, name: &str) {
-        self.text = name.to_string();
-        self.committed = self.text.clone();
-        self.cursor = self.text.len();
+        self.committed = name.to_string();
+        self.place(name);
     }
 
-    /// Throws away the in-progress edit. `Esc`'s behavior.
+    /// Throws away the in-progress edit and its undo history, returning to
+    /// `committed` — `Esc`'s behavior. Recomputes the gate exactly as
+    /// `seed` would, from the COMMITTED name: reverting to a dotfile-shaped
+    /// name must unlock too.
     pub fn revert(&mut self) {
-        self.text = self.committed.clone();
-        self.cursor = self.text.len();
+        let committed = self.committed.clone();
+        self.place(&committed);
     }
 
-    /// Accepts `text` as the new committed name — called once a rename has
-    /// actually landed, never optimistically at keypress time.
-    pub fn accept(&mut self) {
-        self.committed = self.text.clone();
-    }
-
-    /// Replaces `text` with a name the user must fix (a failed rename
-    /// refocuses the field holding what they typed, never the old
-    /// committed name — the typed name is the thing worth keeping).
+    /// Replaces the typed text WITHOUT touching `committed` — the shared
+    /// primitive `seed`/`revert` are both built on, exposed for callers
+    /// that need to place new text in the field without asserting it is
+    /// the file's real name.
     pub fn set_text(&mut self, text: &str) {
-        self.text = text.to_string();
-        self.cursor = self.text.len();
+        self.place(text);
     }
 
-    fn insert(&mut self, ch: char) {
-        self.text.insert(self.cursor, ch);
-        self.cursor += ch.len_utf8();
+    fn place(&mut self, name: &str) {
+        self.field.set_text(name);
+        let split = ext_split(name);
+        self.field.set_cursor(split, split);
+        self.ext_unlocked = split == 0;
     }
 
-    /// Deletes the character *before* the cursor, moving the cursor back to
-    /// that character's own start byte — never `cursor - 1`, which would
-    /// land mid-codepoint on a multi-byte name.
-    fn delete_left(&mut self) {
-        let Some(prev) = self.prev_boundary() else {
-            return;
-        };
-        self.text.replace_range(prev..self.cursor, "");
-        self.cursor = prev;
+    /// What the user has typed so far — the full name, extension included.
+    pub fn text(&self) -> &str {
+        self.field.text()
     }
 
-    fn delete_right(&mut self) {
-        let Some(next) = self.next_boundary() else {
-            return;
-        };
-        self.text.replace_range(self.cursor..next, "");
+    /// The name the file actually has right now.
+    pub fn committed(&self) -> &str {
+        &self.committed
     }
 
-    fn prev_boundary(&self) -> Option<usize> {
-        self.text[..self.cursor]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
+    /// Whether the extension gate has latched open for this focus session.
+    pub fn ext_unlocked(&self) -> bool {
+        self.ext_unlocked
     }
 
-    fn next_boundary(&self) -> Option<usize> {
-        self.text[self.cursor..]
-            .chars()
-            .next()
-            .map(|ch| self.cursor + ch.len_utf8())
+    /// The editing core, for rendering (cursor/selection) and the key
+    /// layer's `apply`/`insert` calls.
+    pub fn field(&self) -> &crate::field::TextField {
+        &self.field
+    }
+
+    pub fn field_mut(&mut self) -> &mut crate::field::TextField {
+        &mut self.field
+    }
+
+    /// The currently-editable sub-range: the whole name once unlocked,
+    /// else everything before the extension. Never stored (gotcha 12) —
+    /// recomputed fresh from the LIVE text on every call, so it can never
+    /// drift out of sync with an edit that moved the dot.
+    pub fn window(&self) -> Range<usize> {
+        if self.ext_unlocked {
+            0..self.field.len()
+        } else {
+            0..ext_split(self.field.text())
+        }
     }
 }
 
-/// The stem the field should show for `doc`: its file name minus the
-/// extension, or the empty string for a pathless draft (there is no name to
-/// edit yet, and seeding the `"[No Name]"` display placeholder as editable
-/// text would let the user rename a file to literally that).
-pub fn stem_for(doc: &Document) -> String {
+impl Default for TitleField {
+    fn default() -> Self {
+        TitleField {
+            field: crate::field::TextField::new(""),
+            committed: String::new(),
+            ext_unlocked: true,
+        }
+    }
+}
+
+/// The byte offset where the extension begins: the last `.` in `name`, or
+/// `name.len()` when there is none. Unconditional `rfind` (gotcha 10) — a
+/// dotfile like `.gitignore` is therefore all extension and no stem, which
+/// is exactly what keeps decision 9's empty-stem unlock rule meaningful
+/// instead of a special case.
+pub fn ext_split(name: &str) -> usize {
+    name.rfind('.').unwrap_or(name.len())
+}
+
+/// The full name `doc` should seed its title with: the path's own
+/// `file_name()`, or the draft default (an empty stem plus `.md`) for a
+/// pathless document — there is no name to edit yet, and seeding the
+/// `"[No Name]"` display placeholder as editable text would let the user
+/// rename a file to literally that.
+pub fn name_for(doc: &Document) -> String {
     doc.file_path
         .as_ref()
-        .and_then(|p| p.file_stem())
+        .and_then(|p| p.file_name())
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default()
+        .unwrap_or_else(|| format!(".{MARKDOWN_EXT}"))
 }
 
-/// Whether `name` is usable as a file stem. Rejects the empty string (there
-/// would be no file left to name), any [`INVALID_NAME_CHARS`], and every
-/// control character. Not a security boundary — a refusal here is a UX
-/// courtesy; the atomic no-clobber `rename_excl` is what actually protects
-/// the destination.
-pub fn is_valid_stem(name: &str) -> bool {
+/// Whether `name` is usable as a file name. Rejects the empty string,
+/// every control character, any [`INVALID_NAME_CHARS`], and the two
+/// special directory entries `.`/`..` — all three newly reachable now that
+/// the name includes the extension (with the gate locked, none of these
+/// could ever be typed; unlocked, they are one keystroke away). Not a
+/// security boundary — a refusal here is a UX courtesy; the atomic
+/// no-clobber `rename_excl` is what actually protects the destination.
+pub fn is_valid_name(name: &str) -> bool {
     !name.is_empty()
+        && name != "."
+        && name != ".."
         && !name
             .chars()
             .any(|ch| ch.is_control() || INVALID_NAME_CHARS.contains(&ch))
-}
-
-/// Stage 3 for `Pane::Title` (§3.3): every key is consumed here — a
-/// keystroke aimed at a file name must never reach the buffer, which is
-/// what the fuzzer's `PANE-NO-BLEED` invariant asserts.
-///
-/// `Enter`/`Down` commit; `Esc` reverts and returns focus to the editor;
-/// arrows/Home/End move; Backspace/Delete edit; printable characters
-/// insert after filtering. Anything else is a consumed no-op.
-pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
-    match key.code {
-        // Enter/Down do nothing but move focus — the blur commits (decision
-        // 4: DRY, one commit chokepoint). Matches ANY modifiers, exactly as
-        // before: ⌘Enter and ⇧Down commit too.
-        KeyCode::Enter | KeyCode::Down => {
-            app.set_focus(Pane::Editor, effects);
-        }
-        // Escape reverts FIRST, then releases focus — reversed, it would
-        // commit the abandoned name, and it is what keeps Escape an
-        // unconditional exit even when `on_blur` would otherwise veto.
-        KeyCode::Escape => {
-            app.title.revert();
-            app.set_focus(Pane::Editor, effects);
-        }
-        KeyCode::Left => {
-            if let Some(prev) = app.title.prev_boundary() {
-                app.title.cursor = prev;
-            }
-        }
-        KeyCode::Right => {
-            if let Some(next) = app.title.next_boundary() {
-                app.title.cursor = next;
-            }
-        }
-        KeyCode::Home => app.title.cursor = 0,
-        KeyCode::End => app.title.cursor = app.title.text.len(),
-        KeyCode::Backspace => app.title.delete_left(),
-        KeyCode::Delete => app.title.delete_right(),
-        KeyCode::Char(ch)
-            if !key.mods.ctrl
-                && !key.mods.alt
-                && !key.mods.sup
-                && !ch.is_control()
-                && !INVALID_NAME_CHARS.contains(&ch) =>
-        {
-            app.title.insert(ch);
-        }
-        _ => {}
-    }
-    KeyOutcome::Consumed
-}
-
-/// The single commit chokepoint (decision 4/8): whether the title may
-/// release focus. Called from exactly one place, `App::set_focus`, whenever
-/// the title currently holds focus and something else wants it — every
-/// site that changes the active document, every chrome-focus command, and
-/// the hoisted gate in `pane::handle_global_command` all reach this
-/// indirectly through `set_focus`/`blur_title`, never directly.
-///
-/// A commit with an unchanged name is `Accepted` outright — a plain
-/// refocus, never a rename of a file onto its own path. Otherwise
-/// `rename::begin` decides every refusal (read-only, a save in flight, an
-/// invalid name, a rename already in progress) and owns the whole workflow
-/// from here. `committed` is deliberately NOT advanced on the way out: it
-/// is the name the file actually has, and it moves only once a rename has
-/// really landed (`rename::bind_to` reseeds the field). Advancing it
-/// optimistically here would make `Esc` revert to a name no file has.
-pub fn on_blur(app: &mut App, effects: &mut Effects) -> rename::Commit {
-    if app.title.text == app.title.committed {
-        return rename::Commit::Accepted;
-    }
-    rename::begin(app, effects)
-}
-
-/// Renders `<name>` (styled `theme.chrome.title_text`) followed by ` •`
-/// when the active document is dirty, or — when the title has focus — the
-/// editable field with a block cursor. Pure function of `&App` in both
-/// modes: it reads `app.active_doc()`/`app.title` fresh every call and
-/// caches nothing, so drawing twice produces identical output.
-pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
-    let spans = if app.focus() == Pane::Title {
-        field_spans(&app.title, &app.theme)
-    } else {
-        let doc = app.active_doc();
-        let mut spans = vec![Span::styled(
-            doc.file_name().to_string(),
-            app.theme.chrome.title_text,
-        )];
-        if doc.is_dirty() {
-            spans.push(Span::styled(" \u{2022}", app.theme.chrome.error));
-        }
-        spans
-    };
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-/// The focused field: text before the cursor, the cursor cell (the
-/// character under it, or a space at end-of-text), then the remainder.
-/// Slicing is by BYTE offset — `cursor` is a byte offset and is always kept
-/// on a `char` boundary by the mutators above (§1.5).
-fn field_spans(field: &TitleField, theme: &crate::theme::Theme) -> Vec<Span<'static>> {
-    let base = theme.chrome.title_text;
-    let cursor_style: Style = base.add_modifier(Modifier::REVERSED);
-
-    let (before, rest) = field.text.split_at(field.cursor.min(field.text.len()));
-    let mut chars = rest.chars();
-    let (at, after) = match chars.next() {
-        Some(ch) => (ch.to_string(), chars.as_str().to_string()),
-        None => (" ".to_string(), String::new()),
-    };
-
-    vec![
-        Span::styled(before.to_string(), base),
-        Span::styled(at, cursor_style),
-        Span::styled(after, base),
-    ]
 }
 
 #[cfg(test)]
@@ -281,95 +199,82 @@ fn field_spans(field: &TitleField, theme: &crate::theme::Theme) -> Vec<Span<'sta
 mod tests {
     use super::*;
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, Vfs};
     use std::sync::Arc;
 
-    fn app_for(content: &str) -> App {
-        App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
-    }
-
-    /// Draws just the title row into a `width`-wide, 1-row terminal —
-    /// through `testgrid::draw_with` (plan WP13.S5), the crate's one
-    /// `TestBackend` construction site, rather than this file's own
-    /// hand-rolled copy (the `worktree-kind-inventing-marshmallow` lock
-    /// that used to keep this file untouched has long since landed).
-    fn draw_line(app: &App, width: u16) -> String {
-        let buf = crate::testgrid::draw_with(width, 1, |frame| {
-            draw(app, frame.area(), frame);
-        });
-        let mut s = String::new();
-        for x in 0..width {
-            if let Some(cell) = buf.cell((x, 0)) {
-                s.push_str(cell.symbol());
-            }
-        }
-        s
+    fn app_for(content: &str) -> crate::app::App {
+        crate::app::App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
     }
 
     #[test]
-    fn no_name_placeholder_when_pathless() {
-        let app = app_for("hello");
-        assert!(draw_line(&app, 40).contains("[No Name]"));
+    fn ext_split_finds_the_last_dot_or_the_end() {
+        assert_eq!(ext_split("lessrc.md"), 6);
+        assert_eq!(ext_split("archive.tar.gz"), 11);
+        assert_eq!(ext_split("noext"), 5);
+        assert_eq!(ext_split(".gitignore"), 0);
+        assert_eq!(ext_split(""), 0);
     }
 
     #[test]
-    fn dirty_dot_appears_only_when_dirty() {
-        let mut app = app_for("hello");
-        assert!(!draw_line(&app, 40).contains('\u{2022}'));
-        app.active_doc_mut().mark_dirty_from_hydration();
-        assert!(draw_line(&app, 40).contains('\u{2022}'));
-    }
-
-    /// The focused field shows what was TYPED, not the document's own
-    /// file name — that difference is the whole point of the mode.
-    #[test]
-    fn focused_field_renders_the_typed_text() {
-        let mut app = app_for("hello");
-        app.title.seed("notes");
-        app.refocus_title();
-        assert!(draw_line(&app, 40).starts_with("notes"));
-    }
-
-    /// Render purity (§5.2): drawing twice must produce identical output.
-    #[test]
-    fn drawing_a_focused_field_twice_is_identical() {
-        let mut app = app_for("hello");
-        app.title.seed("notes");
-        app.refocus_title();
-        assert_eq!(draw_line(&app, 40), draw_line(&app, 40));
-    }
-
-    /// Byte-offset cursor arithmetic on a multi-byte name (§1.5): every
-    /// motion and deletion must land on a `char` boundary.
-    #[test]
-    fn cursor_motion_and_deletion_stay_on_char_boundaries() {
+    fn seeding_a_name_with_a_stem_locks_the_gate_at_the_split() {
         let mut field = TitleField::default();
-        field.seed("héllo");
-        assert_eq!(field.cursor, "héllo".len(), "seed lands at the byte end");
-
-        field.cursor = 0;
-        for _ in 0..2 {
-            let next = field.next_boundary().expect("next");
-            field.cursor = next;
-        }
-        assert_eq!(field.cursor, 3, "'h' is 1 byte, 'é' is 2");
-
-        field.delete_left();
-        assert_eq!(field.text, "hllo");
-        assert_eq!(field.cursor, 1);
-
-        field.delete_right();
-        assert_eq!(field.text, "hlo");
-        assert_eq!(field.cursor, 1);
+        field.seed("lessrc.md");
+        assert!(!field.ext_unlocked());
+        assert_eq!(field.window(), 0..6);
+        assert_eq!(field.field().cursor().position, 6);
     }
 
     #[test]
-    fn invalid_stems_are_rejected() {
-        assert!(is_valid_stem("notes"));
-        assert!(is_valid_stem("h\u{e9}llo world"));
-        assert!(!is_valid_stem(""));
-        assert!(!is_valid_stem("a/b"));
-        assert!(!is_valid_stem("a:b"));
-        assert!(!is_valid_stem("a\u{0}b"));
+    fn seeding_an_empty_stem_starts_unlocked() {
+        let mut field = TitleField::default();
+        field.seed(".md");
+        assert!(field.ext_unlocked());
+        assert_eq!(field.window(), 0..3);
+    }
+
+    #[test]
+    fn revert_restores_the_committed_name_and_its_gate() {
+        let mut field = TitleField::default();
+        field.seed("lessrc.md");
+        field.set_text(".foo");
+        assert!(field.ext_unlocked(), "an empty stem from '.foo' unlocks");
+        field.revert();
+        assert_eq!(field.text(), "lessrc.md");
+        assert!(
+            !field.ext_unlocked(),
+            "revert recomputes the gate from committed"
+        );
+    }
+
+    #[test]
+    fn is_valid_name_rejects_empty_dot_and_dotdot() {
+        assert!(!is_valid_name(""));
+        assert!(!is_valid_name("."));
+        assert!(!is_valid_name(".."));
+        assert!(!is_valid_name("a/b"));
+        assert!(!is_valid_name("a\u{0}b"));
+        assert!(is_valid_name("notes.md"));
+        assert!(is_valid_name(".gitignore"));
+    }
+
+    #[test]
+    fn name_for_a_pathless_draft_is_a_dotted_md() {
+        let app = app_for("hello");
+        assert_eq!(name_for(app.active_doc()), ".md");
+    }
+
+    #[test]
+    fn name_for_a_real_path_is_the_whole_file_name() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(std::path::Path::new("/root/a.md"), b"hi")
+            .expect("seed");
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = mem;
+        let app = crate::app::App::new(
+            Buffer::new("hi"),
+            Some(std::path::PathBuf::from("/root/a.md")),
+            vfs,
+            None,
+        );
+        assert_eq!(name_for(app.active_doc()), "a.md");
     }
 }

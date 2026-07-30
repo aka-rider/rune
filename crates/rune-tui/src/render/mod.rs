@@ -7,6 +7,7 @@
 //! here IS the cursor, Go parity.
 
 mod overlay;
+pub mod title;
 
 use std::ops::Range;
 
@@ -343,7 +344,7 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 
     if let Some(title_area) = geo.title {
-        crate::title::draw(app, title_area, frame);
+        title::draw(app, title_area, frame);
     }
 
     if let Some(view) = &app.active_doc().view {

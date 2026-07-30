@@ -31,7 +31,7 @@
 //! - **No `Failed`.** Nothing would wait in it and nothing would leave it;
 //!   `Modal::Error` already owns errors. Every failure edge goes to `Idle`
 //!   + `banner::report_error` + refocus the title with the typed name.
-//! - **No `typed: String`.** The typed name IS `to.file_stem()` — one
+//! - **No `typed: String`.** The typed name IS `to.file_name()` — one
 //!   value, one meaning (§1.7).
 //!
 //! Single slot: a second commit while one is in flight is **refused**,
@@ -178,7 +178,7 @@ fn display_name(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Starts a rename of `app.active` to the title field's typed stem.
+/// Starts a rename of `app.active` to the title field's typed name.
 ///
 /// Returns whether the title may now release focus (`Commit`) — NOT whether
 /// a rename was actually started: the draft-create route, an unchanged
@@ -225,8 +225,8 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         return Commit::Refused;
     }
 
-    let typed = app.title.text.clone();
-    if !title::is_valid_stem(&typed) {
+    let typed = app.title.text().to_string();
+    if !title::is_valid_name(&typed) {
         app.set_status("that name can't be used for a file", StatusSource::Other);
         return Commit::Refused;
     }
@@ -260,11 +260,14 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     Commit::Accepted
 }
 
-/// `<parent-of-from>/<stem>.md` — the rename stays in the file's own
-/// directory (the title field rejects `/`, so `stem` can never escape it).
-fn target_path(from: &Path, stem: &str) -> PathBuf {
+/// `<parent-of-from>/<name>` — the rename stays in the file's own directory
+/// (the title field rejects `/`, so `name` can never escape it), and `name`
+/// is used VERBATIM (decision 10): the title now edits the whole file name,
+/// extension included, so there is nothing left for this function to
+/// re-append.
+fn target_path(from: &Path, name: &str) -> PathBuf {
     let parent = from.parent().unwrap_or_else(|| Path::new(""));
-    parent.join(format!("{stem}.{}", title::MARKDOWN_EXT))
+    parent.join(name)
 }
 
 /// `Msg::RenameDone` — the no-store route's reply.
@@ -413,8 +416,8 @@ fn bind_to(app: &mut App, doc_id: DocumentId, to: &Path, effects: &mut Effects) 
         doc.bind_path(to.to_path_buf());
     }
     if app.active == doc_id {
-        let stem = app.doc(doc_id).map(title::stem_for).unwrap_or_default();
-        app.title.seed(&stem);
+        let name = app.doc(doc_id).map(title::name_for).unwrap_or_default();
+        app.title.seed(&name);
     }
     crate::explorer::refresh_for(app, to, effects);
 }

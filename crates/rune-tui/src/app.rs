@@ -110,10 +110,12 @@ pub struct App {
     /// The document active right before `F1` last activated Help —
     /// `workspace::toggle_help`'s target when toggling back off.
     pub help_return_to: Option<DocumentId>,
-    /// The editable title field (`title.rs`) — the file name a rename types
-    /// into. Reseeded at every document switch (`workspace::switch_to`) and
-    /// at every focus gain (`App::focus_title`), so it always describes
-    /// the document actually showing. Unjournaled (§12).
+    /// The editable title field (`title.rs`) — the file's FULL name,
+    /// extension included, that a rename types into. Reseeded at every
+    /// document switch (`workspace::switch_to`) and at every focus gain
+    /// (`App::focus_title`), so it always describes the document actually
+    /// showing. Unjournaled at the document level (§12): its own in-memory
+    /// undo history (⌘Z/⇧⌘Z) never reaches the recovery store.
     pub title: crate::title::TitleField,
     /// The rename workflow's state (`rename.rs`) — a typed machine rather
     /// than another ad hoc pending-boolean, because `[R]eplace` has a
@@ -449,8 +451,8 @@ impl App {
             self.set_status("this document is read-only", StatusSource::Other);
             return;
         }
-        let stem = crate::title::stem_for(self.active_doc());
-        self.title.seed(&stem);
+        let name = crate::title::name_for(self.active_doc());
+        self.title.seed(&name);
         self.focus = Pane::Title;
     }
 

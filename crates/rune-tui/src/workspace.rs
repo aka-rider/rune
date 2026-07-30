@@ -219,8 +219,8 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding
     // the previous document's name (no shadow state).
-    let stem = crate::title::stem_for(app.active_doc());
-    app.title.seed(&stem);
+    let name = crate::title::name_for(app.active_doc());
+    app.title.seed(&name);
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
@@ -360,11 +360,10 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     // the active document actually just changed (the branch above), and only
     // when the title isn't currently focused — an async close landing for
     // the very document being renamed must never silently overwrite the
-    // typed name (or, after WP3, discard its undo history) out from under
-    // the user.
+    // typed name (or discard its undo history) out from under the user.
     if active_changed && app.focus() != Pane::Title {
-        let stem = crate::title::stem_for(app.active_doc());
-        app.title.seed(&stem);
+        let name = crate::title::name_for(app.active_doc());
+        app.title.seed(&name);
     }
 
     app.tabs.nav.cursor = app

@@ -313,8 +313,8 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 doc.bind_path(path);
             }
             if app.active == id {
-                let stem = app.doc(id).map(crate::title::stem_for).unwrap_or_default();
-                app.title.seed(&stem);
+                let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
+                app.title.seed(&name);
             }
         }
         if let Some(saved) = &mat.saved

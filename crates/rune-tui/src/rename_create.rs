@@ -17,7 +17,6 @@ use crate::app::App;
 use crate::document::DocumentId;
 use crate::rename::{RenameState, Ticket};
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
-use crate::title;
 
 /// Enqueues the rename on whichever route this document has: the `rune-db`
 /// writer FIFO when it is store-bound, else a plain `Cmd` over the injected
@@ -94,9 +93,9 @@ pub(crate) fn rename_cmd(
 /// Writes no focus of its own: `begin` (the only caller) always runs inside
 /// `App::set_focus`'s blur of the title to the Editor, which assigns the
 /// focus itself once this returns.
-pub(crate) fn bind_new(app: &mut App, id: DocumentId, stem: &str, effects: &mut Effects) {
+pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut Effects) {
     let dir = crate::explorer::initial_root(app);
-    let path = dir.join(format!("{stem}.{}", title::MARKDOWN_EXT));
+    let path = dir.join(name);
 
     if app.doc(id).and_then(|d| d.db.as_ref()).is_some() && app.db.is_some() {
         // The store route: `materialize(bind_new=true)` is an atomic
