@@ -524,6 +524,22 @@ fn escape_on_the_collision_guard_returns_to_the_title_with_the_typed_name() {
     assert_eq!(app.title.text, "b");
 }
 
+/// Escape used to leave the user with no feedback at all — the modal just
+/// vanished. Pin that cancelling the rename-collision Guard now names what
+/// it cancelled via a status message.
+#[test]
+fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let reply = collide(&mut app, &mem);
+    send(&mut app, reply);
+
+    send(&mut app, plain(KeyCode::Escape));
+
+    assert_eq!(app.status_message.as_deref(), Some("rename cancelled"));
+    assert_eq!(app.status_source, app::StatusSource::Other);
+}
+
 /// `r` on the guard for a `db: None` document cannot capture the displaced
 /// bytes (§1.4.10), so the prompt stays up with an explanation and the disk
 /// is untouched. The footer must not offer `[R]eplace` either.

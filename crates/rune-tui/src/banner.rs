@@ -329,6 +329,16 @@ fn handle_error_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     }
 }
 
+/// Names what Escape cancels for a given Guard kind. An exhaustive match, so
+/// a future `GuardKind` variant is forced to choose its own cancellation
+/// wording rather than silently inheriting a generic one.
+fn cancel_status(kind: &GuardKind) -> &'static str {
+    match kind {
+        GuardKind::DirtyClose => "close cancelled",
+        GuardKind::RenameCollision { .. } => "rename cancelled",
+    }
+}
+
 /// `s`/`S` saves `prompt.doc` then closes it — but ONLY once `trigger_save`
 /// actually started a save (`doc.save_in_flight` true right after calling
 /// it): a document with no file path, or one that just armed the degraded-
@@ -344,9 +354,12 @@ fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     };
     let doc = prompt.doc;
     // `Esc` cancels EVERY Guard kind identically — one arm, hoisted, so a
-    // later kind can never forget to be cancellable.
+    // later kind can never forget to be cancellable — and reports what it
+    // cancelled via `cancel_status` so the modal never just silently vanishes.
     if key.code == KeyCode::Escape {
+        let msg = cancel_status(&prompt.kind);
         clear_modal(app);
+        app.set_status(msg, crate::app::StatusSource::Other);
         return;
     }
     match &prompt.kind {
