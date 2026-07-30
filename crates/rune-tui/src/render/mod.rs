@@ -272,7 +272,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
             // WP4.S2: the row's own decoration (heading icon / bullet /
             // quote bar / hr rule) is prepended BEFORE the overlay walks
             // below run — those walks all skip `buf_offset < 0`
-            // (`overlay.rs`'s own docs), so a decor prefix never competes
+            // (the overlay module documents that skip), so a decor prefix never competes
             // for highlight/selection/caret painting the way a real cell
             // would.
             let mut cells = decor::decor_row_cells(&app.theme, row);

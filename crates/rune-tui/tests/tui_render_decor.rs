@@ -2,7 +2,7 @@
 //! list bullet / quote bar / hr rule prefix `render::decor` builds, the
 //! caret's decor-shifted `visual_col` (`render::overlay::apply_cursor_
 //! overlays`), and the mouse decor-cell fallback (`commands::mouse::
-//! offset_at`). Sits beside `tui_render_basics.rs`'s own conceal/styling
+//! offset_at`). Sits beside the basic conceal/styling render
 //! tests rather than growing that file past its own budget discussion.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -185,7 +185,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
 /// element concealed regardless of cursor position, so a heading hosting
 /// the cursor still renders its decor (icon + uniform heading style) even
 /// though `Document::shows_caret` (`focused && !read_only`) keeps the caret
-/// itself unpainted — extends `tui_render_basics.rs`'s own
+/// itself unpainted — extends the existing
 /// `concealed_heading_marker_not_visible_when_unfocused_even_with_cursor_
 /// on_it`. The decor-shift arithmetic `apply_cursor_overlays` runs for
 /// EVERY cursor unconditionally once overlays are shown; here it never
