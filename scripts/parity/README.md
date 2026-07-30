@@ -96,8 +96,8 @@ the same two-pane chrome geometry — over each markdown fixture under
 `fixtures/` (`headings.md`, `emphasis.md`, `lists.md`, `tasks.md`,
 `fences.md`, `quotes.md`, `tables.md`, `tables-divergent.md`,
 `tables-narrow.md`, `frontmatter.md`, `cjk.md`, `emoji.md`,
-`fences-code.md`; `sample.md` stays `parity-assert`'s own fixture). For
-each one
+`fences-code.md`, `showcase.md`; `sample.md` stays `parity-assert`'s own
+fixture). For each one
 it crops BOTH captures down to the center pane's own content rows — not
 the left Explorer/Open pane, not the title/breadcrumb/footer chrome, which
 are already covered (or explicitly out of scope) via `parity-assert` — and
@@ -286,3 +286,36 @@ of how each side renders:
   WP6). There is nothing on the Go side to assert this fixture's Rust-only
   colouring against; the fixture is retained under `fixtures/` so a human
   can still eyeball it via `scripts/parity/serve.sh rust`.
+- **Rust-only markdown styling showcase (`showcase.md`, excluded from
+  `parity-grid`).** This fixture exercises a batch of deliberate Rust-side
+  rendering additions Go has no equivalent for at all, so the whole
+  fixture's editor-content grid is expected to diverge, not just a region
+  of it:
+  - **Styled concealed headings with per-level icons.** A concealed
+    heading line (cursor elsewhere, marker hidden) carries the
+    `markup.heading.N` style plus a per-level icon glyph in Rust; Go
+    renders concealed heading text unstyled and iconless.
+  - **Bullet/ordered-marker decor.** Rust prefixes each list line with a
+    rendered bullet glyph (by nesting depth) or the item's own ordered
+    number as decorative, non-buffer cells; combined with the pre-existing
+    "plain list markers are never concealed in Go" divergence above, the
+    two sides' list rows look structurally different, not just
+    differently concealed.
+  - **Blockquote bars.** Rust decorates every blockquote row — including
+    wrapped continuation rows — with a bar glyph; Go has no equivalent
+    decoration.
+  - **Full-width thematic-break rule.** Rust renders a `---` line as a
+    rule glyph repeated to the full content width; Go renders the
+    concealed/raw marker text instead.
+  - **Retuned code-fence backgrounds.** Rust's fenced-code background is
+    `surface0` (block) / `surface1` (inline) instead of the darker
+    `mantle` used elsewhere; Go has no comparable background retune.
+  - **Markdown-fence inline highlighting.** A fenced code block whose
+    info string is `markdown`/`md` gets full inline markdown highlighting
+    (headings, emphasis, code spans, links) in Rust via the comrak-reuse
+    path (plan WP6); Go never highlights fence contents at all (see the
+    `fences-code.md` entry above).
+
+  `make parity` diffs on `showcase.md` are therefore expected and are not
+  regressions — this list is the acknowledgment the plan's Verification
+  section points at.

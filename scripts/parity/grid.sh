@@ -39,6 +39,7 @@ FIXTURES=(
     cjk.md
     emoji.md
     fences-code.md
+    showcase.md
 )
 
 # fixture -> reason, one real, verified cause each (README.md "Known
@@ -77,6 +78,9 @@ excluded_reason() {
             ;;
         fences-code.md)
             echo "Go has no tree-sitter integration at all, so its fenced code blocks never gain token colours — there is nothing on the Go side to assert this fixture's Rust-only tree-sitter highlighting against (plan WP6.S4)"
+            ;;
+        showcase.md)
+            echo "Rust-only markdown styling showcase (styled concealed headings with per-level icons, bullet/number decor, blockquote bars, full-width hr rule, retuned fence backgrounds, markdown-fence inline highlighting) — Go renders none of this, so the whole fixture is expected-divergent by design (plan WP7)"
             ;;
         *)
             return 1
