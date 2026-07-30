@@ -208,11 +208,14 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
     }
 }
 
-/// The span-clamp chokepoint `handle_highlighted` and `handle_highlight_
-/// retried` (finding B) both apply on a reply whose spans are to be
-/// accepted: every range clamped to the live byte length, with mid-`char`
-/// or inverted ranges (§1.3) discarded, and the survivors replace `spans`
-/// tagged with the version they describe.
+/// The single span-clamp chokepoint every accepted highlight reply passes
+/// through: each range is clamped to the live byte length, ranges that are
+/// inverted or that would split a `char` (§1.3) are discarded, and the
+/// survivors replace `spans`, tagged with the version they describe.
+///
+/// Routing every reply through one clamp is what makes an unclamped span
+/// unreachable; when accepting a reply and retrying one were two separate
+/// paths, they drifted apart and one of them skipped the clamp.
 fn apply_highlight_spans(doc: &mut Document, version: u64, spans: Vec<(Range<usize>, ScopeId)>) {
     let content = doc.buffer.content();
     let len = content.len();
