@@ -1,0 +1,307 @@
+//! WP5 done-when: headless render assertions on a `TestBackend`, using the
+//! `Mem` vfs — control-safe glyphs, tab expansion, and grapheme-cluster
+//! cells. TODO.md's §1.6 split of the original `tui_render.rs`: conceal/
+//! styling/status-line/Cell-grid checks live in `tui_render_basics.rs`,
+//! degenerate backend sizes and `blit`'s own clipping in
+//! `tui_render_bounds.rs`, and tables/the focus caret gate in
+//! `tui_render_focus.rs`. The runtime loop itself is NOT exercised here
+//! (plan: "test the pure update/view paths headlessly; do NOT spawn real
+//! terminals in tests") — every test drives `App`/`render::draw` directly.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+mod tui_render_common;
+
+use rune_tui::render;
+
+use tui_render_common::{
+    EDITOR_LEFT_COL, EDITOR_TOP_ROW, HEIGHT, WIDTH, app_for, caret_column, full_text,
+    render_to_test_backend, row_text,
+};
+
+/// Regression for the control-safe cell builder: `\r` (from a CRLF file —
+/// CONSTITUTION §1.4.5 requires it stay in the buffer verbatim) must never
+/// become a `Cell`, and rendering it must not panic. Before the fix, a raw
+/// `\r` reached `ratatui::buffer::Cell::set_char`, and `cell_width()`
+/// `debug_assert!`s on any single-byte ASCII control character reaching a
+/// cell — this test IS the regression check: merely rendering CRLF content
+/// without panicking is the assertion.
+#[test]
+fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cells() {
+    let content = "ab\r\ncd\r\n";
+    let app = app_for(content, 0, true);
+
+    let buf = render_to_test_backend(&app);
+    // `full_text` itself joins rows with '\n' as a formatting separator, so
+    // only '\r' is checked here — a real leaked '\n' cell is instead caught
+    // below, directly on the `Cell` grid (which has no such separator).
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        !text.contains('\r'),
+        "a raw CR must never reach the terminal buffer:\n{text:?}"
+    );
+    assert!(text.contains("ab"), "expected 'ab' visible:\n{text}");
+    assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    for row in &rows {
+        for cell in row {
+            assert!(
+                !matches!(cell.text.as_str(), "\r" | "\n"),
+                "a raw CR/LF must never become a Cell: {cell:?}"
+            );
+        }
+    }
+}
+
+/// Sibling to the CRLF regression above, for the case CRLF does NOT cover:
+/// a LONE `\r` (no paired `\n`) is ordinary mid-line content to the buffer
+/// (CONSTITUTION §1.5 — never a line break), so `"ab\rcd\r"` is a single
+/// buffer line containing two literal `\r` bytes. This must render without
+/// panicking and without ever letting a raw `\r` reach a `Cell`, exactly
+/// like the CRLF case — the render-layer contract (§1.4.5: the user's
+/// bytes stay in the buffer verbatim; the control-safe cell builder maps
+/// a control byte to a placeholder glyph, never a raw `Cell`) does not
+/// distinguish a CR paired with LF from one that stands alone.
+#[test]
+fn lone_cr_line_endings_render_without_panicking_and_leave_no_control_chars_in_cells() {
+    let content = "ab\rcd\r";
+    let app = app_for(content, 0, true);
+
+    let buf = render_to_test_backend(&app);
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        !text.contains('\r'),
+        "a raw CR must never reach the terminal buffer:\n{text:?}"
+    );
+    assert!(text.contains("ab"), "expected 'ab' visible:\n{text}");
+    assert!(text.contains("cd"), "expected 'cd' visible:\n{text}");
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    for row in &rows {
+        for cell in row {
+            assert!(
+                !matches!(cell.text.as_str(), "\r" | "\n"),
+                "a raw CR/LF must never become a Cell: {cell:?}"
+            );
+        }
+    }
+}
+
+/// Regression for the unified width chokepoint: a tab mid-line must expand
+/// to the SAME next-4-stop column both `render::segment_cells` and
+/// `WrapSnapshot::visual_col` compute, so the caret lands on the character
+/// after the tab, not one column short of it. Before the fix, the render
+/// side treated a tab as width 1 (via `control_aware_width` alone) while
+/// wrap's `visual_col` used `rune_width_with_tab`'s 4-stop math — the caret
+/// landed mid-tab-expansion instead of on "c".
+#[test]
+fn tab_caret_column_agrees_with_wrap_visual_col() {
+    let content = "ab\tcd\n";
+    let cursor_offset = 3; // byte offset of 'c', right after the tab
+    let app = app_for(content, cursor_offset, true);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
+    let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
+    let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
+    let expected_visual_col = view
+        .wrap
+        .visual_col(content, wrap_point.row, wrap_point.col);
+    assert_eq!(
+        expected_visual_col, 4,
+        "a tab starting at column 2 must expand to the next 4-stop (column 4)"
+    );
+
+    let buf = render_to_test_backend(&app);
+    // Skip the center block's left AND right border columns (plan gotcha
+    // 10) before comparing against the editor-relative text.
+    let text: String = row_text(&buf, EDITOR_TOP_ROW, WIDTH)
+        .chars()
+        .skip(EDITOR_LEFT_COL as usize)
+        .collect();
+    assert_eq!(
+        text.trim_end_matches('│').trim_end(),
+        "ab  cd",
+        "the tab must expand to exactly 2 columns here"
+    );
+
+    let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
+        .expect("caret cell must be present on the editor's first row");
+    assert_eq!(
+        (caret_x - EDITOR_LEFT_COL) as usize,
+        expected_visual_col,
+        "caret column must agree with wrap's visual_col across a tab"
+    );
+}
+
+/// Wide-char (CJK, width 2) followed by a tab: the tab's 4-stop math must
+/// key off the ACCUMULATED visual column (2, after the wide char), not the
+/// char count (1) — and the caret must still agree with `visual_col`.
+#[test]
+fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
+    let content = "\u{6c49}\tab\n"; // U+6C49 (汉, width 2), tab, "ab"
+    let cursor_offset = 4; // byte offset of 'a': 3 bytes of 汉 + 1 byte tab
+    let app = app_for(content, cursor_offset, true);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let buffer_point = app.active_doc().buffer.offset_to_line_col(cursor_offset);
+    let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
+    let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
+    let expected_visual_col = view
+        .wrap
+        .visual_col(content, wrap_point.row, wrap_point.col);
+    assert_eq!(
+        expected_visual_col, 4,
+        "汉 (width 2) then a tab to the next 4-stop must land 'a' at column 4"
+    );
+
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    assert_eq!(
+        first_row.first().map(|c| (c.text.as_str(), c.width)),
+        Some(("\u{6c49}", 2))
+    );
+    let tab_cells: Vec<_> = first_row
+        .iter()
+        .skip(1)
+        .take_while(|c| c.text == " " && c.buf_offset == 3)
+        .collect();
+    assert_eq!(
+        tab_cells.len(),
+        2,
+        "the tab (starting at visual col 2) must expand to exactly 2 single-width cells: {first_row:?}"
+    );
+
+    let buf = render_to_test_backend(&app);
+    let caret_x = caret_column(&buf, EDITOR_TOP_ROW, WIDTH)
+        .expect("caret cell must be present on the editor's first row");
+    assert_eq!((caret_x - EDITOR_LEFT_COL) as usize, expected_visual_col);
+}
+
+/// Regression for the grapheme-cluster cell builder (parity harness catch,
+/// `scripts/parity/fixtures/emoji.md`): a ZWJ family emoji (7 codepoints
+/// joined by U+200D) must render as exactly ONE `Cell` — never one `Cell`
+/// per codepoint, which corrupted the terminal output (module docs,
+/// `push_grapheme_cells`) — and the buffer's own bytes must stay verbatim
+/// (CONSTITUTION §1.4.5): only the DISPLAY grouping changes, never the
+/// underlying content.
+#[test]
+fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"; // 👨‍👩‍👧‍👦
+    let content = format!("{family}\n");
+    let app = app_for(&content, 0, true);
+
+    assert_eq!(
+        app.active_doc().buffer.content(),
+        content,
+        "buffer bytes must round-trip verbatim across the ZWJ sequence"
+    );
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    assert_eq!(
+        first_row.len(),
+        1,
+        "a ZWJ grapheme cluster must render as exactly one Cell: {first_row:?}"
+    );
+    assert_eq!(
+        first_row[0].text, family,
+        "the cell's text must be the whole grapheme cluster verbatim"
+    );
+    assert_eq!(first_row[0].buf_offset, 0);
+}
+
+/// Same regression, for a skin-tone-modified emoji (base codepoint + a
+/// Fitzpatrick modifier codepoint — 2 codepoints, one grapheme cluster).
+#[test]
+fn skin_tone_modifier_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
+    let wave = "\u{1F44B}\u{1F3FD}"; // 👋🏽 (waving hand + medium skin tone)
+    let content = format!("{wave}\n");
+    let app = app_for(&content, 0, true);
+
+    assert_eq!(
+        app.active_doc().buffer.content(),
+        content,
+        "buffer bytes must round-trip verbatim across the skin-tone modifier"
+    );
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    assert_eq!(
+        first_row.len(),
+        1,
+        "a skin-tone-modified emoji must render as exactly one Cell: {first_row:?}"
+    );
+    assert_eq!(first_row[0].text, wave);
+    assert_eq!(first_row[0].buf_offset, 0);
+}
+
+/// Regression for `blit`'s continuation-cell reset (the other half of the
+/// ZWJ fix): a wide `Cell` must leave every column it covers, beyond its
+/// own first, properly BLANK in the real `ratatui::buffer::Buffer` — never
+/// carrying whatever a neighboring `Cell`'s content would otherwise be,
+/// which is what let a ZWJ sequence's later codepoints corrupt the row
+/// (ratatui's own diffing silently skips re-examining a wide cell's
+/// covered columns; module docs, `blit`).
+#[test]
+fn wide_cell_leaves_a_blank_continuation_column_in_the_real_backend() {
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
+    let content = format!("{family} x\n");
+    let app = app_for(&content, 0, true);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    let family_cell = first_row.first().expect("family cell present");
+    assert_eq!(family_cell.text, family);
+    let width = family_cell.width;
+    assert!(width > 1, "family emoji must occupy more than one column");
+
+    let buf = render_to_test_backend(&app);
+    for dx in 1..u16::from(width) {
+        let x = EDITOR_LEFT_COL + dx;
+        let cell = buf.cell((x, EDITOR_TOP_ROW)).expect("cell in bounds");
+        assert_eq!(
+            cell.symbol(),
+            " ",
+            "continuation column {dx} of the wide grapheme must be blank, got {:?}",
+            cell.symbol()
+        );
+    }
+}
+
+/// Regression for the control-safe cell builder: a non-tab/newline control
+/// character (BEL, `\x07`) must never reach `ratatui::buffer::Cell::set_char`
+/// either — it gets the Unicode "control picture" placeholder (`U+2407`)
+/// instead, at the control char's own `buf_offset`.
+#[test]
+fn control_char_gets_a_safe_placeholder_glyph() {
+    let content = "a\u{7}b\n";
+    let app = app_for(content, 0, true);
+
+    let buf = render_to_test_backend(&app);
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        !text.contains('\u{7}'),
+        "a raw BEL must never reach the terminal buffer:\n{text:?}"
+    );
+    assert!(
+        text.contains('\u{2407}'),
+        "expected the BEL control-picture placeholder (U+2407):\n{text:?}"
+    );
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let placeholder = rows
+        .first()
+        .and_then(|row| row.iter().find(|c| c.text == "\u{2407}"))
+        .expect("placeholder cell present in row 0");
+    assert_eq!(
+        placeholder.buf_offset, 1,
+        "the BEL is the 2nd byte (offset 1) of \"a\\x07b\""
+    );
+}
