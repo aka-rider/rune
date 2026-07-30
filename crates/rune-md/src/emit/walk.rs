@@ -238,7 +238,13 @@ pub(crate) fn emit_block(content: &str, starts: &[usize], block: &Block, out: &m
                 }
             } else {
                 hide_range(out.hidden, out.accounted, content, starts, h.marker);
-                emit_inlines(content, starts, &h.inlines, StyleCtx::default(), out);
+                emit_inlines(
+                    content,
+                    starts,
+                    &h.inlines,
+                    StyleCtx::Override(heading_style(h.level)),
+                    out,
+                );
             }
         }
         Block::Blockquote(bq) => {
