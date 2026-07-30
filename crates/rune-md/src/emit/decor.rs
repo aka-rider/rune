@@ -56,10 +56,10 @@ pub(crate) fn push_heading_decor(out: &mut EmitOut, line: usize, level: u8) {
 
 /// A list item's own marker decor (plan WP2.S5): unordered items get a
 /// bullet chosen by nesting `depth` (cycling `IconSet::bullets`); ordered
-/// items keep the user's own number verbatim — `marker_text` trimmed of
-/// its trailing `". "`/`") "` delimiter and re-suffixed with a single
-/// space, so `"1."`/`"12)"` etc. all render as `"<N>. "`-shaped decor
-/// without hand-parsing the delimiter char.
+/// items keep the user's own marker verbatim, delimiter included —
+/// `marker_text` trimmed of trailing whitespace and re-suffixed with a
+/// single space, so `"1."` renders as `"1. "` and `"12)"` as `"12) "`,
+/// never renumbered and never re-delimited.
 pub(crate) fn push_list_marker_decor(
     out: &mut EmitOut,
     line: usize,
@@ -106,15 +106,19 @@ pub(crate) fn push_quote_marker_decor(out: &mut EmitOut, line: usize) {
 pub(crate) fn push_hr_decor(out: &mut EmitOut, line: usize) {
     let rule_cells = grapheme_width(out.icons.rule).max(1);
     let count = (out.width as usize) / rule_cells;
-    let decor = LineDecor {
-        pieces: vec![DecorPiece {
-            first: out.icons.rule.repeat(count),
-            cont: String::new(),
-            scope: super::style::hr_scope(),
-        }],
-        is_rule: true,
+    let piece = DecorPiece {
+        first: out.icons.rule.repeat(count),
+        cont: String::new(),
+        scope: super::style::hr_scope(),
     };
-    if let Some(slot) = out.decors.get_mut(line) {
-        *slot = Some(decor);
+    // Appended through the same chokepoint as every other producer, never
+    // assigned wholesale: a rule inside a blockquote shares its line with
+    // the quote-bar piece already pushed, and clobbering the slot would
+    // silently drop that bar. The wrap layer's rule-clamp truncates the
+    // combined pieces to the available width, so bar + full-width rule
+    // degrades by shaving trailing rule cells, not by losing the bar.
+    push_piece(out, line, piece);
+    if let Some(Some(decor)) = out.decors.get_mut(line) {
+        decor.is_rule = true;
     }
 }

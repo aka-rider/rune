@@ -188,3 +188,30 @@ fn nested_blockquote_stacks_one_bar_piece_per_marker_outermost_first() {
         "one bar piece per nesting level, outer then inner"
     );
 }
+
+#[test]
+fn hr_inside_a_blockquote_keeps_the_bar_piece_ahead_of_the_rule() {
+    let content = "> ---\n";
+    let lines = lines_for(content, content.len(), false);
+    let decor = lines[0]
+        .decor
+        .as_ref()
+        .expect("a quoted thematic break must carry decor");
+    assert!(
+        decor.is_rule,
+        "the combined decor must still be a rule line"
+    );
+    assert!(
+        decor.pieces.len() >= 2,
+        "the quote bar must survive the rule producer, not be clobbered"
+    );
+    let bar = &decor.pieces[0].first;
+    assert!(
+        !bar.contains('\u{2500}'),
+        "the first piece must be the quote bar, not the rule"
+    );
+    assert!(
+        decor.pieces[1].first.contains('\u{2500}'),
+        "the rule piece follows the bar"
+    );
+}
