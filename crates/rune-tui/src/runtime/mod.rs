@@ -33,6 +33,18 @@ use crate::term::Guard;
 /// type without taking its own dependency on the producer crate.
 pub use rune_ts::HighlightResult;
 
+/// Where a `Msg::ClipboardRead`'s text is destined. Captured when the
+/// `pbpaste` `Cmd` is spawned (`clipboard::pbpaste_cmd`), never resolved
+/// from live focus/active-document state when the reply arrives — that is
+/// what makes a document switch or a focus change mid-flight unable to
+/// redirect the paste. `Msg::Paste` (bracketed paste from the terminal) has
+/// no request to attach a target to, so it keeps routing by live focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PasteTarget {
+    Document(DocumentId),
+    Title,
+}
+
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
 /// `SaveConfirmTimeout` originate from a spawned `Cmd`'s return value;
@@ -53,7 +65,15 @@ pub enum Msg {
     /// A mouse event, translated from `termina::Event::Mouse` (plan
     /// WP7.S4) — `commands::mouse::handle` is its sole handler.
     Mouse(MouseInput),
-    ClipboardRead(String),
+    /// A `pbpaste` reply. `target` is captured when the `Cmd` is spawned
+    /// (`clipboard::pbpaste_cmd`), not resolved on arrival — a document
+    /// switch or a focus change while the subprocess is in flight cannot
+    /// redirect the paste to whatever happens to be focused/active by the
+    /// time the reply lands.
+    ClipboardRead {
+        text: String,
+        target: PasteTarget,
+    },
     SaveDone {
         id: DocumentId,
         version: u64,
