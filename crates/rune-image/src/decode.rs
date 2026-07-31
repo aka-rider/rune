@@ -27,10 +27,20 @@ pub enum Format {
 
 /// The extensions treated as images, derived from the decoder set actually
 /// compiled in — the single source of truth, replacing the reference
-/// implementation's separately hand-maintained table. SVG joins this list
-/// in WP11, once the `svg` feature actually wires a decoder for it.
+/// implementation's separately hand-maintained table. SVG is present only
+/// when the `svg` feature actually wires a decoder for it, so this stays an
+/// honest reflection of what `decode_still` can actually decode.
 pub fn extensions() -> &'static [&'static str] {
-    &["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp"]
+    #[cfg(feature = "svg")]
+    {
+        &[
+            "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "svg",
+        ]
+    }
+    #[cfg(not(feature = "svg"))]
+    {
+        &["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp"]
+    }
 }
 
 /// Inspects the leading bytes of `data` and reports a best-effort format.
@@ -79,15 +89,27 @@ fn looks_like_svg(data: &[u8]) -> bool {
     false
 }
 
-/// Decodes `data` into a single still image. SVG input is not handled here
-/// (see the `svg` feature) — empty input is an error. No `catch_unwind`
-/// wrapper: `spawn_cmd` already contains decoder panics on the caller side.
+/// Decodes `data` into a single still image. Empty input is an error. No
+/// `catch_unwind` wrapper: `spawn_cmd` already contains decoder panics on
+/// the caller side.
+///
+/// When the `svg` feature is enabled, SVG input is routed to the vector
+/// rasterizer; its error is folded into [`ImageError::IoError`] so this
+/// function keeps one return type regardless of format — there is no
+/// separate raster-vs-vector call site for callers to branch on.
 pub fn decode_still(data: &[u8]) -> Result<Decoded, ImageError> {
     if data.is_empty() {
         return Err(ImageError::IoError(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "decode image: empty data",
         )));
+    }
+
+    #[cfg(feature = "svg")]
+    if looks_like_svg(data) {
+        return crate::svg::decode_svg(data).map_err(|err| {
+            ImageError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+        });
     }
 
     let reader = image::ImageReader::new(Cursor::new(data)).with_guessed_format()?;
@@ -176,5 +198,16 @@ mod tests {
         for ext in ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"] {
             assert!(exts.contains(&ext), "missing extension {ext:?}");
         }
+    }
+
+    #[test]
+    fn extensions_reflect_whether_the_svg_decoder_is_actually_compiled_in() {
+        let exts = extensions();
+        let has_svg = exts.contains(&"svg");
+        assert_eq!(
+            has_svg,
+            cfg!(feature = "svg"),
+            "extensions() must advertise \"svg\" exactly when the svg feature compiles a decoder for it"
+        );
     }
 }
