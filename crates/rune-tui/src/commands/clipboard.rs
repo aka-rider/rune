@@ -129,7 +129,7 @@ pub fn paste(effects: &mut Effects, target: PasteTarget) {
     effects.cmds.push(pbpaste_cmd(target));
 }
 
-/// Port of `commands_clipboard.go:handlePasteContent` (:153-181), the
+/// Port of `commands_clipboard.go:handlePasteContent`, the
 /// single funnel `Msg::Paste` (bracketed paste, when focus isn't the title)
 /// and a document-targeted `Msg::ClipboardRead` both call — see module
 /// docs. Read-only documents are NOT

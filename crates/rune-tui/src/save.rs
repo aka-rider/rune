@@ -76,6 +76,23 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     if doc.save_in_flight {
         return;
     }
+    // The mirror of `rename::begin`'s own `save_in_flight` refusal, and
+    // required for the same reason from the other side: a save `Cmd`
+    // captures the document's path when it is spawned, while the rebind to
+    // the renamed path only happens once the rename ack lands. Saving in
+    // between republishes the edited content at the OLD path — resurrecting
+    // the file the rename is in the middle of moving away from, and leaving
+    // the new name holding stale bytes. Refused rather than queued: the ack
+    // is one message away, and ⌘S again after it lands does the right thing
+    // against the right path.
+    if app.rename.in_flight() {
+        app.set_status(
+            "can't save while a rename is in flight",
+            StatusSource::Other,
+        );
+        return;
+    }
+    let Some(doc) = app.doc(id) else { return };
     let version = doc.buffer.version();
     if version == doc.saved_version {
         return;

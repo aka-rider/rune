@@ -103,11 +103,12 @@ fn cmd_c_then_cmd_x_then_cmd_v_round_trips_the_name_unchanged() {
     // Simulate the pbpaste reply carrying exactly what was copied (never
     // actually shelling out to a real pbpaste in a test — the routing this
     // proves is `PasteTarget::Title`, not the subprocess itself).
+    let target_doc = app.active;
     send(
         &mut app,
         Msg::ClipboardRead {
             text: expected,
-            target: PasteTarget::Title,
+            target: PasteTarget::Title(target_doc),
         },
     );
 
@@ -136,11 +137,12 @@ fn a_clipboard_read_targeted_at_the_title_inserts_filtered_text_into_the_field()
         "the stem is cleared, gate still locked"
     );
 
+    let target_doc = app.active;
     send(
         &mut app,
         Msg::ClipboardRead {
             text: "evil/name\nsecond line".to_string(),
-            target: PasteTarget::Title,
+            target: PasteTarget::Title(target_doc),
         },
     );
 

@@ -32,12 +32,13 @@ use std::ops::Range;
 use crate::app::App;
 use crate::clipboard::pbpaste_cmd;
 use crate::commands::clipboard::write_to_clipboard_or_report;
+use crate::document::DocumentId;
 use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::pane::Pane;
 use crate::rename;
 use crate::runtime::{Effects, PasteTarget};
 
-use super::{INVALID_NAME_CHARS, TitleField, ext_split};
+use super::{TitleField, ext_split};
 
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     match key.code {
@@ -77,12 +78,18 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
                 write_to_clipboard_or_report(app, &text, effects);
             }
             Command::Cut => {
-                let text = copy_range_text(app);
-                write_to_clipboard_or_report(app, &text, effects);
+                // Resolved ONCE and reused: copying and deleting must cover
+                // the identical range (assumption A2), and two calls would
+                // leave that true only by accident of nothing mutating the
+                // cursor in between.
                 let range = selection_or_window(app);
+                let text = range_text(app, range.clone());
+                write_to_clipboard_or_report(app, &text, effects);
                 let _ = app.title.field_mut().delete_range(range);
             }
-            Command::Paste => effects.cmds.push(pbpaste_cmd(PasteTarget::Title)),
+            Command::Paste => effects
+                .cmds
+                .push(pbpaste_cmd(PasteTarget::Title(app.active))),
             _ => {
                 let _ = app.title.field_mut().apply(cmd, window);
             }
@@ -91,8 +98,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         && !key.mods.ctrl
         && !key.mods.alt
         && !key.mods.sup
-        && !ch.is_control()
-        && !INVALID_NAME_CHARS.contains(&ch)
+        && crate::title::is_name_char(ch)
     {
         let _ = app.title.field_mut().insert(&ch.to_string(), window);
     }
@@ -113,14 +119,19 @@ fn selection_or_window(app: &App) -> Range<usize> {
     }
 }
 
-fn copy_range_text(app: &App) -> String {
-    let range = selection_or_window(app);
+/// The field's text over `range`, empty when `range` doesn't land on
+/// `char` boundaries.
+fn range_text(app: &App, range: Range<usize>) -> String {
     app.title
         .field()
         .text()
         .get(range)
         .unwrap_or("")
         .to_string()
+}
+
+fn copy_range_text(app: &App) -> String {
+    range_text(app, selection_or_window(app))
 }
 
 /// Handles a paste routed to the title — a title-focused `Msg::Paste`
@@ -133,8 +144,8 @@ fn copy_range_text(app: &App) -> String {
 /// control-byte-laden clipboard payload can never leave the field holding
 /// something `is_valid_name` would refuse anyway. A sanitized result that
 /// comes out empty is a no-op rather than an insert of nothing.
-pub fn paste(app: &mut App, text: &str) {
-    if app.focus() != Pane::Title {
+pub fn paste(app: &mut App, doc: DocumentId, text: &str) {
+    if app.focus() != Pane::Title || app.active != doc {
         return;
     }
     let sanitized = sanitize_name_input(text);
@@ -145,7 +156,7 @@ pub fn paste(app: &mut App, text: &str) {
     let _ = app.title.field_mut().insert(&sanitized, window);
 }
 
-/// First line only, control characters and [`INVALID_NAME_CHARS`] dropped —
+/// First line only, everything [`crate::title::is_name_char`] rejects dropped —
 /// the same restrictions ordinary character-at-a-time typing enforces in
 /// `handle_key`'s tier 3, applied at once to a pasted string instead of
 /// one `char` at a time.
@@ -154,7 +165,7 @@ fn sanitize_name_input(text: &str) -> String {
         .next()
         .unwrap_or("")
         .chars()
-        .filter(|ch| !ch.is_control() && !INVALID_NAME_CHARS.contains(ch))
+        .filter(|ch| crate::title::is_name_char(*ch))
         .collect()
 }
 
@@ -165,15 +176,20 @@ fn sanitize_name_input(text: &str) -> String {
 /// this never has anything to do there, and a second `Right` press with
 /// the gate already open falls straight through to ordinary motion.
 fn try_unlock_extension(title: &mut TitleField) -> bool {
-    let split = ext_split(title.field.text());
-    let len = title.field.len();
-    let at_split = title.field.cursor().position == split;
-    if !title.ext_unlocked && at_split && split < len {
+    if can_unlock_extension(title) {
         title.ext_unlocked = true;
-        true
-    } else {
-        false
+        return true;
     }
+    false
+}
+
+/// Whether Right would actually unlock the extension right now: the gate is
+/// still locked, there IS an extension to unlock, and the cursor sits
+/// exactly at the split. The footer advertises the gesture through this same
+/// predicate, so the hint can never promise a keypress that does nothing.
+pub(crate) fn can_unlock_extension(title: &TitleField) -> bool {
+    let split = ext_split(title.field.text());
+    !title.ext_unlocked && split < title.field.len() && title.field.cursor().position == split
 }
 
 /// The single commit chokepoint (decision 4/8): whether the title may

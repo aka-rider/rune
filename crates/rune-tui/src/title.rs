@@ -54,6 +54,17 @@ const MARKDOWN_EXT: &str = "md";
 /// site.
 const INVALID_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>'];
 
+/// Whether one character may appear in a file name. The single predicate
+/// every entry point shares — the typed-character guard, the paste
+/// sanitizer, and `is_valid_name`'s whole-string check — so the three can
+/// never drift into disagreeing about what a name may contain. Rejecting
+/// `/` and `\` here is what keeps `rename::target_path`'s `Path::join`
+/// inside the parent directory: `join` with an absolute path REPLACES the
+/// base rather than appending to it.
+pub(crate) fn is_name_char(ch: char) -> bool {
+    !ch.is_control() && !INVALID_NAME_CHARS.contains(&ch)
+}
+
 /// The editable title. One field on `App`, reseeded at every document
 /// switch and every focus gain so it always describes whatever document is
 /// actually showing.
@@ -101,11 +112,24 @@ impl TitleField {
         self.place(text);
     }
 
+    /// The gate exists only when the seeded name has a real extension to
+    /// fence off — `0 < split < len`. Both degenerate cases start unlocked:
+    /// a name with no stem (`.md`, `.gitignore`) has nothing to protect the
+    /// stem from, and a name with no extension has no extension to protect.
+    ///
+    /// The second case is load-bearing, not a courtesy. The window is
+    /// re-derived from the LIVE text on every keystroke, so on an
+    /// extensionless name the first `.` the user types becomes the split
+    /// and shrinks the window to exclude the caret's own position — every
+    /// following character then clamps back in front of the dot, turning
+    /// `README` + `.md` into `READMEmd.` and committing it on blur. Once a
+    /// real extension exists the split can only ever move to or past the
+    /// caret, so the caret can never be stranded outside the window.
     fn place(&mut self, name: &str) {
         self.field.set_text(name);
         let split = ext_split(name);
         self.field.set_cursor(split, split);
-        self.ext_unlocked = split == 0;
+        self.ext_unlocked = split == 0 || split == name.len();
     }
 
     /// What the user has typed so far — the full name, extension included.
@@ -186,12 +210,7 @@ pub fn name_for(doc: &Document) -> String {
 /// security boundary — a refusal here is a UX courtesy; the atomic
 /// no-clobber `rename_excl` is what actually protects the destination.
 pub fn is_valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name
-            .chars()
-            .any(|ch| ch.is_control() || INVALID_NAME_CHARS.contains(&ch))
+    !name.is_empty() && name != "." && name != ".." && !name.chars().any(|ch| !is_name_char(ch))
 }
 
 #[cfg(test)]

@@ -199,3 +199,36 @@ fn undo_in_the_title_never_touches_the_document_journal() {
         "the title's own undo must never touch the document journal"
     );
 }
+
+/// Regression: typing an extension onto a name that has none must produce
+/// the name the user typed.
+///
+/// The gate's window is derived from the live text on every keystroke, so
+/// the moment the user types the `.` themselves the split jumps to it and
+/// the window shrinks to exclude the cursor's own position — stranding the
+/// caret outside the editable range and folding every following character
+/// back in front of the dot. `README` + `.md` became `READMEmd.`, an
+/// `is_valid_name`-passing name that commits to disk on blur.
+#[test]
+fn typing_an_extension_onto_an_extensionless_name_keeps_the_characters_in_order() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/README"), b"readme")
+        .expect("seed README");
+    let mut app = App::new(
+        Buffer::new("readme"),
+        Some(PathBuf::from("/root/README")),
+        Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>,
+        None,
+    );
+
+    send(&mut app, ctrl('r'));
+    assert_eq!(app.title.text(), "README");
+
+    type_text(&mut app, ".md");
+
+    assert_eq!(
+        app.title.text(),
+        "README.md",
+        "each typed character must land where the caret actually is"
+    );
+}

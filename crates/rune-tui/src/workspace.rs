@@ -353,15 +353,20 @@ pub fn close_now(app: &mut App, id: DocumentId) {
     // (plan's transition table: "any | close_now(doc) | Idle").
     crate::rename::forget_document(app, id);
 
-    // WP2.S8c: `close_now` is the one active-document reseed with no blur in
-    // front of it — reached from an async materialize ack
-    // (`materialize_ack::close_if_pending`) and from the Guard's `[D]iscard`,
-    // neither of which threads an `Effects` here. Guarded twice: only when
-    // the active document actually just changed (the branch above), and only
-    // when the title isn't currently focused — an async close landing for
-    // the very document being renamed must never silently overwrite the
-    // typed name (or discard its undo history) out from under the user.
-    if active_changed && app.focus() != Pane::Title {
+    // `close_now` is the one active-document reseed with no blur in front of
+    // it — reached from an async materialize ack and from the Guard's
+    // `[D]iscard`, neither of which threads an `Effects` here.
+    //
+    // Guarded on `active_changed` ALONE, deliberately. Closing some OTHER
+    // document leaves `app.active` untouched and so cannot disturb a name
+    // being typed. Closing the ACTIVE one must reseed even while the title
+    // holds focus: the field would otherwise go on describing a document
+    // that no longer exists while `app.active` has already moved to its
+    // neighbour, and the next blur resolves the rename subject from
+    // `app.active` — renaming that NEIGHBOUR to the name typed for the
+    // closed document. Losing an in-progress name whose target just
+    // vanished is the right trade; renaming a bystander is not.
+    if active_changed {
         let name = crate::title::name_for(app.active_doc());
         app.title.seed(&name);
     }

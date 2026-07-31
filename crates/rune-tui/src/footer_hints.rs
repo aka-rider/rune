@@ -75,8 +75,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         // left to unlock) and the commit itself. The global hints above
         // still render while renaming.
         Pane::Title => {
-            let name = app.title.text();
-            if !app.title.ext_unlocked() && crate::title::ext_split(name) < name.len() {
+            if crate::title::keys::can_unlock_extension(&app.title) {
                 entries.push(("\u{2192}".to_string(), "extension", true));
             }
             entries.push(("\u{23ce}".to_string(), "rename", true));

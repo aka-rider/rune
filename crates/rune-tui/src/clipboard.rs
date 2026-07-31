@@ -89,6 +89,16 @@ fn decode_pbpaste_stdout(stdout: Vec<u8>, target: PasteTarget) -> Msg {
 mod tests {
     use super::*;
 
+    /// A real `DocumentId`, minted the only way one can be: from an `App`.
+    /// These tests only need the target to round-trip, not to name a live
+    /// document.
+    fn doc_id() -> crate::document::DocumentId {
+        use std::sync::Arc;
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = Arc::new(rune_vfs::Mem::new());
+        let mut app = crate::app::App::new(rune_core::buffer::Buffer::new(""), None, vfs, None);
+        app.open_document(rune_core::buffer::Buffer::new(""))
+    }
+
     #[test]
     fn osc52_copy_builds_the_exact_escape_sequence() {
         let bytes = osc52_copy(b"hi");
@@ -104,12 +114,12 @@ mod tests {
 
     #[test]
     fn decode_pbpaste_stdout_passes_through_valid_utf8() {
-        let msg = decode_pbpaste_stdout(b"hello".to_vec(), PasteTarget::Title);
+        let msg = decode_pbpaste_stdout(b"hello".to_vec(), PasteTarget::Title(doc_id()));
         let Msg::ClipboardRead { text, target } = msg else {
             unreachable!("expected a ClipboardRead message, got {msg:?}");
         };
         assert_eq!(text, "hello");
-        assert_eq!(target, PasteTarget::Title);
+        assert_eq!(target, PasteTarget::Title(doc_id()));
     }
 
     /// Regression for `CODE-REVIEW.md` rune-tui B finding 8: invalid UTF-8
@@ -120,7 +130,7 @@ mod tests {
     fn decode_pbpaste_stdout_rejects_invalid_utf8_instead_of_substituting() {
         let invalid = vec![0xff, 0xfe, 0xfd];
         assert!(matches!(
-            decode_pbpaste_stdout(invalid, PasteTarget::Title),
+            decode_pbpaste_stdout(invalid, PasteTarget::Title(doc_id())),
             Msg::Error(_)
         ));
     }

@@ -471,6 +471,13 @@ impl App {
     /// reseeding would resurrect the old name and discard their in-progress
     /// undo history.
     pub fn refocus_title(&mut self) {
+        // The same read-only precondition `focus_title` enforces (decision
+        // 12): an async reply can land after the active document has
+        // changed under it, and parking focus on a title that can never
+        // commit would hold the user there until they found Escape.
+        if self.active_doc().read_only {
+            return;
+        }
         self.focus = Pane::Title;
     }
 

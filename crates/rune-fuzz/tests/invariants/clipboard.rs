@@ -61,7 +61,7 @@ fn paste_verbatim_ignores_a_clipboard_read_targeted_at_the_title() {
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::ClipboardRead {
         text: "b".to_string(),
-        target: PasteTarget::Title,
+        target: PasteTarget::Title(prev.active),
     };
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
 }

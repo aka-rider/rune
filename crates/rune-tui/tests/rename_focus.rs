@@ -27,7 +27,9 @@ use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
 
-use rename_common::{app_with, app_with_store, ctrl, key, plain, seeded_vfs, send, type_new_name};
+use rename_common::{
+    app_with, app_with_store, ctrl, key, plain, rename_to, seeded_vfs, send, sup, type_new_name,
+};
 
 // ── WP2: focus loss is the single commit chokepoint ─────────────────────
 
@@ -349,10 +351,15 @@ fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
     );
 }
 
-/// The second half of WP2.S8c's guard: `close_now` is the one active-
-/// document reseed with no blur in front of it — an async close landing for
-/// the very document being renamed must leave the typed name alone rather
-/// than silently overwrite it.
+/// `close_now` is the one active-document reseed with no blur in front of
+/// it. Closing a document OTHER than the active one leaves `app.active`
+/// untouched, so it must not disturb a name being typed — that is what the
+/// `active_changed` guard buys.
+///
+/// The companion case, closing the ACTIVE document while renaming, is
+/// covered by `an_async_close_while_renaming_never_retargets_the_rename_at_
+/// the_neighbour` below and must behave the OPPOSITE way: it reseeds, since
+/// the field would otherwise describe a document that no longer exists.
 #[test]
 fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
     let mem = seeded_vfs();
@@ -363,14 +370,19 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
     workspace::open_path(&mut app, Path::new("/root/b.md"));
     let first_tab = app.tabs.order[0];
     workspace::switch_to(&mut app, first_tab);
-    let victim = app.active;
+    let renaming = app.active;
+    let background = *app
+        .tabs
+        .order
+        .iter()
+        .find(|&&t| t != renaming)
+        .expect("a second, non-active tab");
 
     type_new_name(&mut app, "zzz");
 
-    // An async close for the very document being renamed lands with no
-    // blur in front of it (mirrors `materialize_ack::close_if_pending`'s own
-    // shape) — the typed name must survive untouched.
-    workspace::close_now(&mut app, victim);
+    // An async close for some OTHER document lands with no blur in front of
+    // it (mirrors `materialize_ack::close_if_pending`'s own shape).
+    workspace::close_now(&mut app, background);
 
     assert_eq!(
         app.focus(),
@@ -378,9 +390,13 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
         "focus must not be silently displaced"
     );
     assert_eq!(
+        app.active, renaming,
+        "closing a background tab must not move the active document"
+    );
+    assert_eq!(
         app.title.text(),
         "zzz.md",
-        "the typed name must survive an async close of the document being renamed"
+        "the typed name must survive an async close of an unrelated document"
     );
 }
 
@@ -437,11 +453,12 @@ fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
     send(&mut app, plain(KeyCode::Escape));
     assert_eq!(app.focus(), Pane::Editor);
 
+    let target_doc = app.active;
     send(
         &mut app,
         Msg::ClipboardRead {
             text: "late".to_string(),
-            target: PasteTarget::Title,
+            target: PasteTarget::Title(target_doc),
         },
     );
 
@@ -449,5 +466,95 @@ fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
         app.title.text(),
         "a.md",
         "a title-targeted paste arriving after focus left must be dropped"
+    );
+}
+
+/// Regression: an async close of the document being renamed must never let
+/// the pending rename retarget whatever document becomes active in its
+/// place.
+///
+/// `close_now` moves `app.active` to a neighbour but deliberately skips the
+/// title reseed while the title holds focus, so the field keeps the name
+/// typed for the closed document. `rename::begin` then resolves its subject
+/// from the live `app.active` — the neighbour — and renames the wrong file
+/// through the real VFS with nothing surfaced.
+#[test]
+fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+    workspace::open_path(&mut app, Path::new("/root/b.md"));
+    let first_tab = app.tabs.order[0];
+    workspace::switch_to(&mut app, first_tab);
+    let victim = app.active;
+
+    type_new_name(&mut app, "zzz");
+
+    // The async close lands with no blur in front of it.
+    workspace::close_now(&mut app, victim);
+
+    // Whatever the field still holds, releasing focus must not rename the
+    // surviving neighbour to it.
+    let mut effects = send(&mut app, plain(KeyCode::Enter));
+    for cmd in effects
+        .cmds
+        .drain(..)
+        .filter(|c| c.kind() == CmdKind::Rename)
+    {
+        if let Some(msg) = cmd.run() {
+            send(&mut app, msg);
+        }
+    }
+
+    assert!(
+        mem.read(Path::new("/root/b.md")).is_ok(),
+        "the surviving neighbour must keep its own name"
+    );
+    assert!(
+        mem.read(Path::new("/root/zzz.md")).is_err(),
+        "no file may be created under the name typed for the closed document"
+    );
+}
+
+/// Regression: a save must not be issued while a rename is in flight.
+///
+/// `rename::begin` already refuses when `save_in_flight`, but the reverse
+/// direction had no guard. `save_cmd` captures the document's path at
+/// trigger time, while the rebind to the new path only happens once the
+/// rename ack lands — so a ⌘S between the two writes the edited content
+/// back to the OLD path, resurrecting a file the rename was in the middle
+/// of moving away from and leaving the new name holding stale bytes.
+#[test]
+fn a_save_is_refused_while_a_rename_is_in_flight() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+
+    let mut effects = rename_to(&mut app, "b");
+    let rename_cmd = effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("a Rename Cmd");
+    assert!(matches!(app.rename, RenameState::Committing { .. }));
+
+    // The user edits and hits save before the rename ack lands.
+    send(&mut app, plain(KeyCode::Char('X')));
+    let save_effects = send(&mut app, sup('s'));
+    let saves: Vec<_> = save_effects
+        .cmds
+        .iter()
+        .filter(|c| c.kind() == CmdKind::Save)
+        .collect();
+    assert!(
+        saves.is_empty(),
+        "no save may be issued against the pre-rename path while the rename is in flight"
+    );
+
+    // The rename lands; the old name must be gone, not resurrected.
+    send(&mut app, rename_cmd.run().expect("a reply"));
+    assert!(
+        mem.read(Path::new("/root/a.md")).is_err(),
+        "the pre-rename path must not be resurrected by a racing save"
     );
 }

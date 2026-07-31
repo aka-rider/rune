@@ -42,7 +42,12 @@ pub use rune_ts::HighlightResult;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasteTarget {
     Document(DocumentId),
-    Title,
+    /// The title field, tagged with the document it was seeded for.
+    /// A reply whose document is no longer the active one is dropped: the
+    /// title is reseeded at every focus gain and document switch, so an
+    /// untagged reply could land one title session's clipboard text into a
+    /// different document's name.
+    Title(DocumentId),
 }
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the

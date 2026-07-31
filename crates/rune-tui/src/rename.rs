@@ -130,7 +130,11 @@ impl RenameState {
         }
     }
 
-    fn in_flight(&self) -> bool {
+    /// Whether a rename op is outstanding. `pub(crate)` so `save` can
+    /// refuse from its side too: the two refusals are a symmetric pair,
+    /// since either operation started while the other is mid-flight would
+    /// act on a path the other is about to invalidate.
+    pub(crate) fn in_flight(&self) -> bool {
         self.ticket().is_some()
     }
 }
