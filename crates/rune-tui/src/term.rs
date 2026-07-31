@@ -140,6 +140,29 @@ impl Guard {
         Ok((size.width, size.height))
     }
 
+    /// This terminal's current `(cols, rows, pixel_width, pixel_height)`
+    /// (plan WP3.S5), queried through the same raw `termina::Terminal`
+    /// `probe_truecolor` above reaches into. `None` when the underlying
+    /// dimensions query fails — `graphics::detect`'s caller treats that
+    /// exactly like an unpopulated pixel field and falls back to
+    /// `rune_image::DEFAULT_CELL_SIZE`. Queried once at startup
+    /// (`runtime::bootstrap`) and again on every `Msg::Resize`
+    /// (`runtime::apply`), never per frame.
+    pub fn window_size(&mut self) -> Option<(u16, u16, u16, u16)> {
+        let dims = self
+            .terminal
+            .backend_mut()
+            .terminal_mut()
+            .get_dimensions()
+            .ok()?;
+        Some((
+            dims.cols,
+            dims.rows,
+            dims.pixel_width.unwrap_or(0),
+            dims.pixel_height.unwrap_or(0),
+        ))
+    }
+
     pub fn draw(&mut self, f: impl FnOnce(&mut ratatui::Frame)) -> io::Result<()> {
         self.terminal.draw(f)?;
         Ok(())

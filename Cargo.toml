@@ -22,6 +22,7 @@ members = [
 edition = "2024"
 
 [workspace.dependencies]
+rune-image = { path = "crates/rune-image" }
 ratatui = "0.30.2"
 ratatui-termina = "0.1.0"
 termina = "0.3.3"

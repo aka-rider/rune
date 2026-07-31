@@ -248,6 +248,16 @@ pub struct App {
     /// real `TERM`/`TERM_PROGRAM`/`RUNE_ICONS` environment can be read —
     /// every test and the fuzzer keep this default.
     pub icons: rune_md::icons::IconSet,
+    /// This process's Kitty graphics support and measured cell pixel
+    /// geometry (plan WP3) — populated at startup (`runtime::bootstrap`,
+    /// alongside `theme` and `icons` above, for the same "decided once,
+    /// never per frame" reason) and re-derived on every `Msg::Resize`
+    /// (`runtime::apply`), since a resize can change the reported pixel
+    /// dimensions even when the Kitty/truecolor decision itself cannot.
+    /// `App::new` defaults to no-Kitty + `rune_image::DEFAULT_CELL_SIZE`
+    /// (`graphics::GraphicsCaps::default`), so every existing test
+    /// constructor and the fuzzer keep this default unchanged.
+    pub graphics: crate::graphics::GraphicsCaps,
     /// The workspace root discovered by `workspaceroot::resolve` (plan
     /// WP4.S4) — the nearest ancestor of the launch directory carrying a
     /// `.git`/`.obsidian` marker, or `cwd` itself when none is found.
@@ -317,6 +327,7 @@ impl App {
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),
+            graphics: crate::graphics::GraphicsCaps::default(),
             root: PathBuf::new(),
             snapshot_timer: crate::runtime::SnapshotTimer::new(),
         }
