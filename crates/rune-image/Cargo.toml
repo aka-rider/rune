@@ -1,0 +1,45 @@
+[package]
+name = "rune-image"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+# Default features pull in `rayon` and, via `avif-native`, link C libdav1d —
+# both explicitly excluded (plan decisions 5/6). `gif` is declared now,
+# ahead of its WP10 use for disposal metadata `image`'s own GIF decoder
+# does not expose, so this dependency gate is written once.
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
+gif = "0.14"
+base64 = { workspace = true }
+
+# Vector rasterization, severable behind the `svg` feature (plan decision 6,
+# WP11): `resvg`/`usvg` parse and lay out; the raster canvas comes from
+# `resvg`'s own re-exported `tiny_skia`, not a separately pinned crate —
+# `resvg::render` takes a `tiny_skia::PixmapMut` from that exact build, and
+# a second direct dependency risks resolving to a different semver-minor
+# `tiny-skia` than the one `resvg` was compiled against. `text`/
+# `system-fonts` are pass-throughs to `usvg` for the font stack SVG text
+# elements need. Every crate in this tree is pure Rust, per the
+# workspace-wide `-sys`-count assertion.
+resvg = { version = "0.47.0", optional = true, default-features = false, features = [
+    "text",
+    "system-fonts",
+] }
+usvg = { version = "0.47.0", optional = true, default-features = false }
+
+[features]
+default = ["svg"]
+svg = ["dep:resvg", "dep:usvg"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

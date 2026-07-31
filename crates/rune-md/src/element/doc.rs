@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::element::block::Block;
 use crate::icons::IconSet;
-use crate::snapshot::DisplaySnapshot;
+use crate::snapshot::{DisplaySnapshot, ImageDims};
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_syntax::SyntaxSnapshot;
@@ -66,6 +66,13 @@ pub struct DocMachine {
     /// (plan WP5) via `set_icons`, mirrored here because `Document` (the
     /// caller) holds no reference back to `App`'s theme/terminal state.
     icons: IconSet,
+    /// Per-embed cell footprint, set once by the runtime (plan WP8.S3) via
+    /// `set_image_dims` — mirrors `icons`' own "the caller pushes terminal-
+    /// side state in, `DocMachine` stays terminal-free" shape. Empty by
+    /// default, which is exactly `expand_images`'s "no dimensions known
+    /// yet" case: every standalone image line still reserves its default 1
+    /// row, it just doesn't grow further until dimensions arrive.
+    images: ImageDims,
     /// The memo `snapshot` returns a clone of when `dirty` is false —
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
@@ -100,6 +107,7 @@ impl DocMachine {
             dirty: true,
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
+            images: ImageDims::new(),
             cached: None,
             #[cfg(test)]
             rebuild_count: std::cell::Cell::new(0),
@@ -204,6 +212,17 @@ impl DocMachine {
         }
     }
 
+    /// Per-embed dimensions change (plan WP8.S3); marks dirty but fires NO
+    /// reveal transitions, the same shape `set_icons`/`set_width` already
+    /// use for terminal-side state that isn't a content edit or a
+    /// focus/reveal change.
+    pub fn set_image_dims(&mut self, dims: ImageDims) {
+        if self.images != dims {
+            self.images = dims;
+            self.dirty = true;
+        }
+    }
+
     /// Selects which producer `sync_content` runs — comrak for `Markdown`,
     /// no parse at all (verbatim per-line text, plan WP4 decision 6) for
     /// `Code`/`Plain`. Marks dirty only when the kind actually changes, so
@@ -286,7 +305,9 @@ impl DocMachine {
         let (lines, syntax) =
             crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
-        let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
+        let display = DisplaySnapshot::from_wrap(&wrap)
+            .expand_tables(&wrap)
+            .expand_images(&wrap, &self.blocks, buf.content(), &self.images);
         ViewSnapshots {
             syntax,
             wrap,

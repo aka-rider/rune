@@ -40,6 +40,16 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // delivered to either reader). One-shot, at startup, never per frame.
     app.theme = crate::theme::Theme::catppuccin_mocha(!guard.probe_truecolor());
 
+    // Plan WP3.S5: populate `app.graphics` in this same startup block,
+    // before `spawn_input_reader` — same ordering reason as the theme probe
+    // immediately above (and the icon tier immediately below): decided once
+    // here, never per frame, from real environment/window state that only
+    // exists once a real `Guard` does. `Msg::Resize` (`runtime::apply`)
+    // re-derives this on every later resize, since the reported pixel
+    // dimensions can change even when the Kitty/truecolor decision itself
+    // cannot.
+    app.graphics = crate::graphics::detect(&crate::graphics::ProcessEnv, guard.window_size());
+
     // Plan WP5.S2: the icon tier is decided once, right beside the theme
     // probe above — same "one-shot, at startup, never per frame" reasoning,
     // and the pure selector itself takes these three as plain values (see

@@ -4,7 +4,7 @@
 //! helper only that arm needs. Shares the same `push_span_split_by_line`/
 //! `hide_range` chokepoints as the block-node walk.
 
-use super::style::{StyleCtx, code_scope, link_scope};
+use super::style::{StyleCtx, code_scope, image_scope, link_scope};
 use super::{EmitOut, hide_range, push_span_split_by_line};
 use crate::element::inline::Inline;
 use rune_syntax::element::{ByteRange, RevealState};
@@ -190,6 +190,47 @@ fn emit_inline(
                     starts,
                     m.label,
                     link_scope(),
+                    RevealState::Rendered,
+                    out.spans,
+                    out.accounted,
+                );
+                hide_range(out.hidden, out.accounted, content, starts, close);
+            }
+        }
+        Inline::Image(m) => {
+            if m.sm.state() == RevealState::Revealed {
+                for &line in &m.content_lines {
+                    push_span_split_by_line(
+                        content,
+                        starts,
+                        line,
+                        image_scope(),
+                        RevealState::Revealed,
+                        out.spans,
+                        out.accounted,
+                    );
+                }
+            } else {
+                // Empty alt (or an empty wikilink-style target, which never
+                // happens by construction but is handled the same way
+                // regardless) falls back to the target itself as the
+                // visible label — mirrors the Go reference's
+                // "empty alt, URL becomes the visible label" rule
+                // (`imageSpans`' doc comment), same shape `WikiLinkM`'s own
+                // label/open/close split above already uses.
+                let label = if m.alt.is_empty() { m.target } else { m.alt };
+                let open = ByteRange::new(
+                    m.range.start,
+                    label.start.max(m.range.start).min(m.range.end),
+                );
+                let close =
+                    ByteRange::new(label.end.max(m.range.start).min(m.range.end), m.range.end);
+                hide_range(out.hidden, out.accounted, content, starts, open);
+                push_span_split_by_line(
+                    content,
+                    starts,
+                    label,
+                    image_scope(),
                     RevealState::Rendered,
                     out.spans,
                     out.accounted,
