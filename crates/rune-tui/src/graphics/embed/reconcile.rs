@@ -55,9 +55,15 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
     let content = doc.buffer.content().to_string();
     let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
     rune_md::snapshot::collect_standalone_images(doc.doc.blocks(), &content, &mut anchors);
+    // `HashMap` iteration order is arbitrary, so when the same target
+    // appears on more than one line, which line's `ImageM` survives the
+    // dedupe below must not depend on it — sort by line first so the
+    // earliest line deterministically wins, run over run.
+    let mut by_line: Vec<(usize, &ImageM)> = anchors.into_iter().collect();
+    by_line.sort_by_key(|(line, _)| *line);
     let mut seen = HashSet::new();
     let mut standalone: Vec<ImageM> = Vec::new();
-    for m in anchors.into_values() {
+    for (_, m) in by_line {
         if seen.insert(m.target_text.clone()) {
             standalone.push(m.clone());
         }
