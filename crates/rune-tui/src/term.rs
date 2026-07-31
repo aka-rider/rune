@@ -61,6 +61,18 @@ fn dec_reset(code: DecPrivateModeCode) -> Csi {
 pub struct Guard {
     terminal: RtTerminal<TerminaBackend<PlatformTerminal>>,
     events: EventReader,
+    /// Whether the real terminal behind this `Guard` speaks the Kitty
+    /// graphics protocol (plan WP6.S3) — `false` at construction, since
+    /// `Guard::new` runs before `graphics::detect` can ever measure the
+    /// window (`bootstrap`'s own ordering: this field is set right after,
+    /// via `set_kitty`, and re-synced on every later `Msg::Resize`). `Drop`
+    /// reads it to decide whether tearing down the terminal should emit
+    /// `rune_image::encode_delete_all()`: the reference Go implementation
+    /// emits it unconditionally, but this crate's Goal promises a non-
+    /// graphics terminal (`TERM=dumb`, an acceptance run) sees NO escape
+    /// bytes at all, so `Guard` has to carry the capability flag rather
+    /// than assume it.
+    kitty: bool,
 }
 
 impl Guard {
@@ -84,9 +96,23 @@ impl Guard {
         let backend = TerminaBackend::new(output);
         let terminal = RtTerminal::new(backend)?;
 
-        let mut guard = Guard { terminal, events };
+        let mut guard = Guard {
+            terminal,
+            events,
+            kitty: false,
+        };
         guard.enter_app_mode()?;
         Ok(guard)
+    }
+
+    /// Records whether the terminal speaks the Kitty graphics protocol
+    /// (plan WP6.S3) — called once right after `graphics::detect` runs in
+    /// `bootstrap` (which itself needs a live `Guard` to query the window
+    /// through, so this can never be known at `new`'s own construction
+    /// time) and again on every `Msg::Resize`, since `app.graphics` is
+    /// re-derived there too. Only `Drop` reads it.
+    pub fn set_kitty(&mut self, kitty: bool) {
+        self.kitty = kitty;
     }
 
     /// Enables the alternate screen, bracketed paste, Kitty keyboard flags,
@@ -189,6 +215,37 @@ impl Guard {
     }
 }
 
+/// The exact bytes `Guard::drop` writes to restore the terminal (plan
+/// WP6.S3) — a pure function so the Kitty-gating decision is unit-testable
+/// without a live `PlatformTerminal` (which `Guard` itself can't be
+/// constructed without in a headless test environment). `kitty` decides
+/// only the LEADING `encode_delete_all()` escape: Kitty images stay
+/// resident in the terminal until explicitly deleted, so quitting must
+/// clear them all, but ONLY on a terminal that actually speaks the
+/// protocol — the reference Go implementation emits this unconditionally,
+/// but this crate's Goal promises a non-graphics terminal sees no escape
+/// bytes at all. The mode-restoring escapes after it are unconditional,
+/// exactly as before this package.
+fn teardown_bytes(kitty: bool) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    if kitty {
+        bytes.extend_from_slice(rune_image::encode_delete_all().as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!(
+            "{}{}{}{}{}{}",
+            Csi::Keyboard(Keyboard::PopFlags(KITTY_FLAGS_PUSHED)),
+            dec_reset(DecPrivateModeCode::SGRMouse),
+            dec_reset(DecPrivateModeCode::ButtonEventMouse),
+            dec_reset(DecPrivateModeCode::BracketedPaste),
+            dec_reset(DecPrivateModeCode::ClearAndEnableAlternateScreen),
+            dec_set(DecPrivateModeCode::ShowCursor),
+        )
+        .as_bytes(),
+    );
+    bytes
+}
+
 impl Drop for Guard {
     fn drop(&mut self) {
         // §1.3: halt, never panic — every step here is best-effort. A
@@ -198,16 +255,32 @@ impl Drop for Guard {
         // once `self.terminal` (and the `PlatformTerminal` it owns) is
         // dropped after this — see module docs.
         let backend = self.terminal.backend_mut();
-        let _ = write!(
-            backend,
-            "{}{}{}{}{}{}",
-            Csi::Keyboard(Keyboard::PopFlags(KITTY_FLAGS_PUSHED)),
-            dec_reset(DecPrivateModeCode::SGRMouse),
-            dec_reset(DecPrivateModeCode::ButtonEventMouse),
-            dec_reset(DecPrivateModeCode::BracketedPaste),
-            dec_reset(DecPrivateModeCode::ClearAndEnableAlternateScreen),
-            dec_set(DecPrivateModeCode::ShowCursor),
-        );
+        let _ = backend.write_all(&teardown_bytes(self.kitty));
         let _ = backend.flush();
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    /// Plan WP6.S3 Done-when: "Guard-equivalent teardown emits
+    /// `encode_delete_all()` when Kitty is available and emits nothing
+    /// when it is not" — asserted against the pure byte-builder `Guard::
+    /// drop` itself calls, since `Guard` cannot be constructed at all
+    /// without a live terminal.
+    #[test]
+    fn teardown_emits_delete_all_only_when_kitty_is_available() {
+        let with_kitty = teardown_bytes(true);
+        assert!(with_kitty.starts_with(rune_image::encode_delete_all().as_bytes()));
+
+        let without_kitty = teardown_bytes(false);
+        assert!(
+            !without_kitty
+                .windows(b"\x1b_G".len())
+                .any(|w| w == b"\x1b_G"),
+            "a non-Kitty terminal must see no image escape bytes at all"
+        );
     }
 }

@@ -366,3 +366,88 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
             .any(|bytes| *bytes == rune_image::encode_delete(image_id).into_bytes())
     );
 }
+
+/// Plan WP6.S1/S2 Done-when, driven through the real `⌘R` key rather than
+/// calling `graphics::reload_image` directly: reloading a live image
+/// document re-emits a transmit escape into `effects.raw` and forces a
+/// redraw, under the exact same allocated id as the original open.
+#[test]
+fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
+    let (mut app, id) = app_with_image();
+    app.graphics.kitty = true;
+    app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
+    decode_x_png_via_update(&mut app, id);
+    let image_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+    app.active = id;
+    app.set_focus(Pane::Editor, &mut Effects::default());
+
+    let mut effects = Effects::default();
+    update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('r'),
+            mods: Mods {
+                sup: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut effects,
+    );
+    assert_eq!(effects.cmds.len(), 1, "reload must spawn exactly one Cmd");
+
+    let mut reply_effects = Effects::default();
+    for cmd in effects.cmds {
+        if let Some(msg) = cmd.run() {
+            update(&mut app, msg, &mut reply_effects);
+        }
+    }
+
+    assert!(
+        reply_effects
+            .raw
+            .iter()
+            .any(|bytes| bytes.starts_with(b"\x1b_G")),
+        "reload must retransmit"
+    );
+    assert!(
+        reply_effects.force_redraw,
+        "reload must force a full redraw"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().image.as_ref().unwrap().id,
+        image_id,
+        "reload must retransmit under the same deterministic id"
+    );
+}
+
+/// Plan WP6.S2: `⌘R` on an ordinary (non-image) document must not do
+/// anything — the reload command's own no-op guard, exercised through the
+/// real key pipeline against the markdown document `App::new` starts on.
+#[test]
+fn super_r_on_a_non_image_document_is_a_no_op() {
+    let (mut app, _image_id) = app_with_image();
+    let markdown_id = app
+        .documents
+        .keys()
+        .find(|&&id| id != _image_id)
+        .copied()
+        .expect("a second (markdown) document from App::new");
+    workspace::switch_to(&mut app, markdown_id);
+    app.set_focus(Pane::Editor, &mut Effects::default());
+
+    let mut effects = Effects::default();
+    update(
+        &mut app,
+        Msg::Key(KeyInput {
+            code: KeyCode::Char('r'),
+            mods: Mods {
+                sup: true,
+                ..Mods::NONE
+            },
+        }),
+        &mut effects,
+    );
+
+    assert!(effects.cmds.is_empty());
+    assert!(effects.raw.is_empty());
+}

@@ -22,6 +22,12 @@ pub struct Context {
     pub has_multi_cursor: bool,
     pub read_only: bool,
     pub modal_open: bool,
+    /// Plan WP6.S2: whether the active document is an image document
+    /// (`Document::image.is_some()`) — the `when` atom the reload binding
+    /// (`editor_bindings::editing::RELOAD`) gates on, so a `when`-aware
+    /// dispatch path can tell the reload chord apart from every ordinary
+    /// text-editing one.
+    pub image: bool,
     pub language: Option<&'static str>,
     /// The vim-set's normal/insert marker (plan WP6.S8). `"insert"` is this
     /// port's whole notion of "insert mode" while full vim modal editing
@@ -38,6 +44,7 @@ impl Default for Context {
             has_multi_cursor: false,
             read_only: false,
             modal_open: false,
+            image: false,
             language: None,
             mode: "insert",
         }
@@ -58,6 +65,7 @@ impl Context {
             "has_multi_cursor" => Some(self.has_multi_cursor),
             "read_only" => Some(self.read_only),
             "modal_open" => Some(self.modal_open),
+            "image" => Some(self.image),
             _ => None,
         }
     }
@@ -345,6 +353,19 @@ mod tests {
             ..Context::default()
         };
         assert!(!eval(&expr, &wrong_focus));
+    }
+
+    #[test]
+    fn image_is_a_bool_field_like_read_only() {
+        let expr = parse("image").expect("parses");
+        assert!(eval(
+            &expr,
+            &Context {
+                image: true,
+                ..Context::default()
+            }
+        ));
+        assert!(!eval(&expr, &Context::default()));
     }
 
     #[test]

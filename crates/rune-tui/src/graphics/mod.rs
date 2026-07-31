@@ -20,5 +20,16 @@ pub use state::{ImageState, ImageStatus};
 // `graphics::` path, but no external consumer of this crate (`rune-cli`,
 // an integration test) has any business spawning a decode or re-fitting a
 // footprint directly.
-pub(crate) use decode_cmd::{handle_image_decoded, schedule_image_decode};
+pub(crate) use decode_cmd::{handle_image_decoded, reload_image, schedule_image_decode};
 pub(crate) use resize_refit::refit_on_resize;
+
+/// Re-derives `app.graphics` from the real terminal AND keeps `guard`'s own
+/// teardown-time Kitty flag in sync with it (plan WP3.S5 + WP6.S3) — one
+/// call, from the two sites that need both steps together
+/// (`runtime::bootstrap`'s startup block, `runtime::apply`'s `Msg::Resize`
+/// arm), rather than each site repeating the pairing by hand and risking
+/// the two ever drifting apart.
+pub(crate) fn redetect(app: &mut crate::app::App, guard: &mut crate::term::Guard) {
+    app.graphics = detect(&ProcessEnv, guard.window_size());
+    guard.set_kitty(app.graphics.kitty);
+}

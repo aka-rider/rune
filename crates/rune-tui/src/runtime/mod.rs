@@ -381,7 +381,7 @@ fn apply(
         guard.force_redraw();
     }
     if is_resize {
-        app.graphics = crate::graphics::detect(&crate::graphics::ProcessEnv, guard.window_size());
+        crate::graphics::redetect(app, guard);
     }
     Ok(())
 }

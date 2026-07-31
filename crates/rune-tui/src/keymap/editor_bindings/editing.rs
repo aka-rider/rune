@@ -161,3 +161,16 @@ pub(crate) const SAVE: Binding<Command> = Binding {
     when: "",
     alias: false,
 };
+
+/// Plan WP6.S1/S2 — re-decode and retransmit an image document. `⌘R` is
+/// unused anywhere else in this table (see `editor_bindings.rs`'s own
+/// collision test); gated on the `image` `when` atom so a non-image
+/// document's help/footer surfaces never advertise a chord that would do
+/// nothing there.
+pub(crate) const RELOAD: Binding<Command> = Binding {
+    keys: &[KeyPattern::new(KeyCode::Char('r'), SUP)],
+    cmd: Command::Reload,
+    help: "reload image",
+    when: "image",
+    alias: false,
+};
