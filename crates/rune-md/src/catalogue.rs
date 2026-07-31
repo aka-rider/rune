@@ -6,7 +6,7 @@
 //! emit walk.
 
 use crate::element::block::{Block, HeadingM};
-use crate::element::inline::Inline;
+use crate::element::inline::{ImageM, Inline};
 use rune_nav::{Anchor, AnchorRole, DefRole, Ref, RefKind, Target, UseRole};
 
 /// The extension `rune_nav::resolve` appends to an extension-less
@@ -172,20 +172,28 @@ fn walk_inline(content: &str, inline: &Inline, out: &mut Vec<Ref>) {
             // scanner never matches a bare `[[target]]`) — unlike a real
             // `WikiLink` node, there is no bare-vs-embedded fork to make
             // here at all, so this never calls `wikilink_role`.
-            let target = if m.is_wikilink {
-                let (name, anchor) = split_wikilink_target(&m.target_text);
-                Target::Name { name, anchor }
-            } else {
-                classify_link_url(&m.target_text)
-            };
             out.push(Ref {
                 site: m.range,
                 kind: RefKind::Use {
                     role: UseRole::Embed,
-                    target,
+                    target: image_target(m),
                 },
             });
         }
+    }
+}
+
+/// An inline image's own navigation `Target`, the SAME classification a
+/// `WikiLink`/`Link` node gets (`split_wikilink_target`/`classify_link_url`)
+/// — the one chokepoint both this catalogue walk and `rune-tui`'s embed
+/// reconciler call, so an image embed and a followable link can never
+/// classify the same raw text two different ways.
+pub fn image_target(m: &ImageM) -> Target {
+    if m.is_wikilink {
+        let (name, anchor) = split_wikilink_target(&m.target_text);
+        Target::Name { name, anchor }
+    } else {
+        classify_link_url(&m.target_text)
     }
 }
 
