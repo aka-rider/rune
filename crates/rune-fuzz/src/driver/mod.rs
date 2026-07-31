@@ -27,7 +27,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Cmd, Msg, PasteTarget};
 use rune_vfs::{Mem, Vfs};
 
-use step_exec::{discharge_pending_save, key_step, step_and_check};
+use step_exec::{discharge_pending_rename, discharge_pending_save, key_step, step_and_check};
 
 /// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
@@ -74,6 +74,17 @@ struct State {
     mem: Arc<Mem>,
     path: PathBuf,
     pending_save: Option<(Cmd, std::collections::BTreeMap<DocumentId, Vec<u8>>)>,
+    /// The one no-store rename `Cmd` (`CmdKind::Rename`) that can be
+    /// outstanding at a time (structurally: `rename::begin` refuses a
+    /// second commit while `RenameState::Committing` — `in_flight()` —
+    /// holds). An `Option`, not a queue, for the same reason `pending_save`
+    /// is: at most one is ever produced before this one resolves. Left
+    /// undischarged, `app.rename` never leaves `Committing`, and every
+    /// later blur attempt — including the end-of-session drive's own `^E`
+    /// — is permanently refused (`rename::begin`'s rename-in-flight guard),
+    /// which is exactly the fuzz-driver gap `discharge_pending_rename`
+    /// closes (plan WP5).
+    pending_rename: Option<Cmd>,
     saves_delivered_ok: usize,
     steps: usize,
     /// The `DocumentId` `App::new` minted for the seeded document below —
@@ -139,6 +150,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         mem,
         path,
         pending_save: None,
+        pending_rename: None,
         saves_delivered_ok: 0,
         steps: 0,
         seed_doc,
@@ -186,6 +198,11 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
             Action::Deliver => {
                 if let Some((msg, tag, bytes)) = discharge_pending_save(&mut state)
                     && step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome)
+                {
+                    break 'session;
+                }
+                if let Some((msg, tag)) = discharge_pending_rename(&mut state)
+                    && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
                 {
                     break 'session;
                 }
@@ -347,6 +364,18 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         && let Some((msg, tag, bytes)) = discharge_pending_save(&mut state)
     {
         step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome);
+    }
+
+    // Rule 6b (plan WP5): discharge any still-pending rename before
+    // finishing too — a session whose last action left `RenameState::
+    // Committing` stuck (no `Action::Deliver` ever followed) must not
+    // reach `drive_end_of_session_checks` with the title still able to
+    // veto every blur. Same skip conditions as Rule 6.
+    if outcome.violation.is_none()
+        && !state.app.should_quit
+        && let Some((msg, tag)) = discharge_pending_rename(&mut state)
+    {
+        step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
     }
 
     // WP6.S4 end-of-session checks — `checks::drive_end_of_session_checks`'s

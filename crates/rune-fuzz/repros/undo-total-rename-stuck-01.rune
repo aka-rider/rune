@@ -1,0 +1,8 @@
+content 
+key up ----
+type hello world
+key down -a-u
+type hello world
+key char:c ---u
+key up ----
+key backspace ----

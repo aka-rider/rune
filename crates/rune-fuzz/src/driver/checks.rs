@@ -109,10 +109,25 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// (`TODO-fuzz-undo-total-dirty-close-discard.md`, fixed: the caller,
 /// `drive_end_of_session_checks`, now checks `seed_doc` still exists BEFORE
 /// calling this function at all, so that case never reaches this `F1`
-/// press in the first place). Then `^E` (`GlobalCommand::FocusEditor`),
-/// only while focus isn't already `Pane::Editor` — re-checked fresh rather
-/// than decided up front, since dismissing the modal (or toggling Help
-/// off) can itself leave focus somewhere other than `Editor`.
+/// press in the first place). Then, only while focus is `Pane::Title`,
+/// plain `Escape` (plan WP5) — NEVER `^E` there, and deliberately BEFORE
+/// the generic `^E` branch below: `^E` (`GlobalCommand::FocusEditor`)
+/// routes through `App::set_focus`, the SAME blur chokepoint any other
+/// focus change does, which `title::on_blur` can legitimately `Refused`
+/// (an invalid — e.g. emptied by an unlocked-gate `⌘X` — or a genuinely
+/// in-flight-renaming typed name, decision 7) and leave focus stuck on
+/// the title forever, silently misdirecting every later `⌘Z`/`⌘⇧Z` press
+/// into the TITLE's own unjournaled field instead of the document
+/// (`UNDO-TOTAL`/`REDO-TOTAL`'s actual precondition). `Escape` has no such
+/// failure mode: `title::keys::handle_key`'s own `Escape` arm reverts the
+/// field to `committed` FIRST, so `on_blur`'s `text == committed` check
+/// trivially holds and the blur can never be refused — decision 8's "Escape
+/// is always an exit" is exactly this guarantee, reused here as the
+/// driver's own unconditional way out of the title. Finally `^E`, only
+/// while focus still isn't `Pane::Editor` — re-checked fresh rather than
+/// decided up front, since dismissing the modal, toggling Help off, or
+/// leaving the title can each independently land focus somewhere other
+/// than `Editor` (Explorer, Tabs) that only `^E` reaches.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.modal.is_some() {
         let (msg, tag) = key_step(KeyInput {
@@ -126,6 +141,15 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
     if state.app.help_doc == Some(state.app.active) {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::F1,
+            mods: Mods::NONE,
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    if state.app.focus() == Pane::Title {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Escape,
             mods: Mods::NONE,
         });
         if step_and_check(state, prev, msg, tag, None, outcome) {

@@ -1,9 +1,10 @@
 //! One-message step execution, split out of `driver` (§1.6 budget): builds
-//! `(Msg, MsgTag)` pairs, discharges the deferred save `Cmd`, and runs one
-//! `update` call under `catch_unwind`, checking every invariant against the
-//! resulting `Snapshot`/`StepCtx`. Nothing here changes behaviour — every
-//! function is exactly what `driver` used to define locally, now reached
-//! through `step_exec::`.
+//! `(Msg, MsgTag)` pairs, discharges the deferred save/rename `Cmd`s, and
+//! runs one `update` call under `catch_unwind`, checking every invariant
+//! against the resulting `Snapshot`/`StepCtx`. Nothing here changes
+//! behaviour beyond plan WP5's rename discharge — every other function is
+//! exactly what `driver` used to define locally, now reached through
+//! `step_exec::`.
 
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyInput};
@@ -61,6 +62,23 @@ pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, 
     };
     let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
     Some((msg, tag, bytes))
+}
+
+/// Runs the one deferred no-store rename `Cmd`, if any, returning the
+/// `Msg` it produced together with its tag (plan WP5). Without this, a
+/// rename `Cmd` spawned by `rename::begin` and never delivered would leave
+/// `app.rename` stuck in `RenameState::Committing` for the rest of the
+/// session: `in_flight()` then refuses every later blur attempt,
+/// including the end-of-session drive's own `^E` restore — which is
+/// exactly the bug this closes (a rename `Cmd` used to be silently
+/// dropped on the floor; only `CmdKind::Save` was ever tracked).
+pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag)> {
+    let cmd = state.pending_rename.take()?;
+    let msg = cmd.run()?;
+    if !matches!(msg, Msg::RenameDone { .. }) {
+        return None;
+    }
+    Some((msg, MsgTag::RenameDone))
 }
 
 /// Delivers one message through `update`, captures the resulting `Snapshot`
@@ -130,11 +148,39 @@ pub(super) fn step_and_check(
                 .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
                 .collect();
             state.pending_save = Some((cmd, per_doc_bytes));
+        } else if cmd.kind() == CmdKind::Rename {
+            // Structurally at most one at a time (`rename::begin` refuses a
+            // second commit while `app.rename.in_flight()`), so overwriting
+            // an existing `Some` here can never lose a still-outstanding
+            // Cmd in practice — unlike `pending_save` above, there is no
+            // separate per-document byte snapshot to carry: no rename-path
+            // checker needs one yet.
+            state.pending_rename = Some(cmd);
         }
     }
 
     if is_save_done_ok {
         state.saves_delivered_ok += 1;
+    }
+
+    // Plan WP5: `RenameDone` was just processed above (`run_update_
+    // catching_panic` -> `rename::apply_outcome`), so `state.app`'s own
+    // document model already names the SEED document's real current path
+    // if the rename actually landed. `state.path` is separate driver
+    // bookkeeping, documented (`SAVE-VERBATIM`/`SAVE-CLEAN-MATCHES-DISK`)
+    // as "the real, seeded document's" location for the `ctx.disk` read
+    // immediately below — it must be resynced HERE, before that read,
+    // never after: `discharge_pending_rename` already ran the real
+    // `rename_excl` against the real `Mem` before this message ever
+    // reached `update`, so a resync any later would still compute `ctx.
+    // disk` against the now-stale pre-rename path on this very step.
+    if matches!(tag, MsgTag::RenameDone)
+        && let Some(path) = state
+            .app
+            .doc(state.seed_doc)
+            .and_then(|d| d.file_path.clone())
+    {
+        state.path = path;
     }
 
     let sampled = checks::should_sample(step_index);

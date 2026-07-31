@@ -54,6 +54,16 @@ pub enum MsgTag {
     /// touches the active document (proved structurally: `explorer::
     /// handle_dir_loaded` only ever writes `App::explorer`).
     DirLoaded,
+    /// `Msg::RenameDone` (plan WP5, fixing a driver gap: a rename `Cmd`
+    /// used to be spawned and then simply dropped, since only `CmdKind::
+    /// Save` was ever tracked — leaving `RenameState::Committing` stuck
+    /// forever and permanently vetoing every later blur, including the
+    /// end-of-session drive's own `^E`). No checker keys off this yet; the
+    /// point of driving it is that `update` never panics and that a
+    /// pending rename actually resolves within a session, the same
+    /// precondition `discharge_pending_save` already established for
+    /// saves.
+    RenameDone,
     /// `Msg::Highlighted` (plan WP7.S4) — `delivered_version` is the version
     /// the driver actually stamped on the message (resolved from
     /// `HighlightVersion` against the live buffer at delivery time, not the
