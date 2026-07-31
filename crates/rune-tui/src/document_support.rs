@@ -45,9 +45,14 @@ fn is_image_extension(ext: &str) -> bool {
 /// one predicate `rune-cli`'s bootstrap needs to route the first
 /// positional through `workspace::open_path` instead of `load_buffer`,
 /// without making `rune_syntax::DocumentKind` a dependency of `rune-cli`
-/// just to compare `kind_for`'s output against one variant.
+/// just to compare `kind_for`'s output against one variant. A pure
+/// extension check against `rune_image::decode::extensions()` — it
+/// deliberately does not route through `kind_for`'s fuller derivation,
+/// since nothing past the extension can change the answer.
 pub fn is_image_path(path: &Path) -> bool {
-    kind_for(Some(path)) == DocumentKind::Image
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(is_image_extension)
 }
 
 /// The outcome of [`crate::document::Document::hydrate`] — the shared
