@@ -6,5 +6,7 @@
 //! this; nothing here decodes an image or renders a placeholder cell.
 
 mod caps;
+mod state;
 
 pub use caps::{EnvSource, GraphicsCaps, ProcessEnv, detect};
+pub use state::{ImageState, ImageStatus};

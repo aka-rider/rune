@@ -12,12 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, BufferError};
+use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::db_enqueue as db;
 use crate::document::DocumentId;
+use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
 use crate::pane::Pane;
 use crate::runtime::Effects;
@@ -157,7 +159,19 @@ pub(crate) fn handle_file_opened(
 /// a new `Document` bound to `resolved`, hydrate it through the recovery
 /// store, and switch to it. Reports and returns `None` on a decode failure
 /// — the caller's own read already succeeded by this point.
+///
+/// Branches BEFORE `Buffer::from_bytes` for an image path (plan WP4.S7):
+/// image bytes are never valid UTF-8 in general (`Buffer` is UTF-8 by
+/// type), and even a coincidentally UTF-8-clean image must still open as a
+/// read-only image document, not an editable text one. Covers both the
+/// Explorer's open (`open_path`) and the CLI's extra positionals
+/// (`open_path` again, via `rune-cli`'s `open::open_extra_files`) — both
+/// funnel through this one tail.
 fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
+    if crate::document_support::kind_for(Some(resolved)) == DocumentKind::Image {
+        return open_image_bytes(app, resolved, bytes);
+    }
+
     let buffer = match Buffer::from_bytes(bytes) {
         Ok(buffer) => buffer,
         Err(BufferError::InvalidUtf8) => {
@@ -188,6 +202,49 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
     db::load_document(app, id, resolved);
     switch_to(app, id);
     Some(id)
+}
+
+/// The image-document counterpart of `open_bytes`'s ordinary tail (plan
+/// WP4.S7): an always-empty `Buffer` (image bytes never live in one), read-
+/// only, no recovery binding at all — there is no text journal to hydrate
+/// and `save::trigger_save`'s own `DocumentKind::Image` guard means nothing
+/// would ever write through it anyway. `bind_path` still runs first (it is
+/// the one place `kind` is derived, and `kind_for` above already agrees the
+/// result will be `Image`), so `doc.kind` and `doc.doc`'s producer selection
+/// come from the SAME chokepoint every other document uses — only the
+/// `display_name`/`read_only`/`image` fields it doesn't itself set are
+/// layered on afterward. `probe_dimensions` is header-only (no full decode,
+/// no `ratatui`/protocol dependency) — enough for the info card to show
+/// `WIDTHxHEIGHT` before any decode `Cmd` exists at all (WP5).
+fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
+    let dims = rune_image::probe_dimensions(&bytes).map(|(w, h, _)| (w, h));
+    let id = rune_image::alloc_id(&resolved.to_string_lossy());
+    let bytes_len = bytes.len() as u64;
+    let file_name = resolved
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image")
+        .to_string();
+
+    let doc_id = app.open_document(Buffer::new(""));
+    if let Some(doc) = app.doc_mut(doc_id) {
+        doc.bind_path(resolved.to_path_buf());
+        doc.read_only = true;
+        doc.display_name = Some(file_name);
+        doc.image = Some(ImageState {
+            path: resolved.to_path_buf(),
+            bytes_len,
+            id,
+            dims,
+            cells: None,
+            decoded: None,
+            status: ImageStatus::Pending,
+            in_flight: None,
+            pending: false,
+        });
+    }
+    switch_to(app, doc_id);
+    Some(doc_id)
 }
 
 fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {

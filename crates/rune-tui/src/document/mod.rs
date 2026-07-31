@@ -149,6 +149,13 @@ pub struct Document {
     /// version tag, and the in-flight/pending bookkeeping that bounds a
     /// document to at most one running highlight `Cmd` at a time.
     pub highlight: HighlightState,
+    /// This document's image state (plan WP4.S6/WP4.S7) — `Some` only for a
+    /// `DocumentKind::Image` document, populated by `workspace::open_bytes`
+    /// at open time. `None` for every other document, including a document
+    /// that used to be an image and no longer is (`kind` never changes back
+    /// once bound — a document only ever acquires its `kind` once, at
+    /// `bind_path`).
+    pub image: Option<crate::graphics::ImageState>,
 }
 
 impl Document {
@@ -188,6 +195,7 @@ impl Document {
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
             highlight: HighlightState::default(),
+            image: None,
         }
     }
 

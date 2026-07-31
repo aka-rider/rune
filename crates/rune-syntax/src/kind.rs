@@ -19,6 +19,13 @@ pub enum DocumentKind {
     /// No known producer: rendered verbatim, exactly like `Code`, but with
     /// no language to highlight against.
     Plain,
+    /// A read-only image document (plan WP4): content is never comrak- or
+    /// verbatim-parsed at all — the producer synthesizes display rows
+    /// directly (`rune_md::element::doc::DocMachine`'s `Image` branch)
+    /// rather than deriving them from a buffer, since the buffer itself
+    /// stays permanently empty (image bytes never live in a `Buffer` — it
+    /// is UTF-8 by type).
+    Image,
 }
 
 impl DocumentKind {
@@ -27,12 +34,12 @@ impl DocumentKind {
     }
 
     /// The language name to highlight against, or `None` for `Markdown`
-    /// (comrak owns fenced-code highlighting choices) and `Plain` (no
-    /// language at all).
+    /// (comrak owns fenced-code highlighting choices), `Plain` (no language
+    /// at all), and `Image` (no text to highlight at all).
     pub fn language(&self) -> Option<&'static str> {
         match self {
             DocumentKind::Code(lang) => Some(lang),
-            DocumentKind::Markdown | DocumentKind::Plain => None,
+            DocumentKind::Markdown | DocumentKind::Plain | DocumentKind::Image => None,
         }
     }
 }
@@ -50,6 +57,7 @@ mod tests {
     fn only_code_carries_a_language() {
         assert_eq!(DocumentKind::Markdown.language(), None);
         assert_eq!(DocumentKind::Plain.language(), None);
+        assert_eq!(DocumentKind::Image.language(), None);
         assert_eq!(DocumentKind::Code("rust").language(), Some("rust"));
     }
 
@@ -58,5 +66,6 @@ mod tests {
         assert!(DocumentKind::Markdown.is_markdown());
         assert!(!DocumentKind::Code("rust").is_markdown());
         assert!(!DocumentKind::Plain.is_markdown());
+        assert!(!DocumentKind::Image.is_markdown());
     }
 }

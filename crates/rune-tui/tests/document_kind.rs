@@ -98,3 +98,12 @@ fn no_path_stays_markdown() {
     let app = app_for("hello\n", None);
     assert_eq!(app.active_doc().kind, DocumentKind::Markdown);
 }
+
+/// Plan WP4.S6 Done-when: an image extension resolves to
+/// `DocumentKind::Image` via `Document::bind_path` — same chokepoint every
+/// other extension goes through.
+#[test]
+fn png_extension_is_image() {
+    let app = app_for("", Some("/x/a.png"));
+    assert_eq!(app.active_doc().kind, DocumentKind::Image);
+}

@@ -3,6 +3,7 @@
 //! that opens every positional past the first as its own tab (WP7.S6).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rune_tui::app::App;
 use rune_tui::banner;
@@ -11,6 +12,8 @@ use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{FileKind, Vfs};
 
 use crate::cli::CliError;
+use crate::db_bootstrap::{DbBootstrap, bootstrap_db};
+use crate::loader::{LoadError, load_buffer};
 use crate::{AppGuard, exit_code};
 
 /// `-w`'s own validation (WP7.S4): `dir` (already absolutized by
@@ -58,6 +61,93 @@ pub(crate) fn resolve_root(
         Some(dir) => dir.to_path_buf(),
         None => workspaceroot::resolve(vfs, cwd, home, first_file),
     }
+}
+
+/// Resolves and opens the first positional, building the `(App,
+/// DbBootstrap)` pair `bootstrap` wires up next (plan WP4.S8, split out of
+/// `main` to keep it under the §1.6 line budget). An image path (`kind_for`
+/// via `rune_tui::document_support::is_image_path`) never reaches
+/// `load_buffer` at all — image bytes are never valid UTF-8 in general, and
+/// even a coincidentally UTF-8-clean image must still open read-only, not
+/// as editable text — so it's routed through the SAME dispatch every extra
+/// positional (and the Explorer) already uses, `workspace::open_path`, via
+/// a freshly built untitled `App` as an anchor (there is no buffer to
+/// pre-load for an image). That anchor's blank draft is closed once the
+/// image opens — it was never edited, so discarding it loses nothing, and
+/// a single-file image launch should show exactly the image, not the image
+/// plus an empty extra tab. Every other path keeps the pre-WP4 text-load
+/// shape unchanged.
+pub(crate) fn open_first_positional(
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    path: PathBuf,
+    home: Option<&Path>,
+) -> Result<(App, DbBootstrap), std::process::ExitCode> {
+    if rune_tui::document_support::is_image_path(&path) {
+        let mut app = App::new_untitled(Arc::clone(vfs));
+        let blank = app.active;
+        let opened = workspace::open_path(&mut app, &path);
+        if let Some(image_id) = opened
+            && image_id != blank
+        {
+            workspace::close_now(&mut app, blank);
+        }
+        return Ok((app, DbBootstrap::default()));
+    }
+
+    let file_existed = vfs.stat(&path).is_ok();
+
+    let buffer = match load_buffer(vfs.as_ref(), &path) {
+        Ok(buffer) => buffer,
+        Err(LoadError::InvalidUtf8) => {
+            eprintln!(
+                "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
+                path.display()
+            );
+            return Err(std::process::ExitCode::from(exit_code::DATA_ERR));
+        }
+        Err(LoadError::Io(e)) => {
+            eprintln!("rune: failed to read {}: {e}", path.display());
+            return Err(std::process::ExitCode::from(exit_code::IO_ERR));
+        }
+    };
+
+    // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
+    // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
+    // NotFound-tolerant branch, unlike `load_buffer` above) — a brand-new
+    // document has no `documents` row to bind yet (WP4 deliberately left
+    // "create a scratch/untitled document" out of scope, `document.rs`'s
+    // module doc), so hydration is skipped entirely for that case: the
+    // editor still opens and runs fully, just without recovery journaling
+    // for THIS launch. Any hydration failure is non-fatal for the same
+    // reason (CONSTITUTION Prime Directive: protect the user's words over
+    // every other feature) — it is reported to stderr, not to the TUI
+    // (which hasn't started yet), and the editor proceeds with `app.db =
+    // None`. This launch mode is otherwise silent about running with zero
+    // crash protection (plan [rune-cli 3]) — every OTHER way this session
+    // can end up without a recovery journal (a degraded open ladder, a
+    // failed `Load`) already sets `app.db_banner`, so this one does too,
+    // rather than leaving the user with no indication at all.
+    let mut db_bootstrap = if file_existed {
+        bootstrap_db(Arc::clone(vfs), &path, home)
+    } else {
+        DbBootstrap {
+            banner: Some(
+                "recovery disabled: this file doesn't exist yet — no crash protection until \
+                 it's first saved"
+                    .to_string(),
+            ),
+            ..DbBootstrap::default()
+        }
+    };
+
+    // The buffer stays exactly what `load_buffer` read off disk here —
+    // adopting `recovered_content` goes through the same hydration
+    // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
+    // uses, once `App::new` exists to hold it. Pre-replacing the buffer
+    // here (as this used to) would skip that chokepoint's §1.3 suspicion
+    // check entirely.
+    let app = App::new(buffer, Some(path), Arc::clone(vfs), db_bootstrap.db.take());
+    Ok((app, db_bootstrap))
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the

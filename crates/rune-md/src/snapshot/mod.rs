@@ -185,6 +185,42 @@ impl DisplaySnapshot {
         }
     }
 
+    /// Builds a `DisplaySnapshot` of `n` synthetic image rows (plan WP4.S2:
+    /// the image producer) — the sole caller is `DocMachine::rebuild`'s
+    /// `DocumentKind::Image` branch, whose buffer is always empty (image
+    /// bytes never live in a `Buffer`) and so has no wrap rows to derive
+    /// real rows from at all. Every row is `synthetic: true`, carries one
+    /// `SyntaxSpan::Substituted` with an empty text/range and an empty
+    /// `cell_map` (the same "no buffer correspondence" shape `expand_tables`'s
+    /// own synthetic border rows use), and an `ImageRowRef` naming its
+    /// 0-based row index and the image's reserved column width — the marker
+    /// `rune-tui`'s `build_rows` override keys off to build placeholder/
+    /// info-card cells instead of the ordinary span-cell path. No row here
+    /// corresponds to any wrap row (there is none), so `wrap_to_display`
+    /// stays empty and `n` is floored at 1 so an image document is never
+    /// left with zero rows to scroll or render into.
+    pub fn image_rows(n: usize, width: usize) -> DisplaySnapshot {
+        let n = n.max(1);
+        let rows = (0..n)
+            .map(|row| DisplayRow {
+                spans: vec![SyntaxSpan::Substituted {
+                    scope: table_border_scope(),
+                    text: String::new(),
+                    range: 0..0,
+                    cell_map: Vec::new(),
+                }],
+                wrap_row: 0,
+                synthetic: true,
+                decor: None,
+                image: Some(ImageRowRef { row, width }),
+            })
+            .collect();
+        DisplaySnapshot {
+            rows,
+            wrap_to_display: Vec::new(),
+        }
+    }
+
     pub fn rows(&self) -> &[DisplayRow] {
         &self.rows
     }
@@ -363,6 +399,30 @@ mod tests {
         }
     }
 
+    /// WP4.S2: `image_rows` reserves exactly `n` rows (floored at 1), every
+    /// one synthetic and carrying an `ImageRowRef` naming its own 0-based
+    /// row index and the given width.
+    #[test]
+    fn image_rows_reserves_n_synthetic_rows() {
+        let display = DisplaySnapshot::image_rows(4, 12);
+        assert_eq!(display.total_rows(), 4);
+        for (i, row) in display.rows().iter().enumerate() {
+            assert!(row.synthetic);
+            assert_eq!(row.image, Some(ImageRowRef { row: i, width: 12 }));
+        }
+    }
+
+    /// `n` is floored at 1 — an image document must never be left with zero
+    /// rows to scroll or render into.
+    #[test]
+    fn image_rows_floors_at_one() {
+        let display = DisplaySnapshot::image_rows(0, 5);
+        assert_eq!(display.total_rows(), 1);
+    }
+
+    /// `display_to_wrap(wrap_to_display(r)) == r` for every wrap row, and
+    /// every synthetic row's `wrap_row` equals an adjacent content row's own
+    /// — the round-trip and adjacency assertions.
     #[test]
     fn wrap_display_round_trip_and_synthetic_adjacency() {
         let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |";

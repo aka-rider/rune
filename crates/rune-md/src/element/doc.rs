@@ -66,13 +66,28 @@ pub struct DocMachine {
     /// (plan WP5) via `set_icons`, mirrored here because `Document` (the
     /// caller) holds no reference back to `App`'s theme/terminal state.
     icons: IconSet,
-    /// Per-embed cell footprint, set once by the runtime (plan WP8.S3) via
-    /// `set_image_dims` — mirrors `icons`' own "the caller pushes terminal-
-    /// side state in, `DocMachine` stays terminal-free" shape. Empty by
-    /// default, which is exactly `expand_images`'s "no dimensions known
-    /// yet" case: every standalone image line still reserves its default 1
-    /// row, it just doesn't grow further until dimensions arrive.
+    /// Per-EMBED cell footprint for inline `![alt](x.png)` images inside an
+    /// ordinary markdown document, set by the runtime via `set_embed_dims`
+    /// — mirrors `icons`' own "the caller pushes terminal-side state in,
+    /// `DocMachine` stays terminal-free" shape. Empty by default, which is
+    /// exactly `expand_images`'s "no dimensions known yet" case: every
+    /// standalone image line still reserves its default 1 row, it just
+    /// doesn't grow further until dimensions arrive.
+    ///
+    /// Distinct from `image_dims` below, which describes a whole image
+    /// DOCUMENT rather than an embed within a text one. The two never both
+    /// apply: an image document has no embeds, and a markdown document is
+    /// never the `Image` kind.
     images: ImageDims,
+    /// `(width, rows)` an image DOCUMENT's producer reserves — read only
+    /// when `kind == DocumentKind::Image`. `rows` is the number of
+    /// synthetic `DisplayRow`s `rebuild` synthesizes in place of the
+    /// ordinary emit/wrap pipeline; `width` is carried onto each row's
+    /// `ImageRowRef` for the renderer. Defaults to `(0, 1)` — one row,
+    /// nothing known about width yet — so an image document that has not
+    /// had its dimensions set at all still has exactly one reserved row
+    /// rather than zero.
+    image_dims: (usize, usize),
     /// The memo `snapshot` returns a clone of when `dirty` is false —
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
@@ -108,6 +123,7 @@ impl DocMachine {
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
             images: ImageDims::new(),
+            image_dims: (0, 1),
             cached: None,
             #[cfg(test)]
             rebuild_count: std::cell::Cell::new(0),
@@ -212,11 +228,14 @@ impl DocMachine {
         }
     }
 
-    /// Per-embed dimensions change (plan WP8.S3); marks dirty but fires NO
-    /// reveal transitions, the same shape `set_icons`/`set_width` already
-    /// use for terminal-side state that isn't a content edit or a
-    /// focus/reveal change.
-    pub fn set_image_dims(&mut self, dims: ImageDims) {
+    /// Per-embed dimensions for the inline images inside a text document;
+    /// marks dirty but fires NO reveal transitions, the same shape
+    /// `set_icons`/`set_width` already use for terminal-side state that
+    /// isn't a content edit or a focus/reveal change.
+    ///
+    /// Named for EMBEDS specifically to keep it distinct from
+    /// `set_image_document_dims`, which sizes a whole image document.
+    pub fn set_embed_dims(&mut self, dims: ImageDims) {
         if self.images != dims {
             self.images = dims;
             self.dirty = true;
@@ -231,6 +250,22 @@ impl DocMachine {
     pub fn set_kind(&mut self, kind: DocumentKind) {
         if kind != self.kind {
             self.kind = kind;
+            self.dirty = true;
+        }
+    }
+
+    /// The reserved `(width, rows)` an image DOCUMENT's producer
+    /// synthesizes rows for — a no-op for any other `kind`. `rows` is
+    /// floored at 1 by `DisplaySnapshot::image_rows` itself, so passing `0`
+    /// here is safe. Marks dirty only on an actual change, same memoization
+    /// shape as `set_width`/`set_icons`.
+    ///
+    /// Distinct from `set_embed_dims`, which sizes the inline images within
+    /// a text document rather than the document itself.
+    pub fn set_image_document_dims(&mut self, width: usize, rows: usize) {
+        let dims = (width, rows);
+        if dims != self.image_dims {
+            self.image_dims = dims;
             self.dirty = true;
         }
     }
@@ -302,12 +337,28 @@ impl DocMachine {
     fn rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         #[cfg(test)]
         self.rebuild_count.set(self.rebuild_count.get() + 1);
+        // `emit`/`wrap` still run even for `DocumentKind::Image` below —
+        // cheaply, since an image document's buffer is always empty — so
+        // `syntax`/`wrap` stay valid coordinate maps for the rest of the
+        // pipeline (cursor sync, etc.) exactly like every other kind. Only
+        // `display` diverges: the image producer (plan WP4.S2) synthesizes
+        // its rows directly rather than deriving them from `wrap`, since an
+        // empty buffer has no wrap rows to derive an image's reserved
+        // layout from at all.
         let (lines, syntax) =
             crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
-        let display = DisplaySnapshot::from_wrap(&wrap)
-            .expand_tables(&wrap)
-            .expand_images(&wrap, &self.blocks, buf.content(), &self.images);
+        // An image document synthesizes its rows outright — there is no
+        // buffer text to emit or wrap. Every other kind goes through the
+        // ordinary pipeline, where `expand_images` reserves rows for the
+        // inline embeds a markdown document may contain.
+        let display = if self.kind == DocumentKind::Image {
+            DisplaySnapshot::image_rows(self.image_dims.1, self.image_dims.0)
+        } else {
+            DisplaySnapshot::from_wrap(&wrap)
+                .expand_tables(&wrap)
+                .expand_images(&wrap, &self.blocks, buf.content(), &self.images)
+        };
         ViewSnapshots {
             syntax,
             wrap,

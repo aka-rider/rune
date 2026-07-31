@@ -16,6 +16,7 @@
 mod blit;
 mod cell;
 pub(crate) mod decor;
+pub mod image;
 mod overlay;
 pub mod title;
 
@@ -46,6 +47,14 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| {
+            // WP4.S11: a row carrying an `ImageRowRef` (set only by the
+            // image producer, `DocMachine::rebuild`'s `DocumentKind::Image`
+            // branch) renders through the info-card override instead of
+            // the ordinary span-cell path below — its spans are decorative
+            // placeholders with no real content to walk.
+            if let Some(image_ref) = row.image {
+                return image::row_cells(app, doc, image_ref, viewport.width);
+            }
             // WP4.S2: the row's own decoration (heading icon / bullet /
             // quote bar / hr rule) is prepended BEFORE the overlay walks
             // below run — those walks all skip `buf_offset < 0`
