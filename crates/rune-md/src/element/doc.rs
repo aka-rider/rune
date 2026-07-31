@@ -66,6 +66,15 @@ pub struct DocMachine {
     /// (plan WP5) via `set_icons`, mirrored here because `Document` (the
     /// caller) holds no reference back to `App`'s theme/terminal state.
     icons: IconSet,
+    /// `(width, rows)` an image document's producer reserves (plan WP4.S2)
+    /// — read only when `kind == DocumentKind::Image`. `rows` is the number
+    /// of synthetic `DisplayRow`s `rebuild` synthesizes in place of the
+    /// ordinary emit/wrap pipeline; `width` is carried onto each row's
+    /// `ImageRowRef` for the renderer. Defaults to `(0, 1)` — one row,
+    /// nothing known about width yet — so an image document that has not
+    /// had its dimensions set at all still has exactly one reserved row
+    /// rather than zero.
+    image_dims: (usize, usize),
     /// The memo `snapshot` returns a clone of when `dirty` is false —
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
@@ -100,6 +109,7 @@ impl DocMachine {
             dirty: true,
             kind: DocumentKind::Markdown,
             icons: IconSet::unicode(),
+            image_dims: (0, 1),
             cached: None,
             #[cfg(test)]
             rebuild_count: std::cell::Cell::new(0),
@@ -216,6 +226,19 @@ impl DocMachine {
         }
     }
 
+    /// The reserved `(width, rows)` an image document's producer
+    /// synthesizes rows for (plan WP4.S2) — a no-op for any other `kind`.
+    /// `rows` is floored at 1 by `DisplaySnapshot::image_rows` itself, so
+    /// passing `0` here is safe. Marks dirty only on an actual change, same
+    /// memoization shape as `set_width`/`set_icons`.
+    pub fn set_image_dims(&mut self, width: usize, rows: usize) {
+        let dims = (width, rows);
+        if dims != self.image_dims {
+            self.image_dims = dims;
+            self.dirty = true;
+        }
+    }
+
     /// Rebuild the block/inline tree iff the buffer version changed. A pure
     /// cursor move never bumps `buf.version()`, so this is a no-op on every
     /// keystroke that isn't a content edit. For a non-markdown `kind`, no
@@ -283,10 +306,22 @@ impl DocMachine {
     fn rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         #[cfg(test)]
         self.rebuild_count.set(self.rebuild_count.get() + 1);
+        // `emit`/`wrap` still run even for `DocumentKind::Image` below —
+        // cheaply, since an image document's buffer is always empty — so
+        // `syntax`/`wrap` stay valid coordinate maps for the rest of the
+        // pipeline (cursor sync, etc.) exactly like every other kind. Only
+        // `display` diverges: the image producer (plan WP4.S2) synthesizes
+        // its rows directly rather than deriving them from `wrap`, since an
+        // empty buffer has no wrap rows to derive an image's reserved
+        // layout from at all.
         let (lines, syntax) =
             crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
-        let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
+        let display = if self.kind == DocumentKind::Image {
+            DisplaySnapshot::image_rows(self.image_dims.1, self.image_dims.0)
+        } else {
+            DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap)
+        };
         ViewSnapshots {
             syntax,
             wrap,
