@@ -165,6 +165,18 @@ pub fn ctrl(c: char) -> Msg {
     )
 }
 
+/// A ⌘-chorded character — copy/cut/paste's own modifier
+/// (`keymap::editor_bindings::clipboard::SUP`).
+pub fn sup(c: char) -> Msg {
+    key(
+        KeyCode::Char(c),
+        Mods {
+            sup: true,
+            ..Mods::NONE
+        },
+    )
+}
+
 pub fn send(app: &mut App, msg: Msg) -> Effects {
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);

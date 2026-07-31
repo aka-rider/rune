@@ -23,7 +23,7 @@ use std::path::Path;
 use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
-use rune_tui::runtime::{CmdKind, Effects};
+use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
 use rune_tui::workspace;
 use rune_vfs::Vfs;
 
@@ -381,5 +381,73 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
         app.title.text(),
         "zzz.md",
         "the typed name must survive an async close of the document being renamed"
+    );
+}
+
+// ── WP4: the paste target travels with the request ──────────────────────
+
+/// The latent bug decision 11 fixes: a `Msg::ClipboardRead` targeted at a
+/// specific document (captured when the paste was requested) must land on
+/// THAT document even after the active document has since changed — never
+/// on whatever happens to be active by the time the reply arrives.
+#[test]
+fn a_document_targeted_clipboard_read_lands_on_its_captured_document_even_after_the_active_document_changes()
+ {
+    let mem = seeded_vfs();
+    mem.save_atomic(Path::new("/root/b.md"), b"b content")
+        .expect("seed b.md");
+    let mut app = app_with(&mem);
+    let first = app.active;
+
+    // The user switches to a different document while a paste requested
+    // FROM `first` is still in flight.
+    workspace::open_path(&mut app, Path::new("/root/b.md"));
+    let second = app.active;
+    assert_ne!(first, second, "test setup: two distinct documents");
+
+    send(
+        &mut app,
+        Msg::ClipboardRead {
+            text: "X".to_string(),
+            target: PasteTarget::Document(first),
+        },
+    );
+
+    assert!(
+        app.doc(first).unwrap().buffer.content().contains('X'),
+        "the reply must land on the document it was requested for"
+    );
+    assert_eq!(
+        app.doc(second).unwrap().buffer.content(),
+        "b content",
+        "the now-active document must be untouched by a reply targeted elsewhere"
+    );
+}
+
+/// `title::keys::paste` no-ops unless the title still has focus: `pbpaste`
+/// runs on its own thread and can take a while, and a late reply must not
+/// write into a field the user has since left.
+#[test]
+fn a_title_targeted_paste_arriving_after_focus_left_the_title_is_dropped() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+
+    send(&mut app, ctrl('r'));
+    assert_eq!(app.focus(), Pane::Title);
+    send(&mut app, plain(KeyCode::Escape));
+    assert_eq!(app.focus(), Pane::Editor);
+
+    send(
+        &mut app,
+        Msg::ClipboardRead {
+            text: "late".to_string(),
+            target: PasteTarget::Title,
+        },
+    );
+
+    assert_eq!(
+        app.title.text(),
+        "a.md",
+        "a title-targeted paste arriving after focus left must be dropped"
     );
 }
