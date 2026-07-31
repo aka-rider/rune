@@ -34,6 +34,18 @@ impl Document {
         self.sync_catalogue();
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
+        // Plan WP4.S2: an image document's reserved row count/width — read
+        // from `self.image.cells` once WP5's fit computation sets it,
+        // falling back to `render::image::INFO_CARD_ROWS` while it's still
+        // `None` (nothing decoded yet). `self.image` is `Some` only for a
+        // `DocumentKind::Image` document, so this whole block is a no-op
+        // for every other kind.
+        if let Some(image) = &self.image {
+            let (width, rows) = image
+                .cells
+                .unwrap_or((0, crate::render::image::INFO_CARD_ROWS));
+            self.doc.set_image_dims(width, rows);
+        }
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)
     }

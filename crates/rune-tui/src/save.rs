@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
@@ -73,6 +74,15 @@ pub(crate) struct PendingMaterialize {
 /// file").
 pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
+    // Plan WP4.S9, the §1.4.1 guard: an image document has a REAL
+    // `file_path`, so without this a save would reach `save_cmd` and
+    // overwrite it with the buffer's own (always empty) bytes. Placed
+    // FIRST, before the in-flight/version checks below — those already
+    // return early for an unedited buffer, which would make a guard placed
+    // after them dead code.
+    if doc.kind == DocumentKind::Image {
+        return;
+    }
     if doc.save_in_flight {
         return;
     }

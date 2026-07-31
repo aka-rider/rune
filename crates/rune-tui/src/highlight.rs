@@ -12,7 +12,7 @@
 
 use std::ops::Range;
 
-use rune_syntax::ScopeId;
+use rune_syntax::{DocumentKind, ScopeId};
 
 use crate::app::App;
 use crate::document::{Document, DocumentId};
@@ -103,6 +103,17 @@ fn resolve_highlight_source(app: &mut App, id: DocumentId) -> Option<HighlightSo
             .set(doc.highlight.resolve_calls.get() + 1);
     }
     let doc = app.doc(id)?;
+    // Plan WP4.S9: `schedule_highlight` itself has no `db`/`file_path`/
+    // `read_only` guard — only `in_flight` and `version` — so this is the
+    // one place an image document is excluded from ever dispatching a
+    // highlight `Cmd`. `doc.kind.language()` already returns `None` for
+    // `Image` and `is_markdown()` is `false`, so the `else` arm below would
+    // reach the same `None` regardless; this explicit early return states
+    // the invariant directly rather than leaving it as an incidental
+    // consequence of two unrelated checks.
+    if doc.kind == DocumentKind::Image {
+        return None;
+    }
     if let Some(lang) = doc.kind.language() {
         Some(HighlightSource::Whole(
             lang,
