@@ -545,17 +545,11 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         let id = app.active;
         save::schedule_snapshot_debounce(app, id);
     }
-    // Plan WP5.S3: the active buffer changed shape, or the active document
-    // itself did (a tab switch) — either way it may still need a highlight.
-    if app.active != active_before || app.active_doc().buffer.version() != buffer_version_before {
-        let id = app.active;
-        crate::highlight::schedule_highlight(app, id, effects);
-    }
-    // Plan WP5.S1: a tab switch may have landed on a `Pending` image
-    // document; `schedule_image_decode` itself guards re-spawning.
-    if app.active != active_before {
-        crate::graphics::schedule_image_decode(app, app.active, effects);
-    }
+    // The rest of the post-dispatch chokepoint (highlight scheduling, a
+    // newly-active image document's decode, WP9's embed reconciler) lives
+    // in `dispatch::after_update` — split out so this already-over-budget
+    // file (§1.6) never needs to grow for a future addition to that list.
+    dispatch::after_update(app, active_before, buffer_version_before, effects);
 }
 
 // `relayout`/`sync_view` moved to `app_view.rs` (§1.6 budget) — both are

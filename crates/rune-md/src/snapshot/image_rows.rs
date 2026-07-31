@@ -14,7 +14,7 @@ use rune_syntax::SyntaxSpan;
 use rune_syntax::wrap::WrapSnapshot;
 
 use crate::element::block::Block;
-use crate::element::inline::standalone_image;
+use crate::element::inline::{ImageM, standalone_image};
 use crate::emit::style::image_scope;
 
 use super::{DisplayRow, DisplaySnapshot, ImageRowRef};
@@ -74,8 +74,8 @@ impl DisplaySnapshot {
         content: &str,
         dims: &ImageDims,
     ) -> DisplaySnapshot {
-        let mut anchors: HashMap<usize, &str> = HashMap::new();
-        collect_standalone_image_lines(blocks, content, &mut anchors);
+        let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
+        collect_standalone_images(blocks, content, &mut anchors);
 
         let segments = wrap.segments();
         let mut rows: Vec<DisplayRow> = Vec::with_capacity(self.rows.len());
@@ -101,14 +101,19 @@ impl DisplaySnapshot {
                 .and_then(|ml| anchors.get(&ml).copied());
 
             if let Some(target) = target {
+                let target_text = target.target_text.as_str();
                 let (width, image_rows) = dims
-                    .get(target)
+                    .get(target_text)
                     .map(|(cols, rows)| (cols, rows.max(1)))
                     .unwrap_or((1, 1));
-                row.image = Some(ImageRowRef { row: 0, width });
+                row.image = Some(ImageRowRef {
+                    row: 0,
+                    width,
+                    target: Some(target_text.to_string()),
+                });
                 rows.push(row);
                 for i in 1..image_rows {
-                    rows.push(synthetic_image_row(wrap_row, i, width));
+                    rows.push(synthetic_image_row(wrap_row, i, width, target_text));
                 }
             } else {
                 rows.push(row);
@@ -128,7 +133,12 @@ impl DisplaySnapshot {
 /// placeholder cells straight from `DisplayRow::image` instead, WP4/WP9),
 /// so only the char COUNT — matching `cell_map`'s length, same invariant
 /// `synthetic_border` keeps — has to be right.
-fn synthetic_image_row(wrap_row: usize, image_row: usize, width: usize) -> DisplayRow {
+fn synthetic_image_row(
+    wrap_row: usize,
+    image_row: usize,
+    width: usize,
+    target: &str,
+) -> DisplayRow {
     let text = " ".repeat(width);
     let cell_map = vec![-1i64; text.chars().count()];
     let span = SyntaxSpan::Substituted {
@@ -145,6 +155,7 @@ fn synthetic_image_row(wrap_row: usize, image_row: usize, width: usize) -> Displ
         image: Some(ImageRowRef {
             row: image_row,
             width,
+            target: Some(target.to_string()),
         }),
     }
 }
@@ -155,23 +166,31 @@ fn synthetic_image_row(wrap_row: usize, image_row: usize, width: usize) -> Displ
 /// kinds a bare image line can sit directly inside (a blockquote's own
 /// paragraphs, a list item's children); every other block kind (headings,
 /// tables, fences, ...) cannot contain a standalone image line by
-/// construction, so is skipped rather than mis-walked.
-fn collect_standalone_image_lines<'a>(
+/// construction, so is skipped rather than mis-walked. `pub` (not just
+/// crate-private): `rune-tui`'s own embed reconciler (plan WP9.S4) needs
+/// the exact same "which lines spawn an embed" answer this pass already
+/// computes — a second, independently-written walk over the same block
+/// shapes would drift the moment one of them added a container kind the
+/// other didn't. Keyed by the whole `&ImageM`, not just its `target_text`
+/// (as an earlier revision did), so a caller can also read `is_wikilink`
+/// (needed to resolve `![[target]]` differently from `![alt](url)`, plan
+/// WP9.S7) without a second walk.
+pub fn collect_standalone_images<'a>(
     blocks: &'a [Block],
     content: &str,
-    out: &mut HashMap<usize, &'a str>,
+    out: &mut HashMap<usize, &'a ImageM>,
 ) {
     for block in blocks {
         match block {
             Block::Paragraph(p) => {
                 if let Some(img) = standalone_image(content, &p.inlines) {
-                    out.insert(img.line, img.target_text.as_str());
+                    out.insert(img.line, img);
                 }
             }
-            Block::Blockquote(bq) => collect_standalone_image_lines(&bq.children, content, out),
+            Block::Blockquote(bq) => collect_standalone_images(&bq.children, content, out),
             Block::List(list) => {
                 for item in &list.items {
-                    collect_standalone_image_lines(&item.children, content, out);
+                    collect_standalone_images(&item.children, content, out);
                 }
             }
             _ => {}

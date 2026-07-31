@@ -166,6 +166,29 @@ pub(super) fn apply_cursor_overlays(
         let Some(row) = rows.get_mut(display_row - scroll_row) else {
             continue;
         };
+        // Plan WP9.S2: `place_caret` walks cells POSITIONALLY and adds
+        // `REVERSED` to whichever one sits at `visual_col`, with no
+        // `buf_offset` check — `REVERSED` swaps fg and bg, which would
+        // destroy a live placeholder cell's smuggled 24-bit image id
+        // (`render::image::row_cells`'s own doc comment: `style.fg` IS the
+        // id). Moot for a read-only image DOCUMENT (`shows_caret` is
+        // `focused && !read_only`, and an image document is always
+        // `read_only`), but very much live for an inline embed inside an
+        // otherwise-editable markdown document — an anchor row's own
+        // `ImageRowRef` (whole-document OR embed, `target` either way)
+        // means this row's cells may be exactly that kind of decorative
+        // placeholder, so the caret is suppressed on it entirely instead of
+        // painted, the same "this row's cells are not what they look like"
+        // precedent `place_caret`'s own `boxed` parameter already
+        // establishes for a table's border row.
+        let on_image_row = view
+            .display
+            .rows()
+            .get(display_row)
+            .is_some_and(|r| r.image.is_some());
+        if on_image_row {
+            continue;
+        }
         // WP4.S3: `visual_col` above is wrap-space, unaware of the row's
         // own decoration prefix (`build_rows` prepends it before this
         // function runs). Shifting it right by that prefix's width is what

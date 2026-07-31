@@ -156,6 +156,16 @@ pub struct Document {
     /// once bound — a document only ever acquires its `kind` once, at
     /// `bind_path`).
     pub image: Option<crate::graphics::ImageState>,
+    /// This document's inline embed set (plan WP9) — the several
+    /// `![alt](x.png)`/`![[x.png]]` images a markdown document may hold at
+    /// once, each independently spawned/decoded/transmitted/despawned.
+    /// Distinct from `image` above (which describes a whole `DocumentKind::
+    /// Image` document, exactly one image): the two are mutually exclusive
+    /// in practice (an image document has no embeds; a markdown document is
+    /// never `DocumentKind::Image`), but nothing enforces that at the type
+    /// level — `embeds` just stays empty and `sync_embeds` a no-op for
+    /// every document kind other than `Markdown`.
+    pub embeds: crate::graphics::EmbedSet,
 }
 
 impl Document {
@@ -196,6 +206,7 @@ impl Document {
             icons: IconSet::unicode(),
             highlight: HighlightState::default(),
             image: None,
+            embeds: crate::graphics::EmbedSet::new(),
         }
     }
 

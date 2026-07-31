@@ -21,7 +21,7 @@
 
 mod image_rows;
 
-pub use image_rows::ImageDims;
+pub use image_rows::{ImageDims, collect_standalone_images};
 
 use rune_syntax::SyntaxSpan;
 use rune_syntax::syntax::{RowBoundary, TableRole};
@@ -63,10 +63,20 @@ pub struct DisplayRow {
 /// image (0 is the anchor row); `width` is the image's own reserved column
 /// count, not the pane width — the renderer clips against the pane
 /// separately, the same way an ordinary row's spans already do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// `target` is `None` for a row synthesized by the whole-document image
+/// producer (`image_rows`, plan WP4.S2) — there is exactly one image per
+/// document, so `Document::image` alone already answers "which image".
+/// `Some(target_text)` for an embed row (`expand_images`, plan WP8/WP9) — a
+/// markdown document can carry several embeds at once, so the renderer
+/// needs this key to find the RIGHT `EmbedState` (`rune-tui`'s own map,
+/// keyed by the same `ImageM::target_text` string) rather than assuming a
+/// document has at most one image. Plain `String` data, never a colour, a
+/// protocol or a `rune-tui` type — `rune-md` stays terminal-free.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageRowRef {
     pub row: usize,
     pub width: usize,
+    pub target: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -212,7 +222,11 @@ impl DisplaySnapshot {
                 wrap_row: 0,
                 synthetic: true,
                 decor: None,
-                image: Some(ImageRowRef { row, width }),
+                image: Some(ImageRowRef {
+                    row,
+                    width,
+                    target: None,
+                }),
             })
             .collect();
         DisplaySnapshot {
@@ -408,7 +422,14 @@ mod tests {
         assert_eq!(display.total_rows(), 4);
         for (i, row) in display.rows().iter().enumerate() {
             assert!(row.synthetic);
-            assert_eq!(row.image, Some(ImageRowRef { row: i, width: 12 }));
+            assert_eq!(
+                row.image,
+                Some(ImageRowRef {
+                    row: i,
+                    width: 12,
+                    target: None,
+                })
+            );
         }
     }
 

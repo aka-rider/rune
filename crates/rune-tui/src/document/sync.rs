@@ -46,6 +46,12 @@ impl Document {
                 .unwrap_or((0, crate::render::image::INFO_CARD_ROWS));
             self.doc.set_image_document_dims(width, rows);
         }
+        // Plan WP9 wiring: the inline embed footprints `sync_embeds`/
+        // `handle_embed_decoded` have computed so far — empty (and so a
+        // no-op past `set_embed_dims`'s own `dims != self.images` guard)
+        // for every document that isn't a markdown one with at least one
+        // decoded embed.
+        self.doc.set_embed_dims(self.embeds.to_image_dims());
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)
     }
