@@ -132,10 +132,10 @@ pub struct Document {
     pub catalogue: Vec<rune_nav::Ref>,
     /// Which producer this document's content goes through (plan WP4) —
     /// mirrored onto `doc` via `DocMachine::set_kind` every time it changes.
-    /// Recomputed from `file_path` only inside `bind_path`, the single place
-    /// a document acquires (or reacquires) a path; a pathless draft and the
-    /// Help document therefore stay `DocumentKind::Markdown`, exactly as
-    /// before this plan.
+    /// Recomputed from `file_path` and the buffer's current content only
+    /// inside `bind_path`, the single place a document acquires (or
+    /// reacquires) a path; a pathless draft and the Help document therefore
+    /// stay `DocumentKind::Markdown`, exactly as before this plan.
     pub kind: DocumentKind,
     /// The icon tier line decorations render with (plan WP5) — mirrored
     /// onto `doc` via `DocMachine::set_icons` on every `view()` call, same
@@ -278,7 +278,8 @@ impl Document {
     /// `doc` too, so `DocMachine::sync_content` picks the right producer on
     /// its very next call.
     pub fn bind_path(&mut self, path: PathBuf) {
-        self.kind = kind_for(Some(&path));
+        let kind = kind_for(Some(&path), self.buffer.content());
+        self.kind = kind;
         self.doc.set_kind(self.kind);
         self.file_path = Some(path);
         self.display_name = None;

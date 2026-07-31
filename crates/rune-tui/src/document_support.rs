@@ -9,28 +9,39 @@ use std::path::Path;
 
 use rune_syntax::DocumentKind;
 
-/// Derives the producer a path should use (plan WP4.S4/WP4.S5): no path at
-/// all (an untitled draft) stays `Markdown`; an extension `rune_image::
-/// decode::extensions()` advertises becomes `Image` — checked
-/// BEFORE the `.md` arm and before `rune_ts::lang::resolve`, since a still-
-/// image format's extension (e.g. `.svg` when the `svg` feature is on)
-/// could otherwise shadow a code language; a `.md` extension stays
-/// `Markdown`; an extension `rune_ts::lang::resolve` recognises becomes
-/// `Code`; anything else is `Plain`. Deliberately calls the compile-free
-/// `lang::resolve`, never the query-compiling registry getter — `resolve`
-/// is a pure `&'static` table lookup with no tree-sitter call at all, so no
-/// query compilation happens on this (the UI) thread.
-pub(crate) fn kind_for(path: Option<&Path>) -> DocumentKind {
+/// Derives the producer a path (plus the document's current content) should
+/// use: no path at all (an untitled draft) stays `Markdown`; an extension
+/// `rune_image::decode::extensions()` advertises becomes `Image` — checked
+/// BEFORE everything else, since a still-image format's extension (e.g.
+/// `.svg` when the `svg` feature is on) could otherwise shadow a code
+/// language or be overridden by a modeline sitting inside a binary-ish blob;
+/// a `.md` extension stays `Markdown` — checked BEFORE `rune_ts::detect`,
+/// because markdown is rune's native format and a `vim: ft=` line living
+/// inside a fenced code block of an otherwise-ordinary markdown document
+/// must not hijack the whole document's kind. Past those two fixed arms,
+/// `rune_ts::detect` walks its own ladder (modeline, then whole filename,
+/// then extension, then shebang) over the path and content together, so
+/// `.zshrc`, `Gemfile`, `README` and an extensionless shebang script all
+/// resolve correctly; anything `detect` can't identify is `Plain`.
+/// Deliberately calls the compile-free `detect`/`lang::resolve` path, never
+/// the query-compiling registry getter — both are pure `&'static` table
+/// lookups with no tree-sitter call at all, so no query compilation happens
+/// on this (the UI) thread.
+pub(crate) fn kind_for(path: Option<&Path>, content: &str) -> DocumentKind {
     let Some(path) = path else {
         return DocumentKind::Markdown;
     };
-    match path.extension().and_then(|e| e.to_str()) {
-        Some(ext) if is_image_extension(ext) => DocumentKind::Image,
-        Some(ext) if ext.eq_ignore_ascii_case("md") => DocumentKind::Markdown,
-        Some(ext) => match rune_ts::lang::resolve(ext) {
-            Some(name) => DocumentKind::Code(name),
-            None => DocumentKind::Plain,
-        },
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        if is_image_extension(ext) {
+            return DocumentKind::Image;
+        }
+        if ext.eq_ignore_ascii_case("md") {
+            return DocumentKind::Markdown;
+        }
+    }
+    match rune_ts::detect(Some(path), content) {
+        Some(rune_ts::Detected::Markdown) => DocumentKind::Markdown,
+        Some(rune_ts::Detected::Lang(name)) => DocumentKind::Code(name),
         None => DocumentKind::Plain,
     }
 }
@@ -84,7 +95,7 @@ mod tests {
 
     #[test]
     fn image_extension_resolves_to_image_kind() {
-        assert_eq!(kind_for(Some(Path::new("a.png"))), DocumentKind::Image);
+        assert_eq!(kind_for(Some(Path::new("a.png")), ""), DocumentKind::Image);
     }
 
     /// Plan WP4 Done-when: no image extension may also resolve through
@@ -102,12 +113,78 @@ mod tests {
 
     #[test]
     fn markdown_extension_still_wins_over_no_language() {
-        assert_eq!(kind_for(Some(Path::new("a.md"))), DocumentKind::Markdown);
+        assert_eq!(
+            kind_for(Some(Path::new("a.md")), ""),
+            DocumentKind::Markdown
+        );
     }
 
     #[test]
     fn no_path_stays_markdown() {
-        assert_eq!(kind_for(None), DocumentKind::Markdown);
+        assert_eq!(kind_for(None, "hello"), DocumentKind::Markdown);
+    }
+
+    /// A dotfile with no extension (`Path::extension()` is `None` for
+    /// `.zshrc`) is still identified by `rune_ts::detect`'s whole-filename
+    /// step.
+    #[test]
+    fn dotfile_resolves_via_whole_filename() {
+        assert_eq!(
+            kind_for(Some(Path::new(".zshrc")), ""),
+            DocumentKind::Code("bash")
+        );
+    }
+
+    /// An extensionless documentation file name resolves to `Markdown`
+    /// through `rune_ts::detect`'s whole-filename step, not just `.md`.
+    #[test]
+    fn extensionless_readme_is_markdown() {
+        assert_eq!(
+            kind_for(Some(Path::new("README")), ""),
+            DocumentKind::Markdown
+        );
+    }
+
+    /// An extensionless script with a shebang line is identified by
+    /// `rune_ts::detect`'s shebang step.
+    #[test]
+    fn extensionless_shebang_resolves_via_interpreter() {
+        assert_eq!(
+            kind_for(Some(Path::new("deploy")), "#!/bin/bash\n"),
+            DocumentKind::Code("bash")
+        );
+    }
+
+    /// The `.md` arm is resolved from the extension BEFORE `detect` ever
+    /// runs, so a modeline living inside a markdown document's content (e.g.
+    /// inside a fenced code block) can never hijack the document's kind.
+    #[test]
+    fn md_extension_beats_a_modeline_in_content() {
+        assert_eq!(
+            kind_for(Some(Path::new("notes.md")), "# vim: ft=python\n"),
+            DocumentKind::Markdown
+        );
+    }
+
+    /// The image arm is resolved from the extension BEFORE `detect` ever
+    /// runs, so a modeline can never shadow an image extension either.
+    #[test]
+    fn image_extension_beats_a_modeline_in_content() {
+        assert_eq!(
+            kind_for(Some(Path::new("a.png")), "# vim: ft=rust\n"),
+            DocumentKind::Image
+        );
+    }
+
+    /// Content `detect` cannot identify by any rung of its ladder still
+    /// falls back to `Plain`, unchanged from before this module consulted
+    /// content at all.
+    #[test]
+    fn unidentifiable_content_stays_plain() {
+        assert_eq!(
+            kind_for(Some(Path::new("mystery")), "just words\n"),
+            DocumentKind::Plain
+        );
     }
 
     /// `is_image_path` is now a standalone extension check rather than a
@@ -118,7 +195,10 @@ mod tests {
     fn is_image_path_agrees_with_kind_for() {
         for ext in rune_image::decode::extensions() {
             let p = std::path::PathBuf::from(format!("a.{ext}"));
-            assert_eq!(is_image_path(&p), kind_for(Some(&p)) == DocumentKind::Image);
+            assert_eq!(
+                is_image_path(&p),
+                kind_for(Some(&p), "") == DocumentKind::Image
+            );
             assert!(is_image_path(&p));
         }
         assert!(!is_image_path(Path::new("a.rs")));
