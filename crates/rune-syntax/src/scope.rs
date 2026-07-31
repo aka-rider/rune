@@ -163,19 +163,31 @@ pub const CODE_SCOPES: &[&str] = &[
     "tag",
 ];
 
-/// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`] then
-/// [`CODE_SCOPES`], in that order. Exposed as a constructor (rather than a
-/// lazily-initialized static) so both the emitter and a theme built in a
-/// test can each own their own instance and still agree on ids, as long as
-/// they're both built from this same function. The one shared constructor
-/// every producer (comrak-driven `rune-md`, tree-sitter-driven `rune-ts`)
-/// and the theme (`rune-tui`) build from independently.
+/// Scopes registered AFTER [`CODE_SCOPES`] rather than folded into either
+/// earlier table (WP7): appending here keeps [`MARKDOWN_SCOPES`] fixed at
+/// `0..=22` and every [`CODE_SCOPES`] id exactly where it already was —
+/// inserting a new name into either earlier table would renumber every id
+/// that follows it, since ids are assigned by registration order. `rune-md`'s
+/// image emission (`emit::style::image_scope`) is the one resolver today.
+pub const EXTENDED_SCOPES: &[&str] = &["markup.image"];
+
+/// Builds a fresh `ScopeTable` pre-registered with [`MARKDOWN_SCOPES`], then
+/// [`CODE_SCOPES`], then [`EXTENDED_SCOPES`], in that order. Exposed as a
+/// constructor (rather than a lazily-initialized static) so both the
+/// emitter and a theme built in a test can each own their own instance and
+/// still agree on ids, as long as they're both built from this same
+/// function. The one shared constructor every producer (comrak-driven
+/// `rune-md`, tree-sitter-driven `rune-ts`) and the theme (`rune-tui`)
+/// build from independently.
 pub fn scope_table() -> ScopeTable {
     let mut table = ScopeTable::new();
     for name in MARKDOWN_SCOPES {
         table.register(name);
     }
     for name in CODE_SCOPES {
+        table.register(name);
+    }
+    for name in EXTENDED_SCOPES {
         table.register(name);
     }
     table
@@ -219,13 +231,44 @@ mod tests {
     #[test]
     fn scope_table_registers_every_canonical_scope() {
         let table = scope_table();
-        assert_eq!(table.len(), MARKDOWN_SCOPES.len() + CODE_SCOPES.len());
+        assert_eq!(
+            table.len(),
+            MARKDOWN_SCOPES.len() + CODE_SCOPES.len() + EXTENDED_SCOPES.len()
+        );
         for name in MARKDOWN_SCOPES {
             assert!(table.resolve(name).is_some(), "missing scope: {name}");
         }
         for name in CODE_SCOPES {
             assert!(table.resolve(name).is_some(), "missing scope: {name}");
         }
+        for name in EXTENDED_SCOPES {
+            assert!(table.resolve(name).is_some(), "missing scope: {name}");
+        }
+    }
+
+    /// WP7: appending `EXTENDED_SCOPES` after `CODE_SCOPES` must not
+    /// renumber any code scope — pins the first `CODE_SCOPES` entry's id at
+    /// exactly `MARKDOWN_SCOPES.len()`, unchanged from before this package.
+    #[test]
+    fn extended_scopes_do_not_renumber_code_scopes() {
+        let table = scope_table();
+        let first_code = CODE_SCOPES.first().copied().unwrap_or_default();
+        assert_eq!(
+            table.resolve(first_code),
+            Some(ScopeId(MARKDOWN_SCOPES.len() as u16))
+        );
+    }
+
+    /// `markup.image` lands strictly after every `CODE_SCOPES` id, proving
+    /// it was appended rather than inserted earlier in the table.
+    #[test]
+    fn markup_image_scope_is_registered_after_code_scopes() {
+        let table = scope_table();
+        let image_id = table.resolve("markup.image").unwrap_or(ScopeId(0));
+        let last_code = table
+            .resolve(CODE_SCOPES.last().copied().unwrap_or_default())
+            .unwrap_or(ScopeId(0));
+        assert!(image_id.0 > last_code.0);
     }
 
     #[test]

@@ -162,6 +162,19 @@ fn render_inline(
                 out.push_str(content, m.label, scope);
             }
         }
+        Inline::Image(m) => {
+            let scope = style::image_scope();
+            if m.sm.state() == RevealState::Revealed {
+                for &line in &m.content_lines {
+                    out.push_str(content, line, scope);
+                }
+            } else {
+                // Same empty-alt-falls-back-to-target rule as
+                // `emit::walk_inline`'s own `Inline::Image` arm.
+                let label = if m.alt.is_empty() { m.target } else { m.alt };
+                out.push_str(content, label, scope);
+            }
+        }
     }
 }
 

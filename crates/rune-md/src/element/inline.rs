@@ -6,10 +6,11 @@
 use rune_syntax::element::{ByteRange, InheritCtx, RevealSm, RevealState};
 
 /// Plain, unconcealable text — no machine (plan: "Text(TextRun), // {
-/// range } — verbatim, no machine"). Also used for inline images (Phase-1
-/// scope: `![alt](url)` is a plain revealed text run, no `ImageM` until
-/// Phase 5) and any inline node kind this crate doesn't otherwise model
-/// (raw HTML, a hard line break, ...).
+/// range } — verbatim, no machine"). Any inline node kind this crate
+/// doesn't otherwise model (raw HTML, a hard line break, ...) degrades to
+/// this. `![alt](url)`/`![[target]]` images are `Inline::Image` (`ImageM`,
+/// below) as of WP7 — they used to flatten to a plain text run here
+/// (Phase-1 scope), no longer.
 #[derive(Clone, Debug)]
 pub struct TextRun {
     pub range: ByteRange,
@@ -159,6 +160,51 @@ impl WikiLinkM {
     }
 }
 
+/// `![alt](target)` (comrak's own `Image` node) or `![[target]]` (recovered
+/// by `parse::inline`'s text scanner — comrak's wikilink trigger has a
+/// `within_brackets` guard that suppresses the node entirely under a
+/// leading `!`, so an embed never arrives as a `WikiLink` node; see that
+/// module's docs, and `catalogue.rs`'s pinned
+/// `embed_prefixed_wikilink_comrak_behaviour_is_pinned`). Rendered -> emit
+/// `alt` (or `target` when `alt` is empty, mirroring the Go reference's
+/// "empty alt, URL becomes the visible label" rule) styled `markup.image`.
+/// Revealed -> raw markdown, the same open/close-hide treatment
+/// `WikiLinkM` already uses. No nested children: an image's alt text is
+/// plain and unstyled, the same Phase-1 simplification a bare wikilink
+/// label already accepts.
+#[derive(Clone, Debug)]
+pub struct ImageM {
+    pub sm: RevealSm,
+    pub range: ByteRange,
+    pub alt: ByteRange,
+    pub target: ByteRange,
+    /// The decoded target string — comrak's own decoded `url` for
+    /// `![alt](url)`, or the raw `target` text for `![[target]]`.
+    pub target_text: String,
+    /// `true` for a `![[target]]` embed recovered by the text scanner,
+    /// `false` for standard `![alt](url)` markdown image syntax — the
+    /// catalogue walk needs this to resolve `target_text` as a
+    /// `Target::Name` (wikilink-style) or a `Target::Path`/`Target::Url`
+    /// (markdown-style), the same fork `WikiLinkM` vs `LinkM` already makes
+    /// for a non-embed reference.
+    pub is_wikilink: bool,
+    pub line: usize,
+    /// One entry per physical line `range` spans — same shape as
+    /// `WikiLinkM`'s siblings; always `vec![range]` for the overwhelmingly
+    /// common single-line case, and always exactly one entry for a
+    /// scanner-recovered `![[target]]` embed (the scanner never lets one
+    /// span a raw newline — see `parse::inline`'s docs).
+    pub content_lines: Vec<ByteRange>,
+}
+
+impl ImageM {
+    fn sync(&mut self, ctx: &InheritCtx) -> bool {
+        let range = self.range;
+        let want = ctx.grant.resolve(|| ctx.cursors.any_in(range));
+        self.sm.transition(want)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Inline {
     Text(TextRun),
@@ -166,6 +212,7 @@ pub enum Inline {
     Code(InlineCodeM),
     Link(LinkM),
     WikiLink(WikiLinkM),
+    Image(ImageM),
 }
 
 impl Inline {
@@ -176,6 +223,7 @@ impl Inline {
             Inline::Code(m) => m.sync(ctx),
             Inline::Link(m) => m.sync(ctx),
             Inline::WikiLink(m) => m.sync(ctx),
+            Inline::Image(m) => m.sync(ctx),
         }
     }
 
@@ -186,6 +234,7 @@ impl Inline {
             Inline::Code(m) => m.sm.state(),
             Inline::Link(m) => m.sm.state(),
             Inline::WikiLink(m) => m.sm.state(),
+            Inline::Image(m) => m.sm.state(),
         }
     }
 
@@ -196,6 +245,45 @@ impl Inline {
             Inline::Code(m) => m.range,
             Inline::Link(m) => m.range,
             Inline::WikiLink(m) => m.range,
+            Inline::Image(m) => m.range,
         }
     }
+}
+
+/// Mirrors Go's `isStandaloneImageLine`
+/// (`golang/pkg/editor/display/image_rows.go`): `true` when `inlines` — a
+/// single block's own inline sequence (a paragraph's or a list item's
+/// `Vec<Inline>`) — consists of exactly one Rendered image, optionally
+/// surrounded by whitespace-only text. Unlike Go's flattened span model,
+/// this crate never represents a list marker as an inline at all (it's
+/// `ListItemM::marker`, concealed or carried as the row's own `decor` — see
+/// `emit::walk::emit_list_item`), so a list-item image already satisfies
+/// this rule with no separate marker case to special-case. Anything else —
+/// text adjacent to the image, more than one image, a Revealed image under
+/// the caret — disqualifies the line, so a truly-inline image falls back to
+/// its alt text instead of a placeholder.
+pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Option<&'a ImageM> {
+    let mut found: Option<&ImageM> = None;
+    for inl in inlines {
+        match inl {
+            Inline::Text(t) => {
+                if !text_run_is_whitespace_only(content, t) {
+                    return None;
+                }
+            }
+            Inline::Image(m) if found.is_none() && m.sm.state() == RevealState::Rendered => {
+                found = Some(m);
+            }
+            _ => return None,
+        }
+    }
+    found
+}
+
+fn text_run_is_whitespace_only(content: &str, t: &TextRun) -> bool {
+    t.content_lines.iter().all(|r| {
+        content
+            .get(r.start..r.end)
+            .is_some_and(|s| s.chars().all(char::is_whitespace))
+    })
 }

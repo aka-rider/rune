@@ -1,11 +1,14 @@
 //! AST -> `Inline` construction: dispatch (`build_inline`) plus the
 //! delimiter-gap derivations (`child_gap_delims`, `link_url_range`,
 //! `wikilink_label_range`) that recover markup ranges comrak has no
-//! dedicated node for.
+//! dedicated node for. `![alt](url)`'s own alt/target range derivation and
+//! `![[target]]` embed recovery live in the sibling `embed` module — split
+//! out to keep this one under CONSTITUTION §1.6's 500-LoC limit.
 
+use super::embed::{image_alt_range, image_target_range, recover_embeds};
 use super::{ScanHint, line_end_at, node_range};
 use crate::element::inline::{
-    EmphasisKind, EmphasisM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
+    EmphasisKind, EmphasisM, ImageM, Inline, InlineCodeM, LinkM, TextRun, WikiLinkM,
 };
 use comrak::nodes::{AstNode, NodeValue};
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
@@ -181,11 +184,11 @@ pub(super) fn build_inlines<'a>(
                     }));
                 }
             }
-            return out;
+            return recover_embeds(content, starts, out);
         }
         out.push(build_inline(content, starts, child, hint));
     }
-    out
+    recover_embeds(content, starts, out)
 }
 
 enum InlineKind {
@@ -195,9 +198,12 @@ enum InlineKind {
     Strikethrough,
     Code(usize),
     Link(String),
-    /// Phase-1 scope: inline images are plain revealed text runs, no
-    /// machine (plan: "Inline images ... -> plain revealed text runs").
-    Image,
+    /// `![alt](url)` markdown image syntax — carries comrak's own decoded
+    /// URL, same shape as `Link`'s. `![[target]]` never reaches here: it
+    /// has no dedicated AST node at all (see `recover_embeds`'s docs) and
+    /// is recovered separately, as a post-pass over the flattened `Text`
+    /// runs this same dispatch produces for ordinary prose.
+    Image(String),
     WikiLink(String),
 }
 
@@ -264,7 +270,7 @@ fn inline_kind(v: &NodeValue) -> InlineKind {
         NodeValue::Strikethrough => InlineKind::Strikethrough,
         NodeValue::Code(c) => InlineKind::Code(c.num_backticks),
         NodeValue::Link(l) => InlineKind::Link(l.url.clone()),
-        NodeValue::Image(_) => InlineKind::Image,
+        NodeValue::Image(l) => InlineKind::Image(l.url.clone()),
         NodeValue::WikiLink(w) => InlineKind::WikiLink(w.url.clone()),
         // Text, SoftBreak, LineBreak, HtmlInline, and any other inline node
         // kind this crate doesn't model degrade to plain text (plan §0:
@@ -287,7 +293,7 @@ fn build_inline<'a>(
     let kind = inline_kind(&node.data.borrow().value);
 
     match kind {
-        InlineKind::TextLike | InlineKind::Image => Inline::Text(TextRun {
+        InlineKind::TextLike => Inline::Text(TextRun {
             range,
             // MAJOR fix (verification round 9's exhaustive audit): an
             // unmodeled inline node (raw HTML, a hard line break, ...)
@@ -300,6 +306,20 @@ fn build_inline<'a>(
             // case.
             content_lines: super::per_line_content(content, starts, range, hint),
         }),
+        InlineKind::Image(url) => {
+            let alt = image_alt_range(content, starts, node, range);
+            let target = image_target_range(alt.end, range, &url, content.len());
+            Inline::Image(ImageM {
+                sm: RevealSm::new(RevealState::Rendered),
+                range,
+                alt,
+                target,
+                target_text: url,
+                is_wikilink: false,
+                line,
+                content_lines: super::per_line_content(content, starts, range, hint),
+            })
+        }
         InlineKind::Emph => {
             let (open, close) = child_gap_delims(content, starts, node, range);
             let children = build_inlines(content, starts, node, hint);
