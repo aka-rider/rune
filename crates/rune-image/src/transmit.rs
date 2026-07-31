@@ -64,38 +64,37 @@ pub fn encode_transmit(
 /// encoding happens to land on it.
 fn frame_transmit(payload: &str, id: u32, cols: usize, rows: usize) -> String {
     let full_options = format!("f=100,q=2,i={id},U=1,c={cols},r={rows},a=T");
-    // `split_at` (not `[]`) throughout: it is a safe, non-panicking method
-    // even under the workspace's `indexing_slicing` lint, and the loop
-    // condition guarantees `MAX_CHUNK_SIZE <= remaining.len()` on entry.
-    let mut remaining = payload.as_bytes();
+    // Chunk the base64 text directly. `split_at_checked` yields `None`
+    // rather than panicking on a non-char-boundary split, so the chunk
+    // boundary is safe by construction instead of by argument — base64 is
+    // pure ASCII, so every boundary is in fact a char boundary, but nothing
+    // here has to rely on that being true.
+    let mut remaining = payload;
     let mut out = String::new();
     let mut wrote_full_chunk = false;
     let mut is_first = true;
 
-    while remaining.len() >= MAX_CHUNK_SIZE {
-        let (chunk, rest) = remaining.split_at(MAX_CHUNK_SIZE);
-        let chunk_str = std::str::from_utf8(chunk).unwrap_or_default();
+    while let Some((chunk, rest)) = remaining.split_at_checked(MAX_CHUNK_SIZE) {
         let options = if is_first {
             format!("{full_options},m=1")
         } else {
             "q=2,m=1".to_string()
         };
-        out.push_str(&frame(&options, chunk_str));
+        out.push_str(&frame(&options, chunk));
         is_first = false;
         wrote_full_chunk = true;
         remaining = rest;
     }
 
-    let remainder_str = std::str::from_utf8(remaining).unwrap_or_default();
     if wrote_full_chunk {
         // The trailing "last chunk" after the loop: whatever remained
         // (possibly empty, on an exact multiple) goes out under `q=2,m=0`.
-        out.push_str(&frame("q=2,m=0", remainder_str));
+        out.push_str(&frame("q=2,m=0", remaining));
     } else {
         // The loop never completed a full read: the whole (short or
         // empty) payload goes out as one chunk under the full option set,
         // with no `m=` key at all.
-        out.push_str(&frame(&full_options, remainder_str));
+        out.push_str(&frame(&full_options, remaining));
     }
     out
 }
@@ -103,7 +102,11 @@ fn frame_transmit(payload: &str, id: u32, cols: usize, rows: usize) -> String {
 /// Frames one APC: `ESC _ G` + options + (`;` + payload, only if
 /// non-empty) + `ESC \`.
 fn frame(options: &str, payload: &str) -> String {
-    let mut s = String::with_capacity(APC_INTRO.len() + options.len() + payload.len() + 3);
+    // Exact capacity: intro + options + the `;` separator + payload + outro.
+    let separator_len = if payload.is_empty() { 0 } else { 1 };
+    let mut s = String::with_capacity(
+        APC_INTRO.len() + options.len() + separator_len + payload.len() + APC_OUTRO.len(),
+    );
     s.push_str(APC_INTRO);
     s.push_str(options);
     if !payload.is_empty() {

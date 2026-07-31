@@ -73,6 +73,11 @@ image-parity-dump:
 	    > ../crates/rune-image/tests/golden/encode_anim_gif.json
 	cd golang && go run ./cmd/imgdump encode testdata/assets/x.png     5 80 40 \
 	    > ../crates/rune-image/tests/golden/encode_x_png_upscale.json
+	# noise.png is incompressible by construction, so its PNG payload's
+	# base64 spans several 4096-char chunks — the only fixture that
+	# exercises multi-chunk APC framing (m=1 / m=0) against the reference.
+	cd golang && go run ./cmd/imgdump encode testdata/assets/noise.png 6  8  4 \
+	    > ../crates/rune-image/tests/golden/encode_noise_png.json
 	cd golang && go run ./cmd/imgdump delete 42 \
 	    > ../crates/rune-image/tests/golden/delete.json
 	cd golang && go run ./cmd/imgdump delete-all \

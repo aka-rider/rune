@@ -11,6 +11,12 @@ use crate::element::inline::{ImageM, Inline, TextRun};
 use comrak::nodes::AstNode;
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
+/// The opening delimiter of a wiki-style image embed. Named so the scan and
+/// its fast-path guard can never drift apart on the literal.
+const EMBED_OPEN: &str = "![[";
+/// The closing delimiter of a wiki-style image embed.
+const EMBED_CLOSE: &str = "]]";
+
 /// The alt-text range of a `![alt](url)` image node: the span from its
 /// first child's start to its last child's end — the same derivation
 /// `child_gap_delims` (`parse::inline`) uses for an emphasis/strong node's
@@ -96,6 +102,21 @@ pub(super) fn recover_embeds(content: &str, starts: &[usize], inlines: Vec<Inlin
 /// the same conservative posture `build_inlines`'s own multiline-wikilink
 /// recovery takes for a genuine `WikiLink` node.
 fn split_text_run_embeds(content: &str, starts: &[usize], t: TextRun, out: &mut Vec<Inline>) {
+    // Fast path: almost every text run in almost every document contains no
+    // embed at all. Splitting one into per-line runs emits byte-identical
+    // spans (emission walks `content_lines`, never `range`), so the split
+    // would buy nothing while allocating a fresh run per line on the parse
+    // path every keystroke re-runs. Hand an embed-free run straight back.
+    let has_embed = t.content_lines.iter().any(|r| {
+        content
+            .get(r.start..r.end)
+            .is_some_and(|line| line.contains(EMBED_OPEN))
+    });
+    if !has_embed {
+        out.push(Inline::Text(t));
+        return;
+    }
+
     for line_range in &t.content_lines {
         let Some(line_text) = content.get(line_range.start..line_range.end) else {
             out.push(Inline::Text(TextRun {
@@ -113,36 +134,40 @@ fn split_text_run_embeds(content: &str, starts: &[usize], t: TextRun, out: &mut 
             continue;
         }
         let mut cursor = 0usize;
-        for (whole, target) in embeds {
-            if whole.start > cursor {
-                let piece =
-                    ByteRange::new(line_range.start + cursor, line_range.start + whole.start);
+        for embed in embeds {
+            if embed.whole.start > cursor {
+                let piece = ByteRange::new(
+                    line_range.start + cursor,
+                    line_range.start + embed.whole.start,
+                );
                 out.push(Inline::Text(TextRun {
                     range: piece,
                     content_lines: vec![piece],
                 }));
             }
-            let whole_range =
-                ByteRange::new(line_range.start + whole.start, line_range.start + whole.end);
-            let target_range = ByteRange::new(
-                line_range.start + target.start,
-                line_range.start + target.end,
+            let whole_range = ByteRange::new(
+                line_range.start + embed.whole.start,
+                line_range.start + embed.whole.end,
             );
-            let target_text = content
-                .get(target_range.start..target_range.end)
-                .unwrap_or("")
-                .to_string();
+            let target_range = ByteRange::new(
+                line_range.start + embed.target.start,
+                line_range.start + embed.target.end,
+            );
             out.push(Inline::Image(ImageM {
                 sm: RevealSm::new(RevealState::Rendered),
                 range: whole_range,
-                alt: ByteRange::new(whole_range.end, whole_range.end),
+                // `![[x]]` carries no alt text at all. The empty range sits
+                // where alt content would begin — matching the childless
+                // `![](url)` convention of anchoring an absent alt at its
+                // own opening delimiter, rather than at the token's end.
+                alt: ByteRange::new(target_range.start, target_range.start),
                 target: target_range,
-                target_text,
+                target_text: embed.target_text.to_string(),
                 is_wikilink: true,
                 line: super::line_at(starts, whole_range.start),
                 content_lines: vec![whole_range],
             }));
-            cursor = whole.end;
+            cursor = embed.whole.end;
         }
         if cursor < line_text.len() {
             let piece = ByteRange::new(line_range.start + cursor, line_range.end);
@@ -154,26 +179,50 @@ fn split_text_run_embeds(content: &str, starts: &[usize], t: TextRun, out: &mut 
     }
 }
 
-/// Finds every non-overlapping `![[...]]` occurrence in `line` (byte
-/// offsets relative to `line`'s own start), returning `(whole, target)`
-/// pairs. A `![[` with no matching `]]` before the line ends is left
-/// unmatched — degrades to plain text, CommonMark's own "an unmatched
-/// delimiter is literal" posture.
-fn find_embeds_in_line(line: &str) -> Vec<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+/// One `![[target]]` occurrence within a single line, in byte offsets
+/// relative to that line's own start. `target_text` is carried alongside
+/// the ranges because this is the one place the slice is provably in
+/// bounds — deriving it again at the emit site would need a fallback for a
+/// case that cannot arise.
+pub(super) struct LineEmbed<'a> {
+    whole: std::ops::Range<usize>,
+    target: std::ops::Range<usize>,
+    target_text: &'a str,
+}
+
+/// Finds every non-overlapping `![[...]]` occurrence in `line`. A `![[`
+/// with no matching `]]` before the line ends is left unmatched — it
+/// degrades to plain text, CommonMark's own "an unmatched delimiter is
+/// literal" posture.
+///
+/// Every slice goes through `get`, never `[]`: an out-of-bounds or
+/// non-char-boundary offset ends the scan instead of panicking. The
+/// delimiters are ASCII so the offsets are in fact always char boundaries,
+/// but §1.3 asks for a halt rather than a panic even on the impossible
+/// branch, and nothing here has to rely on that reasoning holding.
+fn find_embeds_in_line(line: &str) -> Vec<LineEmbed<'_>> {
     let mut out = Vec::new();
     let mut i = 0usize;
-    while let Some(rel) = line[i..].find("![[") {
+    while let Some(rel) = line.get(i..).and_then(|rest| rest.find(EMBED_OPEN)) {
         let start = i + rel;
-        let target_start = start + 3;
-        match line[target_start..].find("]]") {
-            Some(rel_close) => {
-                let target_end = target_start + rel_close;
-                let end = target_end + 2;
-                out.push((start..end, target_start..target_end));
-                i = end;
-            }
-            None => break,
-        }
+        let target_start = start + EMBED_OPEN.len();
+        let Some(after_open) = line.get(target_start..) else {
+            break;
+        };
+        let Some(rel_close) = after_open.find(EMBED_CLOSE) else {
+            break;
+        };
+        let target_end = target_start + rel_close;
+        let end = target_end + EMBED_CLOSE.len();
+        let Some(target_text) = line.get(target_start..target_end) else {
+            break;
+        };
+        out.push(LineEmbed {
+            whole: start..end,
+            target: target_start..target_end,
+            target_text,
+        });
+        i = end;
     }
     out
 }
