@@ -129,9 +129,16 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // request the listing with, so without this the pane would render as an
     // empty box until the user pressed the focus chord. A no-op whenever the
     // column starts hidden or the Explorer already has entries.
+    //
+    // Plan WP5.S1: the same gap applies to an image document opened before
+    // this runtime ever starts (`rune-cli`'s first-positional bootstrap,
+    // WP4.S8) — `app::update`'s own active-change hook never ran for it
+    // either, so its decode would otherwise never be scheduled at all. A
+    // no-op for a non-image document (`schedule_image_decode`'s own guard).
     {
         let mut effects = Effects::default();
         crate::highlight::schedule_highlight(app, app.active, &mut effects);
+        crate::graphics::schedule_image_decode(app, app.active, &mut effects);
         crate::explorer::ensure_loaded(app, &mut effects);
         for cmd in effects.cmds.drain(..) {
             super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
