@@ -15,6 +15,67 @@ use rune_nav::{Anchor, AnchorRole, DefRole, Ref, RefKind, Target, UseRole};
 /// producer supplies it.
 pub const NAME_RESOLUTION_EXTENSION: &str = "md";
 
+/// Every embed's own raw target text (`ImageM::target_text`), from every
+/// `Inline::Image` node anywhere in `blocks` — plan WP9.S4's "present" set,
+/// which a caller (`rune-tui`'s embed reconciler) uses to decide which
+/// tracked embeds to despawn. Deliberately reveal-independent: `blocks` is
+/// the PARSE tree, built before any `RevealSm::sync` transition ever runs,
+/// so an embed target found here is present whether its own line is
+/// currently Rendered (a placeholder showing) or Revealed (raw source under
+/// the caret) — the same "rendered OR revealed" union the plan's own
+/// despawn rule requires, for free, just by reading the parse tree instead
+/// of the emit output. A separate, narrower walk (`catalogue` itself, or
+/// `rune-md::snapshot::collect_standalone_images`) answers the "rendered
+/// AND alone on its line" spawn-source question instead.
+pub fn embed_targets(blocks: &[Block]) -> Vec<String> {
+    let mut out = Vec::new();
+    for block in blocks {
+        collect_embed_targets_in_block(block, &mut out);
+    }
+    out
+}
+
+fn collect_embed_targets_in_block(block: &Block, out: &mut Vec<String>) {
+    match block {
+        Block::Paragraph(m) => collect_embed_targets_in_inlines(&m.inlines, out),
+        Block::Heading(h) => collect_embed_targets_in_inlines(&h.inlines, out),
+        Block::Blockquote(bq) => {
+            for c in &bq.children {
+                collect_embed_targets_in_block(c, out);
+            }
+        }
+        Block::List(list) => {
+            for item in &list.items {
+                for c in &item.children {
+                    collect_embed_targets_in_block(c, out);
+                }
+            }
+        }
+        Block::Table(t) => {
+            for row in &t.rows {
+                for cell in &row.cells {
+                    collect_embed_targets_in_inlines(&cell.inlines, out);
+                }
+            }
+        }
+        Block::CodeFence(_)
+        | Block::ThematicBreak(_)
+        | Block::Frontmatter(_)
+        | Block::Verbatim(_) => {}
+    }
+}
+
+fn collect_embed_targets_in_inlines(inlines: &[Inline], out: &mut Vec<String>) {
+    for inline in inlines {
+        match inline {
+            Inline::Image(m) => out.push(m.target_text.clone()),
+            Inline::Emphasis(m) => collect_embed_targets_in_inlines(&m.children, out),
+            Inline::Link(m) => collect_embed_targets_in_inlines(&m.text, out),
+            Inline::Text(_) | Inline::Code(_) | Inline::WikiLink(_) => {}
+        }
+    }
+}
+
 /// Build a name-based `Anchor` from a markdown heading fragment.
 fn heading_anchor(name: String) -> Anchor {
     Anchor::Named {

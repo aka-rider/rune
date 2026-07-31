@@ -112,11 +112,24 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
+        // Plan WP9: the SAME `Msg` variant carries both a whole image
+        // document's decode reply and one embed's — reusing it (rather
+        // than adding a second variant) keeps `runtime/mod.rs` from
+        // growing past its already-over-budget line count. A document is
+        // exclusively one or the other (`doc.image.is_some()` iff it's a
+        // `DocumentKind::Image` document, which never holds embeds), so
+        // this fork is unambiguous.
         Msg::ImageDecoded {
             doc,
             generation,
             result,
-        } => crate::graphics::handle_image_decoded(app, doc, generation, result, effects),
+        } => {
+            if app.doc(doc).is_some_and(|d| d.image.is_some()) {
+                crate::graphics::handle_image_decoded(app, doc, generation, result, effects)
+            } else {
+                crate::graphics::handle_embed_decoded(app, doc, generation, result, effects)
+            }
+        }
         Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;
@@ -127,6 +140,32 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 // `handle_db_event` (the `rune-db` ack router) moved to `db_dispatch.rs`
 // (§1.6 budget) — `update_inner`'s `Msg::Db` arm above calls it through
 // `db_dispatch::`.
+
+/// The post-dispatch chokepoint `app::update` calls after every message
+/// (moved out of `app.rs` itself, which already exceeds the §1.6 ceiling
+/// from unrelated concurrent work and must not grow further): whatever a
+/// content/cursor/tab-switch change can invalidate that `update_inner`
+/// didn't already handle inline. Highlight scheduling and a newly-active
+/// image DOCUMENT's decode are unchanged from before this package (plan
+/// WP5.S3/WP5.S1); `sync_embeds` (plan WP9.S4) is new — it runs
+/// unconditionally (its own `app.graphics.kitty`/`doc.kind` guards make it
+/// a cheap no-op the overwhelming majority of the time) so no future edit
+/// path can forget to keep the active document's embed set current.
+pub(crate) fn after_update(
+    app: &mut App,
+    active_before: DocumentId,
+    buffer_version_before: u64,
+    effects: &mut Effects,
+) {
+    if app.active != active_before || app.active_doc().buffer.version() != buffer_version_before {
+        let id = app.active;
+        crate::highlight::schedule_highlight(app, id, effects);
+    }
+    if app.active != active_before {
+        crate::graphics::schedule_image_decode(app, app.active, effects);
+    }
+    crate::graphics::sync_embeds(app, app.active, effects);
+}
 
 /// The single span-clamp chokepoint every accepted highlight reply passes
 /// through: each range is clamped to the live byte length, ranges that are

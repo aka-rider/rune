@@ -1,11 +1,16 @@
-//! The per-row override entry point for an image document's cells (plan
-//! WP4.S10/S11): a centered info card — file name, format, dimensions and
-//! byte size, and a reason line — since this package renders NO pixels at
-//! all (WP5 adds placeholder-cell transmission). `build_rows` calls
+//! The per-row override entry point for an image row's cells (plan
+//! WP4.S10/S11, extended WP9.S1 for inline embeds): a centered info card —
+//! file name, format, dimensions and byte size, and a reason line — for a
+//! whole `DocumentKind::Image` document with no pixels yet showable, and
+//! Kitty placeholder cells for one that IS live; an inline embed row
+//! (`ImageRowRef::target.is_some()`) instead shows placeholder cells with a
+//! one-cell left margin when live, blank cells reserving its layout while
+//! not yet live, or `None` (falling through to the row's own alt-text
+//! span) when Kitty isn't available at all. `build_rows` calls
 //! [`row_cells`] instead of `segment_cells` for any row whose `DisplayRow`
-//! carries an `ImageRowRef` (the marker `rune-md`'s image producer,
-//! `DocMachine::rebuild`'s `DocumentKind::Image` branch, sets on every row
-//! it synthesizes).
+//! carries an `ImageRowRef` (the marker either the whole-document image
+//! producer or, for an embed, `expand_images` sets on every row it
+//! synthesizes).
 //!
 //! Every cell built here carries `buf_offset: -1` (plan gotcha: "`Style::
 //! patch` is `or`, not overwrite" / "`place_caret`... no `buf_offset`
@@ -19,7 +24,7 @@ use rune_md::snapshot::ImageRowRef;
 
 use crate::app::App;
 use crate::document::Document;
-use crate::graphics::{ImageState, ImageStatus};
+use crate::graphics::ImageStatus;
 use crate::render::Cell;
 
 /// The fixed number of display rows the image producer reserves while no
@@ -29,28 +34,87 @@ use crate::render::Cell;
 /// count once a decode's fit computation populates `ImageState::cells`.
 pub const INFO_CARD_ROWS: usize = 4;
 
-/// Builds one row of an image document's cells (plan WP4.S10/S11, extended
+/// The single entry point `build_rows` calls for any row carrying an
+/// `ImageRowRef` (plan WP4.S11/WP9.S1). Dispatches on
+/// `image_ref.target`: `None` names a whole-document image row (exactly
+/// one per document, `doc.image` answers everything — always `Some`, this
+/// path never falls through to plain alt text since an image document has
+/// no alt text of its own); `Some(target)` names an inline embed row,
+/// looked up in `doc.embeds` by that key — may return `None` when Kitty
+/// isn't available, letting `build_rows` fall through to the row's own
+/// alt-text span instead (WP7's `Rendered` emit).
+pub fn row_cells(
+    app: &App,
+    doc: &Document,
+    image_ref: ImageRowRef,
+    width: u16,
+) -> Option<Vec<Cell>> {
+    match &image_ref.target {
+        None => Some(doc_image_row_cells(app, doc, &image_ref, width)),
+        Some(target) => embed_row_cells(app, doc, target, &image_ref, width),
+    }
+}
+
+/// A whole `DocumentKind::Image` document's row (plan WP4.S10/S11, extended
 /// WP5.S4): a `Live` image on a Kitty-capable terminal renders real
 /// placeholder cells (`live_row_cells`) carrying the smuggled 24-bit id;
 /// every other case (no Kitty, still `Pending`/`Failed`) falls back to the
 /// info card's own `image_ref.row`'th line, centered within `width`
 /// columns and padded to fill it. A row index past the card's own content
 /// (there are more reserved rows than card lines) renders blank.
-pub fn row_cells(app: &App, doc: &Document, image_ref: ImageRowRef, width: u16) -> Vec<Cell> {
+fn doc_image_row_cells(
+    app: &App,
+    doc: &Document,
+    image_ref: &ImageRowRef,
+    width: u16,
+) -> Vec<Cell> {
     if app.graphics.kitty
         && let Some(image) = &doc.image
         && image.status == ImageStatus::Live
     {
-        return live_row_cells(image, image_ref, width as usize);
+        return live_row_cells(image.id, image_ref.row, image_ref.width, width as usize, 0);
     }
     let lines = info_card_lines(app, doc);
     let text = lines.get(image_ref.row).map(String::as_str).unwrap_or("");
     centered_cells(text, width as usize)
 }
 
-/// A `Live` image row's real cells (plan WP5.S4): `image_ref.width` (the
-/// producer's own reserved column count for this row, WP5.S2's `cols` fed
-/// through `DocMachine::set_image_document_dims`) placeholder cells, each
+/// One inline embed's row (plan WP9.S1): Kitty + `Live` -> placeholder
+/// cells preceded by one blank left-margin cell (`margin: 1` below) so an
+/// embed's pixels never sit flush against the preceding column — the whole
+/// document producer's own rows (no margin) never need this, since a whole
+/// image document has nothing else sharing its rows. Kitty + not yet live
+/// (untracked, still `Pending`, or `Failed`) -> blank cells of the row's
+/// full reserved width, holding the layout without pointing the terminal
+/// at pixels that were never transmitted. No Kitty -> `None`, so
+/// `build_rows` falls through to the row's own alt-text span instead.
+fn embed_row_cells(
+    app: &App,
+    doc: &Document,
+    target: &str,
+    image_ref: &ImageRowRef,
+    width: u16,
+) -> Option<Vec<Cell>> {
+    if !app.graphics.kitty {
+        return None;
+    }
+    let width = width as usize;
+    match doc.embeds.images.get(target) {
+        Some(embed) if embed.status == ImageStatus::Live => Some(live_row_cells(
+            embed.id,
+            image_ref.row,
+            image_ref.width,
+            width,
+            1,
+        )),
+        _ => Some(vec![blank_cell(); width]),
+    }
+}
+
+/// A `Live` image row's real cells (plan WP5.S4, extended WP9.S1's
+/// `margin`): `margin` blank cells (0 for a whole document, 1 for an
+/// embed), then up to `image_cols` (the producer's own reserved column
+/// count for this row, capped by `width`) placeholder cells, each
 /// `PLACEHOLDER` + a row diacritic + a column diacritic — the Kitty Unicode
 /// placeholder protocol's own encoding of WHICH cell of the image this is
 /// — padded with blank cells out to `width`. Every cell is `width: 1`
@@ -60,14 +124,23 @@ pub fn row_cells(app: &App, doc: &Document, image_ref: ImageRowRef, width: u16) 
 /// `style.fg` carries the allocated Kitty image id as a 24-bit RGB colour
 /// — the ONLY way to smuggle an arbitrary colour past `segment_cells`'
 /// theme-lookup-only span styling (see this module's own doc comment).
-fn live_row_cells(image: &ImageState, image_ref: ImageRowRef, width: usize) -> Vec<Cell> {
-    let fg = id_to_rgb(image.id);
-    let cols = image_ref.width.min(width);
+fn live_row_cells(
+    id: u32,
+    row: usize,
+    image_cols: usize,
+    width: usize,
+    margin: usize,
+) -> Vec<Cell> {
+    let fg = id_to_rgb(id);
     let mut cells = Vec::with_capacity(width);
+    for _ in 0..margin.min(width) {
+        cells.push(blank_cell());
+    }
+    let cols = image_cols.min(width.saturating_sub(cells.len()));
     for col in 0..cols {
         let mut text = String::with_capacity(rune_image::PLACEHOLDER.len_utf8() * 3);
         text.push(rune_image::PLACEHOLDER);
-        text.push(rune_image::diacritic(image_ref.row));
+        text.push(rune_image::diacritic(row));
         text.push(rune_image::diacritic(col));
         cells.push(Cell {
             text,
@@ -194,7 +267,7 @@ fn blank_cell() -> Cell {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -247,11 +320,20 @@ mod tests {
         );
     }
 
+    fn doc_row_ref(row: usize, width: usize) -> ImageRowRef {
+        ImageRowRef {
+            row,
+            width,
+            target: None,
+        }
+    }
+
     #[test]
     fn row_cells_center_the_requested_line() {
         let app = app_with_image_doc(true, ImageStatus::Pending);
         let doc = app.doc(app.active).expect("doc");
-        let cells = row_cells(&app, doc, ImageRowRef { row: 0, width: 0 }, 20);
+        let cells =
+            row_cells(&app, doc, doc_row_ref(0, 0), 20).expect("doc-image row is always Some");
         assert_eq!(cells.len(), 20);
         let text: String = cells.iter().map(|c| c.text.as_str()).collect();
         assert!(text.contains("x.png"));
@@ -264,7 +346,60 @@ mod tests {
     fn row_past_the_card_content_is_blank() {
         let app = app_with_image_doc(true, ImageStatus::Pending);
         let doc = app.doc(app.active).expect("doc");
-        let cells = row_cells(&app, doc, ImageRowRef { row: 99, width: 0 }, 10);
+        let cells =
+            row_cells(&app, doc, doc_row_ref(99, 0), 10).expect("doc-image row is always Some");
+        assert!(cells.iter().all(|c| c.text == " "));
+    }
+
+    fn embed_row_ref(row: usize, width: usize, target: &str) -> ImageRowRef {
+        ImageRowRef {
+            row,
+            width,
+            target: Some(target.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_id() {
+        let mut app = app_with_image_doc(true, ImageStatus::Pending);
+        app.doc_mut(app.active).expect("doc").embeds.images.insert(
+            "x.png".to_string(),
+            crate::graphics::EmbedState {
+                abs_path: PathBuf::from("/vault/x.png"),
+                id: 0x00_10_20,
+                mtime: None,
+                dims: Some((64, 48)),
+                cells: Some((8, 3)),
+                decoded: None,
+                status: ImageStatus::Live,
+                in_flight: None,
+            },
+        );
+        let doc = app.doc(app.active).expect("doc");
+        let cells = row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20)
+            .expect("a live, Kitty-capable embed row is Some");
+        assert_eq!(cells.len(), 20);
+        assert_eq!(cells[0].text, " ", "one blank left-margin cell first");
+        assert_eq!(
+            cells[1].style.fg,
+            Some(Color::Rgb(0x00, 0x10, 0x20)),
+            "the second cell carries the allocated id"
+        );
+    }
+
+    #[test]
+    fn an_embed_with_kitty_unavailable_falls_through_to_alt_text() {
+        let app = app_with_image_doc(false, ImageStatus::Pending);
+        let doc = app.doc(app.active).expect("doc");
+        assert!(row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20).is_none());
+    }
+
+    #[test]
+    fn an_embed_not_yet_live_reserves_blank_cells() {
+        let app = app_with_image_doc(true, ImageStatus::Pending);
+        let doc = app.doc(app.active).expect("doc");
+        let cells = row_cells(&app, doc, embed_row_ref(0, 8, "untracked.png"), 20)
+            .expect("Kitty-capable, not-yet-live embed row still reserves blanks");
         assert!(cells.iter().all(|c| c.text == " "));
     }
 

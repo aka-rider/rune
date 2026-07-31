@@ -47,13 +47,19 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| {
-            // WP4.S11: a row carrying an `ImageRowRef` (set only by the
-            // image producer, `DocMachine::rebuild`'s `DocumentKind::Image`
-            // branch) renders through the info-card override instead of
-            // the ordinary span-cell path below — its spans are decorative
-            // placeholders with no real content to walk.
-            if let Some(image_ref) = row.image {
-                return image::row_cells(app, doc, image_ref, viewport.width);
+            // WP4.S11/WP9.S1: a row carrying an `ImageRowRef` (set by
+            // either the whole-document image producer or, for an embed,
+            // `expand_images`) renders through the placeholder/info-card
+            // override instead of the ordinary span-cell path below — its
+            // spans are decorative placeholders with no real content to
+            // walk. `row_cells` returns `None` for an embed row that isn't
+            // currently showable as pixels (no Kitty) — that case falls
+            // through to the ordinary path so the row's own alt-text span
+            // (WP7's `Rendered` emit) shows instead.
+            if let Some(image_ref) = row.image.clone()
+                && let Some(cells) = image::row_cells(app, doc, image_ref, viewport.width)
+            {
+                return cells;
             }
             // WP4.S2: the row's own decoration (heading icon / bullet /
             // quote bar / hr rule) is prepended BEFORE the overlay walks
