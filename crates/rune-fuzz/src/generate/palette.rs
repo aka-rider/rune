@@ -382,6 +382,55 @@ pub(super) const CTRL_R_KEY: KeyInput = KeyInput {
     },
 };
 
+/// ⌥←/⌥→ (word motion), ⇧←/⇧→ (shift-selection) and `UNDO_KEY` (⌘Z) —
+/// paired with `CTRL_R_KEY` by `cluster_chrome` so a single generated
+/// cluster both parks focus on the title AND immediately exercises one of
+/// its own editing bindings, resolved through the SAME `EDITOR_BINDINGS`
+/// table the document editor uses (plan WP3 decision 3). `⌥←`/`⌥→` are
+/// deliberately the plain word-motion pair, not the shift-word variant —
+/// `SELECT_MOTION_KEYS` already covers the char-wise shift pair, and
+/// `PANE-NO-BLEED` cares about "the title, not the document, moved",
+/// which any of these five keys equally proves.
+pub(super) static TITLE_MOTION_KEYS: &[KeyInput] = &[
+    KeyInput {
+        code: KeyCode::Left,
+        mods: Mods {
+            shift: false,
+            alt: true,
+            ctrl: false,
+            sup: false,
+        },
+    },
+    KeyInput {
+        code: KeyCode::Right,
+        mods: Mods {
+            shift: false,
+            alt: true,
+            ctrl: false,
+            sup: false,
+        },
+    },
+    KeyInput {
+        code: KeyCode::Left,
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: false,
+        },
+    },
+    KeyInput {
+        code: KeyCode::Right,
+        mods: Mods {
+            shift: true,
+            alt: false,
+            ctrl: false,
+            sup: false,
+        },
+    },
+    UNDO_KEY,
+];
+
 /// Plain `Esc`, no mods — the key `banner::handle_key`'s stage 1 uses to
 /// clear EITHER modal variant (`Modal::Error`/`Modal::Guard`) without
 /// touching a buffer byte, and the key `title::handle_key` uses to revert

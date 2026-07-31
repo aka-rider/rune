@@ -17,7 +17,7 @@ use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, MARKDOWN_FRAGMENTS,
     NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS,
-    TYPE_PALETTE, UNDO_KEY,
+    TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -315,10 +315,13 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
 }
 
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`,
-/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6), or the named
+/// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6), the named
 /// `^b`/`^t` Explorer/Tabs toggle chords (CODE-REVIEW.md rune-fuzz finding
 /// 10: without these, `DirLoaded` always landed in a never-opened
-/// Explorer).
+/// Explorer), or `^r` immediately followed by one of `TITLE_MOTION_KEYS`
+/// (plan WP5.S6) — so the SAME generated cluster both parks focus on the
+/// title and exercises one of its own word-motion/selection/undo bindings
+/// against it, not just against the document.
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
@@ -328,6 +331,7 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_B_KEY)]),
         Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
+        select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
         (
             proptest::collection::vec(arb_dir_entry(), 0..=6),
             arb_dir_cause(),
