@@ -82,6 +82,7 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
             let _ = writeln!(out, "snapshot.focus: {:?}", snap.focus);
             let _ = writeln!(out, "snapshot.modal_open: {}", snap.modal_open);
             let _ = writeln!(out, "snapshot.active: {:?}", snap.active);
+            let _ = writeln!(out, "snapshot.title_text: {:?}", snap.title_text);
             let _ = writeln!(out);
             let _ = writeln!(out, "rendered frame:");
             out.push_str(&render_frame(&snap.cells));

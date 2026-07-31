@@ -56,6 +56,13 @@ pub struct Snapshot {
     /// switched the active document (Explorer/Tabs `Enter`, `^w`) apart
     /// from one that left it alone but still shouldn't touch its content.
     pub active: DocumentId,
+    /// `app.title.text()` — the title field's current text, independent of
+    /// whether the title is focused right now. No checker keys off this
+    /// yet, but without it none COULD: before this field existed a
+    /// `Snapshot` carried no title text at all (plan WP5.S5), so a failure
+    /// report couldn't even show what the field held when a title-path
+    /// invariant tripped.
+    pub title_text: String,
     /// `app.active_doc().read_only` — the virtual Help document
     /// (`workspace::toggle_help`, reachable now that `F1` is in
     /// `arb_any_keycode`, CODE-REVIEW.md rune-fuzz finding 9) is the one
@@ -163,6 +170,7 @@ impl Snapshot {
             focus: app.focus(),
             modal_open: app.modal.is_some(),
             active: app.active,
+            title_text: app.title.text().to_string(),
             read_only: doc.read_only,
             caret_visible: doc.shows_caret(),
             cells,
