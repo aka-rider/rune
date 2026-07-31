@@ -1,7 +1,5 @@
 ## Open
 
-- [ ] Title component should allow to change file extension. So for that extension should be visible as a separate subcomponent or separate part of the title component, and to focus the extension user should explicitly press right arrow.
-- [ ] Rust implementation should follow Golang implementation. in separation of rich text editor and verbatim editor. verbatim raw text editor should be used as a tile editor component so that selection, undo (w/o persistence), word movement would also work while editing the title.
 - [ ] The title field has no horizontal scroll (title/rename plan assumption A1): an over-long file name is clipped by `Paragraph`, not scrolled to follow the cursor, so editing the tail of a name wider than the terminal is awkward. A viewport can be added to `TextField` later; not attempted here to avoid desyncing byte offsets from a truncated string.
 
 ## File-size budget (§1.6)
@@ -95,10 +93,23 @@ the ceiling, and neither has been split since.
 
 Groomed, verified against the tree, and deliberately not worked — each needs its own plan.
 
-- **`ticket-use-verbatim-editor-title.md`** — the title field should reuse a verbatim text-editing component (selection, word movement, copy/paste, select-all), the way Go's `title.Model` wraps `textedit.Model`. Parked because no such abstraction exists anywhere in the Rust workspace: it means extracting a reusable editable core (buffer + cursor set + command dispatch + a sanitize seam) out of `Document`, plus its own minimal render path and clipboard-message routing. Not a batch-sized change.
-- **`ticket-split-title-extension-edit.md`** — make the file extension a separately focusable part of the title field. Parked because it is blocked on the verbatim-editor work above (the ticket's own open questions concede this). Building it first would add a second hand-rolled two-field cursor model to `title.rs` — exactly the debt the other ticket removes.
+(Both title tickets that used to be parked here are done — see "Recently closed".)
 
 ## Recently closed
+
+- **The title field is a real text editor, and the file extension is editable.**
+  Closes both parked title tickets at once. `rune-tui/src/field.rs`'s `TextField`
+  is the reusable editable core the verbatim-editor ticket asked for — buffer,
+  one cursor with an anchor, and its own in-memory `Journal` that never reaches
+  the recovery store (§12) — and the title resolves keys through the existing
+  `EDITOR_BINDINGS`, so ⌥-arrows, ⇧-selection, ⌘A, ⌘Z/⇧⌘Z and ⌘C/⌘X/⌘V all work
+  on a file name. Two deliberate divergences from the tickets as groomed: the
+  title keeps its **own** undo journal (the ticket recommended ⌘Z undo the
+  document instead), and stem and extension are **one buffer with a derived
+  split** rather than two tracked strings — the latter forced by the
+  requirement that the dot itself be editable, so `lessrc.md` can become
+  `lessrc`. Losing focus, not Enter, is the single chokepoint that commits the
+  rename; Enter and Down merely cause the focus loss.
 
 - **Zero-width edit batches no longer dirty a clean file** — the commit chokepoint drops edits that change nothing, in both the Rust and Go implementations.
 - **`build_5k_doc` has one source of truth** — the bench and perf-guard copies had already silently diverged (the guard measured a table-bearing document the bench did not).
