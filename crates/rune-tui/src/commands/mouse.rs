@@ -5,17 +5,16 @@
 //! scrolls 3 rows. `app::update` routes `Msg::Mouse` here directly, exactly
 //! like `app::handle_key` routes a resolved `Command` to `commands::nav`.
 //!
-//! Hit-testing (`offset_at`) reuses `render::segment_cells` — the SAME
-//! per-cell `buf_offset` the renderer just blitted — rather than
-//! re-deriving a wrap-row/visual-column -> buffer conversion independently:
-//! whatever glyph is on screen at a clicked cell is, by construction, what
-//! the click resolves to.
+//! Hit-testing (`mouse_hit::offset_at`, split out — §1.6 budget) reuses
+//! `render::segment_cells` — the SAME per-cell `buf_offset` the renderer
+//! just blitted — rather than re-deriving a wrap-row/visual-column ->
+//! buffer conversion independently: whatever glyph is on screen at a
+//! clicked cell is, by construction, what the click resolves to.
 
-use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
-use rune_md::element::doc::ViewSnapshots;
 
 use crate::app::App;
+use crate::commands::mouse_hit::hit_test;
 use crate::commands::nav::word_range_at;
 use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
@@ -23,7 +22,6 @@ use crate::commands::splitter;
 use crate::document::Document;
 use crate::navigate;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
-use crate::render;
 use crate::runtime::Effects;
 
 /// The mouse wheel's step (plan WP7.S6: "wheel scrolls 3 rows" — vim,
@@ -88,117 +86,8 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
     }
 }
 
-/// `(buffer offset, desired_col)` for a click at `(row, col)` relative to
-/// the editor rect — `None` before the document's first sync (`doc.view`
-/// unset, never observed past the seeded initial `Msg::Resize` in
-/// practice), or when the click landed on a synthesised table border row
-/// (Go parity: `offset_at` returns `None` there too, so the gesture is a
-/// complete no-op rather than moving the cursor to some nearby offset).
-fn hit_test(doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
-    let view = doc.view.as_ref()?;
-    let offset = offset_at(doc, view, row, col)?;
-    Some((offset, desired_col_at(doc, view, offset)))
-}
-
-/// Walks the clicked row's own rendered cells (`render::segment_cells`) to
-/// find the buffer byte a screen column corresponds to — the same cells
-/// `render::build_rows` just blitted, so a click always resolves to
-/// exactly what's on screen. A column past the last visible cell on that
-/// row lands at the row's own end (clicking in the empty space after a
-/// short line places the caret at that line's end, not its start).
-///
-/// `row` is relative to the DISPLAY grid (WP3: what's actually on screen,
-/// borders included) — clamped against `DisplaySnapshot::total_rows`, then
-/// converted to the WRAP row the click's hit-tested content actually lives
-/// at via `display_to_wrap`, since every coordinate below this point (cell
-/// geometry, `wrap_to_syntax`) is wrap-space. A synthetic border row has no
-/// such wrap row of its own to click into — returns `None` instead (see
-/// `hit_test`'s docs).
-fn offset_at(doc: &Document, view: &ViewSnapshots, row: u16, col: u16) -> Option<usize> {
-    let total = view.display.total_rows();
-    if total == 0 {
-        return Some(0);
-    }
-    let display_row = (doc.viewport.scroll_row + row as usize).min(total - 1);
-    if view
-        .display
-        .rows()
-        .get(display_row)
-        .is_some_and(|r| r.synthetic)
-    {
-        return None;
-    }
-    let wrap_row = view.display.display_to_wrap(display_row);
-    let content = doc.buffer.content();
-
-    // WP4.S4: the clicked row may carry a decoration prefix (heading icon /
-    // bullet / quote bar / hr rule, `build_rows` prepends it before this
-    // same `render::segment_geometry` content the cell walk below reads) —
-    // subtract its width from `col` before walking so a click's column
-    // still lines up with the CONTENT cells `segment_geometry` returns
-    // (which carry no decor prefix of their own). Clamped at 0 rather than
-    // subtracting past it: a click landing ON the decor prefix itself
-    // degrades to column 0 of the content, i.e. the line's own first
-    // content cell, per the fallback below.
-    let decor_width = view
-        .display
-        .rows()
-        .get(display_row)
-        .map(crate::render::decor::decor_cell_width)
-        .unwrap_or(0) as usize;
-    let col = (col as usize).saturating_sub(decor_width) as u16;
-
-    let mut acc = 0usize;
-    let mut first_content_offset: Option<i64> = None;
-    if let Some(seg) = view.wrap.segments().get(wrap_row) {
-        for cell in render::segment_geometry(content, &seg.spans) {
-            if first_content_offset.is_none() && cell.buf_offset >= 0 {
-                first_content_offset = Some(cell.buf_offset);
-            }
-            let width = cell.width.max(1) as usize;
-            if (col as usize) < acc + width {
-                return Some(if cell.buf_offset >= 0 {
-                    cell.buf_offset as usize
-                } else {
-                    // A click resolving onto a decorative cell (should only
-                    // ever be a table's synthetic border padding, since the
-                    // line-decoration prefix was already subtracted above)
-                    // falls back to the row's own first REAL cell rather
-                    // than jumping to document offset 0 — no test pinned
-                    // the old `Some(0)` behaviour (plan Gotchas), and it
-                    // silently sent an unrelated click to the document
-                    // start.
-                    first_content_offset.unwrap_or(0) as usize
-                });
-            }
-            acc += width;
-        }
-    }
-
-    let seg_len = view.wrap.segment_len_at(wrap_row);
-    let syntax_point = view.wrap.wrap_to_syntax(
-        content,
-        WrapPoint {
-            row: wrap_row,
-            col: seg_len,
-        },
-    );
-    let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-    Some(doc.buffer.line_col_to_offset(buffer_point))
-}
-
-/// The visual column `offset` sits at — so a cursor a click plants keeps a
-/// sensible `desired_col` for a later Up/Down arrow, the same convention
-/// `commands::nav::update_horizontal` uses for every keyboard motion.
-fn desired_col_at(doc: &Document, view: &ViewSnapshots, offset: usize) -> usize {
-    let bp = doc.buffer.offset_to_line_col(offset);
-    let sp = view.syntax.buffer_to_syntax(bp);
-    let wp = view.wrap.syntax_to_wrap(sp);
-    view.wrap.visual_col(doc.buffer.content(), wp.row, wp.col)
-}
-
 fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effects: &mut Effects) {
-    let Some((offset, desired_col)) = hit_test(app.active_doc(), row, col) else {
+    let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;
     };
 
@@ -299,7 +188,7 @@ fn handle_left_drag(app: &mut App, col: u16, row: u16) {
     let Some(Drag::Text { anchor }) = app.pointer.drag else {
         return;
     };
-    let Some((offset, desired_col)) = hit_test(app.active_doc(), row, col) else {
+    let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;
     };
     let doc = app.active_doc_mut();
