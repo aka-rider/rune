@@ -111,6 +111,14 @@ pub enum Command {
     /// path (`app::handle_editor_key`, `Mods::NONE` only), so the two can
     /// never collide.
     FollowLink,
+    /// Re-reads an image document through the `Vfs`, re-decodes it, and
+    /// retransmits under the same deterministic id (plan WP6.S1) — bound
+    /// to `⌘R`, gated by the `image` `when` atom (plan WP6.S2) so it only
+    /// ever does anything on an image document; `graphics::reload_image`
+    /// is itself a no-op on any other document, so the gate is a UX
+    /// signal (footer/help visibility) rather than the only thing standing
+    /// between this chord and a real editor document.
+    Reload,
 }
 
 /// Which quit chord produced a `Command::QuitConfirm` — the identity `App`

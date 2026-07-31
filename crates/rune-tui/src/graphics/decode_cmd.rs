@@ -41,6 +41,38 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
     if image.status != ImageStatus::Pending || image.in_flight.is_some() {
         return;
     }
+    spawn_decode(app, id, effects);
+}
+
+/// The reload command (plan WP6.S1): re-reads and re-decodes an already-
+/// open image document on demand, through the very same `Vfs`/decode `Cmd`
+/// `schedule_image_decode` uses — the only difference is this function
+/// does NOT check `status`, since reload's whole point is recovering a
+/// `Failed` document or refreshing an already-`Live` one, not just filling
+/// in a `Pending` one. Still refuses to double-spawn: a decode already
+/// `in_flight` for `id` is left alone, the same guard `schedule_image_
+/// decode` applies. A no-op for any non-image document, so the editor
+/// table's `⌘R` binding (gated on the `image` `when` atom for UX purposes
+/// only) can never do anything harmful even if that gate were bypassed.
+/// `ImageState::id` is never reallocated across this call, so the eventual
+/// transmit (`handle_image_decoded`) necessarily retransmits under the
+/// SAME deterministic id the document opened with.
+pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    let Some(doc) = app.doc(id) else { return };
+    let Some(image) = &doc.image else { return };
+    if image.in_flight.is_some() {
+        return;
+    }
+    spawn_decode(app, id, effects);
+}
+
+/// The shared spawn chokepoint both `schedule_image_decode` and `reload_
+/// image` fall through to once their own status/in-flight gate has
+/// already passed: bumps the request generation, snapshots the path and
+/// `Vfs` handle, marks `in_flight`, and pushes the decode `Cmd`.
+fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    let Some(doc) = app.doc(id) else { return };
+    let Some(image) = &doc.image else { return };
     let generation = image.in_flight.unwrap_or(0).wrapping_add(1);
     let path = image.path.clone();
     let vfs = Arc::clone(&app.vfs);
@@ -88,7 +120,15 @@ fn decode_image_cmd(
 /// reason line; (d) success computes the fit-to-width footprint from the
 /// CURRENT pane width and cell geometry, stores it (feeding the producer
 /// via `Document::view`'s existing `image.cells` read), and — Kitty only —
-/// encodes and pushes a transmit escape into `effects.raw`.
+/// encodes and pushes a transmit escape into `effects.raw`, forcing a full
+/// redraw alongside it (plan WP6.S1/S6's reasoning: the reload command
+/// reaches this exact handler, and a reload's placeholder cells are
+/// typically byte-identical to what was already on screen — same id, same
+/// diacritics — so ratatui's own "only repaint changed cells" diffing
+/// cannot be trusted to notice the underlying pixels changed. Forcing it
+/// unconditionally on every successful transmit, not just a reload, costs
+/// nothing worse than one redundant `Terminal::clear` on the very first
+/// open, which had nothing to redraw over anyway).
 pub(crate) fn handle_image_decoded(
     app: &mut App,
     id: DocumentId,
@@ -130,6 +170,7 @@ pub(crate) fn handle_image_decoded(
     image.status = ImageStatus::Live;
     if let Some(bytes) = raw {
         effects.raw.push(bytes.into_bytes());
+        effects.force_redraw = true;
     }
 }
 
@@ -162,6 +203,27 @@ mod tests {
 
     fn decode_x_png() -> rune_image::decode::Decoded {
         rune_image::decode_still(X_PNG).expect("decode x.png")
+    }
+
+    /// Drives a pending image document all the way to `Live` through the
+    /// real `schedule_image_decode` -> `Cmd::run` -> `handle_image_decoded`
+    /// path (plan WP6.S1's "reload" tests want an already-open, already-
+    /// transmitted image to reload from, not a hand-constructed one).
+    fn app_with_live_image(kitty: bool) -> (App, DocumentId) {
+        let (mut app, id) = app_with_pending_image(kitty);
+        let mut effects = Effects::default();
+        schedule_image_decode(&mut app, id, &mut effects);
+        for cmd in effects.cmds {
+            if let Some(Msg::ImageDecoded {
+                doc,
+                generation,
+                result,
+            }) = cmd.run()
+            {
+                handle_image_decoded(&mut app, doc, generation, result, &mut Effects::default());
+            }
+        }
+        (app, id)
     }
 
     #[test]
@@ -273,5 +335,111 @@ mod tests {
             "stale reply must not clear in_flight"
         );
         assert!(effects.raw.is_empty());
+    }
+
+    #[test]
+    fn reload_retransmits_under_the_same_id_and_forces_a_redraw() {
+        let (mut app, id) = app_with_live_image(true);
+        let original_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+
+        let mut effects = Effects::default();
+        reload_image(&mut app, id, &mut effects);
+        assert_eq!(effects.cmds.len(), 1, "reload must spawn exactly one Cmd");
+        for cmd in effects.cmds {
+            if let Some(Msg::ImageDecoded {
+                doc,
+                generation,
+                result,
+            }) = cmd.run()
+            {
+                let mut reply_effects = Effects::default();
+                handle_image_decoded(&mut app, doc, generation, result, &mut reply_effects);
+                assert_eq!(reply_effects.raw.len(), 1);
+                assert!(reply_effects.raw[0].starts_with(b"\x1b_G"));
+                assert!(reply_effects.force_redraw, "a reload must force a redraw");
+            }
+        }
+
+        let reloaded_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
+        assert_eq!(
+            reloaded_id, original_id,
+            "reload must retransmit under the same deterministic id"
+        );
+        assert_eq!(
+            app.doc(id).unwrap().image.as_ref().unwrap().status,
+            ImageStatus::Live
+        );
+    }
+
+    #[test]
+    fn reload_recovers_a_failed_image_document() {
+        let (mut app, id) = app_with_pending_image(true);
+        app.doc_mut(id)
+            .expect("doc")
+            .image
+            .as_mut()
+            .unwrap()
+            .in_flight = Some(1);
+        handle_image_decoded(
+            &mut app,
+            id,
+            1,
+            Err("boom".to_string()),
+            &mut Effects::default(),
+        );
+        assert!(matches!(
+            app.doc(id).unwrap().image.as_ref().unwrap().status,
+            ImageStatus::Failed(_)
+        ));
+
+        let mut effects = Effects::default();
+        reload_image(&mut app, id, &mut effects);
+        for cmd in effects.cmds {
+            if let Some(Msg::ImageDecoded {
+                doc,
+                generation,
+                result,
+            }) = cmd.run()
+            {
+                handle_image_decoded(&mut app, doc, generation, result, &mut Effects::default());
+            }
+        }
+        assert_eq!(
+            app.doc(id).unwrap().image.as_ref().unwrap().status,
+            ImageStatus::Live,
+            "reload must recover a Failed image document"
+        );
+    }
+
+    #[test]
+    fn reload_is_a_no_op_on_a_non_image_document() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        let id = app.active;
+        assert!(app.doc(id).unwrap().image.is_none());
+
+        let mut effects = Effects::default();
+        reload_image(&mut app, id, &mut effects);
+        assert!(effects.cmds.is_empty());
+        assert!(effects.raw.is_empty());
+    }
+
+    #[test]
+    fn reload_does_not_double_spawn_while_already_in_flight() {
+        let (mut app, id) = app_with_live_image(true);
+        app.doc_mut(id)
+            .expect("doc")
+            .image
+            .as_mut()
+            .unwrap()
+            .in_flight = Some(99);
+
+        let mut effects = Effects::default();
+        reload_image(&mut app, id, &mut effects);
+        assert!(
+            effects.cmds.is_empty(),
+            "already in flight — reload must not spawn a second Cmd"
+        );
     }
 }

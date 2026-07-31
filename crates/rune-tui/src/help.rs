@@ -146,4 +146,26 @@ mod tests {
             .count();
         assert_eq!(row_count, EDITOR_BINDINGS.len());
     }
+
+    /// Plan WP6 "Done when": the generated Help doc contains the reload
+    /// binding — read straight off `EDITOR_BINDINGS` itself (via `editing::
+    /// RELOAD`, the same constant `Command::Reload`'s dispatch arm binds),
+    /// never a hardcoded `"reload image"`/`"⌘R"` literal, so a future
+    /// rename of the help text or a rebind to a different chord can't
+    /// silently leave this test asserting stale strings.
+    #[test]
+    fn the_reload_binding_appears_in_the_generated_help_doc() {
+        let md = help_markdown();
+        let reload = crate::keymap::editor_bindings::RELOAD;
+        assert!(
+            md.contains(reload.help),
+            "missing reload help label {:?}",
+            reload.help
+        );
+        assert!(
+            md.contains(&reload.label()),
+            "missing reload key label {:?}",
+            reload.label()
+        );
+    }
 }
