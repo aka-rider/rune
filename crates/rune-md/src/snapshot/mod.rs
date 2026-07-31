@@ -1,13 +1,27 @@
 //! `DisplaySnapshot` (plan Context, "Emit -> wrap -> snapshot"): the wrap
-//! rows, expanded with the ONE thing wrap genuinely cannot do — synthesised
+//! rows, expanded with the things wrap genuinely cannot do — synthesised
 //! top/bottom/inter-row table borders that have no source line at all
-//! (architectural decision 3). `from_wrap` is the identity (one
-//! `DisplayRow` per wrap row); `expand_tables` walks a table's rendered
-//! rows and inserts a synthetic border row wherever `TableSegInfo::boundary`
-//! says one belongs. Kept as its own type, distinct from `WrapSnapshot`, so
-//! every display-space consumer (`render::build_rows`, the viewport, mouse
-//! hit-testing) reads row geometry through ONE place instead of each
-//! re-deriving "which wrap row is this synthetic border next to" itself.
+//! (architectural decision 3), and, in the sibling `image_rows` module,
+//! reserved rows for a standalone inline image embed (plan WP8). `from_wrap`
+//! is the identity (one `DisplayRow` per wrap row); `expand_tables` walks a
+//! table's rendered rows and inserts a synthetic border row wherever
+//! `TableSegInfo::boundary` says one belongs; `expand_images` chains after
+//! it and does the same for a standalone image line. Kept as its own type,
+//! distinct from `WrapSnapshot`, so every display-space consumer
+//! (`render::build_rows`, the viewport, mouse hit-testing) reads row
+//! geometry through ONE place instead of each re-deriving "which wrap row
+//! is this synthetic row next to" itself.
+//!
+//! Split across two files (CONSTITUTION §1.6): this module owns `DisplayRow`
+//! and the table-border half of `DisplaySnapshot`'s API; `image_rows` owns
+//! `ImageDims` and the image half (`expand_images`, its own synthetic-row
+//! builder, and the standalone-image-line scan) as a second `impl
+//! DisplaySnapshot` block — both files reach `DisplaySnapshot`'s private
+//! fields, since a child module already sees its parent's private items.
+
+mod image_rows;
+
+pub use image_rows::ImageDims;
 
 use rune_syntax::SyntaxSpan;
 use rune_syntax::syntax::{RowBoundary, TableRole};
@@ -234,6 +248,48 @@ fn synthetic_border(
     }
 }
 
+/// `expand_tables`'s and `expand_images`'s shared round-trip/adjacency
+/// invariant (plan WP3.S7, extended by WP8.S1 to cover image rows too):
+/// `display_to_wrap(wrap_to_display(r)) == r` for every wrap row, and every
+/// synthetic row's `wrap_row` equals an adjacent content row's own. `pub
+/// (crate)` (rather than nested inside `mod tests`) so `image_rows`' own
+/// tests check image-bearing snapshots against the exact same invariant a
+/// table's synthetic borders already are, not a parallel one — only
+/// `DisplaySnapshot`'s public API is used, so there is nothing
+/// module-private to duplicate.
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+pub(crate) fn assert_round_trip_and_synthetic_adjacency(
+    wrap: &WrapSnapshot,
+    display: &DisplaySnapshot,
+) {
+    for w in 0..wrap.total_rows() {
+        let d = display.wrap_to_display(w);
+        assert_eq!(
+            display.display_to_wrap(d),
+            w,
+            "round trip failed for wrap row {w}"
+        );
+        assert!(
+            !display.rows()[d].synthetic,
+            "wrap_to_display must land on a real row"
+        );
+    }
+
+    for (i, row) in display.rows().iter().enumerate() {
+        if !row.synthetic {
+            continue;
+        }
+        let prev = i.checked_sub(1).and_then(|j| display.rows().get(j));
+        let next = display.rows().get(i + 1);
+        assert!(
+            prev.is_some_and(|r| r.wrap_row == row.wrap_row)
+                || next.is_some_and(|r| r.wrap_row == row.wrap_row),
+            "synthetic row {i}'s wrap_row must equal an adjacent content row's"
+        );
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
@@ -307,9 +363,6 @@ mod tests {
         }
     }
 
-    /// `display_to_wrap(wrap_to_display(r)) == r` for every wrap row, and
-    /// every synthetic row's `wrap_row` equals an adjacent content row's own
-    /// — the WP3.S7 round-trip and adjacency assertions.
     #[test]
     fn wrap_display_round_trip_and_synthetic_adjacency() {
         let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |";
@@ -317,31 +370,6 @@ mod tests {
         let (lines, _syntax) = crate::emit::emit(content, &blocks, 80);
         let wrap = WrapMap::new(80).sync(content, &lines);
         let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
-
-        for w in 0..wrap.total_rows() {
-            let d = display.wrap_to_display(w);
-            assert_eq!(
-                display.display_to_wrap(d),
-                w,
-                "round trip failed for wrap row {w}"
-            );
-            assert!(
-                !display.rows()[d].synthetic,
-                "wrap_to_display must land on a real row"
-            );
-        }
-
-        for (i, row) in display.rows().iter().enumerate() {
-            if !row.synthetic {
-                continue;
-            }
-            let prev = i.checked_sub(1).and_then(|j| display.rows().get(j));
-            let next = display.rows().get(i + 1);
-            assert!(
-                prev.is_some_and(|r| r.wrap_row == row.wrap_row)
-                    || next.is_some_and(|r| r.wrap_row == row.wrap_row),
-                "synthetic row {i}'s wrap_row must equal an adjacent content row's"
-            );
-        }
+        assert_round_trip_and_synthetic_adjacency(&wrap, &display);
     }
 }
