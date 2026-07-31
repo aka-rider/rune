@@ -34,8 +34,7 @@ use rune_tui::workspace;
 use rune_vfs::{Disk, Vfs};
 
 use cli::CliAction;
-use db_bootstrap::{DbBootstrap, bootstrap_db};
-use loader::{LoadError, load_buffer};
+use db_bootstrap::DbBootstrap;
 
 mod cli;
 mod db_bootstrap;
@@ -208,63 +207,11 @@ fn bootstrap(
         // never bind as an unresolved spelling that a later open of the
         // identical underlying file (a symlink, a `..` segment, a
         // duplicated absolute path) would fail to recognize as the same
-        // document (plan [rune-cli 2]).
+        // document (plan [rune-cli 2]). `open::open_first_positional`
+        // (plan WP4.S8) is what actually decides whether that resolved
+        // path opens as text or as a read-only image document.
         let path = workspace::resolve(vfs.as_ref(), path);
-
-        let file_existed = vfs.stat(&path).is_ok();
-
-        let buffer = match load_buffer(vfs.as_ref(), &path) {
-            Ok(buffer) => buffer,
-            Err(LoadError::InvalidUtf8) => {
-                eprintln!(
-                    "rune: {} is not valid UTF-8 — refusing to open (file left untouched)",
-                    path.display()
-                );
-                return Err(ExitCode::from(exit_code::DATA_ERR));
-            }
-            Err(LoadError::Io(e)) => {
-                eprintln!("rune: failed to read {}: {e}", path.display());
-                return Err(ExitCode::from(exit_code::IO_ERR));
-            }
-        };
-
-        // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
-        // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
-        // NotFound-tolerant branch, unlike `load_buffer` above) — a brand-new
-        // document has no `documents` row to bind yet (WP4 deliberately left
-        // "create a scratch/untitled document" out of scope, `document.rs`'s
-        // module doc), so hydration is skipped entirely for that case: the
-        // editor still opens and runs fully, just without recovery journaling
-        // for THIS launch. Any hydration failure is non-fatal for the same
-        // reason (CONSTITUTION Prime Directive: protect the user's words over
-        // every other feature) — it is reported to stderr, not to the TUI
-        // (which hasn't started yet), and the editor proceeds with `app.db =
-        // None`. This launch mode is otherwise silent about running with zero
-        // crash protection (plan [rune-cli 3]) — every OTHER way this session
-        // can end up without a recovery journal (a degraded open ladder, a
-        // failed `Load`) already sets `app.db_banner`, so this one does too,
-        // rather than leaving the user with no indication at all.
-        let mut db_bootstrap = if file_existed {
-            bootstrap_db(Arc::clone(&vfs), &path, home.as_deref())
-        } else {
-            DbBootstrap {
-                banner: Some(
-                    "recovery disabled: this file doesn't exist yet — no crash protection until \
-                     it's first saved"
-                        .to_string(),
-                ),
-                ..DbBootstrap::default()
-            }
-        };
-
-        // The buffer stays exactly what `load_buffer` read off disk here —
-        // adopting `recovered_content` goes through the same hydration
-        // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
-        // uses, below, once `App::new` exists to hold it. Pre-replacing the
-        // buffer here (as this used to) would skip that chokepoint's §1.3
-        // suspicion check entirely.
-        let app = App::new(buffer, Some(path), Arc::clone(&vfs), db_bootstrap.db.take());
-        (app, db_bootstrap)
+        open::open_first_positional(&vfs, path, home.as_deref())?
     } else {
         // No positional files — open the default untitled document
         // (`App::new_untitled`). The Go implementation uses
@@ -445,6 +392,43 @@ mod tests {
             app.documents.len(),
             1,
             "two spellings of the same file must resolve to one document"
+        );
+    }
+
+    /// Plan WP4.S8: a `.png` first positional bootstraps through the SAME
+    /// `workspace::open_path` dispatch every extra positional uses (built
+    /// via the untitled `App` constructor as an anchor), rather than
+    /// `load_buffer`'s text-only path — which would reject the PNG's bytes
+    /// outright as invalid UTF-8, exactly the failure this restructuring
+    /// exists to route around. Exactly one document is left open (the
+    /// blank untitled anchor is closed once the image opens), it is the
+    /// active one, and it is read-only.
+    #[test]
+    fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
+        let vfs = Mem::new();
+        vfs.save_atomic(
+            Path::new("/vault/x.png"),
+            &[0x89, b'P', b'N', b'G', 0, 0, 0, 0],
+        )
+        .expect("seed a (fake) png");
+
+        let app = bootstrap(
+            Arc::new(vfs),
+            vec![OsString::from("/vault/x.png")].into_iter(),
+            PathBuf::from("/"),
+            None,
+        )
+        .expect("bootstrap should succeed for an image first positional");
+
+        assert_eq!(
+            app.documents.len(),
+            1,
+            "the blank untitled anchor must be closed once the image opens"
+        );
+        assert!(app.doc(app.active).is_some_and(|d| d.read_only));
+        assert!(
+            app.doc(app.active)
+                .is_some_and(|d| d.file_path.as_deref() == Some(Path::new("/vault/x.png")))
         );
     }
 
