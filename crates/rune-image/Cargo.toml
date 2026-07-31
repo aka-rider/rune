@@ -4,6 +4,20 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+# Default features pull in `rayon` and, via `avif-native`, link C libdav1d —
+# both explicitly excluded (plan decisions 5/6). `gif` is declared now,
+# ahead of its WP10 use for disposal metadata `image`'s own GIF decoder
+# does not expose, so this dependency gate is written once.
+image = { version = "0.25.10", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+    "tiff",
+] }
+gif = "0.14"
+base64 = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
