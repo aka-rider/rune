@@ -109,4 +109,19 @@ mod tests {
     fn no_path_stays_markdown() {
         assert_eq!(kind_for(None), DocumentKind::Markdown);
     }
+
+    /// `is_image_path` is now a standalone extension check rather than a
+    /// `kind_for` comparison — it must still answer identically for every
+    /// extension the image decoder advertises, and must still say no for a
+    /// non-image path.
+    #[test]
+    fn is_image_path_agrees_with_kind_for() {
+        for ext in rune_image::decode::extensions() {
+            let p = std::path::PathBuf::from(format!("a.{ext}"));
+            assert_eq!(is_image_path(&p), kind_for(Some(&p)) == DocumentKind::Image);
+            assert!(is_image_path(&p));
+        }
+        assert!(!is_image_path(Path::new("a.rs")));
+        assert!(!is_image_path(Path::new("mystery")));
+    }
 }
