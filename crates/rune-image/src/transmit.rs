@@ -22,7 +22,9 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
-use crate::decode::ImageError;
+use crate::cellsize::CellSize;
+use crate::decode::{Decoded, ImageError};
+use crate::resize::{fit_box, resize};
 
 /// The maximum chunk size, in base64 characters, applied AFTER base64 of
 /// the whole payload — matching the Kitty protocol's own chunking unit.
@@ -117,6 +119,26 @@ fn frame(options: &str, payload: &str) -> String {
     s
 }
 
+/// Fits `decoded`'s full-resolution pixels into `cols` x `rows` terminal
+/// cells (fit-to-width, never upscale — the same posture [`fit_box`]
+/// already guarantees) and encodes the result as a Kitty transmit escape
+/// sequence addressed to `id`. `rune-tui`'s image pipeline is the one
+/// caller — both the initial decode (plan WP5.S2) and any later re-fit (a
+/// pane resize that changes the cell footprint, WP5.S6) call through this
+/// single implementation of the fit_box -> resize -> encode_transmit
+/// sequence, rather than each keeping its own copy that could drift apart.
+pub fn fit_and_encode(
+    decoded: &Decoded,
+    id: u32,
+    cols: usize,
+    rows: usize,
+    cell: CellSize,
+) -> Result<String, ImageError> {
+    let (w, h) = fit_box(decoded.width, decoded.height, cols * cell.w, rows * cell.h);
+    let resized = resize(&decoded.image, w, h);
+    encode_transmit(&resized, id, cols, rows)
+}
+
 /// Returns an APC sequence that deletes the image with the given ID and
 /// frees its data from the terminal.
 pub fn encode_delete(id: u32) -> String {
@@ -185,5 +207,21 @@ mod tests {
     fn empty_payload_is_a_single_chunk_with_no_payload_and_no_m_key() {
         let seq = frame_transmit("", 1, 1, 1);
         assert_eq!(seq, "\x1b_Gf=100,q=2,i=1,U=1,c=1,r=1,a=T\x1b\\");
+    }
+
+    #[test]
+    fn fit_and_encode_never_upscales_and_addresses_the_requested_footprint() {
+        let decoded = Decoded {
+            image: image::RgbaImage::from_pixel(4, 4, image::Rgba([9, 9, 9, 255])),
+            width: 4,
+            height: 4,
+            format: crate::decode::Format::Png,
+        };
+        let cell = CellSize { w: 8, h: 16 };
+        // A 4x4 source asked to fill a much larger cell box must not
+        // upscale — `fit_box` inside `fit_and_encode` floors the resize at
+        // the source's own size.
+        let seq = fit_and_encode(&decoded, 7, 10, 5, cell).expect("encode");
+        assert!(seq.starts_with("\x1b_Gf=100,q=2,i=7,U=1,c=10,r=5,a=T"));
     }
 }
