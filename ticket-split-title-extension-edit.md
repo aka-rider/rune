@@ -1,5 +1,7 @@
 # Split extension into separate focusable subcomponent in title field
 
+> **Implemented** — see the two divergences recorded in the plan's Context: the title keeps its own in-memory undo journal, and the extension is derived from one buffer rather than tracked as a second string.
+
 Groomed at: 47c3e13 (2026-07-30T00:00:00Z)
 
 ## Source
