@@ -7,6 +7,7 @@
 
 mod block;
 mod blockquote;
+mod embed;
 mod inline;
 mod table;
 
@@ -425,18 +426,7 @@ mod tests {
         };
         assert_eq!(fm.sm.state(), RevealState::Revealed);
     }
-
-    #[test]
-    fn inline_image_is_plain_text_run() {
-        let content = "![alt](img.png)\n";
-        let blocks = parse(content);
-        let Block::Paragraph(p) = &blocks[0] else {
-            panic!("expected paragraph");
-        };
-        assert!(matches!(p.inlines[0], Inline::Text(_)));
-        let Inline::Text(t) = &p.inlines[0] else {
-            unreachable!()
-        };
-        assert_eq!(text_of(content, t.range), "![alt](img.png)");
-    }
 }
+
+#[cfg(test)]
+mod image_tests;

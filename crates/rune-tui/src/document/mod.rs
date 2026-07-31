@@ -10,13 +10,22 @@
 //! more, since a scroll command can move the cursor itself, and that move
 //! can itself change reveal-driven display geometry the first reconcile
 //! already settled against — see `sync`'s own docs).
+//!
+//! Split for the §1.6 budget: this file holds the type itself plus
+//! construction/identity/hydration/save-state bookkeeping; [`sync`] holds
+//! the view/scroll/settle sequence (`view`, `sync_catalogue`,
+//! `scroll_to_cursor`, `sync`) as a second `impl Document` block, since none
+//! of that sequence depends on anything declared only in this file.
+
+mod sync;
+#[cfg(test)]
+mod tests;
 
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use rune_core::buffer::{Buffer, Edit};
-use rune_core::coords::WrapPoint;
-use rune_core::cursor::{Cursor, CursorSet};
+use rune_core::cursor::CursorSet;
 use rune_core::undo::{Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
 use rune_md::icons::IconSet;
@@ -265,237 +274,5 @@ impl Document {
         self.doc.set_kind(self.kind);
         self.file_path = Some(path);
         self.display_name = None;
-    }
-
-    /// The pure QUERY half of the per-message sync sequence (plan Context,
-    /// "Msg/Cmd runtime"): `sync_content` iff version changed -> `set_width`
-    /// -> `sync_cursors` -> `snapshot`. Deliberately does NOT touch
-    /// `viewport.scroll_row` — see `scroll_to_cursor`'s docs (review finding
-    /// F4: separating the snapshot-returning query from the scroll
-    /// mutation removes the double-write/double-computation `sync` used to
-    /// cause).
-    ///
-    /// Idempotent/cheap when nothing changed — `sync_content`/
-    /// `sync_cursors` are no-ops in that case (plan Gotchas: "Reveal must
-    /// never bump the buffer version") — so `commands::nav`/`commands::edit`
-    /// call this freely, more than once per message batch, to get
-    /// Buffer<->Syntax<->Wrap coordinate conversions that reflect the
-    /// CURRENT `Document` fields (in particular a `Resize` already applied
-    /// earlier in the same batch — see their module docs) before computing
-    /// a new cursor position.
-    pub fn view(&mut self) -> ViewSnapshots {
-        self.doc.set_focus(self.focused);
-        self.sync_catalogue();
-        self.doc.set_icons(self.icons.clone());
-        self.doc.set_width(self.viewport.width);
-        self.doc.sync_cursors(&self.buffer, &self.cursors);
-        self.doc.snapshot(&self.buffer)
-    }
-
-    /// The narrower, WIDTH-FREE half of `view()`'s parse step (plan WP5.S6,
-    /// [rune-tui A 14]): re-syncs the comrak parse and rebuilds `catalogue`
-    /// from it, without `view()`'s width-dependent wrap pass or cursor/
-    /// snapshot work. `navigate::land_anchor` needs a just-opened target
-    /// document's catalogue to find an anchor's heading BEFORE that
-    /// document is necessarily ever on screen (no viewport width to wrap
-    /// against yet) — exposed here, the one chokepoint `view()` itself
-    /// calls into, rather than re-inlining these same two lines at that
-    /// call site where they'd be free to drift from this sequence.
-    pub fn sync_catalogue(&mut self) {
-        let built_before = self.doc.built_version();
-        self.doc.sync_content(&self.buffer);
-        // The catalogue is derived solely from buffer content + blocks, so
-        // it only needs rebuilding when `sync_content` actually reparsed (a
-        // real content edit, or the very first call) — not on every call,
-        // which commands may make several times per message batch.
-        if self.doc.built_version() != built_before {
-            self.catalogue =
-                rune_md::catalogue::catalogue(self.buffer.content(), self.doc.blocks());
-        }
-    }
-
-    /// Scrolls the viewport so the PRIMARY cursor's current row is visible.
-    /// The single writer of `viewport.scroll_row` (review finding F4: "no
-    /// shadow state" — a value has exactly one writer). Callers that only
-    /// need coordinate conversions (`commands::nav`/`commands::edit`) must
-    /// use `view()` instead and never call this themselves: calling it
-    /// mid-motion would scroll toward a cursor position that's about to
-    /// change again later in the same batch, then get silently overwritten
-    /// by the batch's real settle — wasted work at best, a visibly wrong
-    /// intermediate scroll at worst.
-    ///
-    /// `viewport.scroll_row` is a DISPLAY row (WP3: what `render::build_rows`
-    /// actually indexes, table borders included), but the cursor's own row
-    /// is always WRAP space (border rows aren't addressable by the caret) —
-    /// `view.display.wrap_to_display` converts before `reconcile` ever sees
-    /// it, and the row `reconcile` hands back (also display-space) converts
-    /// the OTHER way, through `display_to_wrap`, before `snap_cursor_to_row`
-    /// (which computes a wrap-space cursor position) ever sees it. Missing
-    /// either conversion scrolls every document containing a table wrong by
-    /// the number of border rows above the cursor.
-    pub fn scroll_to_cursor(&mut self, view: &ViewSnapshots) {
-        let primary = self.cursors.primary();
-        let buffer_point = self.buffer.offset_to_line_col(primary.position);
-        let syntax_point = view.syntax.buffer_to_syntax(buffer_point);
-        let wrap_point = view.wrap.syntax_to_wrap(syntax_point);
-        let display_row = view.display.wrap_to_display(wrap_point.row);
-        if let Some(target_row) = self
-            .viewport
-            .reconcile(display_row, view.display.total_rows())
-        {
-            let wrap_row = view.display.display_to_wrap(target_row);
-            self.snap_cursor_to_row(view, wrap_row);
-        }
-    }
-
-    /// The `Viewport::reconcile` `Independent`-mode counterpart: a
-    /// `commands::nav_scroll` command already moved the viewport on its own
-    /// and left the PRIMARY cursor outside the scrolloff-padded band, so it
-    /// snaps onto `row` at that cursor's own `desired_col` (the same visual-
-    /// column-preserving convention `commands::nav::move_row` uses) —
-    /// collapsing any selection and any secondary cursor, exactly like
-    /// `commands::nav::escape`'s multi-cursor collapse (plan WP7.S1: "the
-    /// cursor is moved onto the window").
-    fn snap_cursor_to_row(&mut self, view: &ViewSnapshots, row: usize) {
-        let primary = self.cursors.primary();
-        let col = view
-            .wrap
-            .byte_col_from_visual(self.buffer.content(), row, primary.desired_col);
-        let syntax_point = view
-            .wrap
-            .wrap_to_syntax(self.buffer.content(), WrapPoint { row, col });
-        let buffer_point = view.syntax.syntax_to_buffer(syntax_point);
-        let offset = self.buffer.line_col_to_offset(buffer_point);
-        let snapped = Cursor {
-            position: offset,
-            anchor: offset,
-            desired_col: primary.desired_col,
-            id: primary.id,
-        };
-        self.cursors = self.cursors.collapse_to(snapped);
-    }
-
-    /// The fixed per-BATCH settle sequence: rebuild the view, scroll to the
-    /// (by now final) cursor, then reconcile the viewport a SECOND time
-    /// against whatever that scroll itself settled. `App::sync_view` —
-    /// called once per whole message batch by the runtime (`runtime::run`)
-    /// and by tests that need the settled state — is the only caller;
-    /// movement/editing commands call `view()` alone (see its docs).
-    ///
-    /// Re-views once more AFTER `scroll_to_cursor`, not before: reveal state
-    /// is a function of `self.cursors` (`RevealGrant::Decide`'s cursor-probe
-    /// policies) — a boxed table's OWN reveal state is exactly such a
-    /// policy (`emit_table`: a table is rendered as its full bordered Grid/
-    /// Wrapped/Pivoted layout, or (cursor inside it) as bare verbatim source
-    /// lines, one whole-table `RevealSm` decision) — and `scroll_to_cursor`
-    /// can itself move `self.cursors`: a `commands::nav_scroll` command's
-    /// `Independent`-mode scroll leaves the viewport where it put it and
-    /// instead snaps the cursor onto the now-settled window (`Viewport::
-    /// reconcile`'s docs). The first `view()` above necessarily samples
-    /// reveal against the PRE-scroll cursor — `scroll_to_cursor` needs that
-    /// view's coordinate maps to decide where the cursor should land in the
-    /// first place, so the two can't run in the other order.
-    ///
-    /// That first `scroll_to_cursor` call reconciles the viewport against
-    /// THAT pre-final view's row geometry (`total_rows`, the wrap<->display
-    /// maps) — geometry a table's own reveal transition can change out from
-    /// under it: snapping the cursor INTO a boxed table collapses it from
-    /// its bordered layout to bare source lines (fewer rows entirely), so
-    /// the `scroll_row`/band `reconcile` just computed can land outside the
-    /// scrolloff band the MOMENT the settled, reveal-updated `total_rows`
-    /// replaces the stale one it was computed against — the exact "8 rows
-    /// before, 9 after" `SYNC-IDEMPOTENT` shape, caught only by a later,
-    /// message-free `App::sync_view` first discovering the un-reconciled
-    /// mismatch. Re-viewing without reconciling again would still hand back
-    /// (and let `DocMachine` cache) a snapshot whose viewport was settled
-    /// against stale geometry.
-    ///
-    /// The second `scroll_to_cursor` call closes that gap: `mode` was
-    /// already consumed back to `FollowCursor` by the first call, so this
-    /// pass only ever ADJUSTS `scroll_row` to keep the (unchanged, already-
-    /// settled) cursor row inside the band of the NOW-final geometry — it
-    /// never moves the cursor again (`Viewport::reconcile`'s `FollowCursor`
-    /// arm), so reveal cannot re-trigger from this second pass, and the
-    /// final `view()` is guaranteed a `DocMachine::snapshot` memo hit. Both
-    /// extra passes are free whenever nothing this batch actually triggered
-    /// a reveal-driven geometry change (the common case: no scroll command,
-    /// or a scroll command whose target lies outside any reveal-sensitive
-    /// element).
-    pub fn sync(&mut self) -> ViewSnapshots {
-        let view = self.view();
-        self.scroll_to_cursor(&view);
-        let settled = self.view();
-        self.scroll_to_cursor(&settled);
-        self.view()
-    }
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use rune_vfs::Mem;
-
-    #[test]
-    fn sync_reparses_once_and_is_idempotent_on_repeat_calls() {
-        let mut doc = Document::new(Buffer::new("# hello\nworld\n"));
-        doc.viewport.set_size(80, 24);
-        let first = doc.sync();
-        // "# hello" + "world" + the trailing empty line from the final \n.
-        assert_eq!(first.display.total_rows(), 3);
-        let second = doc.sync();
-        assert_eq!(second.display.total_rows(), first.display.total_rows());
-    }
-
-    /// The `TODO-fuzz-sync-idempotent-table-scroll.md` regression, pinned
-    /// directly against `Document::sync` rather than only through the
-    /// checked-in fuzz replay (`crates/rune-fuzz/repros/sync-idempotent-
-    /// 04.rune`): `scroll_line_down` (Independent-mode `ctrl+down`) snaps
-    /// the cursor INTO a boxed table, which is itself a `RevealGrant::
-    /// Decide` policy (`rune_md::emit::table::emit_table`) — collapsing the
-    /// table from its bordered layout to bare source lines shrinks
-    /// `total_rows` out from under the `Viewport::reconcile` call that just
-    /// ran against the PRE-collapse geometry, leaving `scroll_row` outside
-    /// the settled scrolloff band. A second, message-free `sync()` must not
-    /// see this catch up on its own — `sync()` itself must already be a
-    /// fixpoint.
-    #[test]
-    fn sync_reconciles_the_viewport_again_after_a_reveal_driven_geometry_shrink() {
-        let content = "# Doc\n\n| Name | Age |\n| :--- | ---: |\n\
-                        | Alice | 30 |\n| Bob | 25 |\n\ntail\n";
-        let mut doc = Document::new(Buffer::new(content));
-        doc.viewport.set_size(80, 24);
-        doc.focused = true;
-
-        crate::commands::nav_scroll::scroll_line_down(&mut doc);
-        let first = doc.sync();
-        let scroll_after_first_sync = doc.viewport.scroll_row;
-
-        let second = doc.sync();
-        assert_eq!(
-            second.display.total_rows(),
-            first.display.total_rows(),
-            "a second, message-free sync() changed the rendered row count"
-        );
-        assert_eq!(
-            doc.viewport.scroll_row, scroll_after_first_sync,
-            "a second, message-free sync() moved scroll_row"
-        );
-    }
-
-    #[test]
-    fn document_ids_are_distinct_and_ordered() {
-        // Mints two REAL ids the same way production code does — through
-        // `App`, never a raw-number constructor.
-        let mut app = crate::app::App::new(
-            Buffer::new("a"),
-            None,
-            std::sync::Arc::new(Mem::new()),
-            None,
-        );
-        let a = app.active;
-        let b = app.open_document(Buffer::new("b"));
-        assert_ne!(a, b);
-        assert!(a < b);
     }
 }

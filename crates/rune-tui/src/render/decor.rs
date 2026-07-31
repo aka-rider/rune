@@ -66,6 +66,7 @@ mod tests {
             wrap_row: 0,
             synthetic: false,
             decor,
+            image: None,
         }
     }
 

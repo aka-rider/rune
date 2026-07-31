@@ -104,6 +104,27 @@ fn walk_inline(content: &str, inline: &Inline, out: &mut Vec<Ref>) {
                 },
             });
         }
+        Inline::Image(m) => {
+            // Both image forms are always an embed (`UseRole::Embed`):
+            // `![alt](url)` has no non-embed reading, and `![[target]]` is
+            // recovered ONLY under the `!` prefix (`parse::inline`'s
+            // scanner never matches a bare `[[target]]`) — unlike a real
+            // `WikiLink` node, there is no bare-vs-embedded fork to make
+            // here at all, so this never calls `wikilink_role`.
+            let target = if m.is_wikilink {
+                let (name, anchor) = split_wikilink_target(&m.target_text);
+                Target::Name { name, anchor }
+            } else {
+                classify_link_url(&m.target_text)
+            };
+            out.push(Ref {
+                site: m.range,
+                kind: RefKind::Use {
+                    role: UseRole::Embed,
+                    target,
+                },
+            });
+        }
     }
 }
 
@@ -145,7 +166,15 @@ fn split_wikilink_target(target: &str) -> (String, Option<Anchor>) {
 /// A `WikiLinkM::range` spans `"[[" target ["|" label] "]]"` INCLUSIVE of
 /// the delimiters, so the byte immediately before `range.start` is `'!'`
 /// iff the source wrote `![[...]]` — there is no embed flag on the struct
-/// itself.
+/// itself. In practice this branch never fires: comrak's own wikilink
+/// trigger has a `within_brackets` guard that suppresses the `WikiLink`
+/// node entirely under a leading `!` (verified empirically, pinned by
+/// `embed_prefixed_wikilink_comrak_behaviour_is_pinned` below), so a real
+/// `WikiLink` node's `range` never has `'!'` immediately before it. As of
+/// WP7, `![[target]]` is recovered separately — by `parse::inline`'s text
+/// scanner, as an `Inline::Image` — and that arm above resolves its own
+/// `UseRole::Embed` directly, never through this function. Kept rather than
+/// deleted in case a future comrak version starts allowing the node.
 fn wikilink_role(content: &str, range_start: usize) -> UseRole {
     if range_start > 0 && content.as_bytes().get(range_start - 1) == Some(&b'!') {
         UseRole::Embed
@@ -339,17 +368,46 @@ mod tests {
     fn embed_prefixed_wikilink_comrak_behaviour_is_pinned() {
         // comrak's wikilink trigger has a `within_brackets` guard that
         // suppresses the wikilink entirely under a leading `!` — verified
-        // empirically: `![[note]]` produces a plain `Inline::Text`, never a
-        // `WikiLink` node, so no embed edge ever reaches the catalogue.
-        // Pinned here so a comrak upgrade that changes this is caught here,
-        // not downstream.
+        // empirically: comrak itself never emits a `WikiLink` node for
+        // `![[note]]`. Pinned here so a comrak upgrade that changes this is
+        // caught here, not downstream. As of WP7 this crate recovers the
+        // embed anyway, by scanning the flattened `Text` run comrak hands
+        // back instead (`parse::inline`'s `![[target]]` scanner) — so the
+        // catalogue still sees an embed `Ref`, just built from
+        // `Inline::Image`, never `Inline::WikiLink`.
         let content = "![[note]]\n";
         let blocks = parse(content);
         assert!(matches!(
             blocks.first(),
-            Some(Block::Paragraph(p)) if matches!(p.inlines.as_slice(), [Inline::Text(_)])
+            Some(Block::Paragraph(p)) if matches!(p.inlines.as_slice(), [Inline::Image(_)])
         ));
         let refs = catalogue(content, &blocks);
-        assert!(refs.is_empty(), "expected no refs, got {refs:?}");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].kind,
+            RefKind::Use {
+                role: UseRole::Embed,
+                target: Target::Name {
+                    name: "note".to_string(),
+                    anchor: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn markdown_image_becomes_an_embed_use() {
+        let refs = refs_of("![alt](x.png)\n");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].kind,
+            RefKind::Use {
+                role: UseRole::Embed,
+                target: Target::Path {
+                    path: "x.png".to_string(),
+                    anchor: None,
+                },
+            }
+        );
     }
 }
