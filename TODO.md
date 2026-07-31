@@ -2,6 +2,20 @@
 
 - [ ] The title field has no horizontal scroll (title/rename plan assumption A1): an over-long file name is clipped by `Paragraph`, not scrolled to follow the cursor, so editing the tail of a name wider than the terminal is awkward. A viewport can be added to `TextField` later; not attempted here to avoid desyncing byte offsets from a truncated string.
 
+### Considered and deliberately rejected
+
+- **Gating async paste behind `app.modal`.** A review pass noted that
+  `Msg::Paste`/`Msg::ClipboardRead` skip the modal capture that stage 1 of the
+  key pipeline applies, so a paste arriving while an Error or Guard is up
+  lands in the buffer behind it. Tried it; the session fuzzer rejected it
+  within a thousand cases (`PASTE-VERBATIM`, repro: type, `^c` to raise the
+  unsaved-changes Guard, paste). The invariant is right and the change was
+  wrong: a paste carries user content, and dropping it because a prompt
+  happens to be up discards something the user explicitly asked to insert,
+  whereas landing it in a journaled, undoable buffer is recoverable. Both
+  paste arms now say so in place. Do not re-attempt without first deciding
+  what happens to the discarded clipboard text.
+
 ## File-size budget (§1.6)
 
 A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
