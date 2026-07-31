@@ -245,6 +245,15 @@ pub struct App {
     /// terminal; every test and the fuzzer keep this default, exactly like
     /// `space_probe`'s `NullProbe` default above.
     pub theme: crate::theme::Theme,
+    /// The icon tier (plan WP5) — `theme::icons::choose`'s one decision,
+    /// made once at startup from the real environment and held here beside
+    /// `theme` for the same reason: nothing downstream re-decides it per
+    /// frame. `App::new` defaults to the plain-Unicode tier (the same
+    /// terminal-agnostic default `DocMachine::new` itself starts with);
+    /// production startup (`runtime::bootstrap`) overwrites it once the
+    /// real `TERM`/`TERM_PROGRAM`/`RUNE_ICONS` environment can be read —
+    /// every test and the fuzzer keep this default.
+    pub icons: rune_md::icons::IconSet,
     /// The workspace root discovered by `workspaceroot::resolve` (plan
     /// WP4.S4) — the nearest ancestor of the launch directory carrying a
     /// `.git`/`.obsidian` marker, or `cwd` itself when none is found.
@@ -313,6 +322,7 @@ impl App {
             modal: None,
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
+            icons: rune_md::icons::IconSet::unicode(),
             root: PathBuf::new(),
             snapshot_timer: crate::runtime::SnapshotTimer::new(),
         }

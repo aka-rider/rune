@@ -18,10 +18,19 @@ most remaining sources that used to be listed here: `db_wiring.rs`,
 `nav/lib.rs`, `keymap/index.rs`, `breadcrumb.rs`, `editor_bindings.rs`,
 `driver/mod.rs`, `runtime/mod.rs`, `commands/nav.rs`, `commands/edit_lines.rs`,
 `keymap.rs`, `dispatch.rs`, `footer.rs`, and `table/layout.rs` are all under
-the ceiling again. Four files remain over it — none introduced by that
-batch, the residue of the same long-running debt:
+the ceiling again. A handful remain over it, mostly the residue of the same
+long-running debt:
 
-- [ ] `rune-tui/src/app.rs` (538), `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (523), `rune-syntax/src/syntax.rs` (505).
+- [ ] Re-measured against the tree after the title/rename work merged, because
+  both sides of that merge carried stale counts: `rune-tui/tests/rename_bind.rs`
+  (795), `rune-tui/src/app.rs` (550), `rune-md/src/emit/mod.rs` (536),
+  `rune-tui/src/rename.rs` (526), `rune-syntax/src/wrap/mod.rs` (520),
+  `rune-syntax/src/syntax.rs` (505), `rune-tui/src/document.rs` (501).
+  `rename_bind.rs` is the outlier and the only one this work created: the
+  extension-gate package and the clipboard package each appended a themed
+  section to it. It wants splitting along the seams already in the file
+  (focus and typing / refusals / the extension gate / clipboard), the same
+  way an earlier batch split `rename.rs` itself.
 
 Two of those grew slightly in an earlier batch and are recorded per the house
 rule: `dispatch.rs` 513 → 527 (the span-cap truncation status branch, since

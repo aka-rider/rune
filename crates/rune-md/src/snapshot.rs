@@ -11,7 +11,7 @@
 
 use rune_syntax::SyntaxSpan;
 use rune_syntax::syntax::{RowBoundary, TableRole};
-use rune_syntax::wrap::WrapSnapshot;
+use rune_syntax::wrap::{SegDecor, WrapSnapshot};
 
 use crate::emit::style::table_border_scope;
 use crate::table::layout::{BorderKind, border_row};
@@ -29,6 +29,11 @@ pub struct DisplayRow {
     pub spans: Vec<SyntaxSpan>,
     pub wrap_row: usize,
     pub synthetic: bool,
+    /// This row's own decoration (heading icon / list bullet / quote bar /
+    /// hr rule), carried straight from the wrap segment it was built from —
+    /// `None` for an undecorated row and for every synthetic table-border
+    /// row (a border has no source line to decorate).
+    pub decor: Option<SegDecor>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -52,6 +57,7 @@ impl DisplaySnapshot {
                 spans: seg.spans.clone(),
                 wrap_row: i,
                 synthetic: false,
+                decor: seg.decor.clone(),
             })
             .collect();
         let wrap_to_display = (0..rows.len()).collect();
@@ -203,6 +209,7 @@ fn synthetic_border(
         spans: vec![span],
         wrap_row,
         synthetic: true,
+        decor: None,
     }
 }
 

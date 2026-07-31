@@ -139,7 +139,10 @@ fn emit_list_item(
         super::decor::push_list_marker_decor(out, line, ordered, depth, marker_text);
     }
     for c in &item.children {
-        emit_block(content, starts, c, depth + 1, out);
+        // Saturating: a pathological ~256-deep nested list must degrade to a
+        // repeated bullet glyph, never overflow a u8 (§1.3 — an overflow
+        // panic in a debug/fuzz build would lose the unsaved buffer).
+        emit_block(content, starts, c, depth.saturating_add(1), out);
     }
 }
 

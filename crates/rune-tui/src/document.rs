@@ -19,6 +19,7 @@ use rune_core::coords::WrapPoint;
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::{Journal, Step};
 use rune_md::element::doc::{DocMachine, ViewSnapshots};
+use rune_md::icons::IconSet;
 use rune_syntax::DocumentKind;
 
 use crate::db::DocDb;
@@ -127,6 +128,14 @@ pub struct Document {
     /// Help document therefore stay `DocumentKind::Markdown`, exactly as
     /// before this plan.
     pub kind: DocumentKind,
+    /// The icon tier line decorations render with (plan WP5) — mirrored
+    /// onto `doc` via `DocMachine::set_icons` on every `view()` call, same
+    /// pattern as `kind`/`set_kind`. `Document` holds no `App` reference,
+    /// so this is a plain field an outside writer (`App::sync_view`, the
+    /// same chokepoint that pushes `focused` down before every sync) sets
+    /// from the one `App`-held decision (`App::icons`) rather than a value
+    /// this type could ever derive on its own.
+    pub icons: IconSet,
     /// This document's async highlight state (plan WP5) — spans, their
     /// version tag, and the in-flight/pending bookkeeping that bounds a
     /// document to at most one running highlight `Cmd` at a time.
@@ -168,6 +177,7 @@ impl Document {
             display_name: None,
             catalogue: Vec::new(),
             kind: DocumentKind::Markdown,
+            icons: IconSet::unicode(),
             highlight: HighlightState::default(),
         }
     }
@@ -276,6 +286,7 @@ impl Document {
     pub fn view(&mut self) -> ViewSnapshots {
         self.doc.set_focus(self.focused);
         self.sync_catalogue();
+        self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
         self.doc.sync_cursors(&self.buffer, &self.cursors);
         self.doc.snapshot(&self.buffer)

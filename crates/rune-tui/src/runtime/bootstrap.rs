@@ -40,6 +40,17 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // delivered to either reader). One-shot, at startup, never per frame.
     app.theme = crate::theme::Theme::catppuccin_mocha(!guard.probe_truecolor());
 
+    // Plan WP5.S2: the icon tier is decided once, right beside the theme
+    // probe above — same "one-shot, at startup, never per frame" reasoning,
+    // and the pure selector itself takes these three as plain values (see
+    // `theme::icons::choose`'s doc comment) so this is the one place that
+    // actually reads the real process environment.
+    app.icons = crate::theme::icons::choose(
+        std::env::var("RUNE_ICONS").ok().as_deref(),
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("TERM").ok().as_deref(),
+    );
+
     let (tx, rx) = mpsc::channel::<Msg>();
     super::spawn_input_reader(guard.event_reader(), tx.clone());
 

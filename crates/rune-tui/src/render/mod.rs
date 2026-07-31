@@ -6,6 +6,7 @@
 //! The terminal cursor stays hidden (`term::Guard::new`); the caret drawn
 //! here IS the cursor, Go parity.
 
+pub(crate) mod decor;
 mod overlay;
 pub mod title;
 
@@ -35,11 +36,14 @@ use crate::theme::Theme;
 /// cells`'s docs for why splitting a cluster across multiple `Cell`s
 /// corrupts the terminal output. `-1` marks a cell with no direct buffer
 /// correspondence — decorative/synthetic (port of Go's `CellMapping`
-/// sentinel, reused here for
-/// the same reason: a synthetic EOL cursor cell still carries its actual
-/// cursor byte offset, never `-1`, since it DOES have a precise buffer
-/// position — only a genuinely decorative cell would use `-1`, and Phase 1
-/// never produces one).
+/// sentinel, reused here for the same reason: a synthetic EOL cursor cell
+/// still carries its actual cursor byte offset, never `-1`, since it DOES
+/// have a precise buffer position). A genuinely decorative cell — a
+/// synthetic table border, or a line's own heading-icon/bullet/quote-bar/
+/// hr-rule prefix — always uses `-1`, and every consumer that walks `Cell`s
+/// keyed on buffer position (the highlight overlay, the selection/caret
+/// overlays, mouse hit-testing) skips a negative `buf_offset` rather than
+/// resolving it to a byte.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
     pub text: String,
@@ -265,7 +269,17 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
-        .map(|row| segment_cells(&app.theme, content, &row.spans))
+        .map(|row| {
+            // WP4.S2: the row's own decoration (heading icon / bullet /
+            // quote bar / hr rule) is prepended BEFORE the overlay walks
+            // below run — those walks all skip `buf_offset < 0`
+            // (the overlay module documents that skip), so a decor prefix never competes
+            // for highlight/selection/caret painting the way a real cell
+            // would.
+            let mut cells = decor::decor_row_cells(&app.theme, row);
+            cells.extend(segment_cells(&app.theme, content, &row.spans));
+            cells
+        })
         .collect();
 
     // Plan WP5.S5: the tree-sitter overlay paints token colours BEFORE the

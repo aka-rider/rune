@@ -74,6 +74,9 @@ pub(super) fn wrap_table_line(
             boundary: seg_boundary(0),
             boxed: info.boxed,
         }),
+        // A table source line is never decorated (WP2.S5: "Table lines:
+        // never decorated") — its own row geometry is described by `table`.
+        decor: None,
     });
     let mut start_col: usize = line.spans.iter().map(query::span_visible_len).sum();
     for (k, extra) in info.extra_rows.iter().enumerate() {
@@ -87,6 +90,7 @@ pub(super) fn wrap_table_line(
                 boundary: seg_boundary(k + 1),
                 boxed: info.boxed,
             }),
+            decor: None,
         });
         start_col += extra.iter().map(query::span_visible_len).sum::<usize>();
     }

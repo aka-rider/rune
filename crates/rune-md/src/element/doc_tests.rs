@@ -18,6 +18,21 @@ fn set_focus_is_idempotent_and_marks_dirty_only_on_change() {
 }
 
 #[test]
+fn set_icons_is_idempotent_and_marks_dirty_only_on_change() {
+    let mut doc = DocMachine::new();
+    doc.clear_dirty();
+    // `DocMachine::new` already starts on `IconSet::unicode()` (see its
+    // constructor) — re-setting the SAME set the machine already holds
+    // must be a memo no-op, exactly like `set_width`/`set_focus` with an
+    // unchanged input.
+    doc.set_icons(IconSet::unicode());
+    assert!(!doc.is_dirty(), "same icon set must not dirty the machine");
+
+    doc.set_icons(IconSet::nerd());
+    assert!(doc.is_dirty(), "a genuine icon-tier change must dirty");
+}
+
+#[test]
 fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
     let mut doc = DocMachine::new();
     doc.set_focus(true); // Decide policies only fire when focused.

@@ -51,6 +51,12 @@ impl App {
         self.relayout();
         let focused = self.focus() == Pane::Editor && self.modal.is_none();
         self.active_doc_mut().focused = focused;
+        // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
+        // onto the active document, same "outside writer pushes an
+        // App-held decision down before every sync" shape as `focused`
+        // right above — `Document` itself holds no `App` reference to read
+        // this from.
+        self.active_doc_mut().icons = self.icons.clone();
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
         if self.modal.is_some() {

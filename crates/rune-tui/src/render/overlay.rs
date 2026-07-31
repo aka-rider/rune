@@ -101,7 +101,8 @@ pub(super) fn apply_highlight_spans(
 
 /// Scans `rows` for the visible byte window `lo..hi` (the min/max
 /// non-negative `buf_offset` seen, `hi` one past the max) — a decorative
-/// cell (`buf_offset < 0`, none produced yet, see `Cell`'s docs) is skipped.
+/// cell (`buf_offset < 0`, carries no buffer position at all, see `Cell`'s
+/// docs) is skipped.
 /// `None` when no cell in `rows` is real (an empty document, or every cell
 /// decorative). Split out of `apply_highlight_spans` (the syntax-
 /// highlighting-latency plan's WP3, D6) so `render::build_rows` can reuse
@@ -165,9 +166,24 @@ pub(super) fn apply_cursor_overlays(
         let Some(row) = rows.get_mut(display_row - scroll_row) else {
             continue;
         };
+        // WP4.S3: `visual_col` above is wrap-space, unaware of the row's
+        // own decoration prefix (`build_rows` prepends it before this
+        // function runs). Shifting it right by that prefix's width is what
+        // keeps `place_caret`'s cell walk landing on the SAME visible
+        // column the decor-shifted row actually put the caret's target
+        // char at — plan Context `[critic R4]`: a decorated line CAN carry
+        // the caret itself (an unfocused pane's forced conceal, or a
+        // wrapped list item's continuation row keeping the first row's own
+        // bullet), so this is load-bearing, not a cosmetic nicety.
         let visual_col = view
             .wrap
-            .visual_col(buf.content(), wrap_point.row, wrap_point.col);
+            .visual_col(buf.content(), wrap_point.row, wrap_point.col)
+            + view
+                .display
+                .rows()
+                .get(display_row)
+                .map(super::decor::decor_cell_width)
+                .unwrap_or(0) as usize;
         // A boxed (Grid/Wrapped) table row's rendered width is a hard
         // invariant (`TABLE-ROW-WIDTH`): every content/border row in the
         // same group carries the SAME summed cell width, always — never
