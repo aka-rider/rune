@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, BufferError};
-use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::App;
@@ -167,7 +166,7 @@ pub(crate) fn handle_file_opened(
 /// (`open_path` again, via `rune-cli`'s `open::open_extra_files`) — both
 /// funnel through this one tail.
 fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<DocumentId> {
-    if crate::document_support::kind_for(Some(resolved)) == DocumentKind::Image {
+    if crate::document_support::is_image_path(resolved) {
         return open_image_bytes(app, resolved, bytes);
     }
 

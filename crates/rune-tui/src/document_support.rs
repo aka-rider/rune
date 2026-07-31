@@ -45,9 +45,14 @@ fn is_image_extension(ext: &str) -> bool {
 /// one predicate `rune-cli`'s bootstrap needs to route the first
 /// positional through `workspace::open_path` instead of `load_buffer`,
 /// without making `rune_syntax::DocumentKind` a dependency of `rune-cli`
-/// just to compare `kind_for`'s output against one variant.
+/// just to compare `kind_for`'s output against one variant. A pure
+/// extension check against `rune_image::decode::extensions()` — it
+/// deliberately does not route through `kind_for`'s fuller derivation,
+/// since nothing past the extension can change the answer.
 pub fn is_image_path(path: &Path) -> bool {
-    kind_for(Some(path)) == DocumentKind::Image
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(is_image_extension)
 }
 
 /// The outcome of [`crate::document::Document::hydrate`] — the shared
@@ -103,5 +108,20 @@ mod tests {
     #[test]
     fn no_path_stays_markdown() {
         assert_eq!(kind_for(None), DocumentKind::Markdown);
+    }
+
+    /// `is_image_path` is now a standalone extension check rather than a
+    /// `kind_for` comparison — it must still answer identically for every
+    /// extension the image decoder advertises, and must still say no for a
+    /// non-image path.
+    #[test]
+    fn is_image_path_agrees_with_kind_for() {
+        for ext in rune_image::decode::extensions() {
+            let p = std::path::PathBuf::from(format!("a.{ext}"));
+            assert_eq!(is_image_path(&p), kind_for(Some(&p)) == DocumentKind::Image);
+            assert!(is_image_path(&p));
+        }
+        assert!(!is_image_path(Path::new("a.rs")));
+        assert!(!is_image_path(Path::new("mystery")));
     }
 }
