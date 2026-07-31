@@ -110,7 +110,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Routes through the one close chokepoint regardless of which pane
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
-        GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active),
+        GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active, effects),
         // Out-of-range is a silent no-op, so a digit naming a tab that
         // isn't open does nothing rather than guessing at a neighbour. Same
         // pre-switch focus move as `Help` above, and for the same reason.

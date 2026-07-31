@@ -88,7 +88,7 @@ fn closing_a_document_sweeps_its_pending_load_version() {
     // — `close_now` only reassigns `active` away from `id` when `id` is
     // currently active, which is not what this test is exercising.
     app.active = initial_id;
-    workspace::close_now(&mut app, opened_id);
+    workspace::close_now(&mut app, opened_id, &mut Effects::default());
 
     assert!(
         app.db_ops.is_empty(),

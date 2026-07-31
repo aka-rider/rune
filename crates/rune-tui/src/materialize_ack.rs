@@ -407,7 +407,10 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
     }
     app.pending_close_on_save = None;
     if succeeded {
-        workspace::close_now(app, id);
+        // A scratch sink, discarded — see `workspace::close::close_now`'s
+        // own doc comment: this call chain never touches an image document.
+        let mut effects = Effects::default();
+        workspace::close_now(app, id, &mut effects);
     }
 }
 
