@@ -67,12 +67,20 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             entries.extend(EXPLORER_BINDINGS.iter().map(|b| (b.label(), b.help, true)))
         }
         Pane::Tabs => entries.extend(TABS_BINDINGS.iter().map(|b| (b.label(), b.help, true))),
-        // The title field has no binding TABLE of its own — `title::
+        // The title field has no binding TABLE of its own — `title::keys::
         // handle_key` matches Enter/Esc/editing keys directly (they are a
         // text field's own behaviour, not chords worth enumerating in the
-        // Help doc), so there is nothing here to reflect over. The global
-        // hints above still render while renaming.
-        Pane::Title => {}
+        // Help doc) — but it does have two gestures worth surfacing here:
+        // the Right-at-end-of-stem unlock (only while there's an extension
+        // left to unlock) and the commit itself. The global hints above
+        // still render while renaming.
+        Pane::Title => {
+            let name = app.title.text();
+            if !app.title.ext_unlocked() && crate::title::ext_split(name) < name.len() {
+                entries.push(("\u{2192}".to_string(), "extension", true));
+            }
+            entries.push(("\u{23ce}".to_string(), "rename", true));
+        }
         Pane::Editor => {}
     }
 
@@ -149,11 +157,67 @@ mod tests {
     use crate::app::App;
     use crate::keymap::GlobalCommand;
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_vfs::{Mem, Vfs};
     use std::sync::Arc;
 
     fn app_with(content: &str) -> App {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    /// WP5.S7 — while the title is focused with the extension gate locked
+    /// and an extension actually present, the footer offers both the
+    /// unlock gesture and the commit itself.
+    #[test]
+    fn title_focus_hints_show_the_unlock_gesture_while_locked_with_an_extension() {
+        let mem = Arc::new(Mem::new());
+        mem.save_atomic(std::path::Path::new("/root/a.md"), b"hi")
+            .expect("seed a.md");
+        let vfs: Arc<dyn rune_vfs::Vfs + Send + Sync> = mem;
+        let mut app = App::new(
+            Buffer::new("hi"),
+            Some(std::path::PathBuf::from("/root/a.md")),
+            vfs,
+            None,
+        );
+        app.focus_title();
+        assert!(!app.title.ext_unlocked(), "seeded with a stem: locked");
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            entries
+                .iter()
+                .any(|(label, help, _)| label == "\u{2192}" && *help == "extension"),
+            "expected an unlock hint, got {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(label, help, _)| label == "\u{23ce}" && *help == "rename"),
+            "expected a rename hint, got {entries:?}"
+        );
+    }
+
+    /// Once the gate is unlocked (or there's no extension to unlock — a
+    /// pathless draft's own seeded state, decision 9), only the commit hint
+    /// remains: offering an unlock gesture that's already a no-op would be
+    /// misleading.
+    #[test]
+    fn title_focus_hints_drop_the_unlock_gesture_once_unlocked() {
+        let mut app = app_with("hi");
+        app.focus_title();
+        assert!(app.title.ext_unlocked(), "a draft seeds unlocked");
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            !entries.iter().any(|(_, help, _)| *help == "extension"),
+            "expected no unlock hint once unlocked, got {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|(label, help, _)| label == "\u{23ce}" && *help == "rename"),
+            "expected a rename hint, got {entries:?}"
+        );
     }
 
     /// Plan WP6.S6 — the span-level regression guard for assumption A2: the
