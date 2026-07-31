@@ -21,11 +21,12 @@ use rune_syntax::scope::{ScopeTable, scope_table};
 pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 
 /// Resolves `name` against [`SCOPES`]. Every name passed below is drawn
-/// verbatim from `rune_syntax::scope::MARKDOWN_SCOPES`, so resolution
-/// always succeeds through `ScopeTable::resolve`'s exact-match branch —
-/// the `unwrap_or` fallback to `ScopeId(0)` (`"text"`, registered first)
-/// exists only so a future typo here degrades gracefully (§1.3) instead of
-/// panicking, never because it's expected to fire.
+/// verbatim from `rune_syntax::scope::MARKDOWN_SCOPES` or (since WP7)
+/// `rune_syntax::scope::EXTENDED_SCOPES`, so resolution always succeeds
+/// through `ScopeTable::resolve`'s exact-match branch — the `unwrap_or`
+/// fallback to `ScopeId(0)` (`"text"`, registered first) exists only so a
+/// future typo here degrades gracefully (§1.3) instead of panicking, never
+/// because it's expected to fire.
 fn scope(name: &str) -> ScopeId {
     SCOPES.resolve(name).unwrap_or(ScopeId(0))
 }
@@ -117,6 +118,16 @@ pub(crate) fn table_border_scope() -> ScopeId {
 
 pub(crate) fn hr_scope() -> ScopeId {
     scope("punctuation.special")
+}
+
+/// An image's visible label — its alt text (or target when alt is empty) in
+/// Rendered state, its raw markup in Revealed state (`walk_inline.rs`'s
+/// `Inline::Image` arm). Registered after `CODE_SCOPES`
+/// (`rune_syntax::scope::EXTENDED_SCOPES`), not folded into either earlier
+/// scope table, so it can't renumber any id both sides of the shared
+/// `scope_table()` constructor already agree on.
+pub(crate) fn image_scope() -> ScopeId {
+    scope("markup.image")
 }
 
 /// No Go equivalent (Go doesn't style frontmatter separately) — kept at the
