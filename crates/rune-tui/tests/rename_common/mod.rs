@@ -1,13 +1,17 @@
 //! Shared setup helpers for the Rename "Done when" test suite, split
-//! across `rename_bind.rs` (focus/typing, the refusals, the end-to-end
-//! no-store rename, and draft naming), `rename_collision.rs` (the
-//! collision guard and both halves of hazard 1), `rename_replace.rs`
-//! (the `[R]eplace` path against a real in-memory `Store`), and
-//! `rename_focus.rs` (the WP2 focus-loss-is-the-commit-chokepoint suite)
-//! — TODO.md's §1.6 split of the original `rename.rs`. Each consumer pulls
-//! this in via `mod rename_common;` — integration test files are separate
-//! binaries, so this is the one place all four draw an identical
-//! `App`/`Mem` fixture from, rather than risking drift.
+//! across `rename_bind.rs` (focus/typing, the end-to-end no-store rename,
+//! and draft naming), `rename_refusals.rs` (the refusal paths),
+//! `rename_gate.rs` (the extension gate and the field's own word-motion/
+//! selection/undo editing), `rename_clipboard.rs` (copy/cut/paste in the
+//! title), `rename_collision.rs` (the collision guard and both halves of
+//! hazard 1), `rename_replace.rs` (the `[R]eplace` path against a real
+//! in-memory `Store`), and `rename_focus.rs` (the WP2
+//! focus-loss-is-the-commit-chokepoint suite) — TODO.md's §1.6 split of
+//! the original `rename.rs`, re-split by plan WP5 once the extension-gate
+//! and clipboard packages grew `rename_bind.rs` past the ceiling again.
+//! Each consumer pulls this in via `mod rename_common;` — integration test
+//! files are separate binaries, so this is the one place all seven draw an
+//! identical `App`/`Mem` fixture from, rather than risking drift.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};

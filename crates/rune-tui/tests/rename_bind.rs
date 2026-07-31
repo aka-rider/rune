@@ -1,10 +1,14 @@
-//! Rename "Done when" tests: focus/typing, the refusals, the end-to-end
-//! no-store rename, and draft naming — TODO.md's §1.6 split of the
-//! original `rename.rs`. The collision guard/hazard-1 tests, the
-//! store-backed `[R]eplace` path, and the WP2 focus-loss-is-the-commit-
-//! chokepoint suite live in the siblings `rename_collision.rs`/
-//! `rename_replace.rs`/`rename_focus.rs`; all four pull shared fixtures
-//! from `rename_common`.
+//! Rename "Done when" tests: focus/typing, the end-to-end no-store
+//! rename, and draft naming — TODO.md's §1.6 split of the original
+//! `rename.rs`, itself re-split by plan WP5 once the extension-gate and
+//! clipboard packages grew this file past the ceiling again: the refusal
+//! paths now live in `rename_refusals.rs`, the extension gate and the
+//! field's own word-motion/selection/undo editing in `rename_gate.rs`,
+//! and copy/cut/paste in `rename_clipboard.rs`. The collision guard/
+//! hazard-1 tests, the store-backed `[R]eplace` path, and the WP2
+//! focus-loss-is-the-commit-chokepoint suite live in the further siblings
+//! `rename_collision.rs`/`rename_replace.rs`/`rename_focus.rs`; all seven
+//! pull shared fixtures from `rename_common`.
 
 #![allow(
     clippy::unwrap_used,
@@ -15,24 +19,19 @@
 
 mod rename_common;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use rune_tui::app::App;
-use rune_tui::clipboard::osc52_copy;
-use rune_tui::keymap::{KeyCode, Mods};
+use rune_tui::keymap::KeyCode;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
-use rune_tui::runtime::{CmdKind, Msg, PasteTarget};
-use rune_tui::title::ext_split;
+use rune_tui::runtime::CmdKind;
 
 use rune_core::buffer::Buffer;
 use rune_vfs::{Mem, Vfs};
 
-use rename_common::{
-    active_path, app_with, assert_refused, ctrl, key, plain, rename_to, seeded_vfs, send, sup,
-    type_text,
-};
+use rename_common::{active_path, app_with, ctrl, plain, rename_to, seeded_vfs, send, type_text};
 
 // ── Focus and typing ────────────────────────────────────────────────────
 
@@ -87,382 +86,6 @@ fn up_at_the_top_of_the_editor_focuses_the_title() {
     let mut app = app_with(&mem);
     send(&mut app, plain(KeyCode::Up));
     assert_eq!(app.focus(), Pane::Title);
-}
-
-// ── The extension gate ──────────────────────────────────────────────────
-
-/// The Right-at-end-of-stem gesture unlocks the extension without moving
-/// the cursor — a further motion can then reach into it.
-#[test]
-fn right_at_the_end_of_the_stem_unlocks_the_extension_without_moving_the_cursor() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, ctrl('r'));
-    assert!(
-        !app.title.ext_unlocked(),
-        "seeded with a stem: starts locked"
-    );
-    let cursor_before = app.title.field().cursor().position;
-
-    send(&mut app, plain(KeyCode::Right));
-
-    assert!(app.title.ext_unlocked(), "Right at the split unlocks");
-    assert_eq!(
-        app.title.field().cursor().position,
-        cursor_before,
-        "the gate unlocks without moving the cursor"
-    );
-
-    send(&mut app, plain(KeyCode::End));
-    assert_eq!(
-        app.title.field().cursor().position,
-        app.title.text().len(),
-        "End can now reach past the split, into the unlocked extension"
-    );
-}
-
-/// Locked, `End` stops at the split (never inside the extension), and
-/// `Delete` right there is a no-op — the extension is fenced off, not just
-/// dimmed.
-#[test]
-fn the_extension_is_fenced_off_until_unlocked() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, ctrl('r'));
-    send(&mut app, plain(KeyCode::End));
-    assert_eq!(
-        app.title.field().cursor().position,
-        ext_split(app.title.text()),
-        "End stops at the split while locked"
-    );
-
-    send(&mut app, plain(KeyCode::Delete));
-    assert_eq!(
-        app.title.text(),
-        "a.md",
-        "DeleteRight at the split is a no-op while locked"
-    );
-}
-
-// ── Editing: word motion, selection, undo ───────────────────────────────
-
-/// ⌥→/⌥⇧→ resolve through the same `EDITOR_BINDINGS` table the document
-/// editor uses, windowed to the (locked) stem.
-#[test]
-fn word_motion_and_shift_selection_work_in_the_title() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, ctrl('r'));
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    type_text(&mut app, "two words");
-    assert_eq!(app.title.text(), "two words.md");
-
-    send(&mut app, plain(KeyCode::Home));
-    send(
-        &mut app,
-        key(
-            KeyCode::Right,
-            Mods {
-                alt: true,
-                ..Mods::NONE
-            },
-        ),
-    );
-    assert_eq!(
-        app.title.field().cursor().position,
-        3,
-        "word-right stops at the end of 'two'"
-    );
-
-    send(
-        &mut app,
-        key(
-            KeyCode::Right,
-            Mods {
-                alt: true,
-                shift: true,
-                ..Mods::NONE
-            },
-        ),
-    );
-    assert_eq!(
-        app.title.field().cursor().position,
-        9,
-        "shift-word-right extends to the end of 'words', clamped by the locked window"
-    );
-    assert_eq!(app.title.field().selected_text(), " words");
-}
-
-/// The title's own `⌘Z` undoes typing WITHOUT ever touching the active
-/// document's journal (§12: "the title field is unjournaled").
-#[test]
-fn undo_in_the_title_never_touches_the_document_journal() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let doc_journal_pos_before = app.active_doc().journal.pos();
-
-    send(&mut app, ctrl('r'));
-    type_text(&mut app, "xyz");
-    assert_eq!(app.title.text(), "axyz.md");
-
-    send(&mut app, ctrl('z'));
-
-    assert_eq!(app.title.text(), "axy.md");
-    assert_eq!(
-        app.active_doc().journal.pos(),
-        doc_journal_pos_before,
-        "the title's own undo must never touch the document journal"
-    );
-}
-
-// ── Clipboard: copy, cut, paste ─────────────────────────────────────────
-
-/// Assumption A2: with the gate locked, ⌘C copies the WINDOW (the stem
-/// alone), never the whole name — and never mutates the document buffer,
-/// which is the `PANE-NO-BLEED` property applied to the title's own
-/// clipboard commands.
-#[test]
-fn cmd_c_in_the_title_copies_the_window_not_the_whole_name() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let before = app.active_doc().buffer.content().to_string();
-
-    send(&mut app, ctrl('r'));
-    assert_eq!(app.title.text(), "a.md");
-    assert!(
-        !app.title.ext_unlocked(),
-        "seeded with a stem: starts locked"
-    );
-
-    let effects = send(&mut app, sup('c'));
-
-    assert_eq!(
-        effects.raw,
-        vec![osc52_copy(b"a")],
-        "locked, ⌘C must copy the stem alone, never 'a.md'"
-    );
-    assert_eq!(
-        app.active_doc().buffer.content(),
-        before,
-        "copying the title must never touch the document buffer"
-    );
-}
-
-/// Assumption A2's own regression: ⌘C then ⌘X then ⌘V must round-trip the
-/// name unchanged, which is only possible when copy and cut act on the
-/// IDENTICAL range. If copy took the whole name while cut could only
-/// delete the window, ⌘X would leave the extension behind and pasting the
-/// (whole-name) copy back would double it (`lessrc.md.md`).
-#[test]
-fn cmd_c_then_cmd_x_then_cmd_v_round_trips_the_name_unchanged() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/lessrc.md"), b"body")
-        .expect("seed lessrc.md");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(
-        Buffer::new("body"),
-        Some(PathBuf::from("/root/lessrc.md")),
-        vfs,
-        None,
-    );
-
-    send(&mut app, ctrl('r'));
-    assert_eq!(app.title.text(), "lessrc.md");
-    assert!(!app.title.ext_unlocked());
-    // The oracle: what the window covers right now, independent of
-    // whatever `title::keys` internally does with it.
-    let expected = app
-        .title
-        .text()
-        .get(app.title.window())
-        .expect("a valid window")
-        .to_string();
-    assert_eq!(expected, "lessrc");
-
-    let copy_effects = send(&mut app, sup('c'));
-    assert_eq!(
-        copy_effects.raw,
-        vec![osc52_copy(expected.as_bytes())],
-        "⌘C must copy exactly the window"
-    );
-
-    send(&mut app, sup('x'));
-    assert_eq!(
-        app.title.text(),
-        ".md",
-        "⌘X must delete exactly the range ⌘C just copied"
-    );
-
-    // Simulate the pbpaste reply carrying exactly what was copied (never
-    // actually shelling out to a real pbpaste in a test — the routing this
-    // proves is `PasteTarget::Title`, not the subprocess itself).
-    send(
-        &mut app,
-        Msg::ClipboardRead {
-            text: expected,
-            target: PasteTarget::Title,
-        },
-    );
-
-    assert_eq!(
-        app.title.text(),
-        "lessrc.md",
-        "⌘V must restore exactly what ⌘C/⌘X took, proving A2's ranges agree"
-    );
-}
-
-/// A `ClipboardRead` targeted at the title inserts SANITIZED text into the
-/// field: only the first line survives, and control characters/`/` (an
-/// `INVALID_NAME_CHARS` entry) are dropped — the same restrictions ordinary
-/// typing enforces one `char` at a time, applied at once to a paste.
-#[test]
-fn a_clipboard_read_targeted_at_the_title_inserts_filtered_text_into_the_field() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, ctrl('r'));
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(
-        app.title.text(),
-        ".md",
-        "the stem is cleared, gate still locked"
-    );
-
-    send(
-        &mut app,
-        Msg::ClipboardRead {
-            text: "evil/name\nsecond line".to_string(),
-            target: PasteTarget::Title,
-        },
-    );
-
-    assert_eq!(
-        app.title.text(),
-        "evilname.md",
-        "only the first line survives, and '/' is dropped"
-    );
-}
-
-// ── Refusals ────────────────────────────────────────────────────────────
-
-/// Decision 12: a read-only document's title cannot be focused AT ALL — the
-/// refusal now happens at `^r` itself (`App::focus_title`), before there is
-/// ever anything to type. Focusing the Help document's title would
-/// otherwise hold the user in a field describing a document they can never
-/// rename; removing the illegal state beats guarding it later inside
-/// `rename::begin`.
-#[test]
-fn a_read_only_document_refuses_to_rename() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    app.active_doc_mut().read_only = true;
-    let before = app.active_doc().buffer.content().to_string();
-
-    send(&mut app, ctrl('r'));
-
-    assert_eq!(app.focus(), Pane::Editor, "the title must never gain focus");
-    assert_eq!(
-        app.status_message.as_deref(),
-        Some("this document is read-only")
-    );
-    assert_eq!(app.active_doc().buffer.content(), before);
-}
-
-/// Decision 12: the Help document is read-only, so its title can never gain
-/// focus at all — `^r` refuses with a status instead, and the title row
-/// still reads "Help".
-#[test]
-fn the_help_document_refuses_title_focus() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, plain(KeyCode::F1));
-    assert_eq!(app.active_doc().file_name(), "Help");
-
-    send(&mut app, ctrl('r'));
-
-    assert_eq!(
-        app.focus(),
-        Pane::Editor,
-        "a read-only document's title must never gain focus"
-    );
-    assert_eq!(
-        app.status_message.as_deref(),
-        Some("this document is read-only")
-    );
-    assert_eq!(
-        app.active_doc().file_name(),
-        "Help",
-        "the title row must still read Help"
-    );
-}
-
-/// The no-store `save_cmd` captures `path` in its closure and would
-/// republish at the OLD name, so a rename mid-save is refused.
-#[test]
-fn a_save_in_flight_refuses_to_rename() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    app.active_doc_mut().save_in_flight = true;
-    let before = app.active_doc().buffer.content().to_string();
-
-    let effects = rename_to(&mut app, "b");
-    assert_refused(&app, &effects, &before);
-}
-
-/// A fully empty name is now only reachable with the extension gate
-/// unlocked — locked, the extension always leaves at least a dot behind
-/// (`title::TitleField::window`'s fenced-off tail), and `.md` alone is a
-/// perfectly valid dotfile name, not an empty one.
-#[test]
-fn an_empty_name_refuses_to_rename() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let before = app.active_doc().buffer.content().to_string();
-
-    send(&mut app, ctrl('r'));
-    send(&mut app, plain(KeyCode::Right)); // unlock: cursor sits at the split
-    send(&mut app, ctrl('a'));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(app.title.text(), "");
-    let effects = send(&mut app, plain(KeyCode::Enter));
-    assert_refused(&app, &effects, &before);
-}
-
-/// `/` is filtered at the keystroke, so it can never even reach the name —
-/// the field's own validation is the second line of defence.
-#[test]
-fn a_slash_never_enters_the_field() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-
-    send(&mut app, ctrl('r'));
-    type_text(&mut app, "b/c");
-    assert_eq!(
-        app.title.text(),
-        "abc.md",
-        "'/' must be filtered at the keystroke"
-    );
-}
-
-/// Committing an unchanged name is a plain refocus, never a rename of a
-/// file onto its own path.
-#[test]
-fn an_unchanged_name_refuses_to_rename() {
-    let mem = seeded_vfs();
-    let mut app = app_with(&mem);
-    let before = app.active_doc().buffer.content().to_string();
-
-    send(&mut app, ctrl('r'));
-    let effects = send(&mut app, plain(KeyCode::Enter));
-
-    assert_eq!(app.focus(), Pane::Editor);
-    assert_refused(&app, &effects, &before);
 }
 
 // ── End to end, no store ────────────────────────────────────────────────
@@ -605,51 +228,6 @@ fn a_second_commit_while_one_is_in_flight_is_refused() {
             .count(),
         0,
         "the second commit must enqueue nothing"
-    );
-}
-
-/// `lessrc.md` -> `lessrc`: the whole point of editing the extension
-/// in-line. `.` is word-forming (gotcha 18), so this name is deliberately
-/// NOT `a.md` — a single ⌥← from the end would otherwise jump straight
-/// past the dot instead of exercising Backspace across it.
-#[test]
-fn deleting_the_extension_renames_to_an_extensionless_file() {
-    let mem = Arc::new(Mem::new());
-    mem.save_atomic(Path::new("/root/lessrc.md"), b"content")
-        .expect("seed lessrc.md");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new(
-        Buffer::new("content"),
-        Some(PathBuf::from("/root/lessrc.md")),
-        vfs,
-        None,
-    );
-
-    send(&mut app, ctrl('r'));
-    assert_eq!(app.title.text(), "lessrc.md");
-    send(&mut app, plain(KeyCode::Right)); // unlock the extension
-    send(&mut app, plain(KeyCode::End));
-    send(&mut app, plain(KeyCode::Backspace));
-    send(&mut app, plain(KeyCode::Backspace));
-    send(&mut app, plain(KeyCode::Backspace));
-    assert_eq!(app.title.text(), "lessrc");
-
-    let mut effects = send(&mut app, plain(KeyCode::Enter));
-    let cmd = effects
-        .cmds
-        .drain(..)
-        .find(|c| c.kind() == CmdKind::Rename)
-        .expect("a Rename Cmd");
-    send(&mut app, cmd.run().expect("a reply"));
-
-    assert_eq!(
-        active_path(&app).as_deref(),
-        Some(Path::new("/root/lessrc"))
-    );
-    assert_eq!(mem.read(Path::new("/root/lessrc")).unwrap(), b"content");
-    assert!(
-        mem.read(Path::new("/root/lessrc.md")).is_err(),
-        "the old name must be gone"
     );
 }
 
