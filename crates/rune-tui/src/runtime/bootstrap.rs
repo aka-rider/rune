@@ -48,7 +48,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // re-derives this on every later resize, since the reported pixel
     // dimensions can change even when the Kitty/truecolor decision itself
     // cannot.
-    app.graphics = crate::graphics::detect(&crate::graphics::ProcessEnv, guard.window_size());
+    crate::graphics::redetect(app, &mut guard);
 
     // Plan WP5.S2: the icon tier is decided once, right beside the theme
     // probe above — same "one-shot, at startup, never per frame" reasoning,
