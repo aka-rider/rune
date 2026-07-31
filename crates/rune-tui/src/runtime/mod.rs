@@ -320,6 +320,12 @@ fn apply(
     tx: &mpsc::Sender<Msg>,
     save_handles: &mut Vec<thread::JoinHandle<()>>,
 ) -> io::Result<()> {
+    // Plan WP3.S5: a resize can change the terminal's reported pixel
+    // dimensions even when the Kitty/truecolor decision itself cannot, so
+    // `app.graphics` is re-derived here — the one "apply a message"
+    // chokepoint this module's own doc comment above describes — rather
+    // than only once at `bootstrap` time.
+    let is_resize = matches!(msg, Msg::Resize(_, _));
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
     for raw in effects.raw.drain(..) {
@@ -327,6 +333,9 @@ fn apply(
     }
     for cmd in effects.cmds.drain(..) {
         spawn_cmd(cmd, tx.clone(), save_handles);
+    }
+    if is_resize {
+        app.graphics = crate::graphics::detect(&crate::graphics::ProcessEnv, guard.window_size());
     }
     Ok(())
 }

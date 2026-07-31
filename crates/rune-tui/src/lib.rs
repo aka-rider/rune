@@ -24,6 +24,7 @@ pub mod focus;
 pub mod footer;
 pub mod footer_hints;
 pub mod global;
+pub mod graphics;
 pub mod help;
 pub mod highlight;
 pub mod keymap;

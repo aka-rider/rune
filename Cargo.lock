@@ -2096,6 +2096,7 @@ dependencies = [
  "ratatui-termina",
  "rune-core",
  "rune-db",
+ "rune-image",
  "rune-md",
  "rune-nav",
  "rune-syntax",

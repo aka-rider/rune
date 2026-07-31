@@ -57,8 +57,12 @@ pub fn supports_truecolor(term: &mut impl Terminal) -> bool {
 /// out from [`colorterm_env_claims_truecolor`] so a test can exercise the
 /// decision without mutating the real process environment (`COLORTERM` is
 /// process-global; a test that set/unset it directly would race every
-/// other test in this binary running concurrently).
-fn colorterm_claims_truecolor(value: Option<&str>) -> bool {
+/// other test in this binary running concurrently). `pub(crate)` so
+/// `graphics::caps::detect` can gate Kitty on the same decision instead of
+/// duplicating it — the image id a placeholder cell smuggles through its
+/// foreground colour is itself a 24-bit colour, so both features share one
+/// truecolor question.
+pub(crate) fn colorterm_claims_truecolor(value: Option<&str>) -> bool {
     matches!(value, Some("truecolor") | Some("24bit"))
 }
 
