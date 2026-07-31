@@ -34,6 +34,25 @@ pub struct DisplayRow {
     /// `None` for an undecorated row and for every synthetic table-border
     /// row (a border has no source line to decorate).
     pub decor: Option<SegDecor>,
+    /// Per-row image metadata, the same "carried for the renderer's
+    /// benefit" precedent as `decor` — `None` for every row that isn't part
+    /// of an image (the image producer/`expand_images` pass are what set
+    /// this to `Some`). Keyed off by `rune-tui`'s `build_rows` override to
+    /// build placeholder cells instead of the ordinary syntax-span cell
+    /// path; deliberately terminal-free — no colour, no protocol, no
+    /// `rune-tui` type appears in `ImageRowRef` itself.
+    pub image: Option<ImageRowRef>,
+}
+
+/// Which row of a multi-row image a `DisplayRow` renders, and how many
+/// cells wide the renderer should build for it. `row` is 0-based within the
+/// image (0 is the anchor row); `width` is the image's own reserved column
+/// count, not the pane width — the renderer clips against the pane
+/// separately, the same way an ordinary row's spans already do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageRowRef {
+    pub row: usize,
+    pub width: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -58,6 +77,7 @@ impl DisplaySnapshot {
                 wrap_row: i,
                 synthetic: false,
                 decor: seg.decor.clone(),
+                image: None,
             })
             .collect();
         let wrap_to_display = (0..rows.len()).collect();
@@ -210,6 +230,7 @@ fn synthetic_border(
         wrap_row,
         synthetic: true,
         decor: None,
+        image: None,
     }
 }
 
@@ -266,6 +287,24 @@ mod tests {
 
         assert!(display.rows().first().is_some_and(|r| r.synthetic));
         assert!(display.rows().last().is_some_and(|r| r.synthetic));
+    }
+
+    /// WP4.S3: the new `image` field must default to `None` for every row
+    /// neither the image producer nor `expand_images` touches — both the
+    /// real (non-synthetic) rows `from_wrap` builds and the synthetic
+    /// table-border rows `expand_tables` inserts.
+    #[test]
+    fn display_row_image_field_defaults_to_none_for_non_image_rows() {
+        let content = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |";
+        let blocks = crate::parse::parse(content);
+        let (lines, _syntax) = crate::emit::emit(content, &blocks, 80);
+        let wrap = WrapMap::new(80).sync(content, &lines);
+        let display = DisplaySnapshot::from_wrap(&wrap).expand_tables(&wrap);
+        assert!(display.rows().iter().any(|r| r.synthetic));
+        assert!(display.rows().iter().any(|r| !r.synthetic));
+        for r in display.rows() {
+            assert_eq!(r.image, None, "row should have no image marker");
+        }
     }
 
     /// `display_to_wrap(wrap_to_display(r)) == r` for every wrap row, and
