@@ -11,6 +11,7 @@
 
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{Command, KeyInput};
+use rune_tui::runtime::PasteTarget;
 
 /// Which message the driver just settled, tagged with everything a checker
 /// needs but `Msg` itself can't carry.
@@ -25,7 +26,14 @@ pub enum MsgTag {
     },
     Paste(String),
     Resize(u16, u16),
-    ClipboardRead(String),
+    /// `target` is the `PasteTarget` captured when the driver spawned the
+    /// `Cmd` this reply answers — never recovered from the reply itself,
+    /// since the classification loop that inspects a spawned `Cmd` keeps
+    /// only its `CmdKind`.
+    ClipboardRead {
+        text: String,
+        target: PasteTarget,
+    },
     SaveDone {
         /// The document `Msg::SaveDone` was actually FOR (`save::save_cmd`
         /// closes over it, `dispatch` forwards it untouched) — never

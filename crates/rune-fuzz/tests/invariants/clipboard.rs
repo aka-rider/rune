@@ -3,8 +3,12 @@
 use rune_fuzz::invariant::{clip_osc52, paste_verbatim};
 use rune_fuzz::step::MsgTag;
 use rune_tui::keymap::{Command, KeyCode};
+use rune_tui::pane::Pane;
+use rune_tui::runtime::PasteTarget;
 
-use crate::support::{base_ctx, base_snapshot, collapsed_cursor, key, selection_cursor, sup};
+use crate::support::{
+    base_ctx, base_snapshot, collapsed_cursor, key, other_doc_id, selection_cursor, sup,
+};
 
 // ---------------------------------------------------------------------
 // PASTE-VERBATIM
@@ -35,7 +39,57 @@ fn paste_verbatim_accepts_a_crlf_clipboard_read_verbatim() {
     let prev = base_snapshot("ac");
     let next = base_snapshot("line1\r\nline2ac");
     let mut ctx = base_ctx();
-    ctx.msg = MsgTag::ClipboardRead("line1\r\nline2".to_string());
+    ctx.msg = MsgTag::ClipboardRead {
+        text: "line1\r\nline2".to_string(),
+        target: PasteTarget::Document(prev.active),
+    };
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+/// WP5.S3's own regression: a title-targeted `ClipboardRead` never touches
+/// the active document at all (the title has its own in-memory field, out
+/// of this checker's domain — §12), so a mismatch between `prev.content`
+/// and `next.content` here must NOT trip `PASTE-VERBATIM` — without the
+/// `target == PasteTarget::Document(prev.active)` guard it would, since a
+/// title-targeted paste legitimately leaves the document untouched while
+/// the checker's own `expected` computation still assumes it landed there.
+#[test]
+fn paste_verbatim_ignores_a_clipboard_read_targeted_at_the_title() {
+    let mut prev = base_snapshot("ac");
+    prev.focus = Pane::Title;
+    let next = base_snapshot("ac"); // correctly untouched
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::ClipboardRead {
+        text: "b".to_string(),
+        target: PasteTarget::Title,
+    };
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+/// A `ClipboardRead` captured for some OTHER document (a switch mid-flight,
+/// decision 11) must not be checked against `prev`, which describes the
+/// document that is active NOW, not the one the reply was captured for.
+#[test]
+fn paste_verbatim_ignores_a_clipboard_read_targeted_at_a_different_document() {
+    let prev = base_snapshot("ac");
+    let next = base_snapshot("ac");
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::ClipboardRead {
+        text: "b".to_string(),
+        target: PasteTarget::Document(other_doc_id()),
+    };
+    assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
+}
+
+/// A `MsgTag::Paste` step with focus off the Editor (the title consumed it
+/// instead) must not be checked against the document either.
+#[test]
+fn paste_verbatim_ignores_a_paste_while_the_title_is_focused() {
+    let mut prev = base_snapshot("ac");
+    prev.focus = Pane::Title;
+    let next = base_snapshot("ac");
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Paste("b".to_string());
     assert_eq!(paste_verbatim(&prev, &next, &ctx), None);
 }
 

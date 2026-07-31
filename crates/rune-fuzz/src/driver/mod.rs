@@ -223,16 +223,21 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 }
             }
             Action::ClipboardReply(s) => {
-                let tag = MsgTag::ClipboardRead(s.clone());
-                // WP4 mechanical fix: `PasteTarget::Document(state.app.
-                // active)` matches this driver's pre-existing semantics —
-                // every `ClipboardReply` this crate synthesizes today
-                // lands on whatever document is active. Threading a title-
-                // aware target (and widening `MsgTag` to carry it) is
-                // WP5's job, not this one's.
+                // `PasteTarget::Document(state.app.active)` matches this
+                // driver's pre-existing semantics — every `ClipboardReply`
+                // this crate synthesizes today lands on whatever document
+                // is active (nothing here spawns a title-targeted
+                // `pbpaste_cmd`). `MsgTag` now carries the same target so a
+                // checker can tell a document-bound reply apart from a
+                // title-bound one without reaching into `Msg` itself.
+                let target = PasteTarget::Document(state.app.active);
+                let tag = MsgTag::ClipboardRead {
+                    text: s.clone(),
+                    target,
+                };
                 let msg = Msg::ClipboardRead {
                     text: s.clone(),
-                    target: PasteTarget::Document(state.app.active),
+                    target,
                 };
                 if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;

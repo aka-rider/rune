@@ -8,6 +8,7 @@ use rune_core::buffer::Buffer;
 use rune_tui::commands::nav;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
+use rune_tui::runtime::PasteTarget;
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
@@ -32,13 +33,21 @@ use crate::step::{MsgTag, StepCtx};
 /// correctly inserts nothing, and asserting verbatim insertion anyway
 /// would be asserting a property production never claimed to begin with.
 ///
-/// Active-document-switch-safe: `Msg::Paste`/`Msg::ClipboardRead` insert
-/// into `app.active` and never switch it (module docs above), so
-/// `prev.active == next.active` always holds on the message types this
-/// checker gates on — no explicit gate needed.
+/// Title-targeted-safe: the title field has its own in-memory buffer, out
+/// of this checker's domain entirely (§12 — it is unjournaled and never
+/// reaches the document). A `MsgTag::Paste` step only asserts when
+/// `prev.focus == Pane::Editor` (a title-focused `Paste` never touches
+/// `app.active`), and a `MsgTag::ClipboardRead` step only asserts when its
+/// captured `target` names `prev.active` (a `PasteTarget::Title` reply
+/// inserts into the field, not the document). Both guards are also what
+/// keeps `prev.active == next.active`, since neither guarded path can
+/// switch the active document.
 pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     let text = match &ctx.msg {
-        MsgTag::Paste(t) | MsgTag::ClipboardRead(t) => t,
+        MsgTag::Paste(t) if prev.focus == Pane::Editor => t,
+        MsgTag::ClipboardRead { text, target } if *target == PasteTarget::Document(prev.active) => {
+            text
+        }
         _ => return None,
     };
     if text.is_empty() || prev.read_only {
@@ -105,15 +114,19 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
         return None;
     }
     // `ctx.msg.command` is `keymap::resolve(input)` computed unconditionally
-    // — but `Command` is the EDITOR pane's command set (stage 3 of
-    // `app::handle_key`), so it only actually FIRES when the editor has
-    // focus and no modal is capturing. With focus on the Explorer, the Open
-    // Tabs pane or the title field, that pane consumes ⌘C itself and no
-    // copy happens — §3.3's "a component ignores keys when unfocused". This
-    // is the same scoping `pane_no_bleed` applies, and without it this
-    // checker asserts something false: that ⌘C copies from a pane that
-    // never saw it. (Latent since Explorer/Tabs focus existed; the
-    // Up-at-editor-top-focuses-the-title gesture made it easy to reach.)
+    // against the editor's own binding table — resolving a key never
+    // depends on which pane is focused, only on how it's later routed. With
+    // focus on the Explorer or the Open Tabs pane, that pane consumes ⌘C
+    // itself and no copy happens at all — §3.3's "a component ignores keys
+    // when unfocused". The title is different: it resolves through this
+    // SAME table (decision 3) and DOES copy on ⌘C, but its own name, taken
+    // from the field's window (assumption A2), not from a document cursor's
+    // `nav::selection_end_inclusive` range — a convention this checker does
+    // not model. Either way, without this guard the checker would assert a
+    // payload the focused pane never produced. This is the same scoping
+    // `pane_no_bleed` applies. (Latent since Explorer/Tabs focus existed;
+    // the Up-at-editor-top-focuses-the-title gesture made it easy to
+    // reach.)
     if prev.modal_open || prev.focus != Pane::Editor {
         return None;
     }
