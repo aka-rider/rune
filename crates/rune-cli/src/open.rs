@@ -89,7 +89,12 @@ pub(crate) fn open_first_positional(
         if let Some(image_id) = opened
             && image_id != blank
         {
-            workspace::close_now(&mut app, blank);
+            // A scratch sink: no runtime/terminal exists yet at this point
+            // in the CLI bootstrap (plan WP4.S8), and the blank draft being
+            // closed here is never an image document, so `close_now`'s
+            // image-delete branch (WP5.S7) is a no-op on this path either
+            // way.
+            workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
         }
         return Ok((app, DbBootstrap::default()));
     }

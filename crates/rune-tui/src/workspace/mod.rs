@@ -15,8 +15,7 @@ use rune_core::buffer::{Buffer, BufferError};
 use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
-use crate::app::{App, StatusSource};
-use crate::banner::{self, GuardKind, GuardPrompt, Modal};
+use crate::app::App;
 use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::graphics::{ImageState, ImageStatus};
@@ -337,121 +336,11 @@ pub fn toggle_help(app: &mut App) {
     switch_to(app, id);
 }
 
-/// Requests closing `id` (plan WP5.S3): refuses outright if it's the LAST
-/// remaining document (rune always shows one — the WP1 accessor floor on
-/// `App::active_doc`/`active_doc_mut` depends on `documents` staying
-/// non-empty), closes immediately if `id` is clean, or arms the close-guard
-/// modal if it's dirty. A stale/already-closed `id` is a silent no-op.
-pub fn request_close(app: &mut App, id: DocumentId) {
-    if app.documents.len() <= 1 {
-        app.set_status("can't close the last open document", StatusSource::Other);
-        return;
-    }
-    let Some(doc) = app.doc(id) else { return };
-    if doc.is_dirty() {
-        // An `Error` already up outranks this prompt; the close intent is
-        // then simply not armed (the user presses `^w` again once the
-        // error is dismissed) — nothing waits on this Guard, unlike the
-        // rename machine's.
-        let _ = banner::set_modal(
-            app,
-            Modal::Guard(GuardPrompt {
-                doc: id,
-                kind: GuardKind::DirtyClose,
-            }),
-        );
-    } else {
-        close_now(app, id);
-    }
-}
-
-/// Closes `id` unconditionally — the plan WP5.S3 chokepoint every close
-/// path (clean `request_close`, the Guard's `[D]iscard`, and its `[S]ave`
-/// once the save ack lands) funnels through. Reassigns `active` to a
-/// neighbor FIRST when `id` is the active document — per the WP1 invariant
-/// comment on `App::active_doc`/`active_doc_mut`, `active` must always
-/// reference a live entry, so the reassignment happens before `id` is
-/// removed, never after. Refuses to remove the LAST document (the same
-/// floor `request_close` already enforces, kept here too since `close_now`
-/// is reachable from other callers that don't re-check it themselves).
-/// Sweeps `db_ops` of any entry still pointing at `id` — a stale ack would
-/// already be a correct no-op via `App::doc_mut` returning `None` (see its
-/// docs), but leaving the entry forever would make `db_ops` an unbounded
-/// leak over a long session of open/close cycles. Because each entry is one
-/// `PendingOp` carrying both the routing fact and (for a `Load` op) the
-/// issued-version fact, this single sweep drops both together — there is no
-/// second map that could still be holding a leaked version. Clears `pending_close_on_
-/// save`/`pending_save_confirm` when either still targets `id` (review fix
-/// for the latter — it was left dangling): both are doc-tagged `Option`s
-/// that would otherwise point at a document that no longer exists, e.g. a
-/// stray `SaveConfirmTimeout` generation match resurrecting a confirm gate
-/// for a doc `[D]iscard` just closed.
-pub fn close_now(app: &mut App, id: DocumentId) {
-    if app.documents.len() <= 1 || !app.documents.contains_key(&id) {
-        return;
-    }
-    let mut active_changed = false;
-    if app.active == id
-        && let Some(neighbor) = neighbor_of(app, id)
-    {
-        app.active = neighbor;
-        active_changed = true;
-    }
-    app.documents.remove(&id);
-    app.tabs.order.retain(|&t| t != id);
-    app.db_ops.retain(|_, pending| pending.doc != id);
-    if app.pending_close_on_save == Some(id) {
-        app.pending_close_on_save = None;
-    }
-    if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
-        app.pending_save_confirm = None;
-    }
-    // The rename machine is one more doc-tagged pending slot to sweep
-    // (plan's transition table: "any | close_now(doc) | Idle").
-    crate::rename::forget_document(app, id);
-
-    // `close_now` is the one active-document reseed with no blur in front of
-    // it — reached from an async materialize ack and from the Guard's
-    // `[D]iscard`, neither of which threads an `Effects` here.
-    //
-    // Guarded on `active_changed` ALONE, deliberately. Closing some OTHER
-    // document leaves `app.active` untouched and so cannot disturb a name
-    // being typed. Closing the ACTIVE one must reseed even while the title
-    // holds focus: the field would otherwise go on describing a document
-    // that no longer exists while `app.active` has already moved to its
-    // neighbour, and the next blur resolves the rename subject from
-    // `app.active` — renaming that NEIGHBOUR to the name typed for the
-    // closed document. Losing an in-progress name whose target just
-    // vanished is the right trade; renaming a bystander is not.
-    if active_changed {
-        let name = crate::title::name_for(app.active_doc());
-        app.title.seed(&name);
-    }
-
-    app.tabs.nav.cursor = app
-        .tabs
-        .order
-        .iter()
-        .position(|&t| t == app.active)
-        .unwrap_or(0);
-}
-
-/// The neighbor `close_now` reassigns `active` to when the closed document
-/// WAS active: the next tab in `tabs.order`, else the previous one (plan
-/// WP5.S3). Falls back to any other live document if `id` isn't in
-/// `tabs.order` at all — shouldn't happen (every document has a tab), but
-/// keeps this total rather than leaving `active` dangling.
-fn neighbor_of(app: &App, id: DocumentId) -> Option<DocumentId> {
-    if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
-        if let Some(&next) = app.tabs.order.get(idx + 1) {
-            return Some(next);
-        }
-        if idx > 0 {
-            return app.tabs.order.get(idx - 1).copied();
-        }
-    }
-    app.documents.keys().find(|&&k| k != id).copied()
-}
+// `request_close`/`close_now`/`neighbor_of` moved to `workspace::close`
+// (§1.6 budget, WP5.S7's image-delete-on-close hook) — re-exported below so
+// every existing `workspace::` call site keeps working unchanged.
+mod close;
+pub use close::{close_now, request_close};
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

@@ -6,6 +6,7 @@ use std::io::Cursor;
 pub use image::ImageError;
 
 /// The result of decoding a single still image.
+#[derive(Debug)]
 pub struct Decoded {
     pub image: image::RgbaImage,
     pub width: usize,

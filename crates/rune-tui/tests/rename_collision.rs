@@ -23,7 +23,7 @@ use rune_tui::banner::{self, GuardKind, Modal};
 use rune_tui::keymap::KeyCode;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
-use rune_tui::runtime::CmdKind;
+use rune_tui::runtime::{CmdKind, Effects};
 use rune_tui::{app, footer, workspace};
 
 use rune_vfs::Vfs;
@@ -216,7 +216,7 @@ fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
     send(&mut app, reply);
     assert!(matches!(app.rename, RenameState::Collision { .. }));
 
-    workspace::close_now(&mut app, victim);
+    workspace::close_now(&mut app, victim, &mut Effects::default());
 
     assert_eq!(app.rename, RenameState::Idle);
     assert!(app.modal.is_none());

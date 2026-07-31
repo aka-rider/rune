@@ -22,4 +22,4 @@ pub use placeholder::{PLACEHOLDER, diacritic};
 pub use resize::{fit_box, resize};
 #[cfg(feature = "svg")]
 pub use svg::{SvgError, decode_svg};
-pub use transmit::{encode_delete, encode_delete_all, encode_transmit};
+pub use transmit::{encode_delete, encode_delete_all, encode_transmit, fit_and_encode};

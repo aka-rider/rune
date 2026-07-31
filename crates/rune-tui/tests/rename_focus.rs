@@ -341,7 +341,7 @@ fn closing_a_tab_reseeds_the_title_from_the_new_active_document() {
     let second = app.active;
     assert_ne!(first, second, "test setup: two distinct documents");
 
-    workspace::close_now(&mut app, second);
+    workspace::close_now(&mut app, second, &mut Effects::default());
 
     assert_eq!(app.active, first);
     assert_eq!(
@@ -382,7 +382,7 @@ fn closing_a_background_tab_while_renaming_leaves_the_typed_name_alone() {
 
     // An async close for some OTHER document lands with no blur in front of
     // it (mirrors `materialize_ack::close_if_pending`'s own shape).
-    workspace::close_now(&mut app, background);
+    workspace::close_now(&mut app, background, &mut Effects::default());
 
     assert_eq!(
         app.focus(),
@@ -492,7 +492,7 @@ fn an_async_close_while_renaming_never_retargets_the_rename_at_the_neighbour() {
     type_new_name(&mut app, "zzz");
 
     // The async close lands with no blur in front of it.
-    workspace::close_now(&mut app, victim);
+    workspace::close_now(&mut app, victim, &mut Effects::default());
 
     // Whatever the field still holds, releasing focus must not rename the
     // surviving neighbour to it.

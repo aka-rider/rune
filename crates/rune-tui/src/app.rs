@@ -551,6 +551,11 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         let id = app.active;
         crate::highlight::schedule_highlight(app, id, effects);
     }
+    // Plan WP5.S1: a tab switch may have landed on a `Pending` image
+    // document; `schedule_image_decode` itself guards re-spawning.
+    if app.active != active_before {
+        crate::graphics::schedule_image_decode(app, app.active, effects);
+    }
 }
 
 // `relayout`/`sync_view` moved to `app_view.rs` (§1.6 budget) — both are

@@ -32,6 +32,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             app.frame_width = width;
             app.frame_height = height;
             app.relayout();
+            // Plan WP5.S6: the pane may have just changed width (or the
+            // terminal's reported cell pixel geometry may — see
+            // `refit_on_resize`'s own docs), so a `Live` image document's
+            // fit-to-width footprint can need re-fitting and retransmitting.
+            crate::graphics::refit_on_resize(app, effects);
         }
         Msg::Paste(text) => {
             // Deliberately NOT gated on `app.modal`, unlike the key
@@ -107,6 +112,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
+        Msg::ImageDecoded {
+            doc,
+            generation,
+            result,
+        } => crate::graphics::handle_image_decoded(app, doc, generation, result, effects),
         Msg::Error(e) => crate::banner::report_error(app, e),
         Msg::Quit => {
             app.should_quit = true;

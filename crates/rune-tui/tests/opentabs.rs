@@ -147,7 +147,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
     edit::insert_char(&mut app, second, '!');
     assert!(app.doc(second).unwrap().is_dirty());
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some(), "a dirty close must arm a modal");
 
     let before = app.doc(second).unwrap().buffer.content().to_string();
@@ -176,7 +176,7 @@ fn discard_closes_and_activates_the_neighbor() {
     edit::insert_char(&mut app, second, '!');
     assert_eq!(app.active, second);
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some());
     // A degraded-save confirm gate armed for `second` and left unresolved
     // (review fix: `close_now` must sweep it, not just `pending_close_on_
@@ -210,7 +210,7 @@ fn save_then_close_waits_for_the_save_done_ack() {
     edit::insert_char(&mut app, second, '!');
     assert!(app.doc(second).unwrap().is_dirty());
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some());
 
     let mut effects = Effects::default();
@@ -261,7 +261,7 @@ fn a_failed_save_ack_leaves_the_document_open() {
     let second = open_second(&mut app);
     edit::insert_char(&mut app, second, '!');
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Char('s'))), &mut effects);
     assert_eq!(app.pending_close_on_save, Some(second));
@@ -294,7 +294,7 @@ fn escape_cancels_the_guard() {
     edit::insert_char(&mut app, second, '!');
     let content_before = app.doc(second).unwrap().buffer.content().to_string();
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some());
 
     let mut effects = Effects::default();
@@ -319,7 +319,7 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     let second = open_second(&mut app);
     edit::insert_char(&mut app, second, '!');
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some());
 
     let mut effects = Effects::default();
@@ -338,7 +338,7 @@ fn closing_the_last_document_is_refused() {
     let only = app.active;
     assert_eq!(app.documents.len(), 1);
 
-    workspace::request_close(&mut app, only);
+    workspace::request_close(&mut app, only, &mut Effects::default());
 
     assert!(
         app.modal.is_none(),
@@ -361,7 +361,7 @@ fn a_guard_does_not_replace_an_existing_error_modal() {
     rune_tui::banner::report_error(&mut app, "boom");
     assert!(matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))));
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
 
     assert!(
         matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))),
@@ -382,7 +382,7 @@ fn escape_on_a_guard_does_not_clobber_an_unacknowledged_save_failure() {
     edit::insert_char(&mut app, second, '!');
     app.set_status("save failed: disk full", StatusSource::SaveError);
 
-    workspace::request_close(&mut app, second);
+    workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.modal.is_some(), "a dirty close arms the Guard");
 
     let mut effects = Effects::default();

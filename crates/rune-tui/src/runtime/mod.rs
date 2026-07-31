@@ -167,6 +167,15 @@ pub enum Msg {
         version: u64,
         result: Option<HighlightPayload>,
     },
+    /// An image document's background decode completed (plan WP5.S1),
+    /// routed to `graphics::handle_image_decoded`. `generation` echoes
+    /// `ImageState::in_flight` — `spawn_cmd` has no cancellation, so a
+    /// reply whose generation no longer matches is dropped silently.
+    ImageDecoded {
+        doc: DocumentId,
+        generation: u64,
+        result: Result<rune_image::decode::Decoded, String>,
+    },
     Error(String),
     Quit,
 }
@@ -244,6 +253,10 @@ pub enum CmdKind {
     /// `highlight::first_paint_highlight` — where nothing is on screen yet
     /// to block.
     Highlight,
+    /// `vfs.read` + `rune_image::decode_still` for an image document (plan
+    /// WP5.S1). Off-thread per §5.4: decode is CPU work and must never
+    /// block the main loop.
+    ImageDecode,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -281,6 +294,11 @@ impl Cmd {
 pub struct Effects {
     pub cmds: Vec<Cmd>,
     pub raw: Vec<Vec<u8>>,
+    /// Plan WP5.S6: forces `apply` to clear the terminal's diff buffer —
+    /// ratatui only repaints changed cells, which would leave a stale
+    /// placement on screen after a retransmit whose placeholder cells
+    /// stayed byte-identical (see `graphics::resize_refit`'s own docs).
+    pub force_redraw: bool,
 }
 
 /// Runs the editor until the user quits or the input stream ends. Owns the
@@ -358,6 +376,9 @@ fn apply(
     }
     for cmd in effects.cmds.drain(..) {
         spawn_cmd(cmd, tx.clone(), save_handles);
+    }
+    if effects.force_redraw {
+        guard.force_redraw();
     }
     if is_resize {
         app.graphics = crate::graphics::detect(&crate::graphics::ProcessEnv, guard.window_size());
