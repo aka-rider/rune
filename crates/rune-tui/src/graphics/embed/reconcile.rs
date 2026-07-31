@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use rune_md::element::inline::ImageM;
-use rune_nav::{Destination, Target};
+use rune_nav::Destination;
 use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
@@ -55,9 +55,15 @@ pub(crate) fn sync_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) 
     let content = doc.buffer.content().to_string();
     let mut anchors: HashMap<usize, &ImageM> = HashMap::new();
     rune_md::snapshot::collect_standalone_images(doc.doc.blocks(), &content, &mut anchors);
+    // `HashMap` iteration order is arbitrary, so when the same target
+    // appears on more than one line, which line's `ImageM` survives the
+    // dedupe below must not depend on it — sort by line first so the
+    // earliest line deterministically wins, run over run.
+    let mut by_line: Vec<(usize, &ImageM)> = anchors.into_iter().collect();
+    by_line.sort_by_key(|(line, _)| *line);
     let mut seen = HashSet::new();
     let mut standalone: Vec<ImageM> = Vec::new();
-    for m in anchors.into_values() {
+    for (_, m) in by_line {
         if seen.insert(m.target_text.clone()) {
             standalone.push(m.clone());
         }
@@ -172,37 +178,23 @@ fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effect
     }
 }
 
-/// `ImageM`'s target text as a `rune_nav::Target` — a deliberately narrower
-/// classification than `rune_md::catalogue`'s own `classify_link_url`
-/// (private to that crate): an image target is never a same-document `#`
-/// anchor and never carries one of its own, so this skips that split.
-fn embed_nav_target(m: &ImageM) -> Target {
-    if m.is_wikilink {
-        Target::Name {
-            name: m.target_text.clone(),
-            anchor: None,
-        }
-    } else {
-        Target::Path {
-            path: m.target_text.clone(),
-            anchor: None,
-        }
-    }
-}
-
 /// Resolves an embed's target to an absolute path (plan WP9.S7): decode,
 /// trim, strip a leading `./`, try the document's own directory then the
 /// workspace root — all reused directly from `rune_nav::resolve`
-/// (`navigate::follow`'s own resolver), never reimplemented here. `None`
-/// when nothing on disk answers to the target — the embed is simply not
-/// spawned this pass (plan: "an absolute path resolves only if it exists").
+/// (`navigate::follow`'s own resolver), never reimplemented here. The
+/// `Target` itself comes from `rune_md::catalogue::image_target`, the same
+/// classification a `WikiLink`/`Link` node gets, so an embed and a link
+/// sharing the same raw text can never resolve through different policy.
+/// `None` when nothing on disk answers to the target — the embed is simply
+/// not spawned this pass (plan: "an absolute path resolves only if it
+/// exists").
 fn resolve_embed_path(
     vfs: &dyn Vfs,
     m: &ImageM,
     doc_dir: Option<&Path>,
     root: &Path,
 ) -> Option<PathBuf> {
-    let target = embed_nav_target(m);
+    let target = rune_md::catalogue::image_target(m);
     match rune_nav::resolve(
         vfs,
         &target,
