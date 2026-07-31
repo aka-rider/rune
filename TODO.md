@@ -23,15 +23,17 @@ the ceiling again. A handful remain over it, mostly the residue of the same
 long-running debt:
 
 - [ ] Re-measured against the tree after the title/rename work merged, because
-  both sides of that merge carried stale counts: `rune-tui/tests/rename_bind.rs`
-  (795), `rune-tui/src/app.rs` (550), `rune-md/src/emit/mod.rs` (536),
-  `rune-tui/src/rename.rs` (526), `rune-syntax/src/wrap/mod.rs` (520),
-  `rune-syntax/src/syntax.rs` (505), `rune-tui/src/document.rs` (501).
-  `rename_bind.rs` is the outlier and the only one this work created: the
-  extension-gate package and the clipboard package each appended a themed
-  section to it. It wants splitting along the seams already in the file
-  (focus and typing / refusals / the extension gate / clipboard), the same
-  way an earlier batch split `rename.rs` itself.
+  both sides of that merge carried stale counts: `rune-tui/src/app.rs` (550),
+  `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (526),
+  `rune-syntax/src/wrap/mod.rs` (520), `rune-fuzz/src/generate/palette.rs`
+  (517), `rune-syntax/src/syntax.rs` (505), `rune-tui/src/document.rs` (501).
+  `rune-tui/tests/rename_bind.rs`, previously listed here at 795 lines, is
+  DONE: split (plan WP5) into `rename_bind.rs` (373 — focus/typing, the
+  end-to-end no-store rename, draft naming), `rename_refusals.rs` (136),
+  `rename_gate.rs` (201 — the extension gate plus the field's own
+  word-motion/selection/undo editing), and `rename_clipboard.rs` (152),
+  the same way an earlier batch split `rename.rs` itself; all four pull
+  shared fixtures from `rename_common`.
 
 Two of those grew slightly in an earlier batch and are recorded per the house
 rule: `dispatch.rs` 513 → 527 (the span-cap truncation status branch, since
@@ -41,6 +43,12 @@ regression test, since split into `db_wiring_degraded.rs`/`_hydrate.rs`/
 `_lifecycle.rs`). Both were already over budget beforehand.
 `commands/edit_core.rs` did cross the ceiling when its no-op-filter tests
 landed and was split the same day, so it was never on the list.
+`rune-fuzz/src/generate/palette.rs` crossed it the same way in plan WP5:
+468 → 517 for `TITLE_MOTION_KEYS`, the five-entry palette `cluster_chrome`
+pairs with `CTRL_R_KEY` so a single generated cluster both parks focus on
+the title and exercises one of its own word-motion/selection/undo
+bindings. Not split further in the same batch — pulling one five-entry
+array into its own file over a 17-line overage would be its own drive-by.
 
 The WP2 focus-chokepoint refactor (title-editing plan) grew `app.rs` and
 `rename.rs` further, both already over budget beforehand: `app.rs` 524 → 588
