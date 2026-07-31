@@ -13,13 +13,13 @@
 //! buffer provenance by the cursor/selection/highlight overlays, all of
 //! which already skip `buf_offset < 0`).
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 
 use rune_md::snapshot::ImageRowRef;
 
 use crate::app::App;
 use crate::document::Document;
-use crate::graphics::ImageStatus;
+use crate::graphics::{ImageState, ImageStatus};
 use crate::render::Cell;
 
 /// The fixed number of display rows the image producer reserves while no
@@ -29,15 +29,69 @@ use crate::render::Cell;
 /// count once a decode's fit computation populates `ImageState::cells`.
 pub const INFO_CARD_ROWS: usize = 4;
 
-/// Builds one row of an image document's cells (plan WP4.S10/S11): the info
-/// card's own `image_ref.row`'th line, centered within `width` columns and
-/// padded to fill it. A row index past the card's own content (there are
-/// more reserved rows than card lines, e.g. once WP5 reserves rows for the
-/// image's real pixel height) renders blank.
+/// Builds one row of an image document's cells (plan WP4.S10/S11, extended
+/// WP5.S4): a `Live` image on a Kitty-capable terminal renders real
+/// placeholder cells (`live_row_cells`) carrying the smuggled 24-bit id;
+/// every other case (no Kitty, still `Pending`/`Failed`) falls back to the
+/// info card's own `image_ref.row`'th line, centered within `width`
+/// columns and padded to fill it. A row index past the card's own content
+/// (there are more reserved rows than card lines) renders blank.
 pub fn row_cells(app: &App, doc: &Document, image_ref: ImageRowRef, width: u16) -> Vec<Cell> {
+    if app.graphics.kitty
+        && let Some(image) = &doc.image
+        && image.status == ImageStatus::Live
+    {
+        return live_row_cells(image, image_ref, width as usize);
+    }
     let lines = info_card_lines(app, doc);
     let text = lines.get(image_ref.row).map(String::as_str).unwrap_or("");
     centered_cells(text, width as usize)
+}
+
+/// A `Live` image row's real cells (plan WP5.S4): `image_ref.width` (the
+/// producer's own reserved column count for this row, WP5.S2's `cols` fed
+/// through `DocMachine::set_image_document_dims`) placeholder cells, each
+/// `PLACEHOLDER` + a row diacritic + a column diacritic — the Kitty Unicode
+/// placeholder protocol's own encoding of WHICH cell of the image this is
+/// — padded with blank cells out to `width`. Every cell is `width: 1`
+/// (`blit` resets the continuation columns of a wide cell, which would
+/// wipe the smuggled id) and `buf_offset: -1` (protects it from the
+/// syntax/selection/caret overlays, all of which skip a negative offset).
+/// `style.fg` carries the allocated Kitty image id as a 24-bit RGB colour
+/// — the ONLY way to smuggle an arbitrary colour past `segment_cells`'
+/// theme-lookup-only span styling (see this module's own doc comment).
+fn live_row_cells(image: &ImageState, image_ref: ImageRowRef, width: usize) -> Vec<Cell> {
+    let fg = id_to_rgb(image.id);
+    let cols = image_ref.width.min(width);
+    let mut cells = Vec::with_capacity(width);
+    for col in 0..cols {
+        let mut text = String::with_capacity(rune_image::PLACEHOLDER.len_utf8() * 3);
+        text.push(rune_image::PLACEHOLDER);
+        text.push(rune_image::diacritic(image_ref.row));
+        text.push(rune_image::diacritic(col));
+        cells.push(Cell {
+            text,
+            width: 1,
+            style: Style::default().fg(fg),
+            buf_offset: -1,
+        });
+    }
+    while cells.len() < width {
+        cells.push(blank_cell());
+    }
+    cells
+}
+
+/// The allocated Kitty image id, reinterpreted as a 24-bit RGB colour
+/// (plan WP5.S4) — `rune_image::alloc_id` already masks its result to
+/// `0x00FF_FFFF`, so the top byte is always zero and every id round-trips
+/// through this split without loss.
+fn id_to_rgb(id: u32) -> Color {
+    Color::Rgb(
+        ((id >> 16) & 0xFF) as u8,
+        ((id >> 8) & 0xFF) as u8,
+        (id & 0xFF) as u8,
+    )
 }
 
 /// The info card's own lines, in display order: file name, format,
