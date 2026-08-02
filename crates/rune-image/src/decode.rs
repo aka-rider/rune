@@ -201,6 +201,24 @@ mod tests {
         }
     }
 
+    /// A real webp fixture (lossless, opaque) — the only test anywhere in
+    /// the workspace that decodes actual webp bytes rather than merely
+    /// asserting the string `"webp"` appears in `extensions()`.
+    const WEBP: &[u8] = include_bytes!("../../../golang/testdata/assets/z.webp");
+
+    #[test]
+    fn sniff_format_detects_webp() {
+        assert_eq!(sniff_format(WEBP), Some(Format::WebP));
+    }
+
+    #[test]
+    fn decode_still_reads_real_webp_bytes() {
+        let decoded = decode_still(WEBP).expect("decode webp");
+        assert_eq!((decoded.width, decoded.height), (32, 24));
+        assert_eq!(decoded.format, Format::WebP);
+        assert_eq!(decoded.image.get_pixel(0, 0).0, [10, 200, 30, 255]);
+    }
+
     #[test]
     fn extensions_reflect_whether_the_svg_decoder_is_actually_compiled_in() {
         let exts = extensions();
