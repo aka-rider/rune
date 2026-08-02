@@ -25,7 +25,7 @@ pub use state::{ImageState, ImageStatus};
 // an integration test) has any business spawning a decode or re-fitting a
 // footprint directly.
 pub(crate) use decode_cmd::{handle_image_decoded, reload_image, schedule_image_decode};
-pub(crate) use embed::{handle_embed_decoded, sync_embeds};
+pub(crate) use embed::{handle_embed_decoded, reload_embeds, sync_embeds};
 pub(crate) use resize_refit::refit_on_resize;
 
 /// Re-derives `app.graphics` from the real terminal AND keeps `guard`'s own

@@ -436,7 +436,10 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
         Command::Save => save::trigger_save(app, app.active, effects),
         Command::FollowLink => navigate::follow(app, effects),
-        Command::Reload => crate::graphics::reload_image(app, app.active, effects),
+        Command::Reload => {
+            crate::graphics::reload_image(app, app.active, effects);
+            crate::graphics::reload_embeds(app, app.active, effects);
+        }
         Command::QuitConfirm => {
             // `resolve` only ever returns `QuitConfirm` when `key` is a
             // known quit chord (see `keymap::QuitKey::from_key`, the single

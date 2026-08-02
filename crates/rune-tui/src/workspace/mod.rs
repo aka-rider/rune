@@ -238,7 +238,7 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Do
             decoded: None,
             status: ImageStatus::Pending,
             in_flight: None,
-            pending: false,
+            next_generation: 0,
         });
     }
     switch_to(app, doc_id);

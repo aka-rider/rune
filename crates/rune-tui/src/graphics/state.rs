@@ -28,9 +28,12 @@ pub enum ImageStatus {
 /// a fixed constant while it stays `None`. `in_flight` carries the request
 /// generation a currently-running async decode was spawned against (WP5) —
 /// `spawn_cmd` has no cancellation, so a stale reply must be recognisable
-/// and dropped; `pending` records that this image needs re-decoding once an
-/// in-flight decode finishes (the same `in_flight`/`pending` shape
-/// `HighlightState` already uses).
+/// and dropped; `next_generation` is the last generation this document ever
+/// issued, so a fresh spawn always mints a strictly greater value than any
+/// generation this document has issued before — including one whose reply
+/// never arrived — rather than deriving a value from `in_flight` (which is
+/// `None` again once a decode finishes, and would otherwise let a later
+/// spawn collide with a still-outstanding earlier one).
 pub struct ImageState {
     pub path: std::path::PathBuf,
     pub bytes_len: u64,
@@ -40,5 +43,5 @@ pub struct ImageState {
     pub decoded: Option<rune_image::decode::Decoded>,
     pub status: ImageStatus,
     pub in_flight: Option<u64>,
-    pub pending: bool,
+    pub next_generation: u64,
 }

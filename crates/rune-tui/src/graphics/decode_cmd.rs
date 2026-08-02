@@ -44,36 +44,47 @@ pub(crate) fn schedule_image_decode(app: &mut App, id: DocumentId, effects: &mut
     spawn_decode(app, id, effects);
 }
 
-/// The reload command (plan WP6.S1): re-reads and re-decodes an already-
-/// open image document on demand, through the very same `Vfs`/decode `Cmd`
-/// `schedule_image_decode` uses — the only difference is this function
-/// does NOT check `status`, since reload's whole point is recovering a
-/// `Failed` document or refreshing an already-`Live` one, not just filling
-/// in a `Pending` one. Still refuses to double-spawn: a decode already
-/// `in_flight` for `id` is left alone, the same guard `schedule_image_
-/// decode` applies. A no-op for any non-image document, so the editor
-/// table's `⌘R` binding (gated on the `image` `when` atom for UX purposes
-/// only) can never do anything harmful even if that gate were bypassed.
-/// `ImageState::id` is never reallocated across this call, so the eventual
-/// transmit (`handle_image_decoded`) necessarily retransmits under the
-/// SAME deterministic id the document opened with.
+/// The reload command (plan WP6.S1, made preempting by WP2.S2): re-reads
+/// and re-decodes an already-open image document on demand, through the
+/// very same `Vfs`/decode `Cmd` `schedule_image_decode` uses — the only
+/// difference is this function does NOT check `status`, since reload's
+/// whole point is recovering a `Failed` document or refreshing an already-
+/// `Live` one, not just filling in a `Pending` one. Unlike `schedule_image_
+/// decode`, it does NOT refuse when a decode is already `in_flight`: it
+/// abandons it instead — `spawn_decode` mints a strictly greater generation
+/// than any this document has issued before, so the abandoned reply is
+/// later dropped by `handle_image_decoded`'s own `in_flight != Some(
+/// generation)` guard rather than accepted as if it belonged to the fresh
+/// decode. This is the recovery path for a reply that is ever lost (a
+/// panicked decode thread, a failed channel send): with no timeout or
+/// reaper anywhere in this pipeline, an explicit reload is the only way
+/// out of a wedge, so it must always be able to spawn a new attempt. A
+/// no-op for any non-image document, so the editor table's `⌘R` binding
+/// (gated on the `image` `when` atom for UX purposes only) can never do
+/// anything harmful even if that gate were bypassed. `ImageState::id` is
+/// never reallocated across this call, so the eventual transmit (`handle_
+/// image_decoded`) necessarily retransmits under the SAME deterministic id
+/// the document opened with.
 pub(crate) fn reload_image(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
-    let Some(image) = &doc.image else { return };
-    if image.in_flight.is_some() {
+    if doc.image.is_none() {
         return;
     }
     spawn_decode(app, id, effects);
 }
 
 /// The shared spawn chokepoint both `schedule_image_decode` and `reload_
-/// image` fall through to once their own status/in-flight gate has
-/// already passed: bumps the request generation, snapshots the path and
-/// `Vfs` handle, marks `in_flight`, and pushes the decode `Cmd`.
+/// image` fall through to once their own gate has already passed: mints a
+/// generation strictly greater than any this document has ever issued
+/// (`ImageState::next_generation`, not derived from `in_flight` — WP2.S1:
+/// `in_flight` goes back to `None` once a decode finishes or is abandoned,
+/// so deriving from it would let a later spawn collide with an earlier,
+/// still-outstanding one), snapshots the path and `Vfs` handle, marks
+/// `in_flight`, and pushes the decode `Cmd`.
 fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let Some(image) = &doc.image else { return };
-    let generation = image.in_flight.unwrap_or(0).wrapping_add(1);
+    let generation = image.next_generation.wrapping_add(1);
     let path = image.path.clone();
     let vfs = Arc::clone(&app.vfs);
 
@@ -81,6 +92,7 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(image) = doc.image.as_mut() else {
         return;
     };
+    image.next_generation = generation;
     image.in_flight = Some(generation);
     effects
         .cmds
@@ -425,8 +437,13 @@ mod tests {
         assert!(effects.raw.is_empty());
     }
 
+    /// WP2.S2: reload used to refuse outright while `in_flight.is_some()`,
+    /// which is exactly what let a lost reply wedge a document forever —
+    /// the recovery command refused to run precisely when recovery was
+    /// needed. It must now preempt: spawn a fresh decode anyway, abandoning
+    /// whatever was in flight.
     #[test]
-    fn reload_does_not_double_spawn_while_already_in_flight() {
+    fn reload_preempts_an_in_flight_decode_instead_of_refusing() {
         let (mut app, id) = app_with_live_image(true);
         app.doc_mut(id)
             .expect("doc")
@@ -437,9 +454,80 @@ mod tests {
 
         let mut effects = Effects::default();
         reload_image(&mut app, id, &mut effects);
-        assert!(
-            effects.cmds.is_empty(),
-            "already in flight — reload must not spawn a second Cmd"
+        assert_eq!(
+            effects.cmds.len(),
+            1,
+            "in flight or not, reload must always spawn a fresh decode"
+        );
+    }
+
+    /// WP2.S2: the abandoned decode's eventual reply (stamped with the OLD
+    /// generation) must be dropped without disturbing the document, once
+    /// the fresh decode from a preempting reload has already landed.
+    #[test]
+    fn a_reply_abandoned_by_a_preempting_reload_is_dropped() {
+        let (mut app, id) = app_with_live_image(true);
+        app.doc_mut(id)
+            .expect("doc")
+            .image
+            .as_mut()
+            .unwrap()
+            .in_flight = Some(1);
+
+        let mut effects = Effects::default();
+        reload_image(&mut app, id, &mut effects);
+        let new_generation = app.doc(id).unwrap().image.as_ref().unwrap().in_flight;
+        assert_eq!(
+            new_generation,
+            Some(2),
+            "reload must mint a strictly greater generation than the abandoned one"
+        );
+
+        // The abandoned decode's reply finally lands, still carrying the
+        // OLD generation.
+        let mut stale_effects = Effects::default();
+        handle_image_decoded(&mut app, id, 1, Ok(decode_x_png()), &mut stale_effects);
+        assert!(stale_effects.raw.is_empty(), "stale reply must not act");
+        assert_eq!(
+            app.doc(id).unwrap().image.as_ref().unwrap().in_flight,
+            Some(2),
+            "the stale reply must not clear the fresh decode's in_flight"
+        );
+    }
+
+    /// WP2.S1's "Done when": two successive reloads must never collapse to
+    /// the same generation — the bug this plan fixes was `spawn_decode`
+    /// deriving the generation from `in_flight.unwrap_or(0)`, which is
+    /// always exactly `1` from every caller that has already proven
+    /// `in_flight.is_none()`.
+    #[test]
+    fn two_successive_reloads_produce_different_generations() {
+        let (mut app, id) = app_with_live_image(true);
+
+        let mut first_effects = Effects::default();
+        reload_image(&mut app, id, &mut first_effects);
+        let first_generation = app.doc(id).unwrap().image.as_ref().unwrap().in_flight;
+
+        // Land the first reload's reply before issuing the second reload,
+        // so the second is a genuinely fresh (non-preempting) spawn too.
+        for cmd in first_effects.cmds {
+            if let Some(Msg::ImageDecoded {
+                doc,
+                generation,
+                result,
+            }) = cmd.run()
+            {
+                handle_image_decoded(&mut app, doc, generation, result, &mut Effects::default());
+            }
+        }
+
+        let mut second_effects = Effects::default();
+        reload_image(&mut app, id, &mut second_effects);
+        let second_generation = app.doc(id).unwrap().image.as_ref().unwrap().in_flight;
+
+        assert_ne!(
+            first_generation, second_generation,
+            "each reload must mint a strictly new generation"
         );
     }
 }
