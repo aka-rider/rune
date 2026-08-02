@@ -198,21 +198,28 @@ fn info_card_lines(app: &App, doc: &Document) -> Vec<String> {
 }
 
 /// The reason line: a non-Kitty terminal always shows the same message
-/// regardless of decode status (plan WP4.S10) — there is nothing to show
-/// there even if the decode itself would have succeeded. A Kitty-capable
-/// terminal shows a status line, including `"decoding\u{2026}"` for the
-/// `Pending` state every image document opens in (plan gotcha 9) — nothing
-/// in WP4 ever advances it past `Pending`, since the decode `Cmd` itself is
-/// WP5's.
+/// regardless of decode status — there is nothing to show there even if the
+/// decode itself would have succeeded.
+///
+/// On a Kitty-capable terminal, `Pending` is deliberately split by whether a
+/// decode is actually in flight. `Pending` alone does NOT mean one is
+/// running — it is equally the state of a document whose decode was never
+/// scheduled, or whose reply was lost. Collapsing both into
+/// `"decoding\u{2026}"` is what made a wedged decode indistinguishable from a
+/// slow one: the card read the same forever, with nothing to suggest the
+/// reload key would help.
 fn reason_line(app: &App, doc: &Document) -> String {
     if !app.graphics.kitty {
         return "this terminal does not support inline images".to_string();
     }
-    match doc.image.as_ref().map(|i| &i.status) {
-        Some(ImageStatus::Pending) => "decoding\u{2026}".to_string(),
-        Some(ImageStatus::Live) => String::new(),
-        Some(ImageStatus::Failed(reason)) => format!("could not decode this image: {reason}"),
-        None => "could not decode this image".to_string(),
+    let Some(image) = doc.image.as_ref() else {
+        return "could not decode this image".to_string();
+    };
+    match &image.status {
+        ImageStatus::Pending if image.in_flight.is_some() => "decoding\u{2026}".to_string(),
+        ImageStatus::Pending => "not decoded — press the reload key to retry".to_string(),
+        ImageStatus::Live => String::new(),
+        ImageStatus::Failed(reason) => format!("could not decode this image: {reason}"),
     }
 }
 
@@ -295,19 +302,62 @@ mod tests {
             decoded: None,
             status,
             in_flight: None,
-            pending: false,
+            next_generation: 0,
         });
         app
     }
 
     #[test]
     fn info_card_lines_include_name_dims_and_kitty_reason() {
-        let app = app_with_image_doc(true, ImageStatus::Pending);
+        let mut app = app_with_image_doc(true, ImageStatus::Pending);
+        if let Some(image) = app.active_doc_mut().image.as_mut() {
+            image.in_flight = Some(1);
+        }
         let doc = app.doc(app.active).expect("doc");
         let lines = info_card_lines(&app, doc);
         assert!(lines.iter().any(|l| l == "x.png"));
         assert!(lines.iter().any(|l| l.contains("64x48")));
         assert!(lines.iter().any(|l| l.contains("decoding")));
+    }
+
+    /// `Pending` splits on `in_flight`: a decode actually running reads
+    /// "decoding…", while one that was never scheduled — or whose reply was
+    /// lost — says so and names the way out. Collapsing both into
+    /// "decoding…" is what made a wedged decode look identical to a slow one
+    /// for an entire session.
+    #[test]
+    fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
+        let mut app = app_with_image_doc(true, ImageStatus::Pending);
+
+        let not_scheduled = {
+            let doc = app.doc(app.active).expect("doc");
+            reason_line(&app, doc)
+        };
+        assert!(
+            !not_scheduled.contains("decoding"),
+            "a Pending image with no decode in flight must not claim to be decoding: \
+             {not_scheduled:?}"
+        );
+        assert!(
+            not_scheduled.contains("reload"),
+            "it must name the recovery available to the user: {not_scheduled:?}"
+        );
+
+        if let Some(image) = app.active_doc_mut().image.as_mut() {
+            image.in_flight = Some(7);
+        }
+        let running = {
+            let doc = app.doc(app.active).expect("doc");
+            reason_line(&app, doc)
+        };
+        assert!(
+            running.contains("decoding"),
+            "a genuinely in-flight decode must still read as decoding: {running:?}"
+        );
+        assert_ne!(
+            running, not_scheduled,
+            "the two Pending states must be distinguishable on screen"
+        );
     }
 
     #[test]

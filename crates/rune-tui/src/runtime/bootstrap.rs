@@ -143,6 +143,17 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
         for cmd in effects.cmds.drain(..) {
             super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
         }
+        // The main loop's own drain honours `raw` and `force_redraw`; this
+        // block predates them and would silently swallow either. None of the
+        // three calls above produces them today, so this is a tripwire for
+        // the next one that does — but a silent drop sitting beside a path
+        // that drains is exactly the shape that costs an afternoon later.
+        for raw in effects.raw.drain(..) {
+            guard.write_raw(&raw)?;
+        }
+        if effects.force_redraw {
+            guard.force_redraw();
+        }
     }
 
     app.sync_view();

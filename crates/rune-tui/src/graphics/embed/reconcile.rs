@@ -157,6 +157,39 @@ fn spawn_or_respawn(
     }
 }
 
+/// Reload's embed counterpart (plan WP2.S4): an embed whose decode reply
+/// was ever lost leaves `in_flight` set forever, and `spawn_or_respawn`'s
+/// own retry rule refuses to touch anything already `in_flight` — so
+/// without this, a wedged embed had no recovery path at all, unlike a whole
+/// image document (`reload_image`, WP2.S2). Abandons every currently in-
+/// flight embed for the ACTIVE document (clearing `in_flight` first, so
+/// `schedule_embed_decode`'s own in-flight guard doesn't refuse the
+/// respawn) and immediately respawns each one. The abandoned reply is then
+/// dropped harmlessly by `handle_embed_decoded`'s own generation search: it
+/// looks for the `EmbedState` whose `in_flight` still equals the OLD
+/// generation, and once the respawn below has overwritten it with a new
+/// one, that search simply finds nothing. Called from the same `⌘R`
+/// dispatch that already calls `reload_image` — a no-op for a document with
+/// no embeds at all, or none currently wedged.
+pub(crate) fn reload_embeds(app: &mut App, id: DocumentId, effects: &mut Effects) {
+    let Some(doc) = app.doc(id) else { return };
+    let wedged: Vec<String> = doc
+        .embeds
+        .images
+        .iter()
+        .filter(|(_, s)| s.in_flight.is_some())
+        .map(|(k, _)| k.clone())
+        .collect();
+    for target in &wedged {
+        if let Some(doc) = app.doc_mut(id)
+            && let Some(state) = doc.embeds.images.get_mut(target.as_str())
+        {
+            state.in_flight = None;
+        }
+        schedule_embed_decode(app, id, target, effects);
+    }
+}
+
 fn despawn_gone(app: &mut App, id: DocumentId, present: &HashSet<String>, effects: &mut Effects) {
     let Some(doc) = app.doc_mut(id) else { return };
     let gone: Vec<String> = doc
