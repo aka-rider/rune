@@ -3,6 +3,8 @@
 //! emitter's style stack — there is no `InlineMarks` bitfield here, unlike
 //! Go's flat-span mark model.
 
+use std::collections::{HashMap, HashSet};
+
 use rune_syntax::element::{ByteRange, InheritCtx, RevealSm, RevealState};
 
 /// Plain, unconcealable text — no machine (plan: "Text(TextRun), // {
@@ -251,39 +253,85 @@ impl Inline {
 }
 
 /// Mirrors Go's `isStandaloneImageLine`
-/// (`golang/pkg/editor/display/image_rows.go`): `true` when `inlines` — a
-/// single block's own inline sequence (a paragraph's or a list item's
-/// `Vec<Inline>`) — consists of exactly one Rendered image, optionally
-/// surrounded by whitespace-only text. Unlike Go's flattened span model,
-/// this crate never represents a list marker as an inline at all (it's
+/// (`golang/pkg/editor/display/image_rows.go`), but qualifies per DISPLAY
+/// LINE rather than per paragraph — Go's own doc comment: "Any other
+/// substantive span (including text adjacent to the image, or a Revealed
+/// image) disqualifies the line", and that adjacency check is scoped to the
+/// line, not the block. `inlines` is a single block's own inline sequence (a
+/// paragraph's or a list item's `Vec<Inline>`); this returns every image in
+/// it that sits alone on its own physical line, optionally surrounded by
+/// whitespace-only text ON THAT SAME LINE. A substantive inline elsewhere in
+/// the paragraph — on a different line — no longer disqualifies a
+/// standalone image line the way it used to; only substantive content
+/// sharing the SAME line does. Unlike Go's flattened span model, this crate
+/// never represents a list marker as an inline at all (it's
 /// `ListItemM::marker`, concealed or carried as the row's own `decor` — see
 /// `emit::walk::emit_list_item`), so a list-item image already satisfies
-/// this rule with no separate marker case to special-case. Anything else —
-/// text adjacent to the image, more than one image, a Revealed image under
-/// the caret — disqualifies the line, so a truly-inline image falls back to
-/// its alt text instead of a placeholder.
-pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Option<&'a ImageM> {
-    let mut found: Option<&ImageM> = None;
+/// this rule with no separate marker case to special-case (do not port Go's
+/// `TokenListMarker` branch — it would be dead code here). Anything else on
+/// a line — text adjacent to the image, a second image, a Revealed image
+/// under the caret — disqualifies THAT line, so a truly-inline image falls
+/// back to its alt text instead of a placeholder.
+pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a ImageM> {
+    let mut candidates: HashMap<usize, &'a ImageM> = HashMap::new();
+    let mut disqualified: HashSet<usize> = HashSet::new();
+
     for inl in inlines {
         match inl {
             Inline::Text(t) => {
-                if !text_run_is_whitespace_only(content, t) {
-                    return None;
+                for r in &t.content_lines {
+                    if !range_is_whitespace_only(content, r) {
+                        disqualified.insert(line_of(content, r.start));
+                    }
                 }
             }
-            Inline::Image(m) if found.is_none() && m.sm.state() == RevealState::Rendered => {
-                found = Some(m);
+            Inline::Image(m) => {
+                if m.sm.state() == RevealState::Rendered {
+                    // A second Rendered image already claiming this line
+                    // disqualifies it — two images can't both be "alone".
+                    if candidates.insert(m.line, m).is_some() {
+                        disqualified.insert(m.line);
+                    }
+                } else {
+                    // A Revealed image (caret-collapsed to raw source) is
+                    // substantive on its own line — must still disqualify.
+                    disqualified.insert(m.line);
+                }
             }
-            _ => return None,
+            other => {
+                let range = other.range();
+                let first = line_of(content, range.start);
+                let last = line_of(content, range.end.saturating_sub(1).max(range.start));
+                for l in first..=last {
+                    disqualified.insert(l);
+                }
+            }
         }
     }
-    found
+
+    candidates
+        .into_iter()
+        .filter(|(line, _)| !disqualified.contains(line))
+        .map(|(_, m)| m)
+        .collect()
 }
 
-fn text_run_is_whitespace_only(content: &str, t: &TextRun) -> bool {
-    t.content_lines.iter().all(|r| {
-        content
-            .get(r.start..r.end)
-            .is_some_and(|s| s.chars().all(char::is_whitespace))
-    })
+fn range_is_whitespace_only(content: &str, r: &ByteRange) -> bool {
+    content
+        .get(r.start..r.end)
+        .is_some_and(|s| s.chars().all(char::is_whitespace))
+}
+
+/// 0-indexed physical line containing `offset` — the number of `\n` bytes
+/// in `content[..offset]`, matching `parse::line_starts`'s "a line ends at
+/// `\n`, nothing else" model (the same one `ImageM::line` is derived
+/// from), without needing that module's own `starts` index in scope here.
+fn line_of(content: &str, offset: usize) -> usize {
+    content
+        .as_bytes()
+        .get(..offset.min(content.len()))
+        .unwrap_or(&[])
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
 }

@@ -183,7 +183,7 @@ pub fn collect_standalone_images<'a>(
     for block in blocks {
         match block {
             Block::Paragraph(p) => {
-                if let Some(img) = standalone_image(content, &p.inlines) {
+                for img in standalone_image(content, &p.inlines) {
                     out.insert(img.line, img);
                 }
             }
