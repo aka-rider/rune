@@ -137,10 +137,12 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     // fails for any dirty document with no live `db` binding (the default
     // untitled draft by construction, or an Explorer/CLI-opened document
     // whose hydration never landed) — for those, quitting would discard
-    // work with no journal to recover it from. Raise the same Guard the
-    // ordinary close path (`workspace::request_close`) uses instead of
-    // arming or completing quit; the user resolves it exactly like any
-    // other dirty-close prompt, then presses the quit chord again.
+    // work with no journal to recover it from. Raise a Guard instead of
+    // arming or completing quit. It carries `DirtyQuit`, not `DirtyClose`:
+    // the answer must finish the quit the user asked for (discard exits;
+    // save exits once every started save acks), because a Guard whose
+    // answers only ever CLOSED left a single-document session with no
+    // reachable exit at all.
     if let Some(doc) = unpreserved_dirty_docs(app).into_iter().next() {
         let _ = banner::set_modal(
             app,
