@@ -68,15 +68,19 @@ pub(crate) fn highlight_cmd(doc: DocumentId, version: u64, jobs: Vec<RegionJob>)
 /// needs its offsets refreshed. A job with no work carries its retained
 /// tree's slot forward untouched.
 ///
-/// `None` iff not one region produced anything `[R2]` — a document where
-/// every parse overran must not flash to unstyled.
+/// `None` iff a parse was ATTEMPTED and not one succeeded `[R2]` — a
+/// document where every parse overran must not flash to unstyled. A pass
+/// with nothing to attempt still succeeds: every region's tree was still
+/// valid, and the refreshed maps it carries are exactly the result.
 pub(crate) fn run_regions(jobs: Vec<RegionJob>, budget: Duration) -> Option<HighlightReply> {
     let mut regions = Vec::with_capacity(jobs.len());
+    let mut attempted = false;
     let mut any_parsed = false;
     // One region hitting the span cap truncates the whole reply: the
     // document's colours are incomplete either way, and the flag says so.
     let mut truncated = false;
     for job in jobs {
+        attempted |= job.work.is_some();
         let payload = match job.work {
             None => None,
             Some((RegionLang::Ts(lang), text)) => rune_ts::parse(lang, &text, budget).map(|tree| {
@@ -108,5 +112,5 @@ pub(crate) fn run_regions(jobs: Vec<RegionJob>, budget: Duration) -> Option<High
             payload,
         });
     }
-    any_parsed.then_some(HighlightReply { regions, truncated })
+    (!attempted || any_parsed).then_some(HighlightReply { regions, truncated })
 }

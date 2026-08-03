@@ -203,16 +203,41 @@ fn editing_prose_between_two_fences_invalidates_neither_fence_tree() {
         &mut effects,
     );
 
-    assert!(
-        effects.cmds.is_empty(),
-        "an edit that leaves every fence's text alone must dispatch no \
-         parse at all — both retained trees are still valid"
-    );
+    // The reply is where "nothing was reparsed" is directly observable: a
+    // region whose retained tree was still valid carries no payload at all,
+    // only its refreshed map.
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("a highlight cmd always replies");
+    let Msg::Highlighted { result, .. } = &msg else {
+        panic!("expected a Msg::Highlighted reply, got {msg:?}");
+    };
+    let reply = result
+        .as_ref()
+        .expect("a pass with nothing to parse succeeds");
+    assert_eq!(reply.regions.len(), 2, "both fences are still regions");
+    for (i, region) in reply.regions.iter().enumerate() {
+        assert!(
+            region.payload.is_none(),
+            "fence {i} was reparsed by an edit that never touched its text"
+        );
+    }
+    let mut settled = Effects::default();
+    app::update(&mut app, msg, &mut settled);
+
     assert_eq!(
         app.active_doc().highlight.version,
         app.active_doc().buffer.version(),
         "the regions' maps must still have been refreshed to the new version"
     );
+    assert_eq!(
+        region_tree_source(&app, 0).as_deref(),
+        Some("fn a() {}"),
+        "the first fence must still hold its original parse"
+    );
+    assert_eq!(region_tree_source(&app, 1).as_deref(), Some("fn b() {}"));
 
     // The colours must have MOVED with the text, not stayed at pre-edit
     // offsets: reusing a tree is only correct if the map was refreshed.
@@ -306,10 +331,11 @@ fn fence_tagged_rust_comma_ignore_still_highlights() {
 }
 
 /// An unknown fence tag and an untagged fence each produce zero spans and no
-/// error — neither resolves to a highlighter, so neither becomes a region
-/// and no `Cmd` is scheduled at all.
+/// error — neither resolves to a highlighter, so neither becomes a region.
+/// With no region to describe and none stored, the pass has nothing to say
+/// and no `Cmd` is dispatched at all.
 #[test]
-fn unknown_and_untagged_fences_schedule_nothing() {
+fn unknown_and_untagged_fences_produce_no_region() {
     let content = "```klingon\nQapla'\n```\n\n```\nplain fenced text\n```\n";
     let mut app = app_for(content, "/x/notes.md");
     app.sync_view();
@@ -319,8 +345,10 @@ fn unknown_and_untagged_fences_schedule_nothing() {
 
     assert!(
         effects.cmds.is_empty(),
-        "no fence resolved to a known language, so no highlight cmd should be scheduled"
+        "no fence resolved to a known language and none was stored, so \
+         nothing should be dispatched"
     );
+
     assert!(app.active_doc().highlight.regions.is_empty());
     assert!(all_spans(&app).is_empty());
 }

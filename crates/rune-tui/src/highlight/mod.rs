@@ -301,9 +301,16 @@ pub(crate) fn apply_reply(doc: &mut Document, version: u64, reply: HighlightRepl
 /// it because a highlight is already in flight (the overwhelmingly common
 /// case while typing) was the cost this ordering removes.
 ///
-/// When every region's retained tree is still valid, nothing is dispatched
-/// at all: the refreshed maps are installed synchronously and the document is
-/// current again. That is the case an edit in prose between two fences takes.
+/// A `Cmd` is dispatched even when every region's retained tree is still
+/// valid and there is nothing to parse — the case an edit in prose between
+/// two fences takes. The regions still need their refreshed maps, and this
+/// function deliberately does not install them itself: scheduling runs from
+/// inside the update loop, including from `handle_highlighted` when a
+/// `pending` edit is consumed, so installing here would let a
+/// `Msg::Highlighted` step change what renders without having adopted any
+/// reply. Routing every region write through the reply keeps that state
+/// unreachable rather than merely unlikely; the round trip costs a thread
+/// hop and still parses nothing.
 pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let version = doc.buffer.version();
@@ -318,19 +325,13 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
     }
     let sources = resolve_region_sources(app, id);
     let Some(doc) = app.doc_mut(id) else { return };
-    let (jobs, any_work) = plan_jobs(doc, sources);
-    if !any_work {
-        // Every region is already parsed (or there are none): only the maps
-        // moved. Install them and stamp the version — no parse, no `Cmd`.
-        let truncated = doc.highlight.truncated;
-        let regions = jobs
-            .into_iter()
-            .map(|job| RegionResult {
-                map: job.map,
-                payload: None,
-            })
-            .collect();
-        install_regions(doc, version, HighlightReply { regions, truncated });
+    let jobs = plan_jobs(doc, sources);
+    // A document with no code region and no stored one has nothing to say:
+    // the reply would carry an empty layout over an already-empty one. This
+    // is the whole reason an image document, or any prose-only markdown
+    // document, never dispatches a highlight `Cmd` — no kind check exists or
+    // is needed, because `code_regions` already answered the question.
+    if jobs.is_empty() && doc.highlight.regions.is_empty() {
         return;
     }
     doc.highlight.in_flight = Some(version);
@@ -338,16 +339,15 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
 }
 
 /// Turns resolved sources into one job per region, marking each as needing a
-/// parse or not, and reports whether any job needs one at all.
+/// parse or not.
 ///
 /// A region's retained tree is valid exactly when it was parsed from the
 /// same bytes the region reconstructs to now. Region identity across an edit
 /// is positional — the same index in document order — which is stable for
 /// every edit that doesn't add or remove a region, and is the same identity
 /// `install_regions` inherits channels by.
-fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> (Vec<RegionJob>, bool) {
-    let mut any_work = false;
-    let jobs = sources
+fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
+    sources
         .into_iter()
         .enumerate()
         .map(|(i, source)| {
@@ -363,15 +363,13 @@ fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> (Vec<RegionJob>, boo
                     work: None,
                 }
             } else {
-                any_work = true;
                 RegionJob {
                     map: source.map,
                     work: Some((source.lang, source.text)),
                 }
             }
         })
-        .collect();
-    (jobs, any_work)
+        .collect()
 }
 
 /// The one sanctioned synchronous parse on the main thread — bounded by
