@@ -202,6 +202,7 @@ pub(super) fn step_and_check(
         pending_save_bytes,
         delivered_save_bytes,
         saves_delivered_ok: state.saves_delivered_ok,
+        active_is_seed_doc: state.app.active == state.seed_doc,
     };
 
     let mut violation = invariant::check_all(prev, &next, &ctx);

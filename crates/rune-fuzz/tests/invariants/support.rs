@@ -153,6 +153,7 @@ pub(crate) fn base_ctx() -> StepCtx {
         pending_save_bytes: None,
         delivered_save_bytes: None,
         saves_delivered_ok: 0,
+        active_is_seed_doc: true,
     }
 }
 
