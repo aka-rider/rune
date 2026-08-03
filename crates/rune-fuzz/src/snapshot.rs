@@ -91,21 +91,25 @@ pub struct Snapshot {
     /// `TABLE-SYNTHETIC-DECORATIVE` the table/border signal `cells` alone
     /// cannot express.
     pub row_meta: Vec<RowMeta>,
-    /// `doc.highlight.spans`, as plain `(start, end)` byte ranges — the
-    /// `ScopeId` tag isn't needed by any checker here, so it's dropped
-    /// rather than carried (plan WP7.S7). `HL-CLAMPED`/`HL-STALE-DROP` key
-    /// off this.
+    /// `highlight::visible_spans` over the WHOLE document, as plain
+    /// `(start, end)` byte ranges — the `ScopeId` tag isn't needed by any
+    /// checker here, so it's dropped rather than carried.
+    ///
+    /// Deliberately the same function the renderer calls, not the stored
+    /// state behind it. Once every code region is tree-backed, the stored
+    /// span channel is empty for most documents, and a projection reading it
+    /// would leave `HL-CLAMPED`/`HL-STALE-DROP` passing while testing
+    /// nothing. Projecting the query instead keeps both invariants pointed
+    /// at exactly what a user would see, and extends them to the whole-file
+    /// path they never reached.
     pub highlight_spans: Vec<(usize, usize)>,
-    /// `doc.highlight.version` — the buffer version `highlight_spans`
-    /// describes. Production's own `schedule_highlight` (`highlight.rs`)
-    /// uses `doc.highlight.version == doc.buffer.version()` as its "spans
-    /// still describe the live buffer" test; `HL-CLAMPED` uses the SAME
-    /// comparison against `Snapshot.version` — a stale (mismatched) tag
-    /// means the stored spans are KNOWN to describe a past version and are
-    /// deliberately left in place (WP5.S4's `[R2]`, "stale colours, never
-    /// no colours"), safely clamped only at the render layer's window
-    /// boundary (`render::overlay::apply_highlight_spans`), not by
-    /// `HighlightState` itself.
+    /// `doc.highlight.version` — the buffer version the region state
+    /// `highlight_spans` was queried from describes. Production's own
+    /// `schedule_highlight` compares it against `doc.buffer.version()` as
+    /// its "regions still describe the live buffer" test. No checker keys
+    /// off it any more, now that the clamp lives in the query and staleness
+    /// is therefore never an excuse for a bad span; it is carried so a
+    /// failure report can still show whether the regions were current.
     pub highlight_version: u64,
     /// `layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height),
     /// app)` — every rect the frame is built from, captured once per step so
@@ -201,12 +205,15 @@ impl Snapshot {
         }
 
         let doc = app.active_doc();
-        let highlight_spans = doc
-            .highlight
-            .spans
-            .iter()
-            .map(|(range, _scope)| (range.start, range.end))
-            .collect();
+        // The whole document, not a viewport window: a checker must see
+        // every span the renderer could paint at any scroll position, and
+        // `visible_spans` clamps and sorts identically whatever window it is
+        // handed.
+        let highlight_spans =
+            rune_tui::highlight::visible_spans(doc, 0..doc.buffer.content().len())
+                .into_iter()
+                .map(|(range, _scope)| (range.start, range.end))
+                .collect();
         let highlight_version = doc.highlight.version;
         let geometry = layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app);
         Snapshot {
