@@ -76,13 +76,14 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
     );
 }
 
-/// Plan WP6.S5, bullet 2: rendering a fenced markdown document leaves
-/// every cell inside the fence carrying a non-`None` background — the
-/// `markup.raw.block` fence background survives the highlight overlay's
-/// `patch` (plan decision 2), since `code_scope_style` sets only `fg` and
-/// never `.bg(..)` (WP1.S4).
+/// An overlay must PATCH a cell's style, never replace it: rendering a
+/// fenced markdown document leaves every cell inside the fence still
+/// carrying the code region's background rectangle after the highlight
+/// overlay has painted token foregrounds over it. `code_scope_style` sets
+/// only `fg` and never `.bg(..)`, and `Theme::overlay_scope_style` strips
+/// any `bg` a scope might carry, which together are what make that true.
 #[test]
-fn fence_background_survives_the_highlight_overlay_patch() {
+fn code_background_survives_the_highlight_overlay_patch() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
     let mut app = app_for(content, "/x/notes.md");
     app.sync_view();
@@ -103,17 +104,17 @@ fn fence_background_survives_the_highlight_overlay_patch() {
 
     app.sync_view();
     let buf = testgrid::draw(&app, 40, 12);
-    let raw_block_bg = app
-        .theme
-        .scope_style(
-            scope_table()
-                .resolve("markup.raw.block")
-                .expect("known scope"),
-        )
-        .bg;
-    assert!(
-        raw_block_bg.is_some(),
-        "the fence background style itself must carry a bg"
+    let code_bg = Some(app.theme.chrome.code_bg);
+    assert_eq!(
+        app.theme
+            .scope_style(
+                scope_table()
+                    .resolve("markup.raw.block")
+                    .expect("known scope"),
+            )
+            .bg,
+        None,
+        "the code background is a region rectangle, never a span bg"
     );
 
     // Scoped to the fence TEXT's own columns, not the whole row: `geo.
@@ -143,8 +144,8 @@ fn fence_background_survives_the_highlight_overlay_patch() {
                 let cell = buf.cell((x, y)).expect("just matched above");
                 assert_eq!(
                     cell.style().bg,
-                    raw_block_bg,
-                    "fence content cell at column {x} lost its markup.raw.block background"
+                    code_bg,
+                    "fence content cell at column {x} lost the code region's background"
                 );
             }
         }

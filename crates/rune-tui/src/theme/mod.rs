@@ -61,9 +61,8 @@ pub struct ChromeStyles {
     /// `selection_bg` because it is a region colour, not a token scope: a
     /// span's `bg` can only colour cells that exist, so it leaves a code
     /// block's blank lines and the ragged space past each short line
-    /// uncovered. Not consumed yet — the render pass that paints it
-    /// arrives with the removal of `markup.raw.block`'s own span `bg`, so
-    /// the tree is never in a state with no code background at all.
+    /// uncovered. The render module's code-background pass is its one
+    /// consumer.
     pub code_bg: Color,
 }
 
@@ -147,7 +146,8 @@ impl Theme {
     /// merged onto the render buffer field-wise (`Style::patch` only
     /// touches fields the patching style actually sets), so a scope that
     /// carries a background here would silently overwrite whatever the base
-    /// cell had — a markdown-fence body's own background, for one. Every
+    /// cell had — the code-region background rectangle painted underneath
+    /// it, or an inline code span's own `markup.raw.inline` chip. Every
     /// overlay consumer routes through this instead of `scope_style`.
     pub fn overlay_scope_style(&self, id: ScopeId) -> Style {
         Style {
@@ -186,7 +186,12 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         // and heading 5's teal. The `surface1` chip is what makes a span
         // legible mid-prose and stays.
         "markup.raw.inline" => base.fg(c(p.sapphire)).bg(c(p.surface1)),
-        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.surface0)),
+        // Foreground only. A code block's background is a REGION colour
+        // (`ChromeStyles::code_bg`), painted as a rectangle by its own
+        // render pass: a span's `bg` can only reach cells that exist, so it
+        // left a block's blank lines bare and stopped at each short line's
+        // last character.
+        "markup.raw.block" => base.fg(c(p.text)),
         "markup.link" => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         "markup.quote.marker" => base.fg(c(p.overlay0)),
@@ -216,8 +221,8 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
 /// [`rune_syntax::scope::CODE_SCOPES`]'s canonical scope -> `Style` mapping
 /// (Catppuccin Mocha), for tokens a tree-sitter producer tags. Sets only
 /// `fg` and `Modifier` — never `bg` — because a later render pass
-/// `Style::patch`es this onto a cell that may already carry a
-/// `markup.raw.block` background, and a `bg` here would clobber it. Every
+/// `Style::patch`es this onto a cell that already carries the code region's
+/// own background rectangle, and a `bg` here would clobber it. Every
 /// colour goes through `c(..)` so the quantized (256-colour) construction
 /// path never surfaces a raw `Color::Rgb`.
 fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
@@ -339,10 +344,12 @@ mod tests {
 
     #[test]
     fn code_scopes_never_carry_a_background() {
-        // decision 2: a later render pass `Style::patch`es a code-token
-        // style onto a cell that may already carry a `markup.raw.block`
-        // background — `code_scope_style` must never set `bg`, or it would
-        // clobber that background instead of layering over it.
+        // A later render pass `Style::patch`es a code-token style onto a
+        // cell that already carries a background: the code region's own
+        // rectangle behind every code row, and `markup.raw.inline`'s
+        // `surface1` chip wherever a code token is painted over an inline
+        // span. `code_scope_style` must never set `bg`, or it would clobber
+        // that background instead of layering over it.
         let theme = Theme::catppuccin_mocha(false);
         let table = scope_table();
         for name in CODE_SCOPES {
