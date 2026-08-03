@@ -74,7 +74,12 @@ fn control_placeholder(ch: char) -> char {
 /// longer line up with the column `visual_col` computes for the same
 /// content, and `place_caret` would land the caret on the wrong cell (e.g.
 /// after "abc" instead of on "a" for `"\tabc"` if tabs were treated as
-/// width 1 here but width-to-next-4-stop there).
+/// width 1 here but width-to-next-4-stop there). `pub(crate)` (not private)
+/// because `render::image`'s `centered_cells` is a second caller: it walks
+/// arbitrary user text (a document's file name, an inline embed's link
+/// target) that is just as capable of containing a raw control byte as any
+/// buffer content is, and needs the same `control_placeholder` substitution
+/// this function already performs rather than re-implementing it.
 ///
 /// Operates on ONE GRAPHEME CLUSTER at a time (`unicode_segmentation::
 /// graphemes(text, true)`, called by `segment_cells` below), not one `char`
@@ -120,7 +125,7 @@ fn control_placeholder(ch: char) -> char {
 /// apply to a genuine multi-codepoint cluster (grapheme segmentation never
 /// joins a control char to a neighboring one), so both are single-char
 /// fast paths ahead of the generic (single- or multi-codepoint) case.
-fn push_grapheme_cells(
+pub(crate) fn push_grapheme_cells(
     cells: &mut Vec<Cell>,
     visual_col: &mut usize,
     grapheme: &str,
