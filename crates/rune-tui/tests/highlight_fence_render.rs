@@ -1,8 +1,8 @@
-//! Split off `highlight_fence.rs` (§1.6): the render-side fence case —
-//! a markdown fence's own background must survive the overlay patch while
-//! inline markdown ranges inside it still carry their own scopes' styles.
-//! Kept apart from the span-production cases because this one asserts on
-//! rendered CELLS rather than on stored spans.
+//! Split off `highlight_fence.rs` (§1.6): the render-side fence case — the
+//! code-region background rectangle must survive the overlay patch while
+//! inline markdown ranges inside the fence still carry their own scopes'
+//! styles. Kept apart from the span-production cases because this one
+//! asserts on rendered CELLS rather than on stored spans.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -27,7 +27,7 @@ use rune_tui::testgrid;
 /// multi-byte UTF-8 glyph occupies one terminal CELL, so a byte-offset
 /// search and a column index silently diverge the moment one precedes the
 /// match.
-fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Style> {
+fn find_needle(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<(u16, u16)> {
     let chars: Vec<char> = needle.chars().collect();
     for y in 0..h {
         for x0 in 0..w {
@@ -37,12 +37,17 @@ fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Sty
                     .is_some_and(|cell| cell.symbol() == nc.to_string())
             });
             if matched {
-                let cell = buf.cell((x0, y))?;
-                return Some(cell.style());
+                return Some((x0, y));
             }
         }
     }
     None
+}
+
+/// [`find_needle`]'s first cell's style.
+fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Style> {
+    let (x, y) = find_needle(buf, w, h, needle)?;
+    buf.cell((x, y)).map(|cell| cell.style())
 }
 
 /// Plan WP6.S5: a ```` ```markdown ```` fence (FOUR backticks, so its own
@@ -53,13 +58,18 @@ fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Sty
 /// contents render with their raw markdown markers visible (`# `, `**`,
 /// `` ` ``, `[]()`), matching what a real revealed line would show. The
 /// heading/bold/code/link ranges must carry their own markdown scopes'
-/// styles OVER the fence's `markup.raw.block` background (WP1.S4's overlay
-/// bg-strip is what lets that background survive the overlay patch), and
-/// the nested three-backtick fence's own body must keep that SAME
-/// background untouched (its lines resolve to `markup.raw.block` too, so
-/// the overlay adds no bg change there either).
+/// styles OVER the code region's background rectangle — the overlay
+/// bg-strip (`Theme::overlay_scope_style`) is what lets that background
+/// survive the overlay patch — and the nested three-backtick fence's own
+/// body must keep that SAME background untouched, since it belongs to the
+/// very same region.
+///
+/// The background is `Theme::chrome.code_bg` painted as a rectangle by the
+/// render pass, not a `bg` on `markup.raw.block`: that is why the blank
+/// lines and the short lines of this fixture — which a span background
+/// could never reach at all — are asserted here too.
 #[test]
-fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
+fn markdown_fence_highlights_inline_markdown_over_the_code_background() {
     let content = concat!(
         "Intro paragraph.\n",
         "\n",
@@ -113,17 +123,17 @@ fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
     let link_style = app
         .theme
         .scope_style(scope_table().resolve("markup.link").expect("known scope"));
-    let fence_bg = app
-        .theme
-        .scope_style(
-            scope_table()
-                .resolve("markup.raw.block")
-                .expect("known scope"),
-        )
-        .bg;
-    assert!(
-        fence_bg.is_some(),
-        "the fence background style itself must carry a bg"
+    let code_bg = Some(app.theme.chrome.code_bg);
+    assert_eq!(
+        app.theme
+            .scope_style(
+                scope_table()
+                    .resolve("markup.raw.block")
+                    .expect("known scope"),
+            )
+            .bg,
+        None,
+        "the code background is a region rectangle, never a span bg"
     );
 
     let title = find_needle_style(&buf, 60, 20, "Title").expect("heading text must be on screen");
@@ -132,8 +142,8 @@ fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
         "heading text inside the markdown fence must carry the heading fg"
     );
     assert_eq!(
-        title.bg, fence_bg,
-        "heading text must still sit on the fence's own background"
+        title.bg, code_bg,
+        "heading text must still sit on the code region's background"
     );
 
     let bold = find_needle_style(&buf, 60, 20, "bold").expect("bold text must be on screen");
@@ -142,8 +152,8 @@ fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
         "bold text inside the markdown fence must carry the BOLD modifier"
     );
     assert_eq!(
-        bold.bg, fence_bg,
-        "bold text must still sit on the fence's own background"
+        bold.bg, code_bg,
+        "bold text must still sit on the code region's background"
     );
 
     let code =
@@ -166,7 +176,23 @@ fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
     let inner_fence_body =
         find_needle_style(&buf, 60, 20, "fn main").expect("nested fence body must be on screen");
     assert_eq!(
-        inner_fence_body.bg, fence_bg,
-        "the nested three-backtick fence's own body must keep the outer fence background"
+        inner_fence_body.bg, code_bg,
+        "the nested three-backtick fence's own body must keep the region background"
+    );
+
+    // What the span background could never reach: the column just past the
+    // heading's own last character, and the blank row underneath it. Both
+    // are inside the region's rectangle, so both must be painted.
+    let (title_x, title_y) = find_needle(&buf, 60, 20, "Title").expect("heading text on screen");
+    let past_eol = title_x + u16::try_from("Title".len()).unwrap_or(u16::MAX);
+    assert_eq!(
+        buf.cell((past_eol, title_y)).map(|c| c.style().bg),
+        Some(code_bg),
+        "the ragged space past a short code line must still be painted"
+    );
+    assert_eq!(
+        buf.cell((title_x, title_y + 1)).map(|c| c.style().bg),
+        Some(code_bg),
+        "a blank line inside the block must be painted"
     );
 }

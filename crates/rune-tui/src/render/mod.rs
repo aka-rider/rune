@@ -8,13 +8,15 @@
 //!
 //! Split for the §1.6 budget: [`cell`] holds the `Cell` type and the
 //! buffer-content -> `Cell` walk (`segment_cells`/`segment_geometry`),
-//! [`blit`] holds the terminal-buffer write, and [`overlay`] holds the
+//! [`blit`] holds the terminal-buffer write, [`code_bg`] holds the
+//! code-region background rectangle, and [`overlay`] holds the
 //! cursor/selection/highlight overlays `build_rows` below applies — all
 //! re-exported here so `render::Cell`/`render::segment_cells`/`render::blit`
 //! stay the paths every other module already calls through.
 
 mod blit;
 mod cell;
+mod code_bg;
 pub(crate) mod decor;
 pub mod image;
 mod overlay;
@@ -72,6 +74,21 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
             cells
         })
         .collect();
+
+    // A code region's background is a RECTANGLE, painted before any token
+    // colour so a foreground lands on top of it rather than being
+    // overwritten by it. It is deliberately driven off `code_regions` (the
+    // one definition of code, shared with the highlight scheduler) and the
+    // display snapshot alone — never `doc.highlight` — so no highlight
+    // reply can reflow a row and two message-free renders agree.
+    code_bg::paint_code_background(
+        &mut rows,
+        view,
+        viewport.scroll_row,
+        viewport.width,
+        &doc.doc.code_regions(&doc.buffer),
+        app.theme.chrome.code_bg,
+    );
 
     // Plan WP5.S5: the tree-sitter overlay paints token colours BEFORE the
     // cursor overlays below, so a selection background or the caret's

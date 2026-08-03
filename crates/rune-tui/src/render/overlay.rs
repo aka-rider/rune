@@ -1,6 +1,7 @@
 //! Cursor/selection overlays, split out of `render` (§1.6 budget):
 //! `build_rows` calls `apply_highlight_spans` after collecting a row's plain
-//! `segment_cells`, then `apply_cursor_overlays`, patching in the selection
+//! `segment_cells` and painting the code-region background rectangle
+//! underneath them, then `apply_cursor_overlays`, patching in the selection
 //! background and the caret's reverse-video AFTER the token colours — so a
 //! selection or the caret always wins over a highlight, exactly as it did
 //! when the cursor overlays alone lived in `render` itself.
@@ -43,9 +44,9 @@ use super::Cell;
 ///    assignment — decision 2) each real cell whose byte fell in the
 ///    window and painted `Some`, through `Theme::overlay_scope_style`
 ///    rather than `Theme::scope_style` — that variant always strips `bg`,
-///    so a fence's own background survives underneath a token's foreground
-///    colour regardless of whether the overlaid scope would otherwise
-///    carry one.
+///    so the code-region background rectangle painted before this pass
+///    survives underneath a token's foreground colour regardless of
+///    whether the overlaid scope would otherwise carry one.
 ///
 /// Every index into `window` goes through `.get`/`.get_mut` (`indexing_
 /// slicing` is a hard `deny` under `make lint`), never `[]`.
