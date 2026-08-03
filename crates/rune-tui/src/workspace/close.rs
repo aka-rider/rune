@@ -2,10 +2,58 @@
 //! `workspace` per §1.6; WP5.S7 adds the image-delete-on-close hook, which
 //! needed an `Effects` sink `close_now` didn't carry before).
 
+use rune_core::buffer::Buffer;
+
 use crate::app::{App, StatusSource};
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
 use crate::runtime::Effects;
+
+/// Mints a fresh untitled document: an empty buffer, opened through
+/// [`App::open_document`], with the next unused "Untitled N" display name
+/// (Go's `nextUntitledName`, `workspace_nav.go` — the lowest N with no
+/// currently-open tab already named that), made the active document (title
+/// and tab cursor reseeded via `workspace::switch_to`). Port of Go's
+/// `CreateUntitled` (`workspace_nav.go`).
+///
+/// This is the minimal stand-in for the "bug-quit-guard" plan's WP0 (a
+/// parallel work package, out of this WP's own scope): WP0 owns wiring this
+/// into `request_close`/`close_now`'s last-document-close path and the
+/// async, in-session `Store::create_scratch` registration (tracked through
+/// `App::db_ops` like every other in-flight write). Written under the exact
+/// name/signature the plan specifies so the two converge regardless of
+/// which lands first — it does not itself touch `db`/`db_ops` (a running
+/// document's recovery-store binding is WP0's own chokepoint to build); WP3
+/// (the untitled draft's own recovery backing, `rune-cli::db_bootstrap`)
+/// binds recovered/freshly-minted scratch documents at LAUNCH time, before
+/// any `App` exists to call this.
+pub fn new_untitled_document(app: &mut App) -> DocumentId {
+    let id = app.open_document(Buffer::new(""));
+    let name = next_untitled_name(app);
+    if let Some(doc) = app.doc_mut(id) {
+        doc.display_name = Some(name);
+    }
+    crate::workspace::switch_to(app, id);
+    id
+}
+
+/// The lowest-numbered "Untitled N" not already the display name of some
+/// currently-open document — Go's `nextUntitledName`. Reused once the
+/// document holding it closes, exactly like the Go source: this only ever
+/// scans documents open right now, not history. `pub`, not private:
+/// `rune-cli`'s own bootstrap (`db_bootstrap`'s recovered-scratch restore,
+/// plan WP3) names each recovered-but-not-yet-active draft's tab through
+/// this same chokepoint rather than re-deriving the numbering scheme.
+pub fn next_untitled_name(app: &App) -> String {
+    let mut n = 1u32;
+    loop {
+        let name = format!("Untitled {n}");
+        if !app.documents.values().any(|d| d.file_name() == name) {
+            return name;
+        }
+        n += 1;
+    }
+}
 
 /// Requests closing `id` (plan WP5.S3): refuses outright if it's the LAST
 /// remaining document (rune always shows one — the WP1 accessor floor on

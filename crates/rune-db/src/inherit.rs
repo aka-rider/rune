@@ -33,7 +33,12 @@ pub(crate) fn most_recent_session_for_doc(
     .map_err(Error::from)
 }
 
-fn is_session_alive(
+/// Whether `session_id`'s recorded process is still alive, per
+/// `liveness_check`. `false` (not an error) when the `sessions` row itself is
+/// gone. Shared by [`find_inheritable_draft`] and `scratch::reconstruct_scratch`
+/// (the untitled-document counterpart to this module's disk-backed
+/// inheritance) so both read the exact same liveness predicate.
+pub(crate) fn is_session_alive(
     tx: &Transaction<'_>,
     liveness_check: &dyn Fn(i64, &str) -> bool,
     session_id: i64,
