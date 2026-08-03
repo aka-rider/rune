@@ -125,7 +125,14 @@ fn doctor() -> ExitCode {
                 DOCTOR_POLL_ITERATIONS / 10
             );
             for i in 0..DOCTOR_POLL_ITERATIONS {
-                println!("  [{i}] space down: {}", keystate::raw_key_state_now());
+                // `None` cannot occur under `SessionPresent`, but is
+                // reported rather than unwrapped: the session could only
+                // vanish mid-loop, and that is itself the finding.
+                let reading = match keystate::raw_key_state_now() {
+                    Some(down) => down.to_string(),
+                    None => "window-server session vanished".to_string(),
+                };
+                println!("  [{i}] space down: {reading}");
                 // Paces the printed series for a human to read; it does not
                 // order or gate any program event (`CLAUDE.md`) — the
                 // iteration count above is the actual bound.

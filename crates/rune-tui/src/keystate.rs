@@ -211,12 +211,19 @@ fn block_hazard_smoke_test() -> bool {
 /// (`rune-cli::main`) to print a rapidly-polled series so an operator can
 /// hold the spacebar and watch it flip; every other caller in this process
 /// goes through `leader_available`'s cached answer or `HidSpaceProbe`, never
-/// this. Calling it with no window-server session blocks (see the module
-/// docs) — callers must confirm `diagnose() == LeaderDiagnosis::
-/// SessionPresent` first, exactly as `leader_available` short-circuits on
-/// `window_server_session_exists`.
-pub fn raw_key_state_now() -> bool {
-    unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE) }
+/// this.
+///
+/// `None` means no window-server session, and is why this returns an
+/// `Option` rather than a `bool`: the raw query BLOCKS (~45s observed)
+/// without a session, so the short-circuit happens here instead of being
+/// asked of every caller. A caller that forgot would hang the process — the
+/// one hazard this whole module exists to prevent, so it must not be
+/// reachable by failing to read a doc comment.
+pub fn raw_key_state_now() -> Option<bool> {
+    if !window_server_session_exists() {
+        return None;
+    }
+    Some(unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE) })
 }
 
 #[cfg(test)]
