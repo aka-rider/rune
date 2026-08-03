@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 
 use crate::element::inline::EmphasisKind;
 use rune_syntax::ScopeId;
+use rune_syntax::kind::DocumentKind;
 use rune_syntax::scope::{ScopeTable, scope_table};
 
 /// The one canonical scope table this emitter resolves every markdown token
@@ -64,6 +65,25 @@ pub(crate) fn text_scope() -> ScopeId {
 /// content line at this one scope).
 pub(crate) fn code_fence_scope() -> ScopeId {
     scope("markup.raw.block")
+}
+
+/// The scope a document's UNCLAIMED bytes fall back to, chosen by the
+/// document's own kind. This exists so that "this text is code" is a
+/// STRUCTURAL fact rather than a coincidence of two theme entries happening
+/// to carry similar styles: a whole `.ts` file and a ```` ```ts ```` fence
+/// body are the same thing to the reader, so they must resolve to the same
+/// scope — the one `code_fence_scope` already names — and can never drift
+/// apart under a theme edit.
+///
+/// A `Code` document parses to an EMPTY block list, so every one of its
+/// spans comes from the gap-fill pass; that pass is the only thing this
+/// choice reaches. `Plain` deliberately stays `text`: an unrecognized
+/// `.txt` is prose of unknown shape, not code.
+pub(crate) fn base_scope(kind: DocumentKind) -> ScopeId {
+    match kind {
+        DocumentKind::Code(_) => code_fence_scope(),
+        DocumentKind::Markdown | DocumentKind::Plain | DocumentKind::Image => text_scope(),
+    }
 }
 
 /// An inline code span (`` `like this` ``).
@@ -211,5 +231,31 @@ impl StyleCtx {
                 (false, false, true) => scope("markup.strikethrough"),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The identity this module exists to make structural: a code
+    /// DOCUMENT's text and a fenced code BLOCK's body are one scope, not
+    /// two that a theme edit could drift apart. Asserted against
+    /// `code_fence_scope` rather than the literal `"markup.raw.block"` on
+    /// purpose — re-pinning the name here would recreate exactly the
+    /// duplication this removes.
+    #[test]
+    fn a_code_document_shares_the_code_fence_scope() {
+        assert_eq!(base_scope(DocumentKind::Code("rust")), code_fence_scope());
+    }
+
+    /// Everything else falls back to prose. `Plain` is the interesting
+    /// one: an unrecognized file is not code just because we failed to
+    /// name a language for it.
+    #[test]
+    fn every_other_kind_falls_back_to_text() {
+        assert_eq!(base_scope(DocumentKind::Markdown), text_scope());
+        assert_eq!(base_scope(DocumentKind::Plain), text_scope());
+        assert_eq!(base_scope(DocumentKind::Image), text_scope());
     }
 }
