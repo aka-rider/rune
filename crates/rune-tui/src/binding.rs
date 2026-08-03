@@ -16,25 +16,59 @@
 
 use crate::keymap::{KeyCode, KeyInput, Mods};
 
-/// One exact chord: a `KeyCode` plus the WHOLE `Mods` set that must be held.
+/// What a table row matches: one exact `KeyCode`, or any printable
+/// character — the Explorer's type-to-search row (plan "Explorer
+/// type-to-search", S1). Deliberately pattern-side only: `KeyInput` (the
+/// real terminal event `app::handle_key` receives) always carries a real
+/// `KeyCode`, never a `KeyMatch`, so a wildcard can never itself arrive AS
+/// input — it can only ever sit on the table side of a match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyMatch {
+    Code(KeyCode),
+    Printable,
+}
+
+/// One exact chord: a `KeyMatch` plus the WHOLE `Mods` set that must be
+/// held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyPattern {
-    pub code: KeyCode,
+    pub key: KeyMatch,
     pub mods: Mods,
 }
 
 impl KeyPattern {
     pub const fn new(code: KeyCode, mods: Mods) -> KeyPattern {
-        KeyPattern { code, mods }
+        KeyPattern {
+            key: KeyMatch::Code(code),
+            mods,
+        }
+    }
+
+    /// A row that matches any printable `Char` (`!c.is_control()`) under
+    /// the given `mods`, with no regard to which character it is — the
+    /// wildcard `EXPLORER_SEARCH_BINDINGS`'s `Type` row needs so the FIRST
+    /// keystroke can both start a search and supply its first character.
+    pub const fn printable(mods: Mods) -> KeyPattern {
+        KeyPattern {
+            key: KeyMatch::Printable,
+            mods,
+        }
     }
 
     pub(crate) fn matches(self, key: KeyInput) -> bool {
-        self.code == key.code && self.mods == key.mods
+        if self.mods != key.mods {
+            return false;
+        }
+        match self.key {
+            KeyMatch::Code(code) => code == key.code,
+            KeyMatch::Printable => matches!(key.code, KeyCode::Char(c) if !c.is_control()),
+        }
     }
 
     /// A short display label (footer default-mode hints, the generated Help
     /// doc — one source of truth): `^`/`⌥`/`⇧`/`⌘` for ctrl/alt/shift/sup,
-    /// then the key, `Char` uppercased ("^X" for Ctrl+x).
+    /// then the key, `Char` uppercased ("^X" for Ctrl+x). `Printable` has no
+    /// single character to show, so it renders as the class it matches.
     pub fn label(&self) -> String {
         let mut s = String::new();
         if self.mods.ctrl {
@@ -49,10 +83,11 @@ impl KeyPattern {
         if self.mods.sup {
             s.push('\u{2318}'); // ⌘
         }
-        match self.code {
-            KeyCode::Char(c) => s.push(c.to_ascii_uppercase()),
-            KeyCode::F1 => s.push_str("F1"),
-            other => s.push_str(&format!("{other:?}")),
+        match self.key {
+            KeyMatch::Code(KeyCode::Char(c)) => s.push(c.to_ascii_uppercase()),
+            KeyMatch::Code(KeyCode::F1) => s.push_str("F1"),
+            KeyMatch::Code(other) => s.push_str(&format!("{other:?}")),
+            KeyMatch::Printable => s.push_str("A-Z"),
         }
         s
     }

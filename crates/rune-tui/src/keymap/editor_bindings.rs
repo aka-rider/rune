@@ -189,12 +189,17 @@ mod tests {
         // table. The CONVERSE direction (every chord `resolve` accepts has
         // a row here) is the real anti-drift gate — see the exhaustive
         // sweep test in `keymap.rs`.
+        use crate::binding::KeyMatch;
         use crate::keymap::{KeyInput, resolve};
 
         for binding in EDITOR_BINDINGS {
             let pattern = binding.keys.first().expect("every row is single-key here");
+            let code = match pattern.key {
+                KeyMatch::Code(code) => code,
+                KeyMatch::Printable => unreachable!("EDITOR_BINDINGS has no wildcard rows"),
+            };
             let key = KeyInput {
-                code: pattern.code,
+                code,
                 mods: pattern.mods,
             };
             assert_eq!(

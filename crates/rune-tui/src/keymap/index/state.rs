@@ -9,7 +9,7 @@
 //! multi-key sequence — the two do not share state and `app::handle_key`
 //! consults the leader stage first (§3.4's matching order).
 
-use crate::binding::{Binding, KeyPattern};
+use crate::binding::{Binding, KeyMatch, KeyPattern};
 use crate::keymap::KeyInput;
 use crate::when::Context;
 
@@ -60,7 +60,7 @@ pub fn resolve<C: Copy + 'static>(
 ) -> Resolution<C> {
     let mut typed: Vec<KeyPattern> = pending.to_vec();
     typed.push(KeyPattern {
-        code: key.code,
+        key: KeyMatch::Code(key.code),
         mods: key.mods,
     });
 
@@ -160,7 +160,7 @@ pub fn resolve_stateful<C: Copy + 'static>(
     match &result {
         Resolution::Matched(_) | Resolution::None => state.pending.clear(),
         Resolution::Pending(_) => state.pending.push(KeyPattern {
-            code: key.code,
+            key: KeyMatch::Code(key.code),
             mods: key.mods,
         }),
     }
