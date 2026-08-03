@@ -23,6 +23,7 @@
 use std::any::Any;
 use std::env;
 use std::ffi::OsString;
+use std::io;
 use std::ops::{Deref, DerefMut};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -40,15 +41,6 @@ mod cli;
 mod db_bootstrap;
 mod loader;
 mod open;
-
-/// How many `--doctor` live-poll iterations to print before exiting.
-/// Iteration-bounded rather than wall-clock-bounded (`CLAUDE.md`: never use
-/// a wall-clock sleep to order or pace events) — this loop's sleeps only
-/// space out already-decided print statements for a human to read, they
-/// never gate whether or when a program event happens, so a fixed iteration
-/// count keeps the bound explicit without pretending the sleep orders
-/// anything.
-const DOCTOR_POLL_ITERATIONS: u32 = 30;
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (a malformed command line —
 /// an unrecognised flag, a missing `-w` value, or `-w` pointing somewhere
@@ -102,9 +94,11 @@ fn main() -> ExitCode {
 /// the measurement gate for the `␣X`-stopped-working investigation). Reports
 /// `keystate::diagnose()` and `leader_available()` once, then — only if a
 /// window-server session exists, since the raw query blocks without one —
-/// polls the LIVE `CGEventSourceKeyState` reading on a bounded loop so an
-/// operator can hold the spacebar and watch the printed value flip between
-/// `true`/`false` in real time.
+/// takes two operator-gated readings of the LIVE `CGEventSourceKeyState`
+/// value, one with the spacebar held and one with it released, and states
+/// what the pair means. Two labelled samples are the whole finding: a query
+/// that answers `false` with the key physically down is exactly the
+/// condition that makes the leader stage never fire.
 fn doctor() -> ExitCode {
     let diagnosis = keystate::diagnose();
     println!("leader diagnosis: {diagnosis:?}");
@@ -118,30 +112,52 @@ fn doctor() -> ExitCode {
             );
         }
         LeaderDiagnosis::SessionPresent => {
-            println!(
-                "session present — polling the live CGEventSourceKeyState(HID_SYSTEM_STATE, \
-                 VK_SPACE) reading for ~{}s. Hold and release the spacebar and watch the value \
-                 flip.",
-                DOCTOR_POLL_ITERATIONS / 10
-            );
-            for i in 0..DOCTOR_POLL_ITERATIONS {
-                // `None` cannot occur under `SessionPresent`, but is
-                // reported rather than unwrapped: the session could only
-                // vanish mid-loop, and that is itself the finding.
-                let reading = match keystate::raw_key_state_now() {
-                    Some(down) => down.to_string(),
-                    None => "window-server session vanished".to_string(),
-                };
-                println!("  [{i}] space down: {reading}");
-                // Paces the printed series for a human to read; it does not
-                // order or gate any program event (`CLAUDE.md`) — the
-                // iteration count above is the actual bound.
-                std::thread::sleep(std::time::Duration::from_millis(100));
+            // Each sample is taken when the OPERATOR says the spacebar is in
+            // a known state, not after a wall-clock delay: the physical key
+            // position is the thing being correlated with the query's
+            // answer, and only the operator knows it. A timed poll would
+            // print a series nobody can align with what their hand was
+            // doing.
+            let held = doctor_sample("Hold the spacebar DOWN, and — still holding it — press Enter");
+            let released = doctor_sample("Now RELEASE the spacebar and press Enter");
+
+            println!();
+            println!("  space held:     {held}");
+            println!("  space released: {released}");
+            println!();
+            match (held.as_str(), released.as_str()) {
+                ("true", "false") => println!(
+                    "The query tracks the hardware. The held-space leader is working here, \
+                     so ␣X failing has another cause."
+                ),
+                ("false", "false") => println!(
+                    "The query is stuck reporting the spacebar up. This is why ␣X types `x`: \
+                     the leader stage never fires. Check System Settings → Privacy & Security \
+                     → Input Monitoring for this terminal."
+                ),
+                _ => println!("Unexpected pair — report both readings verbatim."),
             }
         }
     }
 
     ExitCode::SUCCESS
+}
+
+/// Prompts, waits for the operator to press Enter, then takes ONE live
+/// reading. Returns the reading as the string to print — `None` from the
+/// query means the window-server session vanished mid-run, which cannot
+/// happen under `SessionPresent` but is reported rather than unwrapped,
+/// since it would itself be the finding.
+fn doctor_sample(prompt: &str) -> String {
+    println!("{prompt}");
+    let mut line = String::new();
+    if io::stdin().read_line(&mut line).is_err() {
+        return "stdin closed".to_string();
+    }
+    match keystate::raw_key_state_now() {
+        Some(down) => down.to_string(),
+        None => "window-server session vanished".to_string(),
+    }
 }
 
 /// Everything `main` does after resolving `cwd`/`$HOME` and constructing the
