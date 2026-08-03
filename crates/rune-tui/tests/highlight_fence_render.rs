@@ -50,7 +50,7 @@ fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Sty
     buf.cell((x, y)).map(|cell| cell.style())
 }
 
-/// Plan WP6.S5: a ```` ```markdown ```` fence (FOUR backticks, so its own
+/// A ```` ```markdown ```` fence (FOUR backticks, so its own
 /// nested three-backtick fence doesn't close it early) gets INLINE markdown
 /// highlighting through the comrak reveal-emit reuse path
 /// (`runtime::md_fence::markdown_fence_spans`), not flat near-black text.
@@ -103,7 +103,7 @@ fn markdown_fence_highlights_inline_markdown_over_the_code_background() {
         .cmds
         .remove(0)
         .run()
-        .expect("fence_highlight_cmd always replies");
+        .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
     app::update(&mut app, msg, &mut effects2);
 

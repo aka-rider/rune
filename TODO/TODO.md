@@ -708,7 +708,8 @@ cannot claim to be the table's first or last.
 
 ## rust port — tree-sitter highlighting: unmeasured budgets and known-open gaps (recorded 2026-07-28, tree-sitter plan WP8)
 
-- `HIGHLIGHT_BUDGET` (`crates/rune-tui/src/runtime.rs`, 250ms) and `MAX_SPANS`
+- `PARSE_BUDGET` (`crates/rune-tui/src/runtime/highlight_cmd.rs`, 5s, now
+  applied once per code region) and `MAX_SPANS`
   (`crates/rune-ts/src/highlight.rs`, 100_000) are constants chosen without
   profiling a real large document — not measured against any target frame
   budget or memory ceiling. Revisit once a slow-parse or span-flood case is
@@ -960,9 +961,9 @@ it is recorded here rather than rushed.
 
 `render::build_rows` now runs a `rune_ts::highlight_range` query, scoped to the visible byte window, on every frame for a code document with a retained tree — see `crates/rune-tui/src/render/mod.rs`. This is new per-frame cost with no dedicated gate (`make perf-guard` only covers `rune-md`'s parse pipeline). When the display-pipeline budget review already tracked elsewhere in this file happens, it must measure this query alongside the existing whole-document `build_rows`/snapshot recompute — not just the pre-existing cost.
 
-## syntax-highlighting-latency plan, WP3 — no fuzz invariant observes tree-backed rendering yet
+## no fuzz invariant delivers a tree-backed highlight reply yet
 
-The session fuzzer's `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW` invariants (`crates/rune-fuzz/src/invariant/highlight.rs`) exercise the span path via `Msg::Highlighted`'s `Spans` payload — real coverage, since dispatch stores span payloads for any document (D6 of the plan). Nothing yet exercises the `Tree` payload / per-frame `highlight_range` viewport query path a real code document's background parse takes. Adding a fuzz action that delivers a synthetic `HighlightPayload::Tree` (or a real `rune_ts::parse` over a small fixture) is future work, not part of this change.
+The session fuzzer's `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW` invariants (`crates/rune-fuzz/src/invariant/highlight.rs`) now read `highlight::visible_spans` — the same query the renderer runs — so they cover the render-time clamp, sort and window filter for every channel, including the tree-backed path when a session happens to produce a code region. What they still never do is DELIVER a tree: `Action::Highlight` injects hostile spans, because a `ParsedTree` cannot be synthesized. A fuzz action that runs a real `rune_ts::parse` over a small fixture and delivers the resulting `RegionPayload::Tree` would close that gap; it is future work, not part of this change.
 
 ## `crates/rune-tui/src/runtime/mod.rs` is 542 lines (§1.6 limit 500; recorded at the rr/integration merge)
 

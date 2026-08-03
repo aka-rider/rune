@@ -1,5 +1,4 @@
-//! Split off `highlight.rs` (WP11, §1.6): end-to-end highlight-then-render
-//! checks. The painter resolution itself (a hand-built `(rows, spans)`
+//! End-to-end highlight-then-render checks. The painter resolution itself (a hand-built `(rows, spans)`
 //! pair, outer-first overwrite, `buf_offset`/`width` left untouched) is
 //! unit-tested inside `render/overlay.rs`'s own `#[cfg(test)]` module
 //! instead: its target, `apply_highlight_spans`, is `pub(super)` like every
@@ -16,12 +15,10 @@
 
 mod highlight_common;
 
-use std::time::Duration;
-
 use highlight_common::{app_for, type_one_char_at_end};
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
-use rune_tui::runtime::{Effects, HighlightPayload, Msg};
+use rune_tui::runtime::Effects;
 use rune_tui::testgrid;
 
 #[test]
@@ -30,24 +27,17 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
-    let version = app.doc(id).expect("doc").buffer.version();
-
-    let result = rune_ts::highlight("rust", content, Duration::from_secs(5));
-    assert!(
-        result.is_some(),
-        "a trivial rust source must highlight within a generous budget"
-    );
+    app.sync_view();
 
     let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Highlighted {
-            doc: id,
-            version,
-            result: result.map(HighlightPayload::Spans),
-        },
-        &mut effects,
-    );
+    type_one_char_at_end(&mut app, &mut effects);
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("the highlight cmd always replies");
+    let mut effects = Effects::default();
+    app::update(&mut app, msg, &mut effects);
 
     app.sync_view();
     let rendered = testgrid::grid(&app, 40, 10).join("\n");
@@ -98,7 +88,7 @@ fn code_background_survives_the_highlight_overlay_patch() {
         .cmds
         .remove(0)
         .run()
-        .expect("fence_highlight_cmd always replies");
+        .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
     app::update(&mut app, msg, &mut effects2);
 

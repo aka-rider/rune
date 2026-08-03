@@ -6,19 +6,17 @@
 //! `app.rs` used to define locally, now reached through `dispatch::`
 //! instead.
 
-use std::ops::Range;
-
 use crate::app::App;
 use crate::commands::{
     clipboard, edit, edit_lines, edit_lines_move, mouse, multi, nav, nav_line, nav_scroll,
 };
-use crate::document::{Document, DocumentId};
+use crate::document::DocumentId;
+use crate::highlight::HighlightReply;
 use crate::keymap::{self, Command, KeyCode, KeyInput, Mods, QuitKey};
 use crate::navigate;
 use crate::pane::{self, Pane};
-use crate::runtime::{Effects, HighlightPayload, Msg, PasteTarget};
+use crate::runtime::{Effects, Msg, PasteTarget};
 use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
-use rune_syntax::ScopeId;
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
 /// half, split out here alongside the key/db-event routers it calls into —
@@ -167,70 +165,38 @@ pub(crate) fn after_update(
     crate::graphics::sync_embeds(app, app.active, effects);
 }
 
-/// The single span-clamp chokepoint every accepted highlight reply passes
-/// through: each range is clamped to the live byte length, ranges that are
-/// inverted or that would split a `char` (§1.3) are discarded, and the
-/// survivors replace `spans`, tagged with the version they describe.
-///
-/// Routing every reply through one clamp is what makes an unclamped span
-/// unreachable; when accepting a reply and retrying one were two separate
-/// paths, they drifted apart and one of them skipped the clamp.
-fn apply_highlight_spans(doc: &mut Document, version: u64, spans: Vec<(Range<usize>, ScopeId)>) {
-    let content = doc.buffer.content();
-    let len = content.len();
-    let mut clamped: Vec<(Range<usize>, ScopeId)> = Vec::with_capacity(spans.len());
-    for (range, scope) in spans {
-        let start = range.start;
-        let end = range.end.min(len);
-        if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
-            continue;
-        }
-        clamped.push((start..end, scope));
-    }
-    doc.highlight.spans = clamped;
-    doc.highlight.version = version;
-}
-
-/// Applies a `Msg::Highlighted` reply (plan WP5.S4; payload split in two by
-/// the syntax-highlighting-latency plan's D6), in the fixed order `[R2]`
-/// requires: (a) `in_flight` clears regardless of what the reply carries, so
-/// a document can never deadlock waiting on a highlight that already
-/// returned; (b) `result: None` (budget elapsed, unknown language, parse
-/// failure) leaves `tree`/`spans` exactly as they were — a slow document
+/// Applies a `Msg::Highlighted` reply, in the fixed order `[R2]` requires:
+/// (a) `in_flight` clears regardless of what the reply carries, so a
+/// document can never deadlock waiting on a highlight that already returned;
+/// (b) `result: None` (every attempted region overran its budget, or none
+/// resolved) leaves every region exactly as it was — a slow document
 /// degrades to STALE colours, never to none; (c) a `version` that no longer
 /// matches the live buffer means a NEWER edit landed while this reply was in
-/// flight, so the payload describes stale content and is dropped, `tree`/
-/// `spans` again left untouched; (d) otherwise a `Tree` payload replaces
-/// `doc.highlight.tree` and a `Spans` payload clamps and stores through the
-/// existing `apply_highlight_spans`; (e) if a further edit arrived while
-/// this reply was in flight (`pending`), it is cleared and a fresh highlight
-/// is requested immediately rather than waiting for the next keystroke.
+/// flight, so it describes stale content and is dropped whole, regions again
+/// left untouched; (d) otherwise the reply's whole region layout is
+/// installed; (e) if a further edit arrived while this reply was in flight
+/// (`pending`), it is cleared and a fresh highlight is requested immediately
+/// rather than waiting for the next keystroke.
 ///
-/// D5's replacement for finding B's retry chain: a whole code document
-/// (`doc.kind.language().is_some()`) is the only source scheduled through
-/// `highlight_cmd`'s single-attempt `PARSE_BUDGET` parse, so a `None` reply
-/// for one — at the live version, meaning the parse itself genuinely failed
-/// or overran rather than having been superseded — surfaces the same status
-/// line finding B's exhausted-retry branch used to, in ONE attempt instead
-/// of two. That status line is further narrowed to a document that has
-/// never once been successfully highlighted (`doc.highlight.version == 0`,
-/// which `Buffer::version` itself never produces): once a document has
-/// existing spans or a tree, a reparse-after-edit that overruns the budget
-/// degrades to STALE colours per `[R2]` and stays silent instead of
-/// spamming the status on every settled edit of a large file. A markdown
-/// document's fences stay silent on `None` exactly as before
-/// (`doc.kind.language()` is `None` for `Markdown`): fences are still on
-/// the span path and D6 leaves that pipeline unchanged. A terminal timeout
-/// must never re-dispatch a further parse for a no-edit `pending`: an
-/// edit-armed `pending` carries a version that differs from the reply's,
-/// landing in the stale `_` arm below, so `pending` and `timed_out` can
-/// coincide only when nothing but a document switch armed `pending` — in
+/// A `None` reply at the live version surfaces a status line — for a fence
+/// exactly as for a whole file, since both now run the same single bounded
+/// parse per region and both fail the same way. It is narrowed to a document
+/// that has never once been successfully highlighted (`highlight.version ==
+/// 0`, which `Buffer::version` itself never produces): once a document has
+/// colours, a reparse-after-edit that overruns the budget degrades to STALE
+/// colours per `[R2]` and stays silent instead of spamming the status on
+/// every settled edit of a large file.
+///
+/// A terminal timeout must never re-dispatch a further parse for a no-edit
+/// `pending`: an edit-armed `pending` carries a version that differs from
+/// the reply's, landing in the stale arm below, so `pending` and `timed_out`
+/// can coincide only when nothing but a document switch armed `pending` — in
 /// that case re-scheduling would just repeat the same doomed parse.
 fn handle_highlighted(
     app: &mut App,
     id: DocumentId,
     version: u64,
-    result: Option<HighlightPayload>,
+    result: Option<HighlightReply>,
     effects: &mut Effects,
 ) {
     let mut timed_out = false;
@@ -242,22 +208,15 @@ fn handle_highlighted(
         doc.highlight.pending = false;
         let live_version = doc.buffer.version();
         match result {
-            Some(HighlightPayload::Tree(tree)) if version == live_version => {
-                doc.highlight.tree = Some(tree);
-                doc.highlight.version = version;
+            Some(reply) if version == live_version => {
+                crate::highlight::apply_reply(doc, version, reply);
             }
-            Some(HighlightPayload::Spans(spans)) if version == live_version => {
-                doc.highlight.truncated = spans.truncated;
-                apply_highlight_spans(doc, version, spans.spans);
-            }
-            None if version == live_version
-                && doc.kind.language().is_some()
-                && doc.highlight.version == 0 =>
-            {
+            None if version == live_version && doc.highlight.version == 0 => {
                 timed_out = true;
             }
-            // `result: None` on a fence-only document, or `Some`/`None` at a
-            // stale version, leaves `tree`/`spans` untouched — `[R2]`.
+            // A `None` reply for a document that already has colours, or any
+            // reply at a stale version, leaves every region untouched —
+            // `[R2]`.
             _ => {}
         }
         truncated = doc.highlight.truncated;

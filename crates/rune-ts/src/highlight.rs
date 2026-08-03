@@ -82,6 +82,19 @@ pub struct ParsedTree {
     source: Arc<str>,
 }
 
+impl ParsedTree {
+    /// The exact source text this tree was parsed from.
+    ///
+    /// Exposed so a caller holding a retained tree can decide whether it
+    /// still describes the text it would otherwise be about to reparse:
+    /// equality against a freshly reconstructed source is the whole
+    /// validity test, since every parse here is a full parse of exactly
+    /// these bytes.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+}
+
 /// Parses `source` as `lang` from scratch and returns the retained tree, or
 /// `None` for an unrecognised language, a `Parser::set_language`/query
 /// compile failure recorded in `registry().failures()`, or a parse that did

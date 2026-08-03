@@ -1,5 +1,5 @@
-//! Unit tests for the highlight overlay invariants (plan WP7.S8):
-//! `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW`. Same controlled-experiment
+//! Unit tests for the highlight overlay invariants: `HL-CLAMPED`,
+//! `HL-STALE-DROP`, `HL-NO-REFLOW`. Same controlled-experiment
 //! pattern as every other file here — one hand-built BAD `Snapshot`/pair per
 //! checker asserting it fires with the right id, one well-formed companion
 //! of the same shape asserting `None`. Every checker is called DIRECTLY,
@@ -64,21 +64,22 @@ fn hl_clamped_accepts_no_spans() {
     assert_eq!(hl_clamped(&snap), None);
 }
 
-/// The exact shape `make test-fuzz` first caught (recorded here as a
-/// permanent regression, not just a design note): a highlight reply is
-/// stored for a LONGER buffer, then a later edit (an undo, here) shrinks
-/// the buffer without any new highlight completing. `highlight_version`
-/// now lags `version` — the KNOWN-stale case WP5.S4's `[R2]` deliberately
-/// tolerates (stale colours, never no colours) — so `HL-CLAMPED` must NOT
-/// fire even though the stored span is, in isolation, out of bounds for
-/// the CURRENT content.
+/// The shape `make test-fuzz` first caught — a highlight stored for a
+/// LONGER buffer, then a later edit (an undo, here) shrinking the buffer
+/// without any new highlight completing — is no longer an accepted excuse.
+/// The clamp lives in the query now, so a stale region's spans are
+/// re-clamped against the live buffer every time they are read; an
+/// out-of-bounds span reaching a checker therefore means the clamp itself
+/// failed, staleness or not.
 #[test]
-fn hl_clamped_accepts_an_out_of_bounds_span_left_over_from_a_shrinking_edit() {
+fn hl_clamped_detects_an_out_of_bounds_span_even_at_a_stale_version() {
     let mut snap = base_snapshot("short"); // content.len() == 5
     snap.version = 2; // a further edit landed after the highlight was stored
-    snap.highlight_version = 1; // the stored spans still describe version 1
+    snap.highlight_version = 1; // the regions still describe version 1
     snap.highlight_spans = vec![(0, 40)]; // valid for the old, longer buffer only
-    assert_eq!(hl_clamped(&snap), None);
+    let v = hl_clamped(&snap)
+        .expect("the query must re-clamp a stale span, so this can only be a clamp bug");
+    assert_eq!(v.id, "HL-CLAMPED");
 }
 
 // ---------------------------------------------------------------------

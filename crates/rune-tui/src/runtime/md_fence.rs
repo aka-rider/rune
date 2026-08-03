@@ -7,10 +7,8 @@
 //! emitted `SyntaxSpan`); emit-output feeding an overlay is the sanctioned
 //! channel this module uses instead.
 
-use std::ops::Range;
-
-use rune_syntax::ScopeId;
 use rune_syntax::scope::scope_table;
+use rune_ts::{HighlightResult, MAX_SPANS};
 
 /// Highlights one fence's reconstructed markdown source (plan WP6.S3):
 /// parse -> force every block revealed (`rune_md::reveal_all`, plan
@@ -23,23 +21,30 @@ use rune_syntax::scope::scope_table;
 /// `emit` returns besides the spans.
 ///
 /// Every span's own `(range(), scope())` becomes one overlay span, in the
-/// SAME coordinates as `text` (a fresh parse of the reconstructed fence
-/// text starts its own byte numbering at 0, matching what `run_fence_
-/// highlight`'s `LineMap::to_buffer` expects to remap). The plain
-/// `text` scope is skipped for span economy — an overlay carrying a span
-/// for every unstyled byte would cost the same paint result at a higher
-/// merge/sort cost downstream.
-pub(crate) fn markdown_fence_spans(text: &str) -> Vec<(Range<usize>, ScopeId)> {
+/// SAME coordinates as `text` — a fresh parse of the reconstructed fence
+/// text starts its own byte numbering at 0, which is what the caller's
+/// `LineMap::to_buffer` expects to remap. The plain `text` scope is skipped
+/// for span economy — an overlay carrying a span for every unstyled byte
+/// would cost the same paint result at a higher merge/sort cost downstream.
+///
+/// Capped at the same [`MAX_SPANS`] a tree-sitter query is capped at, and
+/// reporting truncation the same way, so the "part of this document is
+/// uncoloured" status line means one thing regardless of which channel
+/// produced the spans.
+pub(crate) fn markdown_fence_spans(text: &str) -> HighlightResult {
     let plain = scope_table().resolve("text");
     let mut blocks = rune_md::parse::parse(text);
     rune_md::reveal_all(&mut blocks);
     let (lines, _) = rune_md::emit::emit(text, &blocks, 0);
-    lines
+    let mut spans: Vec<_> = lines
         .into_iter()
         .flat_map(|line| line.spans.into_iter())
         .filter(|span| Some(span.scope()) != plain)
         .map(|span| (span.range(), span.scope()))
-        .collect()
+        .collect();
+    let truncated = spans.len() > MAX_SPANS;
+    spans.truncate(MAX_SPANS);
+    HighlightResult { spans, truncated }
 }
 
 #[cfg(test)]
@@ -50,7 +55,8 @@ mod tests {
     #[test]
     fn markdown_fence_spans_tags_a_heading_and_skips_plain_text() {
         let text = "# Title\n\nplain text\n";
-        let spans = markdown_fence_spans(text);
+        let result = markdown_fence_spans(text);
+        let spans = result.spans;
 
         let heading_scope = scope_table()
             .resolve("markup.heading.1")
@@ -69,6 +75,6 @@ mod tests {
 
     #[test]
     fn markdown_fence_spans_never_panics_on_an_empty_fence() {
-        assert!(markdown_fence_spans("").is_empty());
+        assert!(markdown_fence_spans("").spans.is_empty());
     }
 }

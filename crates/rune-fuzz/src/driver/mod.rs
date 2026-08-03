@@ -296,17 +296,25 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 let msg = Msg::Highlighted {
                     doc,
                     version: delivered_version,
-                    // Hostile span injection, never a `ParsedTree` — the
-                    // fuzzer has no way to synthesize one, and shouldn't:
-                    // dispatch still stores a `Spans` payload for any
-                    // document (D6), so this keeps exercising the same
-                    // clamp/stale-drop invariants it always has.
-                    result: Some(rune_tui::runtime::HighlightPayload::Spans(
-                        rune_tui::runtime::HighlightResult {
-                            spans: crate::action::highlight_spans_from_raw(spans),
-                            truncated: false,
-                        },
-                    )),
+                    // Hostile span injection into one region's SPAN
+                    // channel, never a `ParsedTree` — the fuzzer has no way
+                    // to synthesize one, and shouldn't. A reply describes
+                    // the document's whole region layout, so this one is a
+                    // single span-backed region: no coordinate map (its
+                    // spans are already buffer offsets, exactly like a
+                    // markdown fence's), and nothing for the tree channel.
+                    // The render-path query reads it back the same way it
+                    // reads any other region, so `HL-CLAMPED`/
+                    // `HL-STALE-DROP` keep testing the real clamp.
+                    result: Some(rune_tui::highlight::HighlightReply {
+                        regions: vec![rune_tui::highlight::RegionResult {
+                            map: rune_tui::linemap::LineMap::default(),
+                            payload: Some(rune_tui::highlight::RegionPayload::Spans(
+                                crate::action::highlight_spans_from_raw(spans),
+                            )),
+                        }],
+                        truncated: false,
+                    }),
                 };
                 let tag = MsgTag::Highlighted {
                     delivered_version,

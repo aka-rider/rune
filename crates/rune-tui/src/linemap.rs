@@ -125,6 +125,41 @@ impl LineMap {
         Some(start..end)
     }
 
+    /// The smallest reconstructed range covering every line that intersects
+    /// the buffer range `r` — a deliberately CONSERVATIVE superset of
+    /// [`LineMap::to_reconstructed`], defined for a range whose endpoints
+    /// fall in a gap, before the first line, or past the last one.
+    ///
+    /// This is what a per-frame query wants and `to_reconstructed` is not:
+    /// a viewport window is an arbitrary slice of the buffer that rarely
+    /// lands on this region's own line boundaries, and an exact translation
+    /// that reports `None` for such a window would leave the region
+    /// unpainted. Widening to whole lines instead costs only a slightly
+    /// larger query range, which a byte-range query treats as an
+    /// intersection filter anyway.
+    ///
+    /// `None` when no line intersects `r` at all — including an empty or
+    /// inverted `r`, and a map with no lines.
+    pub fn reconstructed_window(&self, r: Range<usize>) -> Option<Range<usize>> {
+        if r.start >= r.end {
+            return None;
+        }
+        // Lines are in ascending buffer order and never overlap, so both
+        // ends are non-decreasing and each boundary is a `partition_point`.
+        // A line is skipped only when it ends strictly before `r` begins or
+        // begins at or after `r` ends.
+        let first = self.lines.partition_point(|line| line.end < r.start);
+        let last = self.lines.partition_point(|line| line.start < r.end);
+        let last_index = last.checked_sub(1)?;
+        if first > last_index {
+            return None;
+        }
+        let start = *self.prefix.get(first)?;
+        let line = self.lines.get(last_index)?;
+        let end = self.prefix.get(last_index)? + line.end.saturating_sub(line.start);
+        if start >= end { None } else { Some(start..end) }
+    }
+
     /// [`LineMap::to_buffer`]'s single-offset chokepoint. `is_end` requests
     /// the inclusive-byte convention: after locating the line owning
     /// `offset`, add one back so the result is an exclusive buffer offset
@@ -341,6 +376,54 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The render path's window translation: an arbitrary viewport slice
+    /// widens to whole lines rather than reporting `None` the way the exact
+    /// `to_reconstructed` does for an endpoint sitting in a container
+    /// prefix.
+    #[test]
+    fn reconstructed_window_widens_a_gap_landing_window_to_whole_lines() {
+        let (_, map) = nested();
+        // Buffer 9..15 starts inside line 0 and ends inside line 1, crossing
+        // the "> " prefix between them. `to_reconstructed` refuses the
+        // prefix bytes outright; the window widens to both whole lines.
+        assert_eq!(map.to_reconstructed(11..12), None);
+        assert_eq!(map.reconstructed_window(9..15), Some(0..21));
+    }
+
+    /// A window falling ENTIRELY inside a container prefix intersects no
+    /// line and therefore covers nothing — widening never invents bytes.
+    #[test]
+    fn reconstructed_window_reports_none_for_a_window_wholly_inside_a_gap() {
+        let (_, map) = nested();
+        assert_eq!(map.reconstructed_window(11..13), None);
+    }
+
+    #[test]
+    fn reconstructed_window_covers_the_whole_text_for_an_oversized_window() {
+        let (content, map) = nested();
+        let len = map.reconstruct(content).unwrap().len();
+        assert_eq!(map.reconstructed_window(0..1000), Some(0..len));
+    }
+
+    #[test]
+    fn reconstructed_window_reports_none_when_no_line_intersects() {
+        let map = one_line(5..8);
+        assert_eq!(map.reconstructed_window(0..5), None);
+        assert_eq!(map.reconstructed_window(9..20), None);
+        let empty = Range { start: 6, end: 6 };
+        assert_eq!(map.reconstructed_window(empty), None);
+        assert_eq!(LineMap::new(vec![]).reconstructed_window(0..10), None);
+    }
+
+    /// A window covering only the second line must not drag the first
+    /// line's bytes in with it — the widening is to whole INTERSECTING
+    /// lines, never to the region's whole extent.
+    #[test]
+    fn reconstructed_window_starts_at_the_first_intersecting_line() {
+        let (_, map) = nested();
+        assert_eq!(map.reconstructed_window(15..18), Some(11..21));
     }
 
     #[test]

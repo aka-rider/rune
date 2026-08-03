@@ -1,39 +1,36 @@
-//! Highlight overlay invariants (plan WP7.S7): `HL-CLAMPED`, `HL-STALE-
-//! DROP`, `HL-NO-REFLOW`. All three key off `Snapshot.highlight_spans`
-//! (`doc.highlight.spans`, `ScopeId` dropped — no checker here needs it)
-//! and, for the L2 pair, `StepCtx.msg` being a `MsgTag::Highlighted`.
+//! Highlight overlay invariants: `HL-CLAMPED`, `HL-STALE-DROP`,
+//! `HL-NO-REFLOW`. All three key off `Snapshot.highlight_spans` — the output
+//! of `highlight::visible_spans`, the same query the renderer runs, with the
+//! `ScopeId` tag dropped because no checker here needs it — and, for the L2
+//! pair, `StepCtx.msg` being a `MsgTag::Highlighted`.
+//!
+//! Projecting the QUERY rather than the stored state is what keeps these
+//! meaningful now that every code region is tree-backed: the stored span
+//! channel is empty for most documents, so a projection reading it would
+//! leave `HL-CLAMPED` and `HL-STALE-DROP` passing while testing nothing. It
+//! also extends both to the whole-file path they never reached.
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `HL-CLAMPED` (L0) — whenever `highlight_version == version` (production's
-/// OWN "spans still describe the live buffer" test — `highlight.rs::
-/// schedule_highlight` uses the identical comparison), every stored
-/// highlight range satisfies `start < end`, `end <= content.len()`, and
-/// both endpoints are `char` boundaries.
+/// `HL-CLAMPED` (L0) — every span the render query would paint satisfies
+/// `start < end`, `end <= content.len()`, and both endpoints are `char`
+/// boundaries.
 ///
-/// Scoped to the version-matched case deliberately, not unconditionally:
-/// `dispatch::handle_highlighted` clamps a reply's spans against the buffer
-/// length ONLY at the moment it processes that reply: nothing re-clamps the
-/// stored spans afterward. A later edit (including an undo) that shrinks
-/// the buffer bumps `version` past `highlight_version` — a real, expected
-/// state (WP5.S4's `[R2]`: "stale colours, never no colours" — the design
-/// deliberately keeps stale spans in place rather than blanking them on
-/// every keystroke) that the render layer's own window-clamped painter
-/// (`render::overlay::apply_highlight_spans`) already tolerates safely.
-/// Checking clamped-ness unconditionally would flag that expected staleness
-/// as a violation; this is the fuzz session that first proved it (a `type`
-/// into a fresh document, one `Action::Highlight` reply describing the
-/// FULL typed content, then enough `⌘Z` presses to shrink the buffer back
-/// past where the stored span ends).
+/// Checked UNCONDITIONALLY, with no staleness escape. It used to be scoped
+/// to `highlight_version == version`, because a reply was clamped once on
+/// receipt and nothing re-clamped it afterwards — so an edit that shrank the
+/// buffer left a stored span legitimately out of bounds (`[R2]`: stale
+/// colours, never no colours), and checking unconditionally would have
+/// flagged that expected staleness. The clamp now lives in the query itself,
+/// which runs afresh against the live buffer every time anything reads it,
+/// so a stale span is re-clamped rather than merely tolerated and there is
+/// no case left where an out-of-bounds span is legitimate.
 ///
 /// Active-document-switch-safe: L0, single `Snapshot`'s own
-/// `highlight_spans`/`highlight_version`/`content`/`version`.
+/// `highlight_spans`/`content`.
 pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
-    if next.highlight_version != next.version {
-        return None;
-    }
     for &(start, end) in &next.highlight_spans {
         let in_bounds = end <= next.content.len();
         let ordered = start < end;
@@ -56,10 +53,10 @@ pub fn hl_clamped(next: &Snapshot) -> Option<Violation> {
 
 /// `HL-STALE-DROP` (L2) — on a `MsgTag::Highlighted` step whose
 /// `delivered_version` does not match the buffer version `next` observes
-/// AFTER the step, the stored spans must equal `prev`'s exactly: a stale
-/// reply describes content the buffer has since moved past, and
-/// `dispatch::handle_highlighted` must leave the previously stored spans
-/// untouched rather than adopting it.
+/// AFTER the step, the spans the render query yields must equal `prev`'s
+/// exactly: a stale reply describes content the buffer has since moved past,
+/// and `dispatch::handle_highlighted` must leave every region untouched
+/// rather than adopting it.
 ///
 /// Active-document-switch-safe: `dispatch::handle_highlighted` mutates only
 /// the document named by `Msg::Highlighted { doc, .. }` (via `app.doc_mut`)
@@ -90,8 +87,8 @@ pub fn hl_stale_drop(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<
 }
 
 /// `HL-NO-REFLOW` (L2) — a `MsgTag::Highlighted` step is a pure style
-/// overlay (plan decision 1: "all tree-sitter output is a render-layer
-/// overlay"); it must never change `content`, `version`, `journal_pos`,
+/// overlay (all tree-sitter output is a render-layer overlay); it must never
+/// change `content`, `version`, `journal_pos`,
 /// `journal_len`, or `is_dirty`, and — when cells were sampled on both
 /// steps — must never change any rendered cell's `buf_offset` or `width`
 /// (only `style` may differ).
