@@ -88,6 +88,23 @@ pub fn resolve_append_ack(app: &mut App, id: DocumentId, seq: i64) {
     }
 }
 
+/// The reaction to a `CreateScratch` op's ack (plan WP0/WP3, mid-session
+/// half): `row_id` is a freshly minted, never-bound scratch row — `id`'s
+/// document binds to it exactly like a recovered launch-time scratch draft
+/// does (`rune-cli::open::adopt_scratch_doc`), `bind_new` true because a
+/// scratch row has never been bound to a real file, so its NEXT save must
+/// still go through the create-only path. `expect_obs` is `0`, the same
+/// fabricated, never-queried `ObsId` `adopt_scratch_doc` uses — `bind_new`
+/// skips the CAS-baseline lookup entirely. `id` no longer live (the draft
+/// was closed while this op was still in flight) is a correct, silent
+/// drop — `close_now` already sweeps `db_ops` of any entry pointing at a
+/// closed document, but a race between that sweep and this ack landing is
+/// still just a document that's gone, nothing to bind.
+pub fn handle_create_scratch_ack(app: &mut App, id: DocumentId, row_id: i64) {
+    let Some(doc) = app.doc_mut(id) else { return };
+    doc.db = Some(DocDb::new(row_id, 0, true, 0));
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

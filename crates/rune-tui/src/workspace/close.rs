@@ -54,6 +54,15 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// single constructor for this shape: `close_now` calls it below when the
 /// last document is about to close, and WP3's bootstrap adoption calls it
 /// when there is nothing recoverable to adopt instead.
+///
+/// Registers `id` as its own scratch row in the recovery store (plan WP0/
+/// WP3's mid-session gap) whenever a live store exists: `db_enqueue::
+/// create_scratch` enqueues nothing and `doc.db` stays `None` — exactly
+/// today's behaviour — when there is no store or it's `degraded`, and
+/// `App::is_preserved` already reports that honestly to the quit/close
+/// guard. Fired after activation so the new tab's own document already
+/// exists for the eventual ack (`db_ack::handle_create_scratch_ack`) to
+/// bind onto.
 pub fn new_untitled_document(app: &mut App) -> DocumentId {
     let name = next_untitled_name(app);
     let id = app.open_document(rune_core::buffer::Buffer::new(""));
@@ -61,6 +70,7 @@ pub fn new_untitled_document(app: &mut App) -> DocumentId {
         doc.display_name = Some(name);
     }
     super::switch_to(app, id);
+    crate::db_enqueue::create_scratch(app, id);
     id
 }
 

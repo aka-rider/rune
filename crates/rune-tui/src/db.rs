@@ -156,6 +156,13 @@ pub struct PendingOp {
     /// The issuing document's `buffer.version()` at the moment a `Load` op
     /// was enqueued — `None` for every other op kind, which never needs it.
     pub issued_version: Option<u64>,
+    /// True iff this op is a `CreateScratch` minting `doc`'s OWN recovery
+    /// row (`db_enqueue::create_scratch`). `CreateSnapshot` also resolves to
+    /// `OpOutcome::RowId` (`materialize_ack::handle_snapshot_due`'s own
+    /// enqueue), so the ack router needs this flag to tell "bind a fresh
+    /// `DocDb`" apart from "a snapshot anchor landed, nothing else to do" —
+    /// both share the same outcome shape but need opposite reactions.
+    pub mints_scratch: bool,
 }
 
 impl PendingOp {
@@ -163,6 +170,7 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: None,
+            mints_scratch: false,
         }
     }
 
@@ -170,6 +178,15 @@ impl PendingOp {
         PendingOp {
             doc,
             issued_version: Some(issued_version),
+            mints_scratch: false,
+        }
+    }
+
+    pub fn create_scratch(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: true,
         }
     }
 }
