@@ -21,17 +21,24 @@ use rune_core::buffer::Buffer;
 
 use crate::app::App;
 use crate::clipboard::osc52_copy;
-use crate::document::{Document, DocumentId};
+use crate::document::Document;
 use crate::keymap::{KeyCode, KeyInput};
 use crate::render::{self, Cell};
 use crate::runtime::Effects;
 
+mod guard;
+pub use guard::{
+    DIRTY_CLOSE_CANCEL_LABEL, DIRTY_CLOSE_DISCARD, DIRTY_CLOSE_OPTIONS, DIRTY_CLOSE_SAVE,
+    GuardKind, GuardOption, GuardPrompt, RENAME_COLLISION_OPTIONS, RENAME_REPLACE,
+};
+
 /// One modal state `App.modal` can hold — `Option<Modal>`, never a stack:
 /// only ever the single highest-priority modal currently warranted (see
-/// `set_modal`). `Error` is WP3's variant; `Guard` (plan WP5.S3) is the
-/// close-confirmation prompt for a dirty document, ranked BELOW it (see
-/// `priority` below) — a fresh error always wins over a stale close prompt,
-/// but a close prompt never silently displaces an error already up.
+/// `set_modal`). `Error` is WP3's variant; `Guard` (plan WP5.S3, widened by
+/// WP2 for quit) is the close/quit-confirmation prompt for a dirty
+/// document, ranked BELOW it (see `priority` below) — a fresh error always
+/// wins over a stale close/quit prompt, but a Guard never silently displaces
+/// an error already up.
 pub enum Modal {
     /// Boxed (clippy `large_enum_variant`): `ErrorState` embeds a whole
     /// `Document`, hundreds of bytes against `GuardPrompt`'s single
@@ -76,67 +83,6 @@ impl Modal {
         }
     }
 }
-
-/// The close-confirmation prompt for a dirty document (plan WP5.S3): armed
-/// by `workspace::request_close` when the document at `doc` is dirty, and
-/// resolved by stage 1's `handle_guard_key` below — `[S]ave`/`[D]iscard`/
-/// `Esc`. `kind` is a single-variant enum today (only one prompt shape
-/// exists) rather than a bare marker struct, so a later second Guard use
-/// case (untitled-draft close, say) is an additive `GuardKind` arm, not a
-/// second `Modal` variant.
-pub struct GuardPrompt {
-    pub doc: DocumentId,
-    pub kind: GuardKind,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum GuardKind {
-    DirtyClose,
-    /// A rename whose destination already exists (§1.4.4's destructive
-    /// transition). `[R]eplace` preserves the replaced file's bytes as a
-    /// durable blob before destroying it (§1.4.10) — see `rename.rs`.
-    /// `target` is the destination's display name, so the prompt can say
-    /// WHICH file is about to be replaced rather than asking blind.
-    RenameCollision {
-        target: String,
-    },
-}
-
-/// One `[X]abel` option in the dirty-close Guard's footer chord list: `key`
-/// is the exact char `handle_guard_key` below matches via `eq_ignore_ascii_
-/// case`; `label` is what `footer.rs`'s `Mode::Guard` rendering shows for
-/// it. The ONE source both sides read from (review fix: `footer.rs`
-/// previously carried its own independently hand-maintained `[S]ave
-/// [D]iscard [Esc] Cancel` literal, free to drift from this function's
-/// `s`/`d`/Esc match arms).
-pub struct GuardOption {
-    pub key: char,
-    pub label: &'static str,
-}
-
-pub const DIRTY_CLOSE_SAVE: GuardOption = GuardOption {
-    key: 's',
-    label: "[S]ave",
-};
-pub const DIRTY_CLOSE_DISCARD: GuardOption = GuardOption {
-    key: 'd',
-    label: "[D]iscard",
-};
-/// In display order — `footer.rs` iterates this for the Save/Discard pair;
-/// `Esc`/Cancel isn't a `GuardOption` (it never triggers an ACTION beyond
-/// clearing the modal, so there's no behavior to key off) and keeps its own
-/// `DIRTY_CLOSE_CANCEL_LABEL` below instead.
-pub const DIRTY_CLOSE_OPTIONS: &[GuardOption] = &[DIRTY_CLOSE_SAVE, DIRTY_CLOSE_DISCARD];
-pub const DIRTY_CLOSE_CANCEL_LABEL: &str = "[Esc] Cancel";
-
-/// The rename-collision Guard's only action. `key` is the exact char
-/// `handle_guard_key` matches; `label` is what the footer shows — the same
-/// one-source-of-truth pairing `DIRTY_CLOSE_*` established.
-pub const RENAME_REPLACE: GuardOption = GuardOption {
-    key: 'r',
-    label: "[R]eplace",
-};
-pub const RENAME_COLLISION_OPTIONS: &[GuardOption] = &[RENAME_REPLACE];
 
 /// The banner's private state (plan WP3.S1): a read-only `Document` that is
 /// NOT in `App.documents` and has no tab — `render::draw`'s editor-area
@@ -302,7 +248,7 @@ pub fn sync_modal(app: &mut App, width: u16, frame_height: u16) {
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     match &app.modal {
         Some(Modal::Error(_)) => handle_error_key(app, key, effects),
-        Some(Modal::Guard(_)) => handle_guard_key(app, key, effects),
+        Some(Modal::Guard(_)) => guard::handle_guard_key(app, key, effects),
         None => {}
     }
 }
@@ -327,92 +273,6 @@ fn handle_error_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         KeyCode::PageDown => scroll(app, page_amount(app)),
         _ => {}
     }
-}
-
-/// Names what Escape cancels for a given Guard kind. An exhaustive match, so
-/// a future `GuardKind` variant is forced to choose its own cancellation
-/// wording rather than silently inheriting a generic one.
-fn cancel_status(kind: &GuardKind) -> &'static str {
-    match kind {
-        GuardKind::DirtyClose => "close cancelled",
-        GuardKind::RenameCollision { .. } => "rename cancelled",
-    }
-}
-
-/// `s`/`S` saves `prompt.doc` then closes it — but ONLY once `trigger_save`
-/// actually started a save (`doc.save_in_flight` true right after calling
-/// it): a document with no file path, or one that just armed the degraded-
-/// store confirm gate instead of saving, never gets its `save_in_flight`
-/// set, so `pending_close_on_save` is deliberately left `None` in that
-/// case — the close intent is dropped (the user must press `^w` again once
-/// ready), never silently mis-fired against a save that never happened.
-/// `d`/`D` discards and closes immediately. `Esc` cancels, leaving the
-/// document untouched. Every other key is a consumed no-op (plan WP5.S3).
-fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    let Some(Modal::Guard(prompt)) = &app.modal else {
-        return;
-    };
-    let doc = prompt.doc;
-    // `Esc` cancels EVERY Guard kind identically — one arm, hoisted, so a
-    // later kind can never forget to be cancellable — and reports what it
-    // cancelled via `cancel_status` so the modal never just silently vanishes.
-    if key.code == KeyCode::Escape {
-        let msg = cancel_status(&prompt.kind);
-        clear_modal(app);
-        // A cancellation ack is the least important thing the status row can
-        // say. An unacknowledged save failure is the most important, and the
-        // footer already ranks it above ordinary status, so overwriting it
-        // here would drop the user's only notice that their bytes did not
-        // reach disk. Cancelling an unrelated Guard must never cost them
-        // that; the save failure stays until its own success clears it.
-        if app.status_source != crate::app::StatusSource::SaveError {
-            app.set_status(msg, crate::app::StatusSource::Other);
-        }
-        return;
-    }
-    match &prompt.kind {
-        GuardKind::DirtyClose => handle_dirty_close_key(app, doc, key, effects),
-        GuardKind::RenameCollision { .. } => handle_rename_collision_key(app, key),
-    }
-}
-
-/// The dirty-close arm, unchanged from WP5 apart from routing its modal
-/// clears through `clear_modal`.
-fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
-    match key.code {
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            clear_modal(app);
-            crate::save::trigger_save(app, doc, effects);
-            if app.doc(doc).is_some_and(|d| d.save_in_flight) {
-                app.pending_close_on_save = Some(doc);
-            }
-        }
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            clear_modal(app);
-            crate::workspace::close_now(app, doc, effects);
-        }
-        _ => {}
-    }
-}
-
-/// `r`/`R` confirms the destructive replace — but only when there is a
-/// durable store to capture the displaced bytes into (§1.4.10). Without
-/// one the key is a consumed no-op with an explanation, and the prompt
-/// STAYS up: silently doing nothing would look like a dropped keypress,
-/// and clearing it would look like the replace happened.
-fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
-    let KeyCode::Char(c) = key.code else { return };
-    if !c.eq_ignore_ascii_case(&RENAME_REPLACE.key) {
-        return;
-    }
-    if !crate::rename::replace_allowed(app) {
-        app.set_status(
-            "cannot replace \u{2014} recovery store unavailable",
-            crate::app::StatusSource::Other,
-        );
-        return;
-    }
-    crate::rename::replace_confirmed(app);
 }
 
 /// The modal document's own viewport height, as a page-scroll amount — `1`

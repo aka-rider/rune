@@ -434,7 +434,9 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::Copy => clipboard::copy(app, app.active, effects),
         Command::Cut => clipboard::cut(app, app.active, effects),
         Command::Paste => clipboard::paste(effects, PasteTarget::Document(app.active)),
-        Command::Save => save::trigger_save(app, app.active, effects),
+        Command::Save => {
+            let _ = save::trigger_save(app, app.active, effects);
+        }
         Command::FollowLink => navigate::follow(app, effects),
         Command::Reload => {
             crate::graphics::reload_image(app, app.active, effects);

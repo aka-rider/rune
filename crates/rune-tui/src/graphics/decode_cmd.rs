@@ -157,6 +157,11 @@ pub(crate) fn handle_image_decoded(
     let cell = app.graphics.cell;
     let kitty = app.graphics.kitty;
     let img_id = image.id;
+    // Only a RETRANSMIT needs the diff invalidated: its placeholder cells can
+    // be byte-identical to the ones already on screen while the pixels behind
+    // them changed, so the renderer would skip them. A first transmit replaces
+    // the info card with placeholder cells, which the diff sees on its own.
+    let was_live = image.status == ImageStatus::Live;
 
     let Some(doc) = app.doc_mut(id) else { return };
     let Some(image) = doc.image.as_mut() else {
@@ -182,7 +187,7 @@ pub(crate) fn handle_image_decoded(
     image.status = ImageStatus::Live;
     if let Some(bytes) = raw {
         effects.raw.push(bytes.into_bytes());
-        effects.force_redraw = true;
+        effects.force_redraw |= was_live;
     }
 }
 

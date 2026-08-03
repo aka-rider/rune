@@ -214,7 +214,7 @@ fn open_path_on_an_already_open_document_reactivates_instead_of_duplicating() {
 fn an_untitled_app_requests_its_first_listing_without_any_keypress() {
     let mem = seeded_vfs();
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
-    let mut app = App::new_untitled(vfs);
+    let mut app = App::new_untitled(vfs, None);
     assert!(
         app.splits.left.is_shown(),
         "a pathless launch shows the left column"

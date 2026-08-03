@@ -93,21 +93,44 @@ fn save_clean_matches_disk_is_inert_while_dirty() {
 /// virtual Help document active — clean by construction, with synthetic
 /// content that has nothing to do with `ctx.disk` (the real, seeded
 /// document's on-disk bytes). Must not misreport that as a durability
-/// defect.
+/// defect. `active_is_seed_doc` (plan WP0/WP1: replaces the old `!read_
+/// only` proxy, which only ever happened to correlate with this ONE case)
+/// is what the driver sets to `false` here — the Help document is never
+/// the seeded one.
 #[test]
 fn save_clean_matches_disk_is_inert_on_the_read_only_help_document() {
     let mut next = crate::support::base_snapshot("# Help\n\n## Global\n");
     next.is_dirty = false;
     next.read_only = true;
     let mut ctx = base_ctx();
+    ctx.active_is_seed_doc = false;
     ctx.saves_delivered_ok = 1;
     ctx.pending_save_bytes = None;
     ctx.disk = Some(b"hello world".to_vec());
     assert_eq!(save_clean_matches_disk(&next, &ctx), None);
 }
 
-/// Same-document coverage must survive the `read_only` gate above: a clean,
-/// NOT-read-only document whose disk bytes are stale is still caught.
+/// Plan WP0's own new way the active document can stop being the seeded
+/// one: closing the last open document now mints and activates a fresh,
+/// NOT-read-only untitled draft rather than refusing. Same inertness as
+/// the Help-toggle case above, for a document that is neither read-only
+/// nor the Help document.
+#[test]
+fn save_clean_matches_disk_is_inert_on_a_fresh_untitled_after_the_seed_doc_closed() {
+    let mut next = crate::support::base_snapshot("");
+    next.is_dirty = false;
+    next.read_only = false;
+    let mut ctx = base_ctx();
+    ctx.active_is_seed_doc = false;
+    ctx.saves_delivered_ok = 1;
+    ctx.pending_save_bytes = None;
+    ctx.disk = Some(b"whatever the closed seed document last held".to_vec());
+    assert_eq!(save_clean_matches_disk(&next, &ctx), None);
+}
+
+/// Same-document coverage must survive the `active_is_seed_doc` gate
+/// above: a clean document that IS still the seeded one, with stale disk
+/// bytes, is still caught.
 #[test]
 fn save_clean_matches_disk_still_catches_a_stale_disk_read_on_a_writable_document() {
     let mut next = crate::support::base_snapshot("current content");

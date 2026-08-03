@@ -162,6 +162,41 @@ fn a_stale_generation_is_dropped_with_no_effects() {
     assert!(effects.raw.is_empty());
 }
 
+/// A FIRST transmit must not ask for a forced redraw. `force_redraw` clears
+/// the terminal, and a clear issued from a decode reply was observed to block
+/// the main thread indefinitely — a hang needing an external kill. It is only
+/// ever needed for a retransmit, whose placeholder cells can be byte-identical
+/// to what is already on screen while the pixels behind them changed. A first
+/// transmit replaces the info card with placeholder cells, which the renderer's
+/// own diff already sees.
+#[test]
+fn a_first_transmit_does_not_force_a_redraw() {
+    let (mut app, id) = app_with_pending_image(true);
+
+    let mut effects = Effects::default();
+    schedule_image_decode(&mut app, id, &mut effects);
+    for cmd in effects.cmds {
+        if let Some(Msg::ImageDecoded {
+            doc,
+            generation,
+            result,
+        }) = cmd.run()
+        {
+            let mut reply = Effects::default();
+            handle_image_decoded(&mut app, doc, generation, result, &mut reply);
+            assert_eq!(reply.raw.len(), 1, "the image must still be transmitted");
+            assert!(
+                !reply.force_redraw,
+                "a first transmit must not clear the terminal"
+            );
+        }
+    }
+    assert_eq!(
+        app.doc(id).unwrap().image.as_ref().unwrap().status,
+        ImageStatus::Live
+    );
+}
+
 #[test]
 fn reload_retransmits_under_the_same_id_and_forces_a_redraw() {
     let (mut app, id) = app_with_live_image(true);

@@ -5,6 +5,8 @@
 //! no crate-internal access `#[cfg(test)]` had).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod dirty_common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -159,14 +161,21 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
     for content in ["a\r\nb\r\n", "\u{feff}hello", "no trailing newline"] {
         let vfs = Arc::new(Mem::new());
         let path = PathBuf::from("/doc.md");
+        // Built EMPTY, then the fixture's exact text is typed in via the
+        // real insert path (`dirty_common`'s doc comment explains why: a
+        // document's `saved_content` baseline is seeded from the buffer at
+        // construction, so starting AT `content` can never be dirty — only
+        // an edit AWAY from the constructed baseline can be, and it must
+        // land on exactly `content` for this test's byte-exact assertion
+        // below to mean anything).
         let mut app = App::new(
-            Buffer::new(content),
+            Buffer::new(""),
             Some(path.clone()),
             Arc::clone(&vfs) as Arc<dyn Vfs + Send + Sync>,
             None,
         );
         let id = app.active;
-        app.doc_mut(id).unwrap().saved_version = 0;
+        edit::insert_text(&mut app, id, content);
 
         let effects = press_save(&mut app);
         assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
@@ -194,7 +203,7 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    dirty_common::force_dirty(&mut app, id);
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
@@ -245,7 +254,7 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    dirty_common::force_dirty(&mut app, id);
 
     let effects = press_save(&mut app); // captures the pre-edit version
     assert_eq!(effects.cmds.len(), 1);
@@ -277,14 +286,13 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
     assert!(!path.exists(), "the fixture path must not exist yet");
 
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
-    let mut app = App::new(
-        Buffer::new("brand new file\n"),
-        Some(path.clone()),
-        vfs,
-        None,
-    );
+    // Built EMPTY, then typed in via the real insert path — see the sibling
+    // CRLF/BOM test above for why: only an edit AWAY from the constructed
+    // baseline is dirty, and it must land on the exact target bytes for the
+    // byte-exact assertion below.
+    let mut app = App::new(Buffer::new(""), Some(path.clone()), vfs, None);
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    edit::insert_text(&mut app, id, "brand new file\n");
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);

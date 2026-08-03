@@ -385,35 +385,72 @@ fn cluster_multicursor() -> impl Strategy<Value = Vec<Action>> {
 
 /// Presses `^C` (may arm the quit-confirm at whatever generation is
 /// currently next, OR — on a dirty, unpreserved document, which this
-/// no-`db` fuzz harness always has — raise the dirty-close Guard instead;
-/// either is a legitimate, already-handled outcome), then unconditionally
-/// delivers `Action::StaleConfirmTimeout` for a generation guaranteed to
-/// mismatch whatever (if anything) ended up armed — exercising
-/// `CONFIRM-GEN`'s `!should_clear` branch (CODE-REVIEW.md rune-fuzz
-/// finding 5), which `Action::ConfirmTimeout` structurally cannot reach
-/// (it always echoes the LIVE armed generation).
+/// no-`db` fuzz harness always has — raise the `DirtyQuit` Guard instead;
+/// either is a legitimate, already-handled outcome), immediately answers
+/// `Escape` if a Guard DID come up, then unconditionally delivers
+/// `Action::StaleConfirmTimeout` for a generation guaranteed to mismatch
+/// whatever (if anything) ended up armed — exercising `CONFIRM-GEN`'s
+/// `!should_clear` branch (CODE-REVIEW.md rune-fuzz finding 5), which
+/// `Action::ConfirmTimeout` structurally cannot reach (it always echoes the
+/// LIVE armed generation).
 ///
-/// Deliberately does NOT chain a second, DIFFERENT quit chord (`^D`) to
-/// re-arm a new generation the way a real "arm -> re-arm -> old-timer-
-/// fires" race would: `banner::handle_dirty_close_key`'s `d`/`D` option
-/// matches on bare `KeyCode::Char` regardless of mods, so `^D` while the
-/// dirty-close Guard from `^C` is already up (routine in a generated
-/// session, since SOME earlier cluster has almost always dirtied the
-/// document by the time this one runs) would DISCARD AND CLOSE the
-/// session's only document — corrupting every later `UNDO-TOTAL`/
-/// `REDO-TOTAL` check with a false, unrelated violation. A generation
-/// picked far outside any realistic `next_quit_gen` range needs no real
-/// re-arm to be guaranteed stale.
+/// The `Escape` answer (plan WP2) is load-bearing, not merely tidy: since
+/// `banner::guard::handle_dirty_quit_key`'s `d`/`D` answer now actually
+/// completes the QUIT (the pre-WP2 wedge fixed by this plan), leaving a
+/// `DirtyQuit` Guard open past this cluster would let ANY later cluster's
+/// ordinary typed prose supply the stray `d` that ends the session early —
+/// silently truncating the long tails `UNDO-TOTAL`/`WRAP-RT`/`HL-*` depend
+/// on. `Escape` is always a safe no-op when NO Guard came up (stage 2/3
+/// with editor focus treats a bare `Escape` as "collapse selection"), so
+/// this is unconditional rather than gated on whether `^C` actually raised
+/// one. Dedicated `cluster_quit_guard` below is where `[S]ave`/`[D]iscard`
+/// answers get exercised instead, self-contained so THEY can't leak either.
 fn cluster_confirm_stale() -> impl Strategy<Value = Vec<Action>> {
     Just(vec![
         Action::Key(CTRL_C_KEY),
+        Action::Key(ESCAPE_KEY),
         Action::StaleConfirmTimeout(u32::MAX),
     ])
 }
 
-/// The user-approved weighted table, now over 14 clusters (plan WP7.S6
+/// A dedicated, SELF-CONTAINED quit-guard scenario (plan WP2): `^C` (which,
+/// against this no-`db` fuzz harness's always-unpreserved document, raises
+/// the `DirtyQuit` Guard unless a two-press quit-confirm chord was already
+/// pending — either outcome is fine, the answer keys below are no-ops when
+/// no Guard is up), then ONE of `Esc`/`s`/`d` to resolve it, chosen and
+/// answered in the SAME cluster so no Guard survives into whatever runs
+/// next — exactly the leak `cluster_confirm_stale`'s own `Escape` fix
+/// guards against, but exercising the OTHER two answers `CONFIRM-GEN`'s own
+/// scenario deliberately never presses. `s`/`S` may start a real (no-store
+/// fallback) save `Cmd`, so this also follows up with `Action::Deliver` —
+/// harmless when nothing is pending — so a save this cluster started never
+/// outlives it either.
+fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
+    prop_oneof![
+        Just(vec![Action::Key(CTRL_C_KEY), Action::Key(ESCAPE_KEY)]),
+        Just(vec![
+            Action::Key(CTRL_C_KEY),
+            Action::Key(KeyInput {
+                code: KeyCode::Char('d'),
+                mods: Mods::NONE,
+            }),
+        ]),
+        Just(vec![
+            Action::Key(CTRL_C_KEY),
+            Action::Key(KeyInput {
+                code: KeyCode::Char('s'),
+                mods: Mods::NONE,
+            }),
+            Action::Deliver,
+        ]),
+    ]
+}
+
+/// The user-approved weighted table, now over 15 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
-/// WP14.S3 added `cluster_multicursor`). All arms are `.boxed()` —
+/// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
+/// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
+/// Guard's `[S]ave`/`[D]iscard`/`Esc` answers). All arms are `.boxed()` —
 /// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
 /// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
@@ -432,60 +469,10 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),
+        1 => cluster_quit_guard().boxed(),
     ]
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
-mod tests {
-    use proptest::strategy::ValueTree;
-    use proptest::test_runner::TestRunner;
-
-    use crate::driver;
-
-    use super::*;
-
-    /// FINDING A regression: `cluster_highlight`'s own doc comment claims
-    /// its `Key('h')` edit is mandatory, but `Action::Key` only reaches the
-    /// buffer while `focus == Pane::Editor` — and a preceding cluster can
-    /// leave focus elsewhere with no restore (`cluster_chrome`'s
-    /// `Key(CTRL_R_KEY)` arm parks it on `Pane::Title`). This test starts a
-    /// session with exactly that arm, THEN runs whatever `cluster_highlight`
-    /// itself generates — sampled from the real strategy, not a hand-copied
-    /// stand-in — and asserts the edit still lands. Run this with the
-    /// `Action::Key(ESCAPE_KEY)`/`Action::Key(CTRL_E_KEY)` prefix reverted
-    /// to confirm it fails first (recorded in the fix's commit/handoff, not
-    /// re-derivable from the test alone).
-    #[test]
-    fn cluster_highlight_edit_survives_focus_parked_off_editor() {
-        let mut runner = TestRunner::default();
-        let tree = cluster_highlight()
-            .new_tree(&mut runner)
-            .expect("cluster_highlight strategy generation failed");
-
-        // Mirrors `cluster_chrome`'s no-restore `Key(CTRL_R_KEY)` arm: parks
-        // focus on `Pane::Title` before `cluster_highlight`'s own actions
-        // run, with no subsequent focus restore of any kind.
-        let mut actions = vec![Action::Key(CTRL_R_KEY)];
-        actions.extend(tree.current());
-
-        let result = driver::run(driver::DOC_PATH, "", &actions);
-
-        assert_eq!(
-            result.violation.as_ref().map(|v| v.id),
-            None,
-            "session should settle with no invariant violation"
-        );
-        assert_eq!(
-            result.final_content, "h",
-            "cluster_highlight's guaranteed edit must land the 'h' keystroke in the buffer even \
-             when a preceding action parks focus off the editor; got {:?} instead",
-            result.final_content
-        );
-    }
-}
+#[path = "cluster_tests.rs"]
+mod tests;

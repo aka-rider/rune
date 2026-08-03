@@ -83,6 +83,18 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
             let _ = writeln!(out, "snapshot.modal_open: {}", snap.modal_open);
             let _ = writeln!(out, "snapshot.active: {:?}", snap.active);
             let _ = writeln!(out, "snapshot.title_text: {:?}", snap.title_text);
+            let _ = writeln!(out, "snapshot.guard: {:?}", snap.guard);
+            let _ = writeln!(
+                out,
+                "snapshot.quit_intent_pending: {:?}",
+                snap.quit_intent_pending
+            );
+            let _ = writeln!(out, "snapshot.dirty_by_doc: {:?}", snap.dirty_by_doc);
+            let _ = writeln!(
+                out,
+                "snapshot.save_in_flight_by_doc: {:?}",
+                snap.save_in_flight_by_doc
+            );
             let _ = writeln!(out);
             let _ = writeln!(out, "rendered frame:");
             out.push_str(&render_frame(&snap.cells));

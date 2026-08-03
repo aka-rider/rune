@@ -34,7 +34,6 @@ use rune_tui::workspace;
 use rune_vfs::{Disk, Vfs};
 
 use cli::CliAction;
-use db_bootstrap::DbBootstrap;
 
 mod cli;
 mod db_bootstrap;
@@ -214,12 +213,11 @@ fn bootstrap(
         open::open_first_positional(&vfs, path, home.as_deref())?
     } else {
         // No positional files — open the default untitled document
-        // (`App::new_untitled`). The Go implementation uses
-        // `nextUntitledName` to pick the first "Untitled N" not already
-        // used by open tabs; at startup there are none, so this is always
-        // "Untitled 1". No file on disk means no recovery store to
-        // hydrate either — see `App::new_untitled`'s own docs.
-        (App::new_untitled(Arc::clone(&vfs)), DbBootstrap::default())
+        // (`App::new_untitled`), genuinely recovery-backed (plan WP3):
+        // `open::open_untitled` opens/recovers its own scratch row through
+        // the SAME recovery store a file launch uses, rather than always
+        // starting with `db: None`.
+        open::open_untitled(&vfs, home.as_deref())
     };
 
     // From here on, a panic unwinding through this function (or `launch`
@@ -266,6 +264,10 @@ fn bootstrap(
                 rune_tui::app::StatusSource::Other,
             );
         }
+        // Dirty is a content comparison now (plan WP1) — `hydrate` no
+        // longer marks it itself, so every hydration site re-derives it
+        // explicitly (CONSTITUTION §1.4.8).
+        app.recompute_dirty(first_doc_id);
     }
 
     Ok(app)
@@ -296,173 +298,5 @@ fn to_abs_path(input: &str, cwd: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
-mod tests {
-    use super::*;
-    use rune_vfs::Mem;
-
-    /// A real, throwaway `$HOME` under the OS temp dir — `Store::open`
-    /// talks to the sqlite file directly via `rusqlite`, bypassing the
-    /// injected `vfs` entirely (same pattern `rune-db`'s own multiprocess
-    /// tests use), so the recovery-store half of these launch tests needs
-    /// a real directory even though every document byte lives in `Mem`.
-    struct ScratchHome(PathBuf);
-
-    impl ScratchHome {
-        fn new(label: &str) -> ScratchHome {
-            let dir = env::temp_dir().join(format!(
-                "rune-cli-launch-{label}-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or_default()
-            ));
-            std::fs::create_dir_all(&dir).expect("create scratch home");
-            ScratchHome(dir)
-        }
-    }
-
-    impl Drop for ScratchHome {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn launch_multi_file_enqueues_a_load_for_every_extra_tab() {
-        let vfs = Mem::new();
-        vfs.save_atomic(Path::new("/vault/a.md"), b"a")
-            .expect("seed a.md");
-        vfs.save_atomic(Path::new("/vault/b.md"), b"b")
-            .expect("seed b.md");
-        vfs.save_atomic(Path::new("/vault/c.md"), b"c")
-            .expect("seed c.md");
-        let home = ScratchHome::new("multi-file");
-
-        let app = bootstrap(
-            Arc::new(vfs),
-            vec![
-                OsString::from("/vault/a.md"),
-                OsString::from("/vault/b.md"),
-                OsString::from("/vault/c.md"),
-            ]
-            .into_iter(),
-            PathBuf::from("/"),
-            Some(home.0.clone()),
-        )
-        .expect("bootstrap should succeed");
-
-        // The first file hydrates synchronously inside `bootstrap_db` and
-        // is bound before `App::new` ever runs.
-        assert_eq!(app.documents.len(), 3);
-        assert!(app.doc(app.active).is_some_and(|d| d.db.is_some()));
-        // The other two open through `workspace::open_path`'s async path
-        // (plan [rune-cli 1]/WP3.S1): each one's `Load` must actually be
-        // enqueued and tracked, not silently dropped the way a `Sink::
-        // Bootstrap`-less bridge used to swallow it — `db_ops` is where
-        // `db::load_document` records that at enqueue time, synchronously.
-        assert_eq!(
-            app.db_ops.len(),
-            2,
-            "every extra tab's Load must be tracked"
-        );
-    }
-
-    #[test]
-    fn launch_same_file_two_spellings_opens_one_document() {
-        let vfs = Mem::new();
-        vfs.save_atomic(Path::new("/vault/notes.md"), b"hi")
-            .expect("seed notes.md");
-        let home = ScratchHome::new("dedup");
-
-        let app = bootstrap(
-            Arc::new(vfs),
-            vec![
-                OsString::from("/vault/notes.md"),
-                OsString::from("/vault/sub/../notes.md"),
-            ]
-            .into_iter(),
-            PathBuf::from("/"),
-            Some(home.0.clone()),
-        )
-        .expect("bootstrap should succeed");
-
-        assert_eq!(
-            app.documents.len(),
-            1,
-            "two spellings of the same file must resolve to one document"
-        );
-    }
-
-    /// Plan WP4.S8: a `.png` first positional bootstraps through the SAME
-    /// `workspace::open_path` dispatch every extra positional uses (built
-    /// via the untitled `App` constructor as an anchor), rather than
-    /// `load_buffer`'s text-only path — which would reject the PNG's bytes
-    /// outright as invalid UTF-8, exactly the failure this restructuring
-    /// exists to route around. Exactly one document is left open (the
-    /// blank untitled anchor is closed once the image opens), it is the
-    /// active one, and it is read-only.
-    #[test]
-    fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
-        let vfs = Mem::new();
-        vfs.save_atomic(
-            Path::new("/vault/x.png"),
-            &[0x89, b'P', b'N', b'G', 0, 0, 0, 0],
-        )
-        .expect("seed a (fake) png");
-
-        let app = bootstrap(
-            Arc::new(vfs),
-            vec![OsString::from("/vault/x.png")].into_iter(),
-            PathBuf::from("/"),
-            None,
-        )
-        .expect("bootstrap should succeed for an image first positional");
-
-        assert_eq!(
-            app.documents.len(),
-            1,
-            "the blank untitled anchor must be closed once the image opens"
-        );
-        assert!(app.doc(app.active).is_some_and(|d| d.read_only));
-        assert!(
-            app.doc(app.active)
-                .is_some_and(|d| d.file_path.as_deref() == Some(Path::new("/vault/x.png")))
-        );
-    }
-
-    #[test]
-    fn launch_nonexistent_path_sets_a_banner() {
-        let vfs = Mem::new();
-
-        let app = bootstrap(
-            Arc::new(vfs),
-            vec![OsString::from("/vault/missing.md")].into_iter(),
-            PathBuf::from("/"),
-            None,
-        )
-        .expect("bootstrap should succeed even with no recovery store");
-
-        assert!(
-            app.db_banner.is_some(),
-            "a nonexistent-path launch must not run with zero indication of no crash protection"
-        );
-    }
-
-    #[test]
-    fn launch_empty_positional_is_rejected_before_any_open() {
-        let vfs = Mem::new();
-
-        let result = bootstrap(
-            Arc::new(vfs),
-            vec![OsString::from("")].into_iter(),
-            PathBuf::from("/"),
-            None,
-        );
-        assert!(
-            result.is_err(),
-            "an empty positional must be rejected at parse"
-        );
-    }
-}
+#[path = "bootstrap_tests.rs"]
+mod tests;

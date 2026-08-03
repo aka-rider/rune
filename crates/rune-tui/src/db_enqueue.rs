@@ -106,3 +106,26 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
 }
+
+/// Enqueues a `CreateScratch` op registering `id` — a freshly minted
+/// untitled draft (`workspace::new_untitled_document`'s one call site) — as
+/// its own scratch row in the recovery store, closing the "an untitled
+/// draft minted mid-session has no journal" gap (plan WP0/WP3). Mirrors
+/// `load_document`'s enqueue-then-record shape: a degraded or absent store
+/// enqueues nothing, leaving `doc.db` `None` and the draft exactly as
+/// unpreserved as it is today — `App::is_preserved` already reports that
+/// honestly, so there is nothing else to gate here. The ack binds `doc.db`
+/// (`db_ack::handle_create_scratch_ack`); until it lands the draft is
+/// simply not yet preserved, same as any other in-flight recovery op.
+pub fn create_scratch(app: &mut App, id: DocumentId) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
+    let Some(db) = app.db.as_ref() else { return };
+    match db.store.create_scratch() {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, PendingOp::create_scratch(id));
+        }
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+    }
+}

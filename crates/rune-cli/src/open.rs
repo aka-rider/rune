@@ -12,7 +12,7 @@ use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{FileKind, Vfs};
 
 use crate::cli::CliError;
-use crate::db_bootstrap::{DbBootstrap, bootstrap_db};
+use crate::db_bootstrap::{DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_untitled_db};
 use crate::loader::{LoadError, load_buffer};
 use crate::{AppGuard, exit_code};
 
@@ -83,7 +83,7 @@ pub(crate) fn open_first_positional(
     home: Option<&Path>,
 ) -> Result<(App, DbBootstrap), std::process::ExitCode> {
     if rune_tui::document_support::is_image_path(&path) {
-        let mut app = App::new_untitled(Arc::clone(vfs));
+        let mut app = App::new_untitled(Arc::clone(vfs), None);
         let blank = app.active;
         let opened = workspace::open_path(&mut app, &path);
         if let Some(image_id) = opened
@@ -94,7 +94,8 @@ pub(crate) fn open_first_positional(
             // closed here is never an image document, so `close_now`'s
             // image-delete branch (WP5.S7) is a no-op on this path either
             // way.
-            workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
+            let _ =
+                workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
         }
         return Ok((app, DbBootstrap::default()));
     }
@@ -153,6 +154,85 @@ pub(crate) fn open_first_positional(
     // check entirely.
     let app = App::new(buffer, Some(path), Arc::clone(vfs), db_bootstrap.db.take());
     Ok((app, db_bootstrap))
+}
+
+/// Builds the default no-positional launch: an untitled document genuinely
+/// backed by the recovery store (plan WP3, "the untitled draft is really
+/// recovery-backed" — the fix for `crates/rune-tui/TODO.md`'s now-resolved
+/// "no recovery journal for the default untitled document" entry).
+/// `bootstrap_untitled_db` does the actual store/scratch-row work
+/// (opening/creating/recovering rows, GC); this only wires its result onto a
+/// freshly constructed `App`. `scratch_docs` is ordered newest first: the
+/// first entry adopts the already-open default document (through
+/// `Document::hydrate`, the same chokepoint every other hydration route
+/// uses) and becomes the active tab; every remaining recovered draft opens
+/// as its OWN background tab, bound to its OWN row (never a fresh row
+/// copying the text in — `ScratchDoc`'s own doc comment explains why).
+pub(crate) fn open_untitled(
+    vfs: &Arc<dyn Vfs + Send + Sync>,
+    home: Option<&Path>,
+) -> (App, DbBootstrap) {
+    let mut bootstrap = bootstrap_untitled_db(Arc::clone(vfs), home);
+
+    let mut app = App::new_untitled(Arc::clone(vfs), bootstrap.db.take());
+
+    let mut docs = bootstrap.scratch_docs.into_iter();
+    if let Some(first) = docs.next() {
+        let active = app.active;
+        adopt_scratch_doc(&mut app, active, first);
+    }
+    for extra in docs {
+        let id = app.open_document(rune_core::buffer::Buffer::new(""));
+        let name = workspace::next_untitled_name(&app);
+        if let Some(doc) = app.doc_mut(id) {
+            doc.display_name = Some(name);
+        }
+        adopt_scratch_doc(&mut app, id, extra);
+    }
+
+    (
+        app,
+        DbBootstrap {
+            banner: bootstrap.banner,
+            ..DbBootstrap::default()
+        },
+    )
+}
+
+/// Binds `scratch.db_id` onto `id`'s `Document` and, when there is actually
+/// recovered text, adopts it through `Document::hydrate` — the §1.3
+/// suspicion check, the synthetic bridge `Step` so post-restart undo reaches
+/// the recovered text in one step, and a refusal surfaced as a status rather
+/// than silently applied (mirrors `bootstrap`'s own handling of `rune_db::
+/// load`'s `recovered_content`). `bind_new` is always `true`: a scratch
+/// document — recovered or freshly minted — has never been bound to a real
+/// file, so its NEXT save must still go through the create-only path.
+/// `expect_obs` is `0`, a fabricated `ObsId` that is never actually queried
+/// (`materialize::prepare_materialize` skips the CAS-baseline lookup
+/// entirely when `bind_new` is set) — never handed to a caller that would
+/// treat it as a genuine baseline.
+fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
+    if let Some(doc) = app.doc_mut(id) {
+        doc.db = Some(rune_tui::db::DocDb::new(scratch.db_id, 0, true, 0));
+    }
+    if scratch.content.is_empty() {
+        return;
+    }
+    let Some(doc) = app.doc_mut(id) else { return };
+    let disk_content = doc.buffer.content().to_string();
+    if let rune_tui::document::Hydration::Refused(reason) =
+        doc.hydrate(&disk_content, &scratch.content)
+    {
+        app.set_status(
+            format!("crash recovery: {reason}"),
+            rune_tui::app::StatusSource::Other,
+        );
+    }
+    // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
+    // marks it itself, so every hydration site re-derives it explicitly
+    // (CONSTITUTION §1.4.8), same as `bootstrap`'s and `db_ack::handle_load_ack`'s
+    // own hydration sites.
+    app.recompute_dirty(id);
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the
@@ -221,6 +301,34 @@ fn combine_open_errors(errors: &[String]) -> String {
 mod tests {
     use super::*;
     use rune_vfs::Mem;
+
+    /// Finding 1 regression: `adopt_scratch_doc` hydrates a recovered
+    /// scratch draft into an otherwise-empty buffer but must also re-derive
+    /// dirty (CONSTITUTION §1.4.8) — dirtiness no longer falls out of
+    /// `Document::hydrate` itself since `mark_dirty_from_hydration` was
+    /// deleted, so every hydration site (this one included) must call
+    /// `App::recompute_dirty` explicitly or the recovered text renders
+    /// clean while `saved_content` is still empty.
+    #[test]
+    fn adopt_scratch_doc_marks_the_document_dirty() {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let mut app = App::new_untitled(Arc::clone(&vfs), None);
+        let id = app.active;
+
+        adopt_scratch_doc(
+            &mut app,
+            id,
+            ScratchDoc {
+                db_id: 1,
+                content: "recovered draft text".to_string(),
+            },
+        );
+
+        assert!(
+            app.doc(id).expect("doc exists").is_dirty(),
+            "a recovered draft that differs from its (empty) baseline must be dirty"
+        );
+    }
 
     #[test]
     fn validate_work_dir_rejects_a_regular_file() {

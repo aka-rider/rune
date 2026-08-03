@@ -60,17 +60,19 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
 /// do with that path — comparing them against `ctx.disk` misreports the
 /// checker's own doc-vs-path mismatch as a durability defect (this is what
 /// TODO-fuzz-save-clean-matches-disk-help-toggle.md's `Type("hello world")
-/// -> ⌘S -> A -> F1 -> A` repro actually hit). Gated on `!next.read_only`
-/// rather than the `prev.active == next.active` pattern `VERSION-MONOTONE`/
-/// `SAVE-INFLIGHT-SM` use: this driver never opens more than one non-Help
-/// document (`checks.rs::restore_editor_focus`'s own docs) and `read_only`
-/// is set on exactly that one virtual document (`workspace::toggle_help`,
-/// the only call site that ever sets it) — so "the active document is
-/// read-only" and "the active document is not the one `ctx.disk` describes"
-/// are the same condition here, without needing `StepCtx` to carry an
-/// active document id at all.
+/// -> ⌘S -> A -> F1 -> A` repro actually hit).
+///
+/// Gated on `ctx.active_is_seed_doc` rather than `!next.read_only` alone
+/// (the `!read_only` proxy this used to rely on): plan WP0 (`rr` history)
+/// made closing the LAST open document mint and activate a fresh, non-
+/// read-only untitled draft instead of refusing — a second way "the active
+/// document is not the one `ctx.disk` describes" can now arise without
+/// `read_only` ever being set, e.g. a Guard's `[S]ave` closing the seed
+/// document once its save ack lands. `active_is_seed_doc` covers both
+/// cases directly instead of proxying through a field that only ever
+/// happened to correlate with the Help-toggle one.
 pub fn save_clean_matches_disk(next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
-    if next.read_only
+    if !ctx.active_is_seed_doc
         || next.is_dirty
         || ctx.saves_delivered_ok == 0
         || ctx.pending_save_bytes.is_some()

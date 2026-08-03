@@ -66,6 +66,22 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
                 );
             }
         }
+        DbEvent::Ok {
+            id: op_id,
+            result: rune_db::OpOutcome::RowId(row_id),
+        } => {
+            // `RowId` is shared by two op kinds (`db::PendingOp::mints_
+            // scratch`'s own doc comment): a `CreateScratch` minting a
+            // mid-session untitled draft's own recovery row (plan WP0/WP3)
+            // binds a fresh `DocDb`; a `CreateSnapshot` anchor
+            // (`materialize_ack::handle_snapshot_due`) is fire-and-forget —
+            // popping it from `db_ops` here is its only needed reaction.
+            if let Some(pending) = app.db_ops.remove(&op_id)
+                && pending.mints_scratch
+            {
+                crate::db_ack::handle_create_scratch_ack(app, pending.doc, row_id);
+            }
+        }
         DbEvent::Ok { id: op_id, .. } => {
             app.db_ops.remove(&op_id);
         }

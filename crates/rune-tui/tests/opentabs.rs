@@ -329,10 +329,11 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     assert_eq!(app.status_source, StatusSource::Other);
 }
 
-/// Closing the last remaining document is refused outright — rune always
-/// shows one document.
+/// Closing the last remaining document (plan WP0) mints a fresh untitled
+/// draft rather than refusing — the old refusal made the user open another
+/// document just to close the untitled one before they could leave.
 #[test]
-fn closing_the_last_document_is_refused() {
+fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     let only = app.active;
@@ -340,13 +341,54 @@ fn closing_the_last_document_is_refused() {
 
     workspace::request_close(&mut app, only, &mut Effects::default());
 
+    assert!(app.modal.is_none(), "a clean close never arms a Guard");
     assert!(
-        app.modal.is_none(),
-        "must not arm a Guard for the last document"
+        !app.documents.contains_key(&only),
+        "the original document must actually be gone"
     );
-    assert!(app.documents.contains_key(&only));
+    assert_eq!(
+        app.documents.len(),
+        1,
+        "closing the last document leaves exactly one — a fresh untitled"
+    );
+    assert_eq!(
+        app.active_doc().display_name.as_deref(),
+        Some("Untitled 1"),
+        "the replacement is the fresh untitled draft, and it's now active"
+    );
+    assert!(
+        app.status_message.is_none(),
+        "there is no more \"can't close\" refusal to report"
+    );
+}
+
+/// The dirty variant of the same scenario still routes through the close
+/// Guard — `^W` on a dirty-and-only document must not silently discard it.
+/// `[D]iscard` then lands on the same fresh-untitled replacement.
+#[test]
+fn closing_a_dirty_only_document_still_routes_through_the_guard() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let only = app.active;
+    edit::insert_char(&mut app, only, '!');
+    assert!(app.doc(only).unwrap().is_dirty());
+
+    workspace::request_close(&mut app, only, &mut Effects::default());
+
+    assert!(
+        app.modal.is_some(),
+        "a dirty close still arms the Guard, even for the only document"
+    );
+    assert!(app.documents.contains_key(&only), "not closed yet");
     assert_eq!(app.documents.len(), 1);
-    assert!(app.status_message.is_some());
+
+    let mut effects = Effects::default();
+    app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
+
+    assert!(app.modal.is_none());
+    assert!(!app.documents.contains_key(&only));
+    assert_eq!(app.documents.len(), 1);
+    assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
 }
 
 /// A Guard armed while an Error banner is already up must not displace it

@@ -88,7 +88,7 @@ fn closing_a_document_sweeps_its_pending_load_version() {
     // — `close_now` only reassigns `active` away from `id` when `id` is
     // currently active, which is not what this test is exercising.
     app.active = initial_id;
-    workspace::close_now(&mut app, opened_id, &mut Effects::default());
+    let _ = workspace::close_now(&mut app, opened_id, &mut Effects::default());
 
     assert!(
         app.db_ops.is_empty(),
@@ -148,7 +148,7 @@ fn two_file_launch_delivers_both_load_acks_once_attach_drains_the_bootstrap_buff
     // `App::new_untitled` mirrors the CLI's own no-positional-file shape —
     // the bridge is still `Bootstrap` here, matching `rune-cli::main`'s
     // window between `Store::open` and `runtime::run`'s `attach` call.
-    let mut app = App::new_untitled(Arc::clone(&vfs));
+    let mut app = App::new_untitled(Arc::clone(&vfs), None);
     app.db = Some(Db::new(store, Arc::clone(&bridge), false));
 
     // Exactly `rune-cli::main`'s extra-positional loop: every file after

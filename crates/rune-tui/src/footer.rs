@@ -12,7 +12,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{App, StatusSource};
 use crate::banner;
-use crate::banner::{GuardKind, Modal};
+use crate::banner::{GuardKind, GuardPrompt, Modal};
 use crate::footer_hints::{default_hint_spans, truncated_default_hint_spans};
 use crate::width::display_width;
 use rune_syntax::wrap::line_visual_col;
@@ -26,10 +26,13 @@ use rune_syntax::wrap::line_visual_col;
 /// `status.rs::status_text`.
 enum Mode<'a> {
     Modal,
-    /// The close-confirmation prompt (plan WP5.S3) — outranks everything
-    /// below it exactly like `Modal` does, since it's the SAME `App.modal`
-    /// slot, just the other variant.
-    Guard(&'a GuardKind),
+    /// The close/quit-confirmation prompt (plan WP5.S3, widened WP2) —
+    /// outranks everything below it exactly like `Modal` does, since it's
+    /// the SAME `App.modal` slot, just the other variant. Carries the whole
+    /// `GuardPrompt`, not just its `GuardKind` (plan WP2): `guard_spans`
+    /// needs `prompt.doc` to name WHICH document a `DirtyQuit` prompt is
+    /// blocking on — a `GuardKind` alone can't say that.
+    Guard(&'a GuardPrompt),
     SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
@@ -40,7 +43,7 @@ enum Mode<'a> {
 fn mode(app: &App) -> Mode<'_> {
     match &app.modal {
         Some(Modal::Error(_)) => return Mode::Modal,
-        Some(Modal::Guard(prompt)) => return Mode::Guard(&prompt.kind),
+        Some(Modal::Guard(prompt)) => return Mode::Guard(prompt),
         None => {}
     }
     if app.status_source == StatusSource::SaveError
@@ -101,7 +104,7 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
             Span::styled("  ", app.theme.chrome.footer_hint),
             Span::styled("[Esc] discard", app.theme.chrome.footer_hint),
         ],
-        Mode::Guard(kind) => guard_spans(app, kind),
+        Mode::Guard(prompt) => guard_spans(app, prompt),
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.error)],
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
@@ -110,18 +113,36 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
     }
 }
 
-/// The dirty-close Guard's `[S]ave [D]iscard [Esc] Cancel` hint (plan
-/// WP5.S3), built from `banner::DIRTY_CLOSE_OPTIONS`/`DIRTY_CLOSE_CANCEL_
-/// LABEL` — the SAME consts `banner::handle_guard_key` matches its `s`/`d`
-/// keys against, so this render can never drift from what those keys
-/// actually do (review fix).
-fn guard_spans(app: &App, kind: &GuardKind) -> Vec<Span<'static>> {
+/// The dirty-close/dirty-quit Guard's `[S]ave [D]iscard [Esc] Cancel` hint
+/// (plan WP5.S3, widened WP2), built from `banner::DIRTY_CLOSE_OPTIONS`/
+/// `DIRTY_CLOSE_CANCEL_LABEL` — the SAME consts `banner::guard::
+/// handle_guard_key` matches its `s`/`d` keys against, so this render can
+/// never drift from what those keys actually do (review fix).
+fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     // A rename collision names its target: "replace <what>?" is a question
-    // the user can answer; a bare `[R]eplace` is not.
-    let options: &[banner::GuardOption] = match kind {
+    // the user can answer; a bare `[R]eplace` is not. `DirtyQuit` names
+    // WHICH document quit is waiting on (plan WP2: the fix for "a
+    // background dirty document blocks quit with no hint which one") — via
+    // `Document::file_name`, the same name the tab bar shows, so the user
+    // matches the prompt against something already on screen. Deliberately
+    // NOT `title::name_for`: that one answers "what should the title FIELD
+    // hold", which for a pathless draft is the editable `.md` stub — a
+    // prompt reading "unsaved changes in .md" names nothing at all.
+    let options: &[banner::GuardOption] = match &prompt.kind {
         GuardKind::DirtyClose => banner::DIRTY_CLOSE_OPTIONS,
+        GuardKind::DirtyQuit => {
+            let name = app
+                .doc(prompt.doc)
+                .map(|doc| doc.file_name().to_string())
+                .unwrap_or_default();
+            spans.push(Span::styled(
+                format!("unsaved changes in {name} \u{2014} "),
+                app.theme.chrome.footer_hint,
+            ));
+            banner::DIRTY_CLOSE_OPTIONS
+        }
         GuardKind::RenameCollision { target } => {
             spans.push(Span::styled(
                 format!("{target} already exists  "),

@@ -138,6 +138,10 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         // wants the STALE case overrides one or the other explicitly.
         highlight_version: 1,
         geometry: base_geometry(),
+        guard: None,
+        quit_intent_pending: None,
+        dirty_by_doc: std::collections::BTreeMap::new(),
+        save_in_flight_by_doc: std::collections::BTreeMap::new(),
     }
 }
 
@@ -153,6 +157,7 @@ pub(crate) fn base_ctx() -> StepCtx {
         pending_save_bytes: None,
         delivered_save_bytes: None,
         saves_delivered_ok: 0,
+        active_is_seed_doc: true,
     }
 }
 

@@ -164,6 +164,25 @@ pub enum OpKind {
     },
     /// Port of `adopt.go` (`ResolveAbandon`).
     ResolveAbandon { session_id: i64, doc_id: i64 },
+    /// WP3 (quit-guard plan): port of `store_documents.go` (`CreateScratch`)
+    /// — inserts a brand-new unbound scratch `documents` row. On success,
+    /// the completion's `DbEvent::Ok.result` carries the new row's id.
+    CreateScratch { now: SystemTime },
+    /// WP3: port of `store_documents.go` (`GCEmptyScratch`) — see
+    /// `scratch::gc_empty_scratch` for why this filter is stricter than Go's.
+    GcEmptyScratch { keep_id: i64 },
+    /// WP3: port of `store_documents.go` (`RecoverableScratch`). On success,
+    /// the completion's `DbEvent::Ok.result` carries the candidate ids,
+    /// newest first.
+    RecoverableScratch { exclude_id: i64 },
+    /// WP3: port of `load.go` (`RecoverAcrossSessions`) for an untitled
+    /// document — see `scratch::reconstruct_scratch`. `liveness_check`
+    /// travels with the op for the same reason `Load` carries its own copy:
+    /// the writer thread never touches `Store`'s mutex.
+    ReconstructScratch {
+        liveness_check: LivenessCheckFn,
+        doc_id: i64,
+    },
     /// WP6.S2: the writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER
@@ -210,6 +229,12 @@ pub enum OpOutcome {
     /// `RenameFile`/`RenameReplace`'s [`RenameOutcome`] (boxed — see
     /// `Sync`'s doc comment: `Replaced` carries a whole `Observation`).
     Rename(Box<RenameOutcome>),
+    /// `RecoverableScratch`'s candidate `documents.id`s, newest first.
+    Ids(Vec<i64>),
+    /// `ReconstructScratch`'s recovered content, or `None` when there was
+    /// nothing to recover (no prior session ever touched the doc, or the
+    /// most recent one is still alive).
+    Reconstructed(Option<String>),
 }
 
 /// A completion posted by the writer thread for one `WriteOp`, or a fatal

@@ -120,6 +120,10 @@ fn base_snapshot(content: &str) -> Snapshot {
         highlight_spans: Vec::new(),
         highlight_version: 1,
         geometry: base_geometry(),
+        guard: None,
+        quit_intent_pending: None,
+        dirty_by_doc: std::collections::BTreeMap::new(),
+        save_in_flight_by_doc: std::collections::BTreeMap::new(),
     }
 }
 
