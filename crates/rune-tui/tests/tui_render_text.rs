@@ -321,9 +321,12 @@ fn control_char_gets_a_safe_placeholder_glyph() {
 fn grapheme_width_agrees_with_ratatuis_own_cell_width_derivation() {
     let corpus: &[(&str, &str)] = &[
         ("plain ASCII", "a"),
-        ("CJK", "\u{6c49}"),                    // 汉
-        ("NFD accent cluster", "e\u{0301}"),    // e + combining acute
-        ("ZWJ family", "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"),
+        ("CJK", "\u{6c49}"),                 // 汉
+        ("NFD accent cluster", "e\u{0301}"), // e + combining acute
+        (
+            "ZWJ family",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}",
+        ),
         ("skin-tone modifier", "\u{1F44B}\u{1F3FD}"), // 👋🏽
         ("heart + FE0F", "\u{2764}\u{FE0F}"),         // ❤️
         ("lightning + FE0E", "\u{26A1}\u{FE0E}"),     // ⚡︎
