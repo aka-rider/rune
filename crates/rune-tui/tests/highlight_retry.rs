@@ -1,25 +1,42 @@
-//! Split off `highlight.rs` (WP11, §1.6): `Msg::Highlighted` reply
-//! semantics — keep-on-`None` (`[R2]`), drop-on-stale-version, the D5/D6
-//! single-bounded-parse timeout/tree-payload handling, and the status line
-//! a reply surfaces (or must stay silent about).
+//! `Msg::Highlighted` reply semantics — keep-on-`None` (`[R2]`),
+//! drop-on-stale-version, the single-bounded-parse timeout, and the status
+//! line a reply surfaces (or must stay silent about).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod highlight_common;
 
-use std::time::Duration;
-
-use highlight_common::app_for;
+use highlight_common::{all_spans, app_for, span_reply};
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
-use rune_tui::runtime::{Effects, HighlightPayload, HighlightResult, Msg};
+use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult};
+use rune_tui::linemap::LineMap;
+use rune_tui::runtime::{Effects, Msg};
+
+/// Installs one span-backed region carrying `spans` through the real
+/// `app::update` chokepoint, at the live buffer version.
+fn install(app: &mut app::App, spans: Vec<(std::ops::Range<usize>, rune_syntax::ScopeId)>) {
+    let id = app.active;
+    let version = app.doc(id).expect("doc").buffer.version();
+    let mut effects = Effects::default();
+    app::update(
+        app,
+        Msg::Highlighted {
+            doc: id,
+            version,
+            result: Some(span_reply(spans)),
+        },
+        &mut effects,
+    );
+}
 
 #[test]
 fn none_result_leaves_spans_byte_identical() {
     let mut app = app_for("fn main() {}\n", "/x/main.rs");
     let id = app.active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    let before = vec![(0..2, keyword)];
-    app.doc_mut(id).expect("doc").highlight.spans = before.clone();
+    install(&mut app, vec![(0..2, keyword)]);
+    let before = all_spans(&app);
+    assert_eq!(before, vec![(0..2, keyword)]);
     let version = app.doc(id).expect("doc").buffer.version();
 
     let mut effects = Effects::default();
@@ -33,7 +50,7 @@ fn none_result_leaves_spans_byte_identical() {
         &mut effects,
     );
 
-    assert_eq!(app.doc(id).expect("doc").highlight.spans, before);
+    assert_eq!(all_spans(&app), before);
 }
 
 #[test]
@@ -41,8 +58,8 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
     let mut app = app_for("fn main() {}\n", "/x/main.rs");
     let id = app.active;
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    let before = vec![(0..2, keyword)];
-    app.doc_mut(id).expect("doc").highlight.spans = before.clone();
+    install(&mut app, vec![(0..2, keyword)]);
+    let before = all_spans(&app);
     let stale_version = app.doc(id).expect("doc").buffer.version();
 
     // Advance the buffer past `stale_version` without going through a real
@@ -63,23 +80,20 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
         Msg::Highlighted {
             doc: id,
             version: stale_version,
-            result: Some(HighlightPayload::Spans(vec![(0..3, keyword)].into())),
+            result: Some(span_reply(vec![(0..3, keyword)])),
         },
         &mut effects,
     );
 
-    assert_eq!(app.doc(id).expect("doc").highlight.spans, before);
+    assert_eq!(all_spans(&app), before);
 }
 
-/// D5: a `None` reply for a scheduled CODE document (a whole-document parse
-/// that timed out, hit an unresolvable language, or failed) surfaces the
-/// same status line finding B's exhausted-retry branch used to — in ONE
-/// attempt, since D5 replaces the whole retry chain with a single bounded
-/// `PARSE_BUDGET` parse. `doc.kind.language().is_some()` is the gate
-/// `handle_highlighted` uses to tell a code document's parse reply from a
-/// markdown document's fence reply.
+/// A `None` reply for a never-yet-highlighted document (every region's parse
+/// timed out, hit an unresolvable language, or failed) surfaces a status
+/// line — in ONE attempt, since there is a single bounded parse per region
+/// and no retry chain.
 #[test]
-fn a_timed_out_code_document_surfaces_a_status_message() {
+fn a_timed_out_document_surfaces_a_status_message() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
@@ -103,8 +117,8 @@ fn a_timed_out_code_document_surfaces_a_status_message() {
 
     let doc = app.doc(id).expect("doc");
     assert!(
-        doc.highlight.spans.is_empty() && doc.highlight.tree.is_none(),
-        "a None reply must never invent spans or a tree"
+        doc.highlight.regions.is_empty(),
+        "a None reply must never invent a region"
     );
     assert_eq!(
         doc.highlight.in_flight, None,
@@ -119,17 +133,17 @@ fn a_timed_out_code_document_surfaces_a_status_message() {
     assert_eq!(
         app.status_message.as_deref(),
         Some("syntax highlighting timed out for this document"),
-        "a timed-out CODE document's parse must surface a status line, not \
-         fail silently"
+        "a timed-out document's parse must surface a status line, not fail \
+         silently"
     );
 }
 
-/// The sibling of the case above: a `None` reply for a MARKDOWN document
-/// (its fences failed/timed out, never a whole-document parse) must stay
-/// silent exactly as `[R2]` already requires for any other stale/failed
-/// reply — D6 leaves the fence pipeline's `None` handling untouched.
+/// The unification this refactor exists for, on the timeout path: a markdown
+/// document whose fence timed out reports exactly like a file that timed
+/// out. The two used to differ — a fence's timeout was silent, because the
+/// status branch was gated on the document having a whole-buffer language.
 #[test]
-fn a_timed_out_markdown_fence_reply_stays_silent() {
+fn a_timed_out_markdown_fence_surfaces_the_same_status_message() {
     let content = "```rust\nfn main() {}\n```\n";
     let mut app = app_for(content, "/x/notes.md");
     let id = app.active;
@@ -147,42 +161,32 @@ fn a_timed_out_markdown_fence_reply_stays_silent() {
     );
 
     assert_eq!(
-        app.status_message, None,
-        "a markdown document's fence timeout must not surface the \
-         code-document status line"
+        app.status_message.as_deref(),
+        Some("syntax highlighting timed out for this document"),
+        "a fence that times out must report like a file that times out"
     );
 }
 
 /// A document that has already been highlighted once must never re-surface
 /// the timeout status on a later reparse-after-edit that overruns the
-/// budget: its existing spans/tree are still good, so the reply degrades to
-/// STALE colours per `[R2]` and stays silent rather than spamming the
-/// status on every settled edit of a large file.
+/// budget: its existing colours are still good, so the reply degrades to
+/// STALE colours per `[R2]` and stays silent rather than spamming the status
+/// on every settled edit of a large file.
 #[test]
 fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
-    let version = app.doc(id).expect("doc").buffer.version();
-
     let keyword = scope_table().resolve("keyword").expect("known scope");
-    let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Highlighted {
-            doc: id,
-            version,
-            result: Some(HighlightPayload::Spans(vec![(0..2, keyword)].into())),
-        },
-        &mut effects,
-    );
+    install(&mut app, vec![(0..2, keyword)]);
 
-    let doc = app.doc(id).expect("doc");
+    let version = app.doc(id).expect("doc").buffer.version();
     assert_eq!(
-        doc.highlight.version, version,
+        app.doc(id).expect("doc").highlight.version,
+        version,
         "the first successful reply must stamp highlight.version"
     );
-    let spans_before = doc.highlight.spans.clone();
+    let spans_before = all_spans(&app);
 
     let mut effects = Effects::default();
     app::update(
@@ -195,14 +199,14 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
         &mut effects,
     );
 
-    let doc = app.doc(id).expect("doc");
     assert_eq!(
         app.status_message, None,
         "a reparse timeout on an already-highlighted document must stay \
          silent, not surface the timed-out status a second time"
     );
     assert_eq!(
-        doc.highlight.spans, spans_before,
+        all_spans(&app),
+        spans_before,
         "the stale-but-good spans from the first successful reply must be \
          left untouched"
     );
@@ -210,7 +214,7 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
 
 /// A terminal timeout must never re-dispatch a further parse when `pending`
 /// was armed only by a document switch (no edit): an edit-armed `pending`
-/// carries a different version and lands in the stale `_` arm instead, so
+/// carries a different version and lands in the stale arm instead, so
 /// `pending` and a live-version `None` can coincide only in this no-edit
 /// case, where re-scheduling would just repeat the same doomed parse.
 #[test]
@@ -244,41 +248,43 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     );
 }
 
-/// D6: a `Tree` payload applied to a live-version reply stores the tree and
-/// stamps `highlight.version`, mirroring what the old span-clamp path did
-/// for `Spans` — the field the render path (`render::build_rows`) and
-/// `highlight::schedule_highlight`'s already-current guard both read.
+/// A reply whose payload is `None` for a region keeps whatever that region
+/// already held while still taking its refreshed map — the mechanism behind
+/// both "my tree is still valid" and "my reparse overran the budget".
 #[test]
-fn a_tree_payload_populates_the_retained_tree() {
+fn a_payload_less_region_slot_carries_its_existing_colours_forward() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
+    let keyword = scope_table().resolve("keyword").expect("known scope");
+    install(&mut app, vec![(0..2, keyword)]);
+    let before = all_spans(&app);
+
     let version = app.doc(id).expect("doc").buffer.version();
-
-    let tree = rune_ts::parse("rust", content, Duration::from_secs(5))
-        .expect("a trivial rust source must parse within a generous budget");
-
     let mut effects = Effects::default();
     app::update(
         &mut app,
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(HighlightPayload::Tree(tree)),
+            result: Some(HighlightReply {
+                regions: vec![RegionResult {
+                    map: LineMap::default(),
+                    payload: None,
+                }],
+                truncated: false,
+            }),
         },
         &mut effects,
     );
 
-    let doc = app.doc(id).expect("doc");
-    assert!(doc.highlight.tree.is_some(), "the tree must be stored");
-    assert_eq!(doc.highlight.version, version);
+    assert_eq!(all_spans(&app), before);
 }
 
-/// The sibling of `a_timed_out_code_document_surfaces_a_status_message`:
-/// a `Spans` reply whose payload carries `truncated: true` (the producer
-/// hit its span cap) must surface a status line telling the user the tail
-/// of the document is uncoloured, just as a timed-out reply already does
-/// for the "nothing coloured at all" case.
+/// A reply carrying `truncated: true` (a producer hit its span cap) must
+/// surface a status line telling the user part of the document is
+/// uncoloured, just as a timed-out reply already does for the "nothing
+/// coloured at all" case.
 #[test]
 fn span_cap_truncation_surfaces_a_status_line() {
     let content = "fn main() {}\n";
@@ -293,10 +299,13 @@ fn span_cap_truncation_surfaces_a_status_line() {
         Msg::Highlighted {
             doc: id,
             version,
-            result: Some(HighlightPayload::Spans(HighlightResult {
-                spans: vec![(0..2, keyword)],
+            result: Some(HighlightReply {
+                regions: vec![RegionResult {
+                    map: LineMap::default(),
+                    payload: Some(RegionPayload::Spans(vec![(0..2, keyword)])),
+                }],
                 truncated: true,
-            })),
+            }),
         },
         &mut effects,
     );
@@ -310,12 +319,11 @@ fn span_cap_truncation_surfaces_a_status_line() {
     );
 }
 
-/// Pins the WP4.S2 decision: when a reply's `truncated` state (sticky on
-/// `Document::highlight` from an earlier `Spans` reply) and this reply's
-/// own `timed_out` outcome (freshly decided on a `None` result) both hold,
+/// When a reply's `truncated` state (sticky on `Document::highlight` from an
+/// earlier reply) and this reply's own `timed_out` outcome both hold,
 /// exactly one status line is shown, and it is the timeout message — a
 /// timed-out reply means nothing was coloured this round at all, which is
-/// more actionable than "coloured, but the tail is missing".
+/// more actionable than "coloured, but part is missing".
 #[test]
 fn timeout_outranks_truncation_in_the_status_line() {
     let content = "fn main() {}\n";

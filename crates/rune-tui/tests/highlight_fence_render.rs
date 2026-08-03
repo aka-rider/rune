@@ -45,7 +45,7 @@ fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Sty
     None
 }
 
-/// Plan WP6.S5: a ```` ```markdown ```` fence (FOUR backticks, so its own
+/// A ```` ```markdown ```` fence (FOUR backticks, so its own
 /// nested three-backtick fence doesn't close it early) gets INLINE markdown
 /// highlighting through the comrak reveal-emit reuse path
 /// (`runtime::md_fence::markdown_fence_spans`), not flat near-black text.
@@ -53,7 +53,7 @@ fn find_needle_style(buf: &RtBuffer, w: u16, h: u16, needle: &str) -> Option<Sty
 /// contents render with their raw markdown markers visible (`# `, `**`,
 /// `` ` ``, `[]()`), matching what a real revealed line would show. The
 /// heading/bold/code/link ranges must carry their own markdown scopes'
-/// styles OVER the fence's `markup.raw.block` background (WP1.S4's overlay
+/// styles OVER the fence's `markup.raw.block` background (the overlay's own
 /// bg-strip is what lets that background survive the overlay patch), and
 /// the nested three-backtick fence's own body must keep that SAME
 /// background untouched (its lines resolve to `markup.raw.block` too, so
@@ -93,7 +93,7 @@ fn markdown_fence_highlights_inline_markdown_over_the_fence_background() {
         .cmds
         .remove(0)
         .run()
-        .expect("fence_highlight_cmd always replies");
+        .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
     app::update(&mut app, msg, &mut effects2);
 

@@ -8,13 +8,17 @@
 //! particular binary.
 #![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
+use rune_syntax::ScopeId;
 use rune_tui::app::{self, App};
+use rune_tui::highlight::{self, HighlightReply, RegionPayload, RegionResult};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::Mem;
 
@@ -48,4 +52,37 @@ pub fn type_one_char_at_end(app: &mut App, effects: &mut Effects) {
         }),
         effects,
     );
+}
+
+/// A `Msg::Highlighted` payload carrying one span-backed region — the shape
+/// a ```` ```markdown ```` fence produces, and the only shape a test can
+/// hand-build (a `ParsedTree` cannot be synthesized). `LineMap::default()`
+/// maps nothing, which is correct: a span-backed region's spans are already
+/// buffer offsets.
+pub fn span_reply(spans: Vec<(Range<usize>, ScopeId)>) -> HighlightReply {
+    HighlightReply {
+        regions: vec![RegionResult {
+            map: LineMap::default(),
+            payload: Some(RegionPayload::Spans(spans)),
+        }],
+        truncated: false,
+    }
+}
+
+/// Every span the active document would paint anywhere — the same query the
+/// renderer runs, over the whole buffer instead of one viewport window.
+pub fn all_spans(app: &App) -> Vec<(Range<usize>, ScopeId)> {
+    let doc = app.active_doc();
+    highlight::visible_spans(doc, 0..doc.buffer.content().len())
+}
+
+/// Whether the active document's region at `index` is backed by a retained
+/// tree — the state a reuse test has to observe to mean anything.
+pub fn region_tree_source(app: &App, index: usize) -> Option<String> {
+    app.active_doc()
+        .highlight
+        .regions
+        .get(index)
+        .and_then(|region| region.tree.as_ref())
+        .map(|tree| tree.source().to_string())
 }
