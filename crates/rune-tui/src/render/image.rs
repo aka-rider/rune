@@ -19,6 +19,8 @@
 //! which already skip `buf_offset < 0`).
 
 use ratatui::style::{Color, Style};
+use rune_syntax::wrap::grapheme_width;
+use unicode_segmentation::UnicodeSegmentation;
 
 use rune_md::snapshot::ImageRowRef;
 
@@ -26,6 +28,7 @@ use crate::app::App;
 use crate::document::Document;
 use crate::graphics::ImageStatus;
 use crate::render::Cell;
+use crate::width::display_width;
 
 /// The fixed number of display rows the image producer reserves while no
 /// pixel-based row count is known yet (plan WP4.S2, `Document::view`'s own
@@ -240,25 +243,38 @@ fn human_size(bytes: u64) -> String {
 }
 
 /// `text` centered within `width` columns, padded to fill it — every cell
-/// `buf_offset: -1`, width 1 (ASCII-only info-card text, so one cell per
-/// byte). A `text` wider than `width` is left-aligned and simply clipped by
-/// `blit`'s own area bound rather than truncated here.
+/// `buf_offset: -1`. `text` names a user file (the card's file-name line, or
+/// an inline embed's link target), so it is NOT ASCII-only: it is segmented
+/// one `Cell` per GRAPHEME CLUSTER, each at its real `grapheme_width` (the
+/// same chokepoint `push_grapheme_cells` uses), never one `Cell` per `char`
+/// — a bare `char` walk would split a ZWJ emoji or a base+combining-mark
+/// cluster apart, and a hardcoded `width: 1` would mislabel a CJK cluster's
+/// true 2-cell width, both of which `blit`'s own wide-cell handling (and
+/// ratatui's buffer diffing beneath it) depend on being correct. Centering
+/// is likewise computed from `text`'s DISPLAY width in cells
+/// (`crate::width::display_width`), not its cluster or byte count. A `text`
+/// wider than `width` is left-aligned and simply clipped by `blit`'s own
+/// area bound rather than truncated here — `blit` already advances by each
+/// cell's real width and stops at the area's right edge, so no cell here
+/// ever gets written past the reserved columns.
 fn centered_cells(text: &str, width: usize) -> Vec<Cell> {
-    let len = text.chars().count();
-    let pad = width.saturating_sub(len) / 2;
+    let text_width = display_width(text);
+    let pad = width.saturating_sub(text_width) / 2;
     let mut cells = Vec::with_capacity(width);
     for _ in 0..pad {
         cells.push(blank_cell());
     }
-    for ch in text.chars() {
+    for grapheme in text.graphemes(true) {
+        let w = grapheme_width(grapheme);
         cells.push(Cell {
-            text: ch.to_string(),
-            width: 1,
+            text: grapheme.to_string(),
+            width: w as u8,
             style: Style::default(),
             buf_offset: -1,
         });
     }
-    while cells.len() < width {
+    let used = pad + text_width;
+    for _ in used..width {
         cells.push(blank_cell());
     }
     cells
@@ -457,5 +473,108 @@ mod tests {
     fn human_size_formats_bytes_and_larger_units() {
         assert_eq!(human_size(512), "512 B");
         assert_eq!(human_size(1536), "1.5 KB");
+    }
+
+    /// `centered_cells` must build ONE `Cell` per grapheme CLUSTER, at that
+    /// cluster's real `grapheme_width`, never one `Cell` per `char` at a
+    /// hardcoded width — the file names it renders (the card's own name
+    /// line, an inline embed's link target) are arbitrary user text, not
+    /// ASCII. `text` here is assumed to contain no space, so every
+    /// non-space cell belongs to `text` and every space cell is centering
+    /// padding.
+    fn non_blank_cells(cells: &[Cell]) -> Vec<&Cell> {
+        cells.iter().filter(|c| c.text != " ").collect()
+    }
+
+    #[test]
+    fn centered_cells_segments_a_cjk_filename_by_grapheme_not_char() {
+        let text = "\u{753b}\u{50cf}.png"; // "画像.png"
+        let expected: Vec<&str> = text.graphemes(true).collect();
+        let width = 20;
+        let cells = centered_cells(text, width);
+
+        assert_eq!(cells.iter().map(|c| c.width as usize).sum::<usize>(), width);
+
+        let content = non_blank_cells(&cells);
+        assert_eq!(
+            content.len(),
+            expected.len(),
+            "one Cell per grapheme cluster"
+        );
+        for (cell, cluster) in content.iter().zip(expected.iter()) {
+            assert_eq!(cell.text, *cluster);
+            assert_eq!(cell.width as usize, grapheme_width(cluster));
+            assert_eq!(cell.buf_offset, -1);
+        }
+
+        let text_width = display_width(text);
+        let expected_pad = (width - text_width) / 2;
+        let leading_pad = cells.iter().take_while(|c| c.text == " ").count();
+        assert_eq!(
+            leading_pad, expected_pad,
+            "centering pad is measured in cells, not chars"
+        );
+    }
+
+    #[test]
+    fn centered_cells_keeps_a_zwj_family_emoji_as_one_cluster() {
+        // "man + ZWJ + woman + ZWJ + girl + ZWJ + boy" — a single extended
+        // grapheme cluster despite being seven code points.
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}";
+        let text = format!("{family}.png");
+        let expected: Vec<&str> = text.graphemes(true).collect();
+        assert_eq!(
+            expected[0], family,
+            "the ZWJ sequence must stay one cluster"
+        );
+
+        let width = 20;
+        let cells = centered_cells(&text, width);
+
+        assert_eq!(cells.iter().map(|c| c.width as usize).sum::<usize>(), width);
+
+        let content = non_blank_cells(&cells);
+        assert_eq!(
+            content.len(),
+            expected.len(),
+            "one Cell per grapheme cluster"
+        );
+        assert_eq!(
+            content[0].text, family,
+            "the family emoji is never split apart"
+        );
+        assert_eq!(
+            content[0].width as usize,
+            grapheme_width(family),
+            "its width is the cluster's own grapheme_width, not a per-char sum"
+        );
+    }
+
+    #[test]
+    fn centered_cells_keeps_a_base_plus_combining_mark_as_one_cluster() {
+        // "cafe" + combining acute accent (NFD "café").
+        let text = "cafe\u{0301}.png";
+        let expected: Vec<&str> = text.graphemes(true).collect();
+        assert_eq!(
+            expected.len(),
+            8,
+            "the base+mark pair is one cluster, not two"
+        );
+
+        let width = 20;
+        let cells = centered_cells(text, width);
+
+        assert_eq!(cells.iter().map(|c| c.width as usize).sum::<usize>(), width);
+
+        let content = non_blank_cells(&cells);
+        assert_eq!(
+            content.len(),
+            expected.len(),
+            "one Cell per grapheme cluster"
+        );
+        for (cell, cluster) in content.iter().zip(expected.iter()) {
+            assert_eq!(cell.text, *cluster);
+            assert_eq!(cell.width as usize, grapheme_width(cluster));
+        }
     }
 }
