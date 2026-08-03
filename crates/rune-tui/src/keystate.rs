@@ -206,6 +206,19 @@ fn block_hazard_smoke_test() -> bool {
     true
 }
 
+/// The raw, uncached `CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE)`
+/// reading, live at the instant of the call. Exists only for `rune --doctor`
+/// (`rune-cli::main`) to print a rapidly-polled series so an operator can
+/// hold the spacebar and watch it flip; every other caller in this process
+/// goes through `leader_available`'s cached answer or `HidSpaceProbe`, never
+/// this. Calling it with no window-server session blocks (see the module
+/// docs) — callers must confirm `diagnose() == LeaderDiagnosis::
+/// SessionPresent` first, exactly as `leader_available` short-circuits on
+/// `window_server_session_exists`.
+pub fn raw_key_state_now() -> bool {
+    unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE) }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
