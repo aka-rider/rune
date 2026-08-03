@@ -11,6 +11,7 @@
 
 mod tui_render_common;
 
+use ratatui::buffer::CellWidth;
 use rune_tui::render;
 
 use tui_render_common::{
@@ -303,5 +304,77 @@ fn control_char_gets_a_safe_placeholder_glyph() {
     assert_eq!(
         placeholder.buf_offset, 1,
         "the BEL is the 2nd byte (offset 1) of \"a\\x07b\""
+    );
+}
+
+/// Guard for the width chokepoint's own invariant (`rune_syntax::wrap::
+/// grapheme_width`'s doc comment): rune's width for a symbol must equal
+/// what ratatui derives for that same symbol, over a corpus covering every
+/// class of cluster known to have diverged — plain ASCII/CJK single runes,
+/// an NFD accent cluster, a ZWJ family, a skin-tone modifier, a base char
+/// plus `U+FE0F`/`U+FE0E` (variation selectors), a regional-indicator flag
+/// pair, a keycap, halfwidth katakana + dakuten, and the reported
+/// `🤖ིྀ`-style cluster. `rune-syntax` stays terminal-free and cannot depend
+/// on ratatui to assert this itself, so the equality is pinned here, in
+/// `rune-tui`, which already depends on both.
+#[test]
+fn grapheme_width_agrees_with_ratatuis_own_cell_width_derivation() {
+    let corpus: &[(&str, &str)] = &[
+        ("plain ASCII", "a"),
+        ("CJK", "\u{6c49}"),                    // 汉
+        ("NFD accent cluster", "e\u{0301}"),    // e + combining acute
+        ("ZWJ family", "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}"),
+        ("skin-tone modifier", "\u{1F44B}\u{1F3FD}"), // 👋🏽
+        ("heart + FE0F", "\u{2764}\u{FE0F}"),         // ❤️
+        ("lightning + FE0E", "\u{26A1}\u{FE0E}"),     // ⚡︎
+        ("regional-indicator flag pair", "\u{1F1FA}\u{1F1F8}"), // 🇺🇸
+        ("keycap", "1\u{FE0F}\u{20E3}"),              // 1️⃣
+        ("halfwidth katakana + dakuten", "\u{FF76}\u{FF9E}"), // ｶﾞ
+        (
+            "reported robot + Tibetan vowel signs",
+            "\u{1F916}\u{0F72}\u{0F80}",
+        ),
+    ];
+
+    for (label, cluster) in corpus {
+        let rune_width = rune_syntax::wrap::grapheme_width(cluster);
+        let ratatui_width = usize::from(cluster.cell_width());
+        assert_eq!(
+            rune_width, ratatui_width,
+            "{label} ({cluster:?}): rune grapheme_width={rune_width}, ratatui cell_width={ratatui_width}"
+        );
+    }
+}
+
+/// End-to-end sibling to the corpus guard above, reusing the `TestBackend`
+/// harness from `wide_cell_leaves_a_blank_continuation_column_in_the_real_
+/// backend`: `❤️` (base + `U+FE0F`, ratatui width 2) followed by another
+/// glyph must not swallow that glyph — before the fix, `grapheme_width`
+/// under-measured this cluster at 1, `blit` wrote it at width 1 and skipped
+/// its continuation-reset loop, and `BufferDiff` then read the emoji's OWN
+/// `cell_width() == 2` and skipped the very column the next glyph landed
+/// on, so it never reached the real terminal buffer.
+#[test]
+fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
+    let heart = "\u{2764}\u{FE0F}"; // ❤️
+    let content = format!("{heart}x\n");
+    let app = app_for(&content, 0, true);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    let heart_cell = first_row.first().expect("heart cell present");
+    assert_eq!(heart_cell.text, heart);
+    assert_eq!(
+        usize::from(heart_cell.width),
+        heart.cell_width() as usize,
+        "the Cell's own width must match ratatui's derivation for the same symbol"
+    );
+
+    let buf = render_to_test_backend(&app);
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        text.contains('x'),
+        "the glyph following the FE0F-presented heart must reach the real backend buffer:\n{text}"
     );
 }
