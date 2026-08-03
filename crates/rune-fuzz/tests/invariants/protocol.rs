@@ -280,13 +280,23 @@ fn quit_chord_accepts_the_final_quit_save_ack() {
 }
 
 /// The converse: a successful `SaveDone` for a document NOT in the pending
-/// quit-intent set must not be treated as a legitimate quit completion.
+/// quit-intent set must not be treated as a legitimate quit completion. The
+/// waited-on document (`other_doc_id`) stays open and never had its own
+/// save in flight in this snapshot pair — still present in `dirty_by_doc`
+/// both before and after, `save_in_flight_by_doc` false throughout — so
+/// neither the "document closed out from under it" nor the "its own save
+/// completed" retirement path applies; only the (wrong) document's
+/// `SaveDone` arrived.
 #[test]
 fn quit_chord_detects_an_unrelated_save_done_while_should_quit_flips() {
     let mut prev = base_snapshot("abc");
     prev.quit_intent_pending = Some(vec![(other_doc_id(), 3)]);
+    prev.dirty_by_doc = [(other_doc_id(), true)].into_iter().collect();
+    prev.save_in_flight_by_doc = [(other_doc_id(), false)].into_iter().collect();
     let mut next = base_snapshot("abc");
     next.should_quit = true;
+    next.dirty_by_doc = [(other_doc_id(), true)].into_iter().collect();
+    next.save_in_flight_by_doc = [(other_doc_id(), false)].into_iter().collect();
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::SaveDone {
         id: base_active_id(),

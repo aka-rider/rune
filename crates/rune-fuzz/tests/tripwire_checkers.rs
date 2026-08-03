@@ -123,6 +123,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         guard: None,
         quit_intent_pending: None,
         dirty_by_doc: std::collections::BTreeMap::new(),
+        save_in_flight_by_doc: std::collections::BTreeMap::new(),
     }
 }
 
