@@ -56,6 +56,7 @@ mod rename_bind;
 mod rename_replace;
 mod retry;
 mod schema;
+mod scratch;
 mod session;
 mod snapshot;
 mod store;

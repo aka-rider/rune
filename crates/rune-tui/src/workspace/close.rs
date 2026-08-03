@@ -55,13 +55,21 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// last document is about to close, and WP3's bootstrap adoption calls it
 /// when there is nothing recoverable to adopt instead.
 pub fn new_untitled_document(app: &mut App) -> DocumentId {
-    let n = next_untitled_number(app);
+    let name = next_untitled_name(app);
     let id = app.open_document(rune_core::buffer::Buffer::new(""));
     if let Some(doc) = app.doc_mut(id) {
-        doc.display_name = Some(format!("Untitled {n}"));
+        doc.display_name = Some(name);
     }
     super::switch_to(app, id);
     id
+}
+
+/// The next unused "Untitled N" display name. `pub`: `rune-cli`'s launch
+/// bootstrap names a recovered draft's tab through this same chokepoint
+/// rather than re-deriving the numbering scheme, and a second scheme is
+/// exactly how two "Untitled 1"s end up open at once.
+pub fn next_untitled_name(app: &App) -> String {
+    format!("Untitled {}", next_untitled_number(app))
 }
 
 /// The next unused "Untitled N" suffix: one past the highest N already in

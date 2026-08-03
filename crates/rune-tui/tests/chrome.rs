@@ -226,7 +226,7 @@ fn left_pane_hidden_by_default_leaves_editor_geometry_unchanged() {
 /// editor gets the full width for the document the user asked to open.
 #[test]
 fn an_untitled_app_starts_with_the_left_column_visible() {
-    let app = App::new_untitled(Arc::new(Mem::new()));
+    let app = App::new_untitled(Arc::new(Mem::new()), None);
     assert!(app.splits.left.is_shown());
 }
 

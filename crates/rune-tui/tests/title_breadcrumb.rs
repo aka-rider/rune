@@ -74,7 +74,7 @@ fn title_row_shows_no_name_placeholder_when_pathless() {
 /// every OTHER pathless document falls back to.
 #[test]
 fn title_row_shows_untitled_1_for_the_default_untitled_document() {
-    let mut app = App::new_untitled(Arc::new(Mem::new()));
+    let mut app = App::new_untitled(Arc::new(Mem::new()), None);
     app.frame_width = WIDTH;
     app.frame_height = HEIGHT;
     app.sync_view();

@@ -201,4 +201,41 @@ impl Store {
             doc_id,
         })
     }
+
+    /// Enqueues a `CreateScratch` op — mints a brand-new unbound scratch
+    /// `documents` row. The new row's id arrives asynchronously as
+    /// `DbEvent::Ok.result` (`OpOutcome::RowId`). Port of
+    /// `store_documents.go` (`CreateScratch`).
+    pub fn create_scratch(&self) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::CreateScratch { now })
+    }
+
+    /// Enqueues a `GcEmptyScratch` op sweeping empty leftover scratch rows,
+    /// keeping `keep_id`. Fire-and-forget housekeeping — see
+    /// `scratch::gc_empty_scratch`'s doc comment for the `inode IS NULL`
+    /// filter this depends on.
+    pub fn gc_empty_scratch(&self, keep_id: i64) -> Result<u64, Error> {
+        self.enqueue(OpKind::GcEmptyScratch { keep_id })
+    }
+
+    /// Enqueues a `RecoverableScratch` op — the candidate ids arrive
+    /// asynchronously as `DbEvent::Ok.result` (`OpOutcome::Ids`). Port of
+    /// `store_documents.go` (`RecoverableScratch`).
+    pub fn recoverable_scratch(&self, exclude_id: i64) -> Result<u64, Error> {
+        self.enqueue(OpKind::RecoverableScratch { exclude_id })
+    }
+
+    /// Enqueues a `ReconstructScratch` op reconstructing `doc_id`'s content
+    /// across a session boundary — the result arrives asynchronously as
+    /// `DbEvent::Ok.result` (`OpOutcome::Reconstructed`). This `Store`'s
+    /// currently-installed liveness check travels with the op, exactly like
+    /// `load`'s. Port of `load.go` (`RecoverAcrossSessions`).
+    pub fn reconstruct_scratch(&self, doc_id: i64) -> Result<u64, Error> {
+        let liveness_check = self.liveness_check();
+        self.enqueue(OpKind::ReconstructScratch {
+            liveness_check,
+            doc_id,
+        })
+    }
 }
