@@ -17,4 +17,14 @@ A heading with emoji: ## Release 🎉 Notes
 A long emoji line to check wrapping at a narrow viewport width when each
 emoji counts for two columns instead of one: 🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉.
 
+A line with emoji-presentation variation selectors: heart ❤️ warning ⚠️ play ▶️.
+
+A line with text-presentation variation selectors: lightning ⚡︎ check ✅︎.
+
+A line with regional-indicator flag pairs: US 🇺🇸 and Japan 🇯🇵 flags.
+
+A line with keycap sequences: press 1️⃣ then 2️⃣ then 3️⃣.
+
+A line with halfwidth katakana plus dakuten: ｶﾞ ｷﾞ ｸﾞ ｹﾞ ｺﾞ.
+
 Trailing paragraph after every emoji example above.
