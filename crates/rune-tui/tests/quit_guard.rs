@@ -13,13 +13,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_db::{ClockFn, Store};
 use rune_tui::app::{App, update};
 use rune_tui::banner::{GuardKind, GuardPrompt, Modal};
+use rune_tui::db::{Db, DocDb};
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{Effects, Msg};
-use rune_vfs::Mem;
+use rune_vfs::{Mem, Vfs};
 
 fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
@@ -334,4 +336,72 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
     // silently doing nothing (the document is still genuinely dirty).
     press(&mut app, ctrl_c());
     assert_eq!(guard_kind(&app), Some(&GuardKind::DirtyQuit));
+}
+
+/// Code-review finding 6: with a DEGRADED store (every dirty document is
+/// unpreserved — `App::is_preserved` is false for all of them, so the
+/// fan-out set is "every dirty document"), each `trigger_save` call that
+/// reaches the degraded arm only ARMS `App::pending_save_confirm` — a
+/// single global slot, not one per document. Two dirty documents must
+/// therefore not both attempt to arm it: the second attempt would silently
+/// overwrite the first's gate and leave the status naming whichever
+/// document happened to go last, while queuing a redundant confirm-timeout
+/// `Cmd` for a gate that no longer matches its own document. The fan-out
+/// must stop at the first arm, leaving exactly one confirm gate, one
+/// coherent (document-naming) status, and no quit intent stranded waiting
+/// on a save that never started.
+#[test]
+fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+    let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+    let store = Store::open_in_memory(clock, Arc::clone(&vfs), Box::new(|_evt| {}))
+        .expect("open in-memory store");
+    let bridge = rune_tui::db::DbBridge::bootstrap();
+    let db = Db::new(store, bridge, true); // degraded from the start
+
+    let mut app = App::new(
+        Buffer::new("hello"),
+        Some(PathBuf::from("/a.md")),
+        vfs,
+        Some(db),
+    );
+    let id_a = app.active;
+    app.doc_mut(id_a).unwrap().db = Some(DocDb::new(1, 0, false, 0));
+    dirty_common::force_dirty(&mut app, id_a);
+
+    let id_b = app.open_document(Buffer::new("second"));
+    app.doc_mut(id_b).unwrap().bind_path(PathBuf::from("/b.md"));
+    app.doc_mut(id_b).unwrap().db = Some(DocDb::new(2, 0, false, 0));
+    dirty_common::force_dirty(&mut app, id_b);
+
+    press(&mut app, ctrl_c());
+    assert_eq!(guard_kind(&app), Some(&GuardKind::DirtyQuit));
+    press(&mut app, key(KeyCode::Char('s')));
+
+    assert!(
+        app.pending_save_confirm.is_some(),
+        "exactly one confirm gate must be armed"
+    );
+    let (armed_id, _) = app.pending_save_confirm.expect("checked above");
+    assert!(
+        armed_id == id_a || armed_id == id_b,
+        "the armed gate must name one of the two dirty documents"
+    );
+    assert!(
+        !app.doc(id_a).unwrap().save_in_flight && !app.doc(id_b).unwrap().save_in_flight,
+        "the degraded arm must never enqueue a save on its first press"
+    );
+    let expected_name = if armed_id == id_a { "a.md" } else { "b.md" };
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("recovery disabled") && m.contains(expected_name)),
+        "the status must name the SAME document the confirm gate is armed for, got {:?}",
+        app.status_message
+    );
+    assert!(
+        app.quit_intent.is_none(),
+        "no save actually started, so no quit intent may be left waiting"
+    );
+    assert!(!app.should_quit);
 }

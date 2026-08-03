@@ -188,14 +188,33 @@ fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// simply not counted — if NONE started, there is nothing left for quit to
 /// wait on, so no `QuitIntent` is armed at all and the user's status line
 /// already says why (`trigger_save`'s own refusal arms all set one).
+///
+/// `App::pending_save_confirm` is a single global slot, not one per
+/// document (plan WP1 decision 3) — a degraded store's FIRST `trigger_save`
+/// for a given document only arms that slot rather than saving. Churning
+/// through the rest of the fan-out after that would overwrite the slot with
+/// a LATER document's arm, silently discarding this one's and leaving the
+/// status naming whichever document happened to arm last rather than the
+/// one the user is now staring at a sentence about. So the fan-out stops
+/// dead the moment an iteration arms the slot for `id`: the surviving status
+/// (`save.rs`'s degraded arm, which names `id`) stays true, and the obvious
+/// next keystroke — ⌘S again — is answered by the confirm gate that is
+/// actually armed. Any documents further down the list simply get their
+/// turn on the next quit attempt, once this one is resolved.
 fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
     let docs = crate::pane::unpreserved_dirty_docs(app);
     let mut pending = BTreeMap::new();
     for id in docs {
-        if let SaveStart::InFlight = save::trigger_save(app, id, effects)
-            && let Some(version) = app.doc(id).and_then(|d| d.pending_save_version())
-        {
-            pending.insert(id, version);
+        match save::trigger_save(app, id, effects) {
+            SaveStart::InFlight => {
+                if let Some(version) = app.doc(id).and_then(|d| d.pending_save_version()) {
+                    pending.insert(id, version);
+                }
+            }
+            SaveStart::Refused if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) => {
+                break;
+            }
+            SaveStart::NotDirty | SaveStart::NeedsName | SaveStart::Refused => {}
         }
     }
     app.quit_intent = if pending.is_empty() {

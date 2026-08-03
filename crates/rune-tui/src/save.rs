@@ -163,8 +163,17 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         let generation = app.next_save_confirm_gen;
         app.next_save_confirm_gen = app.next_save_confirm_gen.wrapping_add(1);
         app.pending_save_confirm = Some((id, generation));
+        // `App::pending_save_confirm` is a single global slot (plan WP1
+        // decision 3), so a caller driving MORE than one document through
+        // this arm in succession (the quit-save fan-out) would otherwise
+        // overwrite an earlier arm with a later one and leave the status
+        // naming nothing — the fan-out is the one caller responsible for not
+        // doing that (it stops at the first arm it sees). Naming the
+        // document here is what makes the surviving sentence true no matter
+        // which caller reaches it.
+        let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
         app.set_status(
-            "recovery disabled \u{2014} press \u{2318}S again to save anyway",
+            format!("recovery disabled for {name} \u{2014} press \u{2318}S again to save anyway"),
             StatusSource::Other,
         );
         effects.cmds.push(save_confirm_timeout_cmd(generation));

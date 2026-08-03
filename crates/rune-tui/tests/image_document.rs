@@ -9,8 +9,6 @@
 //! WP4 already proved for the info card.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod dirty_common;
-
 use std::path::Path;
 use std::sync::Arc;
 
@@ -108,12 +106,17 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
 /// that overwrites the image with the buffer's own (always empty) bytes.
 /// Driven through the real `super+s` key via `app::update`, per the plan's
 /// "drive integration tests through the real update loop".
+///
+/// No `dirty_common::force_dirty` here (finding 7): an image document is
+/// permanently `read_only`, and the shared fixture is now a real edit
+/// through the ordinary insert command — refused outright on a read-only
+/// document, so no production path could ever make one dirty. That is also
+/// why this test still proves what it says regardless: `trigger_save`'s
+/// `DocumentKind::Image` guard is checked FIRST, ahead of the dirty check,
+/// so it fires whether or not the document is dirty.
 #[test]
 fn super_s_on_an_image_document_saves_nothing_and_never_focuses_the_title() {
     let (mut app, id) = app_with_image();
-    // Force the dirty check an earlier revision of the guard would have
-    // relied on to look "dirty" — the guard must still fire BEFORE it.
-    dirty_common::force_dirty(&mut app, id);
     app.active = id;
     // `focus` is private by design — exactly three functions may write it,
     // so go through the setter rather than widening the field for a test.

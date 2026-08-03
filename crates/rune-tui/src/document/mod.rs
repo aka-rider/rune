@@ -95,8 +95,13 @@ pub struct Document {
     /// apply_edits` always returns `version + 1`, and undo/redo build a new
     /// buffer, so a version comparison alone leaves an edit-then-undo
     /// document dirty forever even though the bytes are back to identical.
-    /// Advanced only by [`Document::finish_save_ok`].
-    pub saved_content: Arc<str>,
+    /// Advanced only by [`Document::finish_save_ok`]. `pub(crate)` (not
+    /// `pub`, matching `is_dirty_cached`): only `finish_save_ok` may move the
+    /// saved baseline, and a `pub` field left that invariant enforced by
+    /// convention rather than the type system on this half alone (finding
+    /// 7) — an out-of-crate integration test that needs a dirty fixture goes
+    /// through a real edit instead, see `dirty_common::force_dirty`.
+    pub(crate) saved_content: Arc<str>,
     /// The save-lifecycle state a save-in-progress carries: the version/
     /// content it captured at `begin_save` time. Private — `begin_save`/
     /// `finish_save_ok`/`abandon_save` are the ONLY three places allowed to

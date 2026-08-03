@@ -1,36 +1,36 @@
-//! One shared way every integration test forces a document dirty without a
-//! real edit (plan WP1: dirtiness is a content comparison against
-//! `saved_content` now, so the old `saved_version = 0` trick is inert —
-//! `saved_version` is no longer part of the comparison at all). Integration
-//! test files are separate binaries, so this is the one place the fixture
-//! lives rather than re-open-coding it per file (`app_quit_and_dispatch.rs`,
-//! `save_flow.rs`, `db_wiring_degraded.rs`, `image_document.rs` all pull
-//! this in via `mod dirty_common;`).
-#![allow(dead_code)]
-
-use std::sync::Arc;
-
+//! One shared way every integration test forces a document dirty through a
+//! REAL edit (plan WP1/finding 7: `saved_content` is `pub(crate)` now — only
+//! `Document::finish_save_ok` may move the saved baseline — so an
+//! integration test, which builds as a separate crate, can no longer poke
+//! the field directly; it has to go through the same production path a
+//! user's keystroke does). Integration test files are separate binaries, so
+//! this is the one place the fixture lives rather than re-open-coding it
+//! per file (`app_quit_and_dispatch.rs`, `quit_guard.rs`,
+//! `db_wiring_degraded.rs`, `rename_bind.rs`, and two of `save_flow.rs`'s
+//! tests pull this in via `mod dirty_common;`).
+//!
+//! Dirtiness is a content comparison against `saved_content` (plan WP1), and
+//! `saved_content` is seeded from the buffer's OWN content at construction
+//! time — so any edit that round-trips back to the same final bytes is, by
+//! design, NOT dirty (that is the exact "edit-then-undo" fix WP1 landed).
+//! There is therefore no sequence of edits that leaves a document both
+//! dirty AND at its originally-constructed content; a caller that needs a
+//! SPECIFIC final content (e.g. a byte-exact save round trip) must
+//! construct the buffer EMPTY and insert the target text itself — see
+//! `save_flow.rs`'s CRLF/BOM and create-on-disk tests, which do exactly
+//! that instead of calling this helper.
 use rune_tui::app::App;
+use rune_tui::commands::edit;
 use rune_tui::document::DocumentId;
 
-/// Forces `id` dirty by moving its saved-content baseline away from the
-/// live buffer — guaranteed to differ regardless of what the buffer holds
-/// (including empty), since a NUL byte never occurs in a `Buffer`'s own
-/// UTF-8 content. Also refreshes the render-only dirty cache through
-/// `App::recompute_dirty` (CONSTITUTION §1.4.8: nothing reads `saved_content`
-/// directly), so `doc.is_dirty()`/`app.is_dirty()` observe the change
-/// immediately, exactly as they would after a real edit.
-///
-/// Also lowers `saved_version` one below the live buffer's version — a real
-/// edit always moves both `saved_content` and `saved_version` out of sync
-/// with the buffer TOGETHER, and a test that goes on to drive an actual
-/// save through needs `Document::finish_save_ok`'s own `version > saved_
-/// version` gate to pass, or the round trip would silently promote nothing
-/// and leave the document dirty forever despite the save having "worked".
+/// Makes `id` genuinely dirty via the ordinary insert-char command — the
+/// same `commit_edit_batch` chokepoint a keystroke goes through, which
+/// already recomputes the render-only dirty cache (`materialize_ack::
+/// recompute_dirty`) as part of committing the edit. A no-op on a
+/// `read_only` document (the chokepoint refuses those outright): callers
+/// with a read-only fixture (e.g. an image document) cannot use this at
+/// all, since no production path can dirty one — see `image_document.rs`,
+/// which no longer calls this helper for exactly that reason.
 pub fn force_dirty(app: &mut App, id: DocumentId) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    let marker: Arc<str> = Arc::from(format!("\u{0}{}", doc.buffer.content()));
-    doc.saved_content = marker;
-    doc.saved_version = doc.buffer.version().saturating_sub(1);
-    app.recompute_dirty(id);
+    edit::insert_char(app, id, '!');
 }
