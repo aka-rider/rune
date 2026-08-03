@@ -228,6 +228,11 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
             rune_tui::app::StatusSource::Other,
         );
     }
+    // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
+    // marks it itself, so every hydration site re-derives it explicitly
+    // (CONSTITUTION §1.4.8), same as `bootstrap`'s and `db_ack::handle_load_ack`'s
+    // own hydration sites.
+    app.recompute_dirty(id);
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the
@@ -296,6 +301,34 @@ fn combine_open_errors(errors: &[String]) -> String {
 mod tests {
     use super::*;
     use rune_vfs::Mem;
+
+    /// Finding 1 regression: `adopt_scratch_doc` hydrates a recovered
+    /// scratch draft into an otherwise-empty buffer but must also re-derive
+    /// dirty (CONSTITUTION §1.4.8) — dirtiness no longer falls out of
+    /// `Document::hydrate` itself since `mark_dirty_from_hydration` was
+    /// deleted, so every hydration site (this one included) must call
+    /// `App::recompute_dirty` explicitly or the recovered text renders
+    /// clean while `saved_content` is still empty.
+    #[test]
+    fn adopt_scratch_doc_marks_the_document_dirty() {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let mut app = App::new_untitled(Arc::clone(&vfs), None);
+        let id = app.active;
+
+        adopt_scratch_doc(
+            &mut app,
+            id,
+            ScratchDoc {
+                db_id: 1,
+                content: "recovered draft text".to_string(),
+            },
+        );
+
+        assert!(
+            app.doc(id).expect("doc exists").is_dirty(),
+            "a recovered draft that differs from its (empty) baseline must be dirty"
+        );
+    }
 
     #[test]
     fn validate_work_dir_rejects_a_regular_file() {
