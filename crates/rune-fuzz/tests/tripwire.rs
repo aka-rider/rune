@@ -241,7 +241,8 @@ fn seed_discarded_by_dirty_close_guard_skips_undo_total() {
 /// Regression for `TODO-fuzz-save-verbatim-help-doc-stale-ack.md`: `F1`
 /// makes the virtual Help document active, then the quit chord's dirty-
 /// close Guard arms on the REAL seeded document (still dirty, not the
-/// active one) via `first_unpreserved_dirty_doc`. Pressing the Guard's own
+/// active one) via the close-guard's scan over unpreserved dirty documents.
+/// Pressing the Guard's own
 /// `s` hotkey (`banner::handle_dirty_close_key`) saves THAT document, not
 /// whichever one is active — production is correct here (`Msg::SaveDone`
 /// already carries the right `id`). The bug was in this very fuzz driver:
