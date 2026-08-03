@@ -157,6 +157,31 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     }
 
     app.sync_view();
+
+    // Inline embeds are reconciled from the post-dispatch chokepoint, which
+    // only runs once a message arrives — and a user who opens a file and
+    // simply looks at it generates none, so every embed stayed unspawned and
+    // rendered as a blank gap forever. The same startup gap the block above
+    // closes for the highlight and for an image document's own decode.
+    //
+    // It cannot join that block: `sync_embeds` reads the parsed block tree,
+    // which is empty until `sync_view` above has run. Discovery therefore
+    // belongs here, after the first parse and before the loop parks on
+    // `recv`. Decode replies arrive asynchronously and redraw on their own.
+    {
+        let mut effects = Effects::default();
+        crate::graphics::sync_embeds(app, app.active, &mut effects);
+        for cmd in effects.cmds.drain(..) {
+            super::spawn_cmd(cmd, tx.clone(), &mut save_handles);
+        }
+        for raw in effects.raw.drain(..) {
+            guard.write_raw(&raw)?;
+        }
+        if effects.force_redraw {
+            guard.force_redraw();
+        }
+    }
+
     guard.draw(|frame| crate::render::draw(app, frame))?;
 
     Ok(Bootstrap {
