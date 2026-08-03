@@ -19,7 +19,7 @@ with `begin`/`apply_outcome`/`bind_to`/`bind_new` and the plain no-store
 reshape, plus the doc comments recording every extraction already made —
 `pane.rs`/`dispatch.rs`/`app_view.rs`/`highlight.rs` — to keep it AS SMALL
 AS IT IS). Plan WP2's `quit_intent: Option<QuitIntent>` field plus
-`App::is_preserved` push it further over, to ~615. Out of scope for WP2
+`App::is_preserved` push it further over, to 632. Out of scope for WP2
 itself (the plan's own Verification section names only `materialize_ack.rs`
 and `banner.rs` as WP2's splits); tracked here rather than silently grown
 past unremarked. A plausible split: `QuitIntent` plus `App::is_preserved`

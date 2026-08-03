@@ -132,6 +132,18 @@ pub struct Snapshot {
     /// quit/close-guard invariant that needs to know whether some OTHER,
     /// inactive document is dirty has no other way to see it.
     pub dirty_by_doc: BTreeMap<DocumentId, bool>,
+    /// `Document::save_in_flight` for every open document, the same
+    /// per-document shape as `dirty_by_doc` above. `QUIT-CHORD` needs this
+    /// to recognize a quit-save entry retiring through a materialize ack
+    /// that isn't tagged `MsgTag::SaveDone` (the store-backed `Msg::Db`
+    /// route into `handle_materialize_ack` -> `quit_if_pending` completes
+    /// the exact same save lifecycle chokepoint, just via a different
+    /// message shape the fuzz driver has no document that can construct
+    /// yet) — a true->false transition here for a document that was in the
+    /// prior step's quit-wait set is the save lifecycle's OWN signal that
+    /// its save actually completed, independent of which message carried
+    /// the ack.
+    pub save_in_flight_by_doc: BTreeMap<DocumentId, bool>,
 }
 
 impl Snapshot {
@@ -179,10 +191,12 @@ impl Snapshot {
             .map(|intent| intent.pending.iter().map(|(&id, &v)| (id, v)).collect());
         let doc_ids: Vec<DocumentId> = app.documents.keys().copied().collect();
         let mut dirty_by_doc = BTreeMap::new();
+        let mut save_in_flight_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
                 dirty_by_doc.insert(doc_id, d.is_dirty());
+                save_in_flight_by_doc.insert(doc_id, d.save_in_flight);
             }
         }
 
@@ -224,6 +238,7 @@ impl Snapshot {
             guard,
             quit_intent_pending,
             dirty_by_doc,
+            save_in_flight_by_doc,
         }
     }
 }

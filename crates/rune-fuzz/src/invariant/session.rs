@@ -81,24 +81,35 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
 /// two-press chord quits regardless of `is_dirty()` once it's reached that
 /// path at all; asserting a dirty check here would be an instant false
 /// catch on intended Phase-1 behaviour) — `should_quit` goes false->true
-/// only on one of THREE named transitions (plan WP2 widened this from one):
-/// the SAME quit chord armed in `prev.pending_quit`; a `DirtyQuit` Guard's
-/// `[D]iscard` answer (immediate, no save involved); or the quit-save
-/// fan-out's LAST outstanding save acking successfully (`banner::guard`'s
-/// `[S]ave` answer completing once every awaited document has persisted).
-/// `Msg::Quit` (a real terminal's input stream ending) is out of this
-/// checker's domain entirely, not merely an inert arm — `MsgTag` carries no
-/// `Quit` variant at all (`step.rs`'s own module docs), since this headless
-/// driver can never construct one (CODE-REVIEW.md rune-fuzz finding 15: the
-/// previous `MsgTag::Quit => true` arm was unreachable outside its own unit
-/// test).
+/// only on one of FOUR named transitions (plan WP2 widened this from one;
+/// this pass widened the third into two, since it covers two distinct
+/// production call sites): the SAME quit chord armed in `prev.pending_quit`;
+/// a `DirtyQuit` Guard's `[D]iscard` answer (immediate, no save involved);
+/// the quit-save fan-out's LAST outstanding entry retiring because ITS
+/// document's save actually completed (`materialize_ack::quit_if_pending`,
+/// reached from both the no-store `Msg::SaveDone` ack AND the store-backed
+/// `Msg::Db` -> `handle_materialize_ack` route — the fuzz driver can only
+/// tag the former today, since no fuzz document ever constructs a `DocDb`,
+/// so the latter is verified through the save-lifecycle's own `save_in_
+/// flight` transition instead of a message tag); or that same LAST entry
+/// retiring because `workspace::close_now` closed the document it was
+/// waiting on out from under it (`materialize_ack::retire_quit_wait`,
+/// unconditional, no save involved either). `Msg::Quit` (a real terminal's
+/// input stream ending) is out of this checker's domain entirely, not
+/// merely an inert arm — `MsgTag` carries no `Quit` variant at all
+/// (`step.rs`'s own module docs), since this headless driver can never
+/// construct one (CODE-REVIEW.md rune-fuzz finding 15: the previous
+/// `MsgTag::Quit => true` arm was unreachable outside its own unit test).
 ///
 /// Active-document-switch-safe: `should_quit`/`pending_quit` are `App`-level
 /// fields (`app.should_quit`, `app.pending_quit`), never per-document — a
 /// document switch between `prev`/`next` cannot change which two documents'
 /// facts are being compared, because there's only ever one copy of either
-/// field to begin with. The two new WP2 arms below key off `prev.guard`/
-/// `prev.quit_intent_pending`, which are likewise `App`-level.
+/// field to begin with. The WP2 arms below key off `prev.guard`/`prev.
+/// quit_intent_pending`, which are likewise `App`-level; the two save/close
+/// retirement arms are keyed per-document instead, off `dirty_by_doc`/
+/// `save_in_flight_by_doc`, exactly because a quit-save fan-out can span
+/// more than one document.
 pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     if prev.should_quit || !next.should_quit {
         return None;
@@ -122,23 +133,65 @@ pub fn quit_chord(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Vio
         }
         _ => false,
     };
-    let quit_save_ack = match &ctx.msg {
-        MsgTag::SaveDone { id, version, ok } => {
-            *ok && prev
-                .quit_intent_pending
-                .as_ref()
-                .is_some_and(|pending| pending.iter().any(|&(d, v)| d == *id && v == *version))
-        }
-        _ => false,
-    };
-    if armed_chord || guard_discard || quit_save_ack {
+    // The quit-save fan-out's own retirement: legitimate only when EVERY
+    // entry that dropped out of `prev.quit_intent_pending` this step did so
+    // through one of production's two retirement paths for that SAME
+    // document — never merely because the map went empty.
+    let quit_intent_fully_retired = prev
+        .quit_intent_pending
+        .as_ref()
+        .is_some_and(|p| !p.is_empty())
+        && next
+            .quit_intent_pending
+            .as_ref()
+            .is_none_or(|p| p.is_empty());
+    let quit_intent_retirement_legitimate = quit_intent_fully_retired
+        && prev
+            .quit_intent_pending
+            .iter()
+            .flatten()
+            .all(|&(doc, version)| {
+                // `materialize_ack::quit_if_pending`'s own path: a
+                // successful ack for THIS document at THIS version — the
+                // no-store fallback is tagged `MsgTag::SaveDone` directly;
+                // the store-backed `Msg::Db` route carries no such tag yet
+                // (module docs above), so it's recognized instead by the
+                // save lifecycle's own true->false `save_in_flight`
+                // transition for the same document, which `begin_save`/
+                // `finish_save_ok`/`abandon_save` (the ONLY three writers of
+                // that field) guarantee never happens except at a real save
+                // completion.
+                let save_done_ack = matches!(
+                    &ctx.msg,
+                    MsgTag::SaveDone { id, version: v, ok: true } if *id == doc && *v == version
+                );
+                let save_in_flight_dropped = prev
+                    .save_in_flight_by_doc
+                    .get(&doc)
+                    .copied()
+                    .unwrap_or(false)
+                    && !next
+                        .save_in_flight_by_doc
+                        .get(&doc)
+                        .copied()
+                        .unwrap_or(false);
+                // `materialize_ack::retire_quit_wait`'s other call site:
+                // `workspace::close_now` closed this document out from
+                // under the wait — it no longer appears among the live
+                // documents at all.
+                let closed_out_from_under_it = !next.dirty_by_doc.contains_key(&doc);
+                save_done_ack || save_in_flight_dropped || closed_out_from_under_it
+            });
+    if armed_chord || guard_discard || quit_intent_retirement_legitimate {
         return None;
     }
     Some(Violation {
         id: "QUIT-CHORD",
         message: format!(
             "should_quit went false->true on {:?} with pending_quit={:?}, guard={:?}, \
-             quit_intent_pending={:?}",
+             quit_intent_pending={:?} (checked: armed chord, DirtyQuit [D]iscard, quit-save \
+             fan-out retirement via SaveDone ack / save_in_flight drop / document closed out \
+             from under it)",
             ctx.msg, prev.pending_quit, prev.guard, prev.quit_intent_pending
         ),
     })

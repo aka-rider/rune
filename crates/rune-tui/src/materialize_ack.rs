@@ -388,10 +388,11 @@ pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
 /// CONSTITUTION §1.4.8: dirty must be re-derived on every TRANSITION (open,
 /// switch, evict, close, quit), not merely read from the render-only cache
 /// `recompute_dirty`'s other callers (edit/ack sites) already keep current
-/// between transitions. The close-guard predicate, `workspace::request_close`,
-/// and `pane::first_unpreserved_dirty_doc`'s quit-guard scan all call this
-/// instead of `Document::is_dirty` so a transition's answer is never one
-/// edit/ack stale — render is the one place that keeps reading the cache.
+/// between transitions. Every transition-time dirty check — the close-guard
+/// predicate, `workspace::request_close`, and the quit-guard's scan over
+/// unpreserved documents — calls this instead of `Document::is_dirty` so a
+/// transition's answer is never one edit/ack stale — render is the one place
+/// that keeps reading the cache.
 pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
     recompute_dirty(app, id);
     app.doc(id).is_some_and(|doc| doc.is_dirty())

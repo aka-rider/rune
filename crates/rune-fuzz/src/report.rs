@@ -90,6 +90,11 @@ fn render_report(v: &Violation, content: &str, result: &RunResult) -> String {
                 snap.quit_intent_pending
             );
             let _ = writeln!(out, "snapshot.dirty_by_doc: {:?}", snap.dirty_by_doc);
+            let _ = writeln!(
+                out,
+                "snapshot.save_in_flight_by_doc: {:?}",
+                snap.save_in_flight_by_doc
+            );
             let _ = writeln!(out);
             let _ = writeln!(out, "rendered frame:");
             out.push_str(&render_frame(&snap.cells));
