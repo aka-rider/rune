@@ -3,10 +3,15 @@
 //! `app::handle_key`'s stage-3 dispatch. Directory loading/listing state
 //! stays in `explorer.rs`; `move_selection`/`open_selected`/`go_to_parent`
 //! below reach back into it (`explorer::ensure_visible`/`request_dir`) for
-//! the pieces `handle_dir_loaded` also needs to share.
+//! the pieces `handle_dir_loaded` also needs to share. Type-to-search
+//! (Go filetree parity, no wall clock) is a sibling module,
+//! `explorer_search`, split out to keep this file under the §1.6 budget —
+//! it owns `ExplorerSearchCommand`/`EXPLORER_SEARCH_BINDINGS`/
+//! `handle_search`, and `handle_key` below consults it FIRST.
 
 use crate::app::App;
 use crate::explorer::{self, ensure_visible};
+use crate::explorer_search::{self, EXPLORER_SEARCH_BINDINGS};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::pane::Pane;
 use crate::runtime::Effects;
@@ -79,10 +84,32 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 /// `ParentDir` must enqueue a `ReadDir` `Cmd` — a Vfs read can never run
 /// inline in `update` (§5.4) — the same reason `app::handle_editor_key`
 /// this mirrors already threads `effects` through for `Save`/clipboard.
+///
+/// Type-to-search (`explorer_search::EXPLORER_SEARCH_BINDINGS`) is checked
+/// FIRST, and only while a search is already running OR the just-typed key
+/// is the `Type` row: this is the whole "there is no key that enters search
+/// mode" story from the design — the very first printable keystroke both
+/// starts the query and supplies its first character, so it must win over
+/// `EXPLORER_BINDINGS` before that table ever sees the key (a plain letter
+/// isn't bound there anyway, but Esc/Backspace ARE, and while a search is
+/// live they must mean "edit the query", not "cancel"/"go to parent dir").
+/// Once a normal `ExplorerCommand` fires, `clear_search` runs first — every
+/// nav/open command exits a stale search, matching the design's "leaving
+/// the Explorer / loading a new directory -> search cleared" list (blur and
+/// directory-reload are the other two clear points, `app::set_focus` and
+/// `explorer::handle_dir_loaded`).
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
+    if let Some(cmd) = resolve_in(EXPLORER_SEARCH_BINDINGS, key)
+        && (app.explorer.search.is_some() || cmd == explorer_search::ExplorerSearchCommand::Type)
+    {
+        explorer_search::handle_search(app, cmd, key);
+        return KeyOutcome::Consumed;
+    }
+
     let Some(cmd) = resolve_in(EXPLORER_BINDINGS, key) else {
         return KeyOutcome::Ignored;
     };
+    explorer_search::clear_search(app);
     match cmd {
         ExplorerCommand::Up => move_selection(app, -1),
         ExplorerCommand::Down => move_selection(app, 1),

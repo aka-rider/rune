@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::explorer_keys::EXPLORER_BINDINGS;
+use rune_tui::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
 use rune_tui::opentabs::TABS_BINDINGS;
 use rune_tui::pane::Pane;
@@ -82,6 +83,17 @@ fn help_content_covers_every_binding_table() {
     assert!(
         EXPLORER_BINDINGS.iter().any(|b| content.contains(b.help)),
         "expected an EXPLORER_BINDINGS help label in:\n{content}"
+    );
+    // §12 reflection check: type-to-search's own binding table must appear
+    // in the generated `## Explorer` section too, not just the ordinary
+    // nav/open one — a hand-typed "type to search" help line would pass the
+    // OLD version of this test just as well, which is exactly what this
+    // guards against.
+    assert!(
+        EXPLORER_SEARCH_BINDINGS
+            .iter()
+            .any(|b| content.contains(b.help)),
+        "expected an EXPLORER_SEARCH_BINDINGS help label in:\n{content}"
     );
     assert!(
         TABS_BINDINGS.iter().any(|b| content.contains(b.help)),

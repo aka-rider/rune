@@ -17,6 +17,7 @@
 //! not exist".
 
 use crate::explorer_keys::EXPLORER_BINDINGS;
+use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::keymap::{Binding, GLOBAL_BINDINGS};
@@ -29,6 +30,13 @@ pub fn help_markdown() -> String {
     push_table_section(&mut out, "Global", GLOBAL_BINDINGS);
     push_leader_section(&mut out);
     push_table_section(&mut out, "Explorer", EXPLORER_BINDINGS);
+    // A second table under the SAME `## Explorer` heading text — type-to-
+    // search (`explorer_search::EXPLORER_SEARCH_BINDINGS`) is reflected in
+    // here rather than folded into the row above's table, since it comes
+    // from a genuinely separate binding set (§12: no hand-maintained key
+    // list; this still has to be generated, not typed by hand into a
+    // combined literal).
+    push_table_section(&mut out, "Explorer", EXPLORER_SEARCH_BINDINGS);
     push_table_section(&mut out, "Open Tabs", TABS_BINDINGS);
     push_table_section(&mut out, "Editor", EDITOR_BINDINGS);
     out

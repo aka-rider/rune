@@ -28,6 +28,18 @@ pub struct Context {
     /// dispatch path can tell the reload chord apart from every ordinary
     /// text-editing one.
     pub image: bool,
+    /// Whether the Explorer's type-to-search is currently running
+    /// (`Explorer::search.is_some()`) — the atom `explorer_search::
+    /// EXPLORER_SEARCH_BINDINGS`'s Esc/Backspace rows name in their `when`
+    /// clause. `explorer_keys::handle_key` gates on `app.explorer.search.
+    /// is_some()` directly rather than building a `Context`/calling
+    /// `resolve_stateful` (the Explorer resolves through the stateless
+    /// `resolve_in`, not the sequence-aware engine `when` clauses actually
+    /// drive), so this field is never consulted by `bool_field` on that live
+    /// path today — it exists so the clause stays a real, declared
+    /// identifier rather than a silently-always-false typo, and so the
+    /// Explorer moving to `resolve_stateful` later needs no clause rewrite.
+    pub explorer_search: bool,
     pub language: Option<&'static str>,
     /// The vim-set's normal/insert marker (plan WP6.S8). `"insert"` is this
     /// port's whole notion of "insert mode" while full vim modal editing
@@ -45,6 +57,7 @@ impl Default for Context {
             read_only: false,
             modal_open: false,
             image: false,
+            explorer_search: false,
             language: None,
             mode: "insert",
         }
@@ -66,6 +79,7 @@ impl Context {
             "read_only" => Some(self.read_only),
             "modal_open" => Some(self.modal_open),
             "image" => Some(self.image),
+            "explorer_search" => Some(self.explorer_search),
             _ => None,
         }
     }

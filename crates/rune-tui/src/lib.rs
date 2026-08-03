@@ -20,6 +20,7 @@ pub mod document_map;
 pub mod document_support;
 pub mod explorer;
 pub mod explorer_keys;
+pub mod explorer_search;
 pub mod field;
 pub mod focus;
 pub mod footer;

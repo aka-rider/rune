@@ -507,6 +507,16 @@ impl App {
         {
             return;
         }
+        // A live Explorer type-to-search doesn't survive a focus round-trip
+        // (design: "leaving the Explorer ... -> search cleared") — the
+        // exact leak Go's own wall-clock reset has, since nothing there
+        // clears the buffer on blur either. `set_focus` is already the blur
+        // chokepoint for the title (`title::on_blur` above), so this is the
+        // one place every route off the Explorer funnels through, same
+        // reasoning.
+        if self.focus == Pane::Explorer && next != Pane::Explorer {
+            crate::explorer_search::clear_search(self);
+        }
         self.focus = next;
     }
 

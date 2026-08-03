@@ -47,6 +47,7 @@ pub struct Explorer {
     /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
     /// bump in place, compare on receipt, ignore a stale one.
     pub request_generation: u32,
+    pub search: Option<String>, // type-to-search query (`explorer_search`); None = inactive
 }
 
 impl Default for Explorer {
@@ -57,6 +58,7 @@ impl Default for Explorer {
             nav: listnav::List { cursor: 0, top: 0 },
             loading: false,
             request_generation: 0,
+            search: None,
         }
     }
 }
@@ -223,6 +225,7 @@ pub(crate) fn handle_dir_loaded(
         return;
     }
 
+    crate::explorer_search::clear_search(app); // a new listing outdates any query
     let entries = with_parent_entry(&root, entries);
 
     let preserve_name = match cause {

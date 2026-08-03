@@ -241,6 +241,7 @@ mod tests {
         assert!(validate(crate::keymap::vim::VIM_BINDINGS).is_ok());
         assert!(validate(crate::opentabs::TABS_BINDINGS).is_ok());
         assert!(validate(crate::explorer_keys::EXPLORER_BINDINGS).is_ok());
+        assert!(validate(crate::explorer_search::EXPLORER_SEARCH_BINDINGS).is_ok());
     }
 
     #[test]

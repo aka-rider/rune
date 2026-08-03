@@ -191,11 +191,22 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     // itself (its own vertical splitter dragged to the top): when it has
     // no rows to draw into, titling the block " Files " would claim a
     // pane that isn't there, so the block's title follows what's actually
-    // showing instead of assuming the Explorer always is.
+    // showing instead of assuming the Explorer always is. A live type-to-
+    // search (`Explorer::search`) takes the next priority: the query is
+    // the whole visible-feedback story the design calls for (no chord, no
+    // mode indicator elsewhere on screen), so the block's own title is the
+    // one place it can show without stealing an entry row.
     let title = if geo.explorer_inner.height == 0 {
-        " Open "
+        " Open ".to_string()
+    } else if let Some(query) = &app.explorer.search {
+        // Truncated to the block's own inner width (minus the two corner
+        // cells) in terminal CELLS (§1.5), not chars — a long query on a
+        // narrow column must not overrun the border.
+        let budget = (left_area.width as usize).saturating_sub(2);
+        let raw = format!(" Search: {query} ");
+        crate::width::truncate_tail_to_width(&raw, budget)
     } else {
-        " Files "
+        " Files ".to_string()
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
