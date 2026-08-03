@@ -11,6 +11,7 @@ use rune_syntax::ScopeId;
 
 use crate::document::DocumentId;
 use crate::highlight::FenceLang;
+use crate::linemap::LineMap;
 
 use super::md_fence::markdown_fence_spans;
 use super::{Cmd, CmdKind, HighlightPayload, Msg};
@@ -72,27 +73,27 @@ pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: 
 /// document with many fences still respects one overall budget rather than
 /// running each fence at the full budget.
 ///
-/// Each fence arrives as `(&'static str, Vec<Range<usize>>, String)`: the
-/// language, that fence's own per-physical-line buffer ranges
+/// Each fence arrives as `(FenceLang, LineMap, String)`: the language, a
+/// `LineMap` over that fence's own per-physical-line buffer ranges
 /// (`DocMachine::code_fences`'s per-line output, finding A), and `text` —
-/// the PREFIX-FREE source `code_fence_sources` already reconstructed by
-/// joining those lines with a single `'\n'`, so a fence nested inside a
-/// blockquote or list item never feeds its container's repeating prefix
-/// (`"> "`, a list marker's indent) to the parser. Because `text` is no
-/// longer a contiguous slice of the buffer for a nested fence, each
-/// returned span is mapped back to buffer coordinates through `lines`
-/// (`map_reconstructed_span`) rather than a single `base + offset` rebase —
-/// a top-level fence's lines are already buffer-contiguous (the gap
-/// between two consecutive lines is exactly the buffer's own `'\n'`), so
-/// the mapping reduces to that same rebase for it. The concatenated result
-/// is re-sorted into the same painter order `rune_ts::highlight` itself
-/// guarantees within one fence (`start` ASC, `end` DESC) — concatenating
-/// two already-sorted lists is not itself sorted. The return is `Some(..)`
+/// the PREFIX-FREE source `code_fence_sources` already reconstructed from
+/// that same map, so a fence nested inside a blockquote or list item never
+/// feeds its container's repeating prefix (`"> "`, a list marker's indent)
+/// to the parser. Because `text` is no longer a contiguous slice of the
+/// buffer for a nested fence, each returned span is mapped back to buffer
+/// coordinates through `LineMap::to_buffer` rather than a single
+/// `base + offset` rebase — a top-level fence's lines are already
+/// buffer-contiguous (the gap between two consecutive lines is exactly the
+/// buffer's own `'\n'`), so the mapping reduces to that same rebase for it.
+/// The concatenated result is re-sorted into the same painter order
+/// `rune_ts::highlight` itself guarantees within one fence (`start` ASC,
+/// `end` DESC) — concatenating two already-sorted lists is not itself
+/// sorted. The return is `Some(..)`
 /// iff at least one fence actually parsed within its slice of the budget
 /// and `None` iff none did `[R2]` — an all-timed-out document must not
 /// flash to unstyled.
 fn run_fence_highlight(
-    fences: Vec<(FenceLang, Vec<Range<usize>>, String)>,
+    fences: Vec<(FenceLang, LineMap, String)>,
     budget: Duration,
 ) -> Option<rune_ts::HighlightResult> {
     let per_fence_budget = budget / (fences.len().max(1) as u32);
@@ -101,7 +102,7 @@ fn run_fence_highlight(
     // One fence hitting the producer's span cap truncates the whole reply:
     // the document's colours are incomplete either way, and the flag says so.
     let mut truncated = false;
-    for (lang, lines, text) in fences {
+    for (lang, map, text) in fences {
         // `FenceLang::Markdown` (plan WP6.S4) reuses the comrak emitter
         // instead of `rune_ts::highlight` — a synchronous, bounded parse of
         // the fence's own (typically short) reconstructed text, so it never
@@ -124,7 +125,7 @@ fn run_fence_highlight(
         spans.extend(
             fence_spans
                 .into_iter()
-                .filter_map(|(r, scope)| map_reconstructed_span(&lines, r).map(|r| (r, scope))),
+                .filter_map(|(r, scope)| map.to_buffer(r).map(|r| (r, scope))),
         );
     }
     spans.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(b.0.end.cmp(&a.0.end)));
@@ -134,7 +135,7 @@ fn run_fence_highlight(
 pub(crate) fn fence_highlight_cmd(
     doc: DocumentId,
     version: u64,
-    fences: Vec<(FenceLang, Vec<Range<usize>>, String)>,
+    fences: Vec<(FenceLang, LineMap, String)>,
 ) -> Cmd {
     Cmd::new(CmdKind::Highlight, move || {
         let result = run_fence_highlight(fences, HIGHLIGHT_BUDGET).map(HighlightPayload::Spans);
@@ -144,118 +145,4 @@ pub(crate) fn fence_highlight_cmd(
             result,
         })
     })
-}
-
-/// Maps one `rune_ts::highlight` span, given in the coordinates of the
-/// prefix-free text `code_fence_sources` reconstructed by joining `lines`
-/// (a fence's own per-physical-line buffer ranges) with a single `'\n'`
-/// between consecutive lines, back to the real buffer offsets those bytes
-/// occupy. A container prefix (a blockquote's `"> "`, a list item's indent)
-/// sits in the GAP between two consecutive lines' buffer ranges and
-/// contributes nothing to the reconstructed text, so the mapping is
-/// piecewise: within one line's own reconstructed span — its content plus
-/// the joining `'\n'` that follows it, which is this repo's real buffer
-/// newline, never a prefix byte — the shift from reconstructed to buffer
-/// offset is constant; it changes only when crossing into the next line.
-/// The end of `r` is resolved through the LAST byte it actually covers
-/// (`r.end - 1`) rather than `r.end` itself, so an end that lands exactly on
-/// a line boundary maps to the position right after that line's own
-/// newline — never into the following line's excluded prefix bytes, which
-/// is where a naive lookup of `r.end` itself would wander. `None` on any
-/// inconsistency (an out-of-range offset, empty `lines`, or an inverted
-/// `r`) degrades to "drop this span" — the same silent-skip convention
-/// `code_fence_sources` already uses for a fence range that doesn't land on
-/// live buffer bytes.
-fn map_reconstructed_span(lines: &[Range<usize>], r: Range<usize>) -> Option<Range<usize>> {
-    if r.start >= r.end {
-        return None;
-    }
-    let start = map_reconstructed_offset(lines, r.start, false)?;
-    let end = map_reconstructed_offset(lines, r.end - 1, true)?;
-    if start >= end {
-        return None;
-    }
-    Some(start..end)
-}
-
-/// `map_reconstructed_span`'s single-offset chokepoint. `is_end` requests
-/// the INCLUSIVE-byte convention that function's `r.end - 1` call needs:
-/// after locating the line owning `offset`, add one back so the result is
-/// an exclusive buffer offset again, landing right after that line's own
-/// content (or its trailing newline, if `offset` was the reconstructed
-/// `'\n'` slot) rather than at the start of the next line's prefix.
-fn map_reconstructed_offset(lines: &[Range<usize>], offset: usize, is_end: bool) -> Option<usize> {
-    let last = lines.len().checked_sub(1)?;
-    let mut cursor = 0usize;
-    for (i, line) in lines.iter().enumerate() {
-        let len = line.end.saturating_sub(line.start);
-        // This line's own reconstructed span: its content, plus — for
-        // every line but the last — the single joining '\n' that follows
-        // it and maps through this SAME line's shift (see the doc comment
-        // above: that newline IS the buffer's real line terminator).
-        let span_len = if i == last { len } else { len + 1 };
-        if offset < cursor + span_len {
-            let within = offset - cursor;
-            let mapped = line.start + within;
-            return Some(if is_end { mapped + 1 } else { mapped });
-        }
-        cursor += span_len;
-    }
-    None
-}
-
-#[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn map_reconstructed_span_is_identity_for_buffer_contiguous_lines() {
-        // Top-level fence: consecutive lines are truly adjacent in the
-        // buffer (gap of exactly one real '\n'), so the reconstructed text
-        // is byte-identical to the buffer slice and every mapped span must
-        // equal its own reconstructed-coordinates input verbatim.
-        let content = "let a = 1;\nlet b = 2;";
-        let lines = vec![0..10, 11..21];
-        assert_eq!(content.len(), 21);
-        assert_eq!(&content[11..21], "let b = 2;");
-
-        let mapped = map_reconstructed_span(&lines, 11..15).expect("in range");
-        assert_eq!(mapped, 11..15);
-        assert_eq!(&content[mapped], "let ");
-    }
-
-    #[test]
-    fn map_reconstructed_span_skips_the_gap_between_nested_lines() {
-        // Blockquoted fence: buffer line 1 starts after "> " (2 extra
-        // bytes the reconstructed text never sees). A span entirely inside
-        // line 1's own reconstructed content must land on line 1's real
-        // buffer bytes, never inside the "> " gap.
-        let content = "let a = 1;\n> let b = 2;";
-        let line0 = 0..10; // "let a = 1;"
-        let line1 = 13..23; // "let b = 2;" (after "> ")
-        assert_eq!(&content[line1.clone()], "let b = 2;");
-        let lines = vec![line0, line1];
-
-        // Reconstructed text: "let a = 1;" + '\n' + "let b = 2;" -> "let"
-        // at reconstructed offset 11..14 is line 1's own "let".
-        let mapped = map_reconstructed_span(&lines, 11..14).expect("in range");
-        assert_eq!(&content[mapped], "let");
-    }
-
-    #[test]
-    fn map_reconstructed_offset_end_boundary_never_lands_in_the_prefix() {
-        let content = "ab\n> cd";
-        let line0 = 0..2; // "ab"
-        let line1 = 5..7; // "cd" (after "> ")
-        let lines = vec![line0, line1];
-
-        // Reconstructed text is "ab\ncd" (5 bytes). A span covering just
-        // "ab" plus its joining '\n' (offsets 0..3) must map to the real
-        // newline's own end in the buffer (0..3, the byte right after
-        // '\n'), never into the "> " gap that follows it.
-        let mapped = map_reconstructed_span(&lines, 0..3).expect("in range");
-        assert_eq!(mapped, 0..3);
-        assert_eq!(&content[mapped], "ab\n");
-    }
 }
