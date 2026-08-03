@@ -473,6 +473,33 @@ pub(super) const CTRL_T_KEY: KeyInput = KeyInput {
     },
 };
 
+/// Unmodified printable-letter keys for the Explorer type-to-search feature
+/// (Go filetree parity, `explorer_search.rs`): `KeyPattern::printable`'s
+/// wildcard row matches any non-control `Char` under `Mods::NONE`, so this
+/// is only ever exercised if a generated key actually reaches the Explorer
+/// AS an unmodified letter — `cluster_chrome`'s `^b`-then-type arm
+/// (`cluster.rs`) is what supplies that reachability, letting `PANE-NO-
+/// BLEED` prove a key aimed at the Explorer (moving `nav.cursor`, not the
+/// active document) never mutates a buffer byte.
+pub(super) static EXPLORER_SEARCH_KEYS: &[KeyInput] = &[
+    KeyInput {
+        code: KeyCode::Char('r'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('e'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('a'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('z'),
+        mods: Mods::NONE,
+    },
+];
+
 /// `alt+sup+Up` (`Command::AddCursorAbove`, `keymap/editor_bindings.rs`'s
 /// `ALT_SUP` row) — CODE-REVIEW.md rune-fuzz finding 11: the entire
 /// multi-cursor surface was monkey-burst-only at ~0.42%/key, so

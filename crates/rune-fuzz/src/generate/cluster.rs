@@ -15,9 +15,9 @@ use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
-    CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, MARKDOWN_FRAGMENTS,
-    NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS,
-    TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS,
+    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
+    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -318,10 +318,15 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
 /// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6), the named
 /// `^b`/`^t` Explorer/Tabs toggle chords (CODE-REVIEW.md rune-fuzz finding
 /// 10: without these, `DirLoaded` always landed in a never-opened
-/// Explorer), or `^r` immediately followed by one of `TITLE_MOTION_KEYS`
+/// Explorer), `^r` immediately followed by one of `TITLE_MOTION_KEYS`
 /// (plan WP5.S6) — so the SAME generated cluster both parks focus on the
 /// title and exercises one of its own word-motion/selection/undo bindings
-/// against it, not just against the document.
+/// against it, not just against the document — or `^b` immediately
+/// followed by 1-3 unmodified printable letters (Explorer type-to-search,
+/// `explorer_search.rs`): without this arm, a generated key aimed at the
+/// Explorer while it's actually focused was reachable only through
+/// `cluster_monkey_burst`'s ~0.4%-of-16-mods-per-key odds, never reliably
+/// enough to prove `PANE-NO-BLEED` against the new wildcard binding row.
 fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         arb_resize().prop_map(|(w, h)| vec![Action::Resize(w, h)]),
@@ -332,6 +337,11 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
         select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
+        proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {
+            let mut actions = vec![Action::Key(CTRL_B_KEY)];
+            actions.extend(keys.into_iter().map(Action::Key));
+            actions
+        }),
         (
             proptest::collection::vec(arb_dir_entry(), 0..=6),
             arb_dir_cause(),
