@@ -139,7 +139,40 @@ impl SpaceProbe for FixedSpaceProbe {
 /// assumption is documented and pinned, not silently relied upon.
 pub fn leader_available() -> bool {
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| window_server_session_exists() && probe_key_state_once())
+    *AVAILABLE.get_or_init(|| window_server_session_exists() && block_hazard_smoke_test())
+}
+
+/// Distinguishes the two causes `leader_available`'s bare `bool` cannot: no
+/// window-server session reachable at all, versus a session that exists (so
+/// the key-state query was at least reachable without blocking). Exposed
+/// publicly — unlike `window_server_session_exists` — so `rune --doctor` can
+/// report which branch a given machine is on instead of a single opaque
+/// `bool` that collapses "revoked Input Monitoring" and "no window server"
+/// into the same `false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaderDiagnosis {
+    /// `CGSessionCopyCurrentDictionary` returned NULL: this process has no
+    /// window-server session, so `CGEventSourceKeyState` is never called
+    /// (calling it here would block, per the module docs).
+    NoWindowServerSession,
+    /// A window-server session exists, so the key-state query was reachable
+    /// without blocking. This does NOT prove `CGEventSourceKeyState` reports
+    /// live key state correctly — e.g. a revoked Input Monitoring TCC grant
+    /// can leave the session present while the query answers `false`
+    /// forever. `rune --doctor`'s live loop is what tells the two apart.
+    SessionPresent,
+}
+
+/// Diagnoses the leader capability without caching, so it can be called
+/// repeatedly by `rune --doctor` and always reflects the current machine
+/// state (unlike `leader_available`, which is deliberately a one-shot cache
+/// primed at startup).
+pub fn diagnose() -> LeaderDiagnosis {
+    if window_server_session_exists() {
+        LeaderDiagnosis::SessionPresent
+    } else {
+        LeaderDiagnosis::NoWindowServerSession
+    }
 }
 
 /// `true` when this process can reach the window server. See the module docs
@@ -157,10 +190,18 @@ fn window_server_session_exists() -> bool {
     true
 }
 
-/// The one-and-only `CGEventSourceKeyState` call made for availability. Its
-/// answer (is space down *right now*, at startup) is meaningless and
-/// deliberately discarded; reaching this point at all is what `true` records.
-fn probe_key_state_once() -> bool {
+/// The one-and-only `CGEventSourceKeyState` call made for availability. This
+/// is NOT a measurement of whether the leader works — its answer (is space
+/// down *right now*, at startup) is meaningless and deliberately discarded.
+/// It exists purely as a block-hazard smoke test: `window_server_session_
+/// exists` already proved a session is reachable, and this call proves the
+/// key-state query itself doesn't hang or crash given that session. A
+/// revoked Input Monitoring grant does NOT make this return `false` — it
+/// makes every *subsequent* call from `HidSpaceProbe` answer `false` while
+/// this one-shot smoke test still records `true`. `rune --doctor`'s live
+/// loop, not this function, is what actually observes a stuck-`false`
+/// query.
+fn block_hazard_smoke_test() -> bool {
     let _ = unsafe { CGEventSourceKeyState(HID_SYSTEM_STATE, VK_SPACE) };
     true
 }
@@ -184,6 +225,25 @@ mod tests {
                 leader_available(),
                 first,
                 "a cached OnceLock answer must never change within one process"
+            );
+        }
+    }
+
+    /// `diagnose()` and `leader_available()` derive from the same
+    /// `window_server_session_exists` fact, so on any one machine they must
+    /// agree on which side of "session present" they're on — a
+    /// `SessionPresent` diagnosis with `leader_available() == false` is a
+    /// legitimate outcome (TCC revoked), but `NoWindowServerSession` with
+    /// `leader_available() == true` would mean the two disagree about
+    /// whether a session exists at all, which must never happen.
+    #[test]
+    fn diagnose_agrees_with_leader_available_on_session_presence() {
+        let diagnosis = diagnose();
+        let available = leader_available();
+        if diagnosis == LeaderDiagnosis::NoWindowServerSession {
+            assert!(
+                !available,
+                "no window-server session must never report the leader available"
             );
         }
     }
