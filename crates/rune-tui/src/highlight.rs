@@ -225,40 +225,51 @@ fn fence_language(info: &str) -> Option<FenceLang> {
     rune_ts::lang::resolve(token).map(FenceLang::Ts)
 }
 
-/// Collects every fence in a markdown document whose info string resolves
-/// to a known language (plan WP6.S3), each carrying its own per-line buffer
-/// ranges and a reconstructed, PREFIX-FREE owned source text — so `fence_
-/// highlight_cmd` can move the result across the `Cmd` thread boundary
-/// exactly like `highlight_cmd` moves a whole code document's content.
+/// Narrows a markdown document's code regions to the ones THIS consumer can
+/// act on — those whose info string resolves to a known highlighter — each
+/// carrying its own per-line buffer ranges and a reconstructed, PREFIX-FREE
+/// owned source text, so `fence_highlight_cmd` can move the result across the
+/// `Cmd` thread boundary exactly like `highlight_cmd` moves a whole code
+/// document's content.
 ///
-/// `code_fences` returns one `Range` per physical content line (finding A):
-/// for a fence nested inside a blockquote or list item, the gap between two
-/// consecutive lines' buffer ranges holds that container's own repeating
-/// prefix (`"> "`, a list marker's indent), which must never reach
-/// `rune_ts::highlight` as source bytes — tree-sitter's error recovery
-/// silently absorbs a stray `"> "` for some grammars (Rust) but not others
-/// (an indentation-sensitive grammar like YAML loses most of its structure
-/// to it). `text` is built by joining each line's own slice with a single
-/// `'\n'`, which reproduces the ORIGINAL buffer bytes exactly for a
-/// top-level fence (the true gap between two top-level lines is exactly one
-/// `'\n'` already) and drops every prefix byte for a nested one. `lines` is
-/// carried alongside so `runtime::map_reconstructed_span` can map spans
-/// parsed against this reconstructed text back to real buffer offsets.
+/// A region with an empty or unresolvable info string is dropped HERE, not
+/// upstream: `code_regions` deliberately emits it (a region is a region
+/// whether or not a grammar exists for it), and highlighting is simply the
+/// one consumer that has nothing to do with it.
 ///
-/// A fence with any line that somehow doesn't land on a live byte range of
-/// the current buffer (should not happen — `code_fences` derives its
-/// ranges from the buffer's own parse — but `.get` degrades to "skip the
-/// whole fence" rather than a panic, per §1.3) is silently skipped.
+/// `CodeRegion::content` is one `Range` per physical content line, and that
+/// is what makes the reconstruction correct: for a fence nested inside a
+/// blockquote or list item, the gap between two consecutive lines' buffer
+/// ranges holds that container's own repeating prefix (`"> "`, a list
+/// marker's indent), which must never reach `rune_ts::highlight` as source
+/// bytes — tree-sitter's error recovery silently absorbs a stray `"> "` for
+/// some grammars (Rust) but not others (an indentation-sensitive grammar
+/// like YAML loses most of its structure to it). `text` is built by joining
+/// each line's own slice with a single `'\n'`, which reproduces the ORIGINAL
+/// buffer bytes exactly for a top-level fence (the true gap between two
+/// top-level lines is exactly one `'\n'` already) and drops every prefix byte
+/// for a nested one. The ranges are carried alongside so
+/// `runtime::map_reconstructed_span` can map spans parsed against this
+/// reconstructed text back to real buffer offsets.
+///
+/// A region with any line that somehow doesn't land on a live byte range of
+/// the current buffer (should not happen — the ranges are derived from the
+/// buffer's own parse — but `.get` degrades to "skip the whole region"
+/// rather than a panic, per §1.3) is silently skipped.
 fn code_fence_sources(doc: &Document) -> Vec<(FenceLang, Vec<Range<usize>>, String)> {
     let content = doc.buffer.content();
     doc.doc
-        .code_fences()
+        .code_regions(&doc.buffer)
         .into_iter()
-        .filter_map(|(info, lines)| {
-            let lang = fence_language(info)?;
-            let pieces: Option<Vec<&str>> = lines.iter().map(|l| content.get(l.clone())).collect();
+        .filter_map(|region| {
+            let lang = fence_language(&region.info)?;
+            let pieces: Option<Vec<&str>> = region
+                .content
+                .iter()
+                .map(|l| content.get(l.clone()))
+                .collect();
             let text = pieces?.join("\n");
-            Some((lang, lines, text))
+            Some((lang, region.content, text))
         })
         .collect()
 }

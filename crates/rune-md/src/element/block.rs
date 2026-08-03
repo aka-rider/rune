@@ -245,6 +245,11 @@ pub enum VerbatimKind {
     Table,
     Html,
     Math,
+    /// An indented (non-fenced) code block. Verbatim like the rest, but it
+    /// is the one variant that is genuinely CODE — `code_region::collect`
+    /// keys off it to tell an indented code block apart from the other
+    /// passthroughs, none of which may be treated as code.
+    IndentedCode,
     Unknown,
 }
 

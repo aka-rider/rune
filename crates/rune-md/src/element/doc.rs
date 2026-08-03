@@ -6,9 +6,8 @@
 //! changed, and reveal transitions never touch `built_version` (Gotchas:
 //! "Reveal must never bump the buffer version").
 
-use std::ops::Range;
-
 use crate::element::block::Block;
+use crate::element::code_region::{self, CodeRegion};
 use crate::icons::IconSet;
 use crate::snapshot::{DisplaySnapshot, ImageDims};
 use rune_core::buffer::Buffer;
@@ -170,22 +169,32 @@ impl DocMachine {
         &self.blocks
     }
 
-    /// Every fenced code block's language tag and per-line content byte
-    /// ranges (plan WP6.S1) — walked recursively into blockquotes and list
-    /// items so a fence nested inside either is found too, not only a
-    /// top-level one. Returns `CodeFenceM::content_lines` itself, ONE
-    /// `Range` per physical content line, never collapsed into a single
-    /// `first.start..last.end` span: a container's own repeating prefix
-    /// (`"> "`, a list marker's indent) sits in the GAP between two
-    /// consecutive lines' buffer ranges, so a single contiguous range
-    /// covering both would include it, while the per-line list lets the
-    /// caller reconstruct a prefix-free source and map spans back through
-    /// the gaps instead. A fence with an empty `language` or no content
-    /// lines contributes nothing.
-    pub fn code_fences(&self) -> Vec<(&str, Vec<Range<usize>>)> {
-        let mut out = Vec::new();
-        collect_code_fences(&self.blocks, &mut out);
-        out
+    /// Every region of code in this document — the one definition every
+    /// downstream consumer reads, whether it highlights the region or merely
+    /// paints a background behind it.
+    ///
+    /// What counts depends entirely on `kind`. A `Code` document is exactly
+    /// one region spanning the whole buffer; a `Markdown` document is one
+    /// region per fenced block (found recursively, so a fence nested in a
+    /// blockquote or list item counts) plus every indented code block; a
+    /// `Plain` or `Image` document has none. A region whose `info` is empty
+    /// is still returned — see `CodeRegion` for why, and for why `content`
+    /// is one range per physical line rather than one contiguous span.
+    ///
+    /// Takes the buffer rather than reading a mirrored copy: `DocMachine`
+    /// owns no buffer (every content-reading method here is handed one), and
+    /// a `Code` document's regions come from the buffer's own line structure
+    /// because a non-markdown kind is never parsed into `blocks` at all.
+    pub fn code_regions(&self, buf: &Buffer) -> Vec<CodeRegion> {
+        match self.kind {
+            DocumentKind::Code(lang) => vec![code_region::whole_document(lang, buf)],
+            DocumentKind::Markdown => {
+                let mut out = Vec::new();
+                code_region::collect(&self.blocks, buf, &mut out);
+                out
+            }
+            DocumentKind::Plain | DocumentKind::Image => Vec::new(),
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -380,30 +389,6 @@ impl DocMachine {
     #[cfg(any(test, feature = "strict-invariants", feature = "fuzz-hooks"))]
     pub fn force_rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         self.rebuild(buf)
-    }
-}
-
-/// `DocMachine::code_fences`'s own recursion — descends into `Blockquote`
-/// and `List` children (a fence can sit inside either), skipping every
-/// other block kind since none of them can contain a nested `CodeFence`.
-fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Vec<Range<usize>>)>) {
-    for block in blocks {
-        match block {
-            Block::CodeFence(cf) => {
-                if cf.language.is_empty() || cf.content_lines.is_empty() {
-                    continue;
-                }
-                let lines = cf.content_lines.iter().map(|l| l.start..l.end).collect();
-                out.push((cf.language.as_str(), lines));
-            }
-            Block::Blockquote(bq) => collect_code_fences(&bq.children, out),
-            Block::List(list) => {
-                for item in &list.items {
-                    collect_code_fences(&item.children, out);
-                }
-            }
-            _ => {}
-        }
     }
 }
 
