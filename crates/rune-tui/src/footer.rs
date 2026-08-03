@@ -124,15 +124,18 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     // A rename collision names its target: "replace <what>?" is a question
     // the user can answer; a bare `[R]eplace` is not. `DirtyQuit` names
     // WHICH document quit is waiting on (plan WP2: the fix for "a
-    // background dirty document blocks quit with no hint which one") —
-    // `title::name_for` is the same name the title field itself would seed
-    // if the user pressed `^R` on this document.
+    // background dirty document blocks quit with no hint which one") — via
+    // `Document::file_name`, the same name the tab bar shows, so the user
+    // matches the prompt against something already on screen. Deliberately
+    // NOT `title::name_for`: that one answers "what should the title FIELD
+    // hold", which for a pathless draft is the editable `.md` stub — a
+    // prompt reading "unsaved changes in .md" names nothing at all.
     let options: &[banner::GuardOption] = match &prompt.kind {
         GuardKind::DirtyClose => banner::DIRTY_CLOSE_OPTIONS,
         GuardKind::DirtyQuit => {
             let name = app
                 .doc(prompt.doc)
-                .map(crate::title::name_for)
+                .map(|doc| doc.file_name().to_string())
                 .unwrap_or_default();
             spans.push(Span::styled(
                 format!("unsaved changes in {name} \u{2014} "),
