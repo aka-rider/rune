@@ -30,6 +30,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use rune_tui::app::App;
+use rune_tui::keystate::{self, LeaderDiagnosis};
 use rune_tui::workspace;
 use rune_vfs::{Disk, Vfs};
 
@@ -39,6 +40,15 @@ mod cli;
 mod db_bootstrap;
 mod loader;
 mod open;
+
+/// How many `--doctor` live-poll iterations to print before exiting.
+/// Iteration-bounded rather than wall-clock-bounded (`CLAUDE.md`: never use
+/// a wall-clock sleep to order or pace events) — this loop's sleeps only
+/// space out already-decided print statements for a human to read, they
+/// never gate whether or when a program event happens, so a fixed iteration
+/// count keeps the bound explicit without pretending the sleep orders
+/// anything.
+const DOCTOR_POLL_ITERATIONS: u32 = 30;
 
 /// `sysexits.h`-flavored exit codes: `EX_USAGE` (a malformed command line —
 /// an unrecognised flag, a missing `-w` value, or `-w` pointing somewhere
@@ -55,6 +65,16 @@ pub(crate) mod exit_code {
 }
 
 fn main() -> ExitCode {
+    // `--doctor` is parsed here, before `bootstrap`, and handled entirely
+    // outside the normal load/`cli::parse` path: it never opens a file,
+    // never enters the TUI, and prints straight to stdout instead. Checked
+    // as a bare first-argument match rather than folded into `cli::CliAction`
+    // because it shares none of that enum's file-opening semantics.
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--doctor") {
+        return doctor();
+    }
+
     // Read exactly once (plan WP4.S6/[rune-cli 8]): every other spot that
     // used to read `env::current_dir()` a second time (the `-w`-absent
     // workspace-root fallback) now reuses this value, and a failure here is
@@ -74,7 +94,47 @@ fn main() -> ExitCode {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
     let home = env::var_os("HOME").map(PathBuf::from);
 
-    launch(vfs, env::args_os().skip(1), cwd, home)
+    launch(vfs, args.into_iter(), cwd, home)
+}
+
+/// `rune --doctor`: prints the leader capability's diagnostic state and
+/// exits without ever constructing an `App` or entering the TUI (plan WP0,
+/// the measurement gate for the `␣X`-stopped-working investigation). Reports
+/// `keystate::diagnose()` and `leader_available()` once, then — only if a
+/// window-server session exists, since the raw query blocks without one —
+/// polls the LIVE `CGEventSourceKeyState` reading on a bounded loop so an
+/// operator can hold the spacebar and watch the printed value flip between
+/// `true`/`false` in real time.
+fn doctor() -> ExitCode {
+    let diagnosis = keystate::diagnose();
+    println!("leader diagnosis: {diagnosis:?}");
+    println!("leader_available(): {}", keystate::leader_available());
+
+    match diagnosis {
+        LeaderDiagnosis::NoWindowServerSession => {
+            println!(
+                "no window-server session: the live key-state query is skipped here exactly \
+                 as `leader_available` skips it, because it blocks (~45s observed) without one."
+            );
+        }
+        LeaderDiagnosis::SessionPresent => {
+            println!(
+                "session present — polling the live CGEventSourceKeyState(HID_SYSTEM_STATE, \
+                 VK_SPACE) reading for ~{}s. Hold and release the spacebar and watch the value \
+                 flip.",
+                DOCTOR_POLL_ITERATIONS / 10
+            );
+            for i in 0..DOCTOR_POLL_ITERATIONS {
+                println!("  [{i}] space down: {}", keystate::raw_key_state_now());
+                // Paces the printed series for a human to read; it does not
+                // order or gate any program event (`CLAUDE.md`) — the
+                // iteration count above is the actual bound.
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 /// Everything `main` does after resolving `cwd`/`$HOME` and constructing the
