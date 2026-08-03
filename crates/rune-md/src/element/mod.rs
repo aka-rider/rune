@@ -14,6 +14,7 @@
 //! directly (WP4: the WP3 re-export shim that used to live here is gone).
 
 pub mod block;
+pub mod code_region;
 pub mod doc;
 pub mod inline;
 pub mod table;

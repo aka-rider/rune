@@ -176,7 +176,11 @@ fn build_block<'a>(
                 return Some(Block::Verbatim(VerbatimM {
                     sm: RevealSm::new(RevealState::Revealed),
                     range,
-                    kind: VerbatimKind::Unknown,
+                    // Verbatim like every other passthrough, but tagged as
+                    // code so the code-region collection can find it: an
+                    // indented code block is code, an unrecognized node is
+                    // not, and `Unknown` alone could not tell them apart.
+                    kind: VerbatimKind::IndentedCode,
                     content_lines,
                 }));
             }

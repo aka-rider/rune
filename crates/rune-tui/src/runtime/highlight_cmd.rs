@@ -74,7 +74,7 @@ pub fn highlight_cmd(doc: DocumentId, version: u64, lang: &'static str, source: 
 ///
 /// Each fence arrives as `(&'static str, Vec<Range<usize>>, String)`: the
 /// language, that fence's own per-physical-line buffer ranges
-/// (`DocMachine::code_fences`'s per-line output, finding A), and `text` —
+/// (`CodeRegion::content`'s per-line output, finding A), and `text` —
 /// the PREFIX-FREE source `code_fence_sources` already reconstructed by
 /// joining those lines with a single `'\n'`, so a fence nested inside a
 /// blockquote or list item never feeds its container's repeating prefix
