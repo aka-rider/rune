@@ -345,8 +345,13 @@ impl DocMachine {
         // its rows directly rather than deriving them from `wrap`, since an
         // empty buffer has no wrap rows to derive an image's reserved
         // layout from at all.
-        let (lines, syntax) =
-            crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
+        let (lines, syntax) = crate::emit::emit_with(
+            buf.content(),
+            &self.blocks,
+            self.wrap.width,
+            &self.icons,
+            crate::emit::style::base_scope(self.kind),
+        );
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         // An image document synthesizes its rows outright — there is no
         // buffer text to emit or wrap. Every other kind goes through the

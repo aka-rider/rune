@@ -401,7 +401,19 @@ pub(crate) fn hide_range(
 /// line's full byte range, and inserts an `Identical` span per gap in the
 /// correct buffer-order position (the final per-line sort by `range`'s
 /// start).
-fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [Vec<SyntaxSpan>]) {
+///
+/// `base` is the scope those gap spans carry. It is a parameter rather
+/// than a fixed `style::text_scope()` because a non-markdown document
+/// parses to an empty block list, which makes THIS pass the sole producer
+/// of its every span — so the document's kind can only reach the screen
+/// through here (see `style::base_scope`).
+fn fill_gaps(
+    content: &str,
+    starts: &[usize],
+    accounted: &Accounted,
+    base: ScopeId,
+    out: &mut [Vec<SyntaxSpan>],
+) {
     for line in 0..starts.len() {
         let line_start = starts.get(line).copied().unwrap_or(0);
         let line_end = line_end_at(content.len(), starts, line).max(line_start);
@@ -438,7 +450,7 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
             // No local char-boundary guard needed: `SyntaxSpan::identical`
             // clamps a bad range at construction instead of this call site
             // having to check and skip it first.
-            bucket.push(SyntaxSpan::identical(content, style::text_scope(), s..e));
+            bucket.push(SyntaxSpan::identical(content, base, s..e));
         }
         // Gap-fill spans are appended out of buffer order relative to
         // whatever spans already sit in `bucket` — restore document order
@@ -458,18 +470,28 @@ fn fill_gaps(content: &str, starts: &[usize], accounted: &Accounted, out: &mut [
 /// without a second breaking change to this signature or every one of its
 /// callers; every other producer ignores the field entirely.
 pub fn emit(content: &str, blocks: &[Block], width: u16) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
-    emit_with(content, blocks, width, &IconSet::unicode())
+    emit_with(
+        content,
+        blocks,
+        width,
+        &IconSet::unicode(),
+        style::text_scope(),
+    )
 }
 
 /// `emit`'s full form (plan WP2.S4/B2 resolution): identical to `emit`
 /// except decor producers draw their glyphs from `icons` instead of the
-/// unicode-tier default. `emit` is a thin wrapper over this so the ~90
-/// existing 3-arg call sites across the workspace keep compiling unchanged.
+/// unicode-tier default, and unclaimed bytes fall back to `base` instead of
+/// the plain-prose scope. `emit` is a thin wrapper over this so the ~90
+/// existing 3-arg call sites across the workspace keep compiling unchanged;
+/// a markdown document's gaps ARE prose, so the wrapper's fixed `text` is
+/// the right answer for all of them.
 pub fn emit_with(
     content: &str,
     blocks: &[Block],
     width: u16,
     icons: &IconSet,
+    base: ScopeId,
 ) -> (Vec<SyntaxLine>, SyntaxSnapshot) {
     let starts = line_starts(content);
     let mut spans: Vec<Vec<SyntaxSpan>> = vec![Vec::new(); starts.len()];
@@ -490,7 +512,7 @@ pub fn emit_with(
     for b in blocks {
         walk::emit_block(content, &starts, b, 0, &mut out);
     }
-    fill_gaps(content, &starts, &accounted, &mut spans);
+    fill_gaps(content, &starts, &accounted, base, &mut spans);
 
     // MIXED-INDEX SEAM fallout (verification round 7): a producer's own
     // CALL ORDER is not the same thing as buffer-BYTE order, and this
