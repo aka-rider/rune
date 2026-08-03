@@ -389,7 +389,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
             clear_modal(app);
-            crate::workspace::close_now(app, doc, effects);
+            let _ = crate::workspace::close_now(app, doc, effects);
         }
         _ => {}
     }
