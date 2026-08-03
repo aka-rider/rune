@@ -7,6 +7,16 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Halfwidth Katakana Voiced Sound Mark (dakuten) — `unicode-width` reports
+/// this as zero-width (it carries `Grapheme_Extend`), but terminals render
+/// it as its own halfwidth cell. Mirrors ratatui-core's `CellWidth for str`
+/// adjustment so this chokepoint and ratatui's own derivation land on the
+/// same number for the same symbol (see `grapheme_width`'s doc below).
+const HALFWIDTH_KATAKANA_VOICED_SOUND_MARK: char = '\u{FF9E}';
+/// Halfwidth Katakana Semi-Voiced Sound Mark (handakuten) — the
+/// `U+FF9F` counterpart to the mark above, same rationale.
+const HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK: char = '\u{FF9F}';
+
 /// `ControlAwareWidth` — the single source of truth for a rune's display
 /// width, shared (in the Go original) by the wrap/coordinate layer and the
 /// cell renderer. Rule: `\n`/`\r` occupy no column; every other rune
@@ -53,25 +63,43 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// overwhelming common case) delegates to `control_aware_width` unchanged.
 ///
 /// A MULTI-rune cluster (a ZWJ-joined emoji sequence, a skin-tone-modified
-/// emoji, a base char plus a combining mark) takes the MAX of each rune's
-/// RAW `unicode_width::UnicodeWidthChar::width` — never the SUM, and never
-/// `control_aware_width`'s 1-clamp per rune. Both would overcount: a real
-/// terminal renders the WHOLE cluster as one glyph occupying as many
-/// columns as its single widest member needs (confirmed empirically
-/// against a real tmux capture, `scripts/parity/fixtures/emoji.md` — a
-/// summed or per-rune-clamped width reserves MORE columns than the
-/// terminal actually consumes, leaving a visible gap of blank columns
-/// before whatever follows on the row, the residual divergence a first
-/// attempt at this fix left behind). `control_aware_width`'s 1-clamp exists
-/// so a LONE zero-width rune still gets a reachable caret column, which
-/// doesn't apply inside a cluster either — it already has exactly one
-/// caret position, at its first byte, regardless of how many joiner/
-/// modifier/combining runes follow; a joiner contributing 0 to the MAX is
-/// correct precisely because the cluster's OWN width comes from its widest
-/// member, not from that rune. The result is still clamped to a minimum of
-/// 1 overall (never zero), so a real buffer byte always renders as at
-/// least one cell even for the pathological all-zero-width cluster
-/// (`CELL-OFFSET`'s invariant, `rune-fuzz`).
+/// emoji, a base char plus a variation selector or combining mark) is
+/// measured with `unicode_width::UnicodeWidthStr::width` over the WHOLE
+/// cluster, plus `+1` per halfwidth katakana dakuten/handakuten
+/// (`U+FF9E`/`U+FF9F`) it contains, floored to a minimum of 1.
+///
+/// **The invariant this function exists to uphold: rune's width for a
+/// symbol must equal what ratatui derives for that same symbol** — every
+/// place that walks text one visual unit at a time (this module's
+/// `wrap_line`, the `query` submodule's `WrapSnapshot::visual_col`/
+/// `byte_col_from_visual`, and `rune-tui`'s `push_grapheme_cells`) has to
+/// agree with the buffer ratatui actually diffs and writes to the
+/// terminal, or a `Cell`'s reserved column count stops matching what the
+/// terminal consumes for it — under-reserving drops a neighboring cell,
+/// over-reserving shifts every cell after it on the row. rune-syntax stays
+/// terminal-free and cannot depend on ratatui to assert this itself; the
+/// equality is enforced by a guard test in `rune-tui`, which already
+/// depends on both.
+///
+/// A per-rune MAX of `UnicodeWidthChar::width` (this function's prior
+/// implementation) gets this wrong for a whole class of clusters —
+/// variation selectors, regional-indicator flag pairs, keycaps, and
+/// halfwidth katakana + dakuten all disagree with what
+/// `UnicodeWidthStr::width` derives for the same string, because
+/// `unicode-width` applies string-level ligature rules a per-`char` walk
+/// cannot see. `UnicodeWidthStr::width` is NOT summing per-rune widths —
+/// summing was tried and rejected (a real tmux capture against
+/// `scripts/parity/fixtures/emoji.md` showed it reserves MORE columns than
+/// the terminal actually consumes for a ZWJ-joined or skin-tone-modified
+/// emoji, leaving a visible gap before whatever follows on the row).
+/// `UnicodeWidthStr::width`'s ligature-aware width happens to still land on
+/// the same answer as that empirical result for ZWJ/skin-tone clusters
+/// (both count them as one double-wide glyph) while fixing the classes the
+/// old MAX rule got wrong.
+///
+/// The result is clamped to a minimum of 1 (never zero), so a real buffer
+/// byte always renders as at least one cell even for the pathological
+/// all-zero-width cluster (`CELL-OFFSET`'s invariant, `rune-fuzz`).
 pub fn grapheme_width(cluster: &str) -> usize {
     let mut chars = cluster.chars();
     let Some(first) = chars.next() else {
@@ -80,12 +108,14 @@ pub fn grapheme_width(cluster: &str) -> usize {
     if chars.next().is_none() {
         return control_aware_width(first);
     }
-    cluster
+    let halfwidth_marks = cluster
         .chars()
-        .filter_map(unicode_width::UnicodeWidthChar::width)
-        .max()
-        .unwrap_or(0)
-        .max(1)
+        .filter(|&c| {
+            c == HALFWIDTH_KATAKANA_VOICED_SOUND_MARK
+                || c == HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK
+        })
+        .count();
+    (unicode_width::UnicodeWidthStr::width(cluster) + halfwidth_marks).max(1)
 }
 
 /// `grapheme_width`'s tab-aware counterpart, mirroring `rune_width_with_tab`
