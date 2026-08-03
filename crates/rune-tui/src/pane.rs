@@ -95,7 +95,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 app.set_focus(Pane::Editor, effects);
             }
         }
-        GlobalCommand::Save => save::trigger_save(app, app.active, effects),
+        GlobalCommand::Save => {
+            let _ = save::trigger_save(app, app.active, effects);
+        }
         // WP7.S2: mints/toggles the generated Help virtual document — a
         // direct, same-tick call (decision 10), no I/O involved. The hoisted
         // gate above already blurred, but that gate fires only for
@@ -170,12 +172,14 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 /// key`'s Guard gate exists for. Deterministic ordering (`documents` is a
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
 /// first" — repeated presses always raise the Guard for the same document
-/// until it's resolved.
-fn first_unpreserved_dirty_doc(app: &App) -> Option<DocumentId> {
-    app.documents
-        .iter()
-        .find(|(_, doc)| doc.is_dirty() && doc.db.is_none())
-        .map(|(id, _)| *id)
+/// until it's resolved. Dirty is re-derived via `is_dirty_now`, not read
+/// from the cache (CONSTITUTION §1.4.8: quit is a transition), so a stale
+/// cache can never wave a genuinely-dirty document through the guard.
+fn first_unpreserved_dirty_doc(app: &mut App) -> Option<DocumentId> {
+    let candidates: Vec<DocumentId> = app.documents.keys().copied().collect();
+    candidates.into_iter().find(|&id| {
+        crate::materialize_ack::is_dirty_now(app, id) && app.doc(id).is_some_and(|d| d.db.is_none())
+    })
 }
 
 /// The 2s quit-confirm timer, carrying its generation so a stale timeout
@@ -259,9 +263,13 @@ mod tests {
     #[test]
     fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
         let mut app = app();
+        // Dirty is a content comparison now (plan WP1) — poking the render-
+        // only cache directly would just be overwritten by `is_dirty_now`'s
+        // re-derive, so diverge `saved_content` from the live buffer
+        // instead, exactly like a real edit would.
         app.doc_mut(app.active)
             .expect("active doc exists")
-            .is_dirty_cached = true;
+            .saved_content = Arc::from("");
         assert!(app.active_doc().db.is_none(), "test setup: no db binding");
 
         let mut effects = Effects::default();
@@ -290,9 +298,11 @@ mod tests {
     #[test]
     fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
         let mut app = app();
+        // Genuinely dirty (plan WP1: a content comparison, not the cache) —
+        // `is_dirty_now`'s re-derive would just overwrite a cache poke.
         app.doc_mut(app.active)
             .expect("active doc exists")
-            .is_dirty_cached = true;
+            .saved_content = Arc::from("");
         app.doc_mut(app.active).expect("active doc exists").db =
             Some(crate::db::DocDb::new(1, 0, true, 0));
 

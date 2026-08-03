@@ -23,8 +23,13 @@ pub enum CloseOutcome {
 /// closed `id` is a silent no-op. Closing the LAST remaining document is no
 /// longer refused — `close_now` mints a fresh untitled draft to replace it.
 pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    let Some(doc) = app.doc(id) else { return };
-    if doc.is_dirty() {
+    if app.doc(id).is_none() {
+        return;
+    }
+    // Re-derived, not read from the cache (CONSTITUTION §1.4.8: close is a
+    // transition) — a stale cache could wave a genuinely-dirty document
+    // through, or arm the Guard for one that's actually clean.
+    if crate::materialize_ack::is_dirty_now(app, id) {
         // An `Error` already up outranks this prompt; the close intent is
         // then simply not armed (the user presses `^w` again once the
         // error is dismissed) — nothing waits on this Guard, unlike the

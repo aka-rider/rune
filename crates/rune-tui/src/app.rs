@@ -431,10 +431,16 @@ impl App {
         self.active_doc().file_name()
     }
 
-    /// See `Document::mark_dirty_from_hydration`'s docs — delegates to the
-    /// (sole, at bootstrap time) active document.
-    pub fn mark_dirty_from_hydration(&mut self) {
-        self.active_doc_mut().mark_dirty_from_hydration();
+    /// The public entry point `rune-cli`'s bootstrap hydration uses (plan
+    /// WP1) — `materialize_ack::recompute_dirty` itself is `pub(crate)`, so
+    /// this is the one seam a different crate reaches it through.
+    /// CONSTITUTION §1.4.8 requires dirty to be re-derived on every
+    /// transition, hydration included; dirtiness no longer falls out of
+    /// `Document::hydrate` itself (the deleted `mark_dirty_from_hydration`
+    /// this replaces) since it is now a content comparison the caller must
+    /// explicitly re-run once the buffer settles.
+    pub fn recompute_dirty(&mut self, id: DocumentId) {
+        crate::materialize_ack::recompute_dirty(self, id);
     }
 
     /// The single writer of a NEW `status_message`: every call site that

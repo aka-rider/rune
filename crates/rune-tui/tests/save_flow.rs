@@ -5,6 +5,8 @@
 //! no crate-internal access `#[cfg(test)]` had).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod dirty_common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -166,7 +168,7 @@ fn save_persists_exact_bytes_for_crlf_bom_and_no_trailing_newline_fixtures() {
             None,
         );
         let id = app.active;
-        app.doc_mut(id).unwrap().saved_version = 0;
+        dirty_common::force_dirty(&mut app, id);
 
         let effects = press_save(&mut app);
         assert_eq!(effects.cmds.len(), 1, "one save Cmd must be spawned");
@@ -194,7 +196,7 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    dirty_common::force_dirty(&mut app, id);
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);
@@ -245,7 +247,7 @@ fn an_edit_during_a_save_keeps_the_buffer_dirty_once_the_save_completes() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    dirty_common::force_dirty(&mut app, id);
 
     let effects = press_save(&mut app); // captures the pre-edit version
     assert_eq!(effects.cmds.len(), 1);
@@ -284,7 +286,7 @@ fn saving_a_path_that_does_not_exist_on_disk_creates_it_via_the_excl_path() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0;
+    dirty_common::force_dirty(&mut app, id);
 
     let effects = press_save(&mut app);
     settle_cmds(&mut app, effects);

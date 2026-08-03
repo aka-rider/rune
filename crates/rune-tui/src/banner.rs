@@ -382,7 +382,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
             clear_modal(app);
-            crate::save::trigger_save(app, doc, effects);
+            let _ = crate::save::trigger_save(app, doc, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }

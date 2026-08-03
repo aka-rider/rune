@@ -12,6 +12,7 @@
 )]
 
 mod db_wiring_common;
+mod dirty_common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -260,7 +261,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
     );
     let id = app.active;
     app.doc_mut(id).unwrap().db = Some(doc_db);
-    app.doc_mut(id).unwrap().saved_version = 0; // force dirty — nothing to save otherwise
+    dirty_common::force_dirty(&mut app, id); // nothing to save otherwise
     let len = app.doc(id).unwrap().buffer.len();
     app.doc_mut(id).unwrap().cursors = CursorSet::new(len);
 

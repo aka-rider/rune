@@ -23,6 +23,7 @@ mod tests;
 
 use std::num::NonZeroU64;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rune_core::buffer::{Buffer, Edit};
 use rune_core::cursor::CursorSet;
@@ -85,14 +86,24 @@ pub struct Document {
     /// The buffer version the LAST successful save/materialize ack
     /// persisted — advanced ONLY from a store ack (`save::handle_materialize_
     /// ack`) or, for the no-store fallback path, `Msg::SaveDone` (see
-    /// `save::trigger_save`'s docs). Never read directly by `is_dirty` — see
-    /// `is_dirty_cached`.
+    /// `save::trigger_save`'s docs), and only ever via [`Document::finish_save_ok`].
+    /// Never read directly by `is_dirty` — see `is_dirty_cached`.
     pub saved_version: u64,
-    /// The version `materialize`/the fallback save `Cmd` targets while a
-    /// save is in flight — carried so its eventual ack only ever advances
-    /// `saved_version` to the version IT captured, never the buffer's
-    /// current (possibly further-edited) version.
-    pub save_pending_version: Option<u64>,
+    /// The bytes the last successful save/materialize ack actually
+    /// persisted (plan WP1) — ground truth dirtiness compares the LIVE
+    /// buffer's content against THIS, not a version proxy: `Buffer::
+    /// apply_edits` always returns `version + 1`, and undo/redo build a new
+    /// buffer, so a version comparison alone leaves an edit-then-undo
+    /// document dirty forever even though the bytes are back to identical.
+    /// Advanced only by [`Document::finish_save_ok`].
+    pub saved_content: Arc<str>,
+    /// The save-lifecycle state a save-in-progress carries: the version/
+    /// content it captured at `begin_save` time. Private — `begin_save`/
+    /// `finish_save_ok`/`abandon_save` are the ONLY three places allowed to
+    /// touch `save_in_flight`/`save_pending` together, so a save can never
+    /// be in flight without the exact bytes it captured, and a stale
+    /// capture can never survive to be promoted by a later unrelated ack.
+    save_pending: Option<PendingSave>,
     pub save_in_flight: bool,
     /// The path an in-flight `bind_new` materialize is trying to CREATE
     /// (`save::bind_new_now`). Deliberately not `file_path`: a create that
@@ -181,9 +192,20 @@ impl Document {
     }
 }
 
+/// The save-in-progress capture (plan WP1): the exact version/bytes
+/// [`Document::begin_save`] captured, held until the matching
+/// [`Document::finish_save_ok`]/[`Document::abandon_save`] resolves it.
+/// Private to this module — `Document`'s three chokepoint methods are the
+/// only code that ever constructs, reads, or drops one.
+struct PendingSave {
+    version: u64,
+    content: Arc<str>,
+}
+
 impl Document {
     pub fn new(buffer: Buffer) -> Document {
         let saved_version = buffer.version();
+        let saved_content: Arc<str> = Arc::from(buffer.content());
         Document {
             buffer,
             cursors: CursorSet::new(0),
@@ -194,7 +216,8 @@ impl Document {
             read_only: false,
             file_path: None,
             saved_version,
-            save_pending_version: None,
+            saved_content,
+            save_pending: None,
             save_in_flight: false,
             pending_bind_path: None,
             is_dirty_cached: false,
@@ -216,13 +239,57 @@ impl Document {
         self.is_dirty_cached
     }
 
-    /// Marks the buffer dirty relative to the file it was hydrated from.
-    /// Called from [`Document::hydrate`] on every adoption — both the
-    /// bootstrap path (`rune-cli::main`, before the runtime loop) and the
-    /// live per-document hydration ack (`db::handle_load_ack`, from inside
-    /// `update`) reach this through that one chokepoint, never directly.
-    pub fn mark_dirty_from_hydration(&mut self) {
-        self.is_dirty_cached = true;
+    /// Arms a save in flight, capturing `version`/`content` TOGETHER (plan
+    /// WP1's chokepoint) — the only way `save_in_flight` and `save_pending`
+    /// are ever set, so a save can never be in flight without the exact
+    /// bytes it captured. Called by every save-start site: `save::
+    /// materialize_now`, the no-store fallback in `save::trigger_save`, and
+    /// `save::bind_new_now`.
+    pub fn begin_save(&mut self, version: u64, content: Arc<str>) {
+        self.save_in_flight = true;
+        self.save_pending = Some(PendingSave { version, content });
+    }
+
+    /// Resolves a successful save ack: clears in-flight, and promotes the
+    /// captured `save_pending` content into `saved_content` iff its version
+    /// matches `version` (the ack's own correlated fact) AND exceeds
+    /// `saved_version` — so an ack for a capture this document no longer
+    /// recognizes (or one that would move the baseline BACKWARD) promotes
+    /// nothing. Returns whether the promotion happened. The only writer of
+    /// `saved_content`/`saved_version`.
+    pub fn finish_save_ok(&mut self, version: u64) -> bool {
+        self.save_in_flight = false;
+        let Some(pending) = self.save_pending.take() else {
+            return false;
+        };
+        if pending.version == version && pending.version > self.saved_version {
+            self.saved_version = pending.version;
+            self.saved_content = pending.content;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Resolves a failed/abandoned save: clears in-flight and drops the
+    /// captured bytes without promoting anything — the exact opposite of
+    /// `finish_save_ok`. Every clear site that isn't a genuine success
+    /// (`fail_materialize_locally`, `on_store_failure`'s sweep,
+    /// `bind_new_now`'s error arm, `handle_save_done`'s `Err` arm) goes
+    /// through here, never through a direct field write.
+    pub fn abandon_save(&mut self) {
+        self.save_in_flight = false;
+        self.save_pending = None;
+    }
+
+    /// The version an in-flight save captured, if one is running — a
+    /// read-only peek (never mutates) for `materialize_ack::
+    /// handle_materialize_ack`'s ack-side chokepoint, which needs it to
+    /// correlate `MatResult` (which carries no version of its own) against
+    /// the SAME bytes `begin_save` captured before deciding whether to call
+    /// `finish_save_ok` or `abandon_save`.
+    pub fn pending_save_version(&self) -> Option<u64> {
+        self.save_pending.as_ref().map(|p| p.version)
     }
 
     /// The one hydration-adoption chokepoint (plan WP5.S2): `self.buffer` is
@@ -240,7 +307,11 @@ impl Document {
     /// append_edit` — the durable side already has this content, only the
     /// LOCAL undo journal needs the anchor) so ⌘Z reaches `disk_content`;
     /// (c) surfaces an `apply_edits` failure as a refusal rather than an
-    /// unannotated no-op.
+    /// unannotated no-op. Dirtiness is no longer marked here (plan WP1): an
+    /// adopting hydration leaves the buffer genuinely different from
+    /// `saved_content`, so the ordinary content comparison already reports
+    /// it dirty once the caller recomputes — see `materialize_ack::
+    /// recompute_dirty`, called after every hydration site.
     pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
         if recovered == disk_content {
             return Hydration::NoChange;
@@ -265,7 +336,6 @@ impl Document {
             cursors_before: Vec::new(),
             cursors_after: Vec::new(),
         });
-        self.mark_dirty_from_hydration();
         Hydration::Adopted
     }
 

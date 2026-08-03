@@ -282,8 +282,7 @@ fn record_outcome(
 /// write's own failure carries no `rune-db` signal at all.
 fn fail_materialize_locally(app: &mut App, id: DocumentId, message: impl Into<String>) {
     if let Some(doc) = app.doc_mut(id) {
-        doc.save_in_flight = false;
-        doc.save_pending_version = None;
+        doc.abandon_save();
         doc.pending_bind_path = None;
     }
     app.set_status(message.into(), StatusSource::SaveError);
@@ -300,9 +299,11 @@ fn fail_materialize_locally(app: &mut App, id: DocumentId, message: impl Into<St
 /// bookkeeping that would have supplied `saved`/`raced` was lost to a dead
 /// writer — see `record_outcome`'s doc comment.
 pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResult) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.save_in_flight = false;
-    let pending_version = doc.save_pending_version.take();
+    let Some(doc) = app.doc(id) else { return };
+    // `MatResult` carries no version of its own — this peek is how the
+    // chokepoint below correlates the ack against the SAME bytes
+    // `begin_save` captured, never a later unrelated capture (plan WP1).
+    let pending_version = doc.pending_save_version();
 
     if mat.committed {
         // A committed bind-new create is where an untitled draft finally
@@ -323,11 +324,13 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             doc_db.expect_obs = saved.id;
             doc_db.bind_new = false;
         }
-        if let Some(version) = pending_version
-            && let Some(doc) = app.doc_mut(id)
-            && version > doc.saved_version
-        {
-            doc.saved_version = version;
+        if let Some(doc) = app.doc_mut(id) {
+            match pending_version {
+                Some(version) => {
+                    doc.finish_save_ok(version);
+                }
+                None => doc.abandon_save(),
+            }
         }
         if app.status_source == StatusSource::SaveError {
             app.status_message = None;
@@ -338,16 +341,21 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 StatusSource::Other,
             );
         }
-    } else if mat.missing {
-        app.set_status(
-            "save failed: file no longer exists",
-            StatusSource::SaveError,
-        );
     } else {
-        app.set_status(
-            "save refused \u{2014} the file changed on disk since it was opened",
-            StatusSource::SaveError,
-        );
+        if let Some(doc) = app.doc_mut(id) {
+            doc.abandon_save();
+        }
+        if mat.missing {
+            app.set_status(
+                "save failed: file no longer exists",
+                StatusSource::SaveError,
+            );
+        } else {
+            app.set_status(
+                "save refused \u{2014} the file changed on disk since it was opened",
+                StatusSource::SaveError,
+            );
+        }
     }
     recompute_dirty(app, id);
     close_if_pending(app, id, mat.committed);
@@ -363,15 +371,11 @@ pub(crate) fn handle_save_done(
     version: u64,
     result: Result<(), String>,
 ) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.save_in_flight = false;
     let succeeded = result.is_ok();
     match result {
         Ok(()) => {
-            if let Some(doc) = app.doc_mut(id)
-                && version > doc.saved_version
-            {
-                doc.saved_version = version;
+            if let Some(doc) = app.doc_mut(id) {
+                doc.finish_save_ok(version);
             }
             // Provenance-aware clear (review finding F2): only a message
             // THIS save path set (a prior failed/un-attempted save) is
@@ -383,6 +387,9 @@ pub(crate) fn handle_save_done(
             }
         }
         Err(e) => {
+            if let Some(doc) = app.doc_mut(id) {
+                doc.abandon_save();
+            }
             app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
         }
     }
@@ -434,15 +441,23 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
     }
     app.db_banner = Some(format!("recovery disabled: {error}"));
 
-    let mut any_in_flight = false;
-    for doc in app.documents.values_mut() {
-        if doc.save_in_flight {
-            doc.save_in_flight = false;
-            doc.save_pending_version = None;
-            any_in_flight = true;
+    // Collected first: `abandon_save` needs `&mut Document`, and every one
+    // ALSO needs its dirty cache re-settled (plan WP1 — a stranded capture
+    // must never be left promotable, and the cache must never be left
+    // stale after the state it was derived from just changed).
+    let stranded: Vec<DocumentId> = app
+        .documents
+        .iter()
+        .filter(|(_, doc)| doc.save_in_flight)
+        .map(|(&id, _)| id)
+        .collect();
+    for &id in &stranded {
+        if let Some(doc) = app.doc_mut(id) {
+            doc.abandon_save();
         }
+        recompute_dirty(app, id);
     }
-    if any_in_flight {
+    if !stranded.is_empty() {
         app.set_status(format!("save failed: {error}"), StatusSource::SaveError);
     }
 }
@@ -480,19 +495,30 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
 }
 
 /// CONSTITUTION §1.4.8: `Document::is_dirty` reads only the cache this
-/// recomputes — called at exactly two trigger points: (a) any journal
-/// mutation (`commands::edit::commit_edit_batch`/`undo`/`redo`, immediately
-/// after they mutate `doc.journal`) and (b) any `DbEvent` ack that moves the
-/// baseline (`handle_materialize_ack`, immediately after `saved_version`
-/// itself changes). The comparison is the buffer-version proxy already
-/// established pre-WP5 (`saved_version`, now advanced ONLY by a successful
-/// materialize ack or the no-store fallback's `SaveDone`) — both trigger
-/// points call this immediately after whichever of `saved_version`/
-/// `buffer.version()` they just changed, so the cache never observes a
-/// stale pairing.
+/// recomputes. A straight content comparison against `saved_content` (plan
+/// WP1) — never the old `buffer.version() != saved_version` proxy:
+/// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
+/// a fresh buffer, so a version comparison alone leaves an edit-then-undo
+/// document dirty forever even once the bytes are back to identical.
+/// `saved_content` is a plain `String` compare — a length check plus
+/// `memcmp`, microsecond-scale even against a multi-thousand-line document,
+/// so this stays cheap enough to call from every edit/ack site AND from
+/// [`is_dirty_now`]'s transition re-derive.
 pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
-    let dirty = doc.buffer.version() != doc.saved_version;
+    let dirty = doc.buffer.content() != &*doc.saved_content;
     let Some(doc) = app.doc_mut(id) else { return };
     doc.is_dirty_cached = dirty;
+}
+
+/// CONSTITUTION §1.4.8: dirty must be re-derived on every TRANSITION (open,
+/// switch, evict, close, quit), not merely read from the render-only cache
+/// `recompute_dirty`'s other callers (edit/ack sites) already keep current
+/// between transitions. The close-guard predicate, `workspace::request_close`,
+/// and `pane::first_unpreserved_dirty_doc`'s quit-guard scan all call this
+/// instead of `Document::is_dirty` so a transition's answer is never one
+/// edit/ack stale — render is the one place that keeps reading the cache.
+pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
+    recompute_dirty(app, id);
+    app.doc(id).is_some_and(|doc| doc.is_dirty())
 }

@@ -17,6 +17,7 @@
     clippy::panic
 )]
 
+mod dirty_common;
 mod rename_common;
 
 use std::path::Path;
@@ -98,7 +99,8 @@ fn end_to_end_no_store_rename() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     // Make the document dirty, so "stays dirty" is actually observable.
-    app.active_doc_mut().mark_dirty_from_hydration();
+    let active = app.active;
+    dirty_common::force_dirty(&mut app, active);
     let dirty_before = app.is_dirty();
     assert!(dirty_before, "test setup: the document must be dirty");
 
