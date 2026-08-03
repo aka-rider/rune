@@ -307,9 +307,12 @@ of how each side renders:
   - **Full-width thematic-break rule.** Rust renders a `---` line as a
     rule glyph repeated to the full content width; Go renders the
     concealed/raw marker text instead.
-  - **Retuned code-fence backgrounds.** Rust's fenced-code background is
-    `surface0` (block) / `surface1` (inline) instead of the darker
-    `mantle` used elsewhere; Go has no comparable background retune.
+  - **Rectangular code-region background.** Rust fills every row of a code
+    region — a fence, an indented block, or a whole source file — with
+    `surface0` from the end of the row's own decoration to the pane edge,
+    blank lines and the ragged space past each short line included, and
+    gives an inline code span a `surface1` chip. Go has neither: it has no
+    region background at all, let alone one painted as a rectangle.
   - **Markdown-fence inline highlighting.** A fenced code block whose
     info string is `markdown`/`md` gets full inline markdown highlighting
     (headings, emphasis, code spans, links) in Rust via the comrak-reuse
