@@ -381,3 +381,77 @@ fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
         "the glyph following the FE0F-presented heart must reach the real backend buffer:\n{text}"
     );
 }
+
+/// Guard for the ONE documented exception to the corpus-agreement test
+/// above (`rune_syntax::wrap::grapheme_width`'s doc, `blit`'s narrowed
+/// `assert_invariant`, `TODO/TODO.md`): a LONE (single-`char`) cluster that
+/// ratatui itself derives width 0 for — a bare combining mark with no base,
+/// a stray ZWJ, a lone variation selector, a lone zero-width space — is
+/// reserved at width 1 by `control_aware_width`'s clamp, not ratatui's 0,
+/// so rune's own caret math always has a cell to land the caret on. This
+/// test pins the divergence explicitly (never silently) and proves the
+/// whole render path — including `blit`'s own strict-mode assert, live in
+/// this `cfg(test)` build — tolerates it without panicking, rather than
+/// asserting the two numbers agree (which they deliberately do not here).
+#[test]
+fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
+    let halfwidth_dakuten = '\u{FF9E}'; // agrees with ratatui at width 1 (control_aware_width's own doc) — the control case
+    let lone_zero_width: &[(&str, char)] = &[
+        ("combining acute accent", '\u{0301}'),
+        ("zero-width joiner", '\u{200D}'),
+        ("variation selector-16 (emoji presentation)", '\u{FE0F}'),
+        ("variation selector-15 (text presentation)", '\u{FE0E}'),
+        ("zero-width space", '\u{200B}'),
+    ];
+
+    for (label, ch) in lone_zero_width {
+        assert_ne!(
+            *ch, halfwidth_dakuten,
+            "sanity: the halfwidth-dakuten control case must not appear in this corpus"
+        );
+        assert_eq!(
+            usize::from(ch.to_string().cell_width()),
+            0,
+            "{label} ({ch:?}): expected ratatui to derive width 0 for this rune — \
+             if this now fails, the divergence this test guards may no longer exist \
+             and the exception can be narrowed or removed"
+        );
+
+        // The rune must lead its line, with no preceding base character —
+        // a combining mark (or ZWJ/variation-selector, which also only
+        // attach BACKWARD to a preceding grapheme, per UAX #29 GB9) fuses
+        // with a preceding base into ONE multi-rune cluster instead of
+        // standing alone, which is the already-agreeing case the corpus
+        // test above covers, not this one.
+        let content = format!("{ch}ab\n");
+        let app = app_for(&content, 0, true);
+
+        assert_eq!(
+            app.active_doc().buffer.content(),
+            content,
+            "{label}: buffer bytes must round-trip verbatim (CONSTITUTION §1.4.5)"
+        );
+
+        let view = app.active_doc().view.as_ref().expect("synced view");
+        let rows = render::build_rows(view, &app);
+        let cell = rows
+            .first()
+            .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))
+            .expect("expected a Cell carrying the lone rune verbatim");
+        assert_eq!(
+            cell.width, 1,
+            "{label}: rune reserves width 1 for a lone zero-width rune (caret reachability)"
+        );
+
+        // The end-to-end render must not panic — this exercises `blit`'s
+        // own strict-mode `assert_invariant`, narrowed to admit exactly
+        // this divergence, in a real cfg(test) build (STRICT_INVARIANTS is
+        // `true` here).
+        let buf = render_to_test_backend(&app);
+        let text = full_text(&buf, HEIGHT, WIDTH);
+        assert!(
+            text.contains('a') && text.contains('b'),
+            "{label}: the surrounding glyphs must still reach the real backend buffer:\n{text}"
+        );
+    }
+}

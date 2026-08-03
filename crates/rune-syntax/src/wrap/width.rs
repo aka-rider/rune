@@ -81,6 +81,19 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// equality is enforced by a guard test in `rune-tui`, which already
 /// depends on both.
 ///
+/// **One documented exception, not covered by that guard test:** a LONE
+/// (single-`char`) cluster that ratatui itself derives width 0 for — a bare
+/// combining mark with no base, a stray ZWJ, a lone variation selector
+/// (`U+FE0F`/`U+FE0E`), a lone zero-width space (`U+200B`) — takes
+/// `control_aware_width`'s 1-clamp above, not ratatui's 0, on purpose: the
+/// clamp exists so that rune's own caret/wrap column math always has a
+/// reachable cell for such a rune, per `control_aware_width`'s own doc. For
+/// exactly this single-rune case rune's reserved width and ratatui's own
+/// `cell_width()` for the SAME bytes disagree (1 vs 0) — recorded, with the
+/// measured evidence, in `TODO/TODO.md`. `crates/rune-tui/src/render/
+/// blit.rs`'s own guard assert is narrowed to admit precisely this case and
+/// no other.
+///
 /// A per-rune MAX of `UnicodeWidthChar::width` (this function's prior
 /// implementation) gets this wrong for a whole class of clusters —
 /// variation selectors, regional-indicator flag pairs, keycaps, and

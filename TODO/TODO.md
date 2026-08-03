@@ -958,6 +958,33 @@ than inferring collapse from a transient `available`. That is a design change to
 `Split`'s API (`request` would need the axis length and the trail's limits), so
 it is recorded here rather than rushed.
 
+## grapheme-width defect-fix session — a lone zero-width rune's reserved width (1) disagrees with ratatui's own derivation (0) (recorded 2026-08-04, code review of the `fix-grapheme-width` branch)
+
+`crates/rune-syntax/src/wrap/width.rs`'s `grapheme_width` fast-paths a single-`char` cluster to `control_aware_width`, which clamps any rune `unicode_width::UnicodeWidthChar::width` reports as zero (or has no entry for) to a reserved width of 1 — deliberately, so a lone zero-width rune (an isolated control char, a bare combining mark with no base) still gets a reachable caret column. ratatui-core 0.1.2's own `CellWidth for str` does NOT clamp: measured directly against it,
+
+```
+lone combining acute U+0301   rune=1 ratatui=0
+lone ZWJ U+200D               rune=1 ratatui=0
+lone VS16 U+FE0F              rune=1 ratatui=0
+lone VS15 U+FE0E              rune=1 ratatui=0
+lone ZWSP U+200B              rune=1 ratatui=0
+lone halfwidth dakuten U+FF9E rune=1 ratatui=1   (agrees — control_aware_width's clamp happens to land on the same number ratatui derives for this one rune, see that function's own doc)
+```
+
+Every MULTI-rune cluster (the ZWJ-family/skin-tone/variation-selector/flag/keycap/halfwidth-katakana corpus in `crates/rune-tui/tests/tui_render_text.rs`'s `grapheme_width_agrees_with_ratatuis_own_cell_width_derivation`) agrees; the gap is entirely this single-rune fast path. It is reachable from ordinary document bytes — `unicode-segmentation` yields a lone combining mark as its own grapheme cluster when it leads a line with no preceding base char, and `" \u{200b}\t\u{200b} "` is already an entry in `crates/rune-fuzz/src/generate/palette.rs`'s `PASTE_PALETTE`.
+
+**Resolution chosen: narrow the invariant, not paper over it with a rendering-policy call.** The alternative (making the numbers agree by construction — substituting a visible placeholder glyph, e.g. a dotted circle, for a bare zero-width rune so its declared width and ratatui's own derivation both land on 1) is a user-visible rendering-policy decision (what glyph to show for content the user never typed) that was deliberately NOT made unilaterally here. Instead:
+
+- `grapheme_width`'s doc now states this as ONE documented exception to its own equal-to-ratatui invariant, not a silently-true claim.
+- `crates/rune-tui/src/render/blit.rs`'s `assert_invariant` call (the live guard — `strict-invariants` is armed for every integration test via `rune-tui/Cargo.toml`'s dev-dependency self-reference) is narrowed to admit precisely this case (`declared width == 1 && ratatui width == 0 && single-char symbol`) and no other divergence.
+- `crates/rune-tui/tests/tui_render_text.rs`'s `lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero` pins the divergence explicitly for all five zero-width exception runes and exercises the full render path (including `blit`'s strict-mode assert, live under `cfg(test)`) without panicking.
+
+**Residual, real, user-facing effect — not fixed, only bounded:** on the actual terminal, a lone zero-width rune of this kind consumes 0 columns, but rune reserves 1 for it, so every glyph after it on that row shifts one column right of where the terminal itself would place it (mirroring the already-accepted over-reservation case `blit`'s own module doc names: "over-reserving shifts every cell after it on the row"). This is rare content (an isolated combining mark/ZWJ/variation-selector/ZWSP with no base to attach to) and does not corrupt rendering (no dropped cell, no panic) — only a one-column drift on that one row. Fixing it for real means one of: (a) a placeholder-glyph rendering policy (the unilateral call this entry declined to make), or (b) teaching wrap's width math to reserve 0 for these runes at the cost of losing the lone-rune's own reachable caret column — a design tradeoff, not a bug fix. Revisit when either becomes a real product decision, not a code-review finding.
+
+## grapheme-width defect-fix session — new `emoji.md` parity fixture lines are ungated (recorded 2026-08-04, code review of the `fix-grapheme-width` branch)
+
+Commit `b78ca6b` added five new lines to `scripts/parity/fixtures/emoji.md` covering `U+FE0F`/`U+FE0E` variation selectors, regional-indicator flag pairs, keycap sequences, and halfwidth katakana + dakuten. `scripts/parity/grid.sh` has excluded `emoji.md` from its own comparison since before this branch (`excluded_reason`'s `emoji.md` case: "same list-marker gap as lists.md" — Go never conceals plain bullet/ordered list markers, Rust does, an unrelated pre-existing divergence that already made the WHOLE fixture non-comparable). So these five new lines are not checked by `make parity` (nor by any other gate) — they were captured for documentation/manual-inspection value only, not as an automated regression guard. `make parity` additionally cannot run on this machine at all (`tmux` is not installed) and was not attempted for this entry. The `FE0F`/`FE0E`/flag/keycap/katakana coverage this branch actually relies on for correctness rests solely on the unit-level guard corpus in `crates/rune-tui/tests/tui_render_text.rs` (`grapheme_width_agrees_with_ratatuis_own_cell_width_derivation`) — the fixture lines stay inert until either `emoji.md`'s list-marker divergence is resolved and it's re-included in `FIXTURES`/`excluded_reason`'s exclusion is narrowed, or `tmux` becomes available to run `make parity` at all.
+
 ## syntax-highlighting-latency plan, WP3 — the per-frame viewport query joined the render budget
 
 `render::build_rows` now runs a `rune_ts::highlight_range` query, scoped to the visible byte window, on every frame for a code document with a retained tree — see `crates/rune-tui/src/render/mod.rs`. This is new per-frame cost with no dedicated gate (`make perf-guard` only covers `rune-md`'s parse pipeline). When the display-pipeline budget review already tracked elsewhere in this file happens, it must measure this query alongside the existing whole-document `build_rows`/snapshot recompute — not just the pre-existing cost.

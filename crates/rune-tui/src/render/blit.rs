@@ -22,11 +22,14 @@ const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 /// on an invariant violation rather than take down the user's session;
 /// only a test run or an explicit opt-in feature treats it as fatal.
 ///
-/// `cond` is a closure rather than a `bool` because this module's checks sit
-/// in the per-cell render hot path: re-deriving a symbol's width to compare
-/// against it costs a Unicode table walk per cell per frame, and an eagerly
-/// evaluated argument would pay that cost in ordinary builds that then throw
-/// the answer away.
+/// Deliberately NOT the same shape as `crates/rune-syntax/src/syntax.rs`'s
+/// or `crate::layout`'s identically-named `assert_invariant` — those take a
+/// plain `bool`. This one takes a lazy closure instead, because this
+/// module's checks sit in the per-cell render hot path: re-deriving a
+/// symbol's width to compare against it costs a Unicode table walk per cell
+/// per frame, and an eagerly evaluated `bool` argument would pay that cost
+/// on every cell of every frame in an ordinary (non-strict) build, only to
+/// throw the answer away since `STRICT_INVARIANTS` is `false` there.
 fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
     if STRICT_INVARIANTS {
         assert!(cond(), "{}", msg());
@@ -54,11 +57,13 @@ fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
 /// `Cell`'s own `width` depends on that width actually AGREEING with what
 /// ratatui's own `CellWidth for str` derives for the same symbol —
 /// `rune_syntax::wrap::grapheme_width`'s doc comment states that as the
-/// chokepoint's own invariant, and the `assert_invariant` call below
-/// enforces it at every cell this loop writes; a producer bug that lets the
-/// two drift apart again would corrupt the row exactly as the pre-fix
-/// MAX-rule divergence once did, so this is deliberately checked here too,
-/// not just at the width chokepoint itself.
+/// chokepoint's own invariant (with one documented, narrow exception — a
+/// LONE zero-width rune clamped to a reserved width of 1, see that doc and
+/// `TODO/TODO.md`), and the `assert_invariant` call below enforces exactly
+/// that (narrowed the same way) at every cell this loop writes; a producer
+/// bug that lets the two drift apart in any OTHER way would corrupt the row
+/// exactly as the pre-fix MAX-rule divergence once did, so this is
+/// deliberately checked here too, not just at the width chokepoint itself.
 pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     let right = area.x.saturating_add(area.width);
@@ -73,7 +78,26 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
                 break;
             }
             assert_invariant(
-                || usize::from(cell.width) == cell.text.cell_width() as usize,
+                || {
+                    let declared = usize::from(cell.width);
+                    let ratatui_width = cell.text.cell_width() as usize;
+                    declared == ratatui_width
+                        // Narrowed per `rune_syntax::wrap::grapheme_width`'s
+                        // own doc: a LONE rune ratatui derives width 0 for
+                        // (a bare combining mark, a stray ZWJ, a lone
+                        // variation selector, a lone zero-width space) is
+                        // deliberately clamped to a reserved width of 1 so
+                        // it keeps a reachable caret column — see
+                        // `control_aware_width`'s doc. Admitted here, and
+                        // only here: `declared == 1` (never a wide-cell
+                        // mismatch, so `blit`'s continuation-reset loop
+                        // above never runs for it) with `ratatui_width ==
+                        // 0` on a single-`char` symbol. Recorded, with the
+                        // measured evidence, in `TODO/TODO.md`.
+                        || (declared == 1
+                            && ratatui_width == 0
+                            && cell.text.chars().count() == 1)
+                },
                 || {
                     format!(
                         "Cell width {} disagrees with ratatui's own cell_width() {} for symbol {:?}",
