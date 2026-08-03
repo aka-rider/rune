@@ -3,9 +3,35 @@
 //! `Vec<Vec<Cell>>`.
 
 use ratatui::Frame;
+use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
 
 use super::Cell;
+
+/// Mirrors `rune-syntax`'s and `rune-md`'s own identically-named
+/// `STRICT_INVARIANTS`/`assert_invariant` chokepoint: `true` only in test
+/// builds or when this crate's own `strict-invariants` feature is
+/// explicitly enabled. Kept as a local copy rather than a shared helper —
+/// each crate's gate governs only its own producer-bug invariants.
+const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
+
+/// The chokepoint every "this should never happen, but let's be sure"
+/// blit-layer check in this module routes through — CONSTITUTION §1.3
+/// forbids `panic!`/`assert!`/`unwrap` in production code paths, so an
+/// ordinary build (including a plain `cargo run`) must degrade gracefully
+/// on an invariant violation rather than take down the user's session;
+/// only a test run or an explicit opt-in feature treats it as fatal.
+///
+/// `cond` is a closure rather than a `bool` because this module's checks sit
+/// in the per-cell render hot path: re-deriving a symbol's width to compare
+/// against it costs a Unicode table walk per cell per frame, and an eagerly
+/// evaluated argument would pay that cost in ordinary builds that then throw
+/// the answer away.
+fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
+    if STRICT_INVARIANTS {
+        assert!(cond(), "{}", msg());
+    }
+}
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left
 /// corner, clipping to `area`'s bounds.
@@ -25,14 +51,14 @@ use super::Cell;
 /// is no double-width cell is followed by a non-blank cell" — so leftover,
 /// non-blank content there would never even reach the real terminal's
 /// diff/redraw, breaking the ZWJ fix at the last step. Resetting by THIS
-/// `Cell`'s own `width` (not by re-deriving `cell_width()` from whatever
-/// symbol ends up stored) is always at least as wide as ratatui's own
-/// derivation ever needs, because `control_aware_width` only ever clamps a
-/// zero-or-negative-width codepoint UP to 1, never down — so this cell's
-/// own width sum can never fall short of what ratatui independently
-/// computes for the same text, and the render/wrap width-math identity
-/// (this module's other load-bearing property) stays intact without
-/// needing to force ratatui's own width derivation.
+/// `Cell`'s own `width` depends on that width actually AGREEING with what
+/// ratatui's own `CellWidth for str` derives for the same symbol —
+/// `rune_syntax::wrap::grapheme_width`'s doc comment states that as the
+/// chokepoint's own invariant, and the `assert_invariant` call below
+/// enforces it at every cell this loop writes; a producer bug that lets the
+/// two drift apart again would corrupt the row exactly as the pre-fix
+/// MAX-rule divergence once did, so this is deliberately checked here too,
+/// not just at the width chokepoint itself.
 pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
     let buf = frame.buffer_mut();
     let right = area.x.saturating_add(area.width);
@@ -46,6 +72,17 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
             if x >= right {
                 break;
             }
+            assert_invariant(
+                || usize::from(cell.width) == cell.text.cell_width() as usize,
+                || {
+                    format!(
+                        "Cell width {} disagrees with ratatui's own cell_width() {} for symbol {:?}",
+                        cell.width,
+                        cell.text.cell_width(),
+                        cell.text
+                    )
+                },
+            );
             let width = u16::from(cell.width.max(1));
             // WP13.S2: a cell that *starts* inside `area` can still not
             // *fit* — a double-width glyph landing on the last column
