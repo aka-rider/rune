@@ -147,6 +147,11 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
         app.pending_save_confirm = None;
     }
+    // A quit-save fan-out (plan WP2) may be waiting on `id` specifically —
+    // its enqueued save will never ack once the document is gone, so
+    // without this sweep the wait would strand forever instead of
+    // resolving once every OTHER awaited document's save lands.
+    crate::materialize_ack::retire_quit_wait(app, id);
     // The rename machine is one more doc-tagged pending slot to sweep
     // (plan's transition table: "any | close_now(doc) | Idle").
     crate::rename::forget_document(app, id);

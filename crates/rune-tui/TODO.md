@@ -27,29 +27,6 @@ deliberately left 'create a scratch/untitled document' out of scope").
 Building that binding is out of scope for the untitled-document-startup fix;
 tracked here instead of silently skipped.
 
-## `materialize_ack.rs` over the §1.6 500-LoC ceiling
-
-`src/materialize_ack.rs` is 524 lines, over the CONSTITUTION §1.6 budget.
-Crossed by the dirtiness rework (plan WP1: `begin_save`/`finish_save_ok`/
-`abandon_save`'s ack-side call sites, `on_store_failure`'s per-document
-`recompute_dirty` sweep, and the new `is_dirty_now` transition re-derive).
-The top-level `TODO.md`'s "File-size budget" entry used to claim `save.rs`
-was split as part of an earlier landed batch — that claim was stale
-(`save.rs` was still 515 lines, unsplit, before this plan); this plan does
-the real split (`save.rs`'s start/refusal ladder vs. `save/materialize.rs`'s
-store-backed materialize dance), and corrects that entry. `materialize_ack.rs`
-itself is left over budget here, deliberately: the plan's own Verification
-section assigns splitting it (alongside `banner.rs`, which the same
-Verification section separately notes crossing 490) to WP2, which also adds
-new material to both files (`quit_if_pending`, `GuardKind::DirtyQuit`) —
-splitting now would just be re-split again once WP2 lands. A plausible
-split when WP2 does it: the ack-reaction functions (`handle_materialize_ack`/
-`handle_save_done`/`fail_materialize_locally`/`close_if_pending`) into their
-own `materialize_ack_reactions.rs`, leaving the `vfs`-Cmd-outcome plumbing
-(`handle_prepare_ack`/`handle_materialize_vfs_done`/`record_outcome`/
-`on_store_failure`) and the dirty-cache chokepoint (`recompute_dirty`/
-`is_dirty_now`) here.
-
 ## `rename.rs` over the §1.6 500-LoC ceiling
 
 `src/rename.rs` is ~612 lines, over the CONSTITUTION §1.6 budget
@@ -62,3 +39,18 @@ change; tracked here instead of silently skipped. A plausible split: the
 `replace_confirmed`) into its own `rename_replace.rs`, leaving `rename.rs`
 with `begin`/`apply_outcome`/`bind_to`/`bind_new` and the plain no-store
 `Cmd` builders.
+
+## `app.rs` over the §1.6 500-LoC ceiling
+
+`src/app.rs` was already 573 lines before this plan (WP1's `Document`-map
+reshape, plus the doc comments recording every extraction already made —
+`pane.rs`/`dispatch.rs`/`app_view.rs`/`highlight.rs` — to keep it AS SMALL
+AS IT IS). Plan WP2's `quit_intent: Option<QuitIntent>` field plus
+`App::is_preserved` push it further over, to ~615. Out of scope for WP2
+itself (the plan's own Verification section names only `materialize_ack.rs`
+and `banner.rs` as WP2's splits); tracked here rather than silently grown
+past unremarked. A plausible split: `QuitIntent` plus `App::is_preserved`
+are small and self-contained — the larger win is moving the long per-field
+doc comments on `App` itself (many of which just narrate an already-landed
+extraction) into the module doc comment or a design note, rather than
+inline on the struct.
