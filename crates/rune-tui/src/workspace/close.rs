@@ -2,23 +2,34 @@
 //! `workspace` per §1.6; WP5.S7 adds the image-delete-on-close hook, which
 //! needed an `Effects` sink `close_now` didn't carry before).
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
 use crate::runtime::Effects;
 
-/// Requests closing `id` (plan WP5.S3): refuses outright if it's the LAST
-/// remaining document (rune always shows one — the WP1 accessor floor on
-/// `App::active_doc`/`active_doc_mut` depends on `documents` staying
-/// non-empty), closes immediately if `id` is clean, or arms the close-guard
-/// modal if it's dirty. A stale/already-closed `id` is a silent no-op.
+/// The result of [`close_now`]: `Unknown` when `id` was already stale (a
+/// racing close, or a never-live id) — the bare early return this replaces
+/// used to make that indistinguishable from an actual close from the
+/// caller's side, which is exactly the "no caller can silently do nothing"
+/// gap this enum closes.
+#[must_use]
+pub enum CloseOutcome {
+    Closed,
+    Unknown,
+}
+
+/// Requests closing `id` (plan WP5.S3): closes immediately if `id` is
+/// clean, or arms the close-guard modal if it's dirty. A stale/already-
+/// closed `id` is a silent no-op. Closing the LAST remaining document is no
+/// longer refused — `close_now` mints a fresh untitled draft to replace it.
 pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    if app.documents.len() <= 1 {
-        app.set_status("can't close the last open document", StatusSource::Other);
+    if app.doc(id).is_none() {
         return;
     }
-    let Some(doc) = app.doc(id) else { return };
-    if doc.is_dirty() {
+    // Re-derived, not read from the cache (CONSTITUTION §1.4.8: close is a
+    // transition) — a stale cache could wave a genuinely-dirty document
+    // through, or arm the Guard for one that's actually clean.
+    if crate::materialize_ack::is_dirty_now(app, id) {
         // An `Error` already up outranks this prompt; the close intent is
         // then simply not armed (the user presses `^w` again once the
         // error is dismissed) — nothing waits on this Guard, unlike the
@@ -31,8 +42,40 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
             }),
         );
     } else {
-        close_now(app, id, effects);
+        let _ = close_now(app, id, effects);
     }
+}
+
+/// Mints an empty, pathless draft (Go's `CreateUntitled`) with the next
+/// unused "Untitled N" display name, opened through the existing
+/// `App::open_document` constructor and activated — `switch_to` reseeds the
+/// title field and the breadcrumb reads live off `active_doc` at render
+/// time, so activating here is the one place both need to happen. The
+/// single constructor for this shape: `close_now` calls it below when the
+/// last document is about to close, and WP3's bootstrap adoption calls it
+/// when there is nothing recoverable to adopt instead.
+pub fn new_untitled_document(app: &mut App) -> DocumentId {
+    let n = next_untitled_number(app);
+    let id = app.open_document(rune_core::buffer::Buffer::new(""));
+    if let Some(doc) = app.doc_mut(id) {
+        doc.display_name = Some(format!("Untitled {n}"));
+    }
+    super::switch_to(app, id);
+    id
+}
+
+/// The next unused "Untitled N" suffix: one past the highest N already in
+/// use among live documents, or 1 if none are. Scans `display_name` rather
+/// than keeping a counter so a closed "Untitled 2" frees its number back up
+/// — matching how Go's untitled numbering already behaves.
+fn next_untitled_number(app: &App) -> usize {
+    app.documents
+        .values()
+        .filter_map(|doc| doc.display_name.as_deref())
+        .filter_map(|name| name.strip_prefix("Untitled ")?.parse::<usize>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1
 }
 
 /// Closes `id` unconditionally — the plan WP5.S3 chokepoint every close
@@ -41,10 +84,10 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// neighbor FIRST when `id` is the active document — per the WP1 invariant
 /// comment on `App::active_doc`/`active_doc_mut`, `active` must always
 /// reference a live entry, so the reassignment happens before `id` is
-/// removed, never after. Refuses to remove the LAST document (the same
-/// floor `request_close` already enforces, kept here too since `close_now`
-/// is reachable from other callers that don't re-check it themselves).
-/// Sweeps `db_ops` of any entry still pointing at `id` — a stale ack would
+/// removed, never after. Closing the LAST document is no longer refused
+/// (plan WP0): a fresh untitled draft is minted and activated first, so
+/// that same non-empty floor holds even transiently. Sweeps `db_ops` of any
+/// entry still pointing at `id` — a stale ack would
 /// already be a correct no-op via `App::doc_mut` returning `None` (see its
 /// docs), but leaving the entry forever would make `db_ops` an unbounded
 /// leak over a long session of open/close cycles. Because each entry is one
@@ -69,9 +112,9 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// path, not a silently-dropped real delete. `banner`'s dirty-close
 /// `[D]iscard` arm and `workspace::request_close` above both already carry
 /// a real `Effects` and thread it straight through.
-pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    if app.documents.len() <= 1 || !app.documents.contains_key(&id) {
-        return;
+pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseOutcome {
+    if !app.documents.contains_key(&id) {
+        return CloseOutcome::Unknown;
     }
     if app.graphics.kitty
         && let Some(image) = app.doc(id).and_then(|d| d.image.as_ref())
@@ -81,7 +124,15 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) {
             .push(rune_image::encode_delete(image.id).into_bytes());
     }
     let mut active_changed = false;
-    if app.active == id
+    if app.documents.len() == 1 {
+        // Closing the last document mints its replacement BEFORE `id` is
+        // removed (Go's `CreateUntitled` parity, plan WP0): the non-empty
+        // floor `App::active_doc`/`active_doc_mut` rely on is never
+        // violated even transiently, and `new_untitled_document` already
+        // activates the fresh draft and reseeds the title itself.
+        new_untitled_document(app);
+        active_changed = true;
+    } else if app.active == id
         && let Some(neighbor) = neighbor_of(app, id)
     {
         app.active = neighbor;
@@ -96,6 +147,11 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
         app.pending_save_confirm = None;
     }
+    // A quit-save fan-out (plan WP2) may be waiting on `id` specifically —
+    // its enqueued save will never ack once the document is gone, so
+    // without this sweep the wait would strand forever instead of
+    // resolving once every OTHER awaited document's save lands.
+    crate::materialize_ack::retire_quit_wait(app, id);
     // The rename machine is one more doc-tagged pending slot to sweep
     // (plan's transition table: "any | close_now(doc) | Idle").
     crate::rename::forget_document(app, id);
@@ -125,6 +181,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) {
         .iter()
         .position(|&t| t == app.active)
         .unwrap_or(0);
+    CloseOutcome::Closed
 }
 
 /// The neighbor `close_now` reassigns `active` to when the closed document
@@ -174,7 +231,7 @@ mod tests {
         let expected_id = app.doc(image_id).unwrap().image.as_ref().unwrap().id;
 
         let mut effects = Effects::default();
-        close_now(&mut app, image_id, &mut effects);
+        let _ = close_now(&mut app, image_id, &mut effects);
 
         assert_eq!(effects.raw.len(), 1);
         assert_eq!(
@@ -195,7 +252,7 @@ mod tests {
             crate::workspace::open_path(&mut app, Path::new("/vault/x.png")).expect("open");
 
         let mut effects = Effects::default();
-        close_now(&mut app, image_id, &mut effects);
+        let _ = close_now(&mut app, image_id, &mut effects);
 
         assert!(effects.raw.is_empty());
     }
@@ -209,8 +266,28 @@ mod tests {
         let extra = app.open_document(Buffer::new("second"));
 
         let mut effects = Effects::default();
-        close_now(&mut app, extra, &mut effects);
+        let _ = close_now(&mut app, extra, &mut effects);
 
         assert!(effects.raw.is_empty());
+    }
+
+    /// Plan WP0 Done-when: closing the ONLY open document does not refuse —
+    /// it mints a fresh untitled draft, so the session always ends up with
+    /// exactly one document and no "can't close" status.
+    #[test]
+    fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        let only = app.active;
+
+        let mut effects = Effects::default();
+        let outcome = close_now(&mut app, only, &mut effects);
+
+        assert!(matches!(outcome, CloseOutcome::Closed));
+        assert_eq!(app.documents.len(), 1);
+        assert!(!app.documents.contains_key(&only));
+        assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+        assert!(app.status_message.is_none());
     }
 }

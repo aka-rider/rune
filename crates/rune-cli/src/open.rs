@@ -94,7 +94,8 @@ pub(crate) fn open_first_positional(
             // closed here is never an image document, so `close_now`'s
             // image-delete branch (WP5.S7) is a no-op on this path either
             // way.
-            workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
+            let _ =
+                workspace::close_now(&mut app, blank, &mut rune_tui::runtime::Effects::default());
         }
         return Ok((app, DbBootstrap::default()));
     }

@@ -100,4 +100,14 @@ pub struct StepCtx {
     /// `MsgTag::SaveDone`'s own docs). Pins `SAVE-VERBATIM`.
     pub delivered_save_bytes: Option<Vec<u8>>,
     pub saves_delivered_ok: usize,
+    /// Whether the ACTIVE document is still the one `disk`/`saves_delivered_
+    /// ok` describe (`State::seed_doc`/`State::path`) — plan WP0 (`rr`
+    /// history): closing the last open document now mints and activates a
+    /// fresh untitled draft instead of refusing, so "active" and "the one
+    /// seeded document this whole session is scoped to" can diverge even
+    /// outside the Help-toggle case `save_clean_matches_disk`'s old
+    /// `!read_only` proxy stood in for. Computed once per step so that
+    /// checker never has to re-derive doc identity from a `Snapshot` that
+    /// structurally can't carry it (module docs).
+    pub active_is_seed_doc: bool,
 }

@@ -266,6 +266,10 @@ fn bootstrap(
                 rune_tui::app::StatusSource::Other,
             );
         }
+        // Dirty is a content comparison now (plan WP1) — `hydrate` no
+        // longer marks it itself, so every hydration site re-derives it
+        // explicitly (CONSTITUTION §1.4.8).
+        app.recompute_dirty(first_doc_id);
     }
 
     Ok(app)

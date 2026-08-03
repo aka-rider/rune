@@ -19,9 +19,15 @@
 ## File-size budget (§1.6)
 
 A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
-`save.rs`/`document.rs`/`explorer.rs`, `tests/opentabs.rs`, and the two worst
-test files (`conceal_roundtrip.rs` at 1453 lines and `tests/highlight.rs`).
+`document.rs`/`explorer.rs`, `tests/opentabs.rs`, and the two worst test
+files (`conceal_roundtrip.rs` at 1453 lines and `tests/highlight.rs`).
 `explorer.rs` and `opentabs.rs` — the two previously recorded here — are done.
+(Correction: this entry used to also list `save.rs` in that landed batch —
+it wasn't; `save.rs` was still one file, 515 lines, unsplit, right up until
+the quit-guard/dirtiness-rework plan actually split it into `save.rs`
+(start/refusal ladder) and `save/materialize.rs` (the store-backed
+materialize dance) — see `crates/rune-tui/TODO.md`'s own entry on the
+`materialize_ack.rs` overage that same plan left behind.)
 
 A second, much larger batch (the `split(...)`/`refactor(...)` work packages
 that followed, WP A through H) then split every remaining test file and

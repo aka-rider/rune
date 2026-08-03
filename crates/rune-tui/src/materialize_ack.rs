@@ -11,6 +11,13 @@
 //! Every function here is per-document except `on_store_failure`, which
 //! stays app-wide (plan decision 3/6: a hard write failure degrades the ONE
 //! shared `Store`, never just the document that happened to trigger it).
+//!
+//! [`reactions`] (split out for the §1.6 budget, plan WP2) holds what
+//! happens once a save/materialize attempt actually resolves — `handle_
+//! materialize_ack`/`handle_save_done`'s own success/failure arms, the
+//! close-on-save-ack and quit-save-fan-out chokepoints (`close_if_pending`/
+//! `quit_if_pending`) they both funnel through, and the local materialize
+//! failure path (`fail_materialize_locally`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +29,10 @@ use crate::app::{App, StatusSource};
 use crate::document::DocumentId;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::save::{self, PendingMaterialize};
-use crate::workspace;
+
+mod reactions;
+use reactions::fail_materialize_locally;
+pub(crate) use reactions::{handle_materialize_ack, handle_save_done, retire_quit_wait};
 
 /// WP7 step (a)'s reaction: `prep` carries the CAS decision data
 /// (`rune_db::MaterializePrep`) — no disk-sourced fact of its own — so this
@@ -276,144 +286,6 @@ fn record_outcome(
     }
 }
 
-/// A local (non-`rune-db`) materialize failure: a genuine `vfs` I/O error
-/// on the caller-side write, or a store having vanished entirely
-/// mid-flight. Fails only `id`'s save — never the whole store — since the
-/// write's own failure carries no `rune-db` signal at all.
-fn fail_materialize_locally(app: &mut App, id: DocumentId, message: impl Into<String>) {
-    if let Some(doc) = app.doc_mut(id) {
-        doc.save_in_flight = false;
-        doc.save_pending_version = None;
-        doc.pending_bind_path = None;
-    }
-    app.set_status(message.into(), StatusSource::SaveError);
-    recompute_dirty(app, id);
-}
-
-/// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
-/// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
-/// `bind_new` on a commit, surfaces each `MatResult` outcome as status text,
-/// and — either way — clears `id`'s `save_in_flight` and recomputes its
-/// dirty cache (trigger (b) of `recompute_dirty`'s doc comment). Also
-/// called synthetically (WP7, a `committed: true`, otherwise-default
-/// `MatResult`) when the disk write physically succeeded but the DB-side
-/// bookkeeping that would have supplied `saved`/`raced` was lost to a dead
-/// writer — see `record_outcome`'s doc comment.
-pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResult) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.save_in_flight = false;
-    let pending_version = doc.save_pending_version.take();
-
-    if mat.committed {
-        // A committed bind-new create is where an untitled draft finally
-        // gets its path — only now, after the no-clobber publish actually
-        // succeeded (see `bind_new_now`'s docs).
-        if let Some(path) = app.doc_mut(id).and_then(|d| d.pending_bind_path.take()) {
-            if let Some(doc) = app.doc_mut(id) {
-                doc.bind_path(path);
-            }
-            if app.active == id {
-                let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
-                app.title.seed(&name);
-            }
-        }
-        if let Some(saved) = &mat.saved
-            && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
-        {
-            doc_db.expect_obs = saved.id;
-            doc_db.bind_new = false;
-        }
-        if let Some(version) = pending_version
-            && let Some(doc) = app.doc_mut(id)
-            && version > doc.saved_version
-        {
-            doc.saved_version = version;
-        }
-        if app.status_source == StatusSource::SaveError {
-            app.status_message = None;
-        }
-        if mat.raced {
-            app.set_status(
-                "saved \u{2014} a concurrent external change was overwritten; its bytes were preserved",
-                StatusSource::Other,
-            );
-        }
-    } else if mat.missing {
-        app.set_status(
-            "save failed: file no longer exists",
-            StatusSource::SaveError,
-        );
-    } else {
-        app.set_status(
-            "save refused \u{2014} the file changed on disk since it was opened",
-            StatusSource::SaveError,
-        );
-    }
-    recompute_dirty(app, id);
-    close_if_pending(app, id, mat.committed);
-}
-
-/// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
-/// completion (plan decision 5), or a leftover reply for a document whose
-/// store binding vanished mid-flight. Same provenance-aware clear as
-/// `handle_materialize_ack` (review finding F2).
-pub(crate) fn handle_save_done(
-    app: &mut App,
-    id: DocumentId,
-    version: u64,
-    result: Result<(), String>,
-) {
-    let Some(doc) = app.doc_mut(id) else { return };
-    doc.save_in_flight = false;
-    let succeeded = result.is_ok();
-    match result {
-        Ok(()) => {
-            if let Some(doc) = app.doc_mut(id)
-                && version > doc.saved_version
-            {
-                doc.saved_version = version;
-            }
-            // Provenance-aware clear (review finding F2): only a message
-            // THIS save path set (a prior failed/un-attempted save) is
-            // dismissed here. An unrelated message — a pbpaste failure, an
-            // edit/undo/redo failure — survives a successful save exactly
-            // as it already survives a successful edit.
-            if app.status_source == StatusSource::SaveError {
-                app.status_message = None;
-            }
-        }
-        Err(e) => {
-            app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
-        }
-    }
-    recompute_dirty(app, id);
-    close_if_pending(app, id, succeeded);
-}
-
-/// The close-on-save-ack chokepoint (plan WP5.S3): both save completion
-/// paths (`handle_materialize_ack`'s store-backed flow and this module's
-/// own no-store `handle_save_done` fallback — Assumption A1 documents with
-/// `db: None` take THIS path, never the other) funnel through here. Only
-/// closes when `id` is STILL the document `pending_close_on_save` names —
-/// a later unrelated `^w`/Guard interaction on a DIFFERENT document
-/// overwrites that single global slot, which correctly abandons (never
-/// mis-fires) this document's stale close intent — and only when the save
-/// itself actually succeeded; a failed save leaves the document open with
-/// its usual error surfaced instead of losing the user's only path back to
-/// it.
-fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
-    if app.pending_close_on_save != Some(id) {
-        return;
-    }
-    app.pending_close_on_save = None;
-    if succeeded {
-        // A scratch sink, discarded — see `workspace::close::close_now`'s
-        // own doc comment: this call chain never touches an image document.
-        let mut effects = Effects::default();
-        workspace::close_now(app, id, &mut effects);
-    }
-}
-
 /// A store enqueue-time error or an async `DbEvent::Err`/`Fatal` landed
 /// (plan decision 3): the in-memory buffer/journal are NEVER rolled back —
 /// only the WHOLE store is marked degraded (sticky; no reopen path) and a
@@ -434,17 +306,34 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
     }
     app.db_banner = Some(format!("recovery disabled: {error}"));
 
-    let mut any_in_flight = false;
-    for doc in app.documents.values_mut() {
-        if doc.save_in_flight {
-            doc.save_in_flight = false;
-            doc.save_pending_version = None;
-            any_in_flight = true;
+    // Collected first: `abandon_save` needs `&mut Document`, and every one
+    // ALSO needs its dirty cache re-settled (plan WP1 — a stranded capture
+    // must never be left promotable, and the cache must never be left
+    // stale after the state it was derived from just changed).
+    let stranded: Vec<DocumentId> = app
+        .documents
+        .iter()
+        .filter(|(_, doc)| doc.save_in_flight)
+        .map(|(&id, _)| id)
+        .collect();
+    for &id in &stranded {
+        if let Some(doc) = app.doc_mut(id) {
+            doc.abandon_save();
         }
+        recompute_dirty(app, id);
     }
-    if any_in_flight {
+    if !stranded.is_empty() {
         app.set_status(format!("save failed: {error}"), StatusSource::SaveError);
     }
+
+    // A `Fatal` kills the writer's whole FIFO — every op it had enqueued,
+    // including any quit-save fan-out's, will now never ack (plan WP2).
+    // Aborting the intent outright (rather than leaving it to strand
+    // forever, waiting on acks that can no longer arrive) is what keeps the
+    // NEXT `^C` able to raise a fresh, resolvable Guard instead of silently
+    // doing nothing — the failure itself is already surfaced via `db_banner`
+    // above, so no separate status is needed here.
+    app.quit_intent = None;
 }
 
 /// A stale `generation` (a later journal mutation already rescheduled the
@@ -480,19 +369,30 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
 }
 
 /// CONSTITUTION §1.4.8: `Document::is_dirty` reads only the cache this
-/// recomputes — called at exactly two trigger points: (a) any journal
-/// mutation (`commands::edit::commit_edit_batch`/`undo`/`redo`, immediately
-/// after they mutate `doc.journal`) and (b) any `DbEvent` ack that moves the
-/// baseline (`handle_materialize_ack`, immediately after `saved_version`
-/// itself changes). The comparison is the buffer-version proxy already
-/// established pre-WP5 (`saved_version`, now advanced ONLY by a successful
-/// materialize ack or the no-store fallback's `SaveDone`) — both trigger
-/// points call this immediately after whichever of `saved_version`/
-/// `buffer.version()` they just changed, so the cache never observes a
-/// stale pairing.
+/// recomputes. A straight content comparison against `saved_content` (plan
+/// WP1) — never the old `buffer.version() != saved_version` proxy:
+/// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
+/// a fresh buffer, so a version comparison alone leaves an edit-then-undo
+/// document dirty forever even once the bytes are back to identical.
+/// `saved_content` is a plain `String` compare — a length check plus
+/// `memcmp`, microsecond-scale even against a multi-thousand-line document,
+/// so this stays cheap enough to call from every edit/ack site AND from
+/// [`is_dirty_now`]'s transition re-derive.
 pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
-    let dirty = doc.buffer.version() != doc.saved_version;
+    let dirty = doc.buffer.content() != &*doc.saved_content;
     let Some(doc) = app.doc_mut(id) else { return };
     doc.is_dirty_cached = dirty;
+}
+
+/// CONSTITUTION §1.4.8: dirty must be re-derived on every TRANSITION (open,
+/// switch, evict, close, quit), not merely read from the render-only cache
+/// `recompute_dirty`'s other callers (edit/ack sites) already keep current
+/// between transitions. The close-guard predicate, `workspace::request_close`,
+/// and `pane::first_unpreserved_dirty_doc`'s quit-guard scan all call this
+/// instead of `Document::is_dirty` so a transition's answer is never one
+/// edit/ack stale — render is the one place that keeps reading the cache.
+pub(crate) fn is_dirty_now(app: &mut App, id: DocumentId) -> bool {
+    recompute_dirty(app, id);
+    app.doc(id).is_some_and(|doc| doc.is_dirty())
 }

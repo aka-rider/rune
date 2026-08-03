@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 30 invariants total, one domain per file (mirrors the Go fuzzer's
+//! 31 invariants total, one domain per file (mirrors the Go fuzzer's
 //! own per-domain split):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
@@ -29,7 +29,8 @@
 //!   `CELL-ORDER`, `TABLE-ROW-WIDTH`, `TABLE-SYNTHETIC-DECORATIVE`
 //! - `wrap` — `WRAP-RT`
 //! - `undo` — `REDO-CLEAR`, `UNDO-TOTAL`, `REDO-TOTAL`
-//! - `session` — `SAVE-INFLIGHT-SM`, `QUIT-CHORD`, `CONFIRM-GEN`
+//! - `session` — `SAVE-INFLIGHT-SM`, `QUIT-CHORD`, `CONFIRM-GEN`,
+//!   `GUARD-ANSWERED` (plan WP2)
 //! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
 //! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
@@ -59,7 +60,7 @@ pub use render::{
     table_row_width, table_synthetic_decorative,
 };
 pub use save::{save_clean_matches_disk, save_verbatim};
-pub use session::{confirm_gen, quit_chord, save_inflight_sm};
+pub use session::{confirm_gen, guard_answered, quit_chord, save_inflight_sm};
 pub use undo::{redo_clear, redo_total, undo_total};
 pub use wrap::{wrap_line_lens, wrap_rt};
 
@@ -117,6 +118,7 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| save_inflight_sm(prev, next, ctx))
         .or_else(|| quit_chord(prev, next, ctx))
         .or_else(|| confirm_gen(prev, next, ctx))
+        .or_else(|| guard_answered(prev, next, ctx))
         .or_else(|| paste_verbatim(prev, next, ctx))
         .or_else(|| save_verbatim(ctx))
         .or_else(|| save_clean_matches_disk(next, ctx))

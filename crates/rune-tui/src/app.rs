@@ -31,6 +31,19 @@ use crate::pane::Pane;
 use crate::runtime::{Effects, Msg};
 use crate::save;
 
+/// The quit-save fan-out `GuardKind::DirtyQuit`'s `[S]ave` answer arms (plan
+/// WP2): every document a save was actually started for, each keyed to the
+/// buffer version THAT save captured (`Document::pending_save_version`'s own
+/// value at the moment `trigger_save` returned `SaveStart::InFlight`).
+/// Emptying the map — every entry retired by a matching successful ack, or
+/// by the document closing out from under the wait — is what flips
+/// `should_quit`; any save failing outright aborts the whole intent instead
+/// (Go parity: never exit over a save the user believes succeeded).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuitIntent {
+    pub pending: std::collections::BTreeMap<DocumentId, u64>,
+}
+
 /// Which subsystem last wrote `App::status_message` — the provenance tag
 /// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
 /// save path set, never an unrelated one (review finding F2: an earlier
@@ -200,6 +213,23 @@ pub struct App {
     /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module in
     /// WP2) is the sole minter of new generations.
     pub(crate) next_quit_gen: u32,
+    /// The quit-save fan-out a `GuardKind::DirtyQuit` answer of `[S]ave`
+    /// armed (plan WP2), correlating every document it kicked a save off
+    /// for against the EXACT buffer version that save captured — port of
+    /// Go's `continuation{kind: contQuit, requestID, saveLeft}`. A
+    /// `BTreeMap`, not a bare counter: retiring one document's entry is
+    /// idempotent (a duplicate/late ack can never double-decrement a
+    /// counter that no longer exists as such), an unrelated ⌘S ack for a
+    /// document quit never asked to save can't retire an entry it was
+    /// never keyed to, and a document that disappears mid-flight (closed,
+    /// or the whole store dying) is swept by removing its one entry rather
+    /// than needing to keep a parallel count in sync. `None` whenever no
+    /// quit-save fan-out is outstanding — the ordinary two-press quit-
+    /// confirm chord never touches this at all. `materialize_ack`'s
+    /// `quit_if_pending`/`retire_quit_wait` are the only writers of the map
+    /// once armed; `should_quit` flips only when the LAST entry retires
+    /// successfully.
+    pub quit_intent: Option<QuitIntent>,
     /// Answers "is the spacebar physically down right now?" for the held-
     /// space leader (plan WP5.S3/decision 3). Defaults to `NullProbe`
     /// (always `false`) so the leader is inert unless something opts in:
@@ -324,6 +354,7 @@ impl App {
             pending_close_on_save: None,
             pending_quit: None,
             next_quit_gen: 0,
+            quit_intent: None,
             space_probe: Box::new(crate::keystate::NullProbe),
             pointer: crate::pointer::PointerState::default(),
             pointer_clock: Box::new(crate::pointer::SystemClock),
@@ -427,14 +458,32 @@ impl App {
         self.active_doc().is_dirty()
     }
 
+    /// Whether `doc` has a live, trustworthy recovery journal — the single
+    /// predicate `pane::unpreserved_dirty_docs`'s quit/close guard scan
+    /// keys off (plan WP2). `doc.db.is_some()` alone is not enough: `degraded`
+    /// is sticky with no reopen path, so a mid-session store failure leaves
+    /// `doc.db` `Some` while every write it would enqueue silently never
+    /// lands — a document in that state has stopped journaling in every
+    /// way that matters, exactly as if it had no binding at all. `db: None`
+    /// (no store at all) also fails this, same as before.
+    pub fn is_preserved(&self, doc: &Document) -> bool {
+        doc.db.is_some() && self.db.as_ref().is_some_and(|db| !db.degraded)
+    }
+
     pub fn file_name(&self) -> &str {
         self.active_doc().file_name()
     }
 
-    /// See `Document::mark_dirty_from_hydration`'s docs — delegates to the
-    /// (sole, at bootstrap time) active document.
-    pub fn mark_dirty_from_hydration(&mut self) {
-        self.active_doc_mut().mark_dirty_from_hydration();
+    /// The public entry point `rune-cli`'s bootstrap hydration uses (plan
+    /// WP1) — `materialize_ack::recompute_dirty` itself is `pub(crate)`, so
+    /// this is the one seam a different crate reaches it through.
+    /// CONSTITUTION §1.4.8 requires dirty to be re-derived on every
+    /// transition, hydration included; dirtiness no longer falls out of
+    /// `Document::hydrate` itself (the deleted `mark_dirty_from_hydration`
+    /// this replaces) since it is now a content comparison the caller must
+    /// explicitly re-run once the buffer settles.
+    pub fn recompute_dirty(&mut self, id: DocumentId) {
+        crate::materialize_ack::recompute_dirty(self, id);
     }
 
     /// The single writer of a NEW `status_message`: every call site that

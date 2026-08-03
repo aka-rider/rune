@@ -216,7 +216,7 @@ fn closing_the_renaming_document_clears_the_machine_and_the_prompt() {
     send(&mut app, reply);
     assert!(matches!(app.rename, RenameState::Collision { .. }));
 
-    workspace::close_now(&mut app, victim, &mut Effects::default());
+    let _ = workspace::close_now(&mut app, victim, &mut Effects::default());
 
     assert_eq!(app.rename, RenameState::Idle);
     assert!(app.modal.is_none());

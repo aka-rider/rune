@@ -58,6 +58,13 @@ pub fn handle_load_ack(
     if let Some(reason) = refusal {
         app.set_status(format!("crash recovery: {reason}"), StatusSource::Other);
     }
+    // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
+    // marks it itself, so every hydration site re-derives it explicitly
+    // (CONSTITUTION §1.4.8), even on the `NoChange`/version-moved-on
+    // branches where `hydrate` was never actually called: this document's
+    // `db` binding is about to change below, which is itself a fact worth
+    // re-settling the cache against.
+    crate::materialize_ack::recompute_dirty(app, id);
 
     let Some(doc) = app.doc_mut(id) else { return };
     doc.db = Some(DocDb::new(

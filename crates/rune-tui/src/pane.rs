@@ -95,7 +95,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 app.set_focus(Pane::Editor, effects);
             }
         }
-        GlobalCommand::Save => save::trigger_save(app, app.active, effects),
+        GlobalCommand::Save => {
+            let _ = save::trigger_save(app, app.active, effects);
+        }
         // WP7.S2: mints/toggles the generated Help virtual document — a
         // direct, same-tick call (decision 10), no I/O involved. The hoisted
         // gate above already blurred, but that gate fires only for
@@ -139,12 +141,12 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     // ordinary close path (`workspace::request_close`) uses instead of
     // arming or completing quit; the user resolves it exactly like any
     // other dirty-close prompt, then presses the quit chord again.
-    if let Some(doc) = first_unpreserved_dirty_doc(app) {
+    if let Some(doc) = unpreserved_dirty_docs(app).into_iter().next() {
         let _ = banner::set_modal(
             app,
             Modal::Guard(GuardPrompt {
                 doc,
-                kind: GuardKind::DirtyClose,
+                kind: GuardKind::DirtyQuit,
             }),
         );
         return;
@@ -164,18 +166,28 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     effects.cmds.push(quit_confirm_timeout_cmd(generation));
 }
 
-/// The first (lowest `DocumentId`) open document that is both dirty and has
-/// no live recovery-store binding — quit preserves through the durable
-/// journal, so a dirty document without one is the exact case `handle_quit_
-/// key`'s Guard gate exists for. Deterministic ordering (`documents` is a
+/// Every open document that is both dirty and has no live, trustworthy
+/// recovery-store binding (`App::is_preserved`) — quit preserves through the
+/// durable journal, so a dirty document without one is the exact case
+/// `handle_quit_key`'s Guard gate exists for, and the exact set WP2's
+/// quit-save fan-out (`banner::guard`'s `[S]ave` answer) must save every
+/// member of, not just the first. Deterministic ordering (`documents` is a
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
 /// first" — repeated presses always raise the Guard for the same document
-/// until it's resolved.
-fn first_unpreserved_dirty_doc(app: &App) -> Option<DocumentId> {
-    app.documents
-        .iter()
-        .find(|(_, doc)| doc.is_dirty() && doc.db.is_none())
-        .map(|(id, _)| *id)
+/// until it's resolved. Dirty is re-derived via `is_dirty_now`, not read
+/// from the cache (CONSTITUTION §1.4.8: quit is a transition), so a stale
+/// cache can never wave a genuinely-dirty document through the guard.
+/// `handle_quit_key`'s own Guard-raise takes just the first (lowest-id) one;
+/// the quit-save fan-out iterates the whole `Vec`.
+pub(crate) fn unpreserved_dirty_docs(app: &mut App) -> Vec<DocumentId> {
+    let candidates: Vec<DocumentId> = app.documents.keys().copied().collect();
+    candidates
+        .into_iter()
+        .filter(|&id| {
+            let preserved = app.doc(id).is_some_and(|d| app.is_preserved(d));
+            !preserved && crate::materialize_ack::is_dirty_now(app, id)
+        })
+        .collect()
 }
 
 /// The 2s quit-confirm timer, carrying its generation so a stale timeout
@@ -195,12 +207,26 @@ fn quit_confirm_timeout_cmd(generation: u32) -> Cmd {
 mod tests {
     use super::*;
     use crate::app::App;
+    use crate::db::{Db, DbBridge};
     use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
+    use rune_db::{ClockFn, Store};
+    use rune_vfs::{Mem, Vfs};
     use std::sync::Arc;
 
     fn app() -> App {
         App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
+    }
+
+    /// A live, non-degraded app-level `Db` (mirrors `db_ack.rs::tests::
+    /// in_memory_db`) — `App::is_preserved` requires one to exist (not just
+    /// a document's own `DocDb`) before it will call a document preserved,
+    /// since `degraded` lives on the app-level handle.
+    fn live_db() -> Db {
+        let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store = Store::open_in_memory(clock, vfs, Box::new(|_evt| {})).expect("open store");
+        let bridge = DbBridge::bootstrap();
+        Db::new(store, bridge, false)
     }
 
     #[test]
@@ -252,16 +278,21 @@ mod tests {
         );
     }
 
-    /// Review fix (plan WP5.S3): a dirty document with no live `db` binding
-    /// (the default for an untitled draft) must never be silently discarded
-    /// by the quit chord — `^C^C` (or `^D^D`) raises the same dirty-close
-    /// Guard `workspace::request_close` uses instead of quitting.
+    /// Review fix (plan WP5.S3, widened WP2): a dirty document with no live
+    /// `db` binding (the default for an untitled draft) must never be
+    /// silently discarded by the quit chord — `^C^C` (or `^D^D`) raises a
+    /// `DirtyQuit` Guard rather than quitting or (WP2's own fix) merely
+    /// closing.
     #[test]
     fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
         let mut app = app();
+        // Dirty is a content comparison now (plan WP1) — poking the render-
+        // only cache directly would just be overwritten by `is_dirty_now`'s
+        // re-derive, so diverge `saved_content` from the live buffer
+        // instead, exactly like a real edit would.
         app.doc_mut(app.active)
             .expect("active doc exists")
-            .is_dirty_cached = true;
+            .saved_content = Arc::from("");
         assert!(app.active_doc().db.is_none(), "test setup: no db binding");
 
         let mut effects = Effects::default();
@@ -276,11 +307,11 @@ mod tests {
             matches!(
                 app.modal,
                 Some(Modal::Guard(GuardPrompt {
-                    kind: GuardKind::DirtyClose,
+                    kind: GuardKind::DirtyQuit,
                     ..
                 }))
             ),
-            "expected a DirtyClose Guard prompt to be raised"
+            "expected a DirtyQuit Guard prompt to be raised"
         );
     }
 
@@ -290,11 +321,14 @@ mod tests {
     #[test]
     fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
         let mut app = app();
+        // Genuinely dirty (plan WP1: a content comparison, not the cache) —
+        // `is_dirty_now`'s re-derive would just overwrite a cache poke.
         app.doc_mut(app.active)
             .expect("active doc exists")
-            .is_dirty_cached = true;
+            .saved_content = Arc::from("");
         app.doc_mut(app.active).expect("active doc exists").db =
             Some(crate::db::DocDb::new(1, 0, true, 0));
+        app.db = Some(live_db());
 
         let mut effects = Effects::default();
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);

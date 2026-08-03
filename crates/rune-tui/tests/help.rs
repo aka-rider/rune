@@ -169,7 +169,7 @@ fn closing_the_previous_document_then_toggling_help_lands_somewhere_live() {
 
     // Close `original` while it's not active (help is) — a clean document,
     // so this closes immediately rather than arming the Guard.
-    workspace::close_now(&mut app, original, &mut Effects::default());
+    let _ = workspace::close_now(&mut app, original, &mut Effects::default());
     assert!(!app.documents.contains_key(&original));
     assert_eq!(app.documents.len(), 2, "help doc + second must remain");
 

@@ -9,6 +9,8 @@
 //! WP4 already proved for the info card.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod dirty_common;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -101,18 +103,17 @@ fn a_known_reserved_row_count_is_visible_to_the_producer_and_scrollable() {
 }
 
 /// Plan WP4.S9: an image document's `file_path` is real, so without the
-/// `trigger_save` guard a stale `saved_version` (simulating a would-be
-/// dirty state) would reach the no-DB-binding fallback and push a `Save`
-/// `Cmd` that overwrites the image with the buffer's own (always empty)
-/// bytes. Driven through the real `super+s` key via `app::update`, per the
-/// plan's "drive integration tests through the real update loop".
+/// `trigger_save` guard a forced-dirty state (simulating a would-be dirty
+/// buffer) would reach the no-DB-binding fallback and push a `Save` `Cmd`
+/// that overwrites the image with the buffer's own (always empty) bytes.
+/// Driven through the real `super+s` key via `app::update`, per the plan's
+/// "drive integration tests through the real update loop".
 #[test]
 fn super_s_on_an_image_document_saves_nothing_and_never_focuses_the_title() {
     let (mut app, id) = app_with_image();
-    // Force the version check an earlier revision of the guard would have
+    // Force the dirty check an earlier revision of the guard would have
     // relied on to look "dirty" — the guard must still fire BEFORE it.
-    app.doc_mut(id).expect("doc").saved_version =
-        app.doc(id).expect("doc").buffer.version().wrapping_sub(1);
+    dirty_common::force_dirty(&mut app, id);
     app.active = id;
     // `focus` is private by design — exactly three functions may write it,
     // so go through the setter rather than widening the field for a test.

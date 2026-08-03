@@ -5,6 +5,8 @@
 //! access `#[cfg(test)]` had).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod dirty_common;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -211,7 +213,7 @@ fn every_cmd_is_tagged_with_its_kind() {
         None,
     );
     let id = app.active;
-    app.doc_mut(id).unwrap().saved_version = 0; // force dirty without touching content
+    dirty_common::force_dirty(&mut app, id);
     let mut effects = Effects::default();
     update(&mut app, Msg::Key(save_key()), &mut effects);
     assert_eq!(effects.cmds.len(), 1);
