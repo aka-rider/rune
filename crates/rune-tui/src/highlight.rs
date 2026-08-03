@@ -16,6 +16,7 @@ use rune_syntax::{DocumentKind, ScopeId};
 
 use crate::app::App;
 use crate::document::{Document, DocumentId};
+use crate::linemap::LineMap;
 use crate::runtime::{self, Effects};
 
 /// The async highlight state for one document (plan WP5, extended by the
@@ -72,7 +73,7 @@ pub struct HighlightState {
 /// and survive past the `app.doc_mut(id)` call below.
 enum HighlightSource {
     Whole(&'static str, String),
-    Fences(Vec<(FenceLang, Vec<Range<usize>>, String)>),
+    Fences(Vec<(FenceLang, LineMap, String)>),
 }
 
 /// Which highlighter a fence's info string resolves to (plan WP6.S2): a
@@ -244,32 +245,24 @@ fn fence_language(info: &str) -> Option<FenceLang> {
 /// marker's indent), which must never reach `rune_ts::highlight` as source
 /// bytes — tree-sitter's error recovery silently absorbs a stray `"> "` for
 /// some grammars (Rust) but not others (an indentation-sensitive grammar
-/// like YAML loses most of its structure to it). `text` is built by joining
-/// each line's own slice with a single `'\n'`, which reproduces the ORIGINAL
-/// buffer bytes exactly for a top-level fence (the true gap between two
-/// top-level lines is exactly one `'\n'` already) and drops every prefix byte
-/// for a nested one. The ranges are carried alongside so
-/// `runtime::map_reconstructed_span` can map spans parsed against this
-/// reconstructed text back to real buffer offsets.
+/// like YAML loses most of its structure to it). The `LineMap` those ranges
+/// build both reconstructs the PREFIX-FREE source text and maps spans
+/// parsed against that text back to real buffer offsets.
 ///
 /// A region with any line that somehow doesn't land on a live byte range of
 /// the current buffer (should not happen — the ranges are derived from the
-/// buffer's own parse — but `.get` degrades to "skip the whole region"
-/// rather than a panic, per §1.3) is silently skipped.
-fn code_fence_sources(doc: &Document) -> Vec<(FenceLang, Vec<Range<usize>>, String)> {
+/// buffer's own parse — but `LineMap::reconstruct` degrades to "skip the
+/// whole region" rather than a panic, per §1.3) is silently skipped.
+fn code_fence_sources(doc: &Document) -> Vec<(FenceLang, LineMap, String)> {
     let content = doc.buffer.content();
     doc.doc
         .code_regions(&doc.buffer)
         .into_iter()
         .filter_map(|region| {
             let lang = fence_language(&region.info)?;
-            let pieces: Option<Vec<&str>> = region
-                .content
-                .iter()
-                .map(|l| content.get(l.clone()))
-                .collect();
-            let text = pieces?.join("\n");
-            Some((lang, region.content, text))
+            let map = LineMap::new(region.content);
+            let text = map.reconstruct(content)?;
+            Some((lang, map, text))
         })
         .collect()
 }

@@ -25,7 +25,7 @@ use rune_syntax::scope::scope_table;
 /// Every span's own `(range(), scope())` becomes one overlay span, in the
 /// SAME coordinates as `text` (a fresh parse of the reconstructed fence
 /// text starts its own byte numbering at 0, matching what `run_fence_
-/// highlight`'s `map_reconstructed_span` expects to remap). The plain
+/// highlight`'s `LineMap::to_buffer` expects to remap). The plain
 /// `text` scope is skipped for span economy — an overlay carrying a span
 /// for every unstyled byte would cost the same paint result at a higher
 /// merge/sort cost downstream.
