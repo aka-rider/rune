@@ -2,6 +2,50 @@
 
 - [ ] The title field has no horizontal scroll (title/rename plan assumption A1): an over-long file name is clipped by `Paragraph`, not scrolled to follow the cursor, so editing the tail of a name wider than the terminal is awkward. A viewport can be added to `TextField` later; not attempted here to avoid desyncing byte offsets from a truncated string.
 
+### Image rendering — three known hazards
+
+Found while chasing a full UI freeze on opening a large `.gif` (1920x1080).
+The freeze itself is fixed — a first transmit no longer forces a redraw — but
+the fix is narrow and these three remain.
+
+- [ ] **A terminal clear issued from a decode reply can block the main thread
+  forever.** `Effects::force_redraw` calls `Terminal::clear()`, and that call
+  was observed never to return: the marker immediately before it logged, the
+  one immediately after never did, across four instrumented runs. Input stops
+  being processed, the frame never repaints (so the info card sits on
+  `decoding...` indefinitely), and `^C`/`^W` do nothing — only an external kill
+  ends it.
+
+  Why is NOT understood. `TerminaBackend::clear` is a four-byte `ESC[2J` plus a
+  flush, and `write_raw` pushed 785 KB through the same descriptor milliseconds
+  earlier. Backpressure was ruled out by moving the clear ahead of the payload:
+  it still hung, with nothing in flight. Current guess — unproven — is
+  contention between the writer and the parked event-reader thread inside
+  `termina`.
+
+  Only the first-transmit path was fixed (it never needed the clear: the diff
+  already sees the info card become placeholder cells). **`resize_refit` still
+  sets `force_redraw` on a retransmit, so the same hang is theoretically
+  reachable on resize.** A retransmit genuinely does need the diff invalidated,
+  because its placeholder cells can be byte-identical while the pixels behind
+  them changed — but `Terminal::clear()` both writes to the terminal AND
+  invalidates ratatui's diff buffer, and only the second is wanted. Worth
+  finding a way to get the invalidation without the write.
+
+- [ ] **`fit_and_encode` runs on the main thread.** `handle_image_decoded`
+  resizes, PNG-encodes, base64s and chunks the whole image inline — measured at
+  ~50 ms release / ~700 ms debug for 1920x1080, and it scales with image size.
+  The decode was deliberately moved off-thread for exactly this reason; the
+  encode never was. It should move into the decode `Cmd` (or a second one) so
+  the reply carries ready-to-write bytes.
+
+- [ ] **Nothing bounds the transmitted payload.** A 2250x1500 image produces a
+  4.8 MB APC sequence; 1920x1080 produces 785 KB. All of it is handed to
+  `write_raw` in one synchronous call on the main thread. There is no size cap,
+  no chunk-count cap and no deadline anywhere in `rune-image` or
+  `rune-tui/src/graphics` — verified by sweep. A slow or wedged terminal turns
+  that into an unbounded stall.
+
 ### Considered and deliberately rejected
 
 - **Gating async paste behind `app.modal`.** A review pass noted that
