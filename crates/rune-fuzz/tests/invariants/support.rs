@@ -138,6 +138,9 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         // wants the STALE case overrides one or the other explicitly.
         highlight_version: 1,
         geometry: base_geometry(),
+        guard: None,
+        quit_intent_pending: None,
+        dirty_by_doc: std::collections::BTreeMap::new(),
     }
 }
 

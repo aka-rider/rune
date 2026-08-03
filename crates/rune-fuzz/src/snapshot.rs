@@ -8,9 +8,12 @@
 //! `CONFIRM-GEN` — added by a later work package) — that data lives in
 //! `crate::step::StepCtx` instead (plan Context, decision 7 `[fixes B3]`).
 
+use std::collections::BTreeMap;
+
 use ratatui::layout::Rect;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
+use rune_tui::banner::GuardKind;
 use rune_tui::document::DocumentId;
 use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
@@ -109,6 +112,26 @@ pub struct Snapshot {
     /// `LAYOUT-FITS` (`invariant/pane.rs`) can check it as a plain function
     /// of `next` alone, with no live `App` reach-back.
     pub geometry: Geometry,
+    /// `app.modal`'s `Guard` variant, if one is up — the document it names
+    /// and its `GuardKind` (plan WP2). `None` for every other modal state
+    /// (`Error`, or no modal at all) — no checker here needs to tell those
+    /// two apart, only "is a Guard, specifically, up right now".
+    pub guard: Option<(DocumentId, GuardKind)>,
+    /// `app.quit_intent`'s wait set, as a plain sorted `Vec` (plan WP2) —
+    /// `None` when no quit-save fan-out is outstanding, `Some(vec![])` is
+    /// never observed in practice (an empty map is retired to `None` the
+    /// same tick it empties, `materialize_ack::retire_quit_wait`'s own
+    /// invariant) but is not ruled out structurally, so a checker should
+    /// treat an empty `Some` the same as `None` rather than assuming it
+    /// can't happen.
+    pub quit_intent_pending: Option<Vec<(DocumentId, u64)>>,
+    /// Every open document's own dirty cache, re-derived (via `App::
+    /// recompute_dirty`, the one public seam onto the same chokepoint
+    /// `materialize_ack::is_dirty_now` uses internally) rather than read
+    /// stale — `Snapshot.is_dirty` above is active-document-only, so a
+    /// quit/close-guard invariant that needs to know whether some OTHER,
+    /// inactive document is dirty has no other way to see it.
+    pub dirty_by_doc: BTreeMap<DocumentId, bool>,
 }
 
 impl Snapshot {
@@ -142,6 +165,26 @@ impl Snapshot {
         } else {
             (Vec::new(), Vec::new())
         };
+
+        // Computed BEFORE `doc` below borrows `app` immutably for the rest
+        // of this function: `recompute_dirty` needs `&mut App`, so it must
+        // run while no other borrow of `app` is still alive.
+        let guard = match &app.modal {
+            Some(rune_tui::banner::Modal::Guard(prompt)) => Some((prompt.doc, prompt.kind.clone())),
+            _ => None,
+        };
+        let quit_intent_pending = app
+            .quit_intent
+            .as_ref()
+            .map(|intent| intent.pending.iter().map(|(&id, &v)| (id, v)).collect());
+        let doc_ids: Vec<DocumentId> = app.documents.keys().copied().collect();
+        let mut dirty_by_doc = BTreeMap::new();
+        for doc_id in doc_ids {
+            app.recompute_dirty(doc_id);
+            if let Some(d) = app.doc(doc_id) {
+                dirty_by_doc.insert(doc_id, d.is_dirty());
+            }
+        }
 
         let doc = app.active_doc();
         let highlight_spans = doc
@@ -178,6 +221,9 @@ impl Snapshot {
             highlight_spans,
             highlight_version,
             geometry,
+            guard,
+            quit_intent_pending,
+            dirty_by_doc,
         }
     }
 }
