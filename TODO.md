@@ -100,6 +100,18 @@ decor.rs`) per the plan's own instruction; only wire-up lines touched
 `emit/mod.rs` and `syntax.rs`, but that was still enough to cross or extend
 the ceiling, and neither has been split since.
 
+- [ ] The Explorer type-to-search feature (Go filetree parity, no wall
+  clock) grew two more already-over-budget files: `rune-tui/src/app.rs`
+  567 → 577 (`set_focus`'s new blur clear — the one chokepoint every route
+  off the Explorer funnels through, so it has to live in the same writer
+  the title's own blur clear already does, not a new file) and
+  `rune-fuzz/src/generate/palette.rs` 517 → 544 (`EXPLORER_SEARCH_KEYS`,
+  the printable-letter palette `cluster_chrome`'s new `^b`-then-type arm
+  draws from — a four-entry array, not worth its own file over a 27-line
+  overage). New logic otherwise went into the new sibling `explorer_
+  search.rs` (422 lines, under budget), which is also why `explorer.rs`
+  itself (499) and `explorer_keys.rs` (260) stayed under the ceiling
+  despite gaining the feature's state and dispatch wiring.
 - [ ] Two files landed within a few lines of the ceiling and will breach on the next small edit: `rune-db/src/writer.rs` (497) and `rune-db/src/materialize.rs` (496). Whoever touches either next should take the split rather than squeeze under.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.
 
