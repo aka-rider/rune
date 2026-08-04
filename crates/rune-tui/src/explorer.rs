@@ -48,6 +48,14 @@ pub struct Explorer {
     /// bump in place, compare on receipt, ignore a stale one.
     pub request_generation: u32,
     pub search: Option<String>, // type-to-search query (`explorer_search`); None = inactive
+    /// The file `explorer_reveal::reveal` asked to land the cursor on, set
+    /// the moment it issues a re-rooting `ReadDir` `Cmd` and consumed by
+    /// `handle_dir_loaded` below when that request's reply lands. Guarded by
+    /// `request_generation` exactly like every other in-flight `ReadDir`:
+    /// `handle_dir_loaded` bails out before ever touching this field when
+    /// `generation` no longer matches, so a stale reply can never consume a
+    /// reveal meant for the request that superseded it.
+    pub pending_reveal: Option<PathBuf>,
 }
 
 impl Default for Explorer {
@@ -59,6 +67,7 @@ impl Default for Explorer {
             loading: false,
             request_generation: 0,
             search: None,
+            pending_reveal: None,
         }
     }
 }
@@ -228,6 +237,12 @@ pub(crate) fn handle_dir_loaded(
     crate::explorer_search::clear_search(app); // a new listing outdates any query
     let entries = with_parent_entry(&root, entries);
 
+    // `pending_reveal` (`explorer_reveal::reveal`) wins over both `Nav`'s
+    // top-of-list reset and `Refresh`'s preserve-by-name: a reveal request
+    // that just paid for a re-root round trip must land on its target, not
+    // snap to whatever the ordinary cause-based rule would have picked.
+    let reveal_target = app.explorer.pending_reveal.take();
+
     let preserve_name = match cause {
         DirCause::Nav => None,
         DirCause::Refresh => app
@@ -240,8 +255,11 @@ pub(crate) fn handle_dir_loaded(
     app.explorer.root = root;
     app.explorer.entries = entries;
     app.explorer.loading = false;
-    app.explorer.nav.cursor = preserve_name
-        .and_then(|name| app.explorer.entries.iter().position(|e| e.name == name))
+    app.explorer.nav.cursor = reveal_target
+        .and_then(|target| app.explorer.entries.iter().position(|e| e.path == target))
+        .or_else(|| {
+            preserve_name.and_then(|name| app.explorer.entries.iter().position(|e| e.name == name))
+        })
         .unwrap_or(0);
     ensure_visible(app);
 }
