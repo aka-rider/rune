@@ -292,10 +292,10 @@ fn a_markdown_fence_highlights_through_the_span_channel() {
 fn markdown_rust_fence_produces_spans_inside_the_fence_only() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
     let mut app = app_for(content, "/x/notes.md");
-    // Mirrors `runtime::run`'s own bootstrap ordering: `DocMachine::
-    // code_regions` reads the LAST parse `sync_view` produced, not the live
-    // buffer, so a fence must have been parsed at least once before an edit
-    // can find it.
+    // Mirrors `runtime::run`'s own bootstrap ordering: a view's
+    // `code_regions` describe the LAST parse the display pipeline produced,
+    // not the live buffer, so a fence must have been parsed at least once
+    // before an edit can find it.
     app.sync_view();
     settle_highlight(&mut app);
 

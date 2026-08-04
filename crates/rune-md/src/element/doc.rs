@@ -6,6 +6,8 @@
 //! changed, and reveal transitions never touch `built_version` (Gotchas:
 //! "Reveal must never bump the buffer version").
 
+use std::sync::Arc;
+
 use crate::element::block::Block;
 use crate::element::code_region::{self, CodeRegion};
 use crate::icons::IconSet;
@@ -29,6 +31,17 @@ pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
     pub display: DisplaySnapshot,
+    /// Every region of code in the document this view describes — the one
+    /// value the highlight scheduler and the background painter both read,
+    /// so neither walks the block tree itself.
+    ///
+    /// Behind an `Arc` because a `ViewSnapshots` is cloned out of the
+    /// `snapshot` memo several times per message batch (commands call
+    /// `view()` freely) while it is computed only when the document
+    /// actually changes: an owned `Vec` here would trade one walk per frame
+    /// for one deep copy per `view()` call, and a whole code document's
+    /// region carries one `Range` per buffer line.
+    pub code_regions: Arc<[CodeRegion]>,
 }
 
 /// Force every block (and, transitively, every nested block/inline) into
@@ -93,7 +106,7 @@ pub struct DocMachine {
     /// (`sync_content` on a version change, `set_width`, `sync_cursors`/
     /// `set_focus` on a reveal-relevant change) sets it, so a `view()` call
     /// that changed none of those inputs gets the cached clone instead of
-    /// re-running emit + wrap + `expand_tables`.
+    /// re-running emit + wrap + `expand_tables` + the code-region walk.
     cached: Option<ViewSnapshots>,
     /// Counts actual `rebuild` calls (never memo hits) — test-only
     /// instrumentation for asserting `snapshot`'s memoization, not a
@@ -171,7 +184,11 @@ impl DocMachine {
 
     /// Every region of code in this document — the one definition every
     /// downstream consumer reads, whether it highlights the region or merely
-    /// paints a background behind it.
+    /// paints a background behind it. Private: `rebuild` calls it once per
+    /// document change and publishes the result on `ViewSnapshots`, which is
+    /// where every consumer reads it from. Walking the tree per consumer (and
+    /// so, for the background painter, per frame) is exactly what that
+    /// publication exists to prevent.
     ///
     /// What counts depends entirely on `kind`. A `Code` document is exactly
     /// one region spanning the whole buffer; a `Markdown` document is one
@@ -185,15 +202,15 @@ impl DocMachine {
     /// owns no buffer (every content-reading method here is handed one), and
     /// a `Code` document's regions come from the buffer's own line structure
     /// because a non-markdown kind is never parsed into `blocks` at all.
-    pub fn code_regions(&self, buf: &Buffer) -> Vec<CodeRegion> {
+    fn code_regions(&self, buf: &Buffer) -> Arc<[CodeRegion]> {
         match self.kind {
-            DocumentKind::Code(lang) => vec![code_region::whole_document(lang, buf)],
+            DocumentKind::Code(lang) => Arc::from([code_region::whole_document(lang, buf)]),
             DocumentKind::Markdown => {
                 let mut out = Vec::new();
                 code_region::collect(&self.blocks, buf, &mut out);
-                out
+                Arc::from(out)
             }
-            DocumentKind::Plain | DocumentKind::Image => Vec::new(),
+            DocumentKind::Plain | DocumentKind::Image => Arc::from([]),
         }
     }
 
@@ -377,6 +394,7 @@ impl DocMachine {
             syntax,
             wrap,
             display,
+            code_regions: self.code_regions(buf),
         }
     }
 

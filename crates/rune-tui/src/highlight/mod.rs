@@ -31,6 +31,7 @@ pub mod query;
 
 use std::ops::Range;
 
+use rune_md::element::code_region::CodeRegion;
 use rune_syntax::ScopeId;
 
 use crate::app::App;
@@ -199,40 +200,44 @@ fn region_language(info: &str) -> Option<RegionLang> {
 /// the current buffer (should not happen — the ranges are derived from the
 /// buffer's own parse — but `LineMap::reconstruct` degrades to "skip the
 /// whole region" rather than a panic, per §1.3) is silently skipped.
-fn region_sources(doc: &Document) -> Vec<RegionSource> {
-    let content = doc.buffer.content();
-    doc.doc
-        .code_regions(&doc.buffer)
-        .into_iter()
+fn region_sources(content: &str, regions: &[CodeRegion]) -> Vec<RegionSource> {
+    regions
+        .iter()
         .filter_map(|region| {
             let lang = region_language(&region.info)?;
-            let map = LineMap::new(region.content);
+            let map = LineMap::new(region.content.clone());
             let text = map.reconstruct(content)?;
             Some(RegionSource { lang, map, text })
         })
         .collect()
 }
 
-/// Rebuilds the block tree, then resolves `id`'s region sources.
+/// Re-runs `id`'s display pipeline, then resolves the region sources from the
+/// snapshot it produced.
 ///
 /// The rebuild has to happen before any region range is read: the settle
 /// step that normally rebuilds it runs AFTER the update loop returns, so
-/// without this the regions describe the PREVIOUS buffer version while the
-/// command is stamped with the current one — a reply the version check would
-/// then accept as authoritative, painting every region at a shifted offset
-/// until the next keystroke. It costs nothing beyond this call:
-/// `DocMachine::sync_content`'s own version guard makes it a no-op on every
-/// call after the first per buffer version, so the settle step's own call
-/// becomes the no-op instead of this one.
+/// without this the regions would describe the PREVIOUS buffer version while
+/// the command is stamped with the current one — a reply the version check
+/// would then accept as authoritative, painting every region at a shifted
+/// offset until the next keystroke.
+///
+/// `Document::view` is the whole rebuild rather than `DocMachine::
+/// sync_content` alone because the regions are published on `ViewSnapshots`,
+/// so that a frame's background paint reads the value computed here instead
+/// of walking the block tree again. It costs nothing beyond this call:
+/// `view` is memoized on the same document state, so the settle step's own
+/// call becomes the memo hit instead of this one.
 fn resolve_region_sources(app: &mut App, id: DocumentId) -> Vec<RegionSource> {
-    if let Some(doc) = app.doc_mut(id) {
-        doc.doc.sync_content(&doc.buffer);
-        #[cfg(test)]
-        doc.highlight
-            .resolve_calls
-            .set(doc.highlight.resolve_calls.get() + 1);
-    }
-    app.doc(id).map(region_sources).unwrap_or_default()
+    let Some(doc) = app.doc_mut(id) else {
+        return Vec::new();
+    };
+    let view = doc.view();
+    #[cfg(test)]
+    doc.highlight
+        .resolve_calls
+        .set(doc.highlight.resolve_calls.get() + 1);
+    region_sources(doc.buffer.content(), &view.code_regions)
 }
 
 /// The ONE writer of `HighlightState::regions`.

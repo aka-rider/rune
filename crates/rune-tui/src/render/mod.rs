@@ -74,16 +74,16 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
 
     // A code region's background is a RECTANGLE, painted before any token
     // colour so a foreground lands on top of it rather than being
-    // overwritten by it. It is deliberately driven off `code_regions` (the
-    // one definition of code, shared with the highlight scheduler) and the
-    // display snapshot alone — never `doc.highlight` — so no highlight
-    // reply can reflow a row and two message-free renders agree.
+    // overwritten by it. It is deliberately driven off the display
+    // snapshot's own `code_regions` (the one definition of code, shared with
+    // the highlight scheduler, computed once per document change) — never
+    // `doc.highlight` — so no highlight reply can reflow a row and two
+    // message-free renders agree.
     code_bg::paint_code_background(
         &mut rows,
         view,
         viewport.scroll_row,
         viewport.width,
-        &doc.doc.code_regions(&doc.buffer),
         app.theme.chrome.code_bg,
     );
 
