@@ -30,7 +30,6 @@ pub mod graphics;
 pub mod help;
 pub mod highlight;
 pub mod keymap;
-pub mod keystate;
 pub mod layout;
 pub mod linemap;
 pub mod listnav;
