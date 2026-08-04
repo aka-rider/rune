@@ -23,7 +23,6 @@
 use std::any::Any;
 use std::env;
 use std::ffi::OsString;
-use std::io;
 use std::ops::{Deref, DerefMut};
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -31,7 +30,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use rune_tui::app::App;
-use rune_tui::keystate::{self, LeaderDiagnosis};
 use rune_tui::workspace;
 use rune_vfs::{Disk, Vfs};
 
@@ -57,16 +55,6 @@ pub(crate) mod exit_code {
 }
 
 fn main() -> ExitCode {
-    // `--doctor` is parsed here, before `bootstrap`, and handled entirely
-    // outside the normal load/`cli::parse` path: it never opens a file,
-    // never enters the TUI, and prints straight to stdout instead. Checked
-    // as a bare first-argument match rather than folded into `cli::CliAction`
-    // because it shares none of that enum's file-opening semantics.
-    let args: Vec<OsString> = env::args_os().skip(1).collect();
-    if args.first().is_some_and(|a| a == "--doctor") {
-        return doctor();
-    }
-
     // Read exactly once (plan WP4.S6/[rune-cli 8]): every other spot that
     // used to read `env::current_dir()` a second time (the `-w`-absent
     // workspace-root fallback) now reuses this value, and a failure here is
@@ -86,78 +74,7 @@ fn main() -> ExitCode {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
     let home = env::var_os("HOME").map(PathBuf::from);
 
-    launch(vfs, args.into_iter(), cwd, home)
-}
-
-/// `rune --doctor`: prints the leader capability's diagnostic state and
-/// exits without ever constructing an `App` or entering the TUI (plan WP0,
-/// the measurement gate for the `␣X`-stopped-working investigation). Reports
-/// `keystate::diagnose()` and `leader_available()` once, then — only if a
-/// window-server session exists, since the raw query blocks without one —
-/// takes two operator-gated readings of the LIVE `CGEventSourceKeyState`
-/// value, one with the spacebar held and one with it released, and states
-/// what the pair means. Two labelled samples are the whole finding: a query
-/// that answers `false` with the key physically down is exactly the
-/// condition that makes the leader stage never fire.
-fn doctor() -> ExitCode {
-    let diagnosis = keystate::diagnose();
-    println!("leader diagnosis: {diagnosis:?}");
-    println!("leader_available(): {}", keystate::leader_available());
-
-    match diagnosis {
-        LeaderDiagnosis::NoWindowServerSession => {
-            println!(
-                "no window-server session: the live key-state query is skipped here exactly \
-                 as `leader_available` skips it, because it blocks (~45s observed) without one."
-            );
-        }
-        LeaderDiagnosis::SessionPresent => {
-            // Each sample is taken when the OPERATOR says the spacebar is in
-            // a known state, not after a wall-clock delay: the physical key
-            // position is the thing being correlated with the query's
-            // answer, and only the operator knows it. A timed poll would
-            // print a series nobody can align with what their hand was
-            // doing.
-            let held = doctor_sample("Hold the spacebar DOWN, and — still holding it — press Enter");
-            let released = doctor_sample("Now RELEASE the spacebar and press Enter");
-
-            println!();
-            println!("  space held:     {held}");
-            println!("  space released: {released}");
-            println!();
-            match (held.as_str(), released.as_str()) {
-                ("true", "false") => println!(
-                    "The query tracks the hardware. The held-space leader is working here, \
-                     so ␣X failing has another cause."
-                ),
-                ("false", "false") => println!(
-                    "The query is stuck reporting the spacebar up. This is why ␣X types `x`: \
-                     the leader stage never fires. Check System Settings → Privacy & Security \
-                     → Input Monitoring for this terminal."
-                ),
-                _ => println!("Unexpected pair — report both readings verbatim."),
-            }
-        }
-    }
-
-    ExitCode::SUCCESS
-}
-
-/// Prompts, waits for the operator to press Enter, then takes ONE live
-/// reading. Returns the reading as the string to print — `None` from the
-/// query means the window-server session vanished mid-run, which cannot
-/// happen under `SessionPresent` but is reported rather than unwrapped,
-/// since it would itself be the finding.
-fn doctor_sample(prompt: &str) -> String {
-    println!("{prompt}");
-    let mut line = String::new();
-    if io::stdin().read_line(&mut line).is_err() {
-        return "stdin closed".to_string();
-    }
-    match keystate::raw_key_state_now() {
-        Some(down) => down.to_string(),
-        None => "window-server session vanished".to_string(),
-    }
+    launch(vfs, env::args_os().skip(1), cwd, home)
 }
 
 /// Everything `main` does after resolving `cwd`/`$HOME` and constructing the
@@ -173,16 +90,6 @@ fn launch(
         Ok(app) => app,
         Err(code) => return code,
     };
-
-    // Install the real hardware probe (plan WP5.S8) — production is the
-    // ONLY place `HidSpaceProbe` is installed; every test and the fuzzer
-    // keep `App::new`'s inert `NullProbe` default.
-    app.space_probe = Box::new(rune_tui::keystate::HidSpaceProbe);
-    // Prime `leader_available`'s cache now, at startup, rather than letting
-    // the first `space+x`/`e`/`t` press pay for it: `leader_available` is a
-    // `OnceLock` (plan WP3.S3), so this one-shot check runs here instead of
-    // on the user's first keystroke.
-    let _ = rune_tui::keystate::leader_available();
 
     let result = panic::catch_unwind(AssertUnwindSafe(|| rune_tui::runtime::run(&mut app)));
 
