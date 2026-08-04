@@ -144,6 +144,67 @@ fn reveal_mode_never_forces_every_decide_policy_block_rendered() {
 }
 
 #[test]
+fn table_never_forces_reveal_mode_rendered() {
+    // `TableM`'s Decide policy is `cursors.any_in_lines(first_line,
+    // last_line)`, a genuinely different predicate from `HeadingM`'s
+    // `any_on_line` — pin it independently rather than assume the heading
+    // case above covers it.
+    let mut doc = DocMachine::new();
+    let buf = Buffer::new("| Name | Age |\n| --- | --- |\n| Alice | 30 |\n");
+    doc.sync_content(&buf);
+    // cursor sits on the table's own first line, which WOULD reveal it
+    // under `AtCursor`.
+    let cursors = CursorSet::new(0);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Rendered,
+            "RevealMode::Never must force the table block Rendered"
+        );
+    }
+}
+
+#[test]
+fn table_at_cursor_reveals_when_cursor_is_in_its_line_range() {
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    let buf = Buffer::new("| Name | Age |\n| --- | --- |\n| Alice | 30 |\n");
+    doc.sync_content(&buf);
+    // cursor sits on the table's header line — `TableM::sync` decides off
+    // `cursors.any_in_lines(first_line, last_line)`, so any line the table
+    // spans must reveal the whole block.
+    let cursors = CursorSet::new(0);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Revealed,
+            "RevealMode::AtCursor with the cursor in the table's line range must reveal it"
+        );
+    }
+}
+
+#[test]
+fn heading_at_cursor_reveals_when_cursor_is_on_its_line() {
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    let buf = Buffer::new("# hello\n");
+    doc.sync_content(&buf);
+    // cursor sits on the heading line — `HeadingM::sync` decides off
+    // `cursors.any_on_line`, distinct from `TableM`'s `any_in_lines` above.
+    let cursors = CursorSet::new(2);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Revealed,
+            "RevealMode::AtCursor with the cursor on the heading's line must reveal it"
+        );
+    }
+}
+
+#[test]
 fn frontmatter_and_verbatim_survive_unfocused_as_revealed() {
     // The reveal-policy table's declared exception to "Unfocused ->
     // ForceRendered": Frontmatter and Verbatim (HTML/math/any other

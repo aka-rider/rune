@@ -341,48 +341,60 @@ mod tests {
     /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
     /// pane table this crate has, since `^p`/`⌘p` mint a new global row
     /// rather than reusing an existing chord the way `⌘R` does.
+    ///
+    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
+    /// structural equality on `keys` — a pane row does not need to equal
+    /// `⌃P`/`⌘P` to steal them, it only needs to MATCH them, and
+    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
+    /// any non-control `Char` under equal `Mods` without ever equaling a
+    /// specific `KeyPattern`. Structural equality would stay green while
+    /// that wildcard silently shadowed this exact chord at dispatch.
     #[test]
     fn global_p_binding_is_not_already_bound_in_any_pane_table() {
         use crate::explorer_keys::EXPLORER_BINDINGS;
         use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
         use crate::keymap::editor_bindings::EDITOR_BINDINGS;
         use crate::keymap::vim::VIM_BINDINGS;
         use crate::opentabs::TABS_BINDINGS;
 
-        let ctrl_p = &[KeyPattern::new(KeyCode::Char('p'), CTRL)];
-        let sup_p = &[KeyPattern::new(KeyCode::Char('p'), SUP)];
+        let ctrl_p = KeyInput {
+            code: KeyCode::Char('p'),
+            mods: CTRL,
+        };
+        let sup_p = KeyInput {
+            code: KeyCode::Char('p'),
+            mods: SUP,
+        };
 
-        fn claimants<C: Copy + 'static>(
-            table: &[Binding<C>],
-            keys: &[KeyPattern],
-        ) -> Vec<&'static str> {
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
             table
                 .iter()
-                .filter(|b| b.keys == keys)
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
                 .map(|b| b.help)
                 .collect()
         }
 
-        for keys in [ctrl_p.as_slice(), sup_p.as_slice()] {
+        for key in [ctrl_p, sup_p] {
             assert!(
-                claimants(EDITOR_BINDINGS, keys).is_empty(),
-                "EDITOR_BINDINGS already binds {keys:?}"
+                claimants(EDITOR_BINDINGS, key).is_empty(),
+                "EDITOR_BINDINGS already binds {key:?}"
             );
             assert!(
-                claimants(VIM_BINDINGS, keys).is_empty(),
-                "VIM_BINDINGS already binds {keys:?}"
+                claimants(VIM_BINDINGS, key).is_empty(),
+                "VIM_BINDINGS already binds {key:?}"
             );
             assert!(
-                claimants(TABS_BINDINGS, keys).is_empty(),
-                "TABS_BINDINGS already binds {keys:?}"
+                claimants(TABS_BINDINGS, key).is_empty(),
+                "TABS_BINDINGS already binds {key:?}"
             );
             assert!(
-                claimants(EXPLORER_BINDINGS, keys).is_empty(),
-                "EXPLORER_BINDINGS already binds {keys:?}"
+                claimants(EXPLORER_BINDINGS, key).is_empty(),
+                "EXPLORER_BINDINGS already binds {key:?}"
             );
             assert!(
-                claimants(EXPLORER_SEARCH_BINDINGS, keys).is_empty(),
-                "EXPLORER_SEARCH_BINDINGS already binds {keys:?}"
+                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
+                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
             );
         }
     }
