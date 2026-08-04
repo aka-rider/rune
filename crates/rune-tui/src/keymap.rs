@@ -8,9 +8,10 @@
 //! chord's modifiers and let something else through by accident (the
 //! defect this replaced — `CODE-REVIEW.md`'s rune-tui B finding 3: a loose
 //! `'s' if m.sup && !m.ctrl` arm let `⌘⇧S` perform a real save); a table
-//! lookup cannot. The held-space leader (`global::LEADER_BINDINGS`) is a
-//! separate, already-live stateful mechanism (see `keystate.rs`/
-//! `app::handle_key`'s stage 1.5).
+//! lookup cannot. Every binding is a single chord requiring ctrl or sup, so
+//! a printable keystroke is always text — there is no stateful prefix
+//! mechanism, and nothing outside the terminal's own event stream is ever
+//! consulted to resolve a key.
 
 // The generic binding machinery now lives in `crate::binding` and the
 // global chord table in `crate::global` (§1.6: this file was over the
