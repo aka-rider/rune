@@ -326,7 +326,7 @@ fn error_state_single_line_has_an_empty_body() {
 #[test]
 fn error_state_is_read_only_and_unbound() {
     let state = ErrorState::new("boom");
-    assert!(state.doc.read_only);
+    assert!(state.doc.is_read_only());
     assert!(state.doc.file_path.is_none());
     assert!(state.doc.db.is_none());
     assert!(!state.doc.focused);

@@ -16,7 +16,7 @@ use rune_vfs::Vfs;
 
 use crate::app::App;
 use crate::db_enqueue as db;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, ReadOnly};
 use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
 use crate::pane::Pane;
@@ -227,7 +227,7 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Do
     let doc_id = app.open_document(Buffer::new(""));
     if let Some(doc) = app.doc_mut(doc_id) {
         doc.bind_path(resolved.to_path_buf());
-        doc.read_only = true;
+        doc.read_only = ReadOnly::Always;
         doc.display_name = Some(file_name);
         doc.image = Some(ImageState {
             path: resolved.to_path_buf(),
@@ -327,7 +327,7 @@ pub fn toggle_help(app: &mut App) {
     let previous = app.active;
     let id = app.open_document(Buffer::new(help::help_markdown()));
     if let Some(doc) = app.doc_mut(id) {
-        doc.read_only = true;
+        doc.read_only = ReadOnly::Always;
         doc.display_name = Some("Help".to_string());
     }
     app.help_doc = Some(id);

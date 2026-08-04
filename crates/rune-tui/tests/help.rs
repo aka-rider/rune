@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
+use rune_tui::document::ReadOnly;
 use rune_tui::explorer_keys::EXPLORER_BINDINGS;
 use rune_tui::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use rune_tui::keymap::{GLOBAL_BINDINGS, KeyCode, KeyInput, Mods};
@@ -108,7 +109,12 @@ fn help_document_rejects_edits_and_never_goes_dirty() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
-    assert!(app.active_doc().read_only, "help doc must be read-only");
+    assert_eq!(
+        app.active_doc().read_only,
+        ReadOnly::Always,
+        "F1 must mint ReadOnly::Always — Reading has an editable form to \
+         return to via ⌃P, which would make this document editable again"
+    );
 
     let content_before = app.active_doc().buffer.content().to_string();
     let printable = KeyInput {

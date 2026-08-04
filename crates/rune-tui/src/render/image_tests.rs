@@ -17,7 +17,7 @@ fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
     let id = app.active;
     let doc = app.doc_mut(id).expect("doc");
     doc.bind_path(PathBuf::from("/vault/x.png"));
-    doc.read_only = true;
+    doc.read_only = crate::document::ReadOnly::Always;
     doc.display_name = Some("x.png".to_string());
     doc.image = Some(ImageState {
         path: PathBuf::from("/vault/x.png"),

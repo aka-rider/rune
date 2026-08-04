@@ -184,7 +184,7 @@ fn click_on_a_decor_cell_places_the_caret_at_the_lines_content_start() {
 /// (f) `[critic R4]` case (a): an unfocused pane forces every reveal-Decide
 /// element concealed regardless of cursor position, so a heading hosting
 /// the cursor still renders its decor (icon + uniform heading style) even
-/// though `Document::shows_caret` (`focused && !read_only`) keeps the caret
+/// though `Document::has_insertion_point` (`focused && !is_read_only()`) keeps the caret
 /// itself unpainted — extends the existing
 /// `concealed_heading_marker_not_visible_when_unfocused_even_with_cursor_
 /// on_it`. The decor-shift arithmetic `apply_cursor_overlays` runs for

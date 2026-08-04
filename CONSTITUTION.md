@@ -6,6 +6,7 @@ Article numbers (§) are **frozen**: source comments and tests cite them (e.g. �
 
 Both implementations are bound by it: the Rust workspace at the repo root, and the Go reference implementation under `golang/`. Go package paths cited below (`pkg/…`, `cmd/rune`, `internal/…`) are relative to `golang/`.
 
+
 ---
 
 ## §0 Prime Directive — Protect the User's Words

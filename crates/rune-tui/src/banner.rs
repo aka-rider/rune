@@ -21,7 +21,7 @@ use rune_core::buffer::Buffer;
 
 use crate::app::App;
 use crate::clipboard::osc52_copy;
-use crate::document::Document;
+use crate::document::{Document, ReadOnly};
 use crate::keymap::{KeyCode, KeyInput};
 use crate::render::{self, Cell};
 use crate::runtime::Effects;
@@ -108,10 +108,8 @@ impl ErrorState {
         // `db: None`/`file_path: None` already hold — `Document::new`'s
         // defaults (plan WP3.S1: constructed read-only, no store binding,
         // no file identity).
-        doc.read_only = true;
-        // Never focused: this document is never the stage-3 editor pane,
-        // so it should always render fully rendered/concealed (Gotchas:
-        // "Unfocused -> ForceRendered") regardless of `App.focus`.
+        doc.read_only = ReadOnly::Always;
+        // Never focused: this document is never the stage-3 editor pane.
         doc.focused = false;
         ErrorState { doc }
     }

@@ -22,7 +22,7 @@ use rune_vfs::Vfs;
 use crate::banner::Modal;
 use crate::db::Db;
 use crate::dispatch;
-use crate::document::{Document, DocumentId};
+use crate::document::{Document, DocumentId, ReadOnly};
 use crate::document_map::DocumentMap;
 use crate::explorer::Explorer;
 use crate::keymap::QuitKey;
@@ -499,6 +499,19 @@ impl App {
         self.focus
     }
 
+    /// The single writer of a read-only refusal's status message: posts
+    /// `read_only`'s wording and reports whether it refused — `focus_title`
+    /// and `rename::begin` both call this instead of duplicating the check
+    /// (`refocus_title`'s silent return on the same precondition is a
+    /// re-focus, not a refusal, so it does not).
+    pub fn refuse_if_read_only(&mut self, read_only: ReadOnly) -> bool {
+        let Some(message) = read_only.refusal_message() else {
+            return false;
+        };
+        self.set_status(message, StatusSource::Other);
+        true
+    }
+
     /// Gains title focus, reseeding the field from the active document's own
     /// name and landing the cursor at the end. Needs no `Effects`: entering
     /// the title can never itself leave it, so there is nothing to commit on
@@ -507,8 +520,7 @@ impl App {
     /// focus hostage in a field that can never commit (the Help document is
     /// the case this removes rather than guards against).
     pub fn focus_title(&mut self) {
-        if self.active_doc().read_only {
-            self.set_status("this document is read-only", StatusSource::Other);
+        if self.refuse_if_read_only(self.active_doc().read_only) {
             return;
         }
         let name = crate::title::name_for(self.active_doc());
@@ -525,7 +537,7 @@ impl App {
         // 12): an async reply can land after the active document has
         // changed under it, and parking focus on a title that can never
         // commit would hold the user there until they found Escape.
-        if self.active_doc().read_only {
+        if self.active_doc().is_read_only() {
             return;
         }
         self.focus = Pane::Title;

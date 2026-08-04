@@ -20,7 +20,7 @@ use rune_md::emit::emit;
 pub fn synced(content: &str, cursor_offset: usize, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
-    doc.set_focus(focused);
+    doc.set_reveal_mode(focused);
     doc.sync_content(&buf);
     let offset = cursor_offset.min(buf.len());
     let cursors = CursorSet::new(offset);

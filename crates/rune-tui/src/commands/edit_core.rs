@@ -63,7 +63,9 @@ use crate::materialize_ack;
 /// read-only document got mutated" unreachable regardless of which
 /// command tried it, rather than relying on every call site to remember
 /// its own guard (see `Document::read_only`'s docs for the bug this closes
-/// and why `edit::undo`/`redo` are deliberately exempt).
+/// and why `edit::undo`/`redo` are deliberately exempt). Checked via
+/// `is_read_only()`, not the field directly — refusal must trigger on
+/// every `ReadOnly` variant, not only `Always`.
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
@@ -72,7 +74,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     cursors_after: impl FnOnce(&[AppliedEdit], &[u32]) -> Vec<Cursor>,
 ) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.read_only {
+    if doc.is_read_only() {
         return;
     }
     // A zero-width, insert-nothing edit (`start == end && insert.is_empty()`)

@@ -220,7 +220,7 @@ proptest! {
         let buf = Buffer::new(&content);
         let offset = if buf.is_empty() { 0 } else { raw_offset % (buf.len() + 1) };
         let mut doc = DocMachine::new();
-        doc.set_focus(focused);
+        doc.set_reveal_mode(focused);
         doc.sync_content(&buf);
         let cursors = CursorSet::new(offset);
         doc.sync_cursors(&buf, &cursors);

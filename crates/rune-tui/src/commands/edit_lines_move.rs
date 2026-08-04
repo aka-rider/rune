@@ -304,7 +304,7 @@ mod tests {
     fn read_only_blocks_line_commands() {
         let mut app = app_with("one\ntwo\nthree", "one\n".len());
         let id = app.active;
-        app.doc_mut(id).unwrap().read_only = true;
+        app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
         let before = app.doc(id).unwrap().buffer.content().to_string();
 
         indent(&mut app, id);

@@ -15,6 +15,7 @@ use rune_tui::commands::edit::{
     delete_left, delete_right, delete_word_left, delete_word_right, insert_char, newline, redo,
     undo,
 };
+use rune_tui::document::ReadOnly;
 use rune_vfs::Mem;
 
 fn app_with(content: &str, cursor_offset: usize) -> App {
@@ -221,7 +222,7 @@ fn a_successful_edit_does_not_clear_an_unrelated_status_message() {
 fn read_only_blocks_typing_backspace_and_newline() {
     let mut app = app_with("hello", 5);
     let id = app.active;
-    app.doc_mut(id).unwrap().read_only = true;
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
     let before_content = app.doc(id).unwrap().buffer.content().to_string();
     let before_version = app.doc(id).unwrap().buffer.version();
 
@@ -280,7 +281,7 @@ fn undo_and_redo_are_not_blocked_by_read_only() {
     insert_char(&mut app, id, '!');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
-    app.doc_mut(id).unwrap().read_only = true;
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
 
     undo(&mut app, id);
     assert_eq!(
@@ -294,5 +295,45 @@ fn undo_and_redo_are_not_blocked_by_read_only() {
         app.doc(id).unwrap().buffer.content(),
         "hello!",
         "redo must not be blocked by read_only"
+    );
+}
+
+/// The asymmetry `ReadOnly::Reading` draws (plan WP3): unlike `Always`
+/// (asserted above), a reading-view document blocks BOTH undo and redo —
+/// it is a view mode the user can leave with the same chord, not a
+/// document with no editable form at all. Neither the buffer nor
+/// dirtiness may move while blocked.
+#[test]
+fn reading_view_blocks_undo_and_redo() {
+    let mut app = app_with("hello", 5);
+    let id = app.active;
+    insert_char(&mut app, id, '!');
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Reading;
+    let dirty_before = app.doc(id).unwrap().is_dirty();
+
+    undo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "undo must be blocked in reading view"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked undo must not change dirtiness"
+    );
+
+    redo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "redo must be blocked in reading view"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked redo must not change dirtiness"
     );
 }

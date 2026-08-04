@@ -318,7 +318,7 @@ mod tests {
         let mut app = app_with("hello world", 0);
         let id = app.active;
         selecting(&mut app, id, 0, 5); // "hello"
-        app.doc_mut(id).unwrap().read_only = true;
+        app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
         let before_version = app.doc(id).unwrap().buffer.version();
 
         let mut effects = Effects::default();
@@ -392,7 +392,7 @@ mod tests {
     fn handle_paste_content_is_a_no_op_on_a_read_only_editor() {
         let mut app = app_with("ac", 1);
         let id = app.active;
-        app.doc_mut(id).unwrap().read_only = true;
+        app.doc_mut(id).unwrap().read_only = crate::document::ReadOnly::Always;
         handle_paste_content(&mut app, id, "b");
 
         assert_eq!(app.doc(id).unwrap().buffer.content(), "ac");

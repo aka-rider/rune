@@ -477,6 +477,20 @@ pub(super) const CTRL_T_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `^p` (`GlobalCommand::ToggleReadOnly`) — the reading-view toggle (plan
+/// WP5/WP8). Reaching it is what exercises the reveal-follows-insertion-
+/// point machinery (plan WP1) against the fuzzer's own generated
+/// documents, not just the deterministic test suite.
+pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('p'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
 /// Unmodified printable-letter keys for the Explorer type-to-search feature
 /// (Go filetree parity, `explorer_search.rs`): `KeyPattern::printable`'s
 /// wildcard row matches any non-control `Char` under `Mods::NONE`, so this

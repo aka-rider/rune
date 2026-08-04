@@ -47,6 +47,11 @@ pub enum GlobalCommand {
     /// `GLOBAL_BINDINGS` below, so the digit-to-index mapping lives in
     /// exactly one place rather than being re-derived at the call site.
     TabSwitch(usize),
+    /// Toggles the active document between `ReadOnly::No` and `ReadOnly::
+    /// Reading` (plan WP5) — the same chord both enters and leaves reading
+    /// view. Refused with a status message on `ReadOnly::Always`, which has
+    /// no editable form to return to.
+    ToggleReadOnly,
 }
 
 const CTRL: Mods = Mods {
@@ -277,6 +282,26 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    // `^p`/`⌘p` are unclaimed across all six binding tables (`GLOBAL`,
+    // `EDITOR`, `VIM`, `TABS`, `EXPLORER`, `EXPLORER_SEARCH` — see
+    // `global_p_binding_is_not_already_bound_in_any_pane_table` below).
+    // The label stays "reading" in both directions (unlike the quit/tab
+    // rows above, which differ) so the footer's hint row never jumps as
+    // the state flips.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('p'), CTRL)],
+        cmd: GlobalCommand::ToggleReadOnly,
+        help: "reading",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('p'), SUP)],
+        cmd: GlobalCommand::ToggleReadOnly,
+        help: "reading",
+        when: "",
+        alias: true,
+    },
 ];
 
 #[cfg(test)]
@@ -304,6 +329,73 @@ mod tests {
                     key
                 );
             }
+        }
+    }
+
+    /// Plan WP5: there is no cross-table keymap-union guard in this
+    /// codebase — `index::validate` runs per-table only, and a
+    /// `GLOBAL_BINDINGS` row resolves at stage 2, before any pane's own
+    /// keymap ever sees the key (`resolve_in` never consults `when`), so a
+    /// global row can silently shadow a pane binding with nothing to catch
+    /// it. Modelled on `editor_bindings::reload_key_is_not_already_bound_
+    /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
+    /// pane table this crate has, since `^p`/`⌘p` mint a new global row
+    /// rather than reusing an existing chord the way `⌘R` does.
+    ///
+    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
+    /// structural equality on `keys` — a pane row does not need to equal
+    /// `⌃P`/`⌘P` to steal them, it only needs to MATCH them, and
+    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
+    /// any non-control `Char` under equal `Mods` without ever equaling a
+    /// specific `KeyPattern`. Structural equality would stay green while
+    /// that wildcard silently shadowed this exact chord at dispatch.
+    #[test]
+    fn global_p_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let ctrl_p = KeyInput {
+            code: KeyCode::Char('p'),
+            mods: CTRL,
+        };
+        let sup_p = KeyInput {
+            code: KeyCode::Char('p'),
+            mods: SUP,
+        };
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        for key in [ctrl_p, sup_p] {
+            assert!(
+                claimants(EDITOR_BINDINGS, key).is_empty(),
+                "EDITOR_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(VIM_BINDINGS, key).is_empty(),
+                "VIM_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(TABS_BINDINGS, key).is_empty(),
+                "TABS_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_BINDINGS, key).is_empty(),
+                "EXPLORER_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
+                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
+            );
         }
     }
 }

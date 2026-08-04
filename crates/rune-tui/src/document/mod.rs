@@ -75,11 +75,20 @@ pub struct Document {
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
     /// "read-only" document — the exact Go bug `commands_clipboard.go`'s
     /// comment describes, reintroduced by guarding the wrong layer).
-    /// `commands::edit::undo`/`redo` deliberately do NOT check this field —
-    /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass
-    /// `m.readOnly` the same way, unlike `ReplaceRange`
-    /// (`edit_primitives.go`) which checks it first.
-    pub read_only: bool,
+    /// `commands::edit::undo`/`redo` (plan WP3) check this field but only
+    /// against `ReadOnly::Reading`, never via a blanket `is_read_only()`.
+    /// `ReadOnly::Always` keeps the documented Go-parity exemption — Go's own
+    /// `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass `m.readOnly`
+    /// the same way `ReplaceRange` (`edit_primitives.go`) does not — because
+    /// `Always` means the document has no editable form at all (Help, an
+    /// image, the error banner), not a view mode the user can leave.
+    /// `Reading` is different: it is a toggle the user reaches and leaves
+    /// with the same chord (⌃P), so undo/redo are blocked there while the
+    /// toggle is on. The two chords diverge deliberately: in `Reading`,
+    /// ⌘S still materializes bytes already typed, while ⌘Z (which would
+    /// change them) does not — saving protects what the user wrote, undo
+    /// rewrites it.
+    pub read_only: ReadOnly,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).
     pub file_path: Option<PathBuf>,
@@ -184,16 +193,61 @@ pub struct Document {
     pub embeds: crate::graphics::EmbedSet,
 }
 
+/// Why a document refuses mutation — not a plain bool, so a toggleable view
+/// mode (`Reading`) can be told apart from a document with no editable form
+/// at all (`Always`): a toggle must not make the Help tab editable, and the
+/// undo/redo guard (plan WP3) and the `⌘S` footer hint (plan WP6) each
+/// branch on the two differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadOnly {
+    /// Ordinary editable document.
+    No,
+    /// The user asked for reading view (⌃P) — the same chord returns it.
+    /// The document keeps its journal, its `db` binding and any unsaved
+    /// bytes.
+    Reading,
+    /// No editable form exists: the Help tab, the error banner, an image
+    /// document. `commands::reading::toggle` refuses; only a mint site sets
+    /// it.
+    Always,
+}
+
+impl ReadOnly {
+    /// The wording for why a read-only document refuses, or `None` for
+    /// `No` — which refuses nothing, so it has no wording to give (§1.7:
+    /// carry that out of band instead of a sentinel string a missed check
+    /// could pass off as real). `Reading` names the way out because the
+    /// user reached it with a chord that also leaves it; `Always` has no
+    /// way out to name. The one place both user-initiated refusal
+    /// chokepoints (`App::refuse_if_read_only`) source their wording from.
+    pub fn refusal_message(&self) -> Option<&'static str> {
+        match self {
+            ReadOnly::No => None,
+            ReadOnly::Reading => Some("reading view — ⌃P to edit"),
+            ReadOnly::Always => Some("this document is read-only"),
+        }
+    }
+}
+
 impl Document {
+    /// Whether this document refuses mutation, regardless of which
+    /// `ReadOnly` variant is refusing it.
+    pub fn is_read_only(&self) -> bool {
+        !matches!(self.read_only, ReadOnly::No)
+    }
+
     /// Whether the caret and selection background may be painted onto this
-    /// document's cells. Go's three overlay gates (`textedit/render.go`) are
-    /// all `focused && !readOnly`: an unfocused pane must not show a caret
-    /// that would mislead about where keystrokes land, and a read-only
-    /// document (the virtual Help tab, the error-banner document) has no
-    /// insertion point to point at. `focused` itself already folds in
-    /// `modal.is_none()` — see `App::sync_view`.
-    pub fn shows_caret(&self) -> bool {
-        self.focused && !self.read_only
+    /// document's cells, AND whether reveal may key off the cursor at all
+    /// (plan WP1) — the second consumer of the identical predicate. Go's
+    /// three overlay gates (`textedit/render.go`) are all
+    /// `focused && !readOnly`: an unfocused pane must not show a caret that
+    /// would mislead about where keystrokes land, and a read-only document
+    /// (the virtual Help tab, the error-banner document) has no insertion
+    /// point to point at — nor anything to reveal raw markdown under.
+    /// `focused` itself already folds in `modal.is_none()` — see
+    /// `App::sync_view`.
+    pub fn has_insertion_point(&self) -> bool {
+        self.focused && !self.is_read_only()
     }
 }
 
@@ -218,7 +272,7 @@ impl Document {
             viewport: Viewport::default(),
             focused: true,
             journal: Journal::new(),
-            read_only: false,
+            read_only: ReadOnly::No,
             file_path: None,
             saved_version,
             saved_content,
@@ -317,6 +371,14 @@ impl Document {
     /// `saved_content`, so the ordinary content comparison already reports
     /// it dirty once the caller recomputes — see `materialize_ack::
     /// recompute_dirty`, called after every hydration site.
+    ///
+    /// Deliberately NOT gated on `read_only` (plan WP4), including
+    /// `ReadOnly::Reading`. Hydration adopts the user's OWN unsaved
+    /// recovered draft — refusing it to honour a view mode would DISCARD
+    /// already-typed bytes, a worse failure than a buffer changing once
+    /// under a reading view (§1.4.3, and the prime directive that the
+    /// user's words win). This is silent by design nowhere else: state it
+    /// here so it reads as a decision, not an oversight.
     pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
         if recovered == disk_content {
             return Hydration::NoChange;

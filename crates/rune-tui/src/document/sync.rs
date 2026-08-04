@@ -30,7 +30,7 @@ impl Document {
     /// earlier in the same batch — see their module docs) before computing
     /// a new cursor position.
     pub fn view(&mut self) -> ViewSnapshots {
-        self.doc.set_focus(self.focused);
+        self.doc.set_reveal_mode(self.has_insertion_point());
         self.sync_catalogue();
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);

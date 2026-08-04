@@ -24,7 +24,7 @@ fn plain_kind_skips_parse_and_emits_source_bytes_verbatim() {
         "a Plain document must never run the comrak parse"
     );
 
-    doc.set_focus(true);
+    doc.set_reveal_mode(true);
     doc.set_width(80);
     doc.sync_cursors(&buf, &CursorSet::new(0));
     let view = doc.snapshot(&buf);

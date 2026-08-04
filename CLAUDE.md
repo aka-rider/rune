@@ -2,7 +2,8 @@
 
 `rune` is a ratatui TUI markdown editor in Rust. Prime directive: **protect the user's words** — data safety beats performance, elegance, and features.
 
-**Platform: macOS (Apple Silicon) only.** No other OS is supported or planned. Never write cross-platform code, portability stubs, or `cfg(unix)` / `cfg(windows)` portability seams — a non-Darwin build failing to compile is intended, not a bug to fix. Darwin-only syscalls (`libc::RENAME_SWAP`, `RENAME_EXCL`), framework linkage, and `/usr/bin` shell-outs are expected. `Vfs`'s unsupported-operation error is a per-*filesystem* capability gap (e.g. an SMB/NFS mount lacking `renamex_np`), not an OS-portability seam.
+**Platform**: privary: macOS (Apple Silicon with ANE); potentially Linux but out of scope for now.
+No Windows is supported or planned.
 
 **Designing a feature or touching persistence/UI code? Read `CONSTITUTION.md` first.** Every article is binding; code cites articles by frozen § number (e.g. §1.4.8, §5.4).
 
@@ -43,8 +44,18 @@ Cross-implementation screen parity: `make parity` (builds both sides, captures t
 
 ## House Rules
 
-- **Never cite a `path:line` location in a code comment.** `foo/bar.rs:210` rots the moment either file moves — and it has, repeatedly. A bare filename or module path (`cluster.rs`, `driver::checks`) is tolerated but discouraged — replace it with a description of the invariant when you touch the comment. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
-- Keep a source file under 500 lines (§1.6). When you push one over, record it in `TODO.md` with the reason.
+- **User-centric**: EVERY user's action MUST have a feedback; Every interaction must be pleasant; 
+Design the architecture so that silent input swallowing is architecturally unsound;
+Pay attention to the application performance;
+- **GUI-first**: Take a step to **design UI** validate your solution from **UX** standpoint: are there better alternatives;
+- **Who does it better**: in doubt? /research the best-in-class solutions from: Zed, Helix, Neovim, Visual Studio Code, Emacs, etc.
+- **Never cite a `path:line` or even `path` location in a code comment.** `foo/bar.rs:210` rots the moment either file moves. A bare filename or module path (`cluster.rs`, `driver::checks`) is tolerated but discouraged — replace it with a description of the invariant when you touch the comment. Say what the invariant is or why the code is shaped this way, and let the reader grep. The same goes for doc comments. (Frozen `CONSTITUTION.md` § numbers are the deliberate exception — they are guaranteed stable.)
+- Keep a source file **under 500** lines (§1.6). When you push one over, record it in `TODO.md` with the reason.
+- **User-centric**: EVERY user's action MUST have a feedback; Every interaction must be pleasant; 
+Design the architecture so that silent input swallowing is architecturally unsound;
+Pay attention to the application performance;
+**GUI-first**: Take a step to **design UI** validate your solution from **UX** standpoint: are there better alternatives;
+**Who does it better**
 
 ## The Unbreakables (digest — full articles in CONSTITUTION.md)
 

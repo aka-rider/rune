@@ -18,6 +18,10 @@
 
 - [ ] **A large document wedges startup at 100% CPU with no partial render and no progress feedback.** Observed: a 22 MB markdown file never reached the message loop; the editor shows nothing until its first message arrives.
 
+- [ ] **Reading view has thin on-screen feedback.** Entering or leaving reading view posts no status message — only the `ReadOnly::Always` refusal does — and there is no read-only indicator anywhere in the title, breadcrumb or tab strip; the sole affordance is the footer hint. That hint is the last entry in `GLOBAL_BINDINGS`, so it is the first global hint `footer_hints.rs`'s greedy prefix-walk truncation drops: summing the hint-entry widths for Editor focus, `⌃P reading` sits at cumulative width 105 cells, and `footer::draw` reserves 11 cells for the `Ln 1, Col 1` readout, so the hint needs a terminal at least 116 columns wide to render at all — at the default 80 columns the row stops after `^K hide pane`. Still discoverable through the F1 help document, which lists the whole binding table regardless of width. A status message and a persistent indicator were both considered for this pass and deliberately not added.
+
+- [ ] **`crates/rune-tui/tests/chrome.rs` was not updated for the reading-view chord, though the implementation plan predicted it would need to be.** The plan called out its two width-sensitive tests, `default_footer_hints_omit_the_aliased_quit_chord` and `footer_global_tail_survives_truncation_with_explorer_focused`, as needing changes once the new binding lengthened the hint row — "expected, not flake". They were not touched, and they still pass, because both assert via `contains` rather than a fixed width or hint count, so the row lengthening the plan anticipated is invisible to them. Recorded so the next person doesn't go looking for a missing change that was never needed.
+
 ## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
 
 ## Lists
@@ -162,6 +166,21 @@ decision 8) were never written into a 1196-line monolith — this integration
 merge relocated them straight into `rr`'s already-split `rename_bind.rs`
 (the read-only-title refusal) and a new sibling `rename_focus.rs` (the
 other ten), both comfortably under the ceiling.
+
+The reading-view plan grew three files that were all already over budget,
+none of them enough to justify a drive-by split: `palette.rs` 548 → 562
+(`CTRL_P_KEY`, one more entry in the same chrome palette this list already
+records), `app.rs` 616 → 617 and `rename.rs` 530 → 531 (one line each, both
+just swapping a `read_only` bool test for the shared
+`ReadOnly::refusal_message` chokepoint). Nothing new crossed the ceiling.
+
+A follow-up code review (`ReadOnly::refusal_message` returning `Option`
+instead of answering for `No`, plus the `focus_title`/`rename::begin` guard
+chokepoint the sentinel fix's own review flagged as still duplicated) grew
+`app.rs` further, 617 → 628, for `refuse_if_read_only` — the one new method
+both call instead of each running the check-then-status-then-bail sequence
+itself. `rename.rs` grew by one line, 531 → 532, swapping its half of the
+duplicated guard for a call to it. Neither newly crossed the ceiling.
 
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine

@@ -174,7 +174,7 @@ fn a_wrapped_table_borders_at_the_width_it_lays_its_content_out_at() {
                    | the quick brown fox jumps over the lazy dog | a second rather long cell of prose |\n";
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
-    doc.set_focus(false);
+    doc.set_reveal_mode(false);
     doc.sync_content(&buf);
     doc.set_width(40);
     doc.sync_cursors(&buf, &CursorSet::new(0));

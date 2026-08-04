@@ -6,15 +6,15 @@ use super::*;
 use rune_core::cursor::CursorSet;
 
 #[test]
-fn set_focus_is_idempotent_and_marks_dirty_only_on_change() {
+fn set_reveal_mode_is_idempotent_and_marks_dirty_only_on_change() {
     let mut doc = DocMachine::new();
-    assert_eq!(doc.state(), DocState::Unfocused);
+    assert_eq!(doc.reveal_mode(), RevealMode::Never);
     doc.clear_dirty();
-    doc.set_focus(false);
-    assert!(!doc.is_dirty(), "no-op focus change must not dirty");
-    doc.set_focus(true);
+    doc.set_reveal_mode(false);
+    assert!(!doc.is_dirty(), "no-op reveal-mode change must not dirty");
+    doc.set_reveal_mode(true);
     assert!(doc.is_dirty());
-    assert_eq!(doc.state(), DocState::Focused);
+    assert_eq!(doc.reveal_mode(), RevealMode::AtCursor);
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn set_icons_is_idempotent_and_marks_dirty_only_on_change() {
     doc.clear_dirty();
     // `DocMachine::new` already starts on `IconSet::unicode()` (see its
     // constructor) — re-setting the SAME set the machine already holds
-    // must be a memo no-op, exactly like `set_width`/`set_focus` with an
+    // must be a memo no-op, exactly like `set_width`/`set_reveal_mode` with an
     // unchanged input.
     doc.set_icons(IconSet::unicode());
     assert!(!doc.is_dirty(), "same icon set must not dirty the machine");
@@ -35,7 +35,7 @@ fn set_icons_is_idempotent_and_marks_dirty_only_on_change() {
 #[test]
 fn sync_content_is_a_true_no_op_when_version_is_unchanged() {
     let mut doc = DocMachine::new();
-    doc.set_focus(true); // Decide policies only fire when focused.
+    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
     let buf = Buffer::new("# hello\n");
     doc.sync_content(&buf);
     assert_eq!(doc.built_version, buf.version());
@@ -70,10 +70,10 @@ fn snapshot_short_circuits_when_nothing_changed_between_two_view_calls() {
     // The keystroke-latency regression this test guards: `view()` may be
     // called several times per message batch by sanctioned design, and a
     // cursor-only move changes none of `sync_content`/`set_width`/
-    // `sync_cursors`/`set_focus`'s inputs — the second `snapshot` call
+    // `sync_cursors`/`set_reveal_mode`'s inputs — the second `snapshot` call
     // must be a memo hit, not a second emit + wrap + `expand_tables`.
     let mut doc = DocMachine::new();
-    doc.set_focus(true);
+    doc.set_reveal_mode(true);
     let buf = Buffer::new("# hello\nworld\n");
     let cursors = CursorSet::new(0);
 
@@ -120,25 +120,86 @@ fn sync_cursors_never_bumps_built_version() {
 }
 
 #[test]
-fn unfocused_forces_every_decide_policy_block_rendered() {
+fn reveal_mode_never_forces_every_decide_policy_block_rendered() {
     // This fixture has only a Heading — a `Decide`-policy block, whose
     // reveal follows `ctx.grant`. It does NOT cover Frontmatter/
     // Verbatim, which are pinned Revealed by design regardless of
-    // focus (the reveal-policy table: "Frontmatter, Verbatim | pinned
-    // Revealed (no Decide)") — see
+    // reveal mode (the reveal-policy table: "Frontmatter, Verbatim |
+    // pinned Revealed (no Decide)") — see
     // `frontmatter_and_verbatim_survive_unfocused_as_revealed` below
     // for that intentional exception.
     let mut doc = DocMachine::new();
     let buf = Buffer::new("# hello\n");
     doc.sync_content(&buf);
-    // cursor sits on the heading line, which WOULD reveal if focused.
+    // cursor sits on the heading line, which WOULD reveal under `AtCursor`.
     let cursors = CursorSet::new(2);
     doc.sync_cursors(&buf, &cursors);
     for b in doc.blocks() {
         assert_eq!(
             b.reveal_state(),
             rune_syntax::element::RevealState::Rendered,
-            "unfocused doc must force every Decide-policy block Rendered"
+            "RevealMode::Never must force every Decide-policy block Rendered"
+        );
+    }
+}
+
+#[test]
+fn table_never_forces_reveal_mode_rendered() {
+    // `TableM`'s Decide policy is `cursors.any_in_lines(first_line,
+    // last_line)`, a genuinely different predicate from `HeadingM`'s
+    // `any_on_line` — pin it independently rather than assume the heading
+    // case above covers it.
+    let mut doc = DocMachine::new();
+    let buf = Buffer::new("| Name | Age |\n| --- | --- |\n| Alice | 30 |\n");
+    doc.sync_content(&buf);
+    // cursor sits on the table's own first line, which WOULD reveal it
+    // under `AtCursor`.
+    let cursors = CursorSet::new(0);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Rendered,
+            "RevealMode::Never must force the table block Rendered"
+        );
+    }
+}
+
+#[test]
+fn table_at_cursor_reveals_when_cursor_is_in_its_line_range() {
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    let buf = Buffer::new("| Name | Age |\n| --- | --- |\n| Alice | 30 |\n");
+    doc.sync_content(&buf);
+    // cursor sits on the table's header line — `TableM::sync` decides off
+    // `cursors.any_in_lines(first_line, last_line)`, so any line the table
+    // spans must reveal the whole block.
+    let cursors = CursorSet::new(0);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Revealed,
+            "RevealMode::AtCursor with the cursor in the table's line range must reveal it"
+        );
+    }
+}
+
+#[test]
+fn heading_at_cursor_reveals_when_cursor_is_on_its_line() {
+    let mut doc = DocMachine::new();
+    doc.set_reveal_mode(true); // Decide policies only fire with a live insertion point.
+    let buf = Buffer::new("# hello\n");
+    doc.sync_content(&buf);
+    // cursor sits on the heading line — `HeadingM::sync` decides off
+    // `cursors.any_on_line`, distinct from `TableM`'s `any_in_lines` above.
+    let cursors = CursorSet::new(2);
+    doc.sync_cursors(&buf, &cursors);
+    for b in doc.blocks() {
+        assert_eq!(
+            b.reveal_state(),
+            rune_syntax::element::RevealState::Revealed,
+            "RevealMode::AtCursor with the cursor on the heading's line must reveal it"
         );
     }
 }

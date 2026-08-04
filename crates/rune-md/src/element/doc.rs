@@ -1,4 +1,4 @@
-//! The root machine: owns focus state and the wrap width every downstream
+//! The root machine: owns reveal mode and the wrap width every downstream
 //! element inherits (plan Context, "Root machine"). `DocMachine::sync_cursors`
 //! is the only place child `RevealSm::transition` calls fire during normal
 //! editing (`reveal_all` below drives the same recursion off-editor, for the
@@ -15,7 +15,7 @@ use crate::snapshot::{DisplaySnapshot, ImageDims};
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_syntax::SyntaxSnapshot;
-use rune_syntax::element::{CursorProbe, DocState, InheritCtx, RevealGrant, WrapState};
+use rune_syntax::element::{CursorProbe, InheritCtx, RevealGrant, RevealMode, WrapState};
 use rune_syntax::kind::DocumentKind;
 use rune_syntax::wrap::WrapSnapshot;
 
@@ -57,7 +57,6 @@ pub fn reveal_all(blocks: &mut [Block]) {
     let wrap = WrapState::default();
     let cursors = CursorProbe::default();
     let ctx = InheritCtx {
-        focus: DocState::Focused,
         wrap: &wrap,
         grant: RevealGrant::ForceRevealed,
         cursors: &cursors,
@@ -68,7 +67,7 @@ pub fn reveal_all(blocks: &mut [Block]) {
 }
 
 pub struct DocMachine {
-    state: DocState,
+    reveal_mode: RevealMode,
     wrap: WrapState,
     blocks: Vec<Block>,
     built_version: u64,
@@ -104,7 +103,7 @@ pub struct DocMachine {
     /// `None` only before the first `snapshot` call. `dirty` is the single
     /// guard: every setter that can change what `snapshot` would compute
     /// (`sync_content` on a version change, `set_width`, `sync_cursors`/
-    /// `set_focus` on a reveal-relevant change) sets it, so a `view()` call
+    /// `set_reveal_mode` on a reveal-relevant change) sets it, so a `view()` call
     /// that changed none of those inputs gets the cached clone instead of
     /// re-running emit + wrap + `expand_tables` + the code-region walk.
     cached: Option<ViewSnapshots>,
@@ -124,7 +123,7 @@ impl Default for DocMachine {
 impl DocMachine {
     pub fn new() -> DocMachine {
         DocMachine {
-            state: DocState::Unfocused,
+            reveal_mode: RevealMode::Never,
             wrap: WrapState::default(),
             blocks: Vec::new(),
             // `Buffer::version()` starts at 1 (see rune-core), so 0 can never
@@ -157,21 +156,21 @@ impl DocMachine {
         self.built_version
     }
 
-    /// The single writer of `state` for `DocMachine` — the crate's other
-    /// transition writer (`RevealSm::transition` in `element/mod.rs` is the
-    /// first; this is the second and last).
-    fn transition(&mut self, next: DocState) {
-        let prev = self.state;
-        self.state = next;
+    /// The single writer of `reveal_mode` for `DocMachine` — the crate's
+    /// other transition writer (`RevealSm::transition` in `element/mod.rs`
+    /// is the first; this is the second and last).
+    fn transition(&mut self, next: RevealMode) {
+        let prev = self.reveal_mode;
+        self.reveal_mode = next;
         self.enter_state(prev);
     }
 
-    fn enter_state(&mut self, _prev: DocState) {
+    fn enter_state(&mut self, _prev: RevealMode) {
         self.dirty = true;
     }
 
-    pub fn state(&self) -> DocState {
-        self.state
+    pub fn reveal_mode(&self) -> RevealMode {
+        self.reveal_mode
     }
 
     pub fn wrap(&self) -> WrapState {
@@ -222,13 +221,17 @@ impl DocMachine {
         self.dirty = false;
     }
 
-    pub fn set_focus(&mut self, focused: bool) {
-        let next = if focused {
-            DocState::Focused
+    /// `has_insertion_point` is `Document::has_insertion_point()` — whether
+    /// this document currently has a live insertion point to reveal at, not
+    /// whether its pane has focus (a focused-but-read-only document has no
+    /// insertion point either).
+    pub fn set_reveal_mode(&mut self, has_insertion_point: bool) {
+        let next = if has_insertion_point {
+            RevealMode::AtCursor
         } else {
-            DocState::Unfocused
+            RevealMode::Never
         };
-        if next != self.state {
+        if next != self.reveal_mode {
             self.transition(next);
         }
     }
@@ -320,12 +323,11 @@ impl DocMachine {
     /// disjoint (Gotchas).
     pub fn sync_cursors(&mut self, buf: &Buffer, cursors: &CursorSet) {
         let probe = CursorProbe::new(buf, cursors);
-        let root_grant = match self.state {
-            DocState::Unfocused => RevealGrant::ForceRendered,
-            DocState::Focused => RevealGrant::Decide,
+        let root_grant = match self.reveal_mode {
+            RevealMode::Never => RevealGrant::ForceRendered,
+            RevealMode::AtCursor => RevealGrant::Decide,
         };
         let ctx = InheritCtx {
-            focus: self.state,
             wrap: &self.wrap,
             grant: root_grant,
             cursors: &probe,
@@ -342,7 +344,7 @@ impl DocMachine {
     /// themselves (plan Context, "Emit -> wrap -> snapshot").
     ///
     /// Memoized on `dirty`: a `view()` call that changed none of
-    /// `sync_content`/`set_width`/`sync_cursors`/`set_focus`'s inputs gets a
+    /// `sync_content`/`set_width`/`sync_cursors`/`set_reveal_mode`'s inputs gets a
     /// clone of the last computed `ViewSnapshots` instead of re-running
     /// emit + `WrapMap::sync` + `expand_tables` — commands may call `view()`
     /// (and so `snapshot`) several times per message batch by sanctioned
