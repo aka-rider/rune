@@ -13,7 +13,13 @@ use rune_syntax::SyntaxSpan;
 
 fn lines_for(content: &str, cursor_offset: usize, focused: bool) -> Vec<rune_syntax::SyntaxLine> {
     let (buf, doc) = synced(content, cursor_offset, focused);
-    let (lines, _snap) = emit_with(buf.content(), doc.blocks(), 80, &IconSet::unicode());
+    let (lines, _snap) = emit_with(
+        buf.content(),
+        doc.blocks(),
+        80,
+        &IconSet::unicode(),
+        super::style::text_scope(),
+    );
     lines
 }
 

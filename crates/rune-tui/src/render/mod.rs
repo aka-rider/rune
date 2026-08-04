@@ -8,25 +8,24 @@
 //!
 //! Split for the §1.6 budget: [`cell`] holds the `Cell` type and the
 //! buffer-content -> `Cell` walk (`segment_cells`/`segment_geometry`),
-//! [`blit`] holds the terminal-buffer write, and [`overlay`] holds the
+//! [`blit`] holds the terminal-buffer write, [`code_bg`] holds the
+//! code-region background rectangle, and [`overlay`] holds the
 //! cursor/selection/highlight overlays `build_rows` below applies — all
 //! re-exported here so `render::Cell`/`render::segment_cells`/`render::blit`
 //! stay the paths every other module already calls through.
 
 mod blit;
 mod cell;
+mod code_bg;
 pub(crate) mod decor;
 pub mod image;
 mod overlay;
 pub mod title;
 
-use std::ops::Range;
-
 use ratatui::Frame;
 use ratatui::widgets::{Block, BorderType};
 
 use rune_md::element::doc::ViewSnapshots;
-use rune_syntax::ScopeId;
 
 use crate::app::App;
 use crate::banner;
@@ -73,31 +72,33 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         })
         .collect();
 
-    // Plan WP5.S5: the tree-sitter overlay paints token colours BEFORE the
-    // cursor overlays below, so a selection background or the caret's
-    // reverse-video always wins over a token's foreground. D6 (syntax-
-    // highlighting-latency plan): a code document with a retained tree is
-    // queried fresh every frame, scoped to exactly the bytes just rendered
-    // — `visible_byte_range` derives the same window `apply_highlight_
-    // spans` itself would scan, so the query never does wasted work outside
-    // it. `highlight_range` returning `None` (the language no longer
-    // resolves against the registry — should not happen for a tree `parse`
-    // itself produced, but not assumed) degrades to the stored fallback
-    // spans exactly like a document with no tree at all.
-    let queried;
-    let spans: &[(Range<usize>, ScopeId)] = match &doc.highlight.tree {
-        Some(tree) => match overlay::visible_byte_range(&rows)
-            .and_then(|range| rune_ts::highlight_range(tree, range))
-        {
-            Some(result) => {
-                queried = result.spans;
-                &queried
-            }
-            None => &doc.highlight.spans,
-        },
-        None => &doc.highlight.spans,
+    // A code region's background is a RECTANGLE, painted before any token
+    // colour so a foreground lands on top of it rather than being
+    // overwritten by it. It is deliberately driven off the display
+    // snapshot's own `code_regions` (the one definition of code, shared with
+    // the highlight scheduler, computed once per document change) — never
+    // `doc.highlight` — so no highlight reply can reflow a row and two
+    // message-free renders agree.
+    code_bg::paint_code_background(
+        &mut rows,
+        view,
+        viewport.scroll_row,
+        viewport.width,
+        app.theme.chrome.code_bg,
+    );
+
+    // The token overlay paints BEFORE the cursor overlays below, so a
+    // selection background or the caret's reverse-video always wins over a
+    // token's foreground. Every region with a retained tree is queried fresh
+    // each frame, scoped to exactly the bytes just rendered:
+    // `visible_byte_range` derives the same window the span overlay itself
+    // scans, so the query never does work outside it. This is the whole
+    // parse -> render seam — a fence and a whole file reach it identically.
+    let spans = match overlay::visible_byte_range(&rows) {
+        Some(range) => crate::highlight::visible_spans(doc, range),
+        None => Vec::new(),
     };
-    overlay::apply_highlight_spans(&mut rows, spans, &app.theme);
+    overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
 
     overlay::apply_cursor_overlays(
         doc.shows_caret(),

@@ -56,6 +56,14 @@ pub struct ChromeStyles {
     pub special: Color,
     pub subtle: Color,
     pub selection_bg: Color,
+    /// The background painted behind a whole code REGION, as a rectangle,
+    /// rather than tagged onto its tokens. It lives here beside
+    /// `selection_bg` because it is a region colour, not a token scope: a
+    /// span's `bg` can only colour cells that exist, so it leaves a code
+    /// block's blank lines and the ragged space past each short line
+    /// uncovered. The render module's code-background pass is its one
+    /// consumer.
+    pub code_bg: Color,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -101,6 +109,7 @@ impl Theme {
             special: c(p.mauve),
             subtle: c(p.overlay1),
             selection_bg: c(p.surface2),
+            code_bg: c(p.surface0),
         };
 
         let table = scope_table();
@@ -137,7 +146,8 @@ impl Theme {
     /// merged onto the render buffer field-wise (`Style::patch` only
     /// touches fields the patching style actually sets), so a scope that
     /// carries a background here would silently overwrite whatever the base
-    /// cell had — a markdown-fence body's own background, for one. Every
+    /// cell had — the code-region background rectangle painted underneath
+    /// it, or an inline code span's own `markup.raw.inline` chip. Every
     /// overlay consumer routes through this instead of `scope_style`.
     pub fn overlay_scope_style(&self, id: ScopeId) -> Style {
         Style {
@@ -168,22 +178,34 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         "markup.strong" => base.add_modifier(Modifier::BOLD),
         "markup.italic" => base.add_modifier(Modifier::ITALIC),
         "markup.strikethrough" => base.add_modifier(Modifier::CROSSED_OUT),
-        "markup.raw.inline" => base.fg(c(p.peach)).bg(c(p.surface1)),
-        "markup.raw.block" => base.fg(c(p.text)).bg(c(p.surface0)),
+        // Sapphire, not peach: peach is `markup.heading.2`, so an inline
+        // code span and an H2 title used to render in the same warm
+        // orange — code read as structure and cluttered the prose around
+        // it. Sapphire is a cold cyan-blue no other markdown scope claims,
+        // and stays distinct from `markup.link`'s blue (also underlined)
+        // and heading 5's teal. The `surface1` chip is what makes a span
+        // legible mid-prose and stays.
+        "markup.raw.inline" => base.fg(c(p.sapphire)).bg(c(p.surface1)),
+        // Foreground only. A code block's background is a REGION colour
+        // (`ChromeStyles::code_bg`), painted as a rectangle by its own
+        // render pass: a span's `bg` can only reach cells that exist, so it
+        // left a block's blank lines bare and stopped at each short line's
+        // last character.
+        "markup.raw.block" => base.fg(c(p.text)),
         "markup.link" => base.fg(c(p.blue)).add_modifier(Modifier::UNDERLINED),
         "markup.quote" => base.fg(c(p.overlay1)).add_modifier(Modifier::ITALIC),
         "markup.quote.marker" => base.fg(c(p.overlay0)),
         "markup.list" => base.fg(c(p.overlay1)),
         "markup.list.checked" => base.fg(c(p.green)),
-        // Raw ANSI-256 indices, deliberately NOT routed through the
-        // Catppuccin palette like every scope above. Table chrome has to
-        // match the Go reference's own table styles byte-for-byte in both
-        // truecolor and quantized rendering — the index IS the spec here,
-        // and a hue-derived approximation would break screen parity.
-        "markup.table.header" => base.fg(Color::Indexed(252)).add_modifier(Modifier::BOLD),
-        "markup.table" => base.fg(Color::Indexed(252)),
-        "markup.table.separator" => base.fg(Color::Indexed(240)),
-        "markup.table.border" => base.fg(Color::Indexed(240)),
+        // Table chrome reads as body text with dimmer rules around it, so
+        // it is expressed in palette terms like every scope above rather
+        // than as raw ANSI indices. The literals these replace bypassed
+        // `c(..)` entirely, which meant the quantized path stayed indexed
+        // only by accident of the constants already being indexed.
+        "markup.table.header" => base.fg(c(p.text)).add_modifier(Modifier::BOLD),
+        "markup.table" => base.fg(c(p.text)),
+        "markup.table.separator" => base.fg(c(p.surface2)),
+        "markup.table.border" => base.fg(c(p.surface2)),
         "punctuation.special" => base.fg(c(p.overlay0)),
         "comment" => base.fg(c(p.overlay1)),
         // Unreachable in practice: `name` is always drawn from this same
@@ -199,8 +221,8 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
 /// [`rune_syntax::scope::CODE_SCOPES`]'s canonical scope -> `Style` mapping
 /// (Catppuccin Mocha), for tokens a tree-sitter producer tags. Sets only
 /// `fg` and `Modifier` — never `bg` — because a later render pass
-/// `Style::patch`es this onto a cell that may already carry a
-/// `markup.raw.block` background, and a `bg` here would clobber it. Every
+/// `Style::patch`es this onto a cell that already carries the code region's
+/// own background rectangle, and a `bg` here would clobber it. Every
 /// colour goes through `c(..)` so the quantized (256-colour) construction
 /// path never surfaces a raw `Color::Rgb`.
 fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style {
@@ -289,11 +311,45 @@ mod tests {
     }
 
     #[test]
+    fn code_foreground_never_matches_a_heading() {
+        // Code is content; a heading is structure. When the two share a
+        // foreground the reader cannot tell them apart at a glance —
+        // inline code was once byte-identical to `markup.heading.2`, and
+        // read as a title mid-sentence. The rule is stated instead of a
+        // hex being pinned, so a future palette swap stays free to move
+        // any of these colours, just not back on top of each other.
+        for quantized in [false, true] {
+            let theme = Theme::catppuccin_mocha(quantized);
+            let table = scope_table();
+            let fg_of = |name: &str| table.resolve(name).and_then(|id| theme.scope_style(id).fg);
+            let headings: Vec<(String, Option<Color>)> = (1..=6)
+                .map(|lvl| {
+                    let name = format!("markup.heading.{lvl}");
+                    let fg = fg_of(&name);
+                    (name, fg)
+                })
+                .collect();
+            for code in ["markup.raw.inline", "markup.raw.block"] {
+                let code_fg = fg_of(code);
+                assert!(code_fg.is_some(), "{code} has no foreground at all");
+                for (heading, heading_fg) in &headings {
+                    assert_ne!(
+                        code_fg, *heading_fg,
+                        "{code} shares its foreground with {heading}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn code_scopes_never_carry_a_background() {
-        // decision 2: a later render pass `Style::patch`es a code-token
-        // style onto a cell that may already carry a `markup.raw.block`
-        // background — `code_scope_style` must never set `bg`, or it would
-        // clobber that background instead of layering over it.
+        // A later render pass `Style::patch`es a code-token style onto a
+        // cell that already carries a background: the code region's own
+        // rectangle behind every code row, and `markup.raw.inline`'s
+        // `surface1` chip wherever a code token is painted over an inline
+        // span. `code_scope_style` must never set `bg`, or it would clobber
+        // that background instead of layering over it.
         let theme = Theme::catppuccin_mocha(false);
         let table = scope_table();
         for name in CODE_SCOPES {

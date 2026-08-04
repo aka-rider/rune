@@ -7,6 +7,11 @@
 //! alongside a wrap segment, never a substitute for the segment's own
 //! spans, so it never claims a byte the caret, selection, or click
 //! hit-testing could resolve to.
+//!
+//! Decoration also marks where a row's CONTENT begins: the code-region
+//! background rectangle fills from `decor_cell_width` rightwards, which is
+//! what puts a blockquoted fence's background after the quote bar rather
+//! than under it.
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -45,10 +50,11 @@ pub fn decor_row_cells(theme: &Theme, row: &DisplayRow) -> Vec<Cell> {
 }
 
 /// `row`'s own decoration width in terminal cells — `0` for an undecorated
-/// row. The single source both `apply_cursor_overlays` (shifting a caret's
-/// `visual_col` past the decor prefix) and `commands::mouse::offset_at`
-/// (subtracting the same prefix before its cell walk) read, so the two can
-/// never disagree about how wide a given row's decoration rendered.
+/// row. The single source `apply_cursor_overlays` (shifting a caret's
+/// `visual_col` past the decor prefix), `commands::mouse::offset_at`
+/// (subtracting the same prefix before its cell walk) and the code-region
+/// background fill (starting at the first content column) all read, so none
+/// of them can disagree about how wide a given row's decoration rendered.
 pub fn decor_cell_width(row: &DisplayRow) -> u16 {
     row.decor.as_ref().map(|d| d.cells as u16).unwrap_or(0)
 }

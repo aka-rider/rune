@@ -146,9 +146,10 @@ fn super_s_on_an_image_document_saves_nothing_and_never_focuses_the_title() {
     );
 }
 
-/// Plan WP4.S9: a tab switch onto an image document must never dispatch a
-/// highlight `Cmd` — `resolve_highlight_source` excludes `DocumentKind::
-/// Image` explicitly.
+/// A tab switch onto an image document must never dispatch a highlight
+/// `Cmd`: an image document has no code region at all, so the scheduler
+/// finds nothing to parse. The view's own `code_regions` are where that is
+/// decided, which is why no highlight-specific image guard exists.
 #[test]
 fn switching_to_an_image_tab_dispatches_no_highlight_cmd() {
     let (mut app, image_id) = app_with_image();

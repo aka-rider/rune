@@ -37,6 +37,10 @@ perf-guard:
 	    --ignored --exact --test-threads=1 full_pipeline_5k_under_100ms
 	$(CARGO) test -p rune-tui --release --test perf_guard -- \
 	    --ignored --exact --test-threads=1 keystroke_view_cost_under_budget_on_a_5k_line_code_document
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_5k_line_code_document
+	$(CARGO) test -p rune-tui --release --test perf_guard -- \
+	    --ignored --exact --test-threads=1 render_frame_cost_under_budget_on_a_many_fence_markdown_document
 
 # `-p rune-fuzz` (NOT --workspace) is load-bearing: under --workspace, cargo
 # feature-unifies rune-md's dev-dependency on itself and compiles rune-md with

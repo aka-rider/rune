@@ -1,5 +1,4 @@
-//! Split off `highlight.rs` (WP11, §1.6): end-to-end highlight-then-render
-//! checks. The painter resolution itself (a hand-built `(rows, spans)`
+//! End-to-end highlight-then-render checks. The painter resolution itself (a hand-built `(rows, spans)`
 //! pair, outer-first overwrite, `buf_offset`/`width` left untouched) is
 //! unit-tested inside `render/overlay.rs`'s own `#[cfg(test)]` module
 //! instead: its target, `apply_highlight_spans`, is `pub(super)` like every
@@ -16,12 +15,10 @@
 
 mod highlight_common;
 
-use std::time::Duration;
-
 use highlight_common::{app_for, type_one_char_at_end};
 use rune_syntax::scope::scope_table;
 use rune_tui::app;
-use rune_tui::runtime::{Effects, HighlightPayload, Msg};
+use rune_tui::runtime::Effects;
 use rune_tui::testgrid;
 
 #[test]
@@ -30,24 +27,17 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
     app.doc_mut(id).expect("doc").viewport.set_size(40, 10);
-    let version = app.doc(id).expect("doc").buffer.version();
-
-    let result = rune_ts::highlight("rust", content, Duration::from_secs(5));
-    assert!(
-        result.is_some(),
-        "a trivial rust source must highlight within a generous budget"
-    );
+    app.sync_view();
 
     let mut effects = Effects::default();
-    app::update(
-        &mut app,
-        Msg::Highlighted {
-            doc: id,
-            version,
-            result: result.map(HighlightPayload::Spans),
-        },
-        &mut effects,
-    );
+    type_one_char_at_end(&mut app, &mut effects);
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("the highlight cmd always replies");
+    let mut effects = Effects::default();
+    app::update(&mut app, msg, &mut effects);
 
     app.sync_view();
     let rendered = testgrid::grid(&app, 40, 10).join("\n");
@@ -76,13 +66,14 @@ fn a_real_highlight_reply_colours_a_code_document_without_changing_its_text() {
     );
 }
 
-/// Plan WP6.S5, bullet 2: rendering a fenced markdown document leaves
-/// every cell inside the fence carrying a non-`None` background — the
-/// `markup.raw.block` fence background survives the highlight overlay's
-/// `patch` (plan decision 2), since `code_scope_style` sets only `fg` and
-/// never `.bg(..)` (WP1.S4).
+/// An overlay must PATCH a cell's style, never replace it: rendering a
+/// fenced markdown document leaves every cell inside the fence still
+/// carrying the code region's background rectangle after the highlight
+/// overlay has painted token foregrounds over it. `code_scope_style` sets
+/// only `fg` and never `.bg(..)`, and `Theme::overlay_scope_style` strips
+/// any `bg` a scope might carry, which together are what make that true.
 #[test]
-fn fence_background_survives_the_highlight_overlay_patch() {
+fn code_background_survives_the_highlight_overlay_patch() {
     let content = "Intro paragraph.\n\n```rust\nfn main() {}\n```\n\nOutro.\n";
     let mut app = app_for(content, "/x/notes.md");
     app.sync_view();
@@ -97,23 +88,23 @@ fn fence_background_survives_the_highlight_overlay_patch() {
         .cmds
         .remove(0)
         .run()
-        .expect("fence_highlight_cmd always replies");
+        .expect("the highlight cmd always replies");
     let mut effects2 = Effects::default();
     app::update(&mut app, msg, &mut effects2);
 
     app.sync_view();
     let buf = testgrid::draw(&app, 40, 12);
-    let raw_block_bg = app
-        .theme
-        .scope_style(
-            scope_table()
-                .resolve("markup.raw.block")
-                .expect("known scope"),
-        )
-        .bg;
-    assert!(
-        raw_block_bg.is_some(),
-        "the fence background style itself must carry a bg"
+    let code_bg = Some(app.theme.chrome.code_bg);
+    assert_eq!(
+        app.theme
+            .scope_style(
+                scope_table()
+                    .resolve("markup.raw.block")
+                    .expect("known scope"),
+            )
+            .bg,
+        None,
+        "the code background is a region rectangle, never a span bg"
     );
 
     // Scoped to the fence TEXT's own columns, not the whole row: `geo.
@@ -143,8 +134,8 @@ fn fence_background_survives_the_highlight_overlay_patch() {
                 let cell = buf.cell((x, y)).expect("just matched above");
                 assert_eq!(
                     cell.style().bg,
-                    raw_block_bg,
-                    "fence content cell at column {x} lost its markup.raw.block background"
+                    code_bg,
+                    "fence content cell at column {x} lost the code region's background"
                 );
             }
         }

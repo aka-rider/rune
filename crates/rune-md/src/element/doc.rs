@@ -6,9 +6,10 @@
 //! changed, and reveal transitions never touch `built_version` (Gotchas:
 //! "Reveal must never bump the buffer version").
 
-use std::ops::Range;
+use std::sync::Arc;
 
 use crate::element::block::Block;
+use crate::element::code_region::{self, CodeRegion};
 use crate::icons::IconSet;
 use crate::snapshot::{DisplaySnapshot, ImageDims};
 use rune_core::buffer::Buffer;
@@ -30,6 +31,17 @@ pub struct ViewSnapshots {
     pub syntax: SyntaxSnapshot,
     pub wrap: WrapSnapshot,
     pub display: DisplaySnapshot,
+    /// Every region of code in the document this view describes — the one
+    /// value the highlight scheduler and the background painter both read,
+    /// so neither walks the block tree itself.
+    ///
+    /// Behind an `Arc` because a `ViewSnapshots` is cloned out of the
+    /// `snapshot` memo several times per message batch (commands call
+    /// `view()` freely) while it is computed only when the document
+    /// actually changes: an owned `Vec` here would trade one walk per frame
+    /// for one deep copy per `view()` call, and a whole code document's
+    /// region carries one `Range` per buffer line.
+    pub code_regions: Arc<[CodeRegion]>,
 }
 
 /// Force every block (and, transitively, every nested block/inline) into
@@ -94,7 +106,7 @@ pub struct DocMachine {
     /// (`sync_content` on a version change, `set_width`, `sync_cursors`/
     /// `set_focus` on a reveal-relevant change) sets it, so a `view()` call
     /// that changed none of those inputs gets the cached clone instead of
-    /// re-running emit + wrap + `expand_tables`.
+    /// re-running emit + wrap + `expand_tables` + the code-region walk.
     cached: Option<ViewSnapshots>,
     /// Counts actual `rebuild` calls (never memo hits) — test-only
     /// instrumentation for asserting `snapshot`'s memoization, not a
@@ -170,22 +182,36 @@ impl DocMachine {
         &self.blocks
     }
 
-    /// Every fenced code block's language tag and per-line content byte
-    /// ranges (plan WP6.S1) — walked recursively into blockquotes and list
-    /// items so a fence nested inside either is found too, not only a
-    /// top-level one. Returns `CodeFenceM::content_lines` itself, ONE
-    /// `Range` per physical content line, never collapsed into a single
-    /// `first.start..last.end` span: a container's own repeating prefix
-    /// (`"> "`, a list marker's indent) sits in the GAP between two
-    /// consecutive lines' buffer ranges, so a single contiguous range
-    /// covering both would include it, while the per-line list lets the
-    /// caller reconstruct a prefix-free source and map spans back through
-    /// the gaps instead. A fence with an empty `language` or no content
-    /// lines contributes nothing.
-    pub fn code_fences(&self) -> Vec<(&str, Vec<Range<usize>>)> {
-        let mut out = Vec::new();
-        collect_code_fences(&self.blocks, &mut out);
-        out
+    /// Every region of code in this document — the one definition every
+    /// downstream consumer reads, whether it highlights the region or merely
+    /// paints a background behind it. Private: `rebuild` calls it once per
+    /// document change and publishes the result on `ViewSnapshots`, which is
+    /// where every consumer reads it from. Walking the tree per consumer (and
+    /// so, for the background painter, per frame) is exactly what that
+    /// publication exists to prevent.
+    ///
+    /// What counts depends entirely on `kind`. A `Code` document is exactly
+    /// one region spanning the whole buffer; a `Markdown` document is one
+    /// region per fenced block (found recursively, so a fence nested in a
+    /// blockquote or list item counts) plus every indented code block; a
+    /// `Plain` or `Image` document has none. A region whose `info` is empty
+    /// is still returned — see `CodeRegion` for why, and for why `content`
+    /// is one range per physical line rather than one contiguous span.
+    ///
+    /// Takes the buffer rather than reading a mirrored copy: `DocMachine`
+    /// owns no buffer (every content-reading method here is handed one), and
+    /// a `Code` document's regions come from the buffer's own line structure
+    /// because a non-markdown kind is never parsed into `blocks` at all.
+    fn code_regions(&self, buf: &Buffer) -> Arc<[CodeRegion]> {
+        match self.kind {
+            DocumentKind::Code(lang) => Arc::from([code_region::whole_document(lang, buf)]),
+            DocumentKind::Markdown => {
+                let mut out = Vec::new();
+                code_region::collect(&self.blocks, buf, &mut out);
+                Arc::from(out)
+            }
+            DocumentKind::Plain | DocumentKind::Image => Arc::from([]),
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -345,8 +371,13 @@ impl DocMachine {
         // its rows directly rather than deriving them from `wrap`, since an
         // empty buffer has no wrap rows to derive an image's reserved
         // layout from at all.
-        let (lines, syntax) =
-            crate::emit::emit_with(buf.content(), &self.blocks, self.wrap.width, &self.icons);
+        let (lines, syntax) = crate::emit::emit_with(
+            buf.content(),
+            &self.blocks,
+            self.wrap.width,
+            &self.icons,
+            crate::emit::style::base_scope(self.kind),
+        );
         let wrap = rune_syntax::wrap::WrapMap::new(self.wrap.width).sync(buf.content(), &lines);
         // An image document synthesizes its rows outright — there is no
         // buffer text to emit or wrap. Every other kind goes through the
@@ -363,6 +394,7 @@ impl DocMachine {
             syntax,
             wrap,
             display,
+            code_regions: self.code_regions(buf),
         }
     }
 
@@ -380,30 +412,6 @@ impl DocMachine {
     #[cfg(any(test, feature = "strict-invariants", feature = "fuzz-hooks"))]
     pub fn force_rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         self.rebuild(buf)
-    }
-}
-
-/// `DocMachine::code_fences`'s own recursion — descends into `Blockquote`
-/// and `List` children (a fence can sit inside either), skipping every
-/// other block kind since none of them can contain a nested `CodeFence`.
-fn collect_code_fences<'a>(blocks: &'a [Block], out: &mut Vec<(&'a str, Vec<Range<usize>>)>) {
-    for block in blocks {
-        match block {
-            Block::CodeFence(cf) => {
-                if cf.language.is_empty() || cf.content_lines.is_empty() {
-                    continue;
-                }
-                let lines = cf.content_lines.iter().map(|l| l.start..l.end).collect();
-                out.push((cf.language.as_str(), lines));
-            }
-            Block::Blockquote(bq) => collect_code_fences(&bq.children, out),
-            Block::List(list) => {
-                for item in &list.items {
-                    collect_code_fences(&item.children, out);
-                }
-            }
-            _ => {}
-        }
     }
 }
 

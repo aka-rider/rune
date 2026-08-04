@@ -25,13 +25,10 @@ use rune_vfs::{DirEntry, Vfs};
 
 use crate::app::{self, App};
 use crate::document::DocumentId;
+use crate::highlight::HighlightReply;
 use crate::keymap::{self, KeyInput};
 use crate::pointer::MouseInput;
 use crate::term::Guard;
-
-/// Re-exported so a consumer of `Msg::Highlighted` can name the payload
-/// type without taking its own dependency on the producer crate.
-pub use rune_ts::HighlightResult;
 
 /// Where a `Msg::ClipboardRead`'s text is destined. Captured when the
 /// `pbpaste` `Cmd` is spawned (`clipboard::pbpaste_cmd`), never resolved
@@ -152,20 +149,19 @@ pub enum Msg {
         result: Result<Vec<u8>, String>,
         anchor: Option<rune_nav::Anchor>,
     },
-    /// A background highlight call completed (plan WP5.S2; payload split in
-    /// two by the syntax-highlighting-latency plan's WP3, D6). `result: None`
-    /// means NO RESULT — the parse budget elapsed, the language was
-    /// unrecognised, or the parse failed — and is distinguishable from
-    /// `Some(..)` carrying an empty span list, a real empty result: `None`
-    /// must leave the document's previously stored `tree`/`spans` untouched,
-    /// or a document whose parse is slower than the budget would lose its
-    /// colours on every keystroke and never regain them. `version` is the
-    /// buffer version the highlight ran against; a reply whose `version` no
-    /// longer matches the live buffer is dropped the same way.
+    /// A background highlight call completed. `result: None` means NO
+    /// RESULT — not one region produced anything, because every parse
+    /// budget elapsed or no language resolved — and is distinguishable from
+    /// `Some(..)` carrying empty payloads, a real empty result: `None` must
+    /// leave every region's stored tree/spans untouched, or a document whose
+    /// parse is slower than the budget would lose its colours on every
+    /// keystroke and never regain them. `version` is the buffer version the
+    /// highlight ran against; a reply whose `version` no longer matches the
+    /// live buffer is dropped the same way.
     Highlighted {
         doc: DocumentId,
         version: u64,
-        result: Option<HighlightPayload>,
+        result: Option<HighlightReply>,
     },
     /// An image document's background decode completed (plan WP5.S1),
     /// routed to `graphics::handle_image_decoded`. `generation` echoes
@@ -178,18 +174,6 @@ pub enum Msg {
     },
     Error(String),
     Quit,
-}
-
-/// `Msg::Highlighted`'s payload (D6): a whole code document's background
-/// parse retains the `Tree` for per-frame viewport queries; a markdown
-/// document's fences (and the session fuzzer's injected hostile spans, which
-/// have no way to synthesize a `ParsedTree`) keep flowing through the
-/// existing span list. `dispatch::handle_highlighted` stores whichever arm
-/// arrived into the matching `HighlightState` field.
-#[derive(Debug)]
-pub enum HighlightPayload {
-    Tree(rune_ts::ParsedTree),
-    Spans(HighlightResult),
 }
 
 /// Why a `Msg::DirLoaded` was requested (plan WP4.S4) — `explorer::
@@ -240,10 +224,10 @@ pub enum CmdKind {
     /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
     /// be spawned from a fuzz run.
     OpenExternal,
-    /// A tree-sitter parse (`rune_ts::parse`, whole code documents,
-    /// [`PARSE_BUDGET`]) or highlight query run (fences, [`HIGHLIGHT_BUDGET`])
-    /// — plan WP5.S2, budgets split by the syntax-highlighting-latency
-    /// plan's D5. Off-thread per §5.4: a large document's parse must never
+    /// A tree-sitter parse (`rune_ts::parse`) of every code region of one
+    /// document that needs one, each bounded by [`PARSE_BUDGET`] and all of
+    /// them together by [`PASS_BUDGET`].
+    /// Off-thread per §5.4: a large region's parse must never
     /// block the main loop, and grammar crashes (`ts_assert`) are
     /// architecturally avoided rather than caught (CONSTITUTION §1.3) —
     /// every parse is a full parse, never an incremental reparse fed a
@@ -502,18 +486,17 @@ pub fn read_file_cmd(
 // `bootstrap::`.
 mod bootstrap;
 
-// The tree-sitter highlight `Cmd` constructors (`highlight_cmd`, `fence_
-// highlight_cmd`, plus `HIGHLIGHT_BUDGET`/`PARSE_BUDGET`) moved to
-// `runtime::highlight_cmd` (§1.6 budget) — re-exported below so every
-// existing `runtime::` call site keeps working unchanged.
+// The tree-sitter highlight `Cmd` constructor and the region pass behind it
+// moved to `runtime::highlight_cmd` (§1.6 budget) — re-exported below so
+// every existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
-pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, fence_highlight_cmd};
-pub use highlight_cmd::{HIGHLIGHT_BUDGET, PARSE_BUDGET, highlight_cmd};
+pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, PassBudget, highlight_cmd, run_regions};
+pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 
 // The comrak reveal-emit reuse path a ```markdown fence highlights through
-// (plan WP6.S3) — its own file since it pulls in `rune_md::parse`/`emit`,
-// a dependency `highlight_cmd` itself has no other reason to carry. Reached
-// only from `highlight_cmd::run_fence_highlight`, never re-exported.
+// — its own file since it pulls in `rune_md::parse`/`emit`, a dependency
+// `highlight_cmd` itself has no other reason to carry. Reached only from
+// `highlight_cmd::run_regions`, never re-exported.
 mod md_fence;
 
 // The snapshot-autosave debounce's one rearmable timer thread (plan
