@@ -258,6 +258,22 @@ of how each side renders:
   `cmd/` code, so left unfixed rather than forcing a speculative patch
   into either the dependency or the renderer.
 
+- **Reveal root grant on a read-only document (recorded by reasoning, not
+  verified by a parity run — see below).** The Rust port's reveal root
+  grant now keys off `Document::has_insertion_point()` — focused AND not
+  read-only — so a read-only document's invisible cursor never reveals raw
+  markdown underneath it. Go's `PlainSync` picks `Sync` vs `SyncNoReveal` by
+  focus alone, with no read-only term at all, so Go still reveals in a
+  read-only document. Most visible on the help document: landing the cursor
+  in a key table drops the box-drawn Grid layout and prints the raw
+  `| Key | Action |` source row instead, something the Rust port's help
+  document never does. Go also has no user-facing read-only toggle at all
+  (its `SetReadOnly` is wired only for help/merge/chat, never a keystroke),
+  so the Rust port's `⌃P` reading-view toggle has no Go counterpart to
+  diverge from — the whole chord is Rust-only. This entry is written from
+  reading both sides' code, the same way the rest of this section is; unlike
+  several entries above it, it has not been confirmed by an actual
+  `make parity` run against this branch, and that run has not been done.
 - **Link following and URL autolinking.** The `links.md` fixture is
   excluded from the grid gate: Rust and Go deliberately disagree here.
   - **Bare-URL autolinking.** Rust enables comrak's `autolink` extension,

@@ -18,6 +18,10 @@
 
 - [ ] **A large document wedges startup at 100% CPU with no partial render and no progress feedback.** Observed: a 22 MB markdown file never reached the message loop; the editor shows nothing until its first message arrives.
 
+- [ ] **Reading view has thin on-screen feedback.** Entering or leaving reading view posts no status message — only the `ReadOnly::Always` refusal does — and there is no read-only indicator anywhere in the title, breadcrumb or tab strip; the sole affordance is the footer hint. That hint is the last entry in `GLOBAL_BINDINGS`, so it is the first global hint `footer_hints.rs`'s greedy prefix-walk truncation drops: summing the hint-entry widths for Editor focus, `⌃P reading` sits at cumulative width 105 cells, and `footer::draw` reserves 11 cells for the `Ln 1, Col 1` readout, so the hint needs a terminal at least 116 columns wide to render at all — at the default 80 columns the row stops after `^K hide pane`. Still discoverable through the F1 help document, which lists the whole binding table regardless of width. A status message and a persistent indicator were both considered for this pass and deliberately not added.
+
+- [ ] **`crates/rune-tui/tests/chrome.rs` was not updated for the reading-view chord, though the implementation plan predicted it would need to be.** The plan called out its two width-sensitive tests, `default_footer_hints_omit_the_aliased_quit_chord` and `footer_global_tail_survives_truncation_with_explorer_focused`, as needing changes once the new binding lengthened the hint row — "expected, not flake". They were not touched, and they still pass, because both assert via `contains` rather than a fixed width or hint count, so the row lengthening the plan anticipated is invisible to them. Recorded so the next person doesn't go looking for a missing change that was never needed.
+
 ## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
 
 ## Lists
