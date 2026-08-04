@@ -32,7 +32,10 @@ impl App {
     /// leaves it the way ⌃P leaves reading view, so it alone is refused by
     /// either.
     pub fn refuse_if_preview(&mut self, id: DocumentId) -> bool {
-        if !self.doc(id).is_some_and(crate::document::Document::is_preview) {
+        if !self
+            .doc(id)
+            .is_some_and(crate::document::Document::is_preview)
+        {
             return false;
         }
         if let Some(message) = ReadOnly::Preview.refusal_message() {
