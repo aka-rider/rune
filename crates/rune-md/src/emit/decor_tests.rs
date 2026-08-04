@@ -195,6 +195,88 @@ fn nested_blockquote_stacks_one_bar_piece_per_marker_outermost_first() {
     );
 }
 
+// --- a heading leading a list item wins over the item's own bullet ----
+
+#[test]
+fn atx_heading_leading_a_list_item_suppresses_the_bullet() {
+    for content in ["- # h\n", "- ## h\n"] {
+        let lines = lines_for(content, content.len(), false); // unfocused: Rendered
+        let decor = lines[0]
+            .decor
+            .as_ref()
+            .expect("the heading icon must still decorate the row");
+        assert_eq!(
+            decor.pieces.len(),
+            1,
+            "only the heading icon piece, no bullet, for {content:?}"
+        );
+    }
+}
+
+#[test]
+fn ordered_heading_leading_a_list_item_suppresses_the_bullet() {
+    let content = "1. # h\n";
+    let lines = lines_for(content, content.len(), false);
+    let decor = lines[0]
+        .decor
+        .as_ref()
+        .expect("the heading icon must still decorate the row");
+    assert_eq!(decor.pieces.len(), 1, "no bullet piece stacked on top");
+}
+
+#[test]
+fn heading_on_a_later_row_than_the_marker_leaves_the_bullet_intact() {
+    let content = "- text\n\n  # h\n";
+    let lines = lines_for(content, content.len(), false);
+    let marker_decor = lines[0]
+        .decor
+        .as_ref()
+        .expect("the marker row must keep its bullet");
+    assert_eq!(marker_decor.pieces.len(), 1);
+    assert!(
+        !marker_decor.pieces[0].first.contains('#'),
+        "the marker row's piece must be the bullet, not a heading glyph"
+    );
+
+    let heading_row = lines
+        .iter()
+        .position(|l| joined_text(l, content).contains('h'))
+        .expect("the heading's own row");
+    assert_ne!(
+        heading_row, 0,
+        "the heading must sit on its own row, not the marker's"
+    );
+    assert!(
+        lines[heading_row].decor.is_some(),
+        "the heading's own row still carries its icon decor"
+    );
+}
+
+#[test]
+fn task_item_is_unaffected_by_the_heading_wins_rule() {
+    let content = "- [ ] x\n";
+    let lines = lines_for(content, content.len(), false);
+    assert!(
+        lines[0].decor.is_none(),
+        "a task item still carries no bullet decor"
+    );
+}
+
+#[test]
+fn plain_list_item_keeps_its_bullet_control() {
+    let content = "- text\n";
+    let lines = lines_for(content, content.len(), false);
+    assert!(lines[0].decor.is_some(), "a plain item keeps its bullet");
+}
+
+#[test]
+fn nested_list_items_each_keep_their_own_depth_bullet_control() {
+    let content = "- a\n  - b\n";
+    let lines = lines_for(content, content.len(), false);
+    assert!(lines[0].decor.is_some());
+    assert!(lines[1].decor.is_some());
+}
+
 #[test]
 fn hr_inside_a_blockquote_keeps_the_bar_piece_ahead_of_the_rule() {
     let content = "> ---\n";
