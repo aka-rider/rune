@@ -19,4 +19,16 @@ Some text under H2.
 
 ## A heading with **bold** and `code` inside it
 
+Setext heading level one
+=========================
+
+Setext heading level two
+-------------------------
+
+> Setext inside a blockquote
+> ===========================
+
+- Setext inside a list item
+  =========================
+
 Trailing paragraph after the last heading.
