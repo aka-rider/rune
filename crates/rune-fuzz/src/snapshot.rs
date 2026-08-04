@@ -66,14 +66,15 @@ pub struct Snapshot {
     /// report couldn't even show what the field held when a title-path
     /// invariant tripped.
     pub title_text: String,
-    /// `app.active_doc().read_only` — the virtual Help document
+    /// `doc.is_read_only()` — the virtual Help document
     /// (`workspace::toggle_help`, reachable now that `F1` is in
-    /// `arb_any_keycode`, CODE-REVIEW.md rune-fuzz finding 9) is the one
-    /// live `read_only` document Phase 1 actually mints; `PASTE-VERBATIM`
-    /// needs this to tell "production correctly refused the edit" apart
-    /// from "production silently dropped it" (a paste into a read-only
-    /// document is the former, by design — `Document::read_only` is no
-    /// longer dead code once Help exists).
+    /// `arb_any_keycode`, CODE-REVIEW.md rune-fuzz finding 9) and reading
+    /// view (`⌃P`, `ReadOnly::Reading`) are both live paths to a read-only
+    /// document; `PASTE-VERBATIM` needs this to tell "production correctly
+    /// refused the edit" apart from "production silently dropped it" (a
+    /// paste into a read-only document is the former, by design —
+    /// `Document::read_only` is no longer dead code once either path
+    /// exists).
     pub read_only: bool,
     /// `app.active_doc().has_insertion_point()` — the production predicate itself,
     /// not a re-derivation from `focus`/`modal_open`/`read_only`, so

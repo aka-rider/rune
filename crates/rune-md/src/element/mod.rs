@@ -6,7 +6,7 @@
 //! `block` and `inline` hold the leaf element machines. The shared reveal
 //! vocabulary every one of them is built from (`RevealState`, `RevealSm`,
 //! `RevealGrant`, `InheritCtx`, `ByteRange`, `CursorProbe`, plus the
-//! `DocState`/`WrapState` types `InheritCtx` is typed by) moved to the
+//! `WrapState` type `InheritCtx` is typed by) moved to the
 //! producer-agnostic `rune-syntax` crate in WP3, so a future tree-sitter
 //! producer can emit and consume the same types without depending on this
 //! crate. `Block`/`Inline`/`DocMachine` — which stay here, being
