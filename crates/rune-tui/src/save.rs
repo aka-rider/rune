@@ -48,9 +48,10 @@ pub(crate) enum SaveStart {
     /// now focused so the user can name it.
     NeedsName,
     /// Refused outright: an image document (§1.4.1 — never overwrite it
-    /// with the buffer's own empty bytes), a rename in flight, or a
-    /// degraded-store confirm gate that just armed (or is still pending) —
-    /// every arm reaching this sets its own status explaining why.
+    /// with the buffer's own empty bytes), a `Preview` document (transient,
+    /// not yet committed to), a rename in flight, or a degraded-store
+    /// confirm gate that just armed (or is still pending) — every arm
+    /// reaching this sets its own status explaining why.
     Refused,
 }
 
@@ -85,6 +86,13 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     // return early for an unedited buffer, which would make a guard placed
     // after them dead code.
     if kind == DocumentKind::Image {
+        return SaveStart::Refused;
+    }
+    // The §1.4 guard: every global save chord routes here unconditionally,
+    // and the no-store fallback below reaches `vfs.save_atomic` directly —
+    // without this, saving a `Preview` document would atomically overwrite
+    // the previewed file with this document's own buffer.
+    if app.refuse_if_preview(id) {
         return SaveStart::Refused;
     }
     if app.doc(id).is_some_and(|d| d.save_in_flight) {

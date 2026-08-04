@@ -337,3 +337,41 @@ fn reading_view_blocks_undo_and_redo() {
         "a blocked redo must not change dirtiness"
     );
 }
+
+/// A `Preview` document joins `Reading` in blocking both undo and redo —
+/// it has no chord that leaves it the way ⌃P leaves reading view, so it is
+/// at least as restrictive.
+#[test]
+fn preview_blocks_undo_and_redo() {
+    let mut app = app_with("hello", 5);
+    let id = app.active;
+    insert_char(&mut app, id, '!');
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Preview;
+    let dirty_before = app.doc(id).unwrap().is_dirty();
+
+    undo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "undo must be blocked on a preview document"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked undo must not change dirtiness"
+    );
+
+    redo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "redo must be blocked on a preview document"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked redo must not change dirtiness"
+    );
+}

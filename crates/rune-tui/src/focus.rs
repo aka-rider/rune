@@ -8,7 +8,6 @@
 use ratatui::layout::Rect;
 
 use crate::app::App;
-use crate::document::ReadOnly;
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
@@ -170,19 +169,6 @@ impl App {
     /// reads through here rather than `self.splits` directly.
     pub fn layout_mode(&self) -> LayoutMode {
         LayoutMode::resolve(self)
-    }
-
-    /// The single writer of a read-only refusal's status message: posts
-    /// `read_only`'s wording and reports whether it refused — `focus_title`
-    /// and `rename::begin` both call this instead of duplicating the check
-    /// (`refocus_title`'s silent return on the same precondition is a
-    /// re-focus, not a refusal, so it does not).
-    pub fn refuse_if_read_only(&mut self, read_only: ReadOnly) -> bool {
-        let Some(message) = read_only.refusal_message() else {
-            return false;
-        };
-        self.set_status(message, crate::app::StatusSource::Other);
-        true
     }
 
     /// Gains title focus, reseeding the field from the active document's own

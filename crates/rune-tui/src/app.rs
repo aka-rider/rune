@@ -496,10 +496,13 @@ impl App {
         self.root = root;
     }
 
-    // `focus()`/`refuse_if_read_only`/`focus_title`/`refocus_title`/
-    // `set_focus`/`set_focus_pane`/`blur_title`/`layout_mode` moved to
-    // `focus.rs` (§1.6 budget) — that module is now the sole writer of
-    // `focus` outside this constructor.
+    // `focus()`/`focus_title`/`refocus_title`/`set_focus`/`set_focus_pane`/
+    // `blur_title`/`layout_mode` moved to `focus.rs` (§1.6 budget) — that
+    // module is now the sole writer of `focus` outside this constructor.
+    // `refuse_if_read_only`/`refuse_if_preview` moved to `read_only.rs`:
+    // neither is a focus concern (their callers span rename, save, and
+    // close as well as `focus_title`), so they get their own chokepoint
+    // module instead of riding along with either caller.
 }
 
 /// The ONLY writer of `App` state (§5.4). `effects` accumulates I/O for the

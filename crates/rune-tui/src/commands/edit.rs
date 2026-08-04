@@ -228,12 +228,12 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
 /// clears `app.status_message` — only this function's own failure path
 /// writes it.
 ///
-/// Gated on `ReadOnly::Reading` only, not `is_read_only()` — see
-/// `Document::read_only`'s doc comment for why `ReadOnly::Always` stays
-/// exempt.
+/// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
+/// `is_read_only()` — see `Document::read_only`'s doc comment for why
+/// `ReadOnly::Always` stays exempt.
 pub fn undo(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.read_only == ReadOnly::Reading {
+    if matches!(doc.read_only, ReadOnly::Reading | ReadOnly::Preview) {
         return;
     }
     let Some((step, new_pos)) = doc.journal.undo_peek() else {
@@ -261,12 +261,12 @@ pub fn undo(app: &mut App, id: DocumentId) {
 /// the step forward, commit the position move only on success. Same
 /// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
 ///
-/// Gated on `ReadOnly::Reading` only, not `is_read_only()` — see
-/// `Document::read_only`'s doc comment for why `ReadOnly::Always` stays
-/// exempt.
+/// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
+/// `is_read_only()` — see `Document::read_only`'s doc comment for why
+/// `ReadOnly::Always` stays exempt.
 pub fn redo(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
-    if doc.read_only == ReadOnly::Reading {
+    if matches!(doc.read_only, ReadOnly::Reading | ReadOnly::Preview) {
         return;
     }
     let Some((step, new_pos)) = doc.journal.redo_peek() else {

@@ -50,7 +50,7 @@ pub fn paste_verbatim(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
         }
         _ => return None,
     };
-    if text.is_empty() || prev.read_only {
+    if text.is_empty() || prev.read_only != rune_tui::document::ReadOnly::No {
         return None;
     }
     let [cursor] = prev.cursors.as_slice() else {

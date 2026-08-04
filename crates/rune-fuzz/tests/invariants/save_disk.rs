@@ -101,7 +101,7 @@ fn save_clean_matches_disk_is_inert_while_dirty() {
 fn save_clean_matches_disk_is_inert_on_the_read_only_help_document() {
     let mut next = crate::support::base_snapshot("# Help\n\n## Global\n");
     next.is_dirty = false;
-    next.read_only = true;
+    next.read_only = rune_tui::document::ReadOnly::Always;
     let mut ctx = base_ctx();
     ctx.active_is_seed_doc = false;
     ctx.saves_delivered_ok = 1;
@@ -119,7 +119,7 @@ fn save_clean_matches_disk_is_inert_on_the_read_only_help_document() {
 fn save_clean_matches_disk_is_inert_on_a_fresh_untitled_after_the_seed_doc_closed() {
     let mut next = crate::support::base_snapshot("");
     next.is_dirty = false;
-    next.read_only = false;
+    next.read_only = rune_tui::document::ReadOnly::No;
     let mut ctx = base_ctx();
     ctx.active_is_seed_doc = false;
     ctx.saves_delivered_ok = 1;
@@ -135,7 +135,7 @@ fn save_clean_matches_disk_is_inert_on_a_fresh_untitled_after_the_seed_doc_close
 fn save_clean_matches_disk_still_catches_a_stale_disk_read_on_a_writable_document() {
     let mut next = crate::support::base_snapshot("current content");
     next.is_dirty = false;
-    next.read_only = false;
+    next.read_only = rune_tui::document::ReadOnly::No;
     let mut ctx = base_ctx();
     ctx.saves_delivered_ok = 1;
     ctx.pending_save_bytes = None;

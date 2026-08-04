@@ -26,6 +26,12 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.doc(id).is_none() {
         return;
     }
+    // A not-yet-committed preview refuses `^W` outright: tearing it down
+    // (and `close_now`'s neighbor-reactivation with it) is not the user's
+    // intent for a document they never opened.
+    if app.refuse_if_preview(id) {
+        return;
+    }
     // Re-derived, not read from the cache (CONSTITUTION §1.4.8: close is a
     // transition) — a stale cache could wave a genuinely-dirty document
     // through, or arm the Guard for one that's actually clean.
@@ -228,6 +234,8 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_vfs::{Mem, Vfs};
 
+    use crate::document::ReadOnly;
+
     use super::*;
     use crate::app::App;
 
@@ -307,5 +315,27 @@ mod tests {
         assert!(!app.documents.contains_key(&only));
         assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
         assert!(app.status_message.is_none());
+    }
+
+    #[test]
+    fn request_close_refuses_a_preview_document() {
+        let mem = Arc::new(Mem::new());
+        let vfs: Arc<dyn Vfs + Send + Sync> = mem;
+        let mut app = App::new(Buffer::new("hello"), None, vfs, None);
+        let id = app.active;
+        app.doc_mut(id).unwrap().read_only = ReadOnly::Preview;
+
+        let mut effects = Effects::default();
+        request_close(&mut app, id, &mut effects);
+
+        assert!(
+            app.documents.contains_key(&id),
+            "a preview document must not be closed"
+        );
+        assert_eq!(app.active, id, "active must stay on the refused document");
+        assert_eq!(
+            app.status_message.as_deref(),
+            ReadOnly::Preview.refusal_message()
+        );
     }
 }

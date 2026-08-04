@@ -40,6 +40,7 @@ pub mod navigate;
 pub mod opentabs;
 pub mod pane;
 pub mod pointer;
+pub mod read_only;
 pub mod rename;
 pub mod rename_create;
 pub mod render;
