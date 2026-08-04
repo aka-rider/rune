@@ -120,6 +120,10 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.set_focus(Pane::Editor, effects);
             crate::workspace::switch_to_index(app, idx);
         }
+        // No focus change and no manual view invalidation needed — the
+        // toggle's geometry change is absorbed by the next `view()` call
+        // (`commands::reading`'s own docs).
+        GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
     }
 }
 

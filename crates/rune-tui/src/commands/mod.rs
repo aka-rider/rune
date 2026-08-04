@@ -3,8 +3,8 @@
 //! viewport-only scrolling (`nav_scroll`, WP7), mouse gestures
 //! (`mouse`, WP7), editing/undo-redo (`edit`), the shared buffer-mutation
 //! chokepoint (`edit_core`, WP9.S6), line-oriented editing (`edit_lines`
-//! and `edit_lines_move`, WP9), and multi-cursor management (`multi`,
-//! WP9), dispatched from
+//! and `edit_lines_move`, WP9), multi-cursor management (`multi`,
+//! WP9), and the `⌃P` reading-view toggle (`reading`), dispatched from
 //! `app::handle_key`/`app::update` against the `Command`/`Msg::Mouse` the
 //! keymap resolver/runtime produce (plan Context, "Keymap"). Structural
 //! port of Go's textedit command family.
@@ -20,4 +20,5 @@ pub mod multi;
 pub mod nav;
 pub mod nav_line;
 pub mod nav_scroll;
+pub mod reading;
 pub mod splitter;

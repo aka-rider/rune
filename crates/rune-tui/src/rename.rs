@@ -215,7 +215,8 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     };
 
     if doc.is_read_only() {
-        app.set_status("this document is read-only", StatusSource::Other);
+        let message = doc.read_only.refusal_message();
+        app.set_status(message, StatusSource::Other);
         return Commit::Refused;
     }
     // The no-store `save_cmd` captures `path` in its closure and would

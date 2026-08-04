@@ -508,7 +508,8 @@ impl App {
     /// the case this removes rather than guards against).
     pub fn focus_title(&mut self) {
         if self.active_doc().is_read_only() {
-            self.set_status("this document is read-only", StatusSource::Other);
+            let message = self.active_doc().read_only.refusal_message();
+            self.set_status(message, StatusSource::Other);
             return;
         }
         let name = crate::title::name_for(self.active_doc());
