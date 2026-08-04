@@ -19,6 +19,7 @@
 //! which already skip `buf_offset < 0`).
 
 use ratatui::style::{Color, Style};
+use unicode_segmentation::UnicodeSegmentation;
 
 use rune_md::snapshot::ImageRowRef;
 
@@ -26,6 +27,9 @@ use crate::app::App;
 use crate::document::Document;
 use crate::graphics::ImageStatus;
 use crate::render::Cell;
+use crate::render::cell::push_grapheme_cells;
+#[cfg(test)]
+use crate::width::display_width;
 
 /// The fixed number of display rows the image producer reserves while no
 /// pixel-based row count is known yet (plan WP4.S2, `Document::view`'s own
@@ -240,26 +244,69 @@ fn human_size(bytes: u64) -> String {
 }
 
 /// `text` centered within `width` columns, padded to fill it — every cell
-/// `buf_offset: -1`, width 1 (ASCII-only info-card text, so one cell per
-/// byte). A `text` wider than `width` is left-aligned and simply clipped by
-/// `blit`'s own area bound rather than truncated here.
+/// `buf_offset: -1`. `text` names a user file (the card's file-name line, or
+/// an inline embed's link target), so it is NOT ASCII-only and is not even
+/// guaranteed printable: it is routed through `push_grapheme_cells` — the
+/// SAME chokepoint `segment_cells` uses for real buffer content — one
+/// GRAPHEME CLUSTER at a time, never one `Cell` per `char`. A bare `char`
+/// walk would split a ZWJ emoji or a base+combining-mark cluster apart, and
+/// a hardcoded `width: 1` would mislabel a CJK cluster's true 2-cell width,
+/// both of which `blit`'s own wide-cell handling (and ratatui's buffer
+/// diffing beneath it) depend on being correct; reusing the chokepoint also
+/// inherits its control-character handling for free — a raw control byte in
+/// a file name or link target (a tab, a bare `\r`) is replaced with its
+/// safe placeholder glyph rather than reaching ratatui's buffer, which
+/// panics on an unfiltered ASCII control byte.
+///
+/// The content's width used to compute the leading/trailing pad is NEVER a
+/// second, independently-computed number (a prior version measured with
+/// `crate::width::display_width` while building with `push_grapheme_cells`
+/// — the two disagree on a TAB, whose expansion width depends on its
+/// starting column, so the declared row could silently overrun `width`).
+/// Instead this builds the content cells twice through the ONE chokepoint:
+/// a first pass at column 0 only to learn how many columns the content
+/// needs (`probe_width`, below) so `pad` can be chosen; a second pass that
+/// actually becomes the returned cells, started at column `pad` — the
+/// column the content will really sit at once the leading blanks precede
+/// it — so a tab inside `text` expands to the same stop the finished row
+/// renders it at, not the stop it would hit at column 0. `pad` is then
+/// clamped so the real pass's own width can never push the total past
+/// `width`, even in the (bounded, since a tab expands to at most 4 cells)
+/// case where restarting the tab math at column `pad` instead of `0` makes
+/// the content wider than the probe predicted — the row's declared total
+/// width is always exactly `width`, never more.
 fn centered_cells(text: &str, width: usize) -> Vec<Cell> {
-    let len = text.chars().count();
-    let pad = width.saturating_sub(len) / 2;
+    let probe_width: usize = grapheme_cells(text, 0)
+        .iter()
+        .map(|c| c.width as usize)
+        .sum();
+    let pad = width.saturating_sub(probe_width) / 2;
+
+    let content = grapheme_cells(text, pad);
+    let content_width: usize = content.iter().map(|c| c.width as usize).sum();
+    let pad = pad.min(width.saturating_sub(content_width));
+
     let mut cells = Vec::with_capacity(width);
     for _ in 0..pad {
         cells.push(blank_cell());
     }
-    for ch in text.chars() {
-        cells.push(Cell {
-            text: ch.to_string(),
-            width: 1,
-            style: Style::default(),
-            buf_offset: -1,
-        });
-    }
-    while cells.len() < width {
+    cells.extend(content);
+    let used = pad + content_width;
+    for _ in used..width {
         cells.push(blank_cell());
+    }
+    cells
+}
+
+/// `text` as `Cell`s through the `push_grapheme_cells` chokepoint, with the
+/// running visual column starting at `start_col` — the column the caller
+/// intends this content to actually occupy, so a tab's expansion (which
+/// depends on the column it starts at) matches where it will really render.
+fn grapheme_cells(text: &str, start_col: usize) -> Vec<Cell> {
+    let mut cells = Vec::new();
+    let mut visual_col = start_col;
+    for grapheme in text.graphemes(true) {
+        push_grapheme_cells(&mut cells, &mut visual_col, grapheme, -1, Style::default());
     }
     cells
 }
@@ -273,189 +320,8 @@ fn blank_cell() -> Cell {
     }
 }
 
+// Kept in a sibling file (plan §1.6: this module's own row-building code
+// stays under the line budget on its own merits).
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod tests {
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    use rune_core::buffer::Buffer;
-    use rune_vfs::Mem;
-
-    use super::*;
-    use crate::graphics::ImageState;
-
-    fn app_with_image_doc(kitty: bool, status: ImageStatus) -> App {
-        let mut app = App::new(Buffer::new(""), None, Arc::new(Mem::new()), None);
-        app.graphics.kitty = kitty;
-        let id = app.active;
-        let doc = app.doc_mut(id).expect("doc");
-        doc.bind_path(PathBuf::from("/vault/x.png"));
-        doc.read_only = true;
-        doc.display_name = Some("x.png".to_string());
-        doc.image = Some(ImageState {
-            path: PathBuf::from("/vault/x.png"),
-            bytes_len: 146,
-            id: 1,
-            dims: Some((64, 48)),
-            cells: None,
-            decoded: None,
-            status,
-            in_flight: None,
-            next_generation: 0,
-        });
-        app
-    }
-
-    #[test]
-    fn info_card_lines_include_name_dims_and_kitty_reason() {
-        let mut app = app_with_image_doc(true, ImageStatus::Pending);
-        if let Some(image) = app.active_doc_mut().image.as_mut() {
-            image.in_flight = Some(1);
-        }
-        let doc = app.doc(app.active).expect("doc");
-        let lines = info_card_lines(&app, doc);
-        assert!(lines.iter().any(|l| l == "x.png"));
-        assert!(lines.iter().any(|l| l.contains("64x48")));
-        assert!(lines.iter().any(|l| l.contains("decoding")));
-    }
-
-    /// `Pending` splits on `in_flight`: a decode actually running reads
-    /// "decoding…", while one that was never scheduled — or whose reply was
-    /// lost — says so and names the way out. Collapsing both into
-    /// "decoding…" is what made a wedged decode look identical to a slow one
-    /// for an entire session.
-    #[test]
-    fn pending_without_an_in_flight_decode_reads_differently_from_a_running_one() {
-        let mut app = app_with_image_doc(true, ImageStatus::Pending);
-
-        let not_scheduled = {
-            let doc = app.doc(app.active).expect("doc");
-            reason_line(&app, doc)
-        };
-        assert!(
-            !not_scheduled.contains("decoding"),
-            "a Pending image with no decode in flight must not claim to be decoding: \
-             {not_scheduled:?}"
-        );
-        assert!(
-            not_scheduled.contains("reload"),
-            "it must name the recovery available to the user: {not_scheduled:?}"
-        );
-
-        if let Some(image) = app.active_doc_mut().image.as_mut() {
-            image.in_flight = Some(7);
-        }
-        let running = {
-            let doc = app.doc(app.active).expect("doc");
-            reason_line(&app, doc)
-        };
-        assert!(
-            running.contains("decoding"),
-            "a genuinely in-flight decode must still read as decoding: {running:?}"
-        );
-        assert_ne!(
-            running, not_scheduled,
-            "the two Pending states must be distinguishable on screen"
-        );
-    }
-
-    #[test]
-    fn reason_line_ignores_status_when_kitty_is_unavailable() {
-        let app = app_with_image_doc(false, ImageStatus::Live);
-        let doc = app.doc(app.active).expect("doc");
-        assert_eq!(
-            reason_line(&app, doc),
-            "this terminal does not support inline images"
-        );
-    }
-
-    fn doc_row_ref(row: usize, width: usize) -> ImageRowRef {
-        ImageRowRef {
-            row,
-            width,
-            target: None,
-        }
-    }
-
-    #[test]
-    fn row_cells_center_the_requested_line() {
-        let app = app_with_image_doc(true, ImageStatus::Pending);
-        let doc = app.doc(app.active).expect("doc");
-        let cells =
-            row_cells(&app, doc, doc_row_ref(0, 0), 20).expect("doc-image row is always Some");
-        assert_eq!(cells.len(), 20);
-        let text: String = cells.iter().map(|c| c.text.as_str()).collect();
-        assert!(text.contains("x.png"));
-        for c in &cells {
-            assert_eq!(c.buf_offset, -1);
-        }
-    }
-
-    #[test]
-    fn row_past_the_card_content_is_blank() {
-        let app = app_with_image_doc(true, ImageStatus::Pending);
-        let doc = app.doc(app.active).expect("doc");
-        let cells =
-            row_cells(&app, doc, doc_row_ref(99, 0), 10).expect("doc-image row is always Some");
-        assert!(cells.iter().all(|c| c.text == " "));
-    }
-
-    fn embed_row_ref(row: usize, width: usize, target: &str) -> ImageRowRef {
-        ImageRowRef {
-            row,
-            width,
-            target: Some(target.to_string()),
-        }
-    }
-
-    #[test]
-    fn a_live_embed_renders_placeholder_cells_with_a_left_margin_and_the_allocated_id() {
-        let mut app = app_with_image_doc(true, ImageStatus::Pending);
-        app.doc_mut(app.active).expect("doc").embeds.images.insert(
-            "x.png".to_string(),
-            crate::graphics::EmbedState {
-                abs_path: PathBuf::from("/vault/x.png"),
-                id: 0x00_10_20,
-                mtime: None,
-                dims: Some((64, 48)),
-                cells: Some((8, 3)),
-                decoded: None,
-                status: ImageStatus::Live,
-                in_flight: None,
-            },
-        );
-        let doc = app.doc(app.active).expect("doc");
-        let cells = row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20)
-            .expect("a live, Kitty-capable embed row is Some");
-        assert_eq!(cells.len(), 20);
-        assert_eq!(cells[0].text, " ", "one blank left-margin cell first");
-        assert_eq!(
-            cells[1].style.fg,
-            Some(Color::Rgb(0x00, 0x10, 0x20)),
-            "the second cell carries the allocated id"
-        );
-    }
-
-    #[test]
-    fn an_embed_with_kitty_unavailable_falls_through_to_alt_text() {
-        let app = app_with_image_doc(false, ImageStatus::Pending);
-        let doc = app.doc(app.active).expect("doc");
-        assert!(row_cells(&app, doc, embed_row_ref(0, 8, "x.png"), 20).is_none());
-    }
-
-    #[test]
-    fn an_embed_not_yet_live_reserves_blank_cells() {
-        let app = app_with_image_doc(true, ImageStatus::Pending);
-        let doc = app.doc(app.active).expect("doc");
-        let cells = row_cells(&app, doc, embed_row_ref(0, 8, "untracked.png"), 20)
-            .expect("Kitty-capable, not-yet-live embed row still reserves blanks");
-        assert!(cells.iter().all(|c| c.text == " "));
-    }
-
-    #[test]
-    fn human_size_formats_bytes_and_larger_units() {
-        assert_eq!(human_size(512), "512 B");
-        assert_eq!(human_size(1536), "1.5 KB");
-    }
-}
+#[path = "image_tests.rs"]
+mod tests;
