@@ -19,6 +19,7 @@ pub mod document;
 pub mod document_map;
 pub mod document_support;
 pub mod explorer;
+pub mod explorer_dirload;
 pub mod explorer_keys;
 pub mod explorer_reveal;
 pub mod explorer_search;
