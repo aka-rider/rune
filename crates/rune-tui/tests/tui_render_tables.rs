@@ -42,7 +42,7 @@ const EDITOR_LEFT_COL: usize = 1;
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     if !focused {
-        app.set_focus(Pane::Explorer, &mut Effects::default());
+        app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     }
     let id = app.active;
     app.doc_mut(id).unwrap().cursors = CursorSet::new(cursor_offset.min(content.len()));

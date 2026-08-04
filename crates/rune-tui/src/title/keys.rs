@@ -45,7 +45,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         // Enter/Down do nothing but move focus — the blur commits (decision
         // 4: DRY, one commit chokepoint).
         KeyCode::Enter | KeyCode::Down => {
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
             return KeyOutcome::Consumed;
         }
         // Escape reverts FIRST, then releases focus — reversed, it would
@@ -54,7 +54,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         // veto (gotcha 8).
         KeyCode::Escape => {
             app.title.revert();
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
             return KeyOutcome::Consumed;
         }
         _ => {}

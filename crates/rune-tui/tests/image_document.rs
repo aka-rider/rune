@@ -120,7 +120,7 @@ fn super_s_on_an_image_document_saves_nothing_and_never_focuses_the_title() {
     app.active = id;
     // `focus` is private by design — exactly three functions may write it,
     // so go through the setter rather than widening the field for a test.
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     update(
@@ -345,7 +345,7 @@ fn ctrl_w_on_a_live_image_document_emits_encode_delete() {
     decode_x_png_via_update(&mut app, id);
     let image_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
     app.active = id;
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     update(
@@ -384,7 +384,7 @@ fn super_r_on_a_live_image_document_reloads_under_the_same_id() {
     decode_x_png_via_update(&mut app, id);
     let image_id = app.doc(id).unwrap().image.as_ref().unwrap().id;
     app.active = id;
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     update(
@@ -438,7 +438,7 @@ fn super_r_on_a_non_image_document_is_a_no_op() {
         .copied()
         .expect("a second (markdown) document from App::new");
     workspace::switch_to(&mut app, markdown_id);
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     update(

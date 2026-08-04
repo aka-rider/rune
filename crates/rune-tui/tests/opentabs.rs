@@ -40,7 +40,7 @@ fn tabs_render_both_open_documents_with_digit_shortcuts() {
     assert_eq!(app.tabs.order.len(), 2);
 
     app.splits.left.show();
-    app.set_focus(Pane::Tabs, &mut Effects::default());
+    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.sync_view();
 
     let text = frame_text(&app);
@@ -65,7 +65,7 @@ fn the_open_divider_row_precedes_the_tab_rows() {
     let mut app = app_with(&mem);
     open_second(&mut app);
     app.splits.left.show();
-    app.set_focus(Pane::Tabs, &mut Effects::default());
+    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.sync_view();
 
     let rows = testgrid::grid(&app, WIDTH, HEIGHT);
@@ -100,7 +100,7 @@ fn enter_switches_the_active_document() {
     let mut app = app_with(&mem);
     let first = app.active;
     let second = open_second(&mut app);
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
     workspace::switch_to(&mut app, first); // back to a.md, cursor -> index 0
 
     app.tabs.nav.cursor = 1; // b.md's row

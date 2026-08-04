@@ -9,7 +9,6 @@ use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::layout;
-use crate::pane::Pane;
 use crate::pointer::{Drag, MouseInput, Splitter};
 use crate::runtime::Effects;
 
@@ -75,11 +74,12 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
     false
 }
 
-/// Moves whichever splitter the latched drag is grabbing, then hands focus
-/// back to the Editor if the motion just collapsed the section that had
-/// it. Without that handoff, keystrokes keep routing to a pane with no
-/// on-screen presence: both `visible_rows` helpers `.max(1)`, so they
-/// report a visible row for a zero-height rect and hide the problem.
+/// Moves whichever splitter the latched drag is grabbing, then routes
+/// through `focus::reconcile` so focus hands back to the Editor if the
+/// motion just collapsed the section that had it. Without that handoff,
+/// keystrokes keep routing to a pane with no on-screen presence: both
+/// `visible_rows` helpers `.max(1)`, so they report a visible row for a
+/// zero-height rect and hide the problem.
 pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let Some(Drag::Splitter { which, grab_delta }) = app.pointer.drag else {
         return;
@@ -103,10 +103,10 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
     }
 
-    let geo = layout::geometry(area, app);
-    let explorer_just_collapsed = app.focus() == Pane::Explorer && geo.explorer_inner.height == 0;
-    let tabs_just_collapsed = app.focus() == Pane::Tabs && geo.tabs_divider.is_none();
-    if explorer_just_collapsed || tabs_just_collapsed {
-        app.set_focus(Pane::Editor, effects);
-    }
+    // Same reconciliation the command path runs after `CollapseLeft`
+    // (`pane::handle_global_command`) — a drag that just collapsed the
+    // section holding focus reaches exactly the state a keybinding
+    // collapsing it would, through the one shared chokepoint rather than a
+    // second, independently-maintained copy of the check.
+    crate::focus::reconcile(app, effects);
 }

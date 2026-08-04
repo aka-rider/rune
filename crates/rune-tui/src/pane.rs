@@ -59,12 +59,12 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             // show-plus-focus contract, and `FocusTabs`'s below).
             app.splits.left.show();
             app.splits.explorer.show();
-            app.set_focus(Pane::Explorer, effects);
+            app.set_focus_pane(Pane::Explorer, effects);
             // Shared with the startup path that shows this column before
             // any key is pressed, so both fill the pane identically.
             explorer::ensure_loaded(app, effects);
         }
-        GlobalCommand::FocusEditor => app.set_focus(Pane::Editor, effects),
+        GlobalCommand::FocusEditor => app.set_focus_pane(Pane::Editor, effects),
         // Entering the title needs no `Effects` — it can never itself leave
         // it (decision 5). Reseeds from the document that is actually
         // showing, every time: the field must never present a stale name
@@ -87,13 +87,11 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                     .explorer
                     .ensure_trail(budget, crate::layout::TABS_LIMITS);
             }
-            app.set_focus(Pane::Tabs, effects);
+            app.set_focus_pane(Pane::Tabs, effects);
         }
         GlobalCommand::CollapseLeft => {
             app.splits.left.hide();
-            if matches!(app.focus(), Pane::Explorer | Pane::Tabs) {
-                app.set_focus(Pane::Editor, effects);
-            }
+            crate::focus::reconcile(app, effects);
         }
         GlobalCommand::Save => {
             let _ = save::trigger_save(app, app.active, effects);
@@ -105,7 +103,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // the Explorer or Tabs pane would switch the active document while
         // focus stayed stranded on the chrome list (WP2.S8).
         GlobalCommand::Help => {
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
             crate::workspace::toggle_help(app);
         }
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
@@ -117,7 +115,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // isn't open does nothing rather than guessing at a neighbour. Same
         // pre-switch focus move as `Help` above, and for the same reason.
         GlobalCommand::TabSwitch(idx) => {
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
             crate::workspace::switch_to_index(app, idx);
         }
         // No focus change and no manual view invalidation needed — the
@@ -274,7 +272,7 @@ mod tests {
     fn focus_editor_returns_focus_regardless_of_the_left_columns_visibility() {
         let mut app = app();
         let mut effects = Effects::default();
-        app.set_focus(Pane::Explorer, &mut effects);
+        app.set_focus_pane(Pane::Explorer, &mut effects);
         app.splits.left.show();
         handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
         assert_eq!(app.focus(), Pane::Editor);

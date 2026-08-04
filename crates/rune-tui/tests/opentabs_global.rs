@@ -60,7 +60,7 @@ fn ctrl_w_on_the_tabs_pane_requests_closing_the_active_document() {
         app.active, second,
         "test setup: b.md is the active document"
     );
-    app.set_focus(Pane::Tabs, &mut Effects::default());
+    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.tabs.nav.cursor = 0; // a.md's row — deliberately NOT the active document
 
     let mut effects = Effects::default();
@@ -82,7 +82,7 @@ fn ctrl_w_from_editor_focus_closes_the_active_clean_document() {
     let first = app.active;
     let second = open_second(&mut app);
     assert_eq!(app.active, second);
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl_w()), &mut effects);
@@ -102,7 +102,7 @@ fn ctrl_w_from_editor_focus_on_a_dirty_document_arms_the_guard() {
     let second = open_second(&mut app);
     edit::insert_char(&mut app, second, '!');
     assert!(app.doc(second).unwrap().is_dirty());
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl_w()), &mut effects);
@@ -129,7 +129,7 @@ fn ctrl_1_switches_to_the_first_tab() {
     let mut app = app_with(&mem);
     let first = app.active;
     open_second(&mut app);
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('1')), &mut effects);
@@ -151,7 +151,7 @@ fn ctrl_0_switches_to_the_tenth_tab() {
     let tenth = app.tabs.order[9];
     let away = app.tabs.order[0];
     workspace::switch_to(&mut app, away); // away from the tenth
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('0')), &mut effects);
@@ -170,7 +170,7 @@ fn ctrl_1_from_explorer_focus_switches_tabs() {
     let mut app = app_with(&mem);
     let first = app.active;
     open_second(&mut app);
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('1')), &mut effects);
@@ -188,7 +188,7 @@ fn an_out_of_range_tab_digit_is_a_no_op() {
     open_second(&mut app);
     assert_eq!(app.tabs.order.len(), 2);
     let before = app.active;
-    app.set_focus(Pane::Editor, &mut Effects::default());
+    app.set_focus_pane(Pane::Editor, &mut Effects::default());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl('9')), &mut effects);

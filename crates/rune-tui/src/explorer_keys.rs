@@ -175,7 +175,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
         // itself before returning `None` — discarding the `Option` here
         // drops only the opened id, never an unsurfaced error.
         if workspace::open_path(app, &target).is_some() {
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
         }
     }
 }

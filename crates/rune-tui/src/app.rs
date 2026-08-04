@@ -22,7 +22,7 @@ use rune_vfs::Vfs;
 use crate::banner::Modal;
 use crate::db::Db;
 use crate::dispatch;
-use crate::document::{Document, DocumentId, ReadOnly};
+use crate::document::{Document, DocumentId};
 use crate::document_map::DocumentMap;
 use crate::explorer::Explorer;
 use crate::keymap::QuitKey;
@@ -79,11 +79,14 @@ pub struct App {
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
     /// doesn't claim it (decision 7/8, `pane.rs`) — defaults to `Editor`.
-    /// Private: exactly three functions may change it — `focus_title`/
-    /// `refocus_title` (entering the title, below) and `set_focus` (every
-    /// other transition, below) — so leaving the title always runs through
-    /// the one commit chokepoint (`title::on_blur`). Read through `focus()`.
-    focus: Pane,
+    /// `pub(crate)`, not private: the writers (`focus_title`/`refocus_title`/
+    /// `set_focus`, `focus.rs`'s own `impl App` block — moved there in plan
+    /// WP1 to keep this file under the §1.6 budget) live in a different
+    /// module now, but they remain the ONLY code in this crate that assigns
+    /// it directly; every other call site goes through `focus()`/
+    /// `set_focus_pane`. Leaving the title always runs through the one
+    /// commit chokepoint (`title::on_blur`).
+    pub(crate) focus: Pane,
     /// The draggable splitter positions sizing the left column and its
     /// Explorer/Tabs division (decision 7); starts hidden.
     pub splits: crate::layout::Splits,
@@ -493,94 +496,10 @@ impl App {
         self.root = root;
     }
 
-    /// Which chrome region owns the next keystroke — the sole read of
-    /// `focus` from outside this module.
-    pub fn focus(&self) -> Pane {
-        self.focus
-    }
-
-    /// The single writer of a read-only refusal's status message: posts
-    /// `read_only`'s wording and reports whether it refused — `focus_title`
-    /// and `rename::begin` both call this instead of duplicating the check
-    /// (`refocus_title`'s silent return on the same precondition is a
-    /// re-focus, not a refusal, so it does not).
-    pub fn refuse_if_read_only(&mut self, read_only: ReadOnly) -> bool {
-        let Some(message) = read_only.refusal_message() else {
-            return false;
-        };
-        self.set_status(message, StatusSource::Other);
-        true
-    }
-
-    /// Gains title focus, reseeding the field from the active document's own
-    /// name and landing the cursor at the end. Needs no `Effects`: entering
-    /// the title can never itself leave it, so there is nothing to commit on
-    /// the way in. Refuses on a read-only document — there is nothing to
-    /// rename, and under decision 7 a refusal there would otherwise hold
-    /// focus hostage in a field that can never commit (the Help document is
-    /// the case this removes rather than guards against).
-    pub fn focus_title(&mut self) {
-        if self.refuse_if_read_only(self.active_doc().read_only) {
-            return;
-        }
-        let name = crate::title::name_for(self.active_doc());
-        self.title.seed(&name);
-        self.focus = Pane::Title;
-    }
-
-    /// Returns to the title WITHOUT reseeding — the failed-rename/dismissed-
-    /// collision path, where the field already holds what the user typed and
-    /// reseeding would resurrect the old name and discard their in-progress
-    /// undo history.
-    pub fn refocus_title(&mut self) {
-        // The same read-only precondition `focus_title` enforces (decision
-        // 12): an async reply can land after the active document has
-        // changed under it, and parking focus on a title that can never
-        // commit would hold the user there until they found Escape.
-        if self.active_doc().is_read_only() {
-            return;
-        }
-        self.focus = Pane::Title;
-    }
-
-    /// The one writer for every focus transition OTHER than gaining the
-    /// title (`focus_title`/`refocus_title` above). Leaving the title runs
-    /// `title::on_blur` first: a `Refused` commit vetoes the transition
-    /// (focus stays put, the reason is already in the footer) but the caller
-    /// is never blocked from doing whatever it was about to do next —
-    /// decision 7 is what makes a repeated, idempotent blur safe here.
-    pub fn set_focus(&mut self, next: Pane, effects: &mut crate::runtime::Effects) {
-        if self.focus == next {
-            return;
-        }
-        if self.focus == Pane::Title
-            && crate::title::on_blur(self, effects) == crate::rename::Commit::Refused
-        {
-            return;
-        }
-        // A live Explorer type-to-search doesn't survive a focus round-trip
-        // (design: "leaving the Explorer ... -> search cleared") — the
-        // exact leak Go's own wall-clock reset has, since nothing there
-        // clears the buffer on blur either. `set_focus` is already the blur
-        // chokepoint for the title (`title::on_blur` above), so this is the
-        // one place every route off the Explorer funnels through, same
-        // reasoning.
-        if self.focus == Pane::Explorer && next != Pane::Explorer {
-            crate::explorer_search::clear_search(self);
-        }
-        self.focus = next;
-    }
-
-    /// The blur chokepoint in PREFIX position (decision 8's one spelling):
-    /// every site that changes the active document calls this BEFORE the
-    /// switch, then decides separately (and conditionally, wherever the
-    /// switch itself can fail) where focus should land afterwards. A no-op
-    /// unless the title actually holds focus.
-    pub fn blur_title(&mut self, effects: &mut crate::runtime::Effects) {
-        if self.focus == Pane::Title {
-            self.set_focus(Pane::Editor, effects);
-        }
-    }
+    // `focus()`/`refuse_if_read_only`/`focus_title`/`refocus_title`/
+    // `set_focus`/`set_focus_pane`/`blur_title`/`layout_mode` moved to
+    // `focus.rs` in plan WP1 (§1.6 budget) — that module is now the sole
+    // writer of `focus` outside this constructor.
 }
 
 /// The ONLY writer of `App` state (§5.4). `effects` accumulates I/O for the

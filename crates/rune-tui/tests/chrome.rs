@@ -77,7 +77,7 @@ fn left_column_rows(buf: &RtBuffer) -> Vec<String> {
 fn left_pane_shows_one_bordered_block_with_a_focus_colored_border() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     app.sync_view();
 
     let buf = draw(&app);
@@ -105,7 +105,7 @@ fn left_pane_shows_one_bordered_block_with_a_focus_colored_border() {
 fn the_left_column_has_no_interior_border_rule() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     app.sync_view();
 
     let buf = draw(&app);
@@ -135,7 +135,7 @@ fn the_left_column_has_no_interior_border_rule() {
 fn the_open_divider_row_renders_inside_the_single_border() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     app.sync_view();
 
     let buf = draw(&app);
@@ -159,7 +159,7 @@ fn the_open_divider_row_renders_inside_the_single_border() {
 fn tabs_focus_colors_the_divider_not_the_border() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Tabs, &mut Effects::default());
+    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.sync_view();
 
     let buf = draw(&app);
@@ -187,7 +187,7 @@ fn tabs_focus_colors_the_divider_not_the_border() {
 fn an_unfocused_tabs_pane_uses_the_subtle_divider_style() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     app.sync_view();
 
     let buf = draw(&app);
@@ -273,7 +273,7 @@ fn footer_position_readout_survives_truncation_at_narrow_widths() {
     for width in [80u16, 40u16] {
         let mut app = app_for("hello");
         app.splits.left.show();
-        app.set_focus(Pane::Explorer, &mut Effects::default());
+        app.set_focus_pane(Pane::Explorer, &mut Effects::default());
         app.sync_view();
 
         let buf = draw_with_width(&app, width);
@@ -335,7 +335,7 @@ fn default_footer_hints_omit_the_aliased_quit_chord() {
 fn footer_global_tail_survives_truncation_with_explorer_focused() {
     let mut app = app_for("hello");
     app.splits.left.show();
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     app.sync_view();
 
     let buf = draw_with_width(&app, 120);

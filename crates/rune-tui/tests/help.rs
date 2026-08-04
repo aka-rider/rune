@@ -199,7 +199,7 @@ fn help_tab_renders_in_open_tabs_pane_with_the_name_help() {
     app::update(&mut app, Msg::Key(f1()), &mut effects);
 
     app.splits.left.show();
-    app.set_focus(Pane::Tabs, &mut Effects::default());
+    app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.sync_view();
 
     let text = frame_text(&app);

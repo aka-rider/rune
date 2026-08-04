@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn explorer_focus_shows_its_own_keys_and_omits_save() {
         let mut app = app_with("hello");
-        app.set_focus(Pane::Explorer, &mut crate::runtime::Effects::default());
+        app.set_focus_pane(Pane::Explorer, &mut crate::runtime::Effects::default());
         let text = footer_text(&app);
         assert!(text.contains("up dir"), "footer text: {text:?}");
         assert!(!text.contains("save"), "footer text: {text:?}");
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn tabs_focus_shows_its_own_keys() {
         let mut app = app_with("hello");
-        app.set_focus(Pane::Tabs, &mut crate::runtime::Effects::default());
+        app.set_focus_pane(Pane::Tabs, &mut crate::runtime::Effects::default());
         let text = footer_text(&app);
         assert!(text.contains("close"), "footer text: {text:?}");
     }

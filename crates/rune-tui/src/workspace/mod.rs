@@ -92,7 +92,7 @@ pub fn open_path_async(
         // document just reactivated, not the one the user was renaming.
         app.blur_title(effects);
         switch_to(app, id);
-        app.set_focus(Pane::Editor, effects);
+        app.set_focus_pane(Pane::Editor, effects);
         if let Some(anchor) = anchor {
             crate::navigate::land_anchor(app, id, &anchor);
         }
@@ -129,7 +129,7 @@ pub(crate) fn handle_file_opened(
 
     if let Some(id) = existing_document_for(app, &path) {
         switch_to(app, id);
-        app.set_focus(Pane::Editor, effects);
+        app.set_focus_pane(Pane::Editor, effects);
         if let Some(anchor) = anchor {
             crate::navigate::land_anchor(app, id, &anchor);
         }
@@ -146,7 +146,7 @@ pub(crate) fn handle_file_opened(
     let Some(id) = open_bytes(app, &path, bytes) else {
         return;
     };
-    app.set_focus(Pane::Editor, effects);
+    app.set_focus_pane(Pane::Editor, effects);
     if let Some(anchor) = anchor {
         crate::navigate::land_anchor(app, id, &anchor);
     }

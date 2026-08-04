@@ -373,7 +373,7 @@ fn shrinking_the_frame_height_collapses_the_tab_rows_and_restoring_it_brings_the
 #[test]
 fn collapsing_the_focused_explorer_by_dragging_hands_focus_to_the_editor() {
     let mut app = app_for(100, 30);
-    app.set_focus(Pane::Explorer, &mut Effects::default());
+    app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     let g0 = geo(&app);
     let divider = g0.tabs_divider.expect("divider is shown");
     let left_block = g0.left_block.expect("column is shown");

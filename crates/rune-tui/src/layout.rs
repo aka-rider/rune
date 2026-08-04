@@ -15,6 +15,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
 use crate::app::App;
 use crate::banner;
+use crate::focus::LayoutMode;
 use crate::split::{PaneLimits, Split};
 
 /// Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
@@ -146,16 +147,45 @@ pub struct Geometry {
     pub left_splitter: Option<Rect>,
 }
 
-/// Pure — `&App` only, no `Frame`, no `&mut`. Computes, in order: (1) the
-/// footer split; (2) the banner carve-out, if a modal is up; (3) the left
-/// column's single bordered block and the Explorer/divider/Tabs split of
-/// its inner rect, sized by `app.splits`; (4) the remainder as `center`;
-/// (5) center's own title/editor split.
-///
-/// Every subtraction saturates — `geometry` never panics, however small
-/// `area` is (the fuzzer drives `Resize` down to a 1-column, 2-row
-/// terminal, and the render tests draw at `(0, 0)` and `(1, 1)`).
-pub fn geometry(area: Rect, app: &App) -> Geometry {
+/// What `resolve` below decides, before `geometry` carves a single further
+/// rect from it: the footer/banner split, and — the one place any of this
+/// module ever decides whether the left column and its two sections are
+/// painted at all — the left column's single bordered block (`None` when
+/// nothing fits) and the Explorer/divider/Tabs split of its inner rect.
+struct Resolved {
+    footer: Rect,
+    banner: Option<Rect>,
+    main_area: Rect,
+    left_block: Option<Rect>,
+    explorer_inner: Rect,
+    tabs_divider: Option<Rect>,
+    tabs_inner: Rect,
+    center: Rect,
+}
+
+impl Resolved {
+    /// The coarser `LayoutMode` a focus decision actually needs — a pure
+    /// projection of the same visibility this struct already decided, never
+    /// a second opinion about it.
+    fn mode(&self) -> LayoutMode {
+        match self.left_block {
+            None => LayoutMode::EditorOnly,
+            Some(_) => LayoutMode::Split {
+                explorer: self.explorer_inner.height > 0,
+                tabs: self.tabs_inner.height > 0,
+            },
+        }
+    }
+}
+
+/// The ONE function in this module that decides what's painted this frame
+/// (plan WP1: `layout.rs` must decide visibility in exactly one place, so
+/// `LayoutMode::resolve` and `geometry` below can never silently disagree
+/// about it). Pure — `&App` only, no `Frame`, no `&mut`. Every subtraction
+/// saturates — never panics, however small `area` is (the fuzzer drives
+/// `Resize` down to a 1-column, 2-row terminal, and the render tests draw at
+/// `(0, 0)` and `(1, 1)`).
+fn resolve(area: Rect, app: &App) -> Resolved {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -255,9 +285,48 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         }
     };
 
-    // Derived from `left_block`, never from `left_w`: the two disagree
-    // exactly in the both-sections-collapsed case above, where the
-    // horizontal allot succeeded but the column still shows nothing.
+    Resolved {
+        footer,
+        banner,
+        main_area,
+        left_block,
+        explorer_inner,
+        tabs_divider,
+        tabs_inner,
+        center,
+    }
+}
+
+/// This frame's resolved `LayoutMode` (plan WP1) — the seam `App::
+/// layout_mode` calls into `update`-time, never from `draw`. Reads the same
+/// `resolve` `geometry` itself draws from, so a focus decision and the
+/// frame actually painted can never disagree.
+pub fn resolve_mode(area: Rect, app: &App) -> LayoutMode {
+    resolve(area, app).mode()
+}
+
+/// Every rect `render::draw` blits into (see `Geometry`'s own doc) — carved
+/// from whatever `resolve` above already decided is painted. Nothing past
+/// this point decides shown-vs-hidden for the left column or its two
+/// sections; it only does further pure rect arithmetic (the center pane's
+/// own border/title/editor split, the splitter grab band) against rects
+/// `resolve` already produced.
+pub fn geometry(area: Rect, app: &App) -> Geometry {
+    let Resolved {
+        footer,
+        banner,
+        main_area,
+        left_block,
+        explorer_inner,
+        tabs_divider,
+        tabs_inner,
+        center,
+    } = resolve(area, app);
+
+    // Derived from `left_block`, never from a raw horizontal-allot result:
+    // the two can disagree in the both-sections-collapsed case `resolve`
+    // handles above, where the horizontal allot succeeds but the column
+    // still shows nothing.
     let left_splitter = left_block.map(|b| {
         let max_x = main_area
             .x

@@ -106,7 +106,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
         TabsCommand::Select => {
             app.blur_title(effects);
             workspace::switch_to_index(app, app.tabs.nav.cursor);
-            app.set_focus(Pane::Editor, effects);
+            app.set_focus_pane(Pane::Editor, effects);
         }
     }
     KeyOutcome::Consumed
