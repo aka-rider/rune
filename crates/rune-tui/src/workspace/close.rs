@@ -2,9 +2,9 @@
 //! `workspace` per §1.6; WP5.S7 adds the image-delete-on-close hook, which
 //! needed an `Effects` sink `close_now` didn't carry before).
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::banner::{self, GuardKind, GuardPrompt, Modal};
-use crate::document::{DocumentId, ReadOnly};
+use crate::document::DocumentId;
 use crate::runtime::Effects;
 
 /// The result of [`close_now`]: `Unknown` when `id` was already stale (a
@@ -23,20 +23,13 @@ pub enum CloseOutcome {
 /// closed `id` is a silent no-op. Closing the LAST remaining document is no
 /// longer refused — `close_now` mints a fresh untitled draft to replace it.
 pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
-    let Some(doc) = app.doc(id) else {
+    if app.doc(id).is_none() {
         return;
-    };
-    // Plan WP6: a `Preview` document is transient and not yet committed to
-    // — `^W` tearing it down (and `close_now`'s neighbor-reactivation with
-    // it) is not the user's intent for a document they never opened.
-    // Checked with `is_preview` rather than the generic `App::
-    // refuse_if_read_only`: that chokepoint also refuses `ReadOnly::
-    // Reading`, and closing a reading-view document is ordinary and must
-    // keep working.
-    if doc.is_preview() {
-        if let Some(message) = ReadOnly::Preview.refusal_message() {
-            app.set_status(message, StatusSource::Other);
-        }
+    }
+    // A not-yet-committed preview refuses `^W` outright: tearing it down
+    // (and `close_now`'s neighbor-reactivation with it) is not the user's
+    // intent for a document they never opened.
+    if app.refuse_if_preview(id) {
         return;
     }
     // Re-derived, not read from the cache (CONSTITUTION §1.4.8: close is a
@@ -241,6 +234,8 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_vfs::{Mem, Vfs};
 
+    use crate::document::ReadOnly;
+
     use super::*;
     use crate::app::App;
 
@@ -322,10 +317,6 @@ mod tests {
         assert!(app.status_message.is_none());
     }
 
-    /// Plan WP6 — `^W` (routed here from `pane.rs`'s `GlobalCommand::
-    /// CloseFile`) on a `Preview` document refuses instead of tearing it
-    /// down: the document stays open, `active` is untouched, and a status
-    /// message explains why.
     #[test]
     fn request_close_refuses_a_preview_document() {
         let mem = Arc::new(Mem::new());

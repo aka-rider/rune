@@ -512,6 +512,26 @@ impl App {
         true
     }
 
+    /// The narrower sibling of `refuse_if_read_only` above: posts `id`'s
+    /// refusal message and returns `true` only when `id` is a not-yet-
+    /// committed preview, doing nothing otherwise. `save::trigger_save` and
+    /// `workspace::request_close` both call this instead of the generic
+    /// check, because that one also refuses `ReadOnly::Reading` — and
+    /// unlike rename, both save (⌘S still materializes bytes already typed
+    /// in reading view) and close (closing a reading-view document is
+    /// ordinary) must keep working there. A preview has no chord that
+    /// leaves it the way ⌃P leaves reading view, so it alone is refused by
+    /// either.
+    pub fn refuse_if_preview(&mut self, id: DocumentId) -> bool {
+        if !self.doc(id).is_some_and(Document::is_preview) {
+            return false;
+        }
+        if let Some(message) = ReadOnly::Preview.refusal_message() {
+            self.set_status(message, StatusSource::Other);
+        }
+        true
+    }
+
     /// Gains title focus, reseeding the field from the active document's own
     /// name and landing the cursor at the end. Needs no `Effects`: entering
     /// the title can never itself leave it, so there is nothing to commit on

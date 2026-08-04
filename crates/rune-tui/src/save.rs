@@ -18,7 +18,7 @@ use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
 use crate::app::{App, StatusSource};
-use crate::document::{DocumentId, ReadOnly};
+use crate::document::DocumentId;
 use crate::materialize_ack;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 
@@ -48,10 +48,10 @@ pub(crate) enum SaveStart {
     /// now focused so the user can name it.
     NeedsName,
     /// Refused outright: an image document (§1.4.1 — never overwrite it
-    /// with the buffer's own empty bytes), a `Preview` document (plan
-    /// WP6 — transient, not yet committed to), a rename in flight, or a
-    /// degraded-store confirm gate that just armed (or is still pending) —
-    /// every arm reaching this sets its own status explaining why.
+    /// with the buffer's own empty bytes), a `Preview` document (transient,
+    /// not yet committed to), a rename in flight, or a degraded-store
+    /// confirm gate that just armed (or is still pending) — every arm
+    /// reaching this sets its own status explaining why.
     Refused,
 }
 
@@ -88,18 +88,11 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     if kind == DocumentKind::Image {
         return SaveStart::Refused;
     }
-    // Plan WP6, the §1.4 guard: a `Preview` document is transient and not
-    // yet committed to — without this, `GlobalCommand::Save` (routed here
-    // unconditionally from `pane.rs`) would reach the no-store fallback
-    // below and atomically overwrite the previewed file with this
-    // document's own buffer. Checked with `is_preview` rather than the
-    // generic `App::refuse_if_read_only`: that chokepoint also refuses
-    // `ReadOnly::Reading`, and ⌘S must keep working there (`Document::
-    // read_only`'s doc comment).
-    if app.doc(id).is_some_and(|d| d.is_preview()) {
-        if let Some(message) = ReadOnly::Preview.refusal_message() {
-            app.set_status(message, StatusSource::Other);
-        }
+    // The §1.4 guard: every global save chord routes here unconditionally,
+    // and the no-store fallback below reaches `vfs.save_atomic` directly —
+    // without this, saving a `Preview` document would atomically overwrite
+    // the previewed file with this document's own buffer.
+    if app.refuse_if_preview(id) {
         return SaveStart::Refused;
     }
     if app.doc(id).is_some_and(|d| d.save_in_flight) {
