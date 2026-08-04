@@ -125,8 +125,8 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     // `pointer_clock` is the real wall clock (`SystemClock`) — harmless
     // today only because this driver never delivers `Msg::Mouse`, so
     // `PointerState`'s multi-click window never actually reads it. Swapped
-    // for `ManualClock` (already `pub`, built for exactly this — mirrors
-    // `keystate::FixedSpaceProbe`) BEFORE any mouse action exists, so a
+    // for `ManualClock` (already `pub`, built for exactly this) BEFORE any
+    // mouse action exists, so a
     // future `Action::Mouse` never has to retrofit determinism onto a
     // driver that spent real wall-clock time all along — replay would
     // silently stop reproducing the moment a click sequence straddled a

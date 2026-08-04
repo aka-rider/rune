@@ -6,9 +6,8 @@
 //! (plan WP7.S5): 500 ms window AND Chebyshev distance <= 1 cell (Go
 //! rune's own multi-click rule — deliberately not pixel-exact, since a
 //! human hand drifts). The wall clock never gets read directly here —
-//! `Clock` is an injected field, exactly like `keystate::SpaceProbe`, so a
-//! click sequence is reproducible from a fuzz seed instead of depending on
-//! real elapsed time.
+//! `Clock` is an injected field on `App`, so a click sequence is
+//! reproducible from a fuzz seed instead of depending on real elapsed time.
 
 use std::cell::Cell;
 use std::time::{Duration, Instant};
@@ -83,9 +82,8 @@ pub fn from_termina(event: termina::event::MouseEvent) -> Option<MouseInput> {
 /// Answers "what time is it right now?" — a trait rather than a bare
 /// `Instant::now()` call so `App` can carry the answer source as a field
 /// (plan WP7.S5: "inject the clock as a field so the fuzzer can reproduce
-/// a gesture"), mirroring `keystate::SpaceProbe`'s exact reasoning.
-/// Deliberately no `Send`/`Sync` bound — `App` is never sent across
-/// threads.
+/// a gesture"). Deliberately no `Send`/`Sync` bound — `App` is never sent
+/// across threads.
 pub trait Clock: std::fmt::Debug {
     fn now(&self) -> Instant;
 }
@@ -101,9 +99,9 @@ impl Clock for SystemClock {
 }
 
 /// Test double — `pub` (not `#[cfg(test)]`) so integration tests in
-/// `tests/`, a separate crate, can construct and advance it, exactly like
-/// `keystate::FixedSpaceProbe`. `Instant` has no public constructor other
-/// than `now()`, so this captures one real `Instant` as its epoch and
+/// `tests/`, a separate crate, can construct and advance it. `Instant` has
+/// no public constructor other than `now()`, so this captures one real
+/// `Instant` as its epoch and
 /// advances a `Duration` offset from it rather than fabricating instants
 /// directly — the ABSOLUTE time is irrelevant to `PointerState`, only the
 /// durations BETWEEN clicks are.

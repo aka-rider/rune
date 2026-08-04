@@ -226,17 +226,15 @@ mod tests {
 
     /// Plan WP10.S4's coverage-gap fix: `validate` was only ever called by
     /// each table's own hand-written test — `global::GLOBAL_BINDINGS`,
-    /// `global::LEADER_BINDINGS`, `opentabs::TABS_BINDINGS`, and
-    /// `explorer_keys::EXPLORER_BINDINGS` shipped with none, so a shadowed
-    /// chord in any of them could never fire and nothing would catch it.
-    /// One registry-walking test, listing every binding table this crate
-    /// defines, closes that gap structurally: a new table now has to be
-    /// added HERE to be validated at all, so its absence is conspicuous
-    /// rather than silent.
+    /// `opentabs::TABS_BINDINGS`, and `explorer_keys::EXPLORER_BINDINGS`
+    /// shipped with none, so a shadowed chord in any of them could never
+    /// fire and nothing would catch it. One registry-walking test, listing
+    /// every binding table this crate defines, closes that gap
+    /// structurally: a new table now has to be added HERE to be validated
+    /// at all, so its absence is conspicuous rather than silent.
     #[test]
     fn every_registered_binding_table_validates() {
         assert!(validate(crate::global::GLOBAL_BINDINGS).is_ok());
-        assert!(validate(crate::global::LEADER_BINDINGS).is_ok());
         assert!(validate(crate::keymap::editor_bindings::EDITOR_BINDINGS).is_ok());
         assert!(validate(crate::keymap::vim::VIM_BINDINGS).is_ok());
         assert!(validate(crate::opentabs::TABS_BINDINGS).is_ok());

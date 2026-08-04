@@ -238,8 +238,8 @@ fn a_file_backed_app_starts_with_the_left_column_hidden() {
 
 /// `^b` end-to-end through the real `app::update`: shows the left column,
 /// focuses the Explorer, and the very next render shows the bordered
-/// blocks (plan WP5.S1: `^b` is the always-works ctrl fallback for the
-/// Explorer, `^x` having retired in favor of the held-space leader's `␣x`).
+/// blocks — one of `FocusExplorer`'s two direct chords (`crates/rune-tui/
+/// tests/focus_chords.rs` covers both forms across every pane).
 #[test]
 fn ctrl_b_toggles_the_explorer_through_update() {
     let mut app = app_for("hello");

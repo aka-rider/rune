@@ -3,9 +3,7 @@
 //! budget — every item exercised here (`App`, `commands::edit`'s `pub`
 //! functions, `CursorSet`) is already public, so this needs no
 //! crate-internal access `#[cfg(test)]` had; the same pattern
-//! `tests/app_quit_and_dispatch.rs` used for `app.rs`). `commands::edit::
-//! retract_space`'s own tests stay inline in `edit.rs` — that function is
-//! `pub(crate)`, unreachable from here.
+//! `tests/app_quit_and_dispatch.rs` used for `app.rs`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::sync::Arc;

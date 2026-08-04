@@ -13,7 +13,7 @@ pub enum FocusTarget {
     Tabs,
     Editor,
     /// The editable title field (`title.rs`, `Pane::Title`) — reachable
-    /// today via `^r`/`␣R` or the Up-at-editor-top gesture.
+    /// today via `^r` or the Up-at-editor-top gesture.
     Title,
     /// Not yet reachable — WP8 adds the search UI this pairs with. Included
     /// now so a `when` clause authored against it (e.g. a future search-bar

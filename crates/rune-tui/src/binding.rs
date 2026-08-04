@@ -7,8 +7,8 @@
 //! `keys: &'static [KeyPattern]` sequence plus a `when: &'static str` guard
 //! clause (`crate::when`, `""` meaning unconditional) — the two fields the
 //! sequence-capable resolver in `crate::keymap::index` needs. Every existing
-//! table (`GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `EXPLORER_BINDINGS`,
-//! `TABS_BINDINGS`) still binds a single key each, so `resolve_in` (the
+//! table (`GLOBAL_BINDINGS`, `EXPLORER_BINDINGS`, `TABS_BINDINGS`) still
+//! binds a single key each, so `resolve_in` (the
 //! plain, context-free lookup those tables use) only ever matches a
 //! one-element `keys` slice; the sequence- and context-aware engine that
 //! actually walks a multi-key chord to completion lives in
