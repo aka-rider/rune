@@ -30,10 +30,9 @@ pub enum GlobalCommand {
     /// column currently owns focus, hands it back to the Editor.
     CollapseLeft,
     /// Focuses the title field so the active document can be renamed (`^r`
-    /// — free across `GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `resolve_char`,
-    /// `TABS_BINDINGS` and `EXPLORER_BINDINGS`). Global rather than
-    /// editor-scoped so a rename is reachable from any pane, exactly like
-    /// Save.
+    /// — free across `GLOBAL_BINDINGS`, `resolve_char`, `TABS_BINDINGS` and
+    /// `EXPLORER_BINDINGS`). Global rather than editor-scoped so a rename is
+    /// reachable from any pane, exactly like Save.
     FocusTitle,
     Save,
     Help,
@@ -63,9 +62,17 @@ const SUP: Mods = Mods {
     sup: true,
 };
 
-/// `^b`/`^e`/`^t`/F1 are always-works ctrl fallbacks (plan WP5.S1: `^x`
-/// retired as the explorer chord once the held-space leader — below — took
-/// over as the primary way in; `^b` is free, see plan decision 6/risk R4).
+/// The five focus/chrome commands each get a ⌘ and a `^` chord (the leader
+/// they used to share is gone — a terminal cannot report the spacebar's
+/// physical state in-band, so a prefix chord can never be told apart from
+/// plain text; see the module removed at `keystate.rs`). One form of each
+/// pair is marked `alias: true` so the footer's hint row names the command
+/// once while the Help doc still lists both; which form stays canonical
+/// keeps the shorter `^` glyph in the footer. Ghostty intercepts some ⌘
+/// chords before the app ever sees them (⌘T, ⌘K in particular), so `^` is
+/// the form guaranteed to arrive — both are bound regardless, since a
+/// different terminal may pass the ⌘ form through.
+///
 /// `Save` and the two quit chords are the SAME combos `resolve`/
 /// `QuitKey::from_key` already bind — moving their resolution to the global
 /// pipeline stage changes only WHEN they're seen (before, not after, a
@@ -75,14 +82,26 @@ const SUP: Mods = Mods {
 /// below — the loosely-matched variants were never a documented,
 /// intentional binding.
 ///
-/// A ctrl chord that duplicates a leader chord (or, for `^d`, another quit
-/// chord) is marked `alias: true` so the footer's hint row skips it, since
-/// showing both would just repeat the same action twice. `F1` has no leader
-/// equivalent, so it is not one — hiding it would remove it from the footer
-/// entirely rather than leave a shorter, still-complete hint row.
+/// A ctrl chord that duplicates its ⌘ counterpart (or, for `^d`, another
+/// quit chord) is marked `alias: true` so the footer's hint row skips it,
+/// since showing both would just repeat the same action twice. `F1` has no
+/// counterpart, so it is not one — hiding it would remove it from the
+/// footer entirely rather than leave a shorter, still-complete hint row.
+///
+/// INVARIANT: every row's `KeyPattern` requires `ctrl` or `sup` — see
+/// `every_binding_requires_a_modifier` below. A printable key with no
+/// modifier here would shadow ordinary text input, which is exactly the
+/// defect this table replaced the leader to avoid.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
+        cmd: GlobalCommand::FocusExplorer,
+        help: "explorer",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('b'), SUP)],
         cmd: GlobalCommand::FocusExplorer,
         help: "explorer",
         when: "",
@@ -93,6 +112,13 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         cmd: GlobalCommand::FocusEditor,
         help: "editor",
         when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('e'), SUP)],
+        cmd: GlobalCommand::FocusEditor,
+        help: "editor",
+        when: "",
         alias: true,
     },
     Binding {
@@ -100,12 +126,43 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         cmd: GlobalCommand::FocusTabs,
         help: "tabs",
         when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('t'), SUP)],
+        cmd: GlobalCommand::FocusTabs,
+        help: "tabs",
+        when: "",
         alias: true,
     },
+    // `⌘R` deliberately has NO row here, unlike the other four focus
+    // commands' pairs: `EDITOR_BINDINGS`' `RELOAD` chord already claims
+    // `⌘R` (re-decode the active image) gated on `when: "image"`. This
+    // table's rows are resolved unconditionally at stage 2, before any
+    // pane (including the editor) ever sees the key — `when` on a pane
+    // table only partitions collisions AMONG that pane's own rows, never
+    // against a stage-2 row, since `resolve_in` never consults `when` at
+    // all. Adding `⌘R` here would make Reload permanently unreachable by
+    // keyboard on an image document. `^R` is unaffected — nothing else in
+    // this crate binds it — so `FocusTitle` keeps only its `^` form.
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('r'), CTRL)],
         cmd: GlobalCommand::FocusTitle,
         help: "rename",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('k'), CTRL)],
+        cmd: GlobalCommand::CollapseLeft,
+        help: "hide pane",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('k'), SUP)],
+        cmd: GlobalCommand::CollapseLeft,
+        help: "hide pane",
         when: "",
         alias: true,
     },
@@ -222,60 +279,31 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     },
 ];
 
-/// The glyph every leader label is prefixed with — U+2423 OPEN BOX (plan
-/// decision 9), standing in for the physically-held space that arms it.
-pub const LEADER_GLYPH: char = '␣';
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// The held-space leader table (plan decisions 1/2/4): resolved only when
-/// `app.space_probe.space_is_down()` confirms space is still physically
-/// down at the instant one of these keys arrives (`app::handle_key`'s
-/// leader stage). A plain `Binding<GlobalCommand>` table, not a bespoke
-/// struct, so it reuses `resolve_in` verbatim and stays enumerable by the
-/// same reflection the footer and Help doc already use over
-/// `GLOBAL_BINDINGS`. `Mods::NONE` is load-bearing: `KeyPattern::matches`
-/// compares the WHOLE `Mods` set, so `⌘X` (Cut) and `^X`/`^B` can never be
-/// mistaken for a leader completion.
-pub const LEADER_BINDINGS: &[Binding<GlobalCommand>] = &[
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('x'), Mods::NONE)],
-        cmd: GlobalCommand::FocusExplorer,
-        help: "explorer",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('e'), Mods::NONE)],
-        cmd: GlobalCommand::FocusEditor,
-        help: "editor",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('t'), Mods::NONE)],
-        cmd: GlobalCommand::FocusTabs,
-        help: "tabs",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('r'), Mods::NONE)],
-        cmd: GlobalCommand::FocusTitle,
-        help: "rename",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('z'), Mods::NONE)],
-        cmd: GlobalCommand::CollapseLeft,
-        help: "hide pane",
-        when: "",
-        alias: false,
-    },
-];
-
-/// `␣X`-style label — the one source the footer and the Help doc both
-/// render, so the two can never drift out of step with each other or with
-/// `LEADER_BINDINGS` itself.
-pub fn leader_label(b: &Binding<GlobalCommand>) -> String {
-    format!("{LEADER_GLYPH}{}", b.label())
+    /// Structural proof of the invariant the module doc above states: a
+    /// `Char` row (the only kind of row a printable keystroke could ever
+    /// match — `F1` and any other non-`Char` `KeyCode` can never be typed
+    /// as text, so they are exempt) always requires ctrl or sup. This is
+    /// what makes "every printable keystroke is text" true by construction
+    /// rather than by convention — the exact property the deleted held-
+    /// space leader violated.
+    #[test]
+    fn every_printable_binding_requires_a_modifier() {
+        use crate::binding::KeyMatch;
+        for binding in GLOBAL_BINDINGS {
+            for key in binding.keys {
+                if !matches!(key.key, KeyMatch::Code(KeyCode::Char(_))) {
+                    continue;
+                }
+                assert!(
+                    key.mods.ctrl || key.mods.sup,
+                    "{:?} has no ctrl/sup modifier and could shadow text input",
+                    key
+                );
+            }
+        }
+    }
 }
