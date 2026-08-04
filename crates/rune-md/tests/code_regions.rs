@@ -1,4 +1,4 @@
-//! What `DocMachine::code_regions` promises, stated as a specification.
+//! What `ViewSnapshots::code_regions` promises, stated as a specification.
 //!
 //! A code region is the one definition of "a stretch of code" the rest of the
 //! system reads. These tests pin the properties downstream consumers rely on:
@@ -7,22 +7,26 @@
 //! fence's delimiters, and that a whole code document is just another region.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use std::sync::Arc;
+
 use rune_core::buffer::Buffer;
 use rune_md::element::code_region::CodeRegion;
 use rune_md::element::doc::DocMachine;
 use rune_syntax::kind::DocumentKind;
 
-/// Parse `content` as the given kind and return its code regions.
-fn regions_of(content: &str, kind: DocumentKind) -> (Buffer, Vec<CodeRegion>) {
+/// Parse `content` as the given kind and return its code regions, read off
+/// the display snapshot that publishes them — the same value every
+/// production consumer reads.
+fn regions_of(content: &str, kind: DocumentKind) -> (Buffer, Arc<[CodeRegion]>) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
     doc.set_kind(kind);
     doc.sync_content(&buf);
-    let regions = doc.code_regions(&buf);
+    let regions = doc.snapshot(&buf).code_regions;
     (buf, regions)
 }
 
-fn markdown_regions(content: &str) -> (Buffer, Vec<CodeRegion>) {
+fn markdown_regions(content: &str) -> (Buffer, Arc<[CodeRegion]>) {
     regions_of(content, DocumentKind::Markdown)
 }
 

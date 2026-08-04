@@ -50,14 +50,20 @@ use super::decor::decor_cell_width;
 /// wrap segment it was built from; `WrapSegment::model_line` is constant
 /// across a wrapped line's continuation segments, so a wrapped code line's
 /// continuation rows are covered without a special case.
+///
+/// The regions come from `view` itself rather than from a separate argument:
+/// they are a pure function of the same document state the rest of the
+/// snapshot describes, computed once when that state changes, so the paint
+/// can never disagree with the geometry it paints onto and this per-frame
+/// path never walks the block tree.
 pub(super) fn paint_code_background(
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
     scroll_row: usize,
     width: u16,
-    regions: &[CodeRegion],
     bg: Color,
 ) {
+    let regions: &[CodeRegion] = &view.code_regions;
     if regions.is_empty() || width == 0 {
         return;
     }
