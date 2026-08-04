@@ -9,30 +9,27 @@ use ratatui::text::Span;
 
 use crate::app::App;
 use crate::explorer_keys::EXPLORER_BINDINGS;
-use crate::global::{self, LEADER_BINDINGS};
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
 use crate::pane::Pane;
 use crate::width::display_width;
 
-/// Default-mode hints, now CONTEXTUAL per focused pane (plan WP6.S2,
+/// Default-mode hints, CONTEXTUAL per focused pane (plan WP6.S2,
 /// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
 /// priority-ordered `(label, help, active)` list —
 ///
-/// 1. The three held-space leader chords (`global::LEADER_BINDINGS`),
-///    always active.
-/// 2. `⌘S save` — only in the Editor; styled active only when the
+/// 1. `⌘S save` — only in the Editor; styled active only when the
 ///    document is dirty (assumption A2: always PRESENT there, never
 ///    removed, so the row never jumps).
-/// 3. Every remaining non-alias `GLOBAL_BINDINGS` entry except `⌘S` (already
-///    placed at step 2, with its own dirty-state styling) — help and quit
+/// 2. Every remaining non-alias `GLOBAL_BINDINGS` entry except `⌘S` (already
+///    placed at step 1, with its own dirty-state styling) — help and quit
 ///    are always-available actions, so they get a stable position ahead of
 ///    the pane-specific table below rather than being the first thing width
-///    truncation drops. Aliased ctrl fallbacks (a chord that duplicates a
-///    leader chord, or a second quit chord) are skipped: they still work,
+///    truncation drops. Aliased chords (the ⌘/`^` form the footer doesn't
+///    need twice, or a second quit chord) are skipped: they still work,
 ///    `help_markdown` still lists them, but the footer only needs to name a
 ///    command once.
-/// 4. The focused pane's own table (`EXPLORER_BINDINGS`/`TABS_BINDINGS`) —
+/// 3. The focused pane's own table (`EXPLORER_BINDINGS`/`TABS_BINDINGS`) —
 ///    nothing extra for the Editor, whose chords live in `keymap::resolve`,
 ///    a match rather than a table (the same asymmetry `help.rs` already
 ///    records). Placed last: a pane's own chords are the ones that should
@@ -42,10 +39,7 @@ use crate::width::display_width;
 /// `rune-fuzz`'s snapshots) and the width-truncated one `draw` uses, so the
 /// two can never disagree about WHAT the hints are, only how many fit.
 pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
-    let mut entries: Vec<(String, &'static str, bool)> = LEADER_BINDINGS
-        .iter()
-        .map(|b| (global::leader_label(b), b.help, true))
-        .collect();
+    let mut entries: Vec<(String, &'static str, bool)> = Vec::new();
 
     if app.focus() == Pane::Editor
         && let Some(save) = GLOBAL_BINDINGS
