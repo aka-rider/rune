@@ -139,7 +139,7 @@ fn paste_verbatim_ignores_a_paste_on_a_read_only_document() {
     // CODE-REVIEW.md rune-fuzz finding 9) refuses every mutating command,
     // including paste, by construction.
     let mut prev = base_snapshot("ac");
-    prev.read_only = true;
+    prev.read_only = rune_tui::document::ReadOnly::Always;
     let next = base_snapshot("ac"); // correctly untouched
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Paste("b".to_string());

@@ -59,7 +59,7 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // is dead. A `ReadOnly::Reading` document may hold bytes typed before
     // the toggle and keeps a live, working `⌘S`, so it keeps the hint.
     if app.focus() == Pane::Editor
-        && !matches!(app.active_doc().read_only, ReadOnly::Always)
+        && !matches!(app.active_doc().read_only, ReadOnly::Always | ReadOnly::Preview)
         && let Some(save) = GLOBAL_BINDINGS
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
@@ -67,10 +67,12 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         entries.push((save.label(), save.help, app.is_dirty()));
     }
 
+    let read_only = app.active_doc().read_only;
     entries.extend(
         GLOBAL_BINDINGS
             .iter()
             .filter(|b| !b.alias && !matches!(b.cmd, GlobalCommand::Save))
+            .filter(|b| !hint_suppressed_for(read_only, b.cmd))
             .map(|b| (b.label(), b.help, true)),
     );
 
@@ -96,6 +98,18 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     }
 
     entries
+}
+
+/// Plan WP6 — the one place that suppresses a `GLOBAL_BINDINGS` hint the
+/// bulk `extend` above would otherwise show unconditionally: a `Preview`
+/// document refuses close (`workspace::request_close`) and rename entry
+/// (`App::focus_title`) alike, so their hints must not promise a chord that
+/// only sets a status message. `Save` already has its own bespoke arm above
+/// (styled by dirtiness, not just present/absent) and is filtered out of
+/// this bulk `extend` before it ever reaches here.
+fn hint_suppressed_for(read_only: ReadOnly, cmd: GlobalCommand) -> bool {
+    read_only == ReadOnly::Preview
+        && matches!(cmd, GlobalCommand::CloseFile | GlobalCommand::FocusTitle)
 }
 
 /// One hint entry's own span group: a leading `"  "` separator (every
@@ -302,6 +316,85 @@ mod tests {
         assert!(
             entries.iter().any(|(label, _, _)| *label == save_label),
             "expected a save hint for ReadOnly::Reading, got {entries:?}"
+        );
+    }
+
+    /// Plan WP6 — a `Preview` document promises none of save, close, or
+    /// rename in the footer: all three refuse it (`save::trigger_save`,
+    /// `workspace::request_close`, `App::focus_title`), so none may appear
+    /// as a live hint.
+    #[test]
+    fn default_hint_entries_omit_save_close_and_rename_for_a_preview_document() {
+        let save_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+            .expect("a Save binding exists")
+            .label();
+        let close_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::CloseFile))
+            .expect("a CloseFile binding exists")
+            .label();
+        let rename_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::FocusTitle))
+            .expect("a FocusTitle binding exists")
+            .label();
+
+        let mut app = app_with("hello");
+        app.active_doc_mut().read_only = crate::document::ReadOnly::Preview;
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            !entries.iter().any(|(label, _, _)| *label == save_label),
+            "expected no save hint for ReadOnly::Preview, got {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|(label, _, _)| *label == close_label),
+            "expected no close hint for ReadOnly::Preview, got {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|(label, _, _)| *label == rename_label),
+            "expected no rename hint for ReadOnly::Preview, got {entries:?}"
+        );
+    }
+
+    /// The mirror of the above: an ordinary `ReadOnly::No` document keeps
+    /// all three hints, so the suppression above is really keyed on
+    /// `Preview` and not accidentally dropping them for everyone.
+    #[test]
+    fn default_hint_entries_keep_save_close_and_rename_for_an_ordinary_document() {
+        let save_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+            .expect("a Save binding exists")
+            .label();
+        let close_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::CloseFile))
+            .expect("a CloseFile binding exists")
+            .label();
+        let rename_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::FocusTitle))
+            .expect("a FocusTitle binding exists")
+            .label();
+
+        let app = app_with("hello");
+        assert_eq!(app.active_doc().read_only, crate::document::ReadOnly::No);
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            entries.iter().any(|(label, _, _)| *label == save_label),
+            "expected a save hint for ReadOnly::No, got {entries:?}"
+        );
+        assert!(
+            entries.iter().any(|(label, _, _)| *label == close_label),
+            "expected a close hint for ReadOnly::No, got {entries:?}"
+        );
+        assert!(
+            entries.iter().any(|(label, _, _)| *label == rename_label),
+            "expected a rename hint for ReadOnly::No, got {entries:?}"
         );
     }
 }

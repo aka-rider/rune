@@ -14,7 +14,7 @@ use ratatui::layout::Rect;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
 use rune_tui::banner::GuardKind;
-use rune_tui::document::DocumentId;
+use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::footer;
 use rune_tui::keymap::QuitKey;
 use rune_tui::layout::{self, Geometry};
@@ -66,16 +66,21 @@ pub struct Snapshot {
     /// report couldn't even show what the field held when a title-path
     /// invariant tripped.
     pub title_text: String,
-    /// `doc.is_read_only()` — the virtual Help document
-    /// (`workspace::toggle_help`, reachable now that `F1` is in
-    /// `arb_any_keycode`, CODE-REVIEW.md rune-fuzz finding 9) and reading
-    /// view (`⌃P`, `ReadOnly::Reading`) are both live paths to a read-only
-    /// document; `PASTE-VERBATIM` needs this to tell "production correctly
-    /// refused the edit" apart from "production silently dropped it" (a
-    /// paste into a read-only document is the former, by design —
-    /// `Document::read_only` is no longer dead code once either path
-    /// exists).
-    pub read_only: bool,
+    /// `doc.read_only` — the virtual Help document (`workspace::
+    /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
+    /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃P`,
+    /// `ReadOnly::Reading`), and a not-yet-committed preview (plan WP6,
+    /// `ReadOnly::Preview`) are all live paths to a read-only document;
+    /// `PASTE-VERBATIM` needs this to tell "production correctly refused
+    /// the edit" apart from "production silently dropped it" (a paste into
+    /// a read-only document is the former, by design — `Document::
+    /// read_only` is no longer dead code once any of these paths exists).
+    /// The full variant, not a collapsed `bool` (plan WP6): a checker that
+    /// only ever asks "is this read-only at all" still gets that from
+    /// `!matches!(.., ReadOnly::No)`, but a future checker that needs to
+    /// tell `Preview` apart from `Reading`/`Always` now can, rather than
+    /// the enum being invisible to every session the fuzzer drives.
+    pub read_only: ReadOnly,
     /// `app.active_doc().has_insertion_point()` — the production predicate itself,
     /// not a re-derivation from `focus`/`modal_open`/`read_only`, so
     /// `CUR-NO-CARET-HIDDEN` cannot pass by duplicating the very logic it is
@@ -236,7 +241,7 @@ impl Snapshot {
             modal_open: app.modal.is_some(),
             active: app.active,
             title_text: app.title.text().to_string(),
-            read_only: doc.is_read_only(),
+            read_only: doc.read_only,
             caret_visible: doc.has_insertion_point(),
             cells,
             row_meta,
