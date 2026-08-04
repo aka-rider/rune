@@ -414,8 +414,12 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
 
     /// `explorer_budget` is a public function precisely because `geometry`
     /// and `pane::FocusTabs`'s `ensure_trail` call must both use the exact
@@ -432,5 +436,53 @@ mod tests {
             let inner = left_area.inner(Margin::new(1, 1));
             assert_eq!(explorer_budget(left_area), inner.height.saturating_sub(1));
         }
+    }
+
+    fn app_with_left_shown() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.splits.left.show();
+        app
+    }
+
+    /// Plan WP1: a frame too NARROW to fit the left column at all must
+    /// resolve to `LayoutMode::EditorOnly`, not merely leave `geometry`'s
+    /// own `left_block` `None` while `app.splits.left` still claims shown —
+    /// the exact shadow state this resolver exists to close.
+    #[test]
+    fn a_too_narrow_frame_resolves_to_editor_only_not_a_silently_dropped_column() {
+        let app = app_with_left_shown();
+        let area = Rect::new(0, 0, MIN_LEFT_PANE_W + MIN_CENTER_W - 1, 30);
+        assert!(geometry(area, &app).left_block.is_none());
+        assert_eq!(resolve_mode(area, &app), LayoutMode::EditorOnly);
+    }
+
+    /// The height-driven counterpart: a column with enough WIDTH to show but
+    /// too few ROWS for either the Explorer or the tab rows to fit
+    /// (`resolve`'s `(None, None)` arm) resolves the same way.
+    #[test]
+    fn a_too_short_frame_resolves_to_editor_only_not_a_silently_dropped_column() {
+        let app = app_with_left_shown();
+        let area = Rect::new(0, 0, 40, 3);
+        assert!(geometry(area, &app).left_block.is_none());
+        assert_eq!(resolve_mode(area, &app), LayoutMode::EditorOnly);
+    }
+
+    /// The ordinary case: a roomy frame resolves to `Split` with both
+    /// sections painted, matching `geometry`'s own rects.
+    #[test]
+    fn a_roomy_frame_resolves_to_split_with_both_sections_shown() {
+        let app = app_with_left_shown();
+        let area = Rect::new(0, 0, 100, 30);
+        let geo = geometry(area, &app);
+        assert!(geo.left_block.is_some());
+        assert!(geo.explorer_inner.height > 0);
+        assert!(geo.tabs_inner.height > 0);
+        assert_eq!(
+            resolve_mode(area, &app),
+            LayoutMode::Split {
+                explorer: true,
+                tabs: true
+            }
+        );
     }
 }

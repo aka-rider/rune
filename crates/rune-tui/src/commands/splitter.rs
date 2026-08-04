@@ -110,3 +110,64 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     // second, independently-maintained copy of the check.
     crate::focus::reconcile(app, effects);
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::keymap::GlobalCommand;
+    use crate::pane::{Pane, handle_global_command};
+    use crate::pointer::{MouseButton, MouseKind};
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app_with_explorer_focused() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 100;
+        app.frame_height = 30;
+        app.splits.left.show();
+        let mut effects = Effects::default();
+        app.set_focus_pane(Pane::Explorer, &mut effects);
+        app
+    }
+
+    /// Plan WP1: dragging the left column's splitter away and pressing
+    /// `GlobalCommand::CollapseLeft` must reach IDENTICAL state — both hide
+    /// the same `Split` and both redirect focus through the one shared
+    /// `focus::reconcile` chokepoint, so a user reaching for either gesture
+    /// is never surprised the other one behaves differently.
+    #[test]
+    fn dragging_the_column_away_and_the_collapse_command_reach_the_same_state() {
+        let mut dragged = app_with_explorer_focused();
+        let mut effects = Effects::default();
+        dragged.pointer.drag = Some(Drag::Splitter {
+            which: Splitter::LeftColumn,
+            grab_delta: 0,
+        });
+        drag(
+            &mut dragged,
+            MouseInput {
+                kind: MouseKind::Drag(MouseButton::Left),
+                column: 0,
+                row: 0,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            },
+            &mut effects,
+        );
+
+        let mut commanded = app_with_explorer_focused();
+        let mut effects = Effects::default();
+        handle_global_command(&mut commanded, GlobalCommand::CollapseLeft, &mut effects);
+
+        assert!(
+            !dragged.splits.left.is_shown(),
+            "test setup: the drag must actually collapse the column"
+        );
+        assert_eq!(dragged.splits.left.is_shown(), commanded.splits.left.is_shown());
+        assert_eq!(dragged.focus(), commanded.focus());
+        assert_eq!(dragged.focus(), Pane::Editor);
+    }
+}
