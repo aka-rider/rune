@@ -11,6 +11,7 @@
 
 mod tui_render_common;
 
+use ratatui::buffer::CellWidth;
 use rune_tui::render;
 
 use tui_render_common::{
@@ -304,4 +305,153 @@ fn control_char_gets_a_safe_placeholder_glyph() {
         placeholder.buf_offset, 1,
         "the BEL is the 2nd byte (offset 1) of \"a\\x07b\""
     );
+}
+
+/// Guard for the width chokepoint's own invariant (`rune_syntax::wrap::
+/// grapheme_width`'s doc comment): rune's width for a symbol must equal
+/// what ratatui derives for that same symbol, over a corpus covering every
+/// class of cluster known to have diverged — plain ASCII/CJK single runes,
+/// an NFD accent cluster, a ZWJ family, a skin-tone modifier, a base char
+/// plus `U+FE0F`/`U+FE0E` (variation selectors), a regional-indicator flag
+/// pair, a keycap, halfwidth katakana + dakuten, and the reported
+/// `🤖ིྀ`-style cluster. `rune-syntax` stays terminal-free and cannot depend
+/// on ratatui to assert this itself, so the equality is pinned here, in
+/// `rune-tui`, which already depends on both.
+#[test]
+fn grapheme_width_agrees_with_ratatuis_own_cell_width_derivation() {
+    let corpus: &[(&str, &str)] = &[
+        ("plain ASCII", "a"),
+        ("CJK", "\u{6c49}"),                 // 汉
+        ("NFD accent cluster", "e\u{0301}"), // e + combining acute
+        (
+            "ZWJ family",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}",
+        ),
+        ("skin-tone modifier", "\u{1F44B}\u{1F3FD}"), // 👋🏽
+        ("heart + FE0F", "\u{2764}\u{FE0F}"),         // ❤️
+        ("lightning + FE0E", "\u{26A1}\u{FE0E}"),     // ⚡︎
+        ("regional-indicator flag pair", "\u{1F1FA}\u{1F1F8}"), // 🇺🇸
+        ("keycap", "1\u{FE0F}\u{20E3}"),              // 1️⃣
+        ("halfwidth katakana + dakuten", "\u{FF76}\u{FF9E}"), // ｶﾞ
+        (
+            "reported robot + Tibetan vowel signs",
+            "\u{1F916}\u{0F72}\u{0F80}",
+        ),
+    ];
+
+    for (label, cluster) in corpus {
+        let rune_width = rune_syntax::wrap::grapheme_width(cluster);
+        let ratatui_width = usize::from(cluster.cell_width());
+        assert_eq!(
+            rune_width, ratatui_width,
+            "{label} ({cluster:?}): rune grapheme_width={rune_width}, ratatui cell_width={ratatui_width}"
+        );
+    }
+}
+
+/// End-to-end sibling to the corpus guard above, reusing the `TestBackend`
+/// harness from `wide_cell_leaves_a_blank_continuation_column_in_the_real_
+/// backend`: `❤️` (base + `U+FE0F`, ratatui width 2) followed by another
+/// glyph must not swallow that glyph — before the fix, `grapheme_width`
+/// under-measured this cluster at 1, `blit` wrote it at width 1 and skipped
+/// its continuation-reset loop, and `BufferDiff` then read the emoji's OWN
+/// `cell_width() == 2` and skipped the very column the next glyph landed
+/// on, so it never reached the real terminal buffer.
+#[test]
+fn variation_selector_emoji_does_not_swallow_the_following_glyph() {
+    let heart = "\u{2764}\u{FE0F}"; // ❤️
+    let content = format!("{heart}x\n");
+    let app = app_for(&content, 0, true);
+
+    let view = app.active_doc().view.as_ref().expect("synced view");
+    let rows = render::build_rows(view, &app);
+    let first_row = rows.first().expect("at least one row");
+    let heart_cell = first_row.first().expect("heart cell present");
+    assert_eq!(heart_cell.text, heart);
+    assert_eq!(
+        usize::from(heart_cell.width),
+        heart.cell_width() as usize,
+        "the Cell's own width must match ratatui's derivation for the same symbol"
+    );
+
+    let buf = render_to_test_backend(&app);
+    let text = full_text(&buf, HEIGHT, WIDTH);
+    assert!(
+        text.contains('x'),
+        "the glyph following the FE0F-presented heart must reach the real backend buffer:\n{text}"
+    );
+}
+
+/// Guard for the ONE documented exception to the corpus-agreement test
+/// above (`rune_syntax::wrap::grapheme_width`'s doc, `blit`'s narrowed
+/// `assert_invariant`, `TODO/TODO.md`): a LONE (single-`char`) cluster that
+/// ratatui itself derives width 0 for — a bare combining mark with no base,
+/// a stray ZWJ, a lone variation selector, a lone zero-width space — is
+/// reserved at width 1 by `control_aware_width`'s clamp, not ratatui's 0,
+/// so rune's own caret math always has a cell to land the caret on. This
+/// test pins the divergence explicitly (never silently) and proves the
+/// whole render path — including `blit`'s own strict-mode assert, live in
+/// this `cfg(test)` build — tolerates it without panicking, rather than
+/// asserting the two numbers agree (which they deliberately do not here).
+#[test]
+fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
+    let halfwidth_dakuten = '\u{FF9E}'; // agrees with ratatui at width 1 (control_aware_width's own doc) — the control case
+    let lone_zero_width: &[(&str, char)] = &[
+        ("combining acute accent", '\u{0301}'),
+        ("zero-width joiner", '\u{200D}'),
+        ("variation selector-16 (emoji presentation)", '\u{FE0F}'),
+        ("variation selector-15 (text presentation)", '\u{FE0E}'),
+        ("zero-width space", '\u{200B}'),
+    ];
+
+    for (label, ch) in lone_zero_width {
+        assert_ne!(
+            *ch, halfwidth_dakuten,
+            "sanity: the halfwidth-dakuten control case must not appear in this corpus"
+        );
+        assert_eq!(
+            usize::from(ch.to_string().cell_width()),
+            0,
+            "{label} ({ch:?}): expected ratatui to derive width 0 for this rune — \
+             if this now fails, the divergence this test guards may no longer exist \
+             and the exception can be narrowed or removed"
+        );
+
+        // The rune must lead its line, with no preceding base character —
+        // a combining mark (or ZWJ/variation-selector, which also only
+        // attach BACKWARD to a preceding grapheme, per UAX #29 GB9) fuses
+        // with a preceding base into ONE multi-rune cluster instead of
+        // standing alone, which is the already-agreeing case the corpus
+        // test above covers, not this one.
+        let content = format!("{ch}ab\n");
+        let app = app_for(&content, 0, true);
+
+        assert_eq!(
+            app.active_doc().buffer.content(),
+            content,
+            "{label}: buffer bytes must round-trip verbatim (CONSTITUTION §1.4.5)"
+        );
+
+        let view = app.active_doc().view.as_ref().expect("synced view");
+        let rows = render::build_rows(view, &app);
+        let cell = rows
+            .first()
+            .and_then(|row| row.iter().find(|c| c.text.chars().eq(std::iter::once(*ch))))
+            .expect("expected a Cell carrying the lone rune verbatim");
+        assert_eq!(
+            cell.width, 1,
+            "{label}: rune reserves width 1 for a lone zero-width rune (caret reachability)"
+        );
+
+        // The end-to-end render must not panic — this exercises `blit`'s
+        // own strict-mode `assert_invariant`, narrowed to admit exactly
+        // this divergence, in a real cfg(test) build (STRICT_INVARIANTS is
+        // `true` here).
+        let buf = render_to_test_backend(&app);
+        let text = full_text(&buf, HEIGHT, WIDTH);
+        assert!(
+            text.contains('a') && text.contains('b'),
+            "{label}: the surrounding glyphs must still reach the real backend buffer:\n{text}"
+        );
+    }
 }
