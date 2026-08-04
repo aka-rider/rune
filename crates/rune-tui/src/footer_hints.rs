@@ -8,6 +8,7 @@
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::document::ReadOnly;
 use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand};
 use crate::opentabs::TABS_BINDINGS;
@@ -18,9 +19,11 @@ use crate::width::display_width;
 /// superseding WP2.S6/S7's blind `GLOBAL_BINDINGS` iteration): a
 /// priority-ordered `(label, help, active)` list —
 ///
-/// 1. `⌘S save` — only in the Editor; styled active only when the
-///    document is dirty (assumption A2: always PRESENT there, never
-///    removed, so the row never jumps).
+/// 1. `⌘S save` — only in the Editor, and only when the active document
+///    isn't `ReadOnly::Always` (plan WP6: that variant can never be
+///    saved); styled active only when the document is dirty (assumption
+///    A2: for every document where it's PRESENT it's never removed, so
+///    the row never jumps there).
 /// 2. Every remaining non-alias `GLOBAL_BINDINGS` entry except `⌘S` (already
 ///    placed at step 1, with its own dirty-state styling) — help and quit
 ///    are always-available actions, so they get a stable position ahead of
@@ -41,7 +44,22 @@ use crate::width::display_width;
 pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool)> {
     let mut entries: Vec<(String, &'static str, bool)> = Vec::new();
 
+    // Plan WP6: keyed on the `ReadOnly` VARIANT, not on `is_read_only()`
+    // and not on dirtiness. `Document::is_dirty()` returns the render-only
+    // `is_dirty_cached` field, while `save::trigger_save` deliberately
+    // re-derives via `materialize_ack::is_dirty_now` instead of reading
+    // that cache — a dirtiness-keyed hint would promise a chord the save
+    // path doesn't actually honour whenever the cache is stale, and
+    // `render` cannot take `&mut App` to refresh it first. `ReadOnly::
+    // Always` documents can never be saved regardless: an image document
+    // is refused on `kind == DocumentKind::Image` in `save.rs`, the Help
+    // tab has `file_path: None` and only reaches the `NeedsName` arm, and
+    // the error-banner document is never inserted into `app.documents` at
+    // all — so dropping the hint there drops it exactly where the chord
+    // is dead. A `ReadOnly::Reading` document may hold bytes typed before
+    // the toggle and keeps a live, working `⌘S`, so it keeps the hint.
     if app.focus() == Pane::Editor
+        && !matches!(app.active_doc().read_only, ReadOnly::Always)
         && let Some(save) = GLOBAL_BINDINGS
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
@@ -243,5 +261,47 @@ mod tests {
             .find(|s| s.content.as_ref() == save_label)
             .expect("save label span present");
         assert_eq!(save_span.style, app.theme.chrome.footer_key);
+    }
+
+    /// Plan WP6 — the chord is dead for `ReadOnly::Always` (an image
+    /// document is refused on `kind`, the Help tab has no `file_path`, the
+    /// error banner is never in `app.documents`), so the hint must not
+    /// promise it.
+    #[test]
+    fn default_hint_entries_omit_save_for_a_read_only_always_document() {
+        let save_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+            .expect("a Save binding exists")
+            .label();
+
+        let mut app = app_with("hello");
+        app.active_doc_mut().read_only = crate::document::ReadOnly::Always;
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            !entries.iter().any(|(label, _, _)| *label == save_label),
+            "expected no save hint for ReadOnly::Always, got {entries:?}"
+        );
+    }
+
+    /// Plan WP6 — a `ReadOnly::Reading` document may hold bytes typed
+    /// before the toggle and keeps a live `⌘S`, so the hint stays.
+    #[test]
+    fn default_hint_entries_keep_save_for_a_read_only_reading_document() {
+        let save_label = GLOBAL_BINDINGS
+            .iter()
+            .find(|b| matches!(b.cmd, GlobalCommand::Save))
+            .expect("a Save binding exists")
+            .label();
+
+        let mut app = app_with("hello");
+        app.active_doc_mut().read_only = crate::document::ReadOnly::Reading;
+
+        let entries = default_hint_entries(&app);
+        assert!(
+            entries.iter().any(|(label, _, _)| *label == save_label),
+            "expected a save hint for ReadOnly::Reading, got {entries:?}"
+        );
     }
 }
