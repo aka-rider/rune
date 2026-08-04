@@ -297,7 +297,8 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed:
 /// overlay function here is `pub(super)` too, reached only through
 /// `render::build_rows`), so it is unreachable from the crate's external
 /// `tests/` integration tests — those exercise the SAME algorithm
-/// end-to-end instead, through `Document::highlight.spans` and
+/// end-to-end instead, through a document's stored region highlight state
+/// (`HighlightState::regions`, queried by `highlight::visible_spans`) and
 /// `render::build_rows`/`testgrid`. This module covers the painter
 /// resolution itself directly.
 #[cfg(test)]
