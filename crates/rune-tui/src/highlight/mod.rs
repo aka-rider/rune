@@ -345,9 +345,23 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
 ///
 /// A region's retained tree is valid exactly when it was parsed from the
 /// same bytes the region reconstructs to now. Region identity across an edit
-/// is positional — the same index in document order — which is stable for
-/// every edit that doesn't add or remove a region, and is the same identity
-/// `install_regions` inherits channels by.
+/// is positional — the same index in document order — and MUST be the same
+/// identity `install_regions` inherits channels by, since a slot that
+/// reported no payload takes whatever sits at its own index: a lookup that
+/// found a matching tree at some other index would leave this slot
+/// inheriting a different region's colours entirely.
+///
+/// The cost of that coupling is missed reuse, never a wrong tree — reuse is
+/// gated on the tree's own source text, so a candidate that moved is
+/// rejected and reparsed rather than misapplied. Inserting or deleting a
+/// region therefore reparses every region below it, which is exactly the
+/// shape a pass's total budget has to absorb. Keying reuse by content
+/// instead would mean carrying an explicit inherit-from index through the
+/// reply (the trees themselves cannot make the trip: they are what the
+/// render path paints from, so moving them to the `Cmd` thread would leave
+/// the document uncoloured for the whole time a pass is in flight), plus
+/// claiming bookkeeping so two identical regions cannot both inherit one
+/// tree. Not paid for what it buys today.
 fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
     sources
         .into_iter()
