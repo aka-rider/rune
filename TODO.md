@@ -8,6 +8,16 @@
 
 - [ ] **An indented code block's first content line starts past its four-space indent while every continuation line keeps its own.** The shared per-line splitter trusts the block's own start offset for the first line (comrak reports it past the indent) and falls back to the physical line start for the rest, so the block reconstructs as `"let x = 1;\n    let y = 2;"`. Nothing observable today — an indented block carries no info string, so the highlighter drops it — but it becomes reachable the moment a consumer reads an untagged region's text. Pre-existing and shared with every other multi-line construct; pinned by a test alongside the item above.
 
+- [ ] **The input reader thread pushes into an unbounded `mpsc` with no backpressure**, and `runtime::run` drains the whole backlog into one batch applied serially — so a key can be handled arbitrarily long after it physically arrived, with nothing bounding how deep the backlog can grow.
+
+- [ ] **`after_update` clones the whole buffer (`buffer.content().to_string()`) and `vfs.stat`s each standalone image, per message** — cost that scales with document size and image count on every single update, not just the ones that touch content or images.
+
+- [ ] **Image transmit runs synchronously on the main loop**: `fit_and_encode` plus a blocking tty `write_all`/`flush` plus `terminal.clear()`, all inline with message handling — nothing yields the loop while a large image is being sent.
+
+- [ ] **`runtime::run`'s batch drain has no test harness at all.** The fuzz driver pumps `app::update` one message at a time and cannot model batching, so the drain-and-apply-serially behavior above is currently unverified by any test.
+
+- [ ] **A large document wedges startup at 100% CPU with no partial render and no progress feedback.** Observed: a 22 MB markdown file never reached the message loop; the editor shows nothing until its first message arrives.
+
 ## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
 
 ## Lists

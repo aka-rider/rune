@@ -10,9 +10,7 @@
 //! `'s' if m.sup && !m.ctrl` arm let `⌘⇧S` perform a real save); a table
 //! lookup cannot. The held-space leader (`global::LEADER_BINDINGS`) is a
 //! separate, already-live stateful mechanism (see `keystate.rs`/
-//! `app::handle_key`'s stage 1.5); `index::KeymapState` below is a second,
-//! general-purpose sequence tracker for a future binding-table-driven
-//! chord, not a replacement for it.
+//! `app::handle_key`'s stage 1.5).
 
 // The generic binding machinery now lives in `crate::binding` and the
 // global chord table in `crate::global` (§1.6: this file was over the
@@ -32,7 +30,6 @@ pub mod vim;
 
 pub use crate::binding::{Binding, KeyOutcome, KeyPattern, resolve_in};
 pub use crate::global::{GLOBAL_BINDINGS, GlobalCommand};
-pub use index::{KeymapState, NextKeyFn, Resolution};
 pub use keyinput::{KeyCode, KeyInput, Mods, from_termina};
 pub use vim::{BindingSet, VIM_BINDINGS, VimCommand};
 

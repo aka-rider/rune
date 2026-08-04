@@ -83,8 +83,7 @@ pub enum ExplorerSearchCommand {
 /// Backspace rows (Esc is unbound there; Backspace means `ParentDir`) —
 /// `explorer_keys::handle_key`'s own `is_some()` guard is what actually
 /// enforces that gate (this crate's `when` clauses are declarative
-/// documentation for `resolve_stateful`-style callers, not something
-/// `resolve_in` itself consults), so the `when` string here keeps the
+/// documentation, not something `resolve_in` itself consults), so the
 /// clause honest rather than doing the gating itself.
 ///
 /// `Type` is the ONE row with `when: ""` (unconditional): binding two rows,
