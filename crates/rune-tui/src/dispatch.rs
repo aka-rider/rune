@@ -250,29 +250,9 @@ fn handle_highlighted(
 /// (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3) the focused
 /// pane's own keymap; (4) `Ignored` -> nothing.
 pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    // Take and clear the held-space arming FIRST (plan WP5.S5): whatever
-    // this keystroke turns out to be, the arming from the space typed
-    // immediately before it must never survive past this one lookup.
-    let speculative_space = app.speculative_space.take();
-
     // Stage 1: modal capture, before any other stage ever sees this key.
     if app.modal.is_some() {
         crate::banner::handle_key(app, key, effects);
-        return;
-    }
-
-    // Stage 1.5: held-space leader completion (plan WP5.S6, decision 2) —
-    // after modal capture (a modal owns the keyboard; space under a modal
-    // stays a consumed no-op) and before the global table (§3.4: "chord
-    // completions -> global actions"). Confirms the physical key state only
-    // once an `x`/`e`/`t` press has already arrived, never standalone.
-    if let Some(cmd) = crate::binding::resolve_in(crate::global::LEADER_BINDINGS, key)
-        && app.space_probe.space_is_down()
-    {
-        if let Some(doc) = speculative_space {
-            edit::retract_space(app, doc);
-        }
-        pane::handle_global_command(app, cmd, effects);
         return;
     }
 
@@ -323,14 +303,6 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
             && is_insertable_key_char(ch)
         {
             edit::insert_char(app, app.active, ch);
-            // Arms the held-space leader (plan WP5.S7/decision 2/A3): the
-            // ONLY arming site — a directly-typed space types immediately,
-            // with zero latency, and a following space-held `x`/`e`/`t`
-            // retracts it. Paste, indent-carrying newline and redo insert
-            // spaces too but deliberately do not arm this (assumption A3).
-            if ch == ' ' {
-                app.speculative_space = Some(app.active);
-            }
             return keymap::KeyOutcome::Consumed;
         }
         return keymap::KeyOutcome::Ignored;

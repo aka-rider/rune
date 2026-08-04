@@ -230,20 +230,13 @@ pub struct App {
     /// once armed; `should_quit` flips only when the LAST entry retires
     /// successfully.
     pub quit_intent: Option<QuitIntent>,
-    /// Answers "is the spacebar physically down right now?" for the held-
-    /// space leader (plan WP5.S3/decision 3). Defaults to `NullProbe`
-    /// (always `false`) so the leader is inert unless something opts in:
-    /// `rune-cli::main` installs the real `HidSpaceProbe`, tests install
-    /// `FixedSpaceProbe`, and the fuzzer keeps the default and so stays
-    /// deterministic.
-    pub space_probe: Box<dyn crate::keystate::SpaceProbe>,
     /// The click-aggregation + drag-selection state a mouse gesture needs
     /// across messages (plan WP7.S5) — `commands::mouse`'s sole owner.
     pub pointer: crate::pointer::PointerState,
     /// Answers "what time is it right now?" for `pointer`'s multi-click
     /// window (plan WP7.S5: "inject the clock as a field so the fuzzer can
-    /// reproduce a gesture"), mirroring `space_probe` above: production
-    /// installs the real wall clock, tests install a `ManualClock`.
+    /// reproduce a gesture"): production installs the real wall clock, tests
+    /// install a `ManualClock`.
     pub pointer_clock: Box<dyn crate::pointer::Clock>,
     /// Which binding set governs the editor pane (plan WP6.S8) — defaults to
     /// `BindingSet::Default` (the VS Code-style set this crate has had since
@@ -252,12 +245,6 @@ pub struct App {
     /// comment); this field exists so a future dispatch switch has
     /// somewhere to read from.
     pub binding_set: crate::keymap::BindingSet,
-    /// The document a literal space was just typed into, armed by the
-    /// printable-insert path (`handle_editor_key`) and cleared at the top
-    /// of the NEXT `handle_key` (plan WP5.S4/S5). `Some` for exactly one
-    /// keystroke, so a stale arming is unrepresentable rather than guarded
-    /// against.
-    pub speculative_space: Option<DocumentId>,
     /// The single modal slot (plan WP3, decision 13): `Some` while an error
     /// banner (WP5: or a close-guard prompt) is up. `banner::set_modal` is
     /// the one chokepoint that writes a NEW modal here (plan Risks, "Banner
@@ -272,8 +259,7 @@ pub struct App {
     /// unquantized) — production
     /// startup (`rune-cli`) overwrites it once `term::Guard` exists and
     /// `theme::probe::supports_truecolor` can actually query the real
-    /// terminal; every test and the fuzzer keep this default, exactly like
-    /// `space_probe`'s `NullProbe` default above.
+    /// terminal; every test and the fuzzer keep this default.
     pub theme: crate::theme::Theme,
     /// The icon tier (plan WP5) — `theme::icons::choose`'s one decision,
     /// made once at startup from the real environment and held here beside
@@ -355,11 +341,9 @@ impl App {
             pending_quit: None,
             next_quit_gen: 0,
             quit_intent: None,
-            space_probe: Box::new(crate::keystate::NullProbe),
             pointer: crate::pointer::PointerState::default(),
             pointer_clock: Box::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
-            speculative_space: None,
             modal: None,
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
