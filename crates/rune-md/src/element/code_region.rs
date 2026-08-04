@@ -74,16 +74,16 @@ pub(crate) fn collect(blocks: &[Block], buf: &Buffer, out: &mut Vec<CodeRegion>)
                 });
             }
             Block::Verbatim(v) if v.kind == VerbatimKind::IndentedCode => {
-                if v.content_lines.is_empty() {
-                    continue;
-                }
                 let content: Vec<Range<usize>> =
                     v.content_lines.iter().map(|l| l.start..l.end).collect();
                 // An indented code block has no delimiter lines and no info
                 // string — every line it owns is content, so its row span is
                 // derived from those lines rather than from stored fence
-                // bounds.
-                let rows = rows_of(&content, buf);
+                // bounds. No content lines means no span, which is also the
+                // one condition that drops the region.
+                let Some(rows) = rows_of(&content, buf) else {
+                    continue;
+                };
                 out.push(CodeRegion {
                     info: String::new(),
                     content,
@@ -120,18 +120,17 @@ pub(crate) fn whole_document(info: &str, buf: &Buffer) -> CodeRegion {
     }
 }
 
-/// The model-line span a set of per-line content ranges covers. Reads each
-/// range's START: a line's end offset is the newline byte, which belongs to
-/// that same line, so either end would do — the start is simply the one that
-/// stays correct for a zero-length line range too.
-fn rows_of(content: &[Range<usize>], buf: &Buffer) -> Range<usize> {
-    let first = content
-        .first()
-        .map(|r| buf.offset_to_line_col(r.start).line)
-        .unwrap_or(0);
-    let last = content
-        .last()
-        .map(|r| buf.offset_to_line_col(r.start).line)
-        .unwrap_or(first);
-    first..last.saturating_add(1)
+/// The model-line span a set of per-line content ranges covers, or `None`
+/// when there are none: no lines describe no rows, and row 0 is a real
+/// answer that must never stand in for the absence of one (§1.7). The caller
+/// decides what that means — for `collect` it is the sole condition that
+/// drops a region.
+///
+/// Reads each range's START: a line's end offset is the newline byte, which
+/// belongs to that same line, so either end would do — the start is simply
+/// the one that stays correct for a zero-length line range too.
+fn rows_of(content: &[Range<usize>], buf: &Buffer) -> Option<Range<usize>> {
+    let first = buf.offset_to_line_col(content.first()?.start).line;
+    let last = buf.offset_to_line_col(content.last()?.start).line;
+    Some(first..last.saturating_add(1))
 }
