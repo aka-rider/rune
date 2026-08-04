@@ -163,6 +163,13 @@ merge relocated them straight into `rr`'s already-split `rename_bind.rs`
 (the read-only-title refusal) and a new sibling `rename_focus.rs` (the
 other ten), both comfortably under the ceiling.
 
+The reading-view plan grew three files that were all already over budget,
+none of them enough to justify a drive-by split: `palette.rs` 548 → 562
+(`CTRL_P_KEY`, one more entry in the same chrome palette this list already
+records), `app.rs` 616 → 617 and `rename.rs` 530 → 531 (one line each, both
+just swapping a `read_only` bool test for the shared
+`ReadOnly::refusal_message` chokepoint). Nothing new crossed the ceiling.
+
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine
 consecutive work packages.
