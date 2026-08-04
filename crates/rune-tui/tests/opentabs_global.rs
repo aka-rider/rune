@@ -60,6 +60,9 @@ fn ctrl_w_on_the_tabs_pane_requests_closing_the_active_document() {
         app.active, second,
         "test setup: b.md is the active document"
     );
+    // WP1: focus is gated on `LayoutMode` now — show the column first so
+    // `Tabs` is actually painted and focusable.
+    app.splits.left.show();
     app.set_focus_pane(Pane::Tabs, &mut Effects::default());
     app.tabs.nav.cursor = 0; // a.md's row — deliberately NOT the active document
 
@@ -170,6 +173,9 @@ fn ctrl_1_from_explorer_focus_switches_tabs() {
     let mut app = app_with(&mem);
     let first = app.active;
     open_second(&mut app);
+    // WP1: focus is gated on `LayoutMode` now — show the column first so
+    // `Explorer` is actually painted and focusable.
+    app.splits.left.show();
     app.set_focus_pane(Pane::Explorer, &mut Effects::default());
 
     let mut effects = Effects::default();

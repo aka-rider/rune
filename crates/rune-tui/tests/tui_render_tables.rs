@@ -42,6 +42,10 @@ const EDITOR_LEFT_COL: usize = 1;
 fn app_for(content: &str, cursor_offset: usize, focused: bool) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     if !focused {
+        // WP1: focus is gated on `LayoutMode` now — show the column first
+        // so `Explorer` is actually painted and the fixture keeps landing
+        // focus off the Editor as intended.
+        app.splits.left.show();
         app.set_focus_pane(Pane::Explorer, &mut Effects::default());
     }
     let id = app.active;
