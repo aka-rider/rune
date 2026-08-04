@@ -34,6 +34,28 @@ fn reveal_within_the_current_root_moves_the_cursor_without_a_reload() {
     );
 }
 
+/// A reveal target spelled with a `..` segment (or a `./` prefix) must
+/// still land on the right entry — `reveal` resolves the whole path once
+/// through `workspace::resolve` before comparing it against anything, so
+/// an unresolved caller path (a symlink, a relative segment) can't
+/// silently miss the entry match and look like a deleted file.
+#[test]
+fn reveal_to_a_path_with_a_dotdot_segment_lands_on_the_right_entry() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    load_explorer(&mut app);
+    assert_eq!(app.explorer.root, PathBuf::from("/root"));
+
+    let mut effects = Effects::default();
+    reveal(&mut app, Path::new("/root/sub/../b.md"), &mut effects);
+
+    assert!(effects.cmds.is_empty(), "same-root reveal must not reload");
+    assert_eq!(
+        app.explorer.entries[app.explorer.nav.cursor].path,
+        PathBuf::from("/root/b.md")
+    );
+}
+
 /// A reveal target in a different directory re-roots the Explorer and
 /// lands the cursor on it once the `DirLoaded` reply is delivered.
 #[test]
