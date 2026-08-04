@@ -20,7 +20,6 @@ pub struct Context {
     pub search_open: bool,
     pub has_selection: bool,
     pub has_multi_cursor: bool,
-    pub read_only: bool,
     pub modal_open: bool,
     /// Plan WP6.S2: whether the active document is an image document
     /// (`Document::image.is_some()`) — the `when` atom the reload binding
@@ -51,7 +50,6 @@ impl Default for Context {
             search_open: false,
             has_selection: false,
             has_multi_cursor: false,
-            read_only: false,
             modal_open: false,
             image: false,
             explorer_search: false,
@@ -73,7 +71,6 @@ impl Context {
             "search_open" => Some(self.search_open),
             "has_selection" => Some(self.has_selection),
             "has_multi_cursor" => Some(self.has_multi_cursor),
-            "read_only" => Some(self.read_only),
             "modal_open" => Some(self.modal_open),
             "image" => Some(self.image),
             "explorer_search" => Some(self.explorer_search),
@@ -341,33 +338,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_and_evaluates_focus_and_not_read_only_both_ways() {
-        let expr = parse(r#"focus == "Editor" && !read_only"#).expect("parses");
+    fn parses_and_evaluates_focus_and_negation_together() {
+        let expr = parse(r#"focus == "Editor" && !modal_open"#).expect("parses");
 
         let editable = Context {
             focus: FocusTarget::Editor,
-            read_only: false,
+            modal_open: false,
             ..Context::default()
         };
         assert!(eval(&expr, &editable));
 
         let locked = Context {
             focus: FocusTarget::Editor,
-            read_only: true,
+            modal_open: true,
             ..Context::default()
         };
         assert!(!eval(&expr, &locked));
 
         let wrong_focus = Context {
             focus: FocusTarget::Explorer,
-            read_only: false,
+            modal_open: false,
             ..Context::default()
         };
         assert!(!eval(&expr, &wrong_focus));
     }
 
     #[test]
-    fn image_is_a_bool_field_like_read_only() {
+    fn image_is_a_bool_field() {
         let expr = parse("image").expect("parses");
         assert!(eval(
             &expr,
