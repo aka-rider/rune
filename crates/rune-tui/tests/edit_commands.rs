@@ -338,9 +338,9 @@ fn reading_view_blocks_undo_and_redo() {
     );
 }
 
-/// Plan WP6: a `Preview` document joins `Reading` in blocking both undo and
-/// redo — it has no chord that leaves it the way ⌃P leaves reading view, so
-/// it is at least as restrictive.
+/// A `Preview` document joins `Reading` in blocking both undo and redo —
+/// it has no chord that leaves it the way ⌃P leaves reading view, so it is
+/// at least as restrictive.
 #[test]
 fn preview_blocks_undo_and_redo() {
     let mut app = app_with("hello", 5);

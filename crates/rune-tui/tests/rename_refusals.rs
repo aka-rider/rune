@@ -44,9 +44,9 @@ fn a_read_only_document_refuses_to_rename() {
     assert_eq!(app.active_doc().buffer.content(), before);
 }
 
-/// Plan WP6: a `Preview` document's title cannot be focused either — same
-/// mechanism as `Always` above, `App::focus_title`'s generic `ReadOnly`
-/// refusal, now reached via a different variant.
+/// A `Preview` document's title cannot be focused either — same mechanism
+/// as `Always` above, `App::focus_title`'s generic `ReadOnly` refusal, now
+/// reached via a different variant.
 #[test]
 fn a_preview_document_refuses_to_rename() {
     let mem = seeded_vfs();

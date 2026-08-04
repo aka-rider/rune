@@ -103,8 +103,8 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     entries
 }
 
-/// Plan WP6 — the one place that suppresses a `GLOBAL_BINDINGS` hint the
-/// bulk `extend` above would otherwise show unconditionally: a `Preview`
+/// The one place that suppresses a `GLOBAL_BINDINGS` hint the bulk
+/// `extend` above would otherwise show unconditionally: a `Preview`
 /// document refuses close (`workspace::request_close`) and rename entry
 /// (`App::focus_title`) alike, so their hints must not promise a chord that
 /// only sets a status message. `Save` already has its own bespoke arm above
@@ -322,10 +322,10 @@ mod tests {
         );
     }
 
-    /// Plan WP6 — a `Preview` document promises none of save, close, or
-    /// rename in the footer: all three refuse it (`save::trigger_save`,
-    /// `workspace::request_close`, `App::focus_title`), so none may appear
-    /// as a live hint.
+    /// A `Preview` document promises none of save, close, or rename in the
+    /// footer: all three refuse it (`save::trigger_save`, `workspace::
+    /// request_close`, `App::focus_title`), so none may appear as a live
+    /// hint.
     #[test]
     fn default_hint_entries_omit_save_close_and_rename_for_a_preview_document() {
         let save_label = GLOBAL_BINDINGS

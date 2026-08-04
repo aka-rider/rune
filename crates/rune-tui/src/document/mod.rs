@@ -75,9 +75,9 @@ pub struct Document {
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
     /// "read-only" document — the exact Go bug `commands_clipboard.go`'s
     /// comment describes, reintroduced by guarding the wrong layer).
-    /// `commands::edit::undo`/`redo` (plan WP3, extended by plan WP6) check
-    /// this field but only against `ReadOnly::Reading`/`ReadOnly::Preview`,
-    /// never via a blanket `is_read_only()`.
+    /// `commands::edit::undo`/`redo` check this field but only against
+    /// `ReadOnly::Reading`/`ReadOnly::Preview`, never via a blanket
+    /// `is_read_only()`.
     /// `ReadOnly::Always` keeps the documented Go-parity exemption — Go's own
     /// `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass `m.readOnly`
     /// the same way `ReplaceRange` (`edit_primitives.go`) does not — because
@@ -212,9 +212,9 @@ pub enum ReadOnly {
     /// document. `commands::reading::toggle` refuses; only a mint site sets
     /// it.
     Always,
-    /// A forthcoming Explorer feature (plan WP6) previews the file under
-    /// the cursor in the Editor without the user having committed to
-    /// opening it — this document exists but has not been "opened" in the
+    /// A forthcoming Explorer feature previews the file under the cursor
+    /// in the Editor without the user having committed to opening it —
+    /// this document exists but has not been "opened" in the
     /// ordinary sense. Save, close, and rename all refuse it outright
     /// rather than acting on a document the user never asked to keep; a
     /// later work package flips it to `No` on promotion (the user actually
@@ -249,12 +249,13 @@ impl Document {
         !matches!(self.read_only, ReadOnly::No)
     }
 
-    /// Whether this document is a transient, not-yet-committed preview
-    /// (plan WP6) — `true` only for `ReadOnly::Preview`. Save and close each
-    /// check this directly rather than the generic `App::refuse_if_read_only`
-    /// chokepoint: that one also refuses `ReadOnly::Reading`, which save
-    /// must NOT (⌘S still materializes bytes already typed in reading view)
-    /// and close must NOT (closing a reading-view document is ordinary).
+    /// Whether this document is a transient, not-yet-committed preview —
+    /// `true` only for `ReadOnly::Preview`. `App::refuse_if_preview` is the
+    /// one place that checks this rather than the generic `App::
+    /// refuse_if_read_only`: that one also refuses `ReadOnly::Reading`,
+    /// which save must NOT (⌘S still materializes bytes already typed in
+    /// reading view) and close must NOT (closing a reading-view document is
+    /// ordinary).
     pub fn is_preview(&self) -> bool {
         matches!(self.read_only, ReadOnly::Preview)
     }

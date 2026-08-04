@@ -328,17 +328,16 @@ fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
     );
 }
 
-/// Plan WP6, the highest-value regression in the package: ⌘S on a
-/// `Preview` document must never reach `vfs.save_atomic` — without the
-/// gate, `pane.rs` routes `GlobalCommand::Save` to `trigger_save`
-/// unconditionally, and the no-store fallback here would atomically
-/// overwrite the previewed file with this document's own (edited) buffer,
-/// a §1.4 data-safety violation. The document is dirtied FIRST, while
-/// still `ReadOnly::No` (a preview has no production path to become
-/// dirty, since the edit chokepoint already refuses any read-only
-/// document), then flipped to `Preview` — the same sequence
-/// `reading_view_blocks_undo_and_redo` (`tests/edit_commands.rs`) uses for
-/// the identical reason.
+/// The highest-value regression in the package: ⌘S on a `Preview`
+/// document must never reach `vfs.save_atomic` — every global save chord
+/// routes to `trigger_save` unconditionally, and the no-store fallback
+/// there would otherwise atomically overwrite the previewed file with
+/// this document's own (edited) buffer, a §1.4 data-safety violation. The
+/// document is dirtied FIRST, while still `ReadOnly::No` (a preview has no
+/// production path to become dirty, since the edit chokepoint already
+/// refuses any read-only document), then flipped to `Preview` — the same
+/// sequence `reading_view_blocks_undo_and_redo` (`tests/edit_commands.rs`)
+/// uses for the identical reason.
 #[test]
 fn preview_document_refuses_save_and_never_touches_disk() {
     let vfs = Arc::new(Mem::new());

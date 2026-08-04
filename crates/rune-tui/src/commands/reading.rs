@@ -1,9 +1,9 @@
 //! The `⌃P`/`⌘P` reading-view toggle (plan WP5) — the one place that mints
 //! `ReadOnly::Reading`. Flips the active document between `ReadOnly::No`
-//! and `ReadOnly::Reading`; refuses on `ReadOnly::Always` and (plan WP6)
-//! `ReadOnly::Preview`, neither of which has an editable form the toggle
-//! could return to, exactly like `rename::begin`'s own read-only refusal
-//! (`Document::read_only`'s doc comment).
+//! and `ReadOnly::Reading`; refuses on `ReadOnly::Always` and `ReadOnly::
+//! Preview`, neither of which has an editable form the toggle could return
+//! to, exactly like `rename::begin`'s own read-only refusal (`Document::
+//! read_only`'s doc comment).
 //!
 //! No manual view invalidation is needed here: `Document::view()` calls
 //! `set_reveal_mode` before anything else, and that transition alone marks
@@ -78,8 +78,6 @@ mod tests {
         );
     }
 
-    /// Plan WP6 — `⌃P` on a not-yet-committed preview refuses with a status
-    /// message, same shape as `Always`.
     #[test]
     fn toggle_refuses_on_a_preview_document() {
         let mut app = app();

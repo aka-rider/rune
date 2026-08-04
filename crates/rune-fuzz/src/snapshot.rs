@@ -69,17 +69,17 @@ pub struct Snapshot {
     /// `doc.read_only` — the virtual Help document (`workspace::
     /// toggle_help`, reachable now that `F1` is in `arb_any_keycode`,
     /// CODE-REVIEW.md rune-fuzz finding 9), reading view (`⌃P`,
-    /// `ReadOnly::Reading`), and a not-yet-committed preview (plan WP6,
-    /// `ReadOnly::Preview`) are all live paths to a read-only document;
-    /// `PASTE-VERBATIM` needs this to tell "production correctly refused
-    /// the edit" apart from "production silently dropped it" (a paste into
-    /// a read-only document is the former, by design — `Document::
-    /// read_only` is no longer dead code once any of these paths exists).
-    /// The full variant, not a collapsed `bool` (plan WP6): a checker that
-    /// only ever asks "is this read-only at all" still gets that from
-    /// `!matches!(.., ReadOnly::No)`, but a future checker that needs to
-    /// tell `Preview` apart from `Reading`/`Always` now can, rather than
-    /// the enum being invisible to every session the fuzzer drives.
+    /// `ReadOnly::Reading`), and a not-yet-committed preview (`ReadOnly::
+    /// Preview`) are all live paths to a read-only document; `PASTE-
+    /// VERBATIM` needs this to tell "production correctly refused the
+    /// edit" apart from "production silently dropped it" (a paste into a
+    /// read-only document is the former, by design — `Document::read_only`
+    /// is no longer dead code once any of these paths exists). The full
+    /// variant, not a collapsed `bool`: a checker that only ever asks "is
+    /// this read-only at all" still gets that from `!matches!(..,
+    /// ReadOnly::No)`, but a future checker that needs to tell `Preview`
+    /// apart from `Reading`/`Always` now can, rather than the enum being
+    /// invisible to every session the fuzzer drives.
     pub read_only: ReadOnly,
     /// `app.active_doc().has_insertion_point()` — the production predicate itself,
     /// not a re-derivation from `focus`/`modal_open`/`read_only`, so
