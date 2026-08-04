@@ -297,3 +297,43 @@ fn undo_and_redo_are_not_blocked_by_read_only() {
         "redo must not be blocked by read_only"
     );
 }
+
+/// The asymmetry `ReadOnly::Reading` draws (plan WP3): unlike `Always`
+/// (asserted above), a reading-view document blocks BOTH undo and redo —
+/// it is a view mode the user can leave with the same chord, not a
+/// document with no editable form at all. Neither the buffer nor
+/// dirtiness may move while blocked.
+#[test]
+fn reading_view_blocks_undo_and_redo() {
+    let mut app = app_with("hello", 5);
+    let id = app.active;
+    insert_char(&mut app, id, '!');
+    assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
+
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Reading;
+    let dirty_before = app.doc(id).unwrap().is_dirty();
+
+    undo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "undo must be blocked in reading view"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked undo must not change dirtiness"
+    );
+
+    redo(&mut app, id);
+    assert_eq!(
+        app.doc(id).unwrap().buffer.content(),
+        "hello!",
+        "redo must be blocked in reading view"
+    );
+    assert_eq!(
+        app.doc(id).unwrap().is_dirty(),
+        dirty_before,
+        "a blocked redo must not change dirtiness"
+    );
+}

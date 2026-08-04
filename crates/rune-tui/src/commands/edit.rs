@@ -42,7 +42,7 @@ use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::db_enqueue as db;
-use crate::document::DocumentId;
+use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
 
 /// Port of `commands_edit_lines.go:perCursorSelectionEdits`: one edit per
@@ -227,8 +227,15 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
 /// status-message ownership rule as `commit_edit_batch` (F2): success never
 /// clears `app.status_message` — only this function's own failure path
 /// writes it.
+///
+/// Gated on `ReadOnly::Reading` only, not `is_read_only()` — see
+/// `Document::read_only`'s doc comment for why `ReadOnly::Always` stays
+/// exempt.
 pub fn undo(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
+    if doc.read_only == ReadOnly::Reading {
+        return;
+    }
     let Some((step, new_pos)) = doc.journal.undo_peek() else {
         return;
     };
@@ -253,8 +260,15 @@ pub fn undo(app: &mut App, id: DocumentId) {
 /// Port of `workspace_undo.go:handleRedo` — mirrors `undo` above: reapply
 /// the step forward, commit the position move only on success. Same
 /// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
+///
+/// Gated on `ReadOnly::Reading` only, not `is_read_only()` — see
+/// `Document::read_only`'s doc comment for why `ReadOnly::Always` stays
+/// exempt.
 pub fn redo(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
+    if doc.read_only == ReadOnly::Reading {
+        return;
+    }
     let Some((step, new_pos)) = doc.journal.redo_peek() else {
         return;
     };

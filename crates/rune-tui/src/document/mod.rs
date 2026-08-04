@@ -75,10 +75,19 @@ pub struct Document {
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
     /// "read-only" document — the exact Go bug `commands_clipboard.go`'s
     /// comment describes, reintroduced by guarding the wrong layer).
-    /// `commands::edit::undo`/`redo` deliberately do NOT check this field —
-    /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass
-    /// `m.readOnly` the same way, unlike `ReplaceRange`
-    /// (`edit_primitives.go`) which checks it first.
+    /// `commands::edit::undo`/`redo` (plan WP3) check this field but only
+    /// against `ReadOnly::Reading`, never via a blanket `is_read_only()`.
+    /// `ReadOnly::Always` keeps the documented Go-parity exemption — Go's own
+    /// `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass `m.readOnly`
+    /// the same way `ReplaceRange` (`edit_primitives.go`) does not — because
+    /// `Always` means the document has no editable form at all (Help, an
+    /// image, the error banner), not a view mode the user can leave.
+    /// `Reading` is different: it is a toggle the user reaches and leaves
+    /// with the same chord (⌃P), so undo/redo are blocked there while the
+    /// toggle is on. The two chords diverge deliberately: in `Reading`,
+    /// ⌘S still materializes bytes already typed, while ⌘Z (which would
+    /// change them) does not — saving protects what the user wrote, undo
+    /// rewrites it.
     pub read_only: ReadOnly,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).
@@ -345,6 +354,14 @@ impl Document {
     /// `saved_content`, so the ordinary content comparison already reports
     /// it dirty once the caller recomputes — see `materialize_ack::
     /// recompute_dirty`, called after every hydration site.
+    ///
+    /// Deliberately NOT gated on `read_only` (plan WP4), including
+    /// `ReadOnly::Reading`. Hydration adopts the user's OWN unsaved
+    /// recovered draft — refusing it to honour a view mode would DISCARD
+    /// already-typed bytes, a worse failure than a buffer changing once
+    /// under a reading view (§1.4.3, and the prime directive that the
+    /// user's words win). This is silent by design nowhere else: state it
+    /// here so it reads as a decision, not an oversight.
     pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
         if recovered == disk_content {
             return Hydration::NoChange;

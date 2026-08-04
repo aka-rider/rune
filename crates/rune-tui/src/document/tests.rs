@@ -49,6 +49,22 @@ fn sync_reconciles_the_viewport_again_after_a_reveal_driven_geometry_shrink() {
     );
 }
 
+/// Plan WP4: `hydrate` stays exempt from `read_only` even under
+/// `ReadOnly::Reading` — a reading-view toggle must never cost the user a
+/// recovered draft. Pinned against the public `Document::hydrate` entry
+/// point, not the mint sites that call it.
+#[test]
+fn hydrate_adopts_a_recovered_draft_even_in_reading_view() {
+    let mut doc = Document::new(Buffer::new("on disk"));
+    doc.read_only = ReadOnly::Reading;
+
+    let outcome = doc.hydrate("on disk", "recovered draft");
+
+    assert!(matches!(outcome, Hydration::Adopted));
+    assert_eq!(doc.buffer.content(), "recovered draft");
+    assert_eq!(doc.journal.len(), 1);
+}
+
 #[test]
 fn document_ids_are_distinct_and_ordered() {
     // Mints two REAL ids the same way production code does — through
