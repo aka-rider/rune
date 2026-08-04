@@ -40,21 +40,14 @@ pub struct Explorer {
     pub loading: bool,
     /// Bumped at every `ReadDir` `Cmd` this Explorer issues (`request_dir`
     /// below, and `pane::handle_global_command`'s initial `^x` load) — the
-    /// generation token `Msg::DirLoaded` carries back. Two in-flight
-    /// `ReadDir` Cmds can land out of order (e.g. Backspace to a slow parent
-    /// directory, then immediately Enter into a fast child one): without
-    /// this, the OLDER reply could overwrite the newer listing. Mirrors
-    /// `DocDb::snapshot_generation`'s debounce-token pattern (`db.rs`) —
-    /// bump in place, compare on receipt, ignore a stale one.
+    /// generation token `Msg::DirLoaded` carries back, so an OLDER in-flight
+    /// reply can never overwrite a newer listing. Mirrors `DocDb::snapshot_
+    /// generation`'s debounce-token pattern (`db.rs`).
     pub request_generation: u32,
     pub search: Option<String>, // type-to-search query (`explorer_search`); None = inactive
-    /// The file `explorer_reveal::reveal` asked to land the cursor on, set
-    /// the moment it issues a re-rooting `ReadDir` `Cmd` and consumed by
-    /// `handle_dir_loaded` below when that request's reply lands. Guarded by
-    /// `request_generation` exactly like every other in-flight `ReadDir`:
-    /// `handle_dir_loaded` bails out before ever touching this field when
-    /// `generation` no longer matches, so a stale reply can never consume a
-    /// reveal meant for the request that superseded it.
+    /// The file `explorer_reveal::reveal` wants the cursor on, set when it
+    /// issues a re-rooting `ReadDir`, consumed by `handle_dir_loaded` below
+    /// — guarded by `request_generation` like every other in-flight one.
     pub pending_reveal: Option<PathBuf>,
 }
 
@@ -213,16 +206,12 @@ fn with_parent_entry(root: &Path, mut entries: Vec<DirEntry>) -> Vec<DirEntry> {
 /// Reacts to `Msg::DirLoaded` (plan WP4.S4), routed from `app::update_
 /// inner`. A `generation` that no longer matches `app.explorer.request_
 /// generation` is a reply to a SUPERSEDED request (a later `ReadDir` was
-/// already issued — `request_dir`/the initial `^x` load bump the
-/// generation at every issue site) and is ignored outright, never adopted
-/// over whatever a newer, still-in-flight (or already-landed) request
-/// produced. `Nav` always adopts the new root/entries and resets the cursor
-/// to the top; `Refresh` keeps the currently selected entry selected BY
-/// NAME when it's still present in the new listing (falling back to the
-/// top otherwise) — this is exactly what `refresh_for` (above) issues on
-/// every successful rename that lands inside the current Explorer root, so
-/// the branch has a real production caller, not just this file's own
-/// tests; it's also the shape a later fsnotify-driven reload would use.
+/// already issued — every issue site bumps the generation) and is ignored
+/// outright. `Nav` resets the cursor to the top; `Refresh` keeps the
+/// currently selected entry selected BY NAME when still present (falling
+/// back to the top) — the shape `refresh_for` (above) uses on every
+/// rename landing inside the current root. A pending reveal (see the field
+/// doc on `Explorer::pending_reveal`) wins over both.
 pub(crate) fn handle_dir_loaded(
     app: &mut App,
     root: PathBuf,
@@ -237,12 +226,7 @@ pub(crate) fn handle_dir_loaded(
     crate::explorer_search::clear_search(app); // a new listing outdates any query
     let entries = with_parent_entry(&root, entries);
 
-    // `pending_reveal` (`explorer_reveal::reveal`) wins over both `Nav`'s
-    // top-of-list reset and `Refresh`'s preserve-by-name: a reveal request
-    // that just paid for a re-root round trip must land on its target, not
-    // snap to whatever the ordinary cause-based rule would have picked.
     let reveal_target = app.explorer.pending_reveal.take();
-
     let preserve_name = match cause {
         DirCause::Nav => None,
         DirCause::Refresh => app
@@ -255,12 +239,10 @@ pub(crate) fn handle_dir_loaded(
     app.explorer.root = root;
     app.explorer.entries = entries;
     app.explorer.loading = false;
-    app.explorer.nav.cursor = reveal_target
-        .and_then(|target| app.explorer.entries.iter().position(|e| e.path == target))
-        .or_else(|| {
-            preserve_name.and_then(|name| app.explorer.entries.iter().position(|e| e.name == name))
-        })
-        .unwrap_or(0);
+    let by_reveal =
+        reveal_target.and_then(|t| app.explorer.entries.iter().position(|e| e.path == t));
+    let by_name = preserve_name.and_then(|n| app.explorer.entries.iter().position(|e| e.name == n));
+    app.explorer.nav.cursor = by_reveal.or(by_name).unwrap_or(0);
     ensure_visible(app);
 }
 
