@@ -59,7 +59,10 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
     // is dead. A `ReadOnly::Reading` document may hold bytes typed before
     // the toggle and keeps a live, working `⌘S`, so it keeps the hint.
     if app.focus() == Pane::Editor
-        && !matches!(app.active_doc().read_only, ReadOnly::Always | ReadOnly::Preview)
+        && !matches!(
+            app.active_doc().read_only,
+            ReadOnly::Always | ReadOnly::Preview
+        )
         && let Some(save) = GLOBAL_BINDINGS
             .iter()
             .find(|b| matches!(b.cmd, GlobalCommand::Save))
