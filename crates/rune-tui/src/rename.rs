@@ -210,15 +210,16 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // No status is set on this branch — `app.active` naming a document that
     // isn't there is unreachable in practice, and `Refused` here would trap
     // the user in the title with an empty footer and no way to learn why.
-    let Some(doc) = app.doc(id) else {
+    let Some(read_only) = app.doc(id).map(|doc| doc.read_only) else {
         return Commit::Accepted;
     };
 
-    if doc.is_read_only() {
-        let message = doc.read_only.refusal_message();
-        app.set_status(message, StatusSource::Other);
+    if app.refuse_if_read_only(read_only) {
         return Commit::Refused;
     }
+    let Some(doc) = app.doc(id) else {
+        return Commit::Accepted;
+    };
     // The no-store `save_cmd` captures `path` in its closure and would
     // republish at the OLD name after the rename landed — a save that
     // silently resurrects the old file.

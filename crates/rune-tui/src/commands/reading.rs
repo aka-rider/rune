@@ -32,7 +32,9 @@ pub fn toggle(app: &mut App) {
         ReadOnly::No => doc.read_only = ReadOnly::Reading,
         ReadOnly::Reading => doc.read_only = ReadOnly::No,
         ReadOnly::Always => {
-            app.set_status(ReadOnly::Always.refusal_message(), StatusSource::Other);
+            if let Some(message) = ReadOnly::Always.refusal_message() {
+                app.set_status(message, StatusSource::Other);
+            }
         }
     }
 }
@@ -70,7 +72,7 @@ mod tests {
         assert_eq!(app.active_doc().read_only, ReadOnly::Always);
         assert_eq!(
             app.status_message.as_deref(),
-            Some(ReadOnly::Always.refusal_message())
+            ReadOnly::Always.refusal_message()
         );
     }
 }

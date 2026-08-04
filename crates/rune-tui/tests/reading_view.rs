@@ -195,7 +195,7 @@ fn ctrl_p_on_the_help_tab_refuses_and_posts_a_status_message() {
     );
     assert_eq!(
         app.status_message.as_deref(),
-        Some(ReadOnly::Always.refusal_message())
+        ReadOnly::Always.refusal_message()
     );
 }
 
@@ -240,11 +240,11 @@ fn ctrl_r_in_reading_view_refuses_with_the_reading_wording_not_the_always_wordin
 
     assert_eq!(
         app.status_message.as_deref(),
-        Some(ReadOnly::Reading.refusal_message())
+        ReadOnly::Reading.refusal_message()
     );
     assert_ne!(
         app.status_message.as_deref(),
-        Some(ReadOnly::Always.refusal_message()),
+        ReadOnly::Always.refusal_message(),
         "a Reading document must not get the Always refusal wording"
     );
 }
@@ -339,7 +339,7 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
     );
     assert_ne!(
         app.status_message.as_deref(),
-        Some(ReadOnly::Reading.refusal_message())
+        ReadOnly::Reading.refusal_message()
     );
 }
 

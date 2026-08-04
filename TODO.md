@@ -174,6 +174,14 @@ records), `app.rs` 616 → 617 and `rename.rs` 530 → 531 (one line each, both
 just swapping a `read_only` bool test for the shared
 `ReadOnly::refusal_message` chokepoint). Nothing new crossed the ceiling.
 
+A follow-up code review (`ReadOnly::refusal_message` returning `Option`
+instead of answering for `No`, plus the `focus_title`/`rename::begin` guard
+chokepoint the sentinel fix's own review flagged as still duplicated) grew
+`app.rs` further, 617 → 628, for `refuse_if_read_only` — the one new method
+both call instead of each running the check-then-status-then-bail sequence
+itself. `rename.rs` grew by one line, 531 → 532, swapping its half of the
+duplicated guard for a call to it. Neither newly crossed the ceiling.
+
 The single most-deferred item remains `app.rs`'s `handle_key` /
 `handle_editor_key` / `handle_db_event` extraction, deferred across nine
 consecutive work packages.
