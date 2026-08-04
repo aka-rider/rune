@@ -2,6 +2,25 @@
 
 - [ ] The title field has no horizontal scroll (title/rename plan assumption A1): an over-long file name is clipped by `Paragraph`, not scrolled to follow the cursor, so editing the tail of a name wider than the terminal is awkward. A viewport can be added to `TextField` later; not attempted here to avoid desyncing byte offsets from a truncated string.
 
+- [ ] **A fence inside a list item leaks the item's continuation indent into the source handed to tree-sitter.** The per-line content split drops only prefixes it can attribute to a *repeating* container marker, and a list item's indent is not one, so a fence in a list reconstructs as `"  let x = 1;"` rather than `"let x = 1;"`. This contradicts the stated invariant that container prefix bytes must never reach a parser as source. Harmless for a brace-delimited grammar, which absorbs the indent through error recovery; an indentation-sensitive one (YAML, Python) loses most of its structure to it. Pre-existing — surfaced, not caused, by the `CodeRegion` work, and pinned by a test in `crates/rune-md/tests/code_regions.rs` so a fix is a visible decision rather than a silent drift. The fix belongs in the per-line splitter's notion of an attributable prefix, not at a call site.
+
+- [ ] **A highlight region's retained tree is found by position, so adding or removing a region reparses everything below it.** `plan_jobs` looks up the candidate tree at the same index in document order; reuse is then gated on `tree.source() == source.text`, so a wrong candidate is rejected rather than misapplied — a missed-reuse cost, never a correctness bug. It matters because it is exactly the case the pass ceiling has to absorb: typing an opening fence at the top of a document invalidates every fence beneath it. A content-keyed lookup is not a drop-in — `install_regions` inherits each slot's channels *by the same index*, so matching at a different index would hand a region another region's colours. Doing it properly needs an explicit inherit-from index carried through the reply plus claim bookkeeping for two regions with identical content, since the trees cannot travel to the Cmd thread (the render path paints from them). Judged more machinery than the reuse currently buys.
+
+- [ ] **An indented code block's first content line starts past its four-space indent while every continuation line keeps its own.** The shared per-line splitter trusts the block's own start offset for the first line (comrak reports it past the indent) and falls back to the physical line start for the rest, so the block reconstructs as `"let x = 1;\n    let y = 2;"`. Nothing observable today — an indented block carries no info string, so the highlighter drops it — but it becomes reachable the moment a consumer reads an untagged region's text. Pre-existing and shared with every other multi-line construct; pinned by a test alongside the item above.
+
+## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
+
+## Lists
+
+Auto Continue Lists
+
+- blah blah <enter>
+- <the cursor>
+
+* lists support
+
+full markdown
+
 ### Image rendering — three known hazards
 
 Found while chasing a full UI freeze on opening a large `.gif` (1920x1080).
@@ -163,6 +182,7 @@ the ceiling, and neither has been split since.
   itself (499) and `explorer_keys.rs` (260) stayed under the ceiling
   despite gaining the feature's state and dispatch wiring.
 - [ ] Two files landed within a few lines of the ceiling and will breach on the next small edit: `rune-db/src/writer.rs` (497) and `rune-db/src/materialize.rs` (496). Whoever touches either next should take the split rather than squeeze under.
+- [ ] `rune-md/src/emit/mod.rs` 536 → 558 during the code-pipeline unification (the `base_scope` parameter threaded through `emit_with`/`fill_gaps`, plus its rationale comments). It was already over the ceiling before that change, so this is a deepening rather than a breach. The natural split is the gap-fill and span-ordering pass — `fill_gaps` plus the buffer-order re-sort it exists to preserve — into an `emit/gaps.rs` sibling; `emit_with` itself is the orchestration and should stay.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.
 
 ## Parked tickets
