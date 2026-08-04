@@ -274,6 +274,7 @@ of how each side renders:
   reading both sides' code, the same way the rest of this section is; unlike
   several entries above it, it has not been confirmed by an actual
   `make parity` run against this branch, and that run has not been done.
+
 - **Link following and URL autolinking.** The `links.md` fixture is
   excluded from the grid gate: Rust and Go deliberately disagree here.
   - **Bare-URL autolinking.** Rust enables comrak's `autolink` extension,
