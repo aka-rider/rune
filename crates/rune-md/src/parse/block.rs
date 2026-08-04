@@ -17,7 +17,10 @@ use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 enum BlockKind {
     Document,
     Paragraph,
-    Heading(u8),
+    Heading {
+        level: u8,
+        setext: bool,
+    },
     BlockQuote,
     CodeBlock {
         fenced: bool,
@@ -41,7 +44,10 @@ impl ClassifyBlock for NodeValue {
         match self {
             NodeValue::Document => BlockKind::Document,
             NodeValue::Paragraph => BlockKind::Paragraph,
-            NodeValue::Heading(h) => BlockKind::Heading(h.level),
+            NodeValue::Heading(h) => BlockKind::Heading {
+                level: h.level,
+                setext: h.setext,
+            },
             NodeValue::BlockQuote => BlockKind::BlockQuote,
             NodeValue::CodeBlock(cb) => BlockKind::CodeBlock {
                 fenced: cb.fenced,
@@ -96,7 +102,7 @@ fn build_block<'a>(
             let inlines = super::inline::build_inlines(content, starts, node, hint);
             Some(Block::Paragraph(ParagraphM { range, inlines }))
         }
-        BlockKind::Heading(level) => {
+        BlockKind::Heading { level, setext } => {
             let marker_end = node
                 .first_child()
                 .map(|c| node_range(content, starts, c).start)
@@ -134,12 +140,44 @@ fn build_block<'a>(
             // decide policy) stays a separate field for that one purpose.
             let content_lines = super::per_line_content(content, starts, range, hint);
 
+            // The single chokepoint for setext-ness: comrak's own
+            // `NodeHeading::setext` flag, carried forward as this heading's
+            // underline range rather than re-inferred later from
+            // `marker.is_empty()` or `content_lines.len() > 1`. A setext
+            // heading's underline is always its LAST content line — its
+            // text may itself span several lines (`Foo\nBar\n---`), so
+            // `content_lines[1]` would be wrong for that shape.
+            // Defensive: comrak can leave a residual inline `Text` node
+            // covering the same bytes as the underline it just recognized
+            // (observed with an unmatched emphasis delimiter trailing into
+            // the underline line, e.g. `"x\n*a\nb\n---\n"` — the same class
+            // of comrak-internal desync `frontmatter_extension_is_safe`
+            // and the wikilink `within_brackets` guard already work around
+            // elsewhere in this crate). Trusting `underline` there would
+            // hide bytes `emit_inlines` is about to claim as visible text —
+            // a double-claim. Degrading to `None` in that pathological case
+            // falls back to today's behavior (the underline's bytes render
+            // as ordinary heading text, unconcealed) rather than ever
+            // inventing or double-claiming a byte.
+            let underline = if setext {
+                content_lines.last().copied().filter(|underline| {
+                    !inlines
+                        .iter()
+                        .any(|i| ranges_overlap(i.range(), *underline))
+                })
+            } else {
+                None
+            };
+            let last_line = super::line_at(starts, range.end.saturating_sub(1).max(range.start));
+
             Some(Block::Heading(HeadingM {
                 sm: RevealSm::new(RevealState::Rendered),
                 level,
                 line,
+                last_line,
                 range,
                 marker,
+                underline,
                 inlines,
                 content_lines,
             }))
@@ -407,6 +445,14 @@ fn build_list_items<'a>(
         });
     }
     items
+}
+
+/// Half-open byte-range overlap check — the setext-underline defensiveness
+/// above is the only caller; every other range comparison in this module
+/// works with `contains`/direct arithmetic instead, and this crate has no
+/// existing chokepoint for a general two-range overlap test.
+fn ranges_overlap(a: ByteRange, b: ByteRange) -> bool {
+    a.start < b.end && b.start < a.end
 }
 
 /// True if `range`'s own last line — as comrak (via our conversion)
