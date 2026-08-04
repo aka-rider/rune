@@ -166,7 +166,10 @@ mod tests {
             !dragged.splits.left.is_shown(),
             "test setup: the drag must actually collapse the column"
         );
-        assert_eq!(dragged.splits.left.is_shown(), commanded.splits.left.is_shown());
+        assert_eq!(
+            dragged.splits.left.is_shown(),
+            commanded.splits.left.is_shown()
+        );
         assert_eq!(dragged.focus(), commanded.focus());
         assert_eq!(dragged.focus(), Pane::Editor);
     }
