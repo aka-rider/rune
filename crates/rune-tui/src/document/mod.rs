@@ -213,19 +213,18 @@ pub enum ReadOnly {
 }
 
 impl ReadOnly {
-    /// The wording for the two user-initiated chokepoints that report why a
-    /// read-only document refuses (`app.rs::focus_title`, `rename::begin`'s
-    /// `Commit::Refused`) — one place, so the two sites can never drift
-    /// apart. `Reading` names the way out because the user reached it with
-    /// a chord that also leaves it; `Always` has no way out to name.
-    /// `No` never actually reaches a caller (both chokepoints check
-    /// `is_read_only()` first) but returns the `Always` wording rather than
-    /// an unreachable panic, since a refusal message may never itself halt
-    /// the editor (§1.3).
-    pub fn refusal_message(&self) -> &'static str {
+    /// The wording for why a read-only document refuses, or `None` for
+    /// `No` — which refuses nothing, so it has no wording to give (§1.7:
+    /// carry that out of band instead of a sentinel string a missed check
+    /// could pass off as real). `Reading` names the way out because the
+    /// user reached it with a chord that also leaves it; `Always` has no
+    /// way out to name. The one place both user-initiated refusal
+    /// chokepoints (`App::refuse_if_read_only`) source their wording from.
+    pub fn refusal_message(&self) -> Option<&'static str> {
         match self {
-            ReadOnly::Reading => "reading view — ⌃P to edit",
-            ReadOnly::Always | ReadOnly::No => "this document is read-only",
+            ReadOnly::No => None,
+            ReadOnly::Reading => Some("reading view — ⌃P to edit"),
+            ReadOnly::Always => Some("this document is read-only"),
         }
     }
 }
