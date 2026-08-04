@@ -214,7 +214,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         return Commit::Accepted;
     };
 
-    if doc.read_only {
+    if doc.is_read_only() {
         app.set_status("this document is read-only", StatusSource::Other);
         return Commit::Refused;
     }

@@ -15,6 +15,7 @@ use rune_tui::commands::edit::{
     delete_left, delete_right, delete_word_left, delete_word_right, insert_char, newline, redo,
     undo,
 };
+use rune_tui::document::ReadOnly;
 use rune_vfs::Mem;
 
 fn app_with(content: &str, cursor_offset: usize) -> App {
@@ -221,7 +222,7 @@ fn a_successful_edit_does_not_clear_an_unrelated_status_message() {
 fn read_only_blocks_typing_backspace_and_newline() {
     let mut app = app_with("hello", 5);
     let id = app.active;
-    app.doc_mut(id).unwrap().read_only = true;
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
     let before_content = app.doc(id).unwrap().buffer.content().to_string();
     let before_version = app.doc(id).unwrap().buffer.version();
 
@@ -280,7 +281,7 @@ fn undo_and_redo_are_not_blocked_by_read_only() {
     insert_char(&mut app, id, '!');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
 
-    app.doc_mut(id).unwrap().read_only = true;
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
 
     undo(&mut app, id);
     assert_eq!(

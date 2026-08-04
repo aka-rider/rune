@@ -128,8 +128,8 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
 }
 
 /// Paints the caret and, per-cursor, its selection background — gated on
-/// `show_overlays` (`Document::shows_caret`, folding in both focus and
-/// read-only). Early-returning before the cursor loop, rather than a
+/// `show_overlays` (`Document::has_insertion_point`, folding in both focus
+/// and read-only). Early-returning before the cursor loop, rather than a
 /// caller-side `if`, covers both overlay kinds in one place (the selection
 /// highlight is painted from inside this same loop) and means no future
 /// caller can paint either without deciding whether this document may show
@@ -172,9 +172,9 @@ pub(super) fn apply_cursor_overlays(
         // `buf_offset` check — `REVERSED` swaps fg and bg, which would
         // destroy a live placeholder cell's smuggled 24-bit image id
         // (`render::image::row_cells`'s own doc comment: `style.fg` IS the
-        // id). Moot for a read-only image DOCUMENT (`shows_caret` is
-        // `focused && !read_only`, and an image document is always
-        // `read_only`), but very much live for an inline embed inside an
+        // id). Moot for a read-only image DOCUMENT (`has_insertion_point` is
+        // `focused && !is_read_only()`, and an image document is always
+        // read-only), but very much live for an inline embed inside an
         // otherwise-editable markdown document — an anchor row's own
         // `ImageRowRef` (whole-document OR embed, `target` either way)
         // means this row's cells may be exactly that kind of decorative
@@ -423,16 +423,17 @@ mod tests {
     /// exists for (`crates/rune-fuzz/proptest-regressions/human_session.txt`,
     /// seed `cc 5f23e392...`), exercised directly rather than through the
     /// full `App`/`DocMachine` pipeline: the caret gate this file's
-    /// `apply_cursor_overlays` now applies (`show_overlays`, this ticket)
-    /// and a table's `RevealGrant::ForceRendered`/`Decide` split
-    /// (`rune_md::element::doc::DocMachine`) key off the exact same
-    /// `Document::focused` bit — a table containing the cursor is only ever
-    /// BOXED while unfocused, and the caret gate now suppresses painting
-    /// entirely while unfocused, so a full-pipeline test can no longer
-    /// reach this branch with a caret actually on screen. The clamp logic
-    /// itself is still real (a non-markdown pathway, or a future Decide
-    /// policy change, could still reach a boxed row with the caret
-    /// visible), so it keeps its own direct coverage here instead.
+    /// `apply_cursor_overlays` applies (`show_overlays`) and a table's
+    /// `RevealGrant::ForceRendered`/`Decide` split
+    /// (`rune_md::element::doc::DocMachine`) both key off the identical
+    /// `Document::has_insertion_point` predicate — a table containing the
+    /// cursor is only ever BOXED while that predicate is false, and the
+    /// caret gate suppresses painting entirely under the same condition, so
+    /// a full-pipeline test can no longer reach this branch with a caret
+    /// actually on screen. The clamp logic itself is still real (a
+    /// non-markdown pathway, or a future Decide policy change, could still
+    /// reach a boxed row with the caret visible), so it keeps its own
+    /// direct coverage here instead.
     #[test]
     fn place_caret_clamps_onto_a_boxed_rows_last_cell_instead_of_appending() {
         let mut row: Vec<Cell> = (0..3).map(cell).collect();

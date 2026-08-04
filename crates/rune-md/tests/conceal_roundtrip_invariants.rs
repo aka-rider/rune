@@ -6,19 +6,19 @@
 /// Every RevealSm-shaped machine writes its state through exactly one
 /// method (`RevealSm::transition`, in `rune-syntax`'s own `element.rs`
 /// since WP3 moved it out of `rune-md`'s own `element/mod.rs`); the root
-/// machine writes its own `DocState` through exactly one method
+/// machine writes its own `RevealMode` through exactly one method
 /// (`DocMachine::transition` in `element/doc.rs`, which stays in
-/// `rune-md`). No other file under either crate's `src/` may contain the
-/// literal write `self.state = next` — every other machine reaches a state
-/// change only by calling `self.sm.transition(..)`.
+/// `rune-md`). No other file under either crate's `src/` may contain either
+/// literal write — every other machine reaches a state change only by
+/// calling `self.sm.transition(..)`.
 #[test]
 fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let rune_md_src = manifest_dir.join("src");
     let rune_syntax_src = manifest_dir.join("..").join("rune-syntax").join("src");
 
-    let needle = "self.state = next";
-    let mut counts: Vec<(std::path::PathBuf, usize)> = Vec::new();
+    let element_doc = rune_md_src.join("element").join("doc.rs");
+    let syntax_element = rune_syntax_src.join("element.rs");
 
     fn visit(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -39,26 +39,37 @@ fn self_state_assignment_is_scoped_to_the_two_transition_writers() {
     visit(&rune_syntax_src, &mut files);
     assert!(!files.is_empty(), "expected to find .rs files under src/");
 
+    // Each transition writer has its own field name: `RevealSm::transition`
+    // writes `state` (rune-syntax's `element.rs`); `DocMachine::transition`
+    // writes `reveal_mode` (rune-md's `element/doc.rs`). Every other file
+    // must contain neither literal write.
     for file in &files {
         let contents = std::fs::read_to_string(file).unwrap_or_default();
-        let count = contents.matches(needle).count();
-        counts.push((file.clone(), count));
-    }
+        let state_count = contents.matches("self.state = next").count();
+        let reveal_mode_count = contents.matches("self.reveal_mode = next").count();
 
-    let element_doc = rune_md_src.join("element").join("doc.rs");
-    let syntax_element = rune_syntax_src.join("element.rs");
-
-    for (file, count) in &counts {
-        if file == &element_doc || file == &syntax_element {
+        if file == &syntax_element {
             assert_eq!(
-                *count, 1,
-                "{file:?} must contain exactly one `{needle}` write (its own transition writer), found {count}"
+                state_count, 1,
+                "{file:?} must contain exactly one `self.state = next` write (its own transition writer), found {state_count}"
             );
         } else {
             assert_eq!(
-                *count, 0,
-                "{file:?} must not write `{needle}` directly — every other machine calls \
-                 `self.sm.transition(..)` instead, found {count}"
+                state_count, 0,
+                "{file:?} must not write `self.state = next` directly — every other machine calls \
+                 `self.sm.transition(..)` instead, found {state_count}"
+            );
+        }
+
+        if file == &element_doc {
+            assert_eq!(
+                reveal_mode_count, 1,
+                "{file:?} must contain exactly one `self.reveal_mode = next` write (its own transition writer), found {reveal_mode_count}"
+            );
+        } else {
+            assert_eq!(
+                reveal_mode_count, 0,
+                "{file:?} must not write `self.reveal_mode = next` directly, found {reveal_mode_count}"
             );
         }
     }

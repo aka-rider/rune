@@ -13,6 +13,7 @@
 
 mod rename_common;
 
+use rune_tui::document::ReadOnly;
 use rune_tui::keymap::KeyCode;
 use rune_tui::pane::Pane;
 
@@ -30,7 +31,7 @@ use rename_common::{
 fn a_read_only_document_refuses_to_rename() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
-    app.active_doc_mut().read_only = true;
+    app.active_doc_mut().read_only = ReadOnly::Always;
     let before = app.active_doc().buffer.content().to_string();
 
     send(&mut app, ctrl('r'));

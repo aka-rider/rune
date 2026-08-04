@@ -507,7 +507,7 @@ impl App {
     /// focus hostage in a field that can never commit (the Help document is
     /// the case this removes rather than guards against).
     pub fn focus_title(&mut self) {
-        if self.active_doc().read_only {
+        if self.active_doc().is_read_only() {
             self.set_status("this document is read-only", StatusSource::Other);
             return;
         }
@@ -525,7 +525,7 @@ impl App {
         // 12): an async reply can land after the active document has
         // changed under it, and parking focus on a title that can never
         // commit would hold the user there until they found Escape.
-        if self.active_doc().read_only {
+        if self.active_doc().is_read_only() {
             return;
         }
         self.focus = Pane::Title;

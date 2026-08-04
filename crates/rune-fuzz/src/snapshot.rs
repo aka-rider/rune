@@ -75,7 +75,7 @@ pub struct Snapshot {
     /// document is the former, by design — `Document::read_only` is no
     /// longer dead code once Help exists).
     pub read_only: bool,
-    /// `app.active_doc().shows_caret()` — the production predicate itself,
+    /// `app.active_doc().has_insertion_point()` — the production predicate itself,
     /// not a re-derivation from `focus`/`modal_open`/`read_only`, so
     /// `CUR-NO-CARET-HIDDEN` cannot pass by duplicating the very logic it is
     /// meant to police.
@@ -235,8 +235,8 @@ impl Snapshot {
             modal_open: app.modal.is_some(),
             active: app.active,
             title_text: app.title.text().to_string(),
-            read_only: doc.read_only,
-            caret_visible: doc.shows_caret(),
+            read_only: doc.is_read_only(),
+            caret_visible: doc.has_insertion_point(),
             cells,
             row_meta,
             highlight_spans,

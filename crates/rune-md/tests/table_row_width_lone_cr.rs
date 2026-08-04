@@ -35,7 +35,7 @@ use unicode_segmentation::UnicodeSegmentation;
 fn synced(content: &str, focused: bool) -> (Buffer, DocMachine) {
     let buf = Buffer::new(content);
     let mut doc = DocMachine::new();
-    doc.set_focus(focused);
+    doc.set_reveal_mode(focused);
     doc.sync_content(&buf);
     doc.sync_cursors(&buf, &CursorSet::new(0));
     (buf, doc)

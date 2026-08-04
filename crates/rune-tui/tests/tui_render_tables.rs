@@ -192,7 +192,7 @@ const RAGGED_ROW_TABLE: &str =
 /// editor as unfocused for that step while the cursor still sat inside the
 /// table.
 ///
-/// Once the caret is gated on `Document::shows_caret` (this ticket, Go
+/// Once the caret is gated on `Document::has_insertion_point` (this ticket, Go
 /// parity: an unfocused pane must show no caret, matching a modal's own
 /// keystroke-capture), that same unfocused state ALSO means no caret is
 /// ever painted here — `focused` is the one bit both the table's
@@ -236,6 +236,6 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
     assert_eq!(
         caret_row(&buf, HEIGHT, WIDTH),
         None,
-        "an unfocused editor must show no caret at all, per Document::shows_caret"
+        "an unfocused editor must show no caret at all, per Document::has_insertion_point"
     );
 }

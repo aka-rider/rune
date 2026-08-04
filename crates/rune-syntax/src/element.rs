@@ -4,14 +4,14 @@
 //! and consume the same types without depending on `rune-md`. `Block`,
 //! `Inline` and `DocMachine` stay in `rune-md` — they're markdown-specific.
 //!
-//! `DocState` and `WrapState` move here too (not in the plan's original
+//! `RevealMode` and `WrapState` move here too (not in the plan's original
 //! five-type list, which named only the types textually defined
-//! alongside them in `rune-md`): `InheritCtx::focus`/`wrap` are typed by
-//! them, and `InheritCtx` cannot compile standalone in this crate without
-//! its own field types coming along. Both are producer-agnostic — focus
-//! and wrap width aren't markdown concepts — so this is the smallest move
-//! that actually unblocks the extraction. `rune-md`'s `DocMachine` (which
-//! stays put) imports them back from here.
+//! alongside them in `rune-md`): `InheritCtx::wrap` is typed by the latter,
+//! and `InheritCtx` cannot compile standalone in this crate without its own
+//! field types coming along. Both are producer-agnostic — reveal mode and
+//! wrap width aren't markdown concepts — so this is the smallest move that
+//! actually unblocks the extraction. `rune-md`'s `DocMachine` (which stays
+//! put) imports them back from here.
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::BufferPoint;
@@ -163,15 +163,16 @@ impl CursorProbe {
     }
 }
 
-/// Whether the editor currently has focus. Unfocused forces every
-/// descendant `ForceRendered` — Go's `SyncNoReveal` (Gotchas: "Unfocused ->
-/// ForceRendered"). Lives here (not in `rune-md`'s `DocMachine`) because
-/// `InheritCtx::focus` is typed by it and `InheritCtx` must stand up in this
-/// crate without `rune-md`.
+/// Whether the document root grants `Decide` to its children at all. `Never`
+/// forces every descendant `ForceRendered` — Go's `SyncNoReveal` (Gotchas:
+/// "Unfocused -> ForceRendered"); `AtCursor` lets each element's own policy
+/// consult the cursor. The document root picks this from whether it has a
+/// live insertion point to reveal at — not from focus alone, since a
+/// focused-but-read-only document has no insertion point either.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DocState {
-    Unfocused,
-    Focused,
+pub enum RevealMode {
+    Never,
+    AtCursor,
 }
 
 /// Root-owned wrap state; only a document-root machine (`rune-md`'s
@@ -189,23 +190,20 @@ impl Default for WrapState {
 }
 
 /// The inherited context every parent hands its children. Downstream
-/// elements NEVER own wrap or focus state — they read the root's through
-/// this (plan directive: "downstream inherits upstream state").
+/// elements NEVER own wrap state — they read the root's through this (plan
+/// directive: "downstream inherits upstream state").
 ///
 /// `grant` is Phase 1's only ACTIVELY CONSUMED channel: every element's
 /// `sync` reads it (via `RevealGrant::resolve`) to decide its own reveal
 /// state, and `InheritCtx::child` is what recomputes it going down the
-/// tree. `wrap`/`focus` are carried context for elements that don't exist
-/// yet — no Phase-1 block or inline machine reads them (a Phase-5 table
-/// machine will read `wrap.width` to lay out columns; a future element
-/// keyed directly on focus, independent of `grant`'s already-focus-derived
-/// value, would read `focus`). They stay on this struct now rather than
-/// being bolted on later, since every element already receives `&InheritCtx`
-/// — adding a field here is free; adding it after the fact would touch
-/// every `sync` signature in the crate.
+/// tree. `wrap` is carried context for elements that don't exist yet — no
+/// Phase-1 block or inline machine reads it (a Phase-5 table machine will
+/// read `wrap.width` to lay out columns). It stays on this struct now
+/// rather than being bolted on later, since every element already receives
+/// `&InheritCtx` — adding a field here is free; adding it after the fact
+/// would touch every `sync` signature in the crate.
 #[derive(Clone, Copy)]
 pub struct InheritCtx<'a> {
-    pub focus: DocState,
     pub wrap: &'a WrapState,
     pub grant: RevealGrant,
     pub cursors: &'a CursorProbe,
@@ -245,7 +243,6 @@ mod tests {
         let wrap = WrapState { width: 80 };
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
-            focus: DocState::Focused,
             wrap: &wrap,
             grant: RevealGrant::ForceRendered,
             cursors: &cursors,
@@ -259,7 +256,6 @@ mod tests {
         let wrap = WrapState { width: 80 };
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
-            focus: DocState::Focused,
             wrap: &wrap,
             grant: RevealGrant::Decide,
             cursors: &cursors,
@@ -273,7 +269,6 @@ mod tests {
         let wrap = WrapState { width: 80 };
         let cursors = CursorProbe::default();
         let ctx = InheritCtx {
-            focus: DocState::Focused,
             wrap: &wrap,
             grant: RevealGrant::Decide,
             cursors: &cursors,

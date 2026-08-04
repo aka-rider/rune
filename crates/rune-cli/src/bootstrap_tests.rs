@@ -130,7 +130,7 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
         1,
         "the blank untitled anchor must be closed once the image opens"
     );
-    assert!(app.doc(app.active).is_some_and(|d| d.read_only));
+    assert!(app.doc(app.active).is_some_and(|d| d.is_read_only()));
     assert!(
         app.doc(app.active)
             .is_some_and(|d| d.file_path.as_deref() == Some(Path::new("/vault/x.png")))

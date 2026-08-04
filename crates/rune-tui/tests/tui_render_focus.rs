@@ -13,6 +13,7 @@
 mod tui_render_common;
 
 use rune_core::cursor::{Cursor, CursorSet};
+use rune_tui::document::ReadOnly;
 use rune_tui::testgrid;
 
 use tui_render_common::{
@@ -41,7 +42,7 @@ fn table_renders_as_box_drawing_not_raw_pipes() {
 }
 
 /// Go parity (`textedit/render.go`'s `m.focused && !m.readOnly` gate,
-/// ported via `Document::shows_caret`): a caret must not render once the
+/// ported via `Document::has_insertion_point`): a caret must not render once the
 /// editor pane loses focus. Both fixtures share the same content/cursor
 /// offset, so the assertion can't pass vacuously by the caret simply
 /// landing on a different row than the one checked.
@@ -118,15 +119,15 @@ fn selection_not_highlighted_when_unfocused() {
 
 /// Go parity, the read-only half: the virtual Help document (and any other
 /// read-only document) has no insertion point to point at, so it must show
-/// no caret even while focused — `Document::shows_caret` folds `read_only`
-/// into the same gate as `focused`.
+/// no caret even while focused — `Document::has_insertion_point` folds
+/// `is_read_only()` into the same gate as `focused`.
 #[test]
 fn caret_not_visible_on_a_read_only_document() {
     let content = "hello world\n";
     let offset = 3;
     let mut app = app_for(content, offset, true);
     let id = app.active;
-    app.doc_mut(id).unwrap().read_only = true;
+    app.doc_mut(id).unwrap().read_only = ReadOnly::Always;
     app.sync_view();
     let buf = render_to_test_backend(&app);
     assert_eq!(

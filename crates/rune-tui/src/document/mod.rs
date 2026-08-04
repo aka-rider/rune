@@ -79,7 +79,7 @@ pub struct Document {
     /// Go's own `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass
     /// `m.readOnly` the same way, unlike `ReplaceRange`
     /// (`edit_primitives.go`) which checks it first.
-    pub read_only: bool,
+    pub read_only: ReadOnly,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).
     pub file_path: Option<PathBuf>,
@@ -184,16 +184,44 @@ pub struct Document {
     pub embeds: crate::graphics::EmbedSet,
 }
 
+/// Why a document refuses mutation — not a plain bool, so a toggleable view
+/// mode (`Reading`) can be told apart from a document with no editable form
+/// at all (`Always`): a toggle must not make the Help tab editable, and the
+/// undo/redo guard (plan WP3) and the `⌘S` footer hint (plan WP6) each
+/// branch on the two differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadOnly {
+    /// Ordinary editable document.
+    No,
+    /// The user asked for reading view (⌃P) — the same chord returns it.
+    /// The document keeps its journal, its `db` binding and any unsaved
+    /// bytes.
+    Reading,
+    /// No editable form exists: the Help tab, the error banner, an image
+    /// document. `commands::reading::toggle` refuses; only a mint site sets
+    /// it.
+    Always,
+}
+
 impl Document {
+    /// Whether this document refuses mutation, regardless of which
+    /// `ReadOnly` variant is refusing it.
+    pub fn is_read_only(&self) -> bool {
+        !matches!(self.read_only, ReadOnly::No)
+    }
+
     /// Whether the caret and selection background may be painted onto this
-    /// document's cells. Go's three overlay gates (`textedit/render.go`) are
-    /// all `focused && !readOnly`: an unfocused pane must not show a caret
-    /// that would mislead about where keystrokes land, and a read-only
-    /// document (the virtual Help tab, the error-banner document) has no
-    /// insertion point to point at. `focused` itself already folds in
-    /// `modal.is_none()` — see `App::sync_view`.
-    pub fn shows_caret(&self) -> bool {
-        self.focused && !self.read_only
+    /// document's cells, AND whether reveal may key off the cursor at all
+    /// (plan WP1) — the second consumer of the identical predicate. Go's
+    /// three overlay gates (`textedit/render.go`) are all
+    /// `focused && !readOnly`: an unfocused pane must not show a caret that
+    /// would mislead about where keystrokes land, and a read-only document
+    /// (the virtual Help tab, the error-banner document) has no insertion
+    /// point to point at — nor anything to reveal raw markdown under.
+    /// `focused` itself already folds in `modal.is_none()` — see
+    /// `App::sync_view`.
+    pub fn has_insertion_point(&self) -> bool {
+        self.focused && !self.is_read_only()
     }
 }
 
@@ -218,7 +246,7 @@ impl Document {
             viewport: Viewport::default(),
             focused: true,
             journal: Journal::new(),
-            read_only: false,
+            read_only: ReadOnly::No,
             file_path: None,
             saved_version,
             saved_content,
