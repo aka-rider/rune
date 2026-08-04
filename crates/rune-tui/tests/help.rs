@@ -108,7 +108,10 @@ fn help_document_rejects_edits_and_never_goes_dirty() {
     let mut app = app_with("hello");
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(f1()), &mut effects);
-    assert!(app.active_doc().is_read_only(), "help doc must be read-only");
+    assert!(
+        app.active_doc().is_read_only(),
+        "help doc must be read-only"
+    );
 
     let content_before = app.active_doc().buffer.content().to_string();
     let printable = KeyInput {
