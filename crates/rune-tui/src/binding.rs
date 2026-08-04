@@ -10,9 +10,9 @@
 //! table (`GLOBAL_BINDINGS`, `LEADER_BINDINGS`, `EXPLORER_BINDINGS`,
 //! `TABS_BINDINGS`) still binds a single key each, so `resolve_in` (the
 //! plain, context-free lookup those tables use) only ever matches a
-//! one-element `keys` slice; the sequence- and context-aware engine that
-//! actually walks a multi-key chord to completion lives in
-//! `crate::keymap::index::resolve`/`resolve_stateful`.
+//! one-element `keys` slice. Every binding rune has is a single chord, so
+//! there is no sequence-walking engine behind this one — a row whose `keys`
+//! is longer than one key is simply unreachable.
 
 use crate::keymap::{KeyCode, KeyInput, Mods};
 
@@ -128,8 +128,7 @@ impl<C: Copy + 'static> Binding<C> {
 /// chord tables (single- to low-double-digit entries), not per-keystroke
 /// text, so a `HashMap` would cost this module's whole appeal (a `const`
 /// table, no allocation) for nothing. A binding whose `keys` is a sequence
-/// longer than one never matches here — callers that need sequences use
-/// `crate::keymap::index::resolve`/`resolve_stateful` instead.
+/// longer than one never matches here, and nothing else resolves one either.
 ///
 /// Precedence is FIRST-MATCH-WINS: the earliest row in table order whose
 /// pattern matches is the one returned, and any later row binding the

@@ -32,13 +32,10 @@ pub struct Context {
     /// (`Explorer::search.is_some()`) — the atom `explorer_search::
     /// EXPLORER_SEARCH_BINDINGS`'s Esc/Backspace rows name in their `when`
     /// clause. `explorer_keys::handle_key` gates on `app.explorer.search.
-    /// is_some()` directly rather than building a `Context`/calling
-    /// `resolve_stateful` (the Explorer resolves through the stateless
-    /// `resolve_in`, not the sequence-aware engine `when` clauses actually
-    /// drive), so this field is never consulted by `bool_field` on that live
-    /// path today — it exists so the clause stays a real, declared
-    /// identifier rather than a silently-always-false typo, and so the
-    /// Explorer moving to `resolve_stateful` later needs no clause rewrite.
+    /// is_some()` directly rather than building a `Context`, so this field is
+    /// never consulted by `bool_field` on that live path today — it exists so
+    /// the clause stays a real, declared identifier rather than a
+    /// silently-always-false typo.
     pub explorer_search: bool,
     pub language: Option<&'static str>,
     /// The vim-set's normal/insert marker (plan WP6.S8). `"insert"` is this
