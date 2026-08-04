@@ -16,8 +16,9 @@
 //! timeout was surfaced at all. Collapsing them removed every one of those
 //! divergences.
 //!
-//! Retaining each region's tree is what makes one full budget per region
-//! affordable: a tree is still valid exactly when
+//! One full budget per region is affordable because a pass is bounded twice:
+//! the total it may spend is a constant of its own, and retained trees keep
+//! the regions that actually need parsing few. A tree is still valid when
 //! `tree.source() == map.reconstruct(content)`, so an edit inside one fence
 //! reparses that fence alone and an edit in prose reparses nothing. The maps
 //! still refresh on every version change — a region's BUFFER offsets move
@@ -135,8 +136,9 @@ pub struct HighlightReply {
 ///
 /// `work: None` means the scheduler already holds a valid tree for this
 /// region: the job carries only the refreshed map, and the region is never
-/// reparsed. That is the mechanism that makes one full `PARSE_BUDGET` per
-/// region affordable.
+/// reparsed. That is the mechanism that keeps the regions competing for a
+/// pass's total few enough for one full `PARSE_BUDGET` each to stay
+/// affordable.
 pub(crate) struct RegionJob {
     pub(crate) map: LineMap,
     pub(crate) work: Option<(RegionLang, String)>,
@@ -343,9 +345,23 @@ pub(crate) fn schedule_highlight(app: &mut App, id: DocumentId, effects: &mut Ef
 ///
 /// A region's retained tree is valid exactly when it was parsed from the
 /// same bytes the region reconstructs to now. Region identity across an edit
-/// is positional — the same index in document order — which is stable for
-/// every edit that doesn't add or remove a region, and is the same identity
-/// `install_regions` inherits channels by.
+/// is positional — the same index in document order — and MUST be the same
+/// identity `install_regions` inherits channels by, since a slot that
+/// reported no payload takes whatever sits at its own index: a lookup that
+/// found a matching tree at some other index would leave this slot
+/// inheriting a different region's colours entirely.
+///
+/// The cost of that coupling is missed reuse, never a wrong tree — reuse is
+/// gated on the tree's own source text, so a candidate that moved is
+/// rejected and reparsed rather than misapplied. Inserting or deleting a
+/// region therefore reparses every region below it, which is exactly the
+/// shape a pass's total budget has to absorb. Keying reuse by content
+/// instead would mean carrying an explicit inherit-from index through the
+/// reply (the trees themselves cannot make the trip: they are what the
+/// render path paints from, so moving them to the `Cmd` thread would leave
+/// the document uncoloured for the whole time a pass is in flight), plus
+/// claiming bookkeeping so two identical regions cannot both inherit one
+/// tree. Not paid for what it buys today.
 fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
     sources
         .into_iter()
@@ -389,14 +405,13 @@ fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
 /// document; a failed or skipped attempt leaves `version` untouched, so that
 /// same kick still dispatches the ordinary background `Cmd`.
 ///
-/// This is the ONE place a budget is divided across regions, and for the
-/// opposite reason the fence pipeline's old division existed. There, the
-/// division decided how much colour a document got at all, so a many-fence
-/// document rendered flat. Here the ceiling is on how long the process may
-/// block before showing anything, and missing it costs nothing visible: the
-/// background pass follows immediately at a full budget per region. A total
-/// ceiling is the whole point of this pass, so it has to hold however many
-/// regions the document turns out to have.
+/// `FIRST_PAINT_BUDGET` is this pass's per-region cap AND its total, so the
+/// ceiling holds however many regions the document turns out to have: a
+/// region that would need longer than the whole pre-draw ceiling cannot be
+/// afforded at any share of it, and the fast regions ahead of it are exactly
+/// the ones worth colouring on frame 1. Missing a region costs nothing
+/// visible — the background pass follows immediately at a full
+/// `PARSE_BUDGET` per region.
 pub(crate) fn first_paint_highlight(app: &mut App) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
@@ -411,13 +426,10 @@ pub(crate) fn first_paint_highlight(app: &mut App) {
             work: Some((source.lang, source.text)),
         })
         .collect();
-    let Ok(count) = u32::try_from(jobs.len()) else {
-        return;
-    };
-    if count == 0 {
+    if jobs.is_empty() {
         return;
     }
-    let budget = runtime::FIRST_PAINT_BUDGET / count;
+    let budget = runtime::PassBudget::new(runtime::FIRST_PAINT_BUDGET, runtime::FIRST_PAINT_BUDGET);
     let Some(reply) = runtime::run_regions(jobs, budget) else {
         return;
     };

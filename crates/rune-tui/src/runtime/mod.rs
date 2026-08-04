@@ -225,7 +225,8 @@ pub enum CmdKind {
     /// be spawned from a fuzz run.
     OpenExternal,
     /// A tree-sitter parse (`rune_ts::parse`) of every code region of one
-    /// document that needs one, each bounded by [`PARSE_BUDGET`].
+    /// document that needs one, each bounded by [`PARSE_BUDGET`] and all of
+    /// them together by [`PASS_BUDGET`].
     /// Off-thread per §5.4: a large region's parse must never
     /// block the main loop, and grammar crashes (`ts_assert`) are
     /// architecturally avoided rather than caught (CONSTITUTION §1.3) —
@@ -489,8 +490,8 @@ mod bootstrap;
 // moved to `runtime::highlight_cmd` (§1.6 budget) — re-exported below so
 // every existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
-pub use highlight_cmd::PARSE_BUDGET;
-pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, highlight_cmd, run_regions};
+pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, PassBudget, highlight_cmd, run_regions};
+pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 
 // The comrak reveal-emit reuse path a ```markdown fence highlights through
 // — its own file since it pulls in `rune_md::parse`/`emit`, a dependency
