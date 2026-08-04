@@ -11,11 +11,22 @@
 
 use crate::app::{App, StatusSource};
 use crate::document::ReadOnly;
+use crate::pane::Pane;
 
 /// Toggles the active document's `ReadOnly` state between `No` and
 /// `Reading`. `Always` is left untouched with a status message — the same
 /// refusal shape `rename::begin` uses for the identical precondition.
 pub fn toggle(app: &mut App) {
+    // The reading view is a property of the document the Editor pane
+    // renders, so the pane that renders it is the only pane that may
+    // toggle it (CONSTITUTION §2.1) — `read_only` must never transition
+    // while, say, the title field holds focus. A silent no-op, not a
+    // refusal with a status message: `⌃P` firing from another pane is not
+    // user-initiated intent to toggle THIS document, the same precondition
+    // `app.rs::refocus_title` treats silently rather than as a refusal.
+    if app.focus() != Pane::Editor {
+        return;
+    }
     let doc = app.active_doc_mut();
     match doc.read_only {
         ReadOnly::No => doc.read_only = ReadOnly::Reading,

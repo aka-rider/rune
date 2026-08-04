@@ -11,7 +11,17 @@
 //! builds a `KeyInput` or calls `app::update` at all). Render assertions
 //! reuse `tests/tui_render_common/mod.rs` rather than adding a fourth local
 //! copy of its helpers.
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+// `clippy::panic` joins the other three because this file now pulls in
+// `rename_common` (`mod rename_common;` below) — the same shared Rename
+// fixture module every one of its other seven consumers already carries
+// this allow for, since its store-backed constructors panic on an
+// unexpected `DbEvent` ack.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use std::sync::Arc;
 
@@ -19,11 +29,18 @@ use rune_core::buffer::Buffer;
 use rune_tui::app::{self, App};
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::pane::Pane;
 use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::Mem;
 
 mod tui_render_common;
 use tui_render_common::{HEIGHT, WIDTH, app_for, caret_column, full_text, render_to_test_backend};
+
+// Draws the rename fixtures (`app_with`/`seeded_vfs`/`type_new_name`) from
+// the Rename suite's own shared setup rather than a second local copy —
+// `tests/rename_common/mod.rs`'s own doc comment names every consumer this
+// joins.
+mod rename_common;
 
 fn app_basic(content: &str) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
@@ -45,6 +62,31 @@ fn ctrl(c: char) -> Msg {
         KeyCode::Char(c),
         Mods {
             ctrl: true,
+            ..Mods::NONE
+        },
+    )
+}
+
+/// A ⌘-chorded character — `Command::Undo`'s own modifier
+/// (`keymap::editor_bindings::editing::SUP`).
+fn sup(c: char) -> Msg {
+    key(
+        KeyCode::Char(c),
+        Mods {
+            sup: true,
+            ..Mods::NONE
+        },
+    )
+}
+
+/// A ⌘⇧-chorded character — `Command::Redo`'s own modifier
+/// (`keymap::editor_bindings::editing::SUP_SHIFT`).
+fn sup_shift(c: char) -> Msg {
+    key(
+        KeyCode::Char(c),
+        Mods {
+            sup: true,
+            shift: true,
             ..Mods::NONE
         },
     )
@@ -159,9 +201,11 @@ fn ctrl_p_on_the_help_tab_refuses_and_posts_a_status_message() {
 
 /// In reading view, a printable key must not mutate the buffer or mark it
 /// dirty — the mutation chokepoint (`commands::edit_core`) refuses any
-/// `is_read_only()` document, and `Reading` is one. (Undo/redo blocking is
-/// already covered by `reading_view_blocks_undo_and_redo`; not duplicated
-/// here.)
+/// `is_read_only()` document, and `Reading` is one. (Undo/redo blocking via
+/// direct calls is covered by `edit_commands.rs`'s
+/// `reading_view_blocks_undo_and_redo`; the keystroke-driven equivalent
+/// below, `ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view`, is this
+/// file's own coverage of the same guard through the real resolver.)
 #[test]
 fn a_printable_key_in_reading_view_never_mutates_the_buffer() {
     let mut app = app_basic("hello world");
@@ -225,4 +269,148 @@ fn reading_view_paints_no_caret_anywhere() {
             "row {y} painted a caret while in reading view"
         );
     }
+}
+
+/// Regression test. `pane::handle_global_command` hoists a `blur_title`
+/// commit attempt before EVERY global command's own match arm, `⌃P`
+/// included — so a title-focused `⌃P` already runs `rename::begin` once,
+/// before `commands::reading::toggle` ever executes, as part of that
+/// hoisted gate. `save_in_flight` is the vehicle that keeps `begin`
+/// refusing across both this test's presses, for the SAME reason each
+/// time: with no guard in `toggle` itself, a `Refused` blur (focus left
+/// stuck on the title, `begin`'s own doc comment) did not stop `toggle`
+/// from flipping the document `ReadOnly::Reading` right after, because
+/// `toggle` never looked at focus. The SECOND `begin` call — triggered by
+/// the following `Enter`, on the still-focused title — then hit `doc.
+/// is_read_only()` (checked before `save_in_flight`) and refused with the
+/// READING wording instead of the save-in-flight one: a manufactured
+/// refusal reason from a keystroke the user never aimed at the title at
+/// all, and the typed name still trapped behind it. Pins that `⌃P` from
+/// the title is now inert: the document stays `ReadOnly::No`, and the
+/// refusal reason — and the typed name — survive `⌃P` untouched.
+#[test]
+fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
+    let mem = rename_common::seeded_vfs();
+    let mut app = rename_common::app_with(&mem);
+    app.active_doc_mut().save_in_flight = true;
+
+    rename_common::type_new_name(&mut app, "b");
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "the title must hold focus mid-rename"
+    );
+    assert_eq!(app.title.text(), "b.md");
+
+    send(&mut app, ctrl('p'));
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "⌃P's own hoisted blur must already have refused (save in flight), leaving focus put"
+    );
+    assert_eq!(
+        app.active_doc().read_only,
+        ReadOnly::No,
+        "⌃P must not flip the document read-only out from under a blur that just refused"
+    );
+    assert_eq!(
+        app.title.text(),
+        "b.md",
+        "the typed name must survive ⌃P untouched"
+    );
+
+    send(&mut app, plain(KeyCode::Enter));
+
+    assert_eq!(
+        app.focus(),
+        Pane::Title,
+        "still refused (save in flight), same as before ⌃P ever fired"
+    );
+    assert_eq!(
+        app.title.text(),
+        "b.md",
+        "the typed name must still not be discarded"
+    );
+    assert_eq!(
+        app.status_message.as_deref(),
+        Some("can't rename while a save is in flight"),
+        "the refusal reason must stay the save-in-flight one, not flip to a \
+         read-only refusal ⌃P would otherwise have manufactured"
+    );
+    assert_ne!(
+        app.status_message.as_deref(),
+        Some(ReadOnly::Reading.refusal_message())
+    );
+}
+
+/// `⌃P` fired from the Explorer must not touch a document the user isn't
+/// looking at: no visible change would result (an unfocused document is
+/// already `RevealMode::Never`), so a document silently flipped to
+/// `ReadOnly::Reading` would surface no explanation on returning to the
+/// editor — no caret, no obvious cause. `commands::reading::toggle` gates
+/// on `app.focus() == Pane::Editor` before reading or writing any state,
+/// silently, matching `app.rs::refocus_title`'s precedent for a
+/// non-user-initiated precondition.
+#[test]
+fn ctrl_p_from_the_explorer_is_a_silent_no_op() {
+    let mut app = app_basic("hello");
+
+    send(&mut app, ctrl('b')); // GlobalCommand::FocusExplorer
+    assert_eq!(app.focus(), Pane::Explorer);
+    let status_before = app.status_message.clone();
+
+    send(&mut app, ctrl('p'));
+
+    assert_eq!(
+        app.active_doc().read_only,
+        ReadOnly::No,
+        "⌃P from the Explorer must not change the active document's ReadOnly state"
+    );
+    assert_eq!(
+        app.status_message, status_before,
+        "⌃P from the Explorer must post no status message"
+    );
+}
+
+/// Keystroke-driven equivalent of `edit_commands.rs`'s
+/// `reading_view_blocks_undo_and_redo` (CONSTITUTION §8.2: exercise the
+/// real resolver, not `commands::edit::undo`/`redo` directly). `⌘Z`/`⌘⇧Z`
+/// resolve to `Command::Undo`/`Command::Redo` in `handle_editor_key`'s
+/// stage 3, and both guard on `ReadOnly::Reading` before touching the
+/// buffer.
+#[test]
+fn ctrl_z_and_ctrl_shift_z_are_blocked_in_reading_view() {
+    let mut app = app_basic("hello");
+
+    send(&mut app, plain(KeyCode::End));
+    send(&mut app, plain(KeyCode::Char('!')));
+    assert_eq!(app.active_doc().buffer.content(), "hello!");
+
+    app.active_doc_mut().read_only = ReadOnly::Reading;
+    let content_before = app.active_doc().buffer.content().to_string();
+    let dirty_before = app.active_doc().is_dirty();
+
+    send(&mut app, sup('z'));
+    assert_eq!(
+        app.active_doc().buffer.content(),
+        content_before,
+        "⌘Z must not mutate a reading-view document"
+    );
+    assert_eq!(
+        app.active_doc().is_dirty(),
+        dirty_before,
+        "a blocked undo must not change dirtiness"
+    );
+
+    send(&mut app, sup_shift('z'));
+    assert_eq!(
+        app.active_doc().buffer.content(),
+        content_before,
+        "⌘⇧Z must not mutate a reading-view document"
+    );
+    assert_eq!(
+        app.active_doc().is_dirty(),
+        dirty_before,
+        "a blocked redo must not change dirtiness"
+    );
 }
