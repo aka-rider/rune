@@ -132,7 +132,7 @@ mod tests {
         app
     }
 
-    /// Plan WP1: dragging the left column's splitter away and pressing
+    /// Dragging the left column's splitter away and pressing
     /// `GlobalCommand::CollapseLeft` must reach IDENTICAL state — both hide
     /// the same `Split` and both redirect focus through the one shared
     /// `focus::reconcile` chokepoint, so a user reaching for either gesture

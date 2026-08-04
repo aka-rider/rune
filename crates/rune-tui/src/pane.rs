@@ -268,9 +268,9 @@ mod tests {
         assert_eq!(app.focus(), Pane::Editor);
     }
 
-    /// Plan WP1: `FocusExplorer` shows the column, but a frame too small to
-    /// actually paint it must never leave focus stranded on an invisible
-    /// pane — `set_focus_pane` falls back to the Editor instead.
+    /// `FocusExplorer` shows the column, but a frame too small to actually
+    /// paint it must never leave focus stranded on an invisible pane —
+    /// `set_focus_pane` falls back to the Editor instead.
     #[test]
     fn focus_explorer_on_a_too_small_frame_falls_back_to_the_editor() {
         let mut app = app();

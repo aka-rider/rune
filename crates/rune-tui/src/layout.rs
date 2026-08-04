@@ -178,13 +178,12 @@ impl Resolved {
     }
 }
 
-/// The ONE function in this module that decides what's painted this frame
-/// (plan WP1: `layout.rs` must decide visibility in exactly one place, so
-/// `LayoutMode::resolve` and `geometry` below can never silently disagree
-/// about it). Pure — `&App` only, no `Frame`, no `&mut`. Every subtraction
-/// saturates — never panics, however small `area` is (the fuzzer drives
-/// `Resize` down to a 1-column, 2-row terminal, and the render tests draw at
-/// `(0, 0)` and `(1, 1)`).
+/// The ONE function in this module that decides what's painted this frame:
+/// `LayoutMode::resolve` and `geometry` below both read it, so they can
+/// never silently disagree about visibility. Pure — `&App` only, no
+/// `Frame`, no `&mut`. Every subtraction saturates — never panics, however
+/// small `area` is (the fuzzer drives `Resize` down to a 1-column, 2-row
+/// terminal, and the render tests draw at `(0, 0)` and `(1, 1)`).
 fn resolve(area: Rect, app: &App) -> Resolved {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -297,10 +296,10 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     }
 }
 
-/// This frame's resolved `LayoutMode` (plan WP1) — the seam `App::
-/// layout_mode` calls into `update`-time, never from `draw`. Reads the same
-/// `resolve` `geometry` itself draws from, so a focus decision and the
-/// frame actually painted can never disagree.
+/// This frame's resolved `LayoutMode` — the seam `App::layout_mode` calls
+/// into during `update`, never from `draw`. Reads the same `resolve`
+/// `geometry` itself draws from, so a focus decision and the frame actually
+/// painted can never disagree.
 pub fn resolve_mode(area: Rect, app: &App) -> LayoutMode {
     resolve(area, app).mode()
 }
@@ -444,10 +443,10 @@ mod tests {
         app
     }
 
-    /// Plan WP1: a frame too NARROW to fit the left column at all must
-    /// resolve to `LayoutMode::EditorOnly`, not merely leave `geometry`'s
-    /// own `left_block` `None` while `app.splits.left` still claims shown —
-    /// the exact shadow state this resolver exists to close.
+    /// A frame too NARROW to fit the left column at all must resolve to
+    /// `LayoutMode::EditorOnly`, not merely leave `geometry`'s own
+    /// `left_block` `None` while `app.splits.left` still claims shown — the
+    /// exact shadow state this resolver exists to close.
     #[test]
     fn a_too_narrow_frame_resolves_to_editor_only_not_a_silently_dropped_column() {
         let app = app_with_left_shown();

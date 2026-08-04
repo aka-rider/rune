@@ -78,14 +78,14 @@ pub struct App {
     next_doc_id: NonZeroU64,
     pub vfs: Arc<dyn Vfs + Send + Sync>,
     /// Which chrome region owns the next keystroke once `GLOBAL_BINDINGS`
-    /// doesn't claim it (decision 7/8, `pane.rs`) — defaults to `Editor`.
-    /// `pub(crate)`, not private: the writers (`focus_title`/`refocus_title`/
-    /// `set_focus`, `focus.rs`'s own `impl App` block — moved there in plan
-    /// WP1 to keep this file under the §1.6 budget) live in a different
-    /// module now, but they remain the ONLY code in this crate that assigns
-    /// it directly; every other call site goes through `focus()`/
-    /// `set_focus_pane`. Leaving the title always runs through the one
-    /// commit chokepoint (`title::on_blur`).
+    /// doesn't claim it (`pane.rs`) — defaults to `Editor`. `pub(crate)`,
+    /// not private: the writers (`focus_title`/`refocus_title`/`set_focus`,
+    /// `focus.rs`'s own `impl App` block — moved there to keep this file
+    /// under the §1.6 budget) live in a different module now, but they
+    /// remain the ONLY code in this crate that assigns it directly; every
+    /// other call site goes through `focus()`/`set_focus_pane`. Leaving the
+    /// title always runs through the one commit chokepoint
+    /// (`title::on_blur`).
     pub(crate) focus: Pane,
     /// The draggable splitter positions sizing the left column and its
     /// Explorer/Tabs division (decision 7); starts hidden.
@@ -498,8 +498,8 @@ impl App {
 
     // `focus()`/`refuse_if_read_only`/`focus_title`/`refocus_title`/
     // `set_focus`/`set_focus_pane`/`blur_title`/`layout_mode` moved to
-    // `focus.rs` in plan WP1 (§1.6 budget) — that module is now the sole
-    // writer of `focus` outside this constructor.
+    // `focus.rs` (§1.6 budget) — that module is now the sole writer of
+    // `focus` outside this constructor.
 }
 
 /// The ONLY writer of `App` state (§5.4). `effects` accumulates I/O for the

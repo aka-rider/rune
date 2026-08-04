@@ -53,9 +53,9 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
 /// deciding whether a pane can take focus should ask a `LayoutMode`
 /// instead.
 ///
-/// `ExplorerOnly` is reserved for a later work package (a full-width
-/// Explorer) — `resolve` never produces it yet, so it costs `focusable`
-/// nothing today beyond one extra match arm.
+/// `ExplorerOnly` is reserved for a future full-width Explorer — `resolve`
+/// never produces it yet, so it costs `focusable` nothing today beyond one
+/// extra match arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutMode {
     /// The left column is painted; `explorer`/`tabs` are each independently
@@ -119,25 +119,37 @@ impl LayoutMode {
         painted.then_some(VisiblePane(pane))
     }
 
-    /// `pane` if it's painted this frame, else the Editor — the ONE
+    /// The one pane every `LayoutMode` variant paints by construction —
+    /// `Split`/`EditorOnly` always paint the Editor, `ExplorerOnly` always
+    /// paints the Explorer (a full-width Explorer has to paint SOMETHING).
+    /// `focus_or_default`'s fallback, kept as its own total function rather
+    /// than folded into an `unwrap_or` so it can never itself name a pane
+    /// `focusable` would refuse — the exhaustive test below pins that for
+    /// every variant this match can ever grow.
+    fn default_focus(self) -> VisiblePane {
+        match self {
+            LayoutMode::Split { .. } | LayoutMode::EditorOnly => VisiblePane(Pane::Editor),
+            LayoutMode::ExplorerOnly => VisiblePane(Pane::Explorer),
+        }
+    }
+
+    /// `pane` if it's painted this frame, else `default_focus` — the ONE
     /// fallback both the collapse command (`GlobalCommand::CollapseLeft`)
     /// and the splitter drag path already reached for, ad hoc, before this
     /// module existed (`App::set_focus_pane`/`reconcile`, below, are now
-    /// their shared chokepoint). The Editor is always reachable in either
-    /// mode this resolver currently ever returns (`Split`/`EditorOnly`);
-    /// `unwrap_or` only matters once a future work package makes
-    /// `ExplorerOnly` reachable.
-    pub fn focus_or_editor(self, pane: Pane) -> VisiblePane {
-        self.focusable(pane)
-            .or_else(|| self.focusable(Pane::Editor))
-            .unwrap_or(VisiblePane(pane))
+    /// their shared chokepoint).
+    pub fn focus_or_default(self, pane: Pane) -> VisiblePane {
+        self.focusable(pane).unwrap_or_else(|| self.default_focus())
     }
 }
 
 /// A `Pane` known to be painted under some `LayoutMode` at the moment it was
 /// minted — the token `App::set_focus` requires instead of a bare `Pane`, so
-/// "focus lands on a pane nobody can see" cannot compile. Only
-/// `LayoutMode::focusable`/`focus_or_editor` can produce one.
+/// "focus lands on a pane nobody can see" cannot compile. The inner field is
+/// private to this module (not merely unexported) on purpose: only
+/// `LayoutMode::focusable`/`default_focus`/`focus_or_default` may construct
+/// one, so the guarantee cannot be bypassed by a caller outside this file
+/// reaching for the tuple constructor directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VisiblePane(Pane);
 
@@ -177,9 +189,9 @@ impl App {
     /// name and landing the cursor at the end. Needs no `Effects`: entering
     /// the title can never itself leave it, so there is nothing to commit on
     /// the way in. Refuses on a read-only document — there is nothing to
-    /// rename, and under decision 7 a refusal there would otherwise hold
-    /// focus hostage in a field that can never commit (the Help document is
-    /// the case this removes rather than guards against).
+    /// rename, and a refusal there would otherwise hold focus hostage in a
+    /// field that can never commit (the Help document is the case this
+    /// removes rather than guards against).
     pub fn focus_title(&mut self) {
         if self.refuse_if_read_only(self.active_doc().read_only) {
             return;
@@ -202,10 +214,10 @@ impl App {
     /// reseeding would resurrect the old name and discard their in-progress
     /// undo history.
     pub fn refocus_title(&mut self) {
-        // The same read-only precondition `focus_title` enforces (decision
-        // 12): an async reply can land after the active document has
-        // changed under it, and parking focus on a title that can never
-        // commit would hold the user there until they found Escape.
+        // The same read-only precondition `focus_title` enforces: an async
+        // reply can land after the active document has changed under it,
+        // and parking focus on a title that can never commit would hold the
+        // user there until they found Escape.
         if self.active_doc().is_read_only() {
             return;
         }
@@ -219,14 +231,14 @@ impl App {
     /// title (`focus_title`/`refocus_title` above). Leaving the title runs
     /// `title::on_blur` first: a `Refused` commit vetoes the transition
     /// (focus stays put, the reason is already in the footer) but the caller
-    /// is never blocked from doing whatever it was about to do next —
-    /// decision 7 is what makes a repeated, idempotent blur safe here.
+    /// is never blocked from doing whatever it was about to do next — that
+    /// is what makes a repeated, idempotent blur safe here.
     ///
-    /// Takes a `VisiblePane`, not a bare `Pane` (plan WP1): the only way to
-    /// get one is `LayoutMode::focusable`/`focus_or_editor`, so a caller
-    /// naming a pane absent from the current mode cannot reach this
-    /// function without first deciding what to do about that — it cannot
-    /// compile a focus transition onto an invisible pane by omission.
+    /// Takes a `VisiblePane`, not a bare `Pane`: the only way to get one is
+    /// `LayoutMode::focusable`/`focus_or_default`, so a caller naming a pane
+    /// absent from the current mode cannot reach this function without first
+    /// deciding what to do about that — it cannot compile a focus transition
+    /// onto an invisible pane by omission.
     pub fn set_focus(&mut self, next: VisiblePane, effects: &mut Effects) {
         let next = next.pane();
         if self.focus == next {
@@ -252,21 +264,21 @@ impl App {
 
     /// The ergonomic entry point every ordinary call site uses instead of
     /// minting a `VisiblePane` by hand: focuses `pane` if it's painted this
-    /// frame, else falls back to the Editor (`LayoutMode::focus_or_editor`).
+    /// frame, else falls back to `LayoutMode::default_focus`.
     /// `pane::handle_global_command`'s `FocusExplorer`/`FocusTabs` arms rely
     /// on this to land focus correctly even though they just mutated
     /// `self.splits` moments earlier — `layout_mode()` re-resolves fresh
     /// from the live `Split` state every call, never a cached snapshot.
     pub fn set_focus_pane(&mut self, pane: Pane, effects: &mut Effects) {
-        let target = self.layout_mode().focus_or_editor(pane);
+        let target = self.layout_mode().focus_or_default(pane);
         self.set_focus(target, effects);
     }
 
-    /// The blur chokepoint in PREFIX position (decision 8's one spelling):
-    /// every site that changes the active document calls this BEFORE the
-    /// switch, then decides separately (and conditionally, wherever the
-    /// switch itself can fail) where focus should land afterwards. A no-op
-    /// unless the title actually holds focus.
+    /// The blur chokepoint in PREFIX position: every site that changes the
+    /// active document calls this BEFORE the switch, then decides
+    /// separately (and conditionally, wherever the switch itself can fail)
+    /// where focus should land afterwards. A no-op unless the title
+    /// actually holds focus.
     pub fn blur_title(&mut self, effects: &mut Effects) {
         if self.focus == Pane::Title {
             self.set_focus_pane(Pane::Editor, effects);
@@ -320,12 +332,57 @@ mod tests {
         assert!(split_collapsed.focusable(Pane::Editor).is_some());
     }
 
-    /// `focus_or_editor` never leaves a caller with nothing to focus: an
-    /// unpainted target always resolves to the Editor instead.
+    /// `focus_or_default` never leaves a caller with nothing to focus: an
+    /// unpainted target always resolves to `default_focus` instead.
     #[test]
-    fn focus_or_editor_falls_back_when_the_target_is_unpainted() {
+    fn focus_or_default_falls_back_when_the_target_is_unpainted() {
         let mode = LayoutMode::EditorOnly;
-        assert_eq!(mode.focus_or_editor(Pane::Explorer).pane(), Pane::Editor);
-        assert_eq!(mode.focus_or_editor(Pane::Editor).pane(), Pane::Editor);
+        assert_eq!(mode.focus_or_default(Pane::Explorer).pane(), Pane::Editor);
+        assert_eq!(mode.focus_or_default(Pane::Editor).pane(), Pane::Editor);
+    }
+
+    /// The load-bearing proof `focus_or_default`'s whole guarantee rests on:
+    /// for every `LayoutMode` variant — `ExplorerOnly` included, though
+    /// nothing produces it yet — and every `Pane`, the result is a pane
+    /// `focusable` accepts under that SAME mode. Written as a loop over
+    /// every variant, not a handful of examples, so it keeps holding when a
+    /// later work package adds another `LayoutMode` or `Pane` variant: a
+    /// fallback that ever named an unpainted pane (the exact defect
+    /// `default_focus` replaced an `unwrap_or(VisiblePane(pane))` escape
+    /// hatch to close) fails this test immediately, for that variant.
+    #[test]
+    fn focus_or_default_never_names_a_pane_its_own_mode_refuses() {
+        let modes = [
+            LayoutMode::Split {
+                explorer: true,
+                tabs: true,
+            },
+            LayoutMode::Split {
+                explorer: false,
+                tabs: true,
+            },
+            LayoutMode::Split {
+                explorer: true,
+                tabs: false,
+            },
+            LayoutMode::Split {
+                explorer: false,
+                tabs: false,
+            },
+            LayoutMode::ExplorerOnly,
+            LayoutMode::EditorOnly,
+        ];
+        let panes = [Pane::Explorer, Pane::Tabs, Pane::Editor, Pane::Title];
+
+        for mode in modes {
+            for pane in panes {
+                let target = mode.focus_or_default(pane);
+                assert!(
+                    mode.focusable(target.pane()).is_some(),
+                    "{mode:?}.focus_or_default({pane:?}) produced {target:?}, \
+                     which {mode:?}.focusable refuses"
+                );
+            }
+        }
     }
 }
