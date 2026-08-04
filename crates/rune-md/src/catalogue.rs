@@ -254,12 +254,12 @@ fn wikilink_role(content: &str, range_start: usize) -> UseRole {
 
 /// Derive a heading's displayed name: the marker's own construction already
 /// includes its trailing space, so an ATX heading's name is everything
-/// after the marker; a setext heading has no marker (`h.marker` is an empty
-/// range) so its name is its first content line instead. Either way, trim
+/// after the marker; a setext heading (`h.underline.is_some()`) has no
+/// marker so its name is its first content line instead. Either way, trim
 /// ASCII whitespace, strip a trailing run of `#` when CommonMark says it
 /// closes the heading, then trim ASCII whitespace again.
 fn heading_name(content: &str, h: &HeadingM) -> String {
-    let raw = if !h.marker.is_empty() {
+    let raw = if h.underline.is_none() {
         content.get(h.marker.end..h.range.end).unwrap_or("")
     } else {
         h.content_lines

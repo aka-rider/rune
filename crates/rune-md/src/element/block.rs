@@ -28,17 +28,31 @@ impl ParagraphM {
 }
 
 /// ATX heading (`## text`) or setext heading (`text\n===`/`text\n---`).
-/// Decide policy: `cursors.any_on_line(line)` (the reveal-policy table).
+/// Decide policy: `cursors.any_in_lines(line, last_line)` (the reveal-policy
+/// table) — the heading's own line span, text AND underline together, so a
+/// cursor on either reveals the whole thing. An ATX heading is always
+/// single-line (`line == last_line`), so this is bit-identical to the old
+/// `any_on_line(line)` check there.
 #[derive(Clone, Debug)]
 pub struct HeadingM {
     pub sm: RevealSm,
     pub level: u8,
     pub line: usize,
+    /// The heading's own last physical line: itself for an ATX heading, the
+    /// underline's line for a setext heading.
+    pub last_line: usize,
     pub range: ByteRange,
     /// The `"## "`-style prefix range (parent/child sourcepos-gap derivation,
     /// plan Context "Parse"). Empty for a setext heading (no leading prefix
     /// on its own text line).
     pub marker: ByteRange,
+    /// The setext underline's own row (`content_lines`'s last entry,
+    /// already container-prefix-clamped), or `None` for an ATX heading —
+    /// comrak's `NodeHeading::setext` flag carried forward as the single
+    /// chokepoint for setext-ness. Every other site that used to infer it
+    /// from `marker.is_empty()` or `content_lines.len() > 1` reads this
+    /// instead.
+    pub underline: Option<ByteRange>,
     pub inlines: Vec<Inline>,
     /// One entry per physical line `range` spans, each already clamped to
     /// that line's own `hint`-derived content start (parse time, container-
@@ -56,8 +70,8 @@ pub struct HeadingM {
 
 impl HeadingM {
     fn sync(&mut self, ctx: &InheritCtx) -> bool {
-        let line = self.line;
-        let want = ctx.grant.resolve(|| ctx.cursors.any_on_line(line));
+        let (first, last) = (self.line, self.last_line);
+        let want = ctx.grant.resolve(|| ctx.cursors.any_in_lines(first, last));
         let mut dirty = self.sm.transition(want);
         let child_ctx = ctx.child(self.sm.state());
         for c in &mut self.inlines {

@@ -1,18 +1,17 @@
-//! Characterizes a setext-heading rendering defect at the span level
-//! (repro only — no production fix here).
+//! Fixed behavior for setext headings, at the span level.
 //!
 //! Per CommonMark, a lone `-` line right after paragraph text is a setext
 //! heading underline, so comrak reports the paragraph as `Heading{level:2}`.
-//! `Block::Heading`'s concealed arm hides only `h.marker`, which is an EMPTY
-//! range for a setext heading (see `HeadingM`'s own doc comment on
-//! `content_lines` in `crates/rune-md/src/element/block.rs`) — the
-//! underline row's bytes are never claimed, so `fill_gaps` re-emits them
-//! verbatim in the base prose scope: an unstyled `---`/`-` leftover sitting
-//! under a concealed, icon-decorated heading.
+//! `Block::Heading`'s concealed arm now hides the underline row through the
+//! same `hide_range` the thematic break uses (`HeadingM::underline`, the
+//! chokepoint for setext-ness — see that field's docs in
+//! `crates/rune-md/src/element/block.rs`), and paints it with a full-width
+//! rule in the heading's own style.
 //!
-//! Second half: `HeadingM::sync` decides reveal from
-//! `cursors.any_on_line(self.line)`, where `line` is the heading's FIRST
-//! line — a cursor parked on the underline row never reveals the heading.
+//! `HeadingM::sync` decides reveal from
+//! `cursors.any_in_lines(self.line, self.last_line)` — the heading's own
+//! line span, text and underline together — so a cursor parked on the
+//! underline row reveals the whole heading too.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod conceal_common;
@@ -29,6 +28,13 @@ const TOP_LEVEL: &str = "Title\n---\nbody\n";
 const LIST_ITEM_SHAPE: &str = "- **a**: b\n  -\n- next\n";
 const BLOCKQUOTE: &str = "> a\n> ---\n";
 const ATX_CONTROL: &str = "## Title\nbody\n";
+/// Multi-line setext text — the underline is `content_lines`'s LAST entry,
+/// never a fixed index: this fixture would trip an off-by-one that assumed
+/// `content_lines[1]` is always the underline.
+const MULTI_LINE_TEXT: &str = "Foo\nBar\n---\nbody\n";
+/// `===` underlines a level-1 heading, `---` a level-2 one — both are
+/// `setext`, so this pins the level-1 half of that split.
+const LEVEL_ONE: &str = "Title\n===\nbody\n";
 
 fn heading_reveal_state(doc: &rune_md::element::doc::DocMachine) -> RevealState {
     use rune_md::element::block::Block;
@@ -108,90 +114,125 @@ fn dump_setext_rows() {
     dump_document(LIST_ITEM_SHAPE, 1);
     dump_document(BLOCKQUOTE, 1);
     dump_document(ATX_CONTROL, 0);
+    dump_document(MULTI_LINE_TEXT, 2);
+    dump_document(LEVEL_ONE, 1);
 }
 
 #[test]
-fn setext_underline_row_is_not_hidden_while_concealed() {
+fn setext_underline_row_is_hidden_while_concealed() {
     let (buf, doc) = synced(TOP_LEVEL, 0, false);
     let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
+    let underline_len = buf.line(1).len();
     assert_eq!(
         snap.hidden_byte_count(1),
-        0,
-        "the underline row's bytes are never claimed as hidden by the concealed heading"
+        underline_len,
+        "a concealed setext heading hides its underline row's bytes entirely, matching ATX marker-hiding"
     );
 }
 
 #[test]
-fn setext_underline_row_leaks_into_base_prose_scope_while_concealed() {
+fn setext_underline_row_is_concealed_from_base_prose_scope() {
     let (buf, doc) = synced(TOP_LEVEL, 0, false);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
     let joined = joined_line(&lines, 1, buf.content());
     assert_eq!(
-        joined, "---",
-        "the underline row is re-emitted verbatim by fill_gaps instead of being concealed with the heading"
+        joined, "",
+        "the underline row's raw bytes are hidden, not re-emitted verbatim by fill_gaps"
     );
 }
 
 #[test]
-fn setext_underline_row_in_list_item_is_not_hidden_while_concealed() {
+fn setext_underline_row_in_list_item_is_hidden_while_concealed() {
     let (buf, doc) = synced(LIST_ITEM_SHAPE, 0, false);
     let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
+    let underline_len = buf.line(1).len();
     assert_eq!(
         snap.hidden_byte_count(1),
-        0,
-        "the user's real shape (setext heading nested in a list item) also leaks its underline row"
+        underline_len,
+        "the user's real shape (setext heading nested in a list item) also hides its underline row"
     );
 }
 
 #[test]
-fn setext_underline_row_in_blockquote_leaks_its_marker_text_unstyled() {
+fn setext_underline_row_in_blockquote_hides_marker_and_underline_together() {
     // The blockquote's own per-line marker hiding is a SEPARATE, correctly
-    // working mechanism (`BlockquoteMarkerM`) — it still hides the "> "
-    // bytes (`hidden_byte_count(1) == 2`), so this can't assert zero
-    // hidden bytes the way the top-level/list-item cases do. What's
-    // defective is the "---" text itself: it survives as unstyled base
-    // prose instead of being hidden or styled with the heading.
+    // working mechanism (`BlockquoteMarkerM`) — it hides the "> " bytes,
+    // and the heading's own `underline` hides the "---" that follows: the
+    // whole row (2 + 3 = 5 bytes) is claimed hidden between the two.
     let (buf, doc) = synced(BLOCKQUOTE, 0, false);
     let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
     assert_eq!(
         snap.hidden_byte_count(1),
-        2,
-        "only the \"> \" marker is hidden"
+        buf.line(1).len(),
+        "the \"> \" marker and the \"---\" underline are both hidden"
     );
     assert_eq!(
         joined_line(&lines, 1, buf.content()),
-        "---",
-        "the underline row's own text still leaks unstyled past the blockquote marker hiding"
+        "",
+        "no raw underline text leaks past the blockquote marker hiding"
     );
 }
 
 #[test]
-fn cursor_on_setext_underline_does_not_reveal_the_heading() {
+fn cursor_on_setext_underline_reveals_the_heading() {
     let offset = underline_line_offset(TOP_LEVEL, 1);
     let (_buf, doc) = synced(TOP_LEVEL, offset, true);
     assert_eq!(
         heading_reveal_state(&doc),
-        RevealState::Rendered,
-        "HeadingM::sync keys off the heading's first line only, so a cursor on the underline row leaves it concealed"
+        RevealState::Revealed,
+        "HeadingM::sync keys off the heading's own line span, so a cursor on the underline row reveals it too"
     );
 }
 
 #[test]
-fn cursor_on_setext_underline_in_list_item_does_not_reveal_the_heading() {
+fn cursor_on_setext_underline_in_list_item_reveals_the_heading() {
     let offset = underline_line_offset(LIST_ITEM_SHAPE, 1);
     let (_buf, doc) = synced(LIST_ITEM_SHAPE, offset, true);
     assert_eq!(
         heading_reveal_state(&doc),
-        RevealState::Rendered,
-        "the underline-row cursor blind spot also reproduces inside a list item"
+        RevealState::Revealed,
+        "the underline-row cursor reveal also works inside a list item"
     );
 }
 
 #[test]
+fn setext_underline_row_is_hidden_with_multi_line_heading_text() {
+    // The underline is line 2 here ("Foo"=0, "Bar"=1, "---"=2), not
+    // `content_lines[1]` — pins that the underline is derived from
+    // `content_lines.last()`, not a fixed index.
+    let (buf, doc) = synced(MULTI_LINE_TEXT, 0, false);
+    let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
+    assert_eq!(snap.hidden_byte_count(2), buf.line(2).len());
+    assert_eq!(joined_line(&lines, 2, buf.content()), "");
+}
+
+#[test]
+fn cursor_on_underline_reveals_multi_line_setext_heading() {
+    let offset = underline_line_offset(MULTI_LINE_TEXT, 2);
+    let (_buf, doc) = synced(MULTI_LINE_TEXT, offset, true);
+    assert_eq!(heading_reveal_state(&doc), RevealState::Revealed);
+}
+
+#[test]
+fn setext_level_one_underline_row_is_hidden_while_concealed() {
+    let (buf, doc) = synced(LEVEL_ONE, 0, false);
+    let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
+    assert_eq!(snap.hidden_byte_count(1), buf.line(1).len());
+    assert_eq!(joined_line(&lines, 1, buf.content()), "");
+}
+
+#[test]
+fn cursor_on_underline_reveals_level_one_setext_heading() {
+    let offset = underline_line_offset(LEVEL_ONE, 1);
+    let (_buf, doc) = synced(LEVEL_ONE, offset, true);
+    assert_eq!(heading_reveal_state(&doc), RevealState::Revealed);
+}
+
+#[test]
 fn cursor_on_heading_text_line_reveals_the_setext_heading() {
-    // Control: a cursor on the heading's own FIRST line does reveal it —
-    // pins that `any_on_line(self.line)` works as intended for the line it
-    // does check, isolating the defect to the underline row specifically.
+    // Control: a cursor on the heading's own FIRST line still reveals it —
+    // `any_in_lines(first, last)` covers the text line just as
+    // `any_on_line(first)` used to.
     let (_buf, doc) = synced(TOP_LEVEL, 0, true);
     assert_eq!(heading_reveal_state(&doc), RevealState::Revealed);
 }
@@ -213,29 +254,4 @@ fn cursor_on_atx_heading_line_reveals_it() {
     // first-line-only reveal check is correct there — must stay green.
     let (_buf, doc) = synced(ATX_CONTROL, 0, true);
     assert_eq!(heading_reveal_state(&doc), RevealState::Revealed);
-}
-
-#[test]
-#[ignore = "documents the target behavior; unignore with the fix"]
-fn setext_underline_row_is_hidden_while_concealed() {
-    let (buf, doc) = synced(TOP_LEVEL, 0, false);
-    let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
-    let underline_len = buf.line(1).len();
-    assert_eq!(
-        snap.hidden_byte_count(1),
-        underline_len,
-        "a concealed setext heading should hide its underline row's bytes entirely, matching the ATX marker-hiding behavior"
-    );
-}
-
-#[test]
-#[ignore = "documents the target behavior; unignore with the fix"]
-fn cursor_on_setext_underline_reveals_the_heading() {
-    let offset = underline_line_offset(TOP_LEVEL, 1);
-    let (_buf, doc) = synced(TOP_LEVEL, offset, true);
-    assert_eq!(
-        heading_reveal_state(&doc),
-        RevealState::Revealed,
-        "a cursor parked on the underline row should reveal the whole setext heading, not just its first line"
-    );
 }

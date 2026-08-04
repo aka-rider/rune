@@ -286,6 +286,16 @@ pub(crate) fn emit_block(
                     out,
                 );
                 super::decor::push_heading_decor(out, h.line, h.level);
+                // A setext heading's underline row is claimed here, never
+                // left for `fill_gaps` — its bytes are hidden exactly like
+                // the ATX marker, and the freed row carries a full-width
+                // rule in the heading's own style, not the thematic-break
+                // style (user-decided target behavior).
+                if let Some(underline) = h.underline {
+                    hide_range(out.hidden, out.accounted, content, starts, underline);
+                    let underline_line = line_at(starts, underline.start);
+                    super::decor::push_heading_rule_decor(out, underline_line, h.level);
+                }
             }
         }
         Block::Blockquote(bq) => {

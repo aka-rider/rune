@@ -10,6 +10,7 @@
 
 use super::EmitOut;
 use super::style::{heading_style, list_marker_style, quote_marker_scope};
+use rune_syntax::ScopeId;
 use rune_syntax::wrap::grapheme_width;
 use rune_syntax::{DecorPiece, LineDecor};
 use unicode_segmentation::UnicodeSegmentation;
@@ -97,19 +98,21 @@ pub(crate) fn push_quote_marker_decor(out: &mut EmitOut, line: usize) {
     push_piece(out, line, piece);
 }
 
-/// A thematic break's full-width rule (plan WP2.S5/B1): repeats
-/// `IconSet::rule` to fill `EmitOut::width` cells exactly, `is_rule: true`
-/// so WP3's wrap layer exempts it from the width-drop rule (an hr's rule
-/// competes with no content for cells, unlike every other decor kind).
-/// `cont` is empty — a thematic break is always exactly one line, it never
-/// wraps.
-pub(crate) fn push_hr_decor(out: &mut EmitOut, line: usize) {
+/// A full-width rule, `scope`-parameterized: repeats `IconSet::rule` to fill
+/// `EmitOut::width` cells exactly, `is_rule: true` so WP3's wrap layer
+/// exempts it from the width-drop rule (a rule competes with no content for
+/// cells, unlike every other decor kind). `cont` is empty — every caller of
+/// this producer is always exactly one line, it never wraps. The one shared
+/// chokepoint behind both a thematic break's rule (`hr_scope()`) and a
+/// setext heading's underline row (`heading_style(level)`) — same shape,
+/// different scope.
+fn push_rule_decor(out: &mut EmitOut, line: usize, scope: ScopeId) {
     let rule_cells = grapheme_width(out.icons.rule).max(1);
     let count = (out.width as usize) / rule_cells;
     let piece = DecorPiece {
         first: out.icons.rule.repeat(count),
         cont: String::new(),
-        scope: super::style::hr_scope(),
+        scope,
     };
     // Appended through the same chokepoint as every other producer, never
     // assigned wholesale: a rule inside a blockquote shares its line with
@@ -121,4 +124,19 @@ pub(crate) fn push_hr_decor(out: &mut EmitOut, line: usize) {
     if let Some(Some(decor)) = out.decors.get_mut(line) {
         decor.is_rule = true;
     }
+}
+
+/// A thematic break's full-width rule (plan WP2.S5/B1). See
+/// `push_rule_decor`'s docs for the shared shape.
+pub(crate) fn push_hr_decor(out: &mut EmitOut, line: usize) {
+    push_rule_decor(out, line, super::style::hr_scope());
+}
+
+/// A setext heading's underline row, painted as a full-width rule in the
+/// heading's own style rather than the thematic-break style — the user-
+/// decided target behavior: a concealed setext heading hides its raw
+/// `===`/`---` and shows a rule in `heading_style(level)`. See
+/// `push_rule_decor`'s docs for the shared shape.
+pub(crate) fn push_heading_rule_decor(out: &mut EmitOut, line: usize, level: u8) {
+    push_rule_decor(out, line, heading_style(level));
 }
