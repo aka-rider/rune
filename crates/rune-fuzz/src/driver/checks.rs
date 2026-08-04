@@ -4,6 +4,7 @@
 //! used to define locally, now reached through `checks::`.
 
 use rune_tui::app::App;
+use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::render;
@@ -159,6 +160,28 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
     if state.app.focus() != Pane::Editor {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Char('e'),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::NONE
+            },
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    // Reading view blocks undo/redo by design, so a session that ends in it
+    // would leave the sweep below pressing keys that are correctly ignored —
+    // the same "keys went nowhere" misreading the focus restores above
+    // exist to prevent. `^p` leaves it. Restoring the precondition here
+    // rather than teaching `undo_total`/`redo_total` to skip a read-only
+    // document keeps those invariants asserted on EVERY session: a document
+    // in reading view can still converge, it just has to leave the view
+    // first. Only `ReadOnly::Reading` is restorable — a document with no
+    // editable form at all refuses the toggle, and the sweep is already
+    // gated on the seeded document still being present.
+    if state.app.active_doc().read_only == ReadOnly::Reading {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Char('p'),
             mods: Mods {
                 ctrl: true,
                 ..Mods::NONE

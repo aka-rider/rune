@@ -15,9 +15,9 @@ use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
-    CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS,
-    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
-    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
+    EXPLORER_SEARCH_KEYS, MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY,
+    SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -335,6 +335,7 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_R_KEY)]),
         Just(vec![Action::Key(CTRL_B_KEY)]),
         Just(vec![Action::Key(CTRL_T_KEY)]),
+        Just(vec![Action::Key(CTRL_P_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
         select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
         proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {
