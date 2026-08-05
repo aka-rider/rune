@@ -348,3 +348,35 @@ of how each side renders:
   `make parity` diffs on `showcase.md` are therefore expected and are not
   regressions — this list is the acknowledgment the plan's Verification
   section points at.
+
+- **Merge mode (plan "merge-user-s-changes-with-idempotent-octopus").** No
+  parity fixture drives this yet — recorded from reading both sides' code,
+  the same way several entries above are.
+  - **Resolver keys.** Rust navigates unresolved blocks with `[`/`]` and
+    additionally offers `B`/`b` ("keep both", markers stay, marked resolved
+    without editing the buffer — decision 5, Rust-only). Go navigates with
+    `n`/`p` (`MergeNext`/`MergePrev`) and has no `Both` answer at all —
+    every conflict must resolve to one side or the other.
+  - **Marker labels.** A Rust working-form block reads `<<<<<<< editor` /
+    `>>>>>>> disk`; Go's reads `<<<<<<< ours` / `>>>>>>> theirs`
+    (`mergemode.go`'s `oursMarkerLine`/`theirsMarkerLine`).
+  - **Exit gesture.** Rust's `Esc` is exit-in-place (`merge::exit_in_place`):
+    the working-form buffer, resolved or not, stays exactly as it is — no
+    edit is reverted. Go's `Abort` instead reverts the live buffer to the
+    exact pre-merge content captured at `Enter` (`preMergeOurs`) — an
+    Esc-equivalent in Go is a real undo, not merely a close.
+  - **Fully-resolved auto-exit.** Rust leaves merge mode the instant the
+    last unresolved block is accepted (decision 13,
+    `merge::resolve::accept`), with status `merge complete — ⌘S to save`.
+    Go's resolver has no equivalent auto-exit — a fully-resolved Go session
+    stays in merge mode until the user explicitly presses the abort/confirm
+    gesture.
+  - **Footer hint rank.** Rust's `Mode::MergeHint` ranks below `Status` (a
+    status message set by anything else wins the footer row over the merge
+    hint); Go ranks its merge footer hint above its own status line.
+  - **Hunk engine.** Rust's `rune-merge` runs `diffy`'s Myers-based 3-way
+    merge; Go's `pkg/merge` shells out to `libgit2`/`xdiff`. The two diff
+    algorithms can choose different hunk boundaries for the same
+    ancestor/ours/theirs triple even when both round-trip correctly, so a
+    conflict's exact ours/theirs byte spans (not just its resolution) can
+    differ between the two implementations for the same input.

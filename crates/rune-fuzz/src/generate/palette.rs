@@ -560,3 +560,50 @@ pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
         sup: false,
     },
 };
+
+/// `⌘M` (`GlobalCommand::Merge`, plan WP7.S1) — this no-store harness never
+/// gives a document a real `last_sync`, so `merge::begin`'s own fast
+/// pre-check always refuses with `"no divergence to merge"` (Context, fuzz
+/// state-space growth): reaching this key still proves the refusal itself
+/// sets a status rather than swallowing the chord, and keeps the chord
+/// live in the generator against the day a fuzz `db` seam exists.
+pub(super) const MERGE_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('m'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
+/// `[`/`]` (`MergeCommand::PrevConflict`/`NextConflict`) and `o`/`t`/`b`
+/// (`MergeCommand::KeepOurs`/`KeepTheirs`/`KeepBoth`) — `merge/keys.rs::
+/// intercept`'s own alphabet. Bare, unmodified `Char`s: with merge
+/// `Inactive` (the only state this harness can reach, see `MERGE_KEY`
+/// above) `intercept` returns `false` immediately and every one of these
+/// falls through to ordinary printable-char insertion, exercising nothing
+/// merge-specific yet — carried so the chord is already in the generator's
+/// vocabulary once a fuzz `db` seam makes `Active` reachable.
+pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
+    KeyInput {
+        code: KeyCode::Char('['),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char(']'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('o'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('t'),
+        mods: Mods::NONE,
+    },
+    KeyInput {
+        code: KeyCode::Char('b'),
+        mods: Mods::NONE,
+    },
+];
