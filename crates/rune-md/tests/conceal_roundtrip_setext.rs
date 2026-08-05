@@ -4,9 +4,9 @@
 //! heading underline, so comrak reports the paragraph as `Heading{level:2}`.
 //! `Block::Heading`'s concealed arm now hides the underline row through the
 //! same `hide_range` the thematic break uses (`HeadingM::underline`, the
-//! chokepoint for setext-ness — see that field's docs in
-//! `crates/rune-md/src/element/block.rs`), and paints it with a full-width
-//! rule in the heading's own style.
+//! setext heading's own underline row, when it is safe to conceal — see
+//! that field's own docs), and paints it with a full-width rule in the
+//! heading's own style.
 //!
 //! `HeadingM::sync` decides reveal from
 //! `cursors.any_in_lines(self.line, self.last_line)` — the heading's own
