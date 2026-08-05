@@ -19,7 +19,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::app::App;
 use crate::binding::{Binding, KeyPattern};
 use crate::explorer::ensure_visible;
+use crate::explorer_preview;
 use crate::keymap::{KeyCode, KeyInput, Mods};
+use crate::runtime::Effects;
 
 /// Ends a type-to-search, if one is running. `pub(crate)`, not private:
 /// `explorer_keys::handle_key` calls this from the sibling module the key
@@ -130,7 +132,12 @@ pub const EXPLORER_SEARCH_BINDINGS: &[Binding<ExplorerSearchCommand>] = &[
 /// handle_key`, already past its `resolve_in`/`is_some()` gate). `key` is
 /// only ever consulted by `Type` — `Erase`/`Cancel` need no more than the
 /// command they already resolved to.
-pub(crate) fn handle_search(app: &mut App, cmd: ExplorerSearchCommand, key: KeyInput) {
+pub(crate) fn handle_search(
+    app: &mut App,
+    cmd: ExplorerSearchCommand,
+    key: KeyInput,
+    effects: &mut Effects,
+) {
     match cmd {
         ExplorerSearchCommand::Type => {
             // `resolve_in` already proved `key.code` matched a `Printable`
@@ -158,13 +165,19 @@ pub(crate) fn handle_search(app: &mut App, cmd: ExplorerSearchCommand, key: KeyI
             if emptied {
                 // Emptying the query EXITS search outright — this keystroke
                 // must not also fall through to `ParentDir` the way a bare
-                // Backspace would with no search running.
+                // Backspace would with no search running. Design: "clearing
+                // the search produces exactly one" preview of wherever the
+                // cursor landed while typing.
                 clear_search(app);
+                explorer_preview::after_cursor_move(app, effects);
             } else {
                 apply_search(app);
             }
         }
-        ExplorerSearchCommand::Cancel => clear_search(app),
+        ExplorerSearchCommand::Cancel => {
+            clear_search(app);
+            explorer_preview::after_cursor_move(app, effects);
+        }
     }
 }
 
@@ -328,8 +341,13 @@ mod tests {
         );
     }
 
+    /// A live search's first Escape ends the search only (`ExplorerSearch
+    /// Command::Cancel`, gated on `app.explorer.search.is_some()`); the
+    /// query is already clear by the time a second Escape arrives, so it
+    /// falls through to `EXPLORER_BINDINGS`'s own `Leave` row instead —
+    /// still consumed, this time landing focus on the Editor.
     #[test]
-    fn esc_while_searching_clears_esc_when_not_returns_ignored() {
+    fn esc_while_searching_clears_first_and_leaves_the_explorer_second() {
         let mut app = app();
         loaded(&mut app, &["Alpha", "README.md"]);
         let mut effects = Effects::default();
@@ -345,7 +363,11 @@ mod tests {
         );
         assert_eq!(app.explorer.search, None);
 
-        assert_eq!(handle_key(&mut app, esc, &mut effects), KeyOutcome::Ignored);
+        assert_eq!(
+            handle_key(&mut app, esc, &mut effects),
+            KeyOutcome::Consumed
+        );
+        assert_eq!(app.focus(), crate::pane::Pane::Editor);
     }
 
     #[test]

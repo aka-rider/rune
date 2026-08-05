@@ -480,6 +480,44 @@ pub fn read_file_cmd(
     })
 }
 
+/// The Explorer live-preview's largest previewable file, in bytes — past
+/// this, `explorer_preview` skips the read entirely rather than pulling a
+/// huge file into memory just because the cursor happened to pass over it.
+pub const MAX_PREVIEW_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Reads `path` off-thread for the Explorer's live preview, the same
+/// physical work as [`read_file_cmd`] (a single `vfs.read`) but folding in
+/// the two checks a preview must make BEFORE showing anything: a `vfs.stat`
+/// size gate ([`MAX_PREVIEW_BYTES`]) so an oversized file is never even
+/// read, and a UTF-8 validity check so a binary file never reaches
+/// `Buffer::from_bytes`. Every rejection reports through the SAME `Result`
+/// channel `read_file_cmd` uses (`Msg::FileOpened`'s `result`) rather than a
+/// distinct error shape — `explorer_preview::maybe_consume_reply` is the
+/// only reader, and it treats every `Err` here identically: silently keep
+/// showing whatever was previewed before, never the ordinary open-failure
+/// banner `workspace::handle_file_opened` would otherwise raise. `anchor`
+/// is always `None`: a preview never lands a navigation anchor.
+pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
+    Cmd::new(CmdKind::ReadFile, move || {
+        let result = (|| -> Result<Vec<u8>, String> {
+            let stat = vfs.stat(&path).map_err(|e| e.to_string())?;
+            if stat.size > MAX_PREVIEW_BYTES {
+                return Err("too large to preview".to_string());
+            }
+            let bytes = vfs.read(&path).map_err(|e| e.to_string())?;
+            if std::str::from_utf8(&bytes).is_err() {
+                return Err("not valid UTF-8".to_string());
+            }
+            Ok(bytes)
+        })();
+        Some(Msg::FileOpened {
+            path,
+            result,
+            anchor: None,
+        })
+    })
+}
+
 // `run`'s startup sequence (theme probe, background-thread wiring, the
 // initial size seed, the first-paint parse, the first draw) moved to
 // `runtime::bootstrap` (§1.6 budget) — `run` above calls it through

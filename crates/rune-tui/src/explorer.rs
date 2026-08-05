@@ -11,6 +11,7 @@
 //! load_dir_cmd` runs `vfs.read_dir` off-thread and replies with `Msg::
 //! DirLoaded`, routed from `app::update_inner` to `handle_dir_loaded`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ use ratatui::widgets::Paragraph;
 use rune_vfs::DirEntry;
 
 use crate::app::App;
+use crate::document::DocumentId;
 use crate::listnav;
 use crate::pane::Pane;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
@@ -56,6 +58,22 @@ pub struct Explorer {
     /// ever reaches this field, so it can never consume a reveal meant for
     /// the request that superseded it.
     pub pending_reveal: Option<PathBuf>,
+    /// The minted `ReadOnly::Preview` document currently occupying a slot in
+    /// `tabs.order`, if the cursor is sitting on a file that isn't already
+    /// open as a real tab — `explorer_preview`'s own state, kept here
+    /// because it's the Explorer's cursor position that drives it. At most
+    /// one preview exists at a time: moving the cursor onto a different
+    /// unopened file replaces this SAME document's content and path rather
+    /// than minting a second one, which is what keeps arrowing through N
+    /// files at exactly one extra tab. `None` whenever the cursor sits on a
+    /// directory, an already-open document, or nothing has been previewed
+    /// yet this session.
+    pub preview: Option<DocumentId>,
+    /// Paths `explorer_preview` has asked the `Vfs` to read but hasn't
+    /// heard back from yet — a request is removed the moment ITS OWN reply
+    /// lands, whether that reply is adopted or found stale, so this can
+    /// never grow unbounded across a long arrow-key session.
+    pub preview_awaiting: HashSet<PathBuf>,
 }
 
 impl Default for Explorer {
@@ -68,6 +86,8 @@ impl Default for Explorer {
             request_generation: 0,
             search: None,
             pending_reveal: None,
+            preview: None,
+            preview_awaiting: HashSet::new(),
         }
     }
 }

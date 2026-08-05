@@ -517,6 +517,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     let journal_pos_before = app.active_doc().journal.pos();
     let active_before = app.active;
     let buffer_version_before = app.active_doc().buffer.version();
+    let focus_before = app.focus();
     dispatch::update_inner(app, msg, effects);
     if app.active_doc().journal.pos() != journal_pos_before {
         let id = app.active;
@@ -527,6 +528,16 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     // in `dispatch::after_update` — split out so this already-over-budget
     // file (§1.6) never needs to grow for a future addition to that list.
     dispatch::after_update(app, active_before, buffer_version_before, effects);
+    // The Explorer live preview's promote/discard-on-focus-move reaction
+    // (`explorer_preview::on_focus_changed`) has no hook in `dispatch.rs`
+    // itself: a pure focus transition (Escape from the Explorer landing on
+    // the Editor, some other pane grabbing focus with no document switch of
+    // its own) touches no document, so nothing in `workspace::switch_to`
+    // ever runs for it. Comparing focus before and after the whole message
+    // batch, here, is this crate's other before/after diff
+    // (`active_before`/`buffer_version_before` above) doing the same job
+    // for a different pair of fields.
+    crate::explorer_preview::on_focus_changed(app, focus_before, app.focus());
 }
 
 // `relayout`/`sync_view` moved to `app_view.rs` (§1.6 budget) — both are

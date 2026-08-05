@@ -125,6 +125,16 @@ pub(crate) fn handle_file_opened(
     anchor: Option<rune_nav::Anchor>,
     effects: &mut Effects,
 ) {
+    // The Explorer's live preview reads a file through this SAME `Msg::
+    // FileOpened` channel (`runtime::read_preview_cmd`) rather than a
+    // second one — `explorer_preview::maybe_consume_reply` claims a reply
+    // only when it was the one that asked for it (`Explorer::
+    // preview_awaiting`), so an ordinary open below never sees one of its
+    // own requests intercepted.
+    if crate::explorer_preview::maybe_consume_reply(app, &path, &result) {
+        return;
+    }
+
     app.blur_title(effects);
 
     if let Some(id) = existing_document_for(app, &path) {
@@ -245,7 +255,7 @@ fn open_image_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Do
     Some(doc_id)
 }
 
-fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
+pub(crate) fn existing_document_for(app: &App, path: &Path) -> Option<DocumentId> {
     app.documents
         .iter()
         .find(|(_, doc)| doc.file_path.as_deref() == Some(path))
@@ -270,6 +280,16 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if app.doc(id).is_none() {
         return;
     }
+    // Switching the active document AWAY from the live Explorer preview is
+    // exactly the "user selected away" moment the preview must not survive
+    // (`^1`-`^0`, `TabsCommand::Select`, re-activating an already-open
+    // document from the Explorer, ... every one of them funnels through
+    // this chokepoint). A switch back ONTO the preview itself (`id` already
+    // matches) leaves it untouched — that's promotion's job, not this
+    // one's. No neighbor reassignment is needed here even when `app.active`
+    // currently IS the discarded preview: the very next line below reseats
+    // it at `id`.
+    crate::explorer_preview::discard_if_switching_away(app, id);
     app.active = id;
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding

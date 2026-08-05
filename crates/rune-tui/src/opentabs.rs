@@ -52,6 +52,7 @@ pub enum TabsCommand {
     Up,
     Down,
     Select,
+    Leave,
 }
 
 /// Arrow keys move the cursor; Enter opens the selected tab
@@ -82,6 +83,13 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
         when: "",
         alias: false,
     },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        cmd: TabsCommand::Leave,
+        help: "back to editor",
+        when: "",
+        alias: false,
+    },
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
@@ -108,6 +116,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
             workspace::switch_to_index(app, app.tabs.nav.cursor);
             app.set_focus_pane(Pane::Editor, effects);
         }
+        TabsCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
     }
     KeyOutcome::Consumed
 }
@@ -203,7 +212,16 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             "  "
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
-        let name_style = if id == app.active {
+        // A not-yet-promoted preview renders dimmer than an ordinary tab —
+        // active or not, since it can be the active document while the
+        // Explorer cursor is still just passing over it — so a glance at
+        // the Tabs pane can tell a transient preview apart from a tab the
+        // user actually opened.
+        let name_style = if doc.is_preview() {
+            Style::default()
+                .fg(app.theme.chrome.subtle)
+                .add_modifier(ratatui::style::Modifier::ITALIC)
+        } else if id == app.active {
             app.theme.chrome.tab_active
         } else {
             app.theme.chrome.tab_normal
