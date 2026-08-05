@@ -101,6 +101,21 @@ pub enum Action {
         version: HighlightVersion,
         spans: Vec<(usize, usize, u16)>,
     },
+    /// Synthesizes a `Msg::Highlighted` reply whose one region carries a
+    /// real `RegionPayload::Tree` from an actual `rune_ts::parse` — the
+    /// tree channel `Action::Highlight` cannot reach (its docs explain why:
+    /// the fuzzer has no way to synthesize a `ParsedTree` out of thin air).
+    /// `fixture` indexes `TREE_FIXTURES` (mod its length); `base` is the
+    /// buffer byte offset the fixture's `LineMap` is anchored at, DELIBERATELY
+    /// unvalidated in the same hostile spirit as `Highlight`'s raw spans —
+    /// the render query's clamp against an out-of-bounds anchor is exactly
+    /// the property under fuzz. `version` follows `Highlight`'s own rule
+    /// (`HighlightVersion`'s docs).
+    HighlightTree {
+        version: HighlightVersion,
+        fixture: u8,
+        base: usize,
+    },
 }
 
 /// Rebuilds the concrete `(Range<usize>, ScopeId)` pairs `Msg::Highlighted`
@@ -115,4 +130,99 @@ pub fn highlight_spans_from_raw(
         .iter()
         .map(|&(start, end, scope)| (start..end, ScopeId(scope)))
         .collect()
+}
+
+/// Small JSON sources for `Action::HighlightTree`. Grammar is fixed to JSON
+/// on purpose — the smallest, most stable tree-sitter grammar with an
+/// upstream-maintained highlights query — so this action's in-process
+/// grammar-crash exposure stays to exactly one grammar. At least one
+/// fixture spans multiple physical lines; at least one contains a
+/// multi-byte UTF-8 character, so an out-of-bounds `base` can land a span
+/// end off a char boundary downstream.
+pub const TREE_FIXTURES: &[&str] = &[
+    "{}",
+    "{\n  \"a\": 1,\n  \"b\": [true, null]\n}",
+    "{\"city\": \"Zürich\", \"emoji\": \"😀\"}",
+];
+
+/// Indexes `TREE_FIXTURES` modulo its length, so any `u8` the generator or a
+/// decoded script hands in is a valid selector.
+pub fn tree_fixture(fixture: u8) -> &'static str {
+    let len = TREE_FIXTURES.len();
+    TREE_FIXTURES
+        .get(fixture as usize % len)
+        .copied()
+        .unwrap_or("{}")
+}
+
+/// Rebuilds a fixture's physical line byte ranges shifted to `base`,
+/// matching `LineMap::new`'s reconstruction rule: consecutive lines are
+/// separated by exactly one buffer byte (the joining `'\n'`). Saturating
+/// arithmetic throughout, so a huge `base` shifts every range to
+/// `usize::MAX` instead of overflowing.
+pub fn tree_fixture_line_ranges(source: &str, base: usize) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0usize;
+    for (i, b) in source.bytes().enumerate() {
+        if b == b'\n' {
+            ranges.push(start..i);
+            start = i + 1;
+        }
+    }
+    ranges.push(start..source.len());
+    ranges
+        .into_iter()
+        .map(|r| r.start.saturating_add(base)..r.end.saturating_add(base))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rune_tui::linemap::LineMap;
+    use std::time::Duration;
+
+    #[test]
+    fn every_fixture_parses_as_json() {
+        for &source in TREE_FIXTURES {
+            let parsed = rune_ts::parse("json", source, Duration::from_secs(5));
+            assert!(parsed.is_some(), "fixture {source:?} failed to parse as json");
+        }
+    }
+
+    #[test]
+    fn line_ranges_at_base_zero_reconstruct_byte_identically() {
+        for &source in TREE_FIXTURES {
+            let ranges = tree_fixture_line_ranges(source, 0);
+            let map = LineMap::new(ranges);
+            let reconstructed = map.reconstruct(source);
+            assert_eq!(
+                reconstructed.as_deref(),
+                Some(source),
+                "fixture {source:?} did not reconstruct byte-identically at base 0"
+            );
+        }
+    }
+
+    #[test]
+    fn line_ranges_shift_by_base_with_saturating_arithmetic() {
+        let source = tree_fixture(1);
+        let ranges = tree_fixture_line_ranges(source, usize::MAX - 1);
+        assert!(!ranges.is_empty());
+        for range in &ranges {
+            assert!(range.start <= range.end, "inverted range {range:?}");
+        }
+        let last = ranges.last();
+        assert!(
+            matches!(last, Some(r) if r.end == usize::MAX || r.end == usize::MAX - 1),
+            "expected the shift to saturate near usize::MAX, got {last:?}"
+        );
+    }
+
+    #[test]
+    fn tree_fixture_indexes_modulo_table_length() {
+        let len = TREE_FIXTURES.len() as u8;
+        assert_eq!(tree_fixture(0), tree_fixture(len));
+        assert_eq!(tree_fixture(u8::MAX), tree_fixture(u8::MAX % len));
+    }
 }

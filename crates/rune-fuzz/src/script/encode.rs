@@ -90,6 +90,19 @@ fn encode_action(out: &mut String, action: &Action) {
                 out.push_str(&format!("highlight-span {start} {end} {scope}\n"));
             }
         }
+        Action::HighlightTree {
+            version,
+            fixture,
+            base,
+        } => {
+            out.push_str("highlight-tree ");
+            out.push_str(encode_highlight_version(*version));
+            out.push(' ');
+            out.push_str(&fixture.to_string());
+            out.push(' ');
+            out.push_str(&base.to_string());
+            out.push('\n');
+        }
     }
 }
 

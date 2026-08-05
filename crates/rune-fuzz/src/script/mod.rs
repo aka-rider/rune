@@ -17,6 +17,7 @@
 //! dirloaded-entry <f|d> <escaped name>
 //! highlight <live|stale|future> <n>      # followed by exactly n continuation lines:
 //! highlight-span <start> <end> <scope>
+//! highlight-tree <live|stale|future> <fixture> <base>   # single line, no continuation
 //! ```
 //!
 //! `dirloaded`/`dirloaded-entry` and `highlight`/`highlight-span` are the
@@ -198,6 +199,11 @@ mod tests {
             Action::Highlight {
                 version: HighlightVersion::Future,
                 spans: vec![(7, 2, u16::MAX)], // deliberately inverted — never validated here
+            },
+            Action::HighlightTree {
+                version: HighlightVersion::Future,
+                fixture: 200,
+                base: usize::MAX,
             },
         ];
 

@@ -32,7 +32,12 @@ use step_exec::{discharge_pending_rename, discharge_pending_save, key_step, step
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-use crate::action::{Action, HighlightVersion};
+/// The parse budget `Action::HighlightTree` hands to `rune_ts::parse` — the
+/// fixtures are tiny, so this is never expected to be exhausted; it exists
+/// only so a parse can never block the driver indefinitely.
+const TREE_PARSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+use crate::action::{Action, HighlightVersion, tree_fixture, tree_fixture_line_ranges};
 use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -317,6 +322,45 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 let tag = MsgTag::Highlighted {
                     delivered_version,
                     span_count: spans.len(),
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            } => {
+                // Same live-version resolution rule as `Action::Highlight`
+                // above (`HighlightVersion`'s own docs).
+                let live = state.app.active_doc().buffer.version();
+                let delivered_version = match version {
+                    HighlightVersion::Live => live,
+                    HighlightVersion::Stale => live.saturating_sub(1),
+                    HighlightVersion::Future => live.saturating_add(1),
+                };
+                let doc = state.app.active;
+                let source = tree_fixture(*fixture);
+                let map = rune_tui::linemap::LineMap::new(tree_fixture_line_ranges(
+                    source, *base,
+                ));
+                // A real parse, unlike `Action::Highlight`'s hostile spans —
+                // this is the one action reaching the tree channel
+                // (`RegionPayload::Tree`), never the span channel.
+                let payload = rune_ts::parse("json", source, TREE_PARSE_BUDGET)
+                    .map(rune_tui::highlight::RegionPayload::Tree);
+                let msg = Msg::Highlighted {
+                    doc,
+                    version: delivered_version,
+                    result: Some(rune_tui::highlight::HighlightReply {
+                        regions: vec![rune_tui::highlight::RegionResult { map, payload }],
+                        truncated: false,
+                    }),
+                };
+                let tag = MsgTag::Highlighted {
+                    delivered_version,
+                    span_count: 0,
                 };
                 if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
