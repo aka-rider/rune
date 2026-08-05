@@ -8,12 +8,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use rune_core::buffer::AppliedEdit;
 use rune_db::{DbEvent, OnEvent, Store};
 
-use crate::support::{touch, wait_for_path};
+use crate::support::{MARKER_SAFETY_DEADLINE, touch, wait_for_path};
 
 fn env_var(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("missing required env var {name}"))
@@ -35,7 +34,7 @@ fn open_store(path: &Path, on_event: OnEvent) -> Store {
 }
 
 fn expect_ok(rx: &mpsc::Receiver<DbEvent>, id: u64) {
-    match rx.recv_timeout(Duration::from_secs(30)) {
+    match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok { id: got, .. }) if got == id => {}
         Ok(other) => panic!("expected Ok(id:{id}), got {other:?}"),
         Err(e) => panic!("timed out waiting for ack of op {id}: {e}"),
@@ -62,7 +61,7 @@ pub(crate) fn append_storm() {
     let store = open_store(&path, on_event);
 
     touch(&ready);
-    wait_for_path(&go, Duration::from_secs(30));
+    wait_for_path(&go, MARKER_SAFETY_DEADLINE);
 
     for i in 0..count {
         let edit = AppliedEdit {
@@ -120,7 +119,7 @@ pub(crate) fn append_storm_checkpoint() {
             touch(&checkpoint_marker);
             // Safety-net deadline only: the scenario that spawns this
             // role always kills the process long before this elapses.
-            wait_for_path(&release_marker, Duration::from_secs(60));
+            wait_for_path(&release_marker, MARKER_SAFETY_DEADLINE);
         }
     }
 
@@ -137,7 +136,7 @@ pub(crate) fn race_open() {
     let opened_marker = PathBuf::from(env_var("RUNE_DB_OPENED_MARKER"));
 
     touch(&ready);
-    wait_for_path(&go, Duration::from_secs(30));
+    wait_for_path(&go, MARKER_SAFETY_DEADLINE);
 
     let store = open_store(&path, Box::new(|_evt| {}));
     std::fs::write(&opened_marker, store.session_id().to_string()).expect("write opened marker");
@@ -161,14 +160,14 @@ pub(crate) fn race_close() {
     store.set_liveness_check(Arc::new(|_pid, _started_at| false));
 
     touch(&ready);
-    wait_for_path(&go, Duration::from_secs(30));
+    wait_for_path(&go, MARKER_SAFETY_DEADLINE);
 
     store.shutdown();
     std::process::exit(0);
 }
 
 fn recv_seq(rx: &mpsc::Receiver<DbEvent>, id: u64) -> i64 {
-    match rx.recv_timeout(Duration::from_secs(30)) {
+    match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {
             id: got,
             result: rune_db::OpOutcome::Seq(seq),
@@ -206,7 +205,7 @@ pub(crate) fn gc_editor() {
     let store = open_store(&path, on_event);
 
     touch(&ready);
-    wait_for_path(&go, Duration::from_secs(30));
+    wait_for_path(&go, MARKER_SAFETY_DEADLINE);
 
     for i in 0..count {
         let content_a = format!("round-{i}-a");
@@ -268,7 +267,7 @@ pub(crate) fn edit_and_die() {
     let store = open_store(&path, on_event);
 
     let id = store.load(&doc_path).expect("enqueue load");
-    let doc_id = match rx.recv_timeout(Duration::from_secs(30)) {
+    let doc_id = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {
             id: got,
             result: rune_db::OpOutcome::Load(result),
@@ -308,7 +307,7 @@ pub(crate) fn reload_diverged() {
     let store = open_store(&path, on_event);
 
     let id = store.load(&doc_path).expect("enqueue load");
-    let load_result = match rx.recv_timeout(Duration::from_secs(30)) {
+    let load_result = match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok {
             id: got,
             result: rune_db::OpOutcome::Load(result),
@@ -338,7 +337,7 @@ pub(crate) fn gc_sweeper() {
     let go = PathBuf::from(env_var("RUNE_DB_GO_MARKER"));
 
     touch(&ready);
-    wait_for_path(&go, Duration::from_secs(30));
+    wait_for_path(&go, MARKER_SAFETY_DEADLINE);
 
     for _ in 0..count {
         let store = open_store(&path, Box::new(|_evt| {}));

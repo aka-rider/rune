@@ -5,10 +5,17 @@
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, params};
+
+/// A hang safety net, not a pacing bound: every rendezvous in these
+/// scenarios completes in well under a second on a healthy run, and a
+/// liveness-aware wait already fails fast the moment a child dies. This
+/// deadline only ever fires against a genuinely stuck, still-alive child —
+/// it must never be tuned down to make a scenario run "faster".
+pub(crate) const MARKER_SAFETY_DEADLINE: Duration = Duration::from_secs(120);
 
 pub(crate) fn temp_dir(label: &str) -> PathBuf {
     let dir = env::temp_dir().join(format!(
@@ -39,14 +46,37 @@ pub(crate) fn wait_for_path(path: &Path, deadline: Duration) {
     }
 }
 
-pub(crate) fn wait_for_all(paths: &[PathBuf], deadline: Duration) {
+/// Like a bounded poll-until-condition wait for `markers`, but also holds
+/// the spawned children's own handles: on every poll it checks whether any
+/// of them has already exited before producing its marker, and if so panics
+/// immediately with that child's exit status and captured stderr — a dead
+/// child is a real defect, not something the deadline should have to wait
+/// out. The deadline itself only ever fires against a live-but-hung child.
+pub(crate) fn wait_ready_or_child_death(
+    children: &mut Vec<Child>,
+    markers: &[PathBuf],
+    deadline: Duration,
+) {
     let start = Instant::now();
     loop {
-        if paths.iter().all(|p| p.exists()) {
+        if markers.iter().all(|p| p.exists()) {
             return;
         }
+        for i in 0..children.len() {
+            if let Ok(Some(status)) = children[i].try_wait() {
+                let dead = children.swap_remove(i);
+                let output = dead
+                    .wait_with_output()
+                    .unwrap_or_else(|e| panic!("collect output of dead child: {e}"));
+                panic!(
+                    "child exited ({status}) before its ready marker appeared, markers: \
+                     {markers:?}, stderr: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
         if start.elapsed() > deadline {
-            panic!("timed out after {deadline:?} waiting for markers: {paths:?}");
+            panic!("timed out after {deadline:?} waiting for markers: {markers:?}");
         }
         std::thread::sleep(Duration::from_millis(5));
     }

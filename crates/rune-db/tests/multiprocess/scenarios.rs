@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use rusqlite::{Connection, params};
 
@@ -13,7 +12,8 @@ use rune_core::buffer::AppliedEdit;
 use rune_db::{DbEvent, OnEvent, Store};
 
 use crate::support::{
-    seed_schema_and_docs, spawn_helper, temp_dir, touch, wait_for_all, wait_for_path,
+    MARKER_SAFETY_DEADLINE, seed_schema_and_docs, spawn_helper, temp_dir, touch,
+    wait_ready_or_child_death,
 };
 
 // ---------------------------------------------------------------------
@@ -45,7 +45,7 @@ fn four_children_append_storm_one_doc_each_all_ack_ok_with_exact_event_counts() 
         ));
     }
 
-    wait_for_all(&readies, Duration::from_secs(30));
+    wait_ready_or_child_death(&mut children, &readies, MARKER_SAFETY_DEADLINE);
     touch(&go);
 
     for child in children {
@@ -106,7 +106,7 @@ fn two_children_race_store_open_on_a_fresh_path_apply_schema_once_both_get_sessi
         ));
     }
 
-    wait_for_all(&readies, Duration::from_secs(30));
+    wait_ready_or_child_death(&mut children, &readies, MARKER_SAFETY_DEADLINE);
     touch(&go);
 
     for child in children {
@@ -151,7 +151,7 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     let checkpoint_marker = dir.join("checkpoint");
     let release_marker = dir.join("release"); // intentionally never written
 
-    let mut child = spawn_helper(
+    let mut children = vec![spawn_helper(
         "append_storm_checkpoint",
         &[
             ("RUNE_DB_PATH", path.display().to_string()),
@@ -171,9 +171,14 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
                 release_marker.display().to_string(),
             ),
         ],
-    );
+    )];
 
-    wait_for_path(&checkpoint_marker, Duration::from_secs(30));
+    wait_ready_or_child_death(
+        &mut children,
+        std::slice::from_ref(&checkpoint_marker),
+        MARKER_SAFETY_DEADLINE,
+    );
+    let mut child = children.pop().expect("checkpoint child present");
     child.kill().expect("sigkill child");
     let _ = child.wait_with_output();
 
@@ -238,7 +243,7 @@ fn child_sigkilled_mid_storm_recovers_at_last_committed_batch_and_reaper_reclaim
     let id = store
         .append_edit(doc_id, &[edit], &[], &[])
         .expect("enqueue append");
-    match rx.recv_timeout(Duration::from_secs(30)) {
+    match rx.recv_timeout(MARKER_SAFETY_DEADLINE) {
         Ok(DbEvent::Ok { id: got, .. }) if got == id => {}
         other => panic!("expected append ack, got {other:?}"),
     }
@@ -304,7 +309,7 @@ fn two_stores_closing_simultaneously_surface_no_error_despite_truncate_contentio
         ));
     }
 
-    wait_for_all(&readies, Duration::from_secs(30));
+    wait_ready_or_child_death(&mut children, &readies, MARKER_SAFETY_DEADLINE);
     touch(&go);
 
     for child in children {
@@ -440,13 +445,17 @@ fn gc_contention_never_drops_a_write_or_leaves_a_dangling_blob_reference() {
         ],
     );
 
-    wait_for_all(
+    let mut children = vec![editor, sweeper];
+    wait_ready_or_child_death(
+        &mut children,
         &[editor_ready.clone(), sweeper_ready.clone()],
-        Duration::from_secs(30),
+        MARKER_SAFETY_DEADLINE,
     );
     touch(&go);
 
-    for (label, child) in [("gc_editor", editor), ("gc_sweeper", sweeper)] {
+    let mut children = children.into_iter();
+    for label in ["gc_editor", "gc_sweeper"] {
+        let child = children.next().expect("child present");
         let output = child.wait_with_output().expect("wait child");
         assert!(
             output.status.success(),
@@ -473,6 +482,47 @@ fn gc_contention_never_drops_a_write_or_leaves_a_dangling_blob_reference() {
     assert_eq!(
         dangling, 0,
         "no live snapshot/observation may reference a blob a concurrent sweep removed"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
+// Scenario (j): the liveness-aware marker wait fails fast on a dead child
+// ---------------------------------------------------------------------
+
+#[test]
+fn wait_ready_or_child_death_panics_immediately_when_a_child_dies_before_its_marker() {
+    let dir = temp_dir("fail-fast");
+    let marker = dir.join("never-touched");
+
+    let mut children = vec![spawn_helper("defunct", &[])];
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_ready_or_child_death(
+            &mut children,
+            std::slice::from_ref(&marker),
+            MARKER_SAFETY_DEADLINE,
+        );
+    }));
+
+    let payload = result.expect_err("an unknown role must exit without ever touching its marker");
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_string()))
+        .expect("panic payload must be a string message");
+
+    assert!(
+        message.contains("child exited"),
+        "a dead child must be reported by its own distinct message: {message}"
+    );
+    assert!(
+        !message.contains("timed out"),
+        "a dead child must never be reported as a timeout: {message}"
+    );
+    assert!(
+        message.contains("unknown role defunct"),
+        "the panic message must carry the dead child's captured stderr: {message}"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
