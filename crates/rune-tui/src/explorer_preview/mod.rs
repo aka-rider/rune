@@ -305,6 +305,7 @@ fn discard_active(app: &mut App) {
 fn remove_preview_document(app: &mut App, id: DocumentId) {
     app.documents.remove(&id);
     app.tabs.order.retain(|&t| t != id);
+    app.tabs.mru.retain(|&t| t != id);
     app.explorer.preview = None;
     app.explorer.preview_return_to = None;
 }

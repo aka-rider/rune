@@ -394,6 +394,7 @@ impl App {
         // The Open Tabs chokepoint (plan WP5.S1): every document, however
         // it was opened, gets a tab the moment it exists.
         self.tabs.order.push(id);
+        self.tabs.mru.push(id);
         id
     }
 
