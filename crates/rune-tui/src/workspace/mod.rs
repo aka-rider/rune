@@ -358,7 +358,7 @@ pub fn toggle_help(app: &mut App) {
 // `request_close`/`close_now`/`neighbor_of` moved to `workspace::close`
 // (§1.6 budget, WP5.S7's image-delete-on-close hook) — re-exported below so
 // every existing `workspace::` call site keeps working unchanged.
-mod close;
+pub(crate) mod close;
 pub use close::{close_now, new_untitled_document, next_untitled_name, request_close};
 
 #[cfg(test)]

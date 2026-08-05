@@ -69,6 +69,12 @@ pub struct Explorer {
     /// directory, an already-open document, or nothing has been previewed
     /// yet this session.
     pub preview: Option<DocumentId>,
+    /// The document that was active right before this browsing session's
+    /// preview was first minted (`explorer_preview::apply_loaded`'s own
+    /// mint branch, captured before its `switch_to` moves `app.active`
+    /// off it) — where discarding the preview restores the user to,
+    /// rather than an arbitrary tab. `None` exactly when `preview` is.
+    pub preview_return_to: Option<DocumentId>,
     /// Paths `explorer_preview` has asked the `Vfs` to read but hasn't
     /// heard back from yet — a request is removed the moment ITS OWN reply
     /// lands, whether that reply is adopted or found stale, so this can
@@ -87,6 +93,7 @@ impl Default for Explorer {
             search: None,
             pending_reveal: None,
             preview: None,
+            preview_return_to: None,
             preview_awaiting: HashSet::new(),
         }
     }

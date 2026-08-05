@@ -181,6 +181,11 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
                 doc.read_only = ReadOnly::Preview;
             }
             app.explorer.preview = Some(id);
+            // Remembers what the user was editing before this browsing
+            // session's preview took over — `discard_active`'s own way
+            // back, captured now because `switch_to` below is about to
+            // move `app.active` off it.
+            app.explorer.preview_return_to = Some(app.active);
             id
         }
     };
@@ -243,6 +248,7 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
         doc.read_only = ReadOnly::No;
     }
     app.explorer.preview = None;
+    app.explorer.preview_return_to = None;
     let path = app.doc(id).and_then(|doc| doc.file_path.clone());
     if let Some(path) = path {
         crate::db_enqueue::load_document(app, id, &path);
@@ -251,18 +257,33 @@ pub(crate) fn promote(app: &mut App, id: DocumentId) {
 
 /// Discards the live preview because focus left for the Title or Tabs pane
 /// without going through `workspace::switch_to` (a pure focus move touches
-/// no document) — reassigns `app.active` to a tab-order neighbour first
-/// when the preview WAS the active document, mirroring `workspace::close`'s
-/// own neighbour pick, since nothing else is about to reseat it the way
-/// `switch_to`'s own caller does for [`discard_if_switching_away`].
+/// no document) — restores `app.active` to the document the user was
+/// editing before this browsing session's preview took over
+/// (`Explorer::preview_return_to`) when the preview WAS the active
+/// document, since nothing else is about to reseat it the way
+/// `switch_to`'s own caller does for [`discard_if_switching_away`]. Falls
+/// back to `workspace::close::neighbor_of`'s adjacent-tab pick — reused
+/// rather than a second neighbour picker — when the remembered document
+/// has itself been closed in the meantime. The target is resolved BEFORE
+/// `id` is removed: `neighbor_of` reads `id`'s own position in
+/// `tabs.order`, exactly like `close_now`'s own reassign-before-remove
+/// order.
 fn discard_active(app: &mut App) {
     let Some(id) = app.explorer.preview else {
         return;
     };
     let was_active = app.active == id;
+    let target = was_active
+        .then(|| {
+            app.explorer
+                .preview_return_to
+                .filter(|&t| t != id && app.documents.contains_key(&t))
+                .or_else(|| workspace::close::neighbor_of(app, id))
+        })
+        .flatten();
     remove_preview_document(app, id);
-    if was_active && let Some(&neighbor) = app.tabs.order.first() {
-        workspace::switch_to(app, neighbor);
+    if let Some(target) = target {
+        workspace::switch_to(app, target);
     }
     app.tabs.nav.cursor = app
         .tabs
@@ -273,15 +294,16 @@ fn discard_active(app: &mut App) {
 }
 
 /// The shared tail of every discard path: removes `id` from BOTH
-/// `app.documents` and `app.tabs.order` and clears the preview slot. A
-/// preview is never dirty and never contacted the recovery store, so
-/// unlike `workspace::close::close_now` there is no guard prompt, no
-/// `db_ops`/`pending_*` sweep, and no image-delete effect to run — closing
-/// a preview is pure bookkeeping.
+/// `app.documents` and `app.tabs.order` and clears the preview slot (and
+/// its remembered return-to document). A preview is never dirty and never
+/// contacted the recovery store, so unlike `workspace::close::close_now`
+/// there is no guard prompt, no `db_ops`/`pending_*` sweep, and no
+/// image-delete effect to run — closing a preview is pure bookkeeping.
 fn remove_preview_document(app: &mut App, id: DocumentId) {
     app.documents.remove(&id);
     app.tabs.order.retain(|&t| t != id);
     app.explorer.preview = None;
+    app.explorer.preview_return_to = None;
 }
 
 #[cfg(test)]

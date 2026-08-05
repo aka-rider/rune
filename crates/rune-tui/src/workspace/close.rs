@@ -213,7 +213,10 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
 /// WP5.S3). Falls back to any other live document if `id` isn't in
 /// `tabs.order` at all — shouldn't happen (every document has a tab), but
 /// keeps this total rather than leaving `active` dangling.
-fn neighbor_of(app: &App, id: DocumentId) -> Option<DocumentId> {
+///
+/// `pub(crate)`: `explorer_preview::discard_active` reuses this exact pick
+/// as its own fallback rather than growing a second neighbour picker.
+pub(crate) fn neighbor_of(app: &App, id: DocumentId) -> Option<DocumentId> {
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         if let Some(&next) = app.tabs.order.get(idx + 1) {
             return Some(next);
