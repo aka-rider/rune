@@ -18,23 +18,22 @@ use crate::width::display_width;
 use rune_syntax::wrap::line_visual_col;
 
 /// Which single visual state the footer's left side shows for this render
-/// — priority order highest-first (plan WP2.S6, WP3.S3, WP1.S10, WP4.S2):
-/// the Guard prompt always wins, then the messages pane's own keys (only
-/// while it holds focus), then a pending chord hint, the degraded-store
+/// — priority order highest-first: the Guard prompt always wins, then the
+/// messages pane's own keys (only while it holds focus), then a pending
+/// chord hint, the degraded-store
 /// banner, the merge/disk-changed ambient hints, and the default keymap
 /// hints. Mutually exclusive by construction — never concatenated, unlike
 /// the pre-WP2 `status.rs::status_text`. Transient user-facing messages no
 /// longer have a `Mode` of their own: they live in the message log/pane
 /// (`messages`) instead.
 enum Mode<'a> {
-    /// The close/quit/rename/disk-conflict confirmation prompt (plan
-    /// WP5.S3, widened WP2). Carries the whole `GuardPrompt`, not just its
-    /// `GuardKind` (plan WP2): `guard_spans` needs `prompt.doc` to name
-    /// WHICH document a `DirtyQuit` prompt is blocking on — a `GuardKind`
-    /// alone can't say that.
+    /// The close/quit/rename/disk-conflict confirmation prompt. Carries the
+    /// whole `GuardPrompt`, not just its `GuardKind`: `guard_spans` needs
+    /// `prompt.doc` to name WHICH document a `DirtyQuit` prompt is blocking
+    /// on — a `GuardKind` alone can't say that.
     Guard(&'a GuardPrompt),
-    /// The messages pane's own hint row (plan WP1.S10) — entered whenever
-    /// the pane holds focus, ranked directly below `Guard` and above every
+    /// The messages pane's own hint row — entered whenever the pane holds
+    /// focus, ranked directly below `Guard` and above every
     /// other mode: while the user is inside the pane, its own keys
     /// (`[⌘C] copy`, `[Esc] close`) are the only thing worth showing.
     Messages,
@@ -92,8 +91,8 @@ fn mode(app: &App) -> Mode<'_> {
 /// `pending_quit`'s hint has no other home (the pre-WP2 `quit_hint`, ported
 /// unchanged below); `pending_save_confirm`'s hint is the fixed literal
 /// below — `trigger_save` also posts the degraded-save explanation to the
-/// message log the same tick it arms the confirm gate (plan WP4.S2), so
-/// this no longer needs to read that text back out of a shared slot. The
+/// message log the same tick it arms the confirm gate, so this no longer
+/// needs to read that text back out of a shared slot. The
 /// `cid == app.active` check is load-bearing: `pending_save_confirm` is
 /// doc-tagged (armed for the document that attempted the save), so
 /// switching tabs away from that document must not leave its stale hint
@@ -145,10 +144,10 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
     }
 }
 
-/// The dirty-close/dirty-quit Guard's `[S]ave [D]iscard [Esc] Cancel` hint
-/// (plan WP5.S3, widened WP2), built from `guard::DIRTY_CLOSE_OPTIONS`/
-/// `DIRTY_CLOSE_CANCEL_LABEL` — the SAME consts `guard::
-/// handle_guard_key` matches its `s`/`d` keys against, so this render can
+/// The dirty-close/dirty-quit Guard's `[S]ave [D]iscard [Esc] Cancel` hint,
+/// built from `guard::DIRTY_CLOSE_OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the
+/// SAME consts `guard::handle_guard_key` matches its `s`/`d` keys against,
+/// so this render can
 /// never drift from what those keys actually do (review fix).
 fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     let mut spans = Vec::new();

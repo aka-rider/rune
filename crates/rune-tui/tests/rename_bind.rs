@@ -193,7 +193,7 @@ fn a_failed_rename_returns_to_the_title_with_the_typed_name_and_its_undo_history
         "the failure posts an error message"
     );
 
-    // The message is non-modal (plan WP1) — it never captures the
+    // The message is non-modal — it never captures the
     // keyboard, so the title (still holding the typed name underneath)
     // sees every keystroke exactly as if no message had been posted.
     assert_eq!(app.focus(), Pane::Title);

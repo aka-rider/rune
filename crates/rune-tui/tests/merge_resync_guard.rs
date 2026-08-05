@@ -436,7 +436,7 @@ fn disk_conflict_guard_escape_cancels_with_a_status_and_keeps_the_save_refusal_i
     assert!(app.guard.is_none());
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
-    // The log is append-only (plan WP4.S2): Escape's cancellation ack never
+    // The log is append-only: Escape's cancellation ack never
     // overwrites the save-refused entry the Guard itself was raised over —
     // both stay in the log, in order.
     let log = rune_tui::messages::log_text(&app);

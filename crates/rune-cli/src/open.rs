@@ -234,13 +234,11 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
 /// The first positional is already open (in `bootstrap`) and stays the
 /// active, displayed document (Go treats it as the awaited display document
 /// and the rest as tabs) — every REMAINING file opens as its own tab
-/// through the same path the Explorer uses (WP7.S6). A failure there posts
-/// its own message into the log via `workspace::open_path` itself (plan
-/// WP1) instead of aborting startup — the pre-WP1 accumulate-then-combine-
-/// into-one-banner dance this replaced existed only because the modal
-/// banner was a single slot that would otherwise let a later failure
-/// silently overwrite an earlier one; a log has no such limit, so every
-/// failure simply gets its own entry.
+/// through the same path the Explorer uses. A failure there posts its own
+/// message into the log via `workspace::open_path` itself instead of
+/// aborting startup — the old modal error banner was a single slot that
+/// would otherwise let a later failure silently overwrite an earlier one;
+/// a log has no such limit, so every failure simply gets its own entry.
 pub(crate) fn open_extra_files(app: &mut AppGuard, files: &[PathBuf], first_doc_id: DocumentId) {
     for extra in files.iter().skip(1) {
         workspace::open_path(app, extra);

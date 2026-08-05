@@ -28,8 +28,7 @@ fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
 }
 
-/// The log is append-only (plan WP4.S2, superseding review finding F2's
-/// provenance-aware clear): a save failure's entry stays in the log even
+/// The log is append-only: a save failure's entry stays in the log even
 /// after a LATER save on the same document succeeds — a success posts
 /// nothing at all, so there is nothing to clear.
 #[test]
@@ -70,8 +69,8 @@ fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log
 
 /// A successful save must not disturb an unrelated log entry some OTHER
 /// subsystem posted — e.g. an edit/undo/redo failure. Both entries stay in
-/// the log, in order (plan WP4.S2: the log is append-only, so this is no
-/// longer a provenance question).
+/// the log, in order — the log is append-only, so there is no
+/// provenance question to resolve.
 #[test]
 fn save_done_ok_keeps_an_unrelated_log_entry() {
     let mut app = test_app();

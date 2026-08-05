@@ -53,7 +53,7 @@ pub struct ChromeStyles {
     pub active_border: Style,
     pub inactive_border: Style,
     pub title_text: Style,
-    /// The messages pane's `Severity::Error` colour (plan WP1) — `Info`
+    /// The messages pane's `Severity::Error` colour — `Info`
     /// paints no colour of its own (plain text); `Warn` uses this yellow,
     /// unbolded so it reads as less urgent than `error`'s bold red.
     pub warn: Style,

@@ -49,11 +49,10 @@ pub struct Snapshot {
     /// end-of-session undo/redo drive (`driver.rs`), both of which must
     /// tell an editor-focused step apart from a chrome-focused one.
     pub focus: Pane,
-    /// `app.guard.is_some()` (plan WP1: the pre-WP1 modal error banner's own
-    /// stage-1 capture no longer exists — an error is a non-modal log entry
-    /// now) — a Guard captures every key at stage 1 of the pipeline
-    /// regardless of `focus`, so `PANE-NO-BLEED` and the undo/redo drive
-    /// precondition both need this in addition to `focus`.
+    /// `app.guard.is_some()` — a Guard captures every key at stage 1 of the
+    /// pipeline regardless of `focus` (an error, unlike a Guard, is a
+    /// non-modal log entry and captures nothing), so `PANE-NO-BLEED` and the
+    /// undo/redo drive precondition both need this in addition to `focus`.
     pub modal_open: bool,
     /// `app.active` — which document the OTHER fields in this `Snapshot`
     /// describe. `PANE-NO-BLEED` needs it to tell a chrome key that
@@ -182,11 +181,11 @@ pub struct Snapshot {
     pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
 }
 
-/// `Snapshot.status`'s builder (plan WP4.S4): the footer's own text, plus
-/// the message log's newest entry (now that transient messages live there,
-/// not in the footer — plan WP1), joined by `" | "` so every existing
-/// invariant/tripwire reading `Snapshot.status` for message text keeps
-/// seeing it. Footer text alone when the log is empty.
+/// `Snapshot.status`'s builder: the footer's own text, plus the message
+/// log's newest entry (transient messages live in the log now, not in the
+/// footer), joined by `" | "` so every existing invariant/tripwire reading
+/// `Snapshot.status` for message text keeps seeing it. Footer text alone
+/// when the log is empty.
 fn fuzz_status(app: &App) -> String {
     let footer_text = footer::footer_text(app);
     match rune_tui::messages::newest_text(app) {

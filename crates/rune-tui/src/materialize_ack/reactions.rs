@@ -134,8 +134,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
 /// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
 /// completion (plan decision 5), or a leftover reply for a document whose
 /// store binding vanished mid-flight. Success posts nothing (the log is
-/// append-only, so there is nothing to clear — plan WP4.S2, superseding
-/// review finding F2's provenance-aware clear).
+/// append-only, so there is nothing to clear).
 pub(crate) fn handle_save_done(
     app: &mut App,
     id: DocumentId,

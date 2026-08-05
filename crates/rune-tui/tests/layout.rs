@@ -165,8 +165,8 @@ fn too_narrow_for_both_minimums_with_the_column_hidden_drops_it() {
 /// The test that would have caught the "blank last column" defect (a real
 /// user-reported bug, traced but NOT reproduced against `layout::geometry`
 /// itself — see the plan this test came from): sweep widths, left-column
-/// visibility, and the messages pane's open state (plan WP1: the pre-WP1
-/// modal banner this replaced), and pin the exact right-edge identities
+/// visibility, and the messages pane's open state (replacing the old modal
+/// banner), and pin the exact right-edge identities
 /// `layout.rs`'s own `assert_invariant` calls now also check in production.
 /// Duplicated here deliberately rather than trusted to that internal
 /// assert alone — this test still fails on a regression even if a future

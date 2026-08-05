@@ -55,7 +55,7 @@ pub enum GlobalCommand {
     /// `^M` is Enter in every terminal and can never be this chord's `^`
     /// counterpart (see this module's own gotcha).
     Merge,
-    /// Toggles the message-log pane above the footer (plan WP1): closed ->
+    /// Toggles the message-log pane above the footer: closed ->
     /// open + focus; open + focused -> collapse + focus the Editor; open +
     /// unfocused -> focus. `^E`/`⌘E` — free across every binding table (the
     /// former `GlobalCommand::FocusEditor` these keys used to name was
@@ -450,7 +450,7 @@ mod tests {
         );
     }
 
-    /// Plan WP1.S7: the same cross-table guard as `global_p_binding_...`
+    /// The same cross-table guard as `global_p_binding_...`
     /// above, for `^E`/`⌘E` (`GlobalCommand::ToggleMessages`).
     #[test]
     fn global_e_binding_is_not_already_bound_in_any_pane_table() {

@@ -38,10 +38,10 @@ pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 /// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
 /// rows (WP3: wrap rows plus synthesised table borders) in `[scroll_row,
 /// scroll_row + height)`, with cursor/selection overlays applied. Generic
-/// over `doc` (plan WP1.S3) so the messages pane can render its own
-/// read-only `Document` through the identical pipeline the editor uses —
+/// over `doc` so the messages pane can render its own read-only `Document`
+/// through the identical pipeline the editor uses —
 /// required for mouse hit-testing to ever land correctly, since `render`'s
-/// row space and a bespoke row walk (the pre-WP1 `banner::build_rows`) are
+/// row space and a bespoke row walk (the old `banner::build_rows`) are
 /// NOT the same space. `viewport.scroll_row` is a DISPLAY row index —
 /// `Document::scroll_to_cursor` is its single writer and converts through
 /// `DisplaySnapshot::wrap_to_display` before ever assigning it (see that
@@ -167,12 +167,12 @@ pub fn draw(app: &App, frame: &mut Frame) {
 
     if let Some(view) = &app.active_doc().view {
         let mut rows = build_rows(app, app.active_doc(), view);
-        // Merge mode's ours/theirs/marker backgrounds (plan WP5.S3) paint
-        // LAST, on top of every overlay `build_rows` already applied — the
-        // working form's markers and framed spans are merge mode's own
-        // content, not markdown or code to be highlighted underneath them.
-        // Painted here rather than inside `build_rows` (plan WP1.S3): this
-        // is the one call site that actually knows `doc` is the active
+        // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
+        // every overlay `build_rows` already applied — the working form's
+        // markers and framed spans are merge mode's own content, not
+        // markdown or code to be highlighted underneath them. Painted here
+        // rather than inside `build_rows`: this is the one call site that
+        // actually knows `doc` is the active
         // document, so a generic `build_rows` (the messages pane's own
         // caller included) can never mistakenly paint a merge overlay onto
         // some other document.
@@ -184,8 +184,8 @@ pub fn draw(app: &App, frame: &mut Frame) {
         crate::breadcrumb::overlay(app, geo.center, app.focus() == Pane::Editor, frame);
     }
 
-    // The one messages-pane delegation (plan WP1.S3/S9) — all of its own
-    // cell building lives in `messages::render`, never here.
+    // The one messages-pane delegation — all of its own cell building
+    // lives in `messages::render`, never here.
     if let Some(messages_area) = geo.messages {
         messages::draw(app, messages_area, frame);
     }

@@ -31,10 +31,9 @@ use crate::runtime::{Effects, PasteTarget};
 
 /// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
 /// OSC52_MAX_PAYLOAD_BYTES` — posts an error message instead of silently
-/// writing a sequence a terminal multiplexer would just drop (plan
-/// WP13.S4). Shared by `copy`/`cut` and the title's own `Command::Copy`/
-/// `Command::Cut` handling (`title::keys`) so the cap can never drift
-/// between call sites.
+/// writing a sequence a terminal multiplexer would just drop. Shared by
+/// `copy`/`cut` and the title's own `Command::Copy`/`Command::Cut` handling
+/// (`title::keys`) so the cap can never drift between call sites.
 pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
     if text.is_empty() {
         return;
@@ -269,7 +268,7 @@ mod tests {
         );
     }
 
-    /// The cut half of the same cap (plan WP13.S4): the message is posted
+    /// The cut half of the same cap: the message is posted
     /// BEFORE the delete runs, but the delete still proceeds either way —
     /// it's journaled/undoable regardless of what happened to the
     /// clipboard, so refusing it too would trade one silent failure for a

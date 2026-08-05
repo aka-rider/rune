@@ -27,7 +27,7 @@ use crate::step::{MsgTag, StepCtx};
 /// checker simply never fires on those, because it's scoped to the
 /// no-active-document-change case. The paths that keep the active
 /// document unchanged (`⌘S`, a focus/toggle chord, a quit chord, a failed
-/// open posting a message (plan WP1), `^w` arming the Guard, closing a
+/// open posting a message, `^w` arming the Guard, closing a
 /// non-active tab) never touch a buffer byte either, so they're silent
 /// here too.
 ///

@@ -26,7 +26,7 @@ pub enum FocusTarget {
     SearchField,
     /// Not yet reachable — see `SearchField`'s doc; WP8's replace field.
     ReplaceField,
-    /// The message-log pane above the footer (plan WP1, `Pane::Messages`).
+    /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
 }
 
@@ -108,8 +108,8 @@ impl LayoutMode {
     /// to the left column's own layout — it names the document showing in
     /// the center pane, painted in every mode this resolver can produce.
     ///
-    /// `messages_open` is the messages pane's own open/closed state (plan
-    /// WP1.S6, `messages::is_open`): like `Title`, the pane is orthogonal
+    /// `messages_open` is the messages pane's own open/closed state
+    /// (`messages::is_open`): like `Title`, the pane is orthogonal
     /// to the left column's own split, but unlike `Title` it is NOT always
     /// painted — a closed pane paints nothing, so `LayoutMode` (which
     /// otherwise derives entirely from frame geometry and the `Split`

@@ -51,9 +51,9 @@ pub enum PasteTarget {
 /// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
 /// `SaveConfirmTimeout`/`MessagesCollapseTimeout` originate from a spawned
 /// `Cmd`'s return value; `SnapshotDue` originates from `App::snapshot_timer`'s
-/// one long-lived rearmable timer thread (plan WP16.S5), not a per-message
+/// one long-lived rearmable timer thread, not a per-message
 /// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
-/// `db::DbBridge` (plan WP5.S1); `Error`/`Quit` can be synthesized by
+/// `db::DbBridge`; `Error`/`Quit` can be synthesized by
 /// `update` itself.
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan WP1.S3) so multi-
 /// document acks route back to the document that triggered them;
@@ -92,7 +92,7 @@ pub enum Msg {
     SaveConfirmTimeout {
         generation: u32,
     },
-    /// The message pane's 5s auto-collapse timer (plan WP2), armed by
+    /// The message pane's 5s auto-collapse timer, armed by
     /// `dispatch::after_update` rather than by `messages::post` itself —
     /// same stale-generation-is-ignored shape as `ConfirmTimeout`/
     /// `SaveConfirmTimeout`.
@@ -182,8 +182,8 @@ pub enum Msg {
         result: Result<rune_image::decode::Decoded, String>,
     },
     Error(String),
-    /// The same transport as `Error`, tagged one severity down (plan
-    /// WP4.S1): a background task hit something worth telling the user
+    /// The same transport as `Error`, tagged one severity down: a
+    /// background task hit something worth telling the user
     /// about, but not something as severe as `Error`'s glyph/persistence
     /// implies.
     Warning(String),
@@ -218,7 +218,7 @@ pub enum CmdKind {
     /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6). Sleeps;
     /// never run it inline.
     SaveConfirmTimeout,
-    /// The message pane's 5s auto-collapse timer (plan WP2). Sleeps; never
+    /// The message pane's 5s auto-collapse timer. Sleeps; never
     /// run it inline.
     MessagesCollapseTimeout,
     /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a

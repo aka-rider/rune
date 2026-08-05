@@ -163,10 +163,9 @@ pub struct App {
     /// it spawns — `save::PendingMaterialize`'s doc comment explains why
     /// each field is captured once and never re-derived (§1.4.2/§1.4.8).
     pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
-    /// A persistent status banner independent of the message log (plan
-    /// WP5.S2/S3: "persistent status banner") — set once the store degrades
-    /// (at open, or from a later `on_store_failure`) and never cleared
-    /// automatically.
+    /// A persistent status banner independent of the message log — set once
+    /// the store degrades (at open, or from a later `on_store_failure`) and
+    /// never cleared automatically.
     pub db_banner: Option<String>,
     /// The armed degraded-save confirm chord's target document and timer
     /// generation — `None` when no confirm is pending (plan WP1 decision 3:
@@ -232,8 +231,8 @@ pub struct App {
     /// is the one chokepoint that writes a NEW prompt here; `guard::
     /// clear_guard` is the sole writer of `None`.
     pub guard: Option<GuardPrompt>,
-    /// The message log (plan WP1): every transient user-facing message,
-    /// severity-tagged, plus the collapsible pane's own open/focus state.
+    /// The message log: every transient user-facing message, severity-tagged,
+    /// plus the collapsible pane's own open/focus state.
     /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
     /// chokepoint that writes to it.
     pub messages: MessageLog,

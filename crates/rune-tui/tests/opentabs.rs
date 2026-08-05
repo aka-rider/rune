@@ -419,7 +419,7 @@ fn an_error_message_never_blocks_a_guard_from_being_raised() {
 }
 
 /// A cancellation ack must never cost the user an unacknowledged save
-/// failure — the log is append-only (plan WP4.S2), so an unrelated
+/// failure — the log is append-only, so an unrelated
 /// cancellation posts its own entry without ever touching an earlier one.
 #[test]
 fn escape_on_a_guard_keeps_an_unacknowledged_save_failure_in_the_log() {

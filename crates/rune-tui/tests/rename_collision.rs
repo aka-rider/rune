@@ -56,10 +56,10 @@ fn a_collision_raises_the_guard_and_the_footer_names_the_target() {
     assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"theirs");
 }
 
-/// **Hazard 1a, post-WP1 shape**: errors are a non-modal log entry now
-/// (plan WP1 decision 4), so a pending message can no longer suppress a
-/// Guard raise the way the pre-WP1 modal error banner used to — the collision guard must
-/// still raise, and the earlier message must still be in the log.
+/// **Hazard 1a**: errors are a non-modal log entry now, so a pending
+/// message can no longer suppress a Guard raise the way the old modal
+/// error banner used to — the collision guard must still raise, and the
+/// earlier message must still be in the log.
 #[test]
 fn a_pending_error_message_does_not_suppress_the_collision_guard() {
     let mem = seeded_vfs();
@@ -84,9 +84,9 @@ fn a_pending_error_message_does_not_suppress_the_collision_guard() {
     );
 }
 
-/// **Hazard 1b, post-WP1 shape**: an error posted AFTER the collision guard
+/// **Hazard 1b**: an error posted AFTER the collision guard
 /// is up must not cancel it — errors and the Guard are orthogonal channels
-/// now (plan WP1 decision 4), unlike the pre-WP1 modal error banner that used to
+/// now, unlike the old modal error banner that used to
 /// displace it.
 #[test]
 fn an_error_message_posted_after_the_guard_does_not_cancel_the_collision() {

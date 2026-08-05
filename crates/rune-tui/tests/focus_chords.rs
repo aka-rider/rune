@@ -179,7 +179,7 @@ fn ctrl_r_focuses_the_title() {
 /// `^K`/`⌘K` are deleted entirely: neither resolves to a `GlobalCommand`, so
 /// each falls through to whichever pane owns focus. From the Editor with no
 /// modifier bound to it, that means plain text insertion. `^E`/`⌘E` is NOT
-/// in this list any more (plan WP1): those two chords now resolve to
+/// in this list any more: those two chords now resolve to
 /// `GlobalCommand::ToggleMessages` — see `tests/messages.rs` for their own
 /// coverage.
 #[test]

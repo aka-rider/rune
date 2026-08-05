@@ -33,9 +33,9 @@ pub enum Pane {
     /// pressing Up at the top of the editor. While it owns focus every
     /// keystroke goes to the file name and none of them reach the buffer.
     Title,
-    /// The collapsible message-log pane above the footer (plan WP1) —
-    /// focused by `^E`/`⌘E` while the pane is open, or by clicking inside it
-    /// (WP3). Only ever focusable while `messages::is_open` is true
+    /// The collapsible message-log pane above the footer — focused by
+    /// `^E`/`⌘E` while the pane is open, or by clicking inside it. Only
+    /// ever focusable while `messages::is_open` is true
     /// (`LayoutMode::focusable`'s own gate).
     Messages,
 }
@@ -140,7 +140,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Plan WP3.S5: starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
         GlobalCommand::Merge => crate::merge::toggle(app, effects),
-        // Plan WP1.S7: the message log pane's own open/focus/collapse state
+        // The message log pane's own open/focus/collapse state
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),

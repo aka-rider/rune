@@ -158,9 +158,9 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
             return true;
         }
     }
-    // The message pane (plan WP4.S5) isn't gated behind the left column, so
-    // the generic `^B` fallback below can't reach it — `^B` toggles a
-    // column this pane doesn't live in, leaving focus stuck here forever.
+    // The message pane isn't gated behind the left column, so the generic
+    // `^B` fallback below can't reach it — `^B` toggles a column this pane
+    // doesn't live in, leaving focus stuck here forever.
     // `Escape` is its own dedicated exit (`messages::handle_key`), mirroring
     // the Title case just above.
     if state.app.focus() == Pane::Messages {

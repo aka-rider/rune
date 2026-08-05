@@ -1,10 +1,9 @@
-//! The messages pane's own row builder (plan WP1.S1): one separator row
-//! (styled by whether the pane holds focus), then the log document's rows
-//! through the SAME `render::build_rows` the editor uses — required for
-//! mouse hit-testing to ever land correctly (plan Gotchas: `render::
-//! build_rows` and `banner`'s pre-WP1 own row walk are different row
-//! spaces) — with one extra pass tinting each entry's byte range by its
-//! severity.
+//! The messages pane's own row builder: one separator row (styled by
+//! whether the pane holds focus), then the log document's rows through the
+//! SAME `render::build_rows` the editor uses — required for mouse
+//! hit-testing to ever land correctly, since the old `banner` module's own
+//! row walk built a different row space that hit-testing couldn't reuse —
+//! with one extra pass tinting each entry's byte range by its severity.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

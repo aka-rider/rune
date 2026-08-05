@@ -94,7 +94,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         // A stale generation (a newer post/focus/collapse superseded this
         // one since it was armed) is ignored, mirroring `ConfirmTimeout`/
-        // `SaveConfirmTimeout` above (plan WP2.S3).
+        // `SaveConfirmTimeout` above.
         Msg::MessagesCollapseTimeout { generation } => {
             if crate::messages::is_armed(app, generation) {
                 crate::messages::collapse(app);
@@ -181,8 +181,8 @@ pub(crate) fn after_update(
         crate::graphics::schedule_image_decode(app, app.active, effects);
     }
     crate::graphics::sync_embeds(app, app.active, effects);
-    // The message pane's auto-collapse arming (plan WP2.S2): re-evaluated
-    // after every settle rather than only right after a post, so the
+    // The message pane's auto-collapse arming is re-evaluated after every
+    // settle rather than only right after a post, so the
     // countdown starts (or restays suppressed) correctly no matter what
     // changed focus/selection/log state in between — the four suppression
     // rules live in `should_arm_auto_collapse` itself.
@@ -270,13 +270,13 @@ fn handle_highlighted(
     }
 }
 
-/// The four-stage key pipeline (plan Context, decision 8): (1) Guard capture
-/// (`guard::handle_guard_key`) — every key consumed there while `App.guard`
-/// is `Some`, quit chords included (plan WP1: the old modal error banner no longer
-/// exists, so this stage is Guard-only now — the messages pane is non-modal
-/// and reached through stage 3 instead, like any other pane); (2) the global
-/// chord table (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3)
-/// the focused pane's own keymap; (4) `Ignored` -> nothing.
+/// The four-stage key pipeline: (1) Guard capture (`guard::handle_guard_key`)
+/// — every key consumed there while `App.guard` is `Some`, quit chords
+/// included; the old modal error banner no longer exists, so this stage is
+/// Guard-only now — the messages pane is non-modal and reached through
+/// stage 3 instead, like any other pane; (2) the global chord table
+/// (`GLOBAL_BINDINGS`), fired regardless of focus; (3) the focused pane's
+/// own keymap; (4) `Ignored` -> nothing.
 pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     // Stage 1: Guard capture, before any other stage ever sees this key.
     if app.guard.is_some() {

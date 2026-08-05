@@ -41,7 +41,7 @@ pub fn resolve(vfs: &dyn Vfs, path: &Path) -> PathBuf {
 /// an already-open `Document` with that resolved `file_path` or reads a
 /// fresh one. A read/decode failure is reported into the message log
 /// (`messages::error`) — the one chokepoint every error report
-/// funnels through (plan WP1). Returns the opened/reactivated
+/// funnels through. Returns the opened/reactivated
 /// document's id, or `None` on any of the error paths — `navigate::follow`
 /// (plan WP5) needs the id back to force-parse the target and land the
 /// caret on an anchor.

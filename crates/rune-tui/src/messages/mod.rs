@@ -1,14 +1,15 @@
 //! The message log: an append-only, severity-tagged record of every
 //! transient user-facing message, rendered in a collapsible read-only pane
-//! directly above the footer (plan WP1). `messages::post` (and its
+//! directly above the footer. `messages::post` (and its
 //! `info`/`warn`/`error` wrappers) is the ONE chokepoint every such message
 //! funnels through — replacing both the old modal error banner (which
-//! captured every key) and the pre-WP4 single status slot with its own
+//! captured every key) and the old single status slot with its own
 //! save-failure-provenance clearing rule. A log needs neither: nothing is
 //! ever cleared, and the pane never takes focus on its own.
 //!
-//! Split for the §1.6 budget: this file holds the log's state and its
-//! `&mut App`/`&App` API; [`render`] holds the pane's own row builder.
+//! Split to stay under the source-file line budget: this file holds the
+//! log's state and its `&mut App`/`&App` API; [`render`] holds the pane's
+//! own row builder.
 
 mod render;
 
@@ -35,11 +36,10 @@ const MAX_ENTRIES: usize = 200;
 
 const EMPTY_TEXT: &str = "\u{b7} no messages";
 
-/// The pane's auto-collapse delay (plan WP2, Assumption A2) — armed by
-/// `dispatch::after_update`, not by [`post`] itself (decision 9): `post`
-/// only takes `&mut App`, and threading `&mut Effects` through every call
-/// site is not worth it for a timer that can just as well be armed once,
-/// after the whole message batch settles.
+/// The pane's auto-collapse delay — armed by `dispatch::after_update`, not
+/// by [`post`] itself: `post` only takes `&mut App`, and threading `&mut
+/// Effects` through every call site is not worth it for a timer that can
+/// just as well be armed once, after the whole message batch settles.
 pub const AUTO_COLLAPSE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,7 +77,7 @@ pub struct MessageLog {
     ranges: Vec<(std::ops::Range<usize>, Severity)>,
     open: bool,
     /// The generation of the currently in-flight auto-collapse timer, or
-    /// `None` while none is armed (plan WP2) — set by [`arm_auto_collapse`],
+    /// `None` while none is armed — set by [`arm_auto_collapse`],
     /// cleared by anything that must suppress or restart the countdown
     /// (posting, focusing the pane, collapsing).
     armed: Option<u32>,
@@ -119,8 +119,8 @@ impl Default for MessageLog {
 }
 
 /// Strips C0 control bytes (except `\n`), DEL, and the C1 control range
-/// (`U+0080`-`U+009F`) from `text` (plan WP1 decision 8): error text can
-/// carry filesystem-derived bytes, and those bytes are blitted to the
+/// (`U+0080`-`U+009F`) from `text`: error text can carry filesystem-derived
+/// bytes, and those bytes are blitted to the
 /// terminal and OSC-52-copied verbatim, so they must never reach the
 /// rendered grid unsanitized. C1 controls decode from UTF-8 as ordinary
 /// two-byte sequences (unlike C0/DEL, which are single-byte), so a
@@ -176,9 +176,8 @@ fn rebuild_doc(app: &mut App) {
 
 /// The one chokepoint every transient message funnels through: sanitizes
 /// `text`, appends it (dropping the oldest past [`MAX_ENTRIES`]), rebuilds
-/// the log's document, and opens the pane. Never focuses it (plan WP1
-/// decision 3 — a message is not modal): typing continues to reach whatever
-/// already had focus.
+/// the log's document, and opens the pane. Never focuses it — a message is
+/// not modal: typing continues to reach whatever already had focus.
 pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     let text = sanitize(&text.into());
     app.messages.entries.push(Message { severity, text });
@@ -188,7 +187,7 @@ pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     }
     rebuild_doc(app);
     app.messages.open = true;
-    // A new message restarts the countdown (plan WP2.S4): `after_update`'s
+    // A new message restarts the countdown: `after_update`'s
     // reconciler re-arms from scratch on the next settle, now against the
     // NEWEST entry's severity.
     app.messages.armed = None;
@@ -212,7 +211,7 @@ pub fn error(app: &mut App, text: impl Into<String>) {
 
 /// Opens (and focuses) the pane if it's closed; collapses it if it's open
 /// and already focused; otherwise (open but unfocused) just focuses it —
-/// the `^E`/`⌘E` toggle's whole state machine (plan WP1.S7).
+/// the `^E`/`⌘E` toggle's whole state machine.
 pub fn toggle(app: &mut App, effects: &mut Effects) {
     if !app.messages.open {
         app.messages.open = true;
@@ -227,8 +226,8 @@ pub fn toggle(app: &mut App, effects: &mut Effects) {
 
 fn focus(app: &mut App, effects: &mut Effects) {
     app.messages.doc.focused = true;
-    // A focused pane must never auto-collapse out from under the user (plan
-    // WP2.S4); `after_update`'s reconciler will not re-arm while focused.
+    // A focused pane must never auto-collapse out from under the user;
+    // `after_update`'s reconciler will not re-arm while focused.
     app.messages.armed = None;
     app.set_focus_pane(Pane::Messages, effects);
 }
@@ -269,8 +268,8 @@ pub fn newest_text(app: &App) -> Option<&str> {
 }
 
 /// Every entry's sanitized text, oldest first, joined by `\n` with no
-/// glyphs — the test-assertion helper (plan Risks: the mechanical
-/// `footer_text` -> helper swap WP4 needs).
+/// glyphs — the test-assertion helper for reading the log's content back
+/// out without depending on the pane's own markdown rendering.
 pub fn log_text(app: &App) -> String {
     app.messages
         .entries
@@ -394,7 +393,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
 }
 
 /// Whether `dispatch::after_update`'s reconciler should arm a fresh
-/// auto-collapse timer this settle (plan WP2.S2) — every one of the four
+/// auto-collapse timer this settle — every one of the four
 /// suppression rules is a `false` here: the pane must be open with nothing
 /// already armed, unfocused, carrying no selection on its primary cursor,
 /// and its newest entry must not be an error — a data-risk message must
@@ -421,12 +420,12 @@ pub fn arm_auto_collapse(app: &mut App) -> u32 {
 
 /// Whether `generation` is still the currently armed one — `false` for a
 /// superseded or already-cleared timer, which the caller must then treat as
-/// a no-op (plan WP2.S3).
+/// a no-op.
 pub fn is_armed(app: &App, generation: u32) -> bool {
     app.messages.armed == Some(generation)
 }
 
-/// The pane's 5s auto-collapse timer (plan WP2.S1), modelled on
+/// The pane's 5s auto-collapse timer, modelled on
 /// `save::save_confirm_timeout_cmd`/`pane::quit_confirm_timeout_cmd`: sleeps
 /// on its own dedicated `Cmd` thread, then hands back the generation it was
 /// armed with so a superseded timer is ignored on arrival.
@@ -528,7 +527,7 @@ fn mouse_drag(app: &mut App, input: MouseInput) {
 /// Copies the pane's current selection through the same capped OSC-52 path
 /// every other copy in the app uses — a no-op with no selection, so
 /// `extract_copy_text`'s whole-line fallback (meant for the editor's own
-/// `Copy` command with no selection) never fires here (plan Gotchas). The
+/// `Copy` command with no selection) never fires here. The
 /// one chokepoint both the mouse-release path and `⌘C`/`^⇧C` in
 /// `handle_key` reach through, so the two can never drift on when a copy
 /// actually happens.

@@ -46,8 +46,7 @@ use crate::messages;
 /// and leaves buffer/cursors untouched (CONSTITUTION §1.3: "fail fast on
 /// data risk", the same discipline `edit::undo`/`redo` already follow).
 ///
-/// Message OWNERSHIP (review finding F2, superseded by the message log,
-/// plan WP1): a successful edit posts nothing at all — the log is
+/// Message OWNERSHIP: a successful edit posts nothing at all — the log is
 /// append-only, so there is no shared slot to accidentally clear. This
 /// function only ever POSTS on its own failure path below; an earlier
 /// unrelated entry (e.g. a save failure) simply stays in the log.

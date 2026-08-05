@@ -20,8 +20,8 @@
 //! swap without having captured, and prompting about a collision an
 //! external process already resolved.
 //!
-//! So the *prompt* stays in `guard`/`footer` (§3.2's "the component that
-//! renders the feedback"), and this machine drives the I/O.
+//! So the *prompt* stays in `guard`/`footer` — the component that renders
+//! the feedback — and this machine drives the I/O.
 //!
 //! ### The states, and the ones that deliberately don't exist
 //!
@@ -190,8 +190,8 @@ fn display_name(path: &Path) -> String {
 /// name, a successful enqueue, and an enqueue failure that has already been
 /// reported through `on_store_failure` all return `Accepted`, because none
 /// of them leaves the user needing to fix anything in the field. Every
-/// `Refused` path's SOLE side effect is posting a message to the log
-/// (decision 7) — that is what makes a refused blur running this twice in
+/// `Refused` path's SOLE side effect is posting a message to the log —
+/// that is what makes a refused blur running this twice in
 /// one keystroke
 /// harmless, since the second run just re-reports the same status. Every
 /// refusal below leaves the state `Idle`, the buffer byte-identical,

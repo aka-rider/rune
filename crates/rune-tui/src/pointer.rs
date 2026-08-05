@@ -167,8 +167,8 @@ pub enum Drag {
     /// document — carried so a release or a continuation event can route
     /// back to the SAME document the gesture began in, rather than
     /// whichever one happens to be active or under the pointer at that
-    /// later moment (plan WP3: a drag begun in the messages pane must
-    /// never bleed into the active editor document's selection).
+    /// later moment — a drag begun in the messages pane must
+    /// never bleed into the active editor document's selection.
     Text {
         anchor: usize,
         pane: crate::pane::Pane,

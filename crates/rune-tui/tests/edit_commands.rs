@@ -177,8 +177,8 @@ fn cjk_and_emoji_round_trip_byte_exact_through_undo() {
     assert_eq!(app.doc(id).unwrap().buffer.content(), original);
 }
 
-/// The log is append-only (plan WP4.S2, superseding review finding F2): a
-/// successful edit/undo/redo posts nothing at all, so an unrelated
+/// The log is append-only: a successful edit/undo/redo posts nothing at
+/// all, so an unrelated
 /// (e.g. save-failure) entry an earlier subsystem posted simply stays put —
 /// there is no shared slot left to clobber.
 #[test]
