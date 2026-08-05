@@ -92,6 +92,15 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 app.pending_save_confirm = None;
             }
         }
+        // A stale generation (a newer post/focus/collapse superseded this
+        // one since it was armed) is ignored, mirroring `ConfirmTimeout`/
+        // `SaveConfirmTimeout` above (plan WP2.S3).
+        Msg::MessagesCollapseTimeout { generation } => {
+            if crate::messages::is_armed(app, generation) {
+                crate::messages::collapse(app);
+                crate::focus::reconcile(app, effects);
+            }
+        }
         Msg::SnapshotDue { id, generation } => {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
@@ -174,6 +183,17 @@ pub(crate) fn after_update(
         crate::graphics::schedule_image_decode(app, app.active, effects);
     }
     crate::graphics::sync_embeds(app, app.active, effects);
+    // The message pane's auto-collapse arming (plan WP2.S2): re-evaluated
+    // after every settle rather than only right after a post, so the
+    // countdown starts (or restays suppressed) correctly no matter what
+    // changed focus/selection/log state in between — the four suppression
+    // rules live in `should_arm_auto_collapse` itself.
+    if crate::messages::should_arm_auto_collapse(app) {
+        let generation = crate::messages::arm_auto_collapse(app);
+        effects
+            .cmds
+            .push(crate::messages::collapse_timeout_cmd(generation));
+    }
 }
 
 /// Applies a `Msg::Highlighted` reply, in the fixed order `[R2]` requires:

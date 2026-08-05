@@ -12,11 +12,13 @@
 
 mod render;
 
+use std::time::Duration;
+
 use crate::app::App;
 use crate::document::{Document, ReadOnly};
 use crate::keymap::{KeyCode, KeyInput};
 use crate::pane::Pane;
-use crate::runtime::Effects;
+use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use rune_core::buffer::Buffer;
 
 pub use render::draw;
@@ -26,6 +28,13 @@ pub use render::draw;
 const MAX_ENTRIES: usize = 200;
 
 const EMPTY_TEXT: &str = "\u{b7} no messages";
+
+/// The pane's auto-collapse delay (plan WP2, Assumption A2) — armed by
+/// `dispatch::after_update`, not by [`post`] itself (decision 9): `post`
+/// only takes `&mut App`, and threading `&mut Effects` through every call
+/// site is not worth it for a timer that can just as well be armed once,
+/// after the whole message batch settles.
+pub const AUTO_COLLAPSE: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
@@ -61,6 +70,16 @@ pub struct MessageLog {
     /// re-deriving it from the entry list every frame.
     ranges: Vec<(std::ops::Range<usize>, Severity)>,
     open: bool,
+    /// The generation of the currently in-flight auto-collapse timer, or
+    /// `None` while none is armed (plan WP2) — set by [`arm_auto_collapse`],
+    /// cleared by anything that must suppress or restart the countdown
+    /// (posting, focusing the pane, collapsing).
+    armed: Option<u32>,
+    /// The next generation [`arm_auto_collapse`] will hand out. Monotonic
+    /// for the app's lifetime, so a superseded timer's `Msg` (an older
+    /// generation arriving after a newer one was armed) is always
+    /// distinguishable from the current one.
+    generation: u32,
 }
 
 impl MessageLog {
@@ -73,6 +92,8 @@ impl MessageLog {
             doc,
             ranges: Vec::new(),
             open: false,
+            armed: None,
+            generation: 0,
         }
     }
 }
@@ -144,6 +165,10 @@ pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     }
     rebuild_doc(app);
     app.messages.open = true;
+    // A new message restarts the countdown (plan WP2.S4): `after_update`'s
+    // reconciler re-arms from scratch on the next settle, now against the
+    // NEWEST entry's severity.
+    app.messages.armed = None;
 }
 
 pub fn info(app: &mut App, text: impl Into<String>) {
@@ -175,18 +200,37 @@ pub fn toggle(app: &mut App, effects: &mut Effects) {
 
 fn focus(app: &mut App, effects: &mut Effects) {
     app.messages.doc.focused = true;
+    // A focused pane must never auto-collapse out from under the user (plan
+    // WP2.S4); `after_update`'s reconciler will not re-arm while focused.
+    app.messages.armed = None;
     app.set_focus_pane(Pane::Messages, effects);
 }
 
 /// Closes the pane without moving focus — the caller decides where focus
-/// goes next (`toggle`/`handle_key`'s `Esc` arm both do).
+/// goes next (`toggle`/`handle_key`'s `Esc` arm both do). Also clears any
+/// armed auto-collapse timer: a stale generation still fires harmlessly
+/// (the timeout handler no-ops on a mismatched generation), but there is
+/// nothing left for it to collapse.
 pub fn collapse(app: &mut App) {
     app.messages.open = false;
     app.messages.doc.focused = false;
+    app.messages.armed = None;
 }
 
 pub fn is_open(app: &App) -> bool {
     app.messages.open
+}
+
+/// The log's own read-only document — exposed so a caller that already
+/// works generically over `&Document`/`&mut Document` (`render::build_rows`,
+/// WP3's hit-testing/copy, and tests exercising the pane's cursor state
+/// directly) can reach it without a matching accessor per field.
+pub fn doc(app: &App) -> &Document {
+    &app.messages.doc
+}
+
+pub fn doc_mut(app: &mut App) -> &mut Document {
+    &mut app.messages.doc
 }
 
 pub fn newest(app: &App) -> Option<&Message> {
@@ -296,4 +340,48 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `dispatch::after_update`'s reconciler should arm a fresh
+/// auto-collapse timer this settle (plan WP2.S2) — every one of the four
+/// suppression rules is a `false` here: the pane must be open with nothing
+/// already armed, unfocused, carrying no selection on its primary cursor,
+/// and its newest entry must not be an error (CONSTITUTION §0.1 — a
+/// data-risk message must stay visible until dismissed).
+pub fn should_arm_auto_collapse(app: &App) -> bool {
+    app.messages.open
+        && app.messages.armed.is_none()
+        && app.focus() != Pane::Messages
+        && !app.messages.doc.cursors.primary().has_selection()
+        && !matches!(newest(app), Some(m) if m.severity == Severity::Error)
+}
+
+/// Arms a fresh auto-collapse timer: bumps the generation, marks it armed,
+/// and returns the generation the caller must both tag the returned `Cmd`
+/// with and push into `effects.cmds` — the same "hand the caller the token,
+/// let it push the `Cmd`" shape as `save::trigger_save`'s degraded-confirm
+/// arm.
+pub fn arm_auto_collapse(app: &mut App) -> u32 {
+    let generation = app.messages.generation;
+    app.messages.generation = app.messages.generation.wrapping_add(1);
+    app.messages.armed = Some(generation);
+    generation
+}
+
+/// Whether `generation` is still the currently armed one — `false` for a
+/// superseded or already-cleared timer, which the caller must then treat as
+/// a no-op (plan WP2.S3).
+pub fn is_armed(app: &App, generation: u32) -> bool {
+    app.messages.armed == Some(generation)
+}
+
+/// The pane's 5s auto-collapse timer (plan WP2.S1), modelled on
+/// `save::save_confirm_timeout_cmd`/`pane::quit_confirm_timeout_cmd`: sleeps
+/// on its own dedicated `Cmd` thread, then hands back the generation it was
+/// armed with so a superseded timer is ignored on arrival.
+pub fn collapse_timeout_cmd(generation: u32) -> Cmd {
+    Cmd::new(CmdKind::MessagesCollapseTimeout, move || {
+        std::thread::sleep(AUTO_COLLAPSE);
+        Some(Msg::MessagesCollapseTimeout { generation })
+    })
 }
