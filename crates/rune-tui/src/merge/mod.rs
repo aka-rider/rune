@@ -6,6 +6,7 @@
 
 pub mod frame;
 mod landing;
+pub(crate) mod paint;
 pub mod state;
 
 pub(crate) use landing::handle_merge_prep_ack;
