@@ -18,6 +18,20 @@ use rune_tui::pointer::{MouseButton, MouseInput, MouseKind};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
+/// Following a link can post a message, and an open message pane arms its own
+/// auto-collapse timer — so "nothing was opened" is a claim about the external
+/// handler specifically, never about the effect list being empty. Keeping it
+/// scoped to `OpenExternal` is what makes the `javascript:`/`file://` cases
+/// still assert the thing that matters: that neither ever reaches the OS
+/// opener.
+fn opens_externally(effects: &Effects) -> bool {
+    effects
+        .cmds
+        .iter()
+        .any(|cmd| cmd.kind() == CmdKind::OpenExternal)
+}
+
+
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
@@ -268,7 +282,7 @@ fn a_broken_link_posts_a_message_and_opens_nothing() {
     let effects = press(&mut app, sup_enter());
 
     assert_eq!(app.documents.len(), before, "a broken link opens nothing");
-    assert!(effects.cmds.is_empty());
+    assert!(!opens_externally(&effects), "a broken link opens nothing");
     assert!(
         rune_tui::messages::newest_text(&app).is_some(),
         "a broken link must set a status message"
@@ -302,8 +316,8 @@ fn a_javascript_link_produces_no_cmd_and_resolves_to_unresolved() {
     let effects = press(&mut app, sup_enter());
 
     assert!(
-        effects.cmds.is_empty(),
-        "javascript: must never spawn a Cmd"
+        !opens_externally(&effects),
+        "javascript: must never reach the OS opener"
     );
     assert_eq!(app.documents.len(), before);
 }
@@ -318,7 +332,10 @@ fn a_file_scheme_link_produces_no_cmd_and_resolves_to_unresolved() {
 
     let effects = press(&mut app, sup_enter());
 
-    assert!(effects.cmds.is_empty(), "file:// must never spawn a Cmd");
+    assert!(
+        !opens_externally(&effects),
+        "file:// must never reach the OS opener"
+    );
     assert_eq!(app.documents.len(), before);
 }
 

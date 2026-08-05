@@ -10,7 +10,17 @@ use rune_syntax::scope::scope_table;
 use rune_tui::app;
 use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult};
 use rune_tui::linemap::LineMap;
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects, Msg};
+
+/// A timed-out reply posts a message, and an open message pane arms its own
+/// auto-collapse timer — so "no retry was scheduled" is a claim about the
+/// highlight chain specifically, never about the effect list being empty.
+fn schedules_a_highlight_cmd(effects: &Effects) -> bool {
+    effects
+        .cmds
+        .iter()
+        .any(|cmd| cmd.kind() == CmdKind::Highlight)
+}
 
 /// Installs one span-backed region carrying `spans` through the real
 /// `app::update` chokepoint, at the live buffer version.
@@ -126,9 +136,9 @@ fn a_timed_out_document_surfaces_a_message() {
          could never be highlighted again by any future edit"
     );
     assert!(
-        effects.cmds.is_empty(),
-        "a single-attempt timeout schedules no further cmd — there is no \
-         retry chain to continue"
+        !schedules_a_highlight_cmd(&effects),
+        "a single-attempt timeout schedules no further highlight cmd — there \
+         is no retry chain to continue"
     );
     assert_eq!(
         rune_tui::messages::newest_text(&app),
@@ -238,8 +248,8 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     );
 
     assert!(
-        effects.cmds.is_empty(),
-        "a terminal timeout must schedule no further cmd even with \
+        !schedules_a_highlight_cmd(&effects),
+        "a terminal timeout must schedule no further highlight cmd even with \
          `pending` armed by a mere document switch"
     );
     assert_eq!(

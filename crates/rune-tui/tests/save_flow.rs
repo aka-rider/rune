@@ -14,7 +14,14 @@ use rune_core::buffer::Buffer;
 use rune_tui::app::{App, update};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects, Msg};
+
+/// A refused save posts a message, and an open message pane arms its own
+/// auto-collapse timer — so "no save was issued" is a claim about the save
+/// Cmd specifically, never about the effect list being empty.
+fn spawns_a_save(effects: &Effects) -> bool {
+    effects.cmds.iter().any(|cmd| cmd.kind() == CmdKind::Save)
+}
 use rune_vfs::{Disk, Mem, Vfs};
 
 fn test_app() -> App {
@@ -226,7 +233,7 @@ fn a_second_save_press_while_one_is_in_flight_is_a_no_op() {
 
     let effects2 = press_save(&mut app);
     assert!(
-        effects2.cmds.is_empty(),
+        !spawns_a_save(&effects2),
         "a save already in flight must not spawn a second save Cmd"
     );
     assert!(app.doc(id).unwrap().save_in_flight);
@@ -346,8 +353,8 @@ fn preview_document_refuses_save_and_never_touches_disk() {
 
     let effects = press_save(&mut app);
     assert!(
-        effects.cmds.is_empty(),
-        "a refused preview save must spawn no Cmd"
+        !spawns_a_save(&effects),
+        "a refused preview save must spawn no save Cmd"
     );
 
     let saved = vfs.read(&path).expect("the seeded file must still exist");
