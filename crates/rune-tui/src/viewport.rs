@@ -63,6 +63,18 @@ impl Viewport {
         self.height = height;
     }
 
+    /// The read-only counterpart of `reconcile` (`Document::scroll_to_cursor`'s
+    /// docs): a read-only document has no insertion point for the viewport to
+    /// chase, so there is nothing to reconcile the cursor against — only the
+    /// document itself can shrink under a scrolled-away viewport (a resize, or
+    /// a wrap-width change), which this guards against. Always leaves `mode`
+    /// at `FollowCursor`: idempotent by construction, since a second call with
+    /// the same `total_rows` recomputes the same already-clamped `scroll_row`.
+    pub fn clamp_to_document(&mut self, total_rows: usize) {
+        self.scroll_row = self.scroll_row.min(total_rows.saturating_sub(1));
+        self.mode = ScrollMode::FollowCursor;
+    }
+
     /// `scrolloff`, clamped so `[scroll_row + off, scroll_row + height - 1
     /// - off]` is never empty — `(height - 1) / 2` is the largest `off` for
     /// which `off <= height - 1 - off` still holds (plan WP7.S1: "clamped
@@ -292,5 +304,37 @@ mod tests {
             vp.scroll_row, scroll_before,
             "a second reconcile with the settled cursor row moved scroll_row"
         );
+    }
+
+    #[test]
+    fn clamp_to_document_is_idempotent_and_resets_to_follow_cursor() {
+        let mut vp = viewport(80, 20);
+        vp.scroll_row = 90;
+        vp.mode = ScrollMode::Independent;
+
+        vp.clamp_to_document(100);
+        assert_eq!(vp.scroll_row, 90, "still within the document, unchanged");
+        assert_eq!(vp.mode, ScrollMode::FollowCursor);
+
+        let scroll_before = vp.scroll_row;
+        vp.clamp_to_document(100);
+        assert_eq!(
+            vp.scroll_row, scroll_before,
+            "a second call must not move it again"
+        );
+    }
+
+    #[test]
+    fn clamp_to_document_pulls_scroll_row_back_when_the_document_shrinks() {
+        let mut vp = viewport(80, 20);
+        vp.scroll_row = 90;
+        vp.mode = ScrollMode::Independent;
+
+        vp.clamp_to_document(10);
+        assert_eq!(
+            vp.scroll_row, 9,
+            "clamped to the shorter document's last row"
+        );
+        assert_eq!(vp.mode, ScrollMode::FollowCursor);
     }
 }

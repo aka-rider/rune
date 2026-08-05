@@ -9,6 +9,7 @@
 use crate::app::App;
 use crate::commands::{
     clipboard, edit, edit_lines, edit_lines_move, mouse, multi, nav, nav_line, nav_scroll,
+    reading_nav,
 };
 use crate::document::DocumentId;
 use crate::highlight::HighlightReply;
@@ -308,13 +309,24 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Ignored;
     };
 
+    // A read-only document has no insertion point, so every motion key is a
+    // viewport command instead (`commands::reading_nav`'s module docs) —
+    // checked before the big match below so none of its cursor-driven
+    // handlers ever runs against a document that paints no caret to show
+    // the cursor moving.
+    if reading_nav::intercept(app, command) {
+        return keymap::KeyOutcome::Consumed;
+    }
+
     match command {
         Command::CharLeft => nav::char_left(app.active_doc_mut(), false),
         Command::CharRight => nav::char_right(app.active_doc_mut(), false),
         // Up at the very top of the buffer focuses the title instead — a
         // contextual gesture, not a new binding, so §3.1's one-key-one-
         // binding rule is untouched. Anywhere else it's an ordinary
-        // cursor move.
+        // cursor move. A read-only document never reaches this arm:
+        // `reading_nav::intercept` above re-keys the same gesture to the
+        // view's own top and consumes the key first.
         Command::LineUp => {
             if at_buffer_top(app) {
                 app.focus_title();
@@ -410,6 +422,9 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 /// can actually type.
 /// Whether the active document's primary cursor sits on the FIRST buffer
 /// line — `offset_to_line_col`'s `line` is 0-indexed, so line 0 is the top.
+/// Only ever asked about an editable document: a read-only one has no
+/// insertion point to test, and `commands::reading_nav` answers the same
+/// question there against the viewport's own top instead.
 fn at_buffer_top(app: &App) -> bool {
     let doc = app.active_doc();
     let offset = doc.cursors.primary().position;
