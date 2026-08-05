@@ -22,6 +22,7 @@ use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::keymap::{Binding, GLOBAL_BINDINGS};
+use crate::merge::MERGE_BINDINGS;
 use crate::opentabs::TABS_BINDINGS;
 
 /// Builds the whole Help document's markdown: a `# Help` heading, one
@@ -41,6 +42,7 @@ pub fn help_markdown() -> String {
     out.push('\n');
     push_table_section(&mut out, "Open Tabs", TABS_BINDINGS);
     push_table_section(&mut out, "Editor", EDITOR_BINDINGS);
+    push_table_section(&mut out, "Merge", MERGE_BINDINGS);
     out
 }
 
@@ -157,10 +159,17 @@ mod tests {
     #[test]
     fn editor_section_row_count_matches_the_table() {
         let md = help_markdown();
-        let section = md
+        let after_heading = md
             .split("## Editor\n\n")
             .nth(1)
             .expect("Editor section present");
+        // Bounded at the next `## ` heading — the Editor table is no longer
+        // the document's last section, and a later section's rows must not
+        // inflate this count.
+        let section = after_heading
+            .split("\n## ")
+            .next()
+            .expect("split yields at least one piece");
         let row_count = section
             .lines()
             .filter(|line| {

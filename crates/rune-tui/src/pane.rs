@@ -94,7 +94,12 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             crate::focus::reconcile(app, effects);
         }
         GlobalCommand::Save => {
-            let _ = save::trigger_save(app, app.active, effects);
+            // Plan WP4.S3: an active resolver with unresolved blocks
+            // refuses the save (with the count) instead of publishing a
+            // half-resolved working form.
+            if !crate::merge::refuses_save(app, app.active) {
+                let _ = save::trigger_save(app, app.active, effects);
+            }
         }
         // WP7.S2: mints/toggles the generated Help virtual document — a
         // direct, same-tick call (decision 10), no I/O involved. The hoisted

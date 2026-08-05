@@ -44,6 +44,16 @@ enum Mode<'a> {
     /// keymap hints so the user always sees it once no more pressing
     /// message is showing.
     DiskChanged,
+    /// Persistent resolver reminder (plan WP4.S4) carrying the live
+    /// unresolved count. Ranked below `Status` — a deliberate divergence
+    /// from Go's ladder (where the merge hint outranks status): rune's
+    /// status messages persist rather than expire, and they are the ONLY
+    /// feedback channel for a key the resolver just swallowed, so hiding
+    /// them behind this ambient reminder would silently eat that feedback.
+    /// Every resolver action writes a status that carries the merge
+    /// vocabulary anyway, so the reminder only needs to win over the bare
+    /// default hints.
+    MergeHint(usize),
     DefaultHints,
 }
 
@@ -67,10 +77,18 @@ fn mode(app: &App) -> Mode<'_> {
     if let Some(msg) = &app.status_message {
         return Mode::Status(msg);
     }
-    if matches!(
-        app.active_doc().last_sync,
-        Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
-    ) {
+    if let crate::merge::MergeState::Active { .. } = app.merge {
+        return Mode::MergeHint(app.merge.unresolved_count());
+    }
+    // Suppressed while a merge attempt is underway (plan WP4.S4): `Active`
+    // returned above, and a `Pending` attempt's "[⌘M]erge" invitation
+    // would be stale advice about the very thing already in flight.
+    if matches!(app.merge, crate::merge::MergeState::Inactive)
+        && matches!(
+            app.active_doc().last_sync,
+            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
+        )
+    {
         return Mode::DiskChanged;
     }
     Mode::DefaultHints
@@ -124,6 +142,12 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
         Mode::Status(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::DiskChanged => vec![Span::styled(
             "\u{21c4} disk changed \u{2014} [\u{2318}M]erge",
+            app.theme.chrome.footer_hint,
+        )],
+        Mode::MergeHint(unresolved) => vec![Span::styled(
+            format!(
+                "\u{2699} merge \u{2014} [O]urs [T]heirs [B]oth · [ ] navigate · {unresolved} left"
+            ),
             app.theme.chrome.footer_hint,
         )],
         Mode::DefaultHints => default_hint_spans(app),

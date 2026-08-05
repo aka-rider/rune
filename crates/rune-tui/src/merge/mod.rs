@@ -5,9 +5,12 @@
 //! (WP6) are later work packages layered on the state this module owns.
 
 pub mod frame;
+pub mod keys;
 mod landing;
+mod resolve;
 pub mod state;
 
+pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
 pub use state::{Block, Conflict, MergeIntent, MergeState};
 
@@ -90,6 +93,30 @@ pub(crate) fn exit_in_place(app: &mut App) {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
     app.set_status(message, StatusSource::Other);
+}
+
+/// The `⌘S` gate (plan WP4.S3, decision 6): while the resolver is active ON
+/// the document being saved with unresolved blocks remaining, saving is
+/// refused with the count — a reflexive save mid-merge must not publish a
+/// half-resolved working form with zero friction. One rule, no content
+/// sniffing: after exit or full resolution the document is ordinary dirty
+/// text and saves normally, markers included.
+pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
+    let MergeState::Active { doc, .. } = &app.merge else {
+        return false;
+    };
+    if *doc != target {
+        return false;
+    }
+    let unresolved = app.merge.unresolved_count();
+    if unresolved == 0 {
+        return false;
+    }
+    app.set_status(
+        format!("{unresolved} conflict(s) to resolve — [O]urs [T]heirs [B]oth"),
+        StatusSource::Other,
+    );
+    true
 }
 
 /// `GlobalCommand::Merge`'s handler (plan WP3.S5): `⌘M` starts a merge
