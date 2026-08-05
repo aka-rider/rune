@@ -8,10 +8,11 @@
 
 use rune_core::buffer::Edit;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav_scroll;
 use crate::document::DocumentId;
+use crate::messages;
 
 use super::state::{Block, MergeState};
 
@@ -45,7 +46,7 @@ pub(crate) fn nav(app: &mut App, dir: isize) {
     let target = blocks.get(next).map(|b| b.start).unwrap_or(0);
     let position = position_status(blocks, next);
     scroll_doc(app, doc, target);
-    app.set_status(position, StatusSource::Other);
+    messages::info(app, position);
 }
 
 /// O/T/B (plan WP4.S2). On an edit refusal (`commit_edit_batch` returning
@@ -82,9 +83,9 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
                 insert: text.clone(),
             };
             if !commit_edit_batch(app, doc, vec![(edit, 0)], cursors_before) {
-                app.set_status(
+                messages::error(
+                    app,
                     "merge: the block could not be applied — left unresolved",
-                    StatusSource::Other,
                 );
                 return;
             }
@@ -128,7 +129,7 @@ pub(crate) fn accept(app: &mut App, choice: Choice) {
     let target = blocks.get(next).map(|b| b.start).unwrap_or(0);
     let position = position_status(blocks, next);
     scroll_doc(app, doc, target);
-    app.set_status(position, StatusSource::Other);
+    messages::info(app, position);
 }
 
 /// The nearest unresolved index from `from` in `dir`, wrapping; `None` only

@@ -181,12 +181,11 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
         "a UTF-8 refusal must never touch the buffer"
     );
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("not valid UTF-8"),
         "expected a UTF-8 refusal status, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert_eq!(app.merge, MergeState::Inactive);
 }
@@ -209,8 +208,7 @@ fn merge_with_no_divergence_hint_refuses_without_enqueueing() {
     assert_eq!(app.merge, MergeState::Inactive);
     assert!(app.db_ops.is_empty(), "no MergePrep should be enqueued");
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("no divergence to merge")
     );

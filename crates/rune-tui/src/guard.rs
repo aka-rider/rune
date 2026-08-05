@@ -1,27 +1,59 @@
-//! The Guard modal's own state and key handling (split out of `banner.rs`
-//! for the 500-line budget, plan WP2: the `DirtyQuit` addition pushed the
-//! parent file over): `GuardPrompt`/`GuardKind`, the `[S]ave`/`[D]iscard`/
-//! `[Esc]` option labels every kind shares, and `handle_guard_key`'s
-//! dispatch to each kind's own answer. `banner.rs` re-exports every public
-//! item here, so `crate::banner::GuardKind` etc. keep resolving unchanged
-//! for every existing caller.
+//! The close/quit/rename/disk-conflict confirmation prompt — `App`'s one
+//! `guard: Option<GuardPrompt>` slot, replacing the old `banner::Modal`'s
+//! `Guard` variant now that its `Error` sibling has moved to the message
+//! log, `messages.rs`. `GuardPrompt`/`GuardKind`, the
+//! `[S]ave`/`[D]iscard`/`[Esc]` option labels every kind shares, and
+//! `handle_guard_key`'s dispatch to each kind's own answer.
 
 use std::collections::BTreeMap;
 
 use rune_db::ObsId;
 
-use crate::app::{App, QuitIntent, StatusSource};
+use crate::app::{App, QuitIntent};
 use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput};
 use crate::merge::MergeIntent;
+use crate::messages;
 use crate::runtime::Effects;
 use crate::save::{self, SaveStart};
 use crate::workspace;
 
-use super::Modal;
+/// The one chokepoint that raises a new Guard prompt, replacing the old
+/// `banner::set_modal`: never displaces a prompt already up — with the old
+/// modal error banner gone, a Guard is the only thing that can ever be up,
+/// so "never displace" now simply means "only while none is up". Returns
+/// whether the prompt was actually raised, `#[must_use]` because a caller
+/// that assumes it always was (`rename.rs`'s `Collision` entry in
+/// particular) would otherwise wait forever on a prompt that never
+/// appeared.
+#[must_use]
+pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> bool {
+    if app.guard.is_some() {
+        return false;
+    }
+    app.guard = Some(prompt);
+    true
+}
 
-/// The close/quit-confirmation prompt for a dirty document (plan WP5.S3,
-/// widened by WP2 for quit): armed by `workspace::request_close`/
+/// The SOLE writer of `app.guard = None` — every dismissal path routes
+/// here, including `set_guard`'s own indirect callers once the previous
+/// state must go.
+pub fn clear_guard(app: &mut App) {
+    let was_collision = matches!(
+        &app.guard,
+        Some(GuardPrompt {
+            kind: GuardKind::RenameCollision { .. },
+            ..
+        })
+    );
+    app.guard = None;
+    if was_collision {
+        crate::rename::on_prompt_dismissed(app);
+    }
+}
+
+/// The close/quit-confirmation prompt for a dirty document: armed by
+/// `workspace::request_close`/
 /// `pane::handle_quit_key` when the document at `doc` is dirty (and, for
 /// quit, unpreserved), and resolved by `handle_guard_key` below —
 /// `[S]ave`/`[D]iscard`/`Esc`. `kind` distinguishes what the ANSWER should
@@ -36,8 +68,8 @@ pub struct GuardPrompt {
 pub enum GuardKind {
     DirtyClose,
     /// Quit is waiting on `doc` specifically because it has no live,
-    /// trustworthy recovery journal (`App::is_preserved`) — plan WP2, the
-    /// fix for the "guard is impossible to exit from" defect. Distinct from
+    /// trustworthy recovery journal (`App::is_preserved`) — otherwise quit
+    /// would be impossible to exit from once armed. Distinct from
     /// `DirtyClose` so the SAME `s`/`d` keys can be answered with the
     /// correct continuation: `DirtyClose`'s `[D]iscard` only ever closes one
     /// document, but here it must complete the quit the user actually
@@ -51,7 +83,7 @@ pub enum GuardKind {
     RenameCollision {
         target: String,
     },
-    /// The save-time CAS conflict (plan WP6.S4): `doc`'s ⌘S found the disk
+    /// The save-time CAS conflict: `doc`'s ⌘S found the disk
     /// bytes no longer match what it last read. `fresh_obs` is the
     /// observation `record_fresh_from_stat` recorded of the live disk bytes
     /// AT THE MOMENT the conflict was detected — `[S]ave anyway`'s retry
@@ -86,7 +118,7 @@ pub const DIRTY_CLOSE_DISCARD: GuardOption = GuardOption {
 /// `Esc`/Cancel isn't a `GuardOption` (it never triggers an ACTION beyond
 /// clearing the modal, so there's no behavior to key off) and keeps its own
 /// `DIRTY_CLOSE_CANCEL_LABEL` below instead. Shared verbatim by
-/// `GuardKind::DirtyQuit` (plan WP2): the two prompts answer to the exact
+/// `GuardKind::DirtyQuit`: the two prompts answer to the exact
 /// same keys, only the CONTINUATION differs.
 pub const DIRTY_CLOSE_OPTIONS: &[GuardOption] = &[DIRTY_CLOSE_SAVE, DIRTY_CLOSE_DISCARD];
 pub const DIRTY_CLOSE_CANCEL_LABEL: &str = "[Esc] Cancel";
@@ -100,7 +132,7 @@ pub const RENAME_REPLACE: GuardOption = GuardOption {
 };
 pub const RENAME_COLLISION_OPTIONS: &[GuardOption] = &[RENAME_REPLACE];
 
-/// The disk-conflict Guard's three answers (plan WP6.S4) — `handle_guard_
+/// The disk-conflict Guard's three answers — `handle_guard_
 /// key`'s `s`/`d`/Esc dispatch above already covers Save/Discard/Cancel by
 /// key, so only `[M]erge` needs a new key; `DISK_CONFLICT_SAVE`/`_DISCARD`
 /// reuse the same `s`/`d` keys as `DIRTY_CLOSE_*` (this Guard never competes
@@ -127,7 +159,7 @@ pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
 /// Names what Escape cancels for a given Guard kind. An exhaustive match, so
 /// a future `GuardKind` variant is forced to choose its own cancellation
 /// wording rather than silently inheriting a generic one.
-pub(super) fn cancel_status(kind: &GuardKind) -> &'static str {
+fn cancel_status(kind: &GuardKind) -> &'static str {
     match kind {
         GuardKind::DirtyClose => "close cancelled",
         GuardKind::DirtyQuit => "quit cancelled",
@@ -140,37 +172,22 @@ pub(super) fn cancel_status(kind: &GuardKind) -> &'static str {
 /// later kind can never forget to be cancellable — and reports what it
 /// cancelled via `cancel_status` so the modal never just silently vanishes.
 /// Every other key dispatches to the kind's own answer below.
-pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    let Some(Modal::Guard(prompt)) = &app.modal else {
+pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    let Some(prompt) = &app.guard else {
         return;
     };
     let doc = prompt.doc;
     if key.code == KeyCode::Escape {
-        let is_disk_conflict = matches!(prompt.kind, GuardKind::DiskConflict { .. });
         let msg = cancel_status(&prompt.kind);
-        super::clear_modal(app);
-        // A cancellation ack is the least important thing the status row can
-        // say. An unacknowledged save failure is the most important, and the
-        // footer already ranks it above ordinary status, so overwriting it
-        // here would drop the user's only notice that their bytes did not
-        // reach disk. Cancelling an unrelated Guard must never cost them
-        // that; the save failure stays until its own success clears it.
-        //
-        // `DiskConflict` is the one exception: this very Guard IS the
-        // acknowledgement the save-refused status was waiting for — by the
-        // time it was raised, the save-refusal reaction had already seeded
-        // `last_sync` as `Diverged`, so the footer's disk-changed hint is
-        // already the persistent replacement feedback. Leaving the
-        // stale "save refused" text up here would outrank that hint forever
-        // (`footer::mode`'s `SaveError` check runs before `DiskChanged`),
-        // stranding the user with no visible way to merge. Clearing to
-        // `None` rather than setting a "cancelled" status matters too — any
-        // status at all would still outrank `DiskChanged` one rung lower.
-        if is_disk_conflict {
-            app.status_message = None;
-        } else if app.status_source != StatusSource::SaveError {
-            app.set_status(msg, StatusSource::Other);
-        }
+        clear_guard(app);
+        // The log never clears an earlier entry, so an unacknowledged save
+        // failure stays visible in the pane regardless of this cancellation
+        // ack landing after it. Dismissing the disk-conflict Guard this way
+        // needs no special case either: `footer::mode` ranks `Guard` above
+        // `DiskChanged` only while `app.guard` is `Some`, so clearing it
+        // here already lets the footer fall through to the persistent
+        // disk-changed/`[^M]erge` hint on its own.
+        messages::info(app, msg);
         return;
     }
     match &prompt.kind {
@@ -191,18 +208,18 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
 /// case — the close intent is dropped (the user must press `^w` again once
 /// ready), never silently mis-fired against a save that never happened.
 /// `d`/`D` discards and closes immediately. Every other key is a consumed
-/// no-op (plan WP5.S3).
+/// no-op.
 fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             let _ = save::trigger_save(app, doc, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             let _ = crate::workspace::close_now(app, doc, effects);
         }
         _ => {}
@@ -225,11 +242,11 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
 fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             app.should_quit = true;
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             start_quit_save_fan_out(app, effects);
         }
         _ => {}
@@ -244,7 +261,7 @@ fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
 /// already says why (`trigger_save`'s own refusal arms all set one).
 ///
 /// `App::pending_save_confirm` is a single global slot, not one per
-/// document (plan WP1 decision 3) — a degraded store's FIRST `trigger_save`
+/// document — a degraded store's FIRST `trigger_save`
 /// for a given document only arms that slot rather than saving. Churning
 /// through the rest of the fan-out after that would overwrite the slot with
 /// a LATER document's arm, silently discarding this one's and leaving the
@@ -279,7 +296,7 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
 }
 
 /// `r`/`R` confirms the destructive replace — but only when there is a
-/// durable store to capture the displaced bytes into. Without
+/// durable store to capture the displaced bytes into first. Without
 /// one the key is a consumed no-op with an explanation, and the prompt
 /// STAYS up: silently doing nothing would look like a dropped keypress,
 /// and clearing it would look like the replace happened.
@@ -289,16 +306,13 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
         return;
     }
     if !crate::rename::replace_allowed(app) {
-        app.set_status(
-            "cannot replace \u{2014} recovery store unavailable",
-            StatusSource::Other,
-        );
+        messages::error(app, "cannot replace \u{2014} recovery store unavailable");
         return;
     }
     crate::rename::replace_confirmed(app);
 }
 
-/// The disk-conflict Guard's own answer (plan WP6.S4). `s`/`S` retries the
+/// The disk-conflict Guard's own answer. `s`/`S` retries the
 /// SAME save with the CAS baseline advanced to `fresh_obs` — the observation
 /// of what was actually on disk at conflict-detection time — so the retry's
 /// expectation matches fact instead of the stale hash that just failed; a
@@ -307,8 +321,8 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
 /// both switch onto `doc` first (a conflict can in principle be answered for
 /// a document that isn't the active one, e.g. a background quit-save) before
 /// starting `merge::begin`'s shared entry pipeline, which reads its subject
-/// off `app.active` (plan A2 — `Discard` shares `Merge`'s own fresh-`MergePrep`
-/// round trip rather than repeating it). Every other key is a consumed
+/// off `app.active` — `Discard` shares `Merge`'s own fresh-`MergePrep`
+/// round trip rather than repeating it. Every other key is a consumed
 /// no-op, matching every other Guard kind.
 fn handle_disk_conflict_key(
     app: &mut App,
@@ -319,26 +333,129 @@ fn handle_disk_conflict_key(
 ) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
                 doc_db.expect_obs = fresh_obs;
             }
             let _ = save::trigger_save(app, doc, effects);
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if app.active != doc {
                 workspace::switch_to(app, doc);
             }
             crate::merge::begin(app, MergeIntent::Discard, effects);
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_MERGE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if app.active != doc {
                 workspace::switch_to(app, doc);
             }
             crate::merge::begin(app, MergeIntent::Merge, effects);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        App::new(Buffer::new("hi"), None, Arc::new(Mem::new()), None)
+    }
+
+    fn prompt(doc: DocumentId, kind: GuardKind) -> GuardPrompt {
+        GuardPrompt { doc, kind }
+    }
+
+    /// `set_guard` raises a prompt onto an empty slot.
+    #[test]
+    fn set_guard_raises_onto_an_empty_slot() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DirtyClose,
+                ..
+            })
+        ));
+    }
+
+    /// `set_guard` never displaces a prompt already up — with the old modal
+    /// error banner gone, this is the whole priority rule — the `false`
+    /// return is what lets `rename.rs` notice and stay `Idle` rather than
+    /// wait on a prompt that was never raised.
+    #[test]
+    fn set_guard_refuses_to_replace_an_existing_prompt() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert!(!set_guard(
+            &mut app,
+            prompt(
+                doc,
+                GuardKind::RenameCollision {
+                    target: "b.md".to_string(),
+                }
+            )
+        ));
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DirtyClose,
+                ..
+            })
+        ));
+    }
+
+    /// `clear_guard` empties the slot.
+    #[test]
+    fn clear_guard_empties_the_slot() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        clear_guard(&mut app);
+        assert!(app.guard.is_none());
+    }
+
+    /// A cleared `RenameCollision` prompt notifies the rename machine
+    /// (`rename::on_prompt_dismissed`), returning it to `Idle` — the other
+    /// half of the global invariant `rename.rs` documents.
+    #[test]
+    fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
+        let mut app = app();
+        let doc = app.active;
+        app.rename = crate::rename::RenameState::Collision {
+            doc,
+            from: std::path::PathBuf::new(),
+            to: std::path::PathBuf::from("/b.md"),
+            seen: rune_vfs::Stat {
+                size: 0,
+                mtime: std::time::SystemTime::UNIX_EPOCH,
+                identity: rune_vfs::Identity::default(),
+                nlink: None,
+                kind: rune_vfs::FileKind::File,
+            },
+        };
+        assert!(set_guard(
+            &mut app,
+            prompt(
+                doc,
+                GuardKind::RenameCollision {
+                    target: "b.md".to_string(),
+                }
+            )
+        ));
+        clear_guard(&mut app);
+        assert!(app.guard.is_none());
+        assert_eq!(app.rename, crate::rename::RenameState::Idle);
     }
 }

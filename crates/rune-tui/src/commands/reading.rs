@@ -10,8 +10,9 @@
 //! `DocMachine` dirty, so the toggle's geometry change is absorbed by the
 //! very next `view()` call (`document/tests.rs`'s sync-idempotence pin).
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::ReadOnly;
+use crate::messages;
 use crate::pane::Pane;
 use crate::viewport::ScrollMode;
 
@@ -37,7 +38,7 @@ pub fn toggle(app: &mut App) {
     // same "finish the merge first" refusal shape as the ⌘S gate
     // (`merge::refuses_save`).
     if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
-        app.set_status("finish or close the merge first", StatusSource::Other);
+        messages::warn(app, "finish or close the merge first");
         return;
     }
     let doc = app.active_doc_mut();
@@ -61,7 +62,7 @@ pub fn toggle(app: &mut App) {
         }
         ReadOnly::Always | ReadOnly::Preview => {
             if let Some(message) = doc.read_only.refusal_message() {
-                app.set_status(message, StatusSource::Other);
+                messages::warn(app, message);
             }
         }
     }
@@ -99,7 +100,7 @@ mod tests {
 
         assert_eq!(app.active_doc().read_only, ReadOnly::Always);
         assert_eq!(
-            app.status_message.as_deref(),
+            crate::messages::newest_text(&app),
             ReadOnly::Always.refusal_message()
         );
     }
@@ -123,12 +124,11 @@ mod tests {
 
         assert_eq!(app.active_doc().read_only, ReadOnly::No);
         assert!(
-            app.status_message
-                .as_deref()
+            crate::messages::newest_text(&app)
                 .unwrap_or_default()
                 .contains("finish or close the merge"),
             "expected the merge refusal status, got {:?}",
-            app.status_message
+            crate::messages::newest_text(&app)
         );
     }
 
@@ -141,7 +141,7 @@ mod tests {
 
         assert_eq!(app.active_doc().read_only, ReadOnly::Preview);
         assert_eq!(
-            app.status_message.as_deref(),
+            crate::messages::newest_text(&app),
             ReadOnly::Preview.refusal_message()
         );
     }

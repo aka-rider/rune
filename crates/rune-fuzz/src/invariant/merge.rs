@@ -85,7 +85,7 @@ pub fn merge_save_blocked(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
 /// status message. `merge/keys.rs::intercept` is the sole owner of every
 /// key in this state (it runs before the hardcoded Enter/Escape fast paths
 /// and the printable-insert fallthrough), so this pins that its own
-/// fallback arm — `app.set_status(MERGE_KEY_HINT, ..)` — is truly
+/// fallback arm — a `messages::warn(MERGE_KEY_HINT, ..)` post — is truly
 /// exhaustive over everything it doesn't otherwise resolve.
 ///
 /// Scoped to `Pane::Editor` (plan `[R1]`): `merge/keys.rs::intercept`

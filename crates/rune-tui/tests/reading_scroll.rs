@@ -151,7 +151,7 @@ fn up_at_the_top_of_a_read_only_document_focuses_the_title() {
         "focus_title refuses on a read-only document; it must not move focus"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Always.refusal_message()
     );
 }

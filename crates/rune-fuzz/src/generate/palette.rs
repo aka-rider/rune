@@ -437,7 +437,7 @@ pub(super) static TITLE_MOTION_KEYS: &[KeyInput] = &[
 ];
 
 /// Plain `Esc`, no mods — the key `banner::handle_key`'s stage 1 uses to
-/// clear EITHER modal variant (`Modal::Error`/`Modal::Guard`) without
+/// clear the modal Guard without
 /// touching a buffer byte, and the key `title::handle_key` uses to revert
 /// and hand focus back to the editor. `driver/checks.rs::
 /// restore_editor_focus` is the existing precedent for this exact key.
@@ -495,9 +495,23 @@ pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
     },
 };
 
-/// Unmodified printable-letter keys for the Explorer type-to-search
-/// feature: `KeyPattern::printable`'s wildcard row matches any non-control
-/// `Char` under `Mods::NONE`, so this
+/// `^e` (`GlobalCommand::ToggleMessages`) — the message pane's own
+/// open/focus/collapse toggle. Reaching it is what exercises the pane
+/// (and, by extension, `Pane::Messages` focus routing) against the
+/// fuzzer's own generated sessions, not just the deterministic test suite.
+pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('e'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
+/// Unmodified printable-letter keys for the Explorer type-to-search feature
+/// (`explorer_search.rs`): `KeyPattern::printable`'s wildcard row matches
+/// any non-control `Char` under `Mods::NONE`, so this
 /// is only ever exercised if a generated key actually reaches the Explorer
 /// AS an unmodified letter — `cluster_chrome`'s `^b`-then-type arm
 /// (`cluster.rs`) is what supplies that reachability, letting `PANE-NO-

@@ -205,7 +205,7 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
     }
 
     app.blur_title(effects);
-    // `open_path` reports a read failure through `banner::report_error`
+    // `open_path` reports a read failure through `messages::error`
     // itself before returning `None` — discarding the `Option` here
     // drops only the opened id, never an unsurfaced error.
     if workspace::open_path(app, &target).is_some() {

@@ -9,7 +9,7 @@
 //!
 //! ### Why a typed machine and not two booleans
 //!
-//! The existing confirmation machinery (`banner`'s `Modal::Guard`) is a
+//! The existing confirmation machinery (`guard`'s `GuardPrompt`) is a
 //! *prompt*: `handle_guard_key` resolves every dirty-close outcome
 //! synchronously in one match arm. `[R]eplace` cannot work that way — it is
 //! capture-displaced-bytes, *then* swap, *then* commit, *then* unlink, with
@@ -20,8 +20,8 @@
 //! rule forbids: reaching a swap without having captured, and prompting
 //! about a collision an external process already resolved.
 //!
-//! So the *prompt* stays in `banner`/`footer` ("the component that
-//! renders the feedback"), and this machine drives the I/O.
+//! So the *prompt* stays in `guard`/`footer` — the component that renders
+//! the feedback — and this machine drives the I/O.
 //!
 //! ### The states, and the ones that deliberately don't exist
 //!
@@ -29,8 +29,8 @@
 //!   op, so "swapped but not captured" is not representable across a
 //!   message boundary.
 //! - **No `Failed`.** Nothing would wait in it and nothing would leave it;
-//!   `Modal::Error` already owns errors. Every failure edge goes to `Idle`
-//!   + `banner::report_error` + refocus the title with the typed name.
+//!   the message log already owns errors. Every failure edge goes to `Idle`
+//!   + `messages::error` + refocus the title with the typed name.
 //! - **No `typed: String`.** The typed name IS `to.file_name()` — one
 //!   value, one meaning.
 //!
@@ -40,8 +40,8 @@
 //! ### Global invariant
 //!
 //! `matches!(app.rename, RenameState::Collision { .. })` ⟺ a
-//! `RenameCollision` Guard is up. `banner::set_modal` returning `bool`
-//! guards the raise side; `banner::clear_modal` calling
+//! `RenameCollision` Guard is up. `guard::set_guard` returning `bool`
+//! guards the raise side; `guard::clear_guard` calling
 //! [`on_prompt_dismissed`] guards the removal side.
 //!
 //! ### Known limitation
@@ -59,9 +59,10 @@ use std::path::{Path, PathBuf};
 use rune_db::RenameOutcome;
 use rune_vfs::Stat;
 
-use crate::app::{App, StatusSource};
-use crate::banner::{self, GuardKind, GuardPrompt, Modal};
+use crate::app::App;
 use crate::document::DocumentId;
+use crate::guard::{self, GuardKind, GuardPrompt};
+use crate::messages;
 use crate::runtime::Effects;
 use crate::title;
 
@@ -189,8 +190,9 @@ fn display_name(path: &Path) -> String {
 /// name, a successful enqueue, and an enqueue failure that has already been
 /// reported through `on_store_failure` all return `Accepted`, because none
 /// of them leaves the user needing to fix anything in the field. Every
-/// `Refused` path's SOLE side effect is `app.set_status` (decision 7) — that
-/// is what makes a refused blur running this twice in one keystroke
+/// `Refused` path's SOLE side effect is posting a message to the log —
+/// that is what makes a refused blur running this twice in
+/// one keystroke
 /// harmless, since the second run just re-reports the same status. Every
 /// refusal below leaves the state `Idle`, the buffer byte-identical,
 /// `file_path` unchanged, and the journal untouched — a refused rename must
@@ -202,7 +204,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // in-flight op captured its own `from`, and letting a second one race
     // it would mean two ops disagreeing about where the file is.
     if app.rename.in_flight() {
-        app.set_status("a rename is already in progress", StatusSource::Other);
+        messages::warn(app, "a rename is already in progress");
         return Commit::Refused;
     }
 
@@ -224,16 +226,13 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // republish at the OLD name after the rename landed — a save that
     // silently resurrects the old file.
     if doc.save_in_flight {
-        app.set_status(
-            "can't rename while a save is in flight",
-            StatusSource::Other,
-        );
+        messages::warn(app, "can't rename while a save is in flight");
         return Commit::Refused;
     }
 
     let typed = app.title.text().to_string();
     if !title::is_valid_name(&typed) {
-        app.set_status("that name can't be used for a file", StatusSource::Other);
+        messages::error(app, "that name can't be used for a file");
         return Commit::Refused;
     }
 
@@ -338,18 +337,18 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
             let verb = if created { "created" } else { "renamed to" };
-            app.set_status(format!("{verb} {}", display_name(&to)), StatusSource::Other);
+            messages::info(app, format!("{verb} {}", display_name(&to)));
         }
         Ok(RenameOutcome::Replaced { displaced }) => {
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
-            app.set_status(
+            messages::info(
+                app,
                 format!(
                     "replaced {} \u{2014} its {} bytes were preserved in the recovery store",
                     display_name(&to),
                     displaced.size
                 ),
-                StatusSource::Other,
             );
         }
         Ok(RenameOutcome::Collided { seen }) => {
@@ -361,18 +360,19 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
                 return_to_title(app);
                 return;
             }
-            // Enter `Collision` ONLY if the prompt is really on screen: an
-            // `Error` already up outranks a Guard, and waiting on an
-            // invisible prompt would leave the title focused with every key
-            // going somewhere the user does not expect (hazard 1).
-            let raised = banner::set_modal(
+            // Enter `Collision` ONLY if the prompt is really on screen: a
+            // Guard already up outranks a new one (`guard::set_guard` never
+            // displaces), and waiting on an invisible prompt would leave the
+            // title focused with every key going somewhere the user does
+            // not expect (hazard 1).
+            let raised = guard::set_guard(
                 app,
-                Modal::Guard(GuardPrompt {
+                GuardPrompt {
                     doc: doc_id,
                     kind: GuardKind::RenameCollision {
                         target: display_name(&to),
                     },
-                }),
+                },
             );
             if raised {
                 app.rename = RenameState::Collision {
@@ -387,7 +387,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
         }
         Ok(RenameOutcome::Refused { .. }) => {
             app.rename = RenameState::Idle;
-            banner::report_error(
+            messages::error(
                 app,
                 format!(
                     "{} changed since you confirmed \u{2014} nothing was replaced",
@@ -398,7 +398,7 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
         Err(e) => {
             app.rename = RenameState::Idle;
             let what = if was_capturing { "replace" } else { "rename" };
-            banner::report_error(
+            messages::error(
                 app,
                 format!("could not {what} {}: {e}", display_name(&from)),
             );
@@ -477,17 +477,17 @@ pub fn replace_confirmed(app: &mut App) {
                 seen,
                 ticket: Ticket::Db(op_id),
             };
-            banner::clear_modal(app);
+            guard::clear_guard(app);
         }
         Err(e) => {
             app.rename = RenameState::Idle;
-            banner::clear_modal(app);
+            guard::clear_guard(app);
             crate::materialize_ack::on_store_failure(app, e.to_string());
         }
     }
 }
 
-/// Called by `banner::clear_modal` whenever a `RenameCollision` Guard is
+/// Called by `guard::clear_guard` whenever a `RenameCollision` Guard is
 /// removed — by `Esc`, by an `Error` displacing it, by anything at all.
 /// Holds up the second half of the global invariant: no `Collision` state
 /// ever outlives its prompt.
@@ -516,7 +516,7 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
         // already a no-op now that the state is `Idle` — clearing the slot
         // directly here would bypass the sole-writer rule, so route
         // through it anyway and let the no-op absorb the second call.
-        banner::clear_modal(app);
+        guard::clear_guard(app);
     }
 }
 
@@ -526,8 +526,5 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
 /// distinguished from a rename.
 fn draft_collision_refusal(app: &mut App, target: &Path) {
     app.rename = RenameState::Idle;
-    app.set_status(
-        format!("{} already exists", display_name(target)),
-        StatusSource::Other,
-    );
+    messages::error(app, format!("{} already exists", display_name(target)));
 }

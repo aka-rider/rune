@@ -28,20 +28,28 @@ use ratatui::widgets::{Block, BorderType};
 use rune_md::element::doc::ViewSnapshots;
 
 use crate::app::App;
-use crate::banner;
+use crate::document::Document;
+use crate::messages;
 use crate::pane::Pane;
 
 pub use blit::blit;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 
-/// Builds the visible `Vec<Vec<Cell>>` for the editor viewport: the DISPLAY
+/// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
 /// rows (WP3: wrap rows plus synthesised table borders) in `[scroll_row,
-/// scroll_row + height)`, with cursor/selection overlays applied.
-/// `viewport.scroll_row` is a DISPLAY row index — `Document::scroll_to_cursor`
-/// is its single writer and converts through `DisplaySnapshot::wrap_to_display`
-/// before ever assigning it (see that function's docs).
-pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
-    let doc = app.active_doc();
+/// scroll_row + height)`, with cursor/selection overlays applied. Generic
+/// over `doc` so the messages pane can render its own read-only `Document`
+/// through the identical pipeline the editor uses —
+/// required for mouse hit-testing to ever land correctly, since `render`'s
+/// row space and a bespoke row walk (the old `banner::build_rows`) are
+/// NOT the same space. `viewport.scroll_row` is a DISPLAY row index —
+/// `Document::scroll_to_cursor` is its single writer and converts through
+/// `DisplaySnapshot::wrap_to_display` before ever assigning it (see that
+/// function's docs). Merge mode's ours/theirs/marker overlay is NOT painted
+/// here — it is the active editor document's own content, so `render::draw`
+/// applies it itself, at the one call site that actually knows `doc` is the
+/// active document.
+pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Cell>> {
     let viewport = &doc.viewport;
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
@@ -113,11 +121,6 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         &app.theme,
     );
 
-    // Merge mode's ours/theirs/marker backgrounds (plan WP5.S3) paint LAST,
-    // on top of the highlight/selection/caret overlays above — the working
-    // form's markers and framed spans are merge mode's own content, not
-    // markdown or code to be highlighted underneath them.
-    crate::merge::paint::paint(&mut rows, &app.merge, app.active, &app.theme);
     rows
 }
 
@@ -162,7 +165,17 @@ pub fn draw(app: &App, frame: &mut Frame) {
     }
 
     if let Some(view) = &app.active_doc().view {
-        let rows = build_rows(view, app);
+        let mut rows = build_rows(app, app.active_doc(), view);
+        // Merge mode's ours/theirs/marker backgrounds paint LAST, on top of
+        // every overlay `build_rows` already applied — the working form's
+        // markers and framed spans are merge mode's own content, not
+        // markdown or code to be highlighted underneath them. Painted here
+        // rather than inside `build_rows`: this is the one call site that
+        // actually knows `doc` is the active
+        // document, so a generic `build_rows` (the messages pane's own
+        // caller included) can never mistakenly paint a merge overlay onto
+        // some other document.
+        crate::merge::paint::paint(&mut rows, &app.merge, app.active, &app.theme);
         blit(&rows, geo.editor, frame);
     }
 
@@ -170,10 +183,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
         crate::breadcrumb::overlay(app, geo.center, app.focus() == Pane::Editor, frame);
     }
 
-    // (b) The one banner delegation (plan WP3.S3) — all of its own cell
-    // building lives in `banner.rs`, never here.
-    if let Some(banner_area) = geo.banner {
-        banner::draw(app, banner_area, frame);
+    // The one messages-pane delegation — all of its own cell building
+    // lives in `messages::render`, never here.
+    if let Some(messages_area) = geo.messages {
+        messages::draw(app, messages_area, frame);
     }
     crate::footer::draw(app, geo.footer, frame);
 }

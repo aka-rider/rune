@@ -19,13 +19,14 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_vfs::Vfs;
 
-use crate::banner::Modal;
 use crate::db::Db;
 use crate::dispatch;
 use crate::document::{Document, DocumentId};
 use crate::document_map::DocumentMap;
 use crate::explorer::Explorer;
+use crate::guard::GuardPrompt;
 use crate::keymap::QuitKey;
+use crate::messages::MessageLog;
 use crate::opentabs::OpenTabs;
 use crate::pane::Pane;
 use crate::runtime::{Effects, Msg};
@@ -42,30 +43,6 @@ use crate::save;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuitIntent {
     pub pending: std::collections::BTreeMap<DocumentId, u64>,
-}
-
-/// Which subsystem last wrote `App::status_message` — the provenance tag
-/// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
-/// save path set, never an unrelated one (review finding F2: an earlier
-/// version cleared `status_message` unconditionally on every successful
-/// save, stomping e.g. an unresolved "pbpaste failed" error the user hadn't
-/// dismissed yet). The ORIGINAL status-message ownership rule (F2 in
-/// `commands::edit`: a successful edit/undo/redo must never clear an
-/// unrelated message) still holds unchanged — those call sites only ever
-/// WRITE `status_message`, they never clear it, so they need no provenance
-/// tag for that rule; they still tag their writes below so a stale write
-/// from one of them can never be mistaken for `SaveError` and get swept up
-/// by a later successful save.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StatusSource {
-    /// A failed (or un-attempted, e.g. "no file to save") save attempt —
-    /// the ONLY source a successful `Msg::SaveDone` is allowed to clear.
-    SaveError,
-    /// Everything else: edit/undo/redo failures, the degraded-save confirm
-    /// hint, ... `Msg::Error` no longer writes `status_message` at all (plan
-    /// WP3.S4: routed through `banner::report_error`, a modal, instead).
-    #[default]
-    Other,
 }
 
 /// The whole editor model: a `DocumentId`-keyed map of every open document,
@@ -94,10 +71,10 @@ pub struct App {
     /// recent `Msg::Resize` — unlike the active document's own `viewport.
     /// height` (which `Msg::Resize` sets to `height - 1`, reserving the
     /// footer row), this is the exact `frame.area().height` `render::draw`
-    /// itself sizes the banner against. `App::sync_view` threads this into
-    /// `banner::sync_modal` (mirroring how it already threads the active
-    /// document's `viewport.width` through) so `banner::banner_height` — the
-    /// one function both `render::draw` and `sync_modal` call — computes the
+    /// itself sizes the messages pane against. `App::sync_view` threads this
+    /// into `messages::sync` (mirroring how it already threads the active
+    /// document's `viewport.width` through) so `messages::height` — the
+    /// one function both `layout::geometry` and `sync` call — computes the
     /// identical figure in both places. `0` before the first `Msg::Resize`
     /// (never observed in practice: `runtime::run` seeds one before the
     /// first `sync_view`/draw).
@@ -108,7 +85,7 @@ pub struct App {
     /// `relayout` sizes the viewport from the EDITOR rect (which may be
     /// narrower than the frame — the left pane, a border), `viewport.width`
     /// is no longer the full frame width, so anything that needs the frame's
-    /// own width (`banner::sync_modal`, `layout::geometry` itself) reads
+    /// own width (`messages::sync`, `layout::geometry` itself) reads
     /// this instead. `0` before the first `Msg::Resize`, exactly like
     /// `frame_height`. `App::relayout` is a no-op while this is `0`.
     pub frame_width: u16,
@@ -147,12 +124,6 @@ pub struct App {
     /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
     /// mirroring `next_rename_gen` above.
     pub(crate) next_merge_gen: u32,
-    pub status_message: Option<String>,
-    /// Provenance of `status_message` — see `StatusSource`'s docs. Only
-    /// meaningful while `status_message.is_some()`; a later `set_status`
-    /// call always updates both fields together, so a stale value here
-    /// after the message is cleared can never be observed.
-    pub status_source: StatusSource,
     /// This session's recovery store (plan WP1 decision 5: split out of the
     /// pre-WP1 `AppDb` — this is the app-wide half, shared by every open
     /// document; each document's own binding lives in its `Document::db:
@@ -192,10 +163,9 @@ pub struct App {
     /// it spawns — `save::PendingMaterialize`'s doc comment explains why
     /// each field is captured once and never re-derived.
     pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
-    /// A persistent status banner independent of `status_message`'s
-    /// provenance-cleared slot (plan WP5.S2/S3: "persistent status banner")
-    /// — set once the store degrades (at open, or from a later
-    /// `on_store_failure`) and never cleared automatically.
+    /// A persistent status banner independent of the message log — set once
+    /// the store degrades (at open, or from a later `on_store_failure`) and
+    /// never cleared automatically.
     pub db_banner: Option<String>,
     /// The armed degraded-save confirm chord's target document and timer
     /// generation — `None` when no confirm is pending (plan WP1 decision 3:
@@ -208,7 +178,7 @@ pub struct App {
     pub(crate) next_save_confirm_gen: u32,
     /// The document a Guard modal's `[S]ave` armed a save-then-close for
     /// (plan WP5.S3) — `None` when no close is waiting on a save ack.
-    /// `banner::handle_key`'s Guard arm sets this immediately before
+    /// `guard::handle_guard_key`'s Guard arm sets this immediately before
     /// calling `save::trigger_save`; `materialize_ack::handle_materialize_ack`/
     /// `handle_save_done`'s success paths are the only readers, closing
     /// the document (`workspace::close_now`) only when the id still
@@ -254,11 +224,17 @@ pub struct App {
     /// comment); this field exists so a future dispatch switch has
     /// somewhere to read from.
     pub binding_set: crate::keymap::BindingSet,
-    /// The single modal slot (plan WP3, decision 13): `Some` while an error
-    /// banner (WP5: or a close-guard prompt) is up. `banner::set_modal` is
-    /// the one chokepoint that writes a NEW modal here (plan Risks, "Banner
-    /// reentrancy"); stage 1's `Esc`/`c` handling is the only other writer.
-    pub modal: Option<Modal>,
+    /// The single close/quit/rename/disk-conflict confirmation prompt (plan
+    /// WP1: replaces the pre-WP1 `banner::Modal`'s `Guard` variant — its
+    /// `Error` sibling now lives in `messages` instead). `guard::set_guard`
+    /// is the one chokepoint that writes a NEW prompt here; `guard::
+    /// clear_guard` is the sole writer of `None`.
+    pub guard: Option<GuardPrompt>,
+    /// The message log: every transient user-facing message, severity-tagged,
+    /// plus the collapsible pane's own open/focus state.
+    /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
+    /// chokepoint that writes to it.
+    pub messages: MessageLog,
     pub should_quit: bool,
     /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
@@ -339,8 +315,6 @@ impl App {
             next_rename_gen: 0,
             merge: crate::merge::MergeState::default(),
             next_merge_gen: 0,
-            status_message: None,
-            status_source: StatusSource::Other,
             db,
             db_ops: HashMap::new(),
             published_ops: HashMap::new(),
@@ -355,7 +329,8 @@ impl App {
             pointer: crate::pointer::PointerState::default(),
             pointer_clock: Box::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
-            modal: None,
+            guard: None,
+            messages: MessageLog::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),
@@ -485,15 +460,6 @@ impl App {
     /// explicitly re-run once the buffer settles.
     pub fn recompute_dirty(&mut self, id: DocumentId) {
         crate::materialize_ack::recompute_dirty(self, id);
-    }
-
-    /// The single writer of a NEW `status_message`: every call site that
-    /// wants to set one goes through here instead of writing
-    /// `status_message`/`status_source` separately, so the text and its
-    /// provenance tag (`StatusSource`) can never drift apart.
-    pub fn set_status(&mut self, message: impl Into<String>, source: StatusSource) {
-        self.status_message = Some(message.into());
-        self.status_source = source;
     }
 
     /// Records the workspace root discovered by `workspaceroot::resolve`

@@ -21,6 +21,7 @@ mod rename_common;
 use std::path::Path;
 
 use rune_tui::keymap::{KeyCode, Mods};
+use rune_tui::messages;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::{CmdKind, Effects, Msg, PasteTarget};
@@ -105,7 +106,7 @@ fn an_invalid_name_vetoes_the_focus_change() {
         "a refused commit must not release focus"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("that name can't be used for a file")
     );
 }
@@ -329,8 +330,8 @@ fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
         "a failed open must not steal the keyboard from the Explorer"
     );
     assert!(
-        app.modal.is_some(),
-        "the read failure must raise the error banner"
+        rune_tui::messages::newest_text(&app).is_some(),
+        "the read failure must post an error message"
     );
 }
 
@@ -562,5 +563,44 @@ fn a_save_is_refused_while_a_rename_is_in_flight() {
     assert!(
         mem.read(Path::new("/root/a.md")).is_err(),
         "the pre-rename path must not be resurrected by a racing save"
+    );
+}
+
+/// The save-refused-during-rename message (finding 2) must stay on screen
+/// until the user dismisses it: nothing was written, so an auto-collapsing
+/// `warn` would leave the refusal with no trace once its 5s window elapses.
+#[test]
+fn a_save_refused_during_a_rename_leaves_the_message_pane_open() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+
+    let mut effects = rename_to(&mut app, "b");
+    effects
+        .cmds
+        .drain(..)
+        .find(|c| c.kind() == CmdKind::Rename)
+        .expect("a Rename Cmd");
+    assert!(matches!(app.rename, RenameState::Committing { .. }));
+
+    send(&mut app, plain(KeyCode::Char('X')));
+    let save_effects = send(&mut app, sup('s'));
+
+    // Checked on the very `Effects` the refusal itself produced (dispatch's
+    // `after_update` reconciler arms the timer within the same `update`
+    // call) — a later, separate read of `should_arm_auto_collapse` would
+    // see the timer already armed by that same reconciler and pass either
+    // way, regardless of the message's severity.
+    let armed = save_effects
+        .cmds
+        .iter()
+        .any(|c| c.kind() == CmdKind::MessagesCollapseTimeout);
+    assert!(
+        !armed,
+        "a save refused for an in-flight rename must never arm the \
+         auto-collapse timer"
+    );
+    assert!(
+        messages::is_open(&app),
+        "the pane must still be open right after the refusal"
     );
 }

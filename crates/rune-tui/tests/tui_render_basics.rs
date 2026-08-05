@@ -116,7 +116,7 @@ fn cell_grid_buf_offsets_map_back_into_the_source_text() {
     let content = "## Heading\n";
     let app = app_for(content, 0, true); // cursor on the heading line: revealed
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = render::build_rows(view, &app);
+    let rows = render::build_rows(&app, app.active_doc(), view);
 
     let first_row = rows.first().expect("at least one row");
     assert!(

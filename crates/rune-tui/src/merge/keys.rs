@@ -6,10 +6,11 @@
 //! and desync the block spans. Consuming with feedback, never silently, is
 //! the House Rule this module exists to uphold.
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::binding::{Binding, KeyPattern, resolve_in};
 use crate::commands::nav_scroll;
 use crate::keymap::{KeyCode, KeyInput, Mods};
+use crate::messages;
 
 use super::state::MergeState;
 
@@ -150,7 +151,7 @@ pub(crate) fn intercept(app: &mut App, key: KeyInput) -> bool {
         }
         KeyCode::Home => nav_scroll::scroll_to_document_top(app.active_doc_mut()),
         KeyCode::End => nav_scroll::scroll_to_document_bottom(app.active_doc_mut()),
-        _ => app.set_status(MERGE_KEY_HINT, StatusSource::Other),
+        _ => messages::warn(app, MERGE_KEY_HINT),
     }
     true
 }

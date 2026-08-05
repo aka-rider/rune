@@ -48,7 +48,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             crate::graphics::refit_on_resize(app, effects);
         }
         Msg::Paste(text) => {
-            // Deliberately NOT gated on `app.modal`, unlike the key
+            // Deliberately NOT gated on `app.guard`, unlike the key
             // pipeline's stage 1. A paste carries user content, and
             // dropping it because a prompt happens to be up discards
             // something the user explicitly asked to insert — the buffer is
@@ -92,6 +92,15 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 app.pending_save_confirm = None;
             }
         }
+        // A stale generation (a newer post/focus/collapse superseded this
+        // one since it was armed) is ignored, mirroring `ConfirmTimeout`/
+        // `SaveConfirmTimeout` above.
+        Msg::MessagesCollapseTimeout { generation } => {
+            if crate::messages::is_armed(app, generation) {
+                crate::messages::collapse(app);
+                crate::focus::reconcile(app, effects);
+            }
+        }
         Msg::SnapshotDue { id, generation } => {
             materialize_ack::handle_snapshot_due(app, id, generation)
         }
@@ -105,9 +114,6 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             cause,
             generation,
         } => explorer::handle_dir_loaded(app, root, entries, cause, generation),
-        // Routed through the modal banner, not `status_message` (plan
-        // WP3.S4) — `report_error` is the one chokepoint every error
-        // report funnels through.
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
@@ -139,7 +145,8 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 crate::graphics::handle_embed_decoded(app, doc, generation, result, effects)
             }
         }
-        Msg::Error(e) => crate::banner::report_error(app, e),
+        Msg::Error(e) => crate::messages::error(app, e),
+        Msg::Warning(w) => crate::messages::warn(app, w),
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -174,6 +181,17 @@ pub(crate) fn after_update(
         crate::graphics::schedule_image_decode(app, app.active, effects);
     }
     crate::graphics::sync_embeds(app, app.active, effects);
+    // The message pane's auto-collapse arming is re-evaluated after every
+    // settle rather than only right after a post, so the
+    // countdown starts (or restays suppressed) correctly no matter what
+    // changed focus/selection/log state in between — the four suppression
+    // rules live in `should_arm_auto_collapse` itself.
+    if crate::messages::should_arm_auto_collapse(app) {
+        let generation = crate::messages::arm_auto_collapse(app);
+        effects
+            .cmds
+            .push(crate::messages::collapse_timeout_cmd(generation));
+    }
 }
 
 /// Applies a `Msg::Highlighted` reply, in the fixed order `[R2]` requires:
@@ -239,14 +257,11 @@ fn handle_highlighted(
     // coloured this round, which is more actionable than a coloured-but-
     // incomplete tail.
     if timed_out {
-        app.set_status(
-            "syntax highlighting timed out for this document",
-            crate::app::StatusSource::Other,
-        );
+        crate::messages::warn(app, "syntax highlighting timed out for this document");
     } else if truncated {
-        app.set_status(
+        crate::messages::warn(
+            app,
             "syntax highlighting was truncated; the tail of this document is uncoloured",
-            crate::app::StatusSource::Other,
         );
     }
 
@@ -255,15 +270,17 @@ fn handle_highlighted(
     }
 }
 
-/// The four-stage key pipeline (plan Context, decision 8): (1) modal capture
-/// (`banner::handle_key`) — every key consumed there while `App.modal` is
-/// `Some`, quit chords included; (2) the global chord table
-/// (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3) the focused
-/// pane's own keymap; (4) `Ignored` -> nothing.
+/// The four-stage key pipeline: (1) Guard capture (`guard::handle_guard_key`)
+/// — every key consumed there while `App.guard` is `Some`, quit chords
+/// included; the old modal error banner no longer exists, so this stage is
+/// Guard-only now — the messages pane is non-modal and reached through
+/// stage 3 instead, like any other pane; (2) the global chord table
+/// (`GLOBAL_BINDINGS`), fired regardless of focus; (3) the focused pane's
+/// own keymap; (4) `Ignored` -> nothing.
 pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    // Stage 1: modal capture, before any other stage ever sees this key.
-    if app.modal.is_some() {
-        crate::banner::handle_key(app, key, effects);
+    // Stage 1: Guard capture, before any other stage ever sees this key.
+    if app.guard.is_some() {
+        crate::guard::handle_guard_key(app, key, effects);
         return;
     }
 
@@ -281,6 +298,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Pane::Explorer => explorer_keys::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key, effects),
         Pane::Title => crate::title::handle_key(app, key, effects),
+        Pane::Messages => {
+            if crate::messages::handle_key(app, key, effects) {
+                keymap::KeyOutcome::Consumed
+            } else {
+                keymap::KeyOutcome::Ignored
+            }
+        }
     };
 }
 

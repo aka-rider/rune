@@ -3,8 +3,8 @@
 //! needed an `Effects` sink `close_now` didn't carry before).
 
 use crate::app::App;
-use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
+use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 
 /// The result of [`close_now`]: `Unknown` when `id` was already stale (a
@@ -36,16 +36,16 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     // stale cache could wave a genuinely-dirty document
     // through, or arm the Guard for one that's actually clean.
     if crate::materialize_ack::is_dirty_now(app, id) {
-        // An `Error` already up outranks this prompt; the close intent is
-        // then simply not armed (the user presses `^w` again once the
-        // error is dismissed) — nothing waits on this Guard, unlike the
-        // rename machine's.
-        let _ = banner::set_modal(
+        // A Guard already up outranks this prompt; the close intent is then
+        // simply not armed (the user presses `^w` again once it's
+        // dismissed) — nothing waits on this Guard, unlike the rename
+        // machine's.
+        let _ = guard::set_guard(
             app,
-            Modal::Guard(GuardPrompt {
+            GuardPrompt {
                 doc: id,
                 kind: GuardKind::DirtyClose,
-            }),
+            },
         );
     } else {
         let _ = close_now(app, id, effects);
@@ -132,7 +132,7 @@ fn next_untitled_number(app: &App) -> usize {
 /// since an image document is always `read_only` with `db: None`, so it
 /// can never be dirty, never has `save_in_flight`, and `pending_close_on_
 /// save` can never target one; this branch is therefore dead code on that
-/// path, not a silently-dropped real delete. `banner`'s dirty-close
+/// path, not a silently-dropped real delete. `guard`'s dirty-close
 /// `[D]iscard` arm and `workspace::request_close` above both already carry
 /// a real `Effects` and thread it straight through.
 pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseOutcome {
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(app.documents.len(), 1);
         assert!(!app.documents.contains_key(&only));
         assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
-        assert!(app.status_message.is_none());
+        assert!(crate::messages::newest_text(&app).is_none());
     }
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
         );
         assert_eq!(app.active, id, "active must stay on the refused document");
         assert_eq!(
-            app.status_message.as_deref(),
+            crate::messages::newest_text(&app),
             ReadOnly::Preview.refusal_message()
         );
     }

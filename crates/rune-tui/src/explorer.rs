@@ -182,7 +182,11 @@ pub(crate) fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
 /// though its `Split` still says shown — is left alone: nothing is on
 /// screen to fill.
 pub fn ensure_loaded(app: &mut App, effects: &mut Effects) {
-    if app.layout_mode().focusable(Pane::Explorer).is_none()
+    let messages_open = crate::messages::is_open(app);
+    if app
+        .layout_mode()
+        .focusable(Pane::Explorer, messages_open)
+        .is_none()
         || !app.explorer.entries.is_empty()
         || app.explorer.loading
     {

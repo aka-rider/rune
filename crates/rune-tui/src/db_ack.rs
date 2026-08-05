@@ -3,9 +3,10 @@
 //! to an `AppendEdit` ack's durable seq. [`crate::db_enqueue`] owns building
 //! and submitting the ops these react to.
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::db::DocDb;
 use crate::document::DocumentId;
+use crate::messages;
 use rune_db::LoadResult;
 
 /// The reaction to a `Load` op's ack (plan WP6.S2/S3) — routed from
@@ -37,9 +38,9 @@ pub fn handle_load_ack(
     issued_version: Option<u64>,
 ) {
     let Some(expect_obs) = load_result.saved_obs else {
-        app.set_status(
+        messages::error(
+            app,
             "crash recovery unavailable for this tab: load returned no baseline observation",
-            StatusSource::Other,
         );
         return;
     };
@@ -56,7 +57,7 @@ pub fn handle_load_ack(
         }
     };
     if let Some(reason) = refusal {
-        app.set_status(format!("crash recovery: {reason}"), StatusSource::Other);
+        messages::error(app, format!("crash recovery: {reason}"));
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
     // marks it itself, so every hydration site re-derives it explicitly,

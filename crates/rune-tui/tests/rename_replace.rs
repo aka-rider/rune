@@ -17,8 +17,8 @@ mod rename_common;
 
 use std::path::Path;
 
-use rune_tui::banner;
 use rune_tui::footer;
+use rune_tui::guard;
 use rune_tui::keymap::KeyCode;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::Msg;
@@ -48,7 +48,7 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
         app.rename
     );
     assert!(
-        footer::footer_text(&app).contains(banner::RENAME_REPLACE.label),
+        footer::footer_text(&app).contains(guard::RENAME_REPLACE.label),
         "a store-bound document must be offered [R]eplace"
     );
 
@@ -60,7 +60,7 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
         app.rename
     );
     assert_eq!(app.db_ops.len(), ops_before + 1, "one replace op enqueued");
-    assert!(app.modal.is_none(), "the prompt is resolved");
+    assert!(app.guard.is_none(), "the prompt is resolved");
 
     let evt = next_event(&rx);
     send(&mut app, Msg::Db(evt));
@@ -70,10 +70,8 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
     assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"a content");
     assert!(mem.read(Path::new("/root/a.md")).is_err());
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("preserved")),
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("preserved")),
         "the status must say the replaced bytes were kept, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }

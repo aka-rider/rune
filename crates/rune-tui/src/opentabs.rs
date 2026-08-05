@@ -102,7 +102,7 @@ pub const TABS_BINDINGS: &[Binding<TabsCommand>] = &[
 /// document resolves at the global pipeline stage (`GlobalCommand::
 /// CloseFile`) instead of here, so it works from any pane, not just this
 /// one — a dirty tab's eventual save-then-close I/O is triggered later,
-/// from the Guard modal's OWN stage-1 key handling (`banner::handle_key`),
+/// from the Guard's OWN stage-1 key handling (`guard::handle_guard_key`),
 /// which already carries its own `Effects`.
 pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
     let Some(cmd) = resolve_in(TABS_BINDINGS, key) else {

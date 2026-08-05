@@ -17,7 +17,7 @@ use crate::render;
 /// practice), or when the click landed on a synthesised table border row
 /// (`offset_at` returns `None` there too, so the gesture is a
 /// complete no-op rather than moving the cursor to some nearby offset).
-pub(super) fn hit_test(app: &App, doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
+pub(crate) fn hit_test(app: &App, doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
     let view = doc.view.as_ref()?;
     let offset = offset_at(app, doc, view, row, col)?;
     Some((offset, desired_col_at(doc, view, offset)))

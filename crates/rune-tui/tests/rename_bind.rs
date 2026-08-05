@@ -131,10 +131,10 @@ fn end_to_end_no_store_rename() {
     );
 }
 
-/// A `rename_excl` I/O failure surfaces as an error modal, leaves
-/// `file_path` alone, and returns the machine to `Idle`.
+/// A `rename_excl` I/O failure posts an error message, leaves `file_path`
+/// alone, and returns the machine to `Idle`.
 #[test]
-fn a_rename_io_failure_raises_the_error_modal_and_changes_nothing() {
+fn a_rename_io_failure_posts_an_error_message_and_changes_nothing() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
 
@@ -151,7 +151,7 @@ fn a_rename_io_failure_raises_the_error_modal_and_changes_nothing() {
     send(&mut app, cmd.run().expect("a reply"));
 
     assert_eq!(app.rename, RenameState::Idle);
-    assert!(matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))));
+    assert!(rune_tui::messages::newest_text(&app).is_some());
     assert_eq!(active_path(&app).as_deref(), Some(Path::new("/root/a.md")));
     assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
 }
@@ -188,12 +188,14 @@ fn a_failed_rename_returns_to_the_title_with_the_typed_name_and_its_undo_history
         "newname.md",
         "the typed name survives verbatim, extension included"
     );
-    assert!(app.modal.is_some(), "the failure raises an error modal");
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some(),
+        "the failure posts an error message"
+    );
 
-    // Stage 1 gives the modal the keyboard first — dismiss it before the
-    // title (still holding the typed name underneath) can see a keystroke.
-    send(&mut app, plain(KeyCode::Escape));
-    assert!(app.modal.is_none());
+    // The message is non-modal — it never captures the
+    // keyboard, so the title (still holding the typed name underneath)
+    // sees every keystroke exactly as if no message had been posted.
     assert_eq!(app.focus(), Pane::Title);
 
     send(&mut app, ctrl('z'));
@@ -312,15 +314,13 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
 
     assert_eq!(app.rename, RenameState::Idle);
     assert!(
-        app.modal.is_none(),
+        app.guard.is_none(),
         "a draft collision must never raise a guard"
     );
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("already exists")),
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("already exists")),
         "got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(
         active_path(&app).is_none(),

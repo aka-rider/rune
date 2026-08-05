@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_tui::app::App;
-use rune_tui::banner;
 use rune_tui::document::DocumentId;
 use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{FileKind, Vfs};
@@ -223,10 +222,7 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
     if let rune_tui::document::Hydration::Refused(reason) =
         doc.hydrate(&disk_content, &scratch.content)
     {
-        app.set_status(
-            format!("crash recovery: {reason}"),
-            rune_tui::app::StatusSource::Other,
-        );
+        rune_tui::messages::error(app, format!("crash recovery: {reason}"));
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
     // marks it itself, so every hydration site re-derives it explicitly,
@@ -237,62 +233,18 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
 
 /// The first positional is already open (in `bootstrap`) and stays the
 /// active, displayed document — every REMAINING file opens as its own tab
-/// through the same path the Explorer uses (WP7.S6). A failure there
-/// reports into the error banner instead of aborting startup; every
-/// failure across the whole batch is accumulated and reported ONCE (plan
-/// WP4.S6/[rune-cli 7]) rather than letting only the last one survive a
-/// string of "the modal replaces on ties" overwrites.
+/// through the same path the Explorer uses. A failure there posts its own
+/// message into the log via `workspace::open_path` itself instead of
+/// aborting startup — a log has no single-slot limit, so a later failure
+/// never silently overwrites an earlier one; every failure across the
+/// whole batch gets its own entry.
 pub(crate) fn open_extra_files(app: &mut AppGuard, files: &[PathBuf], first_doc_id: DocumentId) {
-    let mut open_errors: Vec<String> = Vec::new();
     for extra in files.iter().skip(1) {
-        if workspace::open_path(app, extra).is_none()
-            && let Some(text) = take_error_banner(app)
-        {
-            open_errors.push(text);
-        }
+        workspace::open_path(app, extra);
     }
     if files.len() > 1 {
         workspace::switch_to(app, first_doc_id);
     }
-    if !open_errors.is_empty() {
-        banner::report_error(app, combine_open_errors(&open_errors));
-    }
-}
-
-/// Peeks the modal `workspace::open_path` just raised on a failed open and,
-/// if it's an error banner, clears it and returns its rendered text — so
-/// the caller can accumulate several failures into one combined banner
-/// instead of letting each overwrite the last (plan WP4.S6/[rune-cli 7]).
-/// Only ever sees `Modal::Error` in this bootstrap window: nothing raises a
-/// `Guard` prompt before the interactive run loop starts.
-fn take_error_banner(app: &mut App) -> Option<String> {
-    let text = match &app.modal {
-        Some(banner::Modal::Error(state)) => Some(state.doc.buffer.content().to_string()),
-        _ => None,
-    };
-    if text.is_some() {
-        banner::clear_modal(app);
-    }
-    text
-}
-
-/// Combines the accumulated per-file open failures into one banner body
-/// (plan WP4.S6/[rune-cli 7]): a single failure's own text verbatim, or a
-/// count-prefixed list when more than one file failed to open.
-fn combine_open_errors(errors: &[String]) -> String {
-    if let [only] = errors {
-        return only.clone();
-    }
-    let mut combined = format!(
-        "{} of the requested files could not be opened:\n",
-        errors.len()
-    );
-    for err in errors {
-        combined.push_str("- ");
-        combined.push_str(err);
-        combined.push('\n');
-    }
-    combined
 }
 
 #[cfg(test)]

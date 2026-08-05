@@ -10,7 +10,17 @@ use rune_syntax::scope::scope_table;
 use rune_tui::app;
 use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult};
 use rune_tui::linemap::LineMap;
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects, Msg};
+
+/// A timed-out reply posts a message, and an open message pane arms its own
+/// auto-collapse timer — so "no retry was scheduled" is a claim about the
+/// highlight chain specifically, never about the effect list being empty.
+fn schedules_a_highlight_cmd(effects: &Effects) -> bool {
+    effects
+        .cmds
+        .iter()
+        .any(|cmd| cmd.kind() == CmdKind::Highlight)
+}
 
 /// Installs one span-backed region carrying `spans` through the real
 /// `app::update` chokepoint, at the live buffer version.
@@ -93,7 +103,7 @@ fn reply_at_a_stale_version_leaves_spans_unchanged() {
 /// line — in ONE attempt, since there is a single bounded parse per region
 /// and no retry chain.
 #[test]
-fn a_timed_out_document_surfaces_a_status_message() {
+fn a_timed_out_document_surfaces_a_message() {
     let content = "fn main() {}\n";
     let mut app = app_for(content, "/x/main.rs");
     let id = app.active;
@@ -126,12 +136,12 @@ fn a_timed_out_document_surfaces_a_status_message() {
          could never be highlighted again by any future edit"
     );
     assert!(
-        effects.cmds.is_empty(),
-        "a single-attempt timeout schedules no further cmd — there is no \
-         retry chain to continue"
+        !schedules_a_highlight_cmd(&effects),
+        "a single-attempt timeout schedules no further highlight cmd — there \
+         is no retry chain to continue"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("syntax highlighting timed out for this document"),
         "a timed-out document's parse must surface a status line, not fail \
          silently"
@@ -143,7 +153,7 @@ fn a_timed_out_document_surfaces_a_status_message() {
 /// out. The two used to differ — a fence's timeout was silent, because the
 /// status branch was gated on the document having a whole-buffer language.
 #[test]
-fn a_timed_out_markdown_fence_surfaces_the_same_status_message() {
+fn a_timed_out_markdown_fence_surfaces_the_same_message() {
     let content = "```rust\nfn main() {}\n```\n";
     let mut app = app_for(content, "/x/notes.md");
     let id = app.active;
@@ -161,7 +171,7 @@ fn a_timed_out_markdown_fence_surfaces_the_same_status_message() {
     );
 
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("syntax highlighting timed out for this document"),
         "a fence that times out must report like a file that times out"
     );
@@ -200,7 +210,8 @@ fn a_reparse_timeout_on_an_already_highlighted_document_stays_silent() {
     );
 
     assert_eq!(
-        app.status_message, None,
+        rune_tui::messages::newest_text(&app),
+        None,
         "a reparse timeout on an already-highlighted document must stay \
          silent, not surface the timed-out status a second time"
     );
@@ -237,8 +248,8 @@ fn a_timeout_with_pending_armed_schedules_no_further_cmd() {
     );
 
     assert!(
-        effects.cmds.is_empty(),
-        "a terminal timeout must schedule no further cmd even with \
+        !schedules_a_highlight_cmd(&effects),
+        "a terminal timeout must schedule no further highlight cmd even with \
          `pending` armed by a mere document switch"
     );
     assert_eq!(
@@ -313,7 +324,7 @@ fn span_cap_truncation_surfaces_a_status_line() {
     let doc = app.doc(id).expect("doc");
     assert!(doc.highlight.truncated, "the truncated flag must be stored");
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("syntax highlighting was truncated; the tail of this document is uncoloured"),
         "a truncated reply must surface a status line, not fail silently"
     );
@@ -344,7 +355,7 @@ fn timeout_outranks_truncation_in_the_status_line() {
     );
 
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("syntax highlighting timed out for this document"),
         "the timeout message must win over a sticky truncated flag"
     );

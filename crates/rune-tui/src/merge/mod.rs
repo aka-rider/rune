@@ -19,8 +19,9 @@ pub use state::{Block, Conflict, MergeIntent, MergeState};
 
 use rune_db::SyncKind;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::db::PendingOp;
+use crate::messages;
 use crate::runtime::Effects;
 
 /// `^M` (plan WP3.S5): a fast pre-check against `Document.last_sync`
@@ -37,19 +38,19 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         doc.last_sync,
         Some(SyncKind::DiskAhead) | Some(SyncKind::Diverged)
     ) {
-        app.set_status("no divergence to merge", StatusSource::Other);
+        messages::warn(app, "no divergence to merge");
         return;
     }
     let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
-        app.set_status("no divergence to merge", StatusSource::Other);
+        messages::warn(app, "no divergence to merge");
         return;
     };
     let Some(db) = app.db.as_ref() else {
-        app.set_status("no divergence to merge", StatusSource::Other);
+        messages::warn(app, "no divergence to merge");
         return;
     };
     if db.degraded {
-        app.set_status("no divergence to merge", StatusSource::Other);
+        messages::warn(app, "no divergence to merge");
         return;
     }
 
@@ -64,14 +65,6 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
             };
             app.db_ops
                 .insert(op_id, PendingOp::merge_prep(id, generation));
-            // A stale "save refused" status must never survive into merge —
-            // whichever door the user took (`^M`, the disk-conflict Guard's
-            // `[M]erge`, or its `[D]iscard`, which also routes through this
-            // arm), entering merge is itself the acknowledgement the earlier
-            // refusal was waiting for.
-            if app.status_source == StatusSource::SaveError {
-                app.status_message = None;
-            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
@@ -110,7 +103,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
     } else {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
-    app.set_status(message, StatusSource::Other);
+    messages::info(app, message);
 }
 
 /// Cancels a `Pending` merge attempt with feedback (review fix F3) — the
@@ -128,9 +121,9 @@ pub(crate) fn cancel_pending(app: &mut App) {
         return;
     }
     app.merge = MergeState::Inactive;
-    app.set_status(
+    messages::warn(
+        app,
         "merge cancelled — the document changed before disk state arrived",
-        StatusSource::Other,
     );
 }
 
@@ -163,9 +156,9 @@ pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -
     if unresolved == 0 {
         return false;
     }
-    app.set_status(
+    messages::warn(
+        app,
         format!("{unresolved} conflict(s) to resolve — [O]urs [T]heirs [B]oth"),
-        StatusSource::Other,
     );
     true
 }

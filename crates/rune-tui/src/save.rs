@@ -17,9 +17,10 @@ use std::time::Duration;
 use rune_syntax::DocumentKind;
 use rune_vfs::Vfs;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::DocumentId;
 use crate::materialize_ack;
+use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 
 mod materialize;
@@ -96,7 +97,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         return SaveStart::Refused;
     }
     if app.doc(id).is_some_and(|d| d.save_in_flight) {
-        app.set_status("a save is already in progress", StatusSource::Other);
+        messages::warn(app, "a save is already in progress");
         return SaveStart::InFlight;
     }
     // The mirror of `rename::begin`'s own `save_in_flight` refusal, and
@@ -109,10 +110,13 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     // is one message away, and ⌘S again after it lands does the right thing
     // against the right path.
     if app.rename.in_flight() {
-        app.set_status(
-            "can't save while a rename is in flight",
-            StatusSource::Other,
-        );
+        // `error`, not `warn`: nothing was written, and unlike the
+        // in-progress-save refusal above (where the data genuinely is
+        // being written) or merge mode's own refusal (where the footer's
+        // merge hint keeps that state visible independently), an
+        // auto-collapsing message here would leave this refusal with no
+        // trace once its 5s window elapses.
+        messages::error(app, "can't save while a rename is in flight");
         return SaveStart::Refused;
     }
     // Re-derived, not read from the cache (plan WP1): a transition-quality
@@ -135,9 +139,9 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         // `handle_materialize_ack` below) is what actually switches the
         // title off the placeholder once the file exists.
         app.focus_title();
-        app.set_status(
+        messages::info(
+            app,
             "name this document to save it \u{2014} press Enter when done",
-            StatusSource::Other,
         );
         return SaveStart::NeedsName;
     };
@@ -180,9 +184,9 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         // document here is what makes the surviving sentence true no matter
         // which caller reaches it.
         let name = app.doc(id).map(crate::title::name_for).unwrap_or_default();
-        app.set_status(
+        messages::error(
+            app,
             format!("recovery disabled for {name} \u{2014} press \u{2318}S again to save anyway"),
-            StatusSource::Other,
         );
         effects.cmds.push(save_confirm_timeout_cmd(generation));
         return SaveStart::Refused;

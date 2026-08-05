@@ -3,7 +3,7 @@
 
 use rune_fuzz::invariant::{confirm_gen, guard_answered, quit_chord, save_inflight_sm};
 use rune_fuzz::step::MsgTag;
-use rune_tui::banner::GuardKind;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::{Command, KeyCode, Mods, QuitKey};
 
 use crate::support::{base_active_id, base_ctx, base_snapshot, key, other_doc_id, sup};

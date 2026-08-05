@@ -244,12 +244,12 @@ fn two_message_free_renders_produce_identical_rows() {
     let mut app = sized_app(FENCED, "/x/notes.md");
     let before = {
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(view, &app)
+        render::build_rows(&app, app.active_doc(), view)
     };
     app.sync_view();
     let after = {
         let view = app.active_doc().view.as_ref().expect("synced view");
-        render::build_rows(view, &app)
+        render::build_rows(&app, app.active_doc(), view)
     };
     assert_eq!(
         before, after,

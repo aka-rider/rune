@@ -13,9 +13,9 @@ use std::collections::BTreeMap;
 use ratatui::layout::Rect;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
-use rune_tui::banner::GuardKind;
 use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::footer;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::QuitKey;
 use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
@@ -49,10 +49,10 @@ pub struct Snapshot {
     /// end-of-session undo/redo drive (`driver.rs`), both of which must
     /// tell an editor-focused step apart from a chrome-focused one.
     pub focus: Pane,
-    /// `app.modal.is_some()` — a modal (`Modal::Error`/`Modal::Guard`)
-    /// captures every key at stage 1 of the pipeline regardless of
-    /// `focus`, so `PANE-NO-BLEED` and the undo/redo drive precondition
-    /// both need this in addition to `focus`.
+    /// `app.guard.is_some()` — a Guard captures every key at stage 1 of the
+    /// pipeline regardless of `focus` (an error, unlike a Guard, is a
+    /// non-modal log entry and captures nothing), so `PANE-NO-BLEED` and the
+    /// undo/redo drive precondition both need this in addition to `focus`.
     pub modal_open: bool,
     /// `app.active` — which document the OTHER fields in this `Snapshot`
     /// describe. `PANE-NO-BLEED` needs it to tell a chrome key that
@@ -181,6 +181,19 @@ pub struct Snapshot {
     pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
 }
 
+/// `Snapshot.status`'s builder: the footer's own text, plus the message
+/// log's newest entry (transient messages live in the log now, not in the
+/// footer), joined by `" | "` so every existing invariant/tripwire reading
+/// `Snapshot.status` for message text keeps seeing it. Footer text alone
+/// when the log is empty.
+fn fuzz_status(app: &App) -> String {
+    let footer_text = footer::footer_text(app);
+    match rune_tui::messages::newest_text(app) {
+        Some(newest) => format!("{footer_text} | {newest}"),
+        None => footer_text,
+    }
+}
+
 impl Snapshot {
     /// Captures the current `App` state. Deliberately does NOT call
     /// `app.sync_view()` itself (CODE-REVIEW.md rune-fuzz finding 1): every
@@ -206,7 +219,10 @@ impl Snapshot {
 
         let (cells, row_meta) = if with_cells {
             match &app.active_doc().view {
-                Some(view) => (render::build_rows(view, app), row_meta::row_meta(view, app)),
+                Some(view) => (
+                    render::build_rows(app, app.active_doc(), view),
+                    row_meta::row_meta(view, app),
+                ),
                 None => (Vec::new(), Vec::new()),
             }
         } else {
@@ -216,10 +232,10 @@ impl Snapshot {
         // Computed BEFORE `doc` below borrows `app` immutably for the rest
         // of this function: `recompute_dirty` needs `&mut App`, so it must
         // run while no other borrow of `app` is still alive.
-        let guard = match &app.modal {
-            Some(rune_tui::banner::Modal::Guard(prompt)) => Some((prompt.doc, prompt.kind.clone())),
-            _ => None,
-        };
+        let guard = app
+            .guard
+            .as_ref()
+            .map(|prompt| (prompt.doc, prompt.kind.clone()));
         let quit_intent_pending = app
             .quit_intent
             .as_ref()
@@ -268,9 +284,9 @@ impl Snapshot {
             save_in_flight: doc.save_in_flight,
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
-            status: footer::footer_text(app),
+            status: fuzz_status(app),
             focus: app.focus(),
-            modal_open: app.modal.is_some(),
+            modal_open: app.guard.is_some(),
             active: app.active,
             title_text: app.title.text().to_string(),
             read_only: doc.read_only,

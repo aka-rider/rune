@@ -16,10 +16,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_tui::app::{self, App};
-use rune_tui::banner::{GuardKind, Modal};
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::footer;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{CmdKind, Effects};
@@ -73,8 +73,8 @@ fn enter_disk_conflict_guard(
 #[test]
 fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
     let (app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
-    let Some(Modal::Guard(prompt)) = &app.modal else {
-        panic!("expected the disk-conflict Guard modal");
+    let Some(prompt) = &app.guard else {
+        panic!("expected the disk-conflict Guard");
     };
     assert_eq!(prompt.doc, doc_id);
     assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
@@ -89,7 +89,7 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
         (app, bridge, doc_id)
     };
     press_key(&mut app, ch('m'));
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(matches!(
         app.merge,
         MergeState::Pending { doc, .. } if doc == doc_id
@@ -97,17 +97,13 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
 }
 
 /// Plan WP6 "Done when" (4c): the Guard's `Esc` answer cancels touching
-/// neither the buffer nor merge state, and clears the "save
-/// refused" status rather than leaving it up. `handle_guard_key`'s general
-/// rule is that Escape's cancel status never overwrites an unacknowledged
-/// `SaveError` — but for `DiskConflict` specifically, this Guard IS the
-/// acknowledgement: `last_sync` was already seeded `Diverged` by the time
-/// the Guard was raised, so the footer's persistent disk-changed hint
-/// ("[^M]erge") is the replacement feedback, and it can only show once the
-/// stale `SaveError` status stops outranking it (`footer::mode` checks
-/// `SaveError` before `DiskChanged`). Renamed from
-/// `disk_conflict_guard_escape_cancels_with_a_status` — that name described
-/// the OLD (buggy) behavior this test now falsifies.
+/// neither the buffer nor merge state. The message log never clears an
+/// earlier entry, so the save-refusal message that raised this very Guard
+/// stays in the log alongside the cancellation ack — but the footer itself
+/// carries no memory of it: `footer::mode` ranks `Guard` above `DiskChanged`
+/// only while `app.guard` is `Some`, so clearing the Guard here already
+/// lets the footer fall through to the persistent disk-changed hint on its
+/// own, with nothing left to strand the user behind stale text.
 #[test]
 fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
     let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
@@ -115,14 +111,24 @@ fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
 
     press_key(&mut app, bare(KeyCode::Escape));
 
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
-    assert_eq!(app.status_message, None);
     assert!(
         footer::footer_text(&app).contains("\u{21c4} disk changed \u{2014} [^M]erge"),
         "the footer must fall through to the disk-changed hint, got: {}",
         footer::footer_text(&app)
+    );
+    let log = rune_tui::messages::log_text(&app);
+    let refused_at = log
+        .find("save refused")
+        .expect("save refusal must be logged");
+    let cancelled_at = log
+        .find("save cancelled")
+        .expect("the cancellation ack must be logged");
+    assert!(
+        refused_at < cancelled_at,
+        "the save refusal must precede the cancellation ack in the log, got {log:?}"
     );
 }
 
@@ -135,7 +141,7 @@ fn disk_conflict_guard_escape_then_ctrl_m_starts_a_merge_attempt() {
     let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
 
     press_key(&mut app, bare(KeyCode::Escape));
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
 
     press_key(&mut app, ctrl('m'));
 
@@ -159,7 +165,7 @@ fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
     external_write(vfs.as_ref(), b"disk changed twice");
 
     press_key(&mut app, ch('d'));
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(matches!(
         app.merge,
         MergeState::Pending { doc, .. } if doc == doc_id

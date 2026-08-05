@@ -343,12 +343,11 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
         "a Pending attempt must be cancelled, not left dangling"
     );
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("cancelled"),
         "expected a cancellation status, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 
     // The now-stale MergePrep ack must land safely: no panic, and it must

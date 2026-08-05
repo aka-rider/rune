@@ -39,7 +39,7 @@ fn a_read_only_document_refuses_to_rename() {
 
     assert_eq!(app.focus(), Pane::Editor, "the title must never gain focus");
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("this document is read-only")
     );
     assert_eq!(app.active_doc().buffer.content(), before);
@@ -59,7 +59,7 @@ fn a_preview_document_refuses_to_rename() {
 
     assert_eq!(app.focus(), Pane::Editor, "the title must never gain focus");
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Preview.refusal_message()
     );
     assert_eq!(app.active_doc().buffer.content(), before);
@@ -84,7 +84,7 @@ fn the_help_document_refuses_title_focus() {
         "a read-only document's title must never gain focus"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("this document is read-only")
     );
     assert_eq!(

@@ -7,8 +7,8 @@ use std::sync::Arc;
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
 use rune_tui::app::App;
-use rune_tui::banner::{ErrorState, Modal, set_modal};
 use rune_tui::layout::{self, MIN_CENTER_W, MIN_LEFT_PANE_W};
+use rune_tui::messages;
 use rune_vfs::Mem;
 
 fn app_for() -> App {
@@ -165,7 +165,8 @@ fn too_narrow_for_both_minimums_with_the_column_hidden_drops_it() {
 /// The test that would have caught the "blank last column" defect (a real
 /// user-reported bug, traced but NOT reproduced against `layout::geometry`
 /// itself — see the plan this test came from): sweep widths, left-column
-/// visibility, and modal state, and pin the exact right-edge identities
+/// visibility, and the messages pane's open state (replacing the old modal
+/// banner), and pin the exact right-edge identities
 /// `layout.rs`'s own `assert_invariant` calls now also check in production.
 /// Duplicated here deliberately rather than trusted to that internal
 /// assert alone — this test still fails on a regression even if a future
@@ -176,14 +177,14 @@ fn every_width_tiles_the_frame_with_no_wasted_column() {
     let widths: Vec<u16> = (1..=200).chain([250, 400, 1000]).collect();
 
     for &show_left in &[false, true] {
-        for &show_modal in &[false, true] {
+        for &show_messages in &[false, true] {
             for &width in &widths {
                 let mut app = app_for();
                 if show_left {
                     app.splits.left.show();
                 }
-                if show_modal {
-                    let _ = set_modal(&mut app, Modal::Error(Box::new(ErrorState::new("boom"))));
+                if show_messages {
+                    messages::error(&mut app, "boom");
                 }
                 let area = Rect::new(0, 0, width, height);
                 let geo = layout::geometry(area, &app);
@@ -191,27 +192,27 @@ fn every_width_tiles_the_frame_with_no_wasted_column() {
                 assert_eq!(
                     geo.footer.right(),
                     area.right(),
-                    "footer {:?} vs area {area:?} (width={width}, left={show_left}, modal={show_modal})",
+                    "footer {:?} vs area {area:?} (width={width}, left={show_left}, messages={show_messages})",
                     geo.footer
                 );
                 assert_eq!(
                     geo.center.right(),
                     area.right(),
-                    "center {:?} vs area {area:?} (width={width}, left={show_left}, modal={show_modal})",
+                    "center {:?} vs area {area:?} (width={width}, left={show_left}, messages={show_messages})",
                     geo.center
                 );
                 if geo.center_bordered {
                     assert_eq!(
                         geo.editor.right() + 1,
                         geo.center.right(),
-                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, messages={show_messages})",
                         geo.editor,
                         geo.center
                     );
                     assert_eq!(
                         geo.editor.x,
                         geo.center.x + 1,
-                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        "bordered editor {:?} vs center {:?} (width={width}, left={show_left}, messages={show_messages})",
                         geo.editor,
                         geo.center
                     );
@@ -219,7 +220,7 @@ fn every_width_tiles_the_frame_with_no_wasted_column() {
                     assert_eq!(
                         geo.editor.right(),
                         geo.center.right(),
-                        "unbordered editor {:?} vs center {:?} (width={width}, left={show_left}, modal={show_modal})",
+                        "unbordered editor {:?} vs center {:?} (width={width}, left={show_left}, messages={show_messages})",
                         geo.editor,
                         geo.center
                     );

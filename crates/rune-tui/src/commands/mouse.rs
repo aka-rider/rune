@@ -21,14 +21,16 @@ use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
 use crate::commands::splitter;
 use crate::document::Document;
+use crate::messages;
 use crate::navigate;
+use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
 
 /// The mouse wheel's step (plan WP7.S6: "wheel scrolls 3 rows" — vim,
 /// neovim's `mousescroll=ver:3`, and Helix's `scroll-lines = 3` all
 /// converge on this number).
-const WHEEL_ROWS: isize = 3;
+pub(crate) const WHEEL_ROWS: isize = 3;
 
 /// Routes one `Msg::Mouse`. Mouse support is no longer editor-only: the
 /// two splitter bands (the left column's grab band, the `Open` divider
@@ -60,13 +62,52 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             _ => app.pointer.drag = None,
         }
     }
+
+    // A latched text-selection drag owns the pointer the same way, and for
+    // the same reason: routed by the gesture's OWN pane, not by whichever
+    // rect the pointer currently sits over, so a drag that has wandered
+    // outside its origin pane (or a release out past the frame edge) still
+    // reaches the document it began on instead of being dropped silently.
+    if let Some(Drag::Text { anchor, pane }) = app.pointer.drag {
+        match input.kind {
+            MouseKind::Drag(MouseButton::Left) => {
+                match pane {
+                    Pane::Editor => handle_left_drag(app, anchor, input),
+                    Pane::Messages => messages::mouse(app, input, effects),
+                    _ => {}
+                }
+                return;
+            }
+            MouseKind::Up(MouseButton::Left) => {
+                app.pointer.drag = None;
+                if pane == Pane::Messages {
+                    messages::mouse(app, input, effects);
+                }
+                return;
+            }
+            _ => app.pointer.drag = None,
+        }
+    }
+
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && splitter::begin(app, input) {
         return;
     }
 
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    let editor = crate::layout::geometry(area, app).editor;
+    let geo = crate::layout::geometry(area, app);
 
+    if let Some(rect) = geo.messages {
+        let inside = input.column >= rect.x
+            && input.column < rect.x.saturating_add(rect.width)
+            && input.row >= rect.y
+            && input.row < rect.y.saturating_add(rect.height);
+        if inside {
+            messages::mouse(app, input, effects);
+            return;
+        }
+    }
+
+    let editor = geo.editor;
     if input.column < editor.x
         || input.row < editor.y
         || input.column >= editor.x.saturating_add(editor.width)
@@ -81,8 +122,6 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
         MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
         MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
-        MouseKind::Drag(MouseButton::Left) => handle_left_drag(app, col, row),
-        MouseKind::Up(MouseButton::Left) => app.pointer.drag = None,
         _ => {}
     }
 }
@@ -115,7 +154,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     }
 
     let now = app.pointer_clock.now();
-    let count = app.pointer.register_click(now, col, row);
+    let count = app.pointer.register_click(now, input.column, input.row);
 
     if input.alt {
         // Alt-click: add a cursor, never disturbing the existing set.
@@ -145,36 +184,25 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
             id,
         };
         doc.cursors = CursorSet::new_from(&[extended]);
-        app.pointer.drag = Some(Drag::Text { anchor });
+        app.pointer.drag = Some(Drag::Text {
+            anchor,
+            pane: Pane::Editor,
+        });
         return;
     }
 
     let doc = app.active_doc_mut();
-    match count {
-        1 => {
-            let placed = Cursor {
-                position: offset,
-                anchor: offset,
-                desired_col,
-                id: 0,
-            };
-            doc.cursors = CursorSet::new_from(&[placed]);
-            app.pointer.drag = Some(Drag::Text { anchor: offset });
-        }
-        2 => {
-            let (start, end) = word_range_at(&doc.buffer, offset);
-            select_range(doc, start, end);
-            app.pointer.drag = None;
-        }
-        _ => {
-            let (start, end) = line_range_incl_newline(&doc.buffer, offset);
-            select_range(doc, start, end);
-            app.pointer.drag = None;
-        }
+    if place_click_cursor(doc, offset, desired_col, count) {
+        app.pointer.drag = Some(Drag::Text {
+            anchor: offset,
+            pane: Pane::Editor,
+        });
+    } else {
+        app.pointer.drag = None;
     }
 }
 
-fn select_range(doc: &mut Document, start: usize, end: usize) {
+pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {
     let id = doc.cursors.primary().id;
     let selected = Cursor {
         position: end,
@@ -185,14 +213,54 @@ fn select_range(doc: &mut Document, start: usize, end: usize) {
     doc.cursors = CursorSet::new_from(&[selected]);
 }
 
-fn handle_left_drag(app: &mut App, col: u16, row: u16) {
-    let Some(Drag::Text { anchor }) = app.pointer.drag else {
-        return;
-    };
-    let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
-        return;
-    };
-    let doc = app.active_doc_mut();
+/// The click-count -> cursor shape every left-mouse-down handler shares (the
+/// editor's own `handle_left_down` and the messages pane's `mouse_down`): a
+/// plain click places the caret, a double-click selects the word under it,
+/// three or more selects the whole logical line. Returns whether the caller
+/// should latch a `Drag::Text` — only a plain single click does; the
+/// multi-click cases already produced a full selection. The editor-only
+/// modifier gestures (ctrl/alt/shift-click) stay in `handle_left_down`
+/// itself, since the messages pane has no use for them.
+pub(crate) fn place_click_cursor(
+    doc: &mut Document,
+    offset: usize,
+    desired_col: usize,
+    count: u8,
+) -> bool {
+    match count {
+        1 => {
+            let placed = Cursor {
+                position: offset,
+                anchor: offset,
+                desired_col,
+                id: 0,
+            };
+            doc.cursors = CursorSet::new_from(&[placed]);
+            true
+        }
+        2 => {
+            let (start, end) = word_range_at(&doc.buffer, offset);
+            select_range(doc, start, end);
+            false
+        }
+        _ => {
+            let (start, end) = line_range_incl_newline(&doc.buffer, offset);
+            select_range(doc, start, end);
+            false
+        }
+    }
+}
+
+/// Extends `doc`'s selection for a latched `Drag::Text { anchor, .. }` to
+/// `offset` — the drag half of the shape [`place_click_cursor`] shares:
+/// both the editor's `handle_left_drag` and the messages pane's
+/// `mouse_drag` reach this once they've hit-tested a buffer offset.
+pub(crate) fn extend_drag_cursor(
+    doc: &mut Document,
+    anchor: usize,
+    offset: usize,
+    desired_col: usize,
+) {
     let id = doc.cursors.primary().id;
     let extended = Cursor {
         position: offset,
@@ -201,6 +269,32 @@ fn handle_left_drag(app: &mut App, col: u16, row: u16) {
         id,
     };
     doc.cursors = CursorSet::new_from(&[extended]);
+}
+
+/// Extends the editor's selection for a latched `Drag::Text { pane: Editor,
+/// .. }` — called directly by the top-of-`handle` latched-gesture branch, so
+/// it recomputes the editor rect itself rather than trusting rect-relative
+/// coordinates a caller elsewhere might compute against the wrong rect. A
+/// pointer that has wandered outside the editor mid-drag is a no-op (the
+/// selection simply stops extending until it re-enters), matching the
+/// pre-WP3 behaviour this replaces.
+fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let editor = crate::layout::geometry(area, app).editor;
+    if input.column < editor.x
+        || input.row < editor.y
+        || input.column >= editor.x.saturating_add(editor.width)
+        || input.row >= editor.y.saturating_add(editor.height)
+    {
+        return;
+    }
+    let col = input.column - editor.x;
+    let row = input.row - editor.y;
+    let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
+        return;
+    };
+    let doc = app.active_doc_mut();
+    extend_drag_cursor(doc, anchor, offset, desired_col);
 }
 
 #[cfg(test)]
@@ -382,5 +476,20 @@ mod tests {
             "a click on the synthesised top border must not move the caret"
         );
         assert!(!app.active_doc().cursors.primary().has_selection());
+    }
+
+    /// Finding 6: the shared click-count -> cursor shape, document-agnostic.
+    #[test]
+    fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {
+        let mut doc = crate::document::Document::new(Buffer::new("hello world\n"));
+        assert!(place_click_cursor(&mut doc, 6, 6, 1));
+        assert_eq!(doc.cursors.primary().position, 6);
+        assert!(!place_click_cursor(&mut doc, 6, 6, 2));
+        assert_eq!(doc.cursors.primary().selection_range(), (6, 11));
+        assert!(!place_click_cursor(&mut doc, 6, 6, 3));
+        assert_eq!(doc.cursors.primary().selection_range(), (0, 12));
+        extend_drag_cursor(&mut doc, 0, 5, 5);
+        let c = doc.cursors.primary();
+        assert_eq!((c.anchor, c.position), (0, 5));
     }
 }

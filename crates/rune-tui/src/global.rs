@@ -61,6 +61,12 @@ pub enum GlobalCommand {
     /// plain `Enter` keypress — this binding then simply never fires there,
     /// rather than colliding with real Enter.
     Merge,
+    /// Toggles the message-log pane above the footer: closed ->
+    /// open + focus; open + focused -> collapse + focus the Editor; open +
+    /// unfocused -> focus. `^E`/`⌘E` — free across every binding table (the
+    /// former `GlobalCommand::FocusEditor` these keys used to name was
+    /// deleted in `84a83f5`).
+    ToggleMessages,
 }
 
 const CTRL: Mods = Mods {
@@ -292,6 +298,20 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: false,
     },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('e'), CTRL)],
+        cmd: GlobalCommand::ToggleMessages,
+        help: "messages",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('e'), SUP)],
+        cmd: GlobalCommand::ToggleMessages,
+        help: "messages",
+        when: "",
+        alias: true,
+    },
 ];
 
 #[cfg(test)]
@@ -464,5 +484,57 @@ mod tests {
             claimants(EXPLORER_SEARCH_BINDINGS, ctrl_m).is_empty(),
             "EXPLORER_SEARCH_BINDINGS already binds {ctrl_m:?}"
         );
+    }
+
+    /// The same cross-table guard as `global_p_binding_...`
+    /// above, for `^E`/`⌘E` (`GlobalCommand::ToggleMessages`).
+    #[test]
+    fn global_e_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let ctrl_e = KeyInput {
+            code: KeyCode::Char('e'),
+            mods: CTRL,
+        };
+        let sup_e = KeyInput {
+            code: KeyCode::Char('e'),
+            mods: SUP,
+        };
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        for key in [ctrl_e, sup_e] {
+            assert!(
+                claimants(EDITOR_BINDINGS, key).is_empty(),
+                "EDITOR_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(VIM_BINDINGS, key).is_empty(),
+                "VIM_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(TABS_BINDINGS, key).is_empty(),
+                "TABS_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_BINDINGS, key).is_empty(),
+                "EXPLORER_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
+                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
+            );
+        }
     }
 }

@@ -131,7 +131,7 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
 /// into one value rather than two loose `bool` parameters purely to keep
 /// that function's own argument count under the repo's `too_many_arguments`
 /// deny (the repo bans silencing it with an `#[allow]` instead).
-pub(super) struct OverlayGates {
+pub(crate) struct OverlayGates {
     /// Whether the caret may be painted — `Document::has_insertion_point`.
     pub caret: bool,
     /// Whether the selection background may be painted —
@@ -152,7 +152,7 @@ pub(super) struct OverlayGates {
 /// either overlay without deciding, for each, whether this document may
 /// show it — and the early return below covers the case where neither may
 /// be painted at all.
-pub(super) fn apply_cursor_overlays(
+pub(crate) fn apply_cursor_overlays(
     gates: OverlayGates,
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,

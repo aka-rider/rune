@@ -275,11 +275,7 @@ fn super_s_on_a_degraded_store_arms_a_confirm_gate_then_saves_on_second_press() 
         !app.doc(id).unwrap().save_in_flight,
         "no materialize must be enqueued before the gate is confirmed"
     );
-    assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|s| s.contains("recovery disabled"))
-    );
+    assert!(rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("recovery disabled")));
 
     let mut effects2 = Effects::default();
     app::update(&mut app, Msg::Key(save_key()), &mut effects2);

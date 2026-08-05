@@ -15,8 +15,9 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
 use rune_nav::{Anchor, AnchorRole, DefRole, Destination, Ref, RefKind, Target, UseRole};
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::DocumentId;
+use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::workspace;
 
@@ -58,9 +59,9 @@ pub fn follow(app: &mut App, effects: &mut Effects) {
             follow_location(app, &path, anchor, effects);
         }
         Destination::Unresolved => {
-            app.set_status(
+            messages::warn(
+                app,
                 format!("could not follow link to \"{}\"", describe_target(&target)),
-                StatusSource::Other,
             );
         }
     }
@@ -85,9 +86,9 @@ fn link_target_at(catalogue: &[Ref], offset: usize) -> Option<Target> {
 fn follow_same_doc(app: &mut App, anchor: &Anchor) {
     let doc = app.active_doc();
     let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
-        app.set_status(
+        messages::warn(
+            app,
             format!("no match for anchor \"{}\"", anchor_label(anchor)),
-            StatusSource::Other,
         );
         return;
     };
@@ -125,9 +126,9 @@ pub(crate) fn land_anchor(app: &mut App, id: DocumentId, anchor: &Anchor) {
     };
     doc.sync_catalogue();
     let Some(offset) = anchor_offset(&doc.catalogue, &doc.buffer, anchor) else {
-        app.set_status(
+        messages::warn(
+            app,
             format!("no match for anchor \"{}\"", anchor_label(anchor)),
-            StatusSource::Other,
         );
         return;
     };
@@ -190,8 +191,8 @@ fn open_external_cmd(url: String) -> Cmd {
     Cmd::new(CmdKind::OpenExternal, move || {
         match ProcessCommand::new("/usr/bin/open").arg(&url).status() {
             Ok(status) if status.success() => None,
-            Ok(status) => Some(Msg::Error(format!("open exited with status {status}"))),
-            Err(e) => Some(Msg::Error(format!("could not open {url}: {e}"))),
+            Ok(status) => Some(Msg::Warning(format!("open exited with status {status}"))),
+            Err(e) => Some(Msg::Warning(format!("could not open {url}: {e}"))),
         }
     })
 }

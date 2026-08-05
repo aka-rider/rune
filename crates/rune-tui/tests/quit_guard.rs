@@ -15,9 +15,9 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_db::{ClockFn, Store};
 use rune_tui::app::{App, update};
-use rune_tui::banner::{GuardKind, GuardPrompt, Modal};
 use rune_tui::db::{Db, DocDb};
 use rune_tui::document::DocumentId;
+use rune_tui::guard::{GuardKind, GuardPrompt};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::runtime::{Effects, Msg};
@@ -50,9 +50,9 @@ fn press(app: &mut App, input: KeyInput) {
 }
 
 fn guard_kind(app: &App) -> Option<&GuardKind> {
-    match &app.modal {
-        Some(Modal::Guard(GuardPrompt { kind, .. })) => Some(kind),
-        _ => None,
+    match &app.guard {
+        Some(GuardPrompt { kind, .. }) => Some(kind),
+        None => None,
     }
 }
 
@@ -83,7 +83,7 @@ fn single_dirty_unpreserved_document_ctrl_c_guard_discard_quits() {
         app.should_quit,
         "[D]iscard on the quit guard must actually quit, not merely close"
     );
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
 }
 
 /// A pathless draft has nothing to save TO yet: `[S]ave` must route to the
@@ -104,14 +104,13 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
 
     press(&mut app, key(KeyCode::Char('s')));
 
-    assert!(app.modal.is_none(), "the guard must clear either way");
+    assert!(app.guard.is_none(), "the guard must clear either way");
     assert_eq!(app.focus(), Pane::Title, "naming flow must focus the title");
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .is_some_and(|m| m.contains("name this document to save it")),
         "status was {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(!app.should_quit, "nothing was actually saved yet");
     assert!(
@@ -121,7 +120,7 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
 
     // The guard must not simply re-raise on the very next tick with nothing
     // changed — the new fact WP2's fuzz invariant also checks.
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
 }
 
 fn named_dirty_doc(app: &mut App, path: &str) -> DocumentId {
@@ -199,7 +198,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
         "a failed save must never let quit complete"
     );
     assert!(
-        app.status_message.is_some(),
+        rune_tui::messages::newest_text(&app).is_some(),
         "the failure must be surfaced, not swallowed"
     );
     assert!(
@@ -325,7 +324,10 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         !app.should_quit,
         "a store failure must never let quit complete"
     );
-    assert!(app.status_message.is_some(), "the failure must be surfaced");
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some(),
+        "the failure must be surfaced"
+    );
     assert!(
         app.quit_intent.is_none(),
         "the stranded intent must be cleared"
@@ -393,11 +395,10 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
     );
     let expected_name = if armed_id == id_a { "a.md" } else { "b.md" };
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .is_some_and(|m| m.contains("recovery disabled") && m.contains(expected_name)),
         "the status must name the SAME document the confirm gate is armed for, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(
         app.quit_intent.is_none(),

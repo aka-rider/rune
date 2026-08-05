@@ -25,8 +25,9 @@ use std::sync::Arc;
 use rune_db::{MatResult, MaterializeOutcome, StatFacts};
 use rune_vfs::Vfs;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::DocumentId;
+use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::save::{self, PendingMaterialize};
 
@@ -305,6 +306,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         db.degraded = true;
     }
     app.db_banner = Some(format!("recovery disabled: {error}"));
+    messages::error(app, format!("recovery disabled: {error}"));
 
     // Collected first: `abandon_save` needs `&mut Document`, and every one
     // ALSO needs its dirty cache re-settled (plan WP1 — a stranded capture
@@ -323,7 +325,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
         recompute_dirty(app, id);
     }
     if !stranded.is_empty() {
-        app.set_status(format!("save failed: {error}"), StatusSource::SaveError);
+        messages::error(app, format!("save failed: {error}"));
     }
 
     // A `Fatal` kills the writer's whole FIFO — every op it had enqueued,

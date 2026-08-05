@@ -53,6 +53,10 @@ pub struct ChromeStyles {
     pub active_border: Style,
     pub inactive_border: Style,
     pub title_text: Style,
+    /// The messages pane's `Severity::Error` colour — `Info`
+    /// paints no colour of its own (plain text); `Warn` uses this yellow,
+    /// unbolded so it reads as less urgent than `error`'s bold red.
+    pub warn: Style,
     pub special: Color,
     pub subtle: Color,
     pub selection_bg: Color,
@@ -114,6 +118,7 @@ impl Theme {
             active_border: Style::new().fg(c(p.blue)),
             inactive_border: Style::new().fg(c(p.overlay1)),
             title_text: Style::new().fg(c(p.yellow)).add_modifier(Modifier::BOLD),
+            warn: Style::new().fg(c(p.yellow)),
             special: c(p.mauve),
             subtle: c(p.overlay1),
             selection_bg: c(p.surface2),

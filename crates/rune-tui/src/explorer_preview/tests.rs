@@ -276,7 +276,7 @@ fn an_oversized_file_is_skipped_with_no_read_and_no_banner() {
     run_cmds(&mut app, &mut effects);
 
     assert!(app.explorer.preview.is_none());
-    assert!(app.modal.is_none(), "no error banner for a skipped preview");
+    assert!(app.guard.is_none(), "no error banner for a skipped preview");
 }
 
 #[test]
@@ -293,7 +293,7 @@ fn a_binary_file_is_skipped_with_no_read_and_no_banner() {
     run_cmds(&mut app, &mut effects);
 
     assert!(app.explorer.preview.is_none());
-    assert!(app.modal.is_none(), "no error banner for a skipped preview");
+    assert!(app.guard.is_none(), "no error banner for a skipped preview");
 }
 
 #[test]

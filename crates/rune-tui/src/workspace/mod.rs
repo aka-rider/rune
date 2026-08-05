@@ -19,6 +19,7 @@ use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
 use crate::graphics::{ImageState, ImageStatus};
 use crate::help;
+use crate::messages;
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
@@ -38,9 +39,9 @@ pub fn resolve(vfs: &dyn Vfs, path: &Path) -> PathBuf {
 
 /// Opens `path`: normalizes it via [`resolve`], then either re-activates
 /// an already-open `Document` with that resolved `file_path` or reads a
-/// fresh one. A read/decode failure is reported through the error Banner
-/// (`banner::report_error`) — the one chokepoint every error report
-/// funnels through (plan WP3.S4). Returns the opened/reactivated
+/// fresh one. A read/decode failure is reported into the message log
+/// (`messages::error`) — the one chokepoint every error report
+/// funnels through. Returns the opened/reactivated
 /// document's id, or `None` on any of the error paths — `navigate::follow`
 /// (plan WP5) needs the id back to force-parse the target and land the
 /// caret on an anchor.
@@ -57,7 +58,7 @@ pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
     let bytes = match app.vfs.read(&resolved) {
         Ok(bytes) => bytes,
         Err(e) => {
-            crate::banner::report_error(app, format!("could not open {}: {e}", resolved.display()));
+            messages::error(app, format!("could not open {}: {e}", resolved.display()));
             return None;
         }
     };
@@ -116,7 +117,7 @@ pub fn open_path_async(
 /// ack, so the title can genuinely be focused when it lands, and the switch
 /// below (whichever branch reaches it) must never fire against the wrong
 /// document. Only lands focus on the Editor on the paths that actually open
-/// something; a read/decode failure raises the error banner instead and must
+/// something; a read/decode failure posts an error message instead and must
 /// not steal the keyboard from wherever it already was.
 pub(crate) fn handle_file_opened(
     app: &mut App,
@@ -149,7 +150,7 @@ pub(crate) fn handle_file_opened(
     let bytes = match result {
         Ok(bytes) => bytes,
         Err(e) => {
-            crate::banner::report_error(app, format!("could not open {}: {e}", path.display()));
+            messages::error(app, format!("could not open {}: {e}", path.display()));
             return;
         }
     };
@@ -183,7 +184,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
     let buffer = match Buffer::from_bytes(bytes) {
         Ok(buffer) => buffer,
         Err(BufferError::InvalidUtf8) => {
-            crate::banner::report_error(
+            messages::error(
                 app,
                 format!(
                     "{}: not valid UTF-8 \u{2014} refusing to open",
@@ -193,7 +194,7 @@ fn open_bytes(app: &mut App, resolved: &Path, bytes: Vec<u8>) -> Option<Document
             return None;
         }
         Err(e) => {
-            crate::banner::report_error(app, format!("could not open {}: {e}", resolved.display()));
+            messages::error(app, format!("could not open {}: {e}", resolved.display()));
             return None;
         }
     };
@@ -428,7 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_file_raises_the_error_banner_and_opens_nothing() {
+    fn a_missing_file_posts_an_error_message_and_opens_nothing() {
         let mem = Arc::new(Mem::new());
         let mut app = app_with_seed(&mem);
         let before = app.documents.len();
@@ -436,6 +437,9 @@ mod tests {
         open_path(&mut app, Path::new("/root/missing.md"));
 
         assert_eq!(app.documents.len(), before);
-        assert!(app.modal.is_some(), "open failure must raise the Banner");
+        assert!(
+            messages::newest_text(&app).is_some(),
+            "open failure must post a message"
+        );
     }
 }
