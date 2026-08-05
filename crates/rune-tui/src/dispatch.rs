@@ -30,6 +30,16 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             app.frame_width = width;
             app.frame_height = height;
             app.relayout();
+            // A settled focus is a claim about what THIS frame paints, and
+            // this write is the one place that claim can go stale without
+            // any focus transition ever running: `LayoutMode::resolve` reads
+            // `frame_width`/`frame_height` alone, so the mode can flip while
+            // `app.focus` never moved. `reconcile` already repairs this same
+            // shape for the collapse command and the splitter drag; this is
+            // the resize path's counterpart. Called after `relayout` so the
+            // dimensions `layout_mode` reads back are the ones just written
+            // above, not the previous frame's.
+            crate::focus::reconcile(app, effects);
             // Plan WP5.S6: the pane may have just changed width (or the
             // terminal's reported cell pixel geometry may — see
             // `refit_on_resize`'s own docs), so a `Live` image document's
