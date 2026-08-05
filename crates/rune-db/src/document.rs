@@ -130,10 +130,12 @@ fn open_path_by_inode(
             // moves to the new inode, so a later open of the hardlink's own
             // path resolves as a distinct document rather than the one
             // being tracked here.
+            // A unique partial index enforces that at most one row can ever
+            // claim a given non-empty path, so there is no tie to break
+            // here.
             let claimant: Option<i64> = tx
                 .query_row(
-                    "SELECT id FROM documents WHERE path=?1 \
-                     ORDER BY (inode IS NOT NULL) DESC, id DESC LIMIT 1",
+                    "SELECT id FROM documents WHERE path=?1",
                     params![path],
                     |r| r.get(0),
                 )

@@ -13,10 +13,17 @@
 //! `load` sees ours=draft / theirs=H1 / ancestor=H0 → `Diverged` — the
 //! existing in-session `DiskConflict` guard and merge machinery take it
 //! from there without needing to know any of this happened.
+//!
+//! §12's transactional invariant governs every anchor sequence below: the
+//! blob read (when there is one) and every write it produces commit as ONE
+//! `retry::with_retry` transaction, never as separate back-to-back
+//! transactions. A window between a committed anchor and its not-yet-
+//! committed bridge would let a concurrent fresh session on the same path
+//! observe — and double-bridge — a still-half-anchored dead draft.
 
 use std::time::SystemTime;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
 use rune_core::buffer::AppliedEdit;
 
@@ -51,24 +58,17 @@ pub(crate) struct LoadContext<'a> {
 /// Anchors a snapshot + adoption on `content` (disk content), tagged with
 /// `hash` — the ordinary "first sighting is the adoption" shape shared by
 /// every branch that isn't re-anchoring on a dead session's older baseline.
-fn anchor_on_disk(
-    conn: &mut Connection,
+/// Runs entirely inside the caller's already-open `tx` (§12) — never opens
+/// its own transaction.
+fn anchor_on_disk_tx(
+    tx: &Transaction<'_>,
     ctx: &LoadContext<'_>,
     content: &str,
     hash: &str,
 ) -> Result<(), Error> {
-    retry::with_retry(conn, |tx| {
-        crate::snapshot::create_snapshot(
-            tx,
-            ctx.session_id,
-            ctx.now,
-            ctx.doc_id,
-            content,
-            ctx.load_seq,
-        )
-    })?;
-    adopt::record_adoption(
-        conn,
+    crate::snapshot::create_snapshot(tx, ctx.session_id, ctx.now, ctx.doc_id, content, ctx.load_seq)?;
+    adopt::record_adoption_tx(
+        tx,
         ctx.doc_id,
         ctx.session_id,
         observation::ObservationMeta {
@@ -77,16 +77,17 @@ fn anchor_on_disk(
             origin: "load",
         },
         ctx.live_stat,
-        ctx.now,
+        &crate::session::format_rfc3339_nanos(ctx.now),
     )?;
     Ok(())
 }
 
 /// Journals ONE synthetic replace-all edit turning `from` into `to`, under
 /// `ctx.session_id`, at the very next journal position — exactly as if the
-/// user had just pasted `to` in. Returns the durable seq it landed at.
-fn bridge_edit(
-    conn: &mut Connection,
+/// user had just pasted `to` in. Returns the durable seq it landed at. Runs
+/// entirely inside the caller's already-open `tx` (§12).
+fn bridge_edit_tx(
+    tx: &Transaction<'_>,
     ctx: &LoadContext<'_>,
     from: &str,
     to: &str,
@@ -97,31 +98,39 @@ fn bridge_edit(
         deleted: from.to_string(),
         insert: to.to_string(),
     }];
-    retry::with_retry(conn, |tx| {
-        crate::journal::append_edit(tx, ctx.session_id, ctx.now, ctx.doc_id, &edit, &[], &[])
-    })
+    crate::journal::append_edit(tx, ctx.session_id, ctx.now, ctx.doc_id, &edit, &[], &[])
 }
 
 /// Re-anchors on the dead session's own baseline (`H0`), bridges `H0` to
 /// `draft`, then records a bare sighting of disk's current content
-/// (`ctx.disk_hash`, `H1`) last. `Ok(None)` when `baseline`'s blob is
-/// missing/GC'd or not valid UTF-8 (a rare corner — the caller falls back
-/// to the plain disk-anchor flow rather than fail the whole load over it).
+/// (`ctx.disk_hash`, `H1`) last — the blob read and all three writes commit
+/// as ONE transaction (§12), so a concurrent fresh session on the same path
+/// can never observe a partially-anchored bridge. `Ok(None)` when
+/// `baseline`'s blob is unusable as an anchor: [`Error::NotFound`] (GC'd or
+/// never captured) or [`Error::BlobHashMismatch`] (corrupt) both mean "H0 is
+/// gone, fall back to the plain disk-anchor flow" — the caller still
+/// preserves the draft via the disk-anchored bridge, it just can't honor
+/// H0 as the undo baseline. Every other error from the blob read (a real
+/// SQLite/IO failure) propagates instead of silently changing recovery
+/// semantics. A `baseline` blob that IS present but not valid UTF-8 also
+/// falls back — `load`'s `!has_history` branch has no way to bridge a
+/// non-text H0 into a `String`-typed buffer.
 fn anchor_diverged(
     conn: &mut Connection,
     ctx: &LoadContext<'_>,
     draft: &str,
     baseline: &observation::Observation,
 ) -> Result<Option<AnchorOutcome>, Error> {
-    let Ok(h0_bytes) = retry::with_retry(conn, |tx| crate::blob::get_blob(tx, &baseline.blob_hash))
-    else {
-        return Ok(None);
-    };
-    let Ok(h0_content) = String::from_utf8(h0_bytes) else {
-        return Ok(None);
-    };
-
     retry::with_retry(conn, |tx| {
+        let h0_bytes = match crate::blob::get_blob(tx, &baseline.blob_hash) {
+            Ok(bytes) => bytes,
+            Err(Error::NotFound(_) | Error::BlobHashMismatch { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let Ok(h0_content) = String::from_utf8(h0_bytes) else {
+            return Ok(None);
+        };
+
         crate::snapshot::create_snapshot(
             tx,
             ctx.session_id,
@@ -129,29 +138,26 @@ fn anchor_diverged(
             ctx.doc_id,
             &h0_content,
             ctx.load_seq,
-        )
-    })?;
-    adopt::record_adoption(
-        conn,
-        ctx.doc_id,
-        ctx.session_id,
-        observation::ObservationMeta {
-            blob_hash: &baseline.blob_hash,
-            seq: Some(ctx.load_seq),
-            origin: "load",
-        },
-        &baseline.stat(),
-        ctx.now,
-    )?;
+        )?;
+        adopt::record_adoption_tx(
+            tx,
+            ctx.doc_id,
+            ctx.session_id,
+            observation::ObservationMeta {
+                blob_hash: &baseline.blob_hash,
+                seq: Some(ctx.load_seq),
+                origin: "load",
+            },
+            &baseline.stat(),
+            &crate::session::format_rfc3339_nanos(ctx.now),
+        )?;
 
-    let bridge_seq = bridge_edit(conn, ctx, &h0_content, draft)?;
+        let bridge_seq = bridge_edit_tx(tx, ctx, &h0_content, draft)?;
 
-    // Recorded LAST, uncorrelated (`seq: None`) — `newest_observation` must
-    // report H1, never the H0 adoption just recorded above. Stat facts come
-    // from the LIVE stat (this session's own fresh sighting), matching
-    // every other bare-sighting call site.
-    let at = crate::session::format_rfc3339_nanos(ctx.now);
-    retry::with_retry(conn, |tx| {
+        // Recorded LAST, uncorrelated (`seq: None`) — `newest_observation`
+        // must report H1, never the H0 adoption just recorded above. Stat
+        // facts come from the LIVE stat (this session's own fresh
+        // sighting), matching every other bare-sighting call site.
         observation::record_observation(
             tx,
             ctx.doc_id,
@@ -162,14 +168,14 @@ fn anchor_diverged(
                 origin: "load",
             },
             ctx.live_stat,
-            &at,
-        )
-    })?;
+            &crate::session::format_rfc3339_nanos(ctx.now),
+        )?;
 
-    Ok(Some(AnchorOutcome {
-        recovered: draft.to_string(),
-        bridge_seq: Some(bridge_seq),
-    }))
+        Ok(Some(AnchorOutcome {
+            recovered: draft.to_string(),
+            bridge_seq: Some(bridge_seq),
+        }))
+    })
 }
 
 /// The full body of `load`'s `!has_history` branch: anchors this session's
@@ -189,19 +195,170 @@ pub(crate) fn anchor_first_load(
     }
 
     // Disk, Bridged, or a Diverged baseline whose blob turned out to be
-    // unusable — anchor on disk content, exactly like today's flow.
-    anchor_on_disk(conn, ctx, content, ctx.disk_hash)?;
-    match inherited {
-        Inherited::Bridged { draft } | Inherited::Diverged { draft, .. } => {
-            let bridge_seq = bridge_edit(conn, ctx, content, &draft)?;
-            Ok(AnchorOutcome {
-                recovered: draft,
-                bridge_seq: Some(bridge_seq),
-            })
+    // unusable — anchor on disk content, exactly like today's flow. The
+    // anchor write and the bridge edit (when there is one) commit as ONE
+    // transaction (§12) — the same double-bridge race the `Diverged` path
+    // above closes applies equally here.
+    retry::with_retry(conn, |tx| {
+        anchor_on_disk_tx(tx, ctx, content, ctx.disk_hash)?;
+        match &inherited {
+            Inherited::Bridged { draft } | Inherited::Diverged { draft, .. } => {
+                let bridge_seq = bridge_edit_tx(tx, ctx, content, draft)?;
+                Ok(AnchorOutcome {
+                    recovered: draft.clone(),
+                    bridge_seq: Some(bridge_seq),
+                })
+            }
+            Inherited::Disk => Ok(AnchorOutcome {
+                recovered: content.to_string(),
+                bridge_seq: None,
+            }),
         }
-        Inherited::Disk => Ok(AnchorOutcome {
-            recovered: content.to_string(),
-            bridge_seq: None,
-        }),
+    })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use rusqlite::params;
+
+    use super::*;
+    use crate::observation::Observation;
+
+    fn open() -> Connection {
+        let conn = Connection::open_in_memory().expect("open");
+        crate::schema::apply(&conn).expect("schema");
+        conn
+    }
+
+    fn seed_doc(conn: &Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        conn.last_insert_rowid()
+    }
+
+    /// Through `load::load`'s full two-session scenario, A's own H0 blob
+    /// can never go missing without ALSO breaking
+    /// `inherit::find_inheritable_draft`'s own reconstruction of A's draft
+    /// (both read the identical blob by construction), so `load` fails
+    /// before ever reaching `anchor_diverged`'s fallback. This test exercises
+    /// the fallback directly instead, against `anchor_first_load` itself.
+    ///
+    /// `baseline` names H0's blob hash, but that blob was never stored —
+    /// `anchor_diverged` must fall back to `Ok(None)` (never surface
+    /// `Error::NotFound`), letting `anchor_first_load` fall through to the
+    /// disk-anchored bridge. The draft still survives; only the undo
+    /// baseline degrades from H0 to disk's current content (H1).
+    #[test]
+    fn diverged_anchor_with_missing_h0_blob_falls_back_to_disk_anchor() {
+        let mut conn = open();
+        let doc_id = seed_doc(&conn);
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+
+        let draft = "UNSAVED session A's content";
+        let disk_content = "disk moved on independently";
+        let disk_hash = observation::hash_bytes(disk_content.as_bytes());
+        let h0_hash = observation::hash_bytes(b"session A's content");
+
+        let live_stat = StatFacts {
+            size: disk_content.len() as i64,
+            mtime: "t".to_string(),
+            ..Default::default()
+        };
+        let ctx = LoadContext {
+            session_id: session_b,
+            doc_id,
+            load_seq: 0,
+            disk_hash: &disk_hash,
+            live_stat: &live_stat,
+            now: SystemTime::now(),
+        };
+
+        // `baseline` claims H0's hash, but no such blob was ever put —
+        // simulating corruption/loss distinct from an ordinary GC sweep
+        // (`gc::sweep_unreferenced_blobs` never touches a blob a live
+        // observation still references, so this can only be reached by a
+        // genuinely pathological loss of the row itself).
+        let baseline = Observation {
+            id: 1,
+            doc_id,
+            session_id: session_a,
+            blob_hash: h0_hash.clone(),
+            seq: Some(0),
+            size: 0,
+            mtime: "t".to_string(),
+            inode: None,
+            device: None,
+            nlink: None,
+            origin: "load".to_string(),
+            supersedes: None,
+            at: "t".to_string(),
+        };
+
+        let outcome = anchor_first_load(
+            &mut conn,
+            &ctx,
+            disk_content,
+            Inherited::Diverged {
+                draft: draft.to_string(),
+                baseline: Box::new(baseline),
+            },
+        )
+        .expect("anchor_first_load must succeed via the disk-anchored fallback");
+
+        assert_eq!(
+            outcome.recovered, draft,
+            "the draft must survive even without H0"
+        );
+        let bridge_seq = outcome
+            .bridge_seq
+            .expect("a bridge edit must have been journaled");
+
+        let head = retry::with_retry(&mut conn, |tx| {
+            crate::journal::current_seq(tx, session_b, doc_id)
+        })
+        .expect("current_seq");
+        assert_eq!(head, bridge_seq);
+
+        let saved_obs = retry::with_retry(&mut conn, |tx| {
+            observation::saved_obs_for(tx, session_b, doc_id)
+        })
+        .expect("saved_obs_for")
+        .expect("session b adopted a baseline");
+        assert_eq!(
+            saved_obs.blob_hash, disk_hash,
+            "with H0 unusable, the fallback anchors on disk's current content (H1)"
+        );
+
+        let sync_state = retry::with_retry(&mut conn, |tx| {
+            crate::sync::sync(tx, session_b, doc_id)
+        })
+        .expect("sync");
+        assert_eq!(
+            sync_state.kind,
+            crate::sync::SyncKind::BufferAhead,
+            "ours=draft vs theirs=H1=ancestor(seq 0 < bridge_seq) is BufferAhead"
+        );
+
+        // No trace of H0 was ever written — the fallback commits only the
+        // disk-anchored adoption plus its bridge, never an insert that
+        // would have needed the missing blob row.
+        let h0_still_absent: bool = conn
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM blobs WHERE hash=?1)",
+                params![h0_hash],
+                |r| r.get(0),
+            )
+            .expect("check h0 blob");
+        assert!(
+            h0_still_absent,
+            "the fallback must never attempt to write the missing H0 blob back"
+        );
     }
 }
