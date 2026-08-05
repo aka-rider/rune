@@ -1,7 +1,11 @@
 [package]
 name = "rune-cli"
-version = "0.1.0"
+version = "1.2.0"
 edition.workspace = true
+description = "TUI markdown editor that protects your words"
+homepage = "https://github.com/aka-rider/rune"
+repository = "https://github.com/aka-rider/rune"
+license = "MIT"
 
 [[bin]]
 name = "rune"
