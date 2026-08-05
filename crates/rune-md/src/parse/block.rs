@@ -7,6 +7,7 @@ use crate::element::block::{
     Block, BlockquoteM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM, ListM, ParagraphM,
     VerbatimKind, VerbatimM,
 };
+use crate::element::inline::Inline;
 use comrak::nodes::{AstNode, ListType, NodeValue};
 use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 
@@ -17,7 +18,10 @@ use rune_syntax::element::{ByteRange, RevealSm, RevealState};
 enum BlockKind {
     Document,
     Paragraph,
-    Heading(u8),
+    Heading {
+        level: u8,
+        setext: bool,
+    },
     BlockQuote,
     CodeBlock {
         fenced: bool,
@@ -41,7 +45,10 @@ impl ClassifyBlock for NodeValue {
         match self {
             NodeValue::Document => BlockKind::Document,
             NodeValue::Paragraph => BlockKind::Paragraph,
-            NodeValue::Heading(h) => BlockKind::Heading(h.level),
+            NodeValue::Heading(h) => BlockKind::Heading {
+                level: h.level,
+                setext: h.setext,
+            },
             NodeValue::BlockQuote => BlockKind::BlockQuote,
             NodeValue::CodeBlock(cb) => BlockKind::CodeBlock {
                 fenced: cb.fenced,
@@ -96,7 +103,7 @@ fn build_block<'a>(
             let inlines = super::inline::build_inlines(content, starts, node, hint);
             Some(Block::Paragraph(ParagraphM { range, inlines }))
         }
-        BlockKind::Heading(level) => {
+        BlockKind::Heading { level, setext } => {
             let marker_end = node
                 .first_child()
                 .map(|c| node_range(content, starts, c).start)
@@ -134,12 +141,21 @@ fn build_block<'a>(
             // decide policy) stays a separate field for that one purpose.
             let content_lines = super::per_line_content(content, starts, range, hint);
 
+            // A setext heading's underline is always its LAST content line
+            // — its text may itself span several lines (`Foo\nBar\n---`),
+            // so `content_lines[1]` would be wrong for that shape.
+            let underline = underline_of_setext_heading(setext, &content_lines, &inlines);
+            let last_line = last_line_of(starts, range);
+
             Some(Block::Heading(HeadingM {
                 sm: RevealSm::new(RevealState::Rendered),
                 level,
                 line,
+                last_line,
                 range,
+                setext,
                 marker,
+                underline,
                 inlines,
                 content_lines,
             }))
@@ -189,7 +205,7 @@ fn build_block<'a>(
             // decide policy (`cursors.any_in_lines`, comparing against the
             // cursor's own buffer row).
             let first_line = line;
-            let last_line = super::line_at(starts, range.end.saturating_sub(1).max(range.start));
+            let last_line = last_line_of(starts, range);
 
             // A fence's OWN internal physical-line structure — where its
             // opening fence line ends, where each content line starts,
@@ -200,8 +216,7 @@ fn build_block<'a>(
             // (`comrak_first_line`..=`comrak_last_line`), mirroring the
             // setext-heading fix above.
             let comrak_first_line = super::line_at(starts, range.start);
-            let comrak_last_line =
-                super::line_at(starts, range.end.saturating_sub(1).max(range.start));
+            let comrak_last_line = last_line_of(starts, range);
 
             // CONTAINER-PREFIX fix: `fence_open`'s start is `range.start`,
             // NOT `line_start_at`/`hint` — a node's own sourcepos already
@@ -407,6 +422,39 @@ fn build_list_items<'a>(
         });
     }
     items
+}
+
+/// The buffer line containing `range`'s last byte — a block's own final
+/// physical line, by `starts`' `\n`-only counting rather than comrak's.
+fn last_line_of(starts: &[usize], range: ByteRange) -> usize {
+    super::line_at(starts, range.end.saturating_sub(1).max(range.start))
+}
+
+/// A setext heading's underline row, or `None` if concealing it would hide
+/// bytes `inlines` is already claiming as visible text. Comrak can leave a
+/// residual inline `Text` node covering the same bytes as the underline it
+/// just recognized (observed with an unmatched emphasis delimiter trailing
+/// into the underline line, e.g. `"x\n*a\nb\n---\n"` — the same class of
+/// comrak-internal desync `frontmatter_extension_is_safe` and the wikilink
+/// `within_brackets` guard already work around elsewhere in this crate).
+fn underline_of_setext_heading(
+    setext: bool,
+    content_lines: &[ByteRange],
+    inlines: &[Inline],
+) -> Option<ByteRange> {
+    if !setext {
+        return None;
+    }
+    content_lines.last().copied().filter(|underline| {
+        !inlines
+            .iter()
+            .any(|i| ranges_overlap(i.range(), *underline))
+    })
+}
+
+/// Half-open byte-range overlap check.
+fn ranges_overlap(a: ByteRange, b: ByteRange) -> bool {
+    a.start < b.end && b.start < a.end
 }
 
 /// True if `range`'s own last line — as comrak (via our conversion)

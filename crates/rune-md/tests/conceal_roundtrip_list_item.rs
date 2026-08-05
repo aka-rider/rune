@@ -39,3 +39,16 @@ fn empty_item_continuation_controls_stay_clean() {
     assert_no_duplicate_content("-\n>");
     assert_no_duplicate_content("-\n  x");
 }
+
+#[test]
+fn heading_leading_a_list_item_does_not_shift_byte_accounting() {
+    // The heading-wins decor rule (suppressing the bullet's `LineDecor`
+    // piece) must not touch a single hidden/visible byte — it only changes
+    // which decor pieces get pushed, never `hide_range`/`claim_visible`.
+    assert_no_duplicate_content("- # h");
+    assert_no_duplicate_content("- ## h");
+    assert_no_duplicate_content("1. # h");
+    assert_no_duplicate_content("- text\n\n  # h");
+    assert_no_duplicate_content("- [ ] x");
+    assert_no_duplicate_content("- a\n  - b");
+}

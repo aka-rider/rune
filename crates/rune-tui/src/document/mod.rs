@@ -273,6 +273,17 @@ impl Document {
     pub fn has_insertion_point(&self) -> bool {
         self.focused && !self.is_read_only()
     }
+
+    /// Whether a mouse selection's background may be painted onto this
+    /// document's cells. Deliberately NOT gated on `is_read_only()` the way
+    /// [`Self::has_insertion_point`] is: a read-only document has no caret
+    /// to place, but a mouse-drawn selection in it is real and copyable
+    /// (`⌘C` never checks read-only), so hiding its highlight would leave a
+    /// user action with no visible feedback. An unfocused document still
+    /// shows neither overlay.
+    pub fn shows_selection(&self) -> bool {
+        self.focused
+    }
 }
 
 /// The save-in-progress capture (plan WP1): the exact version/bytes

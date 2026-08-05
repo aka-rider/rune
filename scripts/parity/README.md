@@ -197,6 +197,15 @@ of how each side renders:
   the `**`/`` ` `` inside the heading like anywhere else. Elsewhere (plain
   cursor-off-line headings with no nested inline spans) the two sides
   agree.
+- **Setext headings render as prose in Go (`headings.md`, excluded from
+  `parity-grid`).** Go's heading walk counts leading `#` characters and
+  returns early when there are none, so a setext heading (a title line
+  followed by an `===`/`---` underline) emits no heading span at all and
+  renders as ordinary prose. Rust's CommonMark parser reports setext
+  headings as real headings with a level, so Rust renders heading style
+  and the level icon on them, hides the underline row's own bytes, and
+  paints that row as a full-width rule in the heading's style. Accepted
+  divergence: the Rust side follows CommonMark.
 - **Plain list markers are never concealed in Go (`lists.md`, `tasks.md`,
   `frontmatter.md`, `cjk.md`, `emoji.md`, excluded from `parity-grid`).**
   Go's markdown walker only emits a concealable span for GFM task-list

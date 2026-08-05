@@ -91,6 +91,20 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
     }
 }
 
+/// True when `item`'s decor-suppression case applies: its first child is a
+/// heading whose own line is the item marker's line. That heading already
+/// paints an icon on the row (`push_heading_decor`), so the bullet decor
+/// this item would otherwise contribute (`push_list_marker_decor`) must be
+/// skipped rather than stacked onto the same `LineDecor`. A heading that is
+/// a later child, or one that starts on a different row (a blank line, or
+/// any block, between the marker and it), leaves the bullet untouched.
+fn leads_with_own_line_heading(item: &ListItemM) -> bool {
+    matches!(
+        item.children.first(),
+        Some(Block::Heading(h)) if h.line == item.line
+    )
+}
+
 fn emit_list_item(
     content: &str,
     starts: &[usize],
@@ -132,11 +146,13 @@ fn emit_list_item(
         // Task items keep their `☐`/`☑` checkbox substitution (the `if let
         // Some(task)` arm above) and get NO bullet decor on top of it — the
         // checkbox already communicates the marker.
-        let line = line_at(starts, item.marker.start);
-        let marker_text = content
-            .get(item.marker.start..item.marker.end)
-            .unwrap_or("");
-        super::decor::push_list_marker_decor(out, line, ordered, depth, marker_text);
+        if !leads_with_own_line_heading(item) {
+            let line = line_at(starts, item.marker.start);
+            let marker_text = content
+                .get(item.marker.start..item.marker.end)
+                .unwrap_or("");
+            super::decor::push_list_marker_decor(out, line, ordered, depth, marker_text);
+        }
     }
     for c in &item.children {
         // Saturating: a pathological ~256-deep nested list must degrade to a
@@ -270,6 +286,16 @@ pub(crate) fn emit_block(
                     out,
                 );
                 super::decor::push_heading_decor(out, h.line, h.level);
+                // A setext heading's underline row is claimed here, never
+                // left for `fill_gaps` — its bytes are hidden exactly like
+                // the ATX marker, and the freed row carries a full-width
+                // rule in the heading's own style, not the thematic-break
+                // style (user-decided target behavior).
+                if let Some(underline) = h.underline {
+                    hide_range(out.hidden, out.accounted, content, starts, underline);
+                    let underline_line = line_at(starts, underline.start);
+                    super::decor::push_heading_rule_decor(out, underline_line, h.level);
+                }
             }
         }
         Block::Blockquote(bq) => {
