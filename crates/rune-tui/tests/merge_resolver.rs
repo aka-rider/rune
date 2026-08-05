@@ -1,7 +1,8 @@
 //! WP4 "Done when" integration tests for the merge resolver (plan
 //! `merge-user-s-changes-with-idempotent-octopus.md`): `[`/`]` navigation,
 //! O/T/B accepts, the ⌘S gate, key swallowing with feedback, and the Help
-//! table. Builds on `merge_entry.rs`'s fixtures and helpers.
+//! table. Builds on `merge_entry.rs`'s fixtures, and shares its own setup
+//! helpers with it via `merge_common` (review fix F9's dedupe).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -9,82 +10,29 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
+mod merge_common;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_db::{DbEvent, SyncKind};
-use rune_tui::app::{self, App};
+use rune_db::SyncKind;
+use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
-use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
-use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, publish, recv_ok};
+use merge_common::{
+    app_with_store, bare, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key,
+    publish, sup,
+};
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
 /// context lines between — two separate conflicts under any diff engine.
 const ANCESTOR: &[u8] = b"one\ntwo\nthree\nfour\nfive\n";
 const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
-
-fn bare(code: KeyCode) -> KeyInput {
-    KeyInput {
-        code,
-        mods: Mods::NONE,
-    }
-}
-
-fn ch(c: char) -> KeyInput {
-    bare(KeyCode::Char(c))
-}
-
-fn sup(c: char) -> KeyInput {
-    KeyInput {
-        code: KeyCode::Char(c),
-        mods: Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    }
-}
-
-fn press_key(app: &mut App, key: KeyInput) {
-    let mut effects = Effects::default();
-    app::update(app, Msg::Key(key), &mut effects);
-}
-
-fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let result = recv_ok(bridge, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
-}
-
-fn drain_all_ops_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    while app.db_ops.iter().any(|(_, pending)| pending.doc == doc) {
-        drain_one_op_for(app, bridge, doc);
-    }
-}
-
-fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
-    let path = Path::new("/doc.md");
-    vfs.remove(path).expect("remove the stale file");
-    let temp = vfs.write_durable(path, bytes).expect("write_durable");
-    vfs.rename_excl(&temp, path).expect("publish");
-}
 
 /// Builds the standard two-conflict resolver session: ancestor on disk at
 /// load, ours edits lines 1 and 5 by typing, theirs rewrites both on disk,

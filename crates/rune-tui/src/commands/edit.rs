@@ -248,6 +248,13 @@ pub fn undo(app: &mut App, id: DocumentId) {
     let edits: Vec<AppliedEdit> = step.edits.clone();
     let cursors_before: Vec<Cursor> = step.cursors_before.clone();
 
+    // The step's own `AppliedEdit`s are already in the CURRENT (pre-undo)
+    // buffer's coordinates (`buffer.rs`: `AppliedEdit::start`/`end` is the
+    // post-edit range of the edit that produced the buffer as it stands
+    // right now) — exactly the span undo is about to overwrite (plan review
+    // F1).
+    let affected = affected_range(&edits);
+
     match rune_core::undo::apply_inverse(&doc.buffer, &edits) {
         Ok(new_buf) => {
             let Some(doc) = app.doc_mut(id) else { return };
@@ -256,7 +263,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             materialize_ack::recompute_dirty(app, id);
-            resync_after_journal_jump(app, id);
+            resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
             app.set_status(format!("undo failed: {e}"), StatusSource::Other);
@@ -288,6 +295,14 @@ pub fn redo(app: &mut App, id: DocumentId) {
     let edits: Vec<AppliedEdit> = step.edits.clone();
     let cursors_after: Vec<Cursor> = step.cursors_after.clone();
 
+    // Redo replays each edit's DELETE range — `[start, start + deleted.len())`
+    // — against the running CURRENT (pre-redo) buffer (`rune_core::undo::
+    // reapply`'s own doc), which is the same buffer state the step's
+    // original forward application saw (no other edits interpose between an
+    // undo and its matching redo) — so this is that same pre-redo buffer's
+    // coordinates too (plan review F1).
+    let affected = affected_delete_range(&edits);
+
     match rune_core::undo::reapply(&doc.buffer, &edits) {
         Ok(new_buf) => {
             let Some(doc) = app.doc_mut(id) else { return };
@@ -296,12 +311,31 @@ pub fn redo(app: &mut App, id: DocumentId) {
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             materialize_ack::recompute_dirty(app, id);
-            resync_after_journal_jump(app, id);
+            resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
             app.set_status(format!("redo failed: {e}"), StatusSource::Other);
         }
     }
+}
+
+/// The union of every edit's POST-edit `[start, end)` span (plan review
+/// F1) — the CURRENT buffer's own touched range immediately before an
+/// undo overwrites it. `None` for an empty step (never reachable through a
+/// real journal push, but total rather than assuming).
+fn affected_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>> {
+    let start = edits.iter().map(|e| e.start).min()?;
+    let end = edits.iter().map(|e| e.end).max()?;
+    Some(start..end)
+}
+
+/// The union of every edit's PRE-edit delete range — `[start, start +
+/// deleted.len())`, the same range `rune_core::undo::reapply` computes
+/// internally per edit (plan review F1). `None` for an empty step.
+fn affected_delete_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>> {
+    let start = edits.iter().map(|e| e.start).min()?;
+    let end = edits.iter().map(|e| e.start + e.deleted.len()).max()?;
+    Some(start..end)
 }
 
 /// Plan WP6.S1/S2: every undo/redo that actually applied re-derives the
@@ -313,9 +347,13 @@ pub fn redo(app: &mut App, id: DocumentId) {
 /// override upgrades `DiskAhead` back to `Diverged` in that case) — a fresh
 /// probe re-lights the footer's disk-changed hint so the user is offered
 /// `⌘M` again rather than the hint staying stale.
-fn resync_after_journal_jump(app: &mut App, id: DocumentId) {
+fn resync_after_journal_jump(
+    app: &mut App,
+    id: DocumentId,
+    affected: Option<std::ops::Range<usize>>,
+) {
     if matches!(&app.merge, crate::merge::MergeState::Active { doc, .. } if *doc == id) {
-        crate::merge::resync(app, id);
+        crate::merge::resync(app, id, affected);
     } else {
         crate::db_enqueue::probe(app, id);
     }

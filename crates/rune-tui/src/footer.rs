@@ -77,7 +77,14 @@ fn mode(app: &App) -> Mode<'_> {
     if let Some(msg) = &app.status_message {
         return Mode::Status(msg);
     }
-    if let crate::merge::MergeState::Active { .. } = app.merge {
+    // Review fix F5: gated on the merge doc being the ACTIVE one, same as
+    // `merge/keys.rs`'s own intercept — otherwise switching to a different
+    // tab mid-merge (before the auto-exit below ever runs, or on a path
+    // that leaves a stale reference) would keep showing "[O]urs [T]heirs"
+    // hints for a document that isn't even on screen.
+    if let crate::merge::MergeState::Active { doc, .. } = app.merge
+        && doc == app.active
+    {
         return Mode::MergeHint(app.merge.unresolved_count());
     }
     // Suppressed while a merge attempt is underway (plan WP4.S4): `Active`
@@ -286,6 +293,31 @@ mod tests {
 
     fn app_with(content: &str) -> App {
         App::new(Buffer::new(content), None, Arc::new(Mem::new()), None)
+    }
+
+    /// Review fix F5: `MergeHint` is gated on the merge doc being the
+    /// ACTIVE one, the same check `merge/keys.rs::intercept` uses — a
+    /// merge `Active` on some OTHER (not-currently-shown) document must
+    /// not paint "[O]urs [T]heirs" hints over it.
+    #[test]
+    fn merge_hint_is_suppressed_when_the_merge_document_is_not_active() {
+        let mut app = app_with("hello");
+        let merge_doc = app.active;
+        let other = app.open_document(Buffer::new("scratch"));
+        app.active = other;
+        app.merge = crate::merge::MergeState::Active {
+            doc: merge_doc,
+            conflicts: Vec::new(),
+            blocks: Vec::new(),
+            cur: 0,
+            saved_display_name: None,
+        };
+
+        let text = footer_text(&app);
+        assert!(
+            !text.contains('⚙') && !text.contains("[O]urs"),
+            "merge hint leaked onto an inactive document's footer: {text:?}"
+        );
     }
 
     #[test]

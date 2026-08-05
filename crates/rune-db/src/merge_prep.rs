@@ -5,11 +5,13 @@
 //! `[B2]`: "No existing non-blocking path returns blob bytes to the TUI")
 //! — merge entry needs the actual content to feed `rune_merge::merge_hunks`,
 //! and re-deriving it from a LATER, separately-timed read would reopen
-//! exactly the race `[B2]` exists to close. One writer-thread op, one
-//! decisive moment: nothing else can move `saved_obs`/the newest
-//! observation between the probe and the blob reads below, since this
-//! whole op runs to completion before the writer thread looks at its next
-//! queued op.
+//! exactly the race `[B2]` exists to close. `probe::probe` itself runs as
+//! several short, separately-committed transactions (its own retry loop),
+//! not one — the actual guarantee this function relies on is the
+//! single-writer FIFO every op on this connection already runs under: no
+//! OTHER op can interleave between the probe and the blob reads below, so
+//! the observation `theirs`/`ancestor` are read against is still the
+//! newest one by the time this op hands its result back.
 
 use std::time::SystemTime;
 
@@ -25,16 +27,18 @@ use crate::sync::SyncState;
 
 /// `MergePrep`'s result: the freshly classified [`SyncState`] plus the
 /// actual ancestor/theirs bytes it was classified from. `theirs`/
-/// `theirs_obs` are meaningful only when `sync.kind` is `DiskAhead`/
-/// `Diverged` (the only kinds `classify_sync` can ever produce with a
-/// `theirs` version present) — the caller's authoritative gate (plan
-/// WP3.S6) checks `sync.kind` before ever reading them.
+/// `theirs_obs` are `Some` exactly when `sync.theirs` is `Some` — which
+/// `classify_sync` only ever produces for `DiskAhead`/`Diverged` — so
+/// `None` here while `sync.kind` claims one of those two is an
+/// inconsistency the caller must treat as a hard refusal (§1.7: no `0`/
+/// empty-`Vec` sentinel standing in for "absent"), never silently unwrap
+/// past.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MergePrepResult {
     pub sync: SyncState,
     pub ancestor: Option<Vec<u8>>,
-    pub theirs: Vec<u8>,
-    pub theirs_obs: ObsId,
+    pub theirs: Option<Vec<u8>>,
+    pub theirs_obs: Option<ObsId>,
 }
 
 /// Runs the fresh-state read for `doc_id`. Port of no single Go function —
@@ -51,15 +55,15 @@ pub fn merge_prep(
 ) -> Result<MergePrepResult, Error> {
     let sync = probe::probe(conn, vfs, session_id, doc_id, now)?;
 
-    // `theirs`/`theirs_obs` stay at their empty/zero defaults whenever
-    // `sync.theirs` is `None` — unreachable in practice with `kind` in
-    // `DiskAhead`/`Diverged` (`classify_sync`'s `None` branch only ever
-    // yields `Clean`/`BufferAhead`), which is exactly what the caller's
-    // authoritative gate checks before trusting either field.
-    let theirs_obs = sync.theirs.as_ref().and_then(|v| v.obs).unwrap_or(0);
+    // `theirs`/`theirs_obs` stay `None` whenever `sync.theirs` is `None` —
+    // unreachable in practice with `kind` in `DiskAhead`/`Diverged`
+    // (`classify_sync`'s `None` branch only ever yields `Clean`/
+    // `BufferAhead`), which is exactly what the caller's authoritative gate
+    // checks before trusting either field.
+    let theirs_obs = sync.theirs.as_ref().and_then(|v| v.obs);
     let theirs = match &sync.theirs {
-        Some(version) => blob::get_blob(conn, &version.hash)?,
-        None => Vec::new(),
+        Some(version) => Some(blob::get_blob(conn, &version.hash)?),
+        None => None,
     };
     let ancestor = match &sync.ancestor {
         Some(version) => Some(blob::get_blob(conn, &version.hash)?),
@@ -133,8 +137,8 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
-        assert_eq!(result.theirs, b"theirs content");
-        assert!(result.theirs_obs > 0);
+        assert_eq!(result.theirs, Some(b"theirs content".to_vec()));
+        assert!(result.theirs_obs.is_some_and(|obs| obs > 0));
         assert_eq!(result.ancestor, None, "no prior ancestor-eligible sighting");
     }
 
@@ -187,6 +191,33 @@ mod tests {
         let result =
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::DiskAhead);
-        assert_eq!(result.theirs, b"disk moved on");
+        assert_eq!(result.theirs, Some(b"disk moved on".to_vec()));
+    }
+
+    /// Review fix F4: an untitled document (`path` is empty — `probe::probe`
+    /// degrades to a pure `sync::sync` with nothing to read from disk at
+    /// all) with no recorded observation has no `theirs` version — `Clean`
+    /// via `classify_sync`'s `theirs: None` branch. `theirs`/`theirs_obs`
+    /// come back `None` too, not an empty `Vec`/`0` sentinel standing in
+    /// for "absent" (§1.7).
+    #[test]
+    fn merge_prep_on_an_untitled_document_returns_no_theirs() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('', 'x', 'x')",
+            [],
+        )
+        .expect("seed untitled doc");
+        let doc_id = conn.last_insert_rowid();
+
+        let result =
+            merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
+        assert_eq!(result.sync.kind, crate::sync::SyncKind::Clean);
+        assert_eq!(result.theirs, None);
+        assert_eq!(result.theirs_obs, None);
     }
 }

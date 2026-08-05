@@ -3,6 +3,8 @@
 //! original `ours`/`theirs` inputs. diffy's own serialized output is used
 //! only to find where the boundaries are — never as buffer content.
 
+use std::ops::Range;
+
 use diffy::MergeOptions;
 
 /// A classified region of a 3-way merge, in document order. Concatenating
@@ -153,8 +155,8 @@ fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
 /// A conflict block's sections re-anchored as byte ranges in the original
 /// `ours`/`theirs` inputs.
 struct Anchor {
-    ours: (usize, usize),
-    theirs: (usize, usize),
+    ours: Range<usize>,
+    theirs: Range<usize>,
 }
 
 /// Finds `needle` verbatim in `haystack`, returning its byte offset.
@@ -168,14 +170,14 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// Anchors one conflict section into `input` starting no earlier than
 /// `search_from`, advancing the cursor so later blocks search forward only
 /// (matches diff3's document-ordered, non-overlapping sections).
-fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<(usize, usize)> {
+fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<Range<usize>> {
     if section.is_empty() {
-        return Some((search_from, search_from));
+        return Some(search_from..search_from);
     }
     let haystack = input.get(search_from..)?;
     let idx = find_subslice(haystack, section)?;
     let start = search_from + idx;
-    Some((start, start + section.len()))
+    Some(start..start + section.len())
 }
 
 /// Maps diff3 output boundaries back to verbatim ours/theirs bytes,
@@ -200,8 +202,8 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
             valid = false;
             break;
         };
-        ours_search = ours_range.1;
-        theirs_search = theirs_range.1;
+        ours_search = ours_range.end;
+        theirs_search = theirs_range.end;
         anchors.push(Anchor {
             ours: ours_range,
             theirs: theirs_range,
@@ -221,7 +223,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
 
     for (i, clean) in cleans.iter().enumerate() {
         let (ours_clean_end, theirs_clean_end) = match anchors.get(i) {
-            Some(a) => (a.ours.0, a.theirs.0),
+            Some(a) => (a.ours.start, a.theirs.start),
             None => (ours.len(), theirs.len()),
         };
 
@@ -237,11 +239,11 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
 
         if let Some(a) = anchors.get(i) {
             hunks.push(Hunk::Conflict {
-                ours: ours.get(a.ours.0..a.ours.1).unwrap_or(&[]).to_vec(),
-                theirs: theirs.get(a.theirs.0..a.theirs.1).unwrap_or(&[]).to_vec(),
+                ours: ours.get(a.ours.clone()).unwrap_or(&[]).to_vec(),
+                theirs: theirs.get(a.theirs.clone()).unwrap_or(&[]).to_vec(),
             });
-            ours_pos = a.ours.1;
-            theirs_pos = a.theirs.1;
+            ours_pos = a.ours.end;
+            theirs_pos = a.theirs.end;
         }
     }
 

@@ -6,7 +6,9 @@
 //! checker is called DIRECTLY, never through `invariant::check_all`, so
 //! first-wins ordering can never mask a case.
 
-use rune_fuzz::invariant::{merge_doc_active, merge_key_feedback, merge_save_blocked, merge_title_cleared};
+use rune_fuzz::invariant::{
+    merge_doc_active, merge_key_feedback, merge_save_blocked, merge_title_cleared,
+};
 use rune_fuzz::step::MsgTag;
 use rune_tui::keymap::{Command, KeyCode, Mods};
 use rune_tui::pane::Pane;
@@ -16,7 +18,13 @@ use crate::support::{base_active_id, base_ctx, base_snapshot, key, other_doc_id}
 fn save_key_ctx() -> rune_fuzz::step::StepCtx {
     let mut ctx = base_ctx();
     ctx.msg = MsgTag::Key {
-        input: key(KeyCode::Char('s'), Mods { sup: true, ..Mods::NONE }),
+        input: key(
+            KeyCode::Char('s'),
+            Mods {
+                sup: true,
+                ..Mods::NONE
+            },
+        ),
         command: Some(Command::Save),
     };
     ctx
@@ -90,8 +98,9 @@ fn merge_save_blocked_detects_a_pending_save() {
     let next = base_snapshot("abc");
     let mut ctx = save_key_ctx();
     ctx.pending_save_bytes = Some(b"abc".to_vec());
-    let v = merge_save_blocked(&prev, &next, &ctx)
-        .expect("a Save key arming pending_save_bytes while unresolved must trip MERGE-SAVE-BLOCKED");
+    let v = merge_save_blocked(&prev, &next, &ctx).expect(
+        "a Save key arming pending_save_bytes while unresolved must trip MERGE-SAVE-BLOCKED",
+    );
     assert_eq!(v.id, "MERGE-SAVE-BLOCKED");
 }
 

@@ -133,12 +133,13 @@ pub fn merge_title_cleared(next: &Snapshot) -> Option<Violation> {
         return None;
     }
     for (doc, name) in &next.display_name_by_doc {
-        if name.as_deref().is_some_and(|n| n.contains("editor <-> disk")) {
+        if name
+            .as_deref()
+            .is_some_and(|n| n.contains("editor <-> disk"))
+        {
             return Some(Violation {
                 id: "MERGE-TITLE-CLEARED",
-                message: format!(
-                    "merge is Inactive but {doc:?}'s display_name is still {name:?}"
-                ),
+                message: format!("merge is Inactive but {doc:?}'s display_name is still {name:?}"),
             });
         }
     }

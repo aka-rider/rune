@@ -70,13 +70,20 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
 }
 
 /// The exit-in-place chokepoint (plan WP3.S7, decision 4: "Esc = exit in
-/// place — no abort-restore"). A no-op outside `Active` (`Inactive`/
-/// `Pending` have no `saved_display_name` to restore and no blocks to
-/// count). `pub(crate)`'s only caller in THIS work package is `⌘M` toggling
+/// place — no abort-restore"). A no-op outside `Active` — checked BEFORE
+/// ever taking `app.merge` (review fix F3): a `Pending` attempt has no
+/// `saved_display_name`/blocks to restore or count, and taking it
+/// unconditionally used to silently cancel it with no feedback at all,
+/// contradicting this very doc's "no-op outside `Active`" — see
+/// `cancel_pending` below for `Pending`'s own exit path, with its own
+/// status. `pub(crate)`'s only caller in THIS work package is `⌘M` toggling
 /// off an already-`Active` merge by hand; later work packages (auto-exit on
 /// tab switch/close/quit, the resolver's own Esc, fully-resolved auto-exit)
 /// add more callers without changing this function's contract.
 pub(crate) fn exit_in_place(app: &mut App) {
+    if !matches!(app.merge, MergeState::Active { .. }) {
+        return;
+    }
     let MergeState::Active {
         doc,
         blocks,
@@ -96,6 +103,39 @@ pub(crate) fn exit_in_place(app: &mut App) {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
     app.set_status(message, StatusSource::Other);
+}
+
+/// Cancels a `Pending` merge attempt with feedback (review fix F3) — the
+/// disk-state round trip it was waiting on hasn't landed yet, so there is
+/// no working form to restore and no `exit_in_place` contract to reuse; a
+/// no-op outside `Pending`. Called from the same auto-exit transition sites
+/// as `exit_in_place` (`workspace::switch_to`/`close_now`) when the
+/// transitioning document has a merge attempt still `Pending` rather than
+/// `Active`. The eventual `MergePrep` ack this cancels ahead of is not lost
+/// track of — `handle_merge_prep_ack`'s own generation/doc ticket check
+/// already treats an ack against a no-longer-`Pending` `app.merge` as stale
+/// and drops it, exactly like a superseding `⌘M` would.
+pub(crate) fn cancel_pending(app: &mut App) {
+    if !matches!(app.merge, MergeState::Pending { .. }) {
+        return;
+    }
+    app.merge = MergeState::Inactive;
+    app.set_status(
+        "merge cancelled — the document changed before disk state arrived",
+        StatusSource::Other,
+    );
+}
+
+/// Dispatches `exit_in_place`/`cancel_pending` by `app.merge`'s current
+/// state (review fix F3) — the one place the auto-exit transition sites
+/// (`workspace::switch_to`/`close_now`) need to call, rather than each
+/// re-deriving which of the two applies. A no-op on `Inactive`.
+pub(crate) fn auto_exit(app: &mut App) {
+    match &app.merge {
+        MergeState::Active { .. } => exit_in_place(app),
+        MergeState::Pending { .. } => cancel_pending(app),
+        MergeState::Inactive => {}
+    }
 }
 
 /// The `⌘S` gate (plan WP4.S3, decision 6): while the resolver is active ON

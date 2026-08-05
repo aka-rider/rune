@@ -1,7 +1,8 @@
 //! WP6 "Done when" integration tests for undo/redo resync, auto-exit, and
 //! the save-conflict Guard (plan `merge-user-s-changes-with-idempotent-
 //! octopus.md`). Follows `merge_entry.rs`/`merge_resolver.rs`'s own fixture
-//! pattern, pulling shared setup from `db_wiring_common`.
+//! pattern, pulling shared setup from `merge_common` (review fix F9's
+//! dedupe).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -9,80 +10,26 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
+mod merge_common;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_db::{DbEvent, SyncKind};
+use rune_db::SyncKind;
 use rune_tui::app::{self, App};
 use rune_tui::banner::{GuardKind, Modal};
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
-use rune_tui::keymap::{KeyCode, KeyInput, Mods};
+use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
-use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, publish, recv_ok};
-
-fn bare(code: KeyCode) -> KeyInput {
-    KeyInput {
-        code,
-        mods: Mods::NONE,
-    }
-}
-
-fn ch(c: char) -> KeyInput {
-    bare(KeyCode::Char(c))
-}
-
-fn sup(c: char) -> KeyInput {
-    KeyInput {
-        code: KeyCode::Char(c),
-        mods: Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    }
-}
-
-fn press_key(app: &mut App, key: KeyInput) -> Effects {
-    let mut effects = Effects::default();
-    app::update(app, Msg::Key(key), &mut effects);
-    effects
-}
-
-fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) -> Effects {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let result = recv_ok(bridge, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
-    effects
-}
-
-fn drain_all_ops_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    while app.db_ops.iter().any(|(_, pending)| pending.doc == doc) {
-        drain_one_op_for(app, bridge, doc);
-    }
-}
-
-fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
-    let path = Path::new("/doc.md");
-    vfs.remove(path).expect("remove the stale file");
-    let temp = vfs.write_durable(path, bytes).expect("write_durable");
-    vfs.rename_excl(&temp, path).expect("publish");
-}
+use merge_common::{
+    app_with_store, bare, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key,
+    publish, sup,
+};
 
 /// Three separate conflicts (lines 1, 5, 9), each surrounded by three
 /// unchanged context lines — the same spacing `merge_resolver.rs`'s own
@@ -169,6 +116,82 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
     );
     assert_eq!(*cur, 1, "cur must land back on the reopened hunk");
     assert!(blocks[0].resolved, "the OTHER accept must be untouched");
+}
+
+/// Review fix F1(a): a resolver-Active `undo` used to rescan and reopen
+/// EVERY block, not just the one the journal jump touched — a `[B]`'d
+/// block is byte-identical in the buffer to an undecided one, so a scan
+/// alone cannot tell them apart. `b` (block 0, pushes no journal step)
+/// then `o` (block 1, pushes one) then `undo` must reopen ONLY block 1
+/// (the O-accept undo actually reversed) and leave block 0's `B`
+/// verdict untouched.
+#[test]
+fn undo_after_both_then_ours_reopens_only_the_ours_block_not_the_both_block() {
+    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
+
+    press_key(&mut app, ch('b')); // block 0 -> resolved, no journal step
+    let pos_before_ours = app.doc(doc_id).unwrap().journal.pos();
+    press_key(&mut app, ch('o')); // block 1 -> resolved, one journal step
+    let MergeState::Active { blocks, .. } = &app.merge else {
+        panic!("resolver must still be active — block 2 remains");
+    };
+    assert!(blocks[0].resolved && blocks[1].resolved && !blocks[2].resolved);
+
+    rune_tui::commands::edit::undo(&mut app, doc_id);
+    assert_eq!(
+        app.doc(doc_id).unwrap().journal.pos(),
+        pos_before_ours,
+        "undo must reverse exactly the ours-accept's one journal step"
+    );
+
+    let MergeState::Active { blocks, .. } = &app.merge else {
+        panic!("resync must leave the resolver active — block 2 is still unresolved");
+    };
+    assert!(
+        !blocks[1].resolved,
+        "the just-undone ours-accepted block must be unresolved again"
+    );
+    assert!(
+        blocks[0].resolved,
+        "the untouched B-resolved block must stay resolved — this is review finding F1"
+    );
+}
+
+/// Review fix F1(c): `[B]` pushes no journal step, so `undo` right after a
+/// `B` actually reverses whatever the PREVIOUS real edit was — here, an
+/// earlier `o` accept on a different block. That undo's affected range
+/// still must not touch the later `B`'d block's verdict.
+#[test]
+fn undo_after_ours_then_both_reopens_only_the_ours_block_not_the_both_block() {
+    let (mut app, _bridge, doc_id) = enter_three_conflict_merge();
+
+    let pos_before_ours = app.doc(doc_id).unwrap().journal.pos();
+    press_key(&mut app, ch('o')); // block 0 -> resolved, one journal step
+    press_key(&mut app, ch('b')); // block 1 -> resolved, no journal step
+    let MergeState::Active { blocks, .. } = &app.merge else {
+        panic!("resolver must still be active — block 2 remains");
+    };
+    assert!(blocks[0].resolved && blocks[1].resolved && !blocks[2].resolved);
+
+    // `B` pushed no step, so this undo reverses the EARLIER `o` accept.
+    rune_tui::commands::edit::undo(&mut app, doc_id);
+    assert_eq!(
+        app.doc(doc_id).unwrap().journal.pos(),
+        pos_before_ours,
+        "undo must reverse the earlier ours-accept's journal step, since B pushed none"
+    );
+
+    let MergeState::Active { blocks, .. } = &app.merge else {
+        panic!("resync must leave the resolver active — block 2 is still unresolved");
+    };
+    assert!(
+        !blocks[0].resolved,
+        "the just-undone ours-accepted block must be unresolved again"
+    );
+    assert!(
+        blocks[1].resolved,
+        "the B-resolved block must stay resolved even though it postdates the undone step"
+    );
 }
 
 /// Plan WP6 "Done when" (2): a document whose PROSE quotes literal
@@ -275,6 +298,66 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
             .ends_with(": editor <-> disk"),
         "the title must revert on auto-exit"
     );
+}
+
+/// Review fix F3: `⌘M` on a diverged document leaves `app.merge` `Pending`
+/// while its `MergePrep` op is still in flight — switching tabs BEFORE
+/// that ack lands used to silently discard the attempt with `exit_in_place`
+/// (which only knows how to unwind an `Active` working form, not a
+/// `Pending` one waiting on disk state) and no feedback at all. It must
+/// instead cancel WITH a status, and the eventual (now-stale) ack must be
+/// safely dropped rather than resurrecting `Active` on a document the user
+/// has since switched away from.
+#[test]
+fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_the_stale_ack() {
+    let mem = Mem::new();
+    publish(&mem, Path::new("/doc.md"), b"hello");
+    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
+
+    let (mut app, bridge) = app_with_store("merge-resync-pending-cancel", Arc::clone(&vfs));
+    let draft_id = app.active;
+    workspace::open_path(&mut app, Path::new("/doc.md"));
+    let doc_id = app.active;
+    drain_one_op_for(&mut app, &bridge, doc_id);
+
+    press_key(&mut app, ch('!'));
+    drain_one_op_for(&mut app, &bridge, doc_id);
+    external_write(vfs.as_ref(), b"disk changed this");
+    workspace::switch_to(&mut app, draft_id);
+    workspace::switch_to(&mut app, doc_id);
+    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
+
+    app.active = doc_id;
+    press_key(&mut app, sup('m'));
+    assert!(
+        matches!(app.merge, MergeState::Pending { doc, .. } if doc == doc_id),
+        "expected a Pending merge attempt, got {:?}",
+        app.merge
+    );
+
+    // Switch away BEFORE the MergePrep ack ever arrives.
+    workspace::switch_to(&mut app, draft_id);
+
+    assert_eq!(
+        app.merge,
+        MergeState::Inactive,
+        "a Pending attempt must be cancelled, not left dangling"
+    );
+    assert!(
+        app.status_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("cancelled"),
+        "expected a cancellation status, got {:?}",
+        app.status_message
+    );
+
+    // The now-stale MergePrep ack must land safely: no panic, and it must
+    // NOT resurrect `Active` on a document the user has switched away from.
+    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert_eq!(app.merge, MergeState::Inactive);
+    assert_eq!(app.active, draft_id);
 }
 
 /// Sets up a document whose disk changed since it was opened, edits the

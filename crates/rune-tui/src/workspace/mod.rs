@@ -275,9 +275,12 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     // would re-derive the OUTGOING document's plain name while `app.merge`
     // still holds it `Active`, leaving the merge suffix to vanish from a
     // title that then immediately gets overwritten anyway. A same-document
-    // "switch" (`id` already active) is not a transition at all.
+    // "switch" (`id` already active) is not a transition at all. `auto_exit`
+    // (review fix F3) also cancels a `Pending` attempt WITH feedback,
+    // rather than `exit_in_place` silently discarding it (`Pending` has no
+    // working form to exit from at all).
     if app.merge.doc().is_some_and(|merge_doc| merge_doc != id) {
-        crate::merge::exit_in_place(app);
+        crate::merge::auto_exit(app);
     }
     app.active = id;
     // The title field describes the ACTIVE document, so it is reseeded at

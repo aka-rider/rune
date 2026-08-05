@@ -142,9 +142,11 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     }
     // Plan WP6.S3, decision 12: closing the merge document is an implicit
     // Esc — exit BEFORE `id` is removed below, or `app.merge` would go on
-    // pointing at a document that no longer exists at all.
+    // pointing at a document that no longer exists at all. `auto_exit`
+    // (review fix F3) cancels a `Pending` attempt WITH feedback instead of
+    // `exit_in_place` silently discarding it.
     if app.merge.doc() == Some(id) {
-        crate::merge::exit_in_place(app);
+        crate::merge::auto_exit(app);
     }
     if app.graphics.kitty
         && let Some(image) = app.doc(id).and_then(|d| d.image.as_ref())

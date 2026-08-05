@@ -2,7 +2,8 @@
 //! `merge-user-s-changes-with-idempotent-octopus.md`): the `MergePrep` op,
 //! `⌘M`, working-form install, and retitle. Follows the
 //! `db_wiring_lifecycle.rs`/`db_wiring_sync.rs` pattern, pulling the shared
-//! fixtures from `db_wiring_common`.
+//! fixtures from `merge_common` (review fix F9's dedupe of what used to be
+//! this file's own copy).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -10,67 +11,21 @@
     clippy::panic
 )]
 
-mod db_wiring_common;
+mod merge_common;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_db::{DbEvent, SyncKind};
-use rune_tui::app::{self, App};
+use rune_db::SyncKind;
+use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::merge::MergeState;
-use rune_tui::runtime::{Effects, Msg};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use db_wiring_common::{app_with_store, publish, recv_ok};
-
-/// `⌘M` — see `global.rs`'s own binding for `GlobalCommand::Merge`.
-fn merge_key() -> KeyInput {
-    KeyInput {
-        code: KeyCode::Char('m'),
-        mods: Mods {
-            sup: true,
-            ..Mods::NONE
-        },
-    }
-}
-
-fn press_key(app: &mut App, key: KeyInput) {
-    let mut effects = Effects::default();
-    app::update(app, Msg::Key(key), &mut effects);
-}
-
-/// Drains the single op currently recorded in `app.db_ops` for `doc`,
-/// feeding its ack through `app::update` exactly as the real runtime loop
-/// would when the op's `DbEvent` arrives on `Msg::Db` (mirrors
-/// `db_wiring_sync.rs`'s own helper).
-fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    let op_id = *app
-        .db_ops
-        .iter()
-        .find(|(_, pending)| pending.doc == doc)
-        .expect("one op recorded for this document")
-        .0;
-    let result = recv_ok(bridge, op_id);
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
-}
-
-/// Overwrites `/doc.md`'s content in place, simulating an external editor
-/// (mirrors `db_wiring_sync.rs`'s own `external_write`).
-fn external_write(vfs: &dyn Vfs, bytes: &[u8]) {
-    let path = Path::new("/doc.md");
-    vfs.remove(path).expect("remove the stale file");
-    let temp = vfs.write_durable(path, bytes).expect("write_durable");
-    vfs.rename_excl(&temp, path).expect("publish");
-}
+use merge_common::{app_with_store, drain_one_op_for, external_write, press_key, publish, sup};
 
 /// Opens `/doc.md`, drains its `Load` ack, and returns the opened
 /// document's id alongside the untitled draft it switched away from (a
@@ -128,7 +83,7 @@ fn merge_on_a_diverged_document_installs_markers_as_one_journal_step() {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, merge_key());
+    press_key(&mut app, sup('m'));
     assert!(matches!(app.merge, MergeState::Pending { .. }));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
@@ -184,7 +139,7 @@ fn merge_on_a_disk_ahead_clean_document_installs_disk_bytes_with_no_markers() {
     );
 
     app.active = doc_id;
-    press_key(&mut app, merge_key());
+    press_key(&mut app, sup('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let doc = app.doc(doc_id).unwrap();
@@ -217,7 +172,7 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
     ));
 
     app.active = doc_id;
-    press_key(&mut app, merge_key());
+    press_key(&mut app, sup('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     assert_eq!(
@@ -249,7 +204,7 @@ fn merge_with_no_divergence_hint_refuses_without_enqueueing() {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Clean));
 
     app.active = doc_id;
-    press_key(&mut app, merge_key());
+    press_key(&mut app, sup('m'));
 
     assert_eq!(app.merge, MergeState::Inactive);
     assert!(app.db_ops.is_empty(), "no MergePrep should be enqueued");

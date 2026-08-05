@@ -168,8 +168,11 @@ pub struct Snapshot {
     /// `doc.viewport.scroll_row` — the active document's own scroll
     /// position, needed alongside `content`/`version`/`cursors` so a
     /// checker can tell "this key moved the viewport" apart from "this key
-    /// did nothing" (`invariant/session.rs`'s merge-key no-silent-swallow
-    /// check).
+    /// did nothing": the merge-mode no-silent-swallow invariant treats a
+    /// key dispatched while the resolver is `Active` as a violation unless
+    /// it changed the buffer, cursors, scroll position, merge state, or the
+    /// status line — scroll is the one of those five this field alone
+    /// supplies.
     pub scroll_row: usize,
     /// Every open document's own `display_name`, the same per-document
     /// shape as `dirty_by_doc` above — `MergeState::Inactive` must never
