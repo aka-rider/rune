@@ -163,8 +163,16 @@ pub enum Splitter {
 /// exclusive by construction — one gesture owns the pointer at a time.
 #[derive(Clone, Copy, Debug)]
 pub enum Drag {
-    /// Extending a selection from this buffer byte offset.
-    Text { anchor: usize },
+    /// Extending a selection from this buffer byte offset, in `pane`'s own
+    /// document — carried so a release or a continuation event can route
+    /// back to the SAME document the gesture began in, rather than
+    /// whichever one happens to be active or under the pointer at that
+    /// later moment (plan WP3: a drag begun in the messages pane must
+    /// never bleed into the active editor document's selection).
+    Text {
+        anchor: usize,
+        pane: crate::pane::Pane,
+    },
     /// Moving a splitter. `grab_delta` is the offset between the grabbed
     /// cell and the splitter's own edge, so the splitter never jumps to
     /// the pointer on the first drag event.

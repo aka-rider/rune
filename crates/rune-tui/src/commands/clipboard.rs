@@ -59,7 +59,7 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
 /// Multi-cursor joins each cursor's selection-or-line with `\n`, ported for
 /// `CursorSet` parity even though Phase 1 never actually produces more
 /// than one cursor.
-fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
+pub(crate) fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
     let all = cursors.all();
     match all.as_slice() {
         [] => String::new(),
