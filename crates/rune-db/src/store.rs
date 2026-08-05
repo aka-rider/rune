@@ -209,6 +209,31 @@ impl Store {
         self.enqueue(OpKind::KillWriterForTest).map(|_| ())
     }
 
+    /// Test-support hook, the waiting half of [`Store::kill_writer_for_test`]:
+    /// enqueues a `Probe` with a BLOCKING send. A full queue parks the
+    /// caller instead of failing, and the send errors only when the writer
+    /// thread has actually dropped its receiver — so `Err(WriterGone)`
+    /// here is a true confirmation of writer death, with no
+    /// `WriterQueueFull` ambiguity (a full queue with a live writer is
+    /// unobservable through this method by construction). Never call this
+    /// from production code: `update` must never block on the writer
+    /// queue. Not `#[cfg(test)]` for the same reason as
+    /// `kill_writer_for_test` — it must cross the crate boundary into
+    /// `rune-tui`'s integration tests.
+    pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
+        let now = self.now();
+        let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
+        self.writer.send(WriteOp {
+            id,
+            kind: OpKind::Probe {
+                session_id: self.session_id,
+                doc_id,
+                now,
+            },
+        })?;
+        Ok(id)
+    }
+
     /// Enqueues `kind` to the writer thread, returning the op id the
     /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
     /// surfaces [`Error::WriterQueueFull`] immediately (plan Gotchas).
@@ -393,5 +418,30 @@ mod tests {
         assert!(!store.degraded());
         assert_eq!(store.session_id(), 1);
         store.shutdown();
+    }
+
+    /// Pins the `SendError -> WriterGone` mapping the kill-writer test hook
+    /// relies on: once the writer thread has dequeued
+    /// `OpKind::KillWriterForTest` and dropped its receiver, every
+    /// subsequent blocking probe send must be woken with `Err(WriterGone)`
+    /// — never `WriterQueueFull`, which would be a false confirmation of
+    /// writer death.
+    #[test]
+    fn probe_blocking_for_test_confirms_writer_gone_via_send_error() {
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store =
+            Store::open_in_memory(clock, test_vfs(), noop_on_event()).expect("open in memory");
+
+        store.kill_writer_for_test().expect("enqueue the kill op");
+
+        loop {
+            match store.probe_blocking_for_test(1) {
+                Ok(_) => continue,
+                Err(err) => {
+                    assert!(matches!(err, Error::WriterGone));
+                    break;
+                }
+            }
+        }
     }
 }

@@ -134,8 +134,10 @@ fn killed_writer_surfaces_a_degraded_banner_without_rolling_back_the_buffer() {
 /// so `save_in_flight` stays true (a real write is now in flight) and,
 /// once that `Cmd` runs, the user's bytes are actually on disk — "press
 /// ⌘S again to save anyway" must actually save. Deterministically waits
-/// for the writer to be CONFIRMED gone (a side-channel `probe` enqueue
-/// returning `Err`) before pressing save exactly once, rather than racing
+/// for the writer to be CONFIRMED gone via a BLOCKING probe send that is
+/// woken with `Err(WriterGone)` only when the writer drops its queue
+/// receiver — a full queue merely parks the wait and never counts as
+/// confirmation — before pressing save exactly once, rather than racing
 /// `super+s`'s own in-flight latch against the kill op's async dequeue.
 #[test]
 fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
@@ -172,22 +174,26 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
         .kill_writer_for_test()
         .expect("enqueue the kill op");
 
-    // Bounded spin, not a wall-clock sleep (repo convention): the kill op
-    // must first be DEQUEUED by the writer thread before `try_send` starts
-    // observing `WriterGone` — poll with a cheap, repeatable, non-latching
-    // op (`probe`, which carries no in-flight guard) until the writer is
-    // CONFIRMED gone.
-    let mut confirmed_gone = false;
-    for _ in 0..20_000 {
-        if db.store.probe(load.doc_id).is_err() {
-            confirmed_gone = true;
-            break;
+    // Condition-driven wait, not a spin and not a wall-clock sleep: the
+    // kill op only takes effect once the writer thread DEQUEUES it, and
+    // the one signal that has happened is the writer dropping its side of
+    // the queue — which is exactly what wakes a blocking send. Each `Ok`
+    // means the probe was accepted (a live writer drained a slot, or a
+    // freed slot absorbed it); the writer is FIFO-bound to reach the kill
+    // op after finitely many of those, so this loop terminates by writer
+    // progress alone. `WriterQueueFull` must NEVER count as confirmation:
+    // a full queue with a live writer can free a slot for the very next
+    // enqueue (the super+s below), which would then succeed and never
+    // trip `on_store_failure` — the exact captured flake this replaces.
+    // With a blocking send that ambiguity is unobservable by construction:
+    // there is no full-queue error case, only writer-death.
+    loop {
+        match db.store.probe_blocking_for_test(load.doc_id) {
+            Ok(_) => continue,
+            Err(rune_db::Error::WriterGone) => break,
+            Err(e) => panic!("unexpected error while awaiting writer death: {e}"),
         }
     }
-    assert!(
-        confirmed_gone,
-        "the writer must eventually be confirmed gone"
-    );
 
     // Exactly ONE super+s now: `trigger_save`'s `materialize_now` enqueues
     // against a writer already confirmed gone, so this single call's
