@@ -631,6 +631,7 @@ fn a_highlight_reply_for_the_previous_preview_file_cannot_paint_the_next_one() {
     let scope = rune_syntax::scope::scope_table()
         .resolve("keyword")
         .expect("known scope");
+    let marker_line = 0..4;
     crate::app::update(
         &mut app,
         Msg::Highlighted {
@@ -638,7 +639,7 @@ fn a_highlight_reply_for_the_previous_preview_file_cannot_paint_the_next_one() {
             version: stale_version,
             result: Some(crate::highlight::HighlightReply {
                 regions: vec![crate::highlight::RegionResult {
-                    map: crate::linemap::LineMap::new(vec![0..4]),
+                    map: crate::linemap::LineMap::new(vec![marker_line]),
                     payload: Some(crate::highlight::RegionPayload::Spans(vec![(0..4, scope)])),
                 }],
                 truncated: false,
