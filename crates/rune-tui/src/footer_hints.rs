@@ -280,6 +280,25 @@ mod tests {
         assert_eq!(save_span.style, app.theme.chrome.footer_key);
     }
 
+    /// `GlobalCommand::Merge` has exactly one live binding (`^M` — Ghostty
+    /// steals `⌘M`, so that form was dropped rather than bound), so the
+    /// default hints list "merge" exactly once, rendered with the `^`
+    /// glyph, never `⌘`.
+    #[test]
+    fn default_hints_list_merge_once_as_ctrl_m() {
+        let app = app_with("hello");
+        let entries = default_hint_entries(&app);
+        let mut merge_entries = entries.iter().filter(|(_, help, _)| *help == "merge");
+        let (label, _, _) = merge_entries
+            .next()
+            .expect("expected a merge hint entry");
+        assert_eq!(label, "^M");
+        assert!(
+            merge_entries.next().is_none(),
+            "expected exactly one merge hint, got {entries:?}"
+        );
+    }
+
     /// Plan WP6 — the chord is dead for `ReadOnly::Always` (an image
     /// document is refused on `kind`, the Help tab has no `file_path`, the
     /// error banner is never in `app.documents`), so the hint must not

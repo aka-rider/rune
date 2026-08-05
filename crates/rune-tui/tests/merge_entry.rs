@@ -1,6 +1,6 @@
 //! WP3 "Done when" integration tests for merge entry (plan
 //! `merge-user-s-changes-with-idempotent-octopus.md`): the `MergePrep` op,
-//! `⌘M`, working-form install, and retitle. Follows the
+//! `^M`, working-form install, and retitle. Follows the
 //! `db_wiring_lifecycle.rs`/`db_wiring_sync.rs` pattern, pulling the shared
 //! fixtures from `merge_common` (review fix F9's dedupe of what used to be
 //! this file's own copy).
@@ -25,7 +25,7 @@ use rune_tui::merge::MergeState;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use merge_common::{app_with_store, drain_one_op_for, external_write, press_key, publish, sup};
+use merge_common::{app_with_store, ctrl, drain_one_op_for, external_write, press_key, publish};
 
 /// Opens `/doc.md`, drains its `Load` ack, and returns the opened
 /// document's id alongside the untitled draft it switched away from (a
@@ -46,7 +46,7 @@ fn reprobe(app: &mut App, bridge: &DbBridge, draft_id: DocumentId, doc_id: Docum
     drain_one_op_for(app, bridge, doc_id);
 }
 
-/// Plan WP3 "Done when" (a): a diverged fixture, entered via `⌘M`, installs
+/// Plan WP3 "Done when" (a): a diverged fixture, entered via `^M`, installs
 /// the working form as ONE journaled edit, retitles the tab, and undoes
 /// byte-for-byte.
 #[test]
@@ -83,7 +83,7 @@ fn merge_on_a_diverged_document_installs_markers_as_one_journal_step() {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     assert!(matches!(app.merge, MergeState::Pending { .. }));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
@@ -139,7 +139,7 @@ fn merge_on_a_disk_ahead_clean_document_installs_disk_bytes_with_no_markers() {
     );
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let doc = app.doc(doc_id).unwrap();
@@ -172,7 +172,7 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
     ));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     assert_eq!(
@@ -191,7 +191,7 @@ fn merge_refuses_when_the_disk_file_is_not_valid_utf8() {
     assert_eq!(app.merge, MergeState::Inactive);
 }
 
-/// `⌘M` pressed with no divergence hinted at all must refuse immediately,
+/// `^M` pressed with no divergence hinted at all must refuse immediately,
 /// with feedback, and never enqueue a `MergePrep`.
 #[test]
 fn merge_with_no_divergence_hint_refuses_without_enqueueing() {
@@ -204,7 +204,7 @@ fn merge_with_no_divergence_hint_refuses_without_enqueueing() {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Clean));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
 
     assert_eq!(app.merge, MergeState::Inactive);
     assert!(app.db_ops.is_empty(), "no MergePrep should be enqueued");

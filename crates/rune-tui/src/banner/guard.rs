@@ -146,6 +146,7 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
     };
     let doc = prompt.doc;
     if key.code == KeyCode::Escape {
+        let is_disk_conflict = matches!(prompt.kind, GuardKind::DiskConflict { .. });
         let msg = cancel_status(&prompt.kind);
         super::clear_modal(app);
         // A cancellation ack is the least important thing the status row can
@@ -154,7 +155,20 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         // here would drop the user's only notice that their bytes did not
         // reach disk. Cancelling an unrelated Guard must never cost them
         // that; the save failure stays until its own success clears it.
-        if app.status_source != StatusSource::SaveError {
+        //
+        // `DiskConflict` is the one exception: this very Guard IS the
+        // acknowledgement the save-refused status was waiting for — by the
+        // time it was raised, the save-refusal reaction had already seeded
+        // `last_sync` as `Diverged`, so the footer's disk-changed hint is
+        // already the persistent replacement feedback. Leaving the
+        // stale "save refused" text up here would outrank that hint forever
+        // (`footer::mode`'s `SaveError` check runs before `DiskChanged`),
+        // stranding the user with no visible way to merge. Clearing to
+        // `None` rather than setting a "cancelled" status matters too — any
+        // status at all would still outrank `DiskChanged` one rung lower.
+        if is_disk_conflict {
+            app.status_message = None;
+        } else if app.status_source != StatusSource::SaveError {
             app.set_status(msg, StatusSource::Other);
         }
         return;

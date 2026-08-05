@@ -186,12 +186,12 @@ impl App {
         // the retitled name or leave the field seeded from the real one
         // while the tab/title row still shows the merge suffix — neither
         // is a rename the user actually asked for. Renaming stays blocked
-        // until merge mode exits (in place, `⌘M`, or later work packages'
+        // until merge mode exits (in place, `^M`, or later work packages'
         // auto-exit); everything else about the document stays usable.
         if matches!(self.merge, crate::merge::MergeState::Active { doc, .. } if doc == self.active)
         {
             self.set_status(
-                "can't rename while merge is active — \u{2318}M to exit",
+                "can't rename while merge is active — ^M to exit",
                 StatusSource::Other,
             );
             return;

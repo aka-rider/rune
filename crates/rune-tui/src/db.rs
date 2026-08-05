@@ -174,7 +174,7 @@ pub struct PendingOp {
     /// generation `merge::begin` minted for this attempt at enqueue time.
     /// The landing handler (`merge::handle_merge_prep_ack`) compares this
     /// against `App.merge`'s OWN current `Pending` generation for the same
-    /// document before trusting the ack: a later `⌘M` superseding this
+    /// document before trusting the ack: a later `^M` superseding this
     /// attempt before it lands must not have this stale ack mistaken for
     /// the current one (mirrors `is_probe`'s in-flight bookkeeping, but a
     /// generation counter rather than a plain flag, since more than one

@@ -102,7 +102,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // Plan WP6.S4: a genuine CAS conflict — the fresh disk
             // observation `record_fresh_from_stat` already recorded — offers
             // the disk-conflict Guard so the user can act on it directly
-            // rather than needing to know `⌘M` exists. A refused raise
+            // rather than needing to know `^M` exists. A refused raise
             // (some higher-priority modal already up) leaves the plain
             // status line above as the only feedback, which is still
             // correct — `set_modal`'s `#[must_use]` return says exactly

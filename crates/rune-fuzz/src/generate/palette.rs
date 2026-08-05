@@ -548,7 +548,7 @@ pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `⌘M` (`GlobalCommand::Merge`, plan WP7.S1) — this no-store harness never
+/// `^M` (`GlobalCommand::Merge`, plan WP7.S1) — this no-store harness never
 /// gives a document a real `last_sync`, so `merge::begin`'s own fast
 /// pre-check always refuses with `"no divergence to merge"` (Context, fuzz
 /// state-space growth): reaching this key still proves the refusal itself
@@ -559,8 +559,8 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
     mods: Mods {
         shift: false,
         alt: false,
-        ctrl: false,
-        sup: true,
+        ctrl: true,
+        sup: false,
     },
 };
 

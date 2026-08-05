@@ -88,7 +88,7 @@ fn mode(app: &App) -> Mode<'_> {
         return Mode::MergeHint(app.merge.unresolved_count());
     }
     // Suppressed while a merge attempt is underway (plan WP4.S4): `Active`
-    // returned above, and a `Pending` attempt's "[⌘M]erge" invitation
+    // returned above, and a `Pending` attempt's "[^M]erge" invitation
     // would be stale advice about the very thing already in flight.
     if matches!(app.merge, crate::merge::MergeState::Inactive)
         && matches!(
@@ -148,7 +148,7 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::Status(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::DiskChanged => vec![Span::styled(
-            "\u{21c4} disk changed \u{2014} [\u{2318}M]erge",
+            "\u{21c4} disk changed \u{2014} [^M]erge",
             app.theme.chrome.footer_hint,
         )],
         Mode::MergeHint(unresolved) => vec![Span::styled(

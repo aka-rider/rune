@@ -46,7 +46,7 @@ pub enum MergeState {
     Inactive,
     /// A `MergePrep` op is in flight for `doc` — `generation` is this attempt's own
     /// ticket (`App::next_merge_gen`'s value at `begin` time), so a LATER
-    /// `⌘M` (superseding this attempt before it lands) can't have its
+    /// `^M` (superseding this attempt before it lands) can't have its
     /// eventual stale ack mistaken for the current one.
     Pending {
         doc: DocumentId,

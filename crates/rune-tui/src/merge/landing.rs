@@ -43,7 +43,7 @@ pub(crate) fn handle_merge_prep_ack(
         _ => None,
     };
     let Some(intent) = ticket else {
-        // Stale: a later `⌘M` (or some other transition) already moved
+        // Stale: a later `^M` (or some other transition) already moved
         // `App.merge` on from the attempt this ack belongs to.
         return;
     };

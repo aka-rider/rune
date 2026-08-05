@@ -23,7 +23,7 @@ use crate::app::{App, StatusSource};
 use crate::db::PendingOp;
 use crate::runtime::Effects;
 
-/// `⌘M` (plan WP3.S5): a fast pre-check against `Document.last_sync`
+/// `^M` (plan WP3.S5): a fast pre-check against `Document.last_sync`
 /// (render/hint state only, plan Gotchas `[R3]`) before ever enqueueing a
 /// `MergePrep` — refuses immediately, with feedback, when there is
 /// obviously nothing to merge, without waiting on a round trip to confirm
@@ -64,6 +64,14 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
             };
             app.db_ops
                 .insert(op_id, PendingOp::merge_prep(id, generation));
+            // A stale "save refused" status must never survive into merge —
+            // whichever door the user took (`^M`, the disk-conflict Guard's
+            // `[M]erge`, or its `[D]iscard`, which also routes through this
+            // arm), entering merge is itself the acknowledgement the earlier
+            // refusal was waiting for.
+            if app.status_source == StatusSource::SaveError {
+                app.status_message = None;
+            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
@@ -76,7 +84,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
 /// unconditionally used to silently cancel it with no feedback at all,
 /// contradicting this very doc's "no-op outside `Active`" — see
 /// `cancel_pending` below for `Pending`'s own exit path, with its own
-/// status. `pub(crate)`'s only caller in THIS work package is `⌘M` toggling
+/// status. `pub(crate)`'s only caller in THIS work package is `^M` toggling
 /// off an already-`Active` merge by hand; later work packages (auto-exit on
 /// tab switch/close/quit, the resolver's own Esc, fully-resolved auto-exit)
 /// add more callers without changing this function's contract.
@@ -114,7 +122,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
 /// `Active`. The eventual `MergePrep` ack this cancels ahead of is not lost
 /// track of — `handle_merge_prep_ack`'s own generation/doc ticket check
 /// already treats an ack against a no-longer-`Pending` `app.merge` as stale
-/// and drops it, exactly like a superseding `⌘M` would.
+/// and drops it, exactly like a superseding `^M` would.
 pub(crate) fn cancel_pending(app: &mut App) {
     if !matches!(app.merge, MergeState::Pending { .. }) {
         return;
@@ -162,7 +170,7 @@ pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -
     true
 }
 
-/// `GlobalCommand::Merge`'s handler (plan WP3.S5): `⌘M` starts a merge
+/// `GlobalCommand::Merge`'s handler (plan WP3.S5): `^M` starts a merge
 /// attempt when none is active, or exits an already-`Active` one in place —
 /// a natural toggle, and the only reachable caller `exit_in_place` has
 /// until later work packages (the resolver's own Esc, auto-exit) add

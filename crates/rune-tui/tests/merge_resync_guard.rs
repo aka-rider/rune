@@ -1,8 +1,9 @@
-//! WP6 "Done when" integration tests for undo/redo resync, auto-exit, and
-//! the save-conflict Guard (plan `merge-user-s-changes-with-idempotent-
-//! octopus.md`). Follows `merge_entry.rs`/`merge_resolver.rs`'s own fixture
-//! pattern, pulling shared setup from `merge_common` (review fix F9's
-//! dedupe).
+//! WP6 "Done when" integration tests for undo/redo resync and auto-exit
+//! (plan `merge-user-s-changes-with-idempotent-octopus.md`). The
+//! disk-conflict Guard tests live in `merge_disk_conflict_guard.rs` — split
+//! out to keep both files under the 500-line budget. Follows
+//! `merge_entry.rs`/`merge_resolver.rs`'s own fixture pattern, pulling
+//! shared setup from `merge_common` (review fix F9's dedupe).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -16,19 +17,17 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rune_db::SyncKind;
-use rune_tui::app::{self, App};
-use rune_tui::banner::{GuardKind, Modal};
+use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
-use rune_tui::runtime::{CmdKind, Effects};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
-    app_with_store, bare, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, sup,
+    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
+    publish,
 };
 
 /// Three separate conflicts (lines 1, 5, 9), each surrounded by three
@@ -74,7 +73,7 @@ fn enter_three_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let MergeState::Active { blocks, cur, .. } = &app.merge else {
@@ -235,7 +234,7 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let MergeState::Active { blocks, .. } = &app.merge else {
@@ -300,7 +299,7 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
     );
 }
 
-/// Review fix F3: `⌘M` on a diverged document leaves `app.merge` `Pending`
+/// Review fix F3: `^M` on a diverged document leaves `app.merge` `Pending`
 /// while its `MergePrep` op is still in flight — switching tabs BEFORE
 /// that ack lands used to silently discard the attempt with `exit_in_place`
 /// (which only knows how to unwind an `Active` working form, not a
@@ -329,7 +328,7 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     assert!(
         matches!(app.merge, MergeState::Pending { doc, .. } if doc == doc_id),
         "expected a Pending merge attempt, got {:?}",
@@ -358,132 +357,4 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
     drain_one_op_for(&mut app, &bridge, doc_id);
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.active, draft_id);
-}
-
-/// Sets up a document whose disk changed since it was opened, edits the
-/// buffer, and drives a real `⌘S` all the way through the three-hop
-/// materialize dance to the point where `handle_materialize_ack` raises the
-/// disk-conflict Guard.
-fn enter_disk_conflict_guard(
-    disk_bytes: &[u8],
-) -> (App, Arc<DbBridge>, DocumentId, Arc<dyn Vfs + Send + Sync>) {
-    let mem = Mem::new();
-    publish(&mem, Path::new("/doc.md"), b"hello");
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(mem);
-
-    let (mut app, bridge) = app_with_store("merge-guard", Arc::clone(&vfs));
-    workspace::open_path(&mut app, Path::new("/doc.md"));
-    let doc_id = app.active;
-    drain_one_op_for(&mut app, &bridge, doc_id);
-
-    press_key(&mut app, ch('!'));
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
-    drain_one_op_for(&mut app, &bridge, doc_id);
-
-    external_write(vfs.as_ref(), disk_bytes);
-
-    press_key(&mut app, sup('s'));
-    let prepare_effects = drain_one_op_for(&mut app, &bridge, doc_id);
-    let save_cmd = prepare_effects
-        .cmds
-        .into_iter()
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done_msg = save_cmd.run().expect("the vfs Cmd must reply");
-    let mut effects = Effects::default();
-    app::update(&mut app, vfs_done_msg, &mut effects);
-    drain_one_op_for(&mut app, &bridge, doc_id);
-
-    (app, bridge, doc_id, vfs)
-}
-
-/// Plan WP6 "Done when" (4a): ⌘S on an externally-changed file raises the
-/// Guard.
-#[test]
-fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
-    let (app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
-    let Some(Modal::Guard(prompt)) = &app.modal else {
-        panic!("expected the disk-conflict Guard modal");
-    };
-    assert_eq!(prompt.doc, doc_id);
-    assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
-}
-
-/// Plan WP6 "Done when" (4b): the Guard's `[M]erge` answer enters merge
-/// (`MergeState::Pending`).
-#[test]
-fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
-    let (mut app, _bridge, doc_id) = {
-        let (app, bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
-        (app, bridge, doc_id)
-    };
-    press_key(&mut app, ch('m'));
-    assert!(app.modal.is_none());
-    assert!(matches!(
-        app.merge,
-        MergeState::Pending { doc, .. } if doc == doc_id
-    ));
-}
-
-/// Plan WP6 "Done when" (4c): the Guard's `Esc` answer cancels with a
-/// status, touching neither the buffer nor merge state.
-#[test]
-fn disk_conflict_guard_escape_cancels_with_a_status() {
-    let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
-    let before = app.doc(doc_id).unwrap().buffer.content().to_string();
-
-    press_key(&mut app, bare(KeyCode::Escape));
-
-    assert!(app.modal.is_none());
-    assert_eq!(app.merge, MergeState::Inactive);
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
-    // `handle_guard_key`'s own rule (review fix F2, pre-dating this plan):
-    // Escape's cancel status never overwrites an unacknowledged
-    // `SaveError` — the save-refused message the Guard itself was raised
-    // over stays up, which is still a status, still feedback, and still
-    // non-destructive (§1.4.4).
-    assert_eq!(app.status_source, rune_tui::app::StatusSource::SaveError);
-    assert!(
-        app.status_message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("save refused"),
-    );
-}
-
-/// Plan WP6 "Done when" (4d): the Guard's `[D]iscard` answer makes the
-/// buffer equal the FRESH disk bytes in one undoable step, even when the
-/// disk changed AGAIN between the conflict's detection and pressing `D`
-/// (plan Assumption A2 — Discard shares `Merge`'s fresh `MergePrep`
-/// pipeline rather than replaying the bytes seen at guard-raise time).
-#[test]
-fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
-    let (mut app, bridge, doc_id, vfs) = enter_disk_conflict_guard(b"disk changed once");
-    let pos_before_discard = app.doc(doc_id).unwrap().journal.pos();
-
-    // The disk moves AGAIN while the Guard is still up.
-    external_write(vfs.as_ref(), b"disk changed twice");
-
-    press_key(&mut app, ch('d'));
-    assert!(app.modal.is_none());
-    assert!(matches!(
-        app.merge,
-        MergeState::Pending { doc, .. } if doc == doc_id
-    ));
-    drain_all_ops_for(&mut app, &bridge, doc_id);
-
-    assert_eq!(
-        app.doc(doc_id).unwrap().buffer.content(),
-        "disk changed twice",
-        "Discard must adopt the LATEST disk bytes, not a stale snapshot"
-    );
-    assert_eq!(
-        app.doc(doc_id).unwrap().journal.pos(),
-        pos_before_discard + 1,
-        "Discard installs the fresh bytes as exactly one journal step"
-    );
-    assert_eq!(app.merge, MergeState::Inactive);
-
-    rune_tui::commands::edit::undo(&mut app, doc_id);
-    assert_eq!(app.doc(doc_id).unwrap().buffer.content(), "!hello");
 }
