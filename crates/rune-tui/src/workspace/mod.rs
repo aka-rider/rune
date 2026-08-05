@@ -304,6 +304,7 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
         crate::merge::auto_exit(app);
     }
     app.active = id;
+    app.tabs.touch(id);
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding
     // the previous document's name (no shadow state).

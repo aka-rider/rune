@@ -171,6 +171,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     }
     app.documents.remove(&id);
     app.tabs.order.retain(|&t| t != id);
+    app.tabs.mru.retain(|&t| t != id);
     app.db_ops.retain(|_, pending| pending.doc != id);
     if app.pending_close_on_save == Some(id) {
         app.pending_close_on_save = None;
@@ -204,6 +205,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     if active_changed {
         let name = crate::title::name_for(app.active_doc());
         app.title.seed(&name);
+        app.tabs.touch(app.active);
     }
 
     app.tabs.nav.cursor = app
