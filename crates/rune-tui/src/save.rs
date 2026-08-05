@@ -110,7 +110,13 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     // is one message away, and ⌘S again after it lands does the right thing
     // against the right path.
     if app.rename.in_flight() {
-        messages::warn(app, "can't save while a rename is in flight");
+        // `error`, not `warn`: nothing was written, and unlike the
+        // in-progress-save refusal above (where the data genuinely is
+        // being written) or merge mode's own refusal (where the footer's
+        // merge hint keeps that state visible independently), an
+        // auto-collapsing message here would leave this refusal with no
+        // trace once its 5s window elapses.
+        messages::error(app, "can't save while a rename is in flight");
         return SaveStart::Refused;
     }
     // Re-derived, not read from the cache (plan WP1): a transition-quality

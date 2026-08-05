@@ -191,30 +191,13 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     }
 
     let doc = app.active_doc_mut();
-    match count {
-        1 => {
-            let placed = Cursor {
-                position: offset,
-                anchor: offset,
-                desired_col,
-                id: 0,
-            };
-            doc.cursors = CursorSet::new_from(&[placed]);
-            app.pointer.drag = Some(Drag::Text {
-                anchor: offset,
-                pane: Pane::Editor,
-            });
-        }
-        2 => {
-            let (start, end) = word_range_at(&doc.buffer, offset);
-            select_range(doc, start, end);
-            app.pointer.drag = None;
-        }
-        _ => {
-            let (start, end) = line_range_incl_newline(&doc.buffer, offset);
-            select_range(doc, start, end);
-            app.pointer.drag = None;
-        }
+    if place_click_cursor(doc, offset, desired_col, count) {
+        app.pointer.drag = Some(Drag::Text {
+            anchor: offset,
+            pane: Pane::Editor,
+        });
+    } else {
+        app.pointer.drag = None;
     }
 }
 
@@ -227,6 +210,64 @@ pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {
         id,
     };
     doc.cursors = CursorSet::new_from(&[selected]);
+}
+
+/// The click-count -> cursor shape every left-mouse-down handler shares (the
+/// editor's own `handle_left_down` and the messages pane's `mouse_down`): a
+/// plain click places the caret, a double-click selects the word under it,
+/// three or more selects the whole logical line. Returns whether the caller
+/// should latch a `Drag::Text` — only a plain single click does; the
+/// multi-click cases already produced a full selection. The editor-only
+/// modifier gestures (ctrl/alt/shift-click) stay in `handle_left_down`
+/// itself, since the messages pane has no use for them.
+pub(crate) fn place_click_cursor(
+    doc: &mut Document,
+    offset: usize,
+    desired_col: usize,
+    count: u8,
+) -> bool {
+    match count {
+        1 => {
+            let placed = Cursor {
+                position: offset,
+                anchor: offset,
+                desired_col,
+                id: 0,
+            };
+            doc.cursors = CursorSet::new_from(&[placed]);
+            true
+        }
+        2 => {
+            let (start, end) = word_range_at(&doc.buffer, offset);
+            select_range(doc, start, end);
+            false
+        }
+        _ => {
+            let (start, end) = line_range_incl_newline(&doc.buffer, offset);
+            select_range(doc, start, end);
+            false
+        }
+    }
+}
+
+/// Extends `doc`'s selection for a latched `Drag::Text { anchor, .. }` to
+/// `offset` — the drag half of the shape [`place_click_cursor`] shares:
+/// both the editor's `handle_left_drag` and the messages pane's
+/// `mouse_drag` reach this once they've hit-tested a buffer offset.
+pub(crate) fn extend_drag_cursor(
+    doc: &mut Document,
+    anchor: usize,
+    offset: usize,
+    desired_col: usize,
+) {
+    let id = doc.cursors.primary().id;
+    let extended = Cursor {
+        position: offset,
+        anchor,
+        desired_col,
+        id,
+    };
+    doc.cursors = CursorSet::new_from(&[extended]);
 }
 
 /// Extends the editor's selection for a latched `Drag::Text { pane: Editor,
@@ -252,14 +293,7 @@ fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
         return;
     };
     let doc = app.active_doc_mut();
-    let id = doc.cursors.primary().id;
-    let extended = Cursor {
-        position: offset,
-        anchor,
-        desired_col,
-        id,
-    };
-    doc.cursors = CursorSet::new_from(&[extended]);
+    extend_drag_cursor(doc, anchor, offset, desired_col);
 }
 
 #[cfg(test)]
@@ -441,5 +475,20 @@ mod tests {
             "a click on the synthesised top border must not move the caret"
         );
         assert!(!app.active_doc().cursors.primary().has_selection());
+    }
+
+    /// Finding 6: the shared click-count -> cursor shape, document-agnostic.
+    #[test]
+    fn place_click_cursor_and_extend_drag_cursor_are_document_agnostic() {
+        let mut doc = crate::document::Document::new(Buffer::new("hello world\n"));
+        assert!(place_click_cursor(&mut doc, 6, 6, 1));
+        assert_eq!(doc.cursors.primary().position, 6);
+        assert!(!place_click_cursor(&mut doc, 6, 6, 2));
+        assert_eq!(doc.cursors.primary().selection_range(), (6, 11));
+        assert!(!place_click_cursor(&mut doc, 6, 6, 3));
+        assert_eq!(doc.cursors.primary().selection_range(), (0, 12));
+        extend_drag_cursor(&mut doc, 0, 5, 5);
+        let c = doc.cursors.primary();
+        assert_eq!((c.anchor, c.position), (0, 5));
     }
 }

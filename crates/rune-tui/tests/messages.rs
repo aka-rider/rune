@@ -83,6 +83,75 @@ fn super_c() -> Msg {
     })
 }
 
+/// Finding 3: the pane's copy chord must be resolved through the SAME
+/// binding table the editor's own `Copy` row declares (`EDITOR_BINDINGS`),
+/// not a second, hand-written copy of the chord shape — so a future rebind
+/// of `Copy` can never desync the two. Every chord derived from the table
+/// (not hardcoded here) must trigger a copy while the pane is focused with
+/// a selection.
+#[test]
+fn the_panes_copy_key_matches_every_editor_copy_binding() {
+    use rune_tui::binding::KeyMatch;
+    use rune_tui::keymap::Command;
+    use rune_tui::keymap::editor_bindings::EDITOR_BINDINGS;
+
+    let copy_bindings: Vec<_> = EDITOR_BINDINGS
+        .iter()
+        .filter(|b| b.cmd == Command::Copy)
+        .collect();
+    assert!(
+        !copy_bindings.is_empty(),
+        "test setup: EDITOR_BINDINGS must declare at least one Copy row"
+    );
+
+    for binding in copy_bindings {
+        let pattern = binding.keys.first().expect("Copy is a single-key binding");
+        let KeyMatch::Code(code) = pattern.key else {
+            panic!("Copy's binding is not a plain key code");
+        };
+
+        let mut app = app_for("hello");
+        messages::warn(&mut app, "hello world");
+        app.sync_view();
+
+        let mut focus_effects = Effects::default();
+        app::update(&mut app, ctrl_e(), &mut focus_effects);
+        assert_eq!(
+            app.focus(),
+            Pane::Messages,
+            "test setup: pane must be focused"
+        );
+        let content = messages::doc(&app).buffer.content().to_string();
+        let start = content
+            .find("hello world")
+            .expect("test setup: log document must contain the posted text");
+        let end = start + "hello world".len();
+        messages::doc_mut(&mut app).cursors = CursorSet::new_from(&[Cursor {
+            position: end,
+            anchor: start,
+            desired_col: 0,
+            id: 1,
+        }]);
+
+        let mut effects = Effects::default();
+        app::update(
+            &mut app,
+            Msg::Key(KeyInput {
+                code,
+                mods: pattern.mods,
+            }),
+            &mut effects,
+        );
+
+        assert_eq!(
+            effects.raw,
+            vec![osc52_copy(b"hello world")],
+            "the pane must respond to the {pattern:?} chord EDITOR_BINDINGS \
+             declares for Copy"
+        );
+    }
+}
+
 /// The pane's own `Rect` this frame — panics (test-only) if it's closed,
 /// since every WP3 test opens it first.
 fn pane_rect(app: &App) -> Rect {
@@ -228,18 +297,20 @@ fn pane_height_never_exceeds_forty_percent_of_the_frame() {
     );
 }
 
-/// A C0 control byte in a posted message is sanitized before it can ever
-/// reach the log's own document — and therefore never reaches the rendered
-/// grid.
+/// A C0 control byte, and a C1 control character (`U+0080`-`U+009F`, finding
+/// 4 — unlike C0/DEL, these decode from UTF-8 as ordinary multi-byte
+/// sequences, not raw control bytes), are both sanitized before a posted
+/// message can ever reach the log's own document — and therefore never
+/// reach the rendered grid.
 #[test]
 fn a_c0_byte_in_a_posted_message_never_reaches_the_rendered_grid() {
     let mut app = app_for("hello");
-    messages::error(&mut app, "bad\u{0}\u{7}text");
+    messages::error(&mut app, "bad\u{0}\u{7}\u{85}text");
 
     assert_eq!(
         messages::newest_text(&app),
         Some("badtext"),
-        "C0 control bytes must be stripped before the entry is stored"
+        "C0 and C1 control characters must be stripped before the entry is stored"
     );
 
     app.sync_view();
@@ -357,6 +428,25 @@ fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
         rows_after_first,
         testgrid::grid(&app, 40, HEIGHT),
         "the rendered rows changed on a second settle after a resize"
+    );
+}
+
+/// Finding 1: once enough messages overflow the pane's capped content
+/// height, a freshly posted message must still be visible — pinned to the
+/// tail, not left off-screen above a top-anchored scroll position the pane
+/// never moves.
+#[test]
+fn a_newest_message_is_visible_after_the_pane_overflows() {
+    let mut app = app_for("hello");
+    for i in 0..20 {
+        messages::error(&mut app, format!("entry number {i}"));
+    }
+    app.sync_view();
+
+    let text = frame_text(&app);
+    assert!(
+        text.contains("entry number 19"),
+        "expected the newest entry visible somewhere in the frame, got {text:?}"
     );
 }
 

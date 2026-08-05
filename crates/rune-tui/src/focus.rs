@@ -107,18 +107,21 @@ impl LayoutMode {
     /// name `None` and decide what to do instead. The title is orthogonal
     /// to the left column's own layout — it names the document showing in
     /// the center pane, painted in every mode this resolver can produce.
-    pub fn focusable(self, pane: Pane) -> Option<VisiblePane> {
+    ///
+    /// `messages_open` is the messages pane's own open/closed state (plan
+    /// WP1.S6, `messages::is_open`): like `Title`, the pane is orthogonal
+    /// to the left column's own split, but unlike `Title` it is NOT always
+    /// painted — a closed pane paints nothing, so `LayoutMode` (which
+    /// otherwise derives entirely from frame geometry and the `Split`
+    /// flags) needs this one extra bit from its caller to answer honestly
+    /// for `Pane::Messages`. Passing it through means the generic
+    /// `focusable(app.focus(), ..).is_none()` check in `reconcile` below
+    /// already catches a pane that closed while it held focus, with no
+    /// bespoke case needed there.
+    pub fn focusable(self, pane: Pane, messages_open: bool) -> Option<VisiblePane> {
         let painted = match (self, pane) {
             (_, Pane::Title) => true,
-            // The messages pane is orthogonal to the left column's own
-            // split (plan WP1.S6) — like `Title`, it is painted (or not) by
-            // a decision `LayoutMode` doesn't model at all. `focus::
-            // reconcile` is what actually redirects focus once the pane
-            // closes; this stays `true` unconditionally so a deliberate
-            // `set_focus_pane(Pane::Messages, ..)` (only ever called while
-            // opening or already-open, see `messages::focus`) never falls
-            // back to the Editor by mistake.
-            (_, Pane::Messages) => true,
+            (_, Pane::Messages) => messages_open,
             (LayoutMode::Split { explorer, .. }, Pane::Explorer) => explorer,
             (LayoutMode::Split { tabs, .. }, Pane::Tabs) => tabs,
             (LayoutMode::Split { .. }, Pane::Editor) => true,
@@ -149,8 +152,9 @@ impl LayoutMode {
     /// splitter drag path already reached for, ad hoc, before this module
     /// existed (`App::set_focus_pane`/`reconcile`, below, are now their
     /// shared chokepoint).
-    pub fn focus_or_default(self, pane: Pane) -> VisiblePane {
-        self.focusable(pane).unwrap_or_else(|| self.default_focus())
+    pub fn focus_or_default(self, pane: Pane, messages_open: bool) -> VisiblePane {
+        self.focusable(pane, messages_open)
+            .unwrap_or_else(|| self.default_focus())
     }
 }
 
@@ -212,8 +216,12 @@ impl App {
         // (see `LayoutMode::focusable`'s doc) — the check still runs, not
         // trusted implicitly, so a future `ExplorerOnly` that hides the
         // center pane gates this automatically, with nothing here to
-        // remember to update.
-        let Some(target) = self.layout_mode().focusable(Pane::Title) else {
+        // remember to update. `messages_open` is irrelevant to a `Title`
+        // lookup, but `focusable` always needs one.
+        let Some(target) = self
+            .layout_mode()
+            .focusable(Pane::Title, crate::messages::is_open(self))
+        else {
             return;
         };
         let name = crate::title::name_for(self.active_doc());
@@ -233,7 +241,10 @@ impl App {
         if self.active_doc().is_read_only() {
             return;
         }
-        let Some(target) = self.layout_mode().focusable(Pane::Title) else {
+        let Some(target) = self
+            .layout_mode()
+            .focusable(Pane::Title, crate::messages::is_open(self))
+        else {
             return;
         };
         self.focus = target.pane();
@@ -282,7 +293,9 @@ impl App {
     /// `self.splits` moments earlier — `layout_mode()` re-resolves fresh
     /// from the live `Split` state every call, never a cached snapshot.
     pub fn set_focus_pane(&mut self, pane: Pane, effects: &mut Effects) {
-        let target = self.layout_mode().focus_or_default(pane);
+        let target = self
+            .layout_mode()
+            .focus_or_default(pane, crate::messages::is_open(self));
         self.set_focus(target, effects);
     }
 
@@ -305,16 +318,12 @@ impl App {
 /// section a keybinding would hide can never land focus somewhere the
 /// command path wouldn't.
 pub fn reconcile(app: &mut App, effects: &mut Effects) {
-    // The messages pane's own closed-while-focused case (plan WP1.S6):
-    // `LayoutMode::focusable` treats `Pane::Messages` as always painted
-    // (see its own doc), so the generic check below can never catch this —
-    // it needs the pane's OWN open/closed state, which lives on `App.
-    // messages`, not on anything `LayoutMode` derives.
-    if app.focus() == Pane::Messages && !crate::messages::is_open(app) {
-        app.set_focus_pane(Pane::Editor, effects);
-        return;
-    }
-    if app.layout_mode().focusable(app.focus()).is_none() {
+    let messages_open = crate::messages::is_open(app);
+    if app
+        .layout_mode()
+        .focusable(app.focus(), messages_open)
+        .is_none()
+    {
         app.set_focus_pane(app.focus(), effects);
     }
 }
@@ -339,18 +348,28 @@ mod tests {
     #[test]
     fn no_mode_makes_an_unpainted_pane_focusable() {
         let editor_only = LayoutMode::EditorOnly;
-        assert!(editor_only.focusable(Pane::Explorer).is_none());
-        assert!(editor_only.focusable(Pane::Tabs).is_none());
-        assert!(editor_only.focusable(Pane::Editor).is_some());
-        assert!(editor_only.focusable(Pane::Title).is_some());
+        assert!(editor_only.focusable(Pane::Explorer, false).is_none());
+        assert!(editor_only.focusable(Pane::Tabs, false).is_none());
+        assert!(editor_only.focusable(Pane::Editor, false).is_some());
+        assert!(editor_only.focusable(Pane::Title, false).is_some());
 
         let split_collapsed = LayoutMode::Split {
             explorer: false,
             tabs: false,
         };
-        assert!(split_collapsed.focusable(Pane::Explorer).is_none());
-        assert!(split_collapsed.focusable(Pane::Tabs).is_none());
-        assert!(split_collapsed.focusable(Pane::Editor).is_some());
+        assert!(split_collapsed.focusable(Pane::Explorer, false).is_none());
+        assert!(split_collapsed.focusable(Pane::Tabs, false).is_none());
+        assert!(split_collapsed.focusable(Pane::Editor, false).is_some());
+    }
+
+    /// `Pane::Messages` is focusable exactly when `messages_open` says so —
+    /// unlike every other pane, whose painted-or-not state comes entirely
+    /// from the `LayoutMode` itself.
+    #[test]
+    fn messages_pane_is_focusable_only_when_open() {
+        let mode = LayoutMode::EditorOnly;
+        assert!(mode.focusable(Pane::Messages, false).is_none());
+        assert!(mode.focusable(Pane::Messages, true).is_some());
     }
 
     /// `focus_or_default` never leaves a caller with nothing to focus: an
@@ -358,8 +377,14 @@ mod tests {
     #[test]
     fn focus_or_default_falls_back_when_the_target_is_unpainted() {
         let mode = LayoutMode::EditorOnly;
-        assert_eq!(mode.focus_or_default(Pane::Explorer).pane(), Pane::Editor);
-        assert_eq!(mode.focus_or_default(Pane::Editor).pane(), Pane::Editor);
+        assert_eq!(
+            mode.focus_or_default(Pane::Explorer, false).pane(),
+            Pane::Editor
+        );
+        assert_eq!(
+            mode.focus_or_default(Pane::Editor, false).pane(),
+            Pane::Editor
+        );
     }
 
     /// The load-bearing proof `focus_or_default`'s whole guarantee rests on:
@@ -397,13 +422,48 @@ mod tests {
 
         for mode in modes {
             for pane in panes {
-                let target = mode.focus_or_default(pane);
+                let target = mode.focus_or_default(pane, false);
                 assert!(
-                    mode.focusable(target.pane()).is_some(),
+                    mode.focusable(target.pane(), false).is_some(),
                     "{mode:?}.focus_or_default({pane:?}) produced {target:?}, \
                      which {mode:?}.focusable refuses"
                 );
             }
         }
+    }
+
+    /// The generic `focusable().is_none()` path in `reconcile` (finding 5)
+    /// must catch a pane that closes while it still holds focus, with no
+    /// bespoke special case: focusing the messages pane, then closing it
+    /// without moving focus (mirroring an async reply landing while the
+    /// pane happens to be focused), must still redirect focus to the
+    /// Editor once `reconcile` runs.
+    #[test]
+    fn reconcile_redirects_focus_off_a_pane_that_closed_while_focused() {
+        use crate::runtime::Effects;
+        use rune_core::buffer::Buffer;
+        use rune_vfs::Mem;
+        use std::sync::Arc;
+
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 80;
+        app.frame_height = 24;
+
+        let mut effects = Effects::default();
+        crate::messages::toggle(&mut app, &mut effects);
+        assert_eq!(app.focus(), Pane::Messages);
+
+        // Closes the pane without moving focus — `messages::collapse`
+        // deliberately leaves that decision to its caller.
+        crate::messages::collapse(&mut app);
+        assert_eq!(app.focus(), Pane::Messages, "focus untouched by collapse");
+
+        let mut effects2 = Effects::default();
+        reconcile(&mut app, &mut effects2);
+        assert_eq!(
+            app.focus(),
+            Pane::Editor,
+            "reconcile must redirect focus off a closed pane"
+        );
     }
 }

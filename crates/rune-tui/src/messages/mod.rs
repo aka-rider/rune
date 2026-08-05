@@ -16,16 +16,13 @@ use std::time::Duration;
 
 use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
-use rune_core::cursor::{Cursor, CursorSet};
 
 use crate::app::App;
 use crate::commands::clipboard::{extract_copy_text, write_to_clipboard_or_report};
-use crate::commands::mouse::{WHEEL_ROWS, select_range};
+use crate::commands::mouse::{WHEEL_ROWS, extend_drag_cursor, place_click_cursor};
 use crate::commands::mouse_hit::hit_test;
-use crate::commands::nav::word_range_at;
-use crate::commands::nav_line::line_range_incl_newline;
 use crate::document::{Document, ReadOnly};
-use crate::keymap::{KeyCode, KeyInput, Mods};
+use crate::keymap::{Command, KeyCode, KeyInput};
 use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
@@ -89,6 +86,13 @@ pub struct MessageLog {
     /// generation arriving after a newer one was armed) is always
     /// distinguishable from the current one.
     generation: u32,
+    /// Whether [`sync`] should pin `viewport.scroll_row` to the tail of the
+    /// log rather than leave it where it last settled. Starts (and every
+    /// [`post`] resets it back to) `true` — a message the user cannot see
+    /// is not feedback — and only [`scroll`] clears it, when the user
+    /// explicitly moves the viewport themselves to read back through the
+    /// log; the next post still snaps them back to the newest entry.
+    pinned: bool,
 }
 
 impl MessageLog {
@@ -103,6 +107,7 @@ impl MessageLog {
             open: false,
             armed: None,
             generation: 0,
+            pinned: true,
         }
     }
 }
@@ -113,13 +118,22 @@ impl Default for MessageLog {
     }
 }
 
-/// Strips C0 control bytes (except `\n`) and DEL from `text` (plan WP1
-/// decision 8): error text can carry filesystem-derived bytes, and those
-/// bytes are blitted to the terminal and OSC-52-copied verbatim, so they
-/// must never reach the rendered grid unsanitized.
+/// Strips C0 control bytes (except `\n`), DEL, and the C1 control range
+/// (`U+0080`-`U+009F`) from `text` (plan WP1 decision 8): error text can
+/// carry filesystem-derived bytes, and those bytes are blitted to the
+/// terminal and OSC-52-copied verbatim, so they must never reach the
+/// rendered grid unsanitized. C1 controls decode from UTF-8 as ordinary
+/// two-byte sequences (unlike C0/DEL, which are single-byte), so a
+/// filesystem path or error string can carry one without it ever looking
+/// like a raw control byte on the wire.
 fn sanitize(text: &str) -> String {
     text.chars()
-        .filter(|&c| c == '\n' || !(('\u{0}'..='\u{1f}').contains(&c) || c == '\u{7f}'))
+        .filter(|&c| {
+            c == '\n'
+                || !(('\u{0}'..='\u{1f}').contains(&c)
+                    || c == '\u{7f}'
+                    || ('\u{80}'..='\u{9f}').contains(&c))
+        })
         .collect()
 }
 
@@ -178,6 +192,10 @@ pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     // reconciler re-arms from scratch on the next settle, now against the
     // NEWEST entry's severity.
     app.messages.armed = None;
+    // A message the user cannot see is not feedback: even if the user had
+    // scrolled away to read older entries, a fresh post snaps the pane
+    // back to the newest one on the next `sync` (finding 1).
+    app.messages.pinned = true;
 }
 
 pub fn info(app: &mut App, text: impl Into<String>) {
@@ -300,7 +318,24 @@ pub fn sync(app: &mut App, width: u16, frame_height: u16) {
     app.messages.doc.viewport.width = width;
     let view = app.messages.doc.sync();
     app.messages.doc.view = Some(view);
-    app.messages.doc.viewport.height = content_rows(app, frame_height);
+    let height = content_rows(app, frame_height);
+    app.messages.doc.viewport.height = height;
+    // Top-anchored rendering (`viewport::visible_rows`) means a scroll_row
+    // left wherever it last settled can leave a freshly posted message
+    // entirely off-screen (finding 1) — pinned mode keeps it at the tail
+    // instead, recomputed fresh every settle so a later post (or a rewrap
+    // that changes `total_rows`) is still reflected. `scroll` clears
+    // `pinned` for an explicit user scroll; `post` always restores it.
+    if app.messages.pinned {
+        let total_rows = app
+            .messages
+            .doc
+            .view
+            .as_ref()
+            .map(|v| v.display.total_rows())
+            .unwrap_or(0);
+        app.messages.doc.viewport.scroll_row = total_rows.saturating_sub(height as usize);
+    }
 }
 
 fn page_amount(app: &App) -> isize {
@@ -308,6 +343,9 @@ fn page_amount(app: &App) -> isize {
 }
 
 fn scroll(app: &mut App, delta: isize) {
+    // An explicit scroll means the user is reading back through the log —
+    // stop chasing the tail until the next post (finding 1).
+    app.messages.pinned = false;
     let max_row = app
         .messages
         .doc
@@ -347,7 +385,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
             scroll(app, page_amount(app));
             true
         }
-        KeyCode::Char('c') if is_copy_chord(key.mods) => {
+        _ if crate::keymap::resolve(key) == Some(Command::Copy) => {
             copy_selection(app, effects);
             true
         }
@@ -399,13 +437,6 @@ pub fn collapse_timeout_cmd(generation: u32) -> Cmd {
     })
 }
 
-/// `⌘C` (sup-only) or `^⇧C` (ctrl+shift) — the exact two chords the editor's
-/// own `Copy` row binds (`keymap::editor_bindings::clipboard`), so the pane
-/// is keyboard-copyable with the identical gesture (plan WP3.S5).
-fn is_copy_chord(m: Mods) -> bool {
-    (m.sup && !m.ctrl && !m.alt && !m.shift) || (m.ctrl && m.shift && !m.alt && !m.sup)
-}
-
 /// The pane's own `Rect` this frame, or `None` while it's closed — every
 /// mouse handler below re-derives it fresh rather than trusting a value a
 /// caller might have computed against a stale frame.
@@ -446,11 +477,11 @@ pub fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
 }
 
 /// Left-press: focuses the pane (never modal — a message pane click is just
-/// another way to reach it, exactly like `^E`), places or extends the
-/// selection at the hit-tested offset, and starts a `Drag::Text { pane:
-/// Messages, .. }` for a plain single click — mirrors `commands::mouse::
-/// handle_left_down`'s shape for the editor, reusing the same word/line
-/// range helpers so double/triple-click behave identically in both panes.
+/// another way to reach it, exactly like `^E`), then hands the hit-tested
+/// offset and click count to `commands::mouse::place_click_cursor` — the
+/// same click-count -> cursor shape the editor's own `handle_left_down`
+/// reaches through, so double/triple-click behave identically in both
+/// panes.
 fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
     focus(app, effects);
     let Some((row, col)) = relative(app, input) else {
@@ -463,30 +494,13 @@ fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let now = app.pointer_clock.now();
     let count = app.pointer.register_click(now, input.column, input.row);
 
-    match count {
-        1 => {
-            let placed = Cursor {
-                position: offset,
-                anchor: offset,
-                desired_col,
-                id: 0,
-            };
-            app.messages.doc.cursors = CursorSet::new_from(&[placed]);
-            app.pointer.drag = Some(Drag::Text {
-                anchor: offset,
-                pane: Pane::Messages,
-            });
-        }
-        2 => {
-            let (start, end) = word_range_at(&app.messages.doc.buffer, offset);
-            select_range(&mut app.messages.doc, start, end);
-            app.pointer.drag = None;
-        }
-        _ => {
-            let (start, end) = line_range_incl_newline(&app.messages.doc.buffer, offset);
-            select_range(&mut app.messages.doc, start, end);
-            app.pointer.drag = None;
-        }
+    if place_click_cursor(&mut app.messages.doc, offset, desired_col, count) {
+        app.pointer.drag = Some(Drag::Text {
+            anchor: offset,
+            pane: Pane::Messages,
+        });
+    } else {
+        app.pointer.drag = None;
     }
 }
 
@@ -508,14 +522,7 @@ fn mouse_drag(app: &mut App, input: MouseInput) {
     let Some((offset, desired_col)) = hit_test(app, &app.messages.doc, row, col) else {
         return;
     };
-    let id = app.messages.doc.cursors.primary().id;
-    let extended = Cursor {
-        position: offset,
-        anchor,
-        desired_col,
-        id,
-    };
-    app.messages.doc.cursors = CursorSet::new_from(&[extended]);
+    extend_drag_cursor(&mut app.messages.doc, anchor, offset, desired_col);
 }
 
 /// Copies the pane's current selection through the same capped OSC-52 path
