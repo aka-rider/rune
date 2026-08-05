@@ -73,6 +73,11 @@ pub fn handle_load_ack(
         false, // bind_new: `id` is already bound to a path read straight off disk
         load_result.bridge_seq.unwrap_or(0),
     ));
+    // Plan WP2.S3: render/hint state only (§12; see `Document::last_sync`'s
+    // own doc comment) — set unconditionally, even on the version-moved-on
+    // branch above where `hydrate` was never called: the fact this `Load`
+    // reported is still true regardless of whether the buffer adopted it.
+    doc.last_sync = Some(load_result.sync.kind);
 }
 
 /// Records that `seq` was durably committed for `id`'s oldest still-pending

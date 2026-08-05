@@ -163,6 +163,13 @@ pub struct PendingOp {
     /// `DocDb`" apart from "a snapshot anchor landed, nothing else to do" —
     /// both share the same outcome shape but need opposite reactions.
     pub mints_scratch: bool,
+    /// True iff this op is a `Probe` (plan WP2.S4) — lets
+    /// `workspace::switch_to` skip enqueueing a second probe for a document
+    /// that already has one in flight (`probe.rs`'s own doc comment: each
+    /// probe reads the whole file and inserts a fresh observation, so
+    /// stacking redundant ones on every rapid tab switch would grow the
+    /// store unboundedly for no new information).
+    pub is_probe: bool,
 }
 
 impl PendingOp {
@@ -171,6 +178,7 @@ impl PendingOp {
             doc,
             issued_version: None,
             mints_scratch: false,
+            is_probe: false,
         }
     }
 
@@ -179,6 +187,7 @@ impl PendingOp {
             doc,
             issued_version: Some(issued_version),
             mints_scratch: false,
+            is_probe: false,
         }
     }
 
@@ -187,6 +196,16 @@ impl PendingOp {
             doc,
             issued_version: None,
             mints_scratch: true,
+            is_probe: false,
+        }
+    }
+
+    pub fn probe(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: false,
+            is_probe: true,
         }
     }
 }

@@ -37,6 +37,13 @@ enum Mode<'a> {
     ChordPending(String),
     Degraded(&'a str),
     Status(&'a str),
+    /// Passive persistent hint (plan WP2.S5, Assumption A1): the ACTIVE
+    /// document's disk fact has diverged from the buffer. Ranked just below
+    /// `Status` — a real status message (e.g. a just-completed save) still
+    /// wins over this ambient reminder, but it outranks the bare default
+    /// keymap hints so the user always sees it once no more pressing
+    /// message is showing.
+    DiskChanged,
     DefaultHints,
 }
 
@@ -59,6 +66,12 @@ fn mode(app: &App) -> Mode<'_> {
     }
     if let Some(msg) = &app.status_message {
         return Mode::Status(msg);
+    }
+    if matches!(
+        app.active_doc().last_sync,
+        Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
+    ) {
+        return Mode::DiskChanged;
     }
     Mode::DefaultHints
 }
@@ -109,6 +122,10 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::Status(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
+        Mode::DiskChanged => vec![Span::styled(
+            "\u{21c4} disk changed \u{2014} [\u{2318}M]erge",
+            app.theme.chrome.footer_hint,
+        )],
         Mode::DefaultHints => default_hint_spans(app),
     }
 }
