@@ -41,6 +41,7 @@ mod inherit;
 mod journal;
 mod journal_append;
 mod load;
+mod load_anchor;
 mod materialize;
 mod materialize_types;
 mod merge_prep;

@@ -245,4 +245,96 @@ mod tests {
             .expect("count");
         assert_eq!(events, 1, "a live session must never be reaped");
     }
+
+    /// The reaper runs in `Store::open`, BEFORE `load` — at that moment a
+    /// dead session that diverged content is still `most_recent_session_
+    /// for_doc`, so it's spared. But by the time the NEXT `load` bridges its
+    /// draft into a fresh session's own journal and returns, the dead
+    /// session is no longer most-recent — a LATER reap (the next process's
+    /// own `Store::open`) must not destroy the bridge target's content,
+    /// only the dead session's now-superseded footprint. Regression for the
+    /// data-loss bug this module's whole reap-scoping exists to prevent.
+    #[test]
+    fn diverged_load_bridge_survives_reaping_the_dead_session_it_inherited_from() {
+        use rune_vfs::Vfs;
+
+        let mut conn = open();
+        let vfs = rune_vfs::Mem::new();
+        let path = std::path::Path::new("/doc.md");
+        let publish = |bytes: &[u8]| {
+            let temp = vfs.write_durable(path, bytes).expect("write_durable");
+            vfs.rename_excl(&temp, path).expect("publish");
+        };
+        publish(b"session A's content");
+
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        let doc_id = crate::load::load(
+            &mut conn,
+            &vfs,
+            session_a,
+            &|_pid, _started_at| true,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session a load")
+        .doc_id;
+
+        // Session A types an unsaved edit, then "dies" without saving.
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                &[rune_core::buffer::AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "UNSAVED ".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        // Disk moves on independently — an external atomic-swap overwrite
+        // (`save_atomic`'s `exchange` path, mints a new inode) since session
+        // A's own last-known baseline.
+        vfs.save_atomic(path, b"disk moved on independently")
+            .expect("external atomic swap");
+
+        // Session B loads after A died — diverges, bridges A's own baseline
+        // forward to A's draft (B2/B3), landing it in B's own journal.
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let result = crate::load::load(
+            &mut conn,
+            &vfs,
+            session_b,
+            &|_pid, _started_at| false,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session b load");
+        assert_eq!(
+            result.recovered, "UNSAVED session A's content",
+            "test setup: session b must have inherited a's bridged draft"
+        );
+
+        // NOW force-reap: both sessions report dead, but the reaper must
+        // still spare session_b (the current most-recent toucher) and only
+        // clear session_a's now-superseded footprint.
+        reap_dead_sessions(&mut conn, &|_pid, _started_at| false).expect("reap");
+
+        let recovered = crate::snapshot::recover_document(&conn, session_b, doc_id)
+            .expect("recover_document must still succeed after the reap");
+        assert_eq!(
+            recovered, "UNSAVED session A's content",
+            "the bridged draft must survive reaping the dead session it came from"
+        );
+    }
 }

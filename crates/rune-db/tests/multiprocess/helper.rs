@@ -250,6 +250,80 @@ pub(crate) fn gc_editor() {
     std::process::exit(0);
 }
 
+/// Role (g): opens `RUNE_DB_DOC_PATH` (a REAL file), journals one unsaved
+/// edit on top of it, writes the resulting `doc_id` to
+/// `RUNE_DB_DOC_ID_MARKER`, then exits WITHOUT calling `store.shutdown()` —
+/// the abrupt, store-preserved quit (`^C^C`) the data-loss regression
+/// starts from. The edit's own `append_edit` ack already committed
+/// synchronously (WAL), so skipping shutdown loses nothing durable.
+pub(crate) fn edit_and_die() {
+    let path = db_path();
+    let doc_path = PathBuf::from(env_var("RUNE_DB_DOC_PATH"));
+    let doc_id_marker = PathBuf::from(env_var("RUNE_DB_DOC_ID_MARKER"));
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let store = open_store(&path, on_event);
+
+    let id = store.load(&doc_path).expect("enqueue load");
+    let doc_id = match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Load(result),
+        }) if got == id => result.doc_id,
+        other => panic!("expected load ack, got {other:?}"),
+    };
+
+    let edit = AppliedEdit {
+        start: 0,
+        end: 0,
+        deleted: String::new(),
+        insert: "UNSAVED ".to_string(),
+    };
+    let id = store
+        .append_edit(doc_id, &[edit], &[], &[])
+        .expect("enqueue append");
+    expect_ok(&rx, id);
+
+    std::fs::write(&doc_id_marker, doc_id.to_string()).expect("write doc id marker");
+    std::process::exit(0);
+}
+
+/// Role (h): reopens `RUNE_DB_DOC_PATH` via a FRESH `Store`/session (the
+/// next process), writes the resulting `LoadResult::recovered` content and
+/// `sync.kind` to their own marker files for the parent to assert on. The
+/// data-loss regression's actual claim under test.
+pub(crate) fn reload_diverged() {
+    let path = db_path();
+    let doc_path = PathBuf::from(env_var("RUNE_DB_DOC_PATH"));
+    let recovered_marker = PathBuf::from(env_var("RUNE_DB_RECOVERED_MARKER"));
+    let sync_marker = PathBuf::from(env_var("RUNE_DB_SYNC_MARKER"));
+
+    let (tx, rx) = mpsc::channel::<DbEvent>();
+    let on_event: OnEvent = Box::new(move |evt| {
+        let _ = tx.send(evt);
+    });
+    let store = open_store(&path, on_event);
+
+    let id = store.load(&doc_path).expect("enqueue load");
+    let load_result = match rx.recv_timeout(Duration::from_secs(30)) {
+        Ok(DbEvent::Ok {
+            id: got,
+            result: rune_db::OpOutcome::Load(result),
+        }) if got == id => *result,
+        other => panic!("expected load ack, got {other:?}"),
+    };
+
+    std::fs::write(&recovered_marker, &load_result.recovered).expect("write recovered marker");
+    std::fs::write(&sync_marker, format!("{:?}", load_result.sync.kind))
+        .expect("write sync marker");
+
+    store.shutdown();
+    std::process::exit(0);
+}
+
 /// Role (f): the sibling of [`gc_editor`] — repeatedly opens and closes
 /// its OWN `Store` against the same shared path. Every `Store::open`
 /// runs a best-effort startup blob sweep (`store.rs`'s doc: "One

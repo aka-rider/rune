@@ -26,6 +26,13 @@ pub(crate) struct DbBootstrap {
     /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
     /// `App::new` exists to hold the result.
     pub(crate) recovered_content: Option<String>,
+    /// This `Load`'s [`rune_db::SyncKind`] (§12; see `Document::last_sync`'s
+    /// own doc comment) — render/hint state only, `main` installs it onto
+    /// the active document the same way `db_ack::handle_load_ack` does for
+    /// every later per-document reload. `None` only when `load` itself
+    /// never ran (every early-return branch above `bootstrap_db`'s
+    /// `Store::load` call).
+    pub(crate) sync_kind: Option<rune_db::SyncKind>,
     /// The persistent degraded-store status banner (plan WP5.S2), or
     /// `None` when the store opened clean.
     pub(crate) banner: Option<String>,
@@ -177,10 +184,13 @@ pub(crate) fn bootstrap_db(
         None
     };
 
+    let sync_kind = load_result.sync.kind;
+
     DbBootstrap {
         db: Some(db),
         doc_db: Some(doc_db),
         recovered_content: Some(load_result.recovered),
+        sync_kind: Some(sync_kind),
         banner,
     }
 }

@@ -322,6 +322,89 @@ fn two_stores_closing_simultaneously_surface_no_error_despite_truncate_contentio
 }
 
 // ---------------------------------------------------------------------
+// Scenario (f): reopen-after-external-atomic-swap data-loss regression
+// ---------------------------------------------------------------------
+
+#[test]
+fn reopen_after_external_atomic_swap_bridges_the_dead_sessions_own_draft() {
+    use rune_vfs::Vfs;
+
+    let dir = temp_dir("reopen-dataloss");
+    let path = dir.join("rune-v1.db");
+    let doc_path = dir.join("doc.md");
+    std::fs::write(&doc_path, b"session A's content").expect("seed doc file");
+
+    let doc_id_marker = dir.join("doc-id");
+    let child = spawn_helper(
+        "edit_and_die",
+        &[
+            ("RUNE_DB_PATH", path.display().to_string()),
+            ("RUNE_DB_DOC_PATH", doc_path.display().to_string()),
+            ("RUNE_DB_DOC_ID_MARKER", doc_id_marker.display().to_string()),
+        ],
+    );
+    let output = child.wait_with_output().expect("wait child");
+    assert!(
+        output.status.success(),
+        "edit_and_die child failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let doc_id: i64 = std::fs::read_to_string(&doc_id_marker)
+        .expect("read doc id marker")
+        .trim()
+        .parse()
+        .expect("parse doc id");
+
+    // An external atomic-swap overwrite of the REAL file — a genuinely new
+    // inode, exactly like another editor/tool replacing the file in place.
+    rune_vfs::Disk
+        .save_atomic(&doc_path, b"disk moved on independently")
+        .expect("external atomic swap");
+
+    let recovered_marker = dir.join("recovered");
+    let sync_marker = dir.join("sync-kind");
+    let child2 = spawn_helper(
+        "reload_diverged",
+        &[
+            ("RUNE_DB_PATH", path.display().to_string()),
+            ("RUNE_DB_DOC_PATH", doc_path.display().to_string()),
+            (
+                "RUNE_DB_RECOVERED_MARKER",
+                recovered_marker.display().to_string(),
+            ),
+            ("RUNE_DB_SYNC_MARKER", sync_marker.display().to_string()),
+        ],
+    );
+    let output2 = child2.wait_with_output().expect("wait child");
+    assert!(
+        output2.status.success(),
+        "reload_diverged child failed: {}",
+        String::from_utf8_lossy(&output2.stderr)
+    );
+
+    let recovered = std::fs::read_to_string(&recovered_marker).expect("read recovered marker");
+    assert_eq!(
+        recovered, "UNSAVED session A's content",
+        "the dead session's draft must survive a real cross-process reopen after an \
+         external atomic swap, never silently dropped"
+    );
+    let sync_kind = std::fs::read_to_string(&sync_marker).expect("read sync marker");
+    assert_eq!(sync_kind.trim(), "Diverged");
+
+    let verify = Connection::open(&path).expect("open verify connection");
+    let doc_rows: i64 = verify
+        .query_row(
+            "SELECT COUNT(*) FROM documents WHERE id=?1",
+            params![doc_id],
+            |r| r.get(0),
+        )
+        .expect("count doc rows");
+    assert_eq!(doc_rows, 1, "the swap must reuse the same document row");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------
 // Scenario (e): sweep_unreferenced_blobs under real cross-process
 // contention ([rune-db 8])
 // ---------------------------------------------------------------------

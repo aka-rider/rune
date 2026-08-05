@@ -237,6 +237,14 @@ fn bootstrap(
     if let Some(doc_db) = db_bootstrap.doc_db {
         app.active_doc_mut().db = Some(doc_db);
     }
+    // Plan WP2.S3: render/hint state only (§12; see `Document::last_sync`'s
+    // own doc comment) — set unconditionally, exactly like
+    // `db_ack::handle_load_ack` does for every later reload, so the ⌘S
+    // Guard/footer hint/merge machinery see this session's very first
+    // `Load` outcome too, not just subsequent ones.
+    if let Some(sync_kind) = db_bootstrap.sync_kind {
+        app.active_doc_mut().last_sync = Some(sync_kind);
+    }
     if let Some(recovered) = db_bootstrap.recovered_content {
         // Adopts a dead session's inherited draft content through the same
         // chokepoint `db::handle_load_ack` uses for every later per-document

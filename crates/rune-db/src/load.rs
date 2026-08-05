@@ -15,13 +15,13 @@ use std::time::SystemTime;
 
 use rusqlite::{Connection, Transaction, params};
 
-use rune_core::buffer::AppliedEdit;
 use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::adopt;
 use crate::document::{self, DocRef};
 use crate::inherit::find_inheritable_draft;
+use crate::load_anchor::{LoadContext, anchor_first_load};
 use crate::observation::{self, ObsId};
 use crate::retry;
 use crate::sync::SyncState;
@@ -138,49 +138,26 @@ pub fn load(
     if !has_hist {
         // Cross-session crash recovery (v10, B2/R2) — MUST run before this
         // session writes anything of its own for doc_id, else it would
-        // immediately find itself as "the most recent session".
-        let (draft_content, inheriting) =
-            find_inheritable_draft(conn, liveness_check, doc_id, &content, &hash)?;
-
-        // First-ever load: the sighting IS the adoption — the recovery
-        // anchor MUST commit first (the adoption asserts "the journal
-        // reconstruction at load_seq equals this blob", which only holds
-        // once the anchor snapshot exists). The anchor and the adoption
-        // ALWAYS use disk content/hash, even when inheriting below.
-        retry::with_retry(conn, |tx| {
-            crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, load_seq)
-        })?;
-        adopt::record_adoption(
-            conn,
-            doc_id,
+        // immediately find itself as "the most recent session". First-ever
+        // load: the sighting IS the adoption — the recovery anchor MUST
+        // commit before the adoption (which asserts "the journal
+        // reconstruction at load_seq equals this blob"). The anchor and the
+        // adoption use disk content/hash for `Inherited::Disk`/`Bridged`;
+        // `Inherited::Diverged` instead re-anchors on the dead session's own
+        // baseline (`load_anchor`'s own doc comment) so the newer disk
+        // content is never silently discarded.
+        let inherited = find_inheritable_draft(conn, liveness_check, doc_id, &hash)?;
+        let ctx = LoadContext {
             session_id,
-            observation::ObservationMeta {
-                blob_hash: &hash,
-                seq: Some(load_seq),
-                origin: "load",
-            },
-            &stat,
+            doc_id,
+            load_seq,
+            disk_hash: &hash,
+            live_stat: &stat,
             now,
-        )?;
-
-        if inheriting {
-            // Bridge the just-adopted disk content forward to the dead
-            // session's draft via ONE synthetic replace-all edit, journaled
-            // under THIS session's own session_id at the very next
-            // position — exactly as if the user had just pasted the
-            // recovered draft in.
-            let bridge = vec![AppliedEdit {
-                start: 0,
-                end: content.len(),
-                deleted: content.clone(),
-                insert: draft_content.clone(),
-            }];
-            let seq = retry::with_retry(conn, |tx| {
-                crate::journal::append_edit(tx, session_id, now, doc_id, &bridge, &[], &[])
-            })?;
-            bridge_seq = Some(seq);
-            recovered = draft_content;
-        }
+        };
+        let outcome = anchor_first_load(conn, &ctx, &content, inherited)?;
+        recovered = outcome.recovered;
+        bridge_seq = outcome.bridge_seq;
     } else if hash == observation::hash_bytes(recovered.as_bytes()) {
         // Reload, hash-equality: heal-adopt only when there is something to
         // heal (an ordinary clean tab switch also lands here).
@@ -248,6 +225,7 @@ pub fn load(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use rune_core::buffer::AppliedEdit;
     use rune_vfs::Mem;
 
     fn open() -> Connection {
@@ -405,5 +383,102 @@ mod tests {
         )
         .expect("load");
         assert_eq!(result.bridge_seq, None);
+    }
+
+    /// End-to-end DATA-LOSS regression through the full public [`load`]
+    /// entry point: session A opens (H0), edits (journaled durably, never
+    /// saved), the file is overwritten by an external ATOMIC SWAP (H1,
+    /// mints a new inode — `document::open_path_by_inode`'s reclaim branch,
+    /// B3), and session A dies without saving. Session B, a fresh process
+    /// reopening the same path, must re-anchor on A's own baseline (H0),
+    /// bridge H0 -> A's draft, and end up `Diverged` against disk's current
+    /// content (H1) — never silently dropping A's draft in favor of
+    /// whatever is on disk now.
+    #[test]
+    fn diverged_load_bridges_the_dead_sessions_own_baseline_not_disk() {
+        use rune_vfs::Vfs;
+
+        let mut conn = open();
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"session A's content");
+
+        let session_a =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session a");
+        let doc_id = load(
+            &mut conn,
+            &vfs,
+            session_a,
+            &always_alive,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session a load")
+        .doc_id;
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                session_a,
+                SystemTime::now(),
+                doc_id,
+                &[AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "UNSAVED ".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        // An external atomic-swap overwrite — same path, a NEW inode.
+        vfs.save_atomic(path, b"disk moved on independently")
+            .expect("external atomic swap");
+
+        let session_b =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session b");
+        let result = load(
+            &mut conn,
+            &vfs,
+            session_b,
+            &always_dead,
+            path,
+            SystemTime::now(),
+        )
+        .expect("session b load");
+
+        assert_eq!(
+            result.doc_id, doc_id,
+            "the swap must reuse A's document row"
+        );
+        assert_eq!(
+            result.recovered, "UNSAVED session A's content",
+            "must bridge from A's own baseline, never silently drop A's draft"
+        );
+        assert_eq!(result.sync.kind, crate::sync::SyncKind::Diverged);
+
+        let bridge_seq = result
+            .bridge_seq
+            .expect("a bridge edit must have been journaled for session b");
+        let head = retry::with_retry(&mut conn, |tx| {
+            crate::journal::current_seq(tx, session_b, doc_id)
+        })
+        .expect("current_seq");
+        assert_eq!(head, bridge_seq);
+
+        let saved_obs = retry::with_retry(&mut conn, |tx| {
+            observation::saved_obs_for(tx, session_b, doc_id)
+        })
+        .expect("saved_obs_for")
+        .expect("session b adopted a baseline");
+        assert_eq!(
+            saved_obs.blob_hash,
+            observation::hash_bytes(b"session A's content"),
+            "saved_obs (CAS baseline) must be A's own H0, not disk's H1"
+        );
     }
 }
