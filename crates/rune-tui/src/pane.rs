@@ -68,7 +68,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             );
             if visible {
                 app.splits.left.hide();
-                app.set_focus_pane(Pane::Editor, effects);
+                crate::focus::reconcile(app, effects);
             } else {
                 show_and_focus_explorer_on_active_file(app, effects);
             }
@@ -276,6 +276,34 @@ mod tests {
         handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects); // hide
         assert!(!app.splits.left.is_shown());
         assert_eq!(app.focus(), Pane::Editor);
+    }
+
+    /// The hide branch reaches focus through `focus::reconcile` itself now,
+    /// not a hand-rolled equivalent — from a Tabs-focused column, the
+    /// command path and a direct `reconcile` call after the same `hide()`
+    /// must land on identical focus, proving the two really share the one
+    /// chokepoint rather than two routes that happen to agree today.
+    #[test]
+    fn toggle_left_hide_branch_matches_a_direct_reconcile_call() {
+        let mut via_command = app();
+        let mut effects = Effects::default();
+        via_command.splits.left.show();
+        via_command.set_focus_pane(Pane::Tabs, &mut effects);
+        handle_global_command(&mut via_command, GlobalCommand::ToggleLeft, &mut effects);
+
+        let mut via_reconcile = app();
+        let mut effects = Effects::default();
+        via_reconcile.splits.left.show();
+        via_reconcile.set_focus_pane(Pane::Tabs, &mut effects);
+        via_reconcile.splits.left.hide();
+        crate::focus::reconcile(&mut via_reconcile, &mut effects);
+
+        assert_eq!(
+            via_command.splits.left.is_shown(),
+            via_reconcile.splits.left.is_shown()
+        );
+        assert_eq!(via_command.focus(), via_reconcile.focus());
+        assert_eq!(via_command.focus(), Pane::Editor);
     }
 
     /// Pressing the single toggle twice is identity for both visibility and

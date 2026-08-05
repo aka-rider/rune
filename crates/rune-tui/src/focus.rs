@@ -133,10 +133,10 @@ impl LayoutMode {
     }
 
     /// `pane` if it's painted this frame, else `default_focus` — the ONE
-    /// fallback both the collapse command (`GlobalCommand::CollapseLeft`)
-    /// and the splitter drag path already reached for, ad hoc, before this
-    /// module existed (`App::set_focus_pane`/`reconcile`, below, are now
-    /// their shared chokepoint).
+    /// fallback both `GlobalCommand::ToggleLeft`'s hide branch and the
+    /// splitter drag path already reached for, ad hoc, before this module
+    /// existed (`App::set_focus_pane`/`reconcile`, below, are now their
+    /// shared chokepoint).
     pub fn focus_or_default(self, pane: Pane) -> VisiblePane {
         self.focusable(pane).unwrap_or_else(|| self.default_focus())
     }
@@ -273,11 +273,11 @@ impl App {
 }
 
 /// Redirects focus to the Editor if the pane that currently holds it just
-/// stopped being painted this frame — the ONE reconciliation both the
-/// collapse command (`GlobalCommand::CollapseLeft`, `pane.rs`) and the
-/// splitter drag path (`commands/splitter.rs`) run through, so a drag that
-/// hides the same section a keybinding would hide can never land focus
-/// somewhere the command path wouldn't.
+/// stopped being painted this frame — the ONE reconciliation `GlobalCommand::
+/// ToggleLeft`'s hide branch (`pane.rs`) and the splitter drag path
+/// (`commands/splitter.rs`) both run through, so a drag that hides the same
+/// section a keybinding would hide can never land focus somewhere the
+/// command path wouldn't.
 pub fn reconcile(app: &mut App, effects: &mut Effects) {
     if app.layout_mode().focusable(app.focus()).is_none() {
         app.set_focus_pane(app.focus(), effects);
