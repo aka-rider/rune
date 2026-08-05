@@ -29,6 +29,7 @@ rune-syntax = { path = "../rune-syntax" }
 # a normal dependency link like this one.
 rune-tui = { path = "../rune-tui", features = ["strict-invariants"] }
 rune-vfs = { path = "../rune-vfs" }
+rune-ts = { path = "../rune-ts" }
 base64 = { workspace = true }
 unicode-segmentation = { workspace = true }
 ratatui = { workspace = true }
