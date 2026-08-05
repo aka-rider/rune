@@ -2243,6 +2243,7 @@ dependencies = [
  "rune-db",
  "rune-image",
  "rune-md",
+ "rune-merge",
  "rune-nav",
  "rune-syntax",
  "rune-ts",

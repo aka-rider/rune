@@ -8,6 +8,7 @@ rune-core = { path = "../rune-core" }
 rune-db = { path = "../rune-db" }
 rune-image = { workspace = true }
 rune-md = { path = "../rune-md" }
+rune-merge = { path = "../rune-merge" }
 rune-nav = { path = "../rune-nav" }
 rune-syntax = { path = "../rune-syntax" }
 rune-ts = { path = "../rune-ts" }

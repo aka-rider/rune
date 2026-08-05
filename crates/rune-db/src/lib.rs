@@ -43,6 +43,7 @@ mod journal_append;
 mod load;
 mod materialize;
 mod materialize_types;
+mod merge_prep;
 mod observation;
 mod open_ladder;
 mod paths;
@@ -78,6 +79,7 @@ pub use materialize::{
     DocSession, MatResult, MaterializeOutcome, MaterializePrep, prepare_materialize,
     record_materialize_outcome,
 };
+pub use merge_prep::MergePrepResult;
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
 pub use reader::{ReaderHandle, ReaderReply, ReaderRequestKind};

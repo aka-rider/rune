@@ -86,7 +86,7 @@ fn per_cursor_selection_edits(
         infos.push((edit, c.id));
     }
 
-    commit_edit_batch(app, id, infos, cursors_before);
+    let _ = commit_edit_batch(app, id, infos, cursors_before);
 }
 
 /// Port of `commands_edit.go:execInsertChar`, generalized to arbitrary text

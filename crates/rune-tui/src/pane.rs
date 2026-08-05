@@ -122,6 +122,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
         GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
+        // Plan WP3.S5: starts a merge attempt, or exits an already-active
+        // one in place — see `merge::toggle`'s own docs.
+        GlobalCommand::Merge => crate::merge::toggle(app, effects),
     }
 }
 

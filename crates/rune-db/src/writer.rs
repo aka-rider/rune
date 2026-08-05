@@ -234,6 +234,14 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             let state = crate::probe::probe(conn, vfs, session_id, doc_id, now)?;
             Ok(OpOutcome::Sync(Box::new(state)))
         }
+        OpKind::MergePrep {
+            session_id,
+            doc_id,
+            now,
+        } => {
+            let result = crate::merge_prep::merge_prep(conn, vfs, session_id, doc_id, now)?;
+            Ok(OpOutcome::MergePrep(Box::new(result)))
+        }
         OpKind::MaterializePrepare {
             doc_id,
             expect,

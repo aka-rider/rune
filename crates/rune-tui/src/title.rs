@@ -194,7 +194,24 @@ pub fn ext_split(name: &str) -> usize {
 /// pathless document — there is no name to edit yet, and seeding the
 /// `"[No Name]"` display placeholder as editable text would let the user
 /// rename a file to literally that.
+///
+/// `display_name` overrides this ONLY when `doc` also has a real
+/// `file_path` (plan WP3.S8, `[B5]`): a bound document's only current
+/// source of a display-name override is merge mode's own retitle
+/// (`"{file_name}: editor <-> disk"`, `merge::landing`), so respecting it
+/// here is what keeps `file_name()` (the tab/title row's own name source)
+/// and this seed from ever disagreeing about a document mid-merge. A
+/// PATHLESS document's `display_name` (an "Untitled N" draft, the Help
+/// virtual document) is deliberately NOT respected here: that placeholder
+/// is not a typeable file name, and seeding it into the rename field would
+/// either lose the `.md` extension the draft flow depends on or let a
+/// rename target literally become "Help".
 pub fn name_for(doc: &Document) -> String {
+    if doc.file_path.is_some()
+        && let Some(name) = doc.display_name.as_deref()
+    {
+        return name.to_string();
+    }
     doc.file_path
         .as_ref()
         .and_then(|p| p.file_name())

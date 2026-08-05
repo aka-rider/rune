@@ -61,7 +61,7 @@ pub(crate) fn per_line_edits(
         }
     }
 
-    commit_edit_batch(app, id, infos, cursors_before);
+    let _ = commit_edit_batch(app, id, infos, cursors_before);
 }
 
 /// Port of `commands_edit_lines_indent.go:execIndentLine` (Tab).

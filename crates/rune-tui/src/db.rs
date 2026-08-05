@@ -170,6 +170,16 @@ pub struct PendingOp {
     /// stacking redundant ones on every rapid tab switch would grow the
     /// store unboundedly for no new information).
     pub is_probe: bool,
+    /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
+    /// generation `merge::begin` minted for this attempt at enqueue time.
+    /// The landing handler (`merge::handle_merge_prep_ack`) compares this
+    /// against `App.merge`'s OWN current `Pending` generation for the same
+    /// document before trusting the ack: a later `⌘M` superseding this
+    /// attempt before it lands must not have this stale ack mistaken for
+    /// the current one (mirrors `is_probe`'s in-flight bookkeeping, but a
+    /// generation counter rather than a plain flag, since more than one
+    /// merge attempt can be in flight in sequence for the same document).
+    pub merge_gen: Option<u32>,
 }
 
 impl PendingOp {
@@ -179,6 +189,7 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: false,
             is_probe: false,
+            merge_gen: None,
         }
     }
 
@@ -188,6 +199,7 @@ impl PendingOp {
             issued_version: Some(issued_version),
             mints_scratch: false,
             is_probe: false,
+            merge_gen: None,
         }
     }
 
@@ -197,6 +209,7 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: true,
             is_probe: false,
+            merge_gen: None,
         }
     }
 
@@ -206,6 +219,17 @@ impl PendingOp {
             issued_version: None,
             mints_scratch: false,
             is_probe: true,
+            merge_gen: None,
+        }
+    }
+
+    pub fn merge_prep(doc: DocumentId, generation: u32) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: false,
+            is_probe: false,
+            merge_gen: Some(generation),
         }
     }
 }
