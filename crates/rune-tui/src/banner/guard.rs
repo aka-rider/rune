@@ -146,8 +146,8 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
     };
     let doc = prompt.doc;
     if key.code == KeyCode::Escape {
-        let kind = prompt.kind.clone();
-        let msg = cancel_status(&kind);
+        let is_disk_conflict = matches!(prompt.kind, GuardKind::DiskConflict { .. });
+        let msg = cancel_status(&prompt.kind);
         super::clear_modal(app);
         // A cancellation ack is the least important thing the status row can
         // say. An unacknowledged save failure is the most important, and the
@@ -166,7 +166,7 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         // stranding the user with no visible way to merge. Clearing to
         // `None` rather than setting a "cancelled" status matters too — any
         // status at all would still outrank `DiskChanged` one rung lower.
-        if matches!(kind, GuardKind::DiskConflict { .. }) {
+        if is_disk_conflict {
             app.status_message = None;
         } else if app.status_source != StatusSource::SaveError {
             app.set_status(msg, StatusSource::Other);

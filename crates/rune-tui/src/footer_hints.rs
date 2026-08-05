@@ -280,10 +280,10 @@ mod tests {
         assert_eq!(save_span.style, app.theme.chrome.footer_key);
     }
 
-    /// Bug A fix: `GlobalCommand::Merge` has exactly one live binding
-    /// (`^M` — Ghostty steals `⌘M`, so that form was dropped rather than
-    /// bound), so the default hints list "merge" exactly once, rendered
-    /// with the `^` glyph, never `⌘`.
+    /// `GlobalCommand::Merge` has exactly one live binding (`^M` — Ghostty
+    /// steals `⌘M`, so that form was dropped rather than bound), so the
+    /// default hints list "merge" exactly once, rendered with the `^`
+    /// glyph, never `⌘`.
     #[test]
     fn default_hints_list_merge_once_as_ctrl_m() {
         let app = app_with("hello");

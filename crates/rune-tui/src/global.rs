@@ -298,9 +298,9 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
 mod tests {
     use super::*;
 
-    /// Bug A fix: `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds
-    /// nothing at all — Ghostty steals it, so it was dropped rather than
-    /// bound, unlike this table's other paired rows.
+    /// `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds nothing at
+    /// all — Ghostty steals it, so it was dropped rather than bound, unlike
+    /// this table's other paired rows.
     #[test]
     fn ctrl_m_resolves_to_merge_and_sup_m_binds_nothing() {
         use crate::binding::resolve_in;
