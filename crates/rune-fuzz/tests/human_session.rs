@@ -47,8 +47,10 @@ fn human_session() {
     let mut runner = TestRunner::new(config);
 
     let outcome = runner.run(&generate::arb_session(), |(path, content, actions)| {
-        let _wal = wal::arm(Path::new("artifacts"), &path, &content, &actions)
-            .map_err(|e| TestCaseError::fail(format!("wal::arm failed: {e}")))?;
+        let _wal =
+            wal::arm(Path::new("artifacts"), &path, &content, &actions).unwrap_or_else(|e| {
+                panic!("wal::arm failed (environment fault, not a fuzz finding): {e}")
+            });
         match driver::run(&path, &content, &actions).violation {
             None => Ok(()),
             Some(v) => Err(TestCaseError::fail(format!("{}: {}", v.id, v.message))),
