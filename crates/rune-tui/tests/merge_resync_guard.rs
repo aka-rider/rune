@@ -173,7 +173,7 @@ fn undo_after_two_accepts_reopens_the_last_accepted_hunk() {
 
 /// Plan WP6 "Done when" (2): a document whose PROSE quotes literal
 /// `<<<<<<< editor`/`=======`/`>>>>>>> disk` lines round-trips resync
-/// without misclassifying (port of the Go `resync_test.go:118` quoted-marker
+/// without misclassifying (port of the Go reference resync test's quoted-marker
 /// scenario) — driven end-to-end through a real undo/redo, not just the
 /// unit-level `resync` module tests.
 #[test]
