@@ -49,16 +49,18 @@ pub enum PasteTarget {
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
 /// input-reader thread; `ClipboardRead`/`SaveDone`/`ConfirmTimeout`/
-/// `SaveConfirmTimeout` originate from a spawned `Cmd`'s return value;
-/// `SnapshotDue` originates from `App::snapshot_timer`'s one long-lived
-/// rearmable timer thread (plan WP16.S5), not a per-message spawned `Cmd`;
-/// `Db` originates from the `rune-db` writer thread via `db::DbBridge`
-/// (plan WP5.S1); `Error`/`Quit` can be synthesized by `update` itself.
+/// `SaveConfirmTimeout`/`MessagesCollapseTimeout` originate from a spawned
+/// `Cmd`'s return value; `SnapshotDue` originates from `App::snapshot_timer`'s
+/// one long-lived rearmable timer thread (plan WP16.S5), not a per-message
+/// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
+/// `db::DbBridge` (plan WP5.S1); `Error`/`Quit` can be synthesized by
+/// `update` itself.
 /// `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan WP1.S3) so multi-
 /// document acks route back to the document that triggered them;
-/// `ConfirmTimeout`/`SaveConfirmTimeout` stay doc-agnostic — `pending_quit`
-/// is app-wide and `pending_save_confirm`'s doc tag lives in the `Option`
-/// tuple itself, not in the `Msg`.
+/// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
+/// doc-agnostic — `pending_quit` is app-wide, `pending_save_confirm`'s doc
+/// tag lives in the `Option` tuple itself, and the message log is a single
+/// app-wide pane — none of them need a `Msg`-carried document identity.
 #[derive(Debug)]
 pub enum Msg {
     Key(KeyInput),
@@ -88,6 +90,13 @@ pub enum Msg {
     /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
     /// ignored exactly like `ConfirmTimeout`.
     SaveConfirmTimeout {
+        generation: u32,
+    },
+    /// The message pane's 5s auto-collapse timer (plan WP2), armed by
+    /// `dispatch::after_update` rather than by `messages::post` itself —
+    /// same stale-generation-is-ignored shape as `ConfirmTimeout`/
+    /// `SaveConfirmTimeout`.
+    MessagesCollapseTimeout {
         generation: u32,
     },
     /// The 2s snapshot-autosave debounce timer (plan WP5.S6, port of
@@ -204,6 +213,9 @@ pub enum CmdKind {
     /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6). Sleeps;
     /// never run it inline.
     SaveConfirmTimeout,
+    /// The message pane's 5s auto-collapse timer (plan WP2). Sleeps; never
+    /// run it inline.
+    MessagesCollapseTimeout,
     /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
     /// draft create) for the no-store route — the §1.4.1 no-clobber atomic
     /// publish. Off-thread per §5.4.
