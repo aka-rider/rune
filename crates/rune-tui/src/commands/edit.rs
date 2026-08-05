@@ -230,10 +230,16 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why
-/// `ReadOnly::Always` stays exempt.
+/// `ReadOnly::Always` stays exempt. `ReadOnly::Preview` routes through
+/// `App::refuse_if_preview` so the refusal posts a status message like
+/// every other preview refusal; `ReadOnly::Reading`'s refusal stays silent,
+/// unchanged from before.
 pub fn undo(app: &mut App, id: DocumentId) {
+    if app.refuse_if_preview(id) {
+        return;
+    }
     let Some(doc) = app.doc(id) else { return };
-    if matches!(doc.read_only, ReadOnly::Reading | ReadOnly::Preview) {
+    if matches!(doc.read_only, ReadOnly::Reading) {
         return;
     }
     let Some((step, new_pos)) = doc.journal.undo_peek() else {
@@ -263,10 +269,16 @@ pub fn undo(app: &mut App, id: DocumentId) {
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why
-/// `ReadOnly::Always` stays exempt.
+/// `ReadOnly::Always` stays exempt. `ReadOnly::Preview` routes through
+/// `App::refuse_if_preview` so the refusal posts a status message like
+/// every other preview refusal; `ReadOnly::Reading`'s refusal stays silent,
+/// unchanged from before.
 pub fn redo(app: &mut App, id: DocumentId) {
+    if app.refuse_if_preview(id) {
+        return;
+    }
     let Some(doc) = app.doc(id) else { return };
-    if matches!(doc.read_only, ReadOnly::Reading | ReadOnly::Preview) {
+    if matches!(doc.read_only, ReadOnly::Reading) {
         return;
     }
     let Some((step, new_pos)) = doc.journal.redo_peek() else {
