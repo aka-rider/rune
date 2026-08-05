@@ -22,7 +22,7 @@ use rune_core::buffer::{AppliedEdit, Buffer};
 use rune_core::cursor::CursorSet;
 use rune_core::undo::Step;
 use rune_db::{DbEvent, LoadResult, OpOutcome, Store, SyncKind, SyncState, Version};
-use rune_tui::app::{self, App, StatusSource};
+use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
 use rune_tui::db::{DbBridge, PendingOp};
 use rune_tui::runtime::{Effects, Msg};
@@ -233,7 +233,7 @@ fn ack_for_a_document_edited_during_the_round_trip_leaves_the_buffer_unchanged()
 /// a first load) must install nothing and surface a status message rather
 /// than binding a document to a recovery row with no CAS baseline.
 #[test]
-fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
+fn ack_with_no_saved_obs_leaves_db_none_and_posts_a_message() {
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
     let mut app = App::new(
         Buffer::new("hello"),
@@ -283,13 +283,11 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
         "no baseline observation means no DocDb binding"
     );
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello");
-    assert_eq!(app.status_source, StatusSource::Other);
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .is_some_and(|s| s.contains("no baseline observation")),
         "a status message must explain why crash recovery wasn't bound (got {:?})",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }
 
@@ -360,12 +358,9 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         app.doc(id).unwrap().db.is_some(),
         "DocDb must still be installed even when the adopt is refused"
     );
-    assert_eq!(app.status_source, StatusSource::Other);
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|s| s.contains("crash recovery")),
+        rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("crash recovery")),
         "a status message must explain the refusal (got {:?})",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }

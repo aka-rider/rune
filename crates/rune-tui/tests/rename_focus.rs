@@ -105,7 +105,7 @@ fn an_invalid_name_vetoes_the_focus_change() {
         "a refused commit must not release focus"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("that name can't be used for a file")
     );
 }

@@ -59,7 +59,7 @@ use std::path::{Path, PathBuf};
 use rune_db::RenameOutcome;
 use rune_vfs::Stat;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::DocumentId;
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::messages;
@@ -190,8 +190,9 @@ fn display_name(path: &Path) -> String {
 /// name, a successful enqueue, and an enqueue failure that has already been
 /// reported through `on_store_failure` all return `Accepted`, because none
 /// of them leaves the user needing to fix anything in the field. Every
-/// `Refused` path's SOLE side effect is `app.set_status` (decision 7) — that
-/// is what makes a refused blur running this twice in one keystroke
+/// `Refused` path's SOLE side effect is posting a message to the log
+/// (decision 7) — that is what makes a refused blur running this twice in
+/// one keystroke
 /// harmless, since the second run just re-reports the same status. Every
 /// refusal below leaves the state `Idle`, the buffer byte-identical,
 /// `file_path` unchanged, and the journal untouched — a refused rename must
@@ -203,7 +204,7 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // in-flight op captured its own `from`, and letting a second one race
     // it would mean two ops disagreeing about where the file is.
     if app.rename.in_flight() {
-        app.set_status("a rename is already in progress", StatusSource::Other);
+        messages::warn(app, "a rename is already in progress");
         return Commit::Refused;
     }
 
@@ -225,16 +226,13 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // republish at the OLD name after the rename landed — a save that
     // silently resurrects the old file.
     if doc.save_in_flight {
-        app.set_status(
-            "can't rename while a save is in flight",
-            StatusSource::Other,
-        );
+        messages::warn(app, "can't rename while a save is in flight");
         return Commit::Refused;
     }
 
     let typed = app.title.text().to_string();
     if !title::is_valid_name(&typed) {
-        app.set_status("that name can't be used for a file", StatusSource::Other);
+        messages::error(app, "that name can't be used for a file");
         return Commit::Refused;
     }
 
@@ -338,18 +336,18 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
             let verb = if created { "created" } else { "renamed to" };
-            app.set_status(format!("{verb} {}", display_name(&to)), StatusSource::Other);
+            messages::info(app, format!("{verb} {}", display_name(&to)));
         }
         Ok(RenameOutcome::Replaced { displaced }) => {
             app.rename = RenameState::Idle;
             bind_to(app, doc_id, &to, effects);
-            app.set_status(
+            messages::info(
+                app,
                 format!(
                     "replaced {} \u{2014} its {} bytes were preserved in the recovery store",
                     display_name(&to),
                     displaced.size
                 ),
-                StatusSource::Other,
             );
         }
         Ok(RenameOutcome::Collided { seen }) => {
@@ -527,8 +525,5 @@ pub fn forget_document(app: &mut App, doc: DocumentId) {
 /// distinguished from a rename.
 fn draft_collision_refusal(app: &mut App, target: &Path) {
     app.rename = RenameState::Idle;
-    app.set_status(
-        format!("{} already exists", display_name(target)),
-        StatusSource::Other,
-    );
+    messages::error(app, format!("{} already exists", display_name(target)));
 }

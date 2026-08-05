@@ -3,9 +3,9 @@
 //! directly above the footer (plan WP1). `messages::post` (and its
 //! `info`/`warn`/`error` wrappers) is the ONE chokepoint every such message
 //! funnels through — replacing both the old modal error banner (which
-//! captured every key) and `App::set_status` (a single slot with a clearing
-//! rule keyed on `StatusSource`). A log needs neither: nothing is ever
-//! cleared, and the pane never takes focus on its own.
+//! captured every key) and the pre-WP4 single status slot with its own
+//! save-failure-provenance clearing rule. A log needs neither: nothing is
+//! ever cleared, and the pane never takes focus on its own.
 //!
 //! Split for the §1.6 budget: this file holds the log's state and its
 //! `&mut App`/`&App` API; [`render`] holds the pane's own row builder.

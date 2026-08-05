@@ -70,10 +70,8 @@ fn replace_with_a_real_store_preserves_the_displaced_bytes() {
     assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"a content");
     assert!(mem.read(Path::new("/root/a.md")).is_err());
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("preserved")),
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("preserved")),
         "the status must say the replaced bytes were kept, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }

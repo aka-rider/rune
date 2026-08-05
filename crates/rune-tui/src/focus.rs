@@ -7,7 +7,7 @@
 
 use ratatui::layout::Rect;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
@@ -202,9 +202,9 @@ impl App {
         // auto-exit); everything else about the document stays usable.
         if matches!(self.merge, crate::merge::MergeState::Active { doc, .. } if doc == self.active)
         {
-            self.set_status(
+            crate::messages::warn(
+                self,
                 "can't rename while merge is active — \u{2318}M to exit",
-                StatusSource::Other,
             );
             return;
         }

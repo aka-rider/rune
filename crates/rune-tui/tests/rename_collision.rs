@@ -24,7 +24,7 @@ use rune_tui::keymap::KeyCode;
 use rune_tui::pane::Pane;
 use rune_tui::rename::RenameState;
 use rune_tui::runtime::{CmdKind, Effects};
-use rune_tui::{app, footer, messages, workspace};
+use rune_tui::{footer, messages, workspace};
 
 use rune_vfs::Vfs;
 
@@ -135,8 +135,7 @@ fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
 
     send(&mut app, plain(KeyCode::Escape));
 
-    assert_eq!(app.status_message.as_deref(), Some("rename cancelled"));
-    assert_eq!(app.status_source, app::StatusSource::Other);
+    assert_eq!(messages::newest_text(&app), Some("rename cancelled"));
 }
 
 /// `r` on the guard for a `db: None` document cannot capture the displaced
@@ -159,11 +158,9 @@ fn replace_is_refused_and_unoffered_without_a_store() {
     assert!(matches!(app.rename, RenameState::Collision { .. }));
     assert!(app.guard.is_some(), "the prompt must stay up");
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("cannot replace")),
+        messages::newest_text(&app).is_some_and(|m| m.contains("cannot replace")),
         "got {:?}",
-        app.status_message
+        messages::newest_text(&app)
     );
     assert_eq!(mem.read(Path::new("/root/a.md")).unwrap(), b"a content");
     assert_eq!(mem.read(Path::new("/root/b.md")).unwrap(), b"theirs");

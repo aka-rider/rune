@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::footer_hints::{default_hint_spans, truncated_default_hint_spans};
 use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::pane::Pane;
@@ -18,12 +18,14 @@ use crate::width::display_width;
 use rune_syntax::wrap::line_visual_col;
 
 /// Which single visual state the footer's left side shows for this render
-/// — priority order highest-first (plan WP2.S6, WP3.S3, WP1.S10): the Guard
-/// prompt always wins, then the messages pane's own keys (only while it
-/// holds focus), then a save error, a pending chord hint, the degraded-
-/// store banner, a plain status message, and the default keymap hints.
-/// Mutually exclusive by construction — never concatenated, unlike the
-/// pre-WP2 `status.rs::status_text`.
+/// — priority order highest-first (plan WP2.S6, WP3.S3, WP1.S10, WP4.S2):
+/// the Guard prompt always wins, then the messages pane's own keys (only
+/// while it holds focus), then a pending chord hint, the degraded-store
+/// banner, the merge/disk-changed ambient hints, and the default keymap
+/// hints. Mutually exclusive by construction — never concatenated, unlike
+/// the pre-WP2 `status.rs::status_text`. Transient user-facing messages no
+/// longer have a `Mode` of their own: they live in the message log/pane
+/// (`messages`) instead.
 enum Mode<'a> {
     /// The close/quit/rename/disk-conflict confirmation prompt (plan
     /// WP5.S3, widened WP2). Carries the whole `GuardPrompt`, not just its
@@ -36,26 +38,16 @@ enum Mode<'a> {
     /// other mode: while the user is inside the pane, its own keys
     /// (`[⌘C] copy`, `[Esc] close`) are the only thing worth showing.
     Messages,
-    SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
-    Status(&'a str),
     /// Passive persistent hint (plan WP2.S5, Assumption A1): the ACTIVE
     /// document's disk fact has diverged from the buffer. Ranked just below
-    /// `Status` — a real status message (e.g. a just-completed save) still
-    /// wins over this ambient reminder, but it outranks the bare default
-    /// keymap hints so the user always sees it once no more pressing
-    /// message is showing.
+    /// `Degraded` — the message log carries every actual status text now,
+    /// so this ambient reminder only needs to outrank the bare default
+    /// keymap hints.
     DiskChanged,
     /// Persistent resolver reminder (plan WP4.S4) carrying the live
-    /// unresolved count. Ranked below `Status` — a deliberate divergence
-    /// from Go's ladder (where the merge hint outranks status): rune's
-    /// status messages persist rather than expire, and they are the ONLY
-    /// feedback channel for a key the resolver just swallowed, so hiding
-    /// them behind this ambient reminder would silently eat that feedback.
-    /// Every resolver action writes a status that carries the merge
-    /// vocabulary anyway, so the reminder only needs to win over the bare
-    /// default hints.
+    /// unresolved count.
     MergeHint(usize),
     DefaultHints,
 }
@@ -67,19 +59,11 @@ fn mode(app: &App) -> Mode<'_> {
     if app.focus() == Pane::Messages {
         return Mode::Messages;
     }
-    if app.status_source == StatusSource::SaveError
-        && let Some(msg) = &app.status_message
-    {
-        return Mode::SaveError(msg);
-    }
     if let Some(hint) = chord_hint(app) {
         return Mode::ChordPending(hint);
     }
     if let Some(banner) = &app.db_banner {
         return Mode::Degraded(banner);
-    }
-    if let Some(msg) = &app.status_message {
-        return Mode::Status(msg);
     }
     // Review fix F5: gated on the merge doc being the ACTIVE one, same as
     // `merge/keys.rs`'s own intercept — otherwise switching to a different
@@ -106,13 +90,14 @@ fn mode(app: &App) -> Mode<'_> {
 }
 
 /// `pending_quit`'s hint has no other home (the pre-WP2 `quit_hint`, ported
-/// unchanged below); `pending_save_confirm`'s hint text is already sitting
-/// in `app.status_message` — `trigger_save` wrote it there the same tick it
-/// armed the confirm gate — so this just surfaces that rather than
-/// duplicating the string. The `cid == app.active` check is load-bearing:
-/// `pending_save_confirm` is doc-tagged (armed for the document that
-/// attempted the save), so switching tabs away from that document must not
-/// leave its stale hint showing over whatever document is active now.
+/// unchanged below); `pending_save_confirm`'s hint is the fixed literal
+/// below — `trigger_save` also posts the degraded-save explanation to the
+/// message log the same tick it arms the confirm gate (plan WP4.S2), so
+/// this no longer needs to read that text back out of a shared slot. The
+/// `cid == app.active` check is load-bearing: `pending_save_confirm` is
+/// doc-tagged (armed for the document that attempted the save), so
+/// switching tabs away from that document must not leave its stale hint
+/// showing over whatever document is active now.
 fn chord_hint(app: &App) -> Option<String> {
     if app.pending_quit.is_some() {
         return Some(quit_hint(app).to_string());
@@ -121,10 +106,7 @@ fn chord_hint(app: &App) -> Option<String> {
         .pending_save_confirm
         .is_some_and(|(cid, _)| cid == app.active)
     {
-        return app
-            .status_message
-            .clone()
-            .or_else(|| Some("press \u{2318}S again to save anyway".to_string()));
+        return Some("press \u{2318}S again to save anyway".to_string());
     }
     None
 }
@@ -147,10 +129,8 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
             Span::styled("  ", app.theme.chrome.footer_hint),
             Span::styled("[Esc] close", app.theme.chrome.footer_hint),
         ],
-        Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.error)],
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
-        Mode::Status(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
         Mode::DiskChanged => vec![Span::styled(
             "\u{21c4} disk changed \u{2014} [\u{2318}M]erge",
             app.theme.chrome.footer_hint,
@@ -396,15 +376,6 @@ mod tests {
     }
 
     #[test]
-    fn save_error_outranks_everything_else() {
-        let mut app = app_with("hello");
-        app.db_banner = Some("recovery disabled: boom".to_string());
-        app.status_message = Some("status message".to_string());
-        app.set_status("save failed: disk full", StatusSource::SaveError);
-        assert_eq!(footer_text(&app), "save failed: disk full");
-    }
-
-    #[test]
     fn pending_quit_shows_the_quit_hint_over_the_degraded_banner() {
         let mut app = app_with("hello");
         app.db_banner = Some("recovery disabled: boom".to_string());
@@ -413,10 +384,10 @@ mod tests {
     }
 
     #[test]
-    fn degraded_banner_outranks_a_plain_status_message() {
+    fn degraded_banner_outranks_the_default_hints() {
         let mut app = app_with("hello");
         app.db_banner = Some("recovery disabled: boom".to_string());
-        app.set_status("some other message", StatusSource::Other);
+        crate::messages::info(&mut app, "some other message");
         assert_eq!(footer_text(&app), "recovery disabled: boom");
     }
 

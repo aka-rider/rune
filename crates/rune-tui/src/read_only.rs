@@ -4,8 +4,9 @@
 //! document refuse the action the caller is about to take?"), even though
 //! their callers span focus (`focus_title`), rename, save, and close.
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::{DocumentId, ReadOnly};
+use crate::messages;
 
 impl App {
     /// The single writer of a read-only refusal's status message: posts
@@ -17,7 +18,7 @@ impl App {
         let Some(message) = read_only.refusal_message() else {
             return false;
         };
-        self.set_status(message, StatusSource::Other);
+        messages::warn(self, message);
         true
     }
 
@@ -39,7 +40,7 @@ impl App {
             return false;
         }
         if let Some(message) = ReadOnly::Preview.refusal_message() {
-            self.set_status(message, StatusSource::Other);
+            messages::warn(self, message);
         }
         true
     }

@@ -10,9 +10,10 @@
 
 use rune_db::MatResult;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::document::DocumentId;
 use crate::guard::{self, GuardKind, GuardPrompt};
+use crate::messages;
 use crate::runtime::Effects;
 use crate::workspace;
 
@@ -28,7 +29,7 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
         doc.abandon_save();
         doc.pending_bind_path = None;
     }
-    app.set_status(message.into(), StatusSource::SaveError);
+    messages::error(app, message.into());
     recompute_dirty(app, id);
     quit_if_pending(app, id, pending_version, false);
 }
@@ -77,13 +78,10 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 None => doc.abandon_save(),
             }
         }
-        if app.status_source == StatusSource::SaveError {
-            app.status_message = None;
-        }
         if mat.raced {
-            app.set_status(
+            messages::info(
+                app,
                 "saved \u{2014} a concurrent external change was overwritten; its bytes were preserved",
-                StatusSource::Other,
             );
         }
     } else {
@@ -91,14 +89,11 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             doc.abandon_save();
         }
         if mat.missing {
-            app.set_status(
-                "save failed: file no longer exists",
-                StatusSource::SaveError,
-            );
+            messages::error(app, "save failed: file no longer exists");
         } else {
-            app.set_status(
+            messages::error(
+                app,
                 "save refused \u{2014} the file changed on disk since it was opened",
-                StatusSource::SaveError,
             );
             // Plan WP6.S4: a genuine CAS conflict — the fresh disk
             // observation `record_fresh_from_stat` already recorded — offers
@@ -138,8 +133,9 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
 
 /// The reaction to `Msg::SaveDone` — the no-store fallback save path's own
 /// completion (plan decision 5), or a leftover reply for a document whose
-/// store binding vanished mid-flight. Same provenance-aware clear as
-/// `handle_materialize_ack` (review finding F2).
+/// store binding vanished mid-flight. Success posts nothing (the log is
+/// append-only, so there is nothing to clear — plan WP4.S2, superseding
+/// review finding F2's provenance-aware clear).
 pub(crate) fn handle_save_done(
     app: &mut App,
     id: DocumentId,
@@ -152,20 +148,12 @@ pub(crate) fn handle_save_done(
             if let Some(doc) = app.doc_mut(id) {
                 doc.finish_save_ok(version);
             }
-            // Provenance-aware clear (review finding F2): only a message
-            // THIS save path set (a prior failed/un-attempted save) is
-            // dismissed here. An unrelated message — a pbpaste failure, an
-            // edit/undo/redo failure — survives a successful save exactly
-            // as it already survives a successful edit.
-            if app.status_source == StatusSource::SaveError {
-                app.status_message = None;
-            }
         }
         Err(e) => {
             if let Some(doc) = app.doc_mut(id) {
                 doc.abandon_save();
             }
-            app.set_status(format!("save failed: {e}"), StatusSource::SaveError);
+            messages::error(app, format!("save failed: {e}"));
         }
     }
     recompute_dirty(app, id);

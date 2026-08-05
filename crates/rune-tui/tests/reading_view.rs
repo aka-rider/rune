@@ -192,7 +192,7 @@ fn ctrl_p_toggles_an_ordinary_documents_table_between_boxed_and_raw() {
 /// to toggle back to, so `commands::reading::toggle` refuses and posts its
 /// status message instead of flipping state.
 #[test]
-fn ctrl_p_on_the_help_tab_refuses_and_posts_a_status_message() {
+fn ctrl_p_on_the_help_tab_refuses_and_posts_a_message() {
     let mut app = app_basic("hello");
     send(&mut app, plain(KeyCode::F1));
     assert_eq!(app.active_doc().read_only, ReadOnly::Always);
@@ -205,7 +205,7 @@ fn ctrl_p_on_the_help_tab_refuses_and_posts_a_status_message() {
         "⌃P must not change the Help document's ReadOnly state"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Always.refusal_message()
     );
 }
@@ -250,11 +250,11 @@ fn ctrl_r_in_reading_view_refuses_with_the_reading_wording_not_the_always_wordin
     send(&mut app, ctrl('r'));
 
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Reading.refusal_message()
     );
     assert_ne!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Always.refusal_message(),
         "a Reading document must not get the Always refusal wording"
     );
@@ -343,13 +343,13 @@ fn ctrl_p_while_the_title_holds_focus_does_not_derail_an_in_progress_rename() {
         "the typed name must still not be discarded"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         Some("can't rename while a save is in flight"),
         "the refusal reason must stay the save-in-flight one, not flip to a \
          read-only refusal ⌃P would otherwise have manufactured"
     );
     assert_ne!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Reading.refusal_message()
     );
 }
@@ -368,7 +368,7 @@ fn ctrl_p_from_the_explorer_is_a_silent_no_op() {
 
     send(&mut app, ctrl('b')); // GlobalCommand::FocusExplorer
     assert_eq!(app.focus(), Pane::Explorer);
-    let status_before = app.status_message.clone();
+    let log_before = rune_tui::messages::log_text(&app);
 
     send(&mut app, ctrl('p'));
 
@@ -378,7 +378,8 @@ fn ctrl_p_from_the_explorer_is_a_silent_no_op() {
         "⌃P from the Explorer must not change the active document's ReadOnly state"
     );
     assert_eq!(
-        app.status_message, status_before,
+        rune_tui::messages::log_text(&app),
+        log_before,
         "⌃P from the Explorer must post no status message"
     );
 }

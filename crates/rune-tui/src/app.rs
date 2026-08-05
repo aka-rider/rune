@@ -45,31 +45,6 @@ pub struct QuitIntent {
     pub pending: std::collections::BTreeMap<DocumentId, u64>,
 }
 
-/// Which subsystem last wrote `App::status_message` — the provenance tag
-/// `Msg::SaveDone`'s success arm needs so it clears ONLY a message its own
-/// save path set, never an unrelated one (review finding F2: an earlier
-/// version cleared `status_message` unconditionally on every successful
-/// save, stomping e.g. an unresolved "pbpaste failed" error the user hadn't
-/// dismissed yet). The ORIGINAL status-message ownership rule (F2 in
-/// `commands::edit`: a successful edit/undo/redo must never clear an
-/// unrelated message) still holds unchanged — those call sites only ever
-/// WRITE `status_message`, they never clear it, so they need no provenance
-/// tag for that rule; they still tag their writes below so a stale write
-/// from one of them can never be mistaken for `SaveError` and get swept up
-/// by a later successful save.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum StatusSource {
-    /// A failed (or un-attempted, e.g. "no file to save") save attempt —
-    /// the ONLY source a successful `Msg::SaveDone` is allowed to clear.
-    SaveError,
-    /// Everything else: edit/undo/redo failures, the degraded-save confirm
-    /// hint, ... `Msg::Error` no longer writes `status_message` at all (plan
-    /// WP3.S4: routed through the old modal error banner, instead —
-    /// now `messages::error`, a log entry, plan WP1).
-    #[default]
-    Other,
-}
-
 /// The whole editor model: a `DocumentId`-keyed map of every open document,
 /// the injected `Vfs` save target shared by all of them, this session's
 /// recovery store (app-level half), and app-wide UI state (status message,
@@ -149,12 +124,6 @@ pub struct App {
     /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
     /// mirroring `next_rename_gen` above.
     pub(crate) next_merge_gen: u32,
-    pub status_message: Option<String>,
-    /// Provenance of `status_message` — see `StatusSource`'s docs. Only
-    /// meaningful while `status_message.is_some()`; a later `set_status`
-    /// call always updates both fields together, so a stale value here
-    /// after the message is cleared can never be observed.
-    pub status_source: StatusSource,
     /// This session's recovery store (plan WP1 decision 5: split out of the
     /// pre-WP1 `AppDb` — this is the app-wide half, shared by every open
     /// document; each document's own binding lives in its `Document::db:
@@ -194,10 +163,10 @@ pub struct App {
     /// it spawns — `save::PendingMaterialize`'s doc comment explains why
     /// each field is captured once and never re-derived (§1.4.2/§1.4.8).
     pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
-    /// A persistent status banner independent of `status_message`'s
-    /// provenance-cleared slot (plan WP5.S2/S3: "persistent status banner")
-    /// — set once the store degrades (at open, or from a later
-    /// `on_store_failure`) and never cleared automatically.
+    /// A persistent status banner independent of the message log (plan
+    /// WP5.S2/S3: "persistent status banner") — set once the store degrades
+    /// (at open, or from a later `on_store_failure`) and never cleared
+    /// automatically.
     pub db_banner: Option<String>,
     /// The armed degraded-save confirm chord's target document and timer
     /// generation — `None` when no confirm is pending (plan WP1 decision 3:
@@ -348,8 +317,6 @@ impl App {
             next_rename_gen: 0,
             merge: crate::merge::MergeState::default(),
             next_merge_gen: 0,
-            status_message: None,
-            status_source: StatusSource::Other,
             db,
             db_ops: HashMap::new(),
             published_ops: HashMap::new(),
@@ -495,15 +462,6 @@ impl App {
     /// explicitly re-run once the buffer settles.
     pub fn recompute_dirty(&mut self, id: DocumentId) {
         crate::materialize_ack::recompute_dirty(self, id);
-    }
-
-    /// The single writer of a NEW `status_message`: every call site that
-    /// wants to set one goes through here instead of writing
-    /// `status_message`/`status_source` separately, so the text and its
-    /// provenance tag (`StatusSource`) can never drift apart.
-    pub fn set_status(&mut self, message: impl Into<String>, source: StatusSource) {
-        self.status_message = Some(message.into());
-        self.status_source = source;
     }
 
     /// Records the workspace root discovered by `workspaceroot::resolve`

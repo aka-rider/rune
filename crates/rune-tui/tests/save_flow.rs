@@ -21,15 +21,16 @@ fn test_app() -> App {
     App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None)
 }
 
+/// The log is append-only (plan WP4.S2, superseding review finding F2's
+/// provenance-aware clear): a save failure's entry stays in the log even
+/// after a LATER save on the same document succeeds — a success posts
+/// nothing at all, so there is nothing to clear.
 #[test]
-fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
+fn save_done_ok_advances_saved_version_and_keeps_a_prior_save_failure_in_the_log() {
     let mut app = test_app();
     let id = app.active;
     let version = app.doc(id).unwrap().buffer.version();
 
-    // A real prior save failure — the only kind of message the
-    // provenance-aware clear below (review finding F2) is allowed to
-    // dismiss.
     let mut effects = Effects::default();
     update(
         &mut app,
@@ -40,7 +41,7 @@ fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
         },
         &mut effects,
     );
-    assert!(app.status_message.is_some());
+    assert!(rune_tui::messages::newest_text(&app).is_some());
 
     let mut effects2 = Effects::default();
     update(
@@ -54,26 +55,22 @@ fn save_done_ok_advances_saved_version_and_clears_a_prior_save_failure() {
     );
     assert_eq!(app.doc(id).unwrap().saved_version, version);
     assert!(
-        app.status_message.is_none(),
-        "a successful save must clear the failure message ITS OWN save path set"
+        rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("oops")),
+        "a successful save must never clear the failure message an earlier \
+         save left in the log"
     );
 }
 
-/// Regression for F2: a successful save must not clear a status message
-/// some OTHER subsystem set — e.g. an `Other`-sourced message an
-/// edit/undo/redo failure left behind. (`Msg::Error` itself no longer
-/// writes `status_message` at all as of plan WP3.S4 — it opens the modal
-/// banner instead, see `tests/banner.rs`; this test's OWN concern, the
-/// provenance-aware clear, is unrelated to which subsystem wrote the
-/// unrelated message, so any `Other`-sourced one exercises it identically.)
+/// A successful save must not disturb an unrelated log entry some OTHER
+/// subsystem posted — e.g. an edit/undo/redo failure. Both entries stay in
+/// the log, in order (plan WP4.S2: the log is append-only, so this is no
+/// longer a provenance question).
 #[test]
-fn save_done_ok_does_not_clear_an_unrelated_status_message() {
-    use rune_tui::app::StatusSource;
-
+fn save_done_ok_keeps_an_unrelated_log_entry() {
     let mut app = test_app();
     let id = app.active;
-    app.set_status("edit failed: some other message", StatusSource::Other);
-    assert!(app.status_message.is_some());
+    rune_tui::messages::warn(&mut app, "edit failed: some other message");
+    assert!(rune_tui::messages::newest_text(&app).is_some());
 
     let version = app.doc(id).unwrap().buffer.version();
     let mut effects2 = Effects::default();
@@ -88,14 +85,10 @@ fn save_done_ok_does_not_clear_an_unrelated_status_message() {
     );
 
     assert_eq!(app.doc(id).unwrap().saved_version, version);
-    assert!(
-        app.status_message.is_some(),
-        "a successful save must not clear an unrelated (non-save) status message"
-    );
-    assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|s| s.contains("some other message"))
+    assert_eq!(
+        rune_tui::messages::log_text(&app),
+        "edit failed: some other message",
+        "a successful save must not clear or add to an unrelated log entry"
     );
 }
 
@@ -123,11 +116,7 @@ fn save_done_err_surfaces_status_and_keeps_dirty() {
     );
     assert_eq!(app.doc(id).unwrap().saved_version, before_saved);
     assert!(app.is_dirty());
-    assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|s| s.contains("disk full"))
-    );
+    assert!(rune_tui::messages::newest_text(&app).is_some_and(|s| s.contains("disk full")));
 }
 
 fn save_key() -> KeyInput {
@@ -210,7 +199,7 @@ fn save_failure_surfaces_a_status_error_and_keeps_dirty() {
 
     assert!(app.is_dirty());
     assert!(
-        app.status_message.is_some(),
+        rune_tui::messages::newest_text(&app).is_some(),
         "a failed save must surface a status-line error"
     );
 }
@@ -367,7 +356,7 @@ fn preview_document_refuses_save_and_never_touches_disk() {
         "a preview save must never touch disk, dirty buffer or not"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         rune_tui::document::ReadOnly::Preview.refusal_message()
     );
 }

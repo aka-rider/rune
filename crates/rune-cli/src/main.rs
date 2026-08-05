@@ -230,7 +230,10 @@ fn bootstrap(
     let first_doc_id = app.active;
     open::open_extra_files(&mut app, &launch.files, first_doc_id);
 
-    app.db_banner = db_bootstrap.banner;
+    app.db_banner = db_bootstrap.banner.clone();
+    if let Some(banner) = &db_bootstrap.banner {
+        rune_tui::messages::error(&mut app, banner.clone());
+    }
     // The DocDb half of the old combined AppDb (plan WP1 decision 5)
     // installs on the initial document — App::new only wires up the
     // app-wide store handle above.
@@ -249,10 +252,7 @@ fn bootstrap(
         if let rune_tui::document::Hydration::Refused(reason) =
             app.active_doc_mut().hydrate(&disk_content, &recovered)
         {
-            app.set_status(
-                format!("crash recovery: {reason}"),
-                rune_tui::app::StatusSource::Other,
-            );
+            rune_tui::messages::error(&mut app, format!("crash recovery: {reason}"));
         }
         // Dirty is a content comparison now (plan WP1) — `hydrate` no
         // longer marks it itself, so every hydration site re-derives it

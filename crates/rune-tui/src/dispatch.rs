@@ -105,9 +105,6 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             cause,
             generation,
         } => explorer::handle_dir_loaded(app, root, entries, cause, generation),
-        // Routed through the message log, not `status_message` (plan WP1) —
-        // `messages::error` is the one chokepoint every error report
-        // funnels through.
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
@@ -140,6 +137,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             }
         }
         Msg::Error(e) => crate::messages::error(app, e),
+        Msg::Warning(w) => crate::messages::warn(app, w),
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -239,14 +237,11 @@ fn handle_highlighted(
     // coloured this round, which is more actionable than a coloured-but-
     // incomplete tail.
     if timed_out {
-        app.set_status(
-            "syntax highlighting timed out for this document",
-            crate::app::StatusSource::Other,
-        );
+        crate::messages::warn(app, "syntax highlighting timed out for this document");
     } else if truncated {
-        app.set_status(
+        crate::messages::warn(
+            app,
             "syntax highlighting was truncated; the tail of this document is uncoloured",
-            crate::app::StatusSource::Other,
         );
     }
 

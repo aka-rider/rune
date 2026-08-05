@@ -149,12 +149,11 @@ fn ours_and_theirs_collapse_blocks_to_exact_bytes_one_journal_step_each() {
         "title must revert on exit"
     );
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("merge complete"),
         "expected the merge-complete status, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }
 
@@ -183,12 +182,11 @@ fn save_is_refused_while_unresolved_and_allowed_after() {
     let before = app.doc(doc_id).unwrap().buffer.content().to_string();
     press_key(&mut app, sup('s'));
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("conflict(s) to resolve"),
         "expected the save refusal, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert_eq!(
         app.doc(doc_id).unwrap().buffer.content(),
@@ -201,12 +199,11 @@ fn save_is_refused_while_unresolved_and_allowed_after() {
     assert_eq!(app.merge, MergeState::Inactive);
     press_key(&mut app, sup('s'));
     assert!(
-        !app.status_message
-            .as_deref()
+        !rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("conflict(s) to resolve"),
         "after full resolution ⌘S must not be refused, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }
 
@@ -229,14 +226,12 @@ fn unbound_keys_are_swallowed_with_feedback_while_resolving() {
             "{key:?} must not reach the working form"
         );
         assert!(
-            app.status_message
-                .as_deref()
+            rune_tui::messages::newest_text(&app)
                 .unwrap_or_default()
                 .contains("merge:"),
             "{key:?} must be swallowed WITH feedback, got {:?}",
-            app.status_message
+            rune_tui::messages::newest_text(&app)
         );
-        app.status_message = None;
     }
     assert_eq!(app.doc(doc_id).unwrap().journal.pos(), pos_before);
 }
@@ -258,12 +253,11 @@ fn escape_exits_in_place_keeping_markers() {
     );
     assert!(!doc.file_name().ends_with(": editor <-> disk"));
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("1 unresolved marker block"),
         "expected the exit summary, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 }
 

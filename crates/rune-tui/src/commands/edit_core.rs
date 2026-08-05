@@ -16,10 +16,11 @@ use rune_core::buffer::{AppliedEdit, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
 use rune_core::undo::Step;
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::db_enqueue as db;
 use crate::document::DocumentId;
 use crate::materialize_ack;
+use crate::messages;
 
 /// Shared low-level chokepoint underneath `commit_edit_batch`: sort the
 /// batch, apply it, journal exactly ONE `Step`, mirror it to the async
@@ -45,15 +46,11 @@ use crate::materialize_ack;
 /// and leaves buffer/cursors untouched (CONSTITUTION §1.3: "fail fast on
 /// data risk", the same discipline `edit::undo`/`redo` already follow).
 ///
-/// Status-message OWNERSHIP (review finding F2): a successful edit must
-/// NOT clear `app.status_message` — that field is a shared, single slot
-/// with no provenance tag, so an unconditional clear here would erase an
-/// unrelated message another subsystem is still showing (the reported
-/// case: a save failure, "save failed: disk full", vanishing on the very
-/// next keystroke while the buffer is still dirty — the user's only
-/// signal, gone). This function only ever WRITES `status_message` on its
-/// own failure path below; a message set by someone else survives here
-/// until whatever set it (or a later, unrelated event) supersedes it.
+/// Message OWNERSHIP (review finding F2, superseded by the message log,
+/// plan WP1): a successful edit posts nothing at all — the log is
+/// append-only, so there is no shared slot to accidentally clear. This
+/// function only ever POSTS on its own failure path below; an earlier
+/// unrelated entry (e.g. a save failure) simply stays in the log.
 ///
 /// The read-only CHOKEPOINT (review finding F1): every mutating command —
 /// typing, backspace/delete, indent/outdent, cut, paste, move/clone/delete
@@ -136,7 +133,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
             true
         }
         Err(e) => {
-            app.set_status(format!("edit failed: {e}"), StatusSource::Other);
+            messages::error(app, format!("edit failed: {e}"));
             false
         }
     }

@@ -318,11 +318,9 @@ fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
         "a draft collision must never raise a guard"
     );
     assert!(
-        app.status_message
-            .as_deref()
-            .is_some_and(|m| m.contains("already exists")),
+        rune_tui::messages::newest_text(&app).is_some_and(|m| m.contains("already exists")),
         "got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(
         active_path(&app).is_none(),
