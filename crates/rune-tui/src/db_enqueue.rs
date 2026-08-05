@@ -107,6 +107,41 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
     }
 }
 
+/// Enqueues a `Probe` op refreshing `id`'s disk fact (plan WP2.S4) — called
+/// from `workspace::switch_to` for a document with both a `db` binding and a
+/// `file_path` (nothing to probe for a pathless draft or one with no
+/// recovery journal). Skips enqueueing if `id` already has a probe in
+/// flight (`PendingOp::is_probe`, `db.rs`'s own doc comment) — a rapid
+/// sequence of tab switches back onto the same document must not stack
+/// redundant probes. The resulting `SyncState` lands as `OpOutcome::Sync`,
+/// handled in `db_dispatch::handle_db_event`.
+pub fn probe(app: &mut App, id: DocumentId) {
+    if app.db.as_ref().is_none_or(|db| db.degraded) {
+        return;
+    }
+    if app
+        .db_ops
+        .values()
+        .any(|pending| pending.doc == id && pending.is_probe)
+    {
+        return;
+    }
+    let Some(doc) = app.doc(id) else { return };
+    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
+        return;
+    };
+    if doc.file_path.is_none() {
+        return;
+    }
+    let Some(db) = app.db.as_ref() else { return };
+    match db.store.probe(db_id) {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, PendingOp::probe(id));
+        }
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+    }
+}
+
 /// Enqueues a `CreateScratch` op registering `id` — a freshly minted
 /// untitled draft (`workspace::new_untitled_document`'s one call site) — as
 /// its own scratch row in the recovery store, closing the "an untitled

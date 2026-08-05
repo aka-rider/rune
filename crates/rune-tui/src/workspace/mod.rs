@@ -279,6 +279,10 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
+    // Plan WP2.S4: re-check this document's disk fact on every switch onto
+    // it — the only detection wiring besides `Load`-at-open and the
+    // save-time CAS conflict (plan decision 8: no file watcher).
+    crate::db_enqueue::probe(app, id);
 }
 
 /// Switches to the tab sitting at `idx` in the current tab order, if there
