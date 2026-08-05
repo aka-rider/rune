@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 libc = { workspace = true }
+trash = { workspace = true }
 
 [lints]
 workspace = true

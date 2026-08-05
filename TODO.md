@@ -105,6 +105,8 @@ the fix is narrow and these three remain.
 
 ## File-size budget
 
+- [ ] **`crates/rune-vfs/src/mem.rs` is over the 500-line file budget (536 lines).** The trash-seam work (`Vfs::trash`, `OpKind::Trash`, and its three unit tests) pushed it past the line the file was already sitting close to (493 lines beforehand). Not split out here to keep the seam landing as one small, reviewable diff; a follow-up should pull the `#[cfg(test)] mod tests` block into a sibling `mem/tests.rs` (or an integration test file, matching how the crate's other `Mem` behavior is already covered by `tests/*.rs`), which alone would bring the production code back under budget.
+
 A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
 `document.rs`/`explorer.rs`, `tests/opentabs.rs`, and the two worst test
 files (`conceal_roundtrip.rs` at 1453 lines and `tests/highlight.rs`).
