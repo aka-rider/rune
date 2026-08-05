@@ -118,8 +118,8 @@ fn wrapped_line_produces_one_wrap_segment_per_visual_row_at_running_start_cols()
     }
 }
 
-/// Regression (found via WP6's `parity-grid` gate, `tables-narrow.md`):
-/// `wrap_table_line` used to stamp the SAME `TableRowInfo::boundary` onto
+/// Regression found via screen-capture comparison of a narrow-table
+/// fixture: `wrap_table_line` used to stamp the SAME `TableRowInfo::boundary` onto
 /// every visual sub-row of a Wrapped body line, so
 /// `DisplaySnapshot::expand_tables` synthesised a `└┴┘` bottom border
 /// after EVERY visual row instead of only the last one; and `emit_table`

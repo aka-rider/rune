@@ -8,8 +8,5 @@ description: Run make test-fuzz; on a catch, a forced-plan-mode subagent finds t
    **Do not poll it.** A background run re-invokes you automatically when it exits; just wait for that
    completion notification, then read the full output. Never busy-check its output (no per-second
    polling). If you must check liveness, do so at most every few minutes.
-   (The Go reference implementation has its own, unrelated fuzzer:
-   `cd golang && make test-fuzz T=25m`, with
-   `export GOPATH=/Users/xiii/Developer/go GOCACHE=/Users/xiii/Developer/go/build-cache GOFLAGS=-buildvcs=false TMPDIR=/Users/xiii/Developer/go/rune-tmp`.)
 2. Passes → report green. Done.
 3. Fails → Call the `Agent` tool with `subagent_type: "rune-fuzz-investigator"`, `model: "sonnet"` with the failing target and its `invariant <ID>: <message>` line. Store its findings in <TODO-brief.md>. Do not edit.

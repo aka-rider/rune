@@ -182,7 +182,7 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
 }
 
 /// Regression for the grapheme-cluster cell builder (caught by
-/// cross-implementation parity testing): a ZWJ family emoji (7 codepoints
+/// screen-capture testing): a ZWJ family emoji (7 codepoints
 /// joined by U+200D) must render as exactly ONE `Cell` — never one `Cell`
 /// per codepoint, which corrupted the terminal output (module docs,
 /// `push_grapheme_cells`) — and the buffer's own bytes must stay verbatim:

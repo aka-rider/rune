@@ -1,10 +1,11 @@
 //! WP2.S9: end-to-end Grid rendering through the real pipeline (parse ->
 //! sync_cursors -> emit) — a header/separator/body row's exact rendered
 //! text, tiling, equal display width across rows, revealed-vs-rendered
-//! byte-verbatim behaviour, alignment, and the CJK column-width case WP6's
-//! parity gate cannot cover (Gotcha/critique B7: the `cjk.md` parity
-//! fixture hits an unfixable vendored-renderer TAB-padding defect, so this
-//! crate's own width correctness is pinned here instead). Split from the
+//! byte-verbatim behaviour, alignment, and the CJK column-width case a
+//! screen-capture comparison cannot cover (Gotcha/critique B7: a terminal
+//! renderer's unfixable TAB-padding defect made the CJK capture
+//! untrustworthy, so this crate's own width correctness is pinned here
+//! instead). Split from the
 //! combined `table_render` file into per-layout groups — this one is Grid.
 //!
 //! Every "Rendered" assertion below uses `focused = false`: an unfocused
@@ -209,8 +210,8 @@ fn right_alignment_right_aligns_short_content() {
     assert_eq!(joined_line(&lines, 2, buf.content()), "│ xx │");
 }
 
-/// CJK column-width case a cross-implementation parity comparison cannot
-/// cover (an unfixable vendored-renderer TAB-padding defect makes exact-cell
+/// CJK column-width case a screen-capture comparison cannot cover (a
+/// terminal renderer's unfixable TAB-padding defect makes exact-cell
 /// comparison against it unreliable for CJK content) — pinned as a unit
 /// test instead. `世界` is two CJK (double-width) chars, so column 0's
 /// computed width must be exactly 4 (measured in display cells via

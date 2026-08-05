@@ -96,8 +96,8 @@ fn control_placeholder(ch: char) -> char {
 /// ratatui's diffing treats as a wide cell's hidden continuation — that
 /// codepoint's bytes never reach the real terminal, and every subsequent
 /// column on the row shifts, which is exactly the "stray joiner/emoji
-/// fragments" and "extra spaces inserted mid-sequence" corruption the
-/// parity harness caught. `blit` (below) closes the other half: it
+/// fragments" and "extra spaces inserted mid-sequence" corruption a
+/// screen-capture comparison caught. `blit` (below) closes the other half: it
 /// explicitly resets the buffer cells a wide `Cell` covers, matching
 /// `Buffer::set_stringn`'s own reset loop, so ratatui's well-formedness
 /// assumption actually holds for cells THIS code writes directly via
