@@ -324,6 +324,10 @@ fn reading_view_blocks_undo_and_redo() {
         dirty_before,
         "a blocked undo must not change dirtiness"
     );
+    assert_eq!(
+        app.status_message, None,
+        "a reading-view undo refusal is silent, pinning pre-existing behavior"
+    );
 
     redo(&mut app, id);
     assert_eq!(
@@ -335,6 +339,10 @@ fn reading_view_blocks_undo_and_redo() {
         app.doc(id).unwrap().is_dirty(),
         dirty_before,
         "a blocked redo must not change dirtiness"
+    );
+    assert_eq!(
+        app.status_message, None,
+        "a reading-view redo refusal is silent, pinning pre-existing behavior"
     );
 }
 
@@ -362,7 +370,13 @@ fn preview_blocks_undo_and_redo() {
         dirty_before,
         "a blocked undo must not change dirtiness"
     );
+    assert_eq!(
+        app.status_message.as_deref(),
+        ReadOnly::Preview.refusal_message(),
+        "a preview undo refusal must surface a status message"
+    );
 
+    app.status_message = None;
     redo(&mut app, id);
     assert_eq!(
         app.doc(id).unwrap().buffer.content(),
@@ -373,5 +387,10 @@ fn preview_blocks_undo_and_redo() {
         app.doc(id).unwrap().is_dirty(),
         dirty_before,
         "a blocked redo must not change dirtiness"
+    );
+    assert_eq!(
+        app.status_message.as_deref(),
+        ReadOnly::Preview.refusal_message(),
+        "a preview redo refusal must surface a status message"
     );
 }
