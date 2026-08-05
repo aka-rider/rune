@@ -11,6 +11,7 @@
 
 use crate::app::App;
 use crate::explorer::{self, ensure_visible};
+use crate::explorer_preview;
 use crate::explorer_search::{self, EXPLORER_SEARCH_BINDINGS};
 use crate::keymap::{Binding, KeyCode, KeyInput, KeyOutcome, KeyPattern, Mods, resolve_in};
 use crate::pane::Pane;
@@ -27,6 +28,7 @@ pub enum ExplorerCommand {
     Bottom,
     Open,
     ParentDir,
+    Leave,
 }
 
 /// Arrow keys move one entry; Home/End jump to the ends; Enter opens the
@@ -76,6 +78,17 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
         when: "",
         alias: false,
     },
+    // Only reached when `EXPLORER_SEARCH_BINDINGS`'s own Escape row didn't
+    // already claim the key (`handle_key`'s `is_some()` gate below) — a
+    // live search's first Escape ends the search; this row is what a
+    // SECOND Escape (search already clear) falls through to.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        cmd: ExplorerCommand::Leave,
+        help: "back to editor",
+        when: "",
+        alias: false,
+    },
 ];
 
 /// Stage 3 of the four-stage key pipeline (plan Context, decision 8) when
@@ -102,7 +115,7 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     if let Some(cmd) = resolve_in(EXPLORER_SEARCH_BINDINGS, key)
         && (app.explorer.search.is_some() || cmd == explorer_search::ExplorerSearchCommand::Type)
     {
-        explorer_search::handle_search(app, cmd, key);
+        explorer_search::handle_search(app, cmd, key, effects);
         return KeyOutcome::Consumed;
     }
 
@@ -111,27 +124,31 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOut
     };
     explorer_search::clear_search(app);
     match cmd {
-        ExplorerCommand::Up => move_selection(app, -1),
-        ExplorerCommand::Down => move_selection(app, 1),
+        ExplorerCommand::Up => move_selection(app, -1, effects),
+        ExplorerCommand::Down => move_selection(app, 1, effects),
         ExplorerCommand::Top => {
             app.explorer.nav.first();
             ensure_visible(app);
+            explorer_preview::after_cursor_move(app, effects);
         }
         ExplorerCommand::Bottom => {
             let len = app.explorer.entries.len();
             app.explorer.nav.last(len);
             ensure_visible(app);
+            explorer_preview::after_cursor_move(app, effects);
         }
         ExplorerCommand::Open => open_selected(app, effects),
         ExplorerCommand::ParentDir => go_to_parent(app, effects),
+        ExplorerCommand::Leave => app.set_focus_pane(Pane::Editor, effects),
     }
     KeyOutcome::Consumed
 }
 
-fn move_selection(app: &mut App, delta: isize) {
+fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
     let len = app.explorer.entries.len();
     app.explorer.nav.move_by(delta, len);
     ensure_visible(app);
+    explorer_preview::after_cursor_move(app, effects);
 }
 
 /// Opens the currently selected entry: a file activates it through
@@ -169,14 +186,29 @@ fn open_selected(app: &mut App, effects: &mut Effects) {
     if is_dir {
         let resolved = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
         explorer::request_dir(app, resolved, effects);
-    } else {
-        app.blur_title(effects);
-        // `open_path` reports a read failure through `banner::report_error`
-        // itself before returning `None` — discarding the `Option` here
-        // drops only the opened id, never an unsurfaced error.
-        if workspace::open_path(app, &target).is_some() {
-            app.set_focus_pane(Pane::Editor, effects);
-        }
+        return;
+    }
+
+    // The cursor's own preview already loaded this exact file: promote it
+    // in place rather than re-reading it through `open_path` — same
+    // document, same id, just no longer `Preview`. A preview still in
+    // flight (or skipped outright — a search was live, the read hasn't
+    // landed yet) falls through to the ordinary synchronous open below,
+    // exactly as before this module existed.
+    if let Some(id) = app.explorer.preview
+        && app.doc(id).and_then(|d| d.file_path.as_deref()) == Some(target.as_path())
+    {
+        explorer_preview::promote(app, id);
+        app.set_focus_pane(Pane::Editor, effects);
+        return;
+    }
+
+    app.blur_title(effects);
+    // `open_path` reports a read failure through `banner::report_error`
+    // itself before returning `None` — discarding the `Option` here
+    // drops only the opened id, never an unsurfaced error.
+    if workspace::open_path(app, &target).is_some() {
+        app.set_focus_pane(Pane::Editor, effects);
     }
 }
 

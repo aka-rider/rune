@@ -227,6 +227,19 @@ the ceiling, and neither has been split since.
 - [ ] `rune-db/src/writer.rs`, previously recorded here at 497 lines and about to breach, has since been split and is now 356. `rune-db/src/materialize.rs` is still within a few lines of the ceiling at 496 — whoever touches it next should take the split rather than squeeze under.
 - [ ] `rune-md/src/emit/mod.rs` 536 → 558 during the code-pipeline unification (the `base_scope` parameter threaded through `emit_with`/`fill_gaps`, plus its rationale comments). It was already over the ceiling before that change, so this is a deepening rather than a breach. The natural split is the gap-fill and span-ordering pass — `fill_gaps` plus the buffer-order re-sort it exists to preserve — into an `emit/gaps.rs` sibling; `emit_with` itself is the orchestration and should stay.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.
+- [ ] The Explorer live-preview feature grew two more already-over-budget
+  files by a handful of lines each: `rune-tui/src/app.rs` 544 → 555 (`update`'s
+  new `focus_before`/`on_focus_changed` diff, alongside the existing
+  `active_before`/`buffer_version_before` ones it's modelled on — the whole
+  point is that this is the ONE place a whole-message before/after diff
+  belongs, so splitting it out would recreate the multiple-chokepoint hazard
+  the existing pattern avoids) and `rune-tui/src/runtime/mod.rs` 517 → 555
+  (`read_preview_cmd` plus its `MAX_PREVIEW_BYTES` constant — the `Cmd`
+  constructors' own home, alongside `read_file_cmd`/`load_dir_cmd`). All the
+  new state/lifecycle logic itself landed in a new `explorer_preview/`
+  directory module (`mod.rs` 272, `tests.rs` 381, both comfortably under
+  budget) rather than either of these two, which is why they only grew by
+  wiring, not by feature weight.
 
 ## Parked tickets
 
