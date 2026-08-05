@@ -198,8 +198,8 @@ pub struct Document {
 /// mode (`Reading`) can be told apart from a document with no editable form
 /// at all (`Always`), and both from a transient, not-yet-committed one
 /// (`Preview`): a toggle must not make the Help tab editable, and the
-/// undo/redo guard (plan WP3) and the `⌘S` footer hint (plan WP6) each
-/// branch on the variants differently.
+/// undo/redo guard and the `⌘S` footer hint each branch on the variants
+/// differently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadOnly {
     /// Ordinary editable document.
@@ -262,7 +262,7 @@ impl Document {
 
     /// Whether the caret and selection background may be painted onto this
     /// document's cells, AND whether reveal may key off the cursor at all
-    /// (plan WP1) — the second consumer of the identical predicate. Go's
+    /// — the second consumer of the identical predicate. Go's
     /// three overlay gates (`textedit/render.go`) are all
     /// `focused && !readOnly`: an unfocused pane must not show a caret that
     /// would mislead about where keystrokes land, and a read-only document
@@ -396,7 +396,7 @@ impl Document {
     /// it dirty once the caller recomputes — see `materialize_ack::
     /// recompute_dirty`, called after every hydration site.
     ///
-    /// Deliberately NOT gated on `read_only` (plan WP4), including
+    /// Deliberately NOT gated on `read_only`, including
     /// `ReadOnly::Reading`. Hydration adopts the user's OWN unsaved
     /// recovered draft — refusing it to honour a view mode would DISCARD
     /// already-typed bytes, a worse failure than a buffer changing once

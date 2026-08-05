@@ -1,7 +1,7 @@
-//! WP4 "Done when" tests for `explorer_reveal::reveal`: pointing the
-//! Explorer at a given file, re-rooting when necessary, and landing the
-//! cursor exactly on it. Shares the `explorer_common` fixtures with the
-//! rest of the WP4 Explorer suite.
+//! Tests for `explorer_reveal::reveal`: pointing the Explorer at a given
+//! file, re-rooting when necessary, and landing the cursor exactly on it.
+//! Shares the `explorer_common` fixtures with the rest of the Explorer
+//! suite.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod explorer_common;
