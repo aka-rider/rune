@@ -1,5 +1,5 @@
 //! `append_edit` and its coalescing/truncation logic. Split out of
-//! `journal.rs` (§1.6) — see that module's doc comment for the shared
+//! `journal.rs` — see that module's doc comment for the shared
 //! session-scoping invariant every journal function honors.
 
 use std::time::SystemTime;
@@ -13,7 +13,7 @@ use crate::Error;
 use crate::payload::{cursors_to_json, edits_from_json, edits_to_json};
 use crate::session::format_rfc3339_nanos;
 
-/// The coalescing window (`journal.go`, plan Gotchas): a
+/// The coalescing window (plan Gotchas): a
 /// single-rune pure insert is folded into the previous event only when it
 /// arrives within this long of it.
 const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(300);
@@ -25,12 +25,12 @@ const COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_millis(30
 /// the new one, and `current_seq` resets to NULL. Adjacent single-character
 /// inserts within 300ms of the previous event are coalesced into it in
 /// place — but only when all of `can_coalesce_into`'s guards hold, INCLUDING
-/// "no snapshot already anchors that seq" (`journal.go`) — an
+/// "no snapshot already anchors that seq" — an
 /// UPDATE coalesced into an already-snapshotted row would be invisible to a
-/// snapshot-anchored `recover_document` replay (CONSTITUTION §1.4.10-adjacent
+/// snapshot-anchored `recover_document` replay (recovery-anchor
 /// correctness: the row's bytes must never silently outrun what a
 /// recovery-anchor reconstruction can see). Returns the journal seq of the
-/// inserted (or coalesced) event. Port of `journal.go`.
+/// inserted (or coalesced) event.
 pub fn append_edit(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -46,7 +46,7 @@ pub fn append_edit(
 
     // Read this session's current undo position; NULL (or no row at all —
     // this session has never journaled anything for doc_id yet) means at
-    // head. Port of journal.go.
+    // head.
     let current_seq: Option<i64> = tx
         .query_row(
             "SELECT current_seq FROM session_documents WHERE session_id=?1 AND doc_id=?2",
@@ -57,7 +57,7 @@ pub fn append_edit(
         .flatten();
 
     // Truncate an abandoned future — events AND snapshots — scoped to this
-    // session's own rows only. Port of journal.go.
+    // session's own rows only.
     if let Some(cs) = current_seq {
         tx.execute(
             "DELETE FROM events WHERE doc_id=?1 AND session_id=?2 AND seq > ?3",
@@ -66,8 +66,7 @@ pub fn append_edit(
         // A snapshot anchored past the truncation point describes content
         // that only ever existed in the abandoned future; left alive it
         // becomes a zombie anchor recover_document could still pick,
-        // resurrecting truncated bytes under a later edit
-        // (journal.go).
+        // resurrecting truncated bytes under a later edit.
         tx.execute(
             "DELETE FROM snapshots WHERE doc_id=?1 AND session_id=?2 AND seq > ?3",
             params![doc_id, session_id, cs],
@@ -81,7 +80,7 @@ pub fn append_edit(
     let now_str = format_rfc3339_nanos(now);
 
     // Attempt coalescing with the previous event for this doc, scoped to
-    // this session's own rows. Port of journal.go.
+    // this session's own rows.
     if let Some(only) = as_single_char_insert(edits) {
         let last: Option<(i64, String, String)> = tx
             .query_row(
@@ -140,8 +139,7 @@ pub fn append_edit(
 /// Returns `edits`' single edit if `edits` is a single character insertion
 /// (no deletion, a one-rune insert), else `None` — pattern-matched rather
 /// than indexed (`edits[0]`) so the single-element access is checked by the
-/// match itself, not a runtime bounds check. Port of `journal.go`
-/// (`isInsertChar`).
+/// match itself, not a runtime bounds check.
 fn as_single_char_insert(edits: &[AppliedEdit]) -> Option<&AppliedEdit> {
     let [only] = edits else { return None };
     (only.deleted.is_empty() && only.insert.chars().count() == 1).then_some(only)
@@ -154,7 +152,6 @@ fn as_single_char_insert(edits: &[AppliedEdit]) -> Option<&AppliedEdit> {
 /// while `apply_inverse`/`reapply` treat an event's edits as a SIMULTANEOUS
 /// batch; a typing run is exactly the shape where both readings agree), and
 /// must not itself end in whitespace (the word-boundary undo-stop rule).
-/// Port of `journal.go` (`canCoalesceInto`).
 fn can_coalesce_into(edits_json: &str, next: &AppliedEdit) -> Result<bool, Error> {
     let edits = edits_from_json(edits_json)?;
     let Some(last) = edits.last() else {
@@ -176,20 +173,18 @@ fn can_coalesce_into(edits_json: &str, next: &AppliedEdit) -> Result<bool, Error
     Ok(true)
 }
 
-/// Appends `new_edits` to the edits stored in `existing_json`. Port of
-/// `journal.go` (`mergeEditsJSON`).
+/// Appends `new_edits` to the edits stored in `existing_json`.
 fn merge_edits_json(existing_json: &str, new_edits: &[AppliedEdit]) -> Result<String, Error> {
     let mut existing = edits_from_json(existing_json)?;
     existing.extend(new_edits.iter().cloned());
     edits_to_json(&existing)
 }
 
-/// `now - parse(last_at)`, or `None` if `last_at` doesn't parse (Go's
-/// `journal.go`: a parse failure on the previous event's own
-/// timestamp silently skips coalescing rather than erroring the whole
-/// append — the previous row's `at` was written by this same crate, so a
-/// parse failure here only ever indicates a hand-seeded/corrupt test row,
-/// never a real production event).
+/// `now - parse(last_at)`, or `None` if `last_at` doesn't parse (a parse
+/// failure on the previous event's own timestamp silently skips coalescing
+/// rather than erroring the whole append — the previous row's `at` was
+/// written by this same crate, so a parse failure here only ever indicates
+/// a hand-seeded/corrupt test row, never a real production event).
 fn elapsed_since(last_at: &str, now: SystemTime) -> Option<std::time::Duration> {
     let last = crate::session::parse_rfc3339_nanos(last_at)?;
     now.duration_since(last).ok()
@@ -229,8 +224,7 @@ mod tests {
         }]
     }
 
-    /// Port of `TestCoalescingWithinWindow` (`journal_test.go`): two
-    /// single-char inserts 200ms apart (well within the 300ms window),
+    /// Two single-char inserts 200ms apart (well within the 300ms window),
     /// continuing the typing run (each starts where the previous ended),
     /// coalesce into the SAME journal seq — one undo stop covers both.
     #[test]
@@ -271,7 +265,7 @@ mod tests {
     }
 
     /// A snapshot anchored at the seq a coalescing candidate would target
-    /// must prevent that coalesce (`journal.go`) — an UPDATE
+    /// must prevent that coalesce — an UPDATE
     /// coalesced in place after the snapshot exists would be invisible to a
     /// snapshot-anchored `recover_document` replay.
     #[test]
@@ -310,8 +304,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Port of `TestCoalescingWhitespaceBreaks`
-    /// (`journal_test.go`): a space coalesces into the preceding
+    /// A space coalesces into the preceding
     /// non-whitespace stop (same seq), but the event now ENDS in
     /// whitespace, which must break the NEXT coalesce attempt — a fresh
     /// stop.
@@ -345,8 +338,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Port of `TestCoalescingOutsideWindow`
-    /// (`journal_test.go`): adjacency alone does not coalesce once
+    /// Adjacency alone does not coalesce once
     /// the 300ms window has elapsed — a fresh journal stop, two separate
     /// undo steps.
     #[test]
@@ -368,9 +360,9 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Port of `TestTruncateOnNewEdit` (`journal_test.go`): after
-    /// undoing past some events, a fresh edit must truncate the abandoned
-    /// future so redo is unavailable and undo never resurrects it.
+    /// After undoing past some events, a fresh edit must truncate the
+    /// abandoned future so redo is unavailable and undo never resurrects
+    /// it.
     #[test]
     fn new_edit_after_undo_truncates_the_abandoned_future() {
         let mut conn = open();

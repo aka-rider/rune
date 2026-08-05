@@ -1,5 +1,5 @@
-//! `SAVE-VERBATIM`/`SAVE-CLEAN-MATCHES-DISK` (§1.4.5 byte-verbatim writes;
-//! §1.4.8 durable-publish-then-clean ordering) — both need `StepCtx`'s VFS
+//! `SAVE-VERBATIM`/`SAVE-CLEAN-MATCHES-DISK` (byte-verbatim writes;
+//! durable-publish-then-clean ordering) — both need `StepCtx`'s VFS
 //! read and save-delivery bookkeeping, which `Snapshot` structurally can't
 //! hold (plan Context, decision 7 `[fixes B3]`).
 
@@ -7,8 +7,7 @@ use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `SAVE-VERBATIM` (§1.4.5; Go's fuzzer names the same invariant
-/// `SAVE-VERBATIM`) — on a successful `SaveDone`, the bytes actually on
+/// `SAVE-VERBATIM` — on a successful `SaveDone`, the bytes actually on
 /// disk must byte-equal the bytes THAT save was constructed with. Byte
 /// comparison, no normalization.
 ///
@@ -44,7 +43,7 @@ pub fn save_verbatim(ctx: &StepCtx) -> Option<Violation> {
     })
 }
 
-/// `SAVE-CLEAN-MATCHES-DISK` (§1.4.8) — once the document reports clean
+/// `SAVE-CLEAN-MATCHES-DISK` — once the document reports clean
 /// (`!is_dirty`) with at least one successful save delivered and no save
 /// still pending, disk bytes must byte-equal the current content. Catches
 /// a save that reports success without actually persisting. Inert during

@@ -1,7 +1,7 @@
-//! Port of `golang/pkg/merge/hunks.go`: diffy identifies conflict
-//! boundaries, then every hunk's bytes are re-anchored verbatim into the
-//! original `ours`/`theirs` inputs. diffy's own serialized output is used
-//! only to find where the boundaries are — never as buffer content.
+//! diffy identifies conflict boundaries, then every hunk's bytes are
+//! re-anchored verbatim into the original `ours`/`theirs` inputs. diffy's
+//! own serialized output is used only to find where the boundaries are —
+//! never as buffer content.
 
 use std::ops::Range;
 
@@ -11,7 +11,7 @@ use diffy::MergeOptions;
 /// `Clean` bytes and `Conflict::ours` bytes for each hunk reconstructs the
 /// buffer content the merge should present verbatim.
 ///
-/// Byte-faithfulness (§1.4.5): `Clean` bytes come verbatim from whichever
+/// Byte-faithfulness: `Clean` bytes come verbatim from whichever
 /// input contributed them; `Conflict` bytes come verbatim from the
 /// respective `ours`/`theirs` inputs. Any region that cannot be re-anchored
 /// this way degrades to a single whole-file `Conflict` rather than trusting
@@ -42,9 +42,9 @@ pub fn merge_hunks(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
     }
 }
 
-/// Classifies a conflict-free merge result (port of the Go reference's clean fast path).
-/// The merged bytes are trusted only to pick which verbatim input to
-/// return; diffy does not renormalize non-conflicting content.
+/// Classifies a conflict-free merge result. The merged bytes are trusted
+/// only to pick which verbatim input to return; diffy does not
+/// renormalize non-conflicting content.
 fn classify_clean(ours: &[u8], theirs: &[u8], merged: &[u8]) -> Hunk {
     if merged == ours || ours == theirs {
         Hunk::Clean(ours.to_vec())
@@ -105,7 +105,7 @@ fn is_theirs_marker(line: &[u8]) -> bool {
 
 /// Splits diffy's diff3 output into alternating clean segments and conflict
 /// blocks. `cleans[i]` precedes `conflicts[i]`; `cleans.len() ==
-/// conflicts.len() + 1` (port of the Go reference's `parseDiff3`).
+/// conflicts.len() + 1`.
 fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
     let mut cleans = Vec::new();
     let mut conflicts = Vec::new();
@@ -181,10 +181,10 @@ fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<Ra
 }
 
 /// Maps diff3 output boundaries back to verbatim ours/theirs bytes,
-/// returning the classified hunk sequence (port of the Go
-/// reference's `parseHunks`). Only called when diffy reports at least one
-/// conflict; an empty `conflicts` list here is treated the same as a failed
-/// anchor — degrade to one whole-file conflict rather than assume clean.
+/// returning the classified hunk sequence. Only called when diffy reports
+/// at least one conflict; an empty `conflicts` list here is treated the
+/// same as a failed anchor — degrade to one whole-file conflict rather
+/// than assume clean.
 fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     let (cleans, conflicts) = parse_diff3(diff3_output);
 
@@ -253,7 +253,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     hunks
 }
 
-/// Classifies one clean region between conflicts (port of the Go reference's clean-region classification).
+/// Classifies one clean region between conflicts.
 fn classify_clean_region(ours_clean: &[u8], theirs_clean: &[u8], merged_clean: &[u8]) -> Hunk {
     if ours_clean == theirs_clean {
         Hunk::Clean(ours_clean.to_vec())

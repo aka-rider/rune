@@ -1,5 +1,4 @@
-//! The conflict-lifecycle comparison — ported from Go's sync + dirty
-//! classification. Pure SQLite: never touches disk (`sync`/
+//! The conflict-lifecycle comparison. Pure SQLite: never touches disk (`sync`/
 //! `sync_with_theirs` are Update-safe); `probe::probe` is the disk-touching
 //! counterpart that records a fresh observation first, making ITS OWN new
 //! observation the newest by construction, then calls `sync_with_theirs`
@@ -12,9 +11,9 @@ use crate::observation::{self, ObsId};
 
 /// A comparable fact for the Sync/Probe three-way comparison: a content
 /// hash, optionally correlated to the [`crate::observation::Observation`]
-/// it came from. Port of `observation.go` (`Version`) — the Go
-/// struct's out-of-band `Valid` bit is instead modeled as `Option<Version>`
-/// at the call site (this crate's own "Options for absent facts" rule).
+/// it came from. An out-of-band validity bit is instead modeled as
+/// `Option<Version>` at the call site (this crate's own "Options for
+/// absent facts" rule).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Version {
     pub hash: String,
@@ -22,7 +21,7 @@ pub struct Version {
 }
 
 /// Discriminates the outcome of comparing buffer/saved/ancestor state for a
-/// document. Port of `observation.go` (`SyncKind`).
+/// document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SyncKind {
     /// The buffer matches what we believe is on disk (or there is no disk
@@ -41,7 +40,7 @@ pub enum SyncKind {
 
 /// The result of comparing three hashes for a document: the buffer head
 /// (`ours`), the freshest disk knowledge (`theirs`), and the derived
-/// 3-way-merge ancestor. Port of `observation.go` (`SyncState`).
+/// 3-way-merge ancestor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SyncState {
     pub kind: SyncKind,
@@ -51,16 +50,14 @@ pub struct SyncState {
 }
 
 /// The SHA-256 of the empty string — the "nothing to save yet" baseline for
-/// a document with no disk fact at all. Port of `sync.go`
-/// (`emptyHash`).
+/// a document with no disk fact at all.
 fn empty_hash() -> &'static str {
     use std::sync::OnceLock;
     static EMPTY: OnceLock<String> = OnceLock::new();
     EMPTY.get_or_init(|| observation::hash_bytes(b""))
 }
 
-/// The Conflict lifecycle comparison. Port of `sync.go`
-/// (`classifySync`).
+/// The Conflict lifecycle comparison.
 pub fn classify_sync(
     ancestor: Option<&Version>,
     ours: &Version,
@@ -90,7 +87,7 @@ pub fn classify_sync(
 
 /// Compares the journal reconstruction, the newest recorded observation
 /// (ANY origin, ANY session — "theirs"), and the derived ancestor for
-/// `doc_id`, AS SEEN BY `session_id`. Port of `sync.go` (`Sync`).
+/// `doc_id`, AS SEEN BY `session_id`.
 pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncState, Error> {
     let newest = observation::newest_observation(tx, doc_id)?;
     let theirs = newest.map(|o| Version {
@@ -102,8 +99,8 @@ pub fn sync(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<SyncSt
 
 /// The ours/ancestor reconstruction shared by [`sync`] (theirs = the newest
 /// recorded observation) and `probe::probe` (theirs = a just-recorded fresh
-/// observation). Port of `sync.go` (`syncWithTheirs`), including the
-/// undo-unwind override (`sync.go`): a `DiskAhead` classification
+/// observation), including the
+/// undo-unwind override: a `DiskAhead` classification
 /// upgrades to `Diverged` when this session has recorded ANY correlated
 /// observation past `pos` — a resolution the buffer has since been undone
 /// past.
@@ -150,8 +147,7 @@ pub fn sync_with_theirs(
 
 /// Dirty ⟺ ours differs from ancestor (`BufferAhead` or `Diverged`) — NEVER
 /// `kind != Clean`, which would also flag `DiskAhead` (a pure external
-/// change with nothing of the user's unsaved) as phantom-dirty. Port of
-/// `dirty.go` (`IsDirty`).
+/// change with nothing of the user's unsaved) as phantom-dirty.
 pub fn is_dirty(kind: SyncKind) -> bool {
     matches!(kind, SyncKind::BufferAhead | SyncKind::Diverged)
 }
@@ -253,7 +249,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// Undo-unwind override (`sync.go`): a resolve observation
+    /// Undo-unwind override: a resolve observation
     /// correlates `theirs` to the edit seq that resolved it. Undoing the
     /// buffer back BELOW that seq makes `ancestor_at` recompute an OLDER
     /// ancestor the wound-back buffer coincidentally matches — plain

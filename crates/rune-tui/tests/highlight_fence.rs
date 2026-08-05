@@ -10,7 +10,7 @@
 //!
 //! The container-prefix-leak cases — a fence nested in a blockquote or list
 //! item must not feed the container's own repeating marker prefix to the
-//! parser as source bytes — live in the `_nesting` sibling (§1.6).
+//! parser as source bytes — live in the `_nesting` sibling (500-line budget).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

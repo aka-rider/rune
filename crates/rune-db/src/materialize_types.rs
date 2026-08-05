@@ -1,6 +1,6 @@
 //! `Materialize`'s data model — `DocSession`, the CAS decision/outcome
 //! types [`prepare_materialize`]/[`record_materialize_outcome`] exchange
-//! with the caller. Split out of `materialize.rs` (§1.6) and re-exported
+//! with the caller. Split out of `materialize.rs` and re-exported
 //! from there, so this stays purely a data-model file with no logic.
 //!
 //! [`prepare_materialize`]: crate::materialize::prepare_materialize
@@ -33,7 +33,7 @@ pub struct MatResult {
     /// displaced/conflicting observation).
     pub fresh: Option<Observation>,
     /// `true` when `!committed` because the target doesn't exist and
-    /// `bind_new` was `false` (§1.4.4 — never silently (re)create). The
+    /// `bind_new` was `false` (never silently (re)create). The
     /// caller decides this entirely on its own vfs read; it is never
     /// constructed by anything in this module.
     pub missing: bool,

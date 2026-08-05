@@ -1,7 +1,7 @@
 //! Shared setup helpers for the Open Tabs test suite, split across
 //! `opentabs.rs` (Tabs-pane-local rendering/switching, and the close
 //! guard's three resolutions) and `opentabs_global.rs` (the GLOBAL `^w`/
-//! `^1`-`^0` bindings, TODO.md's §1.6 split). Each file pulls this in via
+//! `^1`-`^0` bindings, TODO.md's 500-line budget). Each file pulls this in via
 //! `mod opentabs_common;` — integration test files are separate binaries,
 //! so this is the one place both draw an identical `App`/`Mem` fixture
 //! from, rather than risking the two drifting apart.

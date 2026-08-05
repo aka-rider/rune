@@ -1,4 +1,4 @@
-//! The ONE chrome-width chokepoint (plan WP8, CONSTITUTION §1.5: display
+//! The ONE chrome-width chokepoint (plan WP8: display
 //! width is terminal CELLS via `unicode-width` over grapheme clusters, not
 //! a bare `char`/rune count): every chrome element that measures or
 //! truncates user-visible text — footer padding and the always-on `Ln,

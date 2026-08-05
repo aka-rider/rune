@@ -8,8 +8,6 @@
 //! a border was added. `geometry` itself never touches a `Frame` and never
 //! takes `&mut App` — it is safe to call as often as any of its three
 //! readers like, always with the same answer for the same inputs.
-//!
-//! A Rust port of Go's `paneGeometry()`.
 
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
@@ -26,8 +24,8 @@ use crate::split::{PaneLimits, Split};
 const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
 /// The chokepoint every "this should never happen, but let's be sure"
-/// geometry check in this module routes through — CONSTITUTION §1.3 forbids
-/// `panic!`/`assert!`/`unwrap` in production code paths, so an ordinary
+/// geometry check in this module routes through — production code must
+/// never `panic!`/`assert!`/`unwrap`, so an ordinary
 /// build (including a plain `cargo run`) must degrade gracefully on a
 /// geometry-invariant violation rather than take down the user's session;
 /// only a test run or an explicit opt-in feature treats it as fatal.

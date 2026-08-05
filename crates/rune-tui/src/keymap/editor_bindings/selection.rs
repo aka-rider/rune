@@ -1,6 +1,6 @@
 //! Selection group of `EDITOR_BINDINGS` (chords that extend or create a
 //! selection, plus select-all). Split out of `editor_bindings.rs` to bring
-//! that file under the §1.6 500-line budget; assembled back into the
+//! that file under the 500-line budget; assembled back into the
 //! single `EDITOR_BINDINGS` table (see that module's doc comment) in the
 //! exact original order — this module only owns the definitions.
 

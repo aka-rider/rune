@@ -1,5 +1,5 @@
 //! `runtime`'s tree-sitter highlight `Cmd` constructor and the region pass
-//! behind it — split out of `runtime.rs` itself (§1.6 budget). Everything
+//! behind it — split out of `runtime.rs` itself (500-line budget). Everything
 //! here reaches `rune_ts::parse`; nothing else in `rune-tui` does, with the
 //! one sanctioned exception of the pre-first-draw pass, which calls
 //! [`run_regions`] directly rather than through a `Cmd`.
@@ -64,7 +64,7 @@ pub(crate) const FIRST_PAINT_BUDGET: Duration = Duration::from_millis(20);
 /// outrun the total.
 ///
 /// Holds the pass's start rather than its deadline: `Instant + Duration`
-/// panics on overflow (§1.3), and subtracting an elapsed span cannot.
+/// panics on overflow, and subtracting an elapsed span cannot.
 pub(crate) struct PassBudget {
     per_region: Duration,
     total: Duration,
@@ -99,7 +99,7 @@ impl PassBudget {
 /// carries its own already-reconstructed source text. Always replies with
 /// `Some(Msg::Highlighted { .. })`, even when nothing parsed, so `in_flight`
 /// is guaranteed to clear on the UI thread; `rune_ts::parse` itself never
-/// panics (§1.3: it surfaces a failed language load or query compile as
+/// panics (it surfaces a failed language load or query compile as
 /// `None`, never `ts_assert`'s `SIGABRT`, since every parse is a full parse
 /// — no incremental-reparse edit is ever fed back into it).
 pub(crate) fn highlight_cmd(doc: DocumentId, version: u64, jobs: Vec<RegionJob>) -> Cmd {

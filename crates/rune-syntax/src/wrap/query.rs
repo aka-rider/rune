@@ -1,4 +1,4 @@
-//! The coordinate-query half of the wrap pass (CONSTITUTION §1.6 split of
+//! The coordinate-query half of the wrap pass (split out of
 //! the wrap module, plan Context "Emit -> wrap -> snapshot"): `WrapSnapshot`
 //! answers buffer/syntax/wrap coordinate-conversion and visual-column
 //! questions about the segments `super::WrapMap` already computed. It

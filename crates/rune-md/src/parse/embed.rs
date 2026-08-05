@@ -1,6 +1,6 @@
 //! Image range derivation and `![[target]]` embed recovery — split out of
-//! `parse::inline` to keep that module under CONSTITUTION §1.6's 500-LoC
-//! limit. `build_inline`'s `InlineKind::Image` arm calls
+//! `parse::inline` to keep that module under the 500-line budget.
+//! `build_inline`'s `InlineKind::Image` arm calls
 //! [`image_alt_range`]/[`image_target_range`] directly; `build_inlines`
 //! funnels its own output through [`recover_embeds`] before returning, on
 //! both its normal fall-through and its multiline-wikilink-recovery early
@@ -198,8 +198,8 @@ pub(super) struct LineEmbed<'a> {
 /// Every slice goes through `get`, never `[]`: an out-of-bounds or
 /// non-char-boundary offset ends the scan instead of panicking. The
 /// delimiters are ASCII so the offsets are in fact always char boundaries,
-/// but §1.3 asks for a halt rather than a panic even on the impossible
-/// branch, and nothing here has to rely on that reasoning holding.
+/// but a halt beats a panic even on the impossible branch, and nothing
+/// here has to rely on that reasoning holding.
 fn find_embeds_in_line(line: &str) -> Vec<LineEmbed<'_>> {
     let mut out = Vec::new();
     let mut i = 0usize;

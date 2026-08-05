@@ -16,12 +16,9 @@
 //! construction, and the co-tenancy this test guards against becomes
 //! unrepresentable rather than merely unasserted.
 //!
-//! Per Go reference parity (`golang/` — the reference implementation,
-//! confirmed by feeding this exact string to the actual goldmark instance
-//! `rune`'s Go side configures): a lone `\r` never counts as a line
-//! terminator to Go's own buffer or to goldmark's line splitting either,
-//! so `"x\r| Name | Age |\n..."` is ONE paragraph, not a paragraph
-//! followed by a table — this crate's fix produces the identical shape.
+//! A lone `\r` never counts as a line terminator: `"x\r| Name | Age |\n..."`
+//! is ONE paragraph, not a paragraph followed by a table — this crate's
+//! fix produces that same shape.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use rune_core::buffer::Buffer;
@@ -89,10 +86,10 @@ fn assert_every_table_group_has_uniform_width(lines: &[SyntaxLine], content: &st
 
 /// The minimal repro from the `TABLE-ROW-WIDTH` fuzz catch: a lone `\r`
 /// immediately before what would otherwise be a table's header row. Post-
-/// fix, comrak no longer sees a line break there at all (Go parity, see
-/// this module's docs), so no `Table` block forms and there is no table
-/// group to check — the assertion holds vacuously, which is exactly the
-/// point: the co-tenancy that used to violate it can no longer arise.
+/// fix, comrak no longer sees a line break there at all (see this module's
+/// docs), so no `Table` block forms and there is no table group to check —
+/// the assertion holds vacuously, which is exactly the point: the
+/// co-tenancy that used to violate it can no longer arise.
 #[test]
 fn lone_cr_before_table_header_never_produces_a_mismatched_row_width() {
     let content = "x\r| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\ntail\n";

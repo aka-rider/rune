@@ -1,7 +1,7 @@
 //! The editing core a single-line field reuses — cursor motion, selection,
 //! in-place editing, and an in-memory undo/redo journal, all keyed by BYTE
-//! offsets (§1.5). Built directly on `rune_core::{Buffer, Cursor,
-//! undo::Journal}` so every mutation gets §1.3's range clamping and UTF-8
+//! offsets. Built directly on `rune_core::{Buffer, Cursor,
+//! undo::Journal}` so every mutation gets range clamping and UTF-8
 //! validation for free, and the `AppliedEdit`s that `undo::apply_inverse`/
 //! `reapply` invert.
 //!
@@ -270,7 +270,7 @@ impl TextField {
             insert: insert.to_string(),
         }];
         let Ok((new_buf, applied)) = self.buffer.apply_edits(&edits) else {
-            return KeyOutcome::Ignored; // §1.3: refuse, never corrupt
+            return KeyOutcome::Ignored; // refuse an out-of-range edit rather than corrupt the buffer
         };
         let landed = applied.last().map(|a| a.end).unwrap_or(start);
         self.buffer = new_buf;

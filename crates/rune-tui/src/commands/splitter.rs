@@ -42,7 +42,7 @@ pub fn begin(app: &mut App, input: MouseInput) -> bool {
     // Both grab bands only exist while the column itself is shown, but
     // `Geometry`'s type doesn't tie `left_block` to `tabs_divider`/
     // `left_splitter` — so this guard stays a `let ... else` (never
-    // `unwrap`/`expect`, §1.3) even though it's the same check either band
+    // `unwrap`/`expect`) even though it's the same check either band
     // needs.
     let Some(left_block) = geo.left_block else {
         return false;

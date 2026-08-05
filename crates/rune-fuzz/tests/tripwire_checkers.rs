@@ -1,11 +1,11 @@
 //! WP4.S3/S4 — one hand-built bad `Snapshot`/pair per WP3 checker, each
-//! paired with a well-formed companion of the same shape that must NOT fire
-//! (the Risk R-c pattern from the Go fuzzer's own workspace and display
-//! invariant tests). Every checker is called DIRECTLY, not through
-//! `invariant::check_all`, so first-wins ordering cannot mask a case. Split
-//! out of the sibling `tripwire` test binary's session half (§1.6 budget) —
-//! `Snapshot`'s fields are all `pub` (G16), so a checker's input is built
-//! directly here with no need to drive a real `App` through anything.
+//! paired with a well-formed companion of the same shape that must NOT
+//! fire (the Risk R-c pattern). Every checker is called DIRECTLY, not
+//! through `invariant::check_all`, so first-wins ordering cannot mask a
+//! case. Split out of the sibling `tripwire` test binary's session half
+//! (500-line budget) — `Snapshot`'s fields are all `pub` (G16), so
+//! a checker's input is built directly here with no need to drive a real
+//! `App` through anything.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

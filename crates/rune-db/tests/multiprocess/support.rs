@@ -1,5 +1,5 @@
-//! Shared parent/child utilities for the multiprocess scenarios (§1.6
-//! budget split): temp-directory allocation, marker-file rendezvous
+//! Shared parent/child utilities for the multiprocess scenarios:
+//! temp-directory allocation, marker-file rendezvous
 //! (bounded poll-until-condition, never a fixed-length pacing sleep — repo
 //! convention), and re-exec-self child spawning.
 

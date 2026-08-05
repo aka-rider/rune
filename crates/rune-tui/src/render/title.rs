@@ -4,7 +4,7 @@
 //! layout with a live selection background and a reverse-video cursor cell
 //! layered on top.
 //!
-//! Split out from `title.rs` (§1.6): this module owns every span this row
+//! Split out from `title.rs` (500-line budget): this module owns every span this row
 //! ever paints, reading `TitleField` only through its public accessors —
 //! it is a SIBLING of `title`, not a descendant (unlike `title::keys`), so
 //! it has no access to the field's own private shape.
@@ -21,7 +21,7 @@ use crate::pane::Pane;
 use crate::theme::Theme;
 use crate::title::ext_split;
 
-/// Pure function of `&App` (§5.2): drawing twice produces identical
+/// Pure function of `&App`: drawing twice produces identical
 /// output. Unfocused, `name` is the active document's own file name;
 /// focused, it is whatever the user has typed so far — [`TitleField::text`]
 /// (`crate::title::TitleField`).

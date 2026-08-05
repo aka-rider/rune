@@ -3,7 +3,7 @@
 //! support — plan WP1 decision 5): the `DbEvent` -> `Msg::Db` bridge, the
 //! app-level `Db` handle (the `Store` itself + the bridge + the sticky
 //! degraded flag), and the per-document `DocDb` handle (this doc's bound
-//! row plus its async-replica bookkeeping). CONSTITUTION §1.4.8/§5.4: the
+//! row plus its async-replica bookkeeping). The
 //! in-memory `rune_core::undo::Journal` stays the synchronous, authoritative
 //! source of truth for the running session — nothing here ever waits on a
 //! `Store` ack before mutating the buffer (plan decision 3), and every call
@@ -307,10 +307,9 @@ pub struct DocDb {
     /// so the oldest entry here is always the next ack to fill in.
     pub pending_seq_acks: VecDeque<usize>,
     /// Bumped on every journal mutation; the debounce token for the 2s
-    /// snapshot-autosave timer (plan WP5.S6, port of
-    /// `workspace_timers.go`) — a `Msg::SnapshotDue` arriving with a
-    /// stale generation means a later edit already superseded it, so it's
-    /// ignored.
+    /// snapshot-autosave timer (plan WP5.S6) — a `Msg::SnapshotDue`
+    /// arriving with a stale generation means a later edit already
+    /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
 }
 

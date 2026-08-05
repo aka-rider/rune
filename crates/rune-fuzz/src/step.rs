@@ -5,9 +5,6 @@
 //! construction time (never by a totalizing `From<&Msg>`, since the driver
 //! never delivers every `Msg` variant — e.g. `Msg::Error`/`Msg::Quit` never
 //! flow through this headless driver, see `driver.rs`'s module docs).
-//!
-//! Mirrors how Go's driver passes `(rs, m, msg, prev, snap)` to its L2
-//! checks.
 
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{Command, KeyInput};

@@ -1,11 +1,10 @@
 //! Cursor movement, selection, select-all, and Escape-collapse (WP6).
-//! Ports Go's navigation commands and `multicursor.escape`.
 //!
 //! Vertical/page motion and the WP7.S2 viewport-only scroll commands live
-//! in the sibling `nav_scroll` module (plan WP7.S7, §1.6: this file was
+//! in the sibling `nav_scroll` module (plan WP7.S7: this file was
 //! already over the 500-line budget before WP7 added anything). Line/
 //! document motion (line start/end, and the `handle_move_to` driver) lives
-//! in the sibling `nav_line` module for the same reason (§1.6); that module
+//! in the sibling `nav_line` module for the same reason; that module
 //! reaches back into this one for the shared `move_cursors`/
 //! `update_horizontal` cursor-stepping infrastructure.
 //!
@@ -23,12 +22,9 @@
 //! widened the viewport. `Document::view()` is documented idempotent/cheap
 //! and always reflects the CURRENT `Document` fields (`viewport.width` in
 //! particular), so a `Key` handled right after a `Resize` in the same batch
-//! sees the post-resize wrap. This mirrors Go's own behavior too: Go's
-//! command context is built from `m.syntaxSnap`/`m.wrapSnap`, populated by
-//! the MOST RECENT `syncDisplay()` — i.e. reflecting cursor/reveal state
-//! from before this keystroke's own movement, exactly what calling `view()`
-//! at handler-entry (before this handler updates `cursors`) reproduces
-//! here.
+//! sees the post-resize wrap. That is: `view()` called at handler-entry,
+//! before this handler updates `cursors`, reflects cursor/reveal state from
+//! before this keystroke's own movement.
 //!
 //! Handlers here call `view()`, NEVER `sync()` (review finding F4):
 //! `sync()` also scrolls the viewport toward the PRIMARY cursor, and this
@@ -53,20 +49,17 @@ enum CharClass {
     Other,
 }
 
-/// Unicode-aware generalization of `commands_nav.go:getClass` (plan
-/// WP9.S1, recorded as a deliberate divergence in `TODO.md`). Go's
-/// original classifies `[A-Za-z0-9_]` as `Word` and every other rune —
-/// including every non-ASCII letter (Cyrillic, Greek, CJK ideographs,
-/// combining marks, …) — as `Other`, so `⌥←`/`⌥→` stop at every individual
-/// non-ASCII character instead of the actual word boundary. That is a
-/// defect in the Go original, not a behavior worth porting byte-for-byte:
-/// this classifier instead asks `unicode-segmentation`'s UAX #29
+/// Unicode-aware word classifier (plan WP9.S1, recorded as a deliberate
+/// divergence in `TODO.md`): asks `unicode-segmentation`'s UAX #29
 /// word-boundary algorithm whether `r`, fused between two ordinary word
 /// characters, stays part of one word segment — the same rule that
 /// already makes `is_ascii_alphanumeric()` true for `a`-`z`/`0`-`9`, but
 /// extended to every script's letters, digits and combining marks, not
-/// just ASCII's. Whitespace is likewise generalized to `char::is_whitespace`
-/// (a superset of Go's ASCII `' '`/`'\t'`/`'\n'`/`'\r'` check).
+/// just ASCII's. A naive ASCII-only classifier would treat every non-ASCII
+/// letter (Cyrillic, Greek, CJK ideographs, combining marks, …) as `Other`,
+/// so `⌥←`/`⌥→` would stop at every individual character instead of the
+/// actual word boundary. Whitespace is likewise generalized to
+/// `char::is_whitespace`.
 fn char_class(r: char) -> CharClass {
     if r.is_whitespace() {
         CharClass::Whitespace
@@ -84,18 +77,16 @@ fn char_class(r: char) -> CharClass {
 /// one character — it mirrors `unicode_words()`'s own definition of a
 /// word: a maximal run of Alphabetic/Numeric runes and the marks/joiners
 /// that combine with them (which is also why `_`, Unicode's
-/// `ExtendNumLet`, joins rather than breaks a run, matching Go's explicit
-/// `r == '_'` special case without needing one here).
+/// `ExtendNumLet`, joins rather than breaks a run).
 fn is_word_forming(r: char) -> bool {
     let probe = format!("a{r}a");
     probe.split_word_bounds().count() == 1
 }
 
-/// Port of `commands_nav.go:prevRuneOffset`. Simplified relative to Go's
-/// `utf8.DecodeLastRuneInString` + `RuneError` fallback: `Buffer::content`
-/// is a Rust `String`, a UTF-8-valid-by-construction type, so there is no
-/// reachable "invalid encoding" case to recover from — walking back to the
-/// nearest char boundary (at most 3 bytes) is the whole algorithm.
+/// `Buffer::content` is a Rust `String`, a UTF-8-valid-by-construction type,
+/// so there is no reachable "invalid encoding" case to recover from —
+/// walking back to the nearest char boundary (at most 3 bytes) is the whole
+/// algorithm.
 pub fn prev_rune_offset(buf: &Buffer, offset: usize) -> usize {
     if offset == 0 {
         return 0;
@@ -108,7 +99,6 @@ pub fn prev_rune_offset(buf: &Buffer, offset: usize) -> usize {
     i
 }
 
-/// Port of `commands_nav.go:nextRuneOffset`.
 pub fn next_rune_offset(buf: &Buffer, offset: usize) -> usize {
     if offset >= buf.len() {
         return buf.len();
@@ -125,7 +115,6 @@ fn class_at(buf: &Buffer, offset: usize) -> CharClass {
         .unwrap_or(CharClass::Other)
 }
 
-/// Port of `commands_nav.go:wordLeftOffset`.
 pub fn word_left_offset(buf: &Buffer, offset: usize) -> usize {
     if offset == 0 {
         return 0;
@@ -158,7 +147,6 @@ pub fn word_left_offset(buf: &Buffer, offset: usize) -> usize {
     offset
 }
 
-/// Port of `commands_nav.go:wordRightOffset`.
 pub fn word_right_offset(buf: &Buffer, offset: usize) -> usize {
     if offset >= buf.len() {
         return offset;
@@ -230,7 +218,7 @@ pub(crate) fn word_range_at(buf: &Buffer, offset: usize) -> (usize, usize) {
     (start, end)
 }
 
-/// Port of `commands_nav.go:selectionEndInclusive`. Used both by movement
+/// Used both by movement
 /// (implicitly, via `handle_left`/`handle_right`'s `SelectionStart`/`End`)
 /// and by `commands::edit`'s selection-replacing edits.
 pub fn selection_end_inclusive(c: &Cursor, buf: &Buffer) -> usize {
@@ -245,7 +233,7 @@ pub fn selection_end_inclusive(c: &Cursor, buf: &Buffer) -> usize {
     end
 }
 
-/// Port of `commands_nav.go:updateHorizontal`: recomputes `desired_col`
+/// Recomputes `desired_col`
 /// from the NEW position's visual column — every horizontal/line-start-end
 /// motion resets `desired_col` this way (only vertical row motion preserves
 /// the caller's `desired_col`, see `move_row` below).
@@ -268,7 +256,6 @@ pub(crate) fn update_horizontal(
     }
 }
 
-/// Port of `commands_nav.go:handleLeftCmd`.
 fn handle_left(
     view: &ViewSnapshots,
     buf: &Buffer,
@@ -283,7 +270,6 @@ fn handle_left(
     update_horizontal(view, buf, c, offset, select)
 }
 
-/// Port of `commands_nav.go:handleRightCmd`.
 fn handle_right(
     view: &ViewSnapshots,
     buf: &Buffer,
@@ -298,8 +284,8 @@ fn handle_right(
     update_horizontal(view, buf, c, offset, select)
 }
 
-/// Shared horizontal/line-start-end driver — port of `handleCursorCmd`
-/// applied to every cursor in the set.
+/// Shared horizontal/line-start-end driver, applied to every cursor in the
+/// set.
 pub(crate) fn move_cursors(
     doc: &mut Document,
     select: bool,
@@ -339,7 +325,6 @@ pub fn word_right(doc: &mut Document, select: bool) {
     });
 }
 
-/// Port of `commands_nav_gen.go:execSelectAll`.
 pub fn select_all(doc: &mut Document) {
     let all = doc.cursors.all();
     let mut c = all.first().copied().unwrap_or_default();
@@ -360,7 +345,7 @@ pub enum EscapeOutcome {
     Unconsumed,
 }
 
-/// Port of `commands_multi.go:execMulticursorEscape` — the Escape
+/// The Escape
 /// hardcoded fast path (plan Context, "Hardcoded fast paths outside the
 /// resolver"): multi-cursor collapses to the primary; a single cursor with
 /// a selection collapses the selection; otherwise reports `Unconsumed` so
@@ -397,9 +382,9 @@ mod tests {
         let buf = Buffer::new("hello   world");
         assert_eq!(word_left_offset(&buf, 13), 8); // start of "world"
         assert_eq!(word_right_offset(&buf, 0), 5); // end of "hello"
-        // Starting mid-whitespace, Go's wordRightOffset skips the
+        // Starting mid-whitespace, this skips the
         // whitespace run AND the following word class run in the same
-        // call (commands_nav.go) — it does not stop at the start
+        // call — it does not stop at the start
         // of "world".
         assert_eq!(word_right_offset(&buf, 5), 13);
         // Starting mid-word only skips to the end of the CURRENT word,
@@ -407,10 +392,10 @@ mod tests {
         assert_eq!(word_right_offset(&buf, 2), 5);
     }
 
-    /// Regression for WP9.S1 (the Go word-classification defect): a
+    /// Regression for WP9.S1: a
     /// non-ASCII alphabet must still form one word run, so `⌥→`/`⌥←` stop
     /// at the WORD boundary, never at every individual Cyrillic character.
-    /// Under Go's original ASCII-only classifier every non-ASCII letter is
+    /// A naive ASCII-only classifier would treat every non-ASCII letter as
     /// `Other`, so `word_right_offset` from 0 would stop after a single
     /// rune instead of at the end of "привіт".
     #[test]
@@ -422,8 +407,7 @@ mod tests {
         assert_eq!(word_left_offset(&buf, buf.len()), svit_start);
     }
 
-    /// `_` still joins a word run (Go's explicit `r == '_'` special case),
-    /// and ASCII digits/letters keep classifying together with a
+    /// `_` still joins a word run, and ASCII digits/letters keep classifying together with a
     /// following Unicode letter (mixed identifiers stay one word).
     #[test]
     fn underscore_and_mixed_ascii_unicode_runs_stay_one_word() {

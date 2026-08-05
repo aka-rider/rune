@@ -1,8 +1,8 @@
 # rune-tui TODO
 
-## `rename.rs` over the §1.6 500-LoC ceiling
+## `rename.rs` over the file-size budget 500-LoC ceiling
 
-`src/rename.rs` is ~612 lines, over the CONSTITUTION §1.6 budget
+`src/rename.rs` is ~612 lines, over the file-size budget
 (checklist line 278). Pre-existing (the rename state machine — `Ticket`,
 `RenameState`, `begin`/`apply_outcome`/`bind_to`/`replace_confirmed`/
 `bind_new` and their `Cmd` builders — was already this large before the
@@ -13,7 +13,7 @@ change; tracked here instead of silently skipped. A plausible split: the
 with `begin`/`apply_outcome`/`bind_to`/`bind_new` and the plain no-store
 `Cmd` builders.
 
-## `app.rs` over the §1.6 500-LoC ceiling
+## `app.rs` over the file-size budget 500-LoC ceiling
 
 `src/app.rs` was already 573 lines before this plan (WP1's `Document`-map
 reshape, plus the doc comments recording every extraction already made —

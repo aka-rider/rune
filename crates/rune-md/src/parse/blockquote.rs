@@ -1,5 +1,5 @@
 //! Blockquote marker derivation — split out from `block.rs` to keep it
-//! under CONSTITUTION §1.6's 500-LoC limit.
+//! under the 500-line budget.
 
 use super::{ScanHint, line_end_at};
 use crate::element::block::BlockquoteMarkerM;

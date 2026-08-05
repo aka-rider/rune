@@ -1,5 +1,5 @@
 //! The GLOBAL `^w` (close-tab) and `^1`-`^0` (tab-switch) binding tests,
-//! split out of `opentabs.rs` per TODO.md's §1.6 note: these were appended
+//! split out of `opentabs.rs` per TODO.md's 500-line budget note: these were appended
 //! to the Tabs-pane test file rather than split out when the global
 //! bindings first landed. Pane-local Open Tabs rendering/switching and the
 //! close guard's three resolutions stay in `opentabs.rs`; both files pull

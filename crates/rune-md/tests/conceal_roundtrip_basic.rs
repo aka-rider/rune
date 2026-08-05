@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): the base reveal-parity
+//! Split off `conceal_roundtrip.rs` (WP11): the base reveal-parity
 //! table tests and the per-byte coverage regression cases (review BLOCKER
 //! 1/2/3, MAJOR 4) — every byte of every line is either visible or hidden,
 //! never dropped.
@@ -95,10 +95,9 @@ fn tasklist_marker_reveals_on_cursor_line() {
 
 #[test]
 fn tasklist_marker_conceals_off_cursor_line() {
-    // Go parity (`walkTaskList`): the "- " prefix conceals like any list
-    // marker, but the checkbox itself substitutes to its glyph (`☑` for
-    // `[x]`) rather than disappearing outright — the defect this test
-    // pins (`scripts/parity/fixtures/tasks.md`).
+    // The "- " prefix conceals like any list marker, but the checkbox
+    // itself substitutes to its glyph (`☑` for `[x]`) rather than
+    // disappearing outright — the behavior this test pins.
     let content = "- [x] task\nother\n";
     let (buf, doc) = synced(content, "- [x] task\n".len(), true);
     let (lines, _snap) = emit(buf.content(), doc.blocks(), 80);
@@ -170,8 +169,8 @@ fn crlf_carriage_return_is_visible_not_dropped() {
     let (buf, doc) = synced("line one\r\nline two\r\n", 0, true);
     let (lines, snap) = emit(buf.content(), doc.blocks(), 80);
     assert_full_line_coverage(&buf, &lines, &snap);
-    // The bare \r before \n is user content (§1.4.5) — it must show up in
-    // the concealed/revealed text exactly as written.
+    // The bare \r before \n is user content — it must show up in
+    // the concealed/revealed text exactly as written, never dropped.
     assert!(
         joined_line(&lines, 0, buf.content()).ends_with('\r'),
         "line 0 = {:?}",

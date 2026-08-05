@@ -2,7 +2,7 @@
 //! across `explorer_nav.rs` (cursor movement, opening files/directories,
 //! and the parent row) and `explorer_reload.rs` (the `resolve` fallback,
 //! refresh/stale-reply handling, `open_path` reactivation, and the lazy
-//! `ensure_loaded` load) — TODO.md's §1.6 split of the original
+//! `ensure_loaded` load) — TODO.md's 500-line budget split of the original
 //! `explorer.rs`. Both consumers pull this in via `mod explorer_common;`
 //! — integration test files are separate binaries, so this is the one
 //! place both draw an identical `App`/`Mem` fixture from, rather than

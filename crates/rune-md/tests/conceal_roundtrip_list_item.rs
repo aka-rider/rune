@@ -1,12 +1,12 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): empty-list-item-marker
+//! Split off `conceal_roundtrip.rs` (WP11): empty-list-item-marker
 //! regression cases (verification round 3 BLOCKER). An empty item's marker
 //! ran from the item's own start to its FIRST CHILD's start — which, for a
 //! lazily-indented continuation (e.g. a nested blockquote under
 //! "- \n  > q"), sits on the NEXT physical line. The marker swallowed that
 //! line's leading indent, bytes the continuation's own scan
 //! (`blockquote_markers`) claims independently: content invented on the
-//! visible side (both spans show the same 2 bytes) — §1.4.5's mirror image
-//! of dropping a byte.
+//! visible side (both spans show the same 2 bytes) — the mirror image of
+//! dropping a byte: either way, the bytes don't round-trip verbatim.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 mod conceal_common;

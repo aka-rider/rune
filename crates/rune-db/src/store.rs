@@ -4,7 +4,7 @@
 //! escapes the crate (plan decision 11); domain verbs land here as WP3+
 //! grows `OpKind` and the reader's request enum.
 //!
-//! # Open ladder (port of `store.go`)
+//! # Open ladder
 //!
 //! 1. Open `path` directly (creating it if missing).
 //! 2. On failure: `mkdir_all(path.parent())`, retry step 1.
@@ -37,8 +37,7 @@ pub type ClockFn = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 /// An injectable liveness check: `(pid, proc_started_at) -> still running?`.
 /// Production uses [`session::is_process_alive`]; tests simulate a dead
-/// session deterministically (mirrors `SetClock`/`SetLivenessCheck` in the
-/// Go source).
+/// session deterministically.
 pub type LivenessCheckFn = Arc<dyn Fn(i64, &str) -> bool + Send + Sync>;
 
 /// The default synchronous busy-of-storage warning surfaced when the open
@@ -97,8 +96,8 @@ impl Store {
     /// Opens a store entirely in memory, undegraded (unlike the fallback
     /// rung of [`Store::open`], this is an intentional, explicit choice —
     /// tests and, eventually, the session fuzzer). `clock` seeds this
-    /// store's clock from construction, matching Go's `OpenInMemory`
-    /// honoring a caller-supplied clock even at session-establish time.
+    /// store's clock from construction — a caller-supplied clock is
+    /// honored even at session-establish time.
     pub fn open_in_memory(
         clock: ClockFn,
         fs: Arc<dyn Vfs + Send + Sync>,
@@ -110,8 +109,7 @@ impl Store {
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         // Best-effort dead-session reaper (plan WP4.S6): never blocks open
-        // — a failure here is swallowed, not surfaced, exactly like Go's
-        // `openStoreAt` (`liveness.go` doc comment).
+        // — a failure here is swallowed, not surfaced, on purpose.
         let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
         // One startup blob-sweep batch (WP6.S1), after the reaper — best
         // effort, never blocks open.
@@ -140,8 +138,7 @@ impl Store {
         let session_id = session::establish_session(&writer_conn, now)?;
 
         // Best-effort dead-session reaper (plan WP4.S6): never blocks open
-        // — a failure here is swallowed, not surfaced, exactly like Go's
-        // `openStoreAt` (`liveness.go` doc comment).
+        // — a failure here is swallowed, not surfaced, on purpose.
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
         // One startup blob-sweep batch (WP6.S1), after the reaper — best
@@ -177,15 +174,14 @@ impl Store {
         self.session_id
     }
 
-    /// Replaces the store's clock. Used in deterministic tests (mirrors
-    /// Go's `SetClock`).
+    /// Replaces the store's clock. Used in deterministic tests.
     pub fn set_clock(&self, clock: ClockFn) {
         *self.clock.lock().unwrap_or_else(|p| p.into_inner()) = clock;
     }
 
     /// Replaces how this store decides whether a different session's
-    /// recorded process is still alive (mirrors Go's `SetLivenessCheck`).
-    /// Consumed by WP4's cross-session inheritance decision.
+    /// recorded process is still alive. Consumed by WP4's cross-session
+    /// inheritance decision.
     pub fn set_liveness_check(&self, check: LivenessCheckFn) {
         *self
             .liveness_check
@@ -228,7 +224,7 @@ impl Store {
     }
 
     /// The reader handle, for display/immutable reads dispatched from a
-    /// spawned `Cmd` (CONSTITUTION §5.4 — never from `update` directly).
+    /// spawned `Cmd` — never from `update` directly.
     pub fn reader(&self) -> &reader::ReaderHandle {
         &self.reader
     }

@@ -17,9 +17,9 @@ use super::CellSrc;
 use super::render::RenderedCell;
 
 /// Total display width of `text` — the sum of each grapheme cluster's
-/// `grapheme_width` (CONSTITUTION §1.5: widths are terminal cells, never
-/// `.len()`'s bytes nor `.chars().count()`'s scalar values — a ZWJ/skin-tone
-/// emoji cluster is one cell-width unit, not one-per-`char`).
+/// `grapheme_width` (widths are terminal cells, never `.len()`'s bytes nor
+/// `.chars().count()`'s scalar values — a ZWJ/skin-tone emoji cluster is
+/// one cell-width unit, not one-per-`char`).
 pub(crate) fn display_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_width).sum()
 }
@@ -95,8 +95,7 @@ fn longest_atomic_unit_width(text: &str) -> usize {
 /// `pivot::pivot_rows`) build before grouping into the
 /// `(String, Vec<CellSrc>, ScopeId)` runs `row_spans` consumes. `pub(super)`:
 /// visible crate-tree-wide under `table::`, so the Wrapped/Pivoted builders
-/// (separate files, CONSTITUTION §1.6) share this exact shape instead of a
-/// second copy of it.
+/// (separate files) share this exact shape instead of a second copy of it.
 pub(super) struct FlatChar {
     pub(super) ch: char,
     pub(super) buf: i64,
@@ -138,8 +137,8 @@ pub(super) fn group_runs(flat: &[FlatChar]) -> Vec<(String, Vec<CellSrc>, ScopeI
 
 /// Pushes one column's content slot, padded to `w` per `align`: `None`/
 /// `Left` pads on the right, `Right` pads on the left, `Center` splits the
-/// fill (the shorter half first, matching Go's own `(w-content)/2` floor-
-/// division split). Padding chars are decorative (`buf = -1`, the row's own
+/// fill (the shorter half first, via `(w-content)/2` floor-division).
+/// Padding chars are decorative (`buf = -1`, the row's own
 /// role scope); the cell's own chars keep whatever [`super::render::render_cell`]
 /// resolved for them.
 fn push_padded_content(
@@ -287,21 +286,21 @@ pub enum TableLayout {
 /// Selects a table's layout for `avail` display columns (WP4.S1), given
 /// each column's natural width (`widths`) and its floor/atomic width
 /// (`min_widths`, `col_widths`'s second return). `avail == 0` means "no
-/// width has been set" and always selects Grid unconditionally (Go parity:
-/// an editor that never got a resize message never wraps a table either).
+/// width has been set" and always selects Grid unconditionally: a table
+/// that never received a resize message never wraps.
 ///
-/// One deliberate correction against the Go reference (Assumption A1): the
-/// grid-fit test below uses the table's TRUE rendered row width
-/// `Σw + 3n + 1`, not Go's own minimum-grid-width formula (`Σw + 4n − 1`,
-/// which disagrees with the width Go itself actually renders except at
-/// exactly 2 columns). Every OTHER threshold is kept verbatim, including
+/// One deliberate correction (Assumption A1): the grid-fit test below uses
+/// the table's TRUE rendered row width `Σw + 3n + 1`, not the
+/// minimum-grid-width formula (`Σw + 4n − 1`) used elsewhere in this
+/// function, which disagrees with the width actually rendered except at
+/// exactly 2 columns. Every OTHER threshold keeps that formula, including
 /// `frame_overhead` below (`4n − 1`, the SAME formula the grid-fit test just
 /// rejected) — that inconsistency is Assumption A1's documented, accepted
-/// cost: at `n != 2`, within `n − 2` columns of the threshold, this picks a
-/// different layout than Go would at the same width. Not harmonized away —
-/// silently "fixing" only one of the two formulas would make the pair
-/// agree with each other instead of with the rendered width either of them
-/// is supposed to describe.
+/// cost: at `n != 2`, within `n − 2` columns of the threshold, this can
+/// select a different layout than a single consistent formula would. Not
+/// harmonized away — silently "fixing" only one of the two formulas would
+/// make the pair agree with each other instead of with the rendered width
+/// either of them is supposed to describe.
 pub fn choose(widths: &[usize], min_widths: &[usize], avail: usize) -> TableLayout {
     let n = widths.len();
     if n == 0 || avail == 0 {
@@ -335,10 +334,10 @@ pub fn choose(widths: &[usize], min_widths: &[usize], avail: usize) -> TableLayo
     }
 
     let flex_budget = content_budget.saturating_sub(atomic_budget);
-    // Two distinct viability checks (Go parity, kept separate rather than
-    // merged into one condition so each keeps its own name/shape): flexible
-    // columns get enough room each, OR there are no flexible columns at all
-    // and the atomic ones already fit.
+    // Two distinct viability checks, kept separate rather than merged into
+    // one condition so each keeps its own name/shape: flexible columns get
+    // enough room each, OR there are no flexible columns at all and the
+    // atomic ones already fit.
     let flex_cols_have_room = flex_count > 0 && flex_budget >= flex_count * min_flex;
     let only_atomic_cols_fit = flex_count == 0 && atomic_budget <= content_budget;
     if flex_cols_have_room || only_atomic_cols_fit {

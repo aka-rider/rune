@@ -2,7 +2,7 @@
 //! block's marker lines, ours span, and theirs span get their own
 //! background, computed as byte intervals derived purely from `Block::
 //! start` plus [`super::frame::frame_block`]'s own fixed marker-line
-//! lengths — port of Go's `colorIntervals`. A resolved block contributes no
+//! lengths. A resolved block contributes no
 //! interval at all: its span no longer holds markers, just plain accepted
 //! content.
 //!
@@ -10,7 +10,7 @@
 //! (`render/code_bg.rs`), generalized from row-rectangles to byte-interval
 //! regions: rather than a fresh byte->row/col walk, it keys directly off
 //! `Cell::buf_offset` — the same chokepoint `overlay::highlight_selection`
-//! already paints a byte-range background through — so §1.5's "cells for
+//! already paints a byte-range background through — so the "cells for
 //! display, bytes for spans" rule is never in tension with this pass.
 
 use std::ops::Range;

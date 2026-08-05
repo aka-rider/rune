@@ -4,7 +4,7 @@
 //! policy, and `sync_embeds`'s dedupe of same-target duplicates must be
 //! deterministic rather than keyed off arbitrary `HashMap` iteration order.
 //! Kept separate from `inline_embed.rs` (WP9's own file, already near the
-//! §1.6 budget) rather than grown into it.
+//! 500-line budget) rather than grown into it.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

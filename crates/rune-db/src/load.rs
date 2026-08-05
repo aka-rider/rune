@@ -1,8 +1,8 @@
 //! `Load` — reads a path fresh from disk, resolves document identity,
 //! records the sighting, and returns everything the caller needs to decide
-//! how to display it. Ported from Go's `Load`. Every step below
+//! how to display it. Every step below
 //! either does `vfs` I/O with no transaction open, or opens its own short
-//! `retry::with_retry` transaction (plan binding rule, Go invariant I1).
+//! `retry::with_retry` transaction (plan binding rule, invariant I1).
 //!
 //! The Adoption Contract (`observation.rs` module doc) governs `saved_obs`
 //! here: first-ever load anchors a recovery snapshot and adopts it as-is;
@@ -28,8 +28,7 @@ use crate::sync::SyncState;
 
 /// The outcome of [`load`]: the raw disk bytes, the journal-reconstructed
 /// content (identical to `disk_content` when the document has no history),
-/// and the [`SyncState`] that follows from recording this sighting. Port of
-/// `observation.go` (`LoadResult`).
+/// and the [`SyncState`] that follows from recording this sighting.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadResult {
     pub doc_id: i64,
@@ -67,7 +66,7 @@ pub struct LoadResult {
 }
 
 /// Reports whether `doc_id` has any events or snapshots RECORDED BY
-/// `session_id`. Port of `snapshot.go` (`HasHistory`).
+/// `session_id`.
 pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<bool, Error> {
     tx.query_row(
         "SELECT EXISTS( \
@@ -83,7 +82,7 @@ pub fn has_history(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 
 /// Reads `path` fresh from disk, resolves its document identity, records
 /// the sighting, and returns everything the caller needs to decide how to
-/// display it. Port of `load.go` (`Load`). `liveness_check` is
+/// display it. `liveness_check` is
 /// threaded in per-call (this `Store`'s injected liveness function) rather
 /// than read from shared state — `OpKind::Load` carries it.
 pub fn load(

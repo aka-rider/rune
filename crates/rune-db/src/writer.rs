@@ -160,7 +160,7 @@ fn writer_loop(
 /// touches the database. Returns the domain result (if any) that becomes
 /// `DbEvent::Ok.result`. `Probe`/`Materialize`/`Load` call several
 /// `retry::with_retry` transactions internally, interleaved with `vfs`
-/// calls made with NO transaction open (plan binding rule / Go invariant
+/// calls made with NO transaction open (plan binding rule / invariant
 /// I1) — `execute_op` itself never wraps their whole body in one tx.
 fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOutcome, Error> {
     match kind {

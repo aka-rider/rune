@@ -1,8 +1,7 @@
 //! `SyntaxSpan`/`SyntaxLine` (the Emitter's per-buffer-line output) and
-//! `SyntaxSnapshot` (Buffer Space <-> Syntax Space coordinate conversion) —
-//! port of Go's syntax snapshot. Producer-agnostic
-//! (WP3): `rune-md`'s emitter is the only producer today, but nothing here
-//! depends on markdown.
+//! `SyntaxSnapshot` (Buffer Space <-> Syntax Space coordinate conversion).
+//! Producer-agnostic (WP3): `rune-md`'s emitter is the only producer today,
+//! but nothing here depends on markdown.
 
 use std::ops::Range;
 
@@ -49,14 +48,14 @@ fn ceil_char_boundary(s: &str, idx: usize) -> usize {
 }
 
 /// Per-visual-char buffer offset, `-1` for decorative/padding cells with no
-/// buffer correspondence — port of Go's `CellMapping`. `rune-md`'s
-/// synthesized table-border rows already produce all-`-1` maps (a border
+/// buffer correspondence. `rune-md`'s synthesized table-border rows already
+/// produce all-`-1` maps (a border
 /// row's text is decorative, with no buffer position to point back to);
 /// this crate itself never constructs one, but must accept whatever a
 /// producer hands it.
 pub type CellMap = Vec<i64>;
 
-/// Port of Go's per-run syntax-map span, reshaped into
+/// A per-run syntax-map span, modeled as
 /// two variants (plan Context: "Span becomes an enum ... Makes 'identical
 /// text carrying a cell map' unrepresentable") so a producer can no longer
 /// pair a `cell_map` with text that's already a verbatim buffer slice, nor
@@ -91,7 +90,7 @@ impl SyntaxSpan {
     /// guarantees never actually fires) the way an externally-guarded
     /// convention could still get wrong. A producer handing back an
     /// out-of-bounds or mid-codepoint range is a bug; this degrades it to a
-    /// clamped (never panicking, §1.3) range in every build, surfaced via
+    /// clamped (never panicking) range in every build, surfaced via
     /// `assert_invariant` in tests.
     pub fn identical(content: &str, scope: ScopeId, range: Range<usize>) -> SyntaxSpan {
         let len = content.len();
@@ -231,9 +230,9 @@ pub(crate) struct LineConversion {
     pub(crate) hidden: Vec<HiddenRange>,
 }
 
-/// Coordinate conversion between Buffer Space and Syntax Space — port of
-/// Go's syntax snapshot. Positions inside hidden
-/// delimiters clamp to the nearest cursor-legal syntax position.
+/// Coordinate conversion between Buffer Space and Syntax Space. Positions
+/// inside hidden delimiters clamp to the nearest cursor-legal syntax
+/// position.
 #[derive(Clone, Debug, Default)]
 pub struct SyntaxSnapshot {
     pub(crate) line_convs: Vec<LineConversion>,
@@ -366,8 +365,9 @@ fn has_overlap(intervals: &[(usize, usize)]) -> bool {
 /// future producer reintroduces an overlapping-range bug (the class two
 /// separate findings on this branch belonged to), the delta accumulation
 /// below can no longer double-count it — merging happens UNCONDITIONALLY
-/// in every build (§1.3 graceful degradation); the `STRICT_INVARIANTS`
-/// assert above is what surfaces the producer bug, in tests only. Sorting
+/// in every build, so a producer bug degrades gracefully instead of
+/// panicking; the `STRICT_INVARIANTS` assert above is what surfaces the
+/// producer bug, in tests only. Sorting
 /// lives HERE (not in each caller) so "unsorted intervals" can't
 /// legitimately reach a caller that forgot to sort first — both current
 /// callers (this module's own `build_line_conversions` and `rune-md`'s
@@ -416,7 +416,7 @@ pub(crate) fn build_line_conversions(
             .map(|&(s, e)| (s.saturating_sub(line_start), e.saturating_sub(line_start)))
             .collect();
 
-        // §1.3: never panics in an ordinary shipped build — only in tests
+        // Never panics in an ordinary shipped build — only in tests
         // (or a build that opts in via the `strict-invariants` feature),
         // via the shared `assert_invariant` chokepoint. The merge two
         // lines below runs unconditionally regardless.
@@ -492,7 +492,7 @@ mod tests {
     /// instead of silently corrupting coordinate conversion. Unlike the
     /// old `debug_assert!`-based version, `STRICT_INVARIANTS` is tied to
     /// `cfg(test)` (not `cfg(debug_assertions)`), so this fires in a
-    /// `--release` test run too (§1.3: the assert is test-only, not
+    /// `--release` test run too (the assert is test-only, not
     /// profile-only — a `cargo test --release` run must still catch this).
     #[test]
     #[should_panic(expected = "overlapping hidden ranges")]

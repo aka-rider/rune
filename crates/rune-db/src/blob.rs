@@ -1,19 +1,17 @@
 //! Content-addressed blob storage: zstd-compressed values keyed by the hex
-//! SHA-256 of the PLAINTEXT bytes (ported from Go's blob store).
-//! CONSTITUTION §1.4.10 ("capture displaced bytes as a durable blob before
-//! they're ever discarded") is what this table exists to satisfy — every
-//! snapshot and every `origin='swap'` observation (WP4) routes its content
-//! through here.
+//! SHA-256 of the PLAINTEXT bytes. Capturing displaced bytes as a durable
+//! blob before they're ever discarded is what this table exists to
+//! satisfy — every snapshot and every `origin='swap'` observation (WP4)
+//! routes its content through here.
 //!
-//! Deliberately `&[u8]`/`Vec<u8>`-typed, never `&str`/`String`: Go's `string`
-//! is just a byte sequence with no UTF-8 validity requirement (`PutBlob`
-//! there takes `string(data)` unconditionally, `load.go`), so disk-sourced
+//! Deliberately `&[u8]`/`Vec<u8>`-typed, never `&str`/`String`: disk-sourced
 //! content — including a swap-race's *displaced* bytes, which may come from
-//! ANY other writer and are captured under duress, never validated — must
-//! never be rejected here just because it fails to decode as UTF-8. A hard
-//! `unwrap`/error at this layer would mean "no blob, no commit" for bytes
-//! that are already physically on disk (§1.4.10's exact failure mode this
-//! type turns into a compile-time impossibility). Callers holding genuinely
+//! ANY other writer and are captured under duress, never validated —
+//! carries no UTF-8 validity guarantee, so it must never be rejected here
+//! just because it fails to decode as UTF-8. A hard `unwrap`/error at this
+//! layer would mean "no blob, no commit" for bytes that are already
+//! physically on disk — this type turns that failure mode into a
+//! compile-time impossibility. Callers holding genuinely
 //! session-authored `String` content (the journal/snapshot/buffer path) pass
 //! `.as_bytes()`; callers that need the content back as `String` (recovery
 //! replay re-entering the edit buffer) convert explicitly at that boundary
@@ -35,8 +33,7 @@ use crate::Error;
 /// Stores `content` compressed under the hex SHA-256 of the raw bytes,
 /// `INSERT OR IGNORE` (content-addressed — an existing row with the same
 /// hash is already byte-identical, so a duplicate insert is a deliberate
-/// no-op, not a conflict). Returns the hash either way. Port of
-/// `snapshot.go`.
+/// no-op, not a conflict). Returns the hash either way.
 pub(crate) fn put_blob(conn: &Connection, content: &[u8]) -> Result<String, Error> {
     let hash = hex_sha256(content);
     let compressed = zstd::encode_all(content, 0).map_err(Error::Io)?;
@@ -51,8 +48,8 @@ pub(crate) fn put_blob(conn: &Connection, content: &[u8]) -> Result<String, Erro
 /// Decompresses and returns the raw bytes stored under `hash`,
 /// re-verifying its SHA-256 against `hash` before returning — blob rot /
 /// bit-flip detection. A mismatch is a corrupt blob and is surfaced as
-/// [`Error::BlobHashMismatch`], never silently returned (port of
-/// `snapshot.go`). Never attempts a UTF-8 decode — that is each
+/// [`Error::BlobHashMismatch`], never silently returned. Never attempts
+/// a UTF-8 decode — that is each
 /// caller's own concern, only where (and if) the bytes need to re-enter a
 /// `String`.
 pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> {
@@ -79,8 +76,7 @@ pub(crate) fn get_blob(conn: &Connection, hash: &str) -> Result<Vec<u8>, Error> 
 }
 
 /// Exposed `pub(crate)` (rather than kept private) so `observation.rs`
-/// (`hashBytes`, `observation.go`) and `sync.rs` (`emptyHash`,
-/// `sync.go`) share this ONE hex-SHA-256 implementation instead of a
+/// and `sync.rs` share this ONE hex-SHA-256 implementation instead of a
 /// second copy — the same hash space `blobs.hash`/`observations.blob_hash`
 /// both live in.
 pub(crate) fn hex_sha256(bytes: &[u8]) -> String {
@@ -150,10 +146,9 @@ mod tests {
         assert_eq!(n, 1);
     }
 
-    /// Port of `docstate_test.go`'s `corruptBlob`: flip the LAST byte of the
-    /// stored compressed content (not append — appending can corrupt the
-    /// zstd frame itself into a decode failure rather than exercising the
-    /// hash re-verification this test targets).
+    /// Flip the LAST byte of the stored compressed content (not append —
+    /// appending can corrupt the zstd frame itself into a decode failure
+    /// rather than exercising the hash re-verification this test targets).
     #[test]
     fn corrupted_blob_content_surfaces_hash_mismatch() {
         let conn = open();

@@ -29,7 +29,7 @@ use crate::document::Document;
 /// spans that tie on both keys keep the capture-yield order `rune_ts` gave
 /// them — the third key of the painter-order contract.
 ///
-/// This is also the one clamp (§1.3), covering both channels and both the
+/// This is also the one clamp, covering both channels and both the
 /// fence and whole-file paths: `end` is clamped to the live content length,
 /// a span whose either endpoint is not a `char` boundary is dropped, and so
 /// is one left empty or inverted by the clamp. Clamping here rather than on

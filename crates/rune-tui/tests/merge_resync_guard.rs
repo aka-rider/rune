@@ -195,9 +195,8 @@ fn undo_after_ours_then_both_reopens_only_the_ours_block_not_the_both_block() {
 
 /// Plan WP6 "Done when" (2): a document whose PROSE quotes literal
 /// `<<<<<<< editor`/`=======`/`>>>>>>> disk` lines round-trips resync
-/// without misclassifying (port of the Go reference resync test's quoted-marker
-/// scenario) — driven end-to-end through a real undo/redo, not just the
-/// unit-level `resync` module tests.
+/// without misclassifying — driven end-to-end through a real undo/redo,
+/// not just the unit-level `resync` module tests.
 #[test]
 fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     let quoted_ours =

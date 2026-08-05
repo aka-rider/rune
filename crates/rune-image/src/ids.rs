@@ -17,9 +17,9 @@ pub fn alloc_id(abs_path: &str) -> u32 {
     if id == 0 { 1 } else { id }
 }
 
-/// The seed string hashed to derive one animation frame's image ID. The
-/// reference implementation derives frame IDs by hashing exactly this
-/// string.
+/// The seed string hashed (via [`alloc_id`]'s FNV-1a) to derive one
+/// animation frame's own image ID, keeping it deterministic and distinct
+/// from the document's own image ID.
 pub fn frame_id_seed(abs_path: &str, frame: usize) -> String {
     format!("{abs_path}#frame{frame}")
 }

@@ -3,8 +3,8 @@
 //! bracketed paste, and mouse reporting (plan WP7.S3) on construction;
 //! `Drop` restores all of it. `Drop` runs
 //! during unwind, before `catch_unwind` traps a panic in `rune-cli`'s
-//! `main` — the halt path CONSTITUTION §1.3 requires (panic = "abort" is
-//! forbidden precisely so this restore can run).
+//! `main` — the halt-never-panic path this crate requires (panic = "abort"
+//! is forbidden precisely so this restore can run).
 //!
 //! Owns the one `termina::Terminal` for the process: main-thread-only by
 //! construction (plan Gotchas: "Cmds must never touch the terminal" —
@@ -67,11 +67,10 @@ pub struct Guard {
     /// window (`bootstrap`'s own ordering: this field is set right after,
     /// via `set_kitty`, and re-synced on every later `Msg::Resize`). `Drop`
     /// reads it to decide whether tearing down the terminal should emit
-    /// `rune_image::encode_delete_all()`: the reference Go implementation
-    /// emits it unconditionally, but this crate's Goal promises a non-
-    /// graphics terminal (`TERM=dumb`, an acceptance run) sees NO escape
-    /// bytes at all, so `Guard` has to carry the capability flag rather
-    /// than assume it.
+    /// `rune_image::encode_delete_all()`: unconditional emission would
+    /// violate this crate's Goal that a non-graphics terminal (`TERM=dumb`,
+    /// an acceptance run) sees NO escape bytes at all, so `Guard` has to
+    /// carry the capability flag rather than assume it.
     kitty: bool,
 }
 
@@ -118,7 +117,7 @@ impl Guard {
     /// Enables the alternate screen, bracketed paste, Kitty keyboard flags,
     /// and mouse reporting, and hides the terminal cursor (render.rs draws
     /// the caret itself as a styled cell — plan Context, "Cell model":
-    /// "Terminal cursor hidden; caret drawn by us (Go parity)"). Only ever
+    /// "Terminal cursor hidden; caret drawn by us"). Only ever
     /// called from `new`, on an already-constructed `Guard` — see its docs
     /// for why that ordering matters.
     ///
@@ -222,10 +221,10 @@ impl Guard {
 /// only the LEADING `encode_delete_all()` escape: Kitty images stay
 /// resident in the terminal until explicitly deleted, so quitting must
 /// clear them all, but ONLY on a terminal that actually speaks the
-/// protocol — the reference Go implementation emits this unconditionally,
-/// but this crate's Goal promises a non-graphics terminal sees no escape
-/// bytes at all. The mode-restoring escapes after it are unconditional,
-/// exactly as before this package.
+/// protocol — unconditional emission would violate this crate's Goal
+/// that a non-graphics terminal sees no escape bytes at all. The
+/// mode-restoring escapes after it are unconditional, exactly as
+/// before this package.
 fn teardown_bytes(kitty: bool) -> Vec<u8> {
     let mut bytes = Vec::new();
     if kitty {
@@ -248,7 +247,7 @@ fn teardown_bytes(kitty: bool) -> Vec<u8> {
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        // §1.3: halt, never panic — every step here is best-effort. A
+        // Halt, never panic — every step here is best-effort. A
         // failure restoring one escape sequence must not prevent the rest
         // from running (a half-restored terminal is still better than
         // none). `termina::UnixTerminal`'s own `Drop` restores cooked mode

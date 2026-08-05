@@ -66,10 +66,9 @@ pub struct ChromeStyles {
     pub code_bg: Color,
     /// Backgrounds for one unresolved merge block's ours span, theirs span,
     /// and marker lines (plan WP5.S1; `merge::paint` is the only consumer).
-    /// Go paints these with raw ANSI green/red/grey (`MergeOursBg`/
-    /// `MergeTheirsBg`/`MergeMarkerBg`); these are the Catppuccin-tinted
-    /// equivalent, muted against `surface0` the same way `code_bg` sits at
-    /// full `surface0` rather than a saturated hue.
+    /// Catppuccin-tinted rather than raw ANSI green/red/grey, muted against
+    /// `surface0` the same way `code_bg` sits at full `surface0` rather
+    /// than a saturated hue.
     pub merge_ours_bg: Style,
     pub merge_theirs_bg: Style,
     pub merge_marker_bg: Style,
@@ -148,7 +147,7 @@ impl Theme {
     /// of `chrome`'s named fields. Falls back to a plain default `Style`
     /// for an id past this theme's `scopes` length (a future tree-sitter
     /// producer, WP5, may register scopes a theme built before it existed
-    /// doesn't know about yet — §1.3: degrade to unstyled text, never
+    /// doesn't know about yet — degrade to unstyled text, never
     /// panic or index out of bounds).
     pub fn scope_style(&self, id: ScopeId) -> Style {
         self.scopes.get(id.0 as usize).copied().unwrap_or_default()
@@ -174,7 +173,7 @@ impl Theme {
 /// `merge_theirs_bg` use to tint `surface0` toward green/red rather than
 /// painting a whole background in a fully saturated hue. Falls back to `a`
 /// unmixed for any non-`Rgb` variant (never reached with `Mocha::palette`'s
-/// own colours, all `Rgb`, but kept total rather than partial, §1.3).
+/// own colours, all `Rgb`, but kept total rather than partial).
 fn blend(a: Color, b: Color, t: f32) -> Color {
     let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
         return a;
@@ -240,7 +239,7 @@ fn markdown_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> S
         // `Theme::catppuccin_mocha` walks `table.iter()`), so every arm
         // above is exhaustive over the names that ever reach here — a
         // future scope this match hasn't been taught yet degrades to
-        // plain, unstyled text (§1.3) rather than panicking.
+        // plain, unstyled text rather than panicking.
         _ => base,
     }
 }
@@ -272,7 +271,7 @@ fn code_scope_style(name: &str, p: &Mocha, c: &impl Fn(Color) -> Color) -> Style
         // Unreachable in practice: `name` is always drawn from this same
         // table's own `CODE_SCOPES`, so every arm above is exhaustive over
         // the names that ever reach here — a future scope this match
-        // hasn't been taught yet degrades to plain, unstyled text (§1.3)
+        // hasn't been taught yet degrades to plain, unstyled text
         // rather than panicking.
         _ => base,
     }

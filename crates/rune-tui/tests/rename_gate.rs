@@ -1,5 +1,5 @@
 //! The title's extension gate, and the field's own word-motion/selection/
-//! undo editing — split out of `rename_bind.rs` (plan WP5, §1.6). Both
+//! undo editing — split out of `rename_bind.rs` (plan WP5, 500-line budget). Both
 //! sections were added by the same extension-gate package that grew that
 //! file past the ceiling.
 
@@ -179,7 +179,7 @@ fn word_motion_and_shift_selection_work_in_the_title() {
 }
 
 /// The title's own `⌘Z` undoes typing WITHOUT ever touching the active
-/// document's journal (§12: "the title field is unjournaled").
+/// document's journal — the title field is unjournaled.
 #[test]
 fn undo_in_the_title_never_touches_the_document_journal() {
     let mem = seeded_vfs();

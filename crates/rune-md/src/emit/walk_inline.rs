@@ -1,5 +1,5 @@
 //! The inline-node handler family, split out from the block-node walk to
-//! keep the owning module under CONSTITUTION §1.6's 500-LoC limit: every
+//! keep the owning module under the 500-line budget: every
 //! `Inline` variant's own concealment arm, plus the link-delimiter gap
 //! helper only that arm needs. Shares the same `push_span_split_by_line`/
 //! `hide_range` chokepoints as the block-node walk.
@@ -214,10 +214,9 @@ fn emit_inline(
                 // Empty alt (or an empty wikilink-style target, which never
                 // happens by construction but is handled the same way
                 // regardless) falls back to the target itself as the
-                // visible label — mirrors the Go reference's
-                // "empty alt, URL becomes the visible label" rule
-                // (`imageSpans`' doc comment), same shape `WikiLinkM`'s own
-                // label/open/close split above already uses.
+                // visible label — the "empty alt, URL becomes the visible
+                // label" rule, same shape `WikiLinkM`'s own label/open/close
+                // split above already uses.
                 let label = if m.alt.is_empty() { m.target } else { m.alt };
                 let open = ByteRange::new(
                     m.range.start,

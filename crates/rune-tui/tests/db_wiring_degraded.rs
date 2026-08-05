@@ -1,6 +1,6 @@
 //! WP5 "Done when" integration tests for the rune-tui <-> rune-db wiring's
 //! degraded-store banner (plan decision 3) and its `super+s` confirm gate
-//! (plan WP5.S2/S6) — TODO.md's §1.6 split of the original `db_wiring.rs`.
+//! (plan WP5.S2/S6) — TODO.md's 500-line budget split of the original `db_wiring.rs`.
 //! Restart/hydration and open/close lifecycle tests live in the sibling
 //! `db_wiring_hydrate.rs`/`db_wiring_lifecycle.rs`; all three pull shared
 //! fixtures from `db_wiring_common`.

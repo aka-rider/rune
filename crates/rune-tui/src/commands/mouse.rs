@@ -5,7 +5,8 @@
 //! scrolls 3 rows. `app::update` routes `Msg::Mouse` here directly, exactly
 //! like `app::handle_key` routes a resolved `Command` to `commands::nav`.
 //!
-//! Hit-testing (`mouse_hit::offset_at`, split out — §1.6 budget) reuses
+//! Hit-testing (`mouse_hit::offset_at`, split out for the 500-line
+//! budget) reuses
 //! `render::segment_cells` — the SAME per-cell `buf_offset` the renderer
 //! just blitted — rather than re-deriving a wrap-row/visual-column ->
 //! buffer conversion independently: whatever glyph is on screen at a
@@ -132,8 +133,8 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
 
     if input.shift {
         // Shift-click: extend the PRIMARY cursor's existing anchor to the
-        // click point, collapsing any other cursor (matches Go/most
-        // editors: shift-click is a single-selection gesture).
+        // click point, collapsing any other cursor (matches most editors:
+        // shift-click is a single-selection gesture).
         let doc = app.active_doc_mut();
         let anchor = doc.cursors.primary().anchor;
         let id = doc.cursors.primary().id;
@@ -349,7 +350,7 @@ mod tests {
     }
 
     /// WP3.S5: a click on a synthesised table border row must be a
-    /// complete no-op (Go parity) — never move the caret to some nearby
+    /// complete no-op — never move the caret to some nearby
     /// offset. The table sits at the very top of the document, so editor
     /// row 0 is its synthesised `┌┬┐` top border (`DisplaySnapshot::
     /// expand_tables`), with no wrap row of its own to click into. The

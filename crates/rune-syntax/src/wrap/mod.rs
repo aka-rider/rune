@@ -1,5 +1,4 @@
-//! The wrap pass (plan Context, "Emit -> wrap -> snapshot"): a structural
-//! port of Go's wrap map. Producer-agnostic
+//! The wrap pass (plan Context, "Emit -> wrap -> snapshot"). Producer-agnostic
 //! (WP3): consumes whatever `SyntaxLine`s a producer emitted — `rune-md`'s
 //! `DocMachine::snapshot` is the only caller today ("children never wrap
 //! themselves"), but nothing here depends on markdown.
@@ -7,20 +6,15 @@
 //! A `Substituted` (concealed) span's visible TEXT is not byte-for-byte
 //! aligned to its BUFFER `range` (delimiters were dropped), so a
 //! `Substituted` span's `range` cannot be narrowed when the greedy break
-//! lands inside it — but its `text` and `cell_map` CAN be, and are: this is
-//! Go's actual behavior (`wrap_map.go`), not the "include whole,
-//! never split" reading its own comment there suggests. The comment
-//! describes why `BufferStart`/`BufferEnd` stay untouched; the code two
-//! lines below it still does `s.Text[localStart:localEnd]` and
-//! rune-slices `CellMap` to match. Ported literally: `slice_spans` below
-//! slices `Substituted` spans exactly like `Identical` ones for `text`,
-//! and slices `cell_map` by RUNE count into that same byte range, while
-//! leaving `range` at the span's full original value — the `cell_map`,
-//! not the buffer range, is the authoritative per-char mapping for a
-//! `Substituted` span from here on.
+//! lands inside it — but its `text` and `cell_map` CAN be, and are:
+//! `slice_spans` below slices `Substituted` spans exactly like `Identical`
+//! ones for `text`, and slices `cell_map` by RUNE count into that same byte
+//! range, while leaving `range` at the span's full original value — the
+//! `cell_map`, not the buffer range, is the authoritative per-char mapping
+//! for a `Substituted` span from here on.
 //!
-//! Split in two (CONSTITUTION §1.6) along the seam the wrap pass already
-//! has: this module computes wrap segments (`WrapMap`, `wrap_line`,
+//! Split in two along the seam the wrap pass already has: this module
+//! computes wrap segments (`WrapMap`, `wrap_line`,
 //! `slice_spans`); the sibling `query` submodule answers coordinate
 //! questions about them (`WrapSnapshot`'s `syntax_to_wrap`/`wrap_to_syntax`/
 //! `visual_col`/`byte_col_from_visual`/etc). `WrapSegment` is defined here,
@@ -48,8 +42,7 @@ pub struct WrapSegment {
     pub spans: Vec<SyntaxSpan>,
     pub model_line: usize,
     /// Start offset of this segment within its line's syntax-space text, in
-    /// BYTES (matches Go's `WrapSegment.StartCol`, which indexes with
-    /// `len(text)`).
+    /// BYTES.
     pub start_col: usize,
     /// `Some` only for a segment that came from a table source line —
     /// `None` for every other segment, prose included.
@@ -205,7 +198,7 @@ impl WrapMap {
 }
 
 /// Slice the original spans down to `[seg_start, seg_end)` of the
-/// concatenated line text — port of Go's `sliceOriginalSpans`.
+/// concatenated line text.
 /// Visible text is sliced identically for both
 /// variants; only the buffer-range metadata differs (module docs):
 /// `Identical` re-bases `range` to match (its text IS byte-for-byte its
@@ -245,7 +238,7 @@ fn slice_spans(
                 range: (range.start + local_start)..(range.start + local_end),
             },
             // `range` intentionally left as the full original span range
-            // (Go parity, module docs); `cell_map` is rune-sliced to match
+            // (see module docs); `cell_map` is rune-sliced to match
             // `sliced` instead.
             SyntaxSpan::Substituted {
                 scope,
@@ -265,7 +258,7 @@ fn slice_spans(
                 // no-correspondence sentinel). Clamping keeps every
                 // in-bounds mapping the producer DID supply; only the
                 // genuinely missing tail is lost, and the mismatch itself
-                // still surfaces via `assert_invariant` (test-only, §1.3).
+                // still surfaces via `assert_invariant` (test-only).
                 let cm_len = cell_map.len();
                 let clamped_start = start_runes.min(cm_len);
                 let clamped_end = end_runes.min(cm_len).max(clamped_start);
@@ -284,7 +277,7 @@ fn slice_spans(
                     // `get` + `unwrap_or_default` rather than a raw index:
                     // the clamp above guarantees this `Some`s, but the
                     // fallback stays as defense-in-depth rather than an
-                    // indexing panic (§1.3) if that guarantee is ever
+                    // indexing panic if that guarantee is ever
                     // violated.
                     cell_map: cell_map
                         .get(clamped_start..clamped_end)
@@ -362,7 +355,7 @@ mod tests {
 
     #[test]
     fn long_line_breaks_before_width_limit_at_the_last_space_seen() {
-        // Go's greedy loop (wrap_map.go) always backs off to the
+        // The greedy loop always backs off to the
         // last space it has seen so far whenever more text remains past the
         // width-fitting cutoff — even when the width-fitting cutoff itself
         // lands cleanly at a word boundary. width=11 fits "hello world"
@@ -391,7 +384,7 @@ mod tests {
 
     #[test]
     fn rendered_span_text_and_cell_map_split_together_buffer_range_stays_whole() {
-        // Go parity (module docs): a Substituted span's TEXT and CellMap DO
+        // A Substituted span's TEXT and CellMap DO
         // get sliced at a wrap break, same as any other span — only its
         // `range` is left at the full original range, because a
         // Substituted span's text isn't byte-for-byte its buffer range once
@@ -444,7 +437,7 @@ mod tests {
         // The concealed inline-code content is split across multiple
         // segments (width 6 can't fit all 20 'a's on one row) but
         // reconstructs exactly, and every piece's buffer range is the
-        // SAME full original span range (Go parity — never narrowed).
+        // SAME full original span range (never narrowed).
         assert_eq!(full_rendered_text, "aaaaaaaaaaaaaaaaaaaa");
         assert!(
             buffer_ranges.len() > 1,

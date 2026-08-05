@@ -1,5 +1,5 @@
 //! Unit tests for the edit-batch commit chokepoint, kept in a sibling
-//! file so the chokepoint itself stays inside the §1.6 budget.
+//! file so the chokepoint itself stays inside the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;

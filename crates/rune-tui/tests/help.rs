@@ -85,7 +85,7 @@ fn help_content_covers_every_binding_table() {
         EXPLORER_BINDINGS.iter().any(|b| content.contains(b.help)),
         "expected an EXPLORER_BINDINGS help label in:\n{content}"
     );
-    // §12 reflection check: type-to-search's own binding table must appear
+    // Reflection check: type-to-search's own binding table must appear
     // in the generated `## Explorer` section too, not just the ordinary
     // nav/open one — a hand-typed "type to search" help line would pass the
     // OLD version of this test just as well, which is exactly what this

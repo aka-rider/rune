@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): fence-inside-container
+//! Split off `conceal_roundtrip.rs` (WP11): fence-inside-container
 //! regression cases (verification-round BLOCKER). `fence_open`/`content`/
 //! `fence_close` used to be derived from PHYSICAL line extents
 //! (`line_start_at`/`line_end_at`), ignoring the enclosing container's own

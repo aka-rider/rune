@@ -1,5 +1,5 @@
 //! Shared fixtures for the `table_render_*` sibling test files (split from
-//! one combined file, §1.6): a synced `(Buffer, DocMachine)` pair, the
+//! one combined file): a synced `(Buffer, DocMachine)` pair, the
 //! line-joining/width-measuring helpers every layout's own test group
 //! reuses, and the Wrapped/Pivoted fixture table. `#![allow(dead_code)]`
 //! because each consumer binary only calls a subset of these — the rest

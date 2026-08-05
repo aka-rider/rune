@@ -1,7 +1,7 @@
 //! WP5/WP6 "Done when" integration tests for the rune-tui <-> rune-db
 //! wiring's hydration paths: post-restart hydration/undo (plan WP5.S4,
 //! replacing the plan's interactive manual gate) and `Load`-ack adoption
-//! into `Document`/`DocDb` — TODO.md's §1.6 split of the original
+//! into `Document`/`DocDb` — TODO.md's 500-line budget split of the original
 //! `db_wiring.rs`. The degraded-store banner and open/close lifecycle
 //! tests live in the sibling `db_wiring_degraded.rs`/
 //! `db_wiring_lifecycle.rs`; all three pull shared fixtures from
@@ -295,7 +295,7 @@ fn ack_with_no_saved_obs_leaves_db_none_and_sets_a_status_message() {
 
 /// Review fix (plan WP5.S2, [rune-tui A 3]): `handle_load_ack` must refuse
 /// to adopt recovered content that would empty (or drastically shrink) a
-/// non-empty on-disk file — the §1.3 destructive-async-reset suspicion
+/// non-empty on-disk file — the destructive-async-reset suspicion
 /// check, run through the shared `Document::hydrate` chokepoint. The buffer
 /// stays exactly what was on disk, and a status message explains why.
 #[test]
@@ -320,7 +320,7 @@ fn ack_refuses_to_adopt_recovered_content_that_would_empty_the_disk_content() {
         renamed_from: None,
         disk_content: disk_content.to_string(),
         // A suspicious "recovered" empty string — the exact destructive
-        // async-reset pattern §1.3 forbids adopting silently.
+        // async-reset pattern that must never be adopted silently.
         recovered: String::new(),
         has_history: false,
         sync: SyncState {

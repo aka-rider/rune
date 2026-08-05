@@ -17,9 +17,8 @@ use comrak::{Arena, Options, parse_document};
 use rune_syntax::element::ByteRange;
 use std::borrow::Cow;
 
-/// Byte offset of the start of each BUFFER line — port of Go's
-/// `computeLineStarts` (Go parity, §1.5):
-/// a line ends at `\n`, nothing else. This is the ONLY line model this
+/// Byte offset of the start of each BUFFER line: a line ends at `\n`,
+/// nothing else. This is the ONLY line model this
 /// crate ever needs: `cr_shadow` makes comrak's own CommonMark line count
 /// agree with it by construction (see that function's docs), so `starts`
 /// derived here serves the buffer, the emitter, `ScanHint`'s container-
@@ -43,9 +42,9 @@ pub fn line_starts(src: &str) -> Vec<usize> {
 /// already agree that a `"\r\n"` pair ends exactly one line, so nothing
 /// there needs changing. A lone `\r` is where they used to disagree:
 /// CommonMark (and so comrak's own `Sourcepos`) treats it as a line
-/// terminator, but this crate's buffer model does not (Go parity, §1.5 —
-/// a bare `\r` is ordinary mid-line content, matching
-/// `rune_core::buffer::Buffer` and Go's own buffer). Blanking it out here
+/// terminator, but this crate's buffer model does not (a bare `\r` is
+/// ordinary mid-line content, matching `rune_core::buffer::Buffer`).
+/// Blanking it out here
 /// makes that disagreement unrepresentable: comrak can no longer end a
 /// line anywhere `line_starts` wouldn't, so every `Sourcepos` it hands
 /// back converts through `line_starts` alone, correctly, always.
@@ -55,8 +54,8 @@ pub fn line_starts(src: &str) -> Vec<usize> {
 /// downstream needs to translate between two coordinate spaces. This is
 /// strictly a view comrak parses: `parse()` is the only caller, the
 /// replaced bytes are never written back to `content`, the buffer, or the
-/// user's file (§1.4.5 stays untouched — this changes what comrak SEES,
-/// never what the user WROTE). `Cow::Borrowed` when no lone `\r` is
+/// user's file (this changes what comrak SEES, never what the user WROTE).
+/// `Cow::Borrowed` when no lone `\r` is
 /// present — the overwhelming common case — so this costs nothing for an
 /// ordinary document.
 pub(crate) fn cr_shadow(content: &str) -> Cow<'_, str> {
@@ -73,8 +72,8 @@ pub(crate) fn cr_shadow(content: &str) -> Cow<'_, str> {
     }
     // Every replaced byte is ASCII (`\r` -> `' '`), so this can never
     // turn valid UTF-8 into invalid UTF-8; the fallback is unreachable in
-    // practice but keeps this function panic-free (§1.3) rather than
-    // relying on that invariant unchecked.
+    // practice but keeps this function panic-free rather than relying on
+    // that invariant unchecked.
     Cow::Owned(String::from_utf8(shadow).unwrap_or_else(|_| content.to_owned()))
 }
 
@@ -141,8 +140,8 @@ pub(crate) fn line_end_at(content_len: usize, starts: &[usize], line: usize) -> 
         .min(content_len)
 }
 
-/// The line index `i` such that `starts[i] <= offset < starts[i+1]` — port
-/// of Go's `findLine`. Shared with `emit/`.
+/// The line index `i` such that `starts[i] <= offset < starts[i+1]`.
+/// Shared with `emit/`.
 pub(crate) fn line_at(starts: &[usize], offset: usize) -> usize {
     let idx = starts.partition_point(|&s| s <= offset);
     idx.saturating_sub(1)
@@ -256,7 +255,7 @@ impl ScanHint<'_> {
 /// rest of this document can't be trusted at all. `parse()` reacts by
 /// re-parsing the WHOLE document with the extension turned off — the
 /// `"---...---"` blob degrades to ordinary paragraphs/thematic breaks
-/// (§0: unknown syntax degrades to visible raw text, never lost), which
+/// (unknown syntax degrades to visible raw text, never lost), which
 /// this crate's other producers are already proven safe against.
 fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) -> bool {
     let arena = Arena::new();
@@ -404,7 +403,7 @@ mod tests {
 
     #[test]
     fn table_and_html_block_become_verbatim() {
-        // HTML blocks still degrade to raw passthrough (§0: unknown syntax
+        // HTML blocks still degrade to raw passthrough (unknown syntax
         // degrades to visible raw text, never lost).
         let html = "<div>\nraw\n</div>\n";
         let blocks = parse(html);

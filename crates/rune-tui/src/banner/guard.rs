@@ -1,5 +1,5 @@
 //! The Guard modal's own state and key handling (split out of `banner.rs`
-//! for the §1.6 budget, plan WP2: the `DirtyQuit` addition pushed the
+//! for the 500-line budget, plan WP2: the `DirtyQuit` addition pushed the
 //! parent file over): `GuardPrompt`/`GuardKind`, the `[S]ave`/`[D]iscard`/
 //! `[Esc]` option labels every kind shares, and `handle_guard_key`'s
 //! dispatch to each kind's own answer. `banner.rs` re-exports every public
@@ -43,9 +43,9 @@ pub enum GuardKind {
     /// document, but here it must complete the quit the user actually
     /// asked for.
     DirtyQuit,
-    /// A rename whose destination already exists (§1.4.4's destructive
-    /// transition). `[R]eplace` preserves the replaced file's bytes as a
-    /// durable blob before destroying it (§1.4.10) — see `rename.rs`.
+    /// A rename whose destination already exists — a destructive
+    /// transition. `[R]eplace` preserves the replaced file's bytes as a
+    /// durable blob before destroying it — see `rename.rs`.
     /// `target` is the destination's display name, so the prompt can say
     /// WHICH file is about to be replaced rather than asking blind.
     RenameCollision {
@@ -209,10 +209,9 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
     }
 }
 
-/// The quit-guard's own answer (plan WP2, port of Go's `continuation{kind:
-/// contQuit, ...}`): `d`/`D` discards immediately — Go parity, and the
-/// prompt itself already said "Discard" — quitting right away rather than
-/// routing through a save at all. `s`/`S` starts a save for EVERY dirty,
+/// The quit-guard's own answer (plan WP2): `d`/`D` discards immediately,
+/// and the prompt itself already said "Discard" — quitting right away
+/// rather than routing through a save at all. `s`/`S` starts a save for EVERY dirty,
 /// unpreserved document (not just the one the prompt named — quit is a
 /// whole-session transition, so it must not leave a SECOND unpreserved
 /// dirty document behind unresolved), building `App::quit_intent` from
@@ -280,7 +279,7 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
 }
 
 /// `r`/`R` confirms the destructive replace — but only when there is a
-/// durable store to capture the displaced bytes into (§1.4.10). Without
+/// durable store to capture the displaced bytes into. Without
 /// one the key is a consumed no-op with an explanation, and the prompt
 /// STAYS up: silently doing nothing would look like a dropped keypress,
 /// and clearing it would look like the replace happened.

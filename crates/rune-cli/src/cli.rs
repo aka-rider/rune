@@ -1,9 +1,8 @@
 //! Strict command-line parsing (plan WP7.S1-S3) — no dependency added for
-//! this; `rune-cli` stays free of `clap`/`lexopt`. Mirrors the Go
-//! reference's flag set (`-w`, `--version`) plus any number of positional
-//! files, but rejects any unrecognised `-`-prefixed argument outright
-//! rather than silently treating it as a filename (CONSTITUTION §1.3:
-//! surface invalid input, no silent fallback).
+//! this; `rune-cli` stays free of `clap`/`lexopt`. Supports a flag set
+//! (`-w`, `--version`) plus any number of positional files, but rejects
+//! any unrecognised `-`-prefixed argument outright rather than silently
+//! treating it as a filename.
 //!
 //! `-w`'s value and every positional are absolutized the same way
 //! (`crate::to_abs_path`, reused rather than duplicated) against the ONE
@@ -88,10 +87,10 @@ pub const USAGE_TEXT: &str = "usage: rune [-w <dir>] [--version] [--help] [file.
 
 /// Parses `args` (already excluding argv[0]) into a [`CliAction`], resolving
 /// every relative path against `cwd` (read exactly once by the caller). `-w`
-/// consumes the very next argument as its value unconditionally — matching
-/// Go's `flag` package, a value starting with `-` is still accepted as the
-/// directory, since only arguments OUTSIDE a flag's own value are checked
-/// against the unknown-flag rule.
+/// consumes the very next argument as its value unconditionally — a value
+/// starting with `-` is still accepted as the directory, since only
+/// arguments OUTSIDE a flag's own value are checked against the
+/// unknown-flag rule.
 pub fn parse<I: Iterator<Item = OsString>>(args: I, cwd: &Path) -> Result<CliAction, CliError> {
     let mut work_dir: Option<PathBuf> = None;
     let mut files = Vec::new();

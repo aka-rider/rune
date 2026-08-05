@@ -1,18 +1,16 @@
 //! JSON payload structs mirroring `rune_core::buffer::AppliedEdit` and
 //! `rune_core::cursor::Cursor` for the `events` table's `edits`/
 //! `cursors_before`/`cursors_after` columns (`events.edits BLOB NOT NULL`
-//! etc., stored as UTF-8 JSON text, matching Go's `encoding/json` payloads —
-//! plan decision "JSON via serde_json ... payloads must be inspectable").
+//! etc., stored as UTF-8 JSON text — plan decision "JSON via serde_json ...
+//! payloads must be inspectable").
 //!
 //! `rune-core` stays dependency-free by default (plan WP3.S1: "prefer the
 //! local-mirror approach ... keeps rune-core dependency-free by default") —
 //! these mirror structs, not `serde` derives on the domain types themselves,
 //! carry the `Serialize`/`Deserialize` impls. Field names are renamed to
-//! match Go's unadorned `encoding/json` output (`buffer.go`,
-//! `cursor.go` have no json tags, so Go serializes the bare
-//! capitalized field names) — a Rust-written row and a Go-written row of the
-//! same shape read identically under `sqlite3 rune-v1.db 'SELECT edits FROM
-//! events'`.
+//! the schema's established bare capitalized form (no serde tags) so every
+//! row under `sqlite3 rune-v1.db 'SELECT edits FROM events'` reads
+//! identically regardless of which encoder wrote it.
 
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +19,7 @@ use rune_core::cursor::Cursor;
 
 use crate::Error;
 
-/// Mirrors `rune_core::buffer::AppliedEdit` (port of Go's
-/// `buffer.AppliedEdit`, `buffer.go`).
+/// Mirrors `rune_core::buffer::AppliedEdit`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct EditPayload {
     #[serde(rename = "Start")]
@@ -57,8 +54,7 @@ impl From<EditPayload> for AppliedEdit {
     }
 }
 
-/// Mirrors `rune_core::cursor::Cursor` (port of Go's `cursor.Cursor`,
-/// `cursor.go`).
+/// Mirrors `rune_core::cursor::Cursor`.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct CursorPayload {
     #[serde(rename = "Position")]
@@ -103,9 +99,7 @@ pub(crate) fn edits_to_json(edits: &[AppliedEdit]) -> Result<String, Error> {
 }
 
 /// Parses an edit batch from JSON. A parse failure is surfaced as
-/// [`Error::CorruptPayload`], never silently treated as an empty batch
-/// (§1.3; port of `journal.go`'s "corrupt payload is an Error, never a
-/// silent none" discipline).
+/// [`Error::CorruptPayload`], never silently treated as an empty batch.
 pub(crate) fn edits_from_json(json: &str) -> Result<Vec<AppliedEdit>, Error> {
     let payload: Vec<EditPayload> =
         serde_json::from_str(json).map_err(|e| Error::CorruptPayload(e.to_string()))?;

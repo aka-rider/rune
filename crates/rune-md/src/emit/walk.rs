@@ -4,8 +4,8 @@
 //! AND inline delimiters: a `Rendered` element's marker/delimiter bytes are
 //! dropped from the emitted text (recorded as a hidden range for
 //! coordinate conversion) rather than kept-but-restyled — see the crate
-//! root emit module docs for why this is a deliberate simplification of
-//! Go's split block/inline concealment model.
+//! root emit module docs for why this unifies block and inline
+//! concealment under one policy.
 //!
 //! Every `emit_block`/`emit_inline` call threads one `&mut EmitOut` (WP2.S3)
 //! instead of three loose out-params (`spans`, `hidden`, `accounted`) plus a
@@ -124,10 +124,10 @@ fn emit_list_item(
             out.accounted,
         );
     } else if let Some(task) = item.task {
-        // Go parity (`walkTaskList`): a task item's checkbox substitutes to a glyph even
+        // A task item's checkbox substitutes to a glyph even
         // while concealed — plain bullet/ordered markers (the `else` arm
-        // below) stay fully hidden, the Rust-only "list markers are always
-        // concealed" divergence recorded in `scripts/parity/README.md`.
+        // below) stay fully hidden, a deliberate "list markers are always
+        // concealed" divergence, not a bug.
         // The "- "/"1. " prefix before the checkbox is hidden exactly like
         // a plain marker; only the checkbox itself substitutes.
         let before = ByteRange::new(item.marker.start, task.start);
@@ -156,15 +156,15 @@ fn emit_list_item(
     }
     for c in &item.children {
         // Saturating: a pathological ~256-deep nested list must degrade to a
-        // repeated bullet glyph, never overflow a u8 (§1.3 — an overflow
-        // panic in a debug/fuzz build would lose the unsaved buffer).
+        // repeated bullet glyph, never overflow a u8 — an overflow panic in
+        // a debug/fuzz build would lose the unsaved buffer.
         emit_block(content, starts, c, depth.saturating_add(1), out);
     }
 }
 
 /// Substitutes a task item's `"[ ]"`/`"[x]"`/`"[X]"` — always exactly 3
 /// bytes (`ListItemM::task`'s docs) — with its checkbox glyph: `☐`
-/// (U+2610) unchecked, `☑` (U+2611) checked. Go parity (`walkTaskList`).
+/// (U+2610) unchecked, `☑` (U+2611) checked.
 ///
 /// Deliberately NOT routed through `hide_range` — this substitutes visible
 /// content, it doesn't hide it — and deliberately NOT built via

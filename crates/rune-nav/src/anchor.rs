@@ -1,4 +1,4 @@
-//! Anchor-name matching (CONSTITUTION §1.6 split of the crate root): the
+//! Anchor-name matching (500-line budget split of the crate root): the
 //! comparison a `Named` anchor uses against a definition's own name.
 
 /// Compare an in-document anchor reference against a definition's name

@@ -1,7 +1,7 @@
 //! Renders a `DisplayRow`'s own line decoration (heading icon / list bullet
 //! / quote bar / hr rule, `rune_syntax::wrap::decor::SegDecor`) into the
 //! prefix `Cell`s `build_rows` prepends to that row before any overlay
-//! walk runs (§1.6 split of the render module). A decoration cell carries no
+//! walk runs (500-line budget split of the render module). A decoration cell carries no
 //! buffer position (`buf_offset: -1`, the same sentinel the table layout's
 //! synthetic border cells already use) — decoration is metadata carried
 //! alongside a wrap segment, never a substitute for the segment's own

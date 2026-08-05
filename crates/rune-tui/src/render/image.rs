@@ -320,8 +320,8 @@ fn blank_cell() -> Cell {
     }
 }
 
-// Kept in a sibling file (plan §1.6: this module's own row-building code
-// stays under the line budget on its own merits).
+// Kept in a sibling file: this module's own row-building code
+// stays under the 500-line budget on its own merits.
 #[cfg(test)]
 #[path = "image_tests.rs"]
 mod tests;

@@ -1,5 +1,5 @@
 //! The enqueue side of [`crate::rename`], split out to keep it under the
-//! §1.6 line budget: [`enqueue_rename`] (routes to the store's writer FIFO
+//! 500-line budget: [`enqueue_rename`] (routes to the store's writer FIFO
 //! or a plain `Cmd`), the two no-store `Cmd` factories it and [`bind_new`]
 //! use ([`rename_cmd`], `create_cmd`), and [`bind_new`] itself (a pathless
 //! draft's Enter, which routes through the store's bind-new path when
@@ -55,13 +55,13 @@ pub(crate) fn enqueue_rename(
 }
 
 /// The no-store rename `Cmd`: `rename_excl` over the injected `Vfs`
-/// (§1.4.1's no-clobber atomic publish, §1.4.9's single filesystem seam).
+/// (the no-clobber atomic publish, the single filesystem seam).
 /// A collision comes back as `Collided` with the destination's stat — a
 /// refusal, not an error.
 ///
 /// There is no `rename_replace` counterpart: without a store there is
-/// nowhere to durably capture the displaced bytes, and §1.4.10 does not
-/// bend for convenience.
+/// nowhere to durably capture the displaced bytes, and that guarantee does
+/// not bend for convenience.
 pub(crate) fn rename_cmd(
     vfs: Arc<dyn Vfs + Send + Sync>,
     from: PathBuf,
@@ -87,8 +87,7 @@ pub(crate) fn rename_cmd(
 /// store-bound (its EEXIST branch already refuses correctly), else through
 /// a dedicated exclusive-create `Cmd`. Either way a collision is a footer
 /// refusal, **never** a `RenameCollision` guard: offering `[R]eplace` here
-/// would overwrite a foreign file with a buffer that has no CAS baseline
-/// (§1.4.7).
+/// would overwrite a foreign file with a buffer that has no CAS baseline.
 ///
 /// Writes no focus of its own: `begin` (the only caller) always runs inside
 /// `App::set_focus`'s blur of the title to the Editor, which assigns the
@@ -119,7 +118,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
     // `from` is EMPTY, and that is the discriminant: a create has no
     // source path, so `apply_outcome`'s `Collided` arm uses it to tell a
     // draft-create refusal (a footer message) from a rename collision (a
-    // `[R]eplace` guard). §1.7 — the emptiness is the meaning, and it is
+    // `[R]eplace` guard). The emptiness is the meaning, and it is
     // structurally unreachable for a rename, which always has a `from`.
     app.rename = RenameState::Committing {
         doc: id,
@@ -130,7 +129,7 @@ pub(crate) fn bind_new(app: &mut App, id: DocumentId, name: &str, effects: &mut 
 }
 
 /// The no-store draft-create `Cmd`: durable temp write, then a no-clobber
-/// `rename_excl` publish (§1.4.1). On `AlreadyExists` the temp is genuinely
+/// `rename_excl` publish. On `AlreadyExists` the temp is genuinely
 /// unneeded — the existing file is untouched and stays the winner — so it
 /// is removed and the create refused.
 fn create_cmd(

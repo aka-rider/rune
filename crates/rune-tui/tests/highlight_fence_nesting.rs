@@ -1,4 +1,4 @@
-//! The container-prefix-leak cases, split off `highlight_fence.rs` (§1.6):
+//! The container-prefix-leak cases, split off `highlight_fence.rs` (500-line budget):
 //! a fence nested in a blockquote or a list item must not feed that
 //! container's own repeating marker prefix to the parser as source bytes.
 //! Kept apart from the pipeline-equivalence cases because these are all

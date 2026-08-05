@@ -2,8 +2,8 @@
 //! out to the available width, so it is never re-wrapped — it is projected
 //! straight into one segment per visual row.
 //!
-//! Kept out of the wrap pass's own module so that module stays under the
-//! §1.6 size budget, and because "a pre-laid-out line bypasses greedy
+//! Kept out of the wrap pass's own module to keep that module under its
+//! size budget, and because "a pre-laid-out line bypasses greedy
 //! breaking entirely" is a distinct concern from the greedy breaker itself.
 
 use super::WrapSegment;

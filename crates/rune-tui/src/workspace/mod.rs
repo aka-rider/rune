@@ -1,6 +1,6 @@
 //! `workspace::open_path` — opens a file selected in the Explorer (plan
 //! WP4.S5): re-activates a `Document` already bound to the resolved path,
-//! or reads a fresh one SYNCHRONOUSLY through the injected `Vfs` (§1.4.9).
+//! or reads a fresh one SYNCHRONOUSLY through the injected `Vfs`.
 //! Directory navigation is the Explorer's own job instead
 //! (`explorer_keys::handle_key`'s `Open`/`ParentDir` arms build a `runtime::
 //! load_dir_cmd` `Cmd` directly) — this module only ever opens FILES, so
@@ -332,11 +332,10 @@ pub fn switch_to_index(app: &mut App, idx: usize) {
 /// `F1` (plan WP7.S2, `keymap::GlobalCommand::Help`): mints the read-only
 /// Help virtual document the first time it's ever needed (`App.help_doc`,
 /// idempotent — a second press never mints a duplicate), then toggles
-/// between it and whatever was active before. Unlike Go's `toggleHelp`
-/// (`workspace_nav.go`, which CLOSES the help tab on the second press
-/// while focused there), this port keeps the Help document as an ordinary,
-/// closable tab and instead switches back to `App.help_return_to` — the
-/// document that was active right before Help was last activated. Falls
+/// between it and whatever was active before, keeping the Help document as
+/// an ordinary, closable tab rather than closing it, and instead switching
+/// back to `App.help_return_to` — the document that was active right
+/// before Help was last activated. Falls
 /// back to any other live document if that one has since been closed
 /// (e.g. via the Tabs pane's own `^w`). If the Help document ITSELF has
 /// since been closed the same way, `live_help`'s `documents.contains_key`
@@ -372,7 +371,7 @@ pub fn toggle_help(app: &mut App) {
 }
 
 // `request_close`/`close_now`/`neighbor_of` moved to `workspace::close`
-// (§1.6 budget, WP5.S7's image-delete-on-close hook) — re-exported below so
+// (500-line budget, WP5.S7's image-delete-on-close hook) — re-exported below so
 // every existing `workspace::` call site keeps working unchanged.
 pub(crate) mod close;
 pub use close::{close_now, new_untitled_document, next_untitled_name, request_close};

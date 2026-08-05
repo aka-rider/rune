@@ -1,11 +1,11 @@
 //! Line duplication and reordering commands: split out of the sibling
-//! `edit_lines` module (§1.6: that module was already over the 500-line
-//! budget). Ports Go's clone-line-up/down and move-line-up/down commands
+//! `edit_lines` module (that module was already over the 500-line
+//! budget). Implements clone-line-up/down and move-line-up/down commands
 //! (plan WP9.S2). `clone_line_up`/`clone_line_down` reuse `edit_lines`'s
 //! `per_line_edits` (via `pub(crate)`); `move_line_up`/`move_line_down` are
-//! the genuine exception noted there — Go's own `execMoveLineUp`/
-//! `execMoveLineDown` are NOT built on `buildEditResultFromInfos` at all,
-//! so those two call `edit_core::apply_edit_batch_with_cursors` directly.
+//! the genuine exception noted there — they hand-place the resulting
+//! cursor at a column instead of the edit's end, so those two call
+//! `edit_core::apply_edit_batch_with_cursors` directly.
 
 use rune_core::buffer::Edit;
 use rune_core::cursor::Cursor;
@@ -15,9 +15,8 @@ use crate::commands::edit_core::apply_edit_batch_with_cursors;
 use crate::commands::edit_lines::per_line_edits;
 use crate::document::DocumentId;
 
-/// Port of `commands_edit_lines_multi.go:execCloneLineUp` (plan WP9.S2):
-/// inserts a copy of each (non-deduped) cursor's line directly above it.
-/// `line == 0` skips that cursor (no line to clone above).
+/// Inserts a copy of each (non-deduped) cursor's line directly above it
+/// (plan WP9.S2). `line == 0` skips that cursor (no line to clone above).
 pub fn clone_line_up(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
         if line == 0 {
@@ -34,7 +33,7 @@ pub fn clone_line_up(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Port of `commands_edit_lines_multi.go:execCloneLineDown`.
+/// Inserts a copy of each (non-deduped) cursor's line directly below it.
 pub fn clone_line_down(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, false, |line, buf| {
         let line_start = buf.line_start(line)?;
@@ -48,10 +47,9 @@ pub fn clone_line_down(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Port of `commands_edit_lines_multi.go:execMoveLineUp` (plan WP9.S2):
-/// swaps the FIRST cursor's line with the one directly above it, in a
+/// Swaps the FIRST cursor's line with the one directly above it, in a
 /// single edit, and collapses the whole cursor set to just that one
-/// cursor — Go's own behavior: move-line only ever acts on the first
+/// cursor (plan WP9.S2): move-line only ever acts on the first
 /// cursor, dropping any others in the set. The surviving cursor lands at
 /// the same COLUMN it held within its line, now inside the moved block —
 /// not at the edit's end, which is why this calls `apply_edit_batch_with_
@@ -111,8 +109,7 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         });
 }
 
-/// Port of `commands_edit_lines_multi.go:execMoveLineDown` — mirror of
-/// `move_line_up` above.
+/// Mirror of `move_line_up` above.
 pub fn move_line_down(app: &mut App, id: DocumentId) {
     let Some(doc) = app.doc(id) else { return };
     let cursors_before = doc.cursors.clone();

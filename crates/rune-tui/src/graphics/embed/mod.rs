@@ -5,7 +5,7 @@
 //! `rune_md::snapshot::ImageDims` uses), each entry independently allocated,
 //! decoded, transmitted and torn down.
 //!
-//! Split for the §1.6 budget: [`alloc`] holds the id allocator,
+//! Split for the 500-line budget: [`alloc`] holds the id allocator,
 //! [`state`] holds `EmbedState`/`EmbedSet`, [`reconcile`] holds the
 //! spawn/despawn pass (`sync_embeds`), and [`decode`] holds the decode
 //! `Cmd`/reply handler pair.

@@ -1,7 +1,7 @@
 //! The table-validation side of the prefix index (plan WP6.S4, WP10.S4):
 //! rejects, at startup, a strict-prefix collision, two bindings sharing the
 //! identical sequence, or a `when` clause that fails to parse. Split out of
-//! `index.rs` to bring that file under the §1.6 500-line budget; `index`
+//! `index.rs` to bring that file under the 500-line budget; `index`
 //! re-exports every item here so no import path downstream changed.
 
 use crate::binding::{Binding, KeyPattern};

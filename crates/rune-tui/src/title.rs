@@ -13,12 +13,12 @@
 //!   this module, not a descendant, so it reads `TitleField` only through
 //!   the public accessors below.
 //!
-//! The field is unjournaled at the DOCUMENT level (§12: "the title field is
-//! unjournaled — a rename is one atomic bind"): typing here never touches
-//! the document buffer, never appends to the document's own journal, and
-//! never marks the document dirty. Its own [`crate::field::TextField`] DOES
-//! keep an in-memory undo history (⌘Z/⇧⌘Z) — that history is private to the
-//! field, never replicated to the recovery store (§12 again), and discarded
+//! The field is unjournaled at the DOCUMENT level — a rename is one atomic
+//! bind: typing here never touches the document buffer, never appends to
+//! the document's own journal, and never marks the document dirty. Its own
+//! [`crate::field::TextField`] DOES keep an in-memory undo history (⌘Z/⇧⌘Z)
+//! — that history is private to the field, never replicated to the
+//! recovery store, and discarded
 //! outright by every [`TitleField::seed`]/[`TitleField::set_text`].
 //!
 //! `TitleField` holds the FULL file name, extension included, in one
@@ -48,9 +48,8 @@ const MARKDOWN_EXT: &str = "md";
 /// Characters a file name may never contain. `/` is the path separator (a
 /// typed `a/b` would silently rename into a different directory — or fail
 /// confusingly); the rest are rejected because they are hostile on the
-/// network volumes and archive formats a `.md` vault routinely crosses,
-/// matching Go's `invalidFileNameChars` (`title.go`). `\0` and every other
-/// control character are rejected via `char::is_control` at every call
+/// network volumes and archive formats a `.md` vault routinely crosses.
+/// `\0` and every other control character are rejected via `char::is_control` at every call
 /// site.
 const INVALID_NAME_CHARS: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>'];
 

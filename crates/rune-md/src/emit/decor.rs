@@ -5,8 +5,9 @@
 //! `emit_table` (sibling module) never calls into this one.
 //!
 //! Every producer measures cell width through `DecorPiece::cells`, which
-//! routes to the one `rune_syntax::wrap::grapheme_width` chokepoint (§1.5)
-//! — never a raw `.len()` byte count or `.chars().count()`.
+//! routes to the one `rune_syntax::wrap::grapheme_width` chokepoint —
+//! widths are terminal cells, never a raw `.len()` byte count or
+//! `.chars().count()`.
 
 use super::EmitOut;
 use super::style::{heading_style, list_marker_style, quote_marker_scope};
@@ -41,7 +42,7 @@ fn blank_cont(first: &str) -> String {
 /// Heading icon (plan A1/A2, `IconSet::headings`): one piece, level 1..6
 /// indexes `headings[0..=5]`, clamped so an out-of-range level (never
 /// produced by a real parse, but not structurally impossible) degrades to
-/// the H6 glyph instead of panicking (§1.3).
+/// the H6 glyph instead of panicking.
 pub(crate) fn push_heading_decor(out: &mut EmitOut, line: usize, level: u8) {
     let idx = (level.saturating_sub(1) as usize).min(out.icons.headings.len() - 1);
     let Some(&glyph) = out.icons.headings.get(idx) else {

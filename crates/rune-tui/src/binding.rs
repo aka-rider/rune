@@ -1,6 +1,6 @@
 //! Generic, data-driven binding tables — the second resolution style
 //! alongside `keymap::resolve`. Split out of `keymap.rs` to bring that file
-//! under the §1.6 500-line budget; `keymap` re-exports every item here so no
+//! under the 500-line budget; `keymap` re-exports every item here so no
 //! import path downstream changed.
 //!
 //! Plan WP6.S1 extended `Binding<C>` from a single `key: KeyPattern` to a

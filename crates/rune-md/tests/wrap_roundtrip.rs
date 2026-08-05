@@ -1,5 +1,5 @@
-//! WP4.S2: proptest mirroring Go's `FuzzWrapMapRoundtrip`, plus pinned CJK/emoji/tab cases
-//! for `visual_col`/`byte_col_from_visual`.
+//! WP4.S2: round-trip proptest, plus pinned CJK/emoji/tab cases, for
+//! `visual_col`/`byte_col_from_visual`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use proptest::prelude::*;
@@ -89,9 +89,9 @@ proptest! {
         // Segment texts concatenate back to the exact syntax-space line
         // text, and no segment's VISUAL width exceeds the configured width
         // except a single over-wide char (Major 5: Rendered spans are NOT
-        // exempt — Go's wrap_map.go actually slices a Rendered span's text
-        // at a break just like any other span; only its buffer range stays
-        // whole. No whitelist here anymore.).
+        // exempt — a Rendered span's text is sliced at a break just like
+        // any other span; only its buffer range stays whole. No whitelist
+        // here anymore.).
         for line in 0..buf.line_count() {
             let mut joined = String::new();
             let mut row = wrap_snap.model_line_to_first_row(line);

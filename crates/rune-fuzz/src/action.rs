@@ -1,7 +1,6 @@
-//! The `Action` model: the fuzzer's input vocabulary. Modelled on the Go
-//! fuzzer's event vocabulary, scoped to what Phase-1 Rust reaches
-//! (no docstate/journal persistence, no file tree, no dictation — see the
-//! plan's "Explicitly out of scope").
+//! The `Action` model: the fuzzer's input vocabulary, scoped to what
+//! Phase-1 Rust reaches (no docstate/journal persistence, no file tree,
+//! no dictation — see the plan's "Explicitly out of scope").
 //!
 //! There is no `DeliverMode` enum: G9 proves at most one save `Cmd` can ever
 //! be outstanding (`trigger_save` guards on `save_in_flight`), so a mode

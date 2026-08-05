@@ -1,6 +1,6 @@
 //! The `cluster_*` strategy functions and the weighted table over them,
-//! split out of `generate` (§1.6 budget) — every one of these draws its
-//! fixed data from `palette.rs`.
+//! split out of `generate` (500-line budget) — every one of these
+//! draws its fixed data from `palette.rs`.
 
 use std::path::PathBuf;
 
@@ -67,7 +67,7 @@ fn arb_mods() -> impl Strategy<Value = Mods> {
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
 /// 1-in-4 a `Paste` of a `PASTE_PALETTE` entry — the only path that can
 /// insert `\r`, `\t`, or other control bytes (G3), so this is what actually
-/// exercises the §1.4.5 byte-verbatim edge.
+/// exercises the byte-verbatim paste edge.
 fn cluster_type_prose() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         3 => proptest::collection::vec(select(TYPE_PALETTE), 1..=4)
@@ -142,7 +142,7 @@ fn cluster_clipboard() -> impl Strategy<Value = Vec<Action>> {
         // Selects 1-3 chars first, THEN pastes over that selection —
         // CODE-REVIEW.md rune-fuzz finding 12: `PASTE-VERBATIM` used to
         // skip selections entirely, so a paste-over-selection (the
-        // byte-displacing path §1.4.10 governs) had no fuzz-time guard
+        // byte-displacing path) had no fuzz-time guard
         // while the byte-safe collapsed-caret half did. Relying on
         // `cluster_selection` happening to run immediately before this one
         // would leave it to chance; this arm is self-contained.

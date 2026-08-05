@@ -1,5 +1,5 @@
 //! `App`'s quit-confirm state machine and `Cmd` tagging (moved out of
-//! `app.rs` in plan WP1.S5 to keep that file under the §1.6 line budget —
+//! `app.rs` in plan WP1.S5 to keep that file under the 500-line budget —
 //! every item exercised here (`App`, `update`, `Msg`, `Effects`, `CmdKind`,
 //! `keymap` types) is already public, so this needs no crate-internal
 //! access `#[cfg(test)]` had).

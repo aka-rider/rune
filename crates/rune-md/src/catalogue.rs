@@ -219,9 +219,9 @@ fn classify_link_url(url: &str) -> Target {
     }
 }
 
-/// `[[target#Fragment|label]]` splits `target` on the LAST `#` (mirrors the
-/// Go reference's `bytes.LastIndex`), so a target that legitimately embeds
-/// an earlier `#` still resolves its trailing anchor correctly.
+/// `[[target#Fragment|label]]` splits `target` on the LAST `#`, so a target
+/// that legitimately embeds an earlier `#` still resolves its trailing
+/// anchor correctly.
 fn split_wikilink_target(target: &str) -> (String, Option<Anchor>) {
     match target.rfind('#') {
         Some(idx) => (

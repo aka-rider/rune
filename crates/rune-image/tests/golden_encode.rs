@@ -11,9 +11,10 @@
 //! bytes, to absorb CatmullRom rounding differences.
 //!
 //! Second — and less obvious — the CHUNK COUNT is itself non-portable,
-//! because chunking splits the base64 of those same non-portable bytes: the
-//! multi-chunk fixture yields 5 APCs from Go and 6 from Rust for identical
-//! pixels. So an index-wise option comparison is sound ONLY for fixtures
+//! because chunking splits the base64 of those same non-portable bytes:
+//! the multi-chunk fixture yields 5 APCs in the committed golden
+//! expectations and 6 from this crate's encoder for identical pixels. So
+//! an index-wise option comparison is sound ONLY for fixtures
 //! small enough that both encoders stay within a single chunk, which is
 //! every fixture [`check_encode_golden`] is applied to. Multi-chunk framing
 //! is instead asserted as RULES, independently on each side.
@@ -34,10 +35,11 @@ use rune_image::{
     decode_still, encode_delete, encode_delete_all, encode_transmit, fit_box, resize,
 };
 
-/// Per-channel RGBA tolerance for comparing Rust's CatmullRom resize
-/// against Go's `golang.org/x/image/draw.CatmullRom` — both are the same
-/// named kernel, but the two implementations' rounding can differ by an
-/// epsilon. PNG bytes themselves are never compared (see module docs).
+/// Per-channel RGBA tolerance for comparing this crate's CatmullRom
+/// resize against the committed golden expectations' encoder — both use
+/// the same named kernel, but the two implementations' rounding can
+/// differ by an epsilon. PNG bytes themselves are never compared (see
+/// module docs).
 const RESIZE_TOLERANCE: i16 = 2;
 
 /// One parsed Kitty APC: the option string and the payload's raw text
@@ -74,7 +76,7 @@ fn asset_path(name: &str) -> PathBuf {
 }
 
 /// Splits a (possibly chunked) Kitty APC stream into its individual
-/// records, mirroring the Go dump harness's own splitter.
+/// records.
 fn split_apcs(seq: &str) -> Vec<Apc> {
     const INTRO: &str = "\x1b_G";
     const OUTRO: &str = "\x1b\\";
@@ -166,8 +168,8 @@ fn check_encode_golden(golden_file: &str, asset_file: &str) {
         fs::read(asset_path(asset_file)).unwrap_or_else(|e| panic!("read {asset_file}: {e}"));
     let decoded = decode_still(&data).unwrap_or_else(|e| panic!("decode {asset_file}: {e}"));
 
-    // Mirrors the Go dump harness: FitBox against the DEFAULT 8x16 cell
-    // size's pixel box for the requested cols x rows.
+    // FitBox against the DEFAULT 8x16 cell size's pixel box for the
+    // requested cols x rows.
     let (fit_w, fit_h) = fit_box(decoded.width, decoded.height, cols * 8, rows * 16);
     let resized = resize(&decoded.image, fit_w, fit_h);
 
@@ -235,7 +237,7 @@ fn x_png_upscale_request_does_not_upscale() {
     check_encode_golden("encode_x_png_upscale.json", "x.png");
 }
 
-/// Asserts one APC stream obeys the reference's chunk-framing rules: a lone
+/// Asserts one APC stream obeys the protocol's chunk-framing rules: a lone
 /// chunk carries the full option set and NO `m=` key; a split stream is
 /// full-options + `m=1`, then middles carrying ONLY `q=2,m=1`, then a final
 /// `q=2,m=0`.
@@ -268,17 +270,19 @@ fn assert_chunk_framing(options: &[&str], who: &str) {
 
 /// The only fixture whose payload crosses the 4096-char chunk boundary.
 /// Every other asset encodes as a single APC, so without this one the
-/// golden corpus never exercised multi-chunk framing against the reference
-/// at all — that path was covered only by Rust-side unit tests reasoning
-/// about Go's behaviour, never by Go's actual output.
+/// golden corpus never exercised multi-chunk framing against the golden
+/// expectations at all — that path was covered only by Rust-side unit
+/// tests reasoning about the wire format, never by the committed
+/// encoder's actual output.
 ///
 /// Note what is and is NOT portable here. The chunk COUNT is a function of
-/// the PNG payload's byte length, and PNG bytes differ between Go's and
-/// Rust's encoders for identical pixels (Go emits 5 APCs for this fixture,
-/// Rust 6). So this asserts the framing RULES independently on each side
-/// and compares decoded pixels — never the APC count, and never options by
-/// index. `check_encode_golden`'s index-wise comparison is sound only for
-/// the single-chunk fixtures it is applied to.
+/// the PNG payload's byte length, and PNG bytes differ between the
+/// committed golden encoder and this crate's encoder for identical pixels
+/// (the golden expectations record 5 APCs for this fixture, this crate's
+/// encoder 6). So this asserts the framing RULES independently on each
+/// side and compares decoded pixels — never the APC count, and never
+/// options by index. `check_encode_golden`'s index-wise comparison is
+/// sound only for the single-chunk fixtures it is applied to.
 #[test]
 fn noise_png_multi_chunk_framing_matches_reference_rules() {
     let g = golden("encode_noise_png.json");
@@ -294,12 +298,12 @@ fn noise_png_multi_chunk_framing_matches_reference_rules() {
         .collect();
     assert!(
         want_options.len() > 2,
-        "noise.png must span several chunks on the Go side, got {} APC(s) — \
+        "noise.png must span several chunks in the golden expectations, got {} APC(s) — \
          the fixture is no longer incompressible enough to cover multi-chunk \
          framing",
         want_options.len()
     );
-    assert_chunk_framing(&want_options, "go reference");
+    assert_chunk_framing(&want_options, "golden");
 
     let data = fs::read(asset_path("noise.png")).expect("read noise.png");
     let decoded = decode_still(&data).expect("decode noise.png");

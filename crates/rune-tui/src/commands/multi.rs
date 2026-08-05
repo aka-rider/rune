@@ -1,7 +1,6 @@
-//! Multi-cursor management (plan WP9.S3). Ports Go's `execMulticursorAdd`/
-//! `execMulticursorAddAbove`/`execMulticursorAddBelow`
-//! (`multicursor.escape`, the third command alongside them, is already
-//! ported as `commands::nav::escape`).
+//! Multi-cursor management (plan WP9.S3): add-cursor-above/add-cursor-below.
+//! `multicursor.escape`, the third command in this family, lives in
+//! `commands::nav::escape`.
 //!
 //! Doc-local (plan WP1 decision 4), like `commands::nav`: pure cursor
 //! placement, no buffer mutation, so this takes `&mut Document` directly
@@ -9,12 +8,12 @@
 //! cursors`/`commit_edit_batch`.
 //!
 //! Deliberately NOT built on `nav::move_row` (the wrap-aware vertical
-//! motion arrow-up/down uses): Go's own `execMulticursorAdd` works in
+//! motion arrow-up/down uses): add-cursor-above/below works in
 //! plain BUFFER-line space (`OffsetToLineCol`/`LineStart`/`LineEnd`), not
-//! wrap space — add-cursor-above/below targets the next LOGICAL line,
-//! ignoring soft-wrap entirely, unlike arrow-key vertical motion. Porting
-//! it onto `move_row` would silently make it wrap-aware, a behavior Go
-//! does not have and this plan did not ask for.
+//! wrap space — it targets the next LOGICAL line,
+//! ignoring soft-wrap entirely, unlike arrow-key vertical motion. Building
+//! it onto `move_row` would silently make it wrap-aware, which this plan
+//! did not ask for.
 
 use rune_core::buffer::Buffer;
 use rune_core::coords::{BufferPoint, VisualCol, WrapPoint};
@@ -25,14 +24,14 @@ use crate::document::Document;
 
 /// Shared direction driver: `dir < 0` adds a cursor on the line above the
 /// TOPMOST existing cursor; `dir > 0` adds one on the line below the
-/// BOTTOMMOST. Port of `commands_multi.go:execMulticursorAdd`.
+/// BOTTOMMOST.
 fn add_cursor(doc: &mut Document, dir: isize) {
     let all = doc.cursors.all();
     let Some(&first) = all.first() else { return };
 
     // Find the extreme cursor to add adjacent to: topmost for dir<0,
     // bottommost for dir>0. Ties keep the earlier cursor in iteration
-    // order, matching Go's strict `<`/`>` comparison.
+    // order.
     let mut extreme = first;
     for &c in all.iter().skip(1) {
         if (dir < 0 && c.position < extreme.position) || (dir > 0 && c.position > extreme.position)
@@ -52,7 +51,7 @@ fn add_cursor(doc: &mut Document, dir: isize) {
 
     let target_line = if dir < 0 { bp.line - 1 } else { bp.line + 1 };
 
-    // `desired_col` is a terminal-CELL count (§1.5), never a byte column —
+    // `desired_col` is a terminal-CELL count, never a byte column —
     // it is measured on ONE line and only ever meaningful when replayed
     // through the same cell->byte conversion `commands::nav_scroll::
     // move_row` uses (`byte_col_from_visual`), never as a raw `BufferPoint.
@@ -114,12 +113,14 @@ fn visual_col_on_line(
     view.syntax.syntax_to_buffer(sp)
 }
 
-/// Port of `commands_multi.go:execMulticursorAddAbove`.
+/// Adds a cursor on the logical line above the topmost existing cursor, at
+/// its desired visual column.
 pub fn add_cursor_above(doc: &mut Document) {
     add_cursor(doc, -1);
 }
 
-/// Port of `commands_multi.go:execMulticursorAddBelow`.
+/// Adds a cursor on the logical line below the bottommost existing cursor,
+/// at its desired visual column.
 pub fn add_cursor_below(doc: &mut Document) {
     add_cursor(doc, 1);
 }

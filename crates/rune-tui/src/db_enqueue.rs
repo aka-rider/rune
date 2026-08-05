@@ -1,5 +1,5 @@
 //! The enqueue side of the [`crate::db`] bridge (split out of `db.rs` to
-//! keep it under the §1.6 line budget): the small functions the three
+//! keep it under the 500-line budget): the small functions the three
 //! journal call sites (`commands::edit::commit_edit_batch`/`undo`/`redo`)
 //! and `workspace::open_path` use to build and submit ops into `db_ops`.
 //! The reaction to their eventual acks lives in [`crate::db_ack`].

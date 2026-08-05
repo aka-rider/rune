@@ -44,7 +44,7 @@ impl RenderedCell {
             // and the box would not line up. Substituting keeps the
             // char-for-char mapping intact (one char in, one char out, so
             // `src` stays index-aligned) and leaves the buffer bytes
-            // untouched (§1.4.5) — this is a display decision only.
+            // untouched — this is a display decision only.
             self.text.push(if ch == '\t' { ' ' } else { ch });
             self.src.push(CellSrc {
                 buf: (range.start + i) as i64,

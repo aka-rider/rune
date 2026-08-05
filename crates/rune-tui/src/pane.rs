@@ -1,7 +1,7 @@
 //! `Pane` — the focus discriminant (plan Context, decision 7: "Pane enum =
 //! focus discriminant only" — no trait objects; `Explorer`/`Tabs`'s own
 //! state lands in plain named `App` fields in WP4/WP5). Extracted out of
-//! `app.rs` to keep it under the §1.6 budget (plan WP2 Rules: "extract to
+//! `app.rs` to keep it under the 500-line budget (plan WP2 Rules: "extract to
 //! pane.rs ... as needed") — `handle_global_command` lives here too since
 //! it's the sole reader/writer of `App::focus`/the left column's `Split`
 //! state outside `app.rs` itself.
@@ -155,13 +155,12 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
     }
 }
 
-/// Port of the quit-confirm state machine (plan Context, "Quit-confirm",
-/// mirroring Go `footer.go`): the SAME chord pressed twice quits;
-/// pressing a quit chord while a DIFFERENT one is pending re-arms with the
-/// new chord and a fresh generation, restarting the 2s window. `pub(crate)`
-/// — WP2 moved this out of `app.rs` (§1.6 budget); `handle_global_command`
-/// above is its only caller now that quit chords resolve at the global
-/// pipeline stage.
+/// The quit-confirm state machine (plan Context, "Quit-confirm"): the SAME
+/// chord pressed twice quits; pressing a quit chord while a DIFFERENT one is
+/// pending re-arms with the new chord and a fresh generation, restarting the
+/// 2s window. `pub(crate)` — WP2 moved this out of `app.rs` (500-line
+/// budget); `handle_global_command` above is its only caller now that quit
+/// chords resolve at the global pipeline stage.
 pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
     // Plan WP6.S3, decision 12: quit is an implicit Esc for an active OR
     // pending merge — exited/cancelled BEFORE the dirty-guard scan below,
@@ -173,9 +172,9 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     if !matches!(app.merge, crate::merge::MergeState::Inactive) {
         crate::merge::auto_exit(app);
     }
-    // §1.4.4: quit is a destructive transition on every dirty document at
-    // once, and the 2-press confirm above is only a safe shortcut BECAUSE
-    // §12 assumes quit preserves through the durable journal. That premise
+    // Quit is a destructive transition on every dirty document at once, and
+    // the 2-press confirm above is only a safe shortcut BECAUSE quit
+    // preserves through the durable journal. That premise
     // fails for any dirty document with no live `db` binding (the default
     // untitled draft by construction, or an Explorer/CLI-opened document
     // whose hydration never landed) — for those, quitting would discard
@@ -219,7 +218,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
 /// first" — repeated presses always raise the Guard for the same document
 /// until it's resolved. Dirty is re-derived via `is_dirty_now`, not read
-/// from the cache (CONSTITUTION §1.4.8: quit is a transition), so a stale
+/// from the cache — quit is a transition — so a stale
 /// cache can never wave a genuinely-dirty document through the guard.
 /// `handle_quit_key`'s own Guard-raise takes just the first (lowest-id) one;
 /// the quit-save fan-out iterates the whole `Vec`.

@@ -8,7 +8,7 @@
 //! "every motion key is a viewport command" policy (`reading_nav`),
 //! dispatched from `app::handle_key`/`app::update` against the
 //! `Command`/`Msg::Mouse` the keymap resolver/runtime produce (plan
-//! Context, "Keymap"). Structural port of Go's textedit command family.
+//! Context, "Keymap").
 
 pub mod clipboard;
 pub mod edit;

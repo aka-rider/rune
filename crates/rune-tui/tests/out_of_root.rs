@@ -5,7 +5,7 @@
 //! exactly why the vault-containment check WP1 removed could break every
 //! relative reference in an out-of-root document without any existing test
 //! catching it. Kept as its own file rather than grown into either of
-//! those, both already near the §1.6 budget.
+//! those, both already near the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::Path;

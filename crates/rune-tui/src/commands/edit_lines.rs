@@ -1,24 +1,20 @@
-//! Line-oriented editing commands (plan WP9.S6 §1.6 split out of
-//! `edit.rs`, which was 802 lines before WP9 added anything). Ports Go's
+//! Line-oriented editing commands (plan WP9.S6, a 500-line budget split out
+//! of `edit.rs`, which was 802 lines before WP9 added anything). Implements
 //! indent/outdent and delete-line commands (plan WP9.S2). Line duplication
 //! and reordering (clone-line-up/down, move-line-up/down) live in the
-//! sibling `edit_lines_move` module (§1.6: this file was already over the
+//! sibling `edit_lines_move` module (this file was already over the
 //! 500-line budget); that module reaches back into this one for the shared
 //! `per_line_edits` driver.
 //!
 //! `per_line_edits` below (indent/outdent/delete-line/clone-line) shares
 //! `edit_core::commit_edit_batch`'s generic "each surviving cursor lands
-//! at its own edit's `AppliedEdit::end`" rule — Go's `computePostEditCursors`
-//! formula (`newPos = edit.Start + shift + insLen`) reduces to exactly
-//! that rule for every one of these commands, since `AppliedEdit::end` is
+//! at its own edit's `AppliedEdit::end`" rule, since `AppliedEdit::end` is
 //! `start + insert.len()` in the same post-shift coordinates
 //! `Buffer::apply_edits` already produces. Only `move_line_up`/`down` is a
-//! genuine exception: Go's own `execMoveLineUp`/`execMoveLineDown` are NOT
-//! built on `buildEditResultFromInfos` at all — they hand-place the single
-//! resulting cursor at a COLUMN within the moved line, not at the edit's
-//! end — so those two call `edit_core::apply_edit_batch_with_cursors`
-//! directly with that custom rule instead of going through
-//! `commit_edit_batch`.
+//! genuine exception: they hand-place the single resulting cursor at a
+//! COLUMN within the moved line, not at the edit's end — so those two call
+//! `edit_core::apply_edit_batch_with_cursors` directly with that custom
+//! rule instead of going through `commit_edit_batch`.
 
 use std::collections::HashSet;
 
@@ -28,7 +24,7 @@ use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
 use crate::document::DocumentId;
 
-/// Port of `commands_edit_lines.go:perLineEdits`. `dedupe=true` (indent,
+/// `dedupe=true` (indent,
 /// outdent, delete-line) skips a line an earlier cursor in this same batch
 /// already produced an edit for — two cursors on one line must not
 /// double-edit it. `dedupe=false` (clone-line-up/down, in the sibling
@@ -64,7 +60,7 @@ pub(crate) fn per_line_edits(
     let _ = commit_edit_batch(app, id, infos, cursors_before);
 }
 
-/// Port of `commands_edit_lines_indent.go:execIndentLine` (Tab).
+/// Indents the line under each cursor by one tab.
 pub fn indent(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, |line, buf| {
         let line_start = buf.line_start(line)?;
@@ -76,9 +72,8 @@ pub fn indent(app: &mut App, id: DocumentId) {
     });
 }
 
-/// Port of `commands_edit_lines_indent.go:execDedentLine` (Shift+Tab):
-/// removes up to one leading tab, or up to 4 leading spaces if the line
-/// starts with at least 4 of them.
+/// Outdents (Shift+Tab): removes up to one leading tab, or up to 4 leading
+/// spaces if the line starts with at least 4 of them.
 pub fn outdent(app: &mut App, id: DocumentId) {
     per_line_edits(app, id, true, dedent_edit_for_line);
 }
@@ -118,8 +113,8 @@ fn dedent_edit_for_line(line: usize, buf: &Buffer) -> Option<Edit> {
     })
 }
 
-/// Port of `commands_edit_lines_multi.go:execDeleteLineMulti` (plan
-/// WP9.S2). Deletes the whole line under each (deduped) cursor: the whole
+/// Deletes the whole line under each (deduped) cursor (plan
+/// WP9.S2): the whole
 /// buffer when it's the only line; the line plus its own trailing `\n`
 /// when a later line exists; otherwise (the last line) the PREVIOUS
 /// line's trailing `\n` plus this line's own text, since the last line has

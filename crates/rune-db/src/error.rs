@@ -31,9 +31,9 @@ pub enum Error {
     /// The reader thread has already exited and can no longer serve reads.
     ReaderGone,
     /// This process's own `sessions` row could not be established. Hard
-    /// failure (`store.go`'s `openStoreAt` doc comment: session identity is
-    /// load-bearing for every subsequent write) — there is no fallback left
-    /// once even the `:memory:` open ladder rung has been reached.
+    /// failure (session identity is load-bearing for every subsequent
+    /// write) — there is no fallback left once even the `:memory:` open
+    /// ladder rung has been reached.
     SessionEstablish(String),
     /// `PRAGMA journal_mode=WAL` did not report back `"wal"` on a
     /// file-backed connection (plan Gotchas: "verify the returned string is
@@ -42,43 +42,38 @@ pub enum Error {
     /// multi-connection concurrency guarantees.
     WalModeUnavailable(String),
     /// A `events`/`snapshots` JSON payload (edits or cursors) failed to
-    /// parse. Port of `journal.go`'s §1.3 discipline: `UndoPeek`/`RedoPeek`
-    /// surface a corrupt payload as an error, NEVER silently fold it into
-    /// `ok=false` ("nothing to undo/redo") — a corrupt row is a Tolerable
-    /// halt with the buffer kept, not an empty journal
-    /// (`journal.go`).
+    /// parse. `undo_peek`/`redo_peek` surface a corrupt payload as an
+    /// error, NEVER silently fold it into `ok=false` ("nothing to
+    /// undo/redo") — a corrupt row is a halt with the buffer kept, not an
+    /// empty journal.
     CorruptPayload(String),
     /// `get_blob` decompressed a row whose SHA-256 does not match its own
-    /// `hash` key — blob rot / bit-flip detection (port of
-    /// `snapshot.go`). Surfaced, never silently returned as if it were
-    /// the original content.
+    /// `hash` key — blob rot / bit-flip detection. Surfaced, never
+    /// silently returned as if it were the original content.
     BlobHashMismatch { hash: String, got: String },
     /// A replay (`snapshot::recover_document`) attempted to apply an
     /// `AppliedEdit` batch that does not fit the buffer it was replayed
     /// against — an out-of-range or malformed journal row. Wraps
-    /// `rune_core::buffer::BufferError` (port of the failure mode
-    /// `buffer.ReplayForward` used to silently clamp/skip; §1.3 forbids
-    /// that here — see `snapshot.rs`'s module doc).
+    /// `rune_core::buffer::BufferError`, surfacing the failure as
+    /// corruption rather than silently clamping or skipping it (see
+    /// `snapshot.rs`'s module doc).
     ReplayFailed(String),
-    /// A lookup that Go wraps `sql.ErrNoRows` into a genuine error for
-    /// (rather than a silent zero value) — e.g. `getObservation`
-    /// (`observation.go`) on an id with no row. Never used for a
-    /// legitimate "not found" outcome a caller treats as ordinary control
-    /// flow (those stay `Option`/`bool`, per this crate's own
+    /// A lookup that returns a genuine error rather than a silent zero
+    /// value — e.g. `get_observation` on an id with no row. Never used for
+    /// a legitimate "not found" outcome a caller treats as ordinary
+    /// control flow (those stay `Option`/`bool`, per this crate's own
     /// Options-for-absent-facts rule) — only for a caller-supplied
     /// reference (an `ObsId`, a bound path) that MUST resolve.
     NotFound(String),
-    /// A WP4 business-rule refusal with no dedicated variant — the direct
-    /// port of an ad hoc `fmt.Errorf` guard in the Go source (e.g.
+    /// A WP4 business-rule refusal with no dedicated variant (e.g.
     /// `Materialize`'s "no path bound (untitled document)",
     /// `ResolveAbandon`'s "not a resolve adoption" refusal), or `load.rs`'s
-    /// own non-UTF-8 disk read (the Rust port's `Buffer`/`AppliedEdit` model
-    /// is `String`-based throughout, unlike Go's raw `[]byte`↔`string`
-    /// conversions, which tolerate arbitrary bytes — see `load.rs`'s doc
-    /// comment). `probe.rs`/`materialize.rs` no longer hit this case: their
-    /// disk-sourced reads never need to decode as text at all (`blob.rs`'s
-    /// module doc) — only `load.rs`'s return path, which must produce a
-    /// genuine `String` for the edit buffer, still can.
+    /// own non-UTF-8 disk read (this crate's `Buffer`/`AppliedEdit` model
+    /// is `String`-based throughout and cannot tolerate arbitrary bytes —
+    /// see `load.rs`'s doc comment). `probe.rs`/`materialize.rs` no longer
+    /// hit this case: their disk-sourced reads never need to decode as text
+    /// at all (`blob.rs`'s module doc) — only `load.rs`'s return path,
+    /// which must produce a genuine `String` for the edit buffer, still can.
     Invalid(String),
 }
 

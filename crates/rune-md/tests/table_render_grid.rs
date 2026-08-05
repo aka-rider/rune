@@ -2,10 +2,10 @@
 //! sync_cursors -> emit) — a header/separator/body row's exact rendered
 //! text, tiling, equal display width across rows, revealed-vs-rendered
 //! byte-verbatim behaviour, alignment, and the CJK column-width case WP6's
-//! parity gate cannot cover (Gotcha/critique B7: Go's `cjk.md` fixture hits
-//! an unfixable vendored-renderer TAB-padding defect, so this crate's own
-//! width correctness is pinned here instead). Split from the combined
-//! `table_render` file (§1.6) into per-layout groups — this one is Grid.
+//! parity gate cannot cover (Gotcha/critique B7: the `cjk.md` parity
+//! fixture hits an unfixable vendored-renderer TAB-padding defect, so this
+//! crate's own width correctness is pinned here instead). Split from the
+//! combined `table_render` file into per-layout groups — this one is Grid.
 //!
 //! Every "Rendered" assertion below uses `focused = false`: an unfocused
 //! document forces every Decide-policy block Rendered regardless of cursor
@@ -209,9 +209,9 @@ fn right_alignment_right_aligns_short_content() {
     assert_eq!(joined_line(&lines, 2, buf.content()), "│ xx │");
 }
 
-/// CJK column-width case WP6's parity gate cannot cover (Go's own `cjk.md`
-/// fixture hits an unfixable vendored-renderer TAB-padding defect,
-/// `scripts/parity/grid.sh`'s own documented exclusion) — pinned as a unit
+/// CJK column-width case a cross-implementation parity comparison cannot
+/// cover (an unfixable vendored-renderer TAB-padding defect makes exact-cell
+/// comparison against it unreliable for CJK content) — pinned as a unit
 /// test instead. `世界` is two CJK (double-width) chars, so column 0's
 /// computed width must be exactly 4 (measured in display cells via
 /// `grapheme_width`), not `"世界".chars().count() == 2`.
@@ -234,7 +234,7 @@ fn choose_selects_grid_unconditionally_when_avail_is_zero() {
 /// cell sourcepos of every later row shifted one byte right in that case,
 /// so rendering it drops the first character of every body cell and leaks
 /// the skipped byte back as raw text — displaying the user's words wrongly.
-/// Raw markdown is the correct fallback (§1.3).
+/// Raw markdown is the correct fallback.
 #[test]
 fn a_table_starting_mid_line_degrades_to_raw_text_instead_of_rendering_wrong() {
     let content = " Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n";

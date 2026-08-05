@@ -1,5 +1,5 @@
 //! WP2.S7: decor-producer tests, kept apart from the main emit tests so
-//! both files stay under CONSTITUTION §1.6's limit. Three groups: (a) decor never
+//! both files stay under the 500-line budget. Three groups: (a) decor never
 //! perturbs a line's own span bytes (the byte-neutrality Gotcha every decor
 //! producer must respect); (b) decor is present iff the block is Rendered;
 //! (c) a task item keeps its `☐`/`☑` checkbox substitution and gets NO

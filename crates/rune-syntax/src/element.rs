@@ -27,7 +27,7 @@ pub enum RevealState {
 }
 
 /// Embedded in every concealable element. `transition` is the ONLY writer of
-/// `state` in the crate (Go's single-transition-writer pattern: one
+/// `state` in the crate (the single-transition-writer pattern: one
 /// `transition`, callers never assign the field directly). Returns true
 /// iff the state actually changed, so callers can OR it into a dirty flag
 /// without a separate equality check.
@@ -164,8 +164,8 @@ impl CursorProbe {
 }
 
 /// Whether the document root grants `Decide` to its children at all. `Never`
-/// forces every descendant `ForceRendered` — Go's `SyncNoReveal` (Gotchas:
-/// "Unfocused -> ForceRendered"); `AtCursor` lets each element's own policy
+/// forces every descendant `ForceRendered` — an unfocused document forces
+/// every element rendered; `AtCursor` lets each element's own policy
 /// consult the cursor. The document root picks this from whether it has a
 /// live insertion point to reveal at — not from focus alone, since a
 /// focused-but-read-only document has no insertion point either.

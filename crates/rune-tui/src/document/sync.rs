@@ -1,5 +1,5 @@
 //! The view/scroll/settle half of `Document` (split out of `document.rs`
-//! per §1.6): `view` (the pure sync query), `sync_catalogue` (its width-free
+//! for the 500-line-file budget): `view` (the pure sync query), `sync_catalogue` (its width-free
 //! subset), `scroll_to_cursor`/`snap_cursor_to_row` (the single writer of
 //! `viewport.scroll_row`), and `sync` (the fixed per-message/per-batch
 //! sequence that ties them together). None of this depends on anything

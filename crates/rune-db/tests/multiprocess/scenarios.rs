@@ -1,4 +1,4 @@
-//! The four multiprocess scenarios (§1.6 budget split): parent-side setup,
+//! The four multiprocess scenarios: parent-side setup,
 //! child spawning through `support::spawn_helper`, and post-mortem
 //! verification against the shared db file every scenario's children raced
 //! over.

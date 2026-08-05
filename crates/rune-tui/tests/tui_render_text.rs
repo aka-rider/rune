@@ -1,6 +1,6 @@
 //! WP5 done-when: headless render assertions on a `TestBackend`, using the
 //! `Mem` vfs — control-safe glyphs, tab expansion, and grapheme-cluster
-//! cells. TODO.md's §1.6 split of the original `tui_render.rs`: conceal/
+//! cells. TODO.md's 500-line budget split of the original `tui_render.rs`: conceal/
 //! styling/status-line/Cell-grid checks live in `tui_render_basics.rs`,
 //! degenerate backend sizes and `blit`'s own clipping in
 //! `tui_render_bounds.rs`, and tables/the focus caret gate in
@@ -20,7 +20,7 @@ use tui_render_common::{
 };
 
 /// Regression for the control-safe cell builder: `\r` (from a CRLF file —
-/// CONSTITUTION §1.4.5 requires it stay in the buffer verbatim) must never
+/// it must stay in the buffer verbatim) must never
 /// become a `Cell`, and rendering it must not panic. Before the fix, a raw
 /// `\r` reached `ratatui::buffer::Cell::set_char`, and `cell_width()`
 /// `debug_assert!`s on any single-byte ASCII control character reaching a
@@ -57,10 +57,10 @@ fn crlf_line_endings_render_without_panicking_and_leave_no_control_chars_in_cell
 
 /// Sibling to the CRLF regression above, for the case CRLF does NOT cover:
 /// a LONE `\r` (no paired `\n`) is ordinary mid-line content to the buffer
-/// (CONSTITUTION §1.5 — never a line break), so `"ab\rcd\r"` is a single
+/// (never a line break), so `"ab\rcd\r"` is a single
 /// buffer line containing two literal `\r` bytes. This must render without
 /// panicking and without ever letting a raw `\r` reach a `Cell`, exactly
-/// like the CRLF case — the render-layer contract (§1.4.5: the user's
+/// like the CRLF case — the render-layer contract (the user's
 /// bytes stay in the buffer verbatim; the control-safe cell builder maps
 /// a control byte to a placeholder glyph, never a raw `Cell`) does not
 /// distinguish a CR paired with LF from one that stands alone.
@@ -181,12 +181,12 @@ fn wide_char_then_tab_caret_column_agrees_with_wrap_visual_col() {
     assert_eq!((caret_x - EDITOR_LEFT_COL) as usize, expected_visual_col);
 }
 
-/// Regression for the grapheme-cluster cell builder (parity harness catch,
-/// `scripts/parity/fixtures/emoji.md`): a ZWJ family emoji (7 codepoints
+/// Regression for the grapheme-cluster cell builder (caught by
+/// cross-implementation parity testing): a ZWJ family emoji (7 codepoints
 /// joined by U+200D) must render as exactly ONE `Cell` — never one `Cell`
 /// per codepoint, which corrupted the terminal output (module docs,
-/// `push_grapheme_cells`) — and the buffer's own bytes must stay verbatim
-/// (CONSTITUTION §1.4.5): only the DISPLAY grouping changes, never the
+/// `push_grapheme_cells`) — and the buffer's own bytes must stay verbatim:
+/// only the DISPLAY grouping changes, never the
 /// underlying content.
 #[test]
 fn zwj_family_emoji_renders_as_one_cell_and_buffer_bytes_round_trip() {
@@ -429,7 +429,7 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
         assert_eq!(
             app.active_doc().buffer.content(),
             content,
-            "{label}: buffer bytes must round-trip verbatim (CONSTITUTION §1.4.5)"
+            "{label}: buffer bytes must round-trip verbatim"
         );
 
         let view = app.active_doc().view.as_ref().expect("synced view");

@@ -1,23 +1,23 @@
-//! Kitty graphics protocol APC encoding: transmit-and-display, and delete.
+//! Kitty graphics protocol (see the terminal-wg/kitty graphics protocol
+//! docs) APC encoding: transmit-and-display, and delete.
 //!
-//! Byte-parity hazards (re-derived from the vendored
-//! `github.com/charmbracelet/x/ansi` kitty package and confirmed against its
-//! source): PNG payload bytes are NOT portable between Go and Rust — only
-//! framing, the option string, and chunk structure are asserted exactly
-//! here; the payload itself is compared structurally by the caller (decode
-//! base64 -> decode PNG -> compare RGBA within a tolerance).
+//! Byte-parity hazards (re-derived against the committed golden
+//! expectations and confirmed against the protocol spec): PNG payload
+//! bytes are NOT portable between encoders — only framing, the option
+//! string, and chunk structure are asserted exactly here; the payload
+//! itself is compared structurally by the caller (decode base64 -> decode
+//! PNG -> compare RGBA within a tolerance).
 //!
-//! The reference implementation's chunking loop reads with `io.ReadFull`
-//! into a fixed `MAX_CHUNK_SIZE`-byte buffer: a full read writes an in-loop
-//! chunk and continues; a short read (including zero bytes, on an exact
-//! multiple of the chunk size) breaks the loop WITHOUT writing, and the
-//! bytes it did read are instead written as one further "last chunk" after
-//! the loop. Net effect for a payload of `n` chunks of exactly
-//! `MAX_CHUNK_SIZE` bytes: `n` full chunks (first carries the full option
-//! set, the rest `q=2`, all with `m=1`) plus a trailing EMPTY `q=2,m=0`
-//! chunk. For a payload under one chunk (including empty), the loop never
-//! completes a full read: a single chunk carries the whole payload under
-//! the full option set with no `m=` key at all.
+//! Chunking reads into a fixed `MAX_CHUNK_SIZE`-byte buffer: a full read
+//! writes an in-loop chunk and continues; a short read (including zero
+//! bytes, on an exact multiple of the chunk size) breaks the loop WITHOUT
+//! writing, and the bytes it did read are instead written as one further
+//! "last chunk" after the loop. Net effect for a payload of `n` chunks of
+//! exactly `MAX_CHUNK_SIZE` bytes: `n` full chunks (first carries the full
+//! option set, the rest `q=2`, all with `m=1`) plus a trailing EMPTY
+//! `q=2,m=0` chunk. For a payload under one chunk (including empty), the
+//! loop never completes a full read: a single chunk carries the whole
+//! payload under the full option set with no `m=` key at all.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;

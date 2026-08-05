@@ -1,4 +1,4 @@
-//! `WrapSegment`-level decoration (CONSTITUTION §1.6 split of the wrap
+//! `WrapSegment`-level decoration (split out of the wrap
 //! module, which is already over budget — this file carries the
 //! attachment logic; the wrap module keeps only the call sites): turns a
 //! `SyntaxLine`'s `LineDecor` (plan Context, "line decoration at the
@@ -9,7 +9,7 @@
 //! actually renders once that decision is made (`attach`).
 //!
 //! A thematic-break rule (`LineDecor::is_rule`) is the one exception to
-//! "decor that doesn't fit gets dropped" (§1.3): its width is chosen by the
+//! "decor that doesn't fit gets dropped": its width is chosen by the
 //! emitter to exactly fill the line, so it never competes with content for
 //! cells the way a heading icon or list bullet does — it always attaches,
 //! clamped to whatever width is actually available instead.
@@ -135,7 +135,7 @@ fn clamp_to_width(decor: &LineDecor, is_first_segment: bool, width: usize) -> Se
 
 /// Truncate `text` to at most `max_cells` of display width, breaking only
 /// on whole grapheme-cluster boundaries (never mid-cluster) via the one
-/// grapheme-width chokepoint (§1.5). Returns the truncated text and its
+/// grapheme-width chokepoint. Returns the truncated text and its
 /// actual rendered width, which may be less than `max_cells` when the next
 /// cluster wouldn't fit.
 fn clamp_text_to_cells(text: &str, max_cells: usize) -> (String, usize) {

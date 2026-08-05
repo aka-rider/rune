@@ -58,8 +58,9 @@ impl LineMap {
     ///
     /// `None` if any line fails to land on a live byte range of `content` —
     /// should not happen, since the ranges come from `content`'s own parse,
-    /// but degrading to "skip this fence" rather than panicking is the §1.3
-    /// convention. A partial reconstruction would be worse than none: it
+    /// but degrading to "skip this fence" rather than panicking keeps a
+    /// rendering-layer bug from taking down the session. A partial
+    /// reconstruction would be worse than none: it
     /// would silently shift every offset this map then translates.
     pub fn reconstruct(&self, content: &str) -> Option<String> {
         let pieces: Option<Vec<&str>> = self

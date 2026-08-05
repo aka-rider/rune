@@ -1,6 +1,6 @@
 //! `App`: the Elm-style model. `update` is the ONLY writer of synchronous
-//! state (CONSTITUTION §5.4: "mutate synchronous state directly in
-//! `update`; a Cmd is exclusively for I/O that leaves the thread").
+//! state — mutate synchronous state directly in `update`; a Cmd is
+//! exclusively for I/O that leaves the thread.
 //!
 //! Plan WP1 reshaped `App` around a `DocumentId`-keyed map of `Document`s
 //! (decision 1/2): everything that used to live directly on `App` but is
@@ -38,7 +38,7 @@ use crate::save;
 /// Emptying the map — every entry retired by a matching successful ack, or
 /// by the document closing out from under the wait — is what flips
 /// `should_quit`; any save failing outright aborts the whole intent instead
-/// (Go parity: never exit over a save the user believes succeeded).
+/// (never exit over a save the user believes succeeded).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QuitIntent {
     pub pending: std::collections::BTreeMap<DocumentId, u64>,
@@ -81,7 +81,7 @@ pub struct App {
     /// doesn't claim it (`pane.rs`) — defaults to `Editor`. `pub(crate)`,
     /// not private: the writers (`focus_title`/`refocus_title`/`set_focus`,
     /// `focus.rs`'s own `impl App` block — moved there to keep this file
-    /// under the §1.6 budget) live in a different module now, but they
+    /// under the 500-line budget) live in a different module now, but they
     /// remain the ONLY code in this crate that assigns it directly; every
     /// other call site goes through `focus()`/`set_focus_pane`. Leaving the
     /// title always runs through the one commit chokepoint
@@ -130,12 +130,12 @@ pub struct App {
     /// extension included, that a rename types into. Reseeded at every
     /// document switch (`workspace::switch_to`) and at every focus gain
     /// (`App::focus_title`), so it always describes the document actually
-    /// showing. Unjournaled at the document level (§12): its own in-memory
+    /// showing. Unjournaled at the document level: its own in-memory
     /// undo history (⌘Z/⇧⌘Z) never reaches the recovery store.
     pub title: crate::title::TitleField,
     /// The rename workflow's state (`rename.rs`) — a typed machine rather
     /// than another ad hoc pending-boolean, because `[R]eplace` has a
-    /// mid-sequence point past which it is not cancellable (§1.4.10).
+    /// mid-sequence point past which it is not cancellable.
     pub rename: crate::rename::RenameState,
     /// `pub(crate)`: `rename.rs` is the sole minter of new generations for
     /// its own `Cmd` route (mirrors `next_quit_gen`/`next_save_confirm_gen`).
@@ -190,7 +190,7 @@ pub struct App {
     /// trigger time, held here between `MaterializePrepare`'s ack (which
     /// carries no disk-sourced data at all) and the caller-side `vfs` `Cmd`
     /// it spawns — `save::PendingMaterialize`'s doc comment explains why
-    /// each field is captured once and never re-derived (§1.4.2/§1.4.8).
+    /// each field is captured once and never re-derived.
     pub(crate) pending_materialize: HashMap<DocumentId, crate::save::PendingMaterialize>,
     /// A persistent status banner independent of `status_message`'s
     /// provenance-cleared slot (plan WP5.S2/S3: "persistent status banner")
@@ -225,8 +225,7 @@ pub struct App {
     pub(crate) next_quit_gen: u32,
     /// The quit-save fan-out a `GuardKind::DirtyQuit` answer of `[S]ave`
     /// armed (plan WP2), correlating every document it kicked a save off
-    /// for against the EXACT buffer version that save captured — port of
-    /// Go's `continuation{kind: contQuit, requestID, saveLeft}`. A
+    /// for against the EXACT buffer version that save captured. A
     /// `BTreeMap`, not a bare counter: retiring one document's entry is
     /// idempotent (a duplicate/late ack can never double-decrement a
     /// counter that no longer exists as such), an unrelated ⌘S ack for a
@@ -453,9 +452,9 @@ impl App {
         self.documents.get_or_anchor_mut(&self.active)
     }
 
-    /// Convenience delegate to the active document's dirty cache
-    /// (CONSTITUTION §1.4.8) — kept on `App` so render/status call sites
-    /// don't need to spell out `app.active_doc().is_dirty()` everywhere.
+    /// Convenience delegate to the active document's dirty cache — kept on
+    /// `App` so render/status call sites don't need to spell out
+    /// `app.active_doc().is_dirty()` everywhere.
     pub fn is_dirty(&self) -> bool {
         self.active_doc().is_dirty()
     }
@@ -479,8 +478,8 @@ impl App {
     /// The public entry point `rune-cli`'s bootstrap hydration uses (plan
     /// WP1) — `materialize_ack::recompute_dirty` itself is `pub(crate)`, so
     /// this is the one seam a different crate reaches it through.
-    /// CONSTITUTION §1.4.8 requires dirty to be re-derived on every
-    /// transition, hydration included; dirtiness no longer falls out of
+    /// Dirty must be re-derived on every transition, hydration included;
+    /// dirtiness no longer falls out of
     /// `Document::hydrate` itself (the deleted `mark_dirty_from_hydration`
     /// this replaces) since it is now a content comparison the caller must
     /// explicitly re-run once the buffer settles.
@@ -508,7 +507,7 @@ impl App {
     // `focus.rs` is the sole writer of `focus` outside this constructor.
 }
 
-/// The ONLY writer of `App` state (§5.4). `effects` accumulates I/O for the
+/// The ONLY writer of `App` state. `effects` accumulates I/O for the
 /// runtime loop to perform after the whole message batch is applied:
 /// `effects.raw` for OSC 52 (drained by the main loop, never a `Cmd` — plan
 /// Gotchas, "Cmds must never touch the terminal"), `effects.cmds` for
@@ -534,8 +533,9 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     }
     // The rest of the post-dispatch chokepoint (highlight scheduling, a
     // newly-active image document's decode, WP9's embed reconciler) lives
-    // in `dispatch::after_update` — split out so this already-over-budget
-    // file (§1.6) never needs to grow for a future addition to that list.
+    // in `dispatch::after_update` — split out so this file, already over
+    // the 500-line budget, never needs to grow for a future addition to
+    // that list.
     dispatch::after_update(app, active_before, buffer_version_before, effects);
     // The Explorer live preview's promote/discard-on-focus-move reaction
     // (`explorer_preview::on_focus_changed`) has no hook in `dispatch.rs`
@@ -549,16 +549,18 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
     crate::explorer_preview::on_focus_changed(app, focus_before, app.focus());
 }
 
-// `relayout`/`sync_view` moved to `app_view.rs` (§1.6 budget) — both are
-// still plain `impl App` methods, reached the same way as before.
+// `relayout`/`sync_view` moved to `app_view.rs` (500-line budget) —
+// both are still plain `impl App` methods, reached the same way as before.
 
-// `schedule_highlight` moved to `highlight.rs` (§1.6 budget) — `update`
-// above calls it through `highlight::`.
+// `schedule_highlight` moved to `highlight.rs` (500-line budget) —
+// `update` above calls it through `highlight::`.
 
 // `update_inner` (the top-level `Msg` dispatch), `handle_key`,
-// `handle_editor_key` and `handle_db_event` moved to `dispatch.rs` (§1.6
-// budget) — `update` above calls the first through `dispatch::`.
+// `handle_editor_key` and `handle_db_event` moved to `dispatch.rs`
+// (500-line budget) — `update` above calls the first through
+// `dispatch::`.
 
-// `handle_quit_key` and its 2s timer `Cmd` moved to `pane.rs` in WP2 (§1.6
-// budget) — `GlobalCommand::QuitChord` is its only remaining caller. Their
+// `handle_quit_key` and its 2s timer `Cmd` moved to `pane.rs` in WP2
+// (500-line budget) — `GlobalCommand::QuitChord` is its only
+// remaining caller. Their
 // unit tests moved to `tests/app_quit_and_dispatch.rs` earlier (WP1.S5).

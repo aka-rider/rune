@@ -3,9 +3,9 @@
 //! library-independent event type, with `from_termina` the one bridge.
 //!
 //! Also `PointerState`, the multi-click tracker `commands::mouse` drives
-//! (plan WP7.S5): 500 ms window AND Chebyshev distance <= 1 cell (Go
-//! rune's own multi-click rule — deliberately not pixel-exact, since a
-//! human hand drifts). The wall clock never gets read directly here —
+//! (plan WP7.S5): 500 ms window AND Chebyshev distance <= 1 cell
+//! (deliberately not pixel-exact, since a human hand drifts). The wall
+//! clock never gets read directly here —
 //! `Clock` is an injected field on `App`, so a click sequence is
 //! reproducible from a fuzz seed instead of depending on real elapsed time.
 
@@ -24,8 +24,8 @@ pub enum MouseButton {
 /// (button-up hover) and the horizontal scroll variants are dropped by
 /// `from_termina` below — mode 1002 (`ButtonEventMouse`, `term.rs`) never
 /// reports plain hover in the first place, and this crate has no
-/// horizontal-scroll gesture to drive (CONSTITUTION: "horizontal scroll"
-/// is explicitly out of scope for this plan).
+/// horizontal-scroll gesture to drive (horizontal scroll is explicitly out
+/// of scope for this plan).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseKind {
     Down(MouseButton),
@@ -137,13 +137,13 @@ impl Clock for ManualClock {
     }
 }
 
-/// The multi-click threshold: 500 ms (plan WP7.S5, Go rune's own rule).
+/// The multi-click threshold: 500 ms (plan WP7.S5).
 const MULTI_CLICK_WINDOW: Duration = Duration::from_millis(500);
 
 /// The multi-click distance: Chebyshev (max of the row/column deltas) <= 1
 /// cell (plan WP7.S5) — a straight-line/Euclidean distance would reject a
 /// click one cell diagonally off the last one, which a real hand produces
-/// often enough that Go rune deliberately didn't use it.
+/// often enough that this deliberately doesn't use it.
 const MULTI_CLICK_DIST: i32 = 1;
 
 fn chebyshev(c1: u16, r1: u16, c2: u16, r2: u16) -> i32 {

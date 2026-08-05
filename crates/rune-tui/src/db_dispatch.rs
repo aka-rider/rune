@@ -1,4 +1,4 @@
-//! The `rune-db` ack router, split out of `dispatch.rs` (§1.6 budget): a
+//! The `rune-db` ack router, split out of `dispatch.rs` (500-line budget): a
 //! distinct concern from the `Msg` dispatch and key pipeline that file keeps
 //! — this is reached only through `dispatch::update_inner`'s `Msg::Db` arm.
 
@@ -70,7 +70,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Sync(state),
         } => {
-            // Plan WP2.S2: a `Probe` ack — render/hint state only (§12; see
+            // Plan WP2.S2: a `Probe` ack — render/hint state only (see
             // `Document::last_sync`'s own doc comment). Updating it here, in
             // the same dispatch the ack lands in, is what keeps the
             // footer's `DiskChanged` hint from ever needing its own

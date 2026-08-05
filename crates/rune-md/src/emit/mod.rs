@@ -1,19 +1,18 @@
 //! Emitter (plan Context, "Emit -> wrap -> snapshot"): walks the `Block`/
 //! `Inline` tree in model-line order (`walk::emit_block`), producing one
 //! `SyntaxLine` per buffer line plus a `SyntaxSnapshot` for buffer<->syntax
-//! coordinate conversion — a structural port of Go's markdown-block,
-//! syntax-map, syntax-snapshot and cell-map layers.
+//! coordinate conversion.
 //!
 //! Concealment is physical here, uniformly for block markers AND inline
 //! delimiters: a `Rendered` element's marker/delimiter bytes are dropped
 //! from the emitted text (recorded as a hidden range for coordinate
-//! conversion) rather than kept-but-restyled. This is a deliberate
-//! simplification of Go's model, where block-level markers (heading `"## "`,
-//! blockquote `"> "`) stay in the emitted text and are hidden only by the
-//! renderer, while inline delimiters are physically dropped — two policies
-//! for one concept. Phase 1 unifies them: `Rendered` always means "the
+//! conversion) rather than kept-but-restyled. This deliberately unifies
+//! block and inline concealment under one policy, rather than block-level
+//! markers (heading `"## "`, blockquote `"> "`) staying in the emitted text
+//! hidden only by the renderer while inline delimiters are physically
+//! dropped — two policies for one concept. `Rendered` always means "the
 //! markup bytes are not part of the syntax-space text", block or inline
-//! alike, consistent with the plan's single `RevealState` used everywhere.
+//! alike, consistent with the single `RevealState` used everywhere.
 //!
 //! Nested styling (bold-inside-italic) falls out of the tree via `StyleCtx`
 //! (`style.rs`), an accumulator that lives only for the duration of the
@@ -23,10 +22,10 @@
 //!
 //! Every producer-bug invariant this module checks (a duplicate visible
 //! claim in `push_span_split_by_line`) is gated on [`STRICT_INVARIANTS`],
-//! never on `cfg(debug_assertions)`: CONSTITUTION §1.3 requires an ORDINARY
-//! shipped build — including an unoptimized debug one a developer might run
-//! directly — to degrade gracefully on a producer bug, never panic on a
-//! real user's document. Only a test run (or a build that explicitly opts
+//! never on `cfg(debug_assertions)`: an ORDINARY shipped build — including
+//! an unoptimized debug one a developer might run directly — must degrade
+//! gracefully on a producer bug, never panic on a real user's document.
+//! Only a test run (or a build that explicitly opts
 //! in via the `strict-invariants` feature) is allowed to treat the
 //! violation as fatal. Graceful degradation itself (skip an already-claimed
 //! visible byte) runs in EVERY build unconditionally — `STRICT_INVARIANTS`
@@ -106,7 +105,7 @@ fn ceil_char_boundary(s: &str, idx: usize) -> usize {
 /// covered — trailing/leading whitespace, tabs, a bare `\r` before `\n`,
 /// anything a comrak node's sourcepos doesn't happen to span — as ordinary
 /// visible text rather than silently dropping it (a dropped byte is a data
-/// hazard: the caret could no longer reach it, CONSTITUTION §0/§1.3).
+/// hazard: the caret could no longer reach it).
 pub(crate) type Accounted = Vec<Vec<(usize, usize)>>;
 
 /// The chokepoint every range->line-bucket routine in this crate is built
@@ -254,8 +253,7 @@ fn unclaimed_subranges(
     result
 }
 
-/// Port of Go's `buildInlineCellMap`: one entry per
-/// visual char, the absolute buffer offset it maps back to.
+/// One entry per visual char, the absolute buffer offset it maps back to.
 fn build_cell_map(content_start: usize, text: &str) -> CellMap {
     let mut cm = Vec::with_capacity(text.chars().count());
     let mut i = 0usize;
@@ -283,8 +281,8 @@ fn build_cell_map(content_start: usize, text: &str) -> CellMap {
 /// (the class of bug this guards: an empty list item's marker running
 /// onto its continuation line and re-showing bytes a nested blockquote's
 /// own marker scan already claimed — content invented on the visible
-/// side, content_range's mirror image of dropping a byte, both are a
-/// §1.4.5 violation).
+/// side, content_range's mirror image of dropping a byte: both corrupt
+/// the user's own bytes).
 pub(crate) fn push_span_split_by_line(
     content: &str,
     starts: &[usize],
@@ -303,7 +301,7 @@ pub(crate) fn push_span_split_by_line(
                 // subtracting a fixed byte count from a multibyte-char-
                 // adjacent position) can land inside a char instead of on
                 // its boundary — `content.get` then returns `None`. These
-                // are the user's own bytes (§0/§1.4.5): snapping the range
+                // are the user's own bytes: snapping the range
                 // OUTWARD to the nearest valid boundaries and emitting
                 // verbatim is always safe (worst case: a little more
                 // context shown than the producer intended), whereas

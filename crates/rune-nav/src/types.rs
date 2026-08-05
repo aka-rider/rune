@@ -1,4 +1,4 @@
-//! The navigation vocabulary's data shapes (CONSTITUTION §1.6 split of the
+//! The navigation vocabulary's data shapes (500-line budget split of the
 //! crate root): a `Ref`'s two kinds (`Use`/`Def`), what a `Use` points at
 //! before resolution (`Target`), what it resolves to (`Destination`), and
 //! the anchor/role types both sides share. No behavior lives here — see

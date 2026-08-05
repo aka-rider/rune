@@ -1,6 +1,6 @@
 //! The resolver's own key surface (plan WP4.S1): a named binding table so
 //! `ValidateNoPhysicalKeyCollisions`-style guard tests can see every merge
-//! chord (§3.1), and the dispatch intercept that owns EVERY key while the
+//! chord, and the dispatch intercept that owns EVERY key while the
 //! resolver is active — the working form is a live buffer, and any key that
 //! slipped through to the printable-insert fallthrough would type into it
 //! and desync the block spans. Consuming with feedback, never silently, is

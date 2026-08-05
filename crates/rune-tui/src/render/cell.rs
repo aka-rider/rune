@@ -1,5 +1,5 @@
 //! The `Cell` model + the buffer-content -> `Cell` walk (split out of
-//! `render` per §1.6): one visible terminal cell's shape, the width
+//! `render` per the 500-line budget): one visible terminal cell's shape, the width
 //! chokepoint every span-to-cells walk shares, and the two public entry
 //! points (`segment_cells`/`segment_geometry`) `render::build_rows` and
 //! `commands::mouse`'s hit-testing call into.
@@ -20,8 +20,7 @@ use crate::theme::Theme;
 /// ONE user-perceived character occupying ONE cell — see `push_grapheme_
 /// cells`'s docs for why splitting a cluster across multiple `Cell`s
 /// corrupts the terminal output. `-1` marks a cell with no direct buffer
-/// correspondence — decorative/synthetic (port of Go's `CellMapping`
-/// sentinel, reused here for the same reason: a synthetic EOL cursor cell
+/// correspondence — decorative/synthetic (a synthetic EOL cursor cell
 /// still carries its actual cursor byte offset, never `-1`, since it DOES
 /// have a precise buffer position). A genuinely decorative cell — a
 /// synthetic table border, or a line's own heading-icon/bullet/quote-bar/
@@ -111,8 +110,7 @@ fn control_placeholder(ch: char) -> char {
 /// math and render's width math must stay identical) is one function call,
 /// not two independently-written sums that merely happen to agree today.
 ///
-/// `\n`/`\r` are dropped entirely — zero cells, zero width — matching Go's
-/// `cell.go` (`if r == '\n' || r == '\r' { continue }`) and
+/// `\n`/`\r` are dropped entirely — zero cells, zero width, matching
 /// `control_aware_width`'s own `0` for them. `\t` expands into `width`
 /// single-width space cells, ALL carrying the tab's own `buf_offset`, so
 /// the caret can land on any of the tab's columns and still map back to the
@@ -222,7 +220,7 @@ fn segment_cells_with(
                 // fall past the end of `cell_map` — an ordinary shipped
                 // build degrades gracefully (the `-1` "no buffer
                 // correspondence" sentinel, same as any other decorative
-                // cell), per CONSTITUTION §1.3.
+                // cell).
                 let mut char_idx = 0usize;
                 for grapheme in text.graphemes(true) {
                     let offset = cell_map.get(char_idx).copied().unwrap_or(-1);

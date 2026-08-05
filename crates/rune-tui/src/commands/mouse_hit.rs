@@ -1,4 +1,4 @@
-//! Mouse hit-testing (split out of `mouse.rs`, §1.6 budget — WP9 pushed it
+//! Mouse hit-testing (split out of `mouse.rs` — WP9 pushed it
 //! past 500 lines): `hit_test`/`offset_at` walk the clicked row's own
 //! rendered cells (`render::segment_cells`) to find the buffer byte a
 //! screen column corresponds to — the same cells `render::build_rows` just
@@ -15,7 +15,7 @@ use crate::render;
 /// the editor rect — `None` before the document's first sync (`doc.view`
 /// unset, never observed past the seeded initial `Msg::Resize` in
 /// practice), or when the click landed on a synthesised table border row
-/// (Go parity: `offset_at` returns `None` there too, so the gesture is a
+/// (`offset_at` returns `None` there too, so the gesture is a
 /// complete no-op rather than moving the cursor to some nearby offset).
 pub(super) fn hit_test(app: &App, doc: &Document, row: u16, col: u16) -> Option<(usize, usize)> {
     let view = doc.view.as_ref()?;

@@ -1,4 +1,4 @@
-//! List navigation — port of Go's listnav + scroll helpers.
+//! List navigation and scroll-follow helpers for cursor-driven lists.
 
 use std::ops::Range;
 
@@ -9,7 +9,6 @@ pub struct List {
 }
 
 impl List {
-    /// Port of Go's listnav Move.
     pub fn move_by(&mut self, delta: isize, len: usize) {
         if len == 0 {
             self.cursor = 0;
@@ -20,12 +19,10 @@ impl List {
         self.cursor = pos as usize;
     }
 
-    /// Port of Go's listnav First.
     pub fn first(&mut self) {
         self.cursor = 0;
     }
 
-    /// Port of Go's listnav Last.
     pub fn last(&mut self, len: usize) {
         if len == 0 {
             self.cursor = 0;
@@ -34,7 +31,6 @@ impl List {
         }
     }
 
-    /// Port of Go's scroll Follow, inlined here.
     /// Adjusts `top` so that `cursor` stays within the visible window
     /// [top + margin .. top + height - 1 - margin], with a jump buffer.
     pub fn follow(&mut self, len: usize, height: usize, margin: usize, jump: usize) {
@@ -81,7 +77,6 @@ impl List {
         self.top = offset as usize;
     }
 
-    /// Port of Go's listnav Window.
     /// Returns the visible index range [top, top+height) clamped to [0, len).
     pub fn window(&self, len: usize, height: usize) -> Range<usize> {
         if height == 0 || len == 0 {

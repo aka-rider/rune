@@ -1,31 +1,27 @@
-//! Immutable, value-semantics text buffer keyed by BYTE offsets (§1.5).
-//! Ported from Go's buffer + line-index implementation.
+//! Immutable, value-semantics text buffer keyed by BYTE offsets.
 //!
-//! Deliberate, type-driven departures from the Go original (each removes an
-//! illegal state rather than guarding it at runtime):
-//! - `Edit`/`AppliedEdit` offsets are `usize`, not Go's signed `int` — a
-//!   negative offset is now unrepresentable, so the Go `e.Start < 0` guard
-//!   has no Rust equivalent to port.
-//! - `Edit::insert` is a Rust `String`, which is a UTF-8 invariant enforced
-//!   by the type itself — Go's `utf8.ValidString(e.Insert)` runtime check
-//!   has no reachable failure case to port.
-//! - Every access that would use `[]` indexing in the Go original goes
-//!   through `.get()`/`.get_mut()` here instead, per the workspace's
+//! Type-driven invariants (each removes an illegal state rather than
+//! guarding it at runtime):
+//! - `Edit`/`AppliedEdit` offsets are `usize` — a negative offset is
+//!   unrepresentable.
+//! - `Edit::insert` is a Rust `String`, so UTF-8 validity is enforced by
+//!   the type itself.
+//! - Every access that would need `[]` indexing goes through
+//!   `.get()`/`.get_mut()` instead, per the workspace's
 //!   `clippy::indexing_slicing` lint — every `&content[a..b]` must come
 //!   from a validated/clamped range, and the buffer's own methods ARE
 //!   those clamping helpers, so nothing downstream ever indexes `content`
 //!   directly.
-//! - `Slice`/`Byte` panic in Go on an out-of-range argument (a bare Go
-//!   slice/index expression). Per CONSTITUTION §1.3 ("halt, never panic")
-//!   and the workspace's `clippy::panic`/`unwrap_used` deny-lints, the Rust
-//!   equivalents return an empty/`None` fallback instead of panicking.
+//! - An out-of-range `slice`/`byte` access returns an empty/`None`
+//!   fallback instead of panicking, per the workspace's
+//!   `clippy::panic`/`unwrap_used` deny-lints — a panic would take the
+//!   unsaved buffer down with it.
 
 use std::fmt;
 
 mod lineindex;
 
 /// One requested edit: replace the byte range `[start, end)` with `insert`.
-/// Port of `buffer.go`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edit {
     pub start: usize,
@@ -34,7 +30,7 @@ pub struct Edit {
 }
 
 /// The edit actually applied, in POST-edit coordinates, with the displaced
-/// text kept for inversion (undo). Port of `buffer.go`.
+/// text kept for inversion (undo).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AppliedEdit {
     pub start: usize,
@@ -44,14 +40,13 @@ pub struct AppliedEdit {
 }
 
 /// Why an edit batch was rejected. `ApplyEdits` never panics — every
-/// rejected edit surfaces one of these instead (§1.3). Port of the error
-/// cases in `buffer.go`.
+/// rejected edit surfaces one of these instead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BufferError {
     /// `Buffer::from_bytes` was given bytes that are not valid UTF-8.
     InvalidUtf8,
     /// The edit batch was not sorted descending by `start` and
-    /// non-overlapping (`buffer.go`).
+    /// non-overlapping.
     EditsNotSortedOrOverlapping,
     /// An edit's range does not fit the live buffer.
     OutOfBounds {
@@ -95,18 +90,15 @@ impl std::error::Error for BufferError {}
 
 /// An immutable snapshot of document content. Every mutation returns a new
 /// `Buffer`; the receiver is untouched (fuzz-proven in
-/// `tests/buffer_roundtrip.rs`, port of `FuzzBufferSnapshotImmutability`).
-/// Port of `buffer.go`.
+/// `tests/buffer_roundtrip.rs`).
 ///
 /// Invariant: `line_starts` is never empty and `line_starts[0] == 0` —
 /// every method below assumes it (`line_start`/`line_end`/`find_line`/
-/// `update_line_starts` all read `line_starts` under this assumption). Go's
-/// `getLineStarts()` (`lineindex.go`) nil-guards a zero-valued
-/// `Buffer{}` back to `[0]` for exactly this reason. A derived
-/// `#[derive(Default)]` would produce `line_starts: vec![]` instead — an
-/// unrepresentable-by-construction fix: `Buffer` gets a manual `Default`
-/// impl below that routes through `Buffer::new("")`, so no `Buffer` can
-/// ever exist with a malformed line index in the first place.
+/// `update_line_starts` all read `line_starts` under this assumption). A
+/// derived `#[derive(Default)]` would produce `line_starts: vec![]` instead
+/// — an unrepresentable-by-construction fix: `Buffer` gets a manual
+/// `Default` impl below that routes through `Buffer::new("")`, so no
+/// `Buffer` can ever exist with a malformed line index in the first place.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Buffer {
     content: String,
@@ -121,7 +113,6 @@ impl Default for Buffer {
 }
 
 impl Buffer {
-    /// Port of `buffer.go`.
     pub fn new(content: impl Into<String>) -> Buffer {
         let content = content.into();
         let line_starts = lineindex::compute_line_starts(&content);
@@ -132,8 +123,7 @@ impl Buffer {
         }
     }
 
-    /// Refuses non-UTF-8 bytes — the load-time refusal point. Port of
-    /// `buffer.go`.
+    /// Refuses non-UTF-8 bytes — the load-time refusal point.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Buffer, BufferError> {
         let content = String::from_utf8(bytes).map_err(|_| BufferError::InvalidUtf8)?;
         Ok(Buffer::new(content))
@@ -170,12 +160,11 @@ impl Buffer {
     /// Returns `None` instead of panicking when `[start, end)` is not a
     /// valid range on `content` — out of bounds, reversed (`start > end`),
     /// or splitting a multi-byte char — consistent with `byte`/`rune_at`
-    /// below (see module docs — a deliberate deviation from Go's panicking
-    /// `content[start:end]`). Deliberately NOT `""` on failure: an empty
-    /// string is indistinguishable from a legitimately empty slice, which
-    /// would be a §1.4.10 hazard for any caller recording displaced bytes
-    /// (a `None` they mishandle is at least a visible bug, not a silent
-    /// "nothing was displaced").
+    /// below (see module docs). Deliberately NOT `""` on failure: an empty
+    /// string is indistinguishable from a legitimately empty slice, and a
+    /// caller recording displaced bytes must never mistake a lost range for
+    /// an intentional no-op — a `None` they mishandle is at least a visible
+    /// bug, not a silent "nothing was displaced".
     pub fn slice(&self, start: usize, end: usize) -> Option<&str> {
         self.content.get(start..end)
     }
@@ -203,14 +192,11 @@ impl Buffer {
     /// `insert`/`delete`, tests, and programmatic edits that already know
     /// the range is valid. Surfaces `apply_edits`' error instead of
     /// silently returning the receiver unchanged — a caller that ignores
-    /// the rejection can no longer mistake "nothing happened" for success
-    /// (§1.3). Port of `buffer.go`, EXCEPT the start/end
-    /// swap-if-reversed below: Go's `Buffer.Replace` has no such swap (it
-    /// passes `start`/`end` straight through to `ApplyEdits`, so a reversed
-    /// range is simply rejected as out-of-bounds) — the swap is ported from
-    /// `textedit.ReplaceRange` (`edit_primitives.go`), which this
+    /// the rejection can no longer mistake "nothing happened" for success.
+    /// Swaps a reversed `start`/`end` before building the edit: this
     /// method's actual callers (`insert`/`delete`, and arbitrary start/end
-    /// from tests) rely on.
+    /// from tests) rely on a reversed range being normalized rather than
+    /// rejected as out-of-bounds.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> Result<Buffer, BufferError> {
         let (start, end) = if start > end {
             (end, start)
@@ -229,8 +215,7 @@ impl Buffer {
 
     /// Apply a batch of edits atomically. `edits` must already be sorted
     /// descending by `start` and non-overlapping (see
-    /// `clone_and_sort_edits_descending`) — validated, never assumed. Port
-    /// of `buffer.go`.
+    /// `clone_and_sort_edits_descending`) — validated, never assumed.
     pub fn apply_edits(&self, edits: &[Edit]) -> Result<(Buffer, Vec<AppliedEdit>), BufferError> {
         if edits.is_empty() {
             return Ok((self.clone(), Vec::new()));
@@ -372,7 +357,6 @@ pub(crate) fn duplicate_applied_start(applied: &[AppliedEdit]) -> Option<usize> 
         .and_then(|w| w.first().copied())
 }
 
-/// Port of `buffer.go`.
 pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     edits.windows(2).all(|w| match (w.first(), w.get(1)) {
         (Some(a), Some(b)) => a.start >= b.end,
@@ -380,10 +364,8 @@ pub fn is_sorted_descending_non_overlapping(edits: &[Edit]) -> bool {
     })
 }
 
-/// Port of `buffer.go`. Rust's `sort_by` is stable (matches Go's
-/// `sort.Slice` intent, though Go's is not itself guaranteed stable — this
-/// is a strictly more deterministic tie-break, not a behavior change for
-/// any distinguishable `(start, end)` pair).
+/// `sort_by` is stable — ties break deterministically for any
+/// distinguishable `(start, end)` pair.
 pub fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
     let mut cloned = edits.to_vec();
     cloned.sort_by(|a, b| b.start.cmp(&a.start).then(b.end.cmp(&a.end)));
@@ -395,7 +377,6 @@ pub fn clone_and_sort_edits_descending(edits: &[Edit]) -> Vec<Edit> {
 mod tests {
     use super::*;
 
-    /// Port of `TestBuffer_FromBytes`.
     #[test]
     fn from_bytes() {
         let b = Buffer::from_bytes(b"Hello \xe2\x98\xba World".to_vec())
@@ -406,7 +387,6 @@ mod tests {
         assert_eq!(err, Err(BufferError::InvalidUtf8));
     }
 
-    /// Port of `TestBuffer_ApplyEdits_DescendingOrderAndOverlap`.
     #[test]
     fn apply_edits_descending_order_and_overlap() {
         let b = Buffer::new("hello world");
@@ -457,7 +437,6 @@ mod tests {
         assert!(ok.is_ok());
     }
 
-    /// Port of `TestBuffer_CloneAndSortEditsDescending`.
     #[test]
     fn clone_and_sort_edits_descending_test() {
         let edits = vec![

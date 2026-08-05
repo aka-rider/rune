@@ -1,5 +1,5 @@
 //! The global chord table — the bindings resolved before any pane's own
-//! keymap. Split out of `keymap.rs` to bring that file under the §1.6
+//! keymap. Split out of `keymap.rs` to bring that file under the
 //! 500-line budget; `keymap` re-exports `GlobalCommand`/`GLOBAL_BINDINGS`
 //! so no import path downstream changed.
 
@@ -19,9 +19,9 @@ pub enum GlobalCommand {
     /// cursor on the active document's own file. Never a dead key — every
     /// press changes what is on screen (`pane::handle_global_command`).
     ToggleLeft,
-    /// Focuses the Open Tabs pane. Explorer/Tabs are separate panes, so,
-    /// unlike Go's single shared explorer chord, this needs its own binding.
-    /// Shows the left column too, pairing show with focus exactly like
+    /// Focuses the Open Tabs pane. Explorer/Tabs are separate panes, so
+    /// this needs its own binding, distinct from Explorer's own focus
+    /// chord. Shows the left column too, pairing show with focus exactly like
     /// `ToggleLeft`'s show branch does, so the tab list is actually visible
     /// the moment it's focused.
     FocusTabs,

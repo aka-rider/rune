@@ -1,5 +1,5 @@
 //! Rename "Done when" tests: focus/typing, the end-to-end no-store
-//! rename, and draft naming — TODO.md's §1.6 split of the original
+//! rename, and draft naming — TODO.md's 500-line budget split of the original
 //! `rename.rs`, itself re-split by plan WP5 once the extension-gate and
 //! clipboard packages grew this file past the ceiling again: the refusal
 //! paths now live in `rename_refusals.rs`, the extension gate and the
@@ -93,7 +93,7 @@ fn up_at_the_top_of_the_editor_focuses_the_title() {
 
 /// One `CmdKind::Rename`, run it, feed the reply: the file moves, the tab
 /// and title show the new name, and `is_dirty()` is UNCHANGED — a rename
-/// is not a save (§1.4.2).
+/// is not a save.
 #[test]
 fn end_to_end_no_store_rename() {
     let mem = seeded_vfs();
@@ -286,7 +286,7 @@ fn naming_a_draft_creates_the_file() {
 
 /// A draft name that collides gives a FOOTER refusal and never a
 /// `RenameCollision` guard — offering `[R]eplace` would overwrite a foreign
-/// file with a buffer that has no CAS baseline (§1.4.7).
+/// file with a buffer that has no CAS baseline.
 #[test]
 fn a_colliding_draft_name_refuses_in_the_footer_with_no_guard() {
     let mem = Arc::new(Mem::new());

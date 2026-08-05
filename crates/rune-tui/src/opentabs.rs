@@ -152,7 +152,7 @@ fn visible_rows(app: &App) -> usize {
 /// otherwise), alongside the cursor prefix `draw` puts on the rows below.
 ///
 /// The `─` fill is measured in DISPLAY COLUMNS through the shared width
-/// chokepoint, never in bytes (§1.5), and the label is truncated rather
+/// chokepoint, never in bytes, and the label is truncated rather
 /// than allowed to overflow when the column is narrower than the label.
 pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
     if area.width == 0 || area.height == 0 {

@@ -30,7 +30,7 @@ use crate::sync::SyncState;
 /// `theirs_obs` are `Some` exactly when `sync.theirs` is `Some` — which
 /// `classify_sync` only ever produces for `DiskAhead`/`Diverged` — so
 /// `None` here while `sync.kind` claims one of those two is an
-/// inconsistency the caller must treat as a hard refusal (§1.7: no `0`/
+/// inconsistency the caller must treat as a hard refusal (no `0`/
 /// empty-`Vec` sentinel standing in for "absent"), never silently unwrap
 /// past.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,11 +41,10 @@ pub struct MergePrepResult {
     pub theirs_obs: Option<ObsId>,
 }
 
-/// Runs the fresh-state read for `doc_id`. Port of no single Go function —
-/// `workspace_merge_fresh.go`'s entry point re-runs `Probe` then re-reads
-/// blobs across two separate calls; this crate collapses that into one op
-/// so the TUI's `update` never has to correlate two async round trips for
-/// one merge attempt.
+/// Runs the fresh-state read for `doc_id`, collapsing what would otherwise
+/// be a probe and a separate blob re-read into one op, so the TUI's
+/// `update` never has to correlate two async round trips for one merge
+/// attempt.
 pub fn merge_prep(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -199,7 +198,7 @@ mod tests {
     /// all) with no recorded observation has no `theirs` version — `Clean`
     /// via `classify_sync`'s `theirs: None` branch. `theirs`/`theirs_obs`
     /// come back `None` too, not an empty `Vec`/`0` sentinel standing in
-    /// for "absent" (§1.7).
+    /// for "absent".
     #[test]
     fn merge_prep_on_an_untitled_document_returns_no_theirs() {
         let mut conn = open();

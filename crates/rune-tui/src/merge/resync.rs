@@ -1,12 +1,11 @@
-//! Undo/redo resync (plan WP6.S1, port of Go `mergemode/resync.go` — read
-//! its header comment first): a journal jump that did not go through the
-//! resolver's own keys (`super::keys::intercept`) can move `cur`'s block
+//! Undo/redo resync (plan WP6.S1): a journal jump that did not go through
+//! the resolver's own keys (`super::keys::intercept`) can move `cur`'s block
 //! spans out from under the immutable `Conflict` list — an accepted block
 //! shrinks/grows the buffer, and undo/redo replay those edits without the
 //! resolver's own bookkeeping. Called after every `commands::edit::undo`/
 //! `redo` while merge is `Active` on the document being undone/redone.
 //!
-//! Slot-ordered AND content-verifying, exactly like the Go original: each
+//! Slot-ordered AND content-verifying: each
 //! conflict `k`'s ORIGINAL `ours`/`theirs` text never changes, so re-scanning
 //! the CURRENT buffer for the byte-exact FULL framed block (never a bare
 //! `<<<<<<<` anchor) locates block `k` unambiguously even when the document's
@@ -44,7 +43,7 @@ fn intersects(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> boo
 
 /// Byte offset of the first occurrence of `needle` in `content` at or after
 /// `from`, or `None` if absent or `from` doesn't land on a char boundary
-/// (never panics on an out-of-range/mid-rune offset — §1.3).
+/// (never panics on an out-of-range/mid-rune offset).
 fn index_from(content: &str, needle: &str, from: usize) -> Option<usize> {
     content.get(from..)?.find(needle).map(|i| i + from)
 }
@@ -135,7 +134,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
             // present — an inconsistent buffer the merge invariants
             // should prevent (or undo unwound past the install
             // entirely). Degrade safely: mark resolved with no advance,
-            // clamped inside the live buffer (§1.3), rather than
+            // clamped inside the live buffer, rather than
             // misclassify as an open, un-navigable conflict.
             let at = search_from.min(buffer_len);
             new_blocks.push(Block {
@@ -236,8 +235,7 @@ mod tests {
 
     #[test]
     fn quoted_marker_prose_does_not_fool_a_full_framed_search() {
-        // Port of Go `TestResync_QuotedMarkers` (`resync_test.go`): `ours`
-        // itself quotes a spurious full marker block. A bare `<<<<<<<`
+        // `ours` itself quotes a spurious full marker block. A bare `<<<<<<<`
         // anchor scan would misfire on it; the byte-exact framed-block
         // search must not.
         let spurious_ours =

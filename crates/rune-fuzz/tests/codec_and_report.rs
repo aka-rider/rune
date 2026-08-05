@@ -1,7 +1,7 @@
 //! WP5.S2 + WP5.S7, kept in their own file rather than growing
-//! `tests/tripwire.rs` (already 426 lines before this work; §1.6 caps a
-//! file at 500 LoC — "decompose any file past 500 LoC"). Both non-`#[
-//! ignore]`, so `make test` runs them.
+//! `tests/tripwire.rs` (already 426 lines before this work; the file
+//! budget caps a file at 500 LoC — "decompose any file past 500 LoC").
+//! Both non-`#[ignore]`, so `make test` runs them.
 //!
 //! - `codec_round_trips_every_generated_session` (WP5.S2) — `script::
 //!   encode`/`decode` round-trip over every session `generate::

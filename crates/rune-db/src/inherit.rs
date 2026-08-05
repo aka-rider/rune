@@ -1,6 +1,6 @@
 //! Cross-session inheritance: finding a DIFFERENT, now-dead session's
 //! unsaved draft for a document a fresh session is loading. Split out of
-//! `load.rs` (§1.6) — see that module's doc comment for where this fits
+//! `load.rs` — see that module's doc comment for where this fits
 //! in `load`'s overall sequence.
 
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -13,8 +13,7 @@ use crate::retry;
 /// snapshots together — carries the highest seq. Ties break by higher
 /// `session_id`. `None` means `doc_id` has no session-scoped activity
 /// recorded at all. Shared by [`find_inheritable_draft`] and
-/// `reaper::session_is_reapable`. Port of `load.go`
-/// (`mostRecentSessionForDoc`).
+/// `reaper::session_is_reapable`.
 pub(crate) fn most_recent_session_for_doc(
     tx: &Transaction<'_>,
     doc_id: i64,
@@ -56,11 +55,11 @@ pub(crate) fn is_session_alive(
     Ok(liveness_check(pid, &started_at))
 }
 
-/// The outcome of [`find_inheritable_draft`]. Port of `load.go`
-/// (`findInheritableDraft`)'s three-way result, widened from a `(String,
-/// bool)` pair so a baseline-hash mismatch no longer has to mean "bail to
-/// plain disk content" — it instead carries the dead session's own baseline
-/// observation forward so `load` can re-anchor on it (§1.4).
+/// The outcome of [`find_inheritable_draft`]: a three-way result, widened
+/// from a `(String, bool)` pair so a baseline-hash mismatch no longer has
+/// to mean "bail to plain disk content" — it instead carries the dead
+/// session's own baseline observation forward so `load` can re-anchor on
+/// it.
 pub(crate) enum Inherited {
     /// Nothing to inherit: no other session ever touched this doc, the most
     /// recent one is still alive, a reap raced the lookup, or the dead
@@ -82,8 +81,7 @@ pub(crate) enum Inherited {
 
 /// Looks for a DIFFERENT, now-confirmed-dead session's unsaved content for
 /// `doc_id`. Called ONLY from `load`'s `!has_history` branch, before this
-/// session has written anything of its own. Port of `load.go`
-/// (`findInheritableDraft`).
+/// session has written anything of its own.
 pub(crate) fn find_inheritable_draft(
     conn: &mut rusqlite::Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,

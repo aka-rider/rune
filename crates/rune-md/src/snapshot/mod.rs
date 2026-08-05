@@ -12,7 +12,7 @@
 //! geometry through ONE place instead of each re-deriving "which wrap row
 //! is this synthetic row next to" itself.
 //!
-//! Split across two files (CONSTITUTION §1.6): this module owns `DisplayRow`
+//! Split across two files to stay under the 500-line budget: this module owns `DisplayRow`
 //! and the table-border half of `DisplaySnapshot`'s API; `image_rows` owns
 //! `ImageDims` and the image half (`expand_images`, its own synthetic-row
 //! builder, and the standalone-image-line scan) as a second `impl

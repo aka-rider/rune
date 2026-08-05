@@ -209,7 +209,7 @@ pub fn banner_height(app: &App, frame_height: u16) -> u16 {
 /// establishes. Keeping this mutation in the settle step (not inside
 /// `render` itself, which only ever borrows `&App`) is what keeps every
 /// synchronous state write inside `update`/its settle phase, never inside
-/// rendering (§5.4).
+/// rendering.
 pub fn sync_modal(app: &mut App, width: u16, frame_height: u16) {
     let Some(modal) = app.modal.as_mut() else {
         return;
@@ -343,7 +343,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     }
 }
 
-// This module's unit tests moved to `tests/banner.rs` (§1.6: the Guard
+// This module's unit tests moved to `tests/banner.rs` (the Guard
 // plumbing pushed this file past the 500-line budget). Every item they
 // exercise — `Modal`, `ErrorState`, `set_modal`, `clear_modal`,
 // `GuardPrompt`/`GuardKind` — is already public.

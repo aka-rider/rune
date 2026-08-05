@@ -2,7 +2,7 @@
 //! chokepoint suite — the hoisted blur gate, the invalid-name veto, the
 //! Explorer/Tabs focus landings, the outgoing-vs-incoming-document
 //! ordering guard, and the close-while-renaming reseed/preserve pair —
-//! TODO.md's §1.6 split of the original `rename.rs`. Focus/typing, the
+//! TODO.md's 500-line budget split of the original `rename.rs`. Focus/typing, the
 //! refusals, the no-store end-to-end rename, and draft naming live in the
 //! sibling `rename_bind.rs`; the collision guard and hazard-1 tests live
 //! in `rename_collision.rs`; the store-backed `[R]eplace` path lives in

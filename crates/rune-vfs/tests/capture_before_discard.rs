@@ -1,8 +1,7 @@
-//! Proves CONSTITUTION §1.4.10 ("capture displaced bytes as a durable blob
-//! before they're ever discarded") is now expressible against the split
-//! primitive set — the exact property `save_atomic` alone cannot provide
-//! (see its doc comment in `rune_vfs::Vfs`), and the reason WP1 exists
-//! (`TODO.md`, "rust port — vfs primitive shape vs §1.4.10").
+//! Proves that capturing displaced bytes as a durable blob before they're
+//! ever discarded is expressible against the split primitive set — the
+//! exact property `save_atomic` alone cannot provide (see its doc comment
+//! in `rune_vfs::Vfs`), and the reason WP1 exists.
 //!
 //! Sequence: write A to `path` directly (establishing the "existing file"
 //! SWAP case), `write_durable` B to a fresh temp, `exchange(temp, path)`,

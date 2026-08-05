@@ -1,7 +1,6 @@
-//! `Buffer`'s line-index / coordinate-conversion side (CONSTITUTION §1.6
-//! split of the buffer module): the `line_starts` index itself, offset<->
-//! `BufferPoint` conversion, and the incremental rebuild `apply_edits`
-//! drives on every edit. Port of `lineindex.go`.
+//! `Buffer`'s line-index / coordinate-conversion side: the `line_starts`
+//! index itself, offset<->`BufferPoint` conversion, and the incremental
+//! rebuild `apply_edits` drives on every edit.
 
 use super::{Buffer, Edit};
 use crate::assert_invariant;
@@ -13,7 +12,7 @@ impl Buffer {
     }
 
     /// `None` when `n` is not a valid line index — `0` used to double as
-    /// both "line 0 starts at byte 0" and "no such line" (§1.7 sentinel).
+    /// both "line 0 starts at byte 0" and "no such line".
     pub fn line_start(&self, n: usize) -> Option<usize> {
         self.line_starts.get(n).copied()
     }
@@ -63,17 +62,14 @@ impl Buffer {
         } else {
             self.line_end(bp.line).unwrap_or(self.content.len())
         };
-        // Go's original has a redundant `if bp.Line < len(starts)-1 { return
-        // end }; return end` — both arms return `end`; simplified here.
         let offset = if offset > end { end } else { offset };
-        // `bp.col` is a BYTE column (§1.5) and callers routinely carry one
-        // across lines — a remembered desired column, a click, a multicursor
-        // add. Clamping to the line's end keeps it in RANGE but says nothing
+        // `bp.col` is a BYTE column and callers routinely carry one across
+        // lines — a remembered desired column, a click, a multicursor add.
+        // Clamping to the line's end keeps it in RANGE but says nothing
         // about char boundaries, so a column measured on an ASCII line lands
         // mid-UTF-8 when replayed against a line holding wide characters.
         // Snapping here rather than at each call site is what makes an
-        // out-of-boundary cursor unrepresentable instead of merely unlikely
-        // (§1.3 clamp, §1.5 bytes).
+        // out-of-boundary cursor unrepresentable instead of merely unlikely.
         self.floor_char_boundary(offset)
     }
 
@@ -86,9 +82,9 @@ impl Buffer {
         o
     }
 
-    /// Port of `lineindex.go`: an incremental `line_starts` rebuild
-    /// scanning `edits` right-to-left (descending `start`), so each edit
-    /// only touches the portion of `line_starts` it actually displaces.
+    /// An incremental `line_starts` rebuild scanning `edits` right-to-left
+    /// (descending `start`), so each edit only touches the portion of
+    /// `line_starts` it actually displaces.
     pub(super) fn update_line_starts(&self, edits: &[Edit]) -> Vec<usize> {
         let mut line_starts = self.line_starts.clone();
         for e in edits {
@@ -116,7 +112,6 @@ impl Buffer {
     }
 }
 
-/// Port of `lineindex.go`.
 pub(super) fn compute_line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in content.bytes().enumerate() {
@@ -142,7 +137,6 @@ fn assert_line_starts_invariant(line_starts: &[usize]) {
     });
 }
 
-/// Port of `lineindex.go`.
 fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {
     let mut starts = Vec::new();
     for (i, b) in text.bytes().enumerate() {
@@ -153,9 +147,8 @@ fn compute_added_starts(base_offset: usize, text: &str) -> Vec<usize> {
     starts
 }
 
-/// Port of `lineindex.go`: the line index `i` such that
-/// `starts[i] <= offset < starts[i+1]` (or the last line if `offset` is at
-/// or past the final line start).
+/// The line index `i` such that `starts[i] <= offset < starts[i+1]` (or the
+/// last line if `offset` is at or past the final line start).
 fn find_line(starts: &[usize], offset: usize) -> usize {
     if starts.is_empty() {
         return 0;
@@ -169,7 +162,6 @@ fn find_line(starts: &[usize], offset: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Port of `TestBuffer_LineIndex`.
     #[test]
     fn line_index() {
         let b = Buffer::new("line 1\nline 2\nline 3");

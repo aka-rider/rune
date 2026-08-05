@@ -10,9 +10,8 @@
 //!   and the whole checker set, agree with well-formed production
 //!   behaviour;
 //! - one hand-built bad `Snapshot`/pair per WP3 checker, split into the
-//!   sibling `tripwire_checkers` test binary (§1.6 budget) — the Risk R-c
-//!   pattern from the Go fuzzer's own workspace and display invariant
-//!   tests.
+//!   sibling `tripwire_checkers` test binary (500-line budget) —
+//!   the Risk R-c pattern.
 //!
 //! `clean_session_trips_nothing`'s fixture is curated per plan Gotcha G1:
 //! plain ASCII + CJK markdown, no lists or blockquotes, no tab, no `\r` —
@@ -208,7 +207,7 @@ fn driver_is_deterministic() {
 /// quit-chord's dirty-close Guard, armed on a document that is NOT the
 /// currently active one, discards the seeded document via its own
 /// `[D]iscard` key before the end-of-session undo/redo drive runs. That
-/// discard is production working exactly as designed (§1.4.4's Guard has
+/// discard is production working exactly as designed (the Guard has
 /// no "but it's not the active document" exception) — the driver's own
 /// end-of-session drive must recognize the seed is gone and skip `UNDO-
 /// TOTAL`/`REDO-TOTAL` for the session, rather than running the drive

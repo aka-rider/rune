@@ -1,12 +1,11 @@
-//! Recovery-anchor snapshots and `recover_document`'s forward replay —
-//! ported from Go's snapshot layer. A snapshot is a PURE recovery
-//! anchor: it exists only to bound how far `recover_document` ever has to
-//! replay, never a source-of-truth taxonomy (that lives in `observations`,
-//! WP4). CONSTITUTION §1.4.10: every snapshot's content flows through
-//! `blob::put_blob` before it's ever discarded from the journal's live
-//! window (`journal::append_edit`'s future-truncation deletes both `events`
-//! and `snapshots` rows, but the blob a surviving snapshot still points to
-//! is untouched).
+//! Recovery-anchor snapshots and `recover_document`'s forward replay. A
+//! snapshot is a PURE recovery anchor: it exists only to bound how far
+//! `recover_document` ever has to replay, never a source-of-truth taxonomy
+//! (that lives in `observations`, WP4). Every snapshot's content flows
+//! through `blob::put_blob` before it's ever discarded from the journal's
+//! live window (`journal::append_edit`'s future-truncation deletes both
+//! `events` and `snapshots` rows, but the blob a surviving snapshot still
+//! points to is untouched).
 
 use std::time::SystemTime;
 
@@ -25,7 +24,7 @@ use crate::session::format_rfc3339_nanos;
 /// two sessions editing the same `doc_id` keep entirely separate anchor
 /// chains. `seq` should be the most recently returned seq from
 /// `journal::append_edit` so `recover_document` can find this snapshot as
-/// the closest anchor for any replay. Port of `snapshot.go`.
+/// the closest anchor for any replay.
 pub fn create_snapshot(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -58,15 +57,14 @@ pub fn create_snapshot(
 ///    `(anchor_seq, target]`.
 /// 4. Forward-replay those batches onto `anchor_content`, one row at a
 ///    time, using `rune_core::undo::reapply`'s edit-application semantics
-///    (ascending by `start` within a row, against a running buffer) — NOT
-///    Go's `buffer.ReplayForward`, which silently clamps/skips an
-///    out-of-range edit instead of erroring (`replay.go`). Every row
-///    here was produced by this crate's own `append_edit`, so a replay
-///    failure means a genuinely corrupt/inconsistent journal, which §1.3
-///    requires surfacing rather than silently reconstructing wrong content.
+///    (ascending by `start` within a row, against a running buffer) —
+///    replay surfaces an out-of-range edit as corruption instead of
+///    silently clamping or skipping it. Every row here was produced by
+///    this crate's own `append_edit`, so a replay failure means a
+///    genuinely corrupt/inconsistent journal, which must be surfaced
+///    rather than silently reconstructing wrong content.
 ///
-/// Port of `snapshot.go` (`recoverAt`/`RecoverDocument`). Takes
-/// `&Connection` rather than `&Transaction` — this is a pure read, so
+/// Takes `&Connection` rather than `&Transaction` — this is a pure read, so
 /// `rusqlite`'s `Transaction: Deref<Target=Connection>` lets writer-thread
 /// callers (inside `retry::with_retry`'s `&Transaction`) and read-only
 /// callers (`reader.rs`, a plain `&Connection`) share this ONE

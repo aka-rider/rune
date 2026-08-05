@@ -1,17 +1,14 @@
-//! Explorer type-to-search: Go filetree's "just start typing to jump to a
-//! file" ported WITHOUT its 750ms wall-clock inactivity reset (CONSTITUTION:
-//! never order or pace anything by wall clock — and a synchronous driver,
-//! `rune-fuzz`'s own workflow clusters found, can never produce a real gap
-//! anyway, so Go's own behaviour was never reproducible under fuzzing in
-//! the first place). State lives on `Explorer::search` (`explorer.rs`); this
+//! Explorer type-to-search: "just start typing to jump to a file", by
+//! design with no wall-clock inactivity reset — the buffer clears on blur
+//! instead. State lives on `Explorer::search` (`explorer.rs`); this
 //! module owns everything that reads or writes it: `clear_search`/
-//! `apply_search` (moved here from `explorer.rs` — also over the §1.6
+//! `apply_search` (moved here from `explorer.rs` — also over the 500-line
 //! budget by the time this feature's own state landed), the keys that
-//! drive it (`ExplorerSearchCommand`'s table — §12: a hand-maintained key
+//! drive it (`ExplorerSearchCommand`'s table — a hand-maintained key
 //! list may not exist), and the handler `explorer_keys::handle_key`
 //! consults before its own `EXPLORER_BINDINGS`.
 //!
-//! Split out of `explorer_keys.rs` to keep that file under the §1.6 500-
+//! Split out of `explorer_keys.rs` to keep that file under the 500-
 //! line budget once the search table and its own unit tests landed.
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -37,13 +34,12 @@ pub(crate) fn clear_search(app: &mut App) {
 
 /// Re-runs the live query against `entries` and moves the cursor to the
 /// first case-insensitive prefix match (plan "Explorer type-to-search",
-/// S2) — Go filetree's own jump behaviour, ported: the list is never
-/// filtered, only `nav.cursor` moves, then the existing `ensure_visible`
-/// scrolls it into view. The synthetic `..` row (`explorer::
-/// with_parent_entry`) participates like any other entry, exactly as in Go.
+/// S2): the list is never filtered, only `nav.cursor` moves, then the
+/// existing `ensure_visible` scrolls it into view. The synthetic `..` row
+/// (`explorer::with_parent_entry`) participates like any other entry.
 ///
-/// A no-op search still stands when nothing matches (Go's own behaviour):
-/// the cursor is left wherever it was, NOT snapped back to the top, so a
+/// A no-op search still stands when nothing matches: the cursor is left
+/// wherever it was, NOT snapped back to the top, so a
 /// query that overshot ("read" typed past "readme.md") lets Backspace
 /// recover it rather than losing the user's place in the list.
 pub(crate) fn apply_search(app: &mut App) {

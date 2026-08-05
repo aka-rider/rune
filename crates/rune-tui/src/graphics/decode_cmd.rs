@@ -99,8 +99,8 @@ fn spawn_decode(app: &mut App, id: DocumentId, effects: &mut Effects) {
         .push(decode_image_cmd(id, vfs, path, generation));
 }
 
-/// Reads `path` off-thread via `vfs.read` (§1.4.9) and decodes it — the
-/// off-thread half of an image document's lifecycle, §5.4: decode is CPU
+/// Reads `path` off-thread via `vfs.read` and decodes it — the
+/// off-thread half of an image document's lifecycle: decode is CPU
 /// work, and a large/degraded-filesystem image must never block the main
 /// loop. No `catch_unwind` of its own: `spawn_cmd` already contains a
 /// decoder panic on malformed input.

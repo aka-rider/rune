@@ -1,5 +1,5 @@
-//! The element HSM hierarchy: `Block`/`Inline` machine trees. Replaces Go's
-//! flat span list and stateless `shouldReveal` with a typed machine tree
+//! The element HSM hierarchy: `Block`/`Inline` machine trees. Replaces a
+//! flat span list and stateless reveal check with a typed machine tree
 //! (plan Context, "The element HSM hierarchy").
 //!
 //! `doc` holds the root `DocMachine`/`WrapSnapshot`-producing `snapshot`;

@@ -1,7 +1,7 @@
 //! AST -> `TableM` construction (plan WP1.S3). comrak's `table` extension
 //! gives real per-cell sourcepos, so escaped pipes, pipes inside inline
 //! code, and GFM's own ragged-row padding/truncation are correct for free —
-//! unlike Go's `strings.Split(line, "|")` line-splitting. Reuses
+//! unlike splitting a line naively on `|`. Reuses
 //! `super::inline::build_inlines` for cell content instead of writing a
 //! second inline builder.
 
@@ -23,7 +23,7 @@ fn to_align(a: TableAlignment) -> TableAlign {
 
 /// `None` for a non-`Table` node or a table with no rows, so the caller
 /// (`parse::block::build_block`) falls back to the existing `Verbatim`
-/// construction (§1.3: degrade, never panic).
+/// construction (degrade, never panic).
 pub(super) fn build_table<'a>(
     content: &str,
     starts: &[usize],
@@ -101,8 +101,8 @@ pub(super) fn build_table<'a>(
     // two rows' worth of cells, with buffer offsets that run backwards
     // mid-row. Rather than let a `TableM` exist in that state, decline it
     // here: the caller falls back to raw passthrough, so the user's bytes
-    // still reach the screen verbatim (§1.3 — unknown or undecidable
-    // syntax degrades to visible raw text, never lost). This only ever
+    // still reach the screen verbatim (unknown or undecidable syntax
+    // degrades to visible raw text, never lost). This only ever
     // guards the table's OWN rows against each other; a SIBLING block
     // sharing a row's buffer line is a different hazard, ruled out
     // upstream instead — CommonMark's own block parser assigns each
@@ -120,8 +120,8 @@ pub(super) fn build_table<'a>(
     // would render missing its first character while the skipped byte leaks
     // back as raw text. Decline rather than render the user's words wrongly
     // — the caller falls back to raw passthrough and the bytes reach the
-    // screen verbatim (§1.3, and the prime directive: protect the words
-    // above rendering them prettily). A container-explained start is NOT
+    // screen verbatim (protect the words above rendering them prettily).
+    // A container-explained start is NOT
     // affected and still renders, so this doesn't disable tables in
     // blockquotes or list items.
     let first = line_at(starts, range.start);

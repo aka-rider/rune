@@ -1,5 +1,5 @@
 //! The destructive `[R]eplace` rename entry point. Split out of
-//! `rename.rs` (§1.6) — see that module's doc comment for the shared
+//! `rename.rs` — see that module's doc comment for the shared
 //! design.
 
 use std::io;
@@ -44,9 +44,10 @@ use crate::rename::{RenameOutcome, capture_and_rebind};
 /// 5. `remove(from)` — **only now**, after the transaction committed.
 ///
 /// `origin='swap'` is reused rather than a new `'displaced'` value on
-/// purpose: `schema.rs`'s `CHECK(origin IN (...))` would need a
-/// `SCHEMA_VERSION` bump, and migration is drop-on-mismatch — it would
-/// throw away every user's unsaved-work journal on upgrade. `'swap'`
+/// purpose: `schema.rs`'s `CHECK(origin IN (...))` is part of the frozen
+/// on-disk vocabulary of the current schema version — adding a new value
+/// is a schema-shape change, which ships as a new `rune-v{N}.db` rather
+/// than an in-place bump (see `schema.rs`'s module doc). `'swap'`
 /// already means "bytes an atomic `exchange` displaced", which is literally
 /// the mechanism here.
 pub fn rename_replace(
@@ -66,7 +67,7 @@ pub fn rename_replace(
         return Ok(RenameOutcome::Refused { fresh });
     }
 
-    // 2. The atomic publish (§1.4.1). Both files still exist afterwards,
+    // 2. The atomic publish. Both files still exist afterwards,
     //    with their contents swapped.
     vfs.exchange(from, to).map_err(Error::Io)?;
 
@@ -86,7 +87,7 @@ pub fn rename_replace(
         ))
     })?;
 
-    // 4. Capture before discard, physically (§1.4.10), AND rebind — in ONE
+    // 4. Capture before discard, physically, AND rebind — in ONE
     //    transaction (see the doc comment above): if this fails, NEITHER the
     //    observation nor the rebind took effect, our content is at `to`, the
     //    database still says `from` with its OLD identity, and `from` holds
@@ -96,8 +97,8 @@ pub fn rename_replace(
     let displaced = capture_and_rebind(conn, vfs, ds, from, to, &displaced_bytes, now)?;
 
     // 5. The only lossy step in the design, strictly after the transaction
-    //    committed. A failure here is disk hygiene, not data safety
-    //    (§0.1 rung 3): the blob is already durable.
+    //    committed. A failure here is disk hygiene, not data safety: the
+    //    blob is already durable.
     let _ = vfs.remove(from);
 
     Ok(RenameOutcome::Replaced { displaced })
@@ -215,7 +216,7 @@ mod tests {
         assert_eq!(doc_path(&f.conn, f.ds.doc_id), "/b.md");
     }
 
-    /// §1.4.10 capture is unconditional — never gated on UTF-8 validity.
+    /// Capture is unconditional — never gated on UTF-8 validity.
     /// The replaced file was never opened by rune, so it can be anything.
     #[test]
     fn rename_replace_captures_non_utf8_displaced_bytes_byte_exact() {
@@ -381,13 +382,13 @@ mod tests {
         assert_eq!(
             f.vfs.read(Path::new("/a.md")).expect("leftover"),
             b"theirs",
-            "the leftover at `from` is Tolerable (§0.1 rung 3)"
+            "a leftover at `from` is recoverable clutter, never data loss"
         );
     }
 
     /// If the replaced file happened to have its own `documents` row, that
     /// row must stop claiming the path — two rows must never both claim one
-    /// file (§1.7).
+    /// file.
     #[test]
     fn rename_replace_blanks_the_displaced_documents_row_path() {
         let mut f = fixture(b"ours");

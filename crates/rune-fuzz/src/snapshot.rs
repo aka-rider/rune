@@ -1,6 +1,6 @@
 //! Tier-1 observation: a plain, owned, hand-constructible struct capturing
 //! everything a checker needs to know about `App` state at one point in
-//! time. Go analogue: its own fuzz `Snapshot`.
+//! time.
 //!
 //! `Snapshot` cannot express five invariants that need `effects.raw`, VFS
 //! bytes/delivery history, or the triggering message (`CLIP-OSC52`, `SAVE-

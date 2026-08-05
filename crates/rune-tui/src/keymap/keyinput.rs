@@ -1,6 +1,6 @@
 //! The platform key-identity layer: `KeyCode`/`Mods`/`KeyInput` plus the one
 //! bridge from termina's own event type (`from_termina`). Split out of
-//! `keymap.rs` to bring that file under the §1.6 500-line budget, mirroring
+//! `keymap.rs` to bring that file under the 500-line budget, mirroring
 //! the `binding.rs`/`global.rs` extraction already used for the generic
 //! table machinery and the global chord table; `keymap` re-exports every
 //! item here so no import path downstream changed.

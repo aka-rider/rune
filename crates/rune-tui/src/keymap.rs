@@ -14,7 +14,7 @@
 //! consulted to resolve a key.
 
 // The generic binding machinery now lives in `crate::binding` and the
-// global chord table in `crate::global` (§1.6: this file was over the
+// global chord table in `crate::global` (this file was over the
 // 500-line budget). Re-exported here so every existing `keymap::` import
 // path keeps working.
 //
@@ -23,7 +23,7 @@
 // though `foo.rs` itself is not `foo/mod.rs` — so `keymap.rs` stays the
 // single top-level file the rest of the crate already imports from, while
 // its new WP6 machinery gets its own files instead of growing this one
-// past the §1.6 budget again.
+// past the 500-line budget again.
 pub mod editor_bindings;
 pub mod index;
 mod keyinput;
@@ -65,18 +65,17 @@ pub enum Command {
     /// Plan WP9.S2 — `⌥⌫`/`⌥⌦` (Option+Backspace/Delete).
     DeleteWordLeft,
     DeleteWordRight,
-    /// Plan WP9.S2 — `⌘⇧K`, unbound in the Go original (see
-    /// `editor_bindings.rs`'s module doc).
+    /// Plan WP9.S2 — `⌘⇧K` (see `editor_bindings.rs`'s module doc).
     DeleteLine,
     Indent,
     Outdent,
-    /// Plan WP9.S2 — `⌥↑`/`⌥↓`, matching Go's own `keymap.go` bindings.
+    /// Plan WP9.S2 — `⌥↑`/`⌥↓`.
     MoveLineUp,
     MoveLineDown,
-    /// Plan WP9.S2 — `⌥⇧↑`/`⌥⇧↓`, unbound in the Go original.
+    /// Plan WP9.S2 — `⌥⇧↑`/`⌥⇧↓`.
     CloneLineUp,
     CloneLineDown,
-    /// Plan WP9.S3 — `⌥⌘↑`/`⌥⌘↓`, matching Go's own `keymap.go` bindings.
+    /// Plan WP9.S3 — `⌥⌘↑`/`⌥⌘↓`.
     AddCursorAbove,
     AddCursorBelow,
     Copy,

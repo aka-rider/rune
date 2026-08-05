@@ -57,8 +57,8 @@ pub fn to_ansi256(c: Color) -> Color {
     // `nearest_cube_level` only ever returns an index into `CUBE_LEVELS`
     // (`0..6`, one per `enumerate()`'d level), so `.get` never actually
     // misses — `unwrap_or(255)` (the cube's own brightest level) is a
-    // defensive fallback that keeps this indexing-panic-free (§1.3)
-    // without asserting an invariant the caller can't violate anyway.
+    // defensive fallback that keeps this indexing-panic-free without
+    // asserting an invariant the caller can't violate anyway.
     let cube_level = |idx: u8| CUBE_LEVELS.get(idx as usize).copied().unwrap_or(255);
     let cube_rgb = (cube_level(ri), cube_level(gi), cube_level(bi));
     let cube_index = 16 + 36 * ri + 6 * gi + bi;

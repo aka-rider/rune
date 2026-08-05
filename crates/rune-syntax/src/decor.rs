@@ -31,7 +31,7 @@ pub struct DecorPiece {
 
 impl DecorPiece {
     /// Display width of `first` in terminal cells, via the one grapheme-width
-    /// chokepoint (§1.5) — never a byte or `char` count.
+    /// chokepoint — never a byte or `char` count.
     pub fn cells(&self) -> usize {
         self.first.graphemes(true).map(grapheme_width).sum()
     }

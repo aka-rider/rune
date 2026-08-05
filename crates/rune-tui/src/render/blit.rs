@@ -1,5 +1,5 @@
-//! The `Cell` rows -> `ratatui::Frame` blit (split out of `render` per
-//! §1.6) — the single writer of terminal buffer cells from a rendered
+//! The `Cell` rows -> `ratatui::Frame` blit (500-line budget split out of
+//! `render`) — the single writer of terminal buffer cells from a rendered
 //! `Vec<Vec<Cell>>`.
 
 use ratatui::Frame;
@@ -16,11 +16,11 @@ use super::Cell;
 const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
 
 /// The chokepoint every "this should never happen, but let's be sure"
-/// blit-layer check in this module routes through — CONSTITUTION §1.3
-/// forbids `panic!`/`assert!`/`unwrap` in production code paths, so an
-/// ordinary build (including a plain `cargo run`) must degrade gracefully
-/// on an invariant violation rather than take down the user's session;
-/// only a test run or an explicit opt-in feature treats it as fatal.
+/// blit-layer check in this module routes through — production code must
+/// never `panic!`/`assert!`/`unwrap`, so an ordinary build (including a
+/// plain `cargo run`) must degrade gracefully on an invariant violation
+/// rather than take down the user's session; only a test run or an
+/// explicit opt-in feature treats it as fatal.
 ///
 /// Deliberately NOT the same shape as `crates/rune-syntax/src/syntax.rs`'s
 /// or `crate::layout`'s identically-named `assert_invariant` — those take a

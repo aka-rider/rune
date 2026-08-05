@@ -1,4 +1,4 @@
-//! The external-scheme allowlist (CONSTITUTION §1.6 split of the crate
+//! The external-scheme allowlist (500-line budget split of the crate
 //! root) — the one predicate `resolve` trusts to decide whether a `Target`
 //! opens through the OS opener rather than the filesystem.
 

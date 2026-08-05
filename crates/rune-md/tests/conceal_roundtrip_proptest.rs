@@ -1,7 +1,7 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): the `SyntaxSnapshot`
-//! round-trip proptest (mirroring Go's `FuzzSyntaxMapRoundtrip`) and its
-//! own markdown-fragment generator, built up across every regression round
-//! this split's sibling files pin individually.
+//! Split off `conceal_roundtrip.rs` (WP11): the `SyntaxSnapshot`
+//! round-trip proptest and its own markdown-fragment generator, built up
+//! across every regression round this split's sibling files pin
+//! individually.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use proptest::prelude::*;

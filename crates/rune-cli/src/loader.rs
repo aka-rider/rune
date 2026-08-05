@@ -17,10 +17,9 @@ pub(crate) enum LoadError {
 /// A nonexistent path opens an empty buffer — it's created on first save via
 /// `RENAME_EXCL` (plan Assumptions, A3). Any other read failure (permission
 /// denied, a directory, ...) is fatal. Invalid UTF-8 is refused here, before
-/// the TUI is ever entered. Reads through `vfs` (CONSTITUTION §1.4.9:
-/// "Reach the filesystem only through the injected `vfs.FS`") rather than
-/// `std::fs` directly, so this whole load path is exercisable against `Mem`
-/// in tests, not just against a real disk.
+/// the TUI is ever entered. Reads through `vfs` rather than `std::fs`
+/// directly, so this whole load path is exercisable against `Mem` in
+/// tests, not just against a real disk.
 pub(crate) fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadError> {
     let bytes = match vfs.read(path) {
         Ok(bytes) => bytes,
@@ -31,9 +30,8 @@ pub(crate) fn load_buffer(vfs: &dyn Vfs, path: &Path) -> Result<Buffer, LoadErro
         BufferError::InvalidUtf8 => LoadError::InvalidUtf8,
         // `from_bytes` only ever returns `InvalidUtf8` (see rune-core) — the
         // other `BufferError` variants come from `apply_edits`, never from
-        // loading raw bytes. Still handled explicitly rather than assumed,
-        // per CONSTITUTION §1.3 ("surface invalid input — no silent
-        // fallback").
+        // loading raw bytes. Still handled explicitly rather than assumed —
+        // surface invalid input, no silent fallback.
         other => LoadError::Io(std::io::Error::other(other.to_string())),
     })
 }

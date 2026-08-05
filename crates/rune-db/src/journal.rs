@@ -1,11 +1,9 @@
-//! The durable undo/redo journal — ports Go's `AppendEdit`, `UndoPeek`/
-//! `RedoPeek`/`MoveUndoPos`, `CurrentSeq`, and `EditsInRange`.
-//! CONSTITUTION §12: `doc_id` alone is always both the
-//! journal key and the recovery/undo unit; every query here additionally
-//! scopes to `(doc_id, session_id)` together, exactly as Go does, so a
-//! DIFFERENT session sharing this `doc_id` (two rune windows on the same
-//! file) can never see, coalesce with, or truncate this session's own
-//! events.
+//! The durable undo/redo journal: `append_edit`, `undo_peek`/`redo_peek`/
+//! `move_undo_pos`, `current_seq`, and `edits_in_range`. `doc_id` alone is
+//! always both the journal key and the recovery/undo unit; every query here
+//! additionally scopes to `(doc_id, session_id)` together, so a DIFFERENT
+//! session sharing this `doc_id` (two rune windows on the same file) can
+//! never see, coalesce with, or truncate this session's own events.
 //!
 //! Every function below takes an already-open `&Transaction`/`&Connection`
 //! rather than a `Store` — the writer thread (`writer.rs`) is the one
@@ -16,10 +14,8 @@
 //! Gotchas: "rune-db must take a `clock: ... -> SystemTime` injection") is
 //! the only place wall-clock nondeterminism can enter — sampled ONCE per
 //! `append_edit` call and reused for both the row's `at` timestamp and the
-//! coalescing elapsed-time check (Go samples `s.clock()` twice per call,
-//! `journal.go`; with the deterministic `fixedClock` test helper
-//! both calls already return the identical instant, so sampling once here
-//! is behavior-preserving and removes a source of intra-call clock skew).
+//! coalescing elapsed-time check, removing a source of intra-call clock
+//! skew between the two uses.
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -33,7 +29,7 @@ pub use crate::journal_append::append_edit;
 
 /// One undo/redo journal step: the edits to (re)apply to the buffer, the
 /// cursor state to restore, and the journal position `move_undo_pos` should
-/// commit to once the buffer reapply succeeds. Port of `journal.go`.
+/// commit to once the buffer reapply succeeds.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
@@ -41,8 +37,7 @@ pub struct Step {
     pub new_pos: i64,
 }
 
-/// One edit row tagged with the journal seq it was recorded at. Port of
-/// `snapshot.go` (`EditRow`).
+/// One edit row tagged with the journal seq it was recorded at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditRow {
     pub seq: i64,
@@ -53,10 +48,9 @@ pub struct EditRow {
 /// journal position for `doc_id`, plus the position the journal should move
 /// to (one behind that event) once the buffer edit applies. READ-ONLY: does
 /// NOT mutate `current_seq` — the caller commits via `move_undo_pos` only
-/// after the buffer reapply succeeds (§1.4.8). `Ok(None)` means genuinely
+/// after the buffer reapply succeeds. `Ok(None)` means genuinely
 /// nothing to undo; `Err` means the read or an event's payload was corrupt
-/// — surfaced, never folded into `Ok(None)` (§1.3). Port of
-/// `journal.go`.
+/// — surfaced, never folded into `Ok(None)`.
 pub fn undo_peek(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -88,8 +82,7 @@ pub fn undo_peek(
 /// Returns the next event after `session_id`'s current journal position for
 /// `doc_id`, plus the position the journal should advance to. Mirrors
 /// `undo_peek`: READ-ONLY, `Ok(None)` means genuinely nothing to redo, a
-/// corrupt payload is `Err`, never folded into `Ok(None)`. Port of
-/// `journal.go`.
+/// corrupt payload is `Err`, never folded into `Ok(None)`.
 pub fn redo_peek(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -120,11 +113,11 @@ pub fn redo_peek(
 
 /// Commits the journal undo position to `pos` for `doc_id`, scoped to
 /// `session_id`. Call ONLY after the corresponding buffer edit
-/// (`rune_core::undo::apply_inverse`/`reapply`) has already succeeded
-/// (§1.4.8). The UPSERT creates this session's `session_documents` row on
+/// (`rune_core::undo::apply_inverse`/`reapply`) has already succeeded.
+/// The UPSERT creates this session's `session_documents` row on
 /// its very first undo/redo for `doc_id` — no read-then-write split; `pos`
 /// is always caller-supplied (from `undo_peek`/`redo_peek`), never derived
-/// from a value this call itself reads. Port of `journal.go`.
+/// from a value this call itself reads.
 pub fn move_undo_pos(
     tx: &Transaction<'_>,
     session_id: i64,
@@ -142,7 +135,7 @@ pub fn move_undo_pos(
 /// The effective journal position for `doc_id` as seen by `session_id`:
 /// this session's own undo pointer if set, else `MAX(seq)` among only this
 /// session's own events for `doc_id`, else 0 if this session has no events
-/// for `doc_id` at all. Port of `dirty.go` (`CurrentSeq`).
+/// for `doc_id` at all.
 pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result<i64, Error> {
     let seq: i64 = tx.query_row(
         "SELECT COALESCE(
@@ -158,9 +151,8 @@ pub fn current_seq(tx: &Transaction<'_>, session_id: i64, doc_id: i64) -> Result
 /// `doc_id`'s own edit rows with seq in `(from_seq, to_seq]`, each tagged
 /// with its seq, ordered ascending — the current TAIL row (`seq == to_seq`)
 /// is the only one `append_edit`'s coalescing UPDATE can still mutate in
-/// place. Session-scoped: only ever this session's own edits. Port of
-/// `snapshot.go` (`EditsInRange`). Read-only, so it takes
-/// `&Connection` rather than `&Transaction` — callable from either the
+/// place. Session-scoped: only ever this session's own edits. Read-only,
+/// so it takes `&Connection` rather than `&Transaction` — callable from either the
 /// writer's own transaction (via `Transaction`'s `Deref<Target=Connection>`
 /// coercion) or a plain read connection.
 pub fn edits_in_range(
@@ -211,10 +203,8 @@ mod tests {
         tx.last_insert_rowid()
     }
 
-    /// Port of `TestUndoPeek_CorruptEditsSurfacesError`
-    /// (`journal_test.go`): a corrupt edits payload must be
-    /// returned as a non-nil error, never silently folded into "nothing to
-    /// undo".
+    /// A corrupt edits payload must be returned as an error, never
+    /// silently folded into "nothing to undo".
     #[test]
     fn corrupt_edits_payload_surfaces_as_error_not_ok_false() {
         let mut conn = open();

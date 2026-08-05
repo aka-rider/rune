@@ -1,7 +1,6 @@
 //! Clipboard commands (WP8): copy/cut write OSC 52 bytes into `Effects.raw`
 //! (never a `Cmd` — plan Gotchas: "Cmds must never touch the terminal");
-//! paste spawns the `pbpaste` `Cmd`. Ports Go's `extractCopyText`,
-//! `copyEntireLine` and `handlePasteContent`.
+//! paste spawns the `pbpaste` `Cmd`.
 //!
 //! Workspace-coupled (plan WP1 decision 4): `copy`/`cut`/`handle_paste_
 //! content` take `(app: &mut App, id: DocumentId)` — `cut`/`handle_paste_
@@ -52,12 +51,11 @@ pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &
     effects.raw.push(osc52_copy(text.as_bytes()));
 }
 
-/// Port of `commands_clipboard.go:extractCopyText`. Single cursor (Phase
-/// 1's only case): the selection text, or — with no selection — the whole
-/// current line including its trailing newline (`copy_entire_line`).
-/// Multi-cursor joins each cursor's selection-or-line with `\n`, ported for
-/// `CursorSet` parity even though Phase 1 never actually produces more
-/// than one cursor.
+/// Single cursor (Phase 1's only case): the selection text, or — with no
+/// selection — the whole current line including its trailing newline
+/// (`copy_entire_line`). Multi-cursor joins each cursor's selection-or-line
+/// with `\n`, even though Phase 1 never actually produces more than one
+/// cursor.
 fn extract_copy_text(buf: &Buffer, cursors: &CursorSet) -> String {
     let all = cursors.all();
     match all.as_slice() {
@@ -81,38 +79,33 @@ fn copy_text_for_cursor(buf: &Buffer, c: &Cursor) -> String {
     }
 }
 
-/// Port of `commands_clipboard.go:copyEntireLine`: the full line at
-/// `offset`, including its trailing `\n` unless it's the buffer's last
-/// line.
+/// The full line at `offset`, including its trailing `\n` unless it's the
+/// buffer's last line.
 fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
     let (start, end) = nav_line::line_range_incl_newline(buf, offset);
     buf.slice(start, end).unwrap_or("").to_string()
 }
 
-/// Port of `commands_clipboard.go:clipboardCopy`: never mutates the
-/// buffer — pushes the OSC 52 write directly into `Effects.raw` (plan
-/// Gotchas: "Cmds must never touch the terminal", exactly why this is
-/// `raw` output, not a `Cmd`).
+/// Never mutates the buffer — pushes the OSC 52 write directly into
+/// `Effects.raw` (plan Gotchas: "Cmds must never touch the terminal",
+/// exactly why this is `raw` output, not a `Cmd`).
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
     write_to_clipboard_or_report(app, &text, effects);
 }
 
-/// Port of `commands_clipboard.go:clipboardCut`: the same copy text as
-/// `copy`, computed BEFORE the delete (so it reflects what's being
-/// removed), plus a journaled delete of the same range(s) via
-/// `commands::edit::delete_selection_or_line` — reusing the existing
-/// selection-replacing edit machinery rather than duplicating the batch-
-/// apply/journal logic here. `write_to_clipboard_or_report` runs BEFORE
-/// the delete (plan WP13.S4, `rune-tui C 6`): an over-cap selection raises
-/// a banner instead of silently writing a sequence a terminal multiplexer
-/// would just drop, so the user learns the cut never reached the system
-/// clipboard before its bytes are gone from the buffer too — the delete
-/// itself always proceeds either way, since it's journaled/undoable
-/// regardless of what happened to the clipboard (mirrors Go's `command.
-/// Result` returning `Cmd: clipboardWriteCmd(text)` alongside the edit
-/// operation unconditionally).
+/// The same copy text as `copy`, computed BEFORE the delete (so it
+/// reflects what's being removed), plus a journaled delete of the same
+/// range(s) via `commands::edit::delete_selection_or_line` — reusing the
+/// existing selection-replacing edit machinery rather than duplicating the
+/// batch-apply/journal logic here. `write_to_clipboard_or_report` runs
+/// BEFORE the delete (plan WP13.S4, `rune-tui C 6`): an over-cap selection
+/// raises a banner instead of silently writing a sequence a terminal
+/// multiplexer would just drop, so the user learns the cut never reached
+/// the system clipboard before its bytes are gone from the buffer too —
+/// the delete itself always proceeds either way, since it's
+/// journaled/undoable regardless of what happened to the clipboard.
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
@@ -120,33 +113,31 @@ pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
     edit::delete_selection_or_line(app, id);
 }
 
-/// Port of `commands_clipboard.go:clipboardPaste`: no buffer mutation
-/// here — just spawns the pbpaste `Cmd`, tagged with `target` so its
-/// `Msg::ClipboardRead` reply routes back to wherever the paste was
-/// requested from (`dispatch::update_inner`'s `ClipboardRead` arm) rather
-/// than wherever focus/the active document happen to be when it lands.
+/// No buffer mutation here — just spawns the pbpaste `Cmd`, tagged with
+/// `target` so its `Msg::ClipboardRead` reply routes back to wherever the
+/// paste was requested from (`dispatch::update_inner`'s `ClipboardRead`
+/// arm) rather than wherever focus/the active document happen to be when
+/// it lands.
 pub fn paste(effects: &mut Effects, target: PasteTarget) {
     effects.cmds.push(pbpaste_cmd(target));
 }
 
-/// Port of `commands_clipboard.go:handlePasteContent`, the
-/// single funnel `Msg::Paste` (bracketed paste, when focus isn't the title)
-/// and a document-targeted `Msg::ClipboardRead` both call — see module
-/// docs. Read-only documents are NOT
-/// guarded here (review finding F1): `edit::insert_text` bottoms out in
-/// `commands::edit::commit_edit_batch`, the single chokepoint that rejects
-/// every mutating command against a read-only `Document` — see its docs and
-/// `Document::read_only`'s. Duplicating the check here would just be a
-/// second copy that could silently drift from the real gate; the only
-/// guard this function keeps is the empty-text early-out, which the
-/// chokepoint doesn't (and shouldn't) special-case.
+/// The single funnel `Msg::Paste` (bracketed paste, when focus isn't the
+/// title) and a document-targeted `Msg::ClipboardRead` both call — see
+/// module docs. Read-only documents are NOT guarded here (review finding
+/// F1): `edit::insert_text` bottoms out in `commands::edit::commit_edit_batch`,
+/// the single chokepoint that rejects every mutating command against a
+/// read-only `Document` — see its docs and `Document::read_only`'s.
+/// Duplicating the check here would just be a second copy that could
+/// silently drift from the real gate; the only guard this function keeps
+/// is the empty-text early-out, which the chokepoint doesn't (and
+/// shouldn't) special-case.
 ///
-/// Multi-cursor line-distribution (Go: paste text with the same line count
-/// as the cursor set spread one line per cursor) is NOT ported: Phase 1
-/// runs a single cursor, so Go's `distribute` branch is unreachable here.
-/// `edit::insert_text` already reproduces Go's non-distribute fallback —
-/// the same whole text replacing every cursor's selection — which is the
-/// only case that can occur in Phase 1.
+/// Multi-cursor line-distribution (pasting text with the same line count
+/// as the cursor set, spread one line per cursor) is NOT implemented:
+/// Phase 1 runs a single cursor, so that path is unreachable here.
+/// `edit::insert_text` replaces every cursor's selection with the same
+/// whole text — the only case that can occur in Phase 1.
 pub fn handle_paste_content(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;

@@ -1,4 +1,4 @@
-//! The dead-session reaper — ported from Go's liveness layer.
+//! The dead-session reaper.
 //! Best-effort on `Store::open` (never blocks open — any error here is
 //! swallowed by the caller, not surfaced as an open failure): for every
 //! `sessions` row confirmed dead, deletes its `session_documents`/`events`/
@@ -22,7 +22,7 @@ use crate::retry;
 /// Runs once per `Store::open`. `is_alive` decides whether a recorded
 /// `(pid, proc_started_at)` pair still identifies a running process — the
 /// caller passes the real liveness check in production, a deterministic
-/// stand-in in tests. Port of `liveness.go` (`reapDeadSessions`).
+/// stand-in in tests.
 pub fn reap_dead_sessions(
     conn: &mut Connection,
     is_alive: &dyn Fn(i64, &str) -> bool,
@@ -52,8 +52,7 @@ pub fn reap_dead_sessions(
 
 /// Reports whether `session_id` is safe to reap: for EVERY `doc_id` it ever
 /// touched, some OTHER session must now hold the higher seq. A session that
-/// never touched any doc (vacuously true) is reapable. Port of
-/// `liveness.go` (`sessionIsReapable`).
+/// never touched any doc (vacuously true) is reapable.
 fn session_is_reapable(tx: &Transaction<'_>, session_id: i64) -> Result<bool, Error> {
     let doc_ids: Vec<i64> = {
         let mut stmt = tx.prepare(
@@ -82,8 +81,7 @@ fn session_is_reapable(tx: &Transaction<'_>, session_id: i64) -> Result<bool, Er
 }
 
 /// Deletes `session_id`'s `session_documents`/`events`/`snapshots` rows,
-/// leaving the `sessions` row itself in place. Port of `liveness.go`
-/// (`reapSessionFootprint`).
+/// leaving the `sessions` row itself in place.
 fn reap_session_footprint(tx: &Transaction<'_>, session_id: i64) -> Result<(), Error> {
     tx.execute(
         "DELETE FROM session_documents WHERE session_id=?1",

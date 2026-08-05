@@ -15,8 +15,8 @@
 //! one hand-maintained key list, kept in sync by hand with `keymap::
 //! resolve`'s match arms) with this same reflection pass, once
 //! `editor_bindings::EDITOR_BINDINGS` gave the editor's own chords a real
-//! table to reflect over — CONSTITUTION §12: "a hand-maintained key list may
-//! not exist".
+//! table to reflect over — a hand-maintained key list may
+//! not exist.
 
 use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
@@ -34,7 +34,7 @@ pub fn help_markdown() -> String {
     // and type-to-search — but they are one pane to the reader, so they
     // share a single heading and a single table rather than producing two
     // identically-titled `## Explorer` sections. Both sets are still
-    // reflected over (§12: no hand-maintained key list); only the heading
+    // reflected over (no hand-maintained key list); only the heading
     // is shared.
     push_section_header(&mut out, "Explorer");
     push_rows(&mut out, EXPLORER_BINDINGS);

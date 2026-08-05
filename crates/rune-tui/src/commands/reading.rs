@@ -22,8 +22,8 @@ use crate::viewport::ScrollMode;
 pub fn toggle(app: &mut App) {
     // The reading view is a property of the document the Editor pane
     // renders, so the pane that renders it is the only pane that may
-    // toggle it (CONSTITUTION §2.1) — `read_only` must never transition
-    // while, say, the title field holds focus. A silent no-op, not a
+    // toggle it — `read_only` must never transition while, say, the
+    // title field holds focus. A silent no-op, not a
     // refusal with a status message: `⌃P` firing from another pane is not
     // user-initiated intent to toggle THIS document, the same precondition
     // `app.rs::refocus_title` treats silently rather than as a refusal.

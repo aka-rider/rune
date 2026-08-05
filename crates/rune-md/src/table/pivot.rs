@@ -1,7 +1,7 @@
 //! Pivoted layout (WP4.S5): the last-resort layout for a table too wide to
 //! render as any box at all — one BODY row becomes `n_cols` `"Label: Value"`
-//! lines, no `│` anywhere. Split out of `layout.rs` on its own
-//! (CONSTITUTION §1.6) — Pivoted's row builder shares `layout`'s
+//! lines, no `│` anywhere. Split out of `layout.rs` on its own —
+//! Pivoted's row builder shares `layout`'s
 //! `FlatChar`/`group_runs` plumbing but is otherwise a distinct concern
 //! from Grid geometry.
 
@@ -23,9 +23,8 @@ use rune_syntax::ScopeId;
 /// THIS row's own line — mixing them would go backwards; `-1` is also the
 /// honest answer, since a label isn't this row's own byte at all). Value
 /// characters keep whatever real buffer offset `render_cell` resolved for
-/// them (Go parity: Go's own Pivoted renderer copies the value's real
-/// per-char mapping verbatim, unlike its Wrapped renderer, which never
-/// keeps one).
+/// them — unlike Wrapped, which never keeps a real per-char mapping,
+/// Pivoted preserves it verbatim.
 ///
 /// Returns one `Vec` of runs per VISUAL row, top to bottom (the separator
 /// rule first, if included, then one row per column) — the caller takes

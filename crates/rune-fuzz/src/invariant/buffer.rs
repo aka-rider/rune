@@ -21,7 +21,7 @@ fn expected_line_bounds(content: &str) -> (Vec<usize>, Vec<usize>) {
     (starts, ends)
 }
 
-/// `BUF-LINE-INDEX` (L0, Go `B1`) — the line index is EXACTLY the one
+/// `BUF-LINE-INDEX` (L0) — the line index is EXACTLY the one
 /// `\n` positions in `content` imply, not merely monotone/in-bounds
 /// (CODE-REVIEW.md rune-fuzz finding 2: a monotone-only check lets
 /// `line_starts=[0,1,2]` pass clean for `"a\nbb\nccc"`, whose real starts
@@ -63,7 +63,7 @@ pub fn buf_line_index(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `VERSION-MONOTONE` (L1, Go `B2`) — neither `Buffer::version()` nor
+/// `VERSION-MONOTONE` (L1) — neither `Buffer::version()` nor
 /// `saved_version` ever goes backwards across a step, for the SAME
 /// document. Scoped to `prev.active == next.active` for exactly the reason
 /// `PANE-NO-BLEED` already is (that invariant's own docs): switching the

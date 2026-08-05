@@ -48,7 +48,7 @@ fn paste_verbatim_accepts_a_crlf_clipboard_read_verbatim() {
 
 /// WP5.S3's own regression: a title-targeted `ClipboardRead` never touches
 /// the active document at all (the title has its own in-memory field, out
-/// of this checker's domain — §12), so a mismatch between `prev.content`
+/// of this checker's domain), so a mismatch between `prev.content`
 /// and `next.content` here must NOT trip `PASTE-VERBATIM` — without the
 /// `target == PasteTarget::Document(prev.active)` guard it would, since a
 /// title-targeted paste legitimately leaves the document untouched while
@@ -96,7 +96,7 @@ fn paste_verbatim_ignores_a_paste_while_the_title_is_focused() {
 #[test]
 fn paste_verbatim_accepts_a_paste_over_a_selection() {
     // CODE-REVIEW.md rune-fuzz finding 12: a paste over a selection is the
-    // byte-displacing path §1.4.10 governs, previously skipped entirely.
+    // byte-displacing path, previously skipped entirely.
     let mut prev = base_snapshot("hello world");
     prev.cursors = vec![selection_cursor(1, 0, 5)]; // "hello" selected
     let next = base_snapshot("bye world");

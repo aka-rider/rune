@@ -1,5 +1,5 @@
 //! The child-process roles `helper_entrypoint` dispatches to — one per
-//! multiprocess scenario (§1.6 budget split). Every role opens its own
+//! multiprocess scenario. Every role opens its own
 //! `Store` against the shared path a scenario test hands it via
 //! `RUNE_DB_PATH`, synchronizes with its siblings through the ready/go
 //! marker handshake `support` provides, then calls `std::process::exit`

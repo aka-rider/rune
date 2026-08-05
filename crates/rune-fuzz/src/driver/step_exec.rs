@@ -1,10 +1,10 @@
-//! One-message step execution, split out of `driver` (§1.6 budget): builds
-//! `(Msg, MsgTag)` pairs, discharges the deferred save/rename `Cmd`s, and
-//! runs one `update` call under `catch_unwind`, checking every invariant
-//! against the resulting `Snapshot`/`StepCtx`. Nothing here changes
-//! behaviour beyond plan WP5's rename discharge — every other function is
-//! exactly what `driver` used to define locally, now reached through
-//! `step_exec::`.
+//! One-message step execution, split out of `driver` (500-line budget):
+//! builds `(Msg, MsgTag)` pairs, discharges the deferred save/rename
+//! `Cmd`s, and runs one `update` call under `catch_unwind`, checking every
+//! invariant against the resulting `Snapshot`/`StepCtx`. Nothing here
+//! changes behaviour beyond plan WP5's rename discharge — every other
+//! function is exactly what `driver` used to define locally, now reached
+//! through `step_exec::`.
 
 use rune_tui::app::{self, App};
 use rune_tui::keymap::{self, KeyInput};

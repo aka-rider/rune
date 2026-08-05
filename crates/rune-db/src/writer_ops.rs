@@ -1,6 +1,6 @@
 //! The writer thread's op vocabulary: the [`OpKind`] catalog a [`WriteOp`]
 //! carries, the [`OpOutcome`] each one can produce, and the [`DbEvent`]
-//! completion wrapping it. Split out of `writer.rs` (§1.6) — this module is
+//! completion wrapping it. Split out of `writer.rs` — this module is
 //! purely the data model; `writer.rs` keeps the queue/dispatch machinery
 //! that consumes it.
 
@@ -63,9 +63,8 @@ pub enum OpKind {
     /// crate, where this crate's `cfg(test)` is never enabled) need this to
     /// exercise the degraded-mode banner end-to-end (plan WP5 "Done when").
     KillWriterForTest,
-    /// Port of `journal.go` (`AppendEdit`). On success, the
-    /// completion's `DbEvent::Ok.result` carries the journal seq of the
-    /// inserted (or coalesced) event.
+    /// On success, the completion's `DbEvent::Ok.result` carries the
+    /// journal seq of the inserted (or coalesced) event.
     AppendEdit {
         session_id: i64,
         now: SystemTime,
@@ -74,14 +73,13 @@ pub enum OpKind {
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
     },
-    /// Port of `journal.go` (`MoveUndoPos`).
     MoveUndoPos {
         session_id: i64,
         doc_id: i64,
         pos: i64,
     },
-    /// Port of `snapshot.go` (`CreateSnapshot`). On success, the
-    /// completion's `DbEvent::Ok.result` carries the new `snapshots.id`.
+    /// On success, the completion's `DbEvent::Ok.result` carries the new
+    /// `snapshots.id`.
     CreateSnapshot {
         session_id: i64,
         now: SystemTime,
@@ -89,9 +87,9 @@ pub enum OpKind {
         content: String,
         seq: i64,
     },
-    /// Port of `probe.go` (`Probe`). Disk I/O (`vfs.resolve`/`stat`/
-    /// `read`) happens between this op's own internal transactions, never
-    /// inside one (plan WP4.S3) — see `probe::probe`.
+    /// Disk I/O (`vfs.resolve`/`stat`/`read`) happens between this op's own
+    /// internal transactions, never inside one (plan WP4.S3) — see
+    /// `probe::probe`.
     Probe {
         session_id: i64,
         doc_id: i64,
@@ -122,7 +120,7 @@ pub enum OpKind {
     /// (`materialize::record_materialize_outcome`) — the ONLY other half of
     /// `Materialize` left on this thread, and it makes no `vfs` call
     /// either. `resolved_path`/`seq` are the caller's own
-    /// enqueue-time-captured facts (§1.4.2/§1.4.8), never re-derived here.
+    /// enqueue-time-captured facts, never re-derived here.
     MaterializeRecord {
         session_id: i64,
         doc_id: i64,
@@ -131,10 +129,10 @@ pub enum OpKind {
         now: SystemTime,
         outcome: MaterializeOutcome,
     },
-    /// Port of `load.go` (`Load`). `liveness_check` is this `Store`'s own
-    /// injected liveness function (`Store::set_liveness_check`), threaded
-    /// through per-op rather than read from shared state, so the writer
-    /// thread never needs to touch `Store`'s mutex.
+    /// `liveness_check` is this `Store`'s own injected liveness function
+    /// (`Store::set_liveness_check`), threaded through per-op rather than
+    /// read from shared state, so the writer thread never needs to touch
+    /// `Store`'s mutex.
     Load {
         session_id: i64,
         liveness_check: LivenessCheckFn,
@@ -156,8 +154,7 @@ pub enum OpKind {
     /// `seen` is the stat the user consented to replace; the op re-checks
     /// it and refuses on a mismatch. Capture-then-swap-then-commit-then-
     /// unlink is deliberately ONE op: splitting it across a message
-    /// boundary would make "swapped but not captured" representable
-    /// (§1.4.10).
+    /// boundary would make "swapped but not captured" representable.
     RenameReplace {
         session_id: i64,
         doc_id: i64,
@@ -166,11 +163,11 @@ pub enum OpKind {
         seen: Stat,
         now: SystemTime,
     },
-    /// Port of `adopt.go` (`ResolveAdopt`). `edit_seq: None` asks
-    /// `adopt::resolve_adopt` to resolve the journal-head seq fresh, inside
-    /// its own transaction, instead of trusting a value the caller could
-    /// only have learned asynchronously (see that function's own doc
-    /// comment) — the merge-entry flow's own case (plan Gotchas `[B3]`).
+    /// `edit_seq: None` asks `adopt::resolve_adopt` to resolve the
+    /// journal-head seq fresh, inside its own transaction, instead of
+    /// trusting a value the caller could only have learned asynchronously
+    /// (see that function's own doc comment) — the merge-entry flow's own
+    /// case (plan Gotchas `[B3]`).
     ResolveAdopt {
         session_id: i64,
         doc_id: i64,
@@ -178,23 +175,30 @@ pub enum OpKind {
         edit_seq: Option<i64>,
         now: SystemTime,
     },
-    /// Port of `adopt.go` (`ResolveAbandon`).
-    ResolveAbandon { session_id: i64, doc_id: i64 },
-    /// WP3 (quit-guard plan): port of `store_documents.go` (`CreateScratch`)
-    /// — inserts a brand-new unbound scratch `documents` row. On success,
-    /// the completion's `DbEvent::Ok.result` carries the new row's id.
-    CreateScratch { now: SystemTime },
-    /// WP3: port of `store_documents.go` (`GCEmptyScratch`) — see
-    /// `scratch::gc_empty_scratch` for why this filter is stricter than Go's.
-    GcEmptyScratch { keep_id: i64 },
-    /// WP3: port of `store_documents.go` (`RecoverableScratch`). On success,
-    /// the completion's `DbEvent::Ok.result` carries the candidate ids,
-    /// newest first.
-    RecoverableScratch { exclude_id: i64 },
-    /// WP3: port of `load.go` (`RecoverAcrossSessions`) for an untitled
-    /// document — see `scratch::reconstruct_scratch`. `liveness_check`
-    /// travels with the op for the same reason `Load` carries its own copy:
-    /// the writer thread never touches `Store`'s mutex.
+    ResolveAbandon {
+        session_id: i64,
+        doc_id: i64,
+    },
+    /// WP3 (quit-guard plan): inserts a brand-new unbound scratch
+    /// `documents` row. On success, the completion's `DbEvent::Ok.result`
+    /// carries the new row's id.
+    CreateScratch {
+        now: SystemTime,
+    },
+    /// WP3: see `scratch::gc_empty_scratch` for why this filter is
+    /// stricter.
+    GcEmptyScratch {
+        keep_id: i64,
+    },
+    /// WP3: on success, the completion's `DbEvent::Ok.result` carries the
+    /// candidate ids, newest first.
+    RecoverableScratch {
+        exclude_id: i64,
+    },
+    /// WP3: for an untitled document — see `scratch::reconstruct_scratch`.
+    /// `liveness_check` travels with the op for the same reason `Load`
+    /// carries its own copy: the writer thread never touches `Store`'s
+    /// mutex.
     ReconstructScratch {
         liveness_check: LivenessCheckFn,
         doc_id: i64,

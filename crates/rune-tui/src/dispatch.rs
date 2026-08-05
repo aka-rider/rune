@@ -1,5 +1,5 @@
 //! The `Msg` dispatcher, key pipeline, and `rune-db` event router, split out
-//! of `app` (§1.6 budget): `update_inner` is the top-level `Msg` match
+//! of `app` (the 500-line budget): `update_inner` is the top-level `Msg` match
 //! `app::update` used to run inline; its `Msg::Key`/`Msg::Db` arms route to
 //! the four-stage key pipeline and the `rune-db` ack router right below.
 //! Nothing else changes — every one of these is exactly the function
@@ -21,7 +21,7 @@ use crate::{explorer, explorer_keys, materialize_ack, opentabs, save};
 
 /// The one dispatcher every `Msg` funnels through (`app::update`'s inner
 /// half, split out here alongside the key/db-event routers it calls into —
-/// §1.6 budget). `app::update` wraps this with the snapshot-autosave
+/// the 500-line budget). `app::update` wraps this with the snapshot-autosave
 /// debounce chokepoint; nothing else in the crate calls this directly.
 pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
     match msg {
@@ -147,11 +147,11 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 }
 
 // `handle_db_event` (the `rune-db` ack router) moved to `db_dispatch.rs`
-// (§1.6 budget) — `update_inner`'s `Msg::Db` arm above calls it through
+// (500-line budget) — `update_inner`'s `Msg::Db` arm above calls it through
 // `db_dispatch::`.
 
 /// The post-dispatch chokepoint `app::update` calls after every message
-/// (moved out of `app.rs` itself, which already exceeds the §1.6 ceiling
+/// (moved out of `app.rs` itself, which already exceeds the 500-line ceiling
 /// from unrelated concurrent work and must not grow further): whatever a
 /// content/cursor/tab-switch change can invalidate that `update_inner`
 /// didn't already handle inline. Highlight scheduling and a newly-active
@@ -297,10 +297,9 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Consumed;
     }
 
-    // Hardcoded fast paths outside the resolver, exactly as Go
-    // (`textedit/update.go`): Enter (mod 0) -> newline; Escape ->
-    // collapse selection. Neither is a resolver-bound chord (plan Context,
-    // "Keymap").
+    // Hardcoded fast paths outside the resolver: Enter (mod 0) -> newline;
+    // Escape -> collapse selection. Neither is a resolver-bound chord (plan
+    // Context, "Keymap").
     if key.code == KeyCode::Enter && key.mods == Mods::NONE {
         edit::newline(app, app.active);
         return keymap::KeyOutcome::Consumed;
@@ -322,7 +321,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 
     let Some(command) = keymap::resolve(key) else {
         // Unmatched printable text -> insert fallthrough (plan Context,
-        // "Hardcoded fast paths outside the resolver": `update.go`).
+        // "Hardcoded fast paths outside the resolver").
         // Ctrl/Alt/Super chords that reach here are simply unbound, never an
         // insert — every bound Ctrl/Alt/Super chord is already caught by
         // `keymap::resolve` above.
@@ -351,7 +350,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         Command::CharLeft => nav::char_left(app.active_doc_mut(), false),
         Command::CharRight => nav::char_right(app.active_doc_mut(), false),
         // Up at the very top of the buffer focuses the title instead — a
-        // contextual gesture, not a new binding, so §3.1's one-key-one-
+        // contextual gesture, not a new binding, so the one-key-one-
         // binding rule is untouched. Anywhere else it's an ordinary
         // cursor move. A read-only document never reaches this arm:
         // `reading_nav::intercept` above re-keys the same gesture to the
@@ -429,17 +428,14 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
 }
 
 /// Guards the printable-insert fallthrough against control-byte leakage
-/// (data-integrity fix, review finding F1). Go's equivalent gate is
-/// `isPrintableChar` (`textedit.go`: `r >= ' ' && r <= '~'`), but
-/// that gate applies ONLY to Go's SYNTHESIZED-from-`BaseCode` case
-/// (`update.go`) — real decoded text (`msg.Text`, and everything
-/// `Msg::Paste` carries here) flows unrestricted, including non-ASCII
-/// (CJK, emoji). This crate's termina-backed `KeyCode::Char(char)` has no
-/// such split: it is Go's `BaseCode` concept alone, never a separate
-/// decoded-text stream, so a literal ASCII-only port would also block
-/// genuine direct-keystroke Unicode entry Go itself allows unrestricted
-/// (and which `tests/tui_edit.rs` requires). The hazard Go's gate actually
-/// closes is narrower than "ASCII only": a raw C0 control byte or DEL
+/// (data-integrity fix, review finding F1). An ASCII-only filter (`' '..=
+/// '~'`) would be wrong here: this crate's termina-backed
+/// `KeyCode::Char(char)` carries both synthesized single-key chords and
+/// genuine decoded text (`msg.Text`, and everything `Msg::Paste` carries
+/// here) with no way to tell them apart, so restricting to that range would
+/// also block real non-ASCII keystrokes — CJK, emoji — that
+/// `tests/tui_edit.rs` requires to flow unrestricted. The hazard actually
+/// worth closing is narrower than "ASCII only": a raw C0 control byte or DEL
 /// leaking through as `Char` with no modifier flag at all — the reported
 /// case is a non-Kitty terminal's legacy encoding, where Ctrl+A IS the
 /// literal SOH byte (no separate "this was a chord" signal survives

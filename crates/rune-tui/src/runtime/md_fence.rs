@@ -2,10 +2,10 @@
 //! ```` ```markdown ````/```` ```md ```` fence has no `rune-ts` grammar
 //! ("markdown stays comrak's", `rune_ts::lang`'s own doc comment), so this
 //! module reuses the SAME emitter that renders the real document, just
-//! forced fully revealed, and re-tags its output as overlay spans. CONSTITUTION
-//! §12 forbids the reverse direction (tree-sitter output feeding back into an
-//! emitted `SyntaxSpan`); emit-output feeding an overlay is the sanctioned
-//! channel this module uses instead.
+//! forced fully revealed, and re-tags its output as overlay spans. The
+//! reverse direction — tree-sitter output feeding back into an emitted
+//! `SyntaxSpan` — is forbidden; emit-output feeding an overlay is the
+//! sanctioned channel this module uses instead.
 
 use rune_syntax::scope::scope_table;
 use rune_ts::{HighlightResult, MAX_SPANS};

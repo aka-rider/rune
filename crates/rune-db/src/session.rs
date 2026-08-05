@@ -1,8 +1,8 @@
-//! Process identity and liveness — ported from Go's recovery-store liveness
-//! layer. Darwin-only (`CLAUDE.md`: no portability shims).
+//! Process identity and liveness. Darwin-only (`CLAUDE.md`: no portability
+//! shims).
 //!
 //! A `sessions` row is this process's own identity for every journaled edit
-//! and recorded observation it will ever produce (CONSTITUTION §12): two
+//! and recorded observation it will ever produce: two
 //! `Store` handles sharing one database (two rune windows on the same file)
 //! tell their own history apart from each other instead of racing a single
 //! shared journal. `proc_started_at` — the OS-reported start time of `pid`
@@ -17,8 +17,8 @@ use rusqlite::Connection;
 use crate::Error;
 
 /// Reads `pid`'s start time via `sysctl(CTL_KERN, KERN_PROC, KERN_PROC_PID)`
-/// — the Darwin equivalent of Linux's `/proc/<pid>/stat` starttime field
-/// (`liveness_darwin.go`). Returns `None` on any failure, including "no such
+/// — the Darwin equivalent of Linux's `/proc/<pid>/stat` starttime field.
+/// Returns `None` on any failure, including "no such
 /// process": Darwin's `sysctl` does not cleanly distinguish that from other
 /// I/O failures, so existence is decided separately and portably by
 /// [`process_exists`] (`kill(pid, 0)`); this function is only ever consulted
@@ -26,8 +26,8 @@ use crate::Error;
 ///
 /// The kernel's `struct kinfo_proc` is `{ struct extern_proc kp_proc;
 /// struct eproc kp_eproc; }` (`SizeofKinfoProc` = 0x288 on arm64/Darwin,
-/// verified against `golang.org/x/sys/unix`'s generated
-/// `ztypes_darwin_arm64.go`), and `p_starttime` (a `struct timeval`: `i64`
+/// cross-checked against the kernel's own struct layout for that size),
+/// and `p_starttime` (a `struct timeval`: `i64`
 /// seconds + `i32` microseconds, 4 bytes padding) is `extern_proc`'s very
 /// first field — offset 0 of the buffer `sysctl` fills. Reading just those
 /// 12 bytes avoids having to replicate the rest of the struct's layout
@@ -80,9 +80,9 @@ fn proc_started_at(pid: i32) -> Option<String> {
 /// "inconclusive, but which way does the existence bit lean" question only
 /// implicit in the caller's own memory of the old encoding, `(false,
 /// false)`). Every caller must fail toward [`Alive`](Existence::Alive) on
-/// [`Inconclusive`](Existence::Inconclusive) — CONSTITUTION §0's harm ladder
-/// (wrongly refusing to inherit a recoverable draft is tolerable; wrongly
-/// inheriting into and corrupting a still-live session's journal is not).
+/// [`Inconclusive`](Existence::Inconclusive): wrongly refusing to inherit
+/// a recoverable draft is tolerable; wrongly inheriting into and
+/// corrupting a still-live session's journal is not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Existence {
     /// `kill(pid, 0)` succeeded, or failed with `EPERM` (exists, owned by
@@ -98,7 +98,7 @@ enum Existence {
 /// Reports whether `pid` currently identifies a running process, via the
 /// POSIX `kill(pid, 0)` idiom (sends no signal, only checks addressability)
 /// — the one existence check that behaves identically and unambiguously on
-/// every unix (`liveness_unix.go`), unlike `proc_started_at`, which on
+/// every unix, unlike `proc_started_at`, which on
 /// Darwin cannot cleanly distinguish "no such process" from an unrelated
 /// read failure.
 fn process_exists(pid: i32) -> Existence {
@@ -114,8 +114,7 @@ fn process_exists(pid: i32) -> Existence {
 }
 
 /// Reports whether `pid` is still running the SAME process that was
-/// recorded with `started_at`. Fails toward "alive" on any ambiguity
-/// (CONSTITUTION §0 harm ladder, port of Go's `isProcessAlive` doc comment):
+/// recorded with `started_at`. Fails toward "alive" on any ambiguity:
 /// wrongly refusing to auto-inherit a recoverable draft is tolerable; wrongly
 /// inheriting into and corrupting a still-live session's journal is not.
 /// Only a POSITIVE confirmation of death returns `false`.
@@ -150,7 +149,7 @@ pub fn is_process_alive(pid: i64, started_at: &str) -> bool {
 /// `proc_started_at`).
 pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<i64, Error> {
     let pid = std::process::id() as i64;
-    // ok ignored, mirroring Go: "" is a valid (if degraded) value — ties
+    // ok ignored: "" is a valid (if degraded) value — ties
     // this session to existence-only comparisons, never blocks session
     // creation.
     let started_at = proc_started_at(pid as i32).unwrap_or_default();
@@ -165,7 +164,7 @@ pub fn establish_session(conn: &Connection, now: SystemTime) -> Result<i64, Erro
 }
 
 /// Formats `t` as UTC RFC3339 with nanosecond precision (`opened_at`'s
-/// on-disk shape, matching Go's `time.RFC3339Nano`), without pulling in a
+/// on-disk shape), without pulling in a
 /// date/time crate — civil-calendar conversion via Howard Hinnant's
 /// `civil_from_days` algorithm (public domain, widely used; the same
 /// algorithm chrono itself is built on).
@@ -201,9 +200,8 @@ pub(crate) fn format_rfc3339_nanos(t: SystemTime) -> String {
 /// a strict fixed-width parse is both simpler and a stronger corruption
 /// check than a lenient one. Returns `None` on any deviation (wrong length,
 /// non-numeric field, out-of-range component) rather than panicking — used
-/// by `journal::append_edit`'s coalescing elapsed-time check
-/// (`journal.go`), where a parse failure just means "don't
-/// coalesce", not a hard error.
+/// by `journal::append_edit`'s coalescing elapsed-time check,
+/// where a parse failure just means "don't coalesce", not a hard error.
 pub(crate) fn parse_rfc3339_nanos(s: &str) -> Option<SystemTime> {
     if s.len() != 30 || s.as_bytes().get(29) != Some(&b'Z') {
         return None;

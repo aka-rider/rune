@@ -1,7 +1,7 @@
 //! WP1.S5: the concealed-heading styling fix (`markup.heading.N` reaching a
 //! Rendered heading's own cells, not just a Revealed one's) pinned end to
 //! end through the real render pipeline. Lives in its own file because the
-//! main render test file is already over the §1.6 size budget; the small
+//! main render test file is already over the 500-line budget; the small
 //! `testgrid`/`app_for` helpers are duplicated locally, following this
 //! crate's established pattern of each integration-test binary keeping its
 //! own copy rather than sharing helpers across binaries.

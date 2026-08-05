@@ -1,6 +1,6 @@
 //! WP6 "Done when" integration tests for the rune-tui <-> rune-db wiring's
 //! open/close op bookkeeping and the bootstrap-bridge handover —
-//! TODO.md's §1.6 split of the original `db_wiring.rs`. The degraded-store
+//! TODO.md's 500-line budget split of the original `db_wiring.rs`. The degraded-store
 //! banner and restart/hydration tests live in the sibling
 //! `db_wiring_degraded.rs`/`db_wiring_hydrate.rs`; all three pull shared
 //! fixtures from `db_wiring_common`.

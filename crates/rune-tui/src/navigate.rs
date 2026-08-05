@@ -23,8 +23,8 @@ use crate::workspace;
 /// Finds the first `Ref` in the ACTIVE document's catalogue whose `site`
 /// contains the primary cursor's byte offset and whose kind is a followable
 /// link, then dispatches on it. `UseRole::Embed` is catalogued but never
-/// followed here (it is an image, not a navigable link — matching the Go
-/// reference); a cursor sitting on neither a link nor an embed is a silent
+/// followed here (it is an image, not a navigable link); a cursor sitting
+/// on neither a link nor an embed is a silent
 /// no-op.
 pub fn follow(app: &mut App, effects: &mut Effects) {
     let offset = app.active_doc().cursors.primary().position;

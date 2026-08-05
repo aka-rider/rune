@@ -44,7 +44,7 @@ pub fn fit_cells(
         let sw = max_cols as f64 / cols as f64;
         let sh = max_rows as f64 / rows as f64;
         let s = sw.min(sh);
-        // Truncating cast, matching the reference implementation's `int(...)`.
+        // Truncating cast: the scaled dimension rounds toward zero.
         cols = (cols as f64 * s) as usize;
         rows = (rows as f64 * s) as usize;
     }

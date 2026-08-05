@@ -1,7 +1,7 @@
 //! The document-row rebind/identity primitives — pointing a `documents`
 //! row at a real on-disk path+identity, and the eviction that keeps
-//! §1.7's "two rows must never both claim the same file" true while doing
-//! it. Split out of `materialize.rs` (§1.6); shared by `materialize.rs`
+//! "two rows must never both claim the same file" true while doing
+//! it. Split out of `materialize.rs`; shared by `materialize.rs`
 //! itself, `rename.rs`, and `document.rs`.
 
 use rusqlite::params;
@@ -25,14 +25,14 @@ pub(crate) struct Rebind<'a> {
 
 /// Points `doc_id`'s `documents` row at `rebind.path` + its on-disk
 /// identity, evicting any OTHER row that currently claims that path or that
-/// (inode, device) — §1.7's one-value-one-meaning applied to the
+/// (inode, device) — one-value-one-meaning applied to the
 /// path/identity columns: two rows must never both claim the same file.
 ///
 /// A rename must NOT go through `materialize::commit_save_from_stat`: that
 /// also does `put_blob(facts.data)` + `record_adoption_tx(origin='save')`,
 /// which after renaming a *dirty* document would move `saved_obs` to an
 /// observation claiming the disk holds the journal head. The next ⌘S would
-/// then CAS against a lie (§1.4.7).
+/// then CAS against a lie.
 ///
 /// Caller-supplied transaction: this is pure SQLite with no `vfs` call
 /// inside, so it is safe to run under an open tx (invariant I1).
@@ -55,7 +55,7 @@ pub(crate) fn rebind_document_tx(
     set_identity_tx(tx, doc_id, rebind.path, stat.inode, stat.device, rebind.at)
 }
 
-/// Evicts any OTHER row currently claiming `path` — §1.7's "two rows must
+/// Evicts any OTHER row currently claiming `path` — "two rows must
 /// never both claim the same file" applied to the `path` column, everywhere
 /// a document row is about to be pointed at a real path. The ONE eviction
 /// chokepoint for this exact statement: [`rebind_document_tx`] and

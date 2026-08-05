@@ -5,8 +5,8 @@
 //! one miss that scrolls every table document wrong by the number of
 //! border rows above the cursor, and that no pre-existing test caught).
 //!
-//! Split out of `tests/tui_render.rs` rather than appended to it (§1.6:
-//! that file was already at 520 lines, over the 500-line budget, before
+//! Split out of `tests/tui_render.rs` rather than appended to it (that
+//! file was already at 520 lines, over the 500-line budget, before
 //! this work) — reuses its `testgrid`/`app_for`/`EDITOR_TOP_ROW`
 //! conventions, duplicated locally per this crate's own established
 //! per-test-file pattern (`tests/chrome.rs`, `tests/banner.rs` each keep
@@ -196,8 +196,8 @@ const RAGGED_ROW_TABLE: &str =
 /// editor as unfocused for that step while the cursor still sat inside the
 /// table.
 ///
-/// Once the caret is gated on `Document::has_insertion_point` (this ticket, Go
-/// parity: an unfocused pane must show no caret, matching a modal's own
+/// Once the caret is gated on `Document::has_insertion_point` (this ticket:
+/// an unfocused pane must show no caret, matching a modal's own
 /// keystroke-capture), that same unfocused state ALSO means no caret is
 /// ever painted here — `focused` is the one bit both the table's
 /// `ForceRendered` grant and the caret gate key off, so a table can only be

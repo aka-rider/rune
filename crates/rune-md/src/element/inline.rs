@@ -1,7 +1,6 @@
 //! Inline element machines (plan Context, "Block and inline machines").
 //! Nested styling (bold-inside-italic) falls out of the tree itself via the
-//! emitter's style stack — there is no `InlineMarks` bitfield here, unlike
-//! Go's flat-span mark model.
+//! emitter's style stack — there is no `InlineMarks` bitfield here.
 
 use std::collections::{HashMap, HashSet};
 
@@ -168,8 +167,8 @@ impl WikiLinkM {
 /// leading `!`, so an embed never arrives as a `WikiLink` node; see that
 /// module's docs, and `catalogue.rs`'s pinned
 /// `embed_prefixed_wikilink_comrak_behaviour_is_pinned`). Rendered -> emit
-/// `alt` (or `target` when `alt` is empty, mirroring the Go reference's
-/// "empty alt, URL becomes the visible label" rule) styled `markup.image`.
+/// `alt` (or `target` when `alt` is empty, implementing the "empty alt,
+/// URL becomes the visible label" rule) styled `markup.image`.
 /// Revealed -> raw markdown, the same open/close-hide treatment
 /// `WikiLinkM` already uses. No nested children: an image's alt text is
 /// plain and unstyled, the same Phase-1 simplification a bare wikilink
@@ -252,26 +251,23 @@ impl Inline {
     }
 }
 
-/// Mirrors Go's `isStandaloneImageLine`
-/// (`golang/pkg/editor/display/image_rows.go`), but qualifies per DISPLAY
-/// LINE rather than per paragraph — Go's own doc comment: "Any other
-/// substantive span (including text adjacent to the image, or a Revealed
-/// image) disqualifies the line", and that adjacency check is scoped to the
+/// Qualifies per DISPLAY LINE rather than per paragraph: any other
+/// substantive span (including text adjacent to the image, or a revealed
+/// image) disqualifies the line, and that adjacency check is scoped to the
 /// line, not the block. `inlines` is a single block's own inline sequence (a
 /// paragraph's or a list item's `Vec<Inline>`); this returns every image in
 /// it that sits alone on its own physical line, optionally surrounded by
 /// whitespace-only text ON THAT SAME LINE. A substantive inline elsewhere in
 /// the paragraph — on a different line — no longer disqualifies a
 /// standalone image line the way it used to; only substantive content
-/// sharing the SAME line does. Unlike Go's flattened span model, this crate
-/// never represents a list marker as an inline at all (it's
-/// `ListItemM::marker`, concealed or carried as the row's own `decor` — see
-/// `emit::walk::emit_list_item`), so a list-item image already satisfies
-/// this rule with no separate marker case to special-case (do not port Go's
-/// `TokenListMarker` branch — it would be dead code here). Anything else on
-/// a line — text adjacent to the image, a second image, a Revealed image
-/// under the caret — disqualifies THAT line, so a truly-inline image falls
-/// back to its alt text instead of a placeholder.
+/// sharing the SAME line does. This crate never represents a list marker as
+/// an inline at all (it's `ListItemM::marker`, concealed or carried as the
+/// row's own `decor` — see `emit::walk::emit_list_item`), so a list-item
+/// image already satisfies this rule with no separate marker case to
+/// special-case. Anything else on a line — text adjacent to the image, a
+/// second image, a Revealed image under the caret — disqualifies THAT
+/// line, so a truly-inline image falls back to its alt text instead of a
+/// placeholder.
 pub fn standalone_image<'a>(content: &str, inlines: &'a [Inline]) -> Vec<&'a ImageM> {
     let mut candidates: HashMap<usize, &'a ImageM> = HashMap::new();
     let mut disqualified: HashSet<usize> = HashSet::new();

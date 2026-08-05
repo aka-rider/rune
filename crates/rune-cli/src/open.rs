@@ -65,8 +65,8 @@ pub(crate) fn resolve_root(
 
 /// Resolves and opens the first positional, building the `(App,
 /// DbBootstrap)` pair `bootstrap` wires up next (plan WP4.S8, split out of
-/// `main` to keep it under the §1.6 line budget). An image path (`kind_for`
-/// via `rune_tui::document_support::is_image_path`) never reaches
+/// `main` to keep it under the 500-line budget). An image path
+/// (`kind_for` via `rune_tui::document_support::is_image_path`) never reaches
 /// `load_buffer` at all — image bytes are never valid UTF-8 in general, and
 /// even a coincidentally UTF-8-clean image must still open read-only, not
 /// as editable text — so it's routed through the SAME dispatch every extra
@@ -125,9 +125,9 @@ pub(crate) fn open_first_positional(
     // module doc), so hydration is skipped entirely for that case: the
     // editor still opens and runs fully, just without recovery journaling
     // for THIS launch. Any hydration failure is non-fatal for the same
-    // reason (CONSTITUTION Prime Directive: protect the user's words over
-    // every other feature) — it is reported to stderr, not to the TUI
-    // (which hasn't started yet), and the editor proceeds with `app.db =
+    // reason (protect the user's words over every other feature) — it is
+    // reported to stderr, not to the TUI (which hasn't started yet), and
+    // the editor proceeds with `app.db =
     // None`. This launch mode is otherwise silent about running with zero
     // crash protection (plan [rune-cli 3]) — every OTHER way this session
     // can end up without a recovery journal (a degraded open ladder, a
@@ -150,7 +150,7 @@ pub(crate) fn open_first_positional(
     // adopting `recovered_content` goes through the same hydration
     // chokepoint (`Document::hydrate`, plan WP5.S2) `db::handle_load_ack`
     // uses, once `App::new` exists to hold it. Pre-replacing the buffer
-    // here (as this used to) would skip that chokepoint's §1.3 suspicion
+    // here (as this used to) would skip that chokepoint's suspicion
     // check entirely.
     let app = App::new(buffer, Some(path), Arc::clone(vfs), db_bootstrap.db.take());
     Ok((app, db_bootstrap))
@@ -200,8 +200,8 @@ pub(crate) fn open_untitled(
 }
 
 /// Binds `scratch.db_id` onto `id`'s `Document` and, when there is actually
-/// recovered text, adopts it through `Document::hydrate` — the §1.3
-/// suspicion check, the synthetic bridge `Step` so post-restart undo reaches
+/// recovered text, adopts it through `Document::hydrate` — the suspicion
+/// check, the synthetic bridge `Step` so post-restart undo reaches
 /// the recovered text in one step, and a refusal surfaced as a status rather
 /// than silently applied (mirrors `bootstrap`'s own handling of `rune_db::
 /// load`'s `recovered_content`). `bind_new` is always `true`: a scratch
@@ -229,15 +229,14 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
         );
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
-    // marks it itself, so every hydration site re-derives it explicitly
-    // (CONSTITUTION §1.4.8), same as `bootstrap`'s and `db_ack::handle_load_ack`'s
-    // own hydration sites.
+    // marks it itself, so every hydration site re-derives it explicitly,
+    // same as `bootstrap`'s and `db_ack::handle_load_ack`'s own hydration
+    // sites.
     app.recompute_dirty(id);
 }
 
 /// The first positional is already open (in `bootstrap`) and stays the
-/// active, displayed document (Go treats it as the awaited display document
-/// and the rest as tabs) — every REMAINING file opens as its own tab
+/// active, displayed document — every REMAINING file opens as its own tab
 /// through the same path the Explorer uses (WP7.S6). A failure there
 /// reports into the error banner instead of aborting startup; every
 /// failure across the whole batch is accumulated and reported ONCE (plan
@@ -304,9 +303,9 @@ mod tests {
 
     /// Finding 1 regression: `adopt_scratch_doc` hydrates a recovered
     /// scratch draft into an otherwise-empty buffer but must also re-derive
-    /// dirty (CONSTITUTION §1.4.8) — dirtiness no longer falls out of
-    /// `Document::hydrate` itself since `mark_dirty_from_hydration` was
-    /// deleted, so every hydration site (this one included) must call
+    /// dirty — dirtiness no longer falls out of `Document::hydrate` itself
+    /// since `mark_dirty_from_hydration` was deleted, so every hydration
+    /// site (this one included) must call
     /// `App::recompute_dirty` explicitly or the recovered text renders
     /// clean while `saved_content` is still empty.
     #[test]

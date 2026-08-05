@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): wikilink label-range
+//! Split off `conceal_roundtrip.rs` (WP11): wikilink label-range
 //! regression cases (verification round 3 MAJOR): the label range used to
 //! be read off comrak's own child-node sourcepos, which is unreliable for a
 //! WikiLink target with leading whitespace that gets trimmed — off by one

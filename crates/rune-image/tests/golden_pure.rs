@@ -138,9 +138,10 @@ fn diacritic_matches_golden() {
         let output = &case["output"];
         let idx = as_i64(input, "index");
         let want = as_i64(output, "codepoint");
-        // `diacritic` takes an unsigned index; Go's negative-index case
-        // degrades to the same table[0] fallback as any other
-        // out-of-range index, which any out-of-range `usize` reaches too.
+        // `diacritic` takes an unsigned index; the golden fixture's
+        // negative-index case degrades to the same table[0] fallback as
+        // any other out-of-range index, which any out-of-range `usize`
+        // reaches too.
         let got_idx = usize::try_from(idx).unwrap_or(usize::MAX);
         let got = i64::from(u32::from(diacritic(got_idx)));
         assert_eq!(got, want, "diacritic({idx})");

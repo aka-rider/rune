@@ -3,7 +3,7 @@
 //! (`![alt](url)`/`![[target]]` alone on its own line, plan WP7's
 //! `element::inline::standalone_image`) exactly the way `expand_tables`
 //! reserves rows for a table's synthetic borders. Split into its own file
-//! from `super` (CONSTITUTION §1.6) — both files reach `DisplaySnapshot`'s
+//! from `super` to stay under the 500-line budget — both files reach `DisplaySnapshot`'s
 //! private fields, a child module already seeing its parent's private
 //! items, so `expand_images` builds `DisplaySnapshot { rows, wrap_to_display
 //! }` here exactly as `expand_tables` does in `super`.

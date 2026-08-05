@@ -3,7 +3,7 @@
 //! ⌃R (or Up at the top of the editor) focuses the title; Enter commits a
 //! changed name; a destination that already exists raises a
 //! `GuardKind::RenameCollision` prompt; and `[R]eplace` preserves the
-//! replaced file's bytes as a durable blob before destroying it (§1.4.10) —
+//! replaced file's bytes as a durable blob before destroying it —
 //! that blob being the only record the file ever existed, since rune never
 //! opened it.
 //!
@@ -16,11 +16,11 @@
 //! a mid-sequence point past which it is not cancellable. A pair of
 //! booleans on `App` (following `pending_quit` / `pending_close_on_save` /
 //! `pending_save_confirm`, all three already called out as ad hoc in their
-//! own doc comments) would permit two states §1.4.10 forbids: reaching a
-//! swap without having captured, and prompting about a collision an
-//! external process already resolved.
+//! own doc comments) would permit two states the capture-before-destroy
+//! rule forbids: reaching a swap without having captured, and prompting
+//! about a collision an external process already resolved.
 //!
-//! So the *prompt* stays in `banner`/`footer` (§3.2's "the component that
+//! So the *prompt* stays in `banner`/`footer` ("the component that
 //! renders the feedback"), and this machine drives the I/O.
 //!
 //! ### The states, and the ones that deliberately don't exist
@@ -32,7 +32,7 @@
 //!   `Modal::Error` already owns errors. Every failure edge goes to `Idle`
 //!   + `banner::report_error` + refocus the title with the typed name.
 //! - **No `typed: String`.** The typed name IS `to.file_name()` — one
-//!   value, one meaning (§1.7).
+//!   value, one meaning.
 //!
 //! Single slot: a second commit while one is in flight is **refused**,
 //! never queued.
@@ -47,7 +47,7 @@
 //! ### Known limitation
 //!
 //! `[R]eplace` requires a per-document `rune-db` binding to capture the
-//! displaced bytes into (§1.4.10). Today that is only the bootstrap
+//! displaced bytes into. Today that is only the bootstrap
 //! document: every Explorer-opened document has `db: None` until per-doc
 //! hydration lands (`workspace::open_path`, TODO.md). For those, the
 //! collision prompt offers no `[R]eplace` at all and the plain rename is
@@ -150,7 +150,7 @@ pub enum Commit {
 }
 
 /// Whether `[R]eplace` can be offered: it needs a durable store to capture
-/// the displaced bytes into BEFORE they are destroyed (§1.4.10). A
+/// the displaced bytes into BEFORE they are destroyed. A
 /// degraded store still counts — it is a live, if untrusted, connection,
 /// and a `put_blob` that fails there surfaces as an ordinary `Err` edge
 /// rather than a silent loss.
@@ -240,7 +240,8 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
     // A pathless draft is a CREATE, not a rename: `materialize`'s bind-new
     // route already handles the collision correctly, and offering
     // `[R]eplace` there would overwrite a foreign file with a buffer we
-    // have never observed — §1.4.7 forbids it (no CAS baseline exists).
+    // have never observed — forbidden, since no CAS baseline exists to
+    // check against.
     let Some(from) = doc.file_path.clone() else {
         crate::rename_create::bind_new(app, id, &typed, effects);
         return Commit::Accepted;
@@ -353,8 +354,8 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
         }
         Ok(RenameOutcome::Collided { seen }) => {
             // An empty `from` means this was a draft CREATE, not a rename:
-            // refuse in the footer, never offer `[R]eplace` (§1.4.7 — the
-            // buffer has no CAS baseline against a file we never observed).
+            // refuse in the footer, never offer `[R]eplace` (the buffer has
+            // no CAS baseline against a file we never observed).
             if from.as_os_str().is_empty() {
                 draft_collision_refusal(app, &to);
                 return_to_title(app);
@@ -407,10 +408,10 @@ fn apply_outcome(app: &mut App, result: Result<RenameOutcome, String>, effects: 
 }
 
 /// Binds `doc_id` to its new path. Dirty state and `saved_version` are
-/// deliberately **unchanged**: §1.4.2 names the only two acts that touch the
-/// destination (⌘S, save-on-close) and a rename is neither, so a dirty
-/// document renames and stays dirty. §1.4.6 keys history to inode+device,
-/// which `renamex_np` preserves, so nothing is orphaned.
+/// deliberately **unchanged**: only two acts touch the destination (⌘S,
+/// save-on-close) and a rename is neither, so a dirty document renames
+/// and stays dirty. History keys off inode+device, which `renamex_np`
+/// preserves, so nothing is orphaned.
 ///
 /// Writes no focus of its own: this ack lands strictly after the blur that
 /// fired the rename already moved focus off the title (`App::set_focus`'s

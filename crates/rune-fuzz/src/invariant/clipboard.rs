@@ -1,5 +1,5 @@
-//! `PASTE-VERBATIM` (§1.4.5) / `CLIP-OSC52` (§1.4.5 on the clipboard edge)
-//! — the two clipboard-path byte-verbatim invariants.
+//! `PASTE-VERBATIM`/`CLIP-OSC52` — the two clipboard-path byte-verbatim
+//! invariants.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -14,7 +14,7 @@ use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
-/// `PASTE-VERBATIM` (§1.4.5) — on a non-empty `Paste`/`ClipboardRead` into
+/// `PASTE-VERBATIM` — on a non-empty `Paste`/`ClipboardRead` into
 /// a single cursor, `next.content` must equal `prev.content` with exactly
 /// the pasted text's bytes substituted at the cursor: inserted at the
 /// caret when collapsed, or replacing `[selection_start, selection_end_
@@ -34,7 +34,7 @@ use crate::step::{MsgTag, StepCtx};
 /// would be asserting a property production never claimed to begin with.
 ///
 /// Title-targeted-safe: the title field has its own in-memory buffer, out
-/// of this checker's domain entirely (§12 — it is unjournaled and never
+/// of this checker's domain entirely (it is unjournaled and never
 /// reaches the document). A `MsgTag::Paste` step only asserts when
 /// `prev.focus == Pane::Editor` (a title-focused `Paste` never touches
 /// `app.active`), and a `MsgTag::ClipboardRead` step only asserts when its
@@ -93,7 +93,7 @@ fn decode_osc52(bytes: &[u8]) -> Option<Vec<u8>> {
     STANDARD.decode(rest).ok()
 }
 
-/// `CLIP-OSC52` (§1.4.5 on the clipboard edge) — a `Copy`/`Cut` over a
+/// `CLIP-OSC52` — a `Copy`/`Cut` over a
 /// non-empty selection must emit an OSC 52 raw chunk whose decoded payload
 /// byte-equals that selection's text, computed the same way
 /// `commands::clipboard::extract_copy_text` does (`selection_start()` ..
@@ -117,8 +117,8 @@ pub fn clip_osc52(prev: &Snapshot, ctx: &StepCtx) -> Option<Violation> {
     // against the editor's own binding table — resolving a key never
     // depends on which pane is focused, only on how it's later routed. With
     // focus on the Explorer or the Open Tabs pane, that pane consumes ⌘C
-    // itself and no copy happens at all — §3.3's "a component ignores keys
-    // when unfocused". The title is different: it resolves through this
+    // itself and no copy happens at all — a component ignores keys when
+    // unfocused. The title is different: it resolves through this
     // SAME table (decision 3) and DOES copy on ⌘C, but its own name, taken
     // from the field's window (assumption A2), not from a document cursor's
     // `nav::selection_end_inclusive` range — a convention this checker does

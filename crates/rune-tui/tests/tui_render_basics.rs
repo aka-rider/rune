@@ -1,6 +1,6 @@
 //! WP5 done-when: headless render assertions on a `TestBackend`, using the
 //! `Mem` vfs — the conceal-policy, styling, status-line, and raw `Cell`
-//! grid checks. TODO.md's §1.6 split of the original `tui_render.rs`:
+//! grid checks. TODO.md's 500-line budget split of the original `tui_render.rs`:
 //! control-safe glyphs/tabs/graphemes live in `tui_render_text.rs`,
 //! degenerate backend sizes and `blit`'s own clipping in
 //! `tui_render_bounds.rs`, and tables/the focus caret gate in

@@ -1,6 +1,6 @@
 //! The footer row: a display-mode priority renderer, pure function of
-//! `&App` (plan WP2.S6, port of Go's `footer_view.go:displayMode` priority
-//! table — declaration order there IS priority order, highest first). File
+//! `&App` (plan WP2.S6): the `Mode` enum's declaration order below IS
+//! priority order, highest first. File
 //! renamed from `status.rs`: WP1's per-doc file-name/dirty-dot display
 //! moves to WP6's `title.rs`; this module owns only the chrome-wide message
 //! row + the always-visible cursor position.
@@ -45,9 +45,8 @@ enum Mode<'a> {
     /// message is showing.
     DiskChanged,
     /// Persistent resolver reminder (plan WP4.S4) carrying the live
-    /// unresolved count. Ranked below `Status` — a deliberate divergence
-    /// from Go's ladder (where the merge hint outranks status): rune's
-    /// status messages persist rather than expire, and they are the ONLY
+    /// unresolved count. Ranked below `Status` — a deliberate design choice:
+    /// rune's status messages persist rather than expire, and they are the ONLY
     /// feedback channel for a key the resolver just swallowed, so hiding
     /// them behind this ambient reminder would silently eat that feedback.
     /// Every resolver action writes a status that carries the merge
@@ -196,7 +195,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
                 format!("{target} already exists  "),
                 app.theme.chrome.footer_hint,
             ));
-            // §1.4.10: without a durable store there is nowhere to preserve
+            // Without a durable store there is nowhere to preserve
             // the replaced file's bytes, so the option is not offered at
             // all — an offer the app would then refuse is worse than none.
             if crate::rename::replace_allowed(app) {
@@ -237,9 +236,8 @@ pub fn footer_text(app: &App) -> String {
 }
 
 /// `Ln <line>, Col <col>` from the active document's primary cursor (plan
-/// WP8, port of Go `footer_view.go`'s `m.line+1, m.col+1`) — always
-/// shown, regardless of the left side's `Mode`. Col is a LINE-relative
-/// terminal-CELL column (§1.5, `rune_syntax::wrap::line_visual_col`), not a
+/// WP8) — always shown, regardless of the left side's `Mode`. Col is a LINE-relative
+/// terminal-CELL column (`rune_syntax::wrap::line_visual_col`), not a
 /// wrap-row-relative one: `line_visual_col` walks the cursor's own logical
 /// line from its own start, so a wrapped line's second-and-later visual row
 /// never resets the readout back to `Col 1`.

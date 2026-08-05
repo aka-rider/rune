@@ -7,9 +7,9 @@
 //! thread NOT spawned fresh per `Cmd`, since re-arming it is a plain state
 //! update rather than new off-thread work.
 //!
-//! `update` mutates `App` synchronously (CONSTITUTION §5.4: "mutate
-//! synchronous state directly in `update`; a Cmd is exclusively for I/O that
-//! leaves the thread"). `Effects.raw` is the ONLY path by which escape bytes
+//! `update` mutates `App` synchronously — synchronous state changes directly
+//! in `update`; a Cmd is exclusively for I/O that leaves the thread.
+//! `Effects.raw` is the ONLY path by which escape bytes
 //! (OSC 52 clipboard writes) reach the terminal — a `Cmd` never touches it
 //! (plan Gotchas: "Cmds must never touch the terminal"; termina's `Terminal`
 //! is `io::Write` on `&mut self`, single-owner, undocumented for cross-
@@ -90,9 +90,9 @@ pub enum Msg {
     SaveConfirmTimeout {
         generation: u32,
     },
-    /// The 2s snapshot-autosave debounce timer (plan WP5.S6, port of
-    /// `workspace_timers.go`) — a stale generation (a later journal
-    /// mutation already rescheduled) is ignored.
+    /// The 2s snapshot-autosave debounce timer (plan WP5.S6) — a stale
+    /// generation (a later journal mutation already rescheduled) is
+    /// ignored.
     SnapshotDue {
         id: DocumentId,
         generation: u32,
@@ -194,7 +194,7 @@ pub enum DirCause {
 /// inspection instead of inferring it from `App` field diffs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CmdKind {
-    /// `vfs.save_atomic` — the §1.4.1 durable publish.
+    /// `vfs.save_atomic` — the durable publish.
     Save,
     /// The 2s quit-confirm timer. Sleeps; never run it inline.
     QuitTimeout,
@@ -205,11 +205,11 @@ pub enum CmdKind {
     /// never run it inline.
     SaveConfirmTimeout,
     /// `vfs.rename_excl` (a rename) or `write_durable` + `rename_excl` (a
-    /// draft create) for the no-store route — the §1.4.1 no-clobber atomic
-    /// publish. Off-thread per §5.4.
+    /// draft create) for the no-store route — the no-clobber atomic
+    /// publish. Off-thread, never inline in `update`.
     Rename,
     /// `vfs.read_dir` for the Explorer pane (plan WP4.S4). Not a sleeping/
-    /// forking `Cmd` like the three above, but still off-thread per §5.4 so
+    /// forking `Cmd` like the three above, but still off-thread so
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
@@ -227,9 +227,9 @@ pub enum CmdKind {
     /// A tree-sitter parse (`rune_ts::parse`) of every code region of one
     /// document that needs one, each bounded by [`PARSE_BUDGET`] and all of
     /// them together by [`PASS_BUDGET`].
-    /// Off-thread per §5.4: a large region's parse must never
+    /// Off-thread: a large region's parse must never
     /// block the main loop, and grammar crashes (`ts_assert`) are
-    /// architecturally avoided rather than caught (CONSTITUTION §1.3) —
+    /// architecturally avoided rather than caught —
     /// every parse is a full parse, never an incremental reparse fed a
     /// prior edit's location. The ONE sanctioned exception is a single
     /// bounded synchronous attempt at the startup document, made from
@@ -238,7 +238,7 @@ pub enum CmdKind {
     /// to block.
     Highlight,
     /// `vfs.read` + `rune_image::decode_still` for an image document (plan
-    /// WP5.S1). Off-thread per §5.4: decode is CPU work and must never
+    /// WP5.S1). Off-thread: decode is CPU work and must never
     /// block the main loop.
     ImageDecode,
 }
@@ -432,8 +432,8 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
 /// Explorer's own boundary Msg, called from `explorer_keys::handle_key` (Open on
 /// a directory, Backspace to the parent) and from `pane::handle_global_
-/// command`'s `FocusExplorer` arm (the very first load). §1.4.9: the
-/// filesystem is reached only through the injected `Vfs`; §5.4: this I/O
+/// command`'s `FocusExplorer` arm (the very first load). The
+/// filesystem is reached only through the injected `Vfs`; this I/O
 /// never runs inline in `update`, only inside a spawned `Cmd`. `generation`
 /// is echoed back verbatim on the `Msg::DirLoaded` reply — every call site
 /// passes `Explorer::request_generation` AFTER bumping it, so a later
@@ -520,12 +520,12 @@ pub fn read_preview_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf) -> Cmd {
 
 // `run`'s startup sequence (theme probe, background-thread wiring, the
 // initial size seed, the first-paint parse, the first draw) moved to
-// `runtime::bootstrap` (§1.6 budget) — `run` above calls it through
+// `runtime::bootstrap` (500-line budget) — `run` above calls it through
 // `bootstrap::`.
 mod bootstrap;
 
 // The tree-sitter highlight `Cmd` constructor and the region pass behind it
-// moved to `runtime::highlight_cmd` (§1.6 budget) — re-exported below so
+// moved to `runtime::highlight_cmd` (500-line budget) — re-exported below so
 // every existing `runtime::` call site keeps working unchanged.
 mod highlight_cmd;
 pub(crate) use highlight_cmd::{FIRST_PAINT_BUDGET, PassBudget, highlight_cmd, run_regions};
@@ -540,7 +540,7 @@ mod md_fence;
 // The snapshot-autosave debounce's one rearmable timer thread (plan
 // WP16.S5) — split out for the same reason `highlight_cmd` was: a distinct
 // concern with its own `#[cfg(test)]` module, kept out of this file's own
-// §1.6 budget.
+// 500-line budget.
 mod snapshot_timer;
 pub use snapshot_timer::SnapshotTimer;
 

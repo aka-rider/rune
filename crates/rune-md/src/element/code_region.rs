@@ -122,7 +122,7 @@ pub(crate) fn whole_document(info: &str, buf: &Buffer) -> CodeRegion {
 
 /// The model-line span a set of per-line content ranges covers, or `None`
 /// when there are none: no lines describe no rows, and row 0 is a real
-/// answer that must never stand in for the absence of one (§1.7). The caller
+/// answer that must never stand in for the absence of one. The caller
 /// decides what that means — for `collect` it is the sole condition that
 /// drops a region.
 ///

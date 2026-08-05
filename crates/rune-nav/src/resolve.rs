@@ -1,12 +1,11 @@
-//! Resolving a `Target` against the filesystem (CONSTITUTION §1.6 split of
+//! Resolving a `Target` against the filesystem (500-line budget split of
 //! the crate root): the doc-dir-then-root search and the lexical path
 //! normalization it depends on. There is no vault-containment restriction —
-//! a relative target that lexically escapes `root` is still tried, exactly
-//! as the Go reference implementation does, because the resolver's job is
-//! to find the file the user named, not to police where it lives. The
-//! `Destination::Url` scheme allowlist is a separate, untouched boundary:
-//! it is still the only thing standing between a `Target` and the OS
-//! opener.
+//! a relative target that lexically escapes `root` is still tried, because
+//! the resolver's job is to find the file the user named, not to police
+//! where it lives. The `Destination::Url` scheme allowlist is a separate,
+//! untouched boundary: it is still the only thing standing between a
+//! `Target` and the OS opener.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -23,7 +22,7 @@ use crate::types::{Anchor, Destination, Target};
 /// none of its own — supplied by the producer's resolution policy (e.g.
 /// rune-md's catalogue), never hardcoded here, so a non-markdown producer
 /// resolving symbol names against `.py` files needs no change to this
-/// crate. Every existence check goes through the injected `Vfs` (§1.4.9).
+/// crate. Every existence check goes through the injected `Vfs`.
 pub fn resolve(
     vfs: &dyn Vfs,
     target: &Target,
@@ -70,8 +69,7 @@ pub fn resolve(
 /// contract) and lexically normalized before the `Vfs` ever sees it. There
 /// is no requirement that the normalized path stay within `root` — a
 /// document whose own directory lies outside the workspace root must still
-/// resolve its own relative references, and Go's reference resolver has no
-/// such restriction either.
+/// resolve its own relative references.
 fn resolve_candidate(
     vfs: &dyn Vfs,
     raw: &str,

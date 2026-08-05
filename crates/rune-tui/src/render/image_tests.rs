@@ -1,5 +1,5 @@
 //! Unit tests for the image info-card row builder, kept in a sibling file
-//! so `image.rs` itself stays inside the §1.6 budget.
+//! so `image.rs` itself stays inside the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;

@@ -1,5 +1,5 @@
 //! The path-shortening/eliding computation side of [`crate::breadcrumb`],
-//! split out to keep it under the §1.6 line budget: relativizing a path
+//! split out to keep it under the 500-line budget: relativizing a path
 //! against the workspace root ([`crumb_parts`]) and building the truncated,
 //! styled crumb spans that fit a given width ([`build_crumb`]). The
 //! render/overlay side — splicing those spans onto the center pane's
@@ -24,8 +24,7 @@ pub(crate) const SEP: &str = "/";
 /// directory chain as its address.
 pub(crate) const LEAF_SEP: &str = " › ";
 
-/// Relativizes `path` against `root` (plan WP4.S6, Go's own `buildCrumb`
-/// `root` argument), returning the ordered list of path components the
+/// Relativizes `path` against `root` (plan WP4.S6), returning the ordered list of path components the
 /// crumb renders. When `root` is non-empty and `path` is under it (`Path::
 /// starts_with` compares whole components, so this can never mistake
 /// `/a/vault2` for being under `/a/vault` the way a bare string-prefix
@@ -151,7 +150,7 @@ mod tests {
 
     /// `/a/vault2` must never be treated as under root `/a/vault` —
     /// `Path::starts_with` compares whole components, unlike a bare string
-    /// prefix check (the bug Go's own `buildCrumb` comment calls out).
+    /// prefix check.
     #[test]
     fn crumb_parts_does_not_mistake_a_sibling_with_a_shared_prefix_for_being_under_root() {
         let parts = crumb_parts(Path::new("/a/vault2/notes.md"), Path::new("/a/vault"));
@@ -177,7 +176,7 @@ mod tests {
 
     /// The separator glyphs must be ONE display column each, or every width
     /// in this module (dash fill, `bc`, the truncation budget) is computed
-    /// against a lie and the `──╯` drifts off the right edge (§1.5).
+    /// against a lie and the `──╯` drifts off the right edge.
     #[test]
     fn the_separator_glyphs_are_single_column() {
         assert_eq!(oracle_cell_width(SEP), 1);

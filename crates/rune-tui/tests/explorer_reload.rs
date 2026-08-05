@@ -1,7 +1,7 @@
 //! WP4/WP13 "Done when" tests: the Explorer's `resolve` fallback, refresh
 //! and stale-reply handling, `workspace::open_path` reactivation, and the
-//! lazy `ensure_loaded` load — TODO.md's §1.6 split of the original
-//! `explorer.rs`. Cursor movement and opening files/directories live in
+//! lazy `ensure_loaded` load — TODO.md's 500-line budget split of the
+//! original `explorer.rs`. Cursor movement and opening files/directories live in
 //! the sibling `explorer_nav.rs`; both pull shared fixtures from
 //! `explorer_common`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -21,7 +21,7 @@ use rune_vfs::Vfs;
 use explorer_common::{app_with, key, load_explorer, seeded_vfs};
 
 /// Review fix: `open_selected`'s directory branch must resolve the new root
-/// through `app.vfs.resolve` (§1.4.9), same as `initial_root` already does
+/// through `app.vfs.resolve`, same as `initial_root` already does
 /// — and, on a `resolve` error, fall back to the unresolved path (the same
 /// pattern `workspace::open_path` uses) rather than losing the navigation.
 /// `Mem::resolve` is an identity function, so this can't observe a resolved

@@ -341,7 +341,7 @@ fn build_block<'a>(
                 // prefix (comrak would then report every later row's cell
                 // sourcepos shifted, rendering every cell missing its first
                 // character). In every case, degrade to the same raw
-                // passthrough every other unmodeled construct gets (§0),
+                // passthrough every other unmodeled construct gets,
                 // never panic or render the user's words wrongly.
                 Some(Block::Verbatim(VerbatimM {
                     sm: RevealSm::new(RevealState::Revealed),

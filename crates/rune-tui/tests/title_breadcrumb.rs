@@ -58,7 +58,7 @@ fn title_row_shows_the_active_doc_name() {
 }
 
 /// A pathless (untitled) document's title row falls back to "[No Name]"
-/// (`Document::file_name`'s Go-parity default — WP1).
+/// (`Document::file_name`'s own default — WP1).
 #[test]
 fn title_row_shows_no_name_placeholder_when_pathless() {
     let app = app_for("hello", None);

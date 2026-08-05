@@ -1,5 +1,5 @@
 //! The startup sequence `runtime::run` executes exactly once before it ever
-//! enters its main `recv` loop (split out of `runtime/mod.rs`, §1.6 budget):
+//! enters its main `recv` loop (split out of `runtime/mod.rs`, 500-line budget):
 //! acquiring the terminal, probing the theme, wiring up every background
 //! thread (input reader, `rune-db` bridge, snapshot timer), seeding the
 //! initial size, the one bounded synchronous first-paint parse, and the

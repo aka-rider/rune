@@ -1,11 +1,11 @@
 //! Editing (insert/backspace/delete/delete-word/newline) and undo/redo
-//! (WP7). Ports Go's per-cursor edit commands, its
-//! `perCursorSelectionEdits` driver, and its peek-then-commit undo/redo
-//! discipline. The
-//! shared buffer-mutation chokepoint (`apply_edit_batch_with_cursors`/
-//! `commit_edit_batch`) lives in the sibling `edit_core` module, and the
-//! line-oriented commands (indent/outdent, delete-line, clone/move-line)
-//! live in the sibling `edit_lines` module (plan WP9.S6 §1.6 split — one
+//! (WP7): per-cursor edit commands run through a shared driver
+//! (`per_cursor_selection_edits`), and undo/redo follow a peek-then-commit
+//! discipline (see `undo`/`redo` below). The shared buffer-mutation
+//! chokepoint (`apply_edit_batch_with_cursors`/`commit_edit_batch`) lives
+//! in the sibling `edit_core` module, and the line-oriented commands
+//! (indent/outdent, delete-line, clone/move-line) live in the sibling
+//! `edit_lines` module (plan WP9.S6 500-line budget — one
 //! `edit_lines` boundary was not enough to bring this file itself under
 //! budget, hence the second split into `edit_core`) — see each module's
 //! own doc for why the boundary sits there.
@@ -19,20 +19,15 @@
 //! end, then call `db::append_edit(app, id, ...)`/`materialize_ack::recompute_dirty(
 //! app, id)` — never a split-borrow context type.
 //!
-//! Backspace/delete-right are RUNE-aware, not grapheme-cluster-aware —
-//! this matches Go exactly: `commands_nav.go:prevRuneOffset`/
-//! `nextRuneOffset` (which `execDeleteLeft`/`execDeleteRight` call) decode
-//! one UTF-8 rune at a time via `utf8.DecodeLastRuneInString`, with no
-//! grapheme-CLUSTER SEGMENTATION anywhere in the Go source's delete path.
-//! The Go tree does use `Grapheme` as a struct field name elsewhere
-//! (its per-`Cell` rendered glyph string, its image renderer, and its fuzz
-//! artifact's serialized snapshot of it) — but those are RENDER-TIME display-cell
-//! payloads (what glyph a cell shows), never consulted by
-//! `execDeleteLeft`/`execDeleteRight`'s offset computation. A ZWJ emoji
-//! family sequence therefore deletes one codepoint per Backspace in both
-//! implementations, not the whole cluster — ported 1:1, not "improved",
-//! since drifting from Go here would be a silent behavior change the plan
-//! didn't ask for.
+//! Backspace/delete-right are RUNE-aware, not grapheme-cluster-aware: the
+//! offset walk decodes one UTF-8 codepoint at a time, with no
+//! grapheme-cluster segmentation in the delete path. `Grapheme` names
+//! appear elsewhere in this codebase (a per-cell rendered glyph string,
+//! the image renderer, a fuzz artifact's serialized snapshot) but those
+//! are RENDER-TIME display-cell payloads (what glyph a cell shows), never
+//! consulted by the delete path's offset computation. A ZWJ emoji family
+//! sequence therefore deletes one codepoint per Backspace, not the whole
+//! cluster — a deliberate choice, not an oversight.
 
 use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
@@ -45,10 +40,9 @@ use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
 
-/// Port of `commands_edit_lines.go:perCursorSelectionEdits`: one edit per
-/// cursor, replacing its selection when it has one, or `bare`'s caller-
-/// chosen range otherwise. `bare` returning `None` skips that cursor
-/// entirely (e.g. Backspace at buffer start).
+/// One edit per cursor, replacing its selection when it has one, or
+/// `bare`'s caller-chosen range otherwise. `bare` returning `None` skips
+/// that cursor entirely (e.g. Backspace at buffer start).
 fn per_cursor_selection_edits(
     app: &mut App,
     id: DocumentId,
@@ -89,10 +83,10 @@ fn per_cursor_selection_edits(
     let _ = commit_edit_batch(app, id, infos, cursors_before);
 }
 
-/// Port of `commands_edit.go:execInsertChar`, generalized to arbitrary text
-/// so it doubles as the selection-replacing insert path for bracketed
-/// paste (`Msg::Paste`, plan Context: "Bracketed-paste `Msg::Paste` may
-/// insert text through the same insert path").
+/// Generalized to arbitrary text so it doubles as the selection-replacing
+/// insert path for bracketed paste (`Msg::Paste`, plan Context:
+/// "Bracketed-paste `Msg::Paste` may insert text through the same insert
+/// path").
 pub fn insert_text(app: &mut App, id: DocumentId, text: &str) {
     if text.is_empty() {
         return;
@@ -105,16 +99,14 @@ pub fn insert_text(app: &mut App, id: DocumentId, text: &str) {
     );
 }
 
-/// Port of `commands_edit.go:execInsertChar`.
 pub fn insert_char(app: &mut App, id: DocumentId, ch: char) {
     let mut buf = [0u8; 4];
     insert_text(app, id, ch.encode_utf8(&mut buf));
 }
 
-/// Port of `commands_edit.go:execNewline` — the Enter hardcoded fast path
-/// (plan Context, "Hardcoded fast paths outside the resolver"): inserts a
-/// newline plus the CURRENT line's own leading whitespace, preserving
-/// indentation.
+/// The Enter hardcoded fast path (plan Context, "Hardcoded fast paths
+/// outside the resolver"): inserts a newline plus the CURRENT line's own
+/// leading whitespace, preserving indentation.
 pub fn newline(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -137,12 +129,11 @@ pub fn newline(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `commands_clipboard.go:buildDeleteEdits`, reused by
-/// `commands::clipboard::cut` (WP8): deletes each cursor's selection, or —
-/// with no selection — its whole current line including the trailing `\n`
-/// (`nav_line::line_range_incl_newline`, the same range `copy_entire_line`
-/// used to build the text cut just copied — so cut always removes precisely
-/// what it captured).
+/// Reused by `commands::clipboard::cut` (WP8): deletes each cursor's
+/// selection, or — with no selection — its whole current line including
+/// the trailing `\n` (`nav_line::line_range_incl_newline`, the same range
+/// `copy_entire_line` used to build the text cut just copied — so cut
+/// always removes precisely what it captured).
 pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -152,7 +143,6 @@ pub(crate) fn delete_selection_or_line(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `commands_edit.go:execDeleteLeft` (Backspace).
 pub fn delete_left(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -168,7 +158,6 @@ pub fn delete_left(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `commands_edit.go:execDeleteRight` (Delete).
 pub fn delete_right(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -184,10 +173,10 @@ pub fn delete_right(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `commands_edit.go:execDeleteWordLeft` (plan WP9.S2). Deletes the
-/// selection when the cursor has one (same selection-first rule every
-/// `per_cursor_selection_edits` caller shares); otherwise deletes from
-/// `nav::word_left_offset` up to the caret — one word, not one rune.
+/// (plan WP9.S2) Deletes the selection when the cursor has one (same
+/// selection-first rule every `per_cursor_selection_edits` caller
+/// shares); otherwise deletes from `nav::word_left_offset` up to the
+/// caret — one word, not one rune.
 pub fn delete_word_left(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -203,7 +192,6 @@ pub fn delete_word_left(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `commands_edit.go:execDeleteWordRight` (plan WP9.S2).
 pub fn delete_word_right(app: &mut App, id: DocumentId) {
     per_cursor_selection_edits(
         app,
@@ -219,14 +207,13 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
     );
 }
 
-/// Port of `workspace_undo.go:handleUndo`: peek the target step (without
-/// moving the journal), apply its inverse to the buffer, and commit the
-/// position move ONLY if the buffer edit succeeds (§1.4.8) — a failed
-/// apply surfaces a status-line error and leaves the journal position (and
-/// buffer) untouched, so the journal never runs ahead of the buffer. Same
-/// status-message ownership rule as `commit_edit_batch` (F2): success never
-/// clears `app.status_message` — only this function's own failure path
-/// writes it.
+/// Peek the target step (without moving the journal), apply its inverse
+/// to the buffer, and commit the position move ONLY if the buffer edit
+/// succeeds — a failed apply surfaces a status-line error and leaves the
+/// journal position (and buffer) untouched, so the journal never runs
+/// ahead of the buffer. Same status-message ownership rule as
+/// `commit_edit_batch` (F2): success never clears `app.status_message` —
+/// only this function's own failure path writes it.
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why
@@ -271,9 +258,9 @@ pub fn undo(app: &mut App, id: DocumentId) {
     }
 }
 
-/// Port of `workspace_undo.go:handleRedo` — mirrors `undo` above: reapply
-/// the step forward, commit the position move only on success. Same
-/// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
+/// Mirrors `undo` above: reapply the step forward, commit the position
+/// move only on success. Same status-message ownership rule as
+/// `commit_edit_batch`/`undo` (F2).
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why

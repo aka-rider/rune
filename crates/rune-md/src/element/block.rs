@@ -260,7 +260,7 @@ impl FrontmatterM {
 /// Phase-1 token scope's catch-all for tables, HTML blocks, math blocks, and
 /// any comrak node kind this crate doesn't otherwise model: raw passthrough,
 /// pinned Revealed (plan: "unknown syntax degrades to visible raw text,
-/// never lost", §0).
+/// never lost").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerbatimKind {
     Table,

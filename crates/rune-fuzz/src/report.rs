@@ -1,7 +1,6 @@
 //! Writes one failure bundle for the MINIMAL failing case: `script.rune`
 //! (directly loadable by a later work package's `tests/replay.rs`) plus
-//! `report.txt` (the frozen `Snapshot`/`StepCtx`, human-readable). Go
-//! analogue: its own fuzz artifact writer.
+//! `report.txt` (the frozen `Snapshot`/`StepCtx`, human-readable).
 //!
 //! The bundle directory is named `<id-lowercased>-<hash>`, where `<hash>`
 //! is a deterministic 8-hex-digit FNV-1a of the encoded script — never a

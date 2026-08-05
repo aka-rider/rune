@@ -287,7 +287,7 @@ fn footer_position_readout_survives_truncation_at_narrow_widths() {
 
 /// `Ln n, Col n` on a multiline buffer with a multibyte character before
 /// the cursor: the column counts terminal CELLS, not bytes and not chars
-/// (§1.5) — a CJK ideograph before the cursor counts as 2 columns, not 1.
+/// — a CJK ideograph before the cursor counts as 2 columns, not 1.
 #[test]
 fn footer_reports_cell_column_on_a_multiline_multibyte_buffer() {
     let mut app = app_for("first\nab\u{6c49}cd");

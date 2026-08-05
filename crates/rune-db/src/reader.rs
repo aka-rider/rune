@@ -57,8 +57,8 @@ pub struct ReaderHandle {
 
 impl ReaderHandle {
     /// Sends `kind` to the reader thread and blocks for its reply. Intended
-    /// to be called from a spawned `Cmd` (off the main `update` thread,
-    /// CONSTITUTION §5.4), never from `update` itself.
+    /// to be called from a spawned `Cmd` (off the main `update` thread),
+    /// never from `update` itself.
     pub fn query(&self, kind: ReaderRequestKind) -> Result<ReaderReply, Error> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.sender

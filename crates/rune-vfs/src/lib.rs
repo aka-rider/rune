@@ -1,16 +1,15 @@
 //! `rune-vfs`: the single chokepoint for real-disk I/O of the user's `.md`
-//! documents (CONSTITUTION §1.4.9). Ported from Go's vfs package.
+//! documents.
 //!
 //! The trait is the **materialize-complete primitive set**: `read`,
 //! `write_durable`, `exchange`, `rename_excl`, `remove`, `stat`, `resolve`,
-//! `mkdir_all`. Unlike the Go interface (which is method-parity with
-//! `os.*`), the Rust shape is already split so a caller can capture
-//! displaced bytes before they're discarded (§1.4.10) — see the module docs
-//! on `Vfs::save_atomic` below.
+//! `mkdir_all`. The shape is already split so a caller can capture
+//! displaced bytes before they're discarded — see the module docs on
+//! `Vfs::save_atomic` below.
 //!
 //! Two implementations: `Disk` (production, Darwin `renamex_np` atomic
 //! publish) and `Mem` (fully in-memory, for tests and — eventually — the
-//! session fuzzer), mirroring Go's own `Disk` / `Mem` pair.
+//! session fuzzer).
 
 mod disk;
 mod mem;
@@ -93,10 +92,10 @@ pub fn published_not_durable(e: &io::Error) -> bool {
 }
 
 /// The stable (inode, device) identity of a file. History is keyed to it
-/// rather than the path so a rename does not orphan history (CONSTITUTION
-/// §1.4.6). `None` fields mean the platform or backend doesn't expose that
-/// half of identity — always SQL-NULL-shaped `Option`, never a sentinel `0`
-/// (the Go schema went through v8/v9 specifically to undo that mistake).
+/// rather than the path so a rename does not orphan history. `None` fields
+/// mean the platform or backend doesn't expose that half of identity —
+/// always SQL-NULL-shaped `Option`, never a sentinel `0` (a sentinel value
+/// would be indistinguishable from a real identity that happens to be zero).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Identity {
     pub inode: Option<u64>,
@@ -110,7 +109,7 @@ pub struct Identity {
 /// op re-stats the destination and refuses when it no longer matches ("still
 /// the file you agreed to replace?"). That comparison is a consent check, not
 /// the safety mechanism — safety comes from capturing the displaced bytes
-/// after the atomic swap (§1.4.10). `Identity` already derives them.
+/// after the atomic swap. `Identity` already derives them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stat {
     pub size: u64,
@@ -146,9 +145,9 @@ pub enum FileKind {
 /// `rune-fuzz`'s text script codec, both need a total, always-valid `str`
 /// that an `OsString` cannot give them without breaking script replay);
 /// `path` is the byte-exact full path to open — never lossy-decoded and
-/// never rebuilt by joining `name` back onto a parent (§0: joining a
+/// never rebuilt by joining `name` back onto a parent — joining a
 /// lossy-decoded name into a real path is what let the app mangle and then
-/// open a name the user never had). A caller that needs to OPEN the entry
+/// open a name the user never had. A caller that needs to OPEN the entry
 /// uses `path`; a caller that only displays or sorts uses `name`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirEntry {
@@ -177,23 +176,23 @@ pub trait Vfs {
     /// fsync'd, but **not renamed onto `path` and not unlinked**. Returns
     /// the temp file's path so the caller can publish it (`exchange` /
     /// `rename_excl`) and, critically, can still `read` whatever the
-    /// publish displaces (§1.4.10 "capture displaced bytes as a durable
-    /// blob before they're ever discarded") — the property `save_atomic`
-    /// alone cannot express, because it destroys the displaced bytes
-    /// internally (see its docs).
+    /// publish displaces — capturing displaced bytes as a durable blob
+    /// before they're ever discarded is the property `save_atomic` alone
+    /// cannot express, because it destroys the displaced bytes internally
+    /// (see its docs).
     fn write_durable(&self, path: &Path, bytes: &[u8]) -> io::Result<PathBuf>;
 
     /// Atomically swap the contents of `a` and `b` (both must already
     /// exist; same volume). Disk: `renamex_np(RENAME_SWAP)` + parent fsync
-    /// — a single kernel operation, so neither path is ever unlinked; the
-    /// durability guarantee for the publish (§1.4.1). Mem: swaps the two
+    /// — a single kernel operation, so neither path is ever unlinked; that's
+    /// the durability guarantee for the publish. Mem: swaps the two
     /// entries' file objects between keys (inodes travel with content).
     fn exchange(&self, a: &Path, b: &Path) -> io::Result<()>;
 
     /// Atomically rename `old` to `new`, failing with an error wrapping
-    /// `io::ErrorKind::AlreadyExists` if `new` already exists — no clobber
-    /// (§1.4.1: atomic publish via `RenameExcl`, no window for a silent
-    /// overwrite). Disk: `renamex_np(RENAME_EXCL)` + parent fsync.
+    /// `io::ErrorKind::AlreadyExists` if `new` already exists — no clobber:
+    /// atomic publish via `RenameExcl` leaves no window for a silent
+    /// overwrite. Disk: `renamex_np(RENAME_EXCL)` + parent fsync.
     fn rename_excl(&self, old: &Path, new: &Path) -> io::Result<()>;
 
     /// Delete a single file. Not `Trash` — internal temps must never shell
@@ -227,7 +226,7 @@ pub trait Vfs {
     /// This is a **compatibility convenience** for callers that don't need
     /// the displaced bytes — it deletes the temp (and, on the SWAP path,
     /// the bytes the swap just displaced) as its last step, so it CANNOT
-    /// satisfy §1.4.10's capture-before-discard on its own; a caller that
+    /// satisfy capture-before-discard on its own; a caller that
     /// needs the displaced content must call `write_durable`/`exchange`
     /// directly instead (a later work package wires `materialize` that
     /// way). Kept only so existing callers (the plain `super+s` save path)
@@ -258,8 +257,8 @@ pub trait Vfs {
                 // the new bytes and `temp` is now the SOLE surviving copy of
                 // whatever `dest` held before this call (the swap displaced
                 // it there, and nothing else ever reads `temp` back for the
-                // caller). Removing it here would be exactly the §1.4.10
-                // violation this type exists to prevent, so it is kept —
+                // caller). Removing it here would discard the sole surviving
+                // copy of displaced content, so it is kept —
                 // the same deliberate keep-temp-on-error shape
                 // `rune-db::materialize` already uses around its own
                 // `exchange` call. The error message says so, and the

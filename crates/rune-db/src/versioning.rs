@@ -3,13 +3,13 @@
 //! A schema-shape change bumps [`SCHEMA_VERSION`] and ships as a new
 //! `rune-v{N}.db`; the previous binary's file is left untouched, and a
 //! stale binary launched later goes on using its own version's file
-//! undisturbed. This is a deliberate departure from Go's `dropIfStale`
-//! (which deletes and recreates a file in place on a shape mismatch) — Go
-//! could get away with that because only one Go binary version is ever
-//! installed at a time; the Rust port's filename scheme instead lets an
-//! old-version GC (WP6) reclaim genuinely abandoned files without ever
-//! racing a binary that's still using them (see the plan's Risks section,
-//! "Old-version GC vs a concurrently launching old binary").
+//! undisturbed. Filename versioning replaces an in-place
+//! drop-on-version-mismatch migration (deleting and recreating the file
+//! when the schema shape changes) — old journals survive an upgrade, and
+//! an old-version GC (WP6) can reclaim genuinely abandoned files later
+//! without ever racing a binary that's still using them (see the plan's
+//! Risks section, "Old-version GC vs a concurrently launching old
+//! binary").
 //!
 //! # The frozen liveness contract
 //!

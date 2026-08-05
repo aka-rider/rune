@@ -1,6 +1,6 @@
-//! WP2/Go-parity done-when: headless render assertions on a `TestBackend`,
+//! WP2 done-when: headless render assertions on a `TestBackend`,
 //! using the `Mem` vfs — a table's box-drawn layout and the focus/read-only
-//! caret gate. TODO.md's §1.6 split of the original `tui_render.rs`:
+//! caret gate. TODO.md's 500-line budget split of the original `tui_render.rs`:
 //! conceal/styling/status-line/Cell-grid checks live in
 //! `tui_render_basics.rs`, control-safe glyphs/tabs/graphemes in
 //! `tui_render_text.rs`, and degenerate backend sizes/`blit`'s own
@@ -41,9 +41,8 @@ fn table_renders_as_box_drawing_not_raw_pipes() {
     );
 }
 
-/// Go parity (`textedit/render.go`'s `m.focused && !m.readOnly` gate,
-/// ported via `Document::has_insertion_point`): a caret must not render once the
-/// editor pane loses focus. Both fixtures share the same content/cursor
+/// A caret must not render once the editor pane loses focus
+/// (`Document::has_insertion_point` gates it on `focused`). Both fixtures share the same content/cursor
 /// offset, so the assertion can't pass vacuously by the caret simply
 /// landing on a different row than the one checked.
 #[test]
@@ -67,11 +66,10 @@ fn caret_not_visible_when_unfocused() {
     );
 }
 
-/// Go parity, selection half: `applyOverlays` gates the selection
-/// background on the same `focused && !readOnly` predicate as the caret
-/// (`textedit/render.go`), and `apply_cursor_overlays`'s `show_overlays`
-/// early return covers both in one place — this pins the selection side of
-/// that single gate.
+/// The selection half: `apply_cursor_overlays`'s `show_overlays` early
+/// return gates the selection background on the same `focused && !read_only`
+/// predicate as the caret, covering both in one place — this pins the
+/// selection side of that single gate.
 #[test]
 fn selection_not_highlighted_when_unfocused() {
     let content = "hello world\n";
@@ -117,7 +115,7 @@ fn selection_not_highlighted_when_unfocused() {
     );
 }
 
-/// Go parity, the read-only half: the virtual Help document (and any other
+/// The read-only half: the virtual Help document (and any other
 /// read-only document) has no insertion point to point at, so it must show
 /// no caret even while focused — `Document::has_insertion_point` folds
 /// `is_read_only()` into the same gate as `focused`.

@@ -1,11 +1,9 @@
-//! Silent workspace-root discovery (plan WP4): a Rust port of Go's
-//! `workspaceroot.Resolve` walk, minus the consent prompt. Go creates a
-//! `.rune/` marker in the user's tree and so has to ask before doing that;
-//! Rust's recovery store lives entirely outside the user's tree
-//! (`production_db_path()`), so there is nothing to create and nothing to
-//! consent to — this module only ever answers "where is the nearest
-//! project/vault root", never prompts, and can never fail the app (a
-//! `read_dir` error just means "no markers here", not a halt).
+//! Silent workspace-root discovery (plan WP4): walks up looking for a
+//! marker, with no consent prompt. The recovery store lives entirely
+//! outside the user's tree (`production_db_path()`), so there is nothing to
+//! create and nothing to consent to — this module only ever answers "where
+//! is the nearest project/vault root", never prompts, and can never fail
+//! the app (a `read_dir` error just means "no markers here", not a halt).
 
 use std::path::{Path, PathBuf};
 
@@ -13,8 +11,7 @@ use rune_vfs::Vfs;
 
 /// Marker names scanned for at each directory level, matched BY NAME ONLY.
 /// A git worktree or submodule's `.git` is a *file*, not a directory, so
-/// this never tests `is_dir` — the same reason Go's own `scan` checks name
-/// alone.
+/// this never tests `is_dir`.
 const MARKER_GIT: &str = ".git";
 const MARKER_OBSIDIAN: &str = ".obsidian";
 

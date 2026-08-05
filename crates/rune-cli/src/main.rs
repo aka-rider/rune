@@ -8,7 +8,7 @@
 //! tab, and the first stays the active document. No file opens an empty
 //! untitled document; a nonexistent path opens an empty buffer (created on
 //! first save via `RENAME_EXCL`); invalid UTF-8 is refused at load, before
-//! the TUI is ever entered (CONSTITUTION §0, plan decision 4); a panic
+//! the TUI is ever entered (plan decision 4); a panic
 //! anywhere in the run loop is caught here, after the terminal has already
 //! been restored by `term::Guard`'s `Drop` running during unwind.
 //!
@@ -69,8 +69,8 @@ fn main() -> ExitCode {
     };
 
     // Constructed before the load so the whole load path — like every other
-    // filesystem access in this app (CONSTITUTION §1.4.9) — goes through the
-    // injected `Vfs`, not a direct `std::fs` call: see `load_buffer`.
+    // filesystem access in this app — goes through the injected `Vfs`,
+    // not a direct `std::fs` call: see `load_buffer`.
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Disk);
     let home = env::var_os("HOME").map(PathBuf::from);
 
@@ -180,9 +180,11 @@ fn bootstrap(
         Err(e) => return Err(open::usage_error(&e)),
     };
 
-    // `-w`'s existence/directory-ness check is the documented §1.4.9
-    // launch-bootstrap exception, same class as `workspaceroot::resolve`'s
-    // own `read_dir` walk below (WP7.S4).
+    // `-w`'s existence/directory-ness check (`open::validate_work_dir`)
+    // goes through the injected `Vfs`, same as `workspaceroot::resolve`'s
+    // own `read_dir` walk below (WP7.S4) — only the earlier
+    // `env::current_dir()`/`$HOME` reads bypass it, since `Vfs` has no
+    // cwd/env concept of its own.
     if let Some(dir) = &launch.work_dir
         && let Err(e) = open::validate_work_dir(vfs.as_ref(), dir)
     {
@@ -237,7 +239,7 @@ fn bootstrap(
     if let Some(doc_db) = db_bootstrap.doc_db {
         app.active_doc_mut().db = Some(doc_db);
     }
-    // Plan WP2.S3: render/hint state only (§12; see `Document::last_sync`'s
+    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
     // own doc comment) — set unconditionally, exactly like
     // `db_ack::handle_load_ack` does for every later reload, so the ⌘S
     // Guard/footer hint/merge machinery see this session's very first
@@ -248,7 +250,7 @@ fn bootstrap(
     if let Some(recovered) = db_bootstrap.recovered_content {
         // Adopts a dead session's inherited draft content through the same
         // chokepoint `db::handle_load_ack` uses for every later per-document
-        // hydration (plan WP5.S2): the §1.3 destructive-reset suspicion
+        // hydration (plan WP5.S2): the destructive-reset suspicion
         // check, the synthetic bridge `Step` so post-restart undo reaches
         // `disk_content` in one step, and a refusal surfaced rather than
         // silently applied. The buffer here still holds exactly what
@@ -264,7 +266,7 @@ fn bootstrap(
         }
         // Dirty is a content comparison now (plan WP1) — `hydrate` no
         // longer marks it itself, so every hydration site re-derives it
-        // explicitly (CONSTITUTION §1.4.8).
+        // explicitly.
         app.recompute_dirty(first_doc_id);
     }
 

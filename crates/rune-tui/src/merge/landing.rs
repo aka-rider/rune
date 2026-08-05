@@ -63,8 +63,8 @@ pub(crate) fn handle_merge_prep_ack(
 
     // Review fix F4: `sync.kind` claiming `DiskAhead`/`Diverged` with no
     // `theirs` version at all is an inconsistency `classify_sync` should
-    // never produce — surfaced as a clean refusal (§1.7: no `0`/empty-`Vec`
-    // sentinel standing in for "absent" to unwrap past).
+    // never produce — surfaced as a clean refusal, no `0`/empty-`Vec`
+    // sentinel standing in for "absent" to unwrap past.
     let (Some(theirs_bytes), Some(theirs_obs)) = (prep.theirs.clone(), prep.theirs_obs) else {
         app.merge = MergeState::Inactive;
         app.set_status(
@@ -106,8 +106,8 @@ pub(crate) fn handle_merge_prep_ack(
         return;
     };
     // Captured fresh, NOW — not whatever `merge::begin` saw when the
-    // `MergePrep` op was enqueued (plan WP3.S6: "Go re-runs on fresh
-    // bytes"). The user may have kept typing during the round trip.
+    // `MergePrep` op was enqueued (plan WP3.S6: re-runs on fresh
+    // bytes). The user may have kept typing during the round trip.
     let ours_text = active.buffer.content().to_string();
 
     let hunks = rune_merge::merge_hunks(

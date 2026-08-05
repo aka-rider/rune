@@ -49,7 +49,7 @@ pub struct EmbedSet {
     /// `handle_embed_decoded`'s reply can find the right `EmbedState` by
     /// scanning for `in_flight == Some(generation)` without the `Msg`
     /// itself needing to carry a target key (plan constraint: this work
-    /// must not grow `runtime/mod.rs`, which already exceeds the §1.6
+    /// must not grow `runtime/mod.rs`, which already exceeds the 500-line
     /// ceiling from unrelated concurrent work).
     pub(crate) next_generation: u64,
 }

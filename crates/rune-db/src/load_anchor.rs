@@ -1,5 +1,5 @@
 //! The first-ever-load anchor/adopt/bridge machinery for `load::load`'s
-//! `!has_history` branch — split out of `load.rs` (§1.6) purely to keep
+//! `!has_history` branch — split out of `load.rs` purely to keep
 //! that module under the line budget; this has no callers outside it.
 //!
 //! [`Inherited::Disk`] and [`Inherited::Bridged`] both anchor the recovery
@@ -14,12 +14,12 @@
 //! existing in-session `DiskConflict` guard and merge machinery take it
 //! from there without needing to know any of this happened.
 //!
-//! §12's transactional invariant governs every anchor sequence below: the
-//! blob read (when there is one) and every write it produces commit as ONE
-//! `retry::with_retry` transaction, never as separate back-to-back
-//! transactions. A window between a committed anchor and its not-yet-
-//! committed bridge would let a concurrent fresh session on the same path
-//! observe — and double-bridge — a still-half-anchored dead draft.
+//! In every anchor sequence below, the blob read (when there is one) and
+//! every write it produces commit as ONE `retry::with_retry` transaction,
+//! never as separate back-to-back transactions. A window between a
+//! committed anchor and its not-yet-committed bridge would let a concurrent
+//! fresh session on the same path observe — and double-bridge — a
+//! still-half-anchored dead draft.
 
 use std::time::SystemTime;
 
@@ -58,7 +58,7 @@ pub(crate) struct LoadContext<'a> {
 /// Anchors a snapshot + adoption on `content` (disk content), tagged with
 /// `hash` — the ordinary "first sighting is the adoption" shape shared by
 /// every branch that isn't re-anchoring on a dead session's older baseline.
-/// Runs entirely inside the caller's already-open `tx` (§12) — never opens
+/// Runs entirely inside the caller's already-open `tx` — never opens
 /// its own transaction.
 fn anchor_on_disk_tx(
     tx: &Transaction<'_>,
@@ -66,7 +66,14 @@ fn anchor_on_disk_tx(
     content: &str,
     hash: &str,
 ) -> Result<(), Error> {
-    crate::snapshot::create_snapshot(tx, ctx.session_id, ctx.now, ctx.doc_id, content, ctx.load_seq)?;
+    crate::snapshot::create_snapshot(
+        tx,
+        ctx.session_id,
+        ctx.now,
+        ctx.doc_id,
+        content,
+        ctx.load_seq,
+    )?;
     adopt::record_adoption_tx(
         tx,
         ctx.doc_id,
@@ -85,7 +92,7 @@ fn anchor_on_disk_tx(
 /// Journals ONE synthetic replace-all edit turning `from` into `to`, under
 /// `ctx.session_id`, at the very next journal position — exactly as if the
 /// user had just pasted `to` in. Returns the durable seq it landed at. Runs
-/// entirely inside the caller's already-open `tx` (§12).
+/// entirely inside the caller's already-open `tx`.
 fn bridge_edit_tx(
     tx: &Transaction<'_>,
     ctx: &LoadContext<'_>,
@@ -104,7 +111,7 @@ fn bridge_edit_tx(
 /// Re-anchors on the dead session's own baseline (`H0`), bridges `H0` to
 /// `draft`, then records a bare sighting of disk's current content
 /// (`ctx.disk_hash`, `H1`) last — the blob read and all three writes commit
-/// as ONE transaction (§12), so a concurrent fresh session on the same path
+/// as ONE transaction, so a concurrent fresh session on the same path
 /// can never observe a partially-anchored bridge. `Ok(None)` when
 /// `baseline`'s blob is unusable as an anchor: [`Error::NotFound`] (GC'd or
 /// never captured) or [`Error::BlobHashMismatch`] (corrupt) both mean "H0 is
@@ -197,7 +204,7 @@ pub(crate) fn anchor_first_load(
     // Disk, Bridged, or a Diverged baseline whose blob turned out to be
     // unusable — anchor on disk content, exactly like today's flow. The
     // anchor write and the bridge edit (when there is one) commit as ONE
-    // transaction (§12) — the same double-bridge race the `Diverged` path
+    // transaction — the same double-bridge race the `Diverged` path
     // above closes applies equally here.
     retry::with_retry(conn, |tx| {
         anchor_on_disk_tx(tx, ctx, content, ctx.disk_hash)?;
@@ -336,10 +343,9 @@ mod tests {
             "with H0 unusable, the fallback anchors on disk's current content (H1)"
         );
 
-        let sync_state = retry::with_retry(&mut conn, |tx| {
-            crate::sync::sync(tx, session_b, doc_id)
-        })
-        .expect("sync");
+        let sync_state =
+            retry::with_retry(&mut conn, |tx| crate::sync::sync(tx, session_b, doc_id))
+                .expect("sync");
         assert_eq!(
             sync_state.kind,
             crate::sync::SyncKind::BufferAhead,

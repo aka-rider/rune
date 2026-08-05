@@ -1,5 +1,5 @@
 //! The default-mode hint list/span builders, split out of [`crate::footer`]
-//! to keep it under the §1.6 line budget: [`default_hint_entries`] (the
+//! to keep it under the 500-line budget: [`default_hint_entries`] (the
 //! priority-ordered `(label, help, active)` list, contextual per focused
 //! pane), [`hint_entry_spans`] (one entry's own span group), and the two
 //! renderers built from them — [`default_hint_spans`] (full, untruncated)
@@ -289,9 +289,7 @@ mod tests {
         let app = app_with("hello");
         let entries = default_hint_entries(&app);
         let mut merge_entries = entries.iter().filter(|(_, help, _)| *help == "merge");
-        let (label, _, _) = merge_entries
-            .next()
-            .expect("expected a merge hint entry");
+        let (label, _, _) = merge_entries.next().expect("expected a merge hint entry");
         assert_eq!(label, "^M");
         assert!(
             merge_entries.next().is_none(),

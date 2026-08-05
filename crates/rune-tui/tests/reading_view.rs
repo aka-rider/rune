@@ -384,7 +384,7 @@ fn ctrl_p_from_the_explorer_is_a_silent_no_op() {
 }
 
 /// Keystroke-driven equivalent of `edit_commands.rs`'s
-/// `reading_view_blocks_undo_and_redo` (CONSTITUTION §8.2: exercise the
+/// `reading_view_blocks_undo_and_redo` (exercise the
 /// real resolver, not `commands::edit::undo`/`redo` directly). `⌘Z`/`⌘⇧Z`
 /// resolve to `Command::Undo`/`Command::Redo` in `handle_editor_key`'s
 /// stage 3, and both guard on `ReadOnly::Reading` before touching the

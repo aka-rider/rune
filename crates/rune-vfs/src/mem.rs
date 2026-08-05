@@ -1,4 +1,4 @@
-//! In-memory `Vfs` for tests — mirrors Go's in-memory filesystem.
+//! In-memory `Vfs` for tests.
 //!
 //! A `Mutex`-backed `HashMap<PathBuf, MemFile>` with synthetic inodes (so
 //! `Vfs::exchange`/`rename_excl` can be verified to move identity the same
@@ -136,8 +136,8 @@ impl Mem {
     /// Test/debug introspection only: every path currently stored,
     /// including orphaned temps a caller never published or removed —
     /// lets a test prove a temp file left behind by a failed publish still
-    /// physically exists (§1.4.10's "capture/never silently discard"
-    /// spirit) without hand-computing `temp_name`'s private naming scheme.
+    /// physically exists (nothing is ever silently discarded) without
+    /// hand-computing `temp_name`'s private naming scheme.
     pub fn debug_paths(&self) -> Vec<PathBuf> {
         self.lock_state().files.keys().cloned().collect()
     }

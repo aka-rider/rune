@@ -1,6 +1,6 @@
 //! Tests for `emit::mod`'s core machinery (`unclaimed_subranges`,
 //! `push_span_split_by_line`, `emit` itself) — split out from `mod.rs` to
-//! keep it under CONSTITUTION §1.6's 500-LoC limit.
+//! keep it under the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;
@@ -260,9 +260,9 @@ fn buffer_to_syntax_roundtrip_on_cursor_legal_position() {
 
 #[test]
 fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
-    // Mirrors Go's FuzzSyntaxMapRoundtrip stability property: a
-    // position inside a hidden delimiter range does NOT roundtrip to
-    // itself, but the CLAMPED position it lands on must be idempotent.
+    // Stability property: a position inside a hidden delimiter range does
+    // NOT roundtrip to itself, but the CLAMPED position it lands on must
+    // be idempotent.
     let content = "**bold** text\n";
     let (buf, doc) = synced(content, content.len(), true);
     let (_lines, snap) = emit(buf.content(), doc.blocks(), 80);
@@ -281,7 +281,7 @@ fn buffer_to_syntax_clamps_stably_inside_hidden_delimiter() {
 }
 
 /// `CellMap` is per-CHAR (one entry per `char`, `chars().count()` entries)
-/// despite the name — easy to conflate with a terminal CELL (§1.5) in a
+/// despite the name — easy to conflate with a terminal display cell in a
 /// module where finding 1 (`table::layout`'s width bug) proves those two
 /// units genuinely diverge. Pins the length against BOTH a combining-mark
 /// cluster (two `char`s, one grapheme cluster) and a double-width CJK char
@@ -296,9 +296,9 @@ fn build_cell_map_has_one_entry_per_char_not_per_grapheme_or_display_cell() {
     assert_eq!(cm.len(), combining.chars().count());
     assert_eq!(cm, vec![10, 11]); // 'e' is 1 byte; the combining mark starts at 11
 
-    // "世界": each char is ONE 3-byte codepoint but TWO display cells
-    // (§1.5) — the map still has exactly one entry per char, at each
-    // char's own byte start, never per display cell.
+    // "世界": each char is ONE 3-byte codepoint but TWO display cells —
+    // the map still has exactly one entry per char, at each char's own
+    // byte start, never per display cell.
     let cjk = "世界";
     let cm = build_cell_map(0, cjk);
     assert_eq!(cm.len(), cjk.chars().count());

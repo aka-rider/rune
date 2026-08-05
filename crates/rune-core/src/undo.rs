@@ -1,7 +1,5 @@
 //! In-memory undo journal, SQLite-shaped for Phase 2 (the durable store adds
 //! persistence behind the same peek-then-commit shape, not a new one).
-//! Ports Go's inverse/reapply edit-primitive formulas and its
-//! peek-then-commit journal discipline.
 
 use crate::buffer::{
     AppliedEdit, Buffer, BufferError, Edit, clone_and_sort_edits_descending,
@@ -66,16 +64,15 @@ pub fn coalesce_touching_deletes<T>(
 
 /// Build the inverse edit batch for an applied-edit batch (undo): each
 /// edit's insert becomes a delete range, and its deleted text becomes the
-/// new insert. Port of the edit construction in
-/// `edit_primitives.go` (`ApplyInverse`).
+/// new insert.
 ///
 /// Returns `BufferError::OutOfBounds` instead of panicking if
 /// `ae.start + ae.insert.len()` would overflow `usize`. Unreachable from
 /// any edit `apply_edits` itself produced (every real `start`/`len` is
 /// bounded by a live document's byte length), but `edits` is `pub fn`
-/// -reachable data — Phase 2 will feed it back from SQLite — and §1.3
-/// forbids panicking on adversarial input regardless of how unreachable it
-/// is today.
+/// -reachable data — Phase 2 will feed it back from SQLite — and
+/// adversarial input must never panic the process, however unreachable
+/// that path is today.
 ///
 /// Runs `coalesce_touching_deletes` on the raw inverse batch before
 /// sorting/returning it: a forward step recording two touching PURE
@@ -116,8 +113,7 @@ pub fn inverse_edits(edits: &[AppliedEdit]) -> Result<Vec<Edit>, BufferError> {
 
 /// Apply the inverse of `edits` to `buf` (undo). All-or-nothing: on error
 /// `buf` is untouched by the caller — the journal position must stay put
-/// too (§1.4.8, `workspace_undo.go`). Port of
-/// `edit_primitives.go`.
+/// too.
 pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferError> {
     let inverse = inverse_edits(edits)?;
     let (new_buf, _) = buf.apply_edits(&inverse)?;
@@ -127,10 +123,8 @@ pub fn apply_inverse(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, Buff
 /// Reapply `edits` forward against `buf` (redo), one edit at a time,
 /// ascending by `start`, against a running copy. `AppliedEdit::start`
 /// carries a baked-in cumulative shift that is only valid one edit at a
-/// time against the running buffer — see `edit_primitives.go` for
-/// why batching them would be wrong. All-or-nothing: any edit's failure
-/// returns the error and the original `buf` is never touched. Port of
-/// `edit_primitives.go`.
+/// time against the running buffer. All-or-nothing: any edit's failure
+/// returns the error and the original `buf` is never touched.
 ///
 /// Real invariant: no two edits in `edits` may share the same `start` (in
 /// the post-edit coordinate space `AppliedEdit::start` lives in) — a tie
@@ -192,8 +186,7 @@ pub fn reapply(buf: &Buffer, edits: &[AppliedEdit]) -> Result<Buffer, BufferErro
 }
 
 /// One undo/redo unit: the edits applied plus cursor state before/after, so
-/// undo/redo restores selection alongside content. Shape implied by
-/// `workspace_undo.go` (`step.Edits`, `step.Cursors`).
+/// undo/redo restores selection alongside content.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Step {
     pub edits: Vec<AppliedEdit>,
@@ -228,8 +221,7 @@ impl Journal {
 
     /// Peek the step undo would apply and the position undo would commit
     /// to — does NOT move `pos`. Callers apply the buffer edit first
-    /// (`apply_inverse`) and call `move_pos` only on success (§1.4.8;
-    /// `workspace_undo.go`).
+    /// (`apply_inverse`) and call `move_pos` only on success.
     pub fn undo_peek(&self) -> Option<(&Step, usize)> {
         if self.pos == 0 {
             return None;
@@ -239,8 +231,7 @@ impl Journal {
     }
 
     /// Peek the step redo would apply and the position redo would commit
-    /// to — does NOT move `pos`. Mirrors `undo_peek` (`workspace_undo.go`,
-    /// `handleRedo`).
+    /// to — does NOT move `pos`. Mirrors `undo_peek`.
     pub fn redo_peek(&self) -> Option<(&Step, usize)> {
         let step = self.steps.get(self.pos)?;
         Some((step, self.pos + 1))
@@ -249,7 +240,7 @@ impl Journal {
     /// Commit a journal position move. Call ONLY after the corresponding
     /// buffer edit (`apply_inverse`/`reapply`) has already succeeded — a
     /// failed apply must leave `pos` untouched so the journal never runs
-    /// ahead of the buffer (§1.4.8).
+    /// ahead of the buffer.
     pub fn move_pos(&mut self, pos: usize) {
         self.pos = pos.min(self.steps.len());
     }

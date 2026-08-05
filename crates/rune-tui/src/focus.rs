@@ -52,9 +52,9 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
 /// deciding whether a pane can take focus should ask a `LayoutMode`
 /// instead.
 ///
-/// `ExplorerOnly` is reserved for a future full-width Explorer — `resolve`
-/// never produces it yet, so it costs `focusable` nothing today beyond one
-/// extra match arm.
+/// `ExplorerOnly` is a full-width Explorer, painted when a frame is too
+/// narrow to fit the left column and the center pane side by side but tall
+/// enough for the column itself (`layout::resolve_mode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutMode {
     /// The left column is painted; `explorer`/`tabs` are each independently
@@ -62,7 +62,7 @@ pub enum LayoutMode {
     /// `layout::Geometry::explorer_inner`/`tabs_inner`, which can each
     /// independently collapse while the column itself stays up).
     Split { explorer: bool, tabs: bool },
-    /// Reserved for a future full-width Explorer; not reachable today.
+    /// A full-width Explorer, filling the whole frame with no center pane.
     ExplorerOnly,
     /// The left column isn't painted this frame at all — either its own
     /// `Split` says hidden, or the frame is too small to fit it even though
@@ -250,12 +250,10 @@ impl App {
             return;
         }
         // A live Explorer type-to-search doesn't survive a focus round-trip
-        // (design: "leaving the Explorer ... -> search cleared") — the
-        // exact leak Go's own wall-clock reset has, since nothing there
-        // clears the buffer on blur either. `set_focus` is already the blur
-        // chokepoint for the title (`title::on_blur` above), so this is the
-        // one place every route off the Explorer funnels through, same
-        // reasoning.
+        // (design: "leaving the Explorer ... -> search cleared"). `set_focus`
+        // is already the blur chokepoint for the title (`title::on_blur`
+        // above), so this is the one place every route off the Explorer
+        // funnels through, same reasoning.
         if self.focus == Pane::Explorer && next != Pane::Explorer {
             crate::explorer_search::clear_search(self);
         }
@@ -342,9 +340,9 @@ mod tests {
     }
 
     /// The load-bearing proof `focus_or_default`'s whole guarantee rests on:
-    /// for every `LayoutMode` variant — `ExplorerOnly` included, though
-    /// nothing produces it yet — and every `Pane`, the result is a pane
-    /// `focusable` accepts under that SAME mode. Written as a loop over
+    /// for every `LayoutMode` variant — `ExplorerOnly` included — and every
+    /// `Pane`, the result is a pane `focusable` accepts under that SAME
+    /// mode. Written as a loop over
     /// every variant, not a handful of examples, so it keeps holding when a
     /// later work package adds another `LayoutMode` or `Pane` variant: a
     /// fallback that ever named an unpainted pane (the exact defect

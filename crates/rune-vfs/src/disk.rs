@@ -1,6 +1,4 @@
 //! Darwin-specific disk-backed `Vfs` using `renamex_np` for atomic publish.
-//!
-//! Ported from Go's Darwin exchange + disk implementations.
 
 use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
@@ -50,7 +48,7 @@ impl Disk {
 
     /// Shared shape behind [`Vfs::exchange`]/[`Vfs::rename_excl`]: both are
     /// `renamex_np` under a different flag, followed by a parent-directory
-    /// fsync (§1.4.1) — they differ only in the flag and the label their
+    /// fsync — they differ only in the flag and the label their
     /// error messages report. `label` reads as `"{label} {src} -> {dst}:
     /// ..."`.
     fn publish(src: &Path, dst: &Path, flags: libc::c_uint, label: &str) -> io::Result<()> {

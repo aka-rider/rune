@@ -1,5 +1,5 @@
 //! `request_close`/`close_now` — the tab-close chokepoint (split out of
-//! `workspace` per §1.6; WP5.S7 adds the image-delete-on-close hook, which
+//! `workspace` per the 500-line budget; WP5.S7 adds the image-delete-on-close hook, which
 //! needed an `Effects` sink `close_now` didn't carry before).
 
 use crate::app::App;
@@ -32,8 +32,8 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     if app.refuse_if_preview(id) {
         return;
     }
-    // Re-derived, not read from the cache (CONSTITUTION §1.4.8: close is a
-    // transition) — a stale cache could wave a genuinely-dirty document
+    // Re-derived, not read from the cache (close is a transition) — a
+    // stale cache could wave a genuinely-dirty document
     // through, or arm the Guard for one that's actually clean.
     if crate::materialize_ack::is_dirty_now(app, id) {
         // An `Error` already up outranks this prompt; the close intent is
@@ -52,7 +52,7 @@ pub fn request_close(app: &mut App, id: DocumentId, effects: &mut Effects) {
     }
 }
 
-/// Mints an empty, pathless draft (Go's `CreateUntitled`) with the next
+/// Mints an empty, pathless draft with the next
 /// unused "Untitled N" display name, opened through the existing
 /// `App::open_document` constructor and activated — `switch_to` reseeds the
 /// title field and the breadcrumb reads live off `active_doc` at render
@@ -90,8 +90,7 @@ pub fn next_untitled_name(app: &App) -> String {
 
 /// The next unused "Untitled N" suffix: one past the highest N already in
 /// use among live documents, or 1 if none are. Scans `display_name` rather
-/// than keeping a counter so a closed "Untitled 2" frees its number back up
-/// — matching how Go's untitled numbering already behaves.
+/// than keeping a counter so a closed "Untitled 2" frees its number back up.
 fn next_untitled_number(app: &App) -> usize {
     app.documents
         .values()
@@ -158,7 +157,7 @@ pub fn close_now(app: &mut App, id: DocumentId, effects: &mut Effects) -> CloseO
     let mut active_changed = false;
     if app.documents.len() == 1 {
         // Closing the last document mints its replacement BEFORE `id` is
-        // removed (Go's `CreateUntitled` parity, plan WP0): the non-empty
+        // removed (plan WP0): the non-empty
         // floor `App::active_doc`/`active_doc_mut` rely on is never
         // violated even transiently, and `new_untitled_document` already
         // activates the fresh draft and reseeds the title itself.

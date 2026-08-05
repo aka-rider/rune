@@ -1,5 +1,5 @@
 //! The save/ack/dirty-flow tests that used to live in `src/save.rs` (moved
-//! out in plan WP1.S5 to keep that file under the §1.6 line budget — every
+//! out in plan WP1.S5 to keep that file under the 500-line budget — every
 //! item exercised here — `App`, `update`, `Msg`, `Effects`, `keymap`
 //! types, `commands::edit::insert_char` — is already public, so this needs
 //! no crate-internal access `#[cfg(test)]` had).
@@ -332,7 +332,7 @@ fn save_on_a_dirty_untitled_document_leaves_the_title_unchanged() {
 /// document must never reach `vfs.save_atomic` — every global save chord
 /// routes to `trigger_save` unconditionally, and the no-store fallback
 /// there would otherwise atomically overwrite the previewed file with
-/// this document's own (edited) buffer, a §1.4 data-safety violation. The
+/// this document's own (edited) buffer, a data-safety violation. The
 /// document is dirtied FIRST, while still `ReadOnly::No` (a preview has no
 /// production path to become dirty, since the edit chokepoint already
 /// refuses any read-only document), then flipped to `Preview` — the same

@@ -64,8 +64,7 @@ impl Context {
     /// identifier this `Context` doesn't know — treated as `false` by
     /// `eval`'s `Marker` arm rather than a parse or evaluation error: an
     /// unknown identifier in a `when` clause is a binding-table typo, not a
-    /// user-facing failure, and CONSTITUTION §1.3 forbids panicking to
-    /// surface it.
+    /// user-facing failure, and panicking to surface it is forbidden.
     fn bool_field(&self, ident: &str) -> Option<bool> {
         match ident {
             "search_open" => Some(self.search_open),

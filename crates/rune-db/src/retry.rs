@@ -70,7 +70,7 @@ const MAX_BACKOFF_ATTEMPTS: u32 = 5;
 /// Runs `op` inside `BEGIN IMMEDIATE`, retrying per [`classify`] on failure,
 /// and commits on success. `op` must never touch the filesystem via
 /// `rune-vfs` — no DB transaction is ever held across a `vfs` call (plan
-/// binding rule, Go invariant I1).
+/// binding rule, invariant I1).
 ///
 /// The classifier covers the WHOLE lifecycle of an attempt — acquiring the
 /// write lock (`BEGIN IMMEDIATE` itself can surface BUSY under real

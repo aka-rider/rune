@@ -1,5 +1,5 @@
 //! Line/document-oriented motion commands: split out of the sibling `nav`
-//! module (§1.6: `nav` was already over the 500-line budget). Character and
+//! module (`nav` was already over the 500-line budget). Character and
 //! word motion, the word/whitespace classifier, and the shared
 //! cursor-stepping infrastructure (`move_cursors`, `update_horizontal`) all
 //! stay in `nav`; this module reaches back into `nav` (via `pub(crate)`)
@@ -13,8 +13,8 @@ use rune_md::element::doc::ViewSnapshots;
 use crate::commands::nav::{move_cursors, update_horizontal};
 use crate::document::Document;
 
-/// Port of `commands_nav.go:lineStartOffset` — toggles between the line's
-/// first non-whitespace column and column 0 (a "smart home").
+/// The "smart home" offset for the line containing `offset`: toggles
+/// between the line's first non-whitespace column and column 0.
 pub fn line_start_offset(buf: &Buffer, offset: usize) -> usize {
     let bp = buf.offset_to_line_col(offset);
     let line_start = buf.line_col_to_offset(BufferPoint {
@@ -40,7 +40,8 @@ pub fn line_start_offset(buf: &Buffer, offset: usize) -> usize {
     }
 }
 
-/// Port of `commands_nav.go:lineEndOffset`.
+/// The offset of the line's end (just before its trailing `\n`, or the
+/// buffer's end) for the line containing `offset`.
 pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
     let bp = buf.offset_to_line_col(offset);
     let mut end = buf.line_col_to_offset(BufferPoint {
@@ -61,8 +62,7 @@ pub fn line_end_offset(buf: &Buffer, offset: usize) -> usize {
 
 /// The byte range `[line_start, line_end)` of the line containing `offset`,
 /// extended to include the line's trailing `\n` unless it's the buffer's
-/// last line. The shared chokepoint for "whole current line" ranges: port
-/// of `commands_clipboard.go:copyEntireLine`'s range arithmetic, used
+/// last line. The shared chokepoint for "whole current line" ranges, used
 /// identically by `commands::clipboard::copy_entire_line` (what gets
 /// copied) and `commands::edit::delete_selection_or_line` (what cut
 /// removes) so the two can never disagree about where a line-copy ends.
@@ -78,7 +78,9 @@ pub(crate) fn line_range_incl_newline(buf: &Buffer, offset: usize) -> (usize, us
     (line_start, line_end)
 }
 
-/// Port of `commands_nav.go:handleMoveTo`.
+/// Resolves `c`'s new position via `step`, then routes it through
+/// `update_horizontal` so the desired visual column and any active
+/// selection are handled consistently with other motions.
 fn handle_move_to(
     view: &ViewSnapshots,
     buf: &Buffer,

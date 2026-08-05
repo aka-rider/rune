@@ -1,4 +1,4 @@
-//! Clamp-plus-char-boundary-discard on the render path (§1.3) — a hostile
+//! Clamp-plus-char-boundary-discard on the render path — a hostile
 //! reply carrying an out-of-bounds, inverted, or off-char-boundary range
 //! must be clamped or dropped before anything can paint it, never applied
 //! verbatim.

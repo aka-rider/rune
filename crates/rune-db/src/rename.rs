@@ -10,25 +10,25 @@
 //! both share: the outcome type and the two transaction primitives beneath
 //! them.
 //!
-//! - **rename_bind** — `renamex_np(RENAME_EXCL)` (§1.4.1's no-clobber
+//! - **rename_bind** — `renamex_np(RENAME_EXCL)` (a no-clobber
 //!   atomic publish). If the destination exists it returns
 //!   [`RenameOutcome::Collided`] having written *nothing*, and the UI
-//!   raises the guard §1.4.4 requires before a destructive transition.
+//!   raises a guard before a destructive transition.
 //! - **rename_replace** — capture-then-swap-then-commit-then-unlink, in
-//!   that order, so §1.4.10's "capture before discard — physically" holds
+//!   that order, so "capture before discard — physically" holds
 //!   by mechanism: the replaced file's bytes are a durable blob before its
 //!   last name is unlinked. That blob is the only record the replaced file
 //!   ever existed, since rune never opened it.
 //!
 //! Why the two halves are ONE op each: the capture and the swap cannot be
 //! separated by a message round-trip without making "swapped but not
-//! captured" a representable state — the exact state §1.4.10 forbids.
+//! captured" a representable state.
 //!
 //! ### What a rename deliberately does NOT do
 //!
-//! - **No save.** §1.4.2 names the only two acts that touch the destination
-//!   (⌘S and save-on-close); a rename is neither. A dirty document renames
-//!   and stays dirty — §1.4.6 keys history to inode+device and `renamex_np`
+//! - **No save.** The only two acts that touch the destination are ⌘S and
+//!   save-on-close; a rename is neither. A dirty document renames
+//!   and stays dirty — history is keyed to inode+device and `renamex_np`
 //!   preserves the inode, so no history is orphaned.
 //! - **No observation for a plain rename.** `observations` (`schema.rs`)
 //!   has no path column: it records blob_hash/size/mtime/inode/device/seq,
@@ -37,7 +37,7 @@
 //! - **No `commit_save`.** It would `put_blob(buffer)` +
 //!   `record_adoption_tx(origin='save')`, i.e. claim the disk holds the
 //!   journal head. After renaming a *dirty* document the next ⌘S would then
-//!   CAS against a lie (§1.4.7). Only `rebind_document_tx` is reused.
+//!   CAS against a lie. Only `rebind_document_tx` is reused.
 //!
 //! ### Failure atomicity
 //!
@@ -78,8 +78,7 @@ pub enum RenameOutcome {
     Collided { seen: Stat },
     /// The replace committed. `displaced` is the observation of the bytes
     /// that used to live at the destination, already durably captured as a
-    /// blob (§1.4.10) — `displaced.blob_hash` retrieves them via
-    /// `get_blob`.
+    /// blob — `displaced.blob_hash` retrieves them via `get_blob`.
     Replaced { displaced: Observation },
     /// The destination no longer matches the `seen` the user consented to,
     /// so the replace was abandoned before touching anything. `fresh` is

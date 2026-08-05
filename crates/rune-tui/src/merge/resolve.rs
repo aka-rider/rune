@@ -4,7 +4,7 @@
 //! decisions needs no machinery beyond the journal itself (decision 1).
 //! Block spans are the mutable "where is it now" projection over the
 //! immutable `Conflict` list; an accept collapses one span and shifts every
-//! later span by the byte delta, mirroring the Go resolver's `accept`.
+//! later span by the byte delta.
 
 use rune_core::buffer::Edit;
 
@@ -15,8 +15,8 @@ use crate::document::DocumentId;
 
 use super::state::{Block, MergeState};
 
-/// Which side an accept keeps. `Both` is this implementation's deliberate
-/// divergence from the Go resolver (decision 5): the framed block stays in
+/// Which side an accept keeps. `Both` is a deliberate design choice
+/// (decision 5): the framed block stays in
 /// the document verbatim — an explicit "decide later in the file" escape
 /// hatch — so it edits nothing and only marks the block resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

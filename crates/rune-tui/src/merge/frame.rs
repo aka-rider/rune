@@ -7,15 +7,14 @@ use rune_merge::Hunk;
 use super::state::{Block, Conflict};
 
 /// The `[B4]` UTF-8 refusal: at least one hunk's bytes are not valid UTF-8.
-/// A unit-shaped error (§1.7 — the caller has exactly one thing to do with
-/// it: refuse with a fixed status message; no variant to distinguish).
+/// A unit-shaped error — the caller has exactly one thing to do with
+/// it: refuse with a fixed status message; no variant to distinguish.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MergeUtf8Error;
 
-/// Ports Go `frameBlock` (`mergemode.go`) byte-for-byte: the offset math
-/// merge navigation and resync depend on assumes this EXACT shape —
-/// unconditional `\n` after both `ours` and `theirs`, regardless of whether
-/// either already ends in one. Decision 5 (editor/disk labels, not
+/// Frames a block to the EXACT shape the offset math merge navigation and
+/// resync depend on: unconditional `\n` after both `ours` and `theirs`,
+/// regardless of whether either already ends in one. Decision 5 (editor/disk labels, not
 /// ours/theirs) is what `[B]oth` leaves standing verbatim.
 pub fn frame_block(ours: &str, theirs: &str) -> String {
     format!("<<<<<<< editor\n{ours}\n=======\n{theirs}\n>>>>>>> disk\n")

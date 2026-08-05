@@ -2,7 +2,7 @@
 //! navigable via `listnav::List`. `Pane::Explorer`-focused key handling
 //! lives in the sibling `explorer_keys` module, its `Msg::DirLoaded`
 //! reaction in `explorer_dirload`, and `reveal` in `explorer_reveal` — all
-//! split out per §1.6; row layout lives here (`draw`, delegated to from
+//! split out to stay under the 500-line budget; row layout lives here (`draw`, delegated to from
 //! `render.rs::draw_left_pane` — the bordered `Block`/focus-colored border
 //! stays render.rs's job).
 //!
@@ -101,11 +101,11 @@ impl Default for Explorer {
 
 /// The Explorer's starting root the first time it's ever shown (plan
 /// WP4.S4's "`^x` triggers the initial load"): the active document's own
-/// directory takes priority (deliberate, and different from Go, which
-/// always roots the tree at the workspace root) — a pathless (draft)
+/// directory takes priority (a deliberate choice, rather than always
+/// rooting the tree at the workspace root) — a pathless (draft)
 /// session falls back to `app.root` (the workspace root discovered at
 /// startup), and only when THAT is also unresolved (still empty) does this
-/// fall back to the literal `"."`. Resolved through `app.vfs` (§1.4.9) so
+/// fall back to the literal `"."`. Resolved through `app.vfs` so
 /// `Disk` canonicalizes it exactly like every other filesystem entry point;
 /// `Mem` (tests) normalizes it lexically to its own synthetic root (`Mem`
 /// has no real cwd to canonicalize `"."` against).
@@ -127,9 +127,8 @@ pub fn initial_root(app: &App) -> PathBuf {
 }
 
 /// Scrolls the Explorer's window to keep the cursor visible (plan WP4.S3:
-/// "follow, margin = min(4, visible/4) like Go filetree" — Go's own
-/// `ensureVisible`, jump
-/// buffer 0 since Go's own `Follow` call has no jump argument either).
+/// follow, margin = min(4, visible/4), jump buffer 0 since this call has no
+/// jump argument).
 /// `pub(crate)`, not private: `explorer_keys::handle_key`'s Top/Bottom
 /// commands and `move_selection` call this from the sibling module the key
 /// handling lives in.
@@ -220,7 +219,7 @@ pub(crate) fn refresh_for(app: &mut App, path: &Path, effects: &mut Effects) {
 }
 
 /// `handle_dir_loaded` (reacts to `Msg::DirLoaded`) lives in the sibling
-/// `explorer_dirload` module (split out per §1.6) — re-exported here so
+/// `explorer_dirload` module (500-line budget) — re-exported here so
 /// every existing `explorer::handle_dir_loaded` call site keeps working
 /// unaware it moved.
 pub(crate) use crate::explorer_dirload::handle_dir_loaded;
@@ -267,7 +266,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// Truncates `root`'s displayed path to fit `width` terminal CELLS (§1.5),
+/// Truncates `root`'s displayed path to fit `width` terminal CELLS,
 /// keeping the TAIL and marking the cut with a leading `…` (plan WP4.S3:
 /// "root-path title row truncated with leading `…`") — the tail (the
 /// directory's own name and its nearest ancestors) is what a user

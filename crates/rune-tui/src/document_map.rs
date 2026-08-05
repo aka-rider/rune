@@ -1,5 +1,5 @@
 //! `DocumentMap`: `App::documents`'s backing collection, split out of
-//! `document.rs` per §1.6 — a self-contained collection type whose only
+//! `document.rs` per the 500-line budget — a self-contained collection type whose only
 //! dependency on `document.rs` is the `Document`/`DocumentId` types
 //! themselves.
 

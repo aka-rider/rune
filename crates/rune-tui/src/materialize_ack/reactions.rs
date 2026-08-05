@@ -1,6 +1,6 @@
 //! The ack-reaction functions (split out of `materialize_ack.rs` for the
-//! §1.6 budget, plan WP2: the `quit_if_pending` addition pushed the parent
-//! file over): what happens once a save/materialize attempt actually
+//! 500-line budget, plan WP2: the `quit_if_pending` addition pushed the
+//! parent file over): what happens once a save/materialize attempt actually
 //! resolves — `handle_materialize_ack`/`handle_save_done`'s success/failure
 //! arms, the close-on-save-ack and quit-save-fan-out chokepoints they both
 //! funnel through, and a local (non-`rune-db`) materialize failure. The
@@ -206,8 +206,8 @@ fn close_if_pending(app: &mut App, id: DocumentId, succeeded: bool) {
 /// unrelated ack for the same document, or a duplicate delivery, can never
 /// retire an entry twice or retire the wrong capture) and, if the map is
 /// now empty, completes the quit (`should_quit = true`). A FAILED save
-/// aborts the whole intent instead, regardless of version — Go parity:
-/// never exit over a save the user believes succeeded, and a wedged
+/// aborts the whole intent instead, regardless of version: never exit over
+/// a save the user believes succeeded, and a wedged
 /// continuation waiting on a save that will never retry is worse than
 /// telling the user plainly that quit did not happen.
 ///

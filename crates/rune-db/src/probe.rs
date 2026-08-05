@@ -1,4 +1,4 @@
-//! `Probe` — refreshes a document's disk fact. Ported from Go's probe.
+//! `Probe` — refreshes a document's disk fact.
 //! Unconditionally reads and hashes the live
 //! target, records the sighting as `origin='probe'`, and classifies the
 //! result — never moving `saved_obs` on a bare divergence (a probe is
@@ -11,7 +11,7 @@
 //! Runs as a writer-FIFO op (`OpKind::Probe`): every step below either does
 //! `vfs` I/O with no transaction open, or opens its own short
 //! `retry::with_retry` transaction — never both at once (plan binding rule,
-//! Go invariant I1).
+//! invariant I1).
 
 use std::io;
 use std::path::PathBuf;
@@ -31,7 +31,7 @@ use crate::sync::{self, SyncKind, SyncState, Version};
 /// A `documents.path` of `""` (untitled/scratch/chat) has nothing on disk
 /// to probe and degrades to a pure [`sync::sync`]. A target that has gone
 /// missing surfaces [`Error::NotFound`] — the workspace layer's
-/// deleted-guard trigger (WP5). Port of `probe.go`.
+/// deleted-guard trigger (WP5).
 pub fn probe(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -117,7 +117,7 @@ pub fn probe(
     if state.kind == SyncKind::Clean {
         // Auto-adopt only when there is something to heal: stacking a fresh
         // 'resolve' adoption on every clean probe tick would grow
-        // observations/supersedes unboundedly (probe.go).
+        // observations/supersedes unboundedly.
         let should_adopt = retry::with_retry(conn, |tx| {
             let cur = observation::saved_obs_for(tx, session_id, doc_id)?;
             Ok::<bool, Error>(match cur {

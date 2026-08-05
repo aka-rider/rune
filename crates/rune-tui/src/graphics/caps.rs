@@ -1,7 +1,6 @@
 //! Terminal graphics capability detection (plan WP3.S1/S2/S3) — an
-//! environment-only sniff, mirroring `golang/pkg/terminal/terminal.go`
-//! exactly, plus the measured cell pixel geometry an image needs to size
-//! itself in columns and rows.
+//! environment-only sniff, plus the measured cell pixel geometry an image
+//! needs to size itself in columns and rows.
 
 /// A source of environment variables, so [`detect`] is unit-testable
 /// without mutating the real process environment (`std::env::var` is
@@ -46,9 +45,9 @@ impl Default for GraphicsCaps {
 }
 
 /// Detects graphics capability from the environment and the terminal's
-/// reported window geometry, mirroring `golang/pkg/terminal/terminal.go`'s
-/// `DetectWithProber` exactly (not the prose summary an earlier plan
-/// revision gave — that description was wrong).
+/// reported window geometry — not the prose summary an earlier plan
+/// revision gave (that description was wrong); follow the exact logic
+/// below.
 ///
 /// `window` is `(cols, rows, pixel_width, pixel_height)`, as reported by
 /// the backend's own dimensions query.
@@ -56,10 +55,10 @@ pub fn detect(env: &impl EnvSource, window: Option<(u16, u16, u16, u16)>) -> Gra
     let term_program = env.var("TERM_PROGRAM").unwrap_or_default().to_lowercase();
     let term = env.var("TERM").unwrap_or_default().to_lowercase();
 
-    // First-match switch, exactly as Go's `switch` does it: `kitty` in
-    // TERM_PROGRAM wins outright; otherwise `ghostty` in either
-    // TERM_PROGRAM or TERM (Ghostty implements the Kitty graphics protocol,
-    // including the Unicode-placeholder virtual-placement extension).
+    // First match wins: `kitty` in TERM_PROGRAM wins outright; otherwise
+    // `ghostty` in either TERM_PROGRAM or TERM (Ghostty implements the
+    // Kitty graphics protocol, including the Unicode-placeholder
+    // virtual-placement extension).
     let mut kitty = if term_program.contains("kitty") {
         true
     } else {
@@ -67,7 +66,7 @@ pub fn detect(env: &impl EnvSource, window: Option<(u16, u16, u16, u16)>) -> Gra
     };
 
     // Then, unconditionally: KITTY_WINDOW_ID promotes to Kitty when no
-    // protocol was detected above. Go's promotion arm has NO TERM_PROGRAM
+    // protocol was detected above. This promotion arm has NO TERM_PROGRAM
     // allow-list — that gate exists only on the (out-of-scope here)
     // WEZTERM_PANE/ITERM_SESSION_ID arms — so `TERM_PROGRAM=vscode` with
     // `KITTY_WINDOW_ID` set still promotes.
@@ -158,7 +157,7 @@ mod tests {
         assert!(detect(&env, None).kitty);
     }
 
-    /// Matches Go exactly: the `KITTY_WINDOW_ID` promotion arm carries no
+    /// The `KITTY_WINDOW_ID` promotion arm carries no
     /// `TERM_PROGRAM` allow-list, unlike the (out-of-scope)
     /// WEZTERM_PANE/ITERM_SESSION_ID arms.
     #[test]

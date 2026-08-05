@@ -204,8 +204,8 @@ fn tasklist_marker_and_text_are_byte_exact() {
         "task",
     );
     // The marker range is the gap between the item's start and its first
-    // child's start (parent/child range-gap derivation, Context §parse.rs) —
-    // proves the "## "-style prefix extraction generalizes to "- [x] ".
+    // child's start (parent/child range-gap derivation) — proves the
+    // "## "-style prefix extraction generalizes to "- [x] ".
     let (item_start, _) = to_range(&starts, item.data.borrow().sourcepos);
     let (text_start, _) = to_range(&starts, text.data.borrow().sourcepos);
     assert_eq!(&src[item_start..text_start], "- [x] ");

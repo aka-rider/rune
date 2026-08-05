@@ -1,9 +1,9 @@
 //! The ack/reaction side of the save flow (split out of `save.rs` to keep
-//! it under the §1.6 line budget): reacting to `MaterializePrepare`'s ack
+//! it under the 500-line budget): reacting to `MaterializePrepare`'s ack
 //! by spawning the caller-side `vfs` work, reacting to what that `vfs` work
 //! concluded ([`MaterializeVfsOutcome`]), the `Msg::SaveDone`/
-//! materialize-ack reactions, the dirty-cache recompute chokepoint
-//! (§1.4.8), and `on_store_failure`'s whole-store degrade. `save.rs` owns
+//! materialize-ack reactions, the dirty-cache recompute chokepoint,
+//! and `on_store_failure`'s whole-store degrade. `save.rs` owns
 //! building and submitting the materialize/save operation in the first
 //! place (`trigger_save`/`materialize_now`/`bind_new_now`); this module
 //! owns everything from the recovery store's first reply onward.
@@ -12,7 +12,7 @@
 //! stays app-wide (plan decision 3/6: a hard write failure degrades the ONE
 //! shared `Store`, never just the document that happened to trigger it).
 //!
-//! [`reactions`] (split out for the §1.6 budget, plan WP2) holds what
+//! [`reactions`] (split out for the 500-line budget, plan WP2) holds what
 //! happens once a save/materialize attempt actually resolves — `handle_
 //! materialize_ack`/`handle_save_done`'s own success/failure arms, the
 //! close-on-save-ack and quit-save-fan-out chokepoints (`close_if_pending`/
@@ -68,7 +68,7 @@ pub(crate) fn handle_prepare_ack(
 #[derive(Debug)]
 pub enum MaterializeVfsOutcome {
     /// The overwrite target no longer exists (`bind_new=false` only) —
-    /// §1.4.4: never silently (re)create.
+    /// never silently (re)create.
     Missing,
     /// The caller's own target disagrees with the document's bound path —
     /// a caller-bug guard ([rune-db 5]), not an ordinary CAS race. No `vfs`
@@ -340,7 +340,7 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
 /// debounce — `save::schedule_snapshot_debounce`) is ignored. `content` and
 /// the journal position ("current position", plan WP5.S6) are captured
 /// SYNCHRONOUSLY here, in `update` — never re-derived once the enqueued
-/// `CreateSnapshot` op actually runs on the writer thread (§1.4.2/§1.4.8's
+/// `CreateSnapshot` op actually runs on the writer thread (the
 /// "caller-captured, never re-derived" discipline, same as `materialize`).
 /// Never touches the user's file — `create_snapshot` is a pure recovery
 /// anchor (`rune-db::snapshot`'s doc comment).
@@ -368,7 +368,7 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
     }
 }
 
-/// CONSTITUTION §1.4.8: `Document::is_dirty` reads only the cache this
+/// `Document::is_dirty` reads only the cache this
 /// recomputes. A straight content comparison against `saved_content` (plan
 /// WP1) — never the old `buffer.version() != saved_version` proxy:
 /// `Buffer::apply_edits` always returns `version + 1`, and undo/redo build
@@ -385,7 +385,7 @@ pub(crate) fn recompute_dirty(app: &mut App, id: DocumentId) {
     doc.is_dirty_cached = dirty;
 }
 
-/// CONSTITUTION §1.4.8: dirty must be re-derived on every TRANSITION (open,
+/// Dirty must be re-derived on every TRANSITION (open,
 /// switch, evict, close, quit), not merely read from the render-only cache
 /// `recompute_dirty`'s other callers (edit/ack sites) already keep current
 /// between transitions. Every transition-time dirty check — the close-guard

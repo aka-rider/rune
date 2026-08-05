@@ -1,5 +1,5 @@
 //! The non-destructive rename entry point. Split out of `rename.rs`
-//! (§1.6) — see that module's doc comment for the shared design.
+//! — see that module's doc comment for the shared design.
 
 use std::io;
 use std::path::Path;
@@ -148,7 +148,7 @@ mod tests {
         let after = f.vfs.stat(Path::new("/b.md")).expect("stat after");
         assert_eq!(
             after.identity, before.identity,
-            "renamex_np preserves inode+device (§1.4.6)"
+            "rename preserves file identity (inode+device)"
         );
         assert_eq!(
             obs_count(&f.conn),

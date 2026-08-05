@@ -1,7 +1,7 @@
 //! The writer thread's own lifecycle housekeeping: the panic-guard drain
 //! entered after a caught unwind, idle-period maintenance, shutdown
 //! maintenance, and the WAL checkpoint primitive both call. Split out of
-//! `writer.rs` (§1.6) — `writer.rs` keeps the queue/dispatch surface,
+//! `writer.rs` — `writer.rs` keeps the queue/dispatch surface,
 //! this module keeps everything that runs on a timer or on the way out.
 
 use std::panic::{self, AssertUnwindSafe};

@@ -1,5 +1,5 @@
 //! Small, standalone helpers used by `Document` (split out of `document.rs`
-//! per §1.6): the path-to-`DocumentKind` derivation `bind_path` calls, and
+//! per the 500-line budget): the path-to-`DocumentKind` derivation `bind_path` calls, and
 //! the hydration-adoption outcome type `Document::hydrate` returns plus its
 //! destructive-shrink guard. None of these depend on `Document`'s own
 //! fields — each is a pure function/type `document.rs`'s `impl Document`
@@ -81,7 +81,7 @@ pub enum Hydration {
 }
 
 /// A `recovered` far shorter than `disk_content` (or emptying it outright)
-/// is not a legitimate recovery — it is the CONSTITUTION §1.3 "destructive
+/// is not a legitimate recovery — it is the "destructive
 /// async edit" pattern (a watcher/IME/dictation reset caught mid-write), and
 /// adopting it would silently discard content the user can see on screen.
 /// `disk_content` empty has nothing to protect, so it never trips this.

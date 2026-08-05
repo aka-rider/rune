@@ -1,4 +1,5 @@
-//! Rename refusal paths — split out of `rename_bind.rs` (plan WP5, §1.6)
+//! Rename refusal paths — split out of `rename_bind.rs` (plan WP5,
+//! 500-line budget)
 //! once the extension-gate and clipboard packages grew that file past the
 //! ceiling. Every refusal here leaves the machine `Idle`, `file_path`
 //! unchanged, and the buffer byte-identical

@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): blockquote-container
+//! Split off `conceal_roundtrip.rs` (WP11): blockquote-container
 //! regression cases from three separate rounds sharing the same family —
 //! a multi-line construct's own raw range fed whole into the generic
 //! per-line splitter re-claims a REPEATING container prefix a blockquote's

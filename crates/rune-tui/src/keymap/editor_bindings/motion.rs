@@ -1,6 +1,6 @@
 //! Motion group of `EDITOR_BINDINGS` (plain cursor movement, viewport-only
 //! scroll, and link-follow — no selection change, no document mutation).
-//! Split out of `editor_bindings.rs` to bring that file under the §1.6
+//! Split out of `editor_bindings.rs` to bring that file under the
 //! 500-line budget; assembled back into the single `EDITOR_BINDINGS` table
 //! (see that module's doc comment) in the exact original order — this
 //! module only owns the definitions.

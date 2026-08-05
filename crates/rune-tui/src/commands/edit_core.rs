@@ -1,6 +1,6 @@
 //! The shared buffer-mutation chokepoint underneath every editing command
-//! (plan WP9.S6 §1.6 split — extracted from `edit.rs` alongside the
-//! `edit_lines` split, since `edit.rs` was still over budget with just
+//! (plan WP9.S6 500-line budget — extracted from `edit.rs` alongside
+//! the `edit_lines` split, since `edit.rs` was still over budget with just
 //! that one boundary; both `edit`'s per-cursor commands and `edit_lines`'
 //! line-oriented commands route through the two functions here, so this
 //! is genuinely their shared home, not an arbitrary third bucket).
@@ -8,9 +8,7 @@
 //! `apply_edit_batch_with_cursors` is THE sole buffer-mutating primitive:
 //! every command in `edit`/`edit_lines` funnels through it (directly, or
 //! via `commit_edit_batch`'s generic per-cursor rule below) — one call,
-//! one journal push, one undo step. Port of
-//! `commands_edit_lines.go:sortInfosDescending` + `buildEditResultFromInfos`
-//! + `textedit.go:applyOperation`'s edit-apply branch + `commitEdits`.
+//! one journal push, one undo step.
 
 use rune_core::buffer::{AppliedEdit, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
@@ -26,24 +24,22 @@ use crate::materialize_ack;
 /// replica, and recompute dirty — everything except how the post-edit
 /// cursor SET is derived from the applied edits. Factored out (rather than
 /// inlined in `commit_edit_batch`) so `edit_lines_move::move_line_up`/`down`
-/// (Go's `execMoveLineUp`/`execMoveLineDown`, which are NOT built on
-/// `buildEditResultFromInfos` and compute their own single resulting
-/// cursor — a column-preserving placement WITHIN the moved line, not at
-/// the edit's end) can fund through the exact same apply+journal-push code
-/// `commit_edit_batch`'s generic per-cursor rule uses, rather than
-/// re-implementing (and risking drifting from) it. `cursors_after` closes
+/// (which compute their own single resulting cursor — a column-preserving
+/// placement WITHIN the moved line, not at the edit's end) can fund
+/// through the exact same apply+journal-push code `commit_edit_batch`'s
+/// generic per-cursor rule uses, rather than re-implementing (and risking
+/// drifting from) it. `cursors_after` closes
 /// over `applied`/`ids` in whatever way the caller's command needs; this
 /// function does not know or care which rule that is — see
 /// `commit_edit_batch` below for the generic one every other command uses.
 ///
-/// Deliberate improvement over Go's `applyOperation`: Go assigns
-/// `result.Operation.Cursors` (computed as if the edit succeeded)
-/// UNCONDITIONALLY, even when `ApplyEdits` itself returned an error — a
-/// dead branch in practice (a cursor-derived edit batch is always
-/// in-bounds), but not a Rust type-state to leave standing. Here cursors
-/// only ever change on `Ok`; a rejected batch surfaces to the status line
-/// and leaves buffer/cursors untouched (CONSTITUTION §1.3: "fail fast on
-/// data risk", the same discipline `edit::undo`/`redo` already follow).
+/// Cursors only ever change on `Ok`; a rejected batch surfaces to the
+/// status line and leaves buffer/cursors untouched — fail fast on data
+/// risk, the same discipline `edit::undo`/`redo` already follow. Computing
+/// a post-edit cursor set unconditionally, even when `apply_edits` itself
+/// returns an error, would be a dead branch in practice (a cursor-derived
+/// edit batch is always in-bounds), but not a Rust type-state worth
+/// leaving standing.
 ///
 /// Status-message OWNERSHIP (review finding F2): a successful edit must
 /// NOT clear `app.status_message` — that field is a shared, single slot
@@ -92,9 +88,9 @@ pub(crate) fn apply_edit_batch_with_cursors(
     // ill-formed. But committing one here anyway would still push a `Step`
     // onto the journal and bump the buffer version for a batch that changed
     // nothing, marking a clean document dirty (e.g. cut on an empty
-    // selection). Per CONSTITUTION §1.3 this belongs at the single
-    // chokepoint every mutating command already funnels through, not as a
-    // per-command spot check duplicated at every call site.
+    // selection). This belongs at the single chokepoint every mutating
+    // command already funnels through, not as a per-command spot check
+    // duplicated at every call site.
     infos.retain(|(edit, _)| !(edit.start == edit.end && edit.insert.is_empty()));
     if infos.is_empty() {
         return false;
@@ -204,9 +200,9 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
 /// move_line_up`/`down` uses: each surviving cursor lands at its own
 /// edit's `AppliedEdit::end` (`start + insert.len()`, already in POST-edit
 /// coordinates per `buffer.rs`'s own docs) — using it directly is simpler
-/// than re-deriving Go's `computePostEditCursors` shift accumulation and
-/// can never disagree with what `Buffer::apply_edits` actually did, since
-/// it comes from the same call. `pub(crate)` so both `edit`'s per-cursor
+/// than re-deriving cursor positions via a separate shift-accumulation
+/// pass, and can never disagree with what `Buffer::apply_edits` actually
+/// did, since it comes from the same call. `pub(crate)` so both `edit`'s per-cursor
 /// commands and `edit_lines::per_line_edits` (indent/outdent/delete-line/
 /// clone-line, whose post-edit cursor also lands at each edit's own end —
 /// see that module's doc comment) share it rather than re-implementing

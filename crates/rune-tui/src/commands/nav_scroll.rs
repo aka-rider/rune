@@ -1,4 +1,4 @@
-//! Vertical/page motion (split out of `nav.rs`, plan WP7.S7, §1.6) plus the
+//! Vertical/page motion (split out of `nav.rs`, plan WP7.S7, 500-line budget) plus the
 //! WP7.S2 viewport-only scroll commands: `scroll_line_up`/`down`,
 //! `scroll_half_page_up`/`down`, `centre_cursor`, `cursor_to_top`,
 //! `cursor_to_bottom`.
@@ -24,10 +24,10 @@ use rune_md::element::doc::ViewSnapshots;
 use crate::document::Document;
 use crate::viewport::ScrollMode;
 
-/// Port of `commands_nav.go:moveRow`: visual-line up/down via the wrap
-/// conversions, preserving `c.desired_col` across the move (the property
-/// that makes moving through a ragged-right wrapped paragraph keep the
-/// caret in its visual column instead of snapping to each row's length).
+/// Visual-line up/down via the wrap conversions, preserving `c.desired_col`
+/// across the move (the property that makes moving through a ragged-right
+/// wrapped paragraph keep the caret in its visual column instead of
+/// snapping to each row's length).
 fn move_row(
     view: &ViewSnapshots,
     buf: &rune_core::buffer::Buffer,
@@ -44,11 +44,9 @@ fn move_row(
     let wp2 = if target_row < 0 {
         WrapPoint { row: 0, col: 0 }
     } else if total > 0 && target_row as usize >= total {
-        // Clamped past the last row: land at that row's own end — the
-        // exact-length equivalent of Go's `wp.Col = 999999` sentinel (which
-        // relies on `WrapByteCol`/`WrapToSyntax` clamping it downstream);
-        // `segment_len_at` expresses the same "end of row" intent directly,
-        // without a magic number.
+        // Clamped past the last row: land at that row's own end —
+        // `segment_len_at` expresses the "end of row" intent directly,
+        // without a magic-number sentinel.
         let row = total - 1;
         WrapPoint {
             row,
@@ -74,7 +72,7 @@ fn move_row(
     }
 }
 
-/// Port of `commands_nav_gen.go:pageStep`: a full viewport minus one row of
+/// A full viewport minus one row of
 /// overlap for context. `pub(crate)` so `commands::reading_nav` pages a
 /// read-only document by the exact same step `page_up`/`page_down` use
 /// below, rather than re-deriving it.

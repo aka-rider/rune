@@ -1,11 +1,10 @@
 //! `PANE-NO-BLEED` — the rule the `UNDO-TOTAL`/`REDO-TOTAL` harness fix
 //! (`driver.rs::restore_editor_focus`) rests on, pinned as an invariant so
-//! a future change toward Go's behaviour (`workspace_update_keys.go`
-//! Priority 2.5 bleeding an unfocused pane's keystroke into the document
-//! as an invisible edit) is caught by the fuzzer instead of landing
-//! silently. Needs `StepCtx.msg` (L2): a keystroke aimed at chrome — the
-//! Explorer or the Open Tabs pane, with no modal capturing it first — must
-//! never mutate the active document behind it.
+//! a future regression bleeding an unfocused pane's keystroke into the
+//! document as an invisible edit is caught by the fuzzer instead of
+//! landing silently. Needs `StepCtx.msg` (L2): a keystroke aimed at
+//! chrome — the Explorer or the Open Tabs pane, with no modal capturing it
+//! first — must never mutate the active document behind it.
 
 use ratatui::layout::Rect;
 use rune_tui::pane::Pane;

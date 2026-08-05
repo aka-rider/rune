@@ -1,8 +1,7 @@
-//! Undo/redo invariants: `REDO-CLEAR` (Go `REDO-CLEAR`) fires per step;
-//! `UNDO-TOTAL`/`REDO-TOTAL`
-//! (§0 "the trust test": load -> N operations -> undo ALL -> byte-
-//! identical to original) run once, at session end, after `driver.rs`
-//! drives the actual undo/redo presses.
+//! Undo/redo invariants: `REDO-CLEAR` fires per step; `UNDO-TOTAL`/
+//! `REDO-TOTAL` ("the trust test": load -> N operations -> undo ALL ->
+//! byte-identical to original) run once, at session end, after
+//! `driver.rs` drives the actual undo/redo presses.
 //!
 //! `UNDO-TOTAL` compares CONTENT ONLY (G5: `apply_edits` bumps `Buffer::
 //! version()` on every call including inverses, so undoing to `journal_pos

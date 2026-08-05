@@ -172,7 +172,7 @@ fn named_dirty_doc_guard_save_completes_quit_on_a_successful_ack() {
 }
 
 /// The converse: a FAILED ack must abort the quit outright rather than
-/// exit over a save the user believes succeeded (Go parity).
+/// exit over a save the user believes succeeded.
 #[test]
 fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
     let mut app = test_app();

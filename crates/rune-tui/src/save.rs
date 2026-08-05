@@ -1,6 +1,6 @@
 //! The start/refusal ladder of the save flow (plan WP1.S5 first extracted
 //! this out of `app.rs`; plan WP1's dirtiness rework split it again to stay
-//! under the §1.6 line budget): `trigger_save`'s guards and its plain
+//! under the 500-line budget): `trigger_save`'s guards and its plain
 //! no-store fallback `Cmd`. The store-backed materialize dance itself
 //! (`materialize_now`/`bind_new_now`/`run_materialize_vfs`, the snapshot-
 //! autosave debounce) lives in the [`materialize`] submodule; the ack/
@@ -8,7 +8,7 @@
 //! — is [`crate::materialize_ack`].
 //!
 //! `App::pending_materialize` carries the caller-captured
-//! content/path/CAS facts between hops (§1.4.2/§1.4.8: captured once, at
+//! content/path/CAS facts between hops (captured once, at
 //! trigger time, never re-derived).
 
 use std::sync::Arc;
@@ -47,7 +47,7 @@ pub(crate) enum SaveStart {
     /// A pathless draft has nothing to save TO yet — the title field is
     /// now focused so the user can name it.
     NeedsName,
-    /// Refused outright: an image document (§1.4.1 — never overwrite it
+    /// Refused outright: an image document (never overwrite it
     /// with the buffer's own empty bytes), a `Preview` document (transient,
     /// not yet committed to), a rename in flight, or a degraded-store
     /// confirm gate that just armed (or is still pending) — every arm
@@ -79,7 +79,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     let Some(kind) = app.doc(id).map(|d| d.kind) else {
         return SaveStart::Refused;
     };
-    // Plan WP4.S9, the §1.4.1 guard: an image document has a REAL
+    // Plan WP4.S9: an image document has a REAL
     // `file_path`, so without this a save would reach `save_cmd` and
     // overwrite it with the buffer's own (always empty) bytes. Placed
     // FIRST, before the in-flight/dirty checks below — those already
@@ -88,7 +88,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     if kind == DocumentKind::Image {
         return SaveStart::Refused;
     }
-    // The §1.4 guard: every global save chord routes here unconditionally,
+    // Every global save chord routes here unconditionally,
     // and the no-store fallback below reaches `vfs.save_atomic` directly —
     // without this, saving a `Preview` document would atomically overwrite
     // the previewed file with this document's own buffer.
@@ -203,9 +203,9 @@ fn save_confirm_timeout_cmd(generation: u32) -> Cmd {
     })
 }
 
-/// The off-thread save I/O itself: `vfs.save_atomic` (§1.4.1's durable
+/// The off-thread save I/O itself: `vfs.save_atomic` (a durable
 /// temp-write + atomic publish, or `Mem`'s test double) writes EXACTLY
-/// `bytes` — §1.4.5 byte-verbatim, no normalization anywhere on this path.
+/// `bytes` verbatim — no normalization anywhere on this path.
 /// Reached when `id` has no store binding (see `trigger_save`'s docs), or
 /// as WP7's fallback when a store binding exists but its `MaterializePrepare`
 /// enqueue itself failed (the store couldn't even do the bookkeeping-only

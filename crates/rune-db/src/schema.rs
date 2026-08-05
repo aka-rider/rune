@@ -1,22 +1,20 @@
-//! The `rune-db` schema: a port of Go's `permSchema` v10,
-//! **minus `drafts`** (plan
-//! decision 13 — the Rust port has no chat/drafts consumer yet; porting the
+//! The `rune-db` schema, **minus `drafts`** (plan
+//! decision 13 — there is no chat/drafts consumer yet; adding the
 //! table now would lock in a scoping decision that belongs to that future
 //! feature instead).
 //!
-//! Unlike Go's `dropIfStale` migration policy (schema-shape changes drop and
-//! recreate the whole file), this crate versions by **filename**
-//! (`versioning.rs`, plan decision 2): a schema-shape change ships as a new
-//! `rune-v{N}.db`, so `SCHEMA` here only ever needs to describe a single,
-//! frozen shape applied once to a brand-new file. `PRAGMA user_version` is
-//! still stamped as a sanity check, but the filename — not this pragma — is
-//! the real version (`versioning.rs`).
+//! This crate versions by **filename** (`versioning.rs`, plan decision 2)
+//! rather than migrating a schema in place: a schema-shape change ships as
+//! a new `rune-v{N}.db`, leaving the old file and its journal untouched, so
+//! `SCHEMA` here only ever needs to describe a single, frozen shape applied
+//! once to a brand-new file. `PRAGMA user_version` is still stamped as a
+//! sanity check, but the filename — not this pragma — is the real version
+//! (`versioning.rs`).
 //!
 //! Table-by-table rationale (inode/device NULL-not-zero, `observations`'s
 //! deliberately cascade-free session FK, `session_documents` holding
-//! per-session undo position and CAS baseline, etc.) is preserved verbatim
-//! from the Go source as inline comments below — this is a faithful
-//! transcription, not a redesign.
+//! per-session undo position and CAS baseline, etc.) is documented inline
+//! as comments below.
 
 use rusqlite::Connection;
 
@@ -47,7 +45,7 @@ CREATE TABLE IF NOT EXISTS blobs (
 -- sessions: one row per Store construction (one per rune process, in
 -- production) — the process identity that lets the journal tell its own
 -- history apart from a DIFFERENT process's edits sharing the same store
--- (v10, CONSTITUTION.md §12). proc_started_at is the OS-reported start time
+-- (v10). proc_started_at is the OS-reported start time
 -- of pid, recorded once at construction (session.rs) — the only thing that
 -- lets a LATER session tell "pid still running MY writer" apart from "pid
 -- recycled to an unrelated process since". A session row is deliberately

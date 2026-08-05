@@ -1,5 +1,6 @@
-//! Static session-generation data, split out of `generate` (§1.6 budget):
-//! the four string palettes and the fixed `KeyInput`s/`KeyInput` slices
+//! Static session-generation data, split out of `generate` (500-line
+//! budget): the four string palettes and the fixed `KeyInput`s/`KeyInput`
+//! slices
 //! every `cluster_*` strategy in `cluster.rs` draws from.
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -71,12 +72,12 @@ pub(super) static SEEDS: &[(&str, &str)] = &[
     ),
 ];
 
-/// `Action::Paste`/`Action::ClipboardReply` payloads: Go's 16 entries,
-/// verbatim by code point.
+/// `Action::Paste`/`Action::ClipboardReply` payloads, verbatim by code
+/// point.
 /// `Paste`/`ClipboardReply` insert bytes with NO filtering
 /// with no filtering, so this is the only place byte-hostile
 /// content — CRLF, tab, ZWSP, a real ZWJ family sequence — can reach the
-/// buffer and exercise the §1.4.5 byte-verbatim edge (G3). Invalid UTF-8 is
+/// buffer and exercise the byte-verbatim edge (G3). Invalid UTF-8 is
 /// out of scope: the Rust `Buffer` is a `String` and cannot represent it.
 pub(super) static PASTE_PALETTE: &[&str] = &[
     "",
@@ -494,9 +495,9 @@ pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
     },
 };
 
-/// Unmodified printable-letter keys for the Explorer type-to-search feature
-/// (Go filetree parity, `explorer_search.rs`): `KeyPattern::printable`'s
-/// wildcard row matches any non-control `Char` under `Mods::NONE`, so this
+/// Unmodified printable-letter keys for the Explorer type-to-search
+/// feature: `KeyPattern::printable`'s wildcard row matches any non-control
+/// `Char` under `Mods::NONE`, so this
 /// is only ever exercised if a generated key actually reaches the Explorer
 /// AS an unmodified letter — `cluster_chrome`'s `^b`-then-type arm
 /// (`cluster.rs`) is what supplies that reachability, letting `PANE-NO-

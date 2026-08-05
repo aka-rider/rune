@@ -1,5 +1,5 @@
 //! `Block::Table`'s emit arm (plan WP2.S7, WP4) — split out of `walk.rs` on
-//! its own (CONSTITUTION §1.6: `walk.rs` was already over budget before this
+//! its own (`walk.rs` was already over the file-size limit before this
 //! function existed) since a table's layout selection and per-row dispatch
 //! is a self-contained concern, distinct from the rest of the block/inline
 //! tree walk.
@@ -28,10 +28,9 @@ use rune_syntax::syntax::{RowBoundary, TableRole, TableRowInfo};
 ///   (`table::layout::constrain_widths`), each cell's own text word-wrapped
 ///   (`table::wrapped::wrap_cell`) across as many visual rows as the widest
 ///   cell in that row needs; every char is decorative (`buf = -1`) once
-///   wrapping has reshuffled a cell's content — Go's own choice, not a
-///   shortcut this port takes alone.
-/// - Pivoted — a header/separator line renders BLANK (suppressed, Go
-///   parity); a body line renders one `"  Label: Value"` row per column
+///   wrapping has reshuffled a cell's content.
+/// - Pivoted — a header/separator line renders BLANK (suppressed); a body
+///   line renders one `"  Label: Value"` row per column
 ///   (`table::pivot::pivot_rows`), preceded by a `─`-filled rule for every
 ///   record but the first. Label chars are decorative (Gotcha 4: the label
 ///   comes from the HEADER line, not this row's own bytes); value chars
@@ -109,7 +108,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
     // Pivoted-only bookkeeping: the header row's own rendered cells supply
     // every body row's LABELS; the first body row (found by document
     // order, not `sep_line` arithmetic — robust to a malformed or absent
-    // delimiter line) never gets a leading separator rule (Go parity).
+    // delimiter line) never gets a leading separator rule.
     let header_cells: &[render::RenderedCell] = t
         .rows
         .iter()
@@ -155,7 +154,7 @@ pub(super) fn emit_table(content: &str, starts: &[usize], t: &TableM, out: &mut 
             // Neither a modeled row's line nor the derived separator line
             // — an unexpected gap within the table's own span (should not
             // occur for a well-formed table; degrade to raw text rather
-            // than inventing content, §1.3).
+            // than inventing content).
             push_span_split_by_line(
                 content,
                 starts,

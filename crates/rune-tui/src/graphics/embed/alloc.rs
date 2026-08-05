@@ -2,12 +2,11 @@
 //! the resolved absolute path that owns it — one instance lives on
 //! `Document::embeds` (`EmbedSet`), surviving across reconcile passes so an
 //! id stays stable for a path's whole lifetime rather than being
-//! re-derived (and potentially colliding differently) every time. Ports
-//! Go's `imageIDAllocator` (`golang/pkg/ui/components/markdownedit/
-//! image_allocator.go`), minus the clone-on-write shape Go's value-typed
-//! `Model` needs — `Document` already owns its `EmbedSet` by `&mut`
-//! reference through the normal `App::doc_mut` chokepoint, so plain
-//! in-place mutation is both simpler and exactly as safe.
+//! re-derived (and potentially colliding differently) every time. Owned
+//! directly, with no clone-on-write layer — `Document` already owns its
+//! `EmbedSet` by `&mut` reference through the normal `App::doc_mut`
+//! chokepoint, so plain in-place mutation is both simpler and exactly as
+//! safe.
 
 use std::collections::HashMap;
 

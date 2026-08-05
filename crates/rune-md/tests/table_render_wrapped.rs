@@ -1,6 +1,6 @@
 //! WP4: end-to-end Wrapped-layout table rendering through the real
 //! pipeline (parse -> sync_cursors -> emit). Split from the combined
-//! `table_render` file (§1.6) into per-layout groups — this one is
+//! `table_render` file into per-layout groups — this one is
 //! Wrapped.
 //!
 //! Every "Rendered" assertion below uses `focused = false`: an unfocused

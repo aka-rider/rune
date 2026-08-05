@@ -2,7 +2,7 @@
 //! split across `db_wiring_degraded.rs` (the degraded-store banner and its
 //! confirm gate), `db_wiring_hydrate.rs` (restart hydration and Load-ack
 //! adoption), and `db_wiring_lifecycle.rs` (open/close op bookkeeping and
-//! the bootstrap handover) — TODO.md's §1.6 split of the original
+//! the bootstrap handover) — TODO.md's 500-line budget split of the original
 //! `db_wiring.rs`. Each consumer pulls this in via `mod db_wiring_common;`
 //! — integration test files are separate binaries, so this is the one
 //! place all three draw an identical `Store`/`App` fixture from, rather

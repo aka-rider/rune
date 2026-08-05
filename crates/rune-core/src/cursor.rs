@@ -1,12 +1,12 @@
 //! Multi-cursor byte-offset primitives with anchor/position selection.
-//! Ported from Go's cursor package. Phase 1 runs a single cursor;
-//! `CursorSet` is the Go-parity seam for the multi-cursor future.
+//! Phase 1 runs a single cursor; `CursorSet` is built to grow into the
+//! multi-cursor future.
 
 use crate::assert_invariant;
 use crate::buffer::{AppliedEdit, edit_delta};
 
 /// One cursor: `position` is the head (blinks), `anchor` is the tail
-/// (`position == anchor` means no selection). Port of `cursor.go`.
+/// (`position == anchor` means no selection).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Cursor {
     /// Byte offset — the "head" (where the cursor blinks).
@@ -56,9 +56,9 @@ impl Cursor {
     }
 }
 
-/// An ordered, non-overlapping set of cursors. Port of
-/// `cursor.go`; `merge()` is the invariant-preserving chokepoint
-/// every constructor and mutator routes through.
+/// An ordered, non-overlapping set of cursors. `merge()` is the
+/// invariant-preserving chokepoint every constructor and mutator routes
+/// through.
 ///
 /// Invariant: `cursors` is never empty — every public constructor produces
 /// at least one cursor, and `merge` only ever coalesces cursors together,
@@ -82,7 +82,6 @@ impl Default for CursorSet {
 }
 
 impl CursorSet {
-    /// Port of `cursor.go`.
     pub fn new(offset: usize) -> CursorSet {
         CursorSet {
             cursors: vec![Cursor {
@@ -95,7 +94,6 @@ impl CursorSet {
         }
     }
 
-    /// Port of `cursor.go`.
     pub fn new_from(cursors: &[Cursor]) -> CursorSet {
         if cursors.is_empty() {
             return CursorSet::new(0);
@@ -120,7 +118,6 @@ impl CursorSet {
         cs.merge()
     }
 
-    /// Port of `cursor.go`.
     pub fn new_from_positions(positions: &[usize]) -> CursorSet {
         if positions.is_empty() {
             return CursorSet::new(0);
@@ -176,7 +173,6 @@ impl CursorSet {
         self.cursors.len() > 1
     }
 
-    /// Port of `cursor.go`.
     pub fn add(&self, mut c: Cursor) -> CursorSet {
         let mut next_id = self.next_id;
         if c.id == 0 {
@@ -201,7 +197,7 @@ impl CursorSet {
 
     /// Sort by `(selection_start, selection_end, id)`, then coalesce any
     /// cursors whose selections touch or overlap into their lower-id
-    /// survivor. Port of `cursor.go`.
+    /// survivor.
     pub fn merge(&self) -> CursorSet {
         if self.cursors.len() <= 1 {
             return self.clone();
@@ -281,8 +277,8 @@ impl CursorSet {
         res.merge()
     }
 
-    /// Port of `cursor.go`: shift cursor offsets after a single
-    /// `[start, end)` -> `insert_len`-byte replace.
+    /// Shift cursor offsets after a single `[start, end)` ->
+    /// `insert_len`-byte replace.
     pub fn adjust_after_edit(&self, start: usize, end: usize, insert_len: usize) -> CursorSet {
         let net: isize = edit_delta(end - start, insert_len);
         self.map(move |c| {
@@ -303,11 +299,8 @@ impl CursorSet {
         })
     }
 
-    /// Port of `cursor.go`: shift cursor offsets after a whole
-    /// applied-edit batch. `edits` is in the same descending-`start` order
-    /// `Buffer::apply_edits` returns; walking it from the last element
-    /// (smallest `start`) to the first mirrors Go's `for i := len-1; i >=
-    /// 0; i--`.
+    /// Shift cursor offsets after a whole applied-edit batch. `edits` is in
+    /// the same descending-`start` order `Buffer::apply_edits` returns.
     pub fn adjust_after_batch_edits(&self, edits: &[AppliedEdit]) -> CursorSet {
         self.map(|c| {
             let adjust = |pos: usize| -> usize {

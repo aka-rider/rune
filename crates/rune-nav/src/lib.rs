@@ -10,8 +10,8 @@
 //! in the same change, rather than finding a half-wired one already
 //! sitting here.
 //!
-//! Split (CONSTITUTION §1.6) into topic modules: `types` (the data shapes),
-//! `resolve` (filesystem resolution), `external` (the URL-scheme
+//! Split (500-line budget) into topic modules: `types` (the data
+//! shapes), `resolve` (filesystem resolution), `external` (the URL-scheme
 //! allowlist), and `anchor` (anchor-name matching). This file stays the
 //! crate's public surface only — declarations and re-exports — so the
 //! crate's external API path is unchanged for its consumers.

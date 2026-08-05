@@ -1,4 +1,4 @@
-//! Paints a code region's background as a RECTANGLE (§1.6 split of the
+//! Paints a code region's background as a RECTANGLE (500-line budget split of the
 //! render module): every display row belonging to a `CodeRegion` is filled
 //! with `Theme::chrome.code_bg` from the end of its own decoration prefix to
 //! the right edge of the pane.
@@ -104,7 +104,7 @@ pub(super) fn paint_code_background(
 /// Columns before `start_col` are the row's decoration prefix and keep their
 /// own style untouched — that is what puts a blockquote's bar in front of
 /// the background rather than under it. The column walk sums `Cell::width`
-/// (terminal CELLS, §1.5), never a byte or `char` count, so a wide glyph
+/// (terminal CELLS), never a byte or `char` count, so a wide glyph
 /// advances the cursor by the columns it actually occupies.
 fn fill_row(cells: &mut Vec<Cell>, start_col: usize, width: usize, bg: Color) {
     let mut col = 0usize;

@@ -1,4 +1,4 @@
-//! Cursor/selection overlays, split out of `render` (§1.6 budget):
+//! Cursor/selection overlays, split out of `render` (500-line budget):
 //! `build_rows` calls `apply_highlight_spans` after collecting a row's plain
 //! `segment_cells` and painting the code-region background rectangle
 //! underneath them, then `apply_cursor_overlays`, patching in the selection
@@ -267,7 +267,6 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
             if cell.buf_offset >= 0 {
                 let offset = cell.buf_offset as usize;
                 if offset >= start && offset < end {
-                    // Go `Selection` (`styles.go`, WP2.S2 migration).
                     cell.style = cell.style.bg(theme.chrome.selection_bg);
                 }
             }
@@ -276,8 +275,8 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
 }
 
 /// Reverse-video the cell at `visual_col`, or — if the caret sits past the
-/// last visible char on this row — append a synthetic EOL cursor cell (port
-/// of Go `render.go`). Only ever reached when the caller has already
+/// last visible char on this row — append a synthetic EOL cursor cell.
+/// Only ever reached when the caller has already
 /// decided the caret may be shown (`apply_cursor_overlays`'s `caret` gate) —
 /// none of its three REVERSED paths (this cell, the boxed-row last cell
 /// below, or the synthetic EOL push) runs on an unfocused or read-only

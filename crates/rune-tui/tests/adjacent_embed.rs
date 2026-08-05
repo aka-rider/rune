@@ -1,7 +1,6 @@
 //! An embed on its own LINE inside a larger paragraph — prose directly above
 //! and below with no blank line separating them — must still render as an
-//! image. Qualification is per line, not per paragraph, matching the Go
-//! reference's own `isStandaloneImageLine`.
+//! image. Qualification is per line, not per paragraph.
 //!
 //! Every other embed fixture in this crate puts a blank line either side, so
 //! the paragraph-scoped predicate that used to reject this layout went

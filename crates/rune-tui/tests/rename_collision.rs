@@ -1,7 +1,7 @@
 //! Rename "Done when" tests: the collision guard and both halves of
 //! hazard 1 (a prompt that is never raised, and one that is displaced
 //! later), the stale-ticket drop, and the close-while-colliding cleanup —
-//! TODO.md's §1.6 split of the original `rename.rs`. Focus/typing, the
+//! TODO.md's 500-line budget split of the original `rename.rs`. Focus/typing, the
 //! refusals, the no-store end-to-end rename, and draft naming live in the
 //! sibling `rename_bind.rs`; the store-backed `[R]eplace` path lives in
 //! `rename_replace.rs`; the WP2 focus-loss-is-the-commit-chokepoint suite
@@ -135,7 +135,7 @@ fn escape_on_the_rename_collision_guard_sets_a_cancellation_status() {
 }
 
 /// `r` on the guard for a `db: None` document cannot capture the displaced
-/// bytes (§1.4.10), so the prompt stays up with an explanation and the disk
+/// bytes, so the prompt stays up with an explanation and the disk
 /// is untouched. The footer must not offer `[R]eplace` either.
 #[test]
 fn replace_is_refused_and_unoffered_without_a_store() {

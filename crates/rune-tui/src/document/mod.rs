@@ -11,7 +11,7 @@
 //! can itself change reveal-driven display geometry the first reconcile
 //! already settled against — see `sync`'s own docs).
 //!
-//! Split for the §1.6 budget: this file holds the type itself plus
+//! Split for the 500-line budget: this file holds the type itself plus
 //! construction/identity/hydration/save-state bookkeeping; [`sync`] holds
 //! the view/scroll/settle sequence (`view`, `sync_catalogue`,
 //! `scroll_to_cursor`, `sync`) as a second `impl Document` block, since none
@@ -73,16 +73,14 @@ pub struct Document {
     /// mutating command can forget the guard (review finding F1: an earlier
     /// version checked this only in `commands::clipboard::handle_paste_
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
-    /// "read-only" document — the exact Go bug `commands_clipboard.go`'s
-    /// comment describes, reintroduced by guarding the wrong layer).
+    /// "read-only" document — a bug class reintroduced by guarding the
+    /// wrong layer).
     /// `commands::edit::undo`/`redo` check this field but only against
     /// `ReadOnly::Reading`/`ReadOnly::Preview`, never via a blanket
-    /// `is_read_only()`.
-    /// `ReadOnly::Always` keeps the documented Go-parity exemption — Go's own
-    /// `ApplyInverse`/`Reapply` (`edit_primitives.go`) bypass `m.readOnly`
-    /// the same way `ReplaceRange` (`edit_primitives.go`) does not — because
-    /// `Always` means the document has no editable form at all (Help, an
-    /// image, the error banner), not a view mode the user can leave.
+    /// `is_read_only()`. `ReadOnly::Always` stays exempt from that guard,
+    /// because `Always` means the document has no editable form at all
+    /// (Help, an image, the error banner), not a view mode the user can
+    /// leave.
     /// `Reading` is different: it is a toggle the user reaches and leaves
     /// with the same chord (⌃P), so undo/redo are blocked there while the
     /// toggle is on. The two chords diverge deliberately: in `Reading`,
@@ -123,10 +121,10 @@ pub struct Document {
     /// The path an in-flight `bind_new` materialize is trying to CREATE
     /// (`save::bind_new_now`). Deliberately not `file_path`: a create that
     /// loses the no-clobber race must leave the draft untitled, or a later
-    /// ⌘S would overwrite the winner (§0.1 rung 1). `handle_materialize_ack`
+    /// ⌘S would overwrite the winner. `handle_materialize_ack`
     /// moves it into `file_path` only once the write actually commits.
     pub pending_bind_path: Option<PathBuf>,
-    /// The render-only dirty cache (CONSTITUTION §1.4.8): `is_dirty` reads
+    /// The render-only dirty cache: `is_dirty` reads
     /// ONLY this field. Recomputed in `update`, and ONLY there, at exactly
     /// two trigger points — see `materialize_ack::recompute_dirty`'s doc comment.
     /// `pub(crate)` (not private) because the recompute chokepoint now lives
@@ -194,8 +192,8 @@ pub struct Document {
     pub embeds: crate::graphics::EmbedSet,
     /// The most recent [`rune_db::SyncKind`] a `Probe`/`Load` ack reported
     /// for this document (plan WP2) — RENDER/HINT STATE ONLY, never a
-    /// decision input (CONSTITUTION §12: sync state must be derived fresh
-    /// by journal position at the moment a decision needs it, never cached).
+    /// decision input: sync state must be derived fresh by journal position
+    /// at the moment a decision needs it, never cached.
     /// The footer's passive `disk changed` hint reads this; nothing that
     /// mutates the buffer or the recovery store may branch on it. `None`
     /// before the first `Load`/`Probe` ack lands for this document.
@@ -234,8 +232,8 @@ pub enum ReadOnly {
 
 impl ReadOnly {
     /// The wording for why a read-only document refuses, or `None` for
-    /// `No` — which refuses nothing, so it has no wording to give (§1.7:
-    /// carry that out of band instead of a sentinel string a missed check
+    /// `No` — which refuses nothing, so it has no wording to give (carry
+    /// that out of band instead of a sentinel string a missed check
     /// could pass off as real). `Reading` names the way out because the
     /// user reached it with a chord that also leaves it; `Always` has no
     /// way out to name. The one place both user-initiated refusal
@@ -270,12 +268,12 @@ impl Document {
 
     /// Whether the caret and selection background may be painted onto this
     /// document's cells, AND whether reveal may key off the cursor at all
-    /// — the second consumer of the identical predicate. Go's
-    /// three overlay gates (`textedit/render.go`) are all
-    /// `focused && !readOnly`: an unfocused pane must not show a caret that
-    /// would mislead about where keystrokes land, and a read-only document
-    /// (the virtual Help tab, the error-banner document) has no insertion
-    /// point to point at — nor anything to reveal raw markdown under.
+    /// — the second consumer of the identical predicate: both overlay
+    /// gates are `focused && !readOnly`: an unfocused pane must not show a
+    /// caret that would mislead about where keystrokes land, and a
+    /// read-only document (the virtual Help tab, the error-banner document)
+    /// has no insertion point to point at — nor anything to reveal raw
+    /// markdown under.
     /// `focused` itself already folds in `modal.is_none()` — see
     /// `App::sync_view`.
     pub fn has_insertion_point(&self) -> bool {
@@ -402,7 +400,7 @@ impl Document {
     /// first). Applies three things every hydration route must do
     /// identically, so they cannot drift apart again:
     ///
-    /// (a) the §1.3 destructive-async-reset suspicion check — refuses an
+    /// (a) the destructive-async-reset suspicion check — refuses an
     /// adoption that would empty or drastically shrink a non-empty buffer,
     /// leaving `self` untouched;
     /// (b) journals the adoption as one synthetic bridge `Step` (pushed
@@ -420,8 +418,8 @@ impl Document {
     /// `ReadOnly::Reading`. Hydration adopts the user's OWN unsaved
     /// recovered draft — refusing it to honour a view mode would DISCARD
     /// already-typed bytes, a worse failure than a buffer changing once
-    /// under a reading view (§1.4.3, and the prime directive that the
-    /// user's words win). This is silent by design nowhere else: state it
+    /// under a reading view (the prime directive that the user's words
+    /// win). This is silent by design nowhere else: state it
     /// here so it reads as a decision, not an oversight.
     pub fn hydrate(&mut self, disk_content: &str, recovered: &str) -> Hydration {
         if recovered == disk_content {
@@ -463,7 +461,7 @@ impl Document {
 
     /// The only way a document acquires (or reacquires) a path. Clears any
     /// `display_name` override so `file_name()` derives from the new path
-    /// (§1.7: one value, one meaning) — a document once shown under a
+    /// (one value, one meaning) — a document once shown under a
     /// placeholder name (an "Untitled N" draft, a rename in progress) must
     /// switch over to its real name the moment it actually has one. Also
     /// the only place `kind` is recomputed (plan WP4.S4) — pushed into

@@ -1,7 +1,6 @@
 //! `Vfs::read_dir` tests — direct-children enumeration, sorted
 //! directories-first then case-INsensitively by name (ties broken by exact,
-//! original-case name), for both `Disk` and `Mem` — matches the Go
-//! workspace's own file-listing order.
+//! original-case name), for both `Disk` and `Mem`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rune_vfs::{DirEntry, Disk, Mem, Vfs};
@@ -235,8 +234,8 @@ fn mem_read_dir_dedups_synthetic_dir_from_multiple_keys() {
 }
 
 /// Sort order: directories before files, then case-INsensitively by name
-/// within each group (matches the Go reference — see this file's module
-/// docs). This fixture's names happen to sort the same way case-sensitively
+/// within each group, ties broken by exact, original-case name. This
+/// fixture's names happen to sort the same way case-sensitively
 /// too; `mem_read_dir_sort_order_is_case_insensitive_with_a_mixed_case_tiebreak`
 /// below covers a fixture where that would NOT hold.
 #[test]
@@ -386,7 +385,7 @@ fn mem_read_dir_parent_listing_dedups_a_name_claimed_as_both_file_and_dir() {
 /// WP13.S1 (finding `rune-tui C 1`): a name that isn't valid UTF-8 gets a
 /// lossy `name` (display-only, may contain U+FFFD) but `path` must still
 /// be the byte-exact key — round-tripping it back through `Vfs::stat`
-/// (rather than rebuilding a path from `name`, which is exactly the §0
+/// (rather than rebuilding a path from `name`, which is exactly the
 /// mangling this field exists to make unrepresentable) must find the same
 /// file.
 #[test]

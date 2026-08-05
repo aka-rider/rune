@@ -31,7 +31,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(200);
 /// gate (see module docs), then decides from `COLORTERM` regardless of
 /// whether a reply arrived in time — a terminal that never replies
 /// degrades to the `COLORTERM` fallback exactly like one that isn't
-/// attached at all (§1.3: never block indefinitely waiting on a query that
+/// attached at all (never block indefinitely waiting on a query that
 /// may never be answered).
 pub fn supports_truecolor(term: &mut impl Terminal) -> bool {
     let _ = write!(

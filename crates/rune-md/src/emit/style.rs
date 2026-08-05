@@ -26,7 +26,7 @@ pub static SCOPES: LazyLock<ScopeTable> = LazyLock::new(scope_table);
 /// `rune_syntax::scope::EXTENDED_SCOPES`, so resolution always succeeds
 /// through `ScopeTable::resolve`'s exact-match branch — the `unwrap_or`
 /// fallback to `ScopeId(0)` (`"text"`, registered first) exists only so a
-/// future typo here degrades gracefully (§1.3) instead of panicking, never
+/// future typo here degrades gracefully instead of panicking, never
 /// because it's expected to fire.
 fn scope(name: &str) -> ScopeId {
     SCOPES.resolve(name).unwrap_or(ScopeId(0))
@@ -150,9 +150,8 @@ pub(crate) fn image_scope() -> ScopeId {
     scope("markup.image")
 }
 
-/// No Go equivalent (Go doesn't style frontmatter separately) — kept at the
-/// pre-WP4 choice of a dim, de-emphasized tone, now expressed as the
-/// `comment` scope.
+/// Frontmatter gets its own dim, de-emphasized tone (the pre-WP4 choice),
+/// now expressed as the `comment` scope.
 pub(crate) fn frontmatter_scope() -> ScopeId {
     scope("comment")
 }

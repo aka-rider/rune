@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): MAJOR (verification
+//! Split off `conceal_roundtrip.rs` (WP11): MAJOR (verification
 //! round 9, second and third fuzz-driven pass) — the same exhaustive audit
 //! that found `Block::Verbatim` missing container-aware per-line treatment
 //! found the identical gap in inline constructs: `EmphasisM`'s Revealed-

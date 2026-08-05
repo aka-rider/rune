@@ -1,7 +1,7 @@
 //! WP5 "Done when" tests: Open Tabs rendering/switching, and the close
 //! guard's three resolutions (`[S]ave`, `[D]iscard`, `Esc`), driven against
 //! a `Mem` vfs seeded with two files. The GLOBAL `^w`/`^1`-`^0` binding
-//! tests live in the sibling `opentabs_global.rs` (TODO.md's §1.6 split);
+//! tests live in the sibling `opentabs_global.rs` (TODO.md's 500-line budget);
 //! both pull shared fixtures from `opentabs_common`.
 #![allow(
     clippy::unwrap_used,

@@ -276,7 +276,7 @@ fn footer_shows_copy_hint_in_modal_mode() {
     );
 }
 
-// ── Unit tests moved out of `banner.rs` itself (§1.6: the Guard plumbing
+// ── Unit tests moved out of `banner.rs` itself (the Guard plumbing
 // pushed that file past the 500-line budget). The priority tests keep their
 // original outcomes — only `set_modal`'s numbers decide them, and those did
 // not change — but each now also asserts the `bool` `set_modal` returns,

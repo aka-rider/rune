@@ -1,4 +1,4 @@
-//! Split off `highlight_fence.rs` (§1.6): the render-side fence case — the
+//! Split off `highlight_fence.rs` (500-line budget): the render-side fence case — the
 //! code-region background rectangle must survive the overlay patch while
 //! inline markdown ranges inside the fence still carry their own scopes'
 //! styles. Kept apart from the span-production cases because this one

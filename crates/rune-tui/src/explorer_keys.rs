@@ -1,11 +1,12 @@
 //! `Pane::Explorer`-focused key handling (split out of `explorer.rs` per
-//! §1.6): `ExplorerCommand`'s binding table and `handle_key`, called from
-//! `app::handle_key`'s stage-3 dispatch. Directory loading/listing state
-//! stays in `explorer.rs`; `move_selection`/`open_selected`/`go_to_parent`
-//! below reach back into it (`explorer::ensure_visible`/`request_dir`) for
-//! the pieces `handle_dir_loaded` also needs to share. Type-to-search
-//! (Go filetree parity, no wall clock) is a sibling module,
-//! `explorer_search`, split out to keep this file under the §1.6 budget —
+//! the 500-line budget): `ExplorerCommand`'s binding table and `handle_key`,
+//! called from `app::handle_key`'s stage-3 dispatch. Directory
+//! loading/listing state stays in `explorer.rs`; `move_selection`/
+//! `open_selected`/`go_to_parent` below reach back into it
+//! (`explorer::ensure_visible`/`request_dir`) for the pieces
+//! `handle_dir_loaded` also needs to share. Type-to-search (no wall clock)
+//! is a sibling module, `explorer_search`, split out to keep this file
+//! under the 500-line budget —
 //! it owns `ExplorerSearchCommand`/`EXPLORER_SEARCH_BINDINGS`/
 //! `handle_search`, and `handle_key` below consults it FIRST.
 
@@ -34,7 +35,7 @@ pub enum ExplorerCommand {
 /// Arrow keys move one entry; Home/End jump to the ends; Enter opens the
 /// selected entry (a file activates it, a directory navigates into it);
 /// Backspace navigates to the parent of the CURRENT root (not the selected
-/// entry) — mirroring Go filetree's `..`-less parent-dir chord.
+/// entry).
 pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
@@ -95,7 +96,7 @@ pub const EXPLORER_BINDINGS: &[Binding<ExplorerCommand>] = &[
 /// `app.focus() == Pane::Explorer`. `effects` is needed (unlike the plan's
 /// literal `handle_key(app, key) -> KeyOutcome` sketch) because `Open`/
 /// `ParentDir` must enqueue a `ReadDir` `Cmd` — a Vfs read can never run
-/// inline in `update` (§5.4) — the same reason `app::handle_editor_key`
+/// inline in `update` — the same reason `app::handle_editor_key`
 /// this mirrors already threads `effects` through for `Save`/clipboard.
 ///
 /// Type-to-search (`explorer_search::EXPLORER_SEARCH_BINDINGS`) is checked
@@ -159,8 +160,8 @@ fn move_selection(app: &mut App, delta: isize, effects: &mut Effects) {
 /// read_dir` returned (plan WP13.S1) — never rejoined from `entry.name`
 /// onto `app.explorer.root`: `name` is lossy-decoded for display, and
 /// rejoining it would let a byte the user's filename actually has silently
-/// become U+FFFD in the path the app opens (§0). The directory branch
-/// resolves the candidate root through `app.vfs.resolve` first (§1.4.9),
+/// become U+FFFD in the path the app opens. The directory branch
+/// resolves the candidate root through `app.vfs.resolve` first,
 /// same as `initial_root`/`open_path` already do — a plain `join` would let
 /// an unresolved (e.g. symlinked) path become the Explorer's new root,
 /// unlike every other root-changing path in this module. Falls back to the

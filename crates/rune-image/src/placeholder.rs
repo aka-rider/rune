@@ -5,9 +5,10 @@
 /// The Unicode placeholder rune (U+10EEEE) for virtual placement.
 pub const PLACEHOLDER: char = '\u{10EEEE}';
 
-/// The 297-entry row/column diacritic table, copied verbatim and in order
-/// from the vendored `github.com/charmbracelet/x/ansi` kitty package this
-/// port mirrors byte-for-byte.
+/// The 297-entry row/column diacritic table defined by the Kitty graphics
+/// protocol's virtual-placement mode (see the module docs), copied
+/// verbatim and in order, matching the committed golden expectations
+/// byte-for-byte.
 static DIACRITICS: [char; 297] = [
     '\u{0305}',
     '\u{030D}',

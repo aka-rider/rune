@@ -1,8 +1,7 @@
 //! `sync_embeds` (plan WP9.S4/S5/S7): the spawn/despawn reconciler for the
-//! ACTIVE document's inline embeds, ported from Go's `syncImageSet`
-//! (`golang/pkg/ui/components/markdownedit/image_integration.go`) minus the
-//! iTerm2 placement half (Kitty-only, decision 2) and minus animation frame
-//! ids (WP10's own scope — none exist yet for an embed).
+//! ACTIVE document's inline embeds, scoped to Kitty-only placement (decision
+//! 2, no iTerm2 half) with no animation frame ids yet (WP10's own scope —
+//! none exist yet for an embed).
 //!
 //! Spawn and despawn are DELIBERATELY asymmetric (plan gotcha 2): spawn
 //! only ever considers a RENDERED-only standalone image line
@@ -119,9 +118,9 @@ fn spawn_or_respawn(
             // Plan gotcha 3: on an mtime respawn, delete FRAME ids only,
             // never the base id — the respawn reuses the base id and its
             // own retransmit would race a base-id delete. The allocator
-            // entry for that id is therefore left exactly as it is (Go's
-            // own comment: "the allocator entries stay until despawn's
-            // FreeAllForPath — conservative, no reuse, no collision").
+            // entry for that id is therefore left exactly as it is:
+            // allocator entries stay until despawn's FreeAllForPath —
+            // conservative, no reuse, no collision.
             // WP9 tracks no frame ids at all (animation is WP10's scope),
             // so there is nothing else to delete here.
             let Some(state) = doc.embeds.images.get_mut(target) else {
@@ -240,8 +239,8 @@ fn resolve_embed_path(
     }
 }
 
-/// `abs_path`'s current mtime, or `None` when the stat fails — the same
-/// "unavailable" sentinel Go's `fileMtime` collapses to `0` for.
+/// `abs_path`'s current mtime, or `None` when the stat fails — the
+/// "unavailable" sentinel.
 fn file_mtime(vfs: &dyn Vfs, abs_path: &Path) -> Option<SystemTime> {
     vfs.stat(abs_path).ok().map(|s| s.mtime)
 }

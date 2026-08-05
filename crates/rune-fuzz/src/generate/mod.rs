@@ -14,8 +14,8 @@
 //! and paired with a `(path, content)` seed from `SEEDS` (plan Assumption
 //! A3, extended by WP7.S3 to include non-markdown paths). The static
 //! palette data lives in `palette.rs` and the `cluster_*` strategies in
-//! `cluster.rs` (§1.6 budget) — this file is left with just the public
-//! entry point tying the two together.
+//! `cluster.rs` (500-line budget) — this file is left with just the
+//! public entry point tying the two together.
 
 mod cluster;
 mod palette;
@@ -33,7 +33,7 @@ use palette::SEEDS;
 /// One whole fuzz case: `(path, content, actions)` — the seed path and
 /// content (plan WP7.S2/S3) plus a weighted "normal human session" of
 /// 1..=40 clusters, concatenated and capped at 120 actions (plan Assumption
-/// A3, mirroring Go's `maxHumanEvents = 160`).
+/// A3).
 pub fn arb_session() -> impl Strategy<Value = (String, String, Vec<Action>)> {
     (
         select(SEEDS).prop_map(|(path, content)| (path.to_string(), content.to_string())),

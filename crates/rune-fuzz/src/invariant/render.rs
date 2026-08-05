@@ -1,6 +1,5 @@
-//! Cell-model invariants: `CELL-OFFSET`/`CELL-NO-EOL`/`CELL-ORDER` (Go
-//! `R4`/`R5`, `R8`, `R3`) over `Snapshot.cells`, plus the pure comparator
-//! half of `SYNC-IDEMPOTENT` (§8 "Render Purity").
+//! Cell-model invariants: `CELL-OFFSET`/`CELL-NO-EOL`/`CELL-ORDER` over
+//! `Snapshot.cells`, plus the pure comparator half of `SYNC-IDEMPOTENT`.
 //!
 //! `SYNC-IDEMPOTENT` itself needs a SECOND live `app.sync_view()` call with
 //! no intervening message — it is a comparison of two consecutive renders
@@ -87,7 +86,7 @@ pub fn sync_idempotent(
     None
 }
 
-/// `CELL-OFFSET` (L0, sampled per G19; Go `R4`/`R5`) — every
+/// `CELL-OFFSET` (L0, sampled per G19) — every
 /// `Cell.buf_offset` is `-1` or a valid, in-bounds, char-boundary byte
 /// offset into `content`; a non-negative offset implies `width >= 1` (a
 /// real buffer byte always renders as at least one cell).
@@ -131,7 +130,7 @@ pub fn cell_offset(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CELL-NO-EOL` (L0, sampled per G19; Go `R8`) — no cell's `text` is `\n`
+/// `CELL-NO-EOL` (L0, sampled per G19) — no cell's `text` is `\n`
 /// or `\r`: those bytes carry zero display width and must never reach a
 /// rendered cell (`push_grapheme_cells` drops them, `render.rs`). A
 /// grapheme cluster is never a bare `\n`/`\r` plus anything else (both
@@ -155,7 +154,7 @@ pub fn cell_no_eol(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CELL-ORDER` (L0, sampled per G19; Go `R3`) — within each row, cells
+/// `CELL-ORDER` (L0, sampled per G19) — within each row, cells
 /// with a real (non-negative) `buf_offset` are non-decreasing left to
 /// right.
 ///
@@ -191,7 +190,7 @@ pub fn cell_order(snap: &Snapshot) -> Option<Violation> {
 /// `viewport.scroll_row`/`height` `render::build_rows` does), so pairing
 /// `cells[i]` with `row_meta[i]` is always the SAME row. A border row
 /// whose width disagrees with its content rows is exactly the defect
-/// class the Go implementation had (plan WP5's own docs).
+/// class this invariant exists to catch (plan WP5's own docs).
 ///
 /// Active-document-switch-safe: L0, single `Snapshot`'s `cells`/`row_meta`.
 pub fn table_row_width(snap: &Snapshot) -> Option<Violation> {

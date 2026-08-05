@@ -3,7 +3,7 @@
 //! threads share SQLite's in-process lock table and never exercise the real
 //! cross-process locking this crate depends on).
 //!
-//! Split across sibling files (§1.6 budget) but compiled as the ONE
+//! Split across sibling files (line-budget rule) but compiled as the ONE
 //! `multiprocess` test binary — `cargo test`'s directory convention (a
 //! `main.rs` under a `tests/<name>/` directory is still exactly one
 //! integration-test target named `<name>`) — never several. Splitting into

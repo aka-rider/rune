@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): the single-transition-
+//! Split off `conceal_roundtrip.rs` (WP11): the single-transition-
 //! writer grep gate (Ground rule 6). No shared fixtures needed — this test
 //! walks source files directly.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]

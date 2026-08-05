@@ -3,14 +3,13 @@
 //!
 //! Every producer-bug invariant this crate checks (a desynced `line_starts`
 //! index, a duplicate post-edit `start` in `undo::reapply`) is gated on
-//! [`STRICT_INVARIANTS`], never on `cfg(debug_assertions)`: CONSTITUTION
-//! §1.3 requires an ORDINARY build — including an unoptimized debug one a
-//! developer might run directly — to degrade gracefully on a producer bug,
-//! never panic on a real user's document. Only a test run (or a build that
-//! explicitly opts in via the `strict-invariants` feature) treats the
-//! violation as fatal. Mirrors `rune-md`'s and `rune-syntax`'s own
-//! identically-named chokepoint — each crate's gate governs only its own
-//! invariants.
+//! [`STRICT_INVARIANTS`], never on `cfg(debug_assertions)`: an ORDINARY
+//! build — including an unoptimized debug one a developer might run
+//! directly — must degrade gracefully on a producer bug, never panic on a
+//! real user's document. Only a test run (or a build that explicitly opts
+//! in via the `strict-invariants` feature) treats the violation as fatal.
+//! Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
+//! chokepoint — each crate's gate governs only its own invariants.
 
 pub mod buffer;
 pub mod coords;

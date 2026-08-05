@@ -1,9 +1,7 @@
 //! Untitled-draft lifecycle: minting a fresh scratch `documents` row,
 //! sweeping empty leftover ones, listing genuinely recoverable ones from a
 //! prior session, and reconstructing one's content across a session
-//! boundary. Port of `store_documents.go`'s `CreateScratch`/
-//! `GCEmptyScratch`/`RecoverableScratch` and `load.go`'s
-//! `RecoverAcrossSessions` — the untitled-document counterpart to `load.rs`'s
+//! boundary — the untitled-document counterpart to `load.rs`'s
 //! disk-backed cross-session inheritance: an untitled document has no
 //! backing file to fall back to at all, so `Load`'s own "seed the anchor
 //! from raw disk" escape hatch does not exist here.
@@ -18,11 +16,11 @@ use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
 /// Inserts a brand-new, unbound scratch `documents` row and returns its id.
-/// inode/device are left NULL (§1.7 — never a literal 0 sentinel): a scratch
+/// inode/device are left NULL (never a literal 0 sentinel): a scratch
 /// document has no file identity at all. `schema.rs`'s `kind` CHECK already
 /// permits `'scratch'`, and both unique indexes are partial (`WHERE path !=
 /// ''`, `WHERE inode IS NOT NULL`), so many `path=''` rows are legal side by
-/// side. Port of `store_documents.go` (`CreateScratch`).
+/// side.
 pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<i64, Error> {
     let at = format_rfc3339_nanos(now);
     retry::with_retry(conn, |tx| {
@@ -39,8 +37,8 @@ pub fn create_scratch(conn: &mut Connection, now: SystemTime) -> Result<i64, Err
 /// (the live untitled document this session is about to bind). Returns the
 /// number of rows removed.
 ///
-/// Deliberately STRICTER than Go's `GCEmptyScratch`, which omits the `inode
-/// IS NULL` filter: `rebind.rs`/`document.rs` also blank `path` on eviction,
+/// Deliberately includes an `inode IS NULL` filter:
+/// `rebind.rs`/`document.rs` also blank `path` on eviction,
 /// and those orphaned BOUND rows retain a real inode. Without this filter
 /// this would delete evicted-but-bound rows too and cascade away their
 /// `observations` — the CAS-baseline material `sync`/`materialize` derive
@@ -60,8 +58,7 @@ pub fn gc_empty_scratch(conn: &mut Connection, keep_id: i64) -> Result<i64, Erro
 
 /// Lists genuine untitled scratch rows carrying history (events or
 /// snapshots) from a prior session — unsaved work the user can recover on
-/// the next launch — excluding `exclude_id`. Newest first. Port of
-/// `store_documents.go` (`RecoverableScratch`).
+/// the next launch — excluding `exclude_id`. Newest first.
 ///
 /// The `inode IS NULL` filter is load-bearing: `rebind.rs`/`document.rs`
 /// also blank `path` on eviction, and those orphaned BOUND rows keep a real
@@ -86,11 +83,11 @@ pub fn recoverable_scratch(conn: &Connection, exclude_id: i64) -> Result<Vec<i64
 /// inheritance. Composed from [`most_recent_session_for_doc`] (whose session
 /// authored the newest row for `doc_id`), [`is_session_alive`] (a still-live
 /// session's private, unsaved draft stays private), and
-/// [`crate::snapshot::recover_document`] (that session's own reconstruction)
-/// — Go's `RecoverAcrossSessions`, minus its "this session already has its
-/// own history" first branch: every `doc_id` this is called with is one the
-/// CURRENT session has never itself touched (a freshly recovered scratch row
-/// at launch), so that branch can never apply here.
+/// [`crate::snapshot::recover_document`] (that session's own reconstruction).
+/// This omits a "this session already has its own history" branch: every
+/// `doc_id` this is called with is one the CURRENT session has never itself
+/// touched (a freshly recovered scratch row at launch), so that branch can
+/// never apply here.
 ///
 /// `None` covers both "nothing recorded for this doc, ever" and "the most
 /// recent other session is still alive" alike — the caller (bootstrap) skips

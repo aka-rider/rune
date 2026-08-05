@@ -3,7 +3,7 @@
 //! `wikilink_label_range`) that recover markup ranges comrak has no
 //! dedicated node for. `![alt](url)`'s own alt/target range derivation and
 //! `![[target]]` embed recovery live in the sibling `embed` module — split
-//! out to keep this one under CONSTITUTION §1.6's 500-LoC limit.
+//! out to keep this one under the 500-line budget.
 
 use super::embed::{image_alt_range, image_target_range, recover_embeds};
 use super::{ScanHint, line_end_at, node_range};
@@ -273,8 +273,8 @@ fn inline_kind(v: &NodeValue) -> InlineKind {
         NodeValue::Image(l) => InlineKind::Image(l.url.clone()),
         NodeValue::WikiLink(w) => InlineKind::WikiLink(w.url.clone()),
         // Text, SoftBreak, LineBreak, HtmlInline, and any other inline node
-        // kind this crate doesn't model degrade to plain text (plan §0:
-        // "unknown syntax degrades to visible raw text, never lost").
+        // kind this crate doesn't model degrade to plain text
+        // ("unknown syntax degrades to visible raw text, never lost").
         _ => InlineKind::TextLike,
     }
 }

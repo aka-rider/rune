@@ -1,12 +1,12 @@
 //! The Cell model + blit (plan Context, "Cell model"): `DisplaySnapshot`
 //! wrap rows -> `Vec<Vec<Cell>>` (Rendered spans via `cell_map`, Revealed
-//! spans via byte arithmetic — port of Go's cell builder) -> overlays keyed on
+//! spans via byte arithmetic) -> overlays keyed on
 //! `buf_offset` (cursor reverse-video, selection background, synthetic EOL
-//! cursor cell, Go parity) -> blit into `frame.buffer_mut()`.
+//! cursor cell) -> blit into `frame.buffer_mut()`.
 //! The terminal cursor stays hidden (`term::Guard::new`); the caret drawn
-//! here IS the cursor, Go parity.
+//! here IS the cursor.
 //!
-//! Split for the §1.6 budget: [`cell`] holds the `Cell` type and the
+//! Split for the 500-line budget: [`cell`] holds the `Cell` type and the
 //! buffer-content -> `Cell` walk (`segment_cells`/`segment_geometry`),
 //! [`blit`] holds the terminal-buffer write, [`code_bg`] holds the
 //! code-region background rectangle, and [`overlay`] holds the
@@ -122,7 +122,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
 }
 
 // `apply_cursor_overlays`, `highlight_selection`, `place_caret` and
-// `apply_highlight_spans` moved to `overlay.rs` (§1.6 budget) — `build_rows`
+// `apply_highlight_spans` moved to `overlay.rs` (500-line budget) — `build_rows`
 // above calls them through `overlay::`.
 
 /// Blits `app.view`'s current snapshot into the editor rect, and every
@@ -136,8 +136,7 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
 /// `Block` must paint before the editor rows are blitted (its border
 /// spans the WHOLE `geo.center` rect, including where the editor sits one
 /// cell in), and the breadcrumb overlay must run after both — it splices
-/// directly onto the border row the `Block` already painted, exactly the
-/// ordering Go documents at `workspace_view.go`.
+/// directly onto the border row the `Block` already painted.
 pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
@@ -210,7 +209,7 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         " Open ".to_string()
     } else if let Some(query) = &app.explorer.search {
         // Truncated to the block's own inner width (minus the two corner
-        // cells) in terminal CELLS (§1.5), not chars — a long query on a
+        // cells) in terminal CELLS, not chars — a long query on a
         // narrow column must not overrun the border.
         let budget = (left_area.width as usize).saturating_sub(2);
         let raw = format!(" Search: {query} ");

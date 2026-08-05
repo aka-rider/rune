@@ -85,7 +85,7 @@ pub fn prepare_materialize(
 /// the same blob+observation(+rebind) bookkeeping `commit_save`/
 /// `record_fresh` always did, fed caller-supplied bytes/stat facts instead
 /// of calling `vfs`. `resolved_path`/`seq` are the caller's own
-/// enqueue-time-captured facts (§1.4.2/§1.4.8), never re-derived here.
+/// enqueue-time-captured facts, never re-derived here.
 /// `resolved_path` is the caller's own already-`vfs.resolve`d destination —
 /// converted to the checked `TEXT`-column string here (A4, [rune-db 6]: a
 /// non-UTF-8 path is rejected loudly rather than mangled), the one place
@@ -151,9 +151,9 @@ pub fn record_materialize_outcome(
 /// Puts `data`'s raw bytes as a blob and records an observation of them at
 /// caller-supplied `stat`, for the `Conflict{Fresh}` outcomes. `data` is
 /// disk-sourced — the target's live content on a CAS refusal, or a racer's
-/// displaced bytes on a swap-race (§1.4.10 mandates this capture happens
-/// unconditionally, never gated on UTF-8 validity: see `blob.rs`'s module
-/// doc). The blob put and its referencing observation insert commit as ONE
+/// displaced bytes on a swap-race; this capture happens unconditionally,
+/// never gated on UTF-8 validity (see `blob.rs`'s module doc). The blob put
+/// and its referencing observation insert commit as ONE
 /// transaction (`observe_from_stat_tx`) — never two, closing the
 /// cross-process GC race [rune-db 2]. No `vfs` call: `stat` is the
 /// caller's own fact, gathered on the thread that did the actual disk work.
@@ -422,8 +422,8 @@ mod tests {
     }
 
     /// A swap-race outcome records BOTH the displaced bytes (`origin=
-    /// 'swap'`) and our own committed write — §1.4.10's unconditional
-    /// displaced-bytes capture, driven entirely by caller-supplied facts.
+    /// 'swap'`) and our own committed write — unconditional displaced-bytes
+    /// capture, driven entirely by caller-supplied facts.
     #[test]
     fn record_materialize_outcome_raced_records_both_displaced_and_committed() {
         let mut conn = open();
@@ -463,9 +463,9 @@ mod tests {
         assert_eq!(blob, b"racer bytes");
     }
 
-    /// §1.4.10 mandates capturing displaced bytes unconditionally — even
-    /// when they are NOT valid UTF-8 (a binary file, or another process's
-    /// own in-progress non-text write landing in the swap window).
+    /// Displaced bytes are captured unconditionally — even when they are
+    /// NOT valid UTF-8 (a binary file, or another process's own
+    /// in-progress non-text write landing in the swap window).
     #[test]
     fn record_materialize_outcome_conflict_with_non_utf8_bytes_captures_them_byte_exact() {
         let mut conn = open();

@@ -7,8 +7,8 @@
 //! `(cols, rows)` for the same inputs, with one implementation.
 //!
 //! Deliberately distinct from [`rune_image::fit_cells`]: that function fits
-//! independently against a `(max_cols, max_rows)` BOX (WP1.S2, ported
-//! byte-for-byte from Go). This one fits to WIDTH ONLY — Decision 8's
+//! independently against a `(max_cols, max_rows)` BOX (WP1.S2). This one
+//! fits to WIDTH ONLY — Decision 8's
 //! "fit-to-width, never upscale, vertical scroll" — and derives the row
 //! count from whatever the width-driven scale leaves, rather than
 //! shrinking further to fit a row cap that doesn't exist here (an image

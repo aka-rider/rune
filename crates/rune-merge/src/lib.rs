@@ -4,8 +4,7 @@
 //! is used only to locate conflict boundaries; every byte returned in a
 //! [`Hunk`] is re-anchored verbatim into the original `ours`/`theirs` inputs
 //! (never diffy's reserialized output), preserving line endings, BOM, and
-//! trailing-newline state exactly as the Go reference (`golang/pkg/merge`)
-//! does with libgit2.
+//! trailing-newline state exactly.
 
 mod hunks;
 

@@ -17,9 +17,9 @@
 //! ordering can never mask a case.
 //!
 //! One test TARGET (`--test invariants`, matching the Done-when gate), but
-//! split into small per-domain files under `tests/invariants/` — §1.6 caps
-//! any one file at 500 LoC, and one flat file for all 16 invariants would
-//! blow well past that.
+//! split into small per-domain files under `tests/invariants/` — the file
+//! budget caps any one file at 500 LoC, and one flat file for all 16
+//! invariants would blow well past that.
 
 #![allow(
     clippy::unwrap_used,

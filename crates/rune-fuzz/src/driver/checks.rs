@@ -1,7 +1,8 @@
 //! The sampled display-pipeline checkers (`SYNC-IDEMPOTENT`, `WRAP-RT`) and
-//! the end-of-session undo/redo drive, split out of `driver` (§1.6 budget).
-//! Nothing here changes behaviour — every function is exactly what `driver`
-//! used to define locally, now reached through `checks::`.
+//! the end-of-session undo/redo drive, split out of `driver` (500-line
+//! budget). Nothing here changes behaviour — every function is
+//! exactly what `driver` used to define locally, now reached through
+//! `checks::`.
 
 use rune_tui::app::App;
 use rune_tui::document::ReadOnly;
@@ -17,7 +18,7 @@ use super::{Outcome, State, key_step, step_and_check};
 /// `SYNC-IDEMPOTENT`/`CELL-*`/`WRAP-RT` sampling cadence (G19: the display
 /// pipeline — comrak parse -> emit -> wrap — runs on every `sync_view()`,
 /// dominating debug-build runtime): full check for the first 32 steps,
-/// then every 8th, mirroring Go's precedent.
+/// then every 8th.
 pub(super) fn should_sample(step: usize) -> bool {
     step <= 32 || step.is_multiple_of(8)
 }
@@ -204,11 +205,11 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
 /// point the session stopped at (`invariant::redo_total`'s docs).
 /// Skipped once a violation already stopped the session, or the session
 /// tore itself down via quit (G15: a torn-down model must not receive
-/// more input, same as Go's driver). Also skipped once the seeded document
+/// more input). Also skipped once the seeded document
 /// itself no longer exists (`TODO-fuzz-undo-total-dirty-close-discard.md`):
 /// a quit-chord's dirty-close Guard, armed on a document other than the one
 /// currently active, can legitimately discard the seed via its own
-/// `[D]iscard` key — production working exactly as designed (§1.4.4's
+/// `[D]iscard` key — production working exactly as designed (the
 /// per-document dirty gate has no "but it's not the active one" exception).
 /// A discarded document has no undo history left to prove anything about;
 /// driving `restore_editor_focus`'s `F1` press in that state would only

@@ -3,7 +3,7 @@
 //! `Cell` grid), `tui_render_text.rs` (control-safe glyphs, tabs, and
 //! grapheme clusters), `tui_render_bounds.rs` (degenerate backend sizes
 //! and `blit`'s own edge clipping), and `tui_render_focus.rs` (tables and
-//! the focus/read-only caret gate) — TODO.md's §1.6 split of the original
+//! the focus/read-only caret gate) — TODO.md's 500-line budget split of the original
 //! `tui_render.rs`. `tui_render_tables.rs` is a pre-existing sibling that
 //! already followed this naming. Every consumer pulls this in via
 //! `mod tui_render_common;` — integration test files are separate

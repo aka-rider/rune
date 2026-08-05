@@ -4,7 +4,7 @@
 //! [`run_materialize_vfs`] — the ENTIRE `vfs` dance, through THIS app's own
 //! `Vfs` handle, never the writer thread's, since a dead writer thread must
 //! never make saving impossible ([rune-db 1])), and the snapshot-autosave
-//! debounce. Split out of `save.rs` (plan WP1, §1.6 budget) — that file
+//! debounce. Split out of `save.rs` (plan WP1, 500-line budget) — that file
 //! owns `trigger_save`'s start/refusal ladder and calls into
 //! [`materialize_now`]/[`bind_new_now`] here.
 
@@ -19,15 +19,14 @@ use crate::document::DocumentId;
 use crate::materialize_ack::{self, MaterializeVfsOutcome};
 use crate::runtime::Effects;
 
-/// The snapshot-autosave debounce window (plan WP5.S6, port of
-/// `workspace_timers.go`'s 2s debounce).
+/// The snapshot-autosave debounce window (plan WP5.S6).
 const SNAPSHOT_DEBOUNCE: Duration = Duration::from_secs(2);
 
 /// WP7: the content/path/CAS facts `materialize_now`/`bind_new_now` capture
 /// at trigger time, held in `App::pending_materialize` between
 /// `MaterializePrepare`'s ack (which carries no disk-sourced data of its
 /// own) and the caller-side `vfs` `Cmd` it spawns. Never re-derived once
-/// captured (§1.4.2/§1.4.8) — the eventual `vfs` work and `MaterializeRecord`
+/// captured — the eventual `vfs` work and `MaterializeRecord`
 /// enqueue both read only from this struct, never from the document's
 /// (possibly further-edited) live buffer.
 #[derive(Clone)]
@@ -42,9 +41,9 @@ pub(crate) struct PendingMaterialize {
 /// WP7 step (a): enqueues `MaterializePrepare` — a plain, non-blocking
 /// channel send (never I/O that leaves this thread; the writer thread's
 /// reply carries no disk-sourced data at all, only DB bookkeeping), so
-/// §5.4 lets `update` call it directly. `content`/`path`/`seq`/`bind_new`
+/// `update` can call it directly. `content`/`path`/`seq`/`bind_new`
 /// are all captured HERE, synchronously, into `App::pending_materialize` —
-/// never re-derived once the round trip is under way (§1.4.2/§1.4.8).
+/// never re-derived once the round trip is under way.
 /// `content` is captured through `Document::begin_save` (plan WP1's
 /// chokepoint) BEFORE the match on `result`, so `save_in_flight` is never
 /// true without the exact bytes this save will persist.
@@ -119,8 +118,8 @@ pub(super) fn materialize_now(
 /// `trigger_save` cannot be reused here: it reads `doc.file_path`, which is
 /// exactly what a draft does not have yet. And the document is deliberately
 /// NOT bound to `path` up front — a `rename_excl` that loses the race must
-/// leave the draft untitled, or a later ⌘S would overwrite the winner
-/// (§0.1 rung 1). `handle_materialize_ack` performs the bind once the
+/// leave the draft untitled, or a later ⌘S would overwrite the winner.
+/// `handle_materialize_ack` performs the bind once the
 /// write actually commits.
 pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
     let Some(doc) = app.doc(id) else { return };
@@ -267,7 +266,7 @@ pub(crate) fn run_materialize_vfs(
     let live_data = match vfs.read(&resolved) {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            // §1.4.4: an ordinary overwrite-intent save must never silently
+            // An ordinary overwrite-intent save must never silently
             // (re)create a file the caller didn't explicitly ask to.
             return MaterializeVfsOutcome::Missing;
         }
@@ -336,10 +335,10 @@ pub(crate) fn run_materialize_vfs(
 }
 
 /// Bumps `id`'s snapshot-autosave generation and (re)arms its 2s debounce
-/// deadline on `app`'s one rearmable timer thread (plan WP5.S6, porting the
-/// Go reference's own debounce; plan WP16.S5 replaced the previous per-call
-/// `Cmd` spawn with `App::snapshot_timer` — see that type's own doc
-/// comment) — called once per message batch that mutated the ACTIVE
+/// deadline on `app`'s one rearmable timer thread (plan WP5.S6; plan
+/// WP16.S5 replaced the previous per-call `Cmd` spawn with
+/// `App::snapshot_timer` — see that type's own doc comment) — called
+/// once per message batch that mutated the ACTIVE
 /// document's journal, from `app::update`'s wrapper. No `Effects` involved
 /// any more: arming the timer is a direct, synchronous call, not I/O that
 /// needs a spawned thread of its own.

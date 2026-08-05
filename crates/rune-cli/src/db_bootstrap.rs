@@ -26,7 +26,7 @@ pub(crate) struct DbBootstrap {
     /// `Document::hydrate` chokepoint `db::handle_load_ack` uses, once
     /// `App::new` exists to hold the result.
     pub(crate) recovered_content: Option<String>,
-    /// This `Load`'s [`rune_db::SyncKind`] (§12; see `Document::last_sync`'s
+    /// This `Load`'s [`rune_db::SyncKind`] (see `Document::last_sync`'s
     /// own doc comment) — render/hint state only, `main` installs it onto
     /// the active document the same way `db_ack::handle_load_ack` does for
     /// every later per-document reload. `None` only when `load` itself
@@ -106,9 +106,9 @@ fn blocking_call(
 /// for why hydration blocks on the bridge's OWN buffer instead). Never
 /// fatal to the editor: any failure here is reported to stderr and this
 /// returns `DbBootstrap::default()` — the editor still opens and runs
-/// fully, just without recovery journaling for this launch (CONSTITUTION
-/// Prime Directive: the user's words come before every other feature, plan
-/// decision 5: "losing the DB never damages a user file").
+/// fully, just without recovery journaling for this launch (the user's
+/// words come before every other feature, plan decision 5: "losing the DB
+/// never damages a user file").
 ///
 /// `home` is threaded in rather than read from `$HOME` directly (unlike
 /// `rune_db::production_db_path`) so this whole path is exercisable
@@ -149,7 +149,7 @@ pub(crate) fn bootstrap_db(
         Err(e) => return degrade(store, format!("load failed: {e}")),
     };
 
-    // §1.7: `saved_obs` is `None` here only if `load` itself failed to
+    // `saved_obs` is `None` here only if `load` itself failed to
     // adopt anything for this session/doc pair — "should not occur" per
     // `LoadResult::saved_obs`'s own doc comment, but a `0` fallback would be
     // a fabricated `ObsId` (AUTOINCREMENT ids start at 1, so `0` is never a
@@ -297,7 +297,7 @@ pub(crate) fn bootstrap_untitled_db(
             }
             // No prior session ever touched it, its owning session is still
             // alive, or its reconstruction is empty/whitespace-only — never
-            // offered as a recoverable tab (Go's `restoreScratch`).
+            // offered as a recoverable tab.
             Ok(OpOutcome::Reconstructed(_)) => {}
             Ok(_) => {
                 return degrade_untitled(

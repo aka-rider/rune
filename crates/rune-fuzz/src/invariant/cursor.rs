@@ -6,7 +6,7 @@ use ratatui::style::Modifier;
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
 
-/// `CUR-BOUNDS` (L0, §1.3 clamp / §1.5 bytes) — every cursor's `position`/
+/// `CUR-BOUNDS` (L0) — every cursor's `position`/
 /// `anchor` is a valid byte offset into `content`: in range and on a char
 /// boundary.
 ///
@@ -35,7 +35,7 @@ pub fn cur_bounds(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-ORDER` (L0, Go `C1`) — cursors are ordered and non-overlapping: each
+/// `CUR-ORDER` (L0) — cursors are ordered and non-overlapping: each
 /// cursor's selection ends at or before the next cursor's selection
 /// starts. Two REAL (non-collapsed) selections may legally touch (one
 /// ends exactly where the next begins), so that pairing still uses `>`.
@@ -80,7 +80,7 @@ pub fn cur_order(snap: &Snapshot) -> Option<Violation> {
     None
 }
 
-/// `CUR-ID` (L0, Go `C2`) — at least one cursor, every id non-zero, all
+/// `CUR-ID` (L0) — at least one cursor, every id non-zero, all
 /// ids distinct. Subsumes any separate cursor-count check.
 ///
 /// Active-document-switch-safe: L0, checks one `Snapshot`'s cursor set in

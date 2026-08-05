@@ -45,7 +45,7 @@ fn a_typed_newline_actually_creates_a_line() {
     assert_eq!(result.final_content, "a\nb");
 }
 
-/// A pasted CRLF survives byte-verbatim (§1.4.5) — `Action::Paste` is the
+/// A pasted CRLF survives byte-verbatim — `Action::Paste` is the
 /// only path that inserts control bytes with no filtering (plan Gotcha
 /// G3).
 #[test]

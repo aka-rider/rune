@@ -1,5 +1,5 @@
 //! Copy, cut, and paste in the title — split out of `rename_bind.rs`
-//! (plan WP5, §1.6). Added by the clipboard package that grew that file
+//! (plan WP5, 500-line budget). Added by the clipboard package that grew that file
 //! past the ceiling.
 
 #![allow(

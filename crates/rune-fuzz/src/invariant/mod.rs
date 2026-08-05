@@ -1,5 +1,5 @@
-//! Named invariant checkers over `Snapshot`/`StepCtx`. Mirrors the Go
-//! fuzzer's `Violation` + `Trunc` and its per-domain checker style.
+//! Named invariant checkers over `Snapshot`/`StepCtx`, using a
+//! `Violation` + `Trunc` shape with a per-domain checker style.
 //!
 //! Three checker shapes, all pure and all over owned data, so every one is
 //! independently unit-testable (plan Risk R-c):
@@ -20,8 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 35 invariants total, one domain per file (mirrors the Go fuzzer's
-//! own per-domain split):
+//! 35 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`, `LAYOUT-TILES`
@@ -78,10 +77,9 @@ pub struct Violation {
     pub message: String,
 }
 
-/// Truncating formatter for message payloads — Go analogue:
-/// `invariant.Trunc`. Never slices mid-character (`clippy::indexing_
-/// slicing` is denied under `-D warnings`; `str::get` returns `None`
-/// instead of panicking on a bad range).
+/// Truncating formatter for message payloads. Never slices mid-character
+/// (`clippy::indexing_slicing` is denied under `-D warnings`; `str::get`
+/// returns `None` instead of panicking on a bad range).
 pub fn trunc(s: &str, n: usize) -> String {
     if s.len() <= n {
         return s.to_string();

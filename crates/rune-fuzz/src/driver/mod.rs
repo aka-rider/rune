@@ -1,8 +1,7 @@
 //! The deterministic engine: drives the real `rune_tui::app::update` against
-//! an in-memory `Vfs`, with no terminal, no clock, and no subprocess.
-//! Modelled on Go's drain loop, scoped to
-//! the seam this crate actually has: `App::new` + `app::update` + `Cmd`
-//! (WP2's tagged struct) + `Mem`.
+//! an in-memory `Vfs`, with no terminal, no clock, and no subprocess — a
+//! drain loop scoped to the seam this crate actually has: `App::new` +
+//! `app::update` + `Cmd` (WP2's tagged struct) + `Mem`.
 //!
 //! This driver never delivers `Msg::Error` or `Msg::Quit`: neither is ever
 //! constructed by an `Action` this crate generates, and production itself
@@ -46,8 +45,7 @@ use crate::step::{MsgTag, StepCtx};
 pub const DOC_PATH: &str = "/fuzz/doc.md";
 
 /// The result of driving one whole session. `final_snapshot`/`final_ctx`
-/// are frozen at the violating step (`None` on a clean run) — Go's driver
-/// freezes `rs.frozenFrame`/`frozenCells` the same way.
+/// are frozen at the violating step (`None` on a clean run).
 pub struct RunResult {
     pub violation: Option<Violation>,
     pub steps: usize,
@@ -402,9 +400,9 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
 
 // `key_step`, `discharge_pending_save`, `step_and_check`,
 // `run_update_catching_panic`, and `downcast_panic` moved into the
-// `step_exec` submodule (§1.6 budget) — `run` above reaches them through
-// the unqualified imports above. `should_sample`, `sync_idempotent_check`,
-// `wrap_rt_check` and the end-of-session undo/redo drive
-// (`drive_end_of_session_checks`, which subsumes the former
-// `restore_editor_focus`) live in the `checks` submodule — `step_exec`/`run`
-// reach those through `checks::`.
+// `step_exec` submodule (500-line budget) — `run` above reaches
+// them through the unqualified imports above. `should_sample`,
+// `sync_idempotent_check`, `wrap_rt_check` and the end-of-session
+// undo/redo drive (`drive_end_of_session_checks`, which subsumes the
+// former `restore_editor_focus`) live in the `checks` submodule —
+// `step_exec`/`run` reach those through `checks::`.

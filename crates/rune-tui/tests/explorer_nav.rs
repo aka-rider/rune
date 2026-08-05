@@ -1,6 +1,6 @@
 //! WP4 "Done when" tests: Explorer cursor movement and opening files/
 //! directories, driven against a `Mem` vfs seeded with files and nested
-//! directories — TODO.md's §1.6 split of the original `explorer.rs`. The
+//! directories — TODO.md's 500-line budget split of the original `explorer.rs`. The
 //! `resolve` fallback, refresh/stale-reply handling, `open_path`
 //! reactivation, and the lazy `ensure_loaded` load live in the sibling
 //! `explorer_reload.rs`; both pull shared fixtures from `explorer_common`.

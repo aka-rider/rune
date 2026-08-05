@@ -25,8 +25,7 @@
 //! when text above it changes even though its own text did not.
 //!
 //! Tree-sitter is never driven incrementally: `Tree::edit` risks a grammar
-//! `ts_assert` `SIGABRT` and every parse here is a full parse of a region
-//! (§1.3).
+//! `ts_assert` `SIGABRT` and every parse here is a full parse of a region.
 
 pub mod query;
 
@@ -201,7 +200,7 @@ fn region_language(info: &str) -> Option<RegionLang> {
 /// A region with any line that somehow doesn't land on a live byte range of
 /// the current buffer (should not happen — the ranges are derived from the
 /// buffer's own parse — but `LineMap::reconstruct` degrades to "skip the
-/// whole region" rather than a panic, per §1.3) is silently skipped.
+/// whole region" rather than a panic) is silently skipped.
 fn region_sources(content: &str, regions: &[CodeRegion]) -> Vec<RegionSource> {
     regions
         .iter()
@@ -396,9 +395,9 @@ fn plan_jobs(doc: &Document, sources: Vec<RegionSource>) -> Vec<RegionJob> {
 /// The one sanctioned synchronous parse on the main thread — bounded by
 /// `runtime::FIRST_PAINT_BUDGET` and made exactly once, from `runtime::run`'s
 /// bootstrap, strictly before the first draw: nothing is on screen yet, so
-/// even a full-budget miss blocks nothing a user can see. CONSTITUTION §5.3
-/// ("`Update()`/`Init()` stay non-blocking") is about `app::update`, which
-/// this deliberately never calls into and is never called from.
+/// even a full-budget miss blocks nothing a user can see. The
+/// non-blocking-update rule is about `app::update`, which this
+/// deliberately never calls into and is never called from.
 ///
 /// Applies to regions generally, not only to code documents: a markdown
 /// document whose first screen is a fence gets frame 1 already coloured for

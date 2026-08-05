@@ -1,6 +1,6 @@
-//! The open ladder (port of `store.go`) `Store::open` runs against a
+//! The open ladder `Store::open` runs against a
 //! file path, plus the two connection-opening primitives it bottoms out
-//! at. Split out of `store.rs` (§1.6) — see that module's doc comment for
+//! at. Split out of `store.rs` — see that module's doc comment for
 //! the ladder's rungs.
 
 use std::path::Path;

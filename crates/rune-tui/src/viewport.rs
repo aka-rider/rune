@@ -1,5 +1,5 @@
 //! The scrollable window onto a document's wrapped display rows (split out
-//! of `document.rs` per §1.6 when this package's `DocumentKind` addition
+//! of `document.rs` when this package's `DocumentKind` addition
 //! pushed that file past 500 lines): `Viewport` itself, its `ScrollMode`
 //! (which side is authoritative for the next `reconcile` call), and the
 //! vim/Helix scrolloff convergence logic.
@@ -89,7 +89,7 @@ impl Viewport {
 
     /// The vim/Helix scrolloff invariant (plan WP7.S1, module docs): the
     /// cursor is never left outside the viewport. Replaces the old
-    /// `scroll_to_row` (Go/vim parity note: "If the cursor position is
+    /// `scroll_to_row` (vim parity note: "If the cursor position is
     /// moved off of the window, the cursor is moved onto the window (with
     /// 'scrolloff' screen lines around it)", `runtime/doc/scroll.txt`).
     ///

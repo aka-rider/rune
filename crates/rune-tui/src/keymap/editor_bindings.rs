@@ -5,8 +5,8 @@
 //! resolve — `help.rs`'s reflection pass and the startup collision index
 //! (`index::validate`) read the exact same data the live dispatch path
 //! uses, closing the recorded exception `help.rs` used to carry (a hand-
-//! maintained editor key list, kept in sync by hand, which CONSTITUTION
-//! §12 says may not exist) AND the drift a second, hand-written match
+//! maintained editor key list, kept in sync by hand — exactly the kind of
+//! parallel source of truth that must never exist) AND the drift a second, hand-written match
 //! used to allow (a loose modifier guard here once let `⌘⇧S` fall through
 //! to a real save — see the crate's `CODE-REVIEW.md`, rune-tui B finding
 //! 3 — since a hand-written `match` arm can check less than its whole
@@ -35,7 +35,7 @@
 //! follow), `selection` (chords that extend or create a selection),
 //! `editing` (chords that mutate the document, move/clone a line, add a
 //! multi-cursor, undo/redo, save), `clipboard` (copy/cut/paste) — to bring
-//! this file under the §1.6 500-line budget. `EDITOR_BINDINGS` below lists
+//! this file under the 500-line budget. `EDITOR_BINDINGS` below lists
 //! every row by name in the EXACT original order (resolution is order-
 //! sensitive), regardless of which sibling module defines it.
 

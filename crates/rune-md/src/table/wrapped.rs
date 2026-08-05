@@ -1,8 +1,8 @@
 //! Wrapped layout (WP4.S4): a table row that no longer fits Grid but can
 //! still be shrunk into a readable, proportionally narrower box, with each
 //! cell's own text word-wrapped across as many visual rows as the widest
-//! cell in that row needs. Split out of `layout.rs` on its own
-//! (CONSTITUTION §1.6) — Wrapped's own row builder shares `layout`'s
+//! cell in that row needs. Split out of `layout.rs` on its own —
+//! Wrapped's own row builder shares `layout`'s
 //! `FlatChar`/`group_runs` plumbing but is otherwise a distinct concern
 //! from Grid geometry.
 
@@ -25,10 +25,10 @@ fn is_url(word: &str) -> bool {
 /// trims, splits on whitespace, greedy-packs words by accumulated
 /// `grapheme_width`. A `http://`/`https://`-prefixed word is atomic and
 /// never broken; any OTHER over-long word is hard-broken, at accumulated
-/// DISPLAY width (Assumption A2: Go's own hard-break chunks by rune COUNT
-/// instead, which overflows a CJK column by up to 2x — a rune there is one
-/// array slot but two display cells). Wrapped rows are always left-aligned
-/// (Go parity) — this returns plain lines; the caller pads and aligns.
+/// DISPLAY width (Assumption A2: never by rune COUNT, which would overflow
+/// a CJK column by up to 2x — a rune there is one array slot but two
+/// display cells). Wrapped rows are always left-aligned — this returns
+/// plain lines; the caller pads and aligns.
 pub fn wrap_cell(text: &str, max_width: usize) -> Vec<String> {
     let trimmed = text.trim();
     if max_width == 0 || display_width(trimmed) <= max_width {
@@ -85,9 +85,9 @@ pub fn wrap_cell(text: &str, max_width: usize) -> Vec<String> {
 
 /// Places `word` as the first word of a (possibly new) wrapped line: an
 /// over-long non-URL word is hard-broken (`hard_break_word`); anything else
-/// — including an over-long URL, which this port never breaks — is placed
-/// whole, overflow and all (Go parity: the first word on a line is always
-/// placed, even past `max_width`).
+/// — including an over-long URL, which this never breaks — is placed
+/// whole, overflow and all: the first word on a line is always placed,
+/// even past `max_width`.
 fn place_first_word(
     word: &str,
     word_width: usize,
@@ -112,7 +112,7 @@ fn place_first_word(
 /// completed line, plus the final (possibly under-full) chunk and its width
 /// for the caller to keep accumulating onto. A single grapheme cluster
 /// wider than `max_width` still becomes its own chunk (an unsplittable
-/// cluster is placed whole rather than silently truncated, §1.3 — no
+/// cluster is placed whole rather than silently truncated — no
 /// caller-visible content is ever dropped).
 fn hard_break_word(word: &str, max_width: usize) -> (Vec<String>, String, usize) {
     let mut lines = Vec::new();
@@ -132,12 +132,11 @@ fn hard_break_word(word: &str, max_width: usize) -> (Vec<String>, String, usize)
 
 /// One Wrapped-layout visual row: `│` opens/closes every column exactly
 /// like `layout::grid_row`, always left-aligned, but EVERY char — content,
-/// padding, and border alike — is decorative (`buf = -1`). This matches
-/// Go's own Wrapped renderer exactly: it never keeps a real per-char buffer
-/// offset for this layout at all, unlike Grid — once word-wrap has
-/// reshuffled a cell's content across several visual rows, "this char came
-/// from that one buffer byte" is no longer a claim either implementation
-/// makes.
+/// padding, and border alike — is decorative (`buf = -1`). Never keeps a
+/// real per-char buffer offset for this layout at all, unlike Grid — once
+/// word-wrap has reshuffled a cell's content across several visual rows,
+/// "this char came from that one buffer byte" is no longer a claim this
+/// renders makes.
 pub fn wrapped_row(
     widths: &[usize],
     wrapped_cells: &[Vec<String>],
@@ -218,8 +217,8 @@ mod tests {
     fn wrap_cell_hard_breaks_an_over_long_non_url_word_by_display_width() {
         let lines = wrap_cell("世界世界世界", 4);
         // Each CJK char is display-width 2, so a width-4 chunk holds exactly
-        // 2 chars — never 4 (Assumption A2: NOT Go's rune-count chunking,
-        // which would put 4 runes = 8 display cells into one "4-wide" chunk).
+        // 2 chars — never 4 (Assumption A2: not rune-count chunking, which
+        // would put 4 runes = 8 display cells into one "4-wide" chunk).
         assert_eq!(lines, vec!["世界", "世界", "世界"]);
     }
 

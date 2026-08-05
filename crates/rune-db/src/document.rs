@@ -1,17 +1,16 @@
-//! Document identity resolution — ports Go's `OpenPath`. Only the slice WP4's `Load`
+//! Document identity resolution. Only the slice WP4's `Load`
 //! actually needs: resolving a real on-disk path to a stable `documents.id`,
 //! preferring inode/device identity and falling back to path-keying when no
-//! usable identity is available (§1.4.6). `Bind`/`DeleteDoc`/
+//! usable identity is available. `Bind`/`DeleteDoc`/
 //! `CreateScratch`/chat-doc reservation are workspace-level document
 //! lifecycle operations outside WP4's Load/Probe/Materialize/adopt/reaper
-//! scope (`Materialize`'s own re-Bind is inlined in `materialize::commit_save`,
-//! matching Go's `commitSave`, which does not call `Bind` either) — left for
-//! whichever later work package wires document creation/rename UI flows.
+//! scope (`materialize::commit_save` inlines its own re-Bind rather than
+//! calling `Bind`) — left for whichever later work package wires document
+//! creation/rename UI flows.
 //!
 //! Both branches below run the whole decide-then-write sequence inside ONE
-//! `retry::with_retry` transaction (mirroring Go's `_txlock=immediate`-begun
-//! `tx` in `openPathByName`/`openPathByInode`), closing the same
-//! same-process-instances TOCTOU race Go's doc comment describes.
+//! `retry::with_retry` transaction, closing the same-process-instances
+//! TOCTOU race between the identity read and the write it drives.
 
 use std::path::Path;
 use std::time::SystemTime;
@@ -23,9 +22,9 @@ use rune_vfs::Vfs;
 use crate::Error;
 use crate::retry;
 
-/// The stable document identity `OpenPath` resolves to, plus whether the
+/// The stable document identity `open_path` resolves to, plus whether the
 /// path arrived at a different name than the row already on file (a
-/// detected rename, §1.4.6). Port of `store_documents.go`'s `DocRef`.
+/// detected rename).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DocRef {
     pub id: i64,
@@ -33,8 +32,8 @@ pub struct DocRef {
 }
 
 /// Real (inode, device) identity for `path` via `vfs`, or `None` when the
-/// stat failed or exposed no usable identity (`ino == 0`, matching Go's
-/// `!ok || inode == 0` fallback-to-name-keying guard, `store_documents.go`).
+/// stat failed or exposed no usable identity (`ino == 0` triggers the
+/// fallback-to-name-keying guard).
 fn stat_id(vfs: &dyn Vfs, path: &Path) -> Option<(i64, i64)> {
     let stat = vfs.stat(path).ok()?;
     match (stat.identity.inode, stat.identity.device) {
@@ -46,7 +45,6 @@ fn stat_id(vfs: &dyn Vfs, path: &Path) -> Option<(i64, i64)> {
 /// Resolves the VFS document for a file that exists on disk. Must only be
 /// called after the file has been successfully read (so stat can obtain a
 /// real inode) — `load::load` satisfies this by reading before calling.
-/// Port of `store_documents.go` (`OpenPath`).
 pub fn open_path(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -64,7 +62,6 @@ pub fn open_path(
     }
 }
 
-/// Port of `store_documents.go` (`openPathByName`).
 fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRef, Error> {
     let existing: Option<i64> = tx
         .query_row(
@@ -98,7 +95,6 @@ fn open_path_by_name(tx: &Transaction<'_>, path: &str, at: &str) -> Result<DocRe
     }
 }
 
-/// Port of `store_documents.go` (`openPathByInode`).
 fn open_path_by_inode(
     tx: &Transaction<'_>,
     path: &str,

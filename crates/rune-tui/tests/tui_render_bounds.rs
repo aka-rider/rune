@@ -1,6 +1,6 @@
 //! WP5/WP13 done-when: headless render assertions on a `TestBackend`,
 //! using the `Mem` vfs — degenerate backend sizes and `blit`'s own
-//! right-edge clipping. TODO.md's §1.6 split of the original
+//! right-edge clipping. TODO.md's 500-line budget split of the original
 //! `tui_render.rs`: conceal/styling/status-line/Cell-grid checks live in
 //! `tui_render_basics.rs`, control-safe glyphs/tabs/graphemes in
 //! `tui_render_text.rs`, and tables/the focus caret gate in

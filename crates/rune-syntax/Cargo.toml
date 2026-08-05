@@ -11,8 +11,8 @@ unicode-segmentation = { workspace = true }
 [features]
 # Opts a non-test build into the same producer-bug invariant checks test
 # builds always run (mirrors rune-md's own `strict-invariants` — see
-# `syntax.rs`'s module docs). Never enabled by default: §1.3 requires an
-# ordinary shipped build to degrade gracefully on a producer-bug invariant
+# `syntax.rs`'s module docs). Never enabled by default: an ordinary
+# shipped build must degrade gracefully on a producer-bug invariant
 # violation, never panic on a user's document.
 strict-invariants = []
 

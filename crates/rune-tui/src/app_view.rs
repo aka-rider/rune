@@ -1,7 +1,7 @@
 //! `App::relayout`/`App::sync_view` — the geometry-and-display settle step
-//! every message batch runs before the next draw (split out of `app.rs`,
-//! §1.6 budget). Still plain `impl App` methods; nothing about how they are
-//! reached from the rest of the crate changes.
+//! every message batch runs before the next draw (split out of `app.rs`
+//! for the 500-line budget). Still plain `impl App` methods; nothing about
+//! how they are reached from the rest of the crate changes.
 
 use crate::app::App;
 use crate::pane::Pane;
@@ -46,7 +46,7 @@ impl App {
     /// every call (plan Gotchas: `&& app.modal.is_none()` — a modal up means
     /// the editor is never really focused). Also re-syncs the modal
     /// document, if one is up (WP3.S3), at the terminal's own width — kept
-    /// in this settle step, never inside `render::draw` itself (§5.4).
+    /// in this settle step, never inside `render::draw` itself.
     pub fn sync_view(&mut self) {
         self.relayout();
         let focused = self.focus() == Pane::Editor && self.modal.is_none();

@@ -1,5 +1,5 @@
 //! Tests for the Grid geometry helpers, split out to keep the owning
-//! module under CONSTITUTION §1.6's 500-LoC limit.
+//! module under the 500-line budget.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use super::*;

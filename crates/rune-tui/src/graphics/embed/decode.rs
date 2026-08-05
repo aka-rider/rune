@@ -2,7 +2,7 @@
 //! sibling of `graphics::decode_cmd`'s whole-image-document pair. Reuses
 //! the EXISTING `Msg::ImageDecoded { doc, generation, result }` variant
 //! rather than adding a new one — `runtime/mod.rs` already exceeds the
-//! §1.6 ceiling from unrelated concurrent work and must not grow further
+//! 500-line ceiling from unrelated concurrent work and must not grow further
 //! for this package. `generation` alone is enough to find the right
 //! `EmbedState`: `EmbedSet::next_generation` mints a value unique across
 //! EVERY embed in one document (not just within one), so

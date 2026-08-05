@@ -1,9 +1,7 @@
 //! Distinct coordinate-space types — Buffer / Syntax / Wrap / Display — so a
 //! conversion between spaces can never be silently skipped by mixing up a
-//! plain `usize`. Ported from Go's coordinate package: Go declares each
-//! offset as a distinct named type (`type BufferOffset int`); Rust newtypes
-//! (single-field tuple structs) are the equivalent — a real distinct type,
-//! not merely an alias.
+//! plain `usize`. Each offset is a distinct newtype (a single-field tuple
+//! struct) — a real distinct type, not merely an alias.
 
 /// Buffer Space — raw byte positions in the UTF-8 document.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -17,7 +15,7 @@ pub struct BufferPoint {
     pub col: usize,
 }
 
-/// A terminal-CELL column (§1.5: display width is CELLS via `unicode-width`
+/// A terminal-CELL column (display width is CELLS via `unicode-width`
 /// over grapheme clusters, never bytes) — distinct from a `BufferPoint.col`
 /// (a BYTE column) so a value measured in one unit can never be replayed as
 /// the other by mixing up a plain `usize`. Exists because a cell count
@@ -72,7 +70,6 @@ pub struct DisplayPoint {
 mod tests {
     use super::*;
 
-    /// Ported from the Go coordinate-package tests.
     #[test]
     fn coordinate_types_hold_their_fields() {
         let bo = BufferOffset(10);

@@ -1,5 +1,5 @@
 //! `commands::edit`'s per-cursor editing commands and undo/redo (moved out
-//! of `edit.rs` in plan WP9.S6 to keep that file under the §1.6 line
+//! of `edit.rs` in plan WP9.S6 to keep that file under the 500-line
 //! budget — every item exercised here (`App`, `commands::edit`'s `pub`
 //! functions, `CursorSet`) is already public, so this needs no
 //! crate-internal access `#[cfg(test)]` had; the same pattern
@@ -266,11 +266,9 @@ fn read_only_blocks_typing_backspace_and_newline() {
     );
 }
 
-/// Regression for F1 (Go parity): `undo`/`redo` are deliberately NOT
-/// gated by `read_only` — Go's own `ApplyInverse`/`Reapply`
-/// (`edit_primitives.go`) bypass `m.readOnly` the same way
-/// `ReplaceRange` (`edit_primitives.go`) does not. A document that
-/// became read-only after edits were already journaled (e.g. Go's Help
+/// Regression for F1: `undo`/`redo` are deliberately NOT
+/// gated by `read_only`, the same way `ReplaceRange` is not. A document that
+/// became read-only after edits were already journaled (e.g. the Help
 /// view is generated fresh and never has journal history, but this
 /// property must hold regardless) must still let undo/redo walk that
 /// history.

@@ -1,7 +1,7 @@
 //! Reacts to `Msg::DirLoaded`, routed from `app::update_inner` through
 //! `explorer::handle_dir_loaded` (a re-export of `handle_dir_loaded` below —
 //! every other module keeps calling it through `explorer::`, unaware it
-//! moved here per §1.6).
+//! moved here (500-line budget).
 
 use std::path::{Path, PathBuf};
 

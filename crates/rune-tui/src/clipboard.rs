@@ -3,10 +3,10 @@
 //! base64-encoded payload — built here as plain bytes and pushed into
 //! `Effects.raw` by `commands::clipboard`, never sent from a `Cmd` (plan
 //! Gotchas: "Cmds must never touch the terminal"). Read: `/usr/bin/pbpaste`,
-//! a deliberate deviation from Go's pure-OSC-52 read (plan Context
-//! "Clipboard": OSC 52 *read* is unsupported in Terminal.app and permission-
-//! gated in iTerm2/kitty — the macOS terminals this app targets; helix ships
-//! exactly this hybrid).
+//! a deliberate choice over a pure-OSC-52 read (plan Context "Clipboard":
+//! OSC 52 *read* is unsupported in Terminal.app and permission-gated in
+//! iTerm2/kitty — the macOS terminals this app targets; helix ships exactly
+//! this hybrid).
 
 use std::process::Command as ProcessCommand;
 
@@ -25,10 +25,8 @@ use crate::runtime::{Cmd, CmdKind, Msg, PasteTarget};
 pub const OSC52_MAX_PAYLOAD_BYTES: usize = 100_000;
 
 /// Builds the OSC 52 "set system clipboard" escape sequence for `payload`:
-/// `ESC ] 5 2 ; c ; <base64> BEL` (plan Context "Clipboard": "exact Go
-/// parity", `commands_clipboard.go`, mediated through Bubble Tea's
-/// `tea.SetClipboard` there — the `c` selector targets the system
-/// clipboard, not a primary/selection buffer). Pure and terminal-free: the
+/// `ESC ] 5 2 ; c ; <base64> BEL` — the `c` selector targets the system
+/// clipboard, not a primary/selection buffer. Pure and terminal-free: the
 /// caller (`commands::clipboard::copy`/`cut`) pushes the returned bytes into
 /// `Effects.raw`; this function performs no I/O itself.
 pub fn osc52_copy(payload: &[u8]) -> Vec<u8> {

@@ -1,9 +1,7 @@
-//! Property tests mirroring the Go buffer fuzz corpus
-//! (`FuzzBufferSnapshotImmutability`, `FuzzBufferBatchEquivalence`,
-//! `FuzzBufferPointRoundtrip`), plus the
-//! plan-required inverse/reapply round-trip through `rune_core::undo`:
-//! random doc + random valid edit batch -> apply -> inverse -> byte-identical
-//! original; `reapply(applied)` reproduces the edited bytes.
+//! Property tests for `Buffer`, plus the plan-required inverse/reapply
+//! round-trip through `rune_core::undo`: random doc + random valid edit
+//! batch -> apply -> inverse -> byte-identical original; `reapply(applied)`
+//! reproduces the edited bytes.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -17,7 +15,6 @@ use rune_core::buffer::{Buffer, Edit};
 use rune_core::coords::BufferPoint;
 use rune_core::undo::{apply_inverse, reapply};
 
-/// Port of `buffer_test.go:normalizeBounds`.
 fn normalize_bounds(length: usize, start: usize, end: usize) -> (usize, usize) {
     let start = start.min(length);
     let end = end.max(start).min(length);
@@ -25,9 +22,8 @@ fn normalize_bounds(length: usize, start: usize, end: usize) -> (usize, usize) {
 }
 
 proptest! {
-    /// Port of `FuzzBufferSnapshotImmutability`: `Buffer::replace` never
-    /// mutates the receiver, and the result's `len()` always matches its
-    /// `content()` byte length.
+    /// `Buffer::replace` never mutates the receiver, and the result's
+    /// `len()` always matches its `content()` byte length.
     #[test]
     fn snapshot_immutability(
         init in ".{0,64}",
@@ -52,9 +48,9 @@ proptest! {
         prop_assert_eq!(b.content(), orig_content.as_str());
     }
 
-    /// Port of `FuzzBufferBatchEquivalence`: applying two non-overlapping
-    /// edits as a descending-sorted batch produces the same content as
-    /// applying them individually in descending order. Bounds are derived
+    /// Applying two non-overlapping edits as a descending-sorted batch
+    /// produces the same content as applying them individually in
+    /// descending order. Bounds are derived
     /// from four sorted raw values (`s2 <= e2 <= s1 <= e1`, all clamped to
     /// `len` — clamping a sorted sequence with a monotonic `.min` preserves
     /// order) so every generated case is valid by construction; no
@@ -89,8 +85,8 @@ proptest! {
         }
     }
 
-    /// Port of `FuzzBufferPointRoundtrip`: `line_col_to_offset` and
-    /// `offset_to_line_col` are inverses for any in-range point. `raw_line`
+    /// `line_col_to_offset` and `offset_to_line_col` are inverses for any
+    /// in-range point. `raw_line`
     /// is reduced modulo the actual line count and `raw_col` modulo the
     /// actual line width (both always >= 1) so every generated point is
     /// in-range by construction; no `prop_assume` rejection is needed.
@@ -115,7 +111,7 @@ proptest! {
         // valid point: `line_col_to_offset` deliberately floors it to a
         // boundary, so feeding one in and demanding it come back unchanged
         // would assert that invalid points survive intact — the very
-        // assumption that let a multicursor add land mid-character (§1.5).
+        // assumption that let a multicursor add land mid-character.
         let mut col = raw;
         while col > 0 && !b.content().is_char_boundary(start + col) {
             col -= 1;
@@ -177,14 +173,13 @@ proptest! {
         // gap between edits (not merely touching). A zero-width edit sitting
         // exactly at another edit's boundary produces AppliedEdit.start
         // ties in the post-edit coordinate space (even when the *original*
-        // starts differ), and `Reapply`/`reapply`'s ascending start-only
-        // sort (`edit_primitives.go`) has no tie-break to order them
-        // correctly. The real pipeline never produces touching edits in one
-        // batch: `CursorSet::merge` coalesces any two cursors whose
-        // selections touch into one before edits are ever generated, so
-        // this is a test-construction artifact, not a reachable state —
-        // require a strict gap instead of asserting an order neither Go nor
-        // this port actually guarantees.
+        // starts differ), and `reapply`'s ascending start-only sort has no
+        // tie-break to order them correctly. The real pipeline never
+        // produces touching edits in one batch: `CursorSet::merge`
+        // coalesces any two cursors whose selections touch into one before
+        // edits are ever generated, so this is a test-construction
+        // artifact, not a reachable state — require a strict gap instead of
+        // asserting an order this port does not guarantee.
         let mut spans = [(s1, e1, i1), (s2, e2, i2), (s3, e3, i3)];
         spans.sort_by_key(|s| std::cmp::Reverse(s.0));
         prop_assume!(spans[0].0 > spans[1].1 && spans[1].0 > spans[2].1);

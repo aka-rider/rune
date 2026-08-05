@@ -1,5 +1,5 @@
 //! The ack-reaction side of the [`crate::db`] bridge (split out of `db.rs`
-//! to keep it under the §1.6 line budget): reacting to a `Load` op's ack and
+//! to keep it under the 500-line budget): reacting to a `Load` op's ack and
 //! to an `AppendEdit` ack's durable seq. [`crate::db_enqueue`] owns building
 //! and submitting the ops these react to.
 
@@ -59,8 +59,8 @@ pub fn handle_load_ack(
         app.set_status(format!("crash recovery: {reason}"), StatusSource::Other);
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
-    // marks it itself, so every hydration site re-derives it explicitly
-    // (CONSTITUTION §1.4.8), even on the `NoChange`/version-moved-on
+    // marks it itself, so every hydration site re-derives it explicitly,
+    // even on the `NoChange`/version-moved-on
     // branches where `hydrate` was never actually called: this document's
     // `db` binding is about to change below, which is itself a fact worth
     // re-settling the cache against.
@@ -73,7 +73,7 @@ pub fn handle_load_ack(
         false, // bind_new: `id` is already bound to a path read straight off disk
         load_result.bridge_seq.unwrap_or(0),
     ));
-    // Plan WP2.S3: render/hint state only (§12; see `Document::last_sync`'s
+    // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
     // own doc comment) — set unconditionally, even on the version-moved-on
     // branch above where `hydrate` was never called: the fact this `Load`
     // reported is still true regardless of whether the buffer adopted it.

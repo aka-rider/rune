@@ -1,4 +1,4 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): MAJOR (verification
+//! Split off `conceal_roundtrip.rs` (WP11): MAJOR (verification
 //! round 9) — `Block::Verbatim` (GFM tables, HTML blocks, and unknown/math
 //! constructs) never received the container-aware per-line treatment
 //! `CodeFenceM`/`HeadingM`/`HrM` got across rounds 4-7 — the dominant

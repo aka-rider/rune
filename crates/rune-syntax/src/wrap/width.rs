@@ -1,4 +1,4 @@
-//! The wrap pass's grapheme/width chokepoint (CONSTITUTION §1.6 split of
+//! The wrap pass's grapheme/width chokepoint (split out of
 //! the wrap module): every place that measures a rune's or a whole
 //! grapheme cluster's DISPLAY width, and the one place every width walker
 //! draws its cluster boundaries from. Shared, per the docs on each item
@@ -18,10 +18,10 @@ const HALFWIDTH_KATAKANA_VOICED_SOUND_MARK: char = '\u{FF9E}';
 const HALFWIDTH_KATAKANA_SEMI_VOICED_SOUND_MARK: char = '\u{FF9F}';
 
 /// `ControlAwareWidth` — the single source of truth for a rune's display
-/// width, shared (in the Go original) by the wrap/coordinate layer and the
-/// cell renderer. Rule: `\n`/`\r` occupy no column; every other rune
+/// width, shared by the wrap/coordinate layer and the cell renderer. Rule:
+/// `\n`/`\r` occupy no column; every other rune
 /// reported zero-width is clamped to 1 (this is a DISPLAY-width decision
-/// only — buffer bytes stay verbatim, §1.4.5). The 1-clamp exists so a LONE
+/// only — buffer bytes stay verbatim). The 1-clamp exists so a LONE
 /// zero-width rune (an isolated control char, a bare combining mark with no
 /// base) still gets its own reachable caret column — see `grapheme_width`
 /// below for why that reasoning does NOT extend to a rune that's part of a
@@ -101,10 +101,10 @@ pub fn rune_width_with_tab(r: char, current_width: usize) -> usize {
 /// `UnicodeWidthStr::width` derives for the same string, because
 /// `unicode-width` applies string-level ligature rules a per-`char` walk
 /// cannot see. `UnicodeWidthStr::width` is NOT summing per-rune widths —
-/// summing was tried and rejected (a real tmux capture against
-/// `scripts/parity/fixtures/emoji.md` showed it reserves MORE columns than
-/// the terminal actually consumes for a ZWJ-joined or skin-tone-modified
-/// emoji, leaving a visible gap before whatever follows on the row).
+/// summing was tried and rejected (a real tmux capture of an emoji-heavy
+/// document showed per-rune sums reserve MORE columns than the terminal
+/// actually consumes for a ZWJ-joined or skin-tone-modified emoji, leaving
+/// a visible gap before whatever follows on the row).
 /// `UnicodeWidthStr::width`'s ligature-aware width happens to still land on
 /// the same answer as that empirical result for ZWJ/skin-tone clusters
 /// (both count them as one double-wide glyph) while fixing the classes the

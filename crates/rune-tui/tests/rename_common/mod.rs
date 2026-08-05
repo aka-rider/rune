@@ -6,7 +6,7 @@
 //! title), `rename_collision.rs` (the collision guard and both halves of
 //! hazard 1), `rename_replace.rs` (the `[R]eplace` path against a real
 //! in-memory `Store`), and `rename_focus.rs` (the WP2
-//! focus-loss-is-the-commit-chokepoint suite) — TODO.md's §1.6 split of
+//! focus-loss-is-the-commit-chokepoint suite) — TODO.md's 500-line budget split of
 //! the original `rename.rs`, re-split by plan WP5 once the extension-gate
 //! and clipboard packages grew `rename_bind.rs` past the ceiling again.
 //! Each consumer pulls this in via `mod rename_common;` — integration test

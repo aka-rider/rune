@@ -21,8 +21,8 @@
 //! Every width in this module — the `bc` total, `build_crumb`'s per-part
 //! accounting, and `put`'s column advance — goes through the crate's ONE
 //! chrome-width chokepoint (`crate::width::display_width`, backed by
-//! `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per cell
-//! (§1.5), so the dash fill can never be sized in one unit and drawn in
+//! `rune_syntax::wrap::grapheme_width`), one grapheme CLUSTER per cell,
+//! so the dash fill can never be sized in one unit and drawn in
 //! another: a CJK/emoji/NFD-accented path component makes the difference
 //! visible immediately if the two ever drift apart.
 
@@ -45,11 +45,11 @@ use rune_syntax::wrap::grapheme_width;
 ///   (`block.height < 2`) or has no width at all;
 /// - the active document has no `file_path` (a draft, the Help virtual
 ///   doc — same "renders nothing" contract the pre-WP4 `draw` had);
-/// - the path has no `Normal` components at all (Go never shows a bare
-///   `/`);
+/// - the path has no `Normal` components at all (a bare `/` renders as
+///   nothing rather than an empty crumb);
 /// - the crumb, even at its MOST truncated (a single leaf part plus the
-///   ellipsis, or fewer), still doesn't fit `block`'s width with Go's
-///   `minOverhead` of 7 columns spare (`bc + 7 > block.width`).
+///   ellipsis, or fewer), still doesn't leave at least 7 spare columns in
+///   `block`'s width (`bc + 7 > block.width`).
 pub fn overlay(app: &App, block: Rect, focused: bool, frame: &mut Frame) {
     if block.height < 2 || block.width == 0 {
         return;
@@ -331,7 +331,7 @@ mod tests {
         // its dash fill in display columns, so `put` must advance in the
         // same unit: advancing 1-per-`char` would land `──╯` three columns
         // short of the right edge here, leaving stale cells behind the
-        // corner (§1.5 — the two coordinate systems must not be mixed).
+        // corner (the two coordinate systems must not be mixed).
         const W: u16 = 40;
         let app = app_for("hello", Some("/a/日本語/note.md"));
         let buf = testgrid::draw_with(W, 3, |frame| {

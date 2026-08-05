@@ -1,6 +1,6 @@
 //! Editing group of `EDITOR_BINDINGS` (chords that mutate the document,
 //! move/clone a line, add a multi-cursor, undo/redo, or save). Split out
-//! of `editor_bindings.rs` to bring that file under the §1.6 500-line
+//! of `editor_bindings.rs` to bring that file under the 500-line
 //! budget; assembled back into the single `EDITOR_BINDINGS` table (see
 //! that module's doc comment) in the exact original order — this module
 //! only owns the definitions.

@@ -1,14 +1,14 @@
-//! Split off `conceal_roundtrip.rs` (WP11, §1.6): CLASS A (verification
+//! Split off `conceal_roundtrip.rs` (WP11): CLASS A (verification
 //! round 5) — a lone `\r` line terminator. comrak follows CommonMark: CR,
 //! LF, or CRLF all end a line. This crate's BUFFER line model is `\n`-only
-//! (Go parity, §1.5) — correctly so, a bare `\r` is ordinary mid-line
-//! content, never a buffer line break. But `sourcepos_to_range` used to
-//! convert comrak's own (CR/LF/CRLF-aware) sourcepos through that SAME
-//! `\n`-only index, so the moment content contained a bare `\r`, comrak's
-//! line N stopped matching this crate's line N and every downstream byte
-//! offset landed on the wrong physical position. Fixed with a SECOND,
-//! comrak-compatible line index (`LineIndex::comrak`) used ONLY for
-//! sourcepos conversion — the bytes themselves are never touched (§1.4.5).
+//! — correctly so, a bare `\r` is ordinary mid-line content, never a
+//! buffer line break. But `sourcepos_to_range` used to convert comrak's
+//! own (CR/LF/CRLF-aware) sourcepos through that SAME `\n`-only index, so
+//! the moment content contained a bare `\r`, comrak's line N stopped
+//! matching this crate's line N and every downstream byte offset landed
+//! on the wrong physical position. Fixed with a SECOND, comrak-compatible
+//! line index (`LineIndex::comrak`) used ONLY for sourcepos conversion —
+//! the bytes themselves are never touched.
 //!
 //! Also carries the MIXED-INDEX SEAM cases (verification round 7 BLOCKER):
 //! a fence's own internal physical-line arithmetic still used the buffer's
