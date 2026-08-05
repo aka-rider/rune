@@ -118,10 +118,12 @@ the ceiling again. A handful remain over it, mostly the residue of the same
 long-running debt:
 
 - [ ] Re-measured against the tree after the title/rename work merged, because
-  both sides of that merge carried stale counts: `rune-tui/src/app.rs` (550),
-  `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (526),
+  both sides of that merge carried stale counts: `rune-tui/src/app.rs` (544,
+  down from 550 after a code review dropped a stale relocation-history
+  comment), `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (532),
   `rune-syntax/src/wrap/mod.rs` (520), `rune-fuzz/src/generate/palette.rs`
-  (517), `rune-syntax/src/syntax.rs` (505), `rune-tui/src/document.rs` (501).
+  (517), `rune-tui/src/runtime/mod.rs` (517), `rune-syntax/src/syntax.rs`
+  (505), `rune-tui/src/document.rs` (501).
   `rune-tui/tests/rename_bind.rs`, previously listed here at 795 lines, is
   DONE: split (plan WP5) into `rename_bind.rs` (373 — focus/typing, the
   end-to-end no-store rename, draft naming), `rename_refusals.rs` (136),
