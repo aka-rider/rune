@@ -142,6 +142,20 @@ fn is_current_target(app: &App, path: &Path) -> bool {
 /// chokepoint's own discard check (`discard_if_switching_away`) sees the
 /// slot already pointing at the document it's about to switch to and
 /// leaves it alone.
+///
+/// The reused-id branch advances the freshly loaded buffer's version past
+/// the document it's about to replace (`Buffer::advance_past`) before
+/// `Document::new` ever sees it. A preview's buffer is never edited, so
+/// without this every preview after the first would sit at version 1
+/// forever under the same id — indistinguishable, to a version-gated
+/// consumer, from "nothing changed". Two such consumers key off exactly
+/// that: `dispatch::after_update`'s highlight-reschedule check (a preview
+/// with no colours until the version moves) and `dispatch::
+/// handle_highlighted`'s in-flight-reply staleness guard (a reply for the
+/// file just replaced, arriving after the swap, whose stale version could
+/// otherwise coincide with the new buffer's and get installed onto it).
+/// Monotonic versions make that coincidence unrepresentable rather than
+/// merely unlikely.
 fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
     let Ok(buffer) = Buffer::from_bytes(bytes) else {
         // `read_preview_cmd` already rejected invalid UTF-8 before this
@@ -151,6 +165,8 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
     };
     let id = match app.explorer.preview.filter(|id| app.doc(*id).is_some()) {
         Some(id) => {
+            let floor = app.doc(id).map_or(0, |doc| doc.buffer.version());
+            let buffer = buffer.advance_past(floor);
             if let Some(doc) = app.doc_mut(id) {
                 *doc = Document::new(buffer);
                 doc.bind_path(path.to_path_buf());

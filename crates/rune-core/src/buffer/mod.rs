@@ -151,6 +151,18 @@ impl Buffer {
         self.version
     }
 
+    /// Advances this buffer's version to be strictly greater than `floor`,
+    /// touching no byte of its content — for a caller that replaces one
+    /// buffer's content with another's under the SAME identity (a document
+    /// id kept across the swap) and needs every consumer gated on
+    /// `version()` to see that as a genuine change, even when both buffers
+    /// independently started at version 1. A no-op once this buffer's own
+    /// version already exceeds `floor`.
+    pub fn advance_past(mut self, floor: u64) -> Buffer {
+        self.version = self.version.max(floor.saturating_add(1));
+        self
+    }
+
     pub fn content(&self) -> &str {
         &self.content
     }

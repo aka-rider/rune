@@ -49,6 +49,20 @@ fn run_cmds(app: &mut App, effects: &mut Effects) {
     }
 }
 
+/// Drains and runs every queued `Cmd` through the real `app::update`
+/// chokepoint, unlike [`run_cmds`] above which calls straight into
+/// `workspace::handle_file_opened` and so never reaches `dispatch::
+/// after_update`'s highlight-reschedule check. Needed for any assertion
+/// about scheduling, not just document/tab bookkeeping.
+fn run_cmds_through_update(app: &mut App, effects: &mut Effects) {
+    let cmds = std::mem::take(&mut effects.cmds);
+    for cmd in cmds {
+        if let Some(msg) = cmd.run() {
+            crate::app::update(app, msg, effects);
+        }
+    }
+}
+
 #[test]
 fn arrowing_down_n_files_leaves_exactly_one_extra_tab_and_one_preview_document() {
     let mem = Arc::new(Mem::new());
@@ -542,6 +556,102 @@ fn promoting_the_preview_enqueues_recovery_store_hydration() {
             .values()
             .any(|op| op.doc == id && op.issued_version.is_some()),
         "promotion must enqueue a Load op hydrating the document through the recovery store"
+    );
+}
+
+/// Finding 1 (HIGH): `Document::new` resets `highlight` and resets the
+/// swapped-in buffer to version 1 — and a preview's buffer is never
+/// edited, so before `apply_loaded` advanced the version past the reused
+/// document's own, every preview after the first sat at version 1 forever.
+/// `dispatch::after_update`'s highlight-reschedule check is gated on the
+/// buffer version actually changing, so nothing was ever scheduled past
+/// the first file arrowed onto — this pins that a highlight is scheduled
+/// for EVERY file in the run, not just the first.
+#[test]
+fn arrowing_across_files_schedules_a_highlight_for_every_preview() {
+    let mem = Arc::new(Mem::new());
+    let code = "```rust\nfn a() {}\n```\n";
+    for name in ["a.md", "b.md", "c.md"] {
+        mem.save_atomic(&PathBuf::from("/root").join(name), code.as_bytes())
+            .unwrap();
+    }
+    let mut app = app_with(&mem);
+    load_entries(&mut app, &["a.md", "b.md", "c.md"]);
+    let mut effects = Effects::default();
+
+    for n in 0..3 {
+        app.explorer.nav.move_by(1, app.explorer.entries.len());
+        after_cursor_move(&mut app, &mut effects);
+        run_cmds_through_update(&mut app, &mut effects);
+
+        let id = app.explorer.preview.expect("preview minted");
+        assert!(
+            app.doc(id).expect("doc").highlight.in_flight.is_some(),
+            "file #{n} previewed onto the reused document must schedule its own highlight"
+        );
+    }
+}
+
+/// Finding 1 (HIGH): the in-place swap's stale-reply hazard, constructed
+/// directly rather than raced across threads — the danger is a version
+/// COLLISION (both buffers independently starting at version 1 under the
+/// same reused id), not a timing window, so feeding a direct `Msg::
+/// Highlighted` at the version captured just before the swap exercises
+/// exactly the check a genuinely late reply would hit. Before `apply_
+/// loaded` advanced the version, this reply's `version` would have equalled
+/// the new file's live version by coincidence and `dispatch::
+/// handle_highlighted` would have installed file A's regions onto file B.
+#[test]
+fn a_highlight_reply_for_the_previous_preview_file_cannot_paint_the_next_one() {
+    let mem = Arc::new(Mem::new());
+    mem.save_atomic(std::path::Path::new("/root/a.md"), b"# a\n")
+        .unwrap();
+    mem.save_atomic(std::path::Path::new("/root/b.md"), b"# b\n")
+        .unwrap();
+    let mut app = app_with(&mem);
+    load_entries(&mut app, &["a.md", "b.md"]);
+    let mut effects = Effects::default();
+
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // "a.md"
+    after_cursor_move(&mut app, &mut effects);
+    run_cmds_through_update(&mut app, &mut effects);
+    let id = app.explorer.preview.expect("preview minted");
+    let stale_version = app.doc(id).expect("doc").buffer.version();
+
+    app.explorer.nav.move_by(1, app.explorer.entries.len()); // "b.md"
+    after_cursor_move(&mut app, &mut effects);
+    run_cmds_through_update(&mut app, &mut effects);
+    assert_eq!(app.explorer.preview, Some(id), "the same id is reused");
+    let live_version = app.doc(id).expect("doc").buffer.version();
+    assert_ne!(
+        stale_version, live_version,
+        "the swap must advance the buffer's version"
+    );
+
+    let scope = rune_syntax::scope::scope_table()
+        .resolve("keyword")
+        .expect("known scope");
+    crate::app::update(
+        &mut app,
+        Msg::Highlighted {
+            doc: id,
+            version: stale_version,
+            result: Some(crate::highlight::HighlightReply {
+                regions: vec![crate::highlight::RegionResult {
+                    map: crate::linemap::LineMap::new(vec![0..4]),
+                    payload: Some(crate::highlight::RegionPayload::Spans(vec![(0..4, scope)])),
+                }],
+                truncated: false,
+            }),
+        },
+        &mut effects,
+    );
+
+    let doc = app.doc(id).expect("doc");
+    assert!(
+        doc.highlight.regions.is_empty(),
+        "a reply computed for the file this id used to show must never install \
+         onto the file that replaced it"
     );
 }
 
