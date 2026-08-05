@@ -75,8 +75,10 @@ fn move_row(
 }
 
 /// Port of `commands_nav_gen.go:pageStep`: a full viewport minus one row of
-/// overlap for context.
-fn page_step(doc: &Document) -> isize {
+/// overlap for context. `pub(crate)` so `commands::reading_nav` pages a
+/// read-only document by the exact same step `page_up`/`page_down` use
+/// below, rather than re-deriving it.
+pub(crate) fn page_step(doc: &Document) -> isize {
     let h = doc.viewport.height;
     if h > 1 { (h - 1) as isize } else { 1 }
 }
@@ -202,6 +204,22 @@ pub fn cursor_to_bottom(doc: &mut Document) {
     scroll_to(doc, row.saturating_sub(height.saturating_sub(1)));
 }
 
+/// `commands::reading_nav`'s `Home`: scrolls a read-only document to its
+/// very first row.
+pub fn scroll_to_document_top(doc: &mut Document) {
+    scroll_to(doc, 0);
+}
+
+/// `commands::reading_nav`'s `End`: scrolls a read-only document to its
+/// LAST PAGE, not merely its last row — the document-reader convention
+/// (Preview, Evince, iBooks all land End on a full final page, not one row
+/// of content above a screen of blank space).
+pub fn scroll_to_document_bottom(doc: &mut Document) {
+    let total = doc.view().display.total_rows();
+    let height = doc.viewport.height as usize;
+    scroll_to(doc, total.saturating_sub(height));
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -276,5 +294,22 @@ mod tests {
         doc.cursors = CursorSet::new(offset);
         cursor_to_bottom(&mut doc);
         assert_eq!(doc.viewport.scroll_row, 50 - 19);
+    }
+
+    #[test]
+    fn scroll_to_document_top_lands_on_row_zero() {
+        let mut doc = doc_with_lines(100, 20);
+        doc.viewport.scroll_row = 42;
+        scroll_to_document_top(&mut doc);
+        assert_eq!(doc.viewport.scroll_row, 0);
+        assert_eq!(doc.viewport.mode, ScrollMode::Independent);
+    }
+
+    #[test]
+    fn scroll_to_document_bottom_lands_on_the_last_full_page() {
+        let mut doc = doc_with_lines(100, 20);
+        scroll_to_document_bottom(&mut doc);
+        let total = doc.view().display.total_rows();
+        assert_eq!(doc.viewport.scroll_row, total - 20);
     }
 }

@@ -26,6 +26,7 @@
 use std::sync::Arc;
 
 use rune_core::buffer::Buffer;
+use rune_core::cursor::CursorSet;
 use rune_tui::app::{self, App};
 use rune_tui::document::ReadOnly;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
@@ -99,12 +100,19 @@ fn send(app: &mut App, msg: Msg) {
 
 /// THE REGRESSION TEST. F1 opens the Help tab; the `## Global` table is the
 /// first table in `help_markdown()` (source line 5, `| Key | Action |`), so
-/// it sits on screen at `scroll_row == 0` with no scrolling needed. A few
-/// `Down` presses land the cursor inside the table's own lines. Before
+/// it sits on screen at `scroll_row == 0` with no scrolling needed. Before
 /// WP1, the root reveal grant keyed off `focused` alone, so a focused
 /// read-only document (Help always is) still revealed raw markdown under
 /// its invisible cursor — this is the exact bug report: box borders
 /// replaced by a literal `| Key | Action |` source row.
+///
+/// WP-A re-keyed every motion key in a read-only document to a viewport
+/// command (`commands::reading_nav`), so `Down` no longer moves the cursor
+/// here at all — driving it with keystrokes the way this test used to would
+/// exercise scrolling, not reveal. The capability this test actually
+/// covers (a read-only document never reveals raw markdown under its
+/// cursor) needs the cursor placed directly instead, exactly as `sync.rs`'s
+/// own tests already poke `viewport` directly.
 #[test]
 fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
     let mut app = app_basic("hello");
@@ -120,12 +128,15 @@ fn help_tab_table_stays_boxed_when_the_cursor_lands_inside_it() {
     // viewport; size it the same way `app_basic` sized the original.
     app.active_doc_mut().viewport.set_size(WIDTH, HEIGHT - 1);
 
-    // "# Help" / "" / "## Global" / "" / "| Key | Action |" / "| --- | --- |"
-    // / first data row: six `Down` presses land the cursor on a real data
-    // row, well inside the table's own line range.
-    for _ in 0..6 {
-        send(&mut app, plain(KeyCode::Down));
-    }
+    // Land the cursor on a real data row of the `## Global` table, just
+    // past its `| --- | --- |` separator.
+    let content = app.active_doc().buffer.content().to_string();
+    let separator = "| --- | --- |\n";
+    let data_row_start = content
+        .find(separator)
+        .map(|i| i + separator.len())
+        .expect("the Global table has a separator row");
+    app.active_doc_mut().cursors = CursorSet::new(data_row_start + 2);
     app.sync_view();
 
     let buf = render_to_test_backend(&app);
