@@ -1,6 +1,6 @@
 ## Open
 
-- [ ] **`crates/rune-tui/src/layout.rs` is over the §1.6 500-line budget (564 lines).** The Enter/Escape rework's narrow-frame flip (`LayoutMode::ExplorerOnly`) added a `carve_column` helper shared between the ordinary `Split` path and the new full-width column path, plus the extra `Resolved.mode` bookkeeping and test coverage for the flip. Not split out here to avoid destabilizing the one geometry chokepoint (`resolve`/`geometry`) mid-rework, alongside a concurrent Explorer-side rework on a sibling branch touching the same area; a follow-up should extract `carve_column` (and maybe the whole `Resolved`-building match) into a sibling module the way `split.rs` was already split out.
+- [ ] **`crates/rune-tui/src/layout.rs` is over the 500-line file budget (564 lines).** The Enter/Escape rework's narrow-frame flip (`LayoutMode::ExplorerOnly`) added a `carve_column` helper shared between the ordinary `Split` path and the new full-width column path, plus the extra `Resolved.mode` bookkeeping and test coverage for the flip. Not split out here to avoid destabilizing the one geometry chokepoint (`resolve`/`geometry`) mid-rework, alongside a concurrent Explorer-side rework on a sibling branch touching the same area; a follow-up should extract `carve_column` (and maybe the whole `Resolved`-building match) into a sibling module the way `split.rs` was already split out.
 
 - [ ] **`cluster_highlight` (`crates/rune-fuzz/src/generate/cluster.rs`) no longer restores focus from the Explorer/Tabs before its guaranteed `Key('h')` edit.** Deleting `GlobalCommand::FocusEditor` (`^E`, Enter/Escape rework) removed the only unconditional, toggle-free way for a STATIC generator (no live `app.focus()` to check) to guarantee landing on the Editor from any pane; `^B`/`GlobalCommand::ToggleLeft` is a genuine toggle and cannot safely replace it blindly — pressed unconditionally it would as often steal focus from an already-focused editor as reclaim one that wasn't. `cluster_chrome`'s `Key(CTRL_B_KEY)`/`Key(CTRL_T_KEY)`/`EXPLORER_SEARCH_KEYS` arms can each leave focus on the Explorer or Tabs ahead of a later `cluster_highlight`; only the `Key(CTRL_R_KEY)` (Title-parking) case is still corrected, via `ESCAPE_KEY` alone. Not a caught invariant violation — the stray `h` keystroke still stays inside whichever pane it lands on (`PANE-NO-BLEED` holds) — just a quieter, uncaught session for the `HighlightVersion::Stale`-vs-`Live` distinction that cluster exists to exercise. A real fix needs `cluster_highlight` (or the session assembler in `generate.rs`) to know which pane the immediately preceding cluster left focus on, not a single blind keystroke.
 
@@ -26,7 +26,7 @@
 
 - [ ] **`crates/rune-tui/tests/chrome.rs` was not updated for the reading-view chord, though the implementation plan predicted it would need to be.** The plan called out its two width-sensitive tests, `default_footer_hints_omit_the_aliased_quit_chord` and `footer_global_tail_survives_truncation_with_explorer_focused`, as needing changes once the new binding lengthened the hint row — "expected, not flake". They were not touched, and they still pass, because both assert via `contains` rather than a fixed width or hint count, so the row lengthening the plan anticipated is invisible to them. Recorded so the next person doesn't go looking for a missing change that was never needed.
 
-- [ ] **`crates/rune-db/tests/multiprocess` — `scenarios::two_stores_closing_simultaneously_surface_no_error_despite_truncate_contention` is a known flake under machine load.** Observed timing out after 30s waiting for child-process marker files (`crates/rune-db/tests/multiprocess/support.rs`'s marker-wait helper) while three cargo builds were running concurrently; passes reliably in isolation. The helper paces multi-process startup on a wall-clock timeout — the pattern `CLAUDE.md` calls out by name ("never order or pace events with wall-clock sleeps, especially in tests") — so it will flake again under load rather than being an actual regression. A real fix replaces the wall-clock wait with a deterministic readiness signal.
+- [ ] **`crates/rune-db/tests/multiprocess` — `scenarios::two_stores_closing_simultaneously_surface_no_error_despite_truncate_contention` is a known flake under machine load.** Observed timing out after 30s waiting for child-process marker files (`crates/rune-db/tests/multiprocess/support.rs`'s marker-wait helper) while three cargo builds were running concurrently; passes reliably in isolation. The helper paces multi-process startup on a wall-clock timeout — never order or pace events with wall-clock sleeps, especially in tests — so it will flake again under load rather than being an actual regression. A real fix replaces the wall-clock wait with a deterministic readiness signal. Second sighting 2026-08-05: `scenarios::four_children_append_storm_one_doc_each_all_ack_ok_with_exact_event_counts` timed out the same 30s marker wait during a full `make test` under load and passed in isolation — same helper, same class.
 
 - [ ] **The fuzz harness never gives a document a real `last_sync`, so `MergeState::Active` is unreachable in a fuzz session and all four merge invariants are vacuous.** The session fuzzer builds its `App` fixtures in memory with no store wired behind them, and `merge::begin`'s own fast-path gate refuses outright without a `Some(SyncKind::DiskAhead | SyncKind::Diverged)` `last_sync` — nothing in the generator/driver ever sets one, so `^M` always refuses and the resolver never activates under fuzzing. `MERGE-KEY-FEEDBACK`, `MERGE-SAVE-BLOCKED`, `MERGE-DOC-ACTIVE`, and `MERGE-TITLE-CLEARED` (`crates/rune-fuzz/src/invariant/merge.rs`) all early-return `None` on `!prev.merge_active`/`!prev.merge_pending`, so they currently pass by construction, not by coverage. A real fix needs a store-backed fuzz session — a `Store` behind the fixture `App`, seeded with a divergent disk fact — not a synthetic `last_sync` poke, since the resolver's own landing path (`merge/landing.rs`) reads real blob bytes back through it.
 
@@ -103,7 +103,7 @@ the fix is narrow and these three remain.
   paste arms now say so in place. Do not re-attempt without first deciding
   what happens to the discarded clipboard text.
 
-## File-size budget (§1.6)
+## File-size budget
 
 A batch of twelve splits landed: all six `rune-db` sources, `rune-tui`'s
 `document.rs`/`explorer.rs`, `tests/opentabs.rs`, and the two worst test
@@ -216,8 +216,8 @@ decor.rs`) per the plan's own instruction; only wire-up lines touched
 `emit/mod.rs` and `syntax.rs`, but that was still enough to cross or extend
 the ceiling, and neither has been split since.
 
-- [ ] The Explorer type-to-search feature (Go filetree parity, no wall
-  clock) grew two more already-over-budget files: `rune-tui/src/app.rs`
+- [ ] The Explorer type-to-search feature (no wall clock) grew two more
+  already-over-budget files: `rune-tui/src/app.rs`
   567 → 577 (`set_focus`'s new blur clear — the one chokepoint every route
   off the Explorer funnels through, so it has to live in the same writer
   the title's own blur clear already does, not a new file) and
@@ -259,7 +259,7 @@ Groomed, verified against the tree, and deliberately not worked — each needs i
   Closes both parked title tickets at once. `rune-tui/src/field.rs`'s `TextField`
   is the reusable editable core the verbatim-editor ticket asked for — buffer,
   one cursor with an anchor, and its own in-memory `Journal` that never reaches
-  the recovery store (§12) — and the title resolves keys through the existing
+  the recovery store — and the title resolves keys through the existing
   `EDITOR_BINDINGS`, so ⌥-arrows, ⇧-selection, ⌘A, ⌘Z/⇧⌘Z and ⌘C/⌘X/⌘V all work
   on a file name. Two deliberate divergences from the tickets as groomed: the
   title keeps its **own** undo journal (the ticket recommended ⌘Z undo the
@@ -269,7 +269,7 @@ Groomed, verified against the tree, and deliberately not worked — each needs i
   `lessrc`. Losing focus, not Enter, is the single chokepoint that commits the
   rename; Enter and Down merely cause the focus loss.
 
-- **Zero-width edit batches no longer dirty a clean file** — the commit chokepoint drops edits that change nothing, in both the Rust and Go implementations.
+- **Zero-width edit batches no longer dirty a clean file** — the commit chokepoint drops edits that change nothing.
 - **`build_5k_doc` has one source of truth** — the bench and perf-guard copies had already silently diverged (the guard measured a table-bearing document the bench did not).
 - **`Mem::stat` and `read_dir` share one synthetic-directory predicate.**
 - **Span-cap truncation surfaces a status line**, with timeout outranking it when both hold.

@@ -123,14 +123,15 @@ target in the footer (`→ target  ⏎ open`) while the caret is on a link.
 
 ## Release packaging
 
-The workspace has no ship pipeline: no release build profile wiring, no archive, no
-Homebrew tap/cask publication, no version injection beyond `CARGO_PKG_VERSION`, and no
-signing story. Target shape:
-- A release target producing a stripped darwin/arm64 binary and tarball.
-- Homebrew cask publication so `brew install` works against the Rust binary.
-- A stable code-signing identity: ad-hoc signatures change on every rebuild and reset
-  TCC permission grants, so releases need a real signing certificate (and eventually
-  notarization) rather than the quarantine-strip workaround.
+A `cargo-dist`-driven pipeline now exists (`dist-workspace.toml`,
+`.github/workflows/release.yml`, `RELEASING.md`): a pushed `v*` tag builds an
+`aarch64-apple-darwin` binary, publishes a GitHub Release, and pushes the `rune`
+Homebrew formula to `aka-rider/homebrew-tap`. What remains open is the signing
+story: releases still ship with an ad-hoc signature, which changes on every
+rebuild and resets TCC permission grants. Target shape:
+- A stable code-signing identity (a real Developer ID certificate) wired into
+  the release build, replacing the ad-hoc signature.
+- Notarization, once a signing identity exists.
 
 ## Port the embed-target fix from branch `img-embedfix`
 

@@ -1,17 +1,17 @@
 # Display-pipeline 100 ms budget violates Non-Blocking Update
 
 **Status:** open
-**Priority:** medium — No user-visible symptom yet; the 100 ms budget is a regression guard, not a measured reality. However, on a 5,000+ line document the sync render loop is permitted to block for 100 ms per message batch, which directly tensions §5.3 Non-Blocking Update. Low priority would imply the tension is acceptable; it is not.
+**Priority:** medium — No user-visible symptom yet; the 100 ms budget is a regression guard, not a measured reality. However, on a 5,000+ line document the sync render loop is permitted to block for 100 ms per message batch, which directly tensions the non-blocking update rule. Low priority would imply the tension is acceptable; it is not.
 
 **Symptom:** None observed in practice. The perf guard test `full_pipeline_5k_under_100ms` permits a 100 ms stall without failing, so the test passes even though that budget would produce a visibly laggy keystroke on a large document if the pipeline actually takes near that duration.
 
-**Root cause:** The perf guard test at `crates/rune-md/tests/perf_guard.rs` allows a 100 ms full display-pipeline run on a 5,000-line document. Meanwhile `App::sync_view` in `crates/rune-tui/src/app.rs` runs that pipeline synchronously with no async offload. The runtime loop in `crates/rune-tui/src/runtime.rs` calls `sync_view()` before every frame is drawn — once per processed message batch, not once per message. §5.3 requires `Update()` and `Init()` to stay non-blocking; a 100 ms synchronous stall on the render path violates that contract even though `sync_view` sits just outside `update` in the same synchronous loop.
+**Root cause:** The perf guard test at `crates/rune-md/tests/perf_guard.rs` allows a 100 ms full display-pipeline run on a 5,000-line document. Meanwhile `App::sync_view` in `crates/rune-tui/src/app.rs` runs that pipeline synchronously with no async offload. The runtime loop in `crates/rune-tui/src/runtime.rs` calls `sync_view()` before every frame is drawn — once per processed message batch, not once per message. The non-blocking update rule requires `App::update` to stay non-blocking, with I/O leaving the thread as commands; a 100 ms synchronous stall on the render path violates that contract even though `sync_view` sits just outside `update` in the same synchronous loop.
 
 **Scope:**
 - `crates/rune-md/tests/perf_guard.rs` — the `full_pipeline_5k_under_100ms` test and its 100 ms threshold
 - `crates/rune-tui/src/app.rs` — `App::sync_view`, the synchronous pipeline invocation
 - `crates/rune-tui/src/runtime.rs` — the render loop with two `app.sync_view()` calls per frame
-- `CONSTITUTION.md` §5.3 — the non-blocking update contract
+- The non-blocking update rule — the update loop stays non-blocking; I/O leaves the thread as commands
 
 **Acceptance criteria:**
 - The display-pipeline recompute no longer blocks the synchronous render loop on large documents.

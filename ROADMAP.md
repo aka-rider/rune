@@ -1,43 +1,38 @@
+# Roadmap
 
-- [x] Scaffolding: Done!.
-- [x] Pre-flight: Port fuzzing infra and start fuzzing
-- [x] Add sqlite, state saving, models, VFS
-- [x] Add Explorer, Open Tabs and Footer 
-- [x] Architecture with tree-sitter (22 languages, render-layer overlay); config, themes still open
-- [ ] 100% features parity with golang's **markdown-edit** TUI parity with rune
-	- rendering readonly view and full editor r's keystrokes,
-  row movements, etc. Rendering parity: colors, styles. Verification via ttyd golang/rust on the same file
-  
-- Add links and links traveling, wiki-links support, HTTP decoding
-- keystrokes / chords 1:1
+The shipped baseline is README's feature list; this is the delta on top of it,
+forward-looking and prioritized by user impact. Full detail on each item lives
+in `TODO/feature-gaps.md`.
 
-5. Markdown (+HTML) rendering capabilities:
-  - images
-  - tables 1:1 rune's behavior
-6. Future: tree sitter integration
-6.1 Recognize file type + render icon for: JavaScript,
-C++, TypeScript, Markdown, etc. (copy NeoVim's / Helix /
-best-in-breed icons pack)
-7. Merge external changes (built-in 3-way merge)
-8. What else?
-
-
-
- ENDGAME: rune in rust
-  1. Scaffold. Mimics the rune editor `rune(in rust)
-  <markdown file>` main Keystrokes, clipboard; Markdown
-  rendering: basic markdown preview + editing combined
-  1.1 Add links and links traveling, wiki-links support,
-  HTTP decoding
-  2. Add sqlite, state saving, models, VFS
-  3. keystrokes / chords 1:1
-  4. Add Explorer, Open Tabs and Footer, TUI parity with
-  rune
-  4.1 Port fuzzing infra and start fuzzing, main focus on
-  improving human session
-  5. Markdown (+HTML) rendering capabilities:
-      - images
-      - tables 1:1 rune's behavior
-  6. Future: tree sitter integration
-  6.1 Recognize file type + render icon for: JavaScript,
-  C++, TypeScript, Markdown, etc. (copy NeoVim's / Helix /
+- [ ] **In-file search** — a toggleable search bar in the editor pane, live
+  highlight-as-you-type with a match readout, next/prev navigation, and
+  durable search history.
+- [ ] **File watching + auto-adoption** — watch the open document's directory
+  and auto-adopt a clean buffer's external changes; keep today's guard/merge
+  flow for every divergent case.
+- [ ] **Trash** — delete a file from the explorer or editor via the macOS
+  Trash, guarded by a confirm prompt and refused while the document is dirty.
+- [ ] **New-file chord** — a key that creates a durable untitled draft and
+  focuses the title for naming, without waiting for the last tab to close.
+- [ ] **Tab cap, eviction, and pinning** — bound open tabs to the ten
+  digit-addressable slots, evict least-recently-active non-pinned tabs, and
+  let the user pin a tab against eviction.
+- [ ] **Hardlink-fork warning** — surface a warning when saving a hardlinked
+  file would fork it from its other names on disk; the underlying plumbing
+  already tracks link count.
+- [ ] **Image paste** — write pasted image bytes to a content-addressed file
+  in the document's assets directory and insert the embed link at the caret.
+- [ ] **Animated GIF playback** — composite and retransmit GIF frames instead
+  of rendering a still first frame.
+- [ ] **iTerm2 inline-image protocol** — a second image protocol behind the
+  existing capability probe, for terminals without Kitty graphics support.
+- [ ] **Markdown extras** — callouts, `==highlight==` marks, `#tags`, math
+  (`$$`/`$...$`), and selectable frontmatter display modes.
+- [ ] **Word-count readout** — a live word count beside the footer's
+  line/column display.
+- [ ] **Footer link hint** — show the resolved target in the footer when the
+  caret sits on a link.
+- [ ] **Release signing** — a stable code-signing identity in place of the
+  ad-hoc signature (which resets TCC grants on every rebuild), and eventual
+  notarization. The build/archive/Homebrew-formula pipeline itself now ships
+  via `cargo-dist` (see `RELEASING.md`).

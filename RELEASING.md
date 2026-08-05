@@ -18,8 +18,7 @@ derived from it and is never created by hand.
 
 - Create a GitHub personal access token with `repo` scope that can push to
   `aka-rider/homebrew-tap`, and add it as repo secret `HOMEBREW_TAP_TOKEN` on
-  `aka-rider/rune`. (This is a different secret name from the Go pipeline's
-  `HOMEBREW_TAP_GITHUB_TOKEN`; the same PAT can back both.)
+  `aka-rider/rune`.
 - If `main` is branch-protected, allow `github-actions[bot]` to push to it —
   Cut Release pushes the version-bump commit directly.
 
