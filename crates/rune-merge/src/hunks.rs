@@ -40,7 +40,7 @@ pub fn merge_hunks(ancestor: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<Hunk> {
     }
 }
 
-/// Classifies a conflict-free merge result (port of `hunks.go:158-171`).
+/// Classifies a conflict-free merge result (port of the Go reference's clean fast path).
 /// The merged bytes are trusted only to pick which verbatim input to
 /// return; diffy does not renormalize non-conflicting content.
 fn classify_clean(ours: &[u8], theirs: &[u8], merged: &[u8]) -> Hunk {
@@ -103,7 +103,7 @@ fn is_theirs_marker(line: &[u8]) -> bool {
 
 /// Splits diffy's diff3 output into alternating clean segments and conflict
 /// blocks. `cleans[i]` precedes `conflicts[i]`; `cleans.len() ==
-/// conflicts.len() + 1` (port of `parseDiff3`, `hunks.go:97`).
+/// conflicts.len() + 1` (port of the Go reference's `parseDiff3`).
 fn parse_diff3(output: &[u8]) -> (Vec<Vec<u8>>, Vec<Diff3Block>) {
     let mut cleans = Vec::new();
     let mut conflicts = Vec::new();
@@ -179,8 +179,8 @@ fn anchor_section(input: &[u8], search_from: usize, section: &[u8]) -> Option<(u
 }
 
 /// Maps diff3 output boundaries back to verbatim ours/theirs bytes,
-/// returning the classified hunk sequence (port of `parseHunks`,
-/// `hunks.go:150-309`). Only called when diffy reports at least one
+/// returning the classified hunk sequence (port of the Go
+/// reference's `parseHunks`). Only called when diffy reports at least one
 /// conflict; an empty `conflicts` list here is treated the same as a failed
 /// anchor — degrade to one whole-file conflict rather than assume clean.
 fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
@@ -251,7 +251,7 @@ fn parse_hunks(ours: &[u8], theirs: &[u8], diff3_output: &[u8]) -> Vec<Hunk> {
     hunks
 }
 
-/// Classifies one clean region between conflicts (port of `hunks.go:254-283`).
+/// Classifies one clean region between conflicts (port of the Go reference's clean-region classification).
 fn classify_clean_region(ours_clean: &[u8], theirs_clean: &[u8], merged_clean: &[u8]) -> Hunk {
     if ours_clean == theirs_clean {
         Hunk::Clean(ours_clean.to_vec())
