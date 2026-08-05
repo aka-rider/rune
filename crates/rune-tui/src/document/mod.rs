@@ -88,6 +88,9 @@ pub struct Document {
     /// change them) does not — saving protects what the user wrote, undo
     /// rewrites it.
     pub read_only: ReadOnly,
+    /// Marks this tab exempt from the tab-cap LRU eviction (set/cleared by
+    /// the ^G toggle); has no other effect yet.
+    pub pinned: bool,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).
     pub file_path: Option<PathBuf>,
@@ -331,6 +334,7 @@ impl Document {
             image: None,
             embeds: crate::graphics::EmbedSet::new(),
             last_sync: None,
+            pinned: false,
         }
     }
 

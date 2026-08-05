@@ -67,6 +67,9 @@ pub enum GlobalCommand {
     /// former `GlobalCommand::FocusEditor` these keys used to name was
     /// deleted in `84a83f5`).
     ToggleMessages,
+    /// Toggles the pin on the active tab, marking it exempt from the
+    /// upcoming tab-cap LRU eviction; refused on a preview tab.
+    TogglePin,
 }
 
 const CTRL: Mods = Mods {
@@ -312,6 +315,16 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    // Appended last deliberately: at narrow widths the footer clips the
+    // tail hint, and this new hint should be the one clipped, not
+    // `^E messages`.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('g'), CTRL)],
+        cmd: GlobalCommand::TogglePin,
+        help: "pin",
+        when: "",
+        alias: false,
+    },
 ];
 
 #[cfg(test)]
@@ -536,5 +549,52 @@ mod tests {
                 "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
             );
         }
+    }
+
+    /// The same cross-table guard as `global_p_binding_...` above, for `^G`
+    /// (`GlobalCommand::TogglePin`) — CTRL only, like `Merge`, there is no
+    /// `⌘G` row.
+    #[test]
+    fn global_g_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let ctrl_g = KeyInput {
+            code: KeyCode::Char('g'),
+            mods: CTRL,
+        };
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        assert!(
+            claimants(EDITOR_BINDINGS, ctrl_g).is_empty(),
+            "EDITOR_BINDINGS already binds {ctrl_g:?}"
+        );
+        assert!(
+            claimants(VIM_BINDINGS, ctrl_g).is_empty(),
+            "VIM_BINDINGS already binds {ctrl_g:?}"
+        );
+        assert!(
+            claimants(TABS_BINDINGS, ctrl_g).is_empty(),
+            "TABS_BINDINGS already binds {ctrl_g:?}"
+        );
+        assert!(
+            claimants(EXPLORER_BINDINGS, ctrl_g).is_empty(),
+            "EXPLORER_BINDINGS already binds {ctrl_g:?}"
+        );
+        assert!(
+            claimants(EXPLORER_SEARCH_BINDINGS, ctrl_g).is_empty(),
+            "EXPLORER_SEARCH_BINDINGS already binds {ctrl_g:?}"
+        );
     }
 }

@@ -22,6 +22,8 @@ use crate::runtime::Effects;
 use crate::width::{display_width, truncate_to_width};
 use crate::workspace;
 
+pub mod limit;
+
 /// The Open Tabs pane's own state (plan WP5.S1): the tab DISPLAY order
 /// (distinct from `App.documents`' `BTreeMap` iteration order, plan
 /// Assumption A2) and its cursor/scroll position. `order` always contains
@@ -212,6 +214,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             "  "
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
+        let pin_marker = if doc.pinned { "*" } else { " " };
         // A not-yet-promoted preview renders dimmer than an ordinary tab —
         // active or not, since it can be the active document while the
         // Explorer cursor is still just passing over it — so a glance at
@@ -230,7 +233,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         lines.push(Line::from(vec![
             Span::raw(prefix),
             Span::styled(format!("{shortcut}:"), app.theme.chrome.tabs_divider),
-            Span::raw(" "),
+            Span::styled(pin_marker, app.theme.chrome.tab_pinned),
             Span::styled(dirty_marker, app.theme.chrome.tab_dirty),
             Span::raw(" "),
             Span::styled(doc.file_name().to_string(), name_style),

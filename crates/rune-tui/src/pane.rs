@@ -144,6 +144,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
+        GlobalCommand::TogglePin => crate::opentabs::limit::toggle_pin(app, app.active),
     }
 }
 
