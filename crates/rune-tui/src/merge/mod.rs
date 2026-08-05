@@ -7,6 +7,7 @@
 pub mod frame;
 pub mod keys;
 mod landing;
+pub(crate) mod paint;
 mod resolve;
 pub mod state;
 
