@@ -90,7 +90,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             // Plan WP3.S6: the fresh-state read `merge::begin` kicked off —
             // `pending.merge_gen` is this attempt's own ticket, checked
             // against `App.merge`'s CURRENT `Pending` generation inside the
-            // landing handler itself (a later `⌘M` may have superseded it).
+            // landing handler itself (a later `^M` may have superseded it).
             if let Some(pending) = app.db_ops.remove(&op_id) {
                 crate::merge::handle_merge_prep_ack(
                     app,

@@ -20,6 +20,7 @@ use rune_tui::app::{self, App};
 use rune_tui::banner::{GuardKind, Modal};
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
+use rune_tui::footer;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{CmdKind, Effects};
@@ -27,7 +28,7 @@ use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
-    app_with_store, bare, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key,
+    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
     publish, sup,
 };
 
@@ -74,7 +75,7 @@ fn enter_three_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let MergeState::Active { blocks, cur, .. } = &app.merge else {
@@ -235,7 +236,7 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let MergeState::Active { blocks, .. } = &app.merge else {
@@ -300,7 +301,7 @@ fn tab_switch_mid_merge_exits_merge_keeps_bytes_and_reverts_title() {
     );
 }
 
-/// Review fix F3: `⌘M` on a diverged document leaves `app.merge` `Pending`
+/// Review fix F3: `^M` on a diverged document leaves `app.merge` `Pending`
 /// while its `MergePrep` op is still in flight — switching tabs BEFORE
 /// that ack lands used to silently discard the attempt with `exit_in_place`
 /// (which only knows how to unwind an `Active` working form, not a
@@ -329,7 +330,7 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     assert!(
         matches!(app.merge, MergeState::Pending { doc, .. } if doc == doc_id),
         "expected a Pending merge attempt, got {:?}",
@@ -425,10 +426,20 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
     ));
 }
 
-/// Plan WP6 "Done when" (4c): the Guard's `Esc` answer cancels with a
-/// status, touching neither the buffer nor merge state.
+/// Plan WP6 "Done when" (4c), Bug A fix: the Guard's `Esc` answer cancels
+/// touching neither the buffer nor merge state, and clears the "save
+/// refused" status rather than leaving it up. `handle_guard_key`'s general
+/// rule is that Escape's cancel status never overwrites an unacknowledged
+/// `SaveError` — but for `DiskConflict` specifically, this Guard IS the
+/// acknowledgement: `last_sync` was already seeded `Diverged` by the time
+/// the Guard was raised, so the footer's persistent disk-changed hint
+/// ("[^M]erge") is the replacement feedback, and it can only show once the
+/// stale `SaveError` status stops outranking it (`footer::mode` checks
+/// `SaveError` before `DiskChanged`). Renamed from
+/// `disk_conflict_guard_escape_cancels_with_a_status` — that name described
+/// the OLD (buggy) behavior this test now falsifies.
 #[test]
-fn disk_conflict_guard_escape_cancels_with_a_status() {
+fn disk_conflict_guard_escape_falls_back_to_the_disk_changed_hint() {
     let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
     let before = app.doc(doc_id).unwrap().buffer.content().to_string();
 
@@ -437,18 +448,31 @@ fn disk_conflict_guard_escape_cancels_with_a_status() {
     assert!(app.modal.is_none());
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
-    // `handle_guard_key`'s own rule (review fix F2, pre-dating this plan):
-    // Escape's cancel status never overwrites an unacknowledged
-    // `SaveError` — the save-refused message the Guard itself was raised
-    // over stays up, which is still a status, still feedback, and still
-    // non-destructive (§1.4.4).
-    assert_eq!(app.status_source, rune_tui::app::StatusSource::SaveError);
+    assert_eq!(app.status_message, None);
     assert!(
-        app.status_message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("save refused"),
+        footer::footer_text(&app).contains("\u{21c4} disk changed \u{2014} [^M]erge"),
+        "the footer must fall through to the disk-changed hint, got: {}",
+        footer::footer_text(&app)
     );
+}
+
+/// Bug A fix: once the disk-conflict Guard is dismissed with Escape, the
+/// user is never stranded — `^M` (the ONLY binding for `GlobalCommand::
+/// Merge`, since Ghostty steals `⌘M`) reaches merge mode through the same
+/// real key pipeline the rest of this suite drives.
+#[test]
+fn disk_conflict_guard_escape_then_ctrl_m_starts_a_merge_attempt() {
+    let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
+
+    press_key(&mut app, bare(KeyCode::Escape));
+    assert!(app.modal.is_none());
+
+    press_key(&mut app, ctrl('m'));
+
+    assert!(matches!(
+        app.merge,
+        MergeState::Pending { doc, .. } | MergeState::Active { doc, .. } if doc == doc_id
+    ));
 }
 
 /// Plan WP6 "Done when" (4d): the Guard's `[D]iscard` answer makes the

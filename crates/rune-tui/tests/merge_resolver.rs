@@ -25,7 +25,7 @@ use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
-    app_with_store, bare, ch, drain_all_ops_for, drain_one_op_for, external_write, press_key,
+    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
     publish, sup,
 };
 
@@ -36,7 +36,7 @@ const THEIRS: &[u8] = b"one disk\ntwo\nthree\nfour\nfive disk\n";
 
 /// Builds the standard two-conflict resolver session: ancestor on disk at
 /// load, ours edits lines 1 and 5 by typing, theirs rewrites both on disk,
-/// `⌘M` enters, and the resolver is Active with exactly two blocks.
+/// `^M` enters, and the resolver is Active with exactly two blocks.
 fn enter_two_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     let mem = Mem::new();
     publish(&mem, Path::new("/doc.md"), ANCESTOR);
@@ -68,7 +68,7 @@ fn enter_two_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
-    press_key(&mut app, sup('m'));
+    press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
 
     let MergeState::Active { blocks, cur, .. } = &app.merge else {

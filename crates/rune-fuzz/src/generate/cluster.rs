@@ -466,7 +466,7 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// `⌘M` then 1-3 of `MERGE_RESOLVE_KEYS` (plan WP7.S1): this no-store
+/// `^M` then 1-3 of `MERGE_RESOLVE_KEYS` (plan WP7.S1): this no-store
 /// harness can never make `MERGE_KEY` succeed (`MERGE_KEY`'s own docs), so
 /// every one of these lands as either the entry refusal's status or, for
 /// the resolve keys, an ordinary printable-char insertion — still worth

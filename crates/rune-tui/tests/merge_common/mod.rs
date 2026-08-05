@@ -43,6 +43,16 @@ pub fn sup(c: char) -> KeyInput {
     }
 }
 
+pub fn ctrl(c: char) -> KeyInput {
+    KeyInput {
+        code: KeyCode::Char(c),
+        mods: Mods {
+            ctrl: true,
+            ..Mods::NONE
+        },
+    }
+}
+
 pub fn press_key(app: &mut App, key: KeyInput) -> Effects {
     let mut effects = Effects::default();
     app::update(app, Msg::Key(key), &mut effects);

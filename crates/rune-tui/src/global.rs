@@ -48,12 +48,18 @@ pub enum GlobalCommand {
     /// view. Refused with a status message on `ReadOnly::Always`, which has
     /// no editable form to return to.
     ToggleReadOnly,
-    /// Toggles merge mode (plan WP3.S5): starts a merge attempt against the
-    /// active document's diverged/disk-ahead disk fact, or exits an
-    /// already-active one in place. `⌘M` only — Ghostty passes it through
-    /// (unlike some ⌘ chords this table's other rows also bind `^` for);
-    /// `^M` is Enter in every terminal and can never be this chord's `^`
-    /// counterpart (see this module's own gotcha).
+    /// Toggles merge mode: starts a merge attempt against the active
+    /// document's diverged/disk-ahead disk fact, or exits an already-active
+    /// one in place. `^M` only, unlike this table's other paired rows —
+    /// Ghostty steals `⌘M` for window minimize before the app ever sees it,
+    /// so that chord is dropped rather than bound and silently unreachable.
+    /// `^M` is safe here specifically because this app requests
+    /// `DISAMBIGUATE_ESCAPE_CODES` (the kitty CSI-u protocol) at startup:
+    /// under that protocol `termina` decodes Ctrl+M as `Char('m')` with
+    /// `CONTROL` set, a distinct event from `Enter` (code 13). A legacy
+    /// terminal that never negotiates the protocol still reports `^M` as a
+    /// plain `Enter` keypress — this binding then simply never fires there,
+    /// rather than colliding with real Enter.
     Merge,
 }
 
@@ -277,9 +283,10 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
-    // `⌘M` only (plan Gotchas: "`^M` IS Enter in terminals — never `^M`").
+    // `^M` only — see the `Merge` variant's own doc for why `⌘M` has no row
+    // (Ghostty steals it) and why `^M` doesn't collide with Enter here.
     Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('m'), SUP)],
+        keys: &[KeyPattern::new(KeyCode::Char('m'), CTRL)],
         cmd: GlobalCommand::Merge,
         help: "merge",
         when: "",
@@ -290,6 +297,36 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bug A fix: `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds
+    /// nothing at all — Ghostty steals it, so it was dropped rather than
+    /// bound, unlike this table's other paired rows.
+    #[test]
+    fn ctrl_m_resolves_to_merge_and_sup_m_binds_nothing() {
+        use crate::binding::resolve_in;
+        use crate::keymap::KeyInput;
+
+        let ctrl_m = KeyInput {
+            code: KeyCode::Char('m'),
+            mods: CTRL,
+        };
+        let sup_m = KeyInput {
+            code: KeyCode::Char('m'),
+            mods: SUP,
+        };
+
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, ctrl_m),
+            Some(GlobalCommand::Merge)
+        );
+        assert_eq!(resolve_in(GLOBAL_BINDINGS, sup_m), None);
+        assert!(
+            GLOBAL_BINDINGS
+                .iter()
+                .all(|b| !b.keys.iter().any(|k| k.matches(sup_m))),
+            "no row should match sup+m"
+        );
+    }
 
     /// Structural proof of the invariant the module doc above states: a
     /// `Char` row (the only kind of row a printable keystroke could ever
@@ -382,10 +419,9 @@ mod tests {
         }
     }
 
-    /// Plan WP3.S5: the same cross-table guard as `global_p_binding_...`
-    /// above, for `⌘M` (`GlobalCommand::Merge`). Only the `sup` form is
-    /// checked — `^M` is Enter in every terminal (this module's own
-    /// gotcha), so no `ctrl` row for it will ever exist to guard against.
+    /// The same cross-table guard as `global_p_binding_...` above, for `^M`
+    /// (`GlobalCommand::Merge`) — `Merge` is the one row in this table bound
+    /// only as `ctrl`, so only that form needs checking here.
     #[test]
     fn global_m_binding_is_not_already_bound_in_any_pane_table() {
         use crate::explorer_keys::EXPLORER_BINDINGS;
@@ -395,9 +431,9 @@ mod tests {
         use crate::keymap::vim::VIM_BINDINGS;
         use crate::opentabs::TABS_BINDINGS;
 
-        let sup_m = KeyInput {
+        let ctrl_m = KeyInput {
             code: KeyCode::Char('m'),
-            mods: SUP,
+            mods: CTRL,
         };
 
         fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
@@ -409,24 +445,24 @@ mod tests {
         }
 
         assert!(
-            claimants(EDITOR_BINDINGS, sup_m).is_empty(),
-            "EDITOR_BINDINGS already binds {sup_m:?}"
+            claimants(EDITOR_BINDINGS, ctrl_m).is_empty(),
+            "EDITOR_BINDINGS already binds {ctrl_m:?}"
         );
         assert!(
-            claimants(VIM_BINDINGS, sup_m).is_empty(),
-            "VIM_BINDINGS already binds {sup_m:?}"
+            claimants(VIM_BINDINGS, ctrl_m).is_empty(),
+            "VIM_BINDINGS already binds {ctrl_m:?}"
         );
         assert!(
-            claimants(TABS_BINDINGS, sup_m).is_empty(),
-            "TABS_BINDINGS already binds {sup_m:?}"
+            claimants(TABS_BINDINGS, ctrl_m).is_empty(),
+            "TABS_BINDINGS already binds {ctrl_m:?}"
         );
         assert!(
-            claimants(EXPLORER_BINDINGS, sup_m).is_empty(),
-            "EXPLORER_BINDINGS already binds {sup_m:?}"
+            claimants(EXPLORER_BINDINGS, ctrl_m).is_empty(),
+            "EXPLORER_BINDINGS already binds {ctrl_m:?}"
         );
         assert!(
-            claimants(EXPLORER_SEARCH_BINDINGS, sup_m).is_empty(),
-            "EXPLORER_SEARCH_BINDINGS already binds {sup_m:?}"
+            claimants(EXPLORER_SEARCH_BINDINGS, ctrl_m).is_empty(),
+            "EXPLORER_SEARCH_BINDINGS already binds {ctrl_m:?}"
         );
     }
 }

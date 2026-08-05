@@ -346,7 +346,7 @@ fn affected_delete_range(edits: &[AppliedEdit]) -> Option<std::ops::Range<usize>
 /// unwound PAST a previously-adopted resolution (`rune-db`'s undo-unwind
 /// override upgrades `DiskAhead` back to `Diverged` in that case) — a fresh
 /// probe re-lights the footer's disk-changed hint so the user is offered
-/// `⌘M` again rather than the hint staying stale.
+/// `^M` again rather than the hint staying stale.
 fn resync_after_journal_jump(
     app: &mut App,
     id: DocumentId,
