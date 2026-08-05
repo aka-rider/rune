@@ -126,6 +126,15 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // held focus when `^w` was pressed, so a dirty document still arms
         // its Guard exactly like the Tabs-pane-local close it replaces.
         GlobalCommand::CloseFile => crate::workspace::request_close(app, app.active, effects),
+        // Same pre-switch focus move as `Help`/`TabSwitch` above, and for the
+        // same reason: without it, `^N` pressed from the Explorer or Tabs
+        // pane would switch the active document while focus stayed stranded
+        // on the chrome list.
+        GlobalCommand::NewDocument => {
+            app.set_focus_pane(Pane::Editor, effects);
+            crate::workspace::new_untitled_document(app);
+            app.focus_title();
+        }
         // Out-of-range is a silent no-op, so a digit naming a tab that
         // isn't open does nothing rather than guessing at a neighbour. Same
         // pre-switch focus move as `Help` above, and for the same reason.
@@ -419,5 +428,23 @@ mod tests {
         assert!(!app.should_quit, "the first press only arms the confirm");
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
         assert!(app.should_quit, "the second matching press quits");
+    }
+
+    /// `NewDocument` mints a new untitled draft, activates it, and focuses
+    /// the title field. No frame-size setup is needed: `Pane::Title` is
+    /// focusable under every layout mode.
+    #[test]
+    fn new_document_mints_activates_and_focuses_the_title() {
+        let mut app = app();
+        let n = app.documents.len();
+        let before = app.active;
+        let mut effects = Effects::default();
+
+        handle_global_command(&mut app, GlobalCommand::NewDocument, &mut effects);
+
+        assert_eq!(app.documents.len(), n + 1);
+        assert_ne!(app.active, before);
+        assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+        assert_eq!(app.focus(), Pane::Title);
     }
 }

@@ -38,6 +38,11 @@ pub enum GlobalCommand {
     /// still arms its Guard regardless of which pane the chord was pressed
     /// from, exactly like `Save` already does for materialize.
     CloseFile,
+    /// Mints a new durable untitled draft, activates it, and focuses the
+    /// title field so it can be named on the spot — the same mint the
+    /// close-then-reopen-empty path already uses, reached directly instead
+    /// of via `CloseFile`.
+    NewDocument,
     /// Switches to the tab at this zero-based position; out of range is a
     /// silent no-op. The digit is already resolved into the payload by
     /// `GLOBAL_BINDINGS` below, so the digit-to-index mapping lives in
@@ -109,7 +114,7 @@ const SUP: Mods = Mods {
 /// footer entirely rather than leave a shorter, still-complete hint row.
 ///
 /// INVARIANT: every row's `KeyPattern` requires `ctrl` or `sup` — see
-/// `every_binding_requires_a_modifier` below. A printable key with no
+/// `every_printable_binding_requires_a_modifier` below. A printable key with no
 /// modifier here would shadow ordinary text input, which is exactly the
 /// defect this table replaced the leader to avoid.
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
@@ -192,6 +197,20 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "close",
         when: "",
         alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('n'), CTRL)],
+        cmd: GlobalCommand::NewDocument,
+        help: "new",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('n'), SUP)],
+        cmd: GlobalCommand::NewDocument,
+        help: "new",
+        when: "",
+        alias: true,
     },
     // `^1`-`^9` switch to the tab at that position; `^0` is the TENTH tab,
     // matching what the tab strip itself prints for the first ten tabs
@@ -318,6 +337,25 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
 mod tests {
     use super::*;
 
+    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
+    /// structural equality on `keys` — a pane row does not need to equal a
+    /// specific chord to steal it, it only needs to MATCH it, and
+    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
+    /// any non-control `Char` under equal `Mods` without ever equaling a
+    /// specific `KeyPattern`. Structural equality would stay green while
+    /// that wildcard silently shadowed a chord at dispatch. Shared by every
+    /// `global_*_binding_is_not_already_bound_in_any_pane_table` guard below.
+    fn claimants<C: Copy + 'static>(
+        table: &[Binding<C>],
+        key: crate::keymap::KeyInput,
+    ) -> Vec<&'static str> {
+        table
+            .iter()
+            .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+            .map(|b| b.help)
+            .collect()
+    }
+
     /// `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds nothing at
     /// all — Ghostty steals it, so it was dropped rather than bound, unlike
     /// this table's other paired rows.
@@ -381,14 +419,6 @@ mod tests {
     /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
     /// pane table this crate has, since `^p`/`⌘p` mint a new global row
     /// rather than reusing an existing chord the way `⌘R` does.
-    ///
-    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
-    /// structural equality on `keys` — a pane row does not need to equal
-    /// `⌃P`/`⌘P` to steal them, it only needs to MATCH them, and
-    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
-    /// any non-control `Char` under equal `Mods` without ever equaling a
-    /// specific `KeyPattern`. Structural equality would stay green while
-    /// that wildcard silently shadowed this exact chord at dispatch.
     #[test]
     fn global_p_binding_is_not_already_bound_in_any_pane_table() {
         use crate::explorer_keys::EXPLORER_BINDINGS;
@@ -406,14 +436,6 @@ mod tests {
             code: KeyCode::Char('p'),
             mods: SUP,
         };
-
-        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-            table
-                .iter()
-                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
-                .map(|b| b.help)
-                .collect()
-        }
 
         for key in [ctrl_p, sup_p] {
             assert!(
@@ -455,14 +477,6 @@ mod tests {
             code: KeyCode::Char('m'),
             mods: CTRL,
         };
-
-        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-            table
-                .iter()
-                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
-                .map(|b| b.help)
-                .collect()
-        }
 
         assert!(
             claimants(EDITOR_BINDINGS, ctrl_m).is_empty(),
@@ -506,15 +520,51 @@ mod tests {
             mods: SUP,
         };
 
-        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
-            table
-                .iter()
-                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
-                .map(|b| b.help)
-                .collect()
-        }
-
         for key in [ctrl_e, sup_e] {
+            assert!(
+                claimants(EDITOR_BINDINGS, key).is_empty(),
+                "EDITOR_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(VIM_BINDINGS, key).is_empty(),
+                "VIM_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(TABS_BINDINGS, key).is_empty(),
+                "TABS_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_BINDINGS, key).is_empty(),
+                "EXPLORER_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
+                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
+            );
+        }
+    }
+
+    /// The same cross-table guard as `global_p_binding_...`
+    /// above, for `^N`/`⌘N` (`GlobalCommand::NewDocument`).
+    #[test]
+    fn global_n_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let ctrl_n = KeyInput {
+            code: KeyCode::Char('n'),
+            mods: CTRL,
+        };
+        let sup_n = KeyInput {
+            code: KeyCode::Char('n'),
+            mods: SUP,
+        };
+
+        for key in [ctrl_n, sup_n] {
             assert!(
                 claimants(EDITOR_BINDINGS, key).is_empty(),
                 "EDITOR_BINDINGS already binds {key:?}"
