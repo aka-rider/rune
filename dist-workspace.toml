@@ -17,6 +17,8 @@ tap = "aka-rider/homebrew-tap"
 formula = "rune"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
+# Trigger releases from the Actions tab; creating the GitHub release makes the tag
+dispatch-releases = true
 
 [dist.github-custom-runners]
 aarch64-apple-darwin = "macos-latest"

@@ -46,3 +46,10 @@ indexing_slicing = "warn"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# cargo-release only bumps and pushes the release commit; the tag is created
+# by the GitHub Release that dist's dispatch-triggered workflow publishes
+[workspace.metadata.release]
+tag = false
+publish = false
+allow-branch = ["main"]
