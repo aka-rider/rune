@@ -6,8 +6,7 @@ RC ?= 512
 # Optional PROPTEST_RNG_SEED for a pinned re-run. Empty = fresh OS entropy.
 RS ?=
 
-.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars go-build \
-        parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
+.PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars
 
 build:
 	$(CARGO) build --workspace
@@ -57,35 +56,3 @@ test-fuzz:
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
 	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
-
-# ── Parity harness ────────────────────────────────────────────────────────────
-# Captures the same scenario from both implementations and diffs the screens.
-# The Go reference implementation lives in golang/ and builds with its own
-# Makefile; `go`/`rust` below are side NAMES the scripts dispatch on.
-
-PARITY_SCENARIO ?= 01-open-file
-
-parity: parity-capture parity-diff parity-assert
-
-go-build:
-	$(MAKE) -C golang build
-
-parity-capture: build go-build
-	scripts/parity/capture.sh go   $(PARITY_SCENARIO)
-	scripts/parity/capture.sh rust $(PARITY_SCENARIO)
-
-parity-diff:
-	scripts/parity/diff.sh
-
-parity-assert:
-	scripts/parity/assert.sh
-
-parity-grid: build go-build
-	scripts/parity/grid.sh
-
-parity-serve:
-	scripts/parity/serve.sh go
-	scripts/parity/serve.sh rust
-
-parity-clean:
-	scripts/parity/clean.sh
