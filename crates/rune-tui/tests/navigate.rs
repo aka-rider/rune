@@ -31,7 +31,6 @@ fn opens_externally(effects: &Effects) -> bool {
         .any(|cmd| cmd.kind() == CmdKind::OpenExternal)
 }
 
-
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 24;
 
