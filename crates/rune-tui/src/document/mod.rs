@@ -236,18 +236,27 @@ impl Document {
         !matches!(self.read_only, ReadOnly::No)
     }
 
-    /// Whether the caret and selection background may be painted onto this
-    /// document's cells, AND whether reveal may key off the cursor at all
-    /// (plan WP1) — the second consumer of the identical predicate. Go's
-    /// three overlay gates (`textedit/render.go`) are all
-    /// `focused && !readOnly`: an unfocused pane must not show a caret that
-    /// would mislead about where keystrokes land, and a read-only document
-    /// (the virtual Help tab, the error-banner document) has no insertion
-    /// point to point at — nor anything to reveal raw markdown under.
-    /// `focused` itself already folds in `modal.is_none()` — see
-    /// `App::sync_view`.
+    /// Whether the caret may be painted onto this document's cells, AND
+    /// whether reveal may key off the cursor at all (plan WP1) — the second
+    /// consumer of the identical predicate. An unfocused pane must not show
+    /// a caret that would mislead about where keystrokes land, and a
+    /// read-only document (the virtual Help tab, the error-banner document)
+    /// has no insertion point to point at — nor anything to reveal raw
+    /// markdown under. `focused` itself already folds in `modal.is_none()`
+    /// — see `App::sync_view`.
     pub fn has_insertion_point(&self) -> bool {
         self.focused && !self.is_read_only()
+    }
+
+    /// Whether a mouse selection's background may be painted onto this
+    /// document's cells. Deliberately NOT gated on `is_read_only()` the way
+    /// [`Self::has_insertion_point`] is: a read-only document has no caret
+    /// to place, but a mouse-drawn selection in it is real and copyable
+    /// (`⌘C` never checks read-only), so hiding its highlight would leave a
+    /// user action with no visible feedback. An unfocused document still
+    /// shows neither overlay.
+    pub fn shows_selection(&self) -> bool {
+        self.focused
     }
 }
 

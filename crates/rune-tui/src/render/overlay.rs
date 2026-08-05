@@ -127,16 +127,33 @@ pub(super) fn visible_byte_range(rows: &[Vec<Cell>]) -> Option<Range<usize>> {
     if hi <= lo { None } else { Some(lo..hi) }
 }
 
-/// Paints the caret and, per-cursor, its selection background — gated on
-/// `show_overlays` (`Document::has_insertion_point`, folding in both focus
-/// and read-only). Early-returning before the cursor loop, rather than a
-/// caller-side `if`, covers both overlay kinds in one place (the selection
-/// highlight is painted from inside this same loop) and means no future
-/// caller can paint either without deciding whether this document may show
-/// them — matching Go's `applyOverlays` gate (`textedit/render.go`), which
-/// covers cursors and selections together.
+/// The two overlay gates [`apply_cursor_overlays`] paints under — grouped
+/// into one value rather than two loose `bool` parameters purely to keep
+/// that function's own argument count under the repo's `too_many_arguments`
+/// deny (the repo bans silencing it with an `#[allow]` instead).
+pub(super) struct OverlayGates {
+    /// Whether the caret may be painted — `Document::has_insertion_point`.
+    pub caret: bool,
+    /// Whether the selection background may be painted —
+    /// `Document::shows_selection`.
+    pub selection: bool,
+}
+
+/// Paints the caret and, per-cursor, its selection background — under two
+/// SEPARATE gates in `gates`, rather than the one combined gate this
+/// function used to take. A read-only document has no insertion point for a
+/// caret to mark — there is nowhere for keystrokes to land — but a mouse
+/// selection in it is real: the user can still `⌘C` it, and a selection that
+/// copies without ever painting is a user action with no visible feedback.
+/// So a read-only document may show `selection` while `caret` stays false;
+/// an unfocused document, by contrast, must show neither, since nothing in
+/// it should look interactive at all. Both gates still route through this
+/// one function rather than two separate ones — no future caller can paint
+/// either overlay without deciding, for each, whether this document may
+/// show it — and the early return below covers the case where neither may
+/// be painted at all.
 pub(super) fn apply_cursor_overlays(
-    show_overlays: bool,
+    gates: OverlayGates,
     rows: &mut [Vec<Cell>],
     view: &ViewSnapshots,
     cursors: &CursorSet,
@@ -144,13 +161,18 @@ pub(super) fn apply_cursor_overlays(
     scroll_row: usize,
     theme: &Theme,
 ) {
-    if !show_overlays {
+    let OverlayGates { caret, selection } = gates;
+    if !caret && !selection {
         return;
     }
     for cursor in cursors.all() {
-        if cursor.has_selection() {
+        if selection && cursor.has_selection() {
             let (start, end) = cursor.selection_range();
             highlight_selection(rows, start, end, theme);
+        }
+
+        if !caret {
+            continue;
         }
 
         let buffer_point = buf.offset_to_line_col(cursor.position);
@@ -256,10 +278,10 @@ fn highlight_selection(rows: &mut [Vec<Cell>], start: usize, end: usize, theme: 
 /// Reverse-video the cell at `visual_col`, or — if the caret sits past the
 /// last visible char on this row — append a synthetic EOL cursor cell (port
 /// of Go `render.go`). Only ever reached when the caller has already
-/// decided overlays are shown (`apply_cursor_overlays`'s `show_overlays`
-/// gate) — none of its three REVERSED paths (this cell, the boxed-row last
-/// cell below, or the synthetic EOL push) runs on an unfocused or
-/// read-only document. `boxed` rows (a Grid/Wrapped table's own content and
+/// decided the caret may be shown (`apply_cursor_overlays`'s `caret` gate) —
+/// none of its three REVERSED paths (this cell, the boxed-row last cell
+/// below, or the synthetic EOL push) runs on an unfocused or read-only
+/// document. `boxed` rows (a Grid/Wrapped table's own content and
 /// border rows) never take that append branch: appending would make this
 /// ONE row a cell wider than every other row in its table group, violating
 /// `TABLE-ROW-WIDTH` (every row in a boxed group shares one summed width,
@@ -423,7 +445,7 @@ mod tests {
     /// exists for (`crates/rune-fuzz/proptest-regressions/human_session.txt`,
     /// seed `cc 5f23e392...`), exercised directly rather than through the
     /// full `App`/`DocMachine` pipeline: the caret gate this file's
-    /// `apply_cursor_overlays` applies (`show_overlays`) and a table's
+    /// `apply_cursor_overlays` applies (its `caret` parameter) and a table's
     /// `RevealGrant::ForceRendered`/`Decide` split
     /// (`rune_md::element::doc::DocMachine`) both key off the identical
     /// `Document::has_insertion_point` predicate — a table containing the
