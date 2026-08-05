@@ -19,19 +19,9 @@ use rune_tui::render::Cell;
 
 use crate::action::Action;
 use crate::driver::RunResult;
+use crate::hash::fnv1a32;
 use crate::invariant::Violation;
 use crate::script;
-
-/// FNV-1a, 32-bit. Hand-written (no new dependency) purely to name the
-/// bundle directory deterministically from its own content.
-fn fnv1a32(bytes: &[u8]) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for &b in bytes {
-        hash ^= u32::from(b);
-        hash = hash.wrapping_mul(0x0100_0193);
-    }
-    hash
-}
 
 /// Writes the failure bundle under `dir_root` and returns its directory.
 /// `path` (plan WP7.S2) is the document path the session that produced
