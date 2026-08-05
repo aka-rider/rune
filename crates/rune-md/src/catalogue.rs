@@ -254,18 +254,22 @@ fn wikilink_role(content: &str, range_start: usize) -> UseRole {
 
 /// Derive a heading's displayed name: the marker's own construction already
 /// includes its trailing space, so an ATX heading's name is everything
-/// after the marker; a setext heading (`h.underline.is_some()`) has no
-/// marker so its name is its first content line instead. Either way, trim
-/// ASCII whitespace, strip a trailing run of `#` when CommonMark says it
-/// closes the heading, then trim ASCII whitespace again.
+/// after the marker; a setext heading (`h.setext`) has no marker so its
+/// name is its first content line instead. Branches on `h.setext`, not
+/// `h.underline` — `underline` can be `None` on a genuinely setext heading
+/// (a defensive guard elsewhere degrades it when comrak's own inline tree
+/// desyncs from its block tree), and this function must still find the
+/// first content line in that case. Either way, trim ASCII whitespace,
+/// strip a trailing run of `#` when CommonMark says it closes the heading,
+/// then trim ASCII whitespace again.
 fn heading_name(content: &str, h: &HeadingM) -> String {
-    let raw = if h.underline.is_none() {
-        content.get(h.marker.end..h.range.end).unwrap_or("")
-    } else {
+    let raw = if h.setext {
         h.content_lines
             .first()
             .and_then(|r| content.get(r.start..r.end))
             .unwrap_or("")
+    } else {
+        content.get(h.marker.end..h.range.end).unwrap_or("")
     };
     let trimmed = raw.trim_matches(|c: char| c.is_ascii_whitespace());
     // A run of `#` closes an ATX heading only when preceded by whitespace, or
@@ -409,6 +413,32 @@ mod tests {
                 name: "Setup".to_string(),
             }
         );
+    }
+
+    /// Reproduces the desync the defensive guard in
+    /// `underline_of_setext_heading` degrades to `None`: not reachable from
+    /// real markdown input in this repro (the guard needs a genuine
+    /// comrak inline/block tree disagreement we could not trigger through
+    /// `parse()` alone), so this builds the `HeadingM` directly to pin the
+    /// contract `heading_name` must honor regardless of `underline`.
+    #[test]
+    fn setext_heading_name_survives_a_degraded_underline() {
+        use rune_syntax::element::{ByteRange, RevealSm, RevealState};
+
+        let content = "Setup\n---\n";
+        let h = HeadingM {
+            sm: RevealSm::new(RevealState::Rendered),
+            level: 2,
+            line: 0,
+            last_line: 1,
+            range: ByteRange::new(0, content.len()),
+            setext: true,
+            marker: ByteRange::new(0, 0),
+            underline: None,
+            inlines: Vec::new(),
+            content_lines: vec![ByteRange::new(0, 6), ByteRange::new(6, 10)],
+        };
+        assert_eq!(heading_name(content, &h), "Setup");
     }
 
     #[test]

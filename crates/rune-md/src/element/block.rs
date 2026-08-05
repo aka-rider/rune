@@ -42,16 +42,23 @@ pub struct HeadingM {
     /// underline's line for a setext heading.
     pub last_line: usize,
     pub range: ByteRange,
+    /// Comrak's own `NodeHeading::setext` flag, carried forward verbatim —
+    /// the ONE reliable "is this heading setext" signal. `underline` looks
+    /// like the same signal but isn't: a defensive guard can null it out on
+    /// a genuinely setext heading (see that field's docs), so any code that
+    /// needs to know setext-vs-ATX, rather than "may I conceal a row",
+    /// reads this field instead.
+    pub setext: bool,
     /// The `"## "`-style prefix range (parent/child sourcepos-gap derivation,
     /// plan Context "Parse"). Empty for a setext heading (no leading prefix
     /// on its own text line).
     pub marker: ByteRange,
     /// The setext underline's own row (`content_lines`'s last entry,
-    /// already container-prefix-clamped), or `None` for an ATX heading —
-    /// comrak's `NodeHeading::setext` flag carried forward as the single
-    /// chokepoint for setext-ness. Every other site that used to infer it
-    /// from `marker.is_empty()` or `content_lines.len() > 1` reads this
-    /// instead.
+    /// already container-prefix-clamped) — `None` for an ATX heading, and
+    /// also `None` when a defensive guard degrades a genuinely setext
+    /// heading (see `underline_of_setext_heading`'s docs). This is a
+    /// conceal-eligibility signal, not a setext-ness signal — use `setext`
+    /// for that.
     pub underline: Option<ByteRange>,
     pub inlines: Vec<Inline>,
     /// One entry per physical line `range` spans, each already clamped to
