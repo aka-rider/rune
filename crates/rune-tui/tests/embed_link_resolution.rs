@@ -20,6 +20,7 @@ use rune_core::cursor::CursorSet;
 use rune_nav::{Destination, RefKind, UseRole};
 use rune_tui::app::{App, update};
 use rune_tui::document::DocumentId;
+use rune_tui::graphics::ImageStatus;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
@@ -129,6 +130,58 @@ fn a_link_and_an_embed_with_the_same_relative_target_resolve_to_the_same_path() 
         }
         other => panic!("link target did not resolve: {other:?}"),
     }
+}
+
+/// A wiki embed (`![[path]]`) whose target sits in a subdirectory must
+/// resolve and go `Live` — a slash-bearing wiki target is a path, not a
+/// name, so no `.md` suffix may ever be appended to it.
+#[test]
+fn a_wiki_embed_in_a_subdirectory_resolves_and_goes_live() {
+    let (mut app, id) = app_with_content("![[assets/pic.png]]\n", &["/vault/assets/pic.png"]);
+    discover_and_decode(&mut app);
+
+    let doc = app.doc(id).expect("doc");
+    let embed = doc
+        .embeds
+        .images
+        .get("assets/pic.png")
+        .expect("embed tracked");
+    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+}
+
+/// A wiki embed target containing spaces must resolve just as cleanly as
+/// one without — nothing in the wikilink grammar or the resolver may
+/// truncate or reject a spaced target.
+#[test]
+fn a_wiki_embed_target_containing_spaces_resolves() {
+    let (mut app, id) = app_with_content("![[my picture.png]]\n", &["/vault/my picture.png"]);
+    discover_and_decode(&mut app);
+
+    let doc = app.doc(id).expect("doc");
+    let embed = doc
+        .embeds
+        .images
+        .get("my picture.png")
+        .expect("embed tracked");
+    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
+}
+
+/// An extension-less wiki embed target must still resolve: `rune_md`
+/// emits an image embed for any `![[target]]` with no extension gate, and
+/// `rune_nav` tries the target bare before ever appending `.md` — so a
+/// file seeded exactly at the bare target wins, never `attachment.md`.
+#[test]
+fn a_wiki_embed_target_with_no_extension_still_resolves() {
+    let (mut app, id) = app_with_content("![[assets/attachment]]\n", &["/vault/assets/attachment"]);
+    discover_and_decode(&mut app);
+
+    let doc = app.doc(id).expect("doc");
+    let embed = doc
+        .embeds
+        .images
+        .get("assets/attachment")
+        .expect("embed tracked");
+    assert_eq!(embed.status, ImageStatus::Live, "decode must have landed");
 }
 
 /// WP2.S2 regression guard: `sync_embeds`'s dedupe used to key off an
