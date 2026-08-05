@@ -198,6 +198,17 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
                 &[]
             }
         }
+        GuardKind::DiskConflict { .. } => {
+            let name = app
+                .doc(prompt.doc)
+                .map(|doc| doc.file_name().to_string())
+                .unwrap_or_default();
+            spans.push(Span::styled(
+                format!("{name} changed on disk \u{2014} "),
+                app.theme.chrome.footer_hint,
+            ));
+            banner::DISK_CONFLICT_OPTIONS
+        }
     };
 
     for opt in options {

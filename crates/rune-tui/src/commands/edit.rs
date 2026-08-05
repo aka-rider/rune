@@ -256,6 +256,7 @@ pub fn undo(app: &mut App, id: DocumentId) {
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             materialize_ack::recompute_dirty(app, id);
+            resync_after_journal_jump(app, id);
         }
         Err(e) => {
             app.set_status(format!("undo failed: {e}"), StatusSource::Other);
@@ -295,10 +296,28 @@ pub fn redo(app: &mut App, id: DocumentId) {
             doc.journal.move_pos(new_pos);
             db::move_undo_pos(app, id, new_pos);
             materialize_ack::recompute_dirty(app, id);
+            resync_after_journal_jump(app, id);
         }
         Err(e) => {
             app.set_status(format!("redo failed: {e}"), StatusSource::Other);
         }
+    }
+}
+
+/// Plan WP6.S1/S2: every undo/redo that actually applied re-derives the
+/// resolver's block spans (`merge::resync`) when `id`'s merge attempt is
+/// `Active` — a journal jump bypasses the resolver's own keys entirely, so
+/// without this its `Block`/`Conflict` bookkeeping would silently drift from
+/// the buffer it now describes. When merge is NOT active, the jump may have
+/// unwound PAST a previously-adopted resolution (`rune-db`'s undo-unwind
+/// override upgrades `DiskAhead` back to `Diverged` in that case) — a fresh
+/// probe re-lights the footer's disk-changed hint so the user is offered
+/// `⌘M` again rather than the hint staying stale.
+fn resync_after_journal_jump(app: &mut App, id: DocumentId) {
+    if matches!(&app.merge, crate::merge::MergeState::Active { doc, .. } if *doc == id) {
+        crate::merge::resync(app, id);
+    } else {
+        crate::db_enqueue::probe(app, id);
     }
 }
 

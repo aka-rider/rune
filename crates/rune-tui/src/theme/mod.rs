@@ -179,9 +179,8 @@ fn blend(a: Color, b: Color, t: f32) -> Color {
     let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
         return a;
     };
-    let mix = |x: u8, y: u8| -> u8 {
-        (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8
-    };
+    let mix =
+        |x: u8, y: u8| -> u8 { (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8 };
     Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 

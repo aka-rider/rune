@@ -36,7 +36,12 @@ const SEP_MARKER_LINE_LEN: usize = "=======\n".len();
 /// isn't the merge's own document — merge mode paints only the document it
 /// took over, never a different pane's buffer that merely happens to share
 /// a render pass.
-pub(crate) fn paint(rows: &mut [Vec<Cell>], state: &MergeState, active_doc: DocumentId, theme: &Theme) {
+pub(crate) fn paint(
+    rows: &mut [Vec<Cell>],
+    state: &MergeState,
+    active_doc: DocumentId,
+    theme: &Theme,
+) {
     let MergeState::Active {
         doc,
         conflicts,
@@ -66,7 +71,13 @@ pub(crate) fn paint(rows: &mut [Vec<Cell>], state: &MergeState, active_doc: Docu
 /// added `BOLD` on top of the ordinary `merge_marker_bg` — the plan's
 /// "distinct cue" so `[`/`]` navigation has visible feedback beyond the
 /// status line.
-fn paint_block(rows: &mut [Vec<Cell>], block: &Block, conflict: &Conflict, is_current: bool, theme: &Theme) {
+fn paint_block(
+    rows: &mut [Vec<Cell>],
+    block: &Block,
+    conflict: &Conflict,
+    is_current: bool,
+    theme: &Theme,
+) {
     let ours_start = block.start + OURS_MARKER_LINE_LEN;
     let ours_end = ours_start + conflict.ours.len();
     let theirs_start = ours_end + 1 + SEP_MARKER_LINE_LEN;
@@ -199,7 +210,10 @@ mod tests {
         paint(&mut rows, &state, id, &theme);
 
         for row in &rows {
-            assert_eq!(row[0].style.bg, None, "a resolved block must stay unpainted");
+            assert_eq!(
+                row[0].style.bg, None,
+                "a resolved block must stay unpainted"
+            );
         }
     }
 

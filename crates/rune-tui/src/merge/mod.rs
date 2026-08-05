@@ -9,10 +9,12 @@ pub mod keys;
 mod landing;
 pub(crate) mod paint;
 mod resolve;
+pub(crate) mod resync;
 pub mod state;
 
 pub use keys::{MERGE_BINDINGS, MergeCommand};
 pub(crate) use landing::handle_merge_prep_ack;
+pub(crate) use resync::resync;
 pub use state::{Block, Conflict, MergeIntent, MergeState};
 
 use rune_db::SyncKind;

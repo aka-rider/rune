@@ -270,6 +270,15 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if app.doc(id).is_none() {
         return;
     }
+    // Plan WP6.S3, decision 12: switching AWAY from the merge document is an
+    // implicit Esc — auto-exit BEFORE the title reseed below, or `name_for`
+    // would re-derive the OUTGOING document's plain name while `app.merge`
+    // still holds it `Active`, leaving the merge suffix to vanish from a
+    // title that then immediately gets overwritten anyway. A same-document
+    // "switch" (`id` already active) is not a transition at all.
+    if app.merge.doc().is_some_and(|merge_doc| merge_doc != id) {
+        crate::merge::exit_in_place(app);
+    }
     app.active = id;
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding

@@ -57,7 +57,11 @@ fn cell_bg(buf: &RtBuffer, x: u16, y: u16) -> Option<ratatui::style::Color> {
 /// separated by a clean line — built through the real `build_marker_buffer`
 /// so the byte offsets `merge::paint` consumes are the real deterministic
 /// framing, not a hand-typed fixture that could drift from `frame_block`.
-fn two_block_fixture() -> (String, Vec<rune_tui::merge::state::Block>, Vec<rune_tui::merge::state::Conflict>) {
+fn two_block_fixture() -> (
+    String,
+    Vec<rune_tui::merge::state::Block>,
+    Vec<rune_tui::merge::state::Conflict>,
+) {
     let hunks = vec![
         Hunk::Conflict {
             ours: b"mine one".to_vec(),
@@ -163,12 +167,22 @@ fn the_current_blocks_marker_carries_a_distinct_cue() {
     });
     let buf = draw(&app);
 
-    let markers: Vec<u16> = (0..H).filter(|&y| row_text(&buf, y).contains("<<<<<<<")).collect();
-    assert_eq!(markers.len(), 2, "fixture has two marker lines, one per block");
+    let markers: Vec<u16> = (0..H)
+        .filter(|&y| row_text(&buf, y).contains("<<<<<<<"))
+        .collect();
+    assert_eq!(
+        markers.len(),
+        2,
+        "fixture has two marker lines, one per block"
+    );
     let col0 = row_text(&buf, markers[0]).find('<').unwrap() as u16;
     let col1 = row_text(&buf, markers[1]).find('<').unwrap() as u16;
-    let current_marker = buf.cell((col0, markers[0])).expect("current block's marker row");
-    let other_marker = buf.cell((col1, markers[1])).expect("other block's marker row");
+    let current_marker = buf
+        .cell((col0, markers[0]))
+        .expect("current block's marker row");
+    let other_marker = buf
+        .cell((col1, markers[1]))
+        .expect("other block's marker row");
 
     assert_eq!(
         current_marker.style().bg,
