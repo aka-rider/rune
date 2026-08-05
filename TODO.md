@@ -22,6 +22,8 @@
 
 - [ ] **`crates/rune-tui/tests/chrome.rs` was not updated for the reading-view chord, though the implementation plan predicted it would need to be.** The plan called out its two width-sensitive tests, `default_footer_hints_omit_the_aliased_quit_chord` and `footer_global_tail_survives_truncation_with_explorer_focused`, as needing changes once the new binding lengthened the hint row — "expected, not flake". They were not touched, and they still pass, because both assert via `contains` rather than a fixed width or hint count, so the row lengthening the plan anticipated is invisible to them. Recorded so the next person doesn't go looking for a missing change that was never needed.
 
+- [ ] **`crates/rune-db/tests/multiprocess` — `scenarios::two_stores_closing_simultaneously_surface_no_error_despite_truncate_contention` is a known flake under machine load.** Observed timing out after 30s waiting for child-process marker files (`crates/rune-db/tests/multiprocess/support.rs`'s marker-wait helper) while three cargo builds were running concurrently; passes reliably in isolation. The helper paces multi-process startup on a wall-clock timeout — the pattern `CLAUDE.md` calls out by name ("never order or pace events with wall-clock sleeps, especially in tests") — so it will flake again under load rather than being an actual regression. A real fix replaces the wall-clock wait with a deterministic readiness signal.
+
 ## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
 
 ## Lists
@@ -117,11 +119,19 @@ most remaining sources that used to be listed here: `db_wiring.rs`,
 the ceiling again. A handful remain over it, mostly the residue of the same
 long-running debt:
 
-- [ ] Re-measured against the tree after the title/rename work merged, because
-  both sides of that merge carried stale counts: `rune-tui/src/app.rs` (550),
-  `rune-md/src/emit/mod.rs` (536), `rune-tui/src/rename.rs` (526),
-  `rune-syntax/src/wrap/mod.rs` (520), `rune-fuzz/src/generate/palette.rs`
-  (517), `rune-syntax/src/syntax.rs` (505), `rune-tui/src/document.rs` (501).
+- [ ] Re-measured wholesale against the tree with `wc -l` (not accreted from
+  individual deltas, so this is every file over the ceiling at one moment,
+  not a running tally): `rune-fuzz/src/generate/palette.rs` (562),
+  `rune-tui/tests/rename_focus.rs` (560, newly over — the WP2 integration
+  entry below only records it as landing "comfortably under the ceiling" at
+  merge time; it has grown past it since), `rune-md/src/emit/mod.rs` (558),
+  `rune-tui/src/app.rs` (544, down from 550 after a code review dropped a
+  stale relocation-history comment), `rune-tui/src/rename.rs` (532),
+  `rune-syntax/src/wrap/mod.rs` (520), `rune-tui/src/runtime/mod.rs` (517),
+  `rune-syntax/src/syntax.rs` (505). `rune-tui/src/document.rs`, previously
+  listed here at 501 lines, no longer exists as a single file — it is now
+  the `document/` directory (`mod.rs` 459, `sync.rs` 195, `tests.rs` 117),
+  every member under the ceiling.
   `rune-tui/tests/rename_bind.rs`, previously listed here at 795 lines, is
   DONE: split (plan WP5) into `rename_bind.rs` (373 — focus/typing, the
   end-to-end no-store rename, draft naming), `rename_refusals.rs` (136),
@@ -210,7 +220,7 @@ the ceiling, and neither has been split since.
   search.rs` (422 lines, under budget), which is also why `explorer.rs`
   itself (499) and `explorer_keys.rs` (260) stayed under the ceiling
   despite gaining the feature's state and dispatch wiring.
-- [ ] Two files landed within a few lines of the ceiling and will breach on the next small edit: `rune-db/src/writer.rs` (497) and `rune-db/src/materialize.rs` (496). Whoever touches either next should take the split rather than squeeze under.
+- [ ] `rune-db/src/writer.rs`, previously recorded here at 497 lines and about to breach, has since been split and is now 356. `rune-db/src/materialize.rs` is still within a few lines of the ceiling at 496 — whoever touches it next should take the split rather than squeeze under.
 - [ ] `rune-md/src/emit/mod.rs` 536 → 558 during the code-pipeline unification (the `base_scope` parameter threaded through `emit_with`/`fill_gaps`, plus its rationale comments). It was already over the ceiling before that change, so this is a deepening rather than a breach. The natural split is the gap-fill and span-ordering pass — `fill_gaps` plus the buffer-order re-sort it exists to preserve — into an `emit/gaps.rs` sibling; `emit_with` itself is the orchestration and should stay.
 - [ ] The `rune-db` splits copy their test scaffolding rather than share it — `open()`, `insert_test_document`, `Fixture`, `always_dead` and friends are now verbatim in both `rename_bind.rs` and `rename_replace.rs` (~50 lines), and similarly across the `writer_*`/`store_*` pairs. Note this predates the splits as a crate-wide habit (`open()` alone is defined in sixteen files), so the fix is one `#[cfg(test)]` support module for the whole crate — the pattern `conceal_common`/`opentabs_common`/`highlight_common` already use on the test side — not a per-split patch.
 
