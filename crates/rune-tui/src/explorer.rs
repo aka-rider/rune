@@ -23,6 +23,7 @@ use rune_vfs::DirEntry;
 
 use crate::app::App;
 use crate::listnav;
+use crate::pane::Pane;
 use crate::runtime::{DirCause, Effects, load_dir_cmd};
 use crate::width::truncate_tail_to_width;
 
@@ -150,10 +151,15 @@ pub(crate) fn request_dir(app: &mut App, root: PathBuf, effects: &mut Effects) {
 /// "Empty and not already loading" is the no-shadow-state stand-in for
 /// "never loaded": `Explorer` carries no separate `loaded` flag, and a
 /// genuinely empty directory re-triggering this is a harmless reload, not
-/// an incorrect state. A hidden column is left alone — nothing is on screen
-/// to fill.
+/// an incorrect state. A section this frame's `LayoutMode` doesn't paint —
+/// hidden outright, or squeezed out by a frame too narrow to fit it even
+/// though its `Split` still says shown — is left alone: nothing is on
+/// screen to fill.
 pub fn ensure_loaded(app: &mut App, effects: &mut Effects) {
-    if !app.splits.left.is_shown() || !app.explorer.entries.is_empty() || app.explorer.loading {
+    if app.layout_mode().focusable(Pane::Explorer).is_none()
+        || !app.explorer.entries.is_empty()
+        || app.explorer.loading
+    {
         return;
     }
     let root = initial_root(app);
