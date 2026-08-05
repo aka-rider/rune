@@ -6,7 +6,7 @@
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::Error;
-use crate::observation;
+use crate::observation::{self, Observation};
 use crate::retry;
 
 /// The session_id attached to whichever row — across `doc_id`'s events and
@@ -56,43 +56,55 @@ pub(crate) fn is_session_alive(
     Ok(liveness_check(pid, &started_at))
 }
 
+/// The outcome of [`find_inheritable_draft`]. Port of `load.go`
+/// (`findInheritableDraft`)'s three-way result, widened from a `(String,
+/// bool)` pair so a baseline-hash mismatch no longer has to mean "bail to
+/// plain disk content" — it instead carries the dead session's own baseline
+/// observation forward so `load` can re-anchor on it (§1.4).
+pub(crate) enum Inherited {
+    /// Nothing to inherit: no other session ever touched this doc, the most
+    /// recent one is still alive, a reap raced the lookup, or the dead
+    /// session's draft happens to hash-equal disk anyway.
+    Disk,
+    /// The dead session's baseline agrees with what's on disk right now (or
+    /// it never recorded one) — safe to bridge disk content straight to
+    /// `draft`, exactly like today's anchor-on-disk flow.
+    Bridged { draft: String },
+    /// The dead session's own baseline (`H0`) no longer matches disk (`H1`)
+    /// — disk moved on independently. `draft` is still genuinely unsaved
+    /// content worth keeping, but it must be bridged from `H0`, not `H1`, so
+    /// the newer disk content is never silently discarded.
+    Diverged {
+        draft: String,
+        baseline: Box<Observation>,
+    },
+}
+
 /// Looks for a DIFFERENT, now-confirmed-dead session's unsaved content for
 /// `doc_id`. Called ONLY from `load`'s `!has_history` branch, before this
-/// session has written anything of its own. Returns `(draft, false)` for
-/// disk content unchanged for every "nothing to inherit" case: no other
-/// session ever touched this doc, the most recent one is still alive, disk
-/// moved since that dead session's own last-known baseline, or its content
-/// happens to hash-equal disk anyway. Port of `load.go`
+/// session has written anything of its own. Port of `load.go`
 /// (`findInheritableDraft`).
 pub(crate) fn find_inheritable_draft(
     conn: &mut rusqlite::Connection,
     liveness_check: &dyn Fn(i64, &str) -> bool,
     doc_id: i64,
-    disk_content: &str,
     disk_hash: &str,
-) -> Result<(String, bool), Error> {
+) -> Result<Inherited, Error> {
     let other_session_id = retry::with_retry(conn, |tx| most_recent_session_for_doc(tx, doc_id))?;
     let Some(other_session_id) = other_session_id else {
-        return Ok((disk_content.to_string(), false));
+        return Ok(Inherited::Disk);
     };
 
     let alive = retry::with_retry(conn, |tx| {
         is_session_alive(tx, liveness_check, other_session_id)
     })?;
     if alive {
-        return Ok((disk_content.to_string(), false));
+        return Ok(Inherited::Disk);
     }
 
     let other_baseline = retry::with_retry(conn, |tx| {
         observation::saved_obs_for(tx, other_session_id, doc_id)
     })?;
-    if let Some(baseline) = &other_baseline
-        && baseline.blob_hash != disk_hash
-    {
-        // Disk moved since the dead session's own last-known fact — not
-        // safe to bridge (would silently discard the newer disk content).
-        return Ok((disk_content.to_string(), false));
-    }
 
     // Re-verify `other_session_id` is STILL the eligible candidate inside the
     // SAME transaction that reads its snapshot/events: a reap racing between
@@ -101,7 +113,8 @@ pub(crate) fn find_inheritable_draft(
     // `snapshots`), and `recover_document` finding zero rows would
     // reconstruct "" — silently presenting an empty buffer for a document
     // with real content ([rune-db 3]). A raced reap must yield "not
-    // eligible", never empty content.
+    // eligible", never empty content — this guard runs regardless of
+    // whether the baseline below turns out to match disk.
     let recovered_draft = retry::with_retry(conn, |tx| {
         let still_candidate = most_recent_session_for_doc(tx, doc_id)?;
         if still_candidate != Some(other_session_id) {
@@ -110,16 +123,30 @@ pub(crate) fn find_inheritable_draft(
         crate::snapshot::recover_document(tx, other_session_id, doc_id).map(Some)
     })?;
     let Some(recovered_draft) = recovered_draft else {
-        return Ok((disk_content.to_string(), false));
+        return Ok(Inherited::Disk);
     };
     if observation::hash_bytes(recovered_draft.as_bytes()) == disk_hash {
-        return Ok((disk_content.to_string(), false)); // never actually diverged from disk
+        return Ok(Inherited::Disk); // never actually diverged from disk
     }
-    Ok((recovered_draft, true))
+
+    match other_baseline {
+        Some(baseline) if baseline.blob_hash != disk_hash => Ok(Inherited::Diverged {
+            draft: recovered_draft,
+            baseline: Box::new(baseline),
+        }),
+        _ => Ok(Inherited::Bridged {
+            draft: recovered_draft,
+        }),
+    }
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 mod tests {
     use std::time::SystemTime;
 
@@ -139,19 +166,17 @@ mod tests {
         false
     }
 
-    /// Dead-session inheritance must bail (fall back to plain disk content)
-    /// when disk has moved on since the dead session's own last-known
-    /// baseline — bridging stale content would silently discard the newer
-    /// disk state (`load.go`'s `findInheritableDraft` review-fix doc
-    /// comment). Exercises `find_inheritable_draft` directly: `Vfs`'s
+    /// Dead-session inheritance must carry the dead session's OWN baseline
+    /// (`H0`) forward, not bail, when disk has moved on since it (`H1`) —
+    /// `load` re-anchors on `H0` and bridges from there, never silently
+    /// discarding either the newer disk content or the dead session's
+    /// unsaved edit. Exercises `find_inheritable_draft` directly: `Vfs`'s
     /// atomic-publish-only contract makes an inode-preserving "external
     /// overwrite" impossible to construct through the public `load` entry
-    /// point (a real atomic swap legitimately mints a fresh inode, exactly
-    /// like Go's own `OpenPath` — orphaning identity is a pre-existing,
-    /// out-of-scope concern, not this test's target), so this seeds the
-    /// document/session/observation state directly instead.
+    /// point, so this seeds the document/session/observation state
+    /// directly instead.
     #[test]
-    fn dead_session_inheritance_bails_when_disk_hash_moved_on() {
+    fn dead_session_inheritance_diverges_when_disk_hash_moved_on() {
         let mut conn = open();
         conn.execute(
             "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
@@ -216,12 +241,20 @@ mod tests {
         let disk_content = "disk moved on independently";
         let disk_hash = observation::hash_bytes(disk_content.as_bytes());
 
-        let (draft, inheriting) =
-            find_inheritable_draft(&mut conn, &always_dead, doc_id, disk_content, &disk_hash)
-                .expect("find_inheritable_draft");
+        let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
+            .expect("find_inheritable_draft");
 
-        assert!(!inheriting, "must bail, never bridge stale unsaved edits");
-        assert_eq!(draft, disk_content, "must fall back to plain disk content");
+        match inherited {
+            Inherited::Diverged { draft, baseline } => {
+                assert_eq!(draft, "UNSAVED session A's content");
+                assert_eq!(
+                    baseline.blob_hash,
+                    observation::hash_bytes(b"session A's content"),
+                    "baseline must be the dead session's own H0, not disk's H1"
+                );
+            }
+            _ => panic!("expected Diverged when disk moved on since the dead session's baseline"),
+        }
     }
 
     /// The mirror-image control: when disk has NOT moved since the dead
@@ -285,13 +318,11 @@ mod tests {
             tx.commit().expect("commit");
         }
 
-        let (draft, inheriting) =
-            find_inheritable_draft(&mut conn, &always_dead, doc_id, disk_content, &disk_hash)
-                .expect("find_inheritable_draft");
-        assert!(
-            inheriting,
-            "disk unchanged since the dead session's baseline -> safe to bridge"
-        );
-        assert_eq!(draft, "UNSAVED shared content");
+        let inherited = find_inheritable_draft(&mut conn, &always_dead, doc_id, &disk_hash)
+            .expect("find_inheritable_draft");
+        match inherited {
+            Inherited::Bridged { draft } => assert_eq!(draft, "UNSAVED shared content"),
+            _ => panic!("disk unchanged since the dead session's baseline -> expected Bridged"),
+        }
     }
 }

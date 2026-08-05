@@ -116,10 +116,39 @@ fn open_path_by_inode(
 
     match existing {
         None => {
-            tx.execute(
-                "UPDATE documents SET path='' WHERE path=?1 AND (inode IS NULL OR inode!=?2)",
-                params![path, inode],
-            )?;
+            // No row claims this exact (inode, device) — but a row may
+            // still claim `path` under a DIFFERENT (or no) identity, e.g.
+            // an external atomic-swap overwrite: the writer's rename onto
+            // `path` mints a brand-new inode, but it is still the SAME
+            // document as far as the user is concerned. Reclaiming that
+            // row's identity keeps its journal intact instead of orphaning
+            // it behind a freshly minted, journal-empty row. Only when
+            // nothing at all claims `path` is a fresh row actually minted.
+            //
+            // A hardlinked sibling that survives this reclaim under its OWN
+            // path is a known, accepted edge: the reclaimed row's identity
+            // moves to the new inode, so a later open of the hardlink's own
+            // path resolves as a distinct document rather than the one
+            // being tracked here.
+            // A unique partial index enforces that at most one row can ever
+            // claim a given non-empty path, so there is no tie to break
+            // here.
+            let claimant: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM documents WHERE path=?1",
+                    params![path],
+                    |r| r.get(0),
+                )
+                .optional()?;
+
+            if let Some(row_id) = claimant {
+                crate::rebind::set_identity_tx(tx, row_id, path, Some(inode), Some(device), at)?;
+                return Ok(DocRef {
+                    id: row_id,
+                    renamed_from: None,
+                });
+            }
+
             tx.execute(
                 "INSERT INTO documents(path, inode, device, kind, created_at, last_seen_at) \
                  VALUES(?1,?2,?3,'file',?4,?4)",
@@ -201,6 +230,46 @@ mod tests {
         let second = open_path(&mut conn, &vfs, new_path, SystemTime::now()).expect("second open");
         assert_eq!(second.id, first.id, "same inode, new path -> same doc id");
         assert_eq!(second.renamed_from.as_deref(), Some("/doc/old.md"));
+    }
+
+    /// B3 (data-loss fix): an external ATOMIC SWAP overwrite mints a NEW
+    /// inode at the SAME path — this must reclaim the existing row's
+    /// identity, never orphan it behind a freshly minted, journal-empty
+    /// row. Port of a real bug: the prior eviction here (`UPDATE documents
+    /// SET path=''`) is what silently dropped a dead session's draft on
+    /// reopen after an external edit.
+    #[test]
+    fn open_path_by_inode_reclaims_the_row_after_an_external_atomic_swap() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let path = Path::new("/doc.md");
+
+        let temp = vfs.write_durable(path, b"hello").expect("temp");
+        vfs.rename_excl(&temp, path).expect("publish");
+        let first = open_path(&mut conn, &vfs, path, SystemTime::now()).expect("first open");
+
+        // An external atomic-swap overwrite at the SAME path — a genuinely
+        // new inode, unlike a rename (which moves the same inode).
+        vfs.save_atomic(path, b"swapped externally")
+            .expect("external atomic swap");
+
+        let second = open_path(&mut conn, &vfs, path, SystemTime::now()).expect("second open");
+        assert_eq!(
+            second.id, first.id,
+            "the swap must reclaim the existing row, not mint a new one"
+        );
+        assert!(
+            second.renamed_from.is_none(),
+            "same path -> not a detected rename"
+        );
+
+        let row_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM documents", [], |r| r.get(0))
+            .expect("count");
+        assert_eq!(
+            row_count, 1,
+            "no orphaned row should be left behind by the swap"
+        );
     }
 
     /// A4/[rune-db 6]: a path that doesn't round-trip through UTF-8 must be

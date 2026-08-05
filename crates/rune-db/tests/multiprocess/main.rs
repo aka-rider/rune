@@ -68,6 +68,8 @@ fn helper_entrypoint() {
         "race_close" => helper::race_close(),
         "gc_editor" => helper::gc_editor(),
         "gc_sweeper" => helper::gc_sweeper(),
+        "edit_and_die" => helper::edit_and_die(),
+        "reload_diverged" => helper::reload_diverged(),
         other => {
             eprintln!("multiprocess helper: unknown role {other}");
             std::process::exit(2);
