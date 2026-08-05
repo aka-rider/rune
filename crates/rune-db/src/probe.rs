@@ -65,29 +65,50 @@ pub fn probe(
         return Err(Error::Io(e));
     }
 
-    let data = vfs.read(&resolved).map_err(Error::Io)?;
-    // Recorded as a raw-bytes blob regardless of UTF-8 validity — a probe is
-    // a passive observation of whatever is actually on disk (blob.rs module
-    // doc); it must never hard-fail just because the file isn't valid text.
-    // The blob put and its referencing observation insert commit as ONE
-    // transaction inside `observe_from_stat` — never two ([rune-db 2]).
-    let fresh = observation::observe_from_stat(
-        conn,
-        vfs,
-        session_id,
-        doc_id,
-        &resolved,
-        observation::ObserveInput {
-            data: &data,
-            seq: None,
-            origin: "probe",
-        },
-        now,
-    )?;
+    // Stat short-circuit (plan Gotchas [R2]): a probe's default action reads
+    // the whole file and inserts a fresh observation on EVERY call, which
+    // would grow the store unboundedly if enqueued on every tab switch. When
+    // the live stat identity/size/mtime already match the newest recorded
+    // observation, nothing on disk has moved since that sighting was taken —
+    // classify against it directly, with no re-read and no new row.
+    let stat = observation::stat_identity(vfs, &resolved);
+    let existing = retry::with_retry(conn, |tx| observation::newest_observation(tx, doc_id))?;
+    let unchanged = existing.filter(|o| {
+        o.size == stat.size
+            && o.mtime == stat.mtime
+            && o.inode == stat.inode
+            && o.device == stat.device
+    });
+
+    let theirs_obs = match unchanged {
+        Some(obs) => obs,
+        None => {
+            let data = vfs.read(&resolved).map_err(Error::Io)?;
+            // Recorded as a raw-bytes blob regardless of UTF-8 validity — a
+            // probe is a passive observation of whatever is actually on disk
+            // (blob.rs module doc); it must never hard-fail just because the
+            // file isn't valid text. The blob put and its referencing
+            // observation insert commit as ONE transaction inside
+            // `observe_from_stat` — never two ([rune-db 2]).
+            observation::observe_from_stat(
+                conn,
+                vfs,
+                session_id,
+                doc_id,
+                &resolved,
+                observation::ObserveInput {
+                    data: &data,
+                    seq: None,
+                    origin: "probe",
+                },
+                now,
+            )?
+        }
+    };
 
     let theirs = Some(Version {
-        hash: fresh.blob_hash.clone(),
-        obs: Some(fresh.id),
+        hash: theirs_obs.blob_hash.clone(),
+        obs: Some(theirs_obs.id),
     });
     let state = retry::with_retry(conn, |tx| {
         sync::sync_with_theirs(tx, session_id, doc_id, theirs.clone())
@@ -101,14 +122,14 @@ pub fn probe(
             let cur = observation::saved_obs_for(tx, session_id, doc_id)?;
             Ok::<bool, Error>(match cur {
                 None => true,
-                Some(c) => c.blob_hash != fresh.blob_hash,
+                Some(c) => c.blob_hash != theirs_obs.blob_hash,
             })
         })?;
         if should_adopt {
             let pos = retry::with_retry(conn, |tx| {
                 crate::journal::current_seq(tx, session_id, doc_id)
             })?;
-            let _ = adopt::adopt_equal(conn, session_id, doc_id, fresh.id, pos, now)?;
+            let _ = adopt::adopt_equal(conn, session_id, doc_id, theirs_obs.id, pos, now)?;
         }
     }
 
@@ -166,6 +187,60 @@ mod tests {
         let err =
             probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect_err("must error");
         assert!(matches!(err, Error::NotFound(_)));
+    }
+
+    /// Plan Gotchas `[R2]`/WP2.S4: a second probe against a file whose stat
+    /// identity/size/mtime haven't moved since the first probe's own
+    /// observation must classify against that stored fact directly — no
+    /// re-read, no second `observations` row.
+    #[test]
+    fn probe_stat_short_circuit_skips_reading_and_inserting_when_unchanged() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"hello");
+
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+
+        let count = |conn: &Connection| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM observations WHERE doc_id=?1",
+                params![doc_id],
+                |r| r.get(0),
+            )
+            .expect("count observations")
+        };
+
+        let first = probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
+        assert_eq!(
+            first.kind,
+            SyncKind::Diverged,
+            "no ancestor and ours (empty) != theirs (hello): a real divergence"
+        );
+        assert_eq!(
+            count(&conn),
+            1,
+            "the first probe records exactly one observation"
+        );
+
+        let second =
+            probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe again");
+        assert_eq!(
+            second.kind, first.kind,
+            "an unchanged file must classify identically the second time"
+        );
+        assert_eq!(
+            count(&conn),
+            1,
+            "an unchanged stat must short-circuit: no second observation inserted"
+        );
     }
 
     #[test]

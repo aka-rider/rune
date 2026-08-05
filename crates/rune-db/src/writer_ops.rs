@@ -13,6 +13,7 @@ use rune_vfs::Stat;
 
 use crate::load::LoadResult;
 use crate::materialize::{MatResult, MaterializeOutcome, MaterializePrep};
+use crate::merge_prep::MergePrepResult;
 use crate::observation::{ObsId, Observation};
 use crate::rename::RenameOutcome;
 use crate::store::LivenessCheckFn;
@@ -96,6 +97,17 @@ pub enum OpKind {
         doc_id: i64,
         now: SystemTime,
     },
+    /// Plan WP3.S1: merge entry's fresh-state read — runs `probe::probe`
+    /// (recording the theirs observation + blob exactly like `Probe`
+    /// above) AND returns the ancestor/theirs bytes from the SAME op, so
+    /// merge acts on disk state captured at one decisive moment (plan
+    /// Gotchas `[B2]`) rather than a `SyncState` alone (which carries only
+    /// hashes, never bytes) plus a second, separately-timed read.
+    MergePrep {
+        session_id: i64,
+        doc_id: i64,
+        now: SystemTime,
+    },
     /// WP7 step (a): the bookkeeping-only half of `Materialize` that runs
     /// BEFORE any `vfs` call — hands the caller the CAS decision data
     /// (`materialize::prepare_materialize`) so the actual disk publish can
@@ -154,12 +166,16 @@ pub enum OpKind {
         seen: Stat,
         now: SystemTime,
     },
-    /// Port of `adopt.go` (`ResolveAdopt`).
+    /// Port of `adopt.go` (`ResolveAdopt`). `edit_seq: None` asks
+    /// `adopt::resolve_adopt` to resolve the journal-head seq fresh, inside
+    /// its own transaction, instead of trusting a value the caller could
+    /// only have learned asynchronously (see that function's own doc
+    /// comment) — the merge-entry flow's own case (plan Gotchas `[B3]`).
     ResolveAdopt {
         session_id: i64,
         doc_id: i64,
         obs: ObsId,
-        edit_seq: i64,
+        edit_seq: Option<i64>,
         now: SystemTime,
     },
     /// Port of `adopt.go` (`ResolveAbandon`).
@@ -216,6 +232,9 @@ pub enum OpOutcome {
     /// variants (`None`/`Seq`/`RowId`) shouldn't all pay for the rare, rich
     /// ones' size.
     Sync(Box<SyncState>),
+    /// `MergePrep`'s resulting [`MergePrepResult`] (boxed — see `Sync`'s
+    /// doc comment).
+    MergePrep(Box<MergePrepResult>),
     /// `MaterializePrepare`'s [`MaterializePrep`] — the CAS decision data
     /// the caller needs before doing any `vfs` call (WP7 step a).
     MaterializePrep(Box<MaterializePrep>),

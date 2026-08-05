@@ -64,6 +64,15 @@ pub struct ChromeStyles {
     /// uncovered. The render module's code-background pass is its one
     /// consumer.
     pub code_bg: Color,
+    /// Backgrounds for one unresolved merge block's ours span, theirs span,
+    /// and marker lines (plan WP5.S1; `merge::paint` is the only consumer).
+    /// Go paints these with raw ANSI green/red/grey (`MergeOursBg`/
+    /// `MergeTheirsBg`/`MergeMarkerBg`); these are the Catppuccin-tinted
+    /// equivalent, muted against `surface0` the same way `code_bg` sits at
+    /// full `surface0` rather than a saturated hue.
+    pub merge_ours_bg: Style,
+    pub merge_theirs_bg: Style,
+    pub merge_marker_bg: Style,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -110,6 +119,9 @@ impl Theme {
             subtle: c(p.overlay1),
             selection_bg: c(p.surface2),
             code_bg: c(p.surface0),
+            merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
+            merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
+            merge_marker_bg: Style::new().bg(c(p.surface1)),
         };
 
         let table = scope_table();
@@ -155,6 +167,21 @@ impl Theme {
             ..self.scope_style(id)
         }
     }
+}
+
+/// Linearly mixes two truecolor `Color::Rgb` values by `t` (`0.0` is pure
+/// `a`, `1.0` is pure `b`) — the same muting `merge_ours_bg`/
+/// `merge_theirs_bg` use to tint `surface0` toward green/red rather than
+/// painting a whole background in a fully saturated hue. Falls back to `a`
+/// unmixed for any non-`Rgb` variant (never reached with `Mocha::palette`'s
+/// own colours, all `Rgb`, but kept total rather than partial, §1.3).
+fn blend(a: Color, b: Color, t: f32) -> Color {
+    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
+        return a;
+    };
+    let mix =
+        |x: u8, y: u8| -> u8 { (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8 };
+    Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
 /// WP4.S2's canonical scope -> `Style` mapping (Catppuccin Mocha). Heading

@@ -16,8 +16,9 @@ use crate::action::{Action, HighlightVersion};
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_P_KEY,
     CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS,
-    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
-    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    MARKDOWN_FRAGMENTS, MERGE_KEY, MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE,
+    REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE,
+    UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -465,13 +466,29 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// The user-approved weighted table, now over 15 clusters (plan WP7.S6
+/// `⌘M` then 1-3 of `MERGE_RESOLVE_KEYS` (plan WP7.S1): this no-store
+/// harness can never make `MERGE_KEY` succeed (`MERGE_KEY`'s own docs), so
+/// every one of these lands as either the entry refusal's status or, for
+/// the resolve keys, an ordinary printable-char insertion — still worth
+/// generating on its own, low-weight cluster rather than only via
+/// `cluster_monkey_burst`'s ~1-in-16-mods odds, so `MERGE-KEY-FEEDBACK`/
+/// `MERGE-DOC-ACTIVE` get exercised against a real (if currently always
+/// `Inactive`) merge-key sequence every run.
+fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
+    proptest::collection::vec(select(MERGE_RESOLVE_KEYS), 1..=3).prop_map(|keys| {
+        let mut actions = vec![Action::Key(MERGE_KEY)];
+        actions.extend(keys.into_iter().map(Action::Key));
+        actions
+    })
+}
+
+/// The user-approved weighted table, now over 16 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
-/// Guard's `[S]ave`/`[D]iscard`/`Esc` answers). All arms are `.boxed()` —
-/// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
-/// boxed…])` (G16).
+/// Guard's `[S]ave`/`[D]iscard`/`Esc` answers; the merge plan's own WP7.S1
+/// added `cluster_merge`). All arms are `.boxed()` — `prop_oneof!` with >10
+/// arms expands to `Union::new_weighted(vec![… boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -489,6 +506,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),
         1 => cluster_quit_guard().boxed(),
+        1 => cluster_merge().boxed(),
     ]
 }
 

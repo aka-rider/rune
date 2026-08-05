@@ -80,6 +80,18 @@ impl Store {
         })
     }
 
+    /// Enqueues a `MergePrep` op — merge entry's fresh-state read (plan
+    /// WP3.S1). The resulting `MergePrepResult` arrives asynchronously as
+    /// `DbEvent::Ok.result` (`OpOutcome::MergePrep`).
+    pub fn merge_prep(&self, doc_id: i64) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::MergePrep {
+            session_id: self.session_id,
+            doc_id,
+            now,
+        })
+    }
+
     /// WP7 step (a): enqueues the bookkeeping-only `MaterializePrepare` op —
     /// hands back the CAS decision data (`materialize::MaterializePrep`) the
     /// caller needs before it does any `vfs` call itself. Never touches
@@ -180,8 +192,16 @@ impl Store {
     }
 
     /// Enqueues a `ResolveAdopt` op — a user-driven [D]iscard/[M]erge
-    /// resolution. Port of `adopt.go` (`ResolveAdopt`).
-    pub fn resolve_adopt(&self, doc_id: i64, obs: ObsId, edit_seq: i64) -> Result<u64, Error> {
+    /// resolution. `edit_seq: None` asks the op to resolve the journal-head
+    /// seq itself (see `adopt::resolve_adopt`'s own doc comment) — the
+    /// merge-entry flow's own case, which cannot learn its install edit's
+    /// durable seq synchronously. Port of `adopt.go` (`ResolveAdopt`).
+    pub fn resolve_adopt(
+        &self,
+        doc_id: i64,
+        obs: ObsId,
+        edit_seq: Option<i64>,
+    ) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::ResolveAdopt {
             session_id: self.session_id,

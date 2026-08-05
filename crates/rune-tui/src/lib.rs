@@ -37,6 +37,7 @@ pub mod layout;
 pub mod linemap;
 pub mod listnav;
 pub mod materialize_ack;
+pub mod merge;
 pub mod navigate;
 pub mod opentabs;
 pub mod pane;

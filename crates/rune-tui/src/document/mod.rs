@@ -192,6 +192,14 @@ pub struct Document {
     /// level — `embeds` just stays empty and `sync_embeds` a no-op for
     /// every document kind other than `Markdown`.
     pub embeds: crate::graphics::EmbedSet,
+    /// The most recent [`rune_db::SyncKind`] a `Probe`/`Load` ack reported
+    /// for this document (plan WP2) — RENDER/HINT STATE ONLY, never a
+    /// decision input (CONSTITUTION §12: sync state must be derived fresh
+    /// by journal position at the moment a decision needs it, never cached).
+    /// The footer's passive `disk changed` hint reads this; nothing that
+    /// mutates the buffer or the recovery store may branch on it. `None`
+    /// before the first `Load`/`Probe` ack lands for this document.
+    pub last_sync: Option<rune_db::SyncKind>,
 }
 
 /// Why a document refuses mutation — not a plain bool, so a toggleable view
@@ -324,6 +332,7 @@ impl Document {
             highlight: HighlightState::default(),
             image: None,
             embeds: crate::graphics::EmbedSet::new(),
+            last_sync: None,
         }
     }
 

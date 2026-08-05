@@ -142,6 +142,12 @@ pub(crate) fn base_snapshot(content: &str) -> Snapshot {
         quit_intent_pending: None,
         dirty_by_doc: std::collections::BTreeMap::new(),
         save_in_flight_by_doc: std::collections::BTreeMap::new(),
+        merge_active: false,
+        merge_pending: false,
+        merge_doc: None,
+        merge_unresolved: 0,
+        scroll_row: 0,
+        display_name_by_doc: std::collections::BTreeMap::new(),
     }
 }
 

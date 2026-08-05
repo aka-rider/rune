@@ -163,6 +163,23 @@ pub struct PendingOp {
     /// `DocDb`" apart from "a snapshot anchor landed, nothing else to do" —
     /// both share the same outcome shape but need opposite reactions.
     pub mints_scratch: bool,
+    /// True iff this op is a `Probe` (plan WP2.S4) — lets
+    /// `workspace::switch_to` skip enqueueing a second probe for a document
+    /// that already has one in flight (`probe.rs`'s own doc comment: each
+    /// probe reads the whole file and inserts a fresh observation, so
+    /// stacking redundant ones on every rapid tab switch would grow the
+    /// store unboundedly for no new information).
+    pub is_probe: bool,
+    /// `Some(generation)` iff this op is a `MergePrep` (plan WP3.S1/S5) — the
+    /// generation `merge::begin` minted for this attempt at enqueue time.
+    /// The landing handler (`merge::handle_merge_prep_ack`) compares this
+    /// against `App.merge`'s OWN current `Pending` generation for the same
+    /// document before trusting the ack: a later `⌘M` superseding this
+    /// attempt before it lands must not have this stale ack mistaken for
+    /// the current one (mirrors `is_probe`'s in-flight bookkeeping, but a
+    /// generation counter rather than a plain flag, since more than one
+    /// merge attempt can be in flight in sequence for the same document).
+    pub merge_gen: Option<u32>,
 }
 
 impl PendingOp {
@@ -171,6 +188,8 @@ impl PendingOp {
             doc,
             issued_version: None,
             mints_scratch: false,
+            is_probe: false,
+            merge_gen: None,
         }
     }
 
@@ -179,6 +198,8 @@ impl PendingOp {
             doc,
             issued_version: Some(issued_version),
             mints_scratch: false,
+            is_probe: false,
+            merge_gen: None,
         }
     }
 
@@ -187,6 +208,28 @@ impl PendingOp {
             doc,
             issued_version: None,
             mints_scratch: true,
+            is_probe: false,
+            merge_gen: None,
+        }
+    }
+
+    pub fn probe(doc: DocumentId) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: false,
+            is_probe: true,
+            merge_gen: None,
+        }
+    }
+
+    pub fn merge_prep(doc: DocumentId, generation: u32) -> PendingOp {
+        PendingOp {
+            doc,
+            issued_version: None,
+            mints_scratch: false,
+            is_probe: false,
+            merge_gen: Some(generation),
         }
     }
 }

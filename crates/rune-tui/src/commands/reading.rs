@@ -30,6 +30,16 @@ pub fn toggle(app: &mut App) {
     if app.focus() != Pane::Editor {
         return;
     }
+    // Review fix F9: while the merge resolver is `Active` ON the active
+    // document, a `Reading` document makes `[O]urs`/`[T]heirs` fail
+    // confusingly (`merge/keys.rs::intercept` still swallows the chords,
+    // but the working form can no longer be edited to reflect them) — the
+    // same "finish the merge first" refusal shape as the ⌘S gate
+    // (`merge::refuses_save`).
+    if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active) {
+        app.set_status("finish or close the merge first", StatusSource::Other);
+        return;
+    }
     let doc = app.active_doc_mut();
     match doc.read_only {
         ReadOnly::No => doc.read_only = ReadOnly::Reading,
@@ -91,6 +101,34 @@ mod tests {
         assert_eq!(
             app.status_message.as_deref(),
             ReadOnly::Always.refusal_message()
+        );
+    }
+
+    /// Review fix F9: `^P` while the merge resolver is `Active` ON the
+    /// active document must refuse — a `Reading` document would leave
+    /// `[O]urs`/`[T]heirs` unable to touch the working form.
+    #[test]
+    fn toggle_refuses_while_the_merge_resolver_is_active_on_the_active_document() {
+        let mut app = app();
+        let doc = app.active;
+        app.merge = crate::merge::MergeState::Active {
+            doc,
+            conflicts: Vec::new(),
+            blocks: Vec::new(),
+            cur: 0,
+            saved_display_name: None,
+        };
+
+        toggle(&mut app);
+
+        assert_eq!(app.active_doc().read_only, ReadOnly::No);
+        assert!(
+            app.status_message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("finish or close the merge"),
+            "expected the merge refusal status, got {:?}",
+            app.status_message
         );
     }
 

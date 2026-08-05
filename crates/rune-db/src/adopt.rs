@@ -140,23 +140,38 @@ pub fn adopt_equal(
 /// automatically stops finding it and `sync` reports `Diverged` again — the
 /// guard re-raises with no bespoke unwind logic. Port of `adopt.go`
 /// (`ResolveAdopt`).
+///
+/// `edit_seq: None` means the caller (the merge-entry TUI flow, plan WP3
+/// Gotchas `[B3]`) could not learn the exact durable seq of its own install
+/// edit synchronously — `Store::append_edit`'s ack is asynchronous, and
+/// `update` may never block on it. The writer thread processes every op in
+/// strict FIFO order, so by the time THIS op runs, that install edit has
+/// already committed; resolving `journal::current_seq` fresh, inside this
+/// same transaction, yields exactly that edit's seq (the journal head at
+/// this instant) without the caller ever needing to wait for its ack.
 pub fn resolve_adopt(
     conn: &mut Connection,
     session_id: i64,
     doc_id: i64,
     obs: ObsId,
-    edit_seq: i64,
+    edit_seq: Option<i64>,
     now: SystemTime,
 ) -> Result<Observation, Error> {
     let source = retry::with_retry(conn, |tx| observation::get_observation(tx, obs))?;
     let stat = source.stat();
+    let seq = match edit_seq {
+        Some(seq) => seq,
+        None => retry::with_retry(conn, |tx| {
+            crate::journal::current_seq(tx, session_id, doc_id)
+        })?,
+    };
     record_adoption(
         conn,
         doc_id,
         session_id,
         ObservationMeta {
             blob_hash: &source.blob_hash,
-            seq: Some(edit_seq),
+            seq: Some(seq),
             origin: "resolve",
         },
         &stat,

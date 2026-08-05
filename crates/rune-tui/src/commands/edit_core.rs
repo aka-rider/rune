@@ -66,16 +66,25 @@ use crate::materialize_ack;
 /// and why `edit::undo`/`redo` are deliberately exempt). Checked via
 /// `is_read_only()`, not the field directly — refusal must trigger on
 /// every `ReadOnly` variant, not only `Always`.
+///
+/// Returns whether a batch actually applied (a journal `Step` was pushed) —
+/// `false` for every refusal below (missing doc, read-only, empty-after-
+/// retain) and for `Buffer::apply_edits`'s own rejection. Plan WP3.S2
+/// (Gotchas `[B3]`): merge entry's D3 invariant needs to tell "the working
+/// form actually landed in the buffer" apart from "nothing happened" before
+/// it is safe to advance the recovery store's CAS baseline
+/// (`resolve_adopt`) over that install — an un-observable `()` return made
+/// that distinction impossible to make from the call site.
 pub(crate) fn apply_edit_batch_with_cursors(
     app: &mut App,
     id: DocumentId,
     mut infos: Vec<(Edit, u32)>,
     cursors_before: CursorSet,
     cursors_after: impl FnOnce(&[AppliedEdit], &[u32]) -> Vec<Cursor>,
-) {
-    let Some(doc) = app.doc(id) else { return };
+) -> bool {
+    let Some(doc) = app.doc(id) else { return false };
     if doc.is_read_only() {
-        return;
+        return false;
     }
     // A zero-width, insert-nothing edit (`start == end && insert.is_empty()`)
     // is a legal no-op at the buffer layer — `Buffer::apply_edits` accepts
@@ -88,7 +97,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
     // per-command spot check duplicated at every call site.
     infos.retain(|(edit, _)| !(edit.start == edit.end && edit.insert.is_empty()));
     if infos.is_empty() {
-        return;
+        return false;
     }
     let mut infos = coalesce_touching_edits(infos);
     infos.sort_by(|a, b| b.0.start.cmp(&a.0.start).then(b.0.end.cmp(&a.0.end)));
@@ -99,7 +108,9 @@ pub(crate) fn apply_edit_batch_with_cursors(
     match doc.buffer.apply_edits(&edits) {
         Ok((new_buf, applied)) => {
             let new_cursors = cursors_after(&applied, &ids);
-            let Some(doc) = app.doc_mut(id) else { return };
+            let Some(doc) = app.doc_mut(id) else {
+                return false;
+            };
             doc.buffer = new_buf;
             doc.cursors = CursorSet::new_from(&new_cursors);
             let cursors_after = doc.cursors.all();
@@ -122,9 +133,11 @@ pub(crate) fn apply_edit_batch_with_cursors(
                 &cursors_after,
             );
             materialize_ack::recompute_dirty(app, id);
+            true
         }
         Err(e) => {
             app.set_status(format!("edit failed: {e}"), StatusSource::Other);
+            false
         }
     }
 }
@@ -198,12 +211,14 @@ fn coalesce_touching_edits(infos: Vec<(Edit, u32)>) -> Vec<(Edit, u32)> {
 /// clone-line, whose post-edit cursor also lands at each edit's own end —
 /// see that module's doc comment) share it rather than re-implementing
 /// the same rule twice.
+/// Returns whether the batch actually applied — see
+/// `apply_edit_batch_with_cursors`'s own doc comment (plan WP3.S2).
 pub(crate) fn commit_edit_batch(
     app: &mut App,
     id: DocumentId,
     infos: Vec<(Edit, u32)>,
     cursors_before: CursorSet,
-) {
+) -> bool {
     apply_edit_batch_with_cursors(app, id, infos, cursors_before, |applied, ids| {
         applied
             .iter()
@@ -215,7 +230,7 @@ pub(crate) fn commit_edit_batch(
                 id: cid,
             })
             .collect()
-    });
+    })
 }
 
 #[cfg(test)]

@@ -290,6 +290,18 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     // currently IS the discarded preview: the very next line below reseats
     // it at `id`.
     crate::explorer_preview::discard_if_switching_away(app, id);
+    // Plan WP6.S3, decision 12: switching AWAY from the merge document is an
+    // implicit Esc — auto-exit BEFORE the title reseed below, or `name_for`
+    // would re-derive the OUTGOING document's plain name while `app.merge`
+    // still holds it `Active`, leaving the merge suffix to vanish from a
+    // title that then immediately gets overwritten anyway. A same-document
+    // "switch" (`id` already active) is not a transition at all. `auto_exit`
+    // (review fix F3) also cancels a `Pending` attempt WITH feedback,
+    // rather than `exit_in_place` silently discarding it (`Pending` has no
+    // working form to exit from at all).
+    if app.merge.doc().is_some_and(|merge_doc| merge_doc != id) {
+        crate::merge::auto_exit(app);
+    }
     app.active = id;
     // The title field describes the ACTIVE document, so it is reseeded at
     // the one chokepoint every switch funnels through — never left holding
@@ -299,6 +311,10 @@ pub fn switch_to(app: &mut App, id: DocumentId) {
     if let Some(idx) = app.tabs.order.iter().position(|&t| t == id) {
         app.tabs.nav.cursor = idx;
     }
+    // Plan WP2.S4: re-check this document's disk fact on every switch onto
+    // it — the only detection wiring besides `Load`-at-open and the
+    // save-time CAS conflict (plan decision 8: no file watcher).
+    crate::db_enqueue::probe(app, id);
 }
 
 /// Switches to the tab sitting at `idx` in the current tab order, if there

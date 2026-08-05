@@ -99,6 +99,36 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 "save refused \u{2014} the file changed on disk since it was opened",
                 StatusSource::SaveError,
             );
+            // Plan WP6.S4: a genuine CAS conflict — the fresh disk
+            // observation `record_fresh_from_stat` already recorded — offers
+            // the disk-conflict Guard so the user can act on it directly
+            // rather than needing to know `⌘M` exists. A refused raise
+            // (some higher-priority modal already up) leaves the plain
+            // status line above as the only feedback, which is still
+            // correct — `set_modal`'s `#[must_use]` return says exactly
+            // that happened.
+            if let Some(fresh) = &mat.fresh {
+                // `merge::begin`'s own fast pre-check (plan Gotchas `[R3]`)
+                // reads `last_sync` as a hint only — this CAS refusal IS
+                // fresh evidence the disk moved, so seed it conservatively
+                // (`Diverged` is the superset of what a save-time refusal
+                // can mean) rather than leaving `[M]erge`/`[D]iscard` here
+                // refused on a stale `Clean` from the last probe/load. The
+                // AUTHORITATIVE classification still happens fresh inside
+                // the `MergePrep` landing either answer starts.
+                if let Some(doc) = app.doc_mut(id) {
+                    doc.last_sync = Some(rune_db::SyncKind::Diverged);
+                }
+                let _ = crate::banner::set_modal(
+                    app,
+                    crate::banner::Modal::Guard(crate::banner::GuardPrompt {
+                        doc: id,
+                        kind: crate::banner::GuardKind::DiskConflict {
+                            fresh_obs: fresh.id,
+                        },
+                    }),
+                );
+            }
         }
     }
     recompute_dirty(app, id);

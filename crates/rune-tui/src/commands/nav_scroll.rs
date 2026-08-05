@@ -180,6 +180,25 @@ fn scroll_to(doc: &mut Document, target_row: usize) {
     doc.viewport.mode = ScrollMode::Independent;
 }
 
+/// Scrolls the viewport so the DISPLAY row containing byte offset `target`
+/// is visible — merge mode's own "jump to a hunk" primitive (plan WP3
+/// Gotchas `[R5]`). Converts through the exact same buffer -> syntax ->
+/// wrap -> display chokepoint chain `cursor_wrap_row`/`scroll_to` above use
+/// for the cursor's own position, but starting from a raw byte offset
+/// instead — and, unlike every other command in this module, never touches
+/// a cursor: `[`/`]` navigation moving the cursor would pollute the NEXT
+/// journal `Step`'s `cursors_before`, corrupting undo's "reopen the hunk
+/// you just resolved" experience.
+pub(crate) fn scroll_to_byte_offset(doc: &mut Document, target: usize) {
+    let view = doc.view();
+    let clamped = target.min(doc.buffer.content().len());
+    let bp = doc.buffer.offset_to_line_col(clamped);
+    let sp = view.syntax.buffer_to_syntax(bp);
+    let wrap_row = view.wrap.syntax_to_wrap(sp).row;
+    let row = view.display.wrap_to_display(wrap_row);
+    scroll_to(doc, row);
+}
+
 /// vim/Helix `zz`: re-centres the viewport on the cursor's current row
 /// without moving the cursor itself.
 pub fn centre_cursor(doc: &mut Document) {

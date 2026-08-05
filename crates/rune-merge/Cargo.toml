@@ -1,0 +1,10 @@
+[package]
+name = "rune-merge"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+diffy = "0.5"
+
+[lints]
+workspace = true

@@ -98,7 +98,12 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.set_focus_pane(Pane::Tabs, effects);
         }
         GlobalCommand::Save => {
-            let _ = save::trigger_save(app, app.active, effects);
+            // Plan WP4.S3: an active resolver with unresolved blocks
+            // refuses the save (with the count) instead of publishing a
+            // half-resolved working form.
+            if !crate::merge::refuses_save(app, app.active) {
+                let _ = save::trigger_save(app, app.active, effects);
+            }
         }
         // WP7.S2: mints/toggles the generated Help virtual document — a
         // direct, same-tick call (decision 10), no I/O involved. The hoisted
@@ -126,6 +131,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
         GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
+        // Plan WP3.S5: starts a merge attempt, or exits an already-active
+        // one in place — see `merge::toggle`'s own docs.
+        GlobalCommand::Merge => crate::merge::toggle(app, effects),
     }
 }
 
@@ -155,6 +163,16 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
 /// above is its only caller now that quit chords resolve at the global
 /// pipeline stage.
 pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
+    // Plan WP6.S3, decision 12: quit is an implicit Esc for an active OR
+    // pending merge — exited/cancelled BEFORE the dirty-guard scan below,
+    // so that scan (and the guard prompt it may raise) sees the reverted
+    // title/plain dirty text, never a stale "editor <-> disk" name for a
+    // merge quit is about to end anyway. `auto_exit` (review fix F3)
+    // cancels a `Pending` attempt WITH feedback instead of silently
+    // discarding it.
+    if !matches!(app.merge, crate::merge::MergeState::Inactive) {
+        crate::merge::auto_exit(app);
+    }
     // §1.4.4: quit is a destructive transition on every dirty document at
     // once, and the 2-press confirm above is only a safe shortcut BECAUSE
     // §12 assumes quit preserves through the durable journal. That premise

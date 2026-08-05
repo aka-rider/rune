@@ -100,14 +100,15 @@ pub fn move_line_up(app: &mut App, id: DocumentId) {
         insert: format!("{text_l}\n{text_prev}"),
     };
 
-    apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
-        vec![Cursor {
-            position: new_pos,
-            anchor: new_pos,
-            desired_col,
-            id: cid,
-        }]
-    });
+    let _ =
+        apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
+            vec![Cursor {
+                position: new_pos,
+                anchor: new_pos,
+                desired_col,
+                id: cid,
+            }]
+        });
 }
 
 /// Port of `commands_edit_lines_multi.go:execMoveLineDown` — mirror of
@@ -157,14 +158,15 @@ pub fn move_line_down(app: &mut App, id: DocumentId) {
         insert: format!("{text_next}\n{text_l}"),
     };
 
-    apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
-        vec![Cursor {
-            position: new_pos,
-            anchor: new_pos,
-            desired_col,
-            id: cid,
-        }]
-    });
+    let _ =
+        apply_edit_batch_with_cursors(app, id, vec![(edit, cid)], cursors_before, move |_, _| {
+            vec![Cursor {
+                position: new_pos,
+                anchor: new_pos,
+                desired_col,
+                id: cid,
+            }]
+        });
 }
 
 #[cfg(test)]

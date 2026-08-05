@@ -154,6 +154,31 @@ pub struct Snapshot {
     /// its save actually completed, independent of which message carried
     /// the ack.
     pub save_in_flight_by_doc: BTreeMap<DocumentId, bool>,
+    /// Whether `app.merge` is `Active`/`Pending` right now (plan WP7.S1) —
+    /// a lean projection of `MergeState`, not the enum itself: no checker
+    /// here needs the working-form `conflicts`/`blocks` bodies, only
+    /// whether an attempt is live, which document it names, and how many
+    /// blocks remain unresolved.
+    pub merge_active: bool,
+    pub merge_pending: bool,
+    /// `MergeState::doc()` — `None` only for `Inactive`.
+    pub merge_doc: Option<DocumentId>,
+    /// `MergeState::unresolved_count()` — `0` outside `Active`.
+    pub merge_unresolved: usize,
+    /// `doc.viewport.scroll_row` — the active document's own scroll
+    /// position, needed alongside `content`/`version`/`cursors` so a
+    /// checker can tell "this key moved the viewport" apart from "this key
+    /// did nothing": the merge-mode no-silent-swallow invariant treats a
+    /// key dispatched while the resolver is `Active` as a violation unless
+    /// it changed the buffer, cursors, scroll position, merge state, or the
+    /// status line — scroll is the one of those five this field alone
+    /// supplies.
+    pub scroll_row: usize,
+    /// Every open document's own `display_name`, the same per-document
+    /// shape as `dirty_by_doc` above — `MergeState::Inactive` must never
+    /// leave a stale `"editor <-> disk"` retitle behind on ANY document,
+    /// not just whichever one happens to be active.
+    pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
 }
 
 impl Snapshot {
@@ -202,13 +227,19 @@ impl Snapshot {
         let doc_ids: Vec<DocumentId> = app.documents.keys().copied().collect();
         let mut dirty_by_doc = BTreeMap::new();
         let mut save_in_flight_by_doc = BTreeMap::new();
+        let mut display_name_by_doc = BTreeMap::new();
         for doc_id in doc_ids {
             app.recompute_dirty(doc_id);
             if let Some(d) = app.doc(doc_id) {
                 dirty_by_doc.insert(doc_id, d.is_dirty());
                 save_in_flight_by_doc.insert(doc_id, d.save_in_flight);
+                display_name_by_doc.insert(doc_id, d.display_name.clone());
             }
         }
+        let merge_active = matches!(app.merge, rune_tui::merge::MergeState::Active { .. });
+        let merge_pending = matches!(app.merge, rune_tui::merge::MergeState::Pending { .. });
+        let merge_doc = app.merge.doc();
+        let merge_unresolved = app.merge.unresolved_count();
 
         let doc = app.active_doc();
         // The whole document, not a viewport window: a checker must see
@@ -222,6 +253,7 @@ impl Snapshot {
                 .collect();
         let highlight_version = doc.highlight.version;
         let geometry = layout::geometry(Rect::new(0, 0, app.frame_width, app.frame_height), app);
+        let scroll_row = doc.viewport.scroll_row;
         Snapshot {
             content: doc.buffer.content().to_string(),
             version: doc.buffer.version(),
@@ -252,6 +284,12 @@ impl Snapshot {
             quit_intent_pending,
             dirty_by_doc,
             save_in_flight_by_doc,
+            merge_active,
+            merge_pending,
+            merge_doc,
+            merge_unresolved,
+            scroll_row,
+            display_name_by_doc,
         }
     }
 }

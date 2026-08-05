@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 31 invariants total, one domain per file (mirrors the Go fuzzer's
+//! 35 invariants total, one domain per file (mirrors the Go fuzzer's
 //! own per-domain split):
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
@@ -34,6 +34,8 @@
 //! - `save` — `SAVE-VERBATIM`, `SAVE-CLEAN-MATCHES-DISK`
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
 //! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
+//! - `merge` — `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
+//!   `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` (plan WP7.S1)
 //! - `SAVE-SINGLE-FLIGHT` — constructed directly by `driver.rs`, not a
 //!   checker function here (like `NO-PANIC`): a second in-flight save
 //!   `Cmd` arriving while one is already pending is itself the violation
@@ -43,6 +45,7 @@ mod buffer;
 mod clipboard;
 mod cursor;
 mod highlight;
+mod merge;
 mod pane;
 mod render;
 mod save;
@@ -54,6 +57,7 @@ pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
+pub use merge::{merge_doc_active, merge_key_feedback, merge_save_blocked, merge_title_cleared};
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,
@@ -126,4 +130,8 @@ pub fn check_all(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option<Viol
         .or_else(|| hl_clamped(next))
         .or_else(|| hl_stale_drop(prev, next, ctx))
         .or_else(|| hl_no_reflow(prev, next, ctx))
+        .or_else(|| merge_doc_active(next))
+        .or_else(|| merge_save_blocked(prev, next, ctx))
+        .or_else(|| merge_key_feedback(prev, next, ctx))
+        .or_else(|| merge_title_cleared(next))
 }

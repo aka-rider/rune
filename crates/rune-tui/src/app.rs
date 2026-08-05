@@ -140,6 +140,13 @@ pub struct App {
     /// `pub(crate)`: `rename.rs` is the sole minter of new generations for
     /// its own `Cmd` route (mirrors `next_quit_gen`/`next_save_confirm_gen`).
     pub(crate) next_rename_gen: u32,
+    /// Merge mode's own state machine (plan WP3.S3) — a plain field, like
+    /// `rename` above. `merge::begin`/`merge::exit_in_place` are its
+    /// writers.
+    pub merge: crate::merge::MergeState,
+    /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
+    /// mirroring `next_rename_gen` above.
+    pub(crate) next_merge_gen: u32,
     pub status_message: Option<String>,
     /// Provenance of `status_message` — see `StatusSource`'s docs. Only
     /// meaningful while `status_message.is_some()`; a later `set_status`
@@ -331,6 +338,8 @@ impl App {
             title: crate::title::TitleField::default(),
             rename: crate::rename::RenameState::default(),
             next_rename_gen: 0,
+            merge: crate::merge::MergeState::default(),
+            next_merge_gen: 0,
             status_message: None,
             status_source: StatusSource::Other,
             db,

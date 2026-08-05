@@ -8,11 +8,15 @@
 
 use std::collections::BTreeMap;
 
+use rune_db::ObsId;
+
 use crate::app::{App, QuitIntent, StatusSource};
 use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput};
+use crate::merge::MergeIntent;
 use crate::runtime::Effects;
 use crate::save::{self, SaveStart};
+use crate::workspace;
 
 use super::Modal;
 
@@ -46,6 +50,15 @@ pub enum GuardKind {
     /// WHICH file is about to be replaced rather than asking blind.
     RenameCollision {
         target: String,
+    },
+    /// The save-time CAS conflict (plan WP6.S4): `doc`'s ⌘S found the disk
+    /// bytes no longer match what it last read. `fresh_obs` is the
+    /// observation `record_fresh_from_stat` recorded of the live disk bytes
+    /// AT THE MOMENT the conflict was detected — `[S]ave anyway`'s retry
+    /// baseline, so the retried CAS check is against fact, not the stale
+    /// hash that just failed.
+    DiskConflict {
+        fresh_obs: ObsId,
     },
 }
 
@@ -87,6 +100,30 @@ pub const RENAME_REPLACE: GuardOption = GuardOption {
 };
 pub const RENAME_COLLISION_OPTIONS: &[GuardOption] = &[RENAME_REPLACE];
 
+/// The disk-conflict Guard's three answers (plan WP6.S4) — `handle_guard_
+/// key`'s `s`/`d`/Esc dispatch above already covers Save/Discard/Cancel by
+/// key, so only `[M]erge` needs a new key; `DISK_CONFLICT_SAVE`/`_DISCARD`
+/// reuse the same `s`/`d` keys as `DIRTY_CLOSE_*` (this Guard never competes
+/// with that one for the same modal slot) but carry their own labels — "Save
+/// anyway" says what's actually happening, unlike a plain "Save" here.
+pub const DISK_CONFLICT_SAVE: GuardOption = GuardOption {
+    key: 's',
+    label: "[S]ave anyway",
+};
+pub const DISK_CONFLICT_DISCARD: GuardOption = GuardOption {
+    key: 'd',
+    label: "[D]iscard",
+};
+pub const DISK_CONFLICT_MERGE: GuardOption = GuardOption {
+    key: 'm',
+    label: "[M]erge",
+};
+pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
+    DISK_CONFLICT_SAVE,
+    DISK_CONFLICT_DISCARD,
+    DISK_CONFLICT_MERGE,
+];
+
 /// Names what Escape cancels for a given Guard kind. An exhaustive match, so
 /// a future `GuardKind` variant is forced to choose its own cancellation
 /// wording rather than silently inheriting a generic one.
@@ -95,6 +132,7 @@ pub(super) fn cancel_status(kind: &GuardKind) -> &'static str {
         GuardKind::DirtyClose => "close cancelled",
         GuardKind::DirtyQuit => "quit cancelled",
         GuardKind::RenameCollision { .. } => "rename cancelled",
+        GuardKind::DiskConflict { .. } => "save cancelled",
     }
 }
 
@@ -125,6 +163,9 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         GuardKind::DirtyClose => handle_dirty_close_key(app, doc, key, effects),
         GuardKind::DirtyQuit => handle_dirty_quit_key(app, key, effects),
         GuardKind::RenameCollision { .. } => handle_rename_collision_key(app, key),
+        GuardKind::DiskConflict { fresh_obs } => {
+            handle_disk_conflict_key(app, doc, *fresh_obs, key, effects);
+        }
     }
 }
 
@@ -242,4 +283,49 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
         return;
     }
     crate::rename::replace_confirmed(app);
+}
+
+/// The disk-conflict Guard's own answer (plan WP6.S4). `s`/`S` retries the
+/// SAME save with the CAS baseline advanced to `fresh_obs` — the observation
+/// of what was actually on disk at conflict-detection time — so the retry's
+/// expectation matches fact instead of the stale hash that just failed; a
+/// disk change landing again in between just fails the retry into a fresh
+/// conflict of its own, exactly like any other CAS race. `d`/`D` and `m`/`M`
+/// both switch onto `doc` first (a conflict can in principle be answered for
+/// a document that isn't the active one, e.g. a background quit-save) before
+/// starting `merge::begin`'s shared entry pipeline, which reads its subject
+/// off `app.active` (plan A2 — `Discard` shares `Merge`'s own fresh-`MergePrep`
+/// round trip rather than repeating it). Every other key is a consumed
+/// no-op, matching every other Guard kind.
+fn handle_disk_conflict_key(
+    app: &mut App,
+    doc: DocumentId,
+    fresh_obs: ObsId,
+    key: KeyInput,
+    effects: &mut Effects,
+) {
+    match key.code {
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
+            super::clear_modal(app);
+            if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
+                doc_db.expect_obs = fresh_obs;
+            }
+            let _ = save::trigger_save(app, doc, effects);
+        }
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
+            super::clear_modal(app);
+            if app.active != doc {
+                workspace::switch_to(app, doc);
+            }
+            crate::merge::begin(app, MergeIntent::Discard, effects);
+        }
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_MERGE.key) => {
+            super::clear_modal(app);
+            if app.active != doc {
+                workspace::switch_to(app, doc);
+            }
+            crate::merge::begin(app, MergeIntent::Merge, effects);
+        }
+        _ => {}
+    }
 }

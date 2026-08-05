@@ -48,6 +48,13 @@ pub enum GlobalCommand {
     /// view. Refused with a status message on `ReadOnly::Always`, which has
     /// no editable form to return to.
     ToggleReadOnly,
+    /// Toggles merge mode (plan WP3.S5): starts a merge attempt against the
+    /// active document's diverged/disk-ahead disk fact, or exits an
+    /// already-active one in place. `⌘M` only — Ghostty passes it through
+    /// (unlike some ⌘ chords this table's other rows also bind `^` for);
+    /// `^M` is Enter in every terminal and can never be this chord's `^`
+    /// counterpart (see this module's own gotcha).
+    Merge,
 }
 
 const CTRL: Mods = Mods {
@@ -270,6 +277,14 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    // `⌘M` only (plan Gotchas: "`^M` IS Enter in terminals — never `^M`").
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('m'), SUP)],
+        cmd: GlobalCommand::Merge,
+        help: "merge",
+        when: "",
+        alias: false,
+    },
 ];
 
 #[cfg(test)]
@@ -365,5 +380,53 @@ mod tests {
                 "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
             );
         }
+    }
+
+    /// Plan WP3.S5: the same cross-table guard as `global_p_binding_...`
+    /// above, for `⌘M` (`GlobalCommand::Merge`). Only the `sup` form is
+    /// checked — `^M` is Enter in every terminal (this module's own
+    /// gotcha), so no `ctrl` row for it will ever exist to guard against.
+    #[test]
+    fn global_m_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let sup_m = KeyInput {
+            code: KeyCode::Char('m'),
+            mods: SUP,
+        };
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        assert!(
+            claimants(EDITOR_BINDINGS, sup_m).is_empty(),
+            "EDITOR_BINDINGS already binds {sup_m:?}"
+        );
+        assert!(
+            claimants(VIM_BINDINGS, sup_m).is_empty(),
+            "VIM_BINDINGS already binds {sup_m:?}"
+        );
+        assert!(
+            claimants(TABS_BINDINGS, sup_m).is_empty(),
+            "TABS_BINDINGS already binds {sup_m:?}"
+        );
+        assert!(
+            claimants(EXPLORER_BINDINGS, sup_m).is_empty(),
+            "EXPLORER_BINDINGS already binds {sup_m:?}"
+        );
+        assert!(
+            claimants(EXPLORER_SEARCH_BINDINGS, sup_m).is_empty(),
+            "EXPLORER_SEARCH_BINDINGS already binds {sup_m:?}"
+        );
     }
 }

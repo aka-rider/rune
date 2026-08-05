@@ -112,6 +112,12 @@ pub fn build_rows(view: &ViewSnapshots, app: &App) -> Vec<Vec<Cell>> {
         viewport.scroll_row,
         &app.theme,
     );
+
+    // Merge mode's ours/theirs/marker backgrounds (plan WP5.S3) paint LAST,
+    // on top of the highlight/selection/caret overlays above — the working
+    // form's markers and framed spans are merge mode's own content, not
+    // markdown or code to be highlighted underneath them.
+    crate::merge::paint::paint(&mut rows, &app.merge, app.active, &app.theme);
     rows
 }
 

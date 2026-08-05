@@ -7,7 +7,7 @@
 
 use ratatui::layout::Rect;
 
-use crate::app::App;
+use crate::app::{App, StatusSource};
 use crate::pane::Pane;
 use crate::runtime::Effects;
 
@@ -180,6 +180,20 @@ impl App {
     /// removes rather than guards against).
     pub fn focus_title(&mut self) {
         if self.refuse_if_read_only(self.active_doc().read_only) {
+            return;
+        }
+        // Plan WP3.S8 (`[B5]`): a rename mid-merge would either type over
+        // the retitled name or leave the field seeded from the real one
+        // while the tab/title row still shows the merge suffix — neither
+        // is a rename the user actually asked for. Renaming stays blocked
+        // until merge mode exits (in place, `⌘M`, or later work packages'
+        // auto-exit); everything else about the document stays usable.
+        if matches!(self.merge, crate::merge::MergeState::Active { doc, .. } if doc == self.active)
+        {
+            self.set_status(
+                "can't rename while merge is active — \u{2318}M to exit",
+                StatusSource::Other,
+            );
             return;
         }
         // Title is painted in every mode this resolver can produce today
