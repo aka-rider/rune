@@ -345,12 +345,11 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
         "a Pending attempt must be cancelled, not left dangling"
     );
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .unwrap_or_default()
             .contains("cancelled"),
         "expected a cancellation status, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
 
     // The now-stale MergePrep ack must land safely: no panic, and it must
@@ -428,7 +427,7 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
 /// Plan WP6 "Done when" (4c): the Guard's `Esc` answer cancels with a
 /// status, touching neither the buffer nor merge state.
 #[test]
-fn disk_conflict_guard_escape_cancels_with_a_status() {
+fn disk_conflict_guard_escape_cancels_with_a_status_and_keeps_the_save_refusal_in_the_log() {
     let (mut app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
     let before = app.doc(doc_id).unwrap().buffer.content().to_string();
 
@@ -437,17 +436,19 @@ fn disk_conflict_guard_escape_cancels_with_a_status() {
     assert!(app.guard.is_none());
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
-    // `handle_guard_key`'s own rule (review fix F2, pre-dating this plan):
-    // Escape's cancel status never overwrites an unacknowledged
-    // `SaveError` — the save-refused message the Guard itself was raised
-    // over stays up, which is still a status, still feedback, and still
-    // non-destructive (§1.4.4).
-    assert_eq!(app.status_source, rune_tui::app::StatusSource::SaveError);
+    // The log is append-only (plan WP4.S2): Escape's cancellation ack never
+    // overwrites the save-refused entry the Guard itself was raised over —
+    // both stay in the log, in order.
+    let log = rune_tui::messages::log_text(&app);
+    let refused_at = log
+        .find("save refused")
+        .expect("save refusal must be logged");
+    let cancelled_at = log
+        .find("save cancelled")
+        .expect("the cancellation ack must be logged");
     assert!(
-        app.status_message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("save refused"),
+        refused_at < cancelled_at,
+        "the save refusal must precede the cancellation ack in the log, got {log:?}"
     );
 }
 

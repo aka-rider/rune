@@ -12,8 +12,8 @@
 //!
 //! Workspace-coupled (plan WP1 decision 4): every function here takes
 //! `(app: &mut App, id: DocumentId)` — every mutation funnels through
-//! `edit_core::commit_edit_batch`, which also touches `app.db`/
-//! `app.status_message`/the dirty cache, so unlike `commands::nav` this
+//! `edit_core::commit_edit_batch`, which also touches `app.db`/the
+//! message log/the dirty cache, so unlike `commands::nav` this
 //! module can't work off a bare `&mut Document`. Internally, functions
 //! borrow `app.doc_mut(id)` SEQUENTIALLY — mutate the doc, let that borrow
 //! end, then call `db::append_edit(app, id, ...)`/`materialize_ack::recompute_dirty(
@@ -37,13 +37,14 @@
 use rune_core::buffer::{AppliedEdit, Buffer, Edit};
 use rune_core::cursor::{Cursor, CursorSet};
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::commands::edit_core::commit_edit_batch;
 use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::db_enqueue as db;
 use crate::document::{DocumentId, ReadOnly};
 use crate::materialize_ack;
+use crate::messages;
 
 /// Port of `commands_edit_lines.go:perCursorSelectionEdits`: one edit per
 /// cursor, replacing its selection when it has one, or `bare`'s caller-
@@ -222,11 +223,10 @@ pub fn delete_word_right(app: &mut App, id: DocumentId) {
 /// Port of `workspace_undo.go:handleUndo`: peek the target step (without
 /// moving the journal), apply its inverse to the buffer, and commit the
 /// position move ONLY if the buffer edit succeeds (§1.4.8) — a failed
-/// apply surfaces a status-line error and leaves the journal position (and
-/// buffer) untouched, so the journal never runs ahead of the buffer. Same
-/// status-message ownership rule as `commit_edit_batch` (F2): success never
-/// clears `app.status_message` — only this function's own failure path
-/// writes it.
+/// apply posts an error to the message log and leaves the journal position
+/// (and buffer) untouched, so the journal never runs ahead of the buffer.
+/// Same ownership rule as `commit_edit_batch` (F2): a success posts
+/// nothing — only this function's own failure path posts.
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why
@@ -266,14 +266,14 @@ pub fn undo(app: &mut App, id: DocumentId) {
             resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
-            app.set_status(format!("undo failed: {e}"), StatusSource::Other);
+            messages::error(app, format!("undo failed: {e}"));
         }
     }
 }
 
 /// Port of `workspace_undo.go:handleRedo` — mirrors `undo` above: reapply
 /// the step forward, commit the position move only on success. Same
-/// status-message ownership rule as `commit_edit_batch`/`undo` (F2).
+/// ownership rule as `commit_edit_batch`/`undo` (F2).
 ///
 /// Gated on `ReadOnly::Reading`/`ReadOnly::Preview` only, not
 /// `is_read_only()` — see `Document::read_only`'s doc comment for why
@@ -314,7 +314,7 @@ pub fn redo(app: &mut App, id: DocumentId) {
             resync_after_journal_jump(app, id, affected);
         }
         Err(e) => {
-            app.set_status(format!("redo failed: {e}"), StatusSource::Other);
+            messages::error(app, format!("redo failed: {e}"));
         }
     }
 }

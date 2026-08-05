@@ -182,6 +182,11 @@ pub enum Msg {
         result: Result<rune_image::decode::Decoded, String>,
     },
     Error(String),
+    /// The same transport as `Error`, tagged one severity down (plan
+    /// WP4.S1): a background task hit something worth telling the user
+    /// about, but not something as severe as `Error`'s glyph/persistence
+    /// implies.
+    Warning(String),
     Quit,
 }
 
@@ -464,7 +469,7 @@ pub fn load_dir_cmd(
             cause,
             generation,
         }),
-        Err(e) => Some(Msg::Error(format!(
+        Err(e) => Some(Msg::Warning(format!(
             "could not list {}: {e}",
             root.display()
         ))),

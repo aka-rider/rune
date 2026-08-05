@@ -258,7 +258,7 @@ fn hash_link_jumps_within_the_same_document() {
 }
 
 #[test]
-fn a_broken_link_sets_a_status_message_and_opens_nothing() {
+fn a_broken_link_posts_a_message_and_opens_nothing() {
     let mem = Arc::new(Mem::new());
     let content = "[x](./missing.md)\n";
     let mut app = app_with(&mem, "/root/a.md", content);
@@ -270,7 +270,7 @@ fn a_broken_link_sets_a_status_message_and_opens_nothing() {
     assert_eq!(app.documents.len(), before, "a broken link opens nothing");
     assert!(effects.cmds.is_empty());
     assert!(
-        app.status_message.is_some(),
+        rune_tui::messages::newest_text(&app).is_some(),
         "a broken link must set a status message"
     );
 }

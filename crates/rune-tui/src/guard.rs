@@ -9,10 +9,11 @@ use std::collections::BTreeMap;
 
 use rune_db::ObsId;
 
-use crate::app::{App, QuitIntent, StatusSource};
+use crate::app::{App, QuitIntent};
 use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput};
 use crate::merge::MergeIntent;
+use crate::messages;
 use crate::runtime::Effects;
 use crate::save::{self, SaveStart};
 use crate::workspace;
@@ -179,15 +180,10 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
     if key.code == KeyCode::Escape {
         let msg = cancel_status(&prompt.kind);
         clear_guard(app);
-        // A cancellation ack is the least important thing the status row can
-        // say. An unacknowledged save failure is the most important, and the
-        // footer already ranks it above ordinary status, so overwriting it
-        // here would drop the user's only notice that their bytes did not
-        // reach disk. Cancelling an unrelated Guard must never cost them
-        // that; the save failure stays until its own success clears it.
-        if app.status_source != StatusSource::SaveError {
-            app.set_status(msg, StatusSource::Other);
-        }
+        // The log never clears an earlier entry (plan WP1 decision 1), so an
+        // unacknowledged save failure stays visible in the pane regardless
+        // of this cancellation ack landing after it.
+        messages::info(app, msg);
         return;
     }
     match &prompt.kind {
@@ -307,10 +303,7 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
         return;
     }
     if !crate::rename::replace_allowed(app) {
-        app.set_status(
-            "cannot replace \u{2014} recovery store unavailable",
-            StatusSource::Other,
-        );
+        messages::error(app, "cannot replace \u{2014} recovery store unavailable");
         return;
     }
     crate::rename::replace_confirmed(app);

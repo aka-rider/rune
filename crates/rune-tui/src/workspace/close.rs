@@ -325,7 +325,7 @@ mod tests {
         assert_eq!(app.documents.len(), 1);
         assert!(!app.documents.contains_key(&only));
         assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
-        assert!(app.status_message.is_none());
+        assert!(crate::messages::newest_text(&app).is_none());
     }
 
     #[test]
@@ -345,7 +345,7 @@ mod tests {
         );
         assert_eq!(app.active, id, "active must stay on the refused document");
         assert_eq!(
-            app.status_message.as_deref(),
+            crate::messages::newest_text(&app),
             ReadOnly::Preview.refusal_message()
         );
     }

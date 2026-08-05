@@ -107,11 +107,10 @@ fn pathless_draft_guard_save_focuses_the_title_and_abandons_the_quit_intent() {
     assert!(app.guard.is_none(), "the guard must clear either way");
     assert_eq!(app.focus(), Pane::Title, "naming flow must focus the title");
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .is_some_and(|m| m.contains("name this document to save it")),
         "status was {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(!app.should_quit, "nothing was actually saved yet");
     assert!(
@@ -199,7 +198,7 @@ fn named_dirty_doc_guard_save_failing_ack_aborts_the_quit() {
         "a failed save must never let quit complete"
     );
     assert!(
-        app.status_message.is_some(),
+        rune_tui::messages::newest_text(&app).is_some(),
         "the failure must be surfaced, not swallowed"
     );
     assert!(
@@ -325,7 +324,10 @@ fn store_failure_mid_quit_save_aborts_the_quit_and_the_next_ctrl_c_still_works()
         !app.should_quit,
         "a store failure must never let quit complete"
     );
-    assert!(app.status_message.is_some(), "the failure must be surfaced");
+    assert!(
+        rune_tui::messages::newest_text(&app).is_some(),
+        "the failure must be surfaced"
+    );
     assert!(
         app.quit_intent.is_none(),
         "the stranded intent must be cleared"
@@ -393,11 +395,10 @@ fn two_dirty_docs_degraded_store_arms_exactly_one_confirm_gate() {
     );
     let expected_name = if armed_id == id_a { "a.md" } else { "b.md" };
     assert!(
-        app.status_message
-            .as_deref()
+        rune_tui::messages::newest_text(&app)
             .is_some_and(|m| m.contains("recovery disabled") && m.contains(expected_name)),
         "the status must name the SAME document the confirm gate is armed for, got {:?}",
-        app.status_message
+        rune_tui::messages::newest_text(&app)
     );
     assert!(
         app.quit_intent.is_none(),

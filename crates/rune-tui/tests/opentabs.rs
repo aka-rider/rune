@@ -12,7 +12,7 @@
 
 mod opentabs_common;
 
-use rune_tui::app::{self, App, StatusSource};
+use rune_tui::app::{self, App};
 use rune_tui::commands::edit;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
@@ -325,8 +325,10 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
 
-    assert_eq!(app.status_message.as_deref(), Some("close cancelled"));
-    assert_eq!(app.status_source, StatusSource::Other);
+    assert_eq!(
+        rune_tui::messages::newest_text(&app),
+        Some("close cancelled")
+    );
 }
 
 /// Closing the last remaining document (plan WP0) mints a fresh untitled
@@ -357,7 +359,7 @@ fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
         "the replacement is the fresh untitled draft, and it's now active"
     );
     assert!(
-        app.status_message.is_none(),
+        rune_tui::messages::newest_text(&app).is_none(),
         "there is no more \"can't close\" refusal to report"
     );
 }
@@ -417,17 +419,15 @@ fn an_error_message_never_blocks_a_guard_from_being_raised() {
 }
 
 /// A cancellation ack must never cost the user an unacknowledged save
-/// failure. The footer ranks a `SaveError` above ordinary status precisely
-/// because it is the user's only notice that their bytes did not reach
-/// disk; cancelling an unrelated Guard is the least important thing the
-/// status row can say, so it yields rather than overwriting.
+/// failure — the log is append-only (plan WP4.S2), so an unrelated
+/// cancellation posts its own entry without ever touching an earlier one.
 #[test]
-fn escape_on_a_guard_does_not_clobber_an_unacknowledged_save_failure() {
+fn escape_on_a_guard_keeps_an_unacknowledged_save_failure_in_the_log() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     let second = open_second(&mut app);
     edit::insert_char(&mut app, second, '!');
-    app.set_status("save failed: disk full", StatusSource::SaveError);
+    rune_tui::messages::error(&mut app, "save failed: disk full");
 
     workspace::request_close(&mut app, second, &mut Effects::default());
     assert!(app.guard.is_some(), "a dirty close arms the Guard");
@@ -437,9 +437,8 @@ fn escape_on_a_guard_does_not_clobber_an_unacknowledged_save_failure() {
 
     assert!(app.guard.is_none(), "Escape still cancels the Guard");
     assert_eq!(
-        app.status_message.as_deref(),
-        Some("save failed: disk full"),
-        "the save failure must survive an unrelated cancellation"
+        rune_tui::messages::log_text(&app),
+        "save failed: disk full\nclose cancelled",
+        "the save failure must survive an unrelated cancellation, in order"
     );
-    assert_eq!(app.status_source, StatusSource::SaveError);
 }

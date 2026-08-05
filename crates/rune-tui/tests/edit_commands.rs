@@ -177,35 +177,36 @@ fn cjk_and_emoji_round_trip_byte_exact_through_undo() {
     assert_eq!(app.doc(id).unwrap().buffer.content(), original);
 }
 
-/// Regression for F2: a successful edit must not clobber an unrelated
-/// (e.g. save-failure) status message — only `commands::edit`'s OWN
-/// failure paths may write `status_message`.
+/// The log is append-only (plan WP4.S2, superseding review finding F2): a
+/// successful edit/undo/redo posts nothing at all, so an unrelated
+/// (e.g. save-failure) entry an earlier subsystem posted simply stays put —
+/// there is no shared slot left to clobber.
 #[test]
-fn a_successful_edit_does_not_clear_an_unrelated_status_message() {
+fn a_successful_edit_keeps_an_unrelated_log_entry() {
     let mut app = app_with("hello", 5);
     let id = app.active;
-    app.status_message = Some("save failed: disk full".to_string());
+    rune_tui::messages::error(&mut app, "save failed: disk full");
 
     insert_char(&mut app, id, '!');
     assert_eq!(app.doc(id).unwrap().buffer.content(), "hello!");
     assert_eq!(
-        app.status_message.as_deref(),
-        Some("save failed: disk full"),
-        "an unrelated save-failure message must survive a successful edit"
+        rune_tui::messages::log_text(&app),
+        "save failed: disk full",
+        "an unrelated save-failure entry must survive a successful edit"
     );
 
     undo(&mut app, id);
     assert_eq!(
-        app.status_message.as_deref(),
-        Some("save failed: disk full"),
-        "an unrelated save-failure message must survive a successful undo"
+        rune_tui::messages::log_text(&app),
+        "save failed: disk full",
+        "an unrelated save-failure entry must survive a successful undo"
     );
 
     redo(&mut app, id);
     assert_eq!(
-        app.status_message.as_deref(),
-        Some("save failed: disk full"),
-        "an unrelated save-failure message must survive a successful redo"
+        rune_tui::messages::log_text(&app),
+        "save failed: disk full",
+        "an unrelated save-failure entry must survive a successful redo"
     );
 }
 
@@ -325,7 +326,8 @@ fn reading_view_blocks_undo_and_redo() {
         "a blocked undo must not change dirtiness"
     );
     assert_eq!(
-        app.status_message, None,
+        rune_tui::messages::newest_text(&app),
+        None,
         "a reading-view undo refusal is silent, pinning pre-existing behavior"
     );
 
@@ -341,7 +343,8 @@ fn reading_view_blocks_undo_and_redo() {
         "a blocked redo must not change dirtiness"
     );
     assert_eq!(
-        app.status_message, None,
+        rune_tui::messages::newest_text(&app),
+        None,
         "a reading-view redo refusal is silent, pinning pre-existing behavior"
     );
 }
@@ -371,12 +374,11 @@ fn preview_blocks_undo_and_redo() {
         "a blocked undo must not change dirtiness"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Preview.refusal_message(),
         "a preview undo refusal must surface a status message"
     );
 
-    app.status_message = None;
     redo(&mut app, id);
     assert_eq!(
         app.doc(id).unwrap().buffer.content(),
@@ -389,7 +391,7 @@ fn preview_blocks_undo_and_redo() {
         "a blocked redo must not change dirtiness"
     );
     assert_eq!(
-        app.status_message.as_deref(),
+        rune_tui::messages::newest_text(&app),
         ReadOnly::Preview.refusal_message(),
         "a preview redo refusal must surface a status message"
     );

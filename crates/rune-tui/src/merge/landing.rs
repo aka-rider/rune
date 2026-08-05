@@ -7,11 +7,12 @@ use rune_core::buffer::Edit;
 use rune_core::cursor::Cursor;
 use rune_db::{MergePrepResult, ObsId, SyncKind};
 
-use crate::app::{App, StatusSource};
+use crate::app::App;
 use crate::commands::edit_core::apply_edit_batch_with_cursors;
 use crate::commands::nav_scroll;
 use crate::db::PendingOp;
 use crate::document::DocumentId;
+use crate::messages;
 use crate::runtime::Effects;
 
 use super::frame::build_marker_buffer;
@@ -54,10 +55,7 @@ pub(crate) fn handle_merge_prep_ack(
     // anything to merge.
     if !matches!(prep.sync.kind, SyncKind::DiskAhead | SyncKind::Diverged) {
         app.merge = MergeState::Inactive;
-        app.set_status(
-            "file on disk matches — nothing to merge",
-            StatusSource::Other,
-        );
+        messages::info(app, "file on disk matches — nothing to merge");
         return;
     }
 
@@ -67,16 +65,13 @@ pub(crate) fn handle_merge_prep_ack(
     // sentinel standing in for "absent" to unwrap past).
     let (Some(theirs_bytes), Some(theirs_obs)) = (prep.theirs.clone(), prep.theirs_obs) else {
         app.merge = MergeState::Inactive;
-        app.set_status(
-            "merge unavailable — no disk version to merge against",
-            StatusSource::Other,
-        );
+        messages::error(app, "merge unavailable — no disk version to merge against");
         return;
     };
 
     let Ok(theirs_text) = String::from_utf8(theirs_bytes) else {
         app.merge = MergeState::Inactive;
-        app.set_status(UTF8_REFUSAL, StatusSource::Other);
+        messages::error(app, UTF8_REFUSAL);
         return;
     };
 
@@ -94,7 +89,7 @@ pub(crate) fn handle_merge_prep_ack(
             Ok(text) => Some(text),
             Err(_) => {
                 app.merge = MergeState::Inactive;
-                app.set_status(UTF8_REFUSAL, StatusSource::Other);
+                messages::error(app, UTF8_REFUSAL);
                 return;
             }
         },
@@ -117,24 +112,21 @@ pub(crate) fn handle_merge_prep_ack(
     );
     let Ok((buffer_text, blocks, conflicts)) = build_marker_buffer(&hunks) else {
         app.merge = MergeState::Inactive;
-        app.set_status(UTF8_REFUSAL, StatusSource::Other);
+        messages::error(app, UTF8_REFUSAL);
         return;
     };
 
     let first_start = blocks.first().map(|b| b.start).unwrap_or(0);
     if !install_whole_range(app, doc, &buffer_text, first_start) {
         app.merge = MergeState::Inactive;
-        app.set_status(
-            "merge failed — the document could not be updated",
-            StatusSource::Other,
-        );
+        messages::error(app, "merge failed — the document could not be updated");
         return;
     }
     enqueue_resolve_adopt(app, doc, theirs_obs);
 
     if blocks.is_empty() {
         app.merge = MergeState::Inactive;
-        app.set_status("merged cleanly — disk changes applied", StatusSource::Other);
+        messages::info(app, "merged cleanly — disk changes applied");
         return;
     }
 
@@ -158,9 +150,9 @@ pub(crate) fn handle_merge_prep_ack(
     if let Some(d) = app.doc_mut(doc) {
         nav_scroll::scroll_to_byte_offset(d, first_start);
     }
-    app.set_status(
+    messages::info(
+        app,
         format!("{unresolved} conflict(s) to resolve — [O]urs [T]heirs [B]oth"),
-        StatusSource::Other,
     );
 }
 
@@ -171,15 +163,12 @@ pub(crate) fn handle_merge_prep_ack(
 fn discard_install(app: &mut App, doc: DocumentId, theirs_text: &str, theirs_obs: ObsId) {
     if !install_whole_range(app, doc, theirs_text, 0) {
         app.merge = MergeState::Inactive;
-        app.set_status(
-            "merge failed — the document could not be updated",
-            StatusSource::Other,
-        );
+        messages::error(app, "merge failed — the document could not be updated");
         return;
     }
     enqueue_resolve_adopt(app, doc, theirs_obs);
     app.merge = MergeState::Inactive;
-    app.set_status("disk changes adopted", StatusSource::Other);
+    messages::info(app, "disk changes adopted");
 }
 
 /// Replaces `doc`'s ENTIRE live buffer content with `text` as one journaled
@@ -265,7 +254,7 @@ mod tests {
 
         assert_eq!(app.doc(doc).unwrap().buffer.content(), "disk replacement\n");
         assert_eq!(app.merge, MergeState::Inactive);
-        assert_eq!(app.status_message.as_deref(), Some("disk changes adopted"));
+        assert_eq!(messages::newest_text(&app), Some("disk changes adopted"));
     }
 
     /// Review fix F4: `sync.kind` claiming `Diverged` (or `DiskAhead`) with
@@ -302,12 +291,11 @@ mod tests {
 
         assert_eq!(app.merge, MergeState::Inactive);
         assert!(
-            app.status_message
-                .as_deref()
+            messages::newest_text(&app)
                 .unwrap_or_default()
                 .contains("no disk version"),
             "expected the F4 refusal status, got {:?}",
-            app.status_message
+            messages::newest_text(&app)
         );
     }
 

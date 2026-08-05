@@ -222,10 +222,7 @@ fn adopt_scratch_doc(app: &mut App, id: DocumentId, scratch: ScratchDoc) {
     if let rune_tui::document::Hydration::Refused(reason) =
         doc.hydrate(&disk_content, &scratch.content)
     {
-        app.set_status(
-            format!("crash recovery: {reason}"),
-            rune_tui::app::StatusSource::Other,
-        );
+        rune_tui::messages::error(app, format!("crash recovery: {reason}"));
     }
     // Dirty is a content comparison now (plan WP1) — `hydrate` no longer
     // marks it itself, so every hydration site re-derives it explicitly

@@ -182,6 +182,19 @@ pub struct Snapshot {
     pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
 }
 
+/// `Snapshot.status`'s builder (plan WP4.S4): the footer's own text, plus
+/// the message log's newest entry (now that transient messages live there,
+/// not in the footer — plan WP1), joined by `" | "` so every existing
+/// invariant/tripwire reading `Snapshot.status` for message text keeps
+/// seeing it. Footer text alone when the log is empty.
+fn fuzz_status(app: &App) -> String {
+    let footer_text = footer::footer_text(app);
+    match rune_tui::messages::newest_text(app) {
+        Some(newest) => format!("{footer_text} | {newest}"),
+        None => footer_text,
+    }
+}
+
 impl Snapshot {
     /// Captures the current `App` state. Deliberately does NOT call
     /// `app.sync_view()` itself (CODE-REVIEW.md rune-fuzz finding 1): every
@@ -272,7 +285,7 @@ impl Snapshot {
             save_in_flight: doc.save_in_flight,
             pending_quit: app.pending_quit,
             should_quit: app.should_quit,
-            status: footer::footer_text(app),
+            status: fuzz_status(app),
             focus: app.focus(),
             modal_open: app.guard.is_some(),
             active: app.active,

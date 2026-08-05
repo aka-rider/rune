@@ -494,6 +494,20 @@ pub(super) const CTRL_P_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `^e` (`GlobalCommand::ToggleMessages`, plan WP4.S5) — the message pane's
+/// own open/focus/collapse toggle. Reaching it is what exercises the pane
+/// (and, by extension, `Pane::Messages` focus routing) against the
+/// fuzzer's own generated sessions, not just the deterministic test suite.
+pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
+    code: KeyCode::Char('e'),
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: true,
+        sup: false,
+    },
+};
+
 /// Unmodified printable-letter keys for the Explorer type-to-search feature
 /// (Go filetree parity, `explorer_search.rs`): `KeyPattern::printable`'s
 /// wildcard row matches any non-control `Char` under `Mods::NONE`, so this
