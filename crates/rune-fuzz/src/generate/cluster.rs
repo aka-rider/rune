@@ -282,40 +282,31 @@ fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
 /// version 0 is silently the SAME as `Live` — an edit first guarantees
 /// `Stale` is genuinely distinct (plan WP7.S6).
 ///
-/// The guarantee is made TRUE BY CONSTRUCTION for the one parking case this
-/// cluster corrects: `Action::Key` only reaches the buffer while
-/// `app.focus() == Pane::Editor` (the ordinary four-stage key pipeline), and
-/// `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks focus on `Pane::Title`
-/// with no restore of its own. This cluster prepends `ESCAPE_KEY` BEFORE
-/// `Key('h')`, unconditional on generator-time state (there is none to
-/// condition on — this runs before any session exists): a no-op from the
-/// editor's own perspective (either collapses a selection or is consumed by
-/// whichever pane owns focus), and `title::keys::handle_key`'s own `Escape`
-/// arm reverts and blurs unconditionally, so it always reaches the Editor
-/// from the Title.
+/// The guarantee is made TRUE BY CONSTRUCTION regardless of which pane a
+/// preceding cluster left focused: `Action::Key` only reaches the buffer
+/// while `app.focus() == Pane::Editor` (the ordinary four-stage key
+/// pipeline), and this cluster is generated statically, with no live
+/// `app.focus()` to branch on. It prepends a `[CTRL_T_KEY, ESCAPE_KEY]` pair
+/// BEFORE `Key('h')`, unconditional on generator-time state. `^T`
+/// (`GlobalCommand::FocusTabs`) is resolved in the dispatch pipeline's
+/// global stage, ahead of any pane's own keymap, so it fires no matter
+/// which pane owns focus and is never consumed as ordinary text (in
+/// particular it survives Explorer live-search, where a plain `Escape`
+/// would only clear the query); its handler unconditionally reveals the
+/// left column and focuses Tabs. From Tabs, `Escape` unconditionally
+/// returns focus to the Editor. So the pair is a state-free focus reset,
+/// proven from Editor, Title, Explorer, Tabs, Explorer live-search,
+/// Messages, and mid-quit-confirm starting focus.
 ///
-/// KNOWN GAP (TODO.md): `cluster_chrome` has other arms — `Key(CTRL_B_KEY)`,
-/// `Key(CTRL_T_KEY)`, and the `EXPLORER_SEARCH_KEYS` combo — that can
-/// likewise leave focus on the Explorer or Tabs, and THOSE are not
-/// corrected here. Before the Enter/Escape rework, the same unconditional
-/// prefix also pressed `^E` (`GlobalCommand::FocusEditor`), a global command
-/// that reached the Editor from ANY pane with no toggle behaviour to get
-/// wrong; deleting it removed the only key that could close this gap
-/// unconditionally. `^B` (`GlobalCommand::ToggleLeft`) is not a safe
-/// replacement here: pressed blindly (this generator has no `app.focus()`
-/// to check, unlike `driver/checks.rs::restore_editor_focus`, which runs
-/// against a live session) it would just as often show the column and
-/// steal focus from an editor that already had it as it would reclaim one
-/// that didn't — actively worse than doing nothing. A generated session
-/// that happens to compose one of those `cluster_chrome` arms immediately
-/// before `cluster_highlight` types `h` into the Explorer's search instead
-/// of the buffer: not a `PANE-NO-BLEED` violation (the keystroke still
-/// stays inside whichever pane it landed on), just a quieter, uncaught
-/// session for the `HighlightVersion::Stale`-vs-`Live` distinction this
-/// cluster exists to exercise.
+/// One caveat survives: while a Guard capture is up it swallows every key,
+/// including `^T`, so no key-based recovery can reach the Editor through
+/// one. Guard-raising clusters are self-contained and never leave a Guard
+/// active for a later cluster to inherit, so this cluster never actually
+/// runs behind one — but a Guard raised some other way would defeat this
+/// prefix too.
 ///
 /// See `cluster_highlight_edit_survives_focus_parked_off_editor` below for
-/// the (Title-only) regression `ESCAPE_KEY` alone closes.
+/// the regression this prefix closes.
 fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
     (
         arb_highlight_version(),
@@ -323,6 +314,7 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
     )
         .prop_map(|(version, spans)| {
             vec![
+                Action::Key(CTRL_T_KEY),
                 Action::Key(ESCAPE_KEY),
                 Action::Key(KeyInput {
                     code: KeyCode::Char('h'),
