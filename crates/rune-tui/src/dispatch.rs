@@ -297,8 +297,8 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
         return keymap::KeyOutcome::Consumed;
     }
     if key.code == KeyCode::Escape && key.mods == Mods::NONE {
-        // The cascade (plan: multi-cursor -> selection -> leave to the
-        // Explorer): `nav::escape` collapses whichever of the first two it
+        // The cascade — multi-cursor, then selection, then leave to the
+        // Explorer: `nav::escape` collapses whichever of the first two it
         // finds and reports `Unconsumed` only once neither applies, which
         // is this fast path's own cue to hand focus to the Explorer instead
         // — unfolding the left column if it's collapsed, and landing the
