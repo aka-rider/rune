@@ -231,3 +231,79 @@ fn opening_the_pane_does_not_scroll_the_caret_out_of_view() {
         doc.viewport.scroll_row + doc.viewport.height as usize
     );
 }
+
+/// The pane's height must be a fixed point of the settle step. `relayout`
+/// sizes the editor viewport from a rect with the pane's height carved out of
+/// it, and that height comes from the log document's synced view — so a
+/// settle step that syncs the pane after laying out would leave the editor
+/// trailing the pane by one pass, and the rows built for one frame would not
+/// fit the rect they are blitted into.
+#[test]
+fn a_second_settle_after_a_post_changes_neither_the_viewport_nor_the_rows() {
+    let mut app = app_for("# Title\n\nsome body text\n");
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Error("something went wrong\nwith a second line".to_string()),
+        &mut effects,
+    );
+    app.sync_view();
+
+    let height_after_first = app.active_doc().viewport.height;
+    let rows_after_first = testgrid::grid(&app, WIDTH, HEIGHT);
+
+    app.sync_view();
+
+    assert_eq!(
+        height_after_first,
+        app.active_doc().viewport.height,
+        "the editor viewport height changed on a second settle with no \
+         intervening message"
+    );
+    assert_eq!(
+        rows_after_first,
+        testgrid::grid(&app, WIDTH, HEIGHT),
+        "the rendered rows changed on a second settle with no intervening \
+         message"
+    );
+}
+
+/// The same fixed point, reached by resizing rather than by posting: the log
+/// document re-wraps at the new width, so its row count — and the pane's
+/// height — changes with no message involved at all.
+#[test]
+fn a_second_settle_after_a_resize_with_the_pane_open_is_stable() {
+    let mut app = app_for("# Title\n\nsome body text\n");
+
+    let mut effects = Effects::default();
+    app::update(
+        &mut app,
+        Msg::Error(
+            "a message long enough that it must re-wrap onto a different \
+             number of rows when the terminal narrows"
+                .to_string(),
+        ),
+        &mut effects,
+    );
+    app.sync_view();
+
+    app::update(&mut app, Msg::Resize(40, HEIGHT), &mut effects);
+    app.sync_view();
+
+    let height_after_first = app.active_doc().viewport.height;
+    let rows_after_first = testgrid::grid(&app, 40, HEIGHT);
+
+    app.sync_view();
+
+    assert_eq!(
+        height_after_first,
+        app.active_doc().viewport.height,
+        "the editor viewport height changed on a second settle after a resize"
+    );
+    assert_eq!(
+        rows_after_first,
+        testgrid::grid(&app, 40, HEIGHT),
+        "the rendered rows changed on a second settle after a resize"
+    );
+}

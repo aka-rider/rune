@@ -234,10 +234,12 @@ pub fn height(app: &App, frame_height: u16) -> u16 {
 }
 
 /// Re-syncs the log document at `width`/`frame_height` — mirrors what
-/// `App::sync_view` already does for the active document, called from the
-/// same settle step (plan WP1.S9), before `render::draw` reads [`height`]
-/// to size the pane's `Rect`. A no-op while the pane is closed: there is
-/// nothing on screen to keep in sync.
+/// `App::sync_view` already does for the active document, from the same
+/// settle step. Must run before `App::relayout`, which sizes the editor
+/// viewport from a rect that has [`height`] carved out of it, and [`height`]
+/// is read off the very view this refreshes; syncing afterwards leaves the
+/// editor's viewport trailing the pane by one pass. A no-op while the pane is
+/// closed: there is nothing on screen to keep in sync.
 pub fn sync(app: &mut App, width: u16, frame_height: u16) {
     if !app.messages.open {
         return;
