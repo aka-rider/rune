@@ -1,7 +1,7 @@
-//! WP3 (plan "Link & embed resolution at Go parity"): regression coverage
-//! for the exact reported bug — a document whose own directory lies
-//! OUTSIDE `app.root`. Every fixture in `inline_embed.rs` and
-//! `embed_link_parity.rs` places the document inside the root, which is
+//! WP3: regression coverage for the exact reported bug — a document whose
+//! own directory lies OUTSIDE `app.root`. Every fixture in
+//! `inline_embed.rs` and `embed_link_resolution.rs` places the document
+//! inside the root, which is
 //! exactly why the vault-containment check WP1 removed could break every
 //! relative reference in an out-of-root document without any existing test
 //! catching it. Kept as its own file rather than grown into either of
@@ -20,7 +20,7 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
-const X_PNG: &[u8] = include_bytes!("../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 
 fn sup_enter() -> KeyInput {
     KeyInput {

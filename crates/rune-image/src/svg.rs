@@ -78,7 +78,7 @@ impl std::error::Error for SvgError {
 mod tests {
     use super::*;
 
-    const VECTOR_SVG: &[u8] = include_bytes!("../../../golang/testdata/assets/vector.svg");
+    const VECTOR_SVG: &[u8] = include_bytes!("../../../testdata/assets/vector.svg");
 
     #[test]
     fn decode_svg_reads_declared_view_box_size() {

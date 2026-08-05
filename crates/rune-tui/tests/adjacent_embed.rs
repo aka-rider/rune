@@ -18,7 +18,7 @@ use rune_tui::graphics::ImageStatus;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
-const X_PNG: &[u8] = include_bytes!("../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 
 /// A document at `/notes/t.md` whose workspace root is `/vault` — i.e. the
 /// document lives OUTSIDE the root, the shape that previously broke relative

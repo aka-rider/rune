@@ -250,7 +250,7 @@ mod tests {
     use super::*;
     use crate::app::App;
 
-    const X_PNG: &[u8] = include_bytes!("../../../../golang/testdata/assets/x.png");
+    const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
     /// Plan WP5.S7 Done-when: closing a `Live`-or-not image document pushes
     /// `encode_delete(id)` into `effects.raw` when the terminal is Kitty-

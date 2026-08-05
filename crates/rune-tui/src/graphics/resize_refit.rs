@@ -89,7 +89,7 @@ mod tests {
     use super::*;
     use crate::document::DocumentId;
 
-    const X_PNG: &[u8] = include_bytes!("../../../../golang/testdata/assets/x.png");
+    const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
     fn app_with_live_image() -> (App, DocumentId) {
         let mem = Arc::new(Mem::new());

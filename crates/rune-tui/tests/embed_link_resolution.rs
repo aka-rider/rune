@@ -1,5 +1,5 @@
-//! WP2 (plan "Link & embed resolution at Go parity"): regression coverage
-//! for the "one mechanism" requirement — a followable link and an image
+//! WP2: regression coverage for link/embed resolution's "one mechanism"
+//! requirement — a followable link and an image
 //! embed sharing the same raw target text must resolve through identical
 //! policy, and `sync_embeds`'s dedupe of same-target duplicates must be
 //! deterministic rather than keyed off arbitrary `HashMap` iteration order.
@@ -23,7 +23,7 @@ use rune_tui::document::DocumentId;
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
-const X_PNG: &[u8] = include_bytes!("../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 
 /// Runs every spawned `CmdKind::ImageDecode` synchronously and feeds each
 /// reply back through `update`, the same shape `inline_embed.rs`'s own

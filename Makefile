@@ -7,8 +7,7 @@ RC ?= 512
 RS ?=
 
 .PHONY: build test lint fmt bench perf-guard test-fuzz test-grammars go-build \
-        parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean \
-        image-parity-dump
+        parity parity-capture parity-diff parity-assert parity-grid parity-serve parity-clean
 
 build:
 	$(CARGO) build --workspace
@@ -58,34 +57,6 @@ test-fuzz:
 # non-ignored smoke test runs on every `make test`.
 test-grammars:
 	$(CARGO) test -p rune-ts --test grammar_props -- --ignored --test-threads=1
-
-# ── Image byte-parity goldens ──────────────────────────────────────────────
-# Regenerates crates/rune-image/tests/golden/ from the Go reference
-# implementation's pure imagekit functions. imagekit is pure Go, so this
-# needs no CGO. The goldens are committed; re-run this only when the Go
-# reference behaviour intentionally changes.
-image-parity-dump:
-	mkdir -p crates/rune-image/tests/golden
-	cd golang && go run ./cmd/imgdump pure > ../crates/rune-image/tests/golden/pure.json
-	cd golang && go run ./cmd/imgdump encode testdata/assets/x.png     1  8  3 \
-	    > ../crates/rune-image/tests/golden/encode_x_png.json
-	cd golang && go run ./cmd/imgdump encode testdata/assets/y.png     2  5  3 \
-	    > ../crates/rune-image/tests/golden/encode_y_png.json
-	cd golang && go run ./cmd/imgdump encode testdata/assets/photo.jpg 3 10  4 \
-	    > ../crates/rune-image/tests/golden/encode_photo_jpg.json
-	cd golang && go run ./cmd/imgdump encode testdata/assets/anim.gif  4  6  3 \
-	    > ../crates/rune-image/tests/golden/encode_anim_gif.json
-	cd golang && go run ./cmd/imgdump encode testdata/assets/x.png     5 80 40 \
-	    > ../crates/rune-image/tests/golden/encode_x_png_upscale.json
-	# noise.png is incompressible by construction, so its PNG payload's
-	# base64 spans several 4096-char chunks — the only fixture that
-	# exercises multi-chunk APC framing (m=1 / m=0) against the reference.
-	cd golang && go run ./cmd/imgdump encode testdata/assets/noise.png 6  8  4 \
-	    > ../crates/rune-image/tests/golden/encode_noise_png.json
-	cd golang && go run ./cmd/imgdump delete 42 \
-	    > ../crates/rune-image/tests/golden/delete.json
-	cd golang && go run ./cmd/imgdump delete-all \
-	    > ../crates/rune-image/tests/golden/delete_all.json
 
 # ── Parity harness ────────────────────────────────────────────────────────────
 # Captures the same scenario from both implementations and diffs the screens.

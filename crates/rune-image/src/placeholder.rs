@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn known_indices_match_go() {
+    fn known_indices_match_golden() {
         assert_eq!(DIACRITICS[0], '\u{0305}');
         assert_eq!(DIACRITICS[1], '\u{030D}');
         assert_eq!(DIACRITICS[2], '\u{030E}');

@@ -17,7 +17,7 @@ use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_tui::testgrid;
 use rune_vfs::{Mem, Vfs};
 
-const X_PNG: &[u8] = include_bytes!("../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 
 /// A markdown document bound to `/vault/doc.md`, with `x.png` seeded
 /// alongside it in the same `Mem` vfs, and the buffer parsed once (plan

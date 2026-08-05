@@ -24,7 +24,7 @@ use rune_tui::testgrid;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-const X_PNG: &[u8] = include_bytes!("../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../testdata/assets/x.png");
 
 fn app_with_image() -> (App, rune_tui::document::DocumentId) {
     let mem = Arc::new(Mem::new());

@@ -204,7 +204,7 @@ mod tests {
     /// A real webp fixture (lossless, opaque) — the only test anywhere in
     /// the workspace that decodes actual webp bytes rather than merely
     /// asserting the string `"webp"` appears in `extensions()`.
-    const WEBP: &[u8] = include_bytes!("../../../golang/testdata/assets/z.webp");
+    const WEBP: &[u8] = include_bytes!("../../../testdata/assets/z.webp");
 
     #[test]
     fn sniff_format_detects_webp() {

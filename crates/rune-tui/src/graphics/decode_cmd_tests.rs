@@ -11,7 +11,7 @@ use rune_vfs::Mem;
 
 use super::*;
 
-const X_PNG: &[u8] = include_bytes!("../../../../golang/testdata/assets/x.png");
+const X_PNG: &[u8] = include_bytes!("../../../../testdata/assets/x.png");
 
 fn app_with_pending_image(kitty: bool) -> (App, DocumentId) {
     let mem = Arc::new(Mem::new());
