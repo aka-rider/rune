@@ -148,7 +148,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
     assert!(app.doc(second).unwrap().is_dirty());
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some(), "a dirty close must arm a modal");
+    assert!(app.guard.is_some(), "a dirty close must arm a modal");
 
     let before = app.doc(second).unwrap().buffer.content().to_string();
     let mut effects = Effects::default();
@@ -160,7 +160,7 @@ fn request_close_on_a_dirty_doc_arms_the_guard_and_blocks_other_keys() {
         "a key consumed by the Guard must never reach commands::edit"
     );
     assert!(
-        app.modal.is_some(),
+        app.guard.is_some(),
         "an unbound key must leave the Guard up"
     );
     assert!(app.documents.contains_key(&second), "must not close yet");
@@ -177,7 +177,7 @@ fn discard_closes_and_activates_the_neighbor() {
     assert_eq!(app.active, second);
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some());
+    assert!(app.guard.is_some());
     // A degraded-save confirm gate armed for `second` and left unresolved
     // (review fix: `close_now` must sweep it, not just `pending_close_on_
     // save`) — must not survive the close as a dangling reference to a
@@ -187,7 +187,7 @@ fn discard_closes_and_activates_the_neighbor() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
 
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(!app.documents.contains_key(&second), "b.md must be closed");
     assert_eq!(app.documents.len(), 1);
     assert_eq!(app.active, first, "the sole remaining document takes over");
@@ -211,13 +211,13 @@ fn save_then_close_waits_for_the_save_done_ack() {
     assert!(app.doc(second).unwrap().is_dirty());
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some());
+    assert!(app.guard.is_some());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Char('s'))), &mut effects);
 
     assert!(
-        app.modal.is_none(),
+        app.guard.is_none(),
         "the Guard clears the moment Save fires"
     );
     assert_eq!(
@@ -295,12 +295,12 @@ fn escape_cancels_the_guard() {
     let content_before = app.doc(second).unwrap().buffer.content().to_string();
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some());
+    assert!(app.guard.is_some());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
 
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(app.documents.contains_key(&second));
     assert_eq!(app.doc(second).unwrap().buffer.content(), content_before);
     assert!(
@@ -320,7 +320,7 @@ fn escape_on_the_dirty_close_guard_sets_a_cancellation_status() {
     edit::insert_char(&mut app, second, '!');
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some());
+    assert!(app.guard.is_some());
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
@@ -341,7 +341,7 @@ fn closing_the_only_document_mints_a_fresh_untitled_instead_of_refusing() {
 
     workspace::request_close(&mut app, only, &mut Effects::default());
 
-    assert!(app.modal.is_none(), "a clean close never arms a Guard");
+    assert!(app.guard.is_none(), "a clean close never arms a Guard");
     assert!(
         !app.documents.contains_key(&only),
         "the original document must actually be gone"
@@ -376,7 +376,7 @@ fn closing_a_dirty_only_document_still_routes_through_the_guard() {
     workspace::request_close(&mut app, only, &mut Effects::default());
 
     assert!(
-        app.modal.is_some(),
+        app.guard.is_some(),
         "a dirty close still arms the Guard, even for the only document"
     );
     assert!(app.documents.contains_key(&only), "not closed yet");
@@ -385,29 +385,34 @@ fn closing_a_dirty_only_document_still_routes_through_the_guard() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Char('d'))), &mut effects);
 
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(!app.documents.contains_key(&only));
     assert_eq!(app.documents.len(), 1);
     assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
 }
 
-/// A Guard armed while an Error banner is already up must not displace it
-/// (plan Risks, "Banner reentrancy": Error always outranks Guard).
+/// A prior error message must never block a Guard from being raised (plan
+/// WP1: errors are a non-modal log entry now, orthogonal to the Guard slot
+/// — unlike the pre-WP1 modal error banner, which used to outrank and refuse a
+/// lower-priority Guard request).
 #[test]
-fn a_guard_does_not_replace_an_existing_error_modal() {
+fn an_error_message_never_blocks_a_guard_from_being_raised() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     let second = open_second(&mut app);
     edit::insert_char(&mut app, second, '!');
 
-    rune_tui::banner::report_error(&mut app, "boom");
-    assert!(matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))));
+    rune_tui::messages::error(&mut app, "boom");
+    assert_eq!(rune_tui::messages::newest_text(&app), Some("boom"));
 
     workspace::request_close(&mut app, second, &mut Effects::default());
 
     assert!(
-        matches!(app.modal, Some(rune_tui::banner::Modal::Error(_))),
-        "the pre-existing Error modal must survive a lower-priority Guard request"
+        matches!(
+            app.guard,
+            Some(ref prompt) if prompt.kind == rune_tui::guard::GuardKind::DirtyClose
+        ),
+        "a prior error message must never block a Guard from being raised"
     );
 }
 
@@ -425,12 +430,12 @@ fn escape_on_a_guard_does_not_clobber_an_unacknowledged_save_failure() {
     app.set_status("save failed: disk full", StatusSource::SaveError);
 
     workspace::request_close(&mut app, second, &mut Effects::default());
-    assert!(app.modal.is_some(), "a dirty close arms the Guard");
+    assert!(app.guard.is_some(), "a dirty close arms the Guard");
 
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(plain(KeyCode::Escape)), &mut effects);
 
-    assert!(app.modal.is_none(), "Escape still cancels the Guard");
+    assert!(app.guard.is_none(), "Escape still cancels the Guard");
     assert_eq!(
         app.status_message.as_deref(),
         Some("save failed: disk full"),

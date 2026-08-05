@@ -13,9 +13,9 @@ use std::collections::BTreeMap;
 use ratatui::layout::Rect;
 use rune_core::cursor::Cursor;
 use rune_tui::app::App;
-use rune_tui::banner::GuardKind;
 use rune_tui::document::{DocumentId, ReadOnly};
 use rune_tui::footer;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::QuitKey;
 use rune_tui::layout::{self, Geometry};
 use rune_tui::pane::Pane;
@@ -49,10 +49,11 @@ pub struct Snapshot {
     /// end-of-session undo/redo drive (`driver.rs`), both of which must
     /// tell an editor-focused step apart from a chrome-focused one.
     pub focus: Pane,
-    /// `app.modal.is_some()` — a modal (`Modal::Error`/`Modal::Guard`)
-    /// captures every key at stage 1 of the pipeline regardless of
-    /// `focus`, so `PANE-NO-BLEED` and the undo/redo drive precondition
-    /// both need this in addition to `focus`.
+    /// `app.guard.is_some()` (plan WP1: the pre-WP1 modal error banner's own
+    /// stage-1 capture no longer exists — an error is a non-modal log entry
+    /// now) — a Guard captures every key at stage 1 of the pipeline
+    /// regardless of `focus`, so `PANE-NO-BLEED` and the undo/redo drive
+    /// precondition both need this in addition to `focus`.
     pub modal_open: bool,
     /// `app.active` — which document the OTHER fields in this `Snapshot`
     /// describe. `PANE-NO-BLEED` needs it to tell a chrome key that
@@ -206,7 +207,10 @@ impl Snapshot {
 
         let (cells, row_meta) = if with_cells {
             match &app.active_doc().view {
-                Some(view) => (render::build_rows(view, app), row_meta::row_meta(view, app)),
+                Some(view) => (
+                    render::build_rows(app, app.active_doc(), view),
+                    row_meta::row_meta(view, app),
+                ),
                 None => (Vec::new(), Vec::new()),
             }
         } else {
@@ -216,10 +220,10 @@ impl Snapshot {
         // Computed BEFORE `doc` below borrows `app` immutably for the rest
         // of this function: `recompute_dirty` needs `&mut App`, so it must
         // run while no other borrow of `app` is still alive.
-        let guard = match &app.modal {
-            Some(rune_tui::banner::Modal::Guard(prompt)) => Some((prompt.doc, prompt.kind.clone())),
-            _ => None,
-        };
+        let guard = app
+            .guard
+            .as_ref()
+            .map(|prompt| (prompt.doc, prompt.kind.clone()));
         let quit_intent_pending = app
             .quit_intent
             .as_ref()
@@ -270,7 +274,7 @@ impl Snapshot {
             should_quit: app.should_quit,
             status: footer::footer_text(app),
             focus: app.focus(),
-            modal_open: app.modal.is_some(),
+            modal_open: app.guard.is_some(),
             active: app.active,
             title_text: app.title.text().to_string(),
             read_only: doc.read_only,

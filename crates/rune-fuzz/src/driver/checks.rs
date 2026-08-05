@@ -26,7 +26,7 @@ pub(super) fn should_sample(step: usize) -> bool {
 /// sync — mirrors `Snapshot::capture`'s own `cells` derivation.
 fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
     match &app.active_doc().view {
-        Some(view) => render::build_rows(view, app),
+        Some(view) => render::build_rows(app, app.active_doc(), view),
         None => Vec::new(),
     }
 }
@@ -52,7 +52,7 @@ pub(super) fn sync_idempotent_check(app: &mut App) -> Option<Violation> {
     let rebuilt_rows = {
         let doc = app.active_doc();
         let forced = doc.doc.force_rebuild(&doc.buffer);
-        render::build_rows(&forced, app)
+        render::build_rows(app, app.active_doc(), &forced)
     };
     if let Some(v) = invariant::sync_idempotent_rebuild(&production_rows, &rebuilt_rows) {
         return Some(v);
@@ -88,7 +88,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// session end today: `^b` (`GlobalCommand::FocusExplorer`) leaves the
 /// Explorer focused — `^x` was retired as the explorer chord once the
 /// held-space leader took over as the primary way in — an Explorer
-/// `Enter` on a path missing from the fuzz `Mem` raises `Modal::Error`; and
+/// `Enter` on a path missing from the fuzz `Mem` posts an error message; and
 /// `F1` (`GlobalCommand::Help`, CODE-REVIEW.md rune-fuzz finding 9's fix)
 /// switches `app.active` itself to the virtual Help document —
 /// `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL seed content,
@@ -97,8 +97,8 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// through `step_and_check`, so every per-step invariant still applies
 /// and a violation here still stops the session, same as any other step.
 ///
-/// Order: `Escape` first, only while a modal is up — both `Modal::Error`
-/// and `Modal::Guard` clear on it without touching a buffer byte. Then
+/// Order: `Escape` first, only while a Guard is up — it clears on `Escape`
+/// without touching a buffer byte. Then
 /// `F1` again, only while the Help document is active — `workspace::
 /// toggle_help`'s own docs say this switches back to whatever was active
 /// right before Help was last activated, ORDINARILY the seeded document
@@ -131,7 +131,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// unlike a plain `Escape` there, which is unbound in both panes' own key
 /// tables and would do nothing.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    if state.app.modal.is_some() {
+    if state.app.guard.is_some() {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Escape,
             mods: Mods::NONE,

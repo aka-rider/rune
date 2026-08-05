@@ -329,8 +329,8 @@ fn a_failed_explorer_open_leaves_focus_on_the_explorer() {
         "a failed open must not steal the keyboard from the Explorer"
     );
     assert!(
-        app.modal.is_some(),
-        "the read failure must raise the error banner"
+        rune_tui::messages::newest_text(&app).is_some(),
+        "the read failure must post an error message"
     );
 }
 

@@ -436,7 +436,7 @@ pub(super) static TITLE_MOTION_KEYS: &[KeyInput] = &[
 ];
 
 /// Plain `Esc`, no mods — the key `banner::handle_key`'s stage 1 uses to
-/// clear EITHER modal variant (`Modal::Error`/`Modal::Guard`) without
+/// clear the modal Guard without
 /// touching a buffer byte, and the key `title::handle_key` uses to revert
 /// and hand focus back to the editor. `driver/checks.rs::
 /// restore_editor_focus` is the existing precedent for this exact key.

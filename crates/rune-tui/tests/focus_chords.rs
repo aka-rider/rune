@@ -176,12 +176,15 @@ fn ctrl_r_focuses_the_title() {
     assert_eq!(app.focus(), Pane::Title);
 }
 
-/// `^E`/`⌘E` and `^K`/`⌘K` are deleted entirely: neither resolves to a
-/// `GlobalCommand`, so each falls through to whichever pane owns focus. From
-/// the Editor with no modifier bound to it, that means plain text insertion.
+/// `^K`/`⌘K` are deleted entirely: neither resolves to a `GlobalCommand`, so
+/// each falls through to whichever pane owns focus. From the Editor with no
+/// modifier bound to it, that means plain text insertion. `^E`/`⌘E` is NOT
+/// in this list any more (plan WP1): those two chords now resolve to
+/// `GlobalCommand::ToggleMessages` — see `tests/messages.rs` for their own
+/// coverage.
 #[test]
-fn ctrl_e_and_ctrl_k_no_longer_resolve_to_anything() {
-    for (ch, mods) in [('e', CTRL), ('e', SUP), ('k', CTRL), ('k', SUP)] {
+fn ctrl_k_no_longer_resolves_to_anything() {
+    for (ch, mods) in [('k', CTRL), ('k', SUP)] {
         let mut app = app_for("hello");
         press(&mut app, KeyCode::Char(ch), mods);
         // Neither chord moves focus or the left column — both are unbound,

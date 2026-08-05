@@ -3,7 +3,7 @@
 //! alone can't express "what caused this transition" (plan Context,
 //! decision 7 `[fixes B3]`).
 
-use rune_tui::banner::GuardKind;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::{Command, KeyCode, QuitKey};
 
 use super::Violation;

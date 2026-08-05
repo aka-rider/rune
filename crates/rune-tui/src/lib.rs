@@ -4,7 +4,6 @@
 
 pub mod app;
 mod app_view;
-pub mod banner;
 pub mod binding;
 pub mod breadcrumb;
 pub mod breadcrumb_layout;
@@ -30,6 +29,7 @@ pub mod footer;
 pub mod footer_hints;
 pub mod global;
 pub mod graphics;
+pub mod guard;
 pub mod help;
 pub mod highlight;
 pub mod keymap;
@@ -38,6 +38,7 @@ pub mod linemap;
 pub mod listnav;
 pub mod materialize_ack;
 pub mod merge;
+pub mod messages;
 pub mod navigate;
 pub mod opentabs;
 pub mod pane;

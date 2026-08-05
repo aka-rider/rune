@@ -1,10 +1,9 @@
-//! The Guard modal's own state and key handling (split out of `banner.rs`
-//! for the §1.6 budget, plan WP2: the `DirtyQuit` addition pushed the
-//! parent file over): `GuardPrompt`/`GuardKind`, the `[S]ave`/`[D]iscard`/
-//! `[Esc]` option labels every kind shares, and `handle_guard_key`'s
-//! dispatch to each kind's own answer. `banner.rs` re-exports every public
-//! item here, so `crate::banner::GuardKind` etc. keep resolving unchanged
-//! for every existing caller.
+//! The close/quit/rename/disk-conflict confirmation prompt — `App`'s one
+//! `guard: Option<GuardPrompt>` slot (plan WP1: replaces the pre-WP1
+//! `banner::Modal`'s `Guard` variant now that its `Error` sibling has moved
+//! to the message log, `messages.rs`). `GuardPrompt`/`GuardKind`, the
+//! `[S]ave`/`[D]iscard`/`[Esc]` option labels every kind shares, and
+//! `handle_guard_key`'s dispatch to each kind's own answer.
 
 use std::collections::BTreeMap;
 
@@ -18,7 +17,39 @@ use crate::runtime::Effects;
 use crate::save::{self, SaveStart};
 use crate::workspace;
 
-use super::Modal;
+/// The one chokepoint that raises a new Guard prompt (plan WP1, replacing
+/// the pre-WP1 `banner::set_modal`): never displaces a prompt already up —
+/// with the old modal error banner gone, a Guard is the only thing that can ever be up,
+/// so "never displace" now simply means "only while none is up". Returns
+/// whether the prompt was actually raised, `#[must_use]` because a caller
+/// that assumes it always was (`rename.rs`'s `Collision` entry in
+/// particular) would otherwise wait forever on a prompt that never
+/// appeared.
+#[must_use]
+pub fn set_guard(app: &mut App, prompt: GuardPrompt) -> bool {
+    if app.guard.is_some() {
+        return false;
+    }
+    app.guard = Some(prompt);
+    true
+}
+
+/// The SOLE writer of `app.guard = None` — every dismissal path routes
+/// here, including `set_guard`'s own indirect callers once the previous
+/// state must go.
+pub fn clear_guard(app: &mut App) {
+    let was_collision = matches!(
+        &app.guard,
+        Some(GuardPrompt {
+            kind: GuardKind::RenameCollision { .. },
+            ..
+        })
+    );
+    app.guard = None;
+    if was_collision {
+        crate::rename::on_prompt_dismissed(app);
+    }
+}
 
 /// The close/quit-confirmation prompt for a dirty document (plan WP5.S3,
 /// widened by WP2 for quit): armed by `workspace::request_close`/
@@ -127,7 +158,7 @@ pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
 /// Names what Escape cancels for a given Guard kind. An exhaustive match, so
 /// a future `GuardKind` variant is forced to choose its own cancellation
 /// wording rather than silently inheriting a generic one.
-pub(super) fn cancel_status(kind: &GuardKind) -> &'static str {
+fn cancel_status(kind: &GuardKind) -> &'static str {
     match kind {
         GuardKind::DirtyClose => "close cancelled",
         GuardKind::DirtyQuit => "quit cancelled",
@@ -140,14 +171,14 @@ pub(super) fn cancel_status(kind: &GuardKind) -> &'static str {
 /// later kind can never forget to be cancellable — and reports what it
 /// cancelled via `cancel_status` so the modal never just silently vanishes.
 /// Every other key dispatches to the kind's own answer below.
-pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    let Some(Modal::Guard(prompt)) = &app.modal else {
+pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
+    let Some(prompt) = &app.guard else {
         return;
     };
     let doc = prompt.doc;
     if key.code == KeyCode::Escape {
         let msg = cancel_status(&prompt.kind);
-        super::clear_modal(app);
+        clear_guard(app);
         // A cancellation ack is the least important thing the status row can
         // say. An unacknowledged save failure is the most important, and the
         // footer already ranks it above ordinary status, so overwriting it
@@ -181,14 +212,14 @@ pub(super) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
 fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             let _ = save::trigger_save(app, doc, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             let _ = crate::workspace::close_now(app, doc, effects);
         }
         _ => {}
@@ -212,11 +243,11 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
 fn handle_dirty_quit_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             app.should_quit = true;
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             start_quit_save_fan_out(app, effects);
         }
         _ => {}
@@ -306,26 +337,129 @@ fn handle_disk_conflict_key(
 ) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
                 doc_db.expect_obs = fresh_obs;
             }
             let _ = save::trigger_save(app, doc, effects);
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if app.active != doc {
                 workspace::switch_to(app, doc);
             }
             crate::merge::begin(app, MergeIntent::Discard, effects);
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_MERGE.key) => {
-            super::clear_modal(app);
+            clear_guard(app);
             if app.active != doc {
                 workspace::switch_to(app, doc);
             }
             crate::merge::begin(app, MergeIntent::Merge, effects);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        App::new(Buffer::new("hi"), None, Arc::new(Mem::new()), None)
+    }
+
+    fn prompt(doc: DocumentId, kind: GuardKind) -> GuardPrompt {
+        GuardPrompt { doc, kind }
+    }
+
+    /// `set_guard` raises a prompt onto an empty slot.
+    #[test]
+    fn set_guard_raises_onto_an_empty_slot() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DirtyClose,
+                ..
+            })
+        ));
+    }
+
+    /// `set_guard` never displaces a prompt already up (plan WP1: with
+    /// the old modal error banner gone, this is the whole of the pre-WP1 priority rule)
+    /// — the `false` return is what lets `rename.rs` notice and stay `Idle`
+    /// rather than wait on a prompt that was never raised.
+    #[test]
+    fn set_guard_refuses_to_replace_an_existing_prompt() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        assert!(!set_guard(
+            &mut app,
+            prompt(
+                doc,
+                GuardKind::RenameCollision {
+                    target: "b.md".to_string(),
+                }
+            )
+        ));
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DirtyClose,
+                ..
+            })
+        ));
+    }
+
+    /// `clear_guard` empties the slot.
+    #[test]
+    fn clear_guard_empties_the_slot() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+        clear_guard(&mut app);
+        assert!(app.guard.is_none());
+    }
+
+    /// A cleared `RenameCollision` prompt notifies the rename machine
+    /// (`rename::on_prompt_dismissed`), returning it to `Idle` — the other
+    /// half of the global invariant `rename.rs` documents.
+    #[test]
+    fn clear_guard_on_a_rename_collision_returns_the_rename_machine_to_idle() {
+        let mut app = app();
+        let doc = app.active;
+        app.rename = crate::rename::RenameState::Collision {
+            doc,
+            from: std::path::PathBuf::new(),
+            to: std::path::PathBuf::from("/b.md"),
+            seen: rune_vfs::Stat {
+                size: 0,
+                mtime: std::time::SystemTime::UNIX_EPOCH,
+                identity: rune_vfs::Identity::default(),
+                nlink: None,
+                kind: rune_vfs::FileKind::File,
+            },
+        };
+        assert!(set_guard(
+            &mut app,
+            prompt(
+                doc,
+                GuardKind::RenameCollision {
+                    target: "b.md".to_string(),
+                }
+            )
+        ));
+        clear_guard(&mut app);
+        assert!(app.guard.is_none());
+        assert_eq!(app.rename, crate::rename::RenameState::Idle);
     }
 }

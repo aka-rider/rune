@@ -26,6 +26,8 @@ pub enum FocusTarget {
     SearchField,
     /// Not yet reachable — see `SearchField`'s doc; WP8's replace field.
     ReplaceField,
+    /// The message-log pane above the footer (plan WP1, `Pane::Messages`).
+    Messages,
 }
 
 /// Derives today's `FocusTarget` from the chrome-level `Pane` — the only
@@ -39,6 +41,7 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
         Pane::Tabs => FocusTarget::Tabs,
         Pane::Editor => FocusTarget::Editor,
         Pane::Title => FocusTarget::Title,
+        Pane::Messages => FocusTarget::Messages,
     }
 }
 
@@ -107,6 +110,15 @@ impl LayoutMode {
     pub fn focusable(self, pane: Pane) -> Option<VisiblePane> {
         let painted = match (self, pane) {
             (_, Pane::Title) => true,
+            // The messages pane is orthogonal to the left column's own
+            // split (plan WP1.S6) — like `Title`, it is painted (or not) by
+            // a decision `LayoutMode` doesn't model at all. `focus::
+            // reconcile` is what actually redirects focus once the pane
+            // closes; this stays `true` unconditionally so a deliberate
+            // `set_focus_pane(Pane::Messages, ..)` (only ever called while
+            // opening or already-open, see `messages::focus`) never falls
+            // back to the Editor by mistake.
+            (_, Pane::Messages) => true,
             (LayoutMode::Split { explorer, .. }, Pane::Explorer) => explorer,
             (LayoutMode::Split { tabs, .. }, Pane::Tabs) => tabs,
             (LayoutMode::Split { .. }, Pane::Editor) => true,
@@ -293,6 +305,15 @@ impl App {
 /// section a keybinding would hide can never land focus somewhere the
 /// command path wouldn't.
 pub fn reconcile(app: &mut App, effects: &mut Effects) {
+    // The messages pane's own closed-while-focused case (plan WP1.S6):
+    // `LayoutMode::focusable` treats `Pane::Messages` as always painted
+    // (see its own doc), so the generic check below can never catch this —
+    // it needs the pane's OWN open/closed state, which lives on `App.
+    // messages`, not on anything `LayoutMode` derives.
+    if app.focus() == Pane::Messages && !crate::messages::is_open(app) {
+        app.set_focus_pane(Pane::Editor, effects);
+        return;
+    }
     if app.layout_mode().focusable(app.focus()).is_none() {
         app.set_focus_pane(app.focus(), effects);
     }

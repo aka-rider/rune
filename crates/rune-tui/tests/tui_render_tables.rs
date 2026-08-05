@@ -216,7 +216,7 @@ fn caret_inside_a_ragged_rows_dropped_cells_stays_hidden_while_unfocused() {
     let app = app_for(RAGGED_ROW_TABLE, cursor, false);
 
     let view = app.active_doc().view.as_ref().expect("synced view");
-    let rows = rune_tui::render::build_rows(view, &app);
+    let rows = rune_tui::render::build_rows(&app, app.active_doc(), view);
 
     // Display rows 0..7: synthesised top border, header, separator,
     // Alice, the synthesised inter-row border between Alice and Bob (two

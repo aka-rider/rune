@@ -229,7 +229,10 @@ pub(crate) fn on_focus_changed(app: &mut App, previous: Pane, current: Pane) {
             }
         }
         Pane::Title | Pane::Tabs => discard_active(app),
-        Pane::Explorer => {}
+        // Landing on the Explorer itself, or on the messages pane (plan
+        // WP1 — a focus move this module has no opinion on, exactly like
+        // the Explorer case), does nothing.
+        Pane::Explorer | Pane::Messages => {}
     }
 }
 

@@ -19,13 +19,14 @@ use std::sync::Arc;
 use rune_core::buffer::Buffer;
 use rune_vfs::Vfs;
 
-use crate::banner::Modal;
 use crate::db::Db;
 use crate::dispatch;
 use crate::document::{Document, DocumentId};
 use crate::document_map::DocumentMap;
 use crate::explorer::Explorer;
+use crate::guard::GuardPrompt;
 use crate::keymap::QuitKey;
+use crate::messages::MessageLog;
 use crate::opentabs::OpenTabs;
 use crate::pane::Pane;
 use crate::runtime::{Effects, Msg};
@@ -63,7 +64,8 @@ pub enum StatusSource {
     SaveError,
     /// Everything else: edit/undo/redo failures, the degraded-save confirm
     /// hint, ... `Msg::Error` no longer writes `status_message` at all (plan
-    /// WP3.S4: routed through `banner::report_error`, a modal, instead).
+    /// WP3.S4: routed through the old modal error banner, instead —
+    /// now `messages::error`, a log entry, plan WP1).
     #[default]
     Other,
 }
@@ -94,10 +96,10 @@ pub struct App {
     /// recent `Msg::Resize` — unlike the active document's own `viewport.
     /// height` (which `Msg::Resize` sets to `height - 1`, reserving the
     /// footer row), this is the exact `frame.area().height` `render::draw`
-    /// itself sizes the banner against. `App::sync_view` threads this into
-    /// `banner::sync_modal` (mirroring how it already threads the active
-    /// document's `viewport.width` through) so `banner::banner_height` — the
-    /// one function both `render::draw` and `sync_modal` call — computes the
+    /// itself sizes the messages pane against. `App::sync_view` threads this
+    /// into `messages::sync` (mirroring how it already threads the active
+    /// document's `viewport.width` through) so `messages::height` — the
+    /// one function both `layout::geometry` and `sync` call — computes the
     /// identical figure in both places. `0` before the first `Msg::Resize`
     /// (never observed in practice: `runtime::run` seeds one before the
     /// first `sync_view`/draw).
@@ -108,7 +110,7 @@ pub struct App {
     /// `relayout` sizes the viewport from the EDITOR rect (which may be
     /// narrower than the frame — the left pane, a border), `viewport.width`
     /// is no longer the full frame width, so anything that needs the frame's
-    /// own width (`banner::sync_modal`, `layout::geometry` itself) reads
+    /// own width (`messages::sync`, `layout::geometry` itself) reads
     /// this instead. `0` before the first `Msg::Resize`, exactly like
     /// `frame_height`. `App::relayout` is a no-op while this is `0`.
     pub frame_width: u16,
@@ -208,7 +210,7 @@ pub struct App {
     pub(crate) next_save_confirm_gen: u32,
     /// The document a Guard modal's `[S]ave` armed a save-then-close for
     /// (plan WP5.S3) — `None` when no close is waiting on a save ack.
-    /// `banner::handle_key`'s Guard arm sets this immediately before
+    /// `guard::handle_guard_key`'s Guard arm sets this immediately before
     /// calling `save::trigger_save`; `materialize_ack::handle_materialize_ack`/
     /// `handle_save_done`'s success paths are the only readers, closing
     /// the document (`workspace::close_now`) only when the id still
@@ -255,11 +257,17 @@ pub struct App {
     /// comment); this field exists so a future dispatch switch has
     /// somewhere to read from.
     pub binding_set: crate::keymap::BindingSet,
-    /// The single modal slot (plan WP3, decision 13): `Some` while an error
-    /// banner (WP5: or a close-guard prompt) is up. `banner::set_modal` is
-    /// the one chokepoint that writes a NEW modal here (plan Risks, "Banner
-    /// reentrancy"); stage 1's `Esc`/`c` handling is the only other writer.
-    pub modal: Option<Modal>,
+    /// The single close/quit/rename/disk-conflict confirmation prompt (plan
+    /// WP1: replaces the pre-WP1 `banner::Modal`'s `Guard` variant — its
+    /// `Error` sibling now lives in `messages` instead). `guard::set_guard`
+    /// is the one chokepoint that writes a NEW prompt here; `guard::
+    /// clear_guard` is the sole writer of `None`.
+    pub guard: Option<GuardPrompt>,
+    /// The message log (plan WP1): every transient user-facing message,
+    /// severity-tagged, plus the collapsible pane's own open/focus state.
+    /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
+    /// chokepoint that writes to it.
+    pub messages: MessageLog,
     pub should_quit: bool,
     /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
@@ -356,7 +364,8 @@ impl App {
             pointer: crate::pointer::PointerState::default(),
             pointer_clock: Box::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
-            modal: None,
+            guard: None,
+            messages: MessageLog::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),

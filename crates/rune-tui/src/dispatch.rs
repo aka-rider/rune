@@ -48,7 +48,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             crate::graphics::refit_on_resize(app, effects);
         }
         Msg::Paste(text) => {
-            // Deliberately NOT gated on `app.modal`, unlike the key
+            // Deliberately NOT gated on `app.guard`, unlike the key
             // pipeline's stage 1. A paste carries user content, and
             // dropping it because a prompt happens to be up discards
             // something the user explicitly asked to insert — the buffer is
@@ -105,9 +105,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             cause,
             generation,
         } => explorer::handle_dir_loaded(app, root, entries, cause, generation),
-        // Routed through the modal banner, not `status_message` (plan
-        // WP3.S4) — `report_error` is the one chokepoint every error
-        // report funnels through.
+        // Routed through the message log, not `status_message` (plan WP1) —
+        // `messages::error` is the one chokepoint every error report
+        // funnels through.
         Msg::RenameDone { generation, result } => {
             crate::rename::handle_rename_done(app, generation, result, effects)
         }
@@ -139,7 +139,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
                 crate::graphics::handle_embed_decoded(app, doc, generation, result, effects)
             }
         }
-        Msg::Error(e) => crate::banner::report_error(app, e),
+        Msg::Error(e) => crate::messages::error(app, e),
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -255,15 +255,17 @@ fn handle_highlighted(
     }
 }
 
-/// The four-stage key pipeline (plan Context, decision 8): (1) modal capture
-/// (`banner::handle_key`) — every key consumed there while `App.modal` is
-/// `Some`, quit chords included; (2) the global chord table
-/// (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3) the focused
-/// pane's own keymap; (4) `Ignored` -> nothing.
+/// The four-stage key pipeline (plan Context, decision 8): (1) Guard capture
+/// (`guard::handle_guard_key`) — every key consumed there while `App.guard`
+/// is `Some`, quit chords included (plan WP1: the old modal error banner no longer
+/// exists, so this stage is Guard-only now — the messages pane is non-modal
+/// and reached through stage 3 instead, like any other pane); (2) the global
+/// chord table (`GLOBAL_BINDINGS`), fired regardless of focus (WP2.S4); (3)
+/// the focused pane's own keymap; (4) `Ignored` -> nothing.
 pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
-    // Stage 1: modal capture, before any other stage ever sees this key.
-    if app.modal.is_some() {
-        crate::banner::handle_key(app, key, effects);
+    // Stage 1: Guard capture, before any other stage ever sees this key.
+    if app.guard.is_some() {
+        crate::guard::handle_guard_key(app, key, effects);
         return;
     }
 
@@ -281,6 +283,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         Pane::Explorer => explorer_keys::handle_key(app, key, effects),
         Pane::Tabs => opentabs::handle_key(app, key, effects),
         Pane::Title => crate::title::handle_key(app, key, effects),
+        Pane::Messages => {
+            if crate::messages::handle_key(app, key, effects) {
+                keymap::KeyOutcome::Consumed
+            } else {
+                keymap::KeyOutcome::Ignored
+            }
+        }
     };
 }
 

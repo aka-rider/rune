@@ -98,6 +98,12 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
             entries.push(("\u{23ce}".to_string(), "rename", true));
         }
         Pane::Editor => {}
+        // The messages pane's own keys render through `footer::Mode::
+        // Messages` instead (plan WP1.S10) — `mode()` returns that variant
+        // before `DefaultHints` is ever reached while this pane holds
+        // focus, so this arm is unreachable in practice; it exists only to
+        // keep this match exhaustive.
+        Pane::Messages => {}
     }
 
     entries

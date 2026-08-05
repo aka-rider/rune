@@ -43,13 +43,15 @@ impl App {
     /// documents are actually on screen.
     ///
     /// Derives the active document's `focused` flag from `App::focus` FIRST,
-    /// every call (plan Gotchas: `&& app.modal.is_none()` — a modal up means
-    /// the editor is never really focused). Also re-syncs the modal
-    /// document, if one is up (WP3.S3), at the terminal's own width — kept
-    /// in this settle step, never inside `render::draw` itself (§5.4).
+    /// every call (plan Gotchas: `&& app.guard.is_none()` — a Guard up means
+    /// the editor is never really focused; the messages pane is deliberately
+    /// NOT part of this gate, since it's non-modal — plan WP1 decision 3).
+    /// Also re-syncs the messages pane's log document (WP1.S9), at the
+    /// terminal's own width — kept in this settle step, never inside
+    /// `render::draw` itself (§5.4).
     pub fn sync_view(&mut self) {
         self.relayout();
-        let focused = self.focus() == Pane::Editor && self.modal.is_none();
+        let focused = self.focus() == Pane::Editor && self.guard.is_none();
         self.active_doc_mut().focused = focused;
         // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
@@ -59,10 +61,8 @@ impl App {
         self.active_doc_mut().icons = self.icons.clone();
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
-        if self.modal.is_some() {
-            let width = self.frame_width;
-            let frame_height = self.frame_height;
-            crate::banner::sync_modal(self, width, frame_height);
-        }
+        let width = self.frame_width;
+        let frame_height = self.frame_height;
+        crate::messages::sync(self, width, frame_height);
     }
 }

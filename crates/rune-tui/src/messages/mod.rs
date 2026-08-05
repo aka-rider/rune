@@ -1,0 +1,297 @@
+//! The message log: an append-only, severity-tagged record of every
+//! transient user-facing message, rendered in a collapsible read-only pane
+//! directly above the footer (plan WP1). `messages::post` (and its
+//! `info`/`warn`/`error` wrappers) is the ONE chokepoint every such message
+//! funnels through — replacing both the old modal error banner (which
+//! captured every key) and `App::set_status` (a single slot with a clearing
+//! rule keyed on `StatusSource`). A log needs neither: nothing is ever
+//! cleared, and the pane never takes focus on its own.
+//!
+//! Split for the §1.6 budget: this file holds the log's state and its
+//! `&mut App`/`&App` API; [`render`] holds the pane's own row builder.
+
+mod render;
+
+use crate::app::App;
+use crate::document::{Document, ReadOnly};
+use crate::keymap::{KeyCode, KeyInput};
+use crate::pane::Pane;
+use crate::runtime::Effects;
+use rune_core::buffer::Buffer;
+
+pub use render::draw;
+
+/// Pushing past this many entries drops the oldest — an unbounded log would
+/// leak for the lifetime of a long session.
+const MAX_ENTRIES: usize = 200;
+
+const EMPTY_TEXT: &str = "\u{b7} no messages";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Info,
+    Warn,
+    Error,
+}
+
+impl Severity {
+    fn glyph(self) -> &'static str {
+        match self {
+            Severity::Error => "\u{26a0} ",
+            Severity::Warn => "! ",
+            Severity::Info => "\u{b7} ",
+        }
+    }
+}
+
+pub struct Message {
+    pub severity: Severity,
+    pub text: String,
+}
+
+/// The log's own state: every posted entry, the read-only `Document` its
+/// text is rendered through (so the pane reuses `render::build_rows`
+/// exactly like the editor does, rather than a second cell-building path),
+/// and whether the pane is currently open.
+pub struct MessageLog {
+    entries: Vec<Message>,
+    doc: Document,
+    /// The byte range each entry occupies in `doc`'s buffer, alongside its
+    /// severity — `render::draw`'s own colour pass keys off this instead of
+    /// re-deriving it from the entry list every frame.
+    ranges: Vec<(std::ops::Range<usize>, Severity)>,
+    open: bool,
+}
+
+impl MessageLog {
+    pub fn new() -> MessageLog {
+        let mut doc = Document::new(Buffer::new(EMPTY_TEXT));
+        doc.read_only = ReadOnly::Always;
+        doc.focused = false;
+        MessageLog {
+            entries: Vec::new(),
+            doc,
+            ranges: Vec::new(),
+            open: false,
+        }
+    }
+}
+
+impl Default for MessageLog {
+    fn default() -> MessageLog {
+        MessageLog::new()
+    }
+}
+
+/// Strips C0 control bytes (except `\n`) and DEL from `text` (plan WP1
+/// decision 8): error text can carry filesystem-derived bytes, and those
+/// bytes are blitted to the terminal and OSC-52-copied verbatim, so they
+/// must never reach the rendered grid unsanitized.
+fn sanitize(text: &str) -> String {
+    text.chars()
+        .filter(|&c| c == '\n' || !(('\u{0}'..='\u{1f}').contains(&c) || c == '\u{7f}'))
+        .collect()
+}
+
+/// The document buffer's markdown source: every sanitized entry, glyph-
+/// prefixed, joined as separate paragraphs (`"\n\n"`) so comrak keeps each
+/// on its own display row — plus the byte range each entry landed at, for
+/// `render`'s severity-colour pass. `EMPTY_TEXT` when there are no entries
+/// at all.
+fn build_markdown(entries: &[Message]) -> (String, Vec<(std::ops::Range<usize>, Severity)>) {
+    if entries.is_empty() {
+        return (EMPTY_TEXT.to_string(), Vec::new());
+    }
+    let mut text = String::new();
+    let mut ranges = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        if i > 0 {
+            text.push_str("\n\n");
+        }
+        let start = text.len();
+        text.push_str(entry.severity.glyph());
+        text.push_str(&entry.text);
+        ranges.push((start..text.len(), entry.severity));
+    }
+    (text, ranges)
+}
+
+fn rebuild_doc(app: &mut App) {
+    let (text, ranges) = build_markdown(&app.messages.entries);
+    let focused = app.messages.doc.focused;
+    let scroll_row = app.messages.doc.viewport.scroll_row;
+    let width = app.messages.doc.viewport.width;
+    let mut doc = Document::new(Buffer::new(text));
+    doc.read_only = ReadOnly::Always;
+    doc.focused = focused;
+    doc.viewport.scroll_row = scroll_row;
+    doc.viewport.width = width;
+    app.messages.doc = doc;
+    app.messages.ranges = ranges;
+}
+
+/// The one chokepoint every transient message funnels through: sanitizes
+/// `text`, appends it (dropping the oldest past [`MAX_ENTRIES`]), rebuilds
+/// the log's document, and opens the pane. Never focuses it (plan WP1
+/// decision 3 — a message is not modal): typing continues to reach whatever
+/// already had focus.
+pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
+    let text = sanitize(&text.into());
+    app.messages.entries.push(Message { severity, text });
+    if app.messages.entries.len() > MAX_ENTRIES {
+        let overflow = app.messages.entries.len() - MAX_ENTRIES;
+        app.messages.entries.drain(0..overflow);
+    }
+    rebuild_doc(app);
+    app.messages.open = true;
+}
+
+pub fn info(app: &mut App, text: impl Into<String>) {
+    post(app, Severity::Info, text);
+}
+
+pub fn warn(app: &mut App, text: impl Into<String>) {
+    post(app, Severity::Warn, text);
+}
+
+pub fn error(app: &mut App, text: impl Into<String>) {
+    post(app, Severity::Error, text);
+}
+
+/// Opens (and focuses) the pane if it's closed; collapses it if it's open
+/// and already focused; otherwise (open but unfocused) just focuses it —
+/// the `^E`/`⌘E` toggle's whole state machine (plan WP1.S7).
+pub fn toggle(app: &mut App, effects: &mut Effects) {
+    if !app.messages.open {
+        app.messages.open = true;
+        focus(app, effects);
+    } else if app.focus() == Pane::Messages {
+        collapse(app);
+        app.set_focus_pane(Pane::Editor, effects);
+    } else {
+        focus(app, effects);
+    }
+}
+
+fn focus(app: &mut App, effects: &mut Effects) {
+    app.messages.doc.focused = true;
+    app.set_focus_pane(Pane::Messages, effects);
+}
+
+/// Closes the pane without moving focus — the caller decides where focus
+/// goes next (`toggle`/`handle_key`'s `Esc` arm both do).
+pub fn collapse(app: &mut App) {
+    app.messages.open = false;
+    app.messages.doc.focused = false;
+}
+
+pub fn is_open(app: &App) -> bool {
+    app.messages.open
+}
+
+pub fn newest(app: &App) -> Option<&Message> {
+    app.messages.entries.last()
+}
+
+pub fn newest_text(app: &App) -> Option<&str> {
+    newest(app).map(|m| m.text.as_str())
+}
+
+/// Every entry's sanitized text, oldest first, joined by `\n` with no
+/// glyphs — the test-assertion helper (plan Risks: the mechanical
+/// `footer_text` -> helper swap WP4 needs).
+pub fn log_text(app: &App) -> String {
+    app.messages
+        .entries
+        .iter()
+        .map(|m| m.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The content rows available to the pane at `frame_height`, capped at the
+/// 40% end of the requested 30-40% band — always at least 1 (even an empty
+/// log shows its one `EMPTY_TEXT` line).
+fn content_rows(app: &App, frame_height: u16) -> u16 {
+    let total = app
+        .messages
+        .doc
+        .view
+        .as_ref()
+        .map(|v| v.display.total_rows())
+        .unwrap_or(0);
+    let cap = ((frame_height as usize) * 2 / 5).max(1);
+    total.min(cap).max(1) as u16
+}
+
+/// The pane's total rendered height at `frame_height`: `0` when closed, else
+/// one separator row plus [`content_rows`].
+pub fn height(app: &App, frame_height: u16) -> u16 {
+    if !app.messages.open {
+        return 0;
+    }
+    content_rows(app, frame_height) + 1
+}
+
+/// Re-syncs the log document at `width`/`frame_height` — mirrors what
+/// `App::sync_view` already does for the active document, called from the
+/// same settle step (plan WP1.S9), before `render::draw` reads [`height`]
+/// to size the pane's `Rect`. A no-op while the pane is closed: there is
+/// nothing on screen to keep in sync.
+pub fn sync(app: &mut App, width: u16, frame_height: u16) {
+    if !app.messages.open {
+        return;
+    }
+    app.messages.doc.viewport.width = width;
+    let view = app.messages.doc.sync();
+    app.messages.doc.view = Some(view);
+    app.messages.doc.viewport.height = content_rows(app, frame_height);
+}
+
+fn page_amount(app: &App) -> isize {
+    app.messages.doc.viewport.height.max(1) as isize
+}
+
+fn scroll(app: &mut App, delta: isize) {
+    let max_row = app
+        .messages
+        .doc
+        .view
+        .as_ref()
+        .map(|v| v.display.total_rows().saturating_sub(1))
+        .unwrap_or(usize::MAX);
+    let current = app.messages.doc.viewport.scroll_row as isize;
+    let next = (current + delta).max(0) as usize;
+    app.messages.doc.viewport.scroll_row = next.min(max_row);
+}
+
+/// The pane's own key handling, reached from stage 3 of the key pipeline
+/// while `app.focus() == Pane::Messages`. `Esc` collapses and returns focus
+/// to the editor; the arrow/page keys scroll. Returns whether the key was
+/// consumed.
+pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
+    match key.code {
+        KeyCode::Escape => {
+            collapse(app);
+            app.set_focus_pane(Pane::Editor, effects);
+            true
+        }
+        KeyCode::Up => {
+            scroll(app, -1);
+            true
+        }
+        KeyCode::Down => {
+            scroll(app, 1);
+            true
+        }
+        KeyCode::PageUp => {
+            scroll(app, -page_amount(app));
+            true
+        }
+        KeyCode::PageDown => {
+            scroll(app, page_amount(app));
+            true
+        }
+        _ => false,
+    }
+}

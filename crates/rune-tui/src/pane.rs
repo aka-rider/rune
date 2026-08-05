@@ -9,10 +9,11 @@
 use std::time::Duration;
 
 use crate::app::App;
-use crate::banner::{self, GuardKind, GuardPrompt, Modal};
 use crate::document::DocumentId;
 use crate::explorer;
+use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::keymap::{GlobalCommand, QuitKey};
+use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::save;
 
@@ -32,6 +33,11 @@ pub enum Pane {
     /// pressing Up at the top of the editor. While it owns focus every
     /// keystroke goes to the file name and none of them reach the buffer.
     Title,
+    /// The collapsible message-log pane above the footer (plan WP1) —
+    /// focused by `^E`/`⌘E` while the pane is open, or by clicking inside it
+    /// (WP3). Only ever focusable while `messages::is_open` is true
+    /// (`LayoutMode::focusable`'s own gate).
+    Messages,
 }
 
 /// Stage 2 of the four-stage key pipeline (plan Context, decision 8,
@@ -134,6 +140,10 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Plan WP3.S5: starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
         GlobalCommand::Merge => crate::merge::toggle(app, effects),
+        // Plan WP1.S7: the message log pane's own open/focus/collapse state
+        // machine lives on `messages` itself, alongside every other reader/
+        // writer of `App.messages`.
+        GlobalCommand::ToggleMessages => messages::toggle(app, effects),
     }
 }
 
@@ -186,12 +196,12 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
     // answers only ever CLOSED left a single-document session with no
     // reachable exit at all.
     if let Some(doc) = unpreserved_dirty_docs(app).into_iter().next() {
-        let _ = banner::set_modal(
+        let _ = guard::set_guard(
             app,
-            Modal::Guard(GuardPrompt {
+            GuardPrompt {
                 doc,
                 kind: GuardKind::DirtyQuit,
-            }),
+            },
         );
         return;
     }
@@ -214,7 +224,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 /// recovery-store binding (`App::is_preserved`) — quit preserves through the
 /// durable journal, so a dirty document without one is the exact case
 /// `handle_quit_key`'s Guard gate exists for, and the exact set WP2's
-/// quit-save fan-out (`banner::guard`'s `[S]ave` answer) must save every
+/// quit-save fan-out (`guard`'s `[S]ave` answer) must save every
 /// member of, not just the first. Deterministic ordering (`documents` is a
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
 /// first" — repeated presses always raise the Guard for the same document
@@ -380,11 +390,11 @@ mod tests {
         );
         assert!(
             matches!(
-                app.modal,
-                Some(Modal::Guard(GuardPrompt {
+                app.guard,
+                Some(GuardPrompt {
                     kind: GuardKind::DirtyQuit,
                     ..
-                }))
+                })
             ),
             "expected a DirtyQuit Guard prompt to be raised"
         );

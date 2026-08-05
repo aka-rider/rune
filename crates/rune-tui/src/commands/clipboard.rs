@@ -21,25 +21,26 @@ use rune_core::buffer::Buffer;
 use rune_core::cursor::{Cursor, CursorSet};
 
 use crate::app::App;
-use crate::banner;
 use crate::clipboard::{OSC52_MAX_PAYLOAD_BYTES, osc52_copy, pbpaste_cmd};
 use crate::commands::edit;
 use crate::commands::nav;
 use crate::commands::nav_line;
 use crate::document::DocumentId;
+use crate::messages;
 use crate::runtime::{Effects, PasteTarget};
 
 /// Pushes `text`'s OSC 52 write into `effects.raw`, or — over `clipboard::
-/// OSC52_MAX_PAYLOAD_BYTES` — reports a banner instead of silently writing
-/// a sequence a terminal multiplexer would just drop (plan WP13.S4).
-/// Shared by `copy`/`cut` and the title's own `Command::Copy`/`Command::Cut`
-/// handling (`title::keys`) so the cap can never drift between call sites.
+/// OSC52_MAX_PAYLOAD_BYTES` — posts an error message instead of silently
+/// writing a sequence a terminal multiplexer would just drop (plan
+/// WP13.S4). Shared by `copy`/`cut` and the title's own `Command::Copy`/
+/// `Command::Cut` handling (`title::keys`) so the cap can never drift
+/// between call sites.
 pub(crate) fn write_to_clipboard_or_report(app: &mut App, text: &str, effects: &mut Effects) {
     if text.is_empty() {
         return;
     }
     if text.len() > OSC52_MAX_PAYLOAD_BYTES {
-        banner::report_error(
+        messages::error(
             app,
             format!(
                 "selection too large to copy to the system clipboard \
@@ -247,10 +248,10 @@ mod tests {
     /// WP13.S4 (`rune-tui C 6`): a selection over `OSC52_MAX_PAYLOAD_BYTES`
     /// must not reach `effects.raw` at all — writing it would just be a
     /// sequence a terminal multiplexer silently drops — and must instead
-    /// raise a banner so the user learns the copy never reached the
+    /// post a message so the user learns the copy never reached the
     /// system clipboard.
     #[test]
-    fn copy_over_the_osc52_cap_reports_a_banner_instead_of_writing_raw() {
+    fn copy_over_the_osc52_cap_posts_a_message_instead_of_writing_raw() {
         let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
         let mut app = app_with(&huge, 0);
         let id = app.active;
@@ -263,18 +264,18 @@ mod tests {
             "an over-cap selection must never reach the OSC 52 raw output"
         );
         assert!(
-            app.modal.is_some(),
-            "an over-cap copy must raise a banner reporting the failure"
+            crate::messages::newest_text(&app).is_some(),
+            "an over-cap copy must post a message reporting the failure"
         );
     }
 
-    /// The cut half of the same cap (plan WP13.S4): the banner is raised
+    /// The cut half of the same cap (plan WP13.S4): the message is posted
     /// BEFORE the delete runs, but the delete still proceeds either way —
     /// it's journaled/undoable regardless of what happened to the
     /// clipboard, so refusing it too would trade one silent failure for a
     /// second one.
     #[test]
-    fn cut_over_the_osc52_cap_reports_a_banner_but_still_deletes() {
+    fn cut_over_the_osc52_cap_posts_a_message_but_still_deletes() {
         let huge = "x".repeat(OSC52_MAX_PAYLOAD_BYTES + 1);
         let mut app = app_with(&huge, 0);
         let id = app.active;
@@ -287,8 +288,8 @@ mod tests {
             "an over-cap selection must never reach the OSC 52 raw output"
         );
         assert!(
-            app.modal.is_some(),
-            "an over-cap cut must raise a banner reporting the failure"
+            crate::messages::newest_text(&app).is_some(),
+            "an over-cap cut must post a message reporting the failure"
         );
         assert_eq!(
             app.doc(id).unwrap().buffer.content(),

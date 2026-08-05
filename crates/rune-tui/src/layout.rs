@@ -14,8 +14,8 @@
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
 
 use crate::app::App;
-use crate::banner;
 use crate::focus::LayoutMode;
+use crate::messages;
 use crate::split::{PaneLimits, Split};
 
 /// Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
@@ -125,7 +125,7 @@ pub fn explorer_fallback(block: Rect) -> u16 {
 #[derive(Clone, Copy, Debug)]
 pub struct Geometry {
     pub footer: Rect,
-    pub banner: Option<Rect>,
+    pub messages: Option<Rect>,
     pub left_block: Option<Rect>,
     pub explorer_inner: Rect,
     pub tabs_divider: Option<Rect>,
@@ -137,8 +137,8 @@ pub struct Geometry {
     pub center_bordered: bool,
     pub title: Option<Rect>,
     pub editor: Rect,
-    /// The area left after the footer and any banner are carved out — the
-    /// height the left column is allotted from.
+    /// The area left after the footer and the messages pane (if open) are
+    /// carved out — the height the left column is allotted from.
     pub main: Rect,
     /// The two-cell-wide band the user grabs to resize the left column: the
     /// column block's right border plus the centre block's left border.
@@ -148,7 +148,7 @@ pub struct Geometry {
 }
 
 /// What `resolve` below decides, before `geometry` carves a single further
-/// rect from it: the footer/banner split, and — the one place any of this
+/// rect from it: the footer/messages-pane split, and — the one place any of this
 /// module ever decides whether the left column and its two sections are
 /// painted at all — the left column's single bordered block (`None` when
 /// nothing fits) and the Explorer/divider/Tabs split of its inner rect.
@@ -159,7 +159,7 @@ pub struct Geometry {
 /// tell that apart from an ordinary `Split`.
 struct Resolved {
     footer: Rect,
-    banner: Option<Rect>,
+    messages: Option<Rect>,
     main_area: Rect,
     left_block: Option<Rect>,
     explorer_inner: Rect,
@@ -234,11 +234,11 @@ fn resolve(area: Rect, app: &App) -> Resolved {
         .copied()
         .unwrap_or(Rect::new(area.x, area.y, area.width, 0));
 
-    let (main_area, banner) = if app.modal.is_some() {
-        let banner_h = banner::banner_height(app, area.height);
+    let (main_area, messages_area) = if messages::is_open(app) {
+        let messages_h = messages::height(app, area.height);
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(banner_h)])
+            .constraints([Constraint::Min(0), Constraint::Length(messages_h)])
             .split(main_area);
         (
             rows.first().copied().unwrap_or(main_area),
@@ -330,7 +330,7 @@ fn resolve(area: Rect, app: &App) -> Resolved {
 
     Resolved {
         footer,
-        banner,
+        messages: messages_area,
         main_area,
         left_block,
         explorer_inner,
@@ -358,7 +358,7 @@ pub fn resolve_mode(area: Rect, app: &App) -> LayoutMode {
 pub fn geometry(area: Rect, app: &App) -> Geometry {
     let Resolved {
         footer,
-        banner,
+        messages: messages_area,
         main_area,
         left_block,
         explorer_inner,
@@ -444,7 +444,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
 
     Geometry {
         footer,
-        banner,
+        messages: messages_area,
         left_block,
         explorer_inner,
         tabs_divider,

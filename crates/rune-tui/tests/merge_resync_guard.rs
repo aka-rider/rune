@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use rune_db::SyncKind;
 use rune_tui::app::{self, App};
-use rune_tui::banner::{GuardKind, Modal};
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
+use rune_tui::guard::GuardKind;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
 use rune_tui::runtime::{CmdKind, Effects};
@@ -402,8 +402,8 @@ fn enter_disk_conflict_guard(
 #[test]
 fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
     let (app, _bridge, doc_id, _vfs) = enter_disk_conflict_guard(b"disk changed");
-    let Some(Modal::Guard(prompt)) = &app.modal else {
-        panic!("expected the disk-conflict Guard modal");
+    let Some(prompt) = &app.guard else {
+        panic!("expected the disk-conflict Guard");
     };
     assert_eq!(prompt.doc, doc_id);
     assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
@@ -418,7 +418,7 @@ fn disk_conflict_guard_merge_answer_starts_a_merge_attempt() {
         (app, bridge, doc_id)
     };
     press_key(&mut app, ch('m'));
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(matches!(
         app.merge,
         MergeState::Pending { doc, .. } if doc == doc_id
@@ -434,7 +434,7 @@ fn disk_conflict_guard_escape_cancels_with_a_status() {
 
     press_key(&mut app, bare(KeyCode::Escape));
 
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert_eq!(app.merge, MergeState::Inactive);
     assert_eq!(app.doc(doc_id).unwrap().buffer.content(), before);
     // `handle_guard_key`'s own rule (review fix F2, pre-dating this plan):
@@ -465,7 +465,7 @@ fn disk_conflict_guard_discard_adopts_the_latest_disk_bytes_in_one_step() {
     external_write(vfs.as_ref(), b"disk changed twice");
 
     press_key(&mut app, ch('d'));
-    assert!(app.modal.is_none());
+    assert!(app.guard.is_none());
     assert!(matches!(
         app.merge,
         MergeState::Pending { doc, .. } if doc == doc_id

@@ -12,6 +12,7 @@ use rune_db::MatResult;
 
 use crate::app::{App, StatusSource};
 use crate::document::DocumentId;
+use crate::guard::{self, GuardKind, GuardPrompt};
 use crate::runtime::Effects;
 use crate::workspace;
 
@@ -102,11 +103,10 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // Plan WP6.S4: a genuine CAS conflict — the fresh disk
             // observation `record_fresh_from_stat` already recorded — offers
             // the disk-conflict Guard so the user can act on it directly
-            // rather than needing to know `⌘M` exists. A refused raise
-            // (some higher-priority modal already up) leaves the plain
-            // status line above as the only feedback, which is still
-            // correct — `set_modal`'s `#[must_use]` return says exactly
-            // that happened.
+            // rather than needing to know `⌘M` exists. A refused raise (a
+            // Guard already up) leaves the plain status line above as the
+            // only feedback, which is still correct — `set_guard`'s
+            // `#[must_use]` return says exactly that happened.
             if let Some(fresh) = &mat.fresh {
                 // `merge::begin`'s own fast pre-check (plan Gotchas `[R3]`)
                 // reads `last_sync` as a hint only — this CAS refusal IS
@@ -119,14 +119,14 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 if let Some(doc) = app.doc_mut(id) {
                     doc.last_sync = Some(rune_db::SyncKind::Diverged);
                 }
-                let _ = crate::banner::set_modal(
+                let _ = guard::set_guard(
                     app,
-                    crate::banner::Modal::Guard(crate::banner::GuardPrompt {
+                    GuardPrompt {
                         doc: id,
-                        kind: crate::banner::GuardKind::DiskConflict {
+                        kind: GuardKind::DiskConflict {
                             fresh_obs: fresh.id,
                         },
-                    }),
+                    },
                 );
             }
         }

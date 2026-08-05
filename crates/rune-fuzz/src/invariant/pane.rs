@@ -27,7 +27,7 @@ use crate::step::{MsgTag, StepCtx};
 /// checker simply never fires on those, because it's scoped to the
 /// no-active-document-change case. The paths that keep the active
 /// document unchanged (`⌘S`, a focus/toggle chord, a quit chord, a failed
-/// open raising `Modal::Error`, `^w` arming the Guard, closing a
+/// open posting a message (plan WP1), `^w` arming the Guard, closing a
 /// non-active tab) never touch a buffer byte either, so they're silent
 /// here too.
 ///
@@ -109,13 +109,14 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
 
     // The frame `geometry` was computed for is not itself a field of
     // `Geometry` — reconstruct it from the three rects that partition it
-    // exactly: `main` (post-banner) plus whatever the banner and footer
-    // splits carved off. Both splits partition their input rect with no gap
-    // and no overlap, so the union reconstructs the original frame exactly.
+    // exactly: `main` (post-messages-pane) plus whatever the messages pane
+    // and footer splits carved off. Both splits partition their input rect
+    // with no gap and no overlap, so the union reconstructs the original
+    // frame exactly.
     let frame = geo
         .main
         .union(geo.footer)
-        .union(geo.banner.unwrap_or_default());
+        .union(geo.messages.unwrap_or_default());
 
     let mut rects: Vec<(&str, Rect)> = vec![
         ("footer", geo.footer),
@@ -125,8 +126,8 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
         ("editor", geo.editor),
         ("main", geo.main),
     ];
-    if let Some(r) = geo.banner {
-        rects.push(("banner", r));
+    if let Some(r) = geo.messages {
+        rects.push(("messages", r));
     }
     if let Some(r) = geo.left_block {
         rects.push(("left_block", r));

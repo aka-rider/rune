@@ -11,28 +11,31 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, StatusSource};
-use crate::banner;
-use crate::banner::{GuardKind, GuardPrompt, Modal};
 use crate::footer_hints::{default_hint_spans, truncated_default_hint_spans};
+use crate::guard::{self, GuardKind, GuardPrompt};
+use crate::pane::Pane;
 use crate::width::display_width;
 use rune_syntax::wrap::line_visual_col;
 
 /// Which single visual state the footer's left side shows for this render
-/// — priority order highest-first (plan WP2.S6, WP3.S3): a modal (the
-/// banner) always wins over a save error, which wins over a pending chord
-/// hint, which wins over the degraded-store banner, which wins over a plain
-/// status message, which falls back to the default keymap hints. Mutually
-/// exclusive by construction — never concatenated, unlike the pre-WP2
-/// `status.rs::status_text`.
+/// — priority order highest-first (plan WP2.S6, WP3.S3, WP1.S10): the Guard
+/// prompt always wins, then the messages pane's own keys (only while it
+/// holds focus), then a save error, a pending chord hint, the degraded-
+/// store banner, a plain status message, and the default keymap hints.
+/// Mutually exclusive by construction — never concatenated, unlike the
+/// pre-WP2 `status.rs::status_text`.
 enum Mode<'a> {
-    Modal,
-    /// The close/quit-confirmation prompt (plan WP5.S3, widened WP2) —
-    /// outranks everything below it exactly like `Modal` does, since it's
-    /// the SAME `App.modal` slot, just the other variant. Carries the whole
-    /// `GuardPrompt`, not just its `GuardKind` (plan WP2): `guard_spans`
-    /// needs `prompt.doc` to name WHICH document a `DirtyQuit` prompt is
-    /// blocking on — a `GuardKind` alone can't say that.
+    /// The close/quit/rename/disk-conflict confirmation prompt (plan
+    /// WP5.S3, widened WP2). Carries the whole `GuardPrompt`, not just its
+    /// `GuardKind` (plan WP2): `guard_spans` needs `prompt.doc` to name
+    /// WHICH document a `DirtyQuit` prompt is blocking on — a `GuardKind`
+    /// alone can't say that.
     Guard(&'a GuardPrompt),
+    /// The messages pane's own hint row (plan WP1.S10) — entered whenever
+    /// the pane holds focus, ranked directly below `Guard` and above every
+    /// other mode: while the user is inside the pane, its own keys
+    /// (`[⌘C] copy`, `[Esc] close`) are the only thing worth showing.
+    Messages,
     SaveError(&'a str),
     ChordPending(String),
     Degraded(&'a str),
@@ -58,10 +61,11 @@ enum Mode<'a> {
 }
 
 fn mode(app: &App) -> Mode<'_> {
-    match &app.modal {
-        Some(Modal::Error(_)) => return Mode::Modal,
-        Some(Modal::Guard(prompt)) => return Mode::Guard(prompt),
-        None => {}
+    if let Some(prompt) = &app.guard {
+        return Mode::Guard(prompt);
+    }
+    if app.focus() == Pane::Messages {
+        return Mode::Messages;
     }
     if app.status_source == StatusSource::SaveError
         && let Some(msg) = &app.status_message
@@ -137,12 +141,12 @@ fn quit_hint(app: &App) -> &'static str {
 /// `draw` renders and tests assert on via `footer_text` below.
 fn left_spans(app: &App) -> Vec<Span<'static>> {
     match mode(app) {
-        Mode::Modal => vec![
-            Span::styled("[C]opy", app.theme.chrome.footer_key),
-            Span::styled("  ", app.theme.chrome.footer_hint),
-            Span::styled("[Esc] discard", app.theme.chrome.footer_hint),
-        ],
         Mode::Guard(prompt) => guard_spans(app, prompt),
+        Mode::Messages => vec![
+            Span::styled("[\u{2318}C] copy", app.theme.chrome.footer_key),
+            Span::styled("  ", app.theme.chrome.footer_hint),
+            Span::styled("[Esc] close", app.theme.chrome.footer_hint),
+        ],
         Mode::SaveError(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.error)],
         Mode::ChordPending(text) => vec![Span::styled(text, app.theme.chrome.footer_key)],
         Mode::Degraded(msg) => vec![Span::styled(msg.to_string(), app.theme.chrome.footer_hint)],
@@ -162,8 +166,8 @@ fn left_spans(app: &App) -> Vec<Span<'static>> {
 }
 
 /// The dirty-close/dirty-quit Guard's `[S]ave [D]iscard [Esc] Cancel` hint
-/// (plan WP5.S3, widened WP2), built from `banner::DIRTY_CLOSE_OPTIONS`/
-/// `DIRTY_CLOSE_CANCEL_LABEL` — the SAME consts `banner::guard::
+/// (plan WP5.S3, widened WP2), built from `guard::DIRTY_CLOSE_OPTIONS`/
+/// `DIRTY_CLOSE_CANCEL_LABEL` — the SAME consts `guard::
 /// handle_guard_key` matches its `s`/`d` keys against, so this render can
 /// never drift from what those keys actually do (review fix).
 fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
@@ -178,8 +182,8 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     // NOT `title::name_for`: that one answers "what should the title FIELD
     // hold", which for a pathless draft is the editable `.md` stub — a
     // prompt reading "unsaved changes in .md" names nothing at all.
-    let options: &[banner::GuardOption] = match &prompt.kind {
-        GuardKind::DirtyClose => banner::DIRTY_CLOSE_OPTIONS,
+    let options: &[guard::GuardOption] = match &prompt.kind {
+        GuardKind::DirtyClose => guard::DIRTY_CLOSE_OPTIONS,
         GuardKind::DirtyQuit => {
             let name = app
                 .doc(prompt.doc)
@@ -189,7 +193,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
                 format!("unsaved changes in {name} \u{2014} "),
                 app.theme.chrome.footer_hint,
             ));
-            banner::DIRTY_CLOSE_OPTIONS
+            guard::DIRTY_CLOSE_OPTIONS
         }
         GuardKind::RenameCollision { target } => {
             spans.push(Span::styled(
@@ -200,7 +204,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
             // the replaced file's bytes, so the option is not offered at
             // all — an offer the app would then refuse is worse than none.
             if crate::rename::replace_allowed(app) {
-                banner::RENAME_COLLISION_OPTIONS
+                guard::RENAME_COLLISION_OPTIONS
             } else {
                 &[]
             }
@@ -214,7 +218,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
                 format!("{name} changed on disk \u{2014} "),
                 app.theme.chrome.footer_hint,
             ));
-            banner::DISK_CONFLICT_OPTIONS
+            guard::DISK_CONFLICT_OPTIONS
         }
     };
 
@@ -223,7 +227,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
         spans.push(Span::styled("  ", app.theme.chrome.footer_hint));
     }
     spans.push(Span::styled(
-        banner::DIRTY_CLOSE_CANCEL_LABEL,
+        guard::DIRTY_CLOSE_CANCEL_LABEL,
         app.theme.chrome.footer_hint,
     ));
     spans
@@ -286,7 +290,6 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::keymap::{GLOBAL_BINDINGS, QuitKey};
-    use crate::pane::Pane;
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -368,28 +371,28 @@ mod tests {
         assert!(text.contains("close"), "footer text: {text:?}");
     }
 
-    /// The Guard mode's rendered labels are exactly `banner::DIRTY_CLOSE_
-    /// OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the same consts `banner::
+    /// The Guard mode's rendered labels are exactly `guard::DIRTY_CLOSE_
+    /// OPTIONS`/`DIRTY_CLOSE_CANCEL_LABEL` — the same consts `guard::
     /// handle_guard_key` matches its `s`/`d` keys against (review fix: no
     /// more independently hand-maintained literal here).
     #[test]
     fn guard_mode_labels_come_from_the_shared_dirty_close_consts() {
         let mut app = app_with("hello");
         let doc = app.active;
-        app.modal = Some(crate::banner::Modal::Guard(crate::banner::GuardPrompt {
+        app.guard = Some(crate::guard::GuardPrompt {
             doc,
-            kind: crate::banner::GuardKind::DirtyClose,
-        }));
+            kind: crate::guard::GuardKind::DirtyClose,
+        });
 
         let text = footer_text(&app);
-        for opt in crate::banner::DIRTY_CLOSE_OPTIONS {
+        for opt in crate::guard::DIRTY_CLOSE_OPTIONS {
             assert!(
                 text.contains(opt.label),
                 "expected {:?} in the Guard footer text {text:?}",
                 opt.label
             );
         }
-        assert!(text.contains(crate::banner::DIRTY_CLOSE_CANCEL_LABEL));
+        assert!(text.contains(crate::guard::DIRTY_CLOSE_CANCEL_LABEL));
     }
 
     #[test]

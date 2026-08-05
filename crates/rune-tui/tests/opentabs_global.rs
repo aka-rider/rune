@@ -70,7 +70,7 @@ fn ctrl_w_on_the_tabs_pane_requests_closing_the_active_document() {
     app::update(&mut app, Msg::Key(ctrl_w()), &mut effects);
 
     assert!(
-        app.modal.is_some(),
+        app.guard.is_some(),
         "^w on the dirty active document must arm the Guard, regardless of the Tabs cursor"
     );
     assert!(app.documents.contains_key(&second));
@@ -90,7 +90,7 @@ fn ctrl_w_from_editor_focus_closes_the_active_clean_document() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl_w()), &mut effects);
 
-    assert!(app.modal.is_none(), "a clean document closes immediately");
+    assert!(app.guard.is_none(), "a clean document closes immediately");
     assert!(!app.documents.contains_key(&second), "b.md must be closed");
     assert_eq!(app.active, first, "the sole remaining document takes over");
 }
@@ -110,13 +110,12 @@ fn ctrl_w_from_editor_focus_on_a_dirty_document_arms_the_guard() {
     let mut effects = Effects::default();
     app::update(&mut app, Msg::Key(ctrl_w()), &mut effects);
 
-    match &app.modal {
-        Some(rune_tui::banner::Modal::Guard(prompt)) => {
+    match &app.guard {
+        Some(prompt) => {
             assert_eq!(prompt.doc, second);
-            assert_eq!(prompt.kind, rune_tui::banner::GuardKind::DirtyClose);
+            assert_eq!(prompt.kind, rune_tui::guard::GuardKind::DirtyClose);
         }
-        Some(_) => panic!("expected a DirtyClose Guard, got some other modal"),
-        None => panic!("expected a DirtyClose Guard, got no modal"),
+        None => panic!("expected a DirtyClose Guard, got no Guard"),
     }
     assert!(
         app.documents.contains_key(&second),
