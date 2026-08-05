@@ -20,14 +20,16 @@ use crate::commands::nav_line::line_range_incl_newline;
 use crate::commands::nav_scroll;
 use crate::commands::splitter;
 use crate::document::Document;
+use crate::messages;
 use crate::navigate;
+use crate::pane::Pane;
 use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
 use crate::runtime::Effects;
 
 /// The mouse wheel's step (plan WP7.S6: "wheel scrolls 3 rows" — vim,
 /// neovim's `mousescroll=ver:3`, and Helix's `scroll-lines = 3` all
 /// converge on this number).
-const WHEEL_ROWS: isize = 3;
+pub(crate) const WHEEL_ROWS: isize = 3;
 
 /// Routes one `Msg::Mouse`. Mouse support is no longer editor-only: the
 /// two splitter bands (the left column's grab band, the `Open` divider
@@ -59,13 +61,52 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
             _ => app.pointer.drag = None,
         }
     }
+
+    // A latched text-selection drag owns the pointer the same way, and for
+    // the same reason: routed by the gesture's OWN pane, not by whichever
+    // rect the pointer currently sits over, so a drag that has wandered
+    // outside its origin pane (or a release out past the frame edge) still
+    // reaches the document it began on instead of being dropped silently.
+    if let Some(Drag::Text { anchor, pane }) = app.pointer.drag {
+        match input.kind {
+            MouseKind::Drag(MouseButton::Left) => {
+                match pane {
+                    Pane::Editor => handle_left_drag(app, anchor, input),
+                    Pane::Messages => messages::mouse(app, input, effects),
+                    _ => {}
+                }
+                return;
+            }
+            MouseKind::Up(MouseButton::Left) => {
+                app.pointer.drag = None;
+                if pane == Pane::Messages {
+                    messages::mouse(app, input, effects);
+                }
+                return;
+            }
+            _ => app.pointer.drag = None,
+        }
+    }
+
     if matches!(input.kind, MouseKind::Down(MouseButton::Left)) && splitter::begin(app, input) {
         return;
     }
 
     let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
-    let editor = crate::layout::geometry(area, app).editor;
+    let geo = crate::layout::geometry(area, app);
 
+    if let Some(rect) = geo.messages {
+        let inside = input.column >= rect.x
+            && input.column < rect.x.saturating_add(rect.width)
+            && input.row >= rect.y
+            && input.row < rect.y.saturating_add(rect.height);
+        if inside {
+            messages::mouse(app, input, effects);
+            return;
+        }
+    }
+
+    let editor = geo.editor;
     if input.column < editor.x
         || input.row < editor.y
         || input.column >= editor.x.saturating_add(editor.width)
@@ -80,8 +121,6 @@ pub fn handle(app: &mut App, input: MouseInput, effects: &mut Effects) {
         MouseKind::ScrollUp => nav_scroll::scroll_lines(app.active_doc_mut(), -WHEEL_ROWS),
         MouseKind::ScrollDown => nav_scroll::scroll_lines(app.active_doc_mut(), WHEEL_ROWS),
         MouseKind::Down(MouseButton::Left) => handle_left_down(app, input, col, row, effects),
-        MouseKind::Drag(MouseButton::Left) => handle_left_drag(app, col, row),
-        MouseKind::Up(MouseButton::Left) => app.pointer.drag = None,
         _ => {}
     }
 }
@@ -114,7 +153,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     }
 
     let now = app.pointer_clock.now();
-    let count = app.pointer.register_click(now, col, row);
+    let count = app.pointer.register_click(now, input.column, input.row);
 
     if input.alt {
         // Alt-click: add a cursor, never disturbing the existing set.
@@ -144,7 +183,10 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
             id,
         };
         doc.cursors = CursorSet::new_from(&[extended]);
-        app.pointer.drag = Some(Drag::Text { anchor });
+        app.pointer.drag = Some(Drag::Text {
+            anchor,
+            pane: Pane::Editor,
+        });
         return;
     }
 
@@ -158,7 +200,10 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
                 id: 0,
             };
             doc.cursors = CursorSet::new_from(&[placed]);
-            app.pointer.drag = Some(Drag::Text { anchor: offset });
+            app.pointer.drag = Some(Drag::Text {
+                anchor: offset,
+                pane: Pane::Editor,
+            });
         }
         2 => {
             let (start, end) = word_range_at(&doc.buffer, offset);
@@ -173,7 +218,7 @@ fn handle_left_down(app: &mut App, input: MouseInput, col: u16, row: u16, effect
     }
 }
 
-fn select_range(doc: &mut Document, start: usize, end: usize) {
+pub(crate) fn select_range(doc: &mut Document, start: usize, end: usize) {
     let id = doc.cursors.primary().id;
     let selected = Cursor {
         position: end,
@@ -184,10 +229,25 @@ fn select_range(doc: &mut Document, start: usize, end: usize) {
     doc.cursors = CursorSet::new_from(&[selected]);
 }
 
-fn handle_left_drag(app: &mut App, col: u16, row: u16) {
-    let Some(Drag::Text { anchor }) = app.pointer.drag else {
+/// Extends the editor's selection for a latched `Drag::Text { pane: Editor,
+/// .. }` — called directly by the top-of-`handle` latched-gesture branch, so
+/// it recomputes the editor rect itself rather than trusting rect-relative
+/// coordinates a caller elsewhere might compute against the wrong rect. A
+/// pointer that has wandered outside the editor mid-drag is a no-op (the
+/// selection simply stops extending until it re-enters), matching the
+/// pre-WP3 behaviour this replaces.
+fn handle_left_drag(app: &mut App, anchor: usize, input: MouseInput) {
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    let editor = crate::layout::geometry(area, app).editor;
+    if input.column < editor.x
+        || input.row < editor.y
+        || input.column >= editor.x.saturating_add(editor.width)
+        || input.row >= editor.y.saturating_add(editor.height)
+    {
         return;
-    };
+    }
+    let col = input.column - editor.x;
+    let row = input.row - editor.y;
     let Some((offset, desired_col)) = hit_test(app, app.active_doc(), row, col) else {
         return;
     };

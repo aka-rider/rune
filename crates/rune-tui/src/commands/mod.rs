@@ -16,7 +16,7 @@ pub mod edit_core;
 pub mod edit_lines;
 pub mod edit_lines_move;
 pub mod mouse;
-mod mouse_hit;
+pub(crate) mod mouse_hit;
 pub mod multi;
 pub mod nav;
 pub mod nav_line;

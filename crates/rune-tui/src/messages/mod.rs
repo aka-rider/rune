@@ -14,12 +14,21 @@ mod render;
 
 use std::time::Duration;
 
-use crate::app::App;
-use crate::document::{Document, ReadOnly};
-use crate::keymap::{KeyCode, KeyInput};
-use crate::pane::Pane;
-use crate::runtime::{Cmd, CmdKind, Effects, Msg};
+use ratatui::layout::Rect;
 use rune_core::buffer::Buffer;
+use rune_core::cursor::{Cursor, CursorSet};
+
+use crate::app::App;
+use crate::commands::clipboard::{extract_copy_text, write_to_clipboard_or_report};
+use crate::commands::mouse::{WHEEL_ROWS, select_range};
+use crate::commands::mouse_hit::hit_test;
+use crate::commands::nav::word_range_at;
+use crate::commands::nav_line::line_range_incl_newline;
+use crate::document::{Document, ReadOnly};
+use crate::keymap::{KeyCode, KeyInput, Mods};
+use crate::pane::Pane;
+use crate::pointer::{Drag, MouseButton, MouseInput, MouseKind};
+use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 
 pub use render::draw;
 
@@ -338,6 +347,10 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
             scroll(app, page_amount(app));
             true
         }
+        KeyCode::Char('c') if is_copy_chord(key.mods) => {
+            copy_selection(app, effects);
+            true
+        }
         _ => false,
     }
 }
@@ -346,8 +359,8 @@ pub fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> bool {
 /// auto-collapse timer this settle (plan WP2.S2) — every one of the four
 /// suppression rules is a `false` here: the pane must be open with nothing
 /// already armed, unfocused, carrying no selection on its primary cursor,
-/// and its newest entry must not be an error (CONSTITUTION §0.1 — a
-/// data-risk message must stay visible until dismissed).
+/// and its newest entry must not be an error — a data-risk message must
+/// stay visible until dismissed.
 pub fn should_arm_auto_collapse(app: &App) -> bool {
     app.messages.open
         && app.messages.armed.is_none()
@@ -384,4 +397,138 @@ pub fn collapse_timeout_cmd(generation: u32) -> Cmd {
         std::thread::sleep(AUTO_COLLAPSE);
         Some(Msg::MessagesCollapseTimeout { generation })
     })
+}
+
+/// `⌘C` (sup-only) or `^⇧C` (ctrl+shift) — the exact two chords the editor's
+/// own `Copy` row binds (`keymap::editor_bindings::clipboard`), so the pane
+/// is keyboard-copyable with the identical gesture (plan WP3.S5).
+fn is_copy_chord(m: Mods) -> bool {
+    (m.sup && !m.ctrl && !m.alt && !m.shift) || (m.ctrl && m.shift && !m.alt && !m.sup)
+}
+
+/// The pane's own `Rect` this frame, or `None` while it's closed — every
+/// mouse handler below re-derives it fresh rather than trusting a value a
+/// caller might have computed against a stale frame.
+fn pane_rect(app: &App) -> Option<Rect> {
+    let area = Rect::new(0, 0, app.frame_width, app.frame_height);
+    crate::layout::geometry(area, app).messages
+}
+
+/// `(row, col)` relative to the pane's CONTENT area — i.e. below its one
+/// separator row — for an absolute-coordinate `input`. `None` when the pane
+/// isn't open, or the point lands on the separator row itself (chrome, not
+/// content).
+fn relative(app: &App, input: MouseInput) -> Option<(u16, u16)> {
+    let rect = pane_rect(app)?;
+    let rel_row = input.row.checked_sub(rect.y)?;
+    if rel_row == 0 || rel_row >= rect.height {
+        return None;
+    }
+    let col = input.column.saturating_sub(rect.x);
+    Some((rel_row - 1, col))
+}
+
+/// Dispatches one `MouseInput` that belongs to the pane — either a fresh
+/// press/wheel-tick landing inside its `Rect` (`commands::mouse::handle`'s
+/// own rect dispatch) or a `Drag`/`Up` continuing a gesture that started
+/// there, routed by the LATCHED drag's own pane rather than by wherever the
+/// pointer currently sits (`Drag::Text`'s own docs) — the same reason a
+/// splitter drag latches instead of re-testing its band on every event.
+pub fn mouse(app: &mut App, input: MouseInput, effects: &mut Effects) {
+    match input.kind {
+        MouseKind::ScrollUp => scroll(app, -WHEEL_ROWS),
+        MouseKind::ScrollDown => scroll(app, WHEEL_ROWS),
+        MouseKind::Down(MouseButton::Left) => mouse_down(app, input, effects),
+        MouseKind::Drag(MouseButton::Left) => mouse_drag(app, input),
+        MouseKind::Up(MouseButton::Left) => copy_selection(app, effects),
+        _ => {}
+    }
+}
+
+/// Left-press: focuses the pane (never modal — a message pane click is just
+/// another way to reach it, exactly like `^E`), places or extends the
+/// selection at the hit-tested offset, and starts a `Drag::Text { pane:
+/// Messages, .. }` for a plain single click — mirrors `commands::mouse::
+/// handle_left_down`'s shape for the editor, reusing the same word/line
+/// range helpers so double/triple-click behave identically in both panes.
+fn mouse_down(app: &mut App, input: MouseInput, effects: &mut Effects) {
+    focus(app, effects);
+    let Some((row, col)) = relative(app, input) else {
+        return;
+    };
+    let Some((offset, desired_col)) = hit_test(app, &app.messages.doc, row, col) else {
+        return;
+    };
+
+    let now = app.pointer_clock.now();
+    let count = app.pointer.register_click(now, input.column, input.row);
+
+    match count {
+        1 => {
+            let placed = Cursor {
+                position: offset,
+                anchor: offset,
+                desired_col,
+                id: 0,
+            };
+            app.messages.doc.cursors = CursorSet::new_from(&[placed]);
+            app.pointer.drag = Some(Drag::Text {
+                anchor: offset,
+                pane: Pane::Messages,
+            });
+        }
+        2 => {
+            let (start, end) = word_range_at(&app.messages.doc.buffer, offset);
+            select_range(&mut app.messages.doc, start, end);
+            app.pointer.drag = None;
+        }
+        _ => {
+            let (start, end) = line_range_incl_newline(&app.messages.doc.buffer, offset);
+            select_range(&mut app.messages.doc, start, end);
+            app.pointer.drag = None;
+        }
+    }
+}
+
+/// Extends the pane's selection for a latched `Drag::Text { pane: Messages,
+/// .. }` — a no-op once the drag belongs to a different pane (guarded by
+/// the pattern match itself) or once the pointer has left the pane's own
+/// content rows (`relative` returning `None`).
+fn mouse_drag(app: &mut App, input: MouseInput) {
+    let Some(Drag::Text {
+        anchor,
+        pane: Pane::Messages,
+    }) = app.pointer.drag
+    else {
+        return;
+    };
+    let Some((row, col)) = relative(app, input) else {
+        return;
+    };
+    let Some((offset, desired_col)) = hit_test(app, &app.messages.doc, row, col) else {
+        return;
+    };
+    let id = app.messages.doc.cursors.primary().id;
+    let extended = Cursor {
+        position: offset,
+        anchor,
+        desired_col,
+        id,
+    };
+    app.messages.doc.cursors = CursorSet::new_from(&[extended]);
+}
+
+/// Copies the pane's current selection through the same capped OSC-52 path
+/// every other copy in the app uses — a no-op with no selection, so
+/// `extract_copy_text`'s whole-line fallback (meant for the editor's own
+/// `Copy` command with no selection) never fires here (plan Gotchas). The
+/// one chokepoint both the mouse-release path and `⌘C`/`^⇧C` in
+/// `handle_key` reach through, so the two can never drift on when a copy
+/// actually happens.
+fn copy_selection(app: &mut App, effects: &mut Effects) {
+    if !app.messages.doc.cursors.primary().has_selection() {
+        return;
+    }
+    let text = extract_copy_text(&app.messages.doc.buffer, &app.messages.doc.cursors);
+    write_to_clipboard_or_report(app, &text, effects);
 }
