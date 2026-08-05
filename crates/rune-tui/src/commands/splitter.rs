@@ -103,9 +103,9 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
         }
     }
 
-    // Same reconciliation the command path runs after `CollapseLeft`
-    // (`pane::handle_global_command`) — a drag that just collapsed the
-    // section holding focus reaches exactly the state a keybinding
+    // Same reconciliation the command path runs after `ToggleLeft`'s hide
+    // branch (`pane::handle_global_command`) — a drag that just collapsed
+    // the section holding focus reaches exactly the state a keybinding
     // collapsing it would, through the one shared chokepoint rather than a
     // second, independently-maintained copy of the check.
     crate::focus::reconcile(app, effects);
@@ -132,13 +132,14 @@ mod tests {
         app
     }
 
-    /// Dragging the left column's splitter away and pressing
-    /// `GlobalCommand::CollapseLeft` must reach IDENTICAL state — both hide
-    /// the same `Split` and both redirect focus through the one shared
-    /// `focus::reconcile` chokepoint, so a user reaching for either gesture
-    /// is never surprised the other one behaves differently.
+    /// Dragging the left column's splitter away and pressing `^B`'s
+    /// `GlobalCommand::ToggleLeft` hide branch must reach IDENTICAL state —
+    /// both hide the same `Split` and both redirect focus through the one
+    /// shared `focus::reconcile`/`set_focus_pane` path, so a user reaching
+    /// for either gesture is never surprised the other one behaves
+    /// differently.
     #[test]
-    fn dragging_the_column_away_and_the_collapse_command_reach_the_same_state() {
+    fn dragging_the_column_away_and_the_toggle_command_reach_the_same_state() {
         let mut dragged = app_with_explorer_focused();
         let mut effects = Effects::default();
         dragged.pointer.drag = Some(Drag::Splitter {
@@ -160,7 +161,7 @@ mod tests {
 
         let mut commanded = app_with_explorer_focused();
         let mut effects = Effects::default();
-        handle_global_command(&mut commanded, GlobalCommand::CollapseLeft, &mut effects);
+        handle_global_command(&mut commanded, GlobalCommand::ToggleLeft, &mut effects);
 
         assert!(
             !dragged.splits.left.is_shown(),

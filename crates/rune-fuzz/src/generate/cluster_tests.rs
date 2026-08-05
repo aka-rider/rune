@@ -23,9 +23,9 @@ use super::*;
 /// session with exactly that arm, THEN runs whatever `cluster_highlight`
 /// itself generates — sampled from the real strategy, not a hand-copied
 /// stand-in — and asserts the edit still lands. Run this with the
-/// `Action::Key(ESCAPE_KEY)`/`Action::Key(CTRL_E_KEY)` prefix reverted
-/// to confirm it fails first (recorded in the fix's commit/handoff, not
-/// re-derivable from the test alone).
+/// `Action::Key(ESCAPE_KEY)` prefix reverted to confirm it fails first
+/// (recorded in the fix's commit/handoff, not re-derivable from the test
+/// alone).
 #[test]
 fn cluster_highlight_edit_survives_focus_parked_off_editor() {
     let mut runner = TestRunner::default();

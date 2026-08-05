@@ -50,6 +50,11 @@ fn up_and_down_clamp_at_the_list_bounds() {
     let mem = seeded_vfs();
     let mut app = app_with(&mem);
     load_explorer(&mut app);
+    // `load_explorer`'s `^b` now reveals the active document's own file
+    // (the Enter/Escape rework's "land on the active file" contract), not
+    // necessarily row 0 — pin a known starting row before probing the
+    // clamp itself, which is what this test is actually about.
+    app.explorer.nav.cursor = 0;
     let mut effects = Effects::default();
 
     assert_eq!(
@@ -180,7 +185,11 @@ fn enter_on_the_parent_row_loads_the_parent_directory() {
     load_explorer(&mut app);
 
     assert_eq!(app.explorer.entries[0].name, "..");
-    assert_eq!(app.explorer.nav.cursor, 0);
+    // `load_explorer`'s `^b` now reveals the active document's own file,
+    // not necessarily row 0 (see `up_and_down_clamp_at_the_list_bounds`'s
+    // own note) — this test is about the ".." row specifically, so park the
+    // cursor there explicitly.
+    app.explorer.nav.cursor = 0;
 
     let mut effects = Effects::default();
     let outcome = explorer_keys::handle_key(&mut app, key(KeyCode::Enter), &mut effects);

@@ -130,10 +130,30 @@ fn zero_and_one_by_one_areas_never_panic_and_stay_within_bounds() {
     }
 }
 
+/// A frame too narrow to fit the column ALONGSIDE the center pane no
+/// longer drops the column — the narrow-frame flip (`LayoutMode::
+/// ExplorerOnly`) hands it the whole frame instead, so `center` shrinks to
+/// nothing rather than the column vanishing.
 #[test]
-fn too_narrow_for_both_minimums_drops_the_left_pane() {
+fn too_narrow_for_both_minimums_flips_to_a_full_width_left_pane() {
     let mut app = app_for();
     app.splits.left.show();
+    let width = MIN_LEFT_PANE_W + MIN_CENTER_W - 10; // 30, well under the 40 floor
+    let geo = layout::geometry(Rect::new(0, 0, width, 34), &app);
+
+    let left_block = geo
+        .left_block
+        .expect("the flip keeps the column, full width");
+    assert_eq!(left_block.width, width);
+    assert_eq!(geo.center.width, 0);
+}
+
+/// The converse: the same too-narrow frame with the column hidden gives the
+/// center pane the whole width, exactly as before — the flip only ever
+/// applies when the user asked for the column.
+#[test]
+fn too_narrow_for_both_minimums_with_the_column_hidden_drops_it() {
+    let app = app_for();
     let width = MIN_LEFT_PANE_W + MIN_CENTER_W - 10; // 30, well under the 40 floor
     let geo = layout::geometry(Rect::new(0, 0, width, 34), &app);
 

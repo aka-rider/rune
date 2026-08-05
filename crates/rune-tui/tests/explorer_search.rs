@@ -90,9 +90,10 @@ fn navigating_into_a_directory_clears_the_search() {
     );
 }
 
-/// Focusing away from the Explorer (here, to the Editor via `^e`) clears a
-/// live search — the design's "leaving the Explorer -> search cleared"
-/// rule, enforced by `app::set_focus`'s own blur chokepoint.
+/// Focusing away from the Explorer (here, to the Editor via `^b`'s hide
+/// branch — `^e` is deleted along with the rest of the Enter/Escape rework)
+/// clears a live search — the design's "leaving the Explorer -> search
+/// cleared" rule, enforced by `app::set_focus`'s own blur chokepoint.
 #[test]
 fn focusing_away_from_the_explorer_clears_the_search() {
     let mem = seeded_vfs();
@@ -103,15 +104,15 @@ fn focusing_away_from_the_explorer_clears_the_search() {
     app::update(&mut app, Msg::Key(key(KeyCode::Char('a'))), &mut effects);
     assert!(app.explorer.search.is_some());
 
-    let ctrl_e = rune_tui::keymap::KeyInput {
-        code: KeyCode::Char('e'),
+    let ctrl_b = rune_tui::keymap::KeyInput {
+        code: KeyCode::Char('b'),
         mods: rune_tui::keymap::Mods {
             ctrl: true,
             ..rune_tui::keymap::Mods::NONE
         },
     };
     let mut effects2 = Effects::default();
-    app::update(&mut app, Msg::Key(ctrl_e), &mut effects2);
+    app::update(&mut app, Msg::Key(ctrl_b), &mut effects2);
 
     assert_eq!(app.focus(), Pane::Editor);
     assert_eq!(

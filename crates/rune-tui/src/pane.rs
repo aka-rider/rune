@@ -52,19 +52,27 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     app.blur_title(effects);
 
     match cmd {
-        GlobalCommand::FocusExplorer => {
-            // Always exposes and focuses the Explorer — never hides it, so
-            // the command a user reaches for to SEE the Explorer can never
-            // instead take it away (mirrors the Go reference's own
-            // show-plus-focus contract, and `FocusTabs`'s below).
-            app.splits.left.show();
-            app.splits.explorer.show();
-            app.set_focus_pane(Pane::Explorer, effects);
-            // Shared with the startup path that shows this column before
-            // any key is pressed, so both fill the pane identically.
-            explorer::ensure_loaded(app, effects);
+        // The single left-column toggle (Enter/Escape rework): painted this
+        // frame ⇒ hide it and hand focus to the Editor; not painted ⇒ show
+        // it, focus the Explorer, and land the cursor on the active
+        // document's own file. Reads `layout_mode()`, never the raw
+        // `Split` flag, so a frame too narrow to actually paint the column
+        // (flag still `shown`, nothing on screen — the exact shadow state
+        // `focus::LayoutMode` exists to close) is treated as hidden, and a
+        // press there shows rather than uselessly re-hiding an already
+        // invisible column.
+        GlobalCommand::ToggleLeft => {
+            let visible = matches!(
+                app.layout_mode(),
+                crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
+            );
+            if visible {
+                app.splits.left.hide();
+                app.set_focus_pane(Pane::Editor, effects);
+            } else {
+                show_and_focus_explorer_on_active_file(app, effects);
+            }
         }
-        GlobalCommand::FocusEditor => app.set_focus_pane(Pane::Editor, effects),
         // Entering the title needs no `Effects` — it can never itself leave
         // it (decision 5). Reseeds from the document that is actually
         // showing, every time: the field must never present a stale name
@@ -88,10 +96,6 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                     .ensure_trail(budget, crate::layout::TABS_LIMITS);
             }
             app.set_focus_pane(Pane::Tabs, effects);
-        }
-        GlobalCommand::CollapseLeft => {
-            app.splits.left.hide();
-            crate::focus::reconcile(app, effects);
         }
         GlobalCommand::Save => {
             let _ = save::trigger_save(app, app.active, effects);
@@ -122,6 +126,24 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
         GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
+    }
+}
+
+/// Shows the left column, focuses the Explorer, and lands the cursor on the
+/// active document's own file — the ONE chokepoint both `ToggleLeft`'s show
+/// branch (above) and the editor's Escape cascade (`dispatch::
+/// handle_editor_key`) reach through, so the two triggers can never drift
+/// apart on how "reveal the active file" behaves. A document with no
+/// `file_path` (a draft, or the virtual Help document) has nothing to
+/// reveal, so it falls back to the Explorer's ordinary first-load fill
+/// instead of calling `explorer_reveal::reveal`.
+pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mut Effects) {
+    app.splits.left.show();
+    app.splits.explorer.show();
+    app.set_focus_pane(Pane::Explorer, effects);
+    match app.active_doc().file_path.clone() {
+        Some(path) => crate::explorer_reveal::reveal(app, &path, effects),
+        None => explorer::ensure_loaded(app, effects),
     }
 }
 
@@ -233,66 +255,56 @@ mod tests {
         Db::new(store, bridge, false)
     }
 
+    /// The show branch: a hidden column becomes shown and the Explorer
+    /// takes focus.
     #[test]
-    fn focus_explorer_shows_the_left_pane_and_focuses_it() {
+    fn toggle_left_shows_the_column_and_focuses_the_explorer() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
         assert!(app.splits.left.is_shown());
         assert_eq!(app.focus(), Pane::Explorer);
     }
 
-    /// The command that shows the Explorer must never be the one that hides
-    /// it again — pressing it a second time is a no-op on visibility, not a
-    /// toggle back off.
+    /// The hide branch: a visible, focused column collapses and focus
+    /// returns to the Editor.
     #[test]
-    fn pressing_it_twice_keeps_the_explorer_shown_and_focused() {
+    fn toggle_left_hides_the_column_and_returns_focus_to_the_editor() {
         let mut app = app();
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
-        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
-        assert!(app.splits.left.is_shown());
-        assert_eq!(app.focus(), Pane::Explorer);
-    }
-
-    /// The collapse command hides the column and, only when it currently
-    /// owns focus, hands focus back to the Editor rather than leaving a
-    /// keystroke routed to a pane with no on-screen presence.
-    #[test]
-    fn collapse_left_hides_the_column_and_returns_focus_to_the_editor() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
-        handle_global_command(&mut app, GlobalCommand::CollapseLeft, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects); // show
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects); // hide
         assert!(!app.splits.left.is_shown());
         assert_eq!(app.focus(), Pane::Editor);
     }
 
-    /// `FocusExplorer` shows the column, but a frame too small to actually
-    /// paint it must never leave focus stranded on an invisible pane —
+    /// Pressing the single toggle twice is identity for both visibility and
+    /// focus — never a dead key, and never a state a third press would need
+    /// to "catch up" from.
+    #[test]
+    fn toggle_left_twice_is_identity() {
+        let mut app = app();
+        let before_shown = app.splits.left.is_shown();
+        let before_focus = app.focus();
+        let mut effects = Effects::default();
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
+        assert_eq!(app.splits.left.is_shown(), before_shown);
+        assert_eq!(app.focus(), before_focus);
+    }
+
+    /// The show branch shows the column, but a frame too small to paint
+    /// anything in it at all — even full-width (`LayoutMode::ExplorerOnly`)
+    /// — must never leave focus stranded on an invisible pane;
     /// `set_focus_pane` falls back to the Editor instead.
     #[test]
-    fn focus_explorer_on_a_too_small_frame_falls_back_to_the_editor() {
+    fn toggle_left_on_a_too_small_frame_falls_back_to_the_editor() {
         let mut app = app();
         app.frame_width = 5;
         app.frame_height = 5;
         let mut effects = Effects::default();
-        handle_global_command(&mut app, GlobalCommand::FocusExplorer, &mut effects);
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
         assert_eq!(app.focus(), Pane::Editor);
-    }
-
-    #[test]
-    fn focus_editor_returns_focus_regardless_of_the_left_columns_visibility() {
-        let mut app = app();
-        let mut effects = Effects::default();
-        app.set_focus_pane(Pane::Explorer, &mut effects);
-        app.splits.left.show();
-        handle_global_command(&mut app, GlobalCommand::FocusEditor, &mut effects);
-        assert_eq!(app.focus(), Pane::Editor);
-        assert!(
-            app.splits.left.is_shown(),
-            "FocusEditor must not hide the left pane"
-        );
     }
 
     /// Review fix (plan WP5.S3, widened WP2): a dirty document with no live

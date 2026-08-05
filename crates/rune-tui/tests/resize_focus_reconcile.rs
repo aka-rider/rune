@@ -50,14 +50,26 @@ const CTRL: Mods = Mods {
 const ROOMY_WIDTH: u16 = 100;
 const ROOMY_HEIGHT: u16 = 30;
 
-/// Narrower than `MIN_LEFT_PANE_W + MIN_CENTER_W` — `layout::resolve_mode`
-/// can no longer fit the left column at all, so the mode resolves to
-/// `LayoutMode::EditorOnly`.
+/// Narrower than `MIN_LEFT_PANE_W + MIN_CENTER_W` — too narrow for the
+/// column to fit ALONGSIDE the center pane. `layout::resolve_mode` no
+/// longer drops the column here (the narrow-frame flip hands it the whole
+/// frame instead, `LayoutMode::ExplorerOnly`), so on its own this no longer
+/// reconciles focus away from the Explorer.
 const NARROW_WIDTH: u16 = MIN_LEFT_PANE_W + MIN_CENTER_W - 1;
 
-/// Focus the Explorer, then narrow the frame far enough that the mode
-/// resolves to `EditorOnly`: focus must be reconciled onto the Editor, the
-/// one pane that mode still paints.
+/// Short enough, paired with `NARROW_WIDTH`, that the column can't paint
+/// anything even at full width — neither the Explorer's nor the tab rows'
+/// own floor fits (`layout::carve_column`'s `(None, None)` arm) — so the
+/// mode genuinely has nothing left to show and resolves to
+/// `LayoutMode::EditorOnly`.
+const TOO_SHORT_HEIGHT: u16 = 3;
+
+/// Focus the Explorer, then shrink the frame far enough — in both
+/// dimensions — that nothing in the column can be painted at all: focus
+/// must be reconciled onto the Editor, the one pane that mode still paints.
+/// A narrow width ALONE is no longer enough (see `NARROW_WIDTH`'s own doc):
+/// that case is covered instead by `a_too_narrow_frame_flips_focus_to_the_
+/// explorer_full_width` below.
 #[test]
 fn narrowing_the_frame_moves_focus_off_a_pane_that_stopped_being_painted() {
     let mut app = app_for("hello");
@@ -65,9 +77,26 @@ fn narrowing_the_frame_moves_focus_off_a_pane_that_stopped_being_painted() {
     press(&mut app, KeyCode::Char('b'), CTRL);
     assert_eq!(app.focus(), Pane::Explorer);
 
-    resize(&mut app, NARROW_WIDTH, ROOMY_HEIGHT);
+    resize(&mut app, NARROW_WIDTH, TOO_SHORT_HEIGHT);
 
     assert_eq!(app.focus(), Pane::Editor);
+}
+
+/// The narrow-frame flip itself: narrowing the frame below `NARROW_WIDTH`
+/// alone (still tall enough for the column's two sections) resolves to
+/// `LayoutMode::ExplorerOnly`, not `EditorOnly` — the Explorer stays
+/// focused because it is still the pane that mode paints.
+#[test]
+fn a_too_narrow_frame_flips_focus_to_the_explorer_full_width() {
+    let mut app = app_for("hello");
+    resize(&mut app, ROOMY_WIDTH, ROOMY_HEIGHT);
+    press(&mut app, KeyCode::Char('b'), CTRL);
+    assert_eq!(app.focus(), Pane::Explorer);
+
+    resize(&mut app, NARROW_WIDTH, ROOMY_HEIGHT);
+
+    assert_eq!(app.layout_mode(), rune_tui::focus::LayoutMode::ExplorerOnly);
+    assert_eq!(app.focus(), Pane::Explorer);
 }
 
 /// The converse: widening the frame back out must never silently move focus

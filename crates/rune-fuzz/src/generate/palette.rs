@@ -450,11 +450,14 @@ pub(super) const ESCAPE_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `^b` (`GlobalCommand::ToggleExplorer`) — CODE-REVIEW.md rune-fuzz
+/// `^b` (`GlobalCommand::ToggleLeft`) — CODE-REVIEW.md rune-fuzz
 /// finding 10: without this, `DirLoaded` always lands in a never-opened
 /// Explorer (the cursor-preserving Refresh path is only ever exercised
 /// against empty state), and the whole Explorer pane was reachable only by
-/// the ~1e-10-probability monkey-burst cluster.
+/// the ~1e-10-probability monkey-burst cluster. Also doubles as the
+/// Enter/Escape rework's own way back to the Editor from any pane the
+/// column can hold (`Pane::Explorer`/`Pane::Tabs`), since both can only
+/// ever be focused while the column is painted.
 pub(super) const CTRL_B_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('b'),
     mods: Mods {
@@ -542,21 +545,5 @@ pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
         alt: true,
         ctrl: false,
         sup: true,
-    },
-};
-
-/// `^e` (`GlobalCommand::FocusEditor`) — fires at stage 2, regardless of
-/// which pane currently has focus (`pane::handle_global_command`'s own
-/// docs: "every `GlobalCommand` fires regardless of which pane"), so this
-/// unconditionally lands `app.focus() == Pane::Editor` once any modal is
-/// already cleared. The other half of `restore_editor_focus`'s two-key
-/// sequence, alongside `ESCAPE_KEY`.
-pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
-    code: KeyCode::Char('e'),
-    mods: Mods {
-        shift: false,
-        alt: false,
-        ctrl: true,
-        sup: false,
     },
 };

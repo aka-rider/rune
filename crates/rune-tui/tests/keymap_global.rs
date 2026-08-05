@@ -22,7 +22,7 @@ fn resolve_in_matches_the_exact_modifier_set() {
     );
     assert_eq!(
         resolve_in(GLOBAL_BINDINGS, ctrl_b),
-        Some(GlobalCommand::FocusExplorer)
+        Some(GlobalCommand::ToggleLeft)
     );
 }
 
@@ -58,18 +58,6 @@ fn resolve_in_rejects_an_unbound_code() {
 fn global_bindings_cover_quit_focus_save_and_help() {
     let f1 = key(KeyCode::F1, Mods::NONE);
     assert_eq!(resolve_in(GLOBAL_BINDINGS, f1), Some(GlobalCommand::Help));
-
-    let ctrl_e = key(
-        KeyCode::Char('e'),
-        Mods {
-            ctrl: true,
-            ..Mods::NONE
-        },
-    );
-    assert_eq!(
-        resolve_in(GLOBAL_BINDINGS, ctrl_e),
-        Some(GlobalCommand::FocusEditor)
-    );
 
     let sup_s = key(
         KeyCode::Char('s'),

@@ -111,24 +111,25 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// `drive_end_of_session_checks`, now checks `seed_doc` still exists BEFORE
 /// calling this function at all, so that case never reaches this `F1`
 /// press in the first place). Then, only while focus is `Pane::Title`,
-/// plain `Escape` (plan WP5) — NEVER `^E` there, and deliberately BEFORE
-/// the generic `^E` branch below: `^E` (`GlobalCommand::FocusEditor`)
-/// routes through `App::set_focus`, the SAME blur chokepoint any other
-/// focus change does, which `title::on_blur` can legitimately `Refused`
-/// (an invalid — e.g. emptied by an unlocked-gate `⌘X` — or a genuinely
-/// in-flight-renaming typed name, decision 7) and leave focus stuck on
-/// the title forever, silently misdirecting every later `⌘Z`/`⌘⇧Z` press
-/// into the TITLE's own unjournaled field instead of the document
-/// (`UNDO-TOTAL`/`REDO-TOTAL`'s actual precondition). `Escape` has no such
-/// failure mode: `title::keys::handle_key`'s own `Escape` arm reverts the
-/// field to `committed` FIRST, so `on_blur`'s `text == committed` check
-/// trivially holds and the blur can never be refused — decision 8's "Escape
-/// is always an exit" is exactly this guarantee, reused here as the
-/// driver's own unconditional way out of the title. Finally `^E`, only
-/// while focus still isn't `Pane::Editor` — re-checked fresh rather than
-/// decided up front, since dismissing the modal, toggling Help off, or
-/// leaving the title can each independently land focus somewhere other
-/// than `Editor` (Explorer, Tabs) that only `^E` reaches.
+/// plain `Escape` (plan WP5) — NEVER `^B` there, and deliberately BEFORE
+/// the generic `^B` branch below: `^B` (`GlobalCommand::ToggleLeft`) is a
+/// TOGGLE, and pressing it while the title is focused would (after the
+/// hoisted blur every `GlobalCommand` runs first) show or hide the column
+/// rather than doing anything useful for the title itself; `Escape` is the
+/// title's own dedicated exit. `Escape` has no failure mode `^B` would:
+/// `title::keys::handle_key`'s own `Escape` arm reverts the field to
+/// `committed` FIRST, so `on_blur`'s `text == committed` check trivially
+/// holds and the blur can never be `Refused` — decision 8's "Escape is
+/// always an exit" is exactly this guarantee, reused here as the driver's
+/// own unconditional way out of the title. Finally `^B`, only while focus
+/// still isn't `Pane::Editor` — re-checked fresh rather than decided up
+/// front, since dismissing the modal, toggling Help off, or leaving the
+/// title can each independently land focus somewhere other than `Editor`
+/// (Explorer, Tabs). Both of those panes can only ever hold focus while the
+/// left column is painted (`LayoutMode::focusable`'s own invariant), so
+/// `^B`'s hide branch is guaranteed to reach the Editor from either one —
+/// unlike a plain `Escape` there, which is unbound in both panes' own key
+/// tables and would do nothing.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.modal.is_some() {
         let (msg, tag) = key_step(KeyInput {
@@ -159,7 +160,7 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
     }
     if state.app.focus() != Pane::Editor {
         let (msg, tag) = key_step(KeyInput {
-            code: KeyCode::Char('e'),
+            code: KeyCode::Char('b'),
             mods: Mods {
                 ctrl: true,
                 ..Mods::NONE

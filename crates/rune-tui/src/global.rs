@@ -13,22 +13,18 @@ use crate::keymap::{KeyCode, Mods, QuitKey};
 /// stub panes own it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlobalCommand {
-    /// Always exposes and focuses the Explorer — never hides it, mirroring
-    /// the Go reference and matching `FocusTabs`'s own show-plus-focus
-    /// contract below.
-    FocusExplorer,
-    FocusEditor,
+    /// The single left-column toggle (Enter/Escape rework): painted this
+    /// frame (`LayoutMode::Split`/`ExplorerOnly`) ⇒ hide it and focus the
+    /// Editor; not painted ⇒ show it, focus the Explorer, and land the
+    /// cursor on the active document's own file. Never a dead key — every
+    /// press changes what is on screen (`pane::handle_global_command`).
+    ToggleLeft,
     /// Focuses the Open Tabs pane. Explorer/Tabs are separate panes, so,
     /// unlike Go's single shared explorer chord, this needs its own binding.
     /// Shows the left column too, pairing show with focus exactly like
-    /// `FocusExplorer` does, so the tab list is actually visible the moment
-    /// it's focused.
+    /// `ToggleLeft`'s show branch does, so the tab list is actually visible
+    /// the moment it's focused.
     FocusTabs,
-    /// Hides the left column, undoing whichever of `FocusExplorer`/
-    /// `FocusTabs` last showed it. The collapse counterpart to those two:
-    /// where they always show and focus, this always hides and, if the
-    /// column currently owns focus, hands it back to the Editor.
-    CollapseLeft,
     /// Focuses the title field so the active document can be renamed (`^r`
     /// — free across `GLOBAL_BINDINGS`, `resolve_char`, `TABS_BINDINGS` and
     /// `EXPLORER_BINDINGS`). Global rather than editor-scoped so a rename is
@@ -67,16 +63,16 @@ const SUP: Mods = Mods {
     sup: true,
 };
 
-/// The five focus/chrome commands each get a ⌘ and a `^` chord (the leader
-/// they used to share is gone — a terminal cannot report the spacebar's
-/// physical state in-band, so a prefix chord can never be told apart from
-/// plain text; see the module removed at `keystate.rs`). One form of each
-/// pair is marked `alias: true` so the footer's hint row names the command
-/// once while the Help doc still lists both; which form stays canonical
-/// keeps the shorter `^` glyph in the footer. Ghostty intercepts some ⌘
-/// chords before the app ever sees them (⌘T, ⌘K in particular), so `^` is
-/// the form guaranteed to arrive — both are bound regardless, since a
-/// different terminal may pass the ⌘ form through.
+/// The focus/chrome commands each get a ⌘ and a `^` chord (the leader they
+/// used to share is gone — a terminal cannot report the spacebar's physical
+/// state in-band, so a prefix chord can never be told apart from plain
+/// text; see the module removed at `keystate.rs`). One form of each pair is
+/// marked `alias: true` so the footer's hint row names the command once
+/// while the Help doc still lists both; which form stays canonical keeps
+/// the shorter `^` glyph in the footer. Ghostty intercepts some ⌘ chords
+/// before the app ever sees them (⌘T in particular), so `^` is the form
+/// guaranteed to arrive — both are bound regardless, since a different
+/// terminal may pass the ⌘ form through.
 ///
 /// `Save` and the two quit chords are the SAME combos `resolve`/
 /// `QuitKey::from_key` already bind — moving their resolution to the global
@@ -100,29 +96,15 @@ const SUP: Mods = Mods {
 pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('b'), CTRL)],
-        cmd: GlobalCommand::FocusExplorer,
+        cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
         when: "",
         alias: false,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('b'), SUP)],
-        cmd: GlobalCommand::FocusExplorer,
+        cmd: GlobalCommand::ToggleLeft,
         help: "explorer",
-        when: "",
-        alias: true,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('e'), CTRL)],
-        cmd: GlobalCommand::FocusEditor,
-        help: "editor",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('e'), SUP)],
-        cmd: GlobalCommand::FocusEditor,
-        help: "editor",
         when: "",
         alias: true,
     },
@@ -156,20 +138,6 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         help: "rename",
         when: "",
         alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('k'), CTRL)],
-        cmd: GlobalCommand::CollapseLeft,
-        help: "hide pane",
-        when: "",
-        alias: false,
-    },
-    Binding {
-        keys: &[KeyPattern::new(KeyCode::Char('k'), SUP)],
-        cmd: GlobalCommand::CollapseLeft,
-        help: "hide pane",
-        when: "",
-        alias: true,
     },
     Binding {
         keys: &[KeyPattern::new(KeyCode::Char('s'), SUP)],

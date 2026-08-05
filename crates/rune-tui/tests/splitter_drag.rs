@@ -303,13 +303,15 @@ fn shrinking_and_restoring_the_frame_preserves_the_dragged_width() {
     );
     assert_eq!(geo(&app).left_block.expect("shown").width, dragged_w);
 
-    // Narrow below the point where both floors can fit: the column drops.
+    // Narrow below the point where both floors can fit alongside each
+    // other: the narrow-frame flip hands the column the WHOLE frame
+    // instead of dropping it (`LayoutMode::ExplorerOnly`) — the dragged
+    // width no longer applies at that width, since there's no longer a
+    // center pane to divide it against.
     app.frame_width = MIN_LEFT_PANE_W + MIN_CENTER_W - 1;
     app.sync_view();
-    assert!(
-        geo(&app).left_block.is_none(),
-        "column must drop below the combined floor"
-    );
+    let narrow_block = geo(&app).left_block.expect("flips full-width, never drops");
+    assert_eq!(narrow_block.width, app.frame_width);
 
     // Restore: the DESIRED size was never written back, so it comes back
     // untouched rather than resetting to the default.

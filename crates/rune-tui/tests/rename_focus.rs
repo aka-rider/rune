@@ -222,6 +222,12 @@ fn ctrl_1_and_f1_from_explorer_focus_land_focus_on_the_editor() {
         "^1 from Explorer focus must land focus on the Editor"
     );
 
+    // `^1` moved focus but never touched the column's own visibility, so
+    // it's still shown — `^b` is a genuine toggle now (Enter/Escape
+    // rework), so ONE press here would hide it instead of re-focusing the
+    // Explorer. Two presses (hide, then show) reach the Explorer reliably
+    // regardless of the column's visibility going in.
+    send(&mut app, ctrl('b'));
     send(&mut app, ctrl('b'));
     assert_eq!(app.focus(), Pane::Explorer);
     send(&mut app, plain(KeyCode::F1));

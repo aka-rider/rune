@@ -349,20 +349,34 @@ pub fn select_all(doc: &mut Document) {
     doc.cursors = CursorSet::new_from(&[c]);
 }
 
+/// Whether `escape` below found something in the buffer to collapse, or
+/// left it untouched — the cascade's own verdict, reported so the caller
+/// (`dispatch::handle_editor_key`'s hardcoded Escape fast path) knows
+/// whether to keep going: multi-cursor and selection collapse stay in the
+/// editor, `Unconsumed` is the cue to leave for the Explorer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EscapeOutcome {
+    Collapsed,
+    Unconsumed,
+}
+
 /// Port of `commands_multi.go:execMulticursorEscape` — the Escape
 /// hardcoded fast path (plan Context, "Hardcoded fast paths outside the
 /// resolver"): multi-cursor collapses to the primary; a single cursor with
-/// a selection collapses the selection; otherwise a no-op.
-pub fn escape(doc: &mut Document) {
+/// a selection collapses the selection; otherwise reports `Unconsumed` so
+/// the cascade can fall through to leaving the editor.
+pub fn escape(doc: &mut Document) -> EscapeOutcome {
     if doc.cursors.is_multi() {
         let primary = doc.cursors.primary();
         doc.cursors = doc.cursors.collapse_to(primary);
-        return;
+        return EscapeOutcome::Collapsed;
     }
     let primary = doc.cursors.primary();
     if primary.has_selection() {
         doc.cursors = CursorSet::new_from(&[primary.collapse_to_position()]);
+        return EscapeOutcome::Collapsed;
     }
+    EscapeOutcome::Unconsumed
 }
 
 #[cfg(test)]

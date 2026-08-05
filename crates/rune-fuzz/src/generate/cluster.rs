@@ -14,10 +14,10 @@ use rune_vfs::DirEntry;
 use crate::action::{Action, HighlightVersion};
 
 use super::palette::{
-    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
-    CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
-    EXPLORER_SEARCH_KEYS, MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY,
-    SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
+    ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_P_KEY,
+    CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY, EXPLORER_SEARCH_KEYS,
+    MARKDOWN_FRAGMENTS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
+    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TYPE_PALETTE, UNDO_KEY,
 };
 
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
@@ -281,21 +281,40 @@ fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
 /// version 0 is silently the SAME as `Live` — an edit first guarantees
 /// `Stale` is genuinely distinct (plan WP7.S6).
 ///
-/// The guarantee is made TRUE by construction, not by assumption:
-/// `Action::Key` only reaches the buffer while `app.focus() == Pane::Editor`
-/// (the ordinary four-stage key pipeline), and a preceding cluster can
-/// leave focus anywhere — `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks it
-/// on `Pane::Title` with no restore. So this cluster prepends the same
-/// two-key focus-restoring sequence `driver/checks.rs::
-/// restore_editor_focus` uses at end-of-session (`ESCAPE_KEY` to dismiss
-/// any modal, then `CTRL_E_KEY`/`GlobalCommand::FocusEditor` to reclaim
-/// focus regardless of which pane held it) BEFORE `Key('h')`, unconditional
-/// on generator-time state (there is none to condition on — this runs
-/// before any session exists). Both keys are no-ops from the editor's own
-/// perspective: `Esc` with no modal up either collapses a selection or is
-/// consumed by whichever pane owns focus, and `^e` is idempotent when focus
-/// is already `Editor`. See `cluster_highlight_edit_survives_focus_parked_
-/// off_editor` below for the regression this closes.
+/// The guarantee is made TRUE BY CONSTRUCTION for the one parking case this
+/// cluster corrects: `Action::Key` only reaches the buffer while
+/// `app.focus() == Pane::Editor` (the ordinary four-stage key pipeline), and
+/// `cluster_chrome`'s `Key(CTRL_R_KEY)` arm parks focus on `Pane::Title`
+/// with no restore of its own. This cluster prepends `ESCAPE_KEY` BEFORE
+/// `Key('h')`, unconditional on generator-time state (there is none to
+/// condition on — this runs before any session exists): a no-op from the
+/// editor's own perspective (either collapses a selection or is consumed by
+/// whichever pane owns focus), and `title::keys::handle_key`'s own `Escape`
+/// arm reverts and blurs unconditionally, so it always reaches the Editor
+/// from the Title.
+///
+/// KNOWN GAP (TODO.md): `cluster_chrome` has other arms — `Key(CTRL_B_KEY)`,
+/// `Key(CTRL_T_KEY)`, and the `EXPLORER_SEARCH_KEYS` combo — that can
+/// likewise leave focus on the Explorer or Tabs, and THOSE are not
+/// corrected here. Before the Enter/Escape rework, the same unconditional
+/// prefix also pressed `^E` (`GlobalCommand::FocusEditor`), a global command
+/// that reached the Editor from ANY pane with no toggle behaviour to get
+/// wrong; deleting it removed the only key that could close this gap
+/// unconditionally. `^B` (`GlobalCommand::ToggleLeft`) is not a safe
+/// replacement here: pressed blindly (this generator has no `app.focus()`
+/// to check, unlike `driver/checks.rs::restore_editor_focus`, which runs
+/// against a live session) it would just as often show the column and
+/// steal focus from an editor that already had it as it would reclaim one
+/// that didn't — actively worse than doing nothing. A generated session
+/// that happens to compose one of those `cluster_chrome` arms immediately
+/// before `cluster_highlight` types `h` into the Explorer's search instead
+/// of the buffer: not a `PANE-NO-BLEED` violation (the keystroke still
+/// stays inside whichever pane it landed on), just a quieter, uncaught
+/// session for the `HighlightVersion::Stale`-vs-`Live` distinction this
+/// cluster exists to exercise.
+///
+/// See `cluster_highlight_edit_survives_focus_parked_off_editor` below for
+/// the (Title-only) regression `ESCAPE_KEY` alone closes.
 fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
     (
         arb_highlight_version(),
@@ -304,7 +323,6 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
         .prop_map(|(version, spans)| {
             vec![
                 Action::Key(ESCAPE_KEY),
-                Action::Key(CTRL_E_KEY),
                 Action::Key(KeyInput {
                     code: KeyCode::Char('h'),
                     mods: Mods::NONE,
