@@ -17,6 +17,9 @@ use rusqlite::{Connection, params};
 /// it must never be tuned down to make a scenario run "faster".
 pub(crate) const MARKER_SAFETY_DEADLINE: Duration = Duration::from_secs(120);
 
+/// Poll cadence shared by every marker-rendezvous loop below.
+pub(crate) const MARKER_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
 pub(crate) fn temp_dir(label: &str) -> PathBuf {
     let dir = env::temp_dir().join(format!(
         "rune-db-mp-{label}-{}-{}",
@@ -42,16 +45,18 @@ pub(crate) fn wait_for_path(path: &Path, deadline: Duration) {
         if start.elapsed() > deadline {
             panic!("timed out after {deadline:?} waiting for {path:?}");
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(MARKER_POLL_INTERVAL);
     }
 }
 
 /// Like a bounded poll-until-condition wait for `markers`, but also holds
 /// the spawned children's own handles: on every poll it checks whether any
-/// of them has already exited before producing its marker, and if so panics
-/// immediately with that child's exit status and captured stderr — a dead
-/// child is a real defect, not something the deadline should have to wait
-/// out. The deadline itself only ever fires against a live-but-hung child.
+/// of them has already exited while any marker is still missing, and if so
+/// panics immediately with that child's exit status and captured stderr — a
+/// child must stay alive until every marker is present, so its death before
+/// that point is a real defect, not something the deadline should have to
+/// wait out. The deadline itself only ever fires against a live-but-hung
+/// child.
 pub(crate) fn wait_ready_or_child_death(
     children: &mut Vec<Child>,
     markers: &[PathBuf],
@@ -69,7 +74,7 @@ pub(crate) fn wait_ready_or_child_death(
                     .wait_with_output()
                     .unwrap_or_else(|e| panic!("collect output of dead child: {e}"));
                 panic!(
-                    "child exited ({status}) before its ready marker appeared, markers: \
+                    "child exited ({status}) before all ready markers appeared, markers: \
                      {markers:?}, stderr: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
@@ -78,7 +83,7 @@ pub(crate) fn wait_ready_or_child_death(
         if start.elapsed() > deadline {
             panic!("timed out after {deadline:?} waiting for markers: {markers:?}");
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::sleep(MARKER_POLL_INTERVAL);
     }
 }
 
