@@ -72,6 +72,25 @@ pub enum GlobalCommand {
     /// drops the state, clears the highlights). `^F`/`⌘F` — free across
     /// every binding table (see the guard test below).
     ToggleSearch,
+    /// Steps to the next match without opening the bar: with the bar
+    /// already open, identical to Enter; with it closed, recomputes matches
+    /// from `App::last_search_query` on demand, applies the same
+    /// concealed-skip and read-only scroll, and jumps — painting no
+    /// highlights (decision A2: those exist only while the bar is open).
+    /// No last query is reported through the message pane rather than
+    /// swallowed silently. `^g`/`⌘g` — bound as the PLAIN char: the shifted
+    /// row below is what makes the two chords distinguishable (see its own
+    /// doc for why).
+    SearchNext,
+    /// The `SearchNext` mirror, stepping backward. Bound as
+    /// `Char('G')+CTRL`/`Char('G')+SUP` — the SHIFTED char with `SHIFT`
+    /// itself cleared, not `Char('g')` with a `SHIFT` bit set: this crate
+    /// requests `REPORT_ALTERNATE_KEYS`, under which a shifted chord
+    /// arrives as the shifted character with `SHIFT` cleared, so a
+    /// `CTRL|SHIFT` row could never fire (see the guard test below and
+    /// `TODO.md` for a pre-existing binding that made exactly that
+    /// mistake).
+    SearchPrev,
 }
 
 const CTRL: Mods = Mods {
@@ -331,6 +350,40 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    // Next/prev step through the current match list without needing the
+    // bar open. `g`/`G` are the plain and shifted forms of the SAME
+    // physical key, not two independently-modified chords — see
+    // `GlobalCommand::SearchPrev`'s own doc for why `G`+ctrl, not
+    // `g`+ctrl|shift, is what actually fires under this crate's kitty
+    // protocol request.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('g'), CTRL)],
+        cmd: GlobalCommand::SearchNext,
+        help: "next match",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('g'), SUP)],
+        cmd: GlobalCommand::SearchNext,
+        help: "next match",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('G'), CTRL)],
+        cmd: GlobalCommand::SearchPrev,
+        help: "prev match",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('G'), SUP)],
+        cmd: GlobalCommand::SearchPrev,
+        help: "prev match",
+        when: "",
+        alias: true,
+    },
 ];
 
 #[cfg(test)]
@@ -506,5 +559,53 @@ mod tests {
             mods: SUP,
         };
         assert_unclaimed_by_any_pane_table(&[ctrl_f, sup_f]);
+    }
+
+    /// `^g`/`⌘g` (`SearchNext`) and their shifted forms `^G`/`⌘G`
+    /// (`SearchPrev`) — all four rows, since the plain and shifted chars
+    /// are entirely separate `KeyCode::Char` values from `KeyPattern`'s own
+    /// point of view (plan WP5.S2).
+    #[test]
+    fn global_g_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_g = KeyInput {
+            code: KeyCode::Char('g'),
+            mods: CTRL,
+        };
+        let sup_g = KeyInput {
+            code: KeyCode::Char('g'),
+            mods: SUP,
+        };
+        let ctrl_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: CTRL,
+        };
+        let sup_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: SUP,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_g, sup_g, ctrl_cap_g, sup_cap_g]);
+    }
+
+    /// A guard test only proves ABSENCE from the pane tables — it can't
+    /// prove the row actually fires in `GLOBAL_BINDINGS` itself. This is
+    /// the positive half for the chord decision 10/WP5.S1 hinges on: the
+    /// SHIFTED char with `SHIFT` cleared (`Char('G')+CTRL`), not a
+    /// `CTRL|SHIFT` row on the plain char, is what resolves to `SearchPrev`
+    /// — exactly the delivery shape `REPORT_ALTERNATE_KEYS` produces.
+    #[test]
+    fn ctrl_shifted_g_resolves_to_search_prev() {
+        use crate::binding::resolve_in;
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: CTRL,
+        };
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, ctrl_cap_g),
+            Some(GlobalCommand::SearchPrev)
+        );
     }
 }

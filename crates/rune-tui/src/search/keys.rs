@@ -68,39 +68,85 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, _effects: &mut Effects) -
 /// read-only document (whose viewport never chases the cursor on its own —
 /// `document::sync::scroll_to_cursor` short-circuits there), and persists
 /// the query as just-used search history.
-fn advance(app: &mut App, forward: bool) {
+///
+/// Also reached with the bar OPEN from the closed-bar next/prev chords
+/// (`GlobalCommand::SearchNext`/`SearchPrev`, `pane::handle_global_command`)
+/// — identical behavior to Enter/Shift+Enter in that state, per plan WP5.
+pub(crate) fn advance(app: &mut App, forward: bool) {
     let Some(state) = app.search.as_ref() else {
         return;
     };
-    if state.matches.is_empty() {
-        return;
-    }
-    let cursor_byte = app.active_doc().cursors.primary().position;
-    let idx = if forward {
-        next_index(&state.matches, cursor_byte, |r| {
-            is_concealed(&state.concealed, r)
-        })
-    } else {
-        prev_index(&state.matches, cursor_byte, |r| {
-            is_concealed(&state.concealed, r)
-        })
-    };
-    let Some(idx) = idx else {
-        return;
-    };
-    let Some(range) = state.matches.get(idx).cloned() else {
-        return;
-    };
+    let matches = state.matches.clone();
+    let concealed = state.concealed.clone();
     let query = state.draft.clone();
-
+    let Some(idx) = jump(app, &matches, &concealed, forward) else {
+        return;
+    };
     if let Some(s) = app.search.as_mut() {
         s.current = Some(idx);
     }
+    persist_query(app, &query);
+}
+
+/// The closed-bar mirror of [`advance`] (`GlobalCommand::SearchNext`/
+/// `SearchPrev`, plan WP5.S1): there is no `SearchState` to read `matches`/
+/// `concealed` from — the bar isn't open — so both are recomputed on demand
+/// from `App::last_search_query` via the same pure functions
+/// [`super::recompute`] itself calls, then jumped through the identical
+/// [`jump`] helper `advance` uses (same concealed-skip, same read-only
+/// scroll). Paints no highlights: those exist only while the bar is open
+/// (decision A2). Returns `false` without doing anything when there is no
+/// last query to navigate with — the caller is responsible for surfacing
+/// that with user-visible feedback, since a silently swallowed chord is
+/// never acceptable.
+pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
+    let Some(query) = app.last_search_query.clone() else {
+        return false;
+    };
+    let matches = super::compute_matches(app.active_doc().buffer.content(), &query);
+    let concealed = app
+        .active_doc()
+        .view
+        .as_ref()
+        .map(|view| super::concealed_ranges(&view.wrap))
+        .unwrap_or_default();
+    if jump(app, &matches, &concealed, forward).is_some() {
+        persist_query(app, &query);
+    }
+    true
+}
+
+/// The shared cursor-jump core [`advance`] and [`advance_closed`] both
+/// funnel through: given a match list and its concealed cache (in whatever
+/// coordinate space the caller sourced them from — live `SearchState` or a
+/// closed-bar on-demand recompute), finds the next/prev non-concealed match
+/// relative to the active document's cursor, moves the cursor there and,
+/// for a read-only document, the viewport too. Returns the index into
+/// `matches` on success; `None` when there's nothing to land on (empty
+/// list, or every match concealed) — the caller decides what "nothing
+/// happened" means for its own state.
+fn jump(
+    app: &mut App,
+    matches: &[std::ops::Range<usize>],
+    concealed: &[std::ops::Range<usize>],
+    forward: bool,
+) -> Option<usize> {
+    if matches.is_empty() {
+        return None;
+    }
+    let cursor_byte = app.active_doc().cursors.primary().position;
+    let idx = if forward {
+        next_index(matches, cursor_byte, |r| is_concealed(concealed, r))
+    } else {
+        prev_index(matches, cursor_byte, |r| is_concealed(concealed, r))
+    };
+    let idx = idx?;
+    let range = matches.get(idx)?.clone();
     app.active_doc_mut().cursors = CursorSet::new(range.start);
     if app.active_doc().is_read_only() {
         nav_scroll::scroll_to_byte_offset(app.active_doc_mut(), range.start);
     }
-    persist_query(app, &query);
+    Some(idx)
 }
 
 /// Records `query` as just-used in the recovery store's `search_history`
@@ -438,5 +484,129 @@ mod tests {
             KeyOutcome::Consumed
         );
         assert_eq!(app.search.as_ref().unwrap().draft, "");
+    }
+
+    // --- Closed-bar next/prev (`GlobalCommand::SearchNext`/`SearchPrev`,
+    // plan WP5) — driven through `pane::handle_global_command`, the actual
+    // dispatch entry point for these chords, rather than calling
+    // `advance_closed` directly, so the tests exercise the same path a real
+    // keypress would.
+
+    #[test]
+    fn closed_bar_next_steps_and_wraps_using_the_last_query() {
+        let mut app = app_with("hi hi hi");
+        crate::search::open(&mut app);
+        let mut effects = Effects::default();
+        for c in "hi".chars() {
+            let _ = handle_key(&mut app, char_key(c), &mut effects);
+        }
+        let esc = KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        };
+        let _ = handle_key(&mut app, esc, &mut effects);
+        assert!(app.search.is_none(), "the bar is closed for this test");
+        assert_eq!(app.last_search_query.as_deref(), Some("hi"));
+
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchNext,
+            &mut effects,
+        );
+        assert_eq!(app.active_doc().cursors.primary().position, 3);
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchNext,
+            &mut effects,
+        );
+        assert_eq!(app.active_doc().cursors.primary().position, 6);
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchNext,
+            &mut effects,
+        );
+        assert_eq!(
+            app.active_doc().cursors.primary().position,
+            0,
+            "next wraps from the last match back to the first"
+        );
+        assert!(
+            app.search.is_none(),
+            "closed-bar navigation never reopens the bar"
+        );
+    }
+
+    #[test]
+    fn closed_bar_prev_wraps_from_the_first_match_to_the_last() {
+        let mut app = app_with("hi hi hi");
+        crate::search::open(&mut app);
+        let mut effects = Effects::default();
+        for c in "hi".chars() {
+            let _ = handle_key(&mut app, char_key(c), &mut effects);
+        }
+        let esc = KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        };
+        let _ = handle_key(&mut app, esc, &mut effects);
+
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchPrev,
+            &mut effects,
+        );
+        assert_eq!(
+            app.active_doc().cursors.primary().position,
+            6,
+            "prev from the first match wraps to the last"
+        );
+    }
+
+    #[test]
+    fn last_query_survives_closing_and_reopening_the_bar() {
+        let mut app = app_with("hi hi");
+        crate::search::open(&mut app);
+        let mut effects = Effects::default();
+        let _ = handle_key(&mut app, char_key('h'), &mut effects);
+        let _ = handle_key(&mut app, char_key('i'), &mut effects);
+        let esc = KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        };
+        let _ = handle_key(&mut app, esc, &mut effects);
+
+        // Reopening starts a fresh, empty draft (`search::open`'s own
+        // contract) — it must never seed from `last_search_query`, but the
+        // field itself must survive so a subsequent closed-bar chord still
+        // has something to navigate with.
+        crate::search::open(&mut app);
+        let _ = handle_key(&mut app, esc, &mut effects);
+        assert_eq!(app.last_search_query.as_deref(), Some("hi"));
+
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchNext,
+            &mut effects,
+        );
+        assert_eq!(app.active_doc().cursors.primary().position, 3);
+    }
+
+    #[test]
+    fn no_last_query_reports_feedback_instead_of_a_silent_no_op() {
+        let mut app = app_with("hello");
+        let mut effects = Effects::default();
+        assert!(app.last_search_query.is_none());
+
+        crate::pane::handle_global_command(
+            &mut app,
+            crate::keymap::GlobalCommand::SearchNext,
+            &mut effects,
+        );
+
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("no previous search"),
+            "an unreachable chord must still give feedback, never swallow the keypress"
+        );
     }
 }
