@@ -26,7 +26,7 @@ use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
     app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, sup,
+    publish, reprobe, sup,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
@@ -62,9 +62,7 @@ fn enter_two_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
     external_write(vfs.as_ref(), THEIRS);
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    reprobe(&mut app, &bridge, draft_id, doc_id);
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;

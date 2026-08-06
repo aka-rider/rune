@@ -17,7 +17,8 @@ use rune_tui::app::{self, App};
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::{Effects, Msg};
+use rune_tui::runtime::{CmdKind, Effects, Msg};
+use rune_tui::workspace;
 use rune_vfs::Vfs;
 
 pub use db_wiring_common::{app_with_store, publish, recv_ok};
@@ -83,6 +84,37 @@ pub fn drain_all_ops_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
     while app.db_ops.iter().any(|(_, pending)| pending.doc == doc) {
         drain_one_op_for(app, bridge, doc);
     }
+}
+
+/// Re-probes `doc` by switching away to `away` and back, then drains the
+/// probe's ack — the only detection wiring this feature has (no file
+/// watcher). Callers must have drained every other pending op for `doc`
+/// first, or `drain_one_op_for` cannot tell which entry is the probe.
+pub fn reprobe(app: &mut App, bridge: &DbBridge, away: DocumentId, doc: DocumentId) {
+    workspace::switch_to(app, away);
+    workspace::switch_to(app, doc);
+    drain_one_op_for(app, bridge, doc);
+}
+
+/// Drives a real `⌘S` all the way through the store-backed three-hop
+/// materialize dance: the prepare op's ack (which spawns the caller-side
+/// vfs `Cmd`), the `Cmd` itself, its `MaterializeVfsDone` reply, and the
+/// record op's commit ack. Callers must have drained every other pending
+/// op for `doc` first, same as `reprobe`. Ends with `app.db_ops` empty for
+/// `doc` whether the save committed or CAS-refused into the disk-conflict
+/// Guard — assertions on which of the two happened belong to the caller.
+pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
+    press_key(app, sup('s'));
+    let prepare_effects = drain_one_op_for(app, bridge, doc);
+    let save_cmd = prepare_effects
+        .cmds
+        .into_iter()
+        .find(|c| c.kind() == CmdKind::Save)
+        .expect("the prepare ack must spawn the caller-side vfs Cmd");
+    let vfs_done_msg = save_cmd.run().expect("the vfs Cmd must reply");
+    let mut effects = Effects::default();
+    app::update(app, vfs_done_msg, &mut effects);
+    drain_all_ops_for(app, bridge, doc);
 }
 
 /// Overwrites `/doc.md`'s content in place, simulating an external editor.

@@ -25,7 +25,9 @@ use rune_tui::merge::MergeState;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use merge_common::{app_with_store, ctrl, drain_one_op_for, external_write, press_key, publish};
+use merge_common::{
+    app_with_store, ctrl, drain_one_op_for, external_write, press_key, publish, reprobe,
+};
 
 /// Opens `/doc.md`, drains its `Load` ack, and returns the opened
 /// document's id alongside the untitled draft it switched away from (a
@@ -36,14 +38,6 @@ fn open_and_drain(app: &mut App, bridge: &DbBridge) -> (DocumentId, DocumentId) 
     let doc_id = app.active;
     drain_one_op_for(app, bridge, doc_id);
     (doc_id, draft_id)
-}
-
-/// Re-probes `doc_id` by switching away and back, then drains the ack —
-/// the only detection wiring this plan phase has (no file watcher).
-fn reprobe(app: &mut App, bridge: &DbBridge, draft_id: DocumentId, doc_id: DocumentId) {
-    workspace::switch_to(app, draft_id);
-    workspace::switch_to(app, doc_id);
-    drain_one_op_for(app, bridge, doc_id);
 }
 
 /// Plan WP3 "Done when" (a): a diverged fixture, entered via `^M`, installs

@@ -15,20 +15,19 @@ mod merge_common;
 use std::path::Path;
 use std::sync::Arc;
 
-use rune_tui::app::{self, App};
+use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::footer;
 use rune_tui::guard::GuardKind;
 use rune_tui::keymap::KeyCode;
 use rune_tui::merge::MergeState;
-use rune_tui::runtime::{CmdKind, Effects};
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
     app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, sup,
+    publish, save_and_ack,
 };
 
 /// Sets up a document whose disk changed since it was opened, edits the
@@ -53,17 +52,7 @@ fn enter_disk_conflict_guard(
 
     external_write(vfs.as_ref(), disk_bytes);
 
-    press_key(&mut app, sup('s'));
-    let prepare_effects = drain_one_op_for(&mut app, &bridge, doc_id);
-    let save_cmd = prepare_effects
-        .cmds
-        .into_iter()
-        .find(|c| c.kind() == CmdKind::Save)
-        .expect("the prepare ack must spawn the caller-side vfs Cmd");
-    let vfs_done_msg = save_cmd.run().expect("the vfs Cmd must reply");
-    let mut effects = Effects::default();
-    app::update(&mut app, vfs_done_msg, &mut effects);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    save_and_ack(&mut app, &bridge, doc_id);
 
     (app, bridge, doc_id, vfs)
 }
