@@ -50,6 +50,18 @@ impl Store {
         })
     }
 
+    /// Enqueues a `TouchSearchQuery` op recording `query` as just-used in
+    /// `search_history`. Cosmetic — see `OpKind::TouchSearchQuery`'s doc
+    /// comment: the caller must treat an `Err` here as a display-only
+    /// failure, never a store degradation.
+    pub fn touch_search_query(&self, query: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::TouchSearchQuery {
+            query: query.to_string(),
+            now,
+        })
+    }
+
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
     /// `doc_id` at journal position `seq`. See `snapshot::create_snapshot`
     /// for the transaction itself.

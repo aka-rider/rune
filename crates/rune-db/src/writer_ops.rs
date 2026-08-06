@@ -203,6 +203,15 @@ pub enum OpKind {
         liveness_check: LivenessCheckFn,
         doc_id: i64,
     },
+    /// Records `query` as just-used, bumping its `search_history` row's
+    /// `last_used_at` (insert-or-touch — see `search_history::touch`). A
+    /// cosmetic write: its own `Store` convenience method is the one place
+    /// that decides an `Err` here must never sticky-degrade the store the
+    /// way a failed recovery write does.
+    TouchSearchQuery {
+        query: String,
+        now: SystemTime,
+    },
     /// WP6.S2: the writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER
