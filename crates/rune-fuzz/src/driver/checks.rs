@@ -130,7 +130,12 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// left column is painted (`LayoutMode::focusable`'s own invariant), so
 /// `^B`'s hide branch is guaranteed to reach the Editor from either one —
 /// unlike a plain `Escape` there, which is unbound in both panes' own key
-/// tables and would do nothing.
+/// tables and would do nothing. Finally, only once focus is back on
+/// `Editor`, plain `Escape` again while merge mode is `Active` —
+/// `merge::keys::intercept` owns every key on its document at that point,
+/// so leaving it Active into the sweep below would spend the whole `⌘Z`
+/// budget being swallowed by the resolver's own feedback fallback instead
+/// of ever reaching the journal.
 fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
     if state.app.guard.is_some() {
         let (msg, tag) = key_step(KeyInput {
@@ -180,6 +185,22 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
                 ctrl: true,
                 ..Mods::NONE
             },
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    // The merge resolver owns every key on its document while `Active`
+    // (`merge::keys::intercept`'s own docs) — the undo sweep below would
+    // otherwise spend its whole `⌘Z` budget being consumed by the
+    // resolver instead of ever reaching the journal. `Escape` is its own
+    // dedicated exit (`MergeCommand::Exit` -> `merge::exit_in_place`),
+    // reached only once the focus restores above have already landed back
+    // on `Pane::Editor` — the resolver's intercept is scoped to that pane.
+    if matches!(state.app.merge, rune_tui::merge::MergeState::Active { .. }) {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
         });
         if step_and_check(state, prev, msg, tag, None, outcome) {
             return true;

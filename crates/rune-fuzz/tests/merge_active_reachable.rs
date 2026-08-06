@@ -75,6 +75,40 @@ fn a_scripted_diverge_then_merge_sequence_reaches_active() {
     );
 }
 
+/// Regression anchor: a session that ends with merge still `Active` (no
+/// closing `^M`) must let the end-of-session undo sweep
+/// (`checks::drive_end_of_session_checks`) reach `journal_pos == 0` clean —
+/// the fifth `restore_editor_focus` step exits the resolver in place
+/// (`Escape` -> `MergeCommand::Exit`) before the sweep's own `⌘Z` presses
+/// begin, exactly like a user would. Before that restore existed, every
+/// `⌘Z` the sweep pressed was swallowed by the resolver's own intercept
+/// instead of ever reaching the journal.
+#[test]
+fn a_session_ending_with_merge_active_still_drives_journal_pos_to_zero() {
+    let actions = vec![
+        Action::Type("!".to_string()),
+        Action::DeliverDb,
+        Action::DivergeDisk,
+        Action::DeliverDb,
+        Action::Key(rune_tui::keymap::KeyInput {
+            code: rune_tui::keymap::KeyCode::Char('m'),
+            mods: rune_tui::keymap::Mods {
+                ctrl: true,
+                ..rune_tui::keymap::Mods::NONE
+            },
+        }),
+        Action::DeliverDb,
+        // No closing `^M`/`Escape` here: the session ends with merge still
+        // `Active`, unlike the acceptance anchor above.
+    ];
+    let result = driver::run("/fuzz/doc.md", "hello", &actions);
+    assert_clean(&result);
+    assert!(
+        result.merge_activated,
+        "expected the session to reach MergeState::Active at some point"
+    );
+}
+
 /// Negative control: the same seed with no divergence ever raised must
 /// never spuriously report reaching `Active` — proves `merge_activated`
 /// tracks the real thing, not a permanently-latched default.
