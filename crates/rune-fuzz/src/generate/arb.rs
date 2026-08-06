@@ -15,8 +15,20 @@ use rune_vfs::DirEntry;
 
 use crate::action::HighlightVersion;
 
+/// The narrowest terminal `Action::Resize` can generate — one column below
+/// this is unreachable through `arb_resize`, so the tiny-terminal matrix
+/// case in `cluster_tests.rs` pins to these instead of repeating the bounds
+/// as bare literals.
+pub(super) const RESIZE_MIN_WIDTH: u16 = 1;
+pub(super) const RESIZE_MIN_HEIGHT: u16 = 2;
+const RESIZE_MAX_WIDTH: u16 = 200;
+const RESIZE_MAX_HEIGHT: u16 = 60;
+
 pub(super) fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
-    (1u16..=200, 2u16..=60)
+    (
+        RESIZE_MIN_WIDTH..=RESIZE_MAX_WIDTH,
+        RESIZE_MIN_HEIGHT..=RESIZE_MAX_HEIGHT,
+    )
 }
 
 /// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary
