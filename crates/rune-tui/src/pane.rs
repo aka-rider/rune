@@ -155,6 +155,23 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 crate::search::open(app);
             }
         }
+        // Reuses the same cursor-jump `advance` Enter/Shift+Enter already
+        // drive: with the bar open, this chord behaves exactly like
+        // Enter/Shift+Enter would; with it closed, `advance_closed`
+        // recomputes matches from `App::last_search_query` on demand and
+        // jumps without painting highlights (plan WP5, decision A2).
+        // Nothing to navigate with is reported, never swallowed silently.
+        GlobalCommand::SearchNext => search_step(app, true),
+        GlobalCommand::SearchPrev => search_step(app, false),
+    }
+}
+
+/// The shared body of the `SearchNext`/`SearchPrev` arms above.
+fn search_step(app: &mut App, forward: bool) {
+    if app.search.is_some() {
+        crate::search::keys::advance(app, forward);
+    } else if !crate::search::keys::advance_closed(app, forward) {
+        messages::info(app, "no previous search");
     }
 }
 
