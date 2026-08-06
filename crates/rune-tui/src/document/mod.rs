@@ -61,6 +61,13 @@ pub struct Document {
     pub doc: DocMachine,
     pub viewport: Viewport,
     pub focused: bool,
+    /// Whether reveal may key off the cursor — deliberately separate from
+    /// the caret gate `focused` feeds: an open search bar blurs the caret
+    /// (keystrokes land in the bar, not the buffer), but its Enter/Shift+
+    /// Enter navigation still drives THIS document's cursor, so a jump into
+    /// a concealed element must still reveal it. Pushed down by
+    /// `App::sync_view`, the same chokepoint that pushes `focused`.
+    pub reveal_engaged: bool,
     /// The in-memory undo/redo journal (WP7): every applied edit batch is
     /// pushed here as a `Step`; `commands::edit::undo`/`redo` peek-then-
     /// commit against it (plan Context, "Undo journal").
@@ -267,17 +274,23 @@ impl Document {
     }
 
     /// Whether the caret and selection background may be painted onto this
-    /// document's cells, AND whether reveal may key off the cursor at all
-    /// — the second consumer of the identical predicate: both overlay
-    /// gates are `focused && !readOnly`: an unfocused pane must not show a
-    /// caret that would mislead about where keystrokes land, and a
-    /// read-only document (the virtual Help tab, the error-banner document)
-    /// has no insertion point to point at — nor anything to reveal raw
-    /// markdown under.
+    /// document's cells: `focused && !readOnly` — an unfocused pane must
+    /// not show a caret that would mislead about where keystrokes land, and
+    /// a read-only document (the virtual Help tab, the error-banner
+    /// document) has no insertion point to point at.
     /// `focused` itself already folds in `modal.is_none()` — see
     /// `App::sync_view`.
     pub fn has_insertion_point(&self) -> bool {
         self.focused && !self.is_read_only()
+    }
+
+    /// Whether reveal may key off the cursor — `reveal_engaged` instead of
+    /// `focused`, so an open search bar (caret blurred, keystrokes owned by
+    /// the bar) still reveals the element its match navigation lands the
+    /// cursor in. A read-only document has nothing to reveal raw markdown
+    /// under, same as it has no caret.
+    pub fn reveals_under_cursor(&self) -> bool {
+        self.reveal_engaged && !self.is_read_only()
     }
 
     /// Whether a mouse selection's background may be painted onto this
@@ -312,6 +325,7 @@ impl Document {
             doc: DocMachine::new(),
             viewport: Viewport::default(),
             focused: true,
+            reveal_engaged: true,
             journal: Journal::new(),
             read_only: ReadOnly::No,
             file_path: None,

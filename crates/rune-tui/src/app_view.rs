@@ -68,14 +68,19 @@ impl App {
     /// The search bar is a second input with its own caret
     /// (`render::search::draw`); the document is never ALSO `focused` while
     /// it's open, or the editor caret would keep painting under a bar that
-    /// is actually eating every keystroke.
+    /// is actually eating every keystroke. Reveal is pushed as its own flag
+    /// (`reveal_engaged`) WITHOUT the search-bar gate: the bar's match
+    /// navigation drives the document cursor, and a jump into a concealed
+    /// element must reveal it even though the caret stays blurred.
     pub fn sync_view(&mut self) {
         let width = self.frame_width;
         let frame_height = self.frame_height;
         crate::messages::sync(self, width, frame_height);
         self.relayout();
-        let focused = self.focus() == Pane::Editor && self.guard.is_none() && self.search.is_none();
+        let engaged = self.focus() == Pane::Editor && self.guard.is_none();
+        let focused = engaged && self.search.is_none();
         self.active_doc_mut().focused = focused;
+        self.active_doc_mut().reveal_engaged = engaged;
         // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
         // App-held decision down before every sync" shape as `focused`

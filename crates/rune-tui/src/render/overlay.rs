@@ -446,12 +446,14 @@ mod tests {
     /// full `App`/`DocMachine` pipeline: the caret gate this file's
     /// `apply_cursor_overlays` applies (its `caret` parameter) and a table's
     /// `RevealGrant::ForceRendered`/`Decide` split
-    /// (`rune_md::element::doc::DocMachine`) both key off the identical
-    /// `Document::has_insertion_point` predicate — a table containing the
-    /// cursor is only ever BOXED while that predicate is false, and the
-    /// caret gate suppresses painting entirely under the same condition, so
-    /// a full-pipeline test can no longer reach this branch with a caret
-    /// actually on screen. The clamp logic itself is still real (a
+    /// (`rune_md::element::doc::DocMachine`) key off near-identical
+    /// predicates (`Document::has_insertion_point` for the caret,
+    /// `Document::reveals_under_cursor` for reveal — they differ only while
+    /// the search bar is open, when the caret blurs but reveal stays live)
+    /// — a table containing the cursor is only ever BOXED while reveal is
+    /// disengaged, and the caret gate suppresses painting under at least
+    /// that same condition, so a full-pipeline test can no longer reach
+    /// this branch with a caret actually on screen. The clamp logic itself is still real (a
     /// non-markdown pathway, or a future Decide policy change, could still
     /// reach a boxed row with the caret visible), so it keeps its own
     /// direct coverage here instead.
