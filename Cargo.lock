@@ -2226,6 +2226,7 @@ dependencies = [
  "rune-db",
  "rune-md",
  "rune-syntax",
+ "rune-ts",
  "rune-tui",
  "rune-vfs",
  "unicode-segmentation",

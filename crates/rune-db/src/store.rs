@@ -215,6 +215,19 @@ impl Store {
         Ok(id)
     }
 
+    /// Blocking twin of [`Store::enqueue`], for the kill-writer test hook
+    /// ONLY (`Store::probe_blocking_for_test`) — a full queue parks the
+    /// caller instead of failing, and the send errors only when the writer
+    /// thread has actually dropped its receiver, so `Err(WriterGone)` from
+    /// this method is a true confirmation of writer death, with no
+    /// `WriterQueueFull` ambiguity. `update` must never call this: every
+    /// production enqueue path stays on `enqueue`/`try_send`.
+    pub(crate) fn enqueue_blocking(&self, kind: OpKind) -> Result<u64, Error> {
+        let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
+        self.writer.send(WriteOp { id, kind })?;
+        Ok(id)
+    }
+
     /// A fresh sample of this store's injected clock.
     pub(crate) fn now(&self) -> SystemTime {
         (self.clock.lock().unwrap_or_else(|p| p.into_inner()))()
@@ -284,6 +297,7 @@ pub(crate) fn set_wal_mode_verified(conn: &Connection) -> Result<(), Error> {
 )]
 mod tests {
     use super::*;
+    use crate::writer::QUEUE_DEPTH;
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -397,6 +411,48 @@ mod tests {
             Store::open_in_memory(clock, test_vfs(), noop_on_event()).expect("open in memory");
         assert!(!store.degraded());
         assert_eq!(store.session_id(), 1);
+        store.shutdown();
+    }
+
+    /// Pins the `SendError -> WriterGone` mapping the kill-writer test hook
+    /// relies on: once the writer thread has dequeued
+    /// `OpKind::KillWriterForTest` and dropped its receiver, every
+    /// subsequent blocking probe send must be woken with `Err(WriterGone)`
+    /// — never `WriterQueueFull`, which would be a false confirmation of
+    /// writer death.
+    #[test]
+    fn probe_blocking_for_test_confirms_writer_gone_via_send_error() {
+        let clock: ClockFn = Arc::new(std::time::SystemTime::now);
+        let store =
+            Store::open_in_memory(clock, test_vfs(), noop_on_event()).expect("open in memory");
+
+        store.kill_writer_for_test().expect("enqueue the kill op");
+
+        // Bounded, not an unbounded spin: a blocking send returns `Ok`
+        // only when the writer consumed a slot or a slot was free, so a
+        // live writer FIFO-bound to the kill op can absorb at most (ops
+        // queued ahead of the kill) + `QUEUE_DEPTH` probes before it must
+        // have dequeued the kill op and dropped its receiver. Exhausting
+        // this cap means the writer survived without ever reaching the
+        // kill op (e.g. it went fatal on something queued first) — that
+        // is a real failure to report loudly, not a hang.
+        let max_attempts = 4 * QUEUE_DEPTH;
+        for attempt in 0..=max_attempts {
+            match store.probe_blocking_for_test(1) {
+                Ok(_) => {
+                    assert!(
+                        attempt < max_attempts,
+                        "writer never confirmed dead after {max_attempts} blocking \
+                         probes — it should have dequeued the kill op long before this"
+                    );
+                }
+                Err(err) => {
+                    assert!(matches!(err, Error::WriterGone));
+                    break;
+                }
+            }
+        }
+
         store.shutdown();
     }
 }

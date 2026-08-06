@@ -12,7 +12,7 @@ use crate::action::Action;
 
 use super::arb::{
     arb_any_keycode, arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_highlight_span,
-    arb_highlight_version, arb_mods, arb_resize,
+    arb_highlight_version, arb_mods, arb_resize, FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START,
 };
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
@@ -207,6 +207,43 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
         })
 }
 
+/// `base` for `Action::HighlightTree`: a small in-bounds anchor (every
+/// `TREE_FIXTURES` entry is well under 30 bytes) or a deliberately far
+/// out-of-bounds one — the same hostile-vs-well-formed split
+/// `arb_highlight_span`'s own two bound arms use, since the render query's
+/// clamp against an out-of-bounds `LineMap` anchor is exactly the property
+/// under fuzz.
+fn arb_tree_base() -> impl Strategy<Value = usize> {
+    prop_oneof![IN_BOUNDS_START, FAR_OUT_OF_BOUNDS_START]
+}
+
+/// 3 — the same mandatory `Escape` + `Key('h')` prefix `cluster_highlight`
+/// uses and for the same two reasons (that cluster's own docs): the edit
+/// guarantees the live buffer version is >= 1 before the reply is
+/// delivered, so `HighlightVersion::Stale` is genuinely distinct from
+/// `Live`; `Escape` unconditionally unparks focus from `Pane::Title` so the
+/// edit reaches the Editor regardless of what ran immediately before. The
+/// reply itself is synthesized through the TREE channel instead
+/// (`Action::HighlightTree`'s own docs): any fixture, any base — `base` is
+/// deliberately unvalidated in the same hostile spirit as
+/// `arb_highlight_span`'s far-out-of-bounds arm.
+fn cluster_highlight_tree() -> impl Strategy<Value = Vec<Action>> {
+    (arb_highlight_version(), any::<u8>(), arb_tree_base()).prop_map(|(version, fixture, base)| {
+        vec![
+            Action::Key(ESCAPE_KEY),
+            Action::Key(KeyInput {
+                code: KeyCode::Char('h'),
+                mods: Mods::NONE,
+            }),
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            },
+        ]
+    })
+}
+
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`,
 /// `DirLoaded` with 0-6 arbitrary entries (plan WP4.S6), the named
 /// `^b`/`^t` Explorer/Tabs toggle chords (CODE-REVIEW.md rune-fuzz finding
@@ -399,15 +436,17 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
     })
 }
 
-/// The user-approved weighted table, now over 16 clusters (plan WP7.S6
+/// The user-approved weighted table, now over 17 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
 /// Guard's `[S]ave`/`[D]iscard`/`Esc` answers; the merge plan's own WP7.S1
 /// added `cluster_merge`, since bumped from a `MERGE_KEY`-only weight of 1
 /// once a store-backed session made `MergeState::Active` actually
-/// reachable). All arms are `.boxed()` — `prop_oneof!` with >10
-/// arms expands to `Union::new_weighted(vec![… boxed…])` (G16).
+/// reachable; issue #37's own generator arm added `cluster_highlight_tree`,
+/// the TREE-channel twin of `cluster_highlight`). All arms are `.boxed()` —
+/// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
+/// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -421,6 +460,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         4 => cluster_multicursor().boxed(),
         3 => cluster_monkey_burst().boxed(),
         3 => cluster_highlight().boxed(),
+        3 => cluster_highlight_tree().boxed(),
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),

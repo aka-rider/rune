@@ -31,7 +31,7 @@ use rune_vfs::{Mem, Vfs};
 
 use step_exec::{
     discharge_pending_rename, discharge_pending_save, discharge_pending_trash, drain_one_db_op,
-    highlight_step, key_step, step_and_check,
+    highlight_step, highlight_tree_step, key_step, step_and_check,
 };
 pub use store_ops::wait_for_db_op;
 use store_ops::{diverge_disk, drain_all_db_ops, drain_all_pending_setup, open_store};
@@ -372,6 +372,16 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
             }
             Action::Highlight { version, spans } => {
                 let (msg, tag) = highlight_step(&state, *version, spans);
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            } => {
+                let (msg, tag) = highlight_tree_step(&state, *version, *fixture, *base);
                 if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
                 }

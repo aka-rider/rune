@@ -22,6 +22,8 @@ use crate::runtime::Effects;
 use crate::width::{display_width, truncate_to_width};
 use crate::workspace;
 
+pub mod limit;
+
 /// The Open Tabs pane's own state (plan WP5.S1): the tab DISPLAY order
 /// (distinct from `App.documents`' `BTreeMap` iteration order, plan
 /// Assumption A2) and its cursor/scroll position. `order` always contains
@@ -31,6 +33,11 @@ use crate::workspace;
 /// removes a closed one.
 pub struct OpenTabs {
     pub order: Vec<DocumentId>,
+    /// Activation order, oldest-first — the last entry is the most recently
+    /// active document. Always the same membership as `order`, just a
+    /// different order; kept in lockstep at every `app.active` write via
+    /// `touch`.
+    pub mru: Vec<DocumentId>,
     pub nav: listnav::List,
 }
 
@@ -41,8 +48,15 @@ impl OpenTabs {
     pub fn new(initial: DocumentId) -> OpenTabs {
         OpenTabs {
             order: vec![initial],
+            mru: vec![initial],
             nav: listnav::List { cursor: 0, top: 0 },
         }
+    }
+
+    /// Moves `id` to the end of `mru` — the most-recently-active slot.
+    pub fn touch(&mut self, id: DocumentId) {
+        self.mru.retain(|&t| t != id);
+        self.mru.push(id);
     }
 }
 
@@ -212,6 +226,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             "  "
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
+        let pin_marker = if doc.pinned { "*" } else { " " };
         // A not-yet-promoted preview renders dimmer than an ordinary tab —
         // active or not, since it can be the active document while the
         // Explorer cursor is still just passing over it — so a glance at
@@ -230,7 +245,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         lines.push(Line::from(vec![
             Span::raw(prefix),
             Span::styled(format!("{shortcut}:"), app.theme.chrome.tabs_divider),
-            Span::raw(" "),
+            Span::styled(pin_marker, app.theme.chrome.tab_pinned),
             Span::styled(dirty_marker, app.theme.chrome.tab_dirty),
             Span::raw(" "),
             Span::styled(doc.file_name().to_string(), name_style),
@@ -338,6 +353,72 @@ mod tests {
             );
         }
         assert_eq!(app.tabs.nav.cursor, 2, "clamped at the bottom");
+    }
+
+    /// `mru` and `order` must always share membership — just in different
+    /// orders — and switching a tab in moves it to the end of `mru`.
+    #[test]
+    fn mru_tracks_activation_order() {
+        let mut app = app();
+        let first = app.active;
+        app.open_document(Buffer::new("second"));
+        app.open_document(Buffer::new("third"));
+
+        crate::workspace::switch_to(&mut app, first);
+
+        assert_eq!(app.tabs.mru.last(), Some(&first));
+
+        let mut order_sorted = app.tabs.order.clone();
+        let mut mru_sorted = app.tabs.mru.clone();
+        order_sorted.sort();
+        mru_sorted.sort();
+        assert_eq!(order_sorted, mru_sorted);
+    }
+
+    /// `close_now` reseats `app.active` at the neighbor WITHOUT going
+    /// through `switch_to` — this pins that the reseated neighbor still
+    /// lands at the end of `mru`.
+    #[test]
+    fn closing_the_active_tab_touches_its_replacement() {
+        let mut app = app();
+        app.open_document(Buffer::new("second"));
+        let target = app.open_document(Buffer::new("third"));
+        crate::workspace::switch_to(&mut app, target);
+
+        let mut effects = Effects::default();
+        crate::workspace::request_close(&mut app, target, &mut effects);
+
+        assert_ne!(app.active, target);
+        assert_eq!(app.tabs.mru.last(), Some(&app.active));
+
+        let mut order_sorted = app.tabs.order.clone();
+        let mut mru_sorted = app.tabs.mru.clone();
+        order_sorted.sort();
+        mru_sorted.sort();
+        assert_eq!(order_sorted, mru_sorted);
+    }
+
+    /// Discarding a live Explorer preview bypasses `close_now` entirely
+    /// (`explorer_preview::remove_preview_document`) — this pins that it
+    /// still keeps `mru` in lockstep with `order`.
+    #[test]
+    fn preview_discard_keeps_mru_in_lockstep() {
+        let mut app = app();
+        let target = app.active;
+        let preview = app.open_document(Buffer::new("previewed"));
+        app.doc_mut(preview).unwrap().read_only = crate::document::ReadOnly::Preview;
+        app.explorer.preview = Some(preview);
+
+        crate::workspace::switch_to(&mut app, target);
+
+        assert!(!app.tabs.order.contains(&preview));
+        assert!(!app.tabs.mru.contains(&preview));
+
+        let mut order_sorted = app.tabs.order.clone();
+        let mut mru_sorted = app.tabs.mru.clone();
+        order_sorted.sort();
+        mru_sorted.sort();
+        assert_eq!(order_sorted, mru_sorted);
     }
 
     #[test]

@@ -275,6 +275,49 @@ fn parse_highlight_span(rest: &str, line: usize) -> Result<(usize, usize, u16), 
     Ok((start, end, scope))
 }
 
+/// Parses a single-line `highlight-tree <live|stale|future> <fixture> <base>`
+/// action — unlike `highlight`, this has no continuation lines, since the
+/// tree channel carries no per-delivery span list.
+fn parse_highlight_tree(rest: &str, line: usize) -> Result<Action, ScriptError> {
+    let malformed = || ScriptError::MalformedLine {
+        line,
+        reason: "expected `highlight-tree <live|stale|future> <fixture> <base>`".to_string(),
+    };
+    let mut parts = rest.split(' ');
+    let version_str = parts.next().ok_or_else(malformed)?;
+    let fixture_str = parts.next().ok_or_else(malformed)?;
+    let base_str = parts.next().ok_or_else(malformed)?;
+    if parts.next().is_some() {
+        return Err(malformed());
+    }
+    let version = match version_str {
+        "live" => HighlightVersion::Live,
+        "stale" => HighlightVersion::Stale,
+        "future" => HighlightVersion::Future,
+        other => {
+            return Err(ScriptError::MalformedLine {
+                line,
+                reason: format!("unknown highlight-tree version {other:?}"),
+            });
+        }
+    };
+    let fixture: u8 = fixture_str
+        .parse()
+        .map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: format!("invalid highlight-tree fixture {fixture_str:?}"),
+        })?;
+    let base: usize = base_str.parse().map_err(|_| ScriptError::InvalidNumber {
+        line,
+        reason: format!("invalid highlight-tree base {base_str:?}"),
+    })?;
+    Ok(Action::HighlightTree {
+        version,
+        fixture,
+        base,
+    })
+}
+
 fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if raw == "confirm-timeout" {
         return Ok(Action::ConfirmTimeout);
@@ -326,6 +369,9 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     }
     if let Some(rest) = raw.strip_prefix("key ") {
         return parse_key(rest, line).map(Action::Key);
+    }
+    if let Some(rest) = raw.strip_prefix("highlight-tree ") {
+        return parse_highlight_tree(rest, line);
     }
 
     let keyword = raw.split(' ').next().unwrap_or(raw);

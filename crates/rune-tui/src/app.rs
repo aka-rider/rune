@@ -441,13 +441,17 @@ impl App {
     /// Inserts a new, not-yet-active `Document` into the map and returns its
     /// id. The minimal multi-document seam (its own unit tests in
     /// `db.rs`/`save.rs`, "two docs enqueue ops") — full open/close/switch
-    /// UX is handled by `workspace::open_path`.
+    /// UX is handled by `workspace::open_path`. Interactive callers clear
+    /// the tab cap through the tabs limit module BEFORE ever reaching here;
+    /// bootstrap and recovery callers skip that gate by design, so this
+    /// constructor itself stays unconditional.
     pub fn open_document(&mut self, buffer: Buffer) -> DocumentId {
         let id = self.mint_doc_id();
         self.documents.insert(id, Document::new(buffer));
         // The Open Tabs chokepoint: every document, however
         // it was opened, gets a tab the moment it exists.
         self.tabs.order.push(id);
+        self.tabs.mru.push(id);
         id
     }
 

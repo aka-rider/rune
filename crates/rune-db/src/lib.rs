@@ -96,4 +96,4 @@ pub use snapshot::{create_snapshot, recover_document};
 pub use store::{ClockFn, DEGRADED_WARNING, LivenessCheckFn, Store};
 pub use sync::{SyncKind, SyncState, Version, classify_sync, is_dirty, sync};
 pub use versioning::{SCHEMA_VERSION, db_file_name, production_db_path};
-pub use writer::{DbEvent, OnEvent, OpKind, OpOutcome, WriteOp, WriterHandle};
+pub use writer::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH, WriteOp, WriterHandle};

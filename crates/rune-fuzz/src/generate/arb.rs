@@ -96,6 +96,17 @@ pub(super) fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion>
     ]
 }
 
+/// Shared by `arb_highlight_span`'s well-formed arm and `arb_tree_base`'s
+/// (`cluster.rs`) own well-formed-vs-hostile split: a small in-bounds start
+/// every `SEEDS` document fits (`arb_highlight_span`) or every
+/// `TREE_FIXTURES` entry fits (`arb_tree_base`).
+pub(super) const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
+
+/// Shared the same way as `IN_BOUNDS_START`: a start entirely past the end
+/// of every `SEEDS`/`TREE_FIXTURES` fixture (the longest is well under 900
+/// bytes), exercising the out-of-bounds clamp/discard path.
+pub(super) const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
+
 /// One raw `(start, end, ScopeId)` triple, deliberately unvalidated —
 /// `Action::Highlight`'s own docs — drawn from four shapes: a small
 /// well-formed range, a range entirely past a short document's length, a
@@ -111,15 +122,11 @@ pub(super) fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion>
 /// literal the four `prop_oneof!` arms used inline before, just named —
 /// the generated distribution is unchanged.
 pub(super) fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
-    /// Arm 1 — a small well-formed span: `start` fits inside every `SEEDS`
-    /// document, `len >= 1` keeps `start < end`.
-    const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
     const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
 
     /// Arm 2 — a span entirely past the end of every `SEEDS` document (the
     /// longest seed is well under 900 bytes), exercising the out-of-bounds
     /// clamp/discard path with a WIDE span, not just a narrow overrun.
-    const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
     const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
 
     /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,

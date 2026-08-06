@@ -31,47 +31,71 @@ pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
     (Msg::Key(key), tag)
 }
 
-/// Builds the `(Msg, MsgTag)` pair for `Action::Highlight` — resolved
-/// against the LIVE buffer version at delivery time (`HighlightVersion`'s
-/// own docs), never a fixed constant, mirroring `Action::ConfirmTimeout`'s
-/// rule. Hostile span injection into one region's SPAN channel, never a
-/// `ParsedTree` — the fuzzer has no way to synthesize one, and shouldn't. A
-/// reply describes the document's whole region layout, so this one is a
-/// single span-backed region: no coordinate map (its spans are already
-/// buffer offsets, exactly like a markdown fence's), and nothing for the
-/// tree channel. The render-path query reads it back the same way it reads
-/// any other region, so `HL-CLAMPED`/`HL-STALE-DROP` keep testing the real
-/// clamp.
+/// Builds the `(Msg, MsgTag)` pair for a `Msg::Highlighted` reply from its
+/// already-built `HighlightReply` — the one place `Action::Highlight` and
+/// `Action::HighlightTree` both resolve the version they claim against the
+/// LIVE buffer version at delivery time (`HighlightVersion::resolve`'s own
+/// docs), never a fixed constant, mirroring `Action::ConfirmTimeout`'s rule.
+fn highlight_reply_step(
+    state: &State,
+    version: HighlightVersion,
+    result: rune_tui::highlight::HighlightReply,
+    span_count: usize,
+) -> (Msg, MsgTag) {
+    let live = state.app.active_doc().buffer.version();
+    let delivered_version = version.resolve(live);
+    let doc = state.app.active;
+    let msg = Msg::Highlighted {
+        doc,
+        version: delivered_version,
+        result: Some(result),
+    };
+    let tag = MsgTag::Highlighted {
+        delivered_version,
+        span_count,
+    };
+    (msg, tag)
+}
+
+/// Builds the `(Msg, MsgTag)` pair for `Action::Highlight` — hostile span
+/// injection into one region's SPAN channel, never a `ParsedTree` — the
+/// fuzzer has no way to synthesize one, and shouldn't (`Action::HighlightTree`
+/// reaches the tree channel instead, through `highlight_tree_step`). A reply
+/// describes the document's whole region layout, so this one is a single
+/// span-backed region: no coordinate map (its spans are already buffer
+/// offsets, exactly like a markdown fence's), and nothing for the tree
+/// channel. The render-path query reads it back the same way it reads any
+/// other region, so `HL-CLAMPED`/`HL-STALE-DROP` keep testing the real clamp.
 pub(super) fn highlight_step(
     state: &State,
     version: HighlightVersion,
     spans: &[(usize, usize, u16)],
 ) -> (Msg, MsgTag) {
-    let live = state.app.active_doc().buffer.version();
-    let delivered_version = match version {
-        HighlightVersion::Live => live,
-        HighlightVersion::Stale => live.saturating_sub(1),
-        HighlightVersion::Future => live.saturating_add(1),
+    let result = rune_tui::highlight::HighlightReply {
+        regions: vec![rune_tui::highlight::RegionResult {
+            map: rune_tui::linemap::LineMap::default(),
+            payload: Some(rune_tui::highlight::RegionPayload::Spans(
+                highlight_spans_from_raw(spans),
+            )),
+        }],
+        truncated: false,
     };
-    let doc = state.app.active;
-    let msg = Msg::Highlighted {
-        doc,
-        version: delivered_version,
-        result: Some(rune_tui::highlight::HighlightReply {
-            regions: vec![rune_tui::highlight::RegionResult {
-                map: rune_tui::linemap::LineMap::default(),
-                payload: Some(rune_tui::highlight::RegionPayload::Spans(
-                    highlight_spans_from_raw(spans),
-                )),
-            }],
-            truncated: false,
-        }),
-    };
-    let tag = MsgTag::Highlighted {
-        delivered_version,
-        span_count: spans.len(),
-    };
-    (msg, tag)
+    highlight_reply_step(state, version, result, spans.len())
+}
+
+/// Builds the `(Msg, MsgTag)` pair for `Action::HighlightTree` — the tree
+/// channel `Action::Highlight` cannot reach (that fn's own docs), delivered
+/// through `crate::action::highlight_tree_reply` so the driver and its
+/// acceptance test share the one construction. `span_count` is 0: the reply
+/// carries a `RegionPayload::Tree`, not spans.
+pub(super) fn highlight_tree_step(
+    state: &State,
+    version: HighlightVersion,
+    fixture: u8,
+    base: usize,
+) -> (Msg, MsgTag) {
+    let result = crate::action::highlight_tree_reply(fixture, base);
+    highlight_reply_step(state, version, result, 0)
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it

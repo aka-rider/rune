@@ -138,7 +138,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // focus stayed stranded on the chrome list.
         GlobalCommand::Help => {
             app.set_focus_pane(Pane::Editor, effects);
-            crate::workspace::toggle_help(app);
+            crate::workspace::toggle_help(app, effects);
         }
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane
@@ -173,6 +173,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
         GlobalCommand::Trash => crate::trash::request_trash(app, effects),
+        GlobalCommand::TogglePin => crate::opentabs::limit::toggle_pin(app, app.active),
         // Open creates a fresh, focused, empty draft; close saves it as
         // `App::last_search_query` and clears the highlight overlay
         // (`search::open`/`close`, the chokepoints — neither

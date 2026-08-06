@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
-use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::mpsc::{self, SendError, SyncSender, TrySendError};
 use std::thread;
 use std::time::Duration;
 
@@ -105,6 +105,19 @@ impl WriterHandle {
             TrySendError::Full(_) => Error::WriterQueueFull,
             TrySendError::Disconnected(_) => Error::WriterGone,
         })
+    }
+
+    /// Blocking counterpart to [`WriterHandle::try_send`], for the
+    /// kill-writer test hook ONLY — production enqueue must never block
+    /// `update` on a full queue, so every production path stays on
+    /// `try_send`. A full queue parks the caller until the writer frees a
+    /// slot; the send is woken with `Err` the moment the writer thread
+    /// drops its receiver, i.e. the error IS the writer-death signal —
+    /// there is no full-queue error case at all.
+    pub(crate) fn send(&self, op: WriteOp) -> Result<(), Error> {
+        self.sender
+            .send(op)
+            .map_err(|SendError(_)| Error::WriterGone)
     }
 }
 
