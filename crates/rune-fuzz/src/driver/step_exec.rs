@@ -7,14 +7,17 @@
 //! through `step_exec::`.
 
 use rune_tui::app::{self, App};
+use rune_tui::db::DbBridge;
 use rune_tui::keymap::{self, KeyInput};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
 
+use crate::action::{HighlightVersion, highlight_spans_from_raw};
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
+use super::store_ops::wait_for_db_op;
 use super::{Outcome, State, checks};
 
 /// Builds the `(Msg, MsgTag)` pair for one keystroke — the one place
@@ -28,40 +31,117 @@ pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
     (Msg::Key(key), tag)
 }
 
+/// Builds the `(Msg, MsgTag)` pair for a `Msg::Highlighted` reply from its
+/// already-built `HighlightReply` — the one place `Action::Highlight` and
+/// `Action::HighlightTree` both resolve the version they claim against the
+/// LIVE buffer version at delivery time (`HighlightVersion::resolve`'s own
+/// docs), never a fixed constant, mirroring `Action::ConfirmTimeout`'s rule.
+fn highlight_reply_step(
+    state: &State,
+    version: HighlightVersion,
+    result: rune_tui::highlight::HighlightReply,
+    span_count: usize,
+) -> (Msg, MsgTag) {
+    let live = state.app.active_doc().buffer.version();
+    let delivered_version = version.resolve(live);
+    let doc = state.app.active;
+    let msg = Msg::Highlighted {
+        doc,
+        version: delivered_version,
+        result: Some(result),
+    };
+    let tag = MsgTag::Highlighted {
+        delivered_version,
+        span_count,
+    };
+    (msg, tag)
+}
+
+/// Builds the `(Msg, MsgTag)` pair for `Action::Highlight` — hostile span
+/// injection into one region's SPAN channel, never a `ParsedTree` — the
+/// fuzzer has no way to synthesize one, and shouldn't (`Action::HighlightTree`
+/// reaches the tree channel instead, through `highlight_tree_step`). A reply
+/// describes the document's whole region layout, so this one is a single
+/// span-backed region: no coordinate map (its spans are already buffer
+/// offsets, exactly like a markdown fence's), and nothing for the tree
+/// channel. The render-path query reads it back the same way it reads any
+/// other region, so `HL-CLAMPED`/`HL-STALE-DROP` keep testing the real clamp.
+pub(super) fn highlight_step(
+    state: &State,
+    version: HighlightVersion,
+    spans: &[(usize, usize, u16)],
+) -> (Msg, MsgTag) {
+    let result = rune_tui::highlight::HighlightReply {
+        regions: vec![rune_tui::highlight::RegionResult {
+            map: rune_tui::linemap::LineMap::default(),
+            payload: Some(rune_tui::highlight::RegionPayload::Spans(
+                highlight_spans_from_raw(spans),
+            )),
+        }],
+        truncated: false,
+    };
+    highlight_reply_step(state, version, result, spans.len())
+}
+
+/// Builds the `(Msg, MsgTag)` pair for `Action::HighlightTree` — the tree
+/// channel `Action::Highlight` cannot reach (that fn's own docs), delivered
+/// through `crate::action::highlight_tree_reply` so the driver and its
+/// acceptance test share the one construction. `span_count` is 0: the reply
+/// carries a `RegionPayload::Tree`, not spans.
+pub(super) fn highlight_tree_step(
+    state: &State,
+    version: HighlightVersion,
+    fixture: u8,
+    base: usize,
+) -> (Msg, MsgTag) {
+    let result = crate::action::highlight_tree_reply(fixture, base);
+    highlight_reply_step(state, version, result, 0)
+}
+
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
-/// produced together with its tag and the bytes it was constructed with —
-/// looked up in the per-document snapshot by the ack's OWN `id`, never by
-/// whichever document is active at delivery time (see `MsgTag::SaveDone`'s
-/// docs; `TODO-fuzz-save-verbatim-help-doc-stale-ack.md`). The snapshot is
-/// guaranteed to have an entry for `id`: it was built from every open
-/// document at the moment THIS save `Cmd` was constructed, and `id` names
-/// exactly the document `trigger_save` built the `Cmd` for — which must
-/// have existed then (`trigger_save` bails out before constructing any
-/// `Cmd` if its target document doesn't). `save_cmd` (`app.rs`) only ever
-/// constructs a `Msg::SaveDone` reply and never returns `None` — the `None`
-/// arms below are defensive against `Cmd`'s general contract, not reachable
-/// from any real save `Cmd` this driver stores. Never synthesizes
-/// `Msg::SaveDone` itself (G14) — it only ever forwards what `cmd.run()`
-/// actually returned.
-pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Vec<u8>)> {
+/// produced together with its tag — and, for the no-store fallback only,
+/// the bytes it was constructed with, looked up in the per-document
+/// snapshot by the ack's OWN `id`, never by whichever document is active
+/// at delivery time (see `MsgTag::SaveDone`'s docs; `TODO-fuzz-save-
+/// verbatim-help-doc-stale-ack.md`). The snapshot is guaranteed to have an
+/// entry for `id`: it was built from every open document at the moment
+/// THIS save `Cmd` was constructed, and `id` names exactly the document
+/// `trigger_save`/`materialize_ack::materialize_vfs_cmd` built the `Cmd`
+/// for — which must have existed then. `CmdKind::Save` now covers TWO
+/// distinct `Cmd` shapes (WP7's store-backed dance spawns its own caller-
+/// side `vfs` `Cmd` under the same tag `step_and_check` already tracks as
+/// `pending_save`, alongside the pre-existing no-store fallback): a
+/// `Msg::SaveDone` reply carries verbatim bytes worth pinning (`SAVE-
+/// VERBATIM`), a `Msg::MaterializeVfsDone` reply does not — `SAVE-VERBATIM`
+/// stays scoped to the tag it already keys off. Never synthesizes either
+/// reply itself (G14) — this only ever forwards what `cmd.run()` actually
+/// returned, and returns `None` for any OTHER reply shape as a defensive
+/// guard against `Cmd`'s general contract, not a path reachable from any
+/// real save `Cmd` this driver stores.
+pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Option<Vec<u8>>)> {
     let (cmd, per_doc_bytes) = state.pending_save.take()?;
     let msg = cmd.run()?;
-    let Msg::SaveDone {
-        id,
-        version,
-        result,
-        ..
-    } = &msg
-    else {
-        return None;
-    };
-    let tag = MsgTag::SaveDone {
-        id: *id,
-        version: *version,
-        ok: result.is_ok(),
-    };
-    let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
-    Some((msg, tag, bytes))
+    match &msg {
+        Msg::SaveDone {
+            id,
+            version,
+            result,
+            ..
+        } => {
+            let tag = MsgTag::SaveDone {
+                id: *id,
+                version: *version,
+                ok: result.is_ok(),
+            };
+            let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
+            Some((msg, tag, Some(bytes)))
+        }
+        Msg::MaterializeVfsDone { id, .. } => {
+            let tag = MsgTag::MaterializeVfsDone { id: *id };
+            Some((msg, tag, None))
+        }
+        _ => None,
+    }
 }
 
 /// Runs the one deferred no-store rename `Cmd`, if any, returning the
@@ -79,6 +159,59 @@ pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag
         return None;
     }
     Some((msg, MsgTag::RenameDone))
+}
+
+/// Finds the oldest still-pending recovery-store op (lowest id) and blocks
+/// on `bridge` for its reply, returning the `(Msg, MsgTag)` pair to deliver
+/// — `Action::DeliverDb`'s and the end-of-session sweep's shared drain
+/// primitive. `None` when nothing is pending (either no store is wired, or
+/// every op issued so far has already been drained). Oldest-first mirrors
+/// the real writer thread's own FIFO completion order.
+pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(Msg, MsgTag)> {
+    let op_id = *state.app.db_ops.keys().min()?;
+    // Read BEFORE the reply is delivered: `handle_db_event` pops this exact
+    // entry out of `db_ops` as part of routing the ack (`db_dispatch.rs`),
+    // so it's gone from `App` by the time any checker could otherwise ask
+    // which document `op_id` belonged to.
+    let doc = state.app.db_ops.get(&op_id).map(|pending| pending.doc);
+    let evt = wait_for_db_op(bridge, op_id);
+    Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
+}
+
+/// Runs an arbitrary direct `App` mutation (one that doesn't go through
+/// `update`, e.g. `workspace::switch_to`'s own away-and-back reprobe dance)
+/// under the same `catch_unwind` guard `run_update_catching_panic` gives
+/// every `Msg` delivery — without this, a debug assertion or genuine panic
+/// inside `switch_to` would abort the whole fuzz run instead of surfacing
+/// as an ordinary `NO-PANIC` violation. Returns the violation directly
+/// rather than the raw panic payload, mirroring `step_and_check`'s own
+/// `NO-PANIC` construction.
+pub(super) fn run_direct_catching_panic(
+    app: &mut App,
+    f: impl FnOnce(&mut App) + std::panic::UnwindSafe,
+) -> Option<Violation> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(app))) {
+        Ok(()) => None,
+        Err(payload) => Some(Violation {
+            id: "NO-PANIC",
+            message: downcast_panic(&payload),
+        }),
+    }
+}
+
+/// Runs the one deferred trash `Cmd`, if any, returning the `Msg` it
+/// produced together with its tag (plan WP3.S3) — the same shape as
+/// `discharge_pending_rename`, closing the identical driver gap for
+/// `CmdKind::Trash`: left undischarged, `Mem::trash` and `Msg::TrashDone`
+/// are unreachable from this driver, and fuzz coverage of the trash flow
+/// stops at `set_guard`.
+pub(super) fn discharge_pending_trash(state: &mut State) -> Option<(Msg, MsgTag)> {
+    let cmd = state.pending_trash.take()?;
+    let msg = cmd.run()?;
+    if !matches!(msg, Msg::TrashDone { .. }) {
+        return None;
+    }
+    Some((msg, MsgTag::TrashDone))
 }
 
 /// Delivers one message through `update`, captures the resulting `Snapshot`
@@ -156,6 +289,15 @@ pub(super) fn step_and_check(
             // separate per-document byte snapshot to carry: no rename-path
             // checker needs one yet.
             state.pending_rename = Some(cmd);
+        } else if cmd.kind() == CmdKind::Trash {
+            // Same single-slot reasoning as `pending_rename` above:
+            // structurally at most one trash `Cmd` can be in flight at a
+            // time (`trash::request_trash` and `trash::confirm` both
+            // refuse while `app.trash_pending` is `Some`, mirroring
+            // `rename::begin`'s `in_flight` refusal), so overwriting an
+            // existing `Some` here can never lose a still-outstanding one
+            // in practice.
+            state.pending_trash = Some(cmd);
         }
     }
 
@@ -185,6 +327,9 @@ pub(super) fn step_and_check(
 
     let sampled = checks::should_sample(step_index);
     let next = Snapshot::capture(&mut state.app, sampled);
+    if next.merge_active {
+        outcome.merge_activated = true;
+    }
     let disk = state.mem.read(&state.path).ok();
     // `SAVE-CLEAN-MATCHES-DISK` only ever tests this field for `.is_some()`
     // (a save is still outstanding), never its content — any one entry

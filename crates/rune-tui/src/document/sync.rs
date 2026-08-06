@@ -13,29 +13,28 @@ use rune_md::element::doc::ViewSnapshots;
 use super::Document;
 
 impl Document {
-    /// The pure QUERY half of the per-message sync sequence (plan Context,
-    /// "Msg/Cmd runtime"): `sync_content` iff version changed -> `set_width`
+    /// The pure QUERY half of the per-message sync sequence: `sync_content`
+    /// iff version changed -> `set_width`
     /// -> `sync_cursors` -> `snapshot`. Deliberately does NOT touch
-    /// `viewport.scroll_row` — see `scroll_to_cursor`'s docs (review finding
-    /// F4: separating the snapshot-returning query from the scroll
-    /// mutation removes the double-write/double-computation `sync` used to
-    /// cause).
+    /// `viewport.scroll_row` — see `scroll_to_cursor`'s docs (separating the
+    /// snapshot-returning query from the scroll mutation removes the
+    /// double-write/double-computation `sync` used to cause).
     ///
     /// Idempotent/cheap when nothing changed — `sync_content`/
-    /// `sync_cursors` are no-ops in that case (plan Gotchas: "Reveal must
-    /// never bump the buffer version") — so `commands::nav`/`commands::edit`
+    /// `sync_cursors` are no-ops in that case (reveal must
+    /// never bump the buffer version) — so `commands::nav`/`commands::edit`
     /// call this freely, more than once per message batch, to get
     /// Buffer<->Syntax<->Wrap coordinate conversions that reflect the
     /// CURRENT `Document` fields (in particular a `Resize` already applied
     /// earlier in the same batch — see their module docs) before computing
     /// a new cursor position.
     pub fn view(&mut self) -> ViewSnapshots {
-        self.doc.set_reveal_mode(self.has_insertion_point());
+        self.doc.set_reveal_mode(self.reveals_under_cursor());
         self.sync_catalogue();
         self.doc.set_icons(self.icons.clone());
         self.doc.set_width(self.viewport.width);
-        // Plan WP4.S2: an image document's reserved row count/width — read
-        // from `self.image.cells` once WP5's fit computation sets it,
+        // An image document's reserved row count/width — read
+        // from `self.image.cells` once the fit computation sets it,
         // falling back to `render::image::INFO_CARD_ROWS` while it's still
         // `None` (nothing decoded yet). `self.image` is `Some` only for a
         // `DocumentKind::Image` document, so this whole block is a no-op
@@ -46,7 +45,7 @@ impl Document {
                 .unwrap_or((0, crate::render::image::INFO_CARD_ROWS));
             self.doc.set_image_document_dims(width, rows);
         }
-        // Plan WP9 wiring: the inline embed footprints `sync_embeds`/
+        // The inline embed footprints `sync_embeds`/
         // `handle_embed_decoded` have computed so far — empty (and so a
         // no-op past `set_embed_dims`'s own `dims != self.images` guard)
         // for every document that isn't a markdown one with at least one
@@ -56,8 +55,8 @@ impl Document {
         self.doc.snapshot(&self.buffer)
     }
 
-    /// The narrower, WIDTH-FREE half of `view()`'s parse step (plan WP5.S6,
-    /// [rune-tui A 14]): re-syncs the comrak parse and rebuilds `catalogue`
+    /// The narrower, WIDTH-FREE half of `view()`'s parse step: re-syncs the
+    /// comrak parse and rebuilds `catalogue`
     /// from it, without `view()`'s width-dependent wrap pass or cursor/
     /// snapshot work. `navigate::land_anchor` needs a just-opened target
     /// document's catalogue to find an anchor's heading BEFORE that
@@ -88,7 +87,7 @@ impl Document {
     /// by the batch's real settle — wasted work at best, a visibly wrong
     /// intermediate scroll at worst.
     ///
-    /// `viewport.scroll_row` is a DISPLAY row (WP3: what `render::build_rows`
+    /// `viewport.scroll_row` is a DISPLAY row (what `render::build_rows`
     /// actually indexes, table borders included), but the cursor's own row
     /// is always WRAP space (border rows aren't addressable by the caret) —
     /// `view.display.wrap_to_display` converts before `reconcile` ever sees
@@ -152,8 +151,8 @@ impl Document {
     /// snaps onto `row` at that cursor's own `desired_col` (the same visual-
     /// column-preserving convention `commands::nav::move_row` uses) —
     /// collapsing any selection and any secondary cursor, exactly like
-    /// `commands::nav::escape`'s multi-cursor collapse (plan WP7.S1: "the
-    /// cursor is moved onto the window").
+    /// `commands::nav::escape`'s multi-cursor collapse: the cursor is moved
+    /// onto the window.
     fn snap_cursor_to_row(&mut self, view: &ViewSnapshots, row: usize) {
         let primary = self.cursors.primary();
         let col = view

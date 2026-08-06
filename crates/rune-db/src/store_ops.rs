@@ -14,9 +14,9 @@ use crate::writer::OpKind;
 
 impl Store {
     /// Enqueues an `AppendEdit` op for `doc_id`, tagged with this session's
-    /// own identity and a fresh sample of this store's injected clock (plan
-    /// decision 3: "every batch is also enqueued to the DB writer thread and
-    /// committed per batch"). Fire-and-forget: the journal seq the write
+    /// own identity and a fresh sample of this store's injected clock —
+    /// every edit batch is enqueued to the DB writer thread and committed
+    /// per batch. Fire-and-forget: the journal seq the write
     /// produced arrives asynchronously as `DbEvent::Ok.result` on the
     /// `on_event` callback this `Store` was constructed with; this method
     /// only returns the op id used to correlate that completion. See
@@ -40,28 +40,55 @@ impl Store {
     }
 
     /// Enqueues a `MoveUndoPos` op committing this session's undo position
-    /// for `doc_id` to `pos` — call only after the corresponding buffer
-    /// edit has already succeeded (see `journal::move_undo_pos`).
-    pub fn move_undo_pos(&self, doc_id: i64, pos: i64) -> Result<u64, Error> {
+    /// for `doc_id` to LOCAL undo-journal position `local_pos` — call only
+    /// after the corresponding buffer edit has already succeeded. The
+    /// writer thread resolves `local_pos` to the exact durable seq itself
+    /// at execution time (`OpKind::MoveUndoPos`'s own doc comment) — this
+    /// method never resolves it.
+    pub fn move_undo_pos(&self, doc_id: i64, local_pos: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
             doc_id,
-            pos,
+            local_pos,
+        })
+    }
+
+    /// Enqueues a `TouchSearchQuery` op recording `query` as just-used in
+    /// `search_history`. Cosmetic — see `OpKind::TouchSearchQuery`'s doc
+    /// comment: the caller must treat an `Err` here as a display-only
+    /// failure, never a store degradation.
+    pub fn touch_search_query(&self, query: &str) -> Result<u64, Error> {
+        let now = self.now();
+        self.enqueue(OpKind::TouchSearchQuery {
+            query: query.to_string(),
+            now,
         })
     }
 
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
-    /// `doc_id` at journal position `seq`. See `snapshot::create_snapshot`
-    /// for the transaction itself.
-    pub fn create_snapshot(&self, doc_id: i64, content: &str, seq: i64) -> Result<u64, Error> {
+    /// `doc_id` at this session's CURRENT durable journal position, resolved
+    /// fresh by the writer thread at execution time (`OpKind::CreateSnapshot`'s
+    /// own doc comment). See `snapshot::create_snapshot` for the transaction
+    /// itself.
+    pub fn create_snapshot(&self, doc_id: i64, content: &str) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::CreateSnapshot {
             session_id: self.session_id,
             now,
             doc_id,
             content: content.to_string(),
-            seq,
         })
+    }
+
+    /// Builds the `Probe` op payload — the one construction site both
+    /// `probe` and `probe_blocking_for_test` enqueue through, so the two
+    /// never drift apart.
+    fn probe_op(&self, doc_id: i64) -> OpKind {
+        OpKind::Probe {
+            session_id: self.session_id,
+            doc_id,
+            now: self.now(),
+        }
     }
 
     /// Enqueues a `Probe` op refreshing `doc_id`'s disk fact. See
@@ -69,16 +96,22 @@ impl Store {
     /// `SyncState` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::Sync`).
     pub fn probe(&self, doc_id: i64) -> Result<u64, Error> {
-        let now = self.now();
-        self.enqueue(OpKind::Probe {
-            session_id: self.session_id,
-            doc_id,
-            now,
-        })
+        self.enqueue(self.probe_op(doc_id))
     }
 
-    /// Enqueues a `MergePrep` op — merge entry's fresh-state read (plan
-    /// WP3.S1). The resulting `MergePrepResult` arrives asynchronously as
+    /// Test-support hook, the waiting half of `Store::kill_writer_for_test`:
+    /// enqueues the same `Probe` payload as [`Store::probe`], but through
+    /// [`Store::enqueue_blocking`]. Never call this from production code:
+    /// `update` must never block on the writer queue. Not `#[cfg(test)]` —
+    /// this needs to cross the crate boundary into `rune-tui`'s own
+    /// integration tests.
+    pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
+        let op = self.probe_op(doc_id);
+        self.enqueue_blocking(op)
+    }
+
+    /// Enqueues a `MergePrep` op — merge entry's fresh-state read. The
+    /// resulting `MergePrepResult` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::MergePrep`).
     pub fn merge_prep(&self, doc_id: i64) -> Result<u64, Error> {
         let now = self.now();
@@ -89,13 +122,13 @@ impl Store {
         })
     }
 
-    /// WP7 step (a): enqueues the bookkeeping-only `MaterializePrepare` op —
+    /// The first, bookkeeping-only step of the materialize protocol
+    /// (prepare / vfs write / record): enqueues `MaterializePrepare` —
     /// hands back the CAS decision data (`materialize::MaterializePrep`) the
     /// caller needs before it does any `vfs` call itself. Never touches
     /// `vfs`: a dead writer failing THIS enqueue means the caller falls
     /// back to an uncoordinated direct write (same as a document with no
-    /// store binding at all) rather than being unable to save
-    /// ([rune-db 1]).
+    /// store binding at all) rather than being unable to save.
     pub fn materialize_prepare(
         &self,
         doc_id: i64,
@@ -109,12 +142,13 @@ impl Store {
         })
     }
 
-    /// WP7 step (c): enqueues `MaterializeRecord`, recording what the
-    /// caller's own `vfs` work (steps a/b, performed entirely on the
-    /// caller's thread through its OWN `Vfs` handle) concluded.
-    /// `resolved_path`/`seq` are the caller's own enqueue-time-captured
-    /// facts, never re-derived once this op runs. A dead
-    /// writer failing THIS enqueue means the disk publish already
+    /// The final, recording step of the materialize protocol (prepare /
+    /// vfs write / record): enqueues `MaterializeRecord`, recording what
+    /// the caller's own `vfs` work (the prepare/write steps, performed
+    /// entirely on the caller's thread through its OWN `Vfs` handle)
+    /// concluded. `resolved_path`/`seq` are the caller's own
+    /// enqueue-time-captured facts, never re-derived once this op runs. A
+    /// dead writer failing THIS enqueue means the disk publish already
     /// physically completed — only this session's CAS bookkeeping is lost,
     /// which degrades the store, never the save.
     pub fn materialize_record(

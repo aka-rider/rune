@@ -1,0 +1,92 @@
+content 
+key char:a ---u
+key home ----
+key pageup ----
+key pagedown ----
+key down ----
+key right ----
+key pagedown ----
+key right ----
+key pageup ----
+key pagedown ----
+type \u{4f60}\u{597d}\u{4e16}\u{754c}\u{ff0c}\u{4e16}\u{754c}\u{4f60}\u{597d} \n\n\n \u{26a1}\u{fe0e} lightning FE0E
+key tab ----
+type hello world
+type \u{1d4d2}\u{1d4fe}\u{1d4fb}\u{1d4fc}\u{1d4f2}\u{1d4ff}\u{1d4ee}
+key f1 -a--
+key up -acu
+key f1 --c-
+key enter sa-u
+key f1 -acu
+key left -a--
+deliver-db
+key char:a ---u
+key right -a--
+key pagedown ----
+key up ----
+key pageup ----
+type \"quoted\" \'text\'  \u{200b}\u{200b} 
+key right ----
+key home ----
+paste \n\n\n
+key down -a-u
+key up -a-u
+type \u{e9} \u{e0} \u{f4}
+key char:c ---u
+key char:c --c-
+key escape ----
+paste \u{1d573}\u{1d58a}\u{1d591}\u{1d591}\u{1d594} \u{1d7d9}\u{1d7da}\u{1d7db}
+key char:z ---u
+key char:z ---u
+deliver-db-all
+key up s---
+key pageup s---
+key end s---
+key up s---
+key pageup s---
+deliver-db
+diverge-disk
+deliver-db-all
+key char:m --c-
+deliver-db-all
+key char:t ----
+key char:m --c-
+paste \u{2764}\u{fe0f} heart FE0F
+key char:z ---u
+key char:z s--u
+key char:z s--u
+key char:z s--u
+key char:s ---u
+deliver
+type \"quoted\" \'text\' \n\n\n \u{2764}\u{fe0f} heart FE0F
+type |---|---|
+type aA1! \u{4f60}\u{597d} \u{1f642} mix \u{e9} \u{e0} \u{f4} \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family \u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466} family
+key char:z ---u
+key char:z ---u
+key home s---
+key escape -a--
+key char:w ----
+key up s---
+key char:x ---u
+key end -ac-
+key delete s--u
+key enter --cu
+key up -a-u
+key backtab sa-u
+key left sac-
+key pageup -a--
+type \u{2764}\u{fe0f} heart FE0F \u{2764}\u{fe0f} heart FE0F ***bold*** _em_ `code`
+key char:c ---u
+key right ----
+key left ----
+key pageup ----
+key left ----
+key down ----
+type \u{26a1}\u{fe0e} lightning FE0E  ***bold*** _em_ `code` \u{1d4d2}\u{1d4fe}\u{1d4fb}\u{1d4fc}\u{1d4f2}\u{1d4ff}\u{1d4ee}
+key char:a ---u
+key backspace ----
+key tab ----
+key tab ----
+key backspace ----
+key backspace ----
+key backtab ----

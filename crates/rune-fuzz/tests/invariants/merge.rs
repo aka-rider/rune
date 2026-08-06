@@ -188,6 +188,42 @@ fn merge_key_feedback_accepts_a_scroll_change() {
 }
 
 #[test]
+fn merge_key_feedback_accepts_a_message_posted_with_identical_status() {
+    // Two consecutive unbound keys post the SAME hint text: `status`
+    // (footer + newest-entry text) looks unchanged, but the log itself
+    // grew by one entry — `message_posts` is the only field that tells the
+    // two apart.
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.status = "merge: [O]urs [T]heirs [B]oth · [ ] navigate · Esc close".to_string();
+    let mut next = prev.clone();
+    next.message_posts = prev.message_posts + 1;
+    let ctx = plain_key_ctx();
+    assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
+}
+
+#[test]
+fn merge_key_feedback_detects_truly_identical_including_posts() {
+    // Same as the silent-swallow case above, but pinned specifically on
+    // `message_posts` also matching: this is the case the counter must
+    // NOT paper over — a checker that always treated "posts differ" as
+    // "feedback happened" without also requiring them to differ would
+    // lose its teeth entirely.
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.message_posts = 5;
+    let mut next = prev.clone();
+    next.message_posts = 5;
+    let ctx = plain_key_ctx();
+    let v = merge_key_feedback(&prev, &next, &ctx).expect(
+        "identical message_posts alongside everything else must still trip MERGE-KEY-FEEDBACK",
+    );
+    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+}
+
+#[test]
 fn merge_key_feedback_ignores_a_non_editor_focus() {
     let mut prev = base_snapshot("abc");
     prev.merge_active = true;

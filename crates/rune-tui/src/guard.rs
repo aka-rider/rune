@@ -6,6 +6,7 @@
 //! `handle_guard_key`'s dispatch to each kind's own answer.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use rune_db::ObsId;
 
@@ -92,6 +93,13 @@ pub enum GuardKind {
     DiskConflict {
         fresh_obs: ObsId,
     },
+    /// A user-requested move of `path` to the OS Trash — an Explorer
+    /// selection or the active document's file. `path` is authoritative:
+    /// an Explorer selection need not be the open document, so
+    /// `GuardPrompt.doc` (set to `app.active`) is unused by this kind.
+    Trash {
+        path: PathBuf,
+    },
 }
 
 /// One `[X]abel` option in a Guard's footer chord list: `key` is the exact
@@ -156,6 +164,13 @@ pub const DISK_CONFLICT_OPTIONS: &[GuardOption] = &[
     DISK_CONFLICT_MERGE,
 ];
 
+/// The trash Guard's only action.
+pub const TRASH_YES: GuardOption = GuardOption {
+    key: 'y',
+    label: "[Y]es",
+};
+pub const TRASH_OPTIONS: &[GuardOption] = &[TRASH_YES];
+
 /// Names what Escape cancels for a given Guard kind. An exhaustive match, so
 /// a future `GuardKind` variant is forced to choose its own cancellation
 /// wording rather than silently inheriting a generic one.
@@ -165,6 +180,7 @@ fn cancel_status(kind: &GuardKind) -> &'static str {
         GuardKind::DirtyQuit => "quit cancelled",
         GuardKind::RenameCollision { .. } => "rename cancelled",
         GuardKind::DiskConflict { .. } => "save cancelled",
+        GuardKind::Trash { .. } => "trash cancelled",
     }
 }
 
@@ -197,6 +213,7 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         GuardKind::DiskConflict { fresh_obs } => {
             handle_disk_conflict_key(app, doc, *fresh_obs, key, effects);
         }
+        GuardKind::Trash { path } => handle_trash_key(app, path.clone(), key, effects),
     }
 }
 
@@ -355,6 +372,17 @@ fn handle_disk_conflict_key(
         }
         _ => {}
     }
+}
+
+/// `y`/`Y` confirms the trash. Every other key is a consumed no-op,
+/// matching every other Guard kind.
+fn handle_trash_key(app: &mut App, path: PathBuf, key: KeyInput, effects: &mut Effects) {
+    let KeyCode::Char(c) = key.code else { return };
+    if !c.eq_ignore_ascii_case(&TRASH_YES.key) {
+        return;
+    }
+    clear_guard(app);
+    crate::trash::confirm(app, path, effects);
 }
 
 #[cfg(test)]

@@ -137,6 +137,9 @@ pub fn layout_fits(next: &Snapshot) -> Option<Violation> {
     if let Some(r) = geo.title {
         rects.push(("title", r));
     }
+    if let Some(r) = geo.search_bar {
+        rects.push(("search_bar", r));
+    }
     if let Some(r) = geo.left_splitter {
         rects.push(("left_splitter", r));
     }
