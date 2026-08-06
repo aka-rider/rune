@@ -1,8 +1,8 @@
-//! Clipboard commands (WP8): copy/cut write OSC 52 bytes into `Effects.raw`
-//! (never a `Cmd` — plan Gotchas: "Cmds must never touch the terminal");
-//! paste spawns the `pbpaste` `Cmd`.
+//! Clipboard commands: copy/cut write OSC 52 bytes into `Effects.raw`
+//! (never a `Cmd` — a `Cmd` must never touch the terminal); paste spawns
+//! the `pbpaste` `Cmd`.
 //!
-//! Workspace-coupled (plan WP1 decision 4): `copy`/`cut`/`handle_paste_
+//! Workspace-coupled: `copy`/`cut`/`handle_paste_
 //! content` take `(app: &mut App, id: DocumentId)` — `cut`/`handle_paste_
 //! content` bottom out in `commands::edit`, which touches `app.db`/dirty
 //! bookkeeping.
@@ -10,8 +10,8 @@
 //! `Msg::Paste` (bracketed paste) and a `Msg::ClipboardRead` targeting a
 //! document both funnel through `handle_paste_content` — the single
 //! function every DOCUMENT paste source calls, so a terminal ⌘V and an
-//! in-app `super+v` can never double-insert the same text (plan Gotchas:
-//! "Bracketed paste vs pbpaste double-paste"). A paste routed to the title
+//! in-app `super+v` can never double-insert the same text (the bracketed
+//! paste vs `pbpaste` double-paste trap). A paste routed to the title
 //! (`PasteTarget::Title`) never reaches this function at all — it goes
 //! through `title::keys::paste` instead (`dispatch::update_inner`'s
 //! `Msg::Paste`/`Msg::ClipboardRead` arms decide which).
@@ -87,8 +87,8 @@ fn copy_entire_line(buf: &Buffer, offset: usize) -> String {
 }
 
 /// Never mutates the buffer — pushes the OSC 52 write directly into
-/// `Effects.raw` (plan Gotchas: "Cmds must never touch the terminal",
-/// exactly why this is `raw` output, not a `Cmd`).
+/// `Effects.raw` — a `Cmd` must never touch the terminal, exactly why
+/// this is `raw` output, not a `Cmd`.
 pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
     let Some(doc) = app.doc(id) else { return };
     let text = extract_copy_text(&doc.buffer, &doc.cursors);
@@ -100,10 +100,11 @@ pub fn copy(app: &mut App, id: DocumentId, effects: &mut Effects) {
 /// range(s) via `commands::edit::delete_selection_or_line` — reusing the
 /// existing selection-replacing edit machinery rather than duplicating the
 /// batch-apply/journal logic here. `write_to_clipboard_or_report` runs
-/// BEFORE the delete (plan WP13.S4, `rune-tui C 6`): an over-cap selection
-/// raises a banner instead of silently writing a sequence a terminal
-/// multiplexer would just drop, so the user learns the cut never reached
-/// the system clipboard before its bytes are gone from the buffer too —
+/// BEFORE the delete, so an over-cap selection must still be capturable
+/// before the delete: it raises a banner instead of silently writing a
+/// sequence a terminal multiplexer would just drop, so the user learns
+/// the cut never reached the system clipboard before its bytes are gone
+/// from the buffer too —
 /// the delete itself always proceeds either way, since it's
 /// journaled/undoable regardless of what happened to the clipboard.
 pub fn cut(app: &mut App, id: DocumentId, effects: &mut Effects) {
@@ -235,8 +236,8 @@ mod tests {
         );
     }
 
-    /// WP13.S4 (`rune-tui C 6`): a selection over `OSC52_MAX_PAYLOAD_BYTES`
-    /// must not reach `effects.raw` at all — writing it would just be a
+    /// A selection over `OSC52_MAX_PAYLOAD_BYTES` must not reach
+    /// `effects.raw` at all — writing it would just be a
     /// sequence a terminal multiplexer silently drops — and must instead
     /// post a message so the user learns the copy never reached the
     /// system clipboard.
@@ -377,6 +378,32 @@ mod tests {
             paste_app.doc(paste_id).unwrap().journal.len(),
             read_app.doc(read_id).unwrap().journal.len()
         );
+    }
+
+    /// Regression: a bracketed paste while the search bar is focused must
+    /// land in the draft, never the document buffer underneath it — the
+    /// bar is a second input, not the active `Pane`, so the naive
+    /// `app.focus()` match this used to route on fell through to
+    /// `handle_paste_content` and bled the pasted text into the document.
+    #[test]
+    fn bracketed_paste_while_the_search_bar_is_focused_lands_in_the_draft() {
+        use crate::app;
+        use crate::runtime::Msg;
+
+        let mut app = app_with("ac", 1);
+        crate::search::open(&mut app);
+        let id = app.active;
+        let before = app.doc(id).unwrap().buffer.content().to_string();
+
+        let mut effects = Effects::default();
+        app::update(&mut app, Msg::Paste("b".to_string()), &mut effects);
+
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before,
+            "the document buffer must be untouched while the bar is focused"
+        );
+        assert_eq!(app.search.as_ref().unwrap().draft, "b");
     }
 
     #[test]

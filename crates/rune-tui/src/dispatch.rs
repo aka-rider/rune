@@ -41,7 +41,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             // dimensions `layout_mode` reads back are the ones just written
             // above, not the previous frame's.
             crate::focus::reconcile(app, effects);
-            // Plan WP5.S6: the pane may have just changed width (or the
+            // The pane may have just changed width (or the
             // terminal's reported cell pixel geometry may — see
             // `refit_on_resize`'s own docs), so a `Live` image document's
             // fit-to-width footprint can need re-fitting and retransmitting.
@@ -58,9 +58,18 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             // Bracketed paste has no request to attach a target to, so it
             // routes by LIVE focus — unlike `Msg::ClipboardRead` below,
             // whose `target` was captured when the paste was requested.
-            match app.focus() {
-                Pane::Title => crate::title::keys::paste(app, app.active, &text),
-                _ => clipboard::handle_paste_content(app, app.active, &text),
+            // The search bar is checked first, mirroring the key
+            // pipeline's own "second input checked before the chrome-level
+            // `Pane`" rule (`focus::target`'s doc) — otherwise a paste
+            // while the bar is open falls through to the `_` arm and lands
+            // in the document underneath it instead of the draft.
+            if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
+                crate::search::keys::paste(app, &text);
+            } else {
+                match app.focus() {
+                    Pane::Title => crate::title::keys::paste(app, app.active, &text),
+                    _ => clipboard::handle_paste_content(app, app.active, &text),
+                }
             }
         }
         Msg::ClipboardRead { text, target } => {
@@ -68,6 +77,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             match target {
                 PasteTarget::Title(doc) => crate::title::keys::paste(app, doc, &text),
                 PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),
+                PasteTarget::Search => crate::search::keys::paste(app, &text),
             }
         }
         Msg::SaveDone {
@@ -132,7 +142,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             version,
             result,
         } => handle_highlighted(app, doc, version, result, effects),
-        // Plan WP9: the SAME `Msg` variant carries both a whole image
+        // The SAME `Msg` variant carries both a whole image
         // document's decode reply and one embed's — reusing it (rather
         // than adding a second variant) keeps `runtime/mod.rs` from
         // growing past its already-over-budget line count. A document is
@@ -152,6 +162,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::Error(e) => crate::messages::error(app, e),
         Msg::Warning(w) => crate::messages::warn(app, w),
+        Msg::SearchHistory { generation, result } => {
+            crate::search::handle_history_loaded(app, generation, result)
+        }
         Msg::Quit => {
             app.should_quit = true;
         }
@@ -167,8 +180,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
 /// from unrelated concurrent work and must not grow further): whatever a
 /// content/cursor/tab-switch change can invalidate that `update_inner`
 /// didn't already handle inline. Highlight scheduling and a newly-active
-/// image DOCUMENT's decode are unchanged from before this package (plan
-/// WP5.S3/WP5.S1); `sync_embeds` (plan WP9.S4) is new — it runs
+/// image DOCUMENT's decode are unchanged; `sync_embeds` runs
 /// unconditionally (its own `app.graphics.kitty`/`doc.kind` guards make it
 /// a cheap no-op the overwhelming majority of the time) so no future edit
 /// path can forget to keep the active document's embed set current.
@@ -295,6 +307,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
+    // Stage 3, search-bar branch: checked BEFORE the chrome-level `Pane`
+    // match below, since the bar is its own focus state, never a `Pane`
+    // variant (`focus::target`'s own "second input checked first" doc).
+    if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
+        let _ = crate::search::keys::handle_key(app, key, effects);
+        return;
+    }
+
     // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
     // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
     // here rather than threaded anywhere further.
@@ -313,7 +333,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     };
 }
 
-/// The editor pane's own key handling — the pre-WP2 `handle_key` body,
+/// The editor pane's own key handling,
 /// reached only when `app.focus() == Pane::Editor`. `Save`/`QuitConfirm` stay
 /// reachable here too, though stage 2 above always intercepts those first.
 fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> keymap::KeyOutcome {
@@ -321,7 +341,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     // checked before the hardcoded Enter/Escape fast paths and the
     // printable-insert fallthrough below, or `o`/`t`/`b` would type into
     // the working form and bare Esc would collapse the selection instead
-    // of closing the merge (plan WP4, Gotchas `[B1]`).
+    // of closing the merge.
     if crate::merge::keys::intercept(app, key) {
         return keymap::KeyOutcome::Consumed;
     }
@@ -349,8 +369,7 @@ fn handle_editor_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> key
     }
 
     let Some(command) = keymap::resolve(key) else {
-        // Unmatched printable text -> insert fallthrough (plan Context,
-        // "Hardcoded fast paths outside the resolver").
+        // Unmatched printable text -> insert fallthrough.
         // Ctrl/Alt/Super chords that reach here are simply unbound, never an
         // insert — every bound Ctrl/Alt/Super chord is already caught by
         // `keymap::resolve` above.
