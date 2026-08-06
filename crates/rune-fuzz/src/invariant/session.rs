@@ -101,7 +101,8 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
             // posted one here is that path's own unambiguous fingerprint.
             MsgTag::Db { doc, .. } => {
                 *doc == Some(next.active)
-                    || (next.status != prev.status && next.status.contains("save failed:"))
+                    || ((next.status != prev.status || next.message_posts != prev.message_posts)
+                        && next.status.contains("save failed:"))
             }
             _ => false,
         };
@@ -311,7 +312,8 @@ pub fn guard_answered(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     let nothing_changed = next.guard == prev.guard
         && next.should_quit == prev.should_quit
         && next.quit_intent_pending == prev.quit_intent_pending
-        && next.status == prev.status;
+        && next.status == prev.status
+        && next.message_posts == prev.message_posts;
     if nothing_changed {
         return Some(Violation {
             id: "GUARD-ANSWERED",
