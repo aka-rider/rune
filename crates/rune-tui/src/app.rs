@@ -11,7 +11,7 @@
 //! handle, and UI chrome state that spans every document (status message,
 //! quit-confirm arming, the degraded-store banner).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -246,6 +246,24 @@ pub struct App {
     /// navigate with. `None` until the bar has closed at least once with a
     /// non-empty query.
     pub(crate) last_search_query: Option<String>,
+    /// The next generation `search::open` mints for a history load request
+    /// (plan WP6.S1) — a plain counter on `App`, not on `SearchState`
+    /// itself, because it must keep distinguishing requests across a
+    /// close-then-reopen: a fresh `SearchState` starts every field over,
+    /// but a reply to the PREVIOUS open's now-abandoned request must still
+    /// be recognizable as stale rather than accidentally matching whatever
+    /// generation the new state happens to start at. Mirrors
+    /// `next_rename_gen`/`next_quit_gen`'s own shape.
+    pub(crate) next_search_history_gen: u64,
+    /// Op ids of an in-flight `TouchSearchQuery` write (plan WP6, the
+    /// history-persistence gap): a completed op id absent from `db_ops`
+    /// still reaches `db_dispatch::handle_db_event`'s `DbEvent::Err` arm,
+    /// which otherwise treats every unmatched failure as a real recovery
+    /// failure and sticky-degrades the whole store. Tracking this cosmetic
+    /// write's own op id here lets that arm recognize it and report a
+    /// message instead of degrading. Cleared on both the write's success
+    /// and its failure — never left stale.
+    pub(crate) search_history_ops: HashSet<u64>,
     pub should_quit: bool,
     /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
@@ -344,6 +362,8 @@ impl App {
             messages: MessageLog::new(),
             search: None,
             last_search_query: None,
+            next_search_history_gen: 0,
+            search_history_ops: HashSet::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),

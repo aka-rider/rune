@@ -147,6 +147,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         }
         Msg::Error(e) => crate::messages::error(app, e),
         Msg::Warning(w) => crate::messages::warn(app, w),
+        Msg::SearchHistory { generation, result } => {
+            crate::search::handle_history_loaded(app, generation, result)
+        }
         Msg::Quit => {
             app.should_quit = true;
         }

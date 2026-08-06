@@ -153,6 +153,21 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 crate::search::close(app);
             } else {
                 crate::search::open(app);
+                // Plan WP6.S1: kicks off the ONE history load this bar-open
+                // needs, off-thread through a cloned `ReaderQuery` — never
+                // gated on `Db::degraded` (a write-path flag; reads run on
+                // their own connection, unaffected by it). No store at all
+                // (the extreme construction-failure fallback) just leaves
+                // history empty, same as an ordinary reader failure.
+                if let (Some(db), Some(generation)) = (
+                    app.db.as_ref(),
+                    app.search.as_ref().map(|s| s.history_generation),
+                ) {
+                    effects.cmds.push(crate::runtime::load_search_history_cmd(
+                        db.store.reader_query(),
+                        generation,
+                    ));
+                }
             }
         }
         // Reuses the same cursor-jump `advance` Enter/Shift+Enter already

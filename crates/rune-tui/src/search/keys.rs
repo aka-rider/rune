@@ -44,10 +44,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, _effects: &mut Effects) -
         // fire.
         KeyCode::Enter if key.mods == Mods::NONE => advance(app, true),
         KeyCode::Enter if key.mods == SHIFT => advance(app, false),
-        // ↑/↓ browse history — filled in by a later change. Consumed here,
-        // doing nothing, so it can't bleed into the document underneath in
-        // the meantime.
-        KeyCode::Up | KeyCode::Down => {}
+        KeyCode::Up => history_prev(app),
+        KeyCode::Down => history_next(app),
         KeyCode::Char(c) if !c.is_control() && (key.mods == Mods::NONE || key.mods == SHIFT) => {
             type_char(app, c);
         }
@@ -152,9 +150,14 @@ fn jump(
 /// Records `query` as just-used in the recovery store's `search_history`
 /// table and remembers it as the closed-bar navigation target
 /// (`App::last_search_query`). A degraded or absent store enqueues
-/// nothing; an enqueue `Err` is reported through the message pane and
-/// otherwise ignored — a cosmetic history write must never sticky-degrade
-/// the store the way a failed recovery write does.
+/// nothing. The enqueued op id is tracked in `App::search_history_ops` so
+/// `db_dispatch::handle_db_event` can recognize a LATER `DbEvent::Err` for
+/// this exact write as a cosmetic failure rather than a real recovery one —
+/// an immediate enqueue `Err` (this write never even reached the writer's
+/// queue) has no such op id to track, so it's reported right here instead.
+/// Either way: a message through the log, never `on_store_failure`'s sticky
+/// degrade — a failed history touch must not disable recovery for the rest
+/// of the session.
 fn persist_query(app: &mut App, query: &str) {
     app.last_search_query = Some(query.to_string());
     if app.db.as_ref().is_none_or(|db| db.degraded) {
@@ -163,14 +166,21 @@ fn persist_query(app: &mut App, query: &str) {
     let Some(db) = app.db.as_ref() else {
         return;
     };
-    if let Err(e) = db.store.touch_search_query(query) {
-        messages::error(app, format!("search history not saved: {e}"));
+    match db.store.touch_search_query(query) {
+        Ok(op_id) => {
+            app.search_history_ops.insert(op_id);
+        }
+        Err(e) => {
+            messages::error(app, format!("search history not saved: {e}"));
+        }
     }
 }
 
 fn type_char(app: &mut App, c: char) {
     if let Some(state) = app.search.as_mut() {
         state.draft.push(c);
+        state.history_pos = None;
+        state.history_draft = None;
     }
     recompute(app);
 }
@@ -181,11 +191,104 @@ fn type_char(app: &mut App, c: char) {
 /// applies). An already-empty draft has nothing to erase; the bar stays
 /// open regardless (decision: only Esc closes it).
 fn erase(app: &mut App) {
-    if let Some(state) = app.search.as_mut()
-        && let Some((byte_idx, _)) = state.draft.grapheme_indices(true).next_back()
-    {
-        state.draft.truncate(byte_idx);
+    if let Some(state) = app.search.as_mut() {
+        state.history_pos = None;
+        state.history_draft = None;
+        if let Some((byte_idx, _)) = state.draft.grapheme_indices(true).next_back() {
+            state.draft.truncate(byte_idx);
+        }
     }
+    recompute(app);
+}
+
+/// The needle every ↑/↓ browse step filters the history against: the draft
+/// as it stood the moment browsing started (`SearchState::history_draft`),
+/// or — before the first ↑ this bar-open has seen — the live draft itself.
+fn browse_needle(state: &super::SearchState) -> String {
+    state
+        .history_draft
+        .clone()
+        .unwrap_or_else(|| state.draft.clone())
+}
+
+/// ↑: steps one entry OLDER in the fuzzy-filtered MRU history, clamping at
+/// the oldest match rather than wrapping — history browsing is a one-way
+/// walk back through time, not a ring like match navigation. The first ↑ of
+/// a bar-open session captures the live draft into `history_draft` before
+/// replacing `draft` with the selected entry, so every subsequent step (and
+/// [`history_next`]'s own restore) still filters against what the user
+/// actually typed. A no-op with no history, or when nothing in it matches
+/// the needle.
+fn history_prev(app: &mut App) {
+    let Some(state) = app.search.as_ref() else {
+        return;
+    };
+    if state.history.is_empty() {
+        return;
+    }
+    let needle = browse_needle(state);
+    let filtered: Vec<String> = super::fuzzy_filter(&state.history, &needle)
+        .into_iter()
+        .cloned()
+        .collect();
+    if filtered.is_empty() {
+        return;
+    }
+    let next_pos = state
+        .history_pos
+        .map_or(0, |pos| (pos + 1).min(filtered.len() - 1));
+    let Some(entry) = filtered.get(next_pos).cloned() else {
+        return;
+    };
+
+    let Some(state) = app.search.as_mut() else {
+        return;
+    };
+    state.history_draft.get_or_insert(needle);
+    state.history_pos = Some(next_pos);
+    state.draft = entry;
+    recompute(app);
+}
+
+/// ↓: the mirror of [`history_prev`], stepping one entry NEWER. Walking
+/// past the newest filtered entry restores the pre-browse draft captured by
+/// the first ↑ and ends the browse session (`history_pos`/`history_draft`
+/// both clear) — the in-progress draft the user was typing before pressing
+/// ↑ is never lost. A no-op while no browse session is active
+/// (`history_pos` is `None`).
+fn history_next(app: &mut App) {
+    let Some(state) = app.search.as_ref() else {
+        return;
+    };
+    let Some(pos) = state.history_pos else {
+        return;
+    };
+    if pos == 0 {
+        let restored = state.history_draft.clone().unwrap_or_default();
+        let Some(state) = app.search.as_mut() else {
+            return;
+        };
+        state.draft = restored;
+        state.history_pos = None;
+        state.history_draft = None;
+        recompute(app);
+        return;
+    }
+    let needle = browse_needle(state);
+    let filtered: Vec<String> = super::fuzzy_filter(&state.history, &needle)
+        .into_iter()
+        .cloned()
+        .collect();
+    let next_pos = pos - 1;
+    let Some(entry) = filtered.get(next_pos).cloned() else {
+        return;
+    };
+
+    let Some(state) = app.search.as_mut() else {
+        return;
+    };
+    state.history_pos = Some(next_pos);
+    state.draft = entry;
     recompute(app);
 }
 
@@ -464,6 +567,104 @@ mod tests {
             None,
             "a degraded store skips the write entirely, so there is nothing to report"
         );
+    }
+
+    fn up_key() -> KeyInput {
+        KeyInput {
+            code: KeyCode::Up,
+            mods: Mods::NONE,
+        }
+    }
+
+    fn down_key() -> KeyInput {
+        KeyInput {
+            code: KeyCode::Down,
+            mods: Mods::NONE,
+        }
+    }
+
+    #[test]
+    fn up_filters_history_against_the_currently_typed_draft() {
+        let mut app = app_with("hello");
+        crate::search::open(&mut app);
+        app.search.as_mut().unwrap().history = vec![
+            "needle".to_string(),
+            "hay".to_string(),
+            "haystack".to_string(),
+        ];
+        let mut effects = Effects::default();
+        let _ = handle_key(&mut app, char_key('h'), &mut effects);
+        let _ = handle_key(&mut app, char_key('a'), &mut effects);
+
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+
+        // "needle" has no "h" at all, so it's filtered out; "hay" is the
+        // MRU-most surviving entry, so the first ↑ lands there rather than
+        // "haystack".
+        assert_eq!(app.search.as_ref().unwrap().draft, "hay");
+    }
+
+    #[test]
+    fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
+        let mut app = app_with("hello");
+        crate::search::open(&mut app);
+        app.search.as_mut().unwrap().history = vec!["one".to_string(), "two".to_string()];
+        let mut effects = Effects::default();
+
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "one");
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "two");
+        // Already at the oldest entry — a further ↑ clamps rather than
+        // wrapping back around to "one".
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "two");
+    }
+
+    #[test]
+    fn down_past_the_newest_entry_restores_the_in_progress_draft() {
+        let mut app = app_with("hello");
+        crate::search::open(&mut app);
+        app.search.as_mut().unwrap().history = vec!["hello world".to_string(), "help".to_string()];
+        let mut effects = Effects::default();
+        let _ = handle_key(&mut app, char_key('h'), &mut effects);
+
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "hello world");
+
+        let _ = handle_key(&mut app, down_key(), &mut effects);
+        assert_eq!(
+            app.search.as_ref().unwrap().draft,
+            "h",
+            "walking down past the newest entry restores the pre-browse draft"
+        );
+        assert!(app.search.as_ref().unwrap().history_pos.is_none());
+    }
+
+    #[test]
+    fn down_with_no_browse_session_active_is_a_no_op() {
+        let mut app = app_with("hello");
+        crate::search::open(&mut app);
+        app.search.as_mut().unwrap().history = vec!["one".to_string()];
+        let mut effects = Effects::default();
+        let _ = handle_key(&mut app, char_key('x'), &mut effects);
+
+        let _ = handle_key(&mut app, down_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "x");
+    }
+
+    #[test]
+    fn typing_after_browsing_history_resets_the_browse_session() {
+        let mut app = app_with("hello");
+        crate::search::open(&mut app);
+        app.search.as_mut().unwrap().history = vec!["one".to_string()];
+        let mut effects = Effects::default();
+        let _ = handle_key(&mut app, up_key(), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "one");
+
+        let _ = handle_key(&mut app, char_key('!'), &mut effects);
+        assert_eq!(app.search.as_ref().unwrap().draft, "one!");
+        assert!(app.search.as_ref().unwrap().history_pos.is_none());
     }
 
     #[test]
