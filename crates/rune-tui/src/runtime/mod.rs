@@ -187,6 +187,19 @@ pub enum Msg {
     /// about, but not something as severe as `Error`'s glyph/persistence
     /// implies.
     Warning(String),
+    /// The search bar's MRU history load, requested once per bar-open
+    /// (`search::open`) and delivered by [`load_search_history_cmd`].
+    /// `generation` echoes the `SearchState::history_generation` minted at
+    /// the request — `search::handle_history_loaded` drops a reply whose
+    /// generation no longer matches (a close-then-reopen since issued it),
+    /// the same shape `Msg::DirLoaded` uses. A reader `Err` still carries
+    /// this variant (with an `Err` result) rather than folding into
+    /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
+    /// instead of always surfacing a message regardless of generation.
+    SearchHistory {
+        generation: u64,
+        result: Result<Vec<String>, String>,
+    },
     Quit,
 }
 
@@ -258,6 +271,11 @@ pub enum CmdKind {
     /// WP5.S1). Off-thread: decode is CPU work and must never
     /// block the main loop.
     ImageDecode,
+    /// `ReaderQuery::query(RecentSearches)` for the search bar's history
+    /// list (plan WP6.S1). Off-thread for the same reason `ReadDir` is: the
+    /// reader thread's reply time is out of `update`'s control, and this
+    /// must never block the main loop waiting on it.
+    SearchHistory,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -494,6 +512,28 @@ pub fn read_file_cmd(
             result,
             anchor,
         })
+    })
+}
+
+/// Loads the search bar's MRU history off-thread through a cloned
+/// `ReaderQuery` (plan WP6.S1) — the reader thread's own connection, never
+/// the writer's, so this can never contend with or block on an in-flight
+/// recovery write. Always replies with `Msg::SearchHistory`, `generation`
+/// carried through unchanged: a query failure becomes `result: Err(..)`
+/// rather than `Msg::Error`/`Msg::Warning` directly, so `search::
+/// handle_history_loaded` can apply the same stale-generation check to a
+/// failure as to a success instead of always surfacing a message even for a
+/// reply nobody's still waiting on.
+pub fn load_search_history_cmd(reader: rune_db::ReaderQuery, generation: u64) -> Cmd {
+    Cmd::new(CmdKind::SearchHistory, move || {
+        let result = reader
+            .query(rune_db::ReaderRequestKind::RecentSearches { limit: 200 })
+            .map(|reply| match reply {
+                rune_db::ReaderReply::RecentSearches(entries) => entries,
+                _ => Vec::new(),
+            })
+            .map_err(|e| e.to_string());
+        Some(Msg::SearchHistory { generation, result })
     })
 }
 

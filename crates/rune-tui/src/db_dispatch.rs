@@ -119,9 +119,23 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Ok { id: op_id, .. } => {
             app.db_ops.remove(&op_id);
+            // A `TouchSearchQuery` ack (`OpOutcome::None`, plan WP6) lands
+            // here — nothing else to react to, just retire the tracking
+            // entry `search::keys::persist_query` inserted at enqueue, so
+            // it can't be mistaken for still-in-flight by a later `Err` for
+            // an unrelated op that happens to reuse the id space.
+            app.search_history_ops.remove(&op_id);
         }
         DbEvent::Err { id: op_id, error } => {
             app.db_ops.remove(&op_id);
+            // A cosmetic `search_history` write failing must never
+            // sticky-degrade the whole recovery store the way a real
+            // journal/materialize failure does (plan WP6 decision 11) — the
+            // bar keeps working, only the just-used query wasn't recorded.
+            if app.search_history_ops.remove(&op_id) {
+                crate::messages::error(app, format!("search history not saved: {error}"));
+                return;
+            }
             crate::rename::fail_op(app, op_id, error.clone(), effects);
             // WP7: this exact op may be a `MaterializeRecord` whose disk
             // write ALREADY physically completed before the writer died —

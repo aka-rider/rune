@@ -3,15 +3,10 @@
 //! skip a match hidden behind a substituted/decorated span, wraparound
 //! stepping through a match list, and a fuzzy filter for browsing search
 //! history), plus the bar's own state and the chokepoints that keep it in
-//! sync with the active document. Keystroke handling lives in the [`keys`]
-//! submodule; the bar's own row lives in `render::search`, a sibling
-//! module, not a descendant — it reads [`SearchState`] only through the
-//! fields this module marks `pub(crate)`.
-//!
-//! `fuzzy_filter` has no production caller yet: history browsing lands in
-//! a later change, and is individually `#[allow(dead_code)]`'d rather than
-//! the whole file, so it loses that allow the moment it gains a real
-//! caller — the lint keeps watching the rest in the meantime.
+//! sync with the active document. Keystroke handling, including ↑/↓ history
+//! browsing, lives in the [`keys`] submodule; the bar's own row lives in
+//! `render::search`, a sibling module, not a descendant — it reads
+//! [`SearchState`] only through the fields this module marks `pub(crate)`.
 
 use std::ops::Range;
 
@@ -47,20 +42,29 @@ pub(crate) struct SearchState {
     /// recomputes `matches`, rather than re-derived at the navigation call
     /// site — one recompute chokepoint, not two.
     pub(crate) concealed: Vec<Range<usize>>,
-    /// MRU search history, fuzzy-filterable — populated by a later change
-    /// (loaded from `search_history` once the bar opens).
-    #[allow(dead_code)]
-    history: Vec<String>,
-    /// The generation `Msg::SearchHistory`'s reply must echo back for a
-    /// later change's async history load to accept it — minted fresh each
-    /// bar-open, same shape as `explorer_dirload`'s own request generation.
-    #[allow(dead_code)]
-    history_generation: u64,
+    /// MRU search history, fuzzy-filterable — loaded once from
+    /// `search_history` via a spawned `Cmd` when the bar opens
+    /// ([`handle_history_loaded`]), browsed with ↑/↓ (`keys::history_prev`/
+    /// `keys::history_next`).
+    pub(crate) history: Vec<String>,
+    /// The generation `Msg::SearchHistory`'s reply must echo back for
+    /// [`handle_history_loaded`] to accept it — minted from
+    /// `App::next_search_history_gen` at [`open`], the same shape
+    /// `explorer_dirload`'s own request generation uses, and for the same
+    /// reason: a close-then-reopen before a load lands must not have the
+    /// stale reply land in the fresh session it wasn't answering.
+    pub(crate) history_generation: u64,
     /// The ↑/↓ browse cursor into the fuzzy-filtered history list — `None`
-    /// while the draft itself (not a browsed entry) is what's showing.
-    /// Written by a later change.
-    #[allow(dead_code)]
-    history_pos: Option<usize>,
+    /// while the draft itself (not a browsed entry) is what's showing, i.e.
+    /// before the first ↑ or after ↓ has walked back past the newest entry.
+    pub(crate) history_pos: Option<usize>,
+    /// The draft as it stood the moment ↑ first started browsing — kept so
+    /// every subsequent ↑/↓ filters against what the user actually TYPED,
+    /// not against whatever history entry currently sits in `draft`, and so
+    /// ↓ walking past the newest entry has the original in-progress draft
+    /// to restore rather than losing it. `None` whenever `history_pos` is
+    /// `None`; typing (`keys::type_char`/`erase`) clears both together.
+    pub(crate) history_draft: Option<String>,
 }
 
 /// Opens the bar: a fresh, focused, empty draft. Never seeds from
@@ -71,6 +75,7 @@ pub(crate) fn open(app: &mut App) {
     if app.search.is_some() {
         return;
     }
+    app.next_search_history_gen = app.next_search_history_gen.wrapping_add(1);
     app.search = Some(SearchState {
         focused: true,
         draft: String::new(),
@@ -80,9 +85,44 @@ pub(crate) fn open(app: &mut App) {
         buffer_version: app.active_doc().buffer.version(),
         concealed: Vec::new(),
         history: Vec::new(),
-        history_generation: 0,
+        history_generation: app.next_search_history_gen,
         history_pos: None,
+        history_draft: None,
     });
+}
+
+/// Applies a `Msg::SearchHistory` reply (plan WP6.S1/S2): dropped outright
+/// when the bar has since closed, or when `generation` no longer matches
+/// the still-open bar's own `history_generation` — a close-then-reopen (or,
+/// in principle, two overlapping loads) must never let a late reply for an
+/// abandoned request land in the session that superseded it, mirroring
+/// `explorer_dirload::handle_dir_loaded`'s own generation check. A reader
+/// `Err` degrades `history` to empty rather than leaving whatever was there
+/// (there's nothing durable to preserve — this is the FIRST load) and is
+/// reported once through the message log; the bar itself keeps working
+/// either way, since browsing an empty history is simply a no-op.
+pub(crate) fn handle_history_loaded(
+    app: &mut App,
+    generation: u64,
+    result: Result<Vec<String>, String>,
+) {
+    let current = app.search.as_ref().map(|s| s.history_generation);
+    if current != Some(generation) {
+        return;
+    }
+    match result {
+        Ok(entries) => {
+            if let Some(state) = app.search.as_mut() {
+                state.history = entries;
+            }
+        }
+        Err(e) => {
+            if let Some(state) = app.search.as_mut() {
+                state.history = Vec::new();
+            }
+            crate::messages::error(app, format!("search history not loaded: {e}"));
+        }
+    }
 }
 
 /// The bar's one close chokepoint (`explorer_search::clear_search`
@@ -301,9 +341,6 @@ fn is_subsequence(haystack: &str, needle: &[char]) -> bool {
 /// History entries whose text contains `draft` as a case-insensitive
 /// subsequence, preserving `history`'s own (MRU-first) order. An empty
 /// draft returns every entry unfiltered.
-///
-/// No production caller yet — history browsing lands in a later change.
-#[allow(dead_code)]
 pub(crate) fn fuzzy_filter<'a>(history: &'a [String], draft: &str) -> Vec<&'a String> {
     if draft.is_empty() {
         return history.iter().collect();

@@ -242,3 +242,63 @@ fn switching_the_active_document_resets_the_match_set() {
 
     assert!(app.search.as_ref().unwrap().matches.is_empty());
 }
+
+/// Plan WP6.S2: a `Msg::SearchHistory` reply whose generation no longer
+/// matches the CURRENTLY open bar's own `history_generation` — a
+/// close-then-reopen since the load was issued — is dropped outright,
+/// mirroring `explorer_dirload::handle_dir_loaded`'s own stale-generation
+/// check.
+#[test]
+fn a_stale_generation_history_reply_is_discarded() {
+    let mut app = app_with("hello");
+    open(&mut app);
+    let stale_generation = app.search.as_ref().unwrap().history_generation;
+    close(&mut app);
+    open(&mut app);
+    let live_generation = app.search.as_ref().unwrap().history_generation;
+    assert_ne!(
+        stale_generation, live_generation,
+        "each open mints a fresh generation"
+    );
+
+    handle_history_loaded(
+        &mut app,
+        stale_generation,
+        Ok(vec!["should not land".into()]),
+    );
+
+    assert!(app.search.as_ref().unwrap().history.is_empty());
+}
+
+/// The matching positive case: a reply whose generation DOES match the
+/// still-open bar adopts its entries.
+#[test]
+fn a_matching_generation_history_reply_populates_history() {
+    let mut app = app_with("hello");
+    open(&mut app);
+    let generation = app.search.as_ref().unwrap().history_generation;
+
+    handle_history_loaded(&mut app, generation, Ok(vec!["one".into(), "two".into()]));
+
+    assert_eq!(
+        app.search.as_ref().unwrap().history,
+        vec!["one".to_string(), "two".to_string()]
+    );
+}
+
+/// Plan WP6.S1: a reader failure degrades history to empty and reports
+/// through the message log, but never closes the bar or otherwise disables
+/// it — the search bar itself must keep working.
+#[test]
+fn a_reader_failure_degrades_history_to_empty_and_reports_a_message() {
+    let mut app = app_with("hello");
+    open(&mut app);
+    let generation = app.search.as_ref().unwrap().history_generation;
+    app.search.as_mut().unwrap().history = vec!["stale".to_string()];
+
+    handle_history_loaded(&mut app, generation, Err("reader gone".to_string()));
+
+    assert!(app.search.as_ref().unwrap().history.is_empty());
+    assert!(app.search.is_some(), "the bar itself keeps working");
+    assert!(crate::messages::newest_text(&app).is_some());
+}
