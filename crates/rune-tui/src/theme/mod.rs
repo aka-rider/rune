@@ -76,6 +76,11 @@ pub struct ChromeStyles {
     pub merge_ours_bg: Style,
     pub merge_theirs_bg: Style,
     pub merge_marker_bg: Style,
+    /// The in-file search bar's match highlight (plan WP3.S6). Its own
+    /// field rather than reusing `selection_bg`: a match and a live text
+    /// selection can both be on screen at once and must read as visually
+    /// distinct.
+    pub search_match_bg: Style,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -126,6 +131,7 @@ impl Theme {
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             merge_marker_bg: Style::new().bg(c(p.surface1)),
+            search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
         };
 
         let table = scope_table();

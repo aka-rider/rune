@@ -19,10 +19,9 @@ pub enum FocusTarget {
     /// The editable title field (`title.rs`, `Pane::Title`) — reachable
     /// today via `^r` or the Up-at-editor-top gesture.
     Title,
-    /// Not yet reachable — WP8 adds the search UI this pairs with. Included
-    /// now so a `when` clause authored against it (e.g. a future search-bar
-    /// binding table) parses and validates today, ahead of the field that
-    /// will actually produce it.
+    /// The search bar's own field, focused whenever `App::search` is
+    /// `Some` — reached through [`target`] below, never through
+    /// [`from_pane`] (the bar is not a `Pane`).
     SearchField,
     /// Not yet reachable — see `SearchField`'s doc; WP8's replace field.
     ReplaceField,
@@ -30,11 +29,12 @@ pub enum FocusTarget {
     Messages,
 }
 
-/// Derives today's `FocusTarget` from the chrome-level `Pane` — the only
-/// input that exists before WP8's search state lands. Once a search bar
-/// exists to focus, its own state (not `Pane`, which never grows a
-/// `Pane::Search` variant per the plan's decision 7) becomes a second input
-/// this function checks first.
+/// Derives a `FocusTarget` from the chrome-level `Pane` alone — never
+/// consulted directly by `dispatch::handle_key` anymore; see [`target`]
+/// below, the one function that also checks the search bar's own state
+/// first. Kept as its own function since `Pane` itself never grows a
+/// `Pane::Search` variant (the plan's recorded decision): every OTHER
+/// `FocusTarget` still corresponds 1:1 with a `Pane`.
 pub fn from_pane(pane: Pane) -> FocusTarget {
     match pane {
         Pane::Explorer => FocusTarget::Explorer,
@@ -42,6 +42,19 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
         Pane::Editor => FocusTarget::Editor,
         Pane::Title => FocusTarget::Title,
         Pane::Messages => FocusTarget::Messages,
+    }
+}
+
+/// The resolved "what has focus" `dispatch::handle_key`'s stage 3 actually
+/// routes on: the search bar's own state, checked FIRST, falling back to
+/// [`from_pane`] of the chrome-level `Pane` — the "second input checked
+/// first" shape `from_pane`'s own doc promises, since the bar is its own
+/// state rather than a `Pane` variant.
+pub fn target(app: &App) -> FocusTarget {
+    if app.search.as_ref().is_some_and(|s| s.focused) {
+        FocusTarget::SearchField
+    } else {
+        from_pane(app.focus())
     }
 }
 
@@ -334,6 +347,26 @@ mod tests {
         assert_eq!(from_pane(Pane::Tabs), FocusTarget::Tabs);
         assert_eq!(from_pane(Pane::Editor), FocusTarget::Editor);
         assert_eq!(from_pane(Pane::Title), FocusTarget::Title);
+    }
+
+    /// `target` checks the search bar's own focus bit before falling back
+    /// to the chrome-level `Pane` — the "second input checked first" shape
+    /// its own doc promises, since `Pane` never grows a search variant to
+    /// match on directly.
+    #[test]
+    fn target_checks_the_search_bar_before_falling_back_to_the_pane() {
+        use rune_core::buffer::Buffer;
+        use rune_vfs::Mem;
+        use std::sync::Arc;
+
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        assert_eq!(target(&app), FocusTarget::Editor);
+
+        crate::search::open(&mut app);
+        assert_eq!(target(&app), FocusTarget::SearchField);
+
+        crate::search::close(&mut app);
+        assert_eq!(target(&app), FocusTarget::Editor);
     }
 
     /// No `LayoutMode` this resolver can produce may ever call `Explorer`

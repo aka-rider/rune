@@ -134,6 +134,11 @@ pub struct Geometry {
     /// WP3 — no border exists yet, so `render::draw` never asks for one.
     pub center_bordered: bool,
     pub title: Option<Rect>,
+    /// The in-file search bar's one row, directly below `title` and above
+    /// `editor` — `Some` only while `App::search` is open AND the center
+    /// pane has room to spare it (a content area one row tall keeps that
+    /// row for the title instead; the bar simply doesn't fit that frame).
+    pub search_bar: Option<Rect>,
     pub editor: Rect,
     /// The area left after the footer and the messages pane (if open) are
     /// carved out — the height the left column is allotted from.
@@ -397,11 +402,21 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     // itself) rather than reserving a second content row the way the
     // pre-WP4 `center_chrome_rows` did.
     let title = (content.height >= 1).then(|| Rect::new(content.x, content.y, content.width, 1));
+
+    // One extra row for the in-file search bar (plan WP3.S4), below the
+    // title and above the editor text, only while `App::search` is open
+    // AND the content area actually has a second row to spare it — a
+    // one-row-tall content area keeps that single row for the title
+    // instead, same "drop the chrome before the essential row" shape the
+    // center border itself already uses.
+    let search_bar = (app.search.is_some() && content.height >= 2)
+        .then(|| Rect::new(content.x, content.y.saturating_add(1), content.width, 1));
+    let editor_y = 1u16.saturating_add(u16::from(search_bar.is_some()));
     let editor = Rect::new(
         content.x,
-        content.y.saturating_add(1),
+        content.y.saturating_add(editor_y),
         content.width,
-        content.height.saturating_sub(1),
+        content.height.saturating_sub(editor_y),
     );
 
     // The defect class this guards against: "a frame column nobody owns" —
@@ -450,6 +465,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         center,
         center_bordered,
         title,
+        search_bar,
         editor,
         main: main_area,
         left_splitter,
@@ -463,6 +479,42 @@ mod tests {
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
+
+    /// Plan WP3.S4: the bar's one row appears between `title` and `editor`
+    /// only while `App::search` is open, and reserving it shrinks `editor`
+    /// by exactly one row rather than displacing `title`.
+    #[test]
+    fn an_open_search_bar_reserves_one_row_between_title_and_editor() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        let area = Rect::new(0, 0, 120, 34);
+
+        let closed = geometry(area, &app);
+        assert!(closed.search_bar.is_none());
+
+        crate::search::open(&mut app);
+        let open = geometry(area, &app);
+        let bar = open.search_bar.expect("bar row while App::search is open");
+        let title = open.title.expect("title row at this frame size");
+
+        assert_eq!(bar.y, title.y + 1);
+        assert_eq!(bar.height, 1);
+        assert_eq!(bar.x, title.x);
+        assert_eq!(bar.width, title.width);
+        assert_eq!(open.editor.y, closed.editor.y + 1);
+        assert_eq!(open.editor.height, closed.editor.height - 1);
+    }
+
+    /// A content area only one row tall keeps that row for the title
+    /// instead — the bar simply has no room and `saturating_sub` keeps
+    /// `editor` from underflowing.
+    #[test]
+    fn a_one_row_content_area_gives_the_bar_no_room_and_never_panics() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        crate::search::open(&mut app);
+        // Tall enough for the footer alone plus one content row.
+        let geo = geometry(Rect::new(0, 0, 40, 2), &app);
+        assert!(geo.search_bar.is_none());
+    }
 
     /// `explorer_budget` is a public function precisely because `geometry`
     /// and `pane::FocusTabs`'s `ensure_trail` call must both use the exact

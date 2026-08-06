@@ -13,13 +13,11 @@
 //! already paints a byte-range background through — so the "cells for
 //! display, bytes for spans" rule is never in tension with this pass.
 
-use std::ops::Range;
-
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Modifier;
 
 use super::state::{Block, Conflict, MergeState};
 use crate::document::DocumentId;
-use crate::render::Cell;
+use crate::render::{Cell, paint_range};
 use crate::theme::Theme;
 
 /// [`super::frame::frame_block`]'s exact framing-line shape: the ours
@@ -96,29 +94,12 @@ fn paint_block(
     paint_range(rows, theirs_end..block.end, marker_style);
 }
 
-/// Patches `style` onto every cell in `rows` whose `buf_offset` falls
-/// inside `range` — a decorative cell (`buf_offset < 0`) is never a
-/// candidate, the same skip `overlay::highlight_selection` and
-/// `apply_highlight_spans` already use for the same reason (it claims no
-/// buffer byte to compare against).
-fn paint_range(rows: &mut [Vec<Cell>], range: Range<usize>, style: Style) {
-    for row in rows.iter_mut() {
-        for cell in row.iter_mut() {
-            if cell.buf_offset < 0 {
-                continue;
-            }
-            let offset = cell.buf_offset as usize;
-            if range.contains(&offset) {
-                cell.style = cell.style.patch(style);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use std::num::NonZeroU64;
+
+    use ratatui::style::Style;
 
     use super::*;
     use crate::merge::frame::build_marker_buffer;

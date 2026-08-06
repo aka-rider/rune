@@ -6,6 +6,7 @@
 
 use rune_tui::app::App;
 use rune_tui::document::ReadOnly;
+use rune_tui::focus::{self, FocusTarget};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::render;
@@ -151,6 +152,21 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
         }
     }
     if state.app.focus() == Pane::Title {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    // The search bar isn't a `Pane` at all (it's its own focus state,
+    // checked by `focus::target` ahead of the chrome-level `Pane` match),
+    // so the generic `^B` fallback below — which reads `app.focus()` —
+    // could never reach it either way. Esc is the bar's own dedicated
+    // exit and closes it outright (`search::keys::handle_key`'s `Escape`
+    // arm), mirroring the Title case just above.
+    if focus::target(&state.app) == FocusTarget::SearchField {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Escape,
             mods: Mods::NONE,

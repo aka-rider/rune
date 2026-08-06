@@ -20,6 +20,7 @@ mod code_bg;
 pub(crate) mod decor;
 pub mod image;
 mod overlay;
+pub mod search;
 pub mod title;
 
 use ratatui::Frame;
@@ -33,6 +34,7 @@ use crate::messages;
 use crate::pane::Pane;
 
 pub use blit::blit;
+pub(crate) use cell::paint_range;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 
 /// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
@@ -108,6 +110,25 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
     };
     overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
 
+    // The search bar's live match highlight (plan WP3.S6): painted AFTER
+    // the token overlay (so a match's background sits under, not over, a
+    // token's foreground) and BEFORE the cursor overlays just below (so
+    // the caret/selection still wins where they land on a match). Guarded
+    // on `doc` actually being the ACTIVE document — `build_rows` is
+    // generic over `doc` (the messages pane renders its own read-only
+    // `Document` through this same function), but `App::search`'s matches
+    // are computed against the active document's bytes only, and `doc`
+    // carries no id of its own to compare against `App::active` directly;
+    // pointer identity is exact here since every caller either passes
+    // `app.active_doc()` itself or a document that provably never is it.
+    if let Some(state) = &app.search
+        && std::ptr::eq(doc, app.active_doc())
+    {
+        for m in &state.matches {
+            paint_range(&mut rows, m.clone(), app.theme.chrome.search_match_bg);
+        }
+    }
+
     overlay::apply_cursor_overlays(
         overlay::OverlayGates {
             caret: doc.has_insertion_point(),
@@ -162,6 +183,10 @@ pub fn draw(app: &App, frame: &mut Frame) {
 
     if let Some(title_area) = geo.title {
         title::draw(app, title_area, frame);
+    }
+
+    if let Some(bar_area) = geo.search_bar {
+        search::draw(app, bar_area, frame);
     }
 
     if let Some(view) = &app.active_doc().view {

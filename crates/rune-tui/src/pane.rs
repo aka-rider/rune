@@ -144,6 +144,17 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
+        // Open creates a fresh, focused, empty draft; close saves it as
+        // `App::last_search_query` and clears the highlight overlay
+        // (`search::open`/`close`, plan WP3.S1's chokepoints — neither
+        // touches `App::focus`, since the bar was never a `Pane`).
+        GlobalCommand::ToggleSearch => {
+            if app.search.is_some() {
+                crate::search::close(app);
+            } else {
+                crate::search::open(app);
+            }
+        }
     }
 }
 

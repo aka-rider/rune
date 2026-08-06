@@ -235,6 +235,17 @@ pub struct App {
     /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
     /// chokepoint that writes to it.
     pub messages: MessageLog,
+    /// The in-file search bar's state — `None` when the bar is closed
+    /// (decision: bar-open IS `search.is_some()`). `pub(crate)`: every
+    /// writer (`search::open`/`close`/`recompute`, `search::keys::
+    /// handle_key`) lives inside the `search` module; outside callers
+    /// (`layout::geometry`, `render`) only ever read it.
+    pub(crate) search: Option<crate::search::SearchState>,
+    /// The last query the search bar held while open, kept after closing
+    /// so a closed-bar next/prev chord (a later change) has something to
+    /// navigate with. `None` until the bar has closed at least once with a
+    /// non-empty query.
+    pub(crate) last_search_query: Option<String>,
     pub should_quit: bool,
     /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
@@ -331,6 +342,8 @@ impl App {
             binding_set: crate::keymap::BindingSet::default(),
             guard: None,
             messages: MessageLog::new(),
+            search: None,
+            last_search_query: None,
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),

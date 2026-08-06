@@ -4,6 +4,8 @@
 //! points (`segment_cells`/`segment_geometry`) `render::build_rows` and
 //! `commands::mouse`'s hit-testing call into.
 
+use std::ops::Range;
+
 use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -244,4 +246,24 @@ fn segment_cells_with(
         }
     }
     cells
+}
+
+/// Patches `style` onto every cell in `rows` whose `buf_offset` falls
+/// inside `range` — the one byte-range background painter every
+/// region-highlight pass in this crate shares (merge mode's per-block
+/// backgrounds, the search bar's per-match highlight): a decorative cell
+/// (`buf_offset < 0`) is never a candidate, since it claims no buffer byte
+/// to compare `range` against.
+pub(crate) fn paint_range(rows: &mut [Vec<Cell>], range: Range<usize>, style: Style) {
+    for row in rows.iter_mut() {
+        for cell in row.iter_mut() {
+            if cell.buf_offset < 0 {
+                continue;
+            }
+            let offset = cell.buf_offset as usize;
+            if range.contains(&offset) {
+                cell.style = cell.style.patch(style);
+            }
+        }
+    }
 }

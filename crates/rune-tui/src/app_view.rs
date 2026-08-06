@@ -80,5 +80,11 @@ impl App {
         self.active_doc_mut().icons = self.icons.clone();
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
+        // A no-op with the bar closed; with it open, recomputes the match
+        // set when the active document or its buffer version has drifted
+        // since the last recompute (a tab switch, an undo/redo, an
+        // external reload) — every draft edit already triggers its own
+        // recompute directly from `search::keys::handle_key`.
+        crate::search::sync(self);
     }
 }

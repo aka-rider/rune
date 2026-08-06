@@ -290,6 +290,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
         return;
     }
 
+    // Stage 3, search-bar branch: checked BEFORE the chrome-level `Pane`
+    // match below, since the bar is its own focus state, never a `Pane`
+    // variant (`focus::target`'s own "second input checked first" doc).
+    if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
+        let _ = crate::search::keys::handle_key(app, key, effects);
+        return;
+    }
+
     // Stage 3 + stage 4: the focused pane's own keymap. There is no stage
     // 5 to react to `KeyOutcome::Ignored` with, so the verdict is discarded
     // here rather than threaded anywhere further.
