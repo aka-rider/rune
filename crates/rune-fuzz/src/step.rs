@@ -65,12 +65,54 @@ pub enum MsgTag {
     /// the driver actually stamped on the message (resolved from
     /// `HighlightVersion` against the live buffer at delivery time, not the
     /// raw enum tag itself); `span_count` is how many raw spans the
-    /// generator attached, kept for report readability. `HL-STALE-DROP`/
-    /// `HL-NO-REFLOW` (`invariant/highlight.rs`) key off this variant.
+    /// generator attached, kept for report readability. `Action::
+    /// HighlightTree` replies reuse this same tag with `span_count: 0` —
+    /// its spans only exist at render-time query, so there is nothing to
+    /// count at delivery. `HL-STALE-DROP`/`HL-NO-REFLOW`
+    /// (`invariant/highlight.rs`) key off this variant.
     Highlighted {
         delivered_version: u64,
         span_count: usize,
     },
+    /// `Msg::Db` — the oldest pending recovery-store op's reply, drained by
+    /// `Action::DeliverDb` or the end-of-session sweep. `op_id` is the op
+    /// this reply answers, kept for report readability. `doc` is the
+    /// document `App::db_ops` named `op_id` for, read by the driver BEFORE
+    /// delivery (`drain_one_db_op` — `handle_db_event` pops the entry as
+    /// part of routing the ack, so it's gone by the time a checker could
+    /// otherwise ask) — `None` only for a `DbEvent::Fatal` (kills the whole
+    /// writer FIFO, not any one op) or a stale id with no live entry. Most
+    /// checkers still don't key off this variant at all (the merge
+    /// invariants key off `Snapshot::merge_active`/`merge_unresolved`
+    /// instead); `SAVE-INFLIGHT-SM` is the one exception, using `doc` to
+    /// recognize a store-backed save completing without trusting anything
+    /// private to `materialize_ack`.
+    Db {
+        op_id: u64,
+        doc: Option<DocumentId>,
+    },
+    /// `Msg::MaterializeVfsDone` — the caller-side `vfs` `Cmd` WP7's
+    /// materialize dance spawns (`materialize_ack::materialize_vfs_cmd`)
+    /// finishing, discharged by `Action::Deliver` alongside the no-store
+    /// `SaveDone`/rename `Cmd`s (`discharge_pending_save`). `id` is the
+    /// document the `Cmd` was built for — carried on the `Msg` itself, so
+    /// unlike `Db` above there's no separate bookkeeping to consult.
+    /// `SAVE-INFLIGHT-SM` uses it to recognize the two outcomes that settle
+    /// `save_in_flight` synchronously, with no further `Db` round trip
+    /// (`Missing`, and a local `vfs`/path-disagreement failure) — every
+    /// other outcome (`Conflict`/`Committed`/`Raced`) instead enqueues a
+    /// `MaterializeRecord` op, so `save_in_flight` doesn't change until the
+    /// `Db` ack for THAT lands.
+    MaterializeVfsDone {
+        id: DocumentId,
+    },
+    /// `Msg::TrashDone` (plan WP3.S3, mirroring `RenameDone`'s driver gap
+    /// fix): a `CmdKind::Trash` used to be silently dropped by the
+    /// classification loop, so `Mem::trash` and this reply were unreachable
+    /// from the fuzzer. No checker keys off this yet; the point of driving
+    /// it is that `update` never panics on a trash reply and that a pending
+    /// trash actually resolves within a session.
+    TrashDone,
 }
 
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,

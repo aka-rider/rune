@@ -179,6 +179,14 @@ pub struct Snapshot {
     /// leave a stale `"editor <-> disk"` retitle behind on ANY document,
     /// not just whichever one happens to be active.
     pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
+    /// `rune_tui::messages::posts` — the message log's own monotonic post
+    /// counter, not re-derived from `status`: two consecutive posts of
+    /// identical text (the same merge-key hint fired by two different
+    /// unbound keys in a row) leave `Snapshot.status` looking unchanged
+    /// even though a new row landed in the pane, so a checker that treats
+    /// "was a message posted" as "did `status` change" is blind to that
+    /// case. `MERGE-KEY-FEEDBACK` needs the distinction directly.
+    pub message_posts: u64,
 }
 
 /// `Snapshot.status`'s builder: the footer's own text, plus the message
@@ -306,6 +314,7 @@ impl Snapshot {
             merge_unresolved,
             scroll_row,
             display_name_by_doc,
+            message_posts: rune_tui::messages::posts(app),
         }
     }
 }

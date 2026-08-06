@@ -307,3 +307,22 @@ fn escape_on_a_pathless_draft_focuses_the_explorer_without_repositioning() {
 
     assert_eq!(app.focus(), Pane::Explorer);
 }
+
+/// `^N`/`⌘N` mint a new durable untitled draft, activate it, and focus the
+/// title field for naming. The fixture doc's `display_name` is `None`, so
+/// the first mint here is always "Untitled 1".
+#[test]
+fn ctrl_n_and_cmd_n_both_mint_and_focus_a_new_untitled_draft() {
+    for mods in [CTRL, SUP] {
+        let mut app = app_for("hello");
+        let n = app.documents.len();
+        let before = app.active;
+
+        press(&mut app, KeyCode::Char('n'), mods);
+
+        assert_eq!(app.documents.len(), n + 1);
+        assert_ne!(app.active, before);
+        assert_eq!(app.active_doc().display_name.as_deref(), Some("Untitled 1"));
+        assert_eq!(app.focus(), Pane::Title);
+    }
+}

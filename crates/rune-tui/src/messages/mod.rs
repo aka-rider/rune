@@ -93,6 +93,15 @@ pub struct MessageLog {
     /// explicitly moves the viewport themselves to read back through the
     /// log; the next post still snaps them back to the newest entry.
     pinned: bool,
+    /// Every call to [`post`], ever — monotonic for the app's lifetime,
+    /// unlike `entries.len()`, which [`MAX_ENTRIES`] eviction can shrink
+    /// back down. A caller that needs to know "was a message posted since
+    /// I last looked", not "is the newest entry different from before",
+    /// must compare this counter: two consecutive posts of identical text
+    /// (e.g. the same hint fired by two different unbound keys in a row)
+    /// leave `entries.last()` looking unchanged even though a new row
+    /// landed in the pane.
+    posts: u64,
 }
 
 impl MessageLog {
@@ -108,6 +117,7 @@ impl MessageLog {
             armed: None,
             generation: 0,
             pinned: true,
+            posts: 0,
         }
     }
 }
@@ -181,6 +191,7 @@ fn rebuild_doc(app: &mut App) {
 pub fn post(app: &mut App, severity: Severity, text: impl Into<String>) {
     let text = sanitize(&text.into());
     app.messages.entries.push(Message { severity, text });
+    app.messages.posts = app.messages.posts.wrapping_add(1);
     if app.messages.entries.len() > MAX_ENTRIES {
         let overflow = app.messages.entries.len() - MAX_ENTRIES;
         app.messages.entries.drain(0..overflow);
@@ -265,6 +276,12 @@ pub fn newest(app: &App) -> Option<&Message> {
 
 pub fn newest_text(app: &App) -> Option<&str> {
     newest(app).map(|m| m.text.as_str())
+}
+
+/// The total number of [`post`] calls this app has ever made — monotonic,
+/// unaffected by [`MAX_ENTRIES`] eviction. See [`MessageLog::posts`].
+pub fn posts(app: &App) -> u64 {
+    app.messages.posts
 }
 
 /// Every entry's sanitized text, oldest first, joined by `\n` with no

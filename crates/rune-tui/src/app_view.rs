@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::pane::Pane;
 
 impl App {
-    /// The ONE geometry chokepoint's writer (plan WP3 decision 1/2): derives
+    /// The ONE geometry chokepoint's writer: derives
     /// every frame rect from `layout::geometry` and sizes the ACTIVE
     /// document's viewport from its `editor` rect. A no-op while either
     /// frame dimension is still `0` (before the first `Msg::Resize` —
@@ -30,7 +30,7 @@ impl App {
     /// pane height and the editor's cached rows disagree with the rect they
     /// are blitted into for one frame.
     ///
-    /// `.max(1)` on both dimensions (plan gotcha 13): the fuzzer drives
+    /// `.max(1)` on both dimensions: the fuzzer drives
     /// `Resize` down to a 1x2 frame, and a 0-width/0-height viewport would
     /// reach `Document::set_width`'s wrap engine with a wrap column of `0`.
     pub fn relayout(&mut self) {
@@ -46,8 +46,8 @@ impl App {
     /// Re-runs the display pipeline for the ACTIVE document and caches the
     /// result on it for `render::draw` to blit. Safe to call more than once
     /// per message batch — see `Document::sync`'s docs. Only the active
-    /// document is synced (Phase 1/WP1: exactly one document is ever
-    /// visible) — a later multi-pane WP re-evaluates this against whichever
+    /// document is synced: exactly one document is ever
+    /// visible — a later multi-pane change re-evaluates this against whichever
     /// documents are actually on screen.
     ///
     /// The messages pane's log document is re-synced FIRST, before
@@ -65,14 +65,23 @@ impl App {
     /// that, every call: a Guard being up means the editor is never really
     /// focused, while the messages pane deliberately is NOT part of that gate
     /// because it is non-modal — a message arriving must not blur the editor.
+    /// The search bar is a second input with its own caret
+    /// (`render::search::draw`); the document is never ALSO `focused` while
+    /// it's open, or the editor caret would keep painting under a bar that
+    /// is actually eating every keystroke. Reveal is pushed as its own flag
+    /// (`reveal_engaged`) WITHOUT the search-bar gate: the bar's match
+    /// navigation drives the document cursor, and a jump into a concealed
+    /// element must reveal it even though the caret stays blurred.
     pub fn sync_view(&mut self) {
         let width = self.frame_width;
         let frame_height = self.frame_height;
         crate::messages::sync(self, width, frame_height);
         self.relayout();
-        let focused = self.focus() == Pane::Editor && self.guard.is_none();
+        let engaged = self.focus() == Pane::Editor && self.guard.is_none();
+        let focused = engaged && self.search.is_none();
         self.active_doc_mut().focused = focused;
-        // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
+        self.active_doc_mut().reveal_engaged = engaged;
+        // Mirrors `App::icons` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
         // App-held decision down before every sync" shape as `focused`
         // right above — `Document` itself holds no `App` reference to read
@@ -80,5 +89,45 @@ impl App {
         self.active_doc_mut().icons = self.icons.clone();
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
+        // A no-op with the bar closed; with it open, recomputes the match
+        // set when the active document or its buffer version has drifted
+        // since the last recompute (a tab switch, an undo/redo, an
+        // external reload) — every draft edit already triggers its own
+        // recompute directly from `search::keys::handle_key`.
+        crate::search::sync(self);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use crate::app::App;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 80;
+        app.frame_height = 24;
+        app
+    }
+
+    /// The document is never `focused` while the search bar is open — the
+    /// bar paints its own caret (`render::search::draw`), so the editor's
+    /// caret must stop claiming focus too, or both would paint at once.
+    #[test]
+    fn the_document_loses_focus_while_the_search_bar_is_open() {
+        let mut app = app();
+        app.sync_view();
+        assert!(app.active_doc().focused, "editor is focused before ^F");
+
+        crate::search::open(&mut app);
+        app.sync_view();
+
+        assert!(
+            !app.active_doc().focused,
+            "the document must not paint a caret while the bar is open"
+        );
     }
 }
