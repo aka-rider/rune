@@ -3,6 +3,8 @@
 //! Nothing here runs I/O or touches the buffer — [`super::begin`]/
 //! [`super::exit_in_place`] are the writers.
 
+use rune_db::ObsId;
+
 use crate::document::DocumentId;
 
 /// Why this merge attempt was started (plan Assumption A2 — shared entry
@@ -63,6 +65,14 @@ pub enum MergeState {
         blocks: Vec<Block>,
         cur: usize,
         saved_display_name: Option<String>,
+        /// The disk observation the working form was built against — the
+        /// save-CAS baseline `exit_in_place` advances to ONLY when the
+        /// merge completes (every block resolved). An unresolved
+        /// retirement never advances it: the buffer still holds conflict
+        /// markers the disk never agreed to, and a ⌘S must keep
+        /// CAS-refusing against the external bytes until the user
+        /// actually resolves or force-saves through the guard.
+        theirs_obs: ObsId,
     },
 }
 

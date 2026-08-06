@@ -100,6 +100,7 @@ pub(crate) fn exit_in_place(app: &mut App) {
         doc,
         blocks,
         saved_display_name,
+        theirs_obs,
         ..
     } = std::mem::take(&mut app.merge)
     else {
@@ -119,12 +120,52 @@ pub(crate) fn exit_in_place(app: &mut App) {
             d.last_sync = Some(SyncKind::BufferAhead);
         }
     }
+    if unresolved == 0 {
+        // Completion is the terminal success: only NOW has the user
+        // genuinely reconciled the buffer with the disk bytes the merge
+        // read, so only now does the save-CAS baseline advance to them.
+        landing::advance_expect_obs(app, doc, theirs_obs);
+    } else {
+        // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
+        // quit auto-exit) retracts the entry-time resolve observation:
+        // without this, the resolve row at the journal head makes the very
+        // next probe classify the marker-filled buffer as reconciled —
+        // retiring every divergence affordance and making `begin` refuse
+        // with "no divergence to merge" while the conflict is anything but
+        // resolved. Abandoning restores the pre-merge baseline so the
+        // document classifies `Diverged` again and `^M` re-enters a real
+        // merge. The save-CAS baseline was never advanced on this path,
+        // so a ⌘S still CAS-refuses into the disk-conflict guard.
+        enqueue_resolve_abandon(app, doc);
+    }
     let message = if unresolved == 0 {
         "merge complete — \u{2318}S to save".to_string()
     } else {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
     messages::info(app, message);
+}
+
+/// Enqueues the store-side retraction of an abandoned merge's entry-time
+/// resolve observation — the writer deletes the `origin='resolve'` row and
+/// restores the baseline it superseded, so the next probe classifies the
+/// still-diverged document truthfully. Mirrors the adopt enqueue's shape: a
+/// store-less/degraded document simply skips it (there is no observation to
+/// retract there either), and a failed enqueue degrades the whole store.
+fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
+    let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|db| db.db_id)) else {
+        return;
+    };
+    let Some(db) = app.db.as_ref() else { return };
+    if db.degraded {
+        return;
+    }
+    match db.store.resolve_abandon(db_id) {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, PendingOp::new(doc));
+        }
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+    }
 }
 
 /// Cancels a `Pending` merge attempt with feedback (review fix F3) — the

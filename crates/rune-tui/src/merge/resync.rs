@@ -83,6 +83,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         blocks: old_blocks,
         cur,
         saved_display_name,
+        theirs_obs,
     } = std::mem::take(&mut app.merge)
     else {
         return;
@@ -185,6 +186,7 @@ pub(crate) fn resync(app: &mut App, doc: DocumentId, affected: Option<std::ops::
         blocks: new_blocks,
         cur: new_cur.unwrap_or(0),
         saved_display_name,
+        theirs_obs,
     };
 
     if new_cur.is_none() {

@@ -118,6 +118,7 @@ mod tests {
             blocks: Vec::new(),
             cur: 0,
             saved_display_name: None,
+            theirs_obs: 0,
         };
 
         toggle(&mut app);

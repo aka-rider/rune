@@ -285,13 +285,14 @@ fn second_external_write_after_completion_still_cas_refuses_into_the_guard() {
     );
 }
 
-/// Esc-out with unresolved blocks is not a dead end: `last_sync` stays
-/// `Diverged`, so the banner and marker return, and `^M` starts a fresh
-/// merge attempt (`Pending`) whose landing answers with explicit feedback
-/// rather than silence.
+/// Esc-out with unresolved blocks is not a dead end: the entry-time
+/// resolve observation is abandoned, so a reprobe classifies the
+/// marker-filled buffer `Diverged` again, the banner and marker return,
+/// and `^M` re-enters a REAL merge (`Active`, not a "nothing to merge"
+/// refusal).
 #[test]
 fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
-    let (mut app, bridge, doc_id, _draft) = open_two_conflict_diverged("post-sync-esc-out");
+    let (mut app, bridge, doc_id, draft_id) = open_two_conflict_diverged("post-sync-esc-out");
 
     press_key(&mut app, ctrl('m'));
     drain_one_op_for(&mut app, &bridge, doc_id);
@@ -309,10 +310,11 @@ fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
     );
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
+    reprobe(&mut app, &bridge, draft_id, doc_id);
     assert_eq!(
         app.doc(doc_id).unwrap().last_sync,
         Some(SyncKind::Diverged),
-        "Esc-out must leave the divergence classification untouched"
+        "after the abandon, a reprobe must classify the marker buffer Diverged again"
     );
     assert!(
         diverged_affordances_shown(&app),
@@ -327,10 +329,40 @@ fn escape_out_with_unresolved_blocks_restores_affordances_and_ctrl_m_retries() {
         "^M after Esc-out must start a fresh merge attempt, got {:?}",
         app.merge
     );
-    let posts_before = rune_tui::messages::posts(&app);
     drain_one_op_for(&mut app, &bridge, doc_id);
     assert!(
-        rune_tui::messages::posts(&app) > posts_before,
-        "the retry's landing must answer with feedback, never silence"
+        matches!(app.merge, MergeState::Active { .. }),
+        "the retry must land in a real resolver, not a refusal — got {:?}, log {:?}",
+        app.merge,
+        rune_tui::messages::log_text(&app)
+    );
+}
+
+/// Esc-out then ⌘S must CAS-refuse into the disk-conflict Guard: the save
+/// baseline never advanced at resolver entry, so a single keystroke can
+/// never silently publish the conflict-marker working form over the
+/// external bytes on disk.
+#[test]
+fn escape_out_then_save_cas_refuses_into_the_guard() {
+    let (mut app, bridge, doc_id, _draft) = open_two_conflict_diverged("post-sync-esc-save");
+
+    press_key(&mut app, ctrl('m'));
+    drain_one_op_for(&mut app, &bridge, doc_id);
+    assert!(matches!(app.merge, MergeState::Active { .. }));
+    press_key(&mut app, bare(KeyCode::Escape));
+    assert_eq!(app.merge, MergeState::Inactive);
+    drain_all_ops_for(&mut app, &bridge, doc_id);
+
+    save_and_ack(&mut app, &bridge, doc_id);
+
+    let Some(prompt) = &app.guard else {
+        panic!("expected the disk-conflict Guard, not a silent marker publish");
+    };
+    assert_eq!(prompt.doc, doc_id);
+    assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
+    assert_eq!(
+        app.vfs.read(Path::new("/doc.md")).unwrap(),
+        THEIRS,
+        "the refused save must leave the external bytes untouched — never conflict markers"
     );
 }

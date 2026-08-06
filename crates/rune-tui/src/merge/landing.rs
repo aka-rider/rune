@@ -130,9 +130,14 @@ pub(crate) fn handle_merge_prep_ack(
         messages::error(app, "merge failed — the document could not be updated");
         return;
     }
-    enqueue_resolve_adopt(app, doc, theirs_obs);
+    let adopted = enqueue_resolve_adopt(app, doc, theirs_obs);
 
     if blocks.is_empty() {
+        if adopted {
+            // Terminal success: a merge with zero conflicts completed the
+            // moment it was installed.
+            advance_expect_obs(app, doc, theirs_obs);
+        }
         // Compared against the just-installed buffer content, not any
         // pre-ack copy: a merge whose result happens to byte-equal the
         // disk version is `Clean`; anything else strictly extends it.
@@ -167,6 +172,7 @@ pub(crate) fn handle_merge_prep_ack(
         blocks,
         cur: 0,
         saved_display_name,
+        theirs_obs,
     };
     if let Some(d) = app.doc_mut(doc) {
         nav_scroll::scroll_to_byte_offset(d, first_start);
@@ -187,7 +193,10 @@ fn discard_install(app: &mut App, doc: DocumentId, theirs_text: &str, theirs_obs
         messages::error(app, "merge failed — the document could not be updated");
         return;
     }
-    enqueue_resolve_adopt(app, doc, theirs_obs);
+    if enqueue_resolve_adopt(app, doc, theirs_obs) {
+        // Terminal success: the install itself is the whole resolution.
+        advance_expect_obs(app, doc, theirs_obs);
+    }
     if let Some(d) = app.doc_mut(doc) {
         // The buffer now byte-equals the disk bytes just installed.
         d.last_sync = Some(SyncKind::Clean);
@@ -232,36 +241,51 @@ fn install_whole_range(app: &mut App, doc: DocumentId, text: &str, cursor_at: us
     })
 }
 
-/// Advances `doc`'s CAS baseline to `theirs_obs`, correlated to the install
-/// edit's durable seq (plan Gotchas `[B3]`: `edit_seq: None` asks
-/// `resolve_adopt` to resolve that seq itself, since the install's own
+/// Records the `origin='resolve'` observation for `theirs_obs`, correlated
+/// to the install edit's durable seq (plan Gotchas `[B3]`: `edit_seq: None`
+/// asks `resolve_adopt` to resolve that seq itself, since the install's own
 /// `AppendEdit` ack has not necessarily landed yet — the writer thread's
 /// strict FIFO order guarantees it has already been APPLIED, just not yet
-/// acknowledged, by the time this op runs).
-fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
+/// acknowledged, by the time this op runs). Returns whether the op was
+/// actually enqueued (`false` for a store-less/degraded/failed enqueue).
+///
+/// Deliberately does NOT advance `DocDb::expect_obs`: recording the
+/// adoption happens at resolver ENTRY, before the user has resolved
+/// anything, and advancing the save-CAS baseline that early would let an
+/// Esc-out ⌘S silently publish a conflict-marker working form over the
+/// external disk bytes. The baseline advances only at a TERMINAL success —
+/// the caller's Discard/clean-merge arms, or `exit_in_place` on completion.
+fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) -> bool {
     let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|db| db.db_id)) else {
-        return;
+        return false;
     };
-    let Some(db) = app.db.as_ref() else { return };
+    let Some(db) = app.db.as_ref() else {
+        return false;
+    };
     if db.degraded {
-        return;
+        return false;
     }
     match db.store.resolve_adopt(db_id, theirs_obs, None) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
-            // The install just reconciled the buffer with `theirs_obs`'s
-            // bytes — the current disk content — so the CAS expectation
-            // advances with it (the disk-conflict guard's [S]ave-anyway
-            // precedent): the invited ⌘S now passes against the file the
-            // merge just read, while a SECOND external write in between
-            // still hash-mismatches into a fresh conflict. Only on a
-            // successful enqueue — a degraded store leaves the baseline
-            // exactly as it was.
-            if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
-                doc_db.expect_obs = theirs_obs;
-            }
+            true
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => {
+            crate::materialize_ack::on_store_failure(app, e.to_string());
+            false
+        }
+    }
+}
+
+/// The terminal-success half of the adoption: the buffer is now genuinely
+/// reconciled with `theirs_obs`'s bytes — the current disk content — so the
+/// CAS expectation advances with it (the disk-conflict guard's
+/// [S]ave-anyway precedent): the invited ⌘S now passes against the file the
+/// merge just read, while a SECOND external write in between still
+/// hash-mismatches into a fresh conflict.
+pub(super) fn advance_expect_obs(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
+    if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
+        doc_db.expect_obs = theirs_obs;
     }
 }
 
