@@ -285,3 +285,7 @@ Groomed, verified against the tree, and deliberately not worked — each needs i
 ## Closed without action
 
 - **`ticket-hide-cursor-unfocused-editor.md`** — the end goal already holds. `Document::shows_caret()` is the single predicate, `apply_cursor_overlays` early-returns on it (gating the caret *and* the selection highlight together), the fuzz snapshot carries `caret_visible`, the `CUR-NO-CARET-HIDDEN` invariant fails any REVERSED cell rendered while the caret is hidden, and `crates/rune-tui/tests/tui_render_focus.rs` pins all three cases.
+
+## Flaky test candidates
+
+- **`runtime::highlight_cmd::tests::a_single_expensive_region_still_parses_among_many_cheap_ones`** (crates/rune-tui/src/runtime/highlight_cmd.rs) — failed once during a code-review pass under an unrelated, heavily loaded stress campaign (loadavg 30-90), asserting "the expensive region must get a real budget, not the crowd's share of the pass total". Re-run 20/20 green on a quiet machine. The suspected mechanism: `PassBudget` measures real wall-clock time (`Instant::now()`/`elapsed()` against 5-second `PARSE_BUDGET`/`PASS_BUDGET` constants), so under enough concurrent CPU contention the cheap regions ahead of the expensive one can themselves consume enough wall-clock time to starve its share of the pass budget — a timing assumption, not a logic bug. Needs a load-immune reformulation (e.g. budgeting by injected/simulated progress rather than real elapsed time) before it can be trusted as a hard CI gate under load.

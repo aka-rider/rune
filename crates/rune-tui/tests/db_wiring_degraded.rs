@@ -187,13 +187,32 @@ fn a_dead_writer_thread_still_lets_the_save_reach_disk() {
     // trip `on_store_failure` — the exact captured flake this replaces.
     // With a blocking send that ambiguity is unobservable by construction:
     // there is no full-queue error case, only writer-death.
-    loop {
+    //
+    // Bounded, not an unbounded spin: a blocking send returns `Ok` only
+    // when the writer consumed a slot or a slot was free, so a live writer
+    // FIFO-bound to the kill op can absorb at most (ops queued ahead of
+    // the kill) + `QUEUE_DEPTH` probes before it must have dequeued the
+    // kill op and dropped its receiver. Exhausting this cap means the
+    // writer survived without ever reaching the kill op (e.g. it went
+    // fatal on something queued first) — a real failure to report loudly,
+    // not a hang.
+    let max_attempts = 4 * rune_db::QUEUE_DEPTH;
+    let mut writer_confirmed_gone = false;
+    for attempt in 0..=max_attempts {
         match db.store.probe_blocking_for_test(load.doc_id) {
-            Ok(_) => continue,
-            Err(rune_db::Error::WriterGone) => break,
+            Ok(_) => assert!(
+                attempt < max_attempts,
+                "writer never confirmed dead after {max_attempts} blocking probes — \
+                 it should have dequeued the kill op long before this"
+            ),
+            Err(rune_db::Error::WriterGone) => {
+                writer_confirmed_gone = true;
+                break;
+            }
             Err(e) => panic!("unexpected error while awaiting writer death: {e}"),
         }
     }
+    assert!(writer_confirmed_gone, "writer death was never confirmed");
 
     // Exactly ONE super+s now: `trigger_save`'s `materialize_now` enqueues
     // against a writer already confirmed gone, so this single call's

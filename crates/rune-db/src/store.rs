@@ -209,37 +209,25 @@ impl Store {
         self.enqueue(OpKind::KillWriterForTest).map(|_| ())
     }
 
-    /// Test-support hook, the waiting half of [`Store::kill_writer_for_test`]:
-    /// enqueues a `Probe` with a BLOCKING send. A full queue parks the
-    /// caller instead of failing, and the send errors only when the writer
-    /// thread has actually dropped its receiver — so `Err(WriterGone)`
-    /// here is a true confirmation of writer death, with no
-    /// `WriterQueueFull` ambiguity (a full queue with a live writer is
-    /// unobservable through this method by construction). Never call this
-    /// from production code: `update` must never block on the writer
-    /// queue. Not `#[cfg(test)]` for the same reason as
-    /// `kill_writer_for_test` — it must cross the crate boundary into
-    /// `rune-tui`'s integration tests.
-    pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
-        let now = self.now();
-        let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
-        self.writer.send(WriteOp {
-            id,
-            kind: OpKind::Probe {
-                session_id: self.session_id,
-                doc_id,
-                now,
-            },
-        })?;
-        Ok(id)
-    }
-
     /// Enqueues `kind` to the writer thread, returning the op id the
     /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
     /// surfaces [`Error::WriterQueueFull`] immediately (plan Gotchas).
     pub fn enqueue(&self, kind: OpKind) -> Result<u64, Error> {
         let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
         self.writer.try_send(WriteOp { id, kind })?;
+        Ok(id)
+    }
+
+    /// Blocking twin of [`Store::enqueue`], for the kill-writer test hook
+    /// ONLY (`Store::probe_blocking_for_test`) — a full queue parks the
+    /// caller instead of failing, and the send errors only when the writer
+    /// thread has actually dropped its receiver, so `Err(WriterGone)` from
+    /// this method is a true confirmation of writer death, with no
+    /// `WriterQueueFull` ambiguity. `update` must never call this: every
+    /// production enqueue path stays on `enqueue`/`try_send`.
+    pub(crate) fn enqueue_blocking(&self, kind: OpKind) -> Result<u64, Error> {
+        let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
+        self.writer.send(WriteOp { id, kind })?;
         Ok(id)
     }
 
@@ -304,6 +292,7 @@ pub(crate) fn set_wal_mode_verified(conn: &Connection) -> Result<(), Error> {
 )]
 mod tests {
     use super::*;
+    use crate::writer::QUEUE_DEPTH;
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -434,14 +423,31 @@ mod tests {
 
         store.kill_writer_for_test().expect("enqueue the kill op");
 
-        loop {
+        // Bounded, not an unbounded spin: a blocking send returns `Ok`
+        // only when the writer consumed a slot or a slot was free, so a
+        // live writer FIFO-bound to the kill op can absorb at most (ops
+        // queued ahead of the kill) + `QUEUE_DEPTH` probes before it must
+        // have dequeued the kill op and dropped its receiver. Exhausting
+        // this cap means the writer survived without ever reaching the
+        // kill op (e.g. it went fatal on something queued first) — that
+        // is a real failure to report loudly, not a hang.
+        let max_attempts = 4 * QUEUE_DEPTH;
+        for attempt in 0..=max_attempts {
             match store.probe_blocking_for_test(1) {
-                Ok(_) => continue,
+                Ok(_) => {
+                    assert!(
+                        attempt < max_attempts,
+                        "writer never confirmed dead after {max_attempts} blocking \
+                         probes — it should have dequeued the kill op long before this"
+                    );
+                }
                 Err(err) => {
                     assert!(matches!(err, Error::WriterGone));
                     break;
                 }
             }
         }
+
+        store.shutdown();
     }
 }
