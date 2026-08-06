@@ -232,16 +232,15 @@ fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
 /// Readability-only split (finding B): each bound below is the exact
 /// literal the four `prop_oneof!` arms used inline before, just named —
 /// the generated distribution is unchanged.
-fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
-    /// Arm 1 — a small well-formed span: `start` fits inside every `SEEDS`
-    /// document, `len >= 1` keeps `start < end`.
-    const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
-    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
+///
+/// `IN_BOUNDS_START` and `FAR_OUT_OF_BOUNDS_START` are hoisted to module
+/// scope: `arb_tree_base` reuses the identical two ranges for its own
+/// well-formed-vs-hostile split.
+const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
+const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
 
-    /// Arm 2 — a span entirely past the end of every `SEEDS` document (the
-    /// longest seed is well under 900 bytes), exercising the out-of-bounds
-    /// clamp/discard path with a WIDE span, not just a narrow overrun.
-    const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
+fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
+    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
     const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
 
     /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,
@@ -340,7 +339,7 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
 /// clamp against an out-of-bounds `LineMap` anchor is exactly the property
 /// under fuzz.
 fn arb_tree_base() -> impl Strategy<Value = usize> {
-    prop_oneof![0usize..30, 900usize..2000]
+    prop_oneof![IN_BOUNDS_START, FAR_OUT_OF_BOUNDS_START]
 }
 
 /// 3 — the same mandatory `Escape` + `Key('h')` prefix `cluster_highlight`
