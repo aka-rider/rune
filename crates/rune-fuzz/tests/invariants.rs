@@ -49,6 +49,8 @@ mod protocol;
 mod render_cells;
 #[path = "invariants/save_disk.rs"]
 mod save_disk;
+#[path = "invariants/save_inflight.rs"]
+mod save_inflight;
 #[path = "invariants/support.rs"]
 mod support;
 #[path = "invariants/wrap_rt.rs"]
