@@ -30,28 +30,15 @@ use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use step_exec::{
-    discharge_pending_rename, discharge_pending_save, drain_one_db_op, highlight_step, key_step,
-    step_and_check,
+    discharge_pending_rename, discharge_pending_save, discharge_pending_trash, drain_one_db_op,
+    highlight_step, key_step, step_and_check,
 };
+pub use store_ops::wait_for_db_op;
 use store_ops::{diverge_disk, drain_all_db_ops, drain_all_pending_setup, open_store};
 
 /// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
-
-/// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
-/// one drain predicate every consumer of a buffered `DbEvent` shares,
-/// whether it's this crate's own step execution/session setup or a test
-/// that builds a session by hand and needs to feed the writer thread's
-/// replies back in exactly as the real runtime does. A `DbEvent::Fatal`
-/// always matches regardless of which id it's waiting on, since a
-/// writer-thread fatal notice ends every outstanding op at once.
-pub fn wait_for_db_op(bridge: &DbBridge, op_id: u64) -> rune_db::DbEvent {
-    bridge.wait_for_bootstrap_event(|evt| match evt {
-        rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
-        rune_db::DbEvent::Fatal { .. } => true,
-    })
-}
 
 use crate::action::Action;
 use crate::invariant::Violation;
@@ -111,6 +98,11 @@ struct State {
     /// which is exactly the fuzz-driver gap `discharge_pending_rename`
     /// closes (plan WP5).
     pending_rename: Option<Cmd>,
+    /// The one trash `Cmd` (`CmdKind::Trash`) that can be outstanding at a
+    /// time (plan WP3.S3) — same single-slot reasoning as `pending_rename`.
+    /// Left undischarged, `Mem::trash` and `Msg::TrashDone` are never
+    /// reached from this driver.
+    pending_trash: Option<Cmd>,
     saves_delivered_ok: usize,
     steps: usize,
     /// The `DocumentId` `App::new` minted for the seeded document below —
@@ -219,6 +211,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         path,
         pending_save: None,
         pending_rename: None,
+        pending_trash: None,
         saves_delivered_ok: 0,
         steps: 0,
         seed_doc,
@@ -292,6 +285,11 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                     break 'session;
                 }
                 if let Some((msg, tag)) = discharge_pending_rename(&mut state)
+                    && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
+                {
+                    break 'session;
+                }
+                if let Some((msg, tag)) = discharge_pending_trash(&mut state)
                     && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
                 {
                     break 'session;
@@ -440,12 +438,21 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
     }
 
-    // Rule 6c: drain every recovery-store op still pending
+    // Rule 6c (plan WP3.S3): discharge any still-pending trash before
+    // finishing too, same skip conditions as Rules 6/6b.
+    if outcome.violation.is_none()
+        && !state.app.should_quit
+        && let Some((msg, tag)) = discharge_pending_trash(&mut state)
+    {
+        step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
+    }
+
+    // Rule 6d: drain every recovery-store op still pending
     // before the end-of-session undo/redo drive — left undrained, a merge/
     // probe/append-edit ack sitting in `app.db_ops` would just carry over
     // into a `Store` about to be shut down anyway, so this settles the
     // backlog THIS session raised rather than handing it to the next one.
-    // Same skip conditions as Rule 6/6b.
+    // Same skip conditions as Rule 6/6b/6c.
     if outcome.violation.is_none() && !state.app.should_quit {
         drain_all_db_ops(&mut state, &mut prev, &mut outcome);
     }

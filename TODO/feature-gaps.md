@@ -41,16 +41,6 @@ Target shape:
 - Detect external renames via file identity (inode+device) and tell the user
   (`Renamed: a.md → b.md`).
 
-## Trash
-
-No way to delete a file from inside the editor. `rune-vfs` already reserves the seam:
-its docs defer `Trash` to "the features that consume them" and forbid internal temp
-cleanup from shelling out to the user-facing trash.
-
-Target shape: a chord (⌘⌫ from the explorer or editor) with a confirm guard
-(`Trash file? [Y]es [Esc]`), refused for a dirty active document, executed via the
-macOS Trash (recoverable), never a plain unlink.
-
 ## Create-new-file keybinding
 
 `workspace::new_untitled_document` exists but is reachable only as the automatic

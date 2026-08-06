@@ -17,6 +17,7 @@ use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
 
+use super::store_ops::wait_for_db_op;
 use super::{Outcome, State, checks};
 
 /// Builds the `(Msg, MsgTag)` pair for one keystroke — the one place
@@ -149,7 +150,7 @@ pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(M
     // so it's gone from `App` by the time any checker could otherwise ask
     // which document `op_id` belonged to.
     let doc = state.app.db_ops.get(&op_id).map(|pending| pending.doc);
-    let evt = super::wait_for_db_op(bridge, op_id);
+    let evt = wait_for_db_op(bridge, op_id);
     Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
 }
 
@@ -172,6 +173,21 @@ pub(super) fn run_direct_catching_panic(
             message: downcast_panic(&payload),
         }),
     }
+}
+
+/// Runs the one deferred trash `Cmd`, if any, returning the `Msg` it
+/// produced together with its tag (plan WP3.S3) — the same shape as
+/// `discharge_pending_rename`, closing the identical driver gap for
+/// `CmdKind::Trash`: left undischarged, `Mem::trash` and `Msg::TrashDone`
+/// are unreachable from this driver, and fuzz coverage of the trash flow
+/// stops at `set_guard`.
+pub(super) fn discharge_pending_trash(state: &mut State) -> Option<(Msg, MsgTag)> {
+    let cmd = state.pending_trash.take()?;
+    let msg = cmd.run()?;
+    if !matches!(msg, Msg::TrashDone { .. }) {
+        return None;
+    }
+    Some((msg, MsgTag::TrashDone))
 }
 
 /// Delivers one message through `update`, captures the resulting `Snapshot`
@@ -249,6 +265,15 @@ pub(super) fn step_and_check(
             // separate per-document byte snapshot to carry: no rename-path
             // checker needs one yet.
             state.pending_rename = Some(cmd);
+        } else if cmd.kind() == CmdKind::Trash {
+            // Same single-slot reasoning as `pending_rename` above:
+            // structurally at most one trash `Cmd` can be in flight at a
+            // time (`trash::request_trash` and `trash::confirm` both
+            // refuse while `app.trash_pending` is `Some`, mirroring
+            // `rename::begin`'s `in_flight` refusal), so overwriting an
+            // existing `Some` here can never lose a still-outstanding one
+            // in practice.
+            state.pending_trash = Some(cmd);
         }
     }
 

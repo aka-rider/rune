@@ -103,6 +103,13 @@ pub enum MsgTag {
     MaterializeVfsDone {
         id: DocumentId,
     },
+    /// `Msg::TrashDone` (plan WP3.S3, mirroring `RenameDone`'s driver gap
+    /// fix): a `CmdKind::Trash` used to be silently dropped by the
+    /// classification loop, so `Mem::trash` and this reply were unreachable
+    /// from the fuzzer. No checker keys off this yet; the point of driving
+    /// it is that `update` never panics on a trash reply and that a pending
+    /// trash actually resolves within a session.
+    TrashDone,
 }
 
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,

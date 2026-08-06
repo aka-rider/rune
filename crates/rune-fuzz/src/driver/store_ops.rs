@@ -19,6 +19,20 @@ use crate::snapshot::Snapshot;
 use super::step_exec::{drain_one_db_op, run_direct_catching_panic, step_and_check};
 use super::{Outcome, State};
 
+/// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
+/// one drain predicate every consumer of a buffered `DbEvent` shares,
+/// whether it's this crate's own step execution/session setup or a test
+/// that builds a session by hand and needs to feed the writer thread's
+/// replies back in exactly as the real runtime does. A `DbEvent::Fatal`
+/// always matches regardless of which id it's waiting on, since a
+/// writer-thread fatal notice ends every outstanding op at once.
+pub fn wait_for_db_op(bridge: &DbBridge, op_id: u64) -> rune_db::DbEvent {
+    bridge.wait_for_bootstrap_event(|evt| match evt {
+        rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
+        rune_db::DbEvent::Fatal { .. } => true,
+    })
+}
+
 /// Opens the in-memory recovery store this session's `App` is wired to, and
 /// the `DbBridge` that routes its async replies back deterministically
 /// (`State::bridge`'s own docs). Uses a fixed clock reading, never
@@ -45,13 +59,13 @@ pub(super) fn open_store(vfs: &Arc<dyn Vfs + Send + Sync>) -> (Arc<DbBridge>, Op
 /// through `step_and_check` either.
 pub(super) fn drain_all_pending_setup(app: &mut App, bridge: &DbBridge) {
     while let Some(&op_id) = app.db_ops.keys().min() {
-        let evt = super::wait_for_db_op(bridge, op_id);
+        let evt = wait_for_db_op(bridge, op_id);
         let mut effects = Effects::default();
         app::update(app, Msg::Db(evt), &mut effects);
     }
 }
 
-/// `Action::DeliverDbAll`'s handler, also reused by `run`'s Rule 6c: drains
+/// `Action::DeliverDbAll`'s handler, also reused by `run`'s Rule 6d: drains
 /// every recovery-store op pending right now, oldest first, one
 /// `step_and_check` per op — `drain_one_db_op` repeated until nothing is
 /// left or a violation stops the session. Returns `true` when the session

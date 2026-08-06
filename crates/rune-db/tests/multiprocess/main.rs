@@ -46,6 +46,7 @@
 
 use std::env;
 
+mod fail_fast;
 mod helper;
 mod scenarios;
 mod support;

@@ -19,7 +19,7 @@ use super::palette::{
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
     EXPLORER_SEARCH_KEYS, MARKDOWN_FRAGMENTS, MERGE_KEY, MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY,
     PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS,
-    TYPE_PALETTE, UNDO_KEY,
+    TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
@@ -230,6 +230,7 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_T_KEY)]),
         Just(vec![Action::Key(CTRL_P_KEY)]),
         Just(vec![Action::Key(CTRL_E_KEY)]),
+        Just(vec![Action::Key(TRASH_KEY)]),
         Just(vec![Action::ConfirmTimeout]),
         select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
         proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {

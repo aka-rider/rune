@@ -509,6 +509,20 @@ pub(super) const CTRL_E_KEY: KeyInput = KeyInput {
     },
 };
 
+/// `⌘⌫` (`GlobalCommand::Trash`) — the recoverable-delete chord. Reaching
+/// it reliably is what exercises the trash guard and the async
+/// `CmdKind::Trash` discharge against the fuzzer's own generated sessions,
+/// not just the deterministic test suite.
+pub(super) const TRASH_KEY: KeyInput = KeyInput {
+    code: KeyCode::Backspace,
+    mods: Mods {
+        shift: false,
+        alt: false,
+        ctrl: false,
+        sup: true,
+    },
+};
+
 /// Unmodified printable-letter keys for the Explorer type-to-search feature
 /// (`explorer_search.rs`): `KeyPattern::printable`'s wildcard row matches
 /// any non-control `Char` under `Mods::NONE`, so this

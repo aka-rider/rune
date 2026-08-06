@@ -22,6 +22,7 @@ pub enum OpKind {
     Exchange,
     RenameExcl,
     Remove,
+    Trash,
     Stat,
     Resolve,
     MkdirAll,
@@ -336,6 +337,15 @@ impl Vfs for Mem {
         Ok(())
     }
 
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        self.take_failure(OpKind::Trash)?;
+        let mut state = self.lock_state();
+        if state.files.remove(path).is_none() {
+            return Err(not_found(path, "trash"));
+        }
+        Ok(())
+    }
+
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         self.take_failure(OpKind::Stat)?;
         let state = self.lock_state();
@@ -489,5 +499,38 @@ mod tests {
             vfs.read_dir(Path::new("/a/b/c.md")).unwrap(),
             Vec::<DirEntry>::new()
         );
+    }
+
+    #[test]
+    fn trash_removes_a_written_file() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a/b.md"), b"content").unwrap();
+
+        vfs.trash(Path::new("/a/b.md")).unwrap();
+
+        assert_eq!(
+            vfs.read(Path::new("/a/b.md")).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn trash_of_a_missing_path_errors() {
+        let vfs = Mem::new();
+
+        assert!(vfs.trash(Path::new("/missing.md")).is_err());
+    }
+
+    #[test]
+    fn fail_next_trash_makes_the_next_trash_fail() {
+        let vfs = Mem::new();
+        vfs.save_atomic(Path::new("/a/b.md"), b"content").unwrap();
+        vfs.fail_next(OpKind::Trash, io::ErrorKind::PermissionDenied);
+
+        let err = vfs.trash(Path::new("/a/b.md")).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        // The failed attempt never touched state: the file is still there.
+        assert!(vfs.read(Path::new("/a/b.md")).is_ok());
     }
 }
