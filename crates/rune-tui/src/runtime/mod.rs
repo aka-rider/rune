@@ -45,6 +45,12 @@ pub enum PasteTarget {
     /// untagged reply could land one title session's clipboard text into a
     /// different document's name.
     Title(DocumentId),
+    /// The search bar's draft. Untagged (the bar is a single global field,
+    /// not per-document like the title): `search::keys::paste` drops the
+    /// reply on arrival if the bar has since closed, the same "reply lands
+    /// only where it can still make sense" discipline `Title`'s own tag
+    /// enforces by a different mechanism.
+    Search,
 }
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
