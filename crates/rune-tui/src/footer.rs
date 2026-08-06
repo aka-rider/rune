@@ -153,17 +153,20 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     // A rename collision names its target: "replace <what>?" is a question
-    // the user can answer; a bare `[R]eplace` is not. `DirtyQuit` names
-    // WHICH document quit is waiting on (plan WP2: the fix for "a
-    // background dirty document blocks quit with no hint which one") — via
-    // `Document::file_name`, the same name the tab bar shows, so the user
-    // matches the prompt against something already on screen. Deliberately
-    // NOT `title::name_for`: that one answers "what should the title FIELD
-    // hold", which for a pathless draft is the editable `.md` stub — a
-    // prompt reading "unsaved changes in .md" names nothing at all.
+    // the user can answer; a bare `[R]eplace` is not. `DirtyClose`/
+    // `DirtyQuit` both name WHICH document is waiting — `DirtyQuit` for the
+    // original reason (plan WP2: "a background dirty document blocks quit
+    // with no hint which one"), and `DirtyClose` because the tab-cap
+    // eviction can now arm it for a document that was not the active one a
+    // moment ago, so the prompt must say which buffer it covers just as
+    // plainly. Both read the name via `Document::file_name`, the same name
+    // the tab bar shows, so the user matches the prompt against something
+    // already on screen. Deliberately NOT `title::name_for`: that one
+    // answers "what should the title FIELD hold", which for a pathless
+    // draft is the editable `.md` stub — a prompt reading "unsaved changes
+    // in .md" names nothing at all.
     let options: &[guard::GuardOption] = match &prompt.kind {
-        GuardKind::DirtyClose => guard::DIRTY_CLOSE_OPTIONS,
-        GuardKind::DirtyQuit => {
+        GuardKind::DirtyClose | GuardKind::DirtyQuit => {
             let name = app
                 .doc(prompt.doc)
                 .map(|doc| doc.file_name().to_string())

@@ -99,6 +99,13 @@ pub enum GlobalCommand {
     /// `TODO.md` for a pre-existing binding that made exactly that
     /// mistake).
     SearchPrev,
+    /// Toggles the pin on the active tab, marking it exempt from the
+    /// tab-cap LRU eviction; refused on a preview tab. `^j` — `^g`/`⌘g` was
+    /// the tab-cap plan's original choice (unclaimed at the time), but the
+    /// in-file search feature claimed it for `SearchNext` first; `^j` is
+    /// unclaimed across every binding table instead (see the guard test
+    /// below).
+    TogglePin,
 }
 
 const CTRL: Mods = Mods {
@@ -420,6 +427,18 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    // Appended last deliberately: at narrow widths the footer clips the
+    // tail hint, and this new hint should be the one clipped, not
+    // `^E messages`. `^j`, not the tab-cap plan's original `^g` — the
+    // in-file search feature claimed `^g` for `SearchNext` first (see
+    // `GlobalCommand::TogglePin`'s own doc).
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('j'), CTRL)],
+        cmd: GlobalCommand::TogglePin,
+        help: "pin",
+        when: "",
+        alias: false,
+    },
 ];
 
 #[cfg(test)]
@@ -711,5 +730,19 @@ mod tests {
                 "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
             );
         }
+    }
+
+    /// The same cross-table guard as `global_p_binding_...` above, for `^J`
+    /// (`GlobalCommand::TogglePin`) — CTRL only, like `Merge`, there is no
+    /// `⌘J` row.
+    #[test]
+    fn global_j_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_j = KeyInput {
+            code: KeyCode::Char('j'),
+            mods: CTRL,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_j]);
     }
 }
