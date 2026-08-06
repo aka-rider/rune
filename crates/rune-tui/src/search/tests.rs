@@ -36,6 +36,33 @@ fn compute_matches_snaps_expanding_fold_to_whole_original_char() {
 }
 
 #[test]
+fn compute_matches_finds_hit_after_a_multibyte_char() {
+    // 'é' folds to a single already-lowercase char but is 2 bytes in UTF-8;
+    // the fold map must advance by that many bytes or every match after it
+    // in the haystack indexes into the wrong place.
+    let haystack = "café needle";
+    assert_eq!(compute_matches(haystack, "needle"), vec![6..12]);
+    assert_eq!(&haystack[6..12], "needle");
+}
+
+#[test]
+fn compute_matches_finds_every_hit_after_a_multibyte_char() {
+    let haystack = "notes — rune editor rune";
+    let matches = compute_matches(haystack, "rune");
+    assert_eq!(matches.len(), 2);
+    for m in matches {
+        assert_eq!(&haystack[m], "rune");
+    }
+}
+
+#[test]
+fn compute_matches_handles_non_ascii_query() {
+    let haystack = "CAFÉ menu";
+    assert_eq!(compute_matches(haystack, "café"), vec![0..5]);
+    assert_eq!(&haystack[0..5], "CAF\u{c9}");
+}
+
+#[test]
 fn compute_matches_is_non_overlapping() {
     // `str::match_indices` semantics: overlapping occurrences are not
     // all reported, only the non-overlapping left-to-right ones.
