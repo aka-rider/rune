@@ -1,10 +1,10 @@
 //! `DocumentId` + `Document`: one open editing pane's full state — buffer,
 //! cursors, the display-pipeline root machine, the scrollable viewport onto
 //! it, file identity, save/dirty bookkeeping, and its own recovery-store
-//! handle (plan WP1 decision 2: "Fat Document, no View split" — `Document`
-//! absorbs everything the pre-WP1 `Editor` held plus every per-doc field
-//! that used to live directly on `App`). `Document::sync` is the fixed
-//! per-message sync sequence (plan Context, "Msg/Cmd runtime": `sync_content`
+//! handle — fat `Document`, no separate View type: `Document`
+//! absorbs everything the previous `Editor` held plus every per-doc field
+//! that used to live directly on `App`. `Document::sync` is the fixed
+//! per-message sync sequence: `sync_content`
 //! iff version changed -> `set_width` -> `sync_cursors` -> `snapshot` ->
 //! scroll-to-cursor -> re-`view` -> scroll-to-cursor again -> re-`view` once
 //! more, since a scroll command can move the cursor itself, and that move
@@ -39,7 +39,7 @@ use crate::highlight::HighlightState;
 use crate::viewport::Viewport;
 
 /// Identifies one open `Document` for the lifetime of the process — minted
-/// monotonically by `App::next_doc_id` (plan WP1 decision 1). Tabs and every
+/// monotonically by `App::next_doc_id`. Tabs and every
 /// doc-scoped `Msg` key on this, never on a path: help/untitled documents
 /// are first-class and have no path at all. The inner `NonZeroU64` is
 /// `pub(crate)`, not private: `App` — the sole minter, via
@@ -48,7 +48,7 @@ use crate::viewport::Viewport;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DocumentId(pub(crate) NonZeroU64);
 
-/// One open editing pane's complete state (plan WP1 decision 2): buffer,
+/// One open editing pane's complete state: buffer,
 /// cursors, the root display machine, the viewport onto it, file identity,
 /// save/dirty bookkeeping, and this doc's own recovery-store handle.
 /// `pending_quit`/`messages`/`db_banner`/`should_quit` stay on `App`
@@ -61,16 +61,23 @@ pub struct Document {
     pub doc: DocMachine,
     pub viewport: Viewport,
     pub focused: bool,
-    /// The in-memory undo/redo journal (WP7): every applied edit batch is
+    /// Whether reveal may key off the cursor — deliberately separate from
+    /// the caret gate `focused` feeds: an open search bar blurs the caret
+    /// (keystrokes land in the bar, not the buffer), but its Enter/Shift+
+    /// Enter navigation still drives THIS document's cursor, so a jump into
+    /// a concealed element must still reveal it. Pushed down by
+    /// `App::sync_view`, the same chokepoint that pushes `focused`.
+    pub reveal_engaged: bool,
+    /// The in-memory undo/redo journal: every applied edit batch is
     /// pushed here as a `Step`; `commands::edit::undo`/`redo` peek-then-
-    /// commit against it (plan Context, "Undo journal").
+    /// commit against it.
     pub journal: Journal,
     /// Guards every buffer-mutating command (typing, backspace/delete,
     /// indent/outdent, cut, paste — anything that reaches
     /// `commands::edit::commit_edit_batch`, the sole writer of buffer
     /// mutations) against touching a read-only document. Checked at that ONE
     /// chokepoint rather than at each command's call site, so no future
-    /// mutating command can forget the guard (review finding F1: an earlier
+    /// mutating command can forget the guard (an earlier
     /// version checked this only in `commands::clipboard::handle_paste_
     /// content`, leaving Cut and every keyboard-insert path able to mutate a
     /// "read-only" document — a bug class reintroduced by guarding the
@@ -88,8 +95,11 @@ pub struct Document {
     /// change them) does not — saving protects what the user wrote, undo
     /// rewrites it.
     pub read_only: ReadOnly,
+    /// Marks the tab the tab-cap eviction victim search must skip
+    /// (set/cleared by the ^G toggle).
+    pub pinned: bool,
     /// The file this document is bound to, or `None` for an untitled draft
-    /// (moved off `App` in WP1: every open document has its own identity).
+    /// (moved off `App`: every open document has its own identity).
     pub file_path: Option<PathBuf>,
     /// The buffer version the LAST successful save/materialize ack
     /// persisted — advanced ONLY from a store ack (`save::handle_materialize_
@@ -98,7 +108,7 @@ pub struct Document {
     /// Never read directly by `is_dirty` — see `is_dirty_cached`.
     pub saved_version: u64,
     /// The bytes the last successful save/materialize ack actually
-    /// persisted (plan WP1) — ground truth dirtiness compares the LIVE
+    /// persisted — ground truth dirtiness compares the LIVE
     /// buffer's content against THIS, not a version proxy: `Buffer::
     /// apply_edits` always returns `version + 1`, and undo/redo build a new
     /// buffer, so a version comparison alone leaves an edit-then-undo
@@ -106,9 +116,9 @@ pub struct Document {
     /// Advanced only by [`Document::finish_save_ok`]. `pub(crate)` (not
     /// `pub`, matching `is_dirty_cached`): only `finish_save_ok` may move the
     /// saved baseline, and a `pub` field left that invariant enforced by
-    /// convention rather than the type system on this half alone (finding
-    /// 7) — an out-of-crate integration test that needs a dirty fixture goes
-    /// through a real edit instead, see `dirty_common::force_dirty`.
+    /// convention rather than the type system alone — an out-of-crate
+    /// integration test that needs a dirty fixture goes through a real edit
+    /// instead, see `dirty_common::force_dirty`.
     pub(crate) saved_content: Arc<str>,
     /// The save-lifecycle state a save-in-progress carries: the version/
     /// content it captured at `begin_save` time. Private — `begin_save`/
@@ -134,14 +144,14 @@ pub struct Document {
     /// for `render::draw` to blit. `None` only before this document's first
     /// sync.
     pub view: Option<ViewSnapshots>,
-    /// This document's handle onto the app-wide recovery store (plan WP1
-    /// decision 5: `AppDb` split into app-level `Db` and per-doc `DocDb`).
+    /// This document's handle onto the app-wide recovery store — `AppDb`
+    /// split into app-level `Db` and per-doc `DocDb`.
     /// `None` for a document with no recovery journal — an ephemeral/help
     /// document, or one opened before per-doc hydration exists (Assumption
     /// A1).
     pub db: Option<DocDb>,
-    /// Overrides `file_name`'s file-path-derived display name (plan
-    /// WP7.S2) — the minimal seam a document with no `file_path` at all
+    /// Overrides `file_name`'s file-path-derived display name — the
+    /// minimal seam a document with no `file_path` at all
     /// (and never will have one) needs to show a real name instead of the
     /// `"[No Name]"` untitled-draft fallback. `Some("Help")` for the Help
     /// virtual document; `None` for every ordinary document, where
@@ -150,18 +160,18 @@ pub struct Document {
     pub display_name: Option<String>,
     /// Every navigable `Ref` (link, embed, heading/block definition) in
     /// this document, in document order — rebuilt on every `view()` call
-    /// from the just-synced `doc`/`buffer` pair (plan WP5.S2). `navigate::
+    /// from the just-synced `doc`/`buffer` pair. `navigate::
     /// follow` reads this to find what the cursor is sitting on and where a
     /// same-document or cross-document anchor lands.
     pub catalogue: Vec<rune_nav::Ref>,
-    /// Which producer this document's content goes through (plan WP4) —
+    /// Which producer this document's content goes through —
     /// mirrored onto `doc` via `DocMachine::set_kind` every time it changes.
     /// Recomputed from `file_path` and the buffer's current content only
     /// inside `bind_path`, the single place a document acquires (or
     /// reacquires) a path; a pathless draft and the Help document therefore
     /// stay `DocumentKind::Markdown`, exactly as before this plan.
     pub kind: DocumentKind,
-    /// The icon tier line decorations render with (plan WP5) — mirrored
+    /// The icon tier line decorations render with — mirrored
     /// onto `doc` via `DocMachine::set_icons` on every `view()` call, same
     /// pattern as `kind`/`set_kind`. `Document` holds no `App` reference,
     /// so this is a plain field an outside writer (`App::sync_view`, the
@@ -169,18 +179,18 @@ pub struct Document {
     /// from the one `App`-held decision (`App::icons`) rather than a value
     /// this type could ever derive on its own.
     pub icons: IconSet,
-    /// This document's async highlight state (plan WP5) — spans, their
+    /// This document's async highlight state — spans, their
     /// version tag, and the in-flight/pending bookkeeping that bounds a
     /// document to at most one running highlight `Cmd` at a time.
     pub highlight: HighlightState,
-    /// This document's image state (plan WP4.S6/WP4.S7) — `Some` only for a
+    /// This document's image state — `Some` only for a
     /// `DocumentKind::Image` document, populated by `workspace::open_bytes`
     /// at open time. `None` for every other document, including a document
     /// that used to be an image and no longer is (`kind` never changes back
     /// once bound — a document only ever acquires its `kind` once, at
     /// `bind_path`).
     pub image: Option<crate::graphics::ImageState>,
-    /// This document's inline embed set (plan WP9) — the several
+    /// This document's inline embed set — the several
     /// `![alt](x.png)`/`![[x.png]]` images a markdown document may hold at
     /// once, each independently spawned/decoded/transmitted/despawned.
     /// Distinct from `image` above (which describes a whole `DocumentKind::
@@ -191,7 +201,7 @@ pub struct Document {
     /// every document kind other than `Markdown`.
     pub embeds: crate::graphics::EmbedSet,
     /// The most recent [`rune_db::SyncKind`] a `Probe`/`Load` ack reported
-    /// for this document (plan WP2) — RENDER/HINT STATE ONLY, never a
+    /// for this document — RENDER/HINT STATE ONLY, never a
     /// decision input: sync state must be derived fresh by journal position
     /// at the moment a decision needs it, never cached.
     /// The footer's passive `disk changed` hint reads this; nothing that
@@ -267,17 +277,23 @@ impl Document {
     }
 
     /// Whether the caret and selection background may be painted onto this
-    /// document's cells, AND whether reveal may key off the cursor at all
-    /// — the second consumer of the identical predicate: both overlay
-    /// gates are `focused && !readOnly`: an unfocused pane must not show a
-    /// caret that would mislead about where keystrokes land, and a
-    /// read-only document (the virtual Help tab, the error-banner document)
-    /// has no insertion point to point at — nor anything to reveal raw
-    /// markdown under.
+    /// document's cells: `focused && !readOnly` — an unfocused pane must
+    /// not show a caret that would mislead about where keystrokes land, and
+    /// a read-only document (the virtual Help tab, the error-banner
+    /// document) has no insertion point to point at.
     /// `focused` itself already folds in `modal.is_none()` — see
     /// `App::sync_view`.
     pub fn has_insertion_point(&self) -> bool {
         self.focused && !self.is_read_only()
+    }
+
+    /// Whether reveal may key off the cursor — `reveal_engaged` instead of
+    /// `focused`, so an open search bar (caret blurred, keystrokes owned by
+    /// the bar) still reveals the element its match navigation lands the
+    /// cursor in. A read-only document has nothing to reveal raw markdown
+    /// under, same as it has no caret.
+    pub fn reveals_under_cursor(&self) -> bool {
+        self.reveal_engaged && !self.is_read_only()
     }
 
     /// Whether a mouse selection's background may be painted onto this
@@ -292,7 +308,7 @@ impl Document {
     }
 }
 
-/// The save-in-progress capture (plan WP1): the exact version/bytes
+/// The save-in-progress capture: the exact version/bytes
 /// [`Document::begin_save`] captured, held until the matching
 /// [`Document::finish_save_ok`]/[`Document::abandon_save`] resolves it.
 /// Private to this module — `Document`'s three chokepoint methods are the
@@ -312,6 +328,7 @@ impl Document {
             doc: DocMachine::new(),
             viewport: Viewport::default(),
             focused: true,
+            reveal_engaged: true,
             journal: Journal::new(),
             read_only: ReadOnly::No,
             file_path: None,
@@ -331,6 +348,7 @@ impl Document {
             image: None,
             embeds: crate::graphics::EmbedSet::new(),
             last_sync: None,
+            pinned: false,
         }
     }
 
@@ -340,8 +358,8 @@ impl Document {
         self.is_dirty_cached
     }
 
-    /// Arms a save in flight, capturing `version`/`content` TOGETHER (plan
-    /// WP1's chokepoint) — the only way `save_in_flight` and `save_pending`
+    /// Arms a save in flight, capturing `version`/`content` TOGETHER at one
+    /// chokepoint — the only way `save_in_flight` and `save_pending`
     /// are ever set, so a save can never be in flight without the exact
     /// bytes it captured. Called by every save-start site: `save::
     /// materialize_now`, the no-store fallback in `save::trigger_save`, and
@@ -393,7 +411,7 @@ impl Document {
         self.save_pending.as_ref().map(|p| p.version)
     }
 
-    /// The one hydration-adoption chokepoint (plan WP5.S2): `self.buffer` is
+    /// The one hydration-adoption chokepoint: `self.buffer` is
     /// assumed to hold exactly `disk_content` (the caller's job — the
     /// bootstrap path just loaded it straight off disk; `db::handle_load_ack`
     /// checks the buffer's version hasn't moved since `Load` was issued
@@ -408,7 +426,7 @@ impl Document {
     /// append_edit` — the durable side already has this content, only the
     /// LOCAL undo journal needs the anchor) so ⌘Z reaches `disk_content`;
     /// (c) surfaces an `apply_edits` failure as a refusal rather than an
-    /// unannotated no-op. Dirtiness is no longer marked here (plan WP1): an
+    /// unannotated no-op. Dirtiness is no longer marked here: an
     /// adopting hydration leaves the buffer genuinely different from
     /// `saved_content`, so the ordinary content comparison already reports
     /// it dirty once the caller recomputes — see `materialize_ack::
@@ -464,7 +482,7 @@ impl Document {
     /// (one value, one meaning) — a document once shown under a
     /// placeholder name (an "Untitled N" draft, a rename in progress) must
     /// switch over to its real name the moment it actually has one. Also
-    /// the only place `kind` is recomputed (plan WP4.S4) — pushed into
+    /// the only place `kind` is recomputed — pushed into
     /// `doc` too, so `DocMachine::sync_content` picks the right producer on
     /// its very next call.
     pub fn bind_path(&mut self, path: PathBuf) {

@@ -1,19 +1,19 @@
 //! The writer thread: owns the single read-write connection, drains a
 //! bounded FIFO queue of [`WriteOp`]s, and runs every op inside
-//! `BEGIN IMMEDIATE` via `retry.rs` (plan decision 7: "one writer thread
-//! owning one read-write connection, FIFO queue for all stateful ops
-//! (read-your-writes by construction)").
+//! `BEGIN IMMEDIATE` via `retry.rs`. One writer thread owns one read-write
+//! connection, with a FIFO queue for all stateful ops, giving
+//! read-your-writes by construction.
 //!
-//! The queue is `std::sync::mpsc::sync_channel(1024)` (plan Assumption A2).
-//! Enqueue uses `try_send`: a full queue means the writer is wedged, and
-//! `update` (the caller, `rune-tui`'s Elm-style loop) must never block on
-//! I/O (plan Gotchas) — `TrySendError::Full` maps to an immediate
+//! The queue is `std::sync::mpsc::sync_channel(1024)`. Enqueue uses
+//! `try_send`: a full queue means the writer is wedged, and `update` (the
+//! caller, `rune-tui`'s Elm-style loop) must never block on I/O —
+//! `TrySendError::Full` maps to an immediate
 //! [`Error::WriterQueueFull`](crate::Error::WriterQueueFull) instead.
 //!
 //! Every completion — success or classified failure — is delivered through
-//! an injected `on_event` callback (plan decision 4: "op carries a `u64` op
-//! id; writer thread posts a completion ... into the runtime's existing
-//! `Sender<Msg>`"); `rune-tui` (WP5) adapts it to the runtime's `Msg`
+//! an injected `on_event` callback: each op carries a `u64` op id, and the
+//! writer thread posts a completion into the runtime's existing
+//! `Sender<Msg>`; `rune-tui` adapts it to the runtime's `Msg`
 //! channel. The loop wraps op execution, completion delivery (`on_event`
 //! itself), AND idle maintenance in `catch_unwind` — a panic anywhere in
 //! any of them must not vanish silently and must not corrupt an
@@ -45,7 +45,7 @@ pub use crate::writer_ops::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH};
 /// One write operation queued to the writer thread.
 pub struct WriteOp {
     /// Caller-assigned id, echoed back in the eventual [`DbEvent`] so the
-    /// caller can correlate completion to request (plan decision 4).
+    /// caller can correlate completion to request.
     pub id: u64,
     pub kind: OpKind,
 }
@@ -61,7 +61,7 @@ pub struct WriterHandle {
 
 impl WriterHandle {
     /// Enqueues `op`. Never blocks: a full queue maps to
-    /// [`Error::WriterQueueFull`] immediately (plan Gotchas).
+    /// [`Error::WriterQueueFull`] immediately.
     pub fn try_send(&self, op: WriteOp) -> Result<(), Error> {
         self.sender.try_send(op).map_err(|e| match e {
             TrySendError::Full(_) => Error::WriterQueueFull,
@@ -86,15 +86,15 @@ impl WriterHandle {
 /// Spawns the writer thread owning `conn`. `conn` must already have its
 /// schema applied and pragmas set (`store::open`'s responsibility) — this
 /// function only spawns the loop. `vfs` is the ONE filesystem every
-/// disk-touching op (`Probe`/`Materialize`/`Load`) uses (plan decision 12 /
-/// WP4) — owned by this thread exclusively, exactly like `conn`.
+/// disk-touching op (`Probe`/`Materialize`/`Load`) uses — owned by this
+/// thread exclusively, exactly like `conn`.
 pub fn spawn(conn: Connection, vfs: Arc<dyn Vfs + Send + Sync>, on_event: OnEvent) -> WriterHandle {
     spawn_with_idle_timeout(conn, vfs, on_event, IDLE_TIMEOUT)
 }
 
-/// Like [`spawn`], but with an injectable idle timeout — the mechanism
-/// WP6's idle-checkpoint/blob-sweep test uses to observe the idle path
-/// firing without a multi-second test.
+/// Like [`spawn`], but with an injectable idle timeout — the mechanism the
+/// idle-checkpoint/blob-sweep test uses to observe the idle path firing
+/// without a multi-second test.
 pub(crate) fn spawn_with_idle_timeout(
     conn: Connection,
     vfs: Arc<dyn Vfs + Send + Sync>,
@@ -146,7 +146,7 @@ fn writer_loop(
                     return fatal(receiver, on_event, format!("op {id}"));
                 }
             }
-            // A quiet period (plan WP6.S1): opportunistic PASSIVE checkpoint
+            // A quiet period: opportunistic PASSIVE checkpoint
             // plus one bounded blob-sweep batch. Best-effort — there is no
             // caller in flight to surface a failure to. Guarded exactly like
             // op processing: `run_idle_maintenance` runs on every quiet
@@ -169,7 +169,7 @@ fn writer_loop(
 }
 
 /// Runs `kind` to completion against `conn`, inside `retry::with_retry`'s
-/// `BEGIN IMMEDIATE` chokepoint (plan Gotchas) for every variant that
+/// `BEGIN IMMEDIATE` chokepoint for every variant that
 /// touches the database. Returns the domain result (if any) that becomes
 /// `DbEvent::Ok.result`. `Probe`/`Materialize`/`Load` call several
 /// `retry::with_retry` transactions internally, interleaved with `vfs`
@@ -361,6 +361,10 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             let content =
                 crate::scratch::reconstruct_scratch(conn, liveness_check.as_ref(), doc_id)?;
             Ok(OpOutcome::Reconstructed(content))
+        }
+        OpKind::TouchSearchQuery { query, now } => {
+            retry::with_retry(conn, |tx| crate::search_history::touch(tx, &query, now))?;
+            Ok(OpOutcome::None)
         }
         OpKind::Shutdown {
             session_id,

@@ -128,6 +128,19 @@ impl Vfs for Disk {
         fs::remove_file(path).map_err(|e| crate::wrap_io(e, format!("remove {}", path.display())))
     }
 
+    fn trash(&self, path: &Path) -> io::Result<()> {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+
+        let mut ctx = trash::TrashContext::default();
+        // Finder's default method shells out to `osascript`, which triggers
+        // a macOS automation-permission dialog against the host terminal;
+        // NsFileManager trashes silently with no subprocess. The item is
+        // still fully recoverable — only Finder's "Put Back" entry is lost.
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+        ctx.delete(path)
+            .map_err(|e| io::Error::other(describe_trash_error(&e)))
+    }
+
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         let meta = fs::metadata(path)?;
         Ok(Stat {
@@ -208,5 +221,21 @@ impl Vfs for Disk {
         }
         sort_dir_entries(&mut entries);
         Ok(entries)
+    }
+}
+
+/// `trash::Error`'s `Display` is a raw `Debug` dump — map the variants a
+/// user-facing message can actually explain, falling back to a short
+/// unqualified label for the rest rather than surfacing the dump.
+fn describe_trash_error(error: &trash::Error) -> String {
+    match error {
+        trash::Error::Os { description, .. } => description.clone(),
+        trash::Error::CouldNotAccess { target } => format!("could not access {target}"),
+        trash::Error::TargetedRoot => "refused to trash a root folder".to_string(),
+        trash::Error::CanonicalizePath { original } => {
+            format!("could not resolve path {}", original.display())
+        }
+        trash::Error::Unknown { description } => description.clone(),
+        _ => "trash operation failed".to_string(),
     }
 }

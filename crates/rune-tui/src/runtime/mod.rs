@@ -1,19 +1,19 @@
-//! The Elm-style runtime: `Msg`, `Cmd`, `Effects`, and the main loop (plan
-//! Context, "Msg/Cmd runtime"). This module's `run` (main: recv -> drain
+//! The Elm-style runtime: `Msg`, `Cmd`, `Effects`, and the main loop.
+//! This module's `run` (main: recv -> drain
 //! `try_iter` -> `update` per message -> drain `Effects.raw` to the terminal
 //! -> spawn `Effects.cmds` -> draw once), the input reader spawned by `run`,
 //! one `std::thread` per `Cmd`, and `App::snapshot_timer`'s own single
-//! long-lived rearmable timer thread (plan WP16.S5) — the one background
+//! long-lived rearmable timer thread — the one background
 //! thread NOT spawned fresh per `Cmd`, since re-arming it is a plain state
 //! update rather than new off-thread work.
 //!
 //! `update` mutates `App` synchronously — synchronous state changes directly
 //! in `update`; a Cmd is exclusively for I/O that leaves the thread.
 //! `Effects.raw` is the ONLY path by which escape bytes
-//! (OSC 52 clipboard writes) reach the terminal — a `Cmd` never touches it
-//! (plan Gotchas: "Cmds must never touch the terminal"; termina's `Terminal`
+//! (OSC 52 clipboard writes) reach the terminal — a `Cmd` never touches it;
+//! termina's `Terminal`
 //! is `io::Write` on `&mut self`, single-owner, undocumented for cross-
-//! thread use).
+//! thread use.
 
 use std::io;
 use std::path::PathBuf;
@@ -45,6 +45,12 @@ pub enum PasteTarget {
     /// untagged reply could land one title session's clipboard text into a
     /// different document's name.
     Title(DocumentId),
+    /// The search bar's draft. Untagged (the bar is a single global field,
+    /// not per-document like the title): `search::keys::paste` drops the
+    /// reply on arrival if the bar has since closed, the same "reply lands
+    /// only where it can still make sense" discipline `Title`'s own tag
+    /// enforces by a different mechanism.
+    Search,
 }
 
 /// One runtime event. `Key`/`Paste`/`Resize`/`Mouse` originate from the
@@ -55,7 +61,7 @@ pub enum PasteTarget {
 /// spawned `Cmd`; `Db` originates from the `rune-db` writer thread via
 /// `db::DbBridge`; `Error`/`Quit` can be synthesized by
 /// `update` itself.
-/// `SaveDone`/`SnapshotDue` carry a `DocumentId` (plan WP1.S3) so multi-
+/// `SaveDone`/`SnapshotDue` carry a `DocumentId` so multi-
 /// document acks route back to the document that triggered them;
 /// `ConfirmTimeout`/`SaveConfirmTimeout`/`MessagesCollapseTimeout` stay
 /// doc-agnostic — `pending_quit` is app-wide, `pending_save_confirm`'s doc
@@ -66,8 +72,8 @@ pub enum Msg {
     Key(KeyInput),
     Paste(String),
     Resize(u16, u16),
-    /// A mouse event, translated from `termina::Event::Mouse` (plan
-    /// WP7.S4) — `commands::mouse::handle` is its sole handler.
+    /// A mouse event, translated from `termina::Event::Mouse` —
+    /// `commands::mouse::handle` is its sole handler.
     Mouse(MouseInput),
     /// A `pbpaste` reply. `target` is captured when the `Cmd` is spawned
     /// (`clipboard::pbpaste_cmd`), not resolved on arrival — a document
@@ -86,7 +92,7 @@ pub enum Msg {
     ConfirmTimeout {
         generation: u32,
     },
-    /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6, mirroring
+    /// The 2s degraded-save confirm-gate timer (mirroring
     /// `ConfirmTimeout`'s quit-confirm shape) — a stale generation is
     /// ignored exactly like `ConfirmTimeout`.
     SaveConfirmTimeout {
@@ -99,7 +105,7 @@ pub enum Msg {
     MessagesCollapseTimeout {
         generation: u32,
     },
-    /// The 2s snapshot-autosave debounce timer (plan WP5.S6) — a stale
+    /// The 2s snapshot-autosave debounce timer — a stale
     /// generation (a later journal mutation already rescheduled) is
     /// ignored.
     SnapshotDue {
@@ -107,9 +113,9 @@ pub enum Msg {
         generation: u32,
     },
     /// A completion posted by `rune-db`'s writer thread, routed through
-    /// `db::DbBridge` (plan WP5.S1).
+    /// `db::DbBridge`.
     Db(rune_db::DbEvent),
-    /// WP7: the caller-side `vfs` `Cmd` a `MaterializePrepare` ack spawned
+    /// The caller-side `vfs` `Cmd` a `MaterializePrepare` ack spawned
     /// (`save::materialize_vfs_cmd`) has finished the ENTIRE disk dance —
     /// resolve/read/hash-compare/publish/read-displaced — through this
     /// app's own `Vfs` handle, never the writer thread's. Routed to
@@ -118,10 +124,10 @@ pub enum Msg {
         id: DocumentId,
         outcome: crate::materialize_ack::MaterializeVfsOutcome,
     },
-    /// `vfs.read_dir(root)` completed (plan WP4.S4) — the Explorer's own
+    /// `vfs.read_dir(root)` completed — the Explorer's own
     /// boundary Msg, delivered by [`load_dir_cmd`]. `Nav` (navigated into
     /// `root`) resets the Explorer's cursor to the top; `Refresh` (a future
-    /// watcher-triggered reload, out of scope for WP4 itself — no
+    /// watcher-triggered reload, out of scope for now — no
     /// production caller constructs it yet) preserves the selected entry by
     /// name when it's still present. A `read_dir` failure becomes
     /// `Msg::Error` instead — see `load_dir_cmd`. `generation` is the
@@ -144,7 +150,18 @@ pub enum Msg {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
     },
-    /// A `ReadFile` `Cmd` completed (plan WP5.S6, [rune-tui A 7]) —
+    /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
+    /// `trash::handle_trash_done`. Carries its own `generation` so a reply
+    /// to a trash the user has since dismissed (there is no dismiss path
+    /// once confirmed, but a fresh trash request can still overwrite
+    /// `App::trash_gen` before this one lands) is dropped rather than
+    /// applied to the fresh one.
+    TrashDone {
+        generation: u32,
+        path: PathBuf,
+        result: Result<(), String>,
+    },
+    /// A `ReadFile` `Cmd` completed —
     /// `workspace::open_path_async`'s reply, routed to `workspace::
     /// handle_file_opened`. `anchor` is carried through unchanged from the
     /// request so landing it (`navigate::land_anchor`) doesn't need a
@@ -172,7 +189,7 @@ pub enum Msg {
         version: u64,
         result: Option<HighlightReply>,
     },
-    /// An image document's background decode completed (plan WP5.S1),
+    /// An image document's background decode completed,
     /// routed to `graphics::handle_image_decoded`. `generation` echoes
     /// `ImageState::in_flight` — `spawn_cmd` has no cancellation, so a
     /// reply whose generation no longer matches is dropped silently.
@@ -187,15 +204,28 @@ pub enum Msg {
     /// about, but not something as severe as `Error`'s glyph/persistence
     /// implies.
     Warning(String),
+    /// The search bar's MRU history load, requested once per bar-open
+    /// (`search::open`) and delivered by [`load_search_history_cmd`].
+    /// `generation` echoes the `SearchState::history_generation` minted at
+    /// the request — `search::handle_history_loaded` drops a reply whose
+    /// generation no longer matches (a close-then-reopen since issued it),
+    /// the same shape `Msg::DirLoaded` uses. A reader `Err` still carries
+    /// this variant (with an `Err` result) rather than folding into
+    /// `Msg::Error`, so a stale reply is discarded exactly like a fresh one
+    /// instead of always surfacing a message regardless of generation.
+    SearchHistory {
+        generation: u64,
+        result: Result<Vec<String>, String>,
+    },
     Quit,
 }
 
-/// Why a `Msg::DirLoaded` was requested (plan WP4.S4) — `explorer::
+/// Why a `Msg::DirLoaded` was requested — `explorer::
 /// handle_dir_loaded` reacts differently: `Nav` (the user navigated to a
 /// new root — Enter on a directory, Backspace to the parent, or the initial
 /// `^x` load) resets the cursor to the top; `Refresh` (reserved for a later
-/// fsnotify-driven reload — out of scope here per the plan's "Out of
-/// scope") preserves the currently selected entry by name.
+/// fsnotify-driven reload — out of scope here) preserves the currently
+/// selected entry by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DirCause {
     Nav,
@@ -215,7 +245,7 @@ pub enum CmdKind {
     /// `/usr/bin/pbpaste`. Spawns a subprocess and reads the live OS
     /// clipboard; never run it inline.
     ClipboardRead,
-    /// The 2s degraded-save confirm-gate timer (plan WP5.S2/S6). Sleeps;
+    /// The 2s degraded-save confirm-gate timer. Sleeps;
     /// never run it inline.
     SaveConfirmTimeout,
     /// The message pane's 5s auto-collapse timer. Sleeps; never
@@ -225,18 +255,18 @@ pub enum CmdKind {
     /// draft create) for the no-store route — the no-clobber atomic
     /// publish. Off-thread, never inline in `update`.
     Rename,
-    /// `vfs.read_dir` for the Explorer pane (plan WP4.S4). Not a sleeping/
+    /// `vfs.read_dir` for the Explorer pane. Not a sleeping/
     /// forking `Cmd` like the three above, but still off-thread so
     /// a slow or degraded filesystem (an NFS mount, a huge directory) never
     /// blocks the main loop.
     ReadDir,
-    /// `vfs.read` for a single FILE (plan WP5.S6, [rune-tui A 7]) —
+    /// `vfs.read` for a single FILE —
     /// `workspace::open_path_async`'s own off-thread read, the `ReadDir`
     /// sibling for opening (rather than listing) a path: a slow or
     /// degraded filesystem must never block the main loop just because the
     /// target happens to be a file instead of a directory.
     ReadFile,
-    /// `/usr/bin/open` on an external link's URL (plan WP5.S6). Spawns a
+    /// `/usr/bin/open` on an external link's URL. Spawns a
     /// subprocess; never run it inline. The session fuzzer's driver keeps
     /// only `CmdKind::Save` and drops every other `Cmd`, so this can never
     /// be spawned from a fuzz run.
@@ -254,10 +284,18 @@ pub enum CmdKind {
     /// `highlight::first_paint_highlight` — where nothing is on screen yet
     /// to block.
     Highlight,
-    /// `vfs.read` + `rune_image::decode_still` for an image document (plan
-    /// WP5.S1). Off-thread: decode is CPU work and must never
+    /// `vfs.read` + `rune_image::decode_still` for an image document.
+    /// Off-thread: decode is CPU work and must never
     /// block the main loop.
     ImageDecode,
+    /// `vfs.trash` — a blocking `NSFileManager` call, off-thread, never
+    /// inline in `update`.
+    Trash,
+    /// `ReaderQuery::query(RecentSearches)` for the search bar's history
+    /// list. Off-thread for the same reason `ReadDir` is: the
+    /// reader thread's reply time is out of `update`'s control, and this
+    /// must never block the main loop waiting on it.
+    SearchHistory,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
@@ -295,7 +333,7 @@ impl Cmd {
 pub struct Effects {
     pub cmds: Vec<Cmd>,
     pub raw: Vec<Vec<u8>>,
-    /// Plan WP5.S6: forces `apply` to clear the terminal's diff buffer —
+    /// Forces `apply` to clear the terminal's diff buffer —
     /// ratatui only repaints changed cells, which would leave a stale
     /// placement on screen after a retransmit whose placeholder cells
     /// stayed byte-identical (see `graphics::resize_refit`'s own docs).
@@ -364,7 +402,7 @@ fn apply(
     tx: &mpsc::Sender<Msg>,
     save_handles: &mut Vec<thread::JoinHandle<()>>,
 ) -> io::Result<()> {
-    // Plan WP3.S5: a resize can change the terminal's reported pixel
+    // A resize can change the terminal's reported pixel
     // dimensions even when the Kitty/truecolor decision itself cannot, so
     // `app.graphics` is re-derived here — the one "apply a message"
     // chokepoint this module's own doc comment above describes — rather
@@ -445,7 +483,7 @@ fn spawn_input_reader(events: termina::EventReader, tx: mpsc::Sender<Msg>) {
     });
 }
 
-/// Reads `root`'s children off-thread via `vfs.read_dir` (plan WP4.S4) and
+/// Reads `root`'s children off-thread via `vfs.read_dir` and
 /// replies with `Msg::DirLoaded`, or `Msg::Error` on a read failure — the
 /// Explorer's own boundary Msg, called from `explorer_keys::handle_key` (Open on
 /// a directory, Backspace to the parent) and from `pane::handle_global_
@@ -476,7 +514,7 @@ pub fn load_dir_cmd(
     })
 }
 
-/// Reads `path` off-thread via `vfs.read` (plan WP5.S6, [rune-tui A 7]) —
+/// Reads `path` off-thread via `vfs.read` —
 /// `workspace::open_path_async`'s only `Cmd`, and `load_dir_cmd`'s single-
 /// file counterpart. `anchor` is opaque data here, just carried through to
 /// the `Msg::FileOpened` reply unchanged — this `Cmd` never resolves it
@@ -494,6 +532,28 @@ pub fn read_file_cmd(
             result,
             anchor,
         })
+    })
+}
+
+/// Loads the search bar's MRU history off-thread through a cloned
+/// `ReaderQuery` — the reader thread's own connection, never
+/// the writer's, so this can never contend with or block on an in-flight
+/// recovery write. Always replies with `Msg::SearchHistory`, `generation`
+/// carried through unchanged: a query failure becomes `result: Err(..)`
+/// rather than `Msg::Error`/`Msg::Warning` directly, so `search::
+/// handle_history_loaded` can apply the same stale-generation check to a
+/// failure as to a success instead of always surfacing a message even for a
+/// reply nobody's still waiting on.
+pub fn load_search_history_cmd(reader: rune_db::ReaderQuery, generation: u64) -> Cmd {
+    Cmd::new(CmdKind::SearchHistory, move || {
+        let result = reader
+            .query(rune_db::ReaderRequestKind::RecentSearches { limit: 200 })
+            .map(|reply| match reply {
+                rune_db::ReaderReply::RecentSearches(entries) => entries,
+                _ => Vec::new(),
+            })
+            .map_err(|e| e.to_string());
+        Some(Msg::SearchHistory { generation, result })
     })
 }
 
@@ -554,8 +614,8 @@ pub use highlight_cmd::{PARSE_BUDGET, PASS_BUDGET};
 // `highlight_cmd::run_regions`, never re-exported.
 mod md_fence;
 
-// The snapshot-autosave debounce's one rearmable timer thread (plan
-// WP16.S5) — split out for the same reason `highlight_cmd` was: a distinct
+// The snapshot-autosave debounce's one rearmable timer thread —
+// split out for the same reason `highlight_cmd` was: a distinct
 // concern with its own `#[cfg(test)]` module, kept out of this file's own
 // 500-line budget.
 mod snapshot_timer;
