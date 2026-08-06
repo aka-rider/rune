@@ -3,10 +3,11 @@
 //! leaves a decodable `inflight.rune` behind, while a Rust-level unwind
 //! (a panicking test case, which proptest itself catches per-case) does
 //! not. Neither can be observed in-process — `catch_unwind` cannot trap a
-//! signal, and Drop-on-unwind is exactly the thing under test — so this
-//! self-execs the test binary itself (precedent: `crates/rune-cli/tests/
-//! launch.rs`), running each `#[ignore]`d child case as its own process
-//! and asserting on the parent's view of how the child died.
+//! signal, and Drop-on-unwind is exactly the thing under test — so the
+//! parent test re-invokes its own test binary with an exact `--ignored`
+//! filter, the same parent/child harness shape the CLI launch tests use,
+//! running each `#[ignore]`d child case as its own process and asserting
+//! on the parent's view of how the child died.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -17,10 +18,10 @@ use std::process::Command;
 
 use rune_fuzz::action::Action;
 use rune_fuzz::driver::DOC_PATH;
+use rune_fuzz::wal::INFLIGHT_NAME;
 use rune_fuzz::{script, wal};
 
 const ARTIFACTS_DIR_ENV: &str = "WAL_ABORT_DIR";
-const INFLIGHT_NAME: &str = "inflight.rune";
 
 fn armed_script() -> (String, String, Vec<Action>) {
     (
