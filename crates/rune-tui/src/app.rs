@@ -246,6 +246,13 @@ pub struct App {
     /// navigate with. `None` until the bar has closed at least once with a
     /// non-empty query.
     pub(crate) last_search_query: Option<String>,
+    /// The query most recently enqueued as a `TouchSearchQuery` write
+    /// (`search::keys::persist_query`'s own debounce key) — lives on `App`,
+    /// not `SearchState`, since a closed-bar chord (`advance_closed`) calls
+    /// the same persist path with no `SearchState` to hold it. Repeated
+    /// Enter on an unchanged query (e.g. wrapping back to the same single
+    /// match) must not re-enqueue a write on every keystroke.
+    pub(crate) last_persisted_search_query: Option<String>,
     /// The next generation `search::open` mints for a history load request
     /// (plan WP6.S1) — a plain counter on `App`, not on `SearchState`
     /// itself, because it must keep distinguishing requests across a
@@ -362,6 +369,7 @@ impl App {
             messages: MessageLog::new(),
             search: None,
             last_search_query: None,
+            last_persisted_search_query: None,
             next_search_history_gen: 0,
             search_history_ops: HashSet::new(),
             should_quit: false,

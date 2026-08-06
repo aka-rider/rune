@@ -28,20 +28,13 @@ pub(crate) struct SearchState {
     pub(crate) draft: String,
     pub(crate) matches: Vec<Range<usize>>,
     pub(crate) current: Option<usize>,
-    /// The document and buffer version `matches`/`concealed` were last
-    /// computed against — [`sync`]'s own memo key, compared each frame so
+    /// The document and buffer version `matches` was last computed
+    /// against — [`sync`]'s own memo key, compared each frame so
     /// a tab switch or an edit that happens while the bar merely sits open
     /// (undo, an external reload) triggers exactly one recompute rather
     /// than paying for one on every idle frame.
-    doc: DocumentId,
-    buffer_version: u64,
-    /// The concealed byte ranges cached alongside `matches` at the same
-    /// [`recompute`] — [`concealed_ranges`]'s own output, read by
-    /// `keys::advance` to skip a match wholly hidden behind a substituted
-    /// span. Computed and cached HERE, at the same chokepoint that
-    /// recomputes `matches`, rather than re-derived at the navigation call
-    /// site — one recompute chokepoint, not two.
-    pub(crate) concealed: Vec<Range<usize>>,
+    pub(crate) doc: DocumentId,
+    pub(crate) buffer_version: u64,
     /// MRU search history, fuzzy-filterable — loaded once from
     /// `search_history` via a spawned `Cmd` when the bar opens
     /// ([`handle_history_loaded`]), browsed with ↑/↓ (`keys::history_prev`/
@@ -83,7 +76,6 @@ pub(crate) fn open(app: &mut App) {
         current: None,
         doc: app.active,
         buffer_version: app.active_doc().buffer.version(),
-        concealed: Vec::new(),
         history: Vec::new(),
         history_generation: app.next_search_history_gen,
         history_pos: None,
@@ -142,14 +134,18 @@ pub(crate) fn close(app: &mut App) {
     }
 }
 
-/// The one chokepoint that keeps `matches`/`concealed` in step with the
-/// live draft, active document, and buffer version (decision: "recompute
-/// over cache, no shadow state") — called directly after every draft edit
+/// The one chokepoint that keeps `matches` in step with the live draft,
+/// active document, and buffer version (decision: "recompute over cache, no
+/// shadow state") — called directly after every draft edit
 /// (`keys::handle_key`) and, for a change that happens out from under an
 /// already-open bar (a tab switch, an undo/redo, an external reload), from
 /// [`sync`] below. Always resets `current` to `None`: a stale selected
 /// index into a freshly recomputed match list could point at the wrong
-/// match, or past the end of a now-shorter one.
+/// match, or past the end of a now-shorter one. Concealment is NOT cached
+/// here: it depends on reveal state (cursor) and viewport width, neither of
+/// which bumps `buffer_version`, so [`concealed_ranges`] is instead
+/// recomputed fresh at the point of use (`keys::jump`) from whatever `doc`
+/// is active THEN, not whatever it was at this recompute.
 pub(crate) fn recompute(app: &mut App) {
     if app.search.is_none() {
         return;
@@ -161,16 +157,10 @@ pub(crate) fn recompute(app: &mut App) {
         .unwrap_or_default();
     let doc = app.active_doc();
     let matches = compute_matches(doc.buffer.content(), &draft);
-    let concealed = doc
-        .view
-        .as_ref()
-        .map(|view| concealed_ranges(&view.wrap))
-        .unwrap_or_default();
     let version = doc.buffer.version();
     let doc_id = app.active;
     if let Some(state) = app.search.as_mut() {
         state.matches = matches;
-        state.concealed = concealed;
         state.doc = doc_id;
         state.buffer_version = version;
         state.current = None;

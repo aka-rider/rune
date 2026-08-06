@@ -1,8 +1,11 @@
-//! Unit tests for `search/keys.rs`'s keystroke handling — split into its
-//! own file (500-line budget), mirroring how `search/tests.rs` already
-//! splits `search/mod.rs`'s own tests out; a child module of `keys`, so
-//! every private item there stays reachable through `use super::*;` exactly
-//! as if this were still inline.
+//! Navigation tests for `search/keys.rs`'s Enter/Shift+Enter and
+//! closed-bar next/prev — split into its own file (500-line budget),
+//! mirroring how `search/tests.rs` already splits `search/mod.rs`'s own
+//! tests out. Basic keystroke editing lives in the sibling
+//! `editing_tests`; ↑/↓ history browsing lives in the sibling
+//! `history_tests`. A child module of `keys`, so every private item there
+//! stays reachable through `use super::*;` exactly as if this were still
+//! inline.
 
 use std::sync::Arc;
 
@@ -24,103 +27,6 @@ fn char_key(c: char) -> KeyInput {
     KeyInput {
         code: KeyCode::Char(c),
         mods: Mods::NONE,
-    }
-}
-
-#[test]
-fn typing_recomputes_matches_live() {
-    let mut app = app_with("hello world hello");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-
-    for c in "hello".chars() {
-        assert_eq!(
-            handle_key(&mut app, char_key(c), &mut effects),
-            KeyOutcome::Consumed
-        );
-    }
-
-    let state = app.search.as_ref().expect("bar stays open");
-    assert_eq!(state.draft, "hello");
-    assert_eq!(state.matches, vec![0..5, 12..17]);
-}
-
-#[test]
-fn backspace_on_an_empty_draft_leaves_the_bar_open() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-
-    let backspace = KeyInput {
-        code: KeyCode::Backspace,
-        mods: Mods::NONE,
-    };
-    assert_eq!(
-        handle_key(&mut app, backspace, &mut effects),
-        KeyOutcome::Consumed
-    );
-    assert!(
-        app.search.is_some(),
-        "an empty-draft Backspace must not close the bar"
-    );
-}
-
-#[test]
-fn backspace_erases_one_grapheme_and_clears_its_matches() {
-    let mut app = app_with("ab ab");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('a'), &mut effects);
-    let _ = handle_key(&mut app, char_key('b'), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().matches, vec![0..2, 3..5]);
-
-    let backspace = KeyInput {
-        code: KeyCode::Backspace,
-        mods: Mods::NONE,
-    };
-    let _ = handle_key(&mut app, backspace, &mut effects);
-    let state = app.search.as_ref().unwrap();
-    assert_eq!(state.draft, "a");
-    assert!(!state.matches.is_empty());
-}
-
-#[test]
-fn escape_closes_the_bar_and_saves_the_query() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('h'), &mut effects);
-
-    let esc = KeyInput {
-        code: KeyCode::Escape,
-        mods: Mods::NONE,
-    };
-    assert_eq!(
-        handle_key(&mut app, esc, &mut effects),
-        KeyOutcome::Consumed
-    );
-    assert!(app.search.is_none(), "Escape closes the bar");
-    assert_eq!(app.last_search_query.as_deref(), Some("h"));
-}
-
-#[test]
-fn arrow_keys_with_empty_history_leave_state_untouched() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('h'), &mut effects);
-    let before = app.search.as_ref().unwrap().draft.clone();
-
-    for code in [KeyCode::Up, KeyCode::Down] {
-        let key = KeyInput {
-            code,
-            mods: Mods::NONE,
-        };
-        assert_eq!(
-            handle_key(&mut app, key, &mut effects),
-            KeyOutcome::Consumed
-        );
-        assert_eq!(app.search.as_ref().unwrap().draft, before);
     }
 }
 
@@ -192,6 +98,11 @@ fn enter_with_zero_matches_is_a_consumed_no_op() {
     );
     assert_eq!(app.search.as_ref().unwrap().current, None);
     assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(
+        messages::newest_text(&app),
+        Some("no matches for \"zzz\""),
+        "a query with no matches must say so, not fail silently"
+    );
 }
 
 #[test]
@@ -207,9 +118,10 @@ fn enter_skips_matches_fully_inside_a_concealed_table_separator_but_still_counts
 
     let state = app.search.as_ref().unwrap();
     assert!(!state.matches.is_empty(), "N still counts every '-'");
-    let concealed = state.concealed.clone();
+    let matches = state.matches.clone();
+    let concealed = current_concealed(&app);
     assert!(
-        state.matches.iter().all(|m| is_concealed(&concealed, m)),
+        matches.iter().all(|m| is_concealed(&concealed, m)),
         "every '-' sits inside the substituted separator row"
     );
 
@@ -221,6 +133,49 @@ fn enter_skips_matches_fully_inside_a_concealed_table_separator_but_still_counts
         "every match is concealed, so navigation finds nothing to land on"
     );
     assert_eq!(app.active_doc().cursors.primary().position, cursor_before);
+    assert_eq!(
+        messages::newest_text(&app),
+        Some(format!("all {} matches are concealed", matches.len())).as_deref(),
+        "a concealed-only match list must say so, not fail silently"
+    );
+}
+
+#[test]
+fn revealing_the_table_makes_its_matches_navigable_without_a_buffer_edit() {
+    // Same fixture and same first Enter as the test above — every '-'
+    // starts out concealed. Moving the cursor INTO the table and re-syncing
+    // the view (no buffer edit, so `buffer_version` never bumps) flips
+    // reveal mode for that element — concealment must be read fresh from
+    // the CURRENT view on the very next Enter, not from a cache stamped at
+    // the earlier recompute.
+    let mut app = app_with("text\n\n| a | b |\n|---|---|\n| a | c |\n");
+    crate::search::open(&mut app);
+    let mut effects = Effects::default();
+    let _ = handle_key(&mut app, char_key('-'), &mut effects);
+    let version_before = app.active_doc().buffer.version();
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
+    assert_eq!(
+        app.search.as_ref().unwrap().current,
+        None,
+        "still concealed before the cursor ever enters the table"
+    );
+
+    // Land the cursor inside the table (the "| a | b |" row) and re-sync —
+    // no text changed, so the buffer version is identical throughout.
+    let table_offset = "text\n\n| a".len();
+    app.active_doc_mut().cursors = CursorSet::new(table_offset);
+    app.sync_view();
+    assert_eq!(
+        app.active_doc().buffer.version(),
+        version_before,
+        "revealing must never look like a buffer edit"
+    );
+
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
+    assert!(
+        app.search.as_ref().unwrap().current.is_some(),
+        "the revealed row's matches must be navigable on the very next Enter"
+    );
 }
 
 #[test]
@@ -278,122 +233,73 @@ fn a_degraded_db_attempts_no_write_but_still_navigates() {
     );
 }
 
-fn up_key() -> KeyInput {
-    KeyInput {
-        code: KeyCode::Up,
-        mods: Mods::NONE,
+#[test]
+fn enter_after_a_coalesced_doc_switch_recomputes_instead_of_jumping_into_the_old_doc() {
+    // Simulates the runtime draining an async doc-switch and this very
+    // Enter in the SAME message batch, ahead of the next `sync_view`
+    // (`super::sync`'s only caller): `SearchState` still names the OLD
+    // document/version, but `App::active` has already moved on. `advance`
+    // must revalidate and recompute against the NEW active document rather
+    // than jumping using the old doc's stale match byte ranges.
+    let mut app = app_with("needle needle");
+    crate::search::open(&mut app);
+    let mut effects = Effects::default();
+    for c in "needle".chars() {
+        let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
+    assert_eq!(app.search.as_ref().unwrap().matches, vec![0..6, 7..13]);
+    let stale_doc = app.search.as_ref().unwrap().doc;
+
+    let other = app.open_document(Buffer::new("no matches in here"));
+    app.active = other;
+
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
+
+    let state = app.search.as_ref().unwrap();
+    assert_ne!(
+        state.doc, stale_doc,
+        "the recompute must retarget the new active doc"
+    );
+    assert_eq!(state.doc, other);
+    assert!(
+        state.matches.is_empty(),
+        "the new document has no \"needle\" — the stale match list must not survive"
+    );
+    assert_eq!(
+        app.active_doc().cursors.primary().position,
+        0,
+        "no jump into the wrong document's byte ranges"
+    );
 }
 
-fn down_key() -> KeyInput {
-    KeyInput {
-        code: KeyCode::Down,
-        mods: Mods::NONE,
+#[test]
+fn repeated_enter_on_the_same_query_enqueues_one_touch_op() {
+    let mut app = app_with("hi hi hi");
+    app.db = Some(crate::db::Db::new(
+        rune_db::Store::open_in_memory(
+            Arc::new(std::time::SystemTime::now),
+            Arc::new(Mem::new()),
+            Box::new(|_evt| {}),
+        )
+        .expect("open in-memory store"),
+        crate::db::DbBridge::bootstrap(),
+        false,
+    ));
+    crate::search::open(&mut app);
+    let mut effects = Effects::default();
+    for c in "hi".chars() {
+        let _ = handle_key(&mut app, char_key(c), &mut effects);
     }
-}
 
-#[test]
-fn up_filters_history_against_the_currently_typed_draft() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec![
-        "needle".to_string(),
-        "hay".to_string(),
-        "haystack".to_string(),
-    ];
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('h'), &mut effects);
-    let _ = handle_key(&mut app, char_key('a'), &mut effects);
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
+    let _ = handle_key(&mut app, enter_key(), &mut effects);
 
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-
-    // "needle" has no "h" at all, so it's filtered out; "hay" is the
-    // MRU-most surviving entry, so the first ↑ lands there rather than
-    // "haystack".
-    assert_eq!(app.search.as_ref().unwrap().draft, "hay");
-}
-
-#[test]
-fn up_walks_older_in_mru_order_and_clamps_at_the_oldest() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string(), "two".to_string()];
-    let mut effects = Effects::default();
-
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one");
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "two");
-    // Already at the oldest entry — a further ↑ clamps rather than
-    // wrapping back around to "one".
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "two");
-}
-
-#[test]
-fn down_past_the_newest_entry_restores_the_in_progress_draft() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["hello world".to_string(), "help".to_string()];
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('h'), &mut effects);
-
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "hello world");
-
-    let _ = handle_key(&mut app, down_key(), &mut effects);
     assert_eq!(
-        app.search.as_ref().unwrap().draft,
-        "h",
-        "walking down past the newest entry restores the pre-browse draft"
+        app.search_history_ops.len(),
+        1,
+        "an unchanged query across repeated Enter must enqueue exactly one write"
     );
-    assert!(app.search.as_ref().unwrap().history_pos.is_none());
-}
-
-#[test]
-fn down_with_no_browse_session_active_is_a_no_op() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string()];
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, char_key('x'), &mut effects);
-
-    let _ = handle_key(&mut app, down_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "x");
-}
-
-#[test]
-fn typing_after_browsing_history_resets_the_browse_session() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    app.search.as_mut().unwrap().history = vec!["one".to_string()];
-    let mut effects = Effects::default();
-    let _ = handle_key(&mut app, up_key(), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one");
-
-    let _ = handle_key(&mut app, char_key('!'), &mut effects);
-    assert_eq!(app.search.as_ref().unwrap().draft, "one!");
-    assert!(app.search.as_ref().unwrap().history_pos.is_none());
-}
-
-#[test]
-fn a_ctrl_modified_char_is_swallowed_rather_than_typed() {
-    let mut app = app_with("hello");
-    crate::search::open(&mut app);
-    let mut effects = Effects::default();
-
-    let ctrl_x = KeyInput {
-        code: KeyCode::Char('x'),
-        mods: Mods {
-            ctrl: true,
-            ..Mods::NONE
-        },
-    };
-    assert_eq!(
-        handle_key(&mut app, ctrl_x, &mut effects),
-        KeyOutcome::Consumed
-    );
-    assert_eq!(app.search.as_ref().unwrap().draft, "");
 }
 
 // --- Closed-bar next/prev (`GlobalCommand::SearchNext`/`SearchPrev`,
