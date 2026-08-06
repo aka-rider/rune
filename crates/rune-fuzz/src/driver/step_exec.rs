@@ -81,6 +81,21 @@ pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag
     Some((msg, MsgTag::RenameDone))
 }
 
+/// Runs the one deferred trash `Cmd`, if any, returning the `Msg` it
+/// produced together with its tag (plan WP3.S3) — the same shape as
+/// `discharge_pending_rename`, closing the identical driver gap for
+/// `CmdKind::Trash`: left undischarged, `Mem::trash` and `Msg::TrashDone`
+/// are unreachable from this driver, and fuzz coverage of the trash flow
+/// stops at `set_guard`.
+pub(super) fn discharge_pending_trash(state: &mut State) -> Option<(Msg, MsgTag)> {
+    let cmd = state.pending_trash.take()?;
+    let msg = cmd.run()?;
+    if !matches!(msg, Msg::TrashDone { .. }) {
+        return None;
+    }
+    Some((msg, MsgTag::TrashDone))
+}
+
 /// Delivers one message through `update`, captures the resulting `Snapshot`
 /// and `StepCtx`, checks every invariant, and records a violation (if any)
 /// into `outcome`. Returns `true` when the session must stop.
@@ -156,6 +171,14 @@ pub(super) fn step_and_check(
             // separate per-document byte snapshot to carry: no rename-path
             // checker needs one yet.
             state.pending_rename = Some(cmd);
+        } else if cmd.kind() == CmdKind::Trash {
+            // Same single-slot reasoning as `pending_rename` above:
+            // structurally at most one trash `Cmd` can be in flight at a
+            // time (a guard for one `GuardKind::Trash` request is answered
+            // or cancelled before another can be raised), so overwriting an
+            // existing `Some` here can never lose a still-outstanding one
+            // in practice.
+            state.pending_trash = Some(cmd);
         }
     }
 
