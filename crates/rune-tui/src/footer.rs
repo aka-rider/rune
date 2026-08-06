@@ -78,10 +78,10 @@ fn mode(app: &App) -> Mode<'_> {
     // returned above, and a `Pending` attempt's "[^M]erge" invitation
     // would be stale advice about the very thing already in flight.
     if matches!(app.merge, crate::merge::MergeState::Inactive)
-        && matches!(
-            app.active_doc().last_sync,
-            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
-        )
+        && app
+            .active_doc()
+            .last_sync
+            .is_some_and(rune_db::SyncKind::is_disk_divergent)
     {
         return Mode::DiskChanged;
     }
@@ -238,9 +238,14 @@ pub fn footer_text(app: &App) -> String {
 /// the always-rendered right side, so it survives Guard/Messages/Chord
 /// modes shadowing the `DiskChanged` banner.
 fn sync_marker(app: &App) -> &'static str {
-    match app.active_doc().last_sync {
-        Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged) => "\u{21c4} ",
-        _ => "",
+    if app
+        .active_doc()
+        .last_sync
+        .is_some_and(rune_db::SyncKind::is_disk_divergent)
+    {
+        "\u{21c4} "
+    } else {
+        ""
     }
 }
 

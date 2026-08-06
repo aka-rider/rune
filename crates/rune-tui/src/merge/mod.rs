@@ -45,10 +45,7 @@ pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) 
         messages::warn(app, "save in progress — merge after it completes");
         return;
     }
-    if !matches!(
-        doc.last_sync,
-        Some(SyncKind::DiskAhead) | Some(SyncKind::Diverged)
-    ) {
+    if !doc.last_sync.is_some_and(SyncKind::is_disk_divergent) {
         messages::warn(app, "no divergence to merge");
         return;
     }
@@ -109,18 +106,16 @@ pub(crate) fn exit_in_place(app: &mut App) {
     let unresolved = blocks.iter().filter(|b| !b.resolved).count();
     if let Some(d) = app.doc_mut(doc) {
         d.display_name = saved_display_name;
-        if unresolved == 0 {
-            // A completed merge (including all-[B]oth, whose kept markers
-            // the user explicitly chose) leaves the buffer strictly ahead
-            // of the disk bytes it just reconciled with — recording that
-            // here is what retires the disk-changed banner/hint instead of
-            // re-inviting a merge forever. Esc-out with unresolved blocks
-            // leaves `last_sync` untouched: the document is still
-            // truthfully diverged and the affordances must return.
-            d.last_sync = Some(SyncKind::BufferAhead);
-        }
     }
     if unresolved == 0 {
+        // A completed merge (including all-[B]oth, whose kept markers
+        // the user explicitly chose) leaves the buffer strictly ahead
+        // of the disk bytes it just reconciled with — recording that
+        // here is what retires the disk-changed banner/hint instead of
+        // re-inviting a merge forever. Esc-out with unresolved blocks
+        // leaves `last_sync` untouched: the document is still
+        // truthfully diverged and the affordances must return.
+        set_last_sync(app, doc, SyncKind::BufferAhead);
         // Completion is the terminal success: only NOW has the user
         // genuinely reconciled the buffer with the disk bytes the merge
         // read, so only now does the save-CAS baseline advance to them.
@@ -144,6 +139,16 @@ pub(crate) fn exit_in_place(app: &mut App) {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
     messages::info(app, message);
+}
+
+/// The one place merge outcomes record a document's fresh sync
+/// classification — render/hint state only, never the CAS baseline (that is
+/// `landing::advance_expect_obs`'s job, gated on terminal success). A no-op
+/// for a document that vanished mid-ack.
+fn set_last_sync(app: &mut App, doc: crate::document::DocumentId, kind: SyncKind) {
+    if let Some(d) = app.doc_mut(doc) {
+        d.last_sync = Some(kind);
+    }
 }
 
 /// Enqueues the store-side retraction of an abandoned merge's entry-time

@@ -38,6 +38,17 @@ pub enum SyncKind {
     Diverged,
 }
 
+impl SyncKind {
+    /// The disk holds changes the buffer doesn't (`DiskAhead`/`Diverged`) —
+    /// the one predicate behind every "disk changed" affordance: the merge
+    /// invitation, the footer/tab divergence markers, and merge entry's own
+    /// pre-check. `BufferAhead` is deliberately excluded: an ordinary unsaved
+    /// edit is the dirty flag's job, not a divergence.
+    pub fn is_disk_divergent(self) -> bool {
+        matches!(self, SyncKind::DiskAhead | SyncKind::Diverged)
+    }
+}
+
 /// The result of comparing three hashes for a document: the buffer head
 /// (`ours`), the freshest disk knowledge (`theirs`), and the derived
 /// 3-way-merge ancestor.

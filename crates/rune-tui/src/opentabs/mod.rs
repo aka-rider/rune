@@ -232,9 +232,13 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
         let pin_marker = if doc.pinned { "*" } else { " " };
-        let sync_marker = match doc.last_sync {
-            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged) => "\u{21c4}",
-            _ => " ",
+        let sync_marker = if doc
+            .last_sync
+            .is_some_and(rune_db::SyncKind::is_disk_divergent)
+        {
+            "\u{21c4}"
+        } else {
+            " "
         };
         // A not-yet-promoted preview renders dimmer than an ordinary tab —
         // active or not, since it can be the active document while the

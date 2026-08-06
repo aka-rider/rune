@@ -53,15 +53,13 @@ pub(crate) fn handle_merge_prep_ack(
     // only ever gave `merge::begin` a fast hint to refuse on; THIS fresh
     // classification is what actually decides whether there is still
     // anything to merge.
-    if !matches!(prep.sync.kind, SyncKind::DiskAhead | SyncKind::Diverged) {
+    if !prep.sync.kind.is_disk_divergent() {
         // The refusal itself carries fresh authoritative news — the hint
         // that invited this attempt was stale. Keep the classification for
         // the chrome instead of dropping it with the refusal, or the
         // banner/hint would go on re-inviting a merge there is nothing
         // left to do.
-        if let Some(d) = app.doc_mut(doc) {
-            d.last_sync = Some(prep.sync.kind);
-        }
+        super::set_last_sync(app, doc, prep.sync.kind);
         app.merge = MergeState::Inactive;
         messages::info(app, "file on disk matches — nothing to merge");
         return;
@@ -144,13 +142,15 @@ pub(crate) fn handle_merge_prep_ack(
         let installed_matches_theirs = app
             .doc(doc)
             .is_some_and(|d| d.buffer.content() == theirs_text);
-        if let Some(d) = app.doc_mut(doc) {
-            d.last_sync = Some(if installed_matches_theirs {
+        super::set_last_sync(
+            app,
+            doc,
+            if installed_matches_theirs {
                 SyncKind::Clean
             } else {
                 SyncKind::BufferAhead
-            });
-        }
+            },
+        );
         app.merge = MergeState::Inactive;
         messages::info(app, "merged cleanly — disk changes applied");
         return;
@@ -197,10 +197,8 @@ fn discard_install(app: &mut App, doc: DocumentId, theirs_text: &str, theirs_obs
         // Terminal success: the install itself is the whole resolution.
         advance_expect_obs(app, doc, theirs_obs);
     }
-    if let Some(d) = app.doc_mut(doc) {
-        // The buffer now byte-equals the disk bytes just installed.
-        d.last_sync = Some(SyncKind::Clean);
-    }
+    // The buffer now byte-equals the disk bytes just installed.
+    super::set_last_sync(app, doc, SyncKind::Clean);
     app.merge = MergeState::Inactive;
     messages::info(app, "disk changes adopted");
 }

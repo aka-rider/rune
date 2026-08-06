@@ -126,10 +126,10 @@ fn hint_suppressed(app: &App, cmd: GlobalCommand) -> bool {
         return true;
     }
     matches!(cmd, GlobalCommand::Merge)
-        && !matches!(
-            app.active_doc().last_sync,
-            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
-        )
+        && !app
+            .active_doc()
+            .last_sync
+            .is_some_and(rune_db::SyncKind::is_disk_divergent)
 }
 
 /// One hint entry's own span group: a leading `"  "` separator (every
