@@ -282,7 +282,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
             }
             Action::Deliver => {
                 if let Some((msg, tag, bytes)) = discharge_pending_save(&mut state)
-                    && step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome)
+                    && step_and_check(&mut state, &mut prev, msg, tag, bytes, &mut outcome)
                 {
                     break 'session;
                 }
@@ -456,7 +456,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         && !state.app.should_quit
         && let Some((msg, tag, bytes)) = discharge_pending_save(&mut state)
     {
-        step_and_check(&mut state, &mut prev, msg, tag, Some(bytes), &mut outcome);
+        step_and_check(&mut state, &mut prev, msg, tag, bytes, &mut outcome);
     }
 
     // Rule 6b (plan WP5): discharge any still-pending rename before

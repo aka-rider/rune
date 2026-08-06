@@ -31,39 +31,49 @@ pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
-/// produced together with its tag and the bytes it was constructed with —
-/// looked up in the per-document snapshot by the ack's OWN `id`, never by
-/// whichever document is active at delivery time (see `MsgTag::SaveDone`'s
-/// docs; `TODO-fuzz-save-verbatim-help-doc-stale-ack.md`). The snapshot is
-/// guaranteed to have an entry for `id`: it was built from every open
-/// document at the moment THIS save `Cmd` was constructed, and `id` names
-/// exactly the document `trigger_save` built the `Cmd` for — which must
-/// have existed then (`trigger_save` bails out before constructing any
-/// `Cmd` if its target document doesn't). `save_cmd` (`app.rs`) only ever
-/// constructs a `Msg::SaveDone` reply and never returns `None` — the `None`
-/// arms below are defensive against `Cmd`'s general contract, not reachable
-/// from any real save `Cmd` this driver stores. Never synthesizes
-/// `Msg::SaveDone` itself (G14) — it only ever forwards what `cmd.run()`
-/// actually returned.
-pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Vec<u8>)> {
+/// produced together with its tag — and, for the no-store fallback only,
+/// the bytes it was constructed with, looked up in the per-document
+/// snapshot by the ack's OWN `id`, never by whichever document is active
+/// at delivery time (see `MsgTag::SaveDone`'s docs; `TODO-fuzz-save-
+/// verbatim-help-doc-stale-ack.md`). The snapshot is guaranteed to have an
+/// entry for `id`: it was built from every open document at the moment
+/// THIS save `Cmd` was constructed, and `id` names exactly the document
+/// `trigger_save`/`materialize_ack::materialize_vfs_cmd` built the `Cmd`
+/// for — which must have existed then. `CmdKind::Save` now covers TWO
+/// distinct `Cmd` shapes (WP7's store-backed dance spawns its own caller-
+/// side `vfs` `Cmd` under the same tag `step_and_check` already tracks as
+/// `pending_save`, alongside the pre-existing no-store fallback): a
+/// `Msg::SaveDone` reply carries verbatim bytes worth pinning (`SAVE-
+/// VERBATIM`), a `Msg::MaterializeVfsDone` reply does not — `SAVE-VERBATIM`
+/// stays scoped to the tag it already keys off. Never synthesizes either
+/// reply itself (G14) — this only ever forwards what `cmd.run()` actually
+/// returned, and returns `None` for any OTHER reply shape as a defensive
+/// guard against `Cmd`'s general contract, not a path reachable from any
+/// real save `Cmd` this driver stores.
+pub(super) fn discharge_pending_save(state: &mut State) -> Option<(Msg, MsgTag, Option<Vec<u8>>)> {
     let (cmd, per_doc_bytes) = state.pending_save.take()?;
     let msg = cmd.run()?;
-    let Msg::SaveDone {
-        id,
-        version,
-        result,
-        ..
-    } = &msg
-    else {
-        return None;
-    };
-    let tag = MsgTag::SaveDone {
-        id: *id,
-        version: *version,
-        ok: result.is_ok(),
-    };
-    let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
-    Some((msg, tag, bytes))
+    match &msg {
+        Msg::SaveDone {
+            id,
+            version,
+            result,
+            ..
+        } => {
+            let tag = MsgTag::SaveDone {
+                id: *id,
+                version: *version,
+                ok: result.is_ok(),
+            };
+            let bytes = per_doc_bytes.get(id).cloned().unwrap_or_default();
+            Some((msg, tag, Some(bytes)))
+        }
+        Msg::MaterializeVfsDone { id, .. } => {
+            let tag = MsgTag::MaterializeVfsDone { id: *id };
+            Some((msg, tag, None))
+        }
+        _ => None,
+    }
 }
 
 /// Runs the one deferred no-store rename `Cmd`, if any, returning the
@@ -91,11 +101,16 @@ pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag
 /// the real writer thread's own FIFO completion order.
 pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(Msg, MsgTag)> {
     let op_id = *state.app.db_ops.keys().min()?;
+    // Read BEFORE the reply is delivered: `handle_db_event` pops this exact
+    // entry out of `db_ops` as part of routing the ack (`db_dispatch.rs`),
+    // so it's gone from `App` by the time any checker could otherwise ask
+    // which document `op_id` belonged to.
+    let doc = state.app.db_ops.get(&op_id).map(|pending| pending.doc);
     let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
         DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
         DbEvent::Fatal { .. } => true,
     });
-    Some((Msg::Db(evt), MsgTag::Db { op_id }))
+    Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
 }
 
 /// Runs an arbitrary direct `App` mutation (one that doesn't go through
