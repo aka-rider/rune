@@ -208,7 +208,9 @@ fn fold_with_map(s: &str) -> (String, Vec<Range<usize>>) {
         let end = start + c.len_utf8();
         for lc in c.to_lowercase() {
             folded.push(lc);
-            map.push(start..end);
+            for _ in 0..lc.len_utf8() {
+                map.push(start..end);
+            }
         }
     }
     (folded, map)
