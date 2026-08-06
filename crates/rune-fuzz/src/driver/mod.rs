@@ -342,9 +342,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 };
                 let doc = state.app.active;
                 let source = tree_fixture(*fixture);
-                let map = rune_tui::linemap::LineMap::new(tree_fixture_line_ranges(
-                    source, *base,
-                ));
+                let map = rune_tui::linemap::LineMap::new(tree_fixture_line_ranges(source, *base));
                 // A real parse, unlike `Action::Highlight`'s hostile spans —
                 // this is the one action reaching the tree channel
                 // (`RegionPayload::Tree`), never the span channel.

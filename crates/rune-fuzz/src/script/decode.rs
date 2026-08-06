@@ -301,10 +301,12 @@ fn parse_highlight_tree(rest: &str, line: usize) -> Result<Action, ScriptError> 
             });
         }
     };
-    let fixture: u8 = fixture_str.parse().map_err(|_| ScriptError::InvalidNumber {
-        line,
-        reason: format!("invalid highlight-tree fixture {fixture_str:?}"),
-    })?;
+    let fixture: u8 = fixture_str
+        .parse()
+        .map_err(|_| ScriptError::InvalidNumber {
+            line,
+            reason: format!("invalid highlight-tree fixture {fixture_str:?}"),
+        })?;
     let base: usize = base_str.parse().map_err(|_| ScriptError::InvalidNumber {
         line,
         reason: format!("invalid highlight-tree base {base_str:?}"),

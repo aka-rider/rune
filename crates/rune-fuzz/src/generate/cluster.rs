@@ -354,22 +354,20 @@ fn arb_tree_base() -> impl Strategy<Value = usize> {
 /// deliberately unvalidated in the same hostile spirit as
 /// `arb_highlight_span`'s far-out-of-bounds arm.
 fn cluster_highlight_tree() -> impl Strategy<Value = Vec<Action>> {
-    (arb_highlight_version(), any::<u8>(), arb_tree_base()).prop_map(
-        |(version, fixture, base)| {
-            vec![
-                Action::Key(ESCAPE_KEY),
-                Action::Key(KeyInput {
-                    code: KeyCode::Char('h'),
-                    mods: Mods::NONE,
-                }),
-                Action::HighlightTree {
-                    version,
-                    fixture,
-                    base,
-                },
-            ]
-        },
-    )
+    (arb_highlight_version(), any::<u8>(), arb_tree_base()).prop_map(|(version, fixture, base)| {
+        vec![
+            Action::Key(ESCAPE_KEY),
+            Action::Key(KeyInput {
+                code: KeyCode::Char('h'),
+                mods: Mods::NONE,
+            }),
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            },
+        ]
+    })
 }
 
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`,

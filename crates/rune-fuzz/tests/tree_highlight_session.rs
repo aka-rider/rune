@@ -158,7 +158,10 @@ fn live_tree_reply_surfaces_nonempty_spans() {
     let mut app = seeded_app_with_bumped_version(fixture_len);
 
     let live_version = app.active_doc().buffer.version();
-    assert!(live_version >= 1, "the edit above must have bumped the version");
+    assert!(
+        live_version >= 1,
+        "the edit above must have bumped the version"
+    );
     deliver_tree(&mut app, live_version, 0);
 
     let doc = app.active_doc();
@@ -175,7 +178,10 @@ fn stale_tree_reply_leaves_spans_unchanged() {
     let mut app = seeded_app_with_bumped_version(fixture_len);
 
     let live_version = app.active_doc().buffer.version();
-    assert!(live_version >= 1, "the edit above must have bumped the version");
+    assert!(
+        live_version >= 1,
+        "the edit above must have bumped the version"
+    );
 
     let content = app.active_doc().buffer.content().to_string();
     let before = visible_spans(app.active_doc(), 0..content.len());

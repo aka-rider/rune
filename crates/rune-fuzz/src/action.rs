@@ -186,7 +186,10 @@ mod tests {
     fn every_fixture_parses_as_json() {
         for &source in TREE_FIXTURES {
             let parsed = rune_ts::parse("json", source, Duration::from_secs(5));
-            assert!(parsed.is_some(), "fixture {source:?} failed to parse as json");
+            assert!(
+                parsed.is_some(),
+                "fixture {source:?} failed to parse as json"
+            );
         }
     }
 

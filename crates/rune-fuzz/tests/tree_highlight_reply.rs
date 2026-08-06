@@ -104,9 +104,18 @@ fn tree_reply_with_real_linemap_surfaces_spans() {
     );
     for (range, _) in &spans {
         assert!(range.start < range.end, "inverted or empty span {range:?}");
-        assert!(range.end <= content.len(), "span past content.len() {range:?}");
-        assert!(content.is_char_boundary(range.start), "start off a char boundary {range:?}");
-        assert!(content.is_char_boundary(range.end), "end off a char boundary {range:?}");
+        assert!(
+            range.end <= content.len(),
+            "span past content.len() {range:?}"
+        );
+        assert!(
+            content.is_char_boundary(range.start),
+            "start off a char boundary {range:?}"
+        );
+        assert!(
+            content.is_char_boundary(range.end),
+            "end off a char boundary {range:?}"
+        );
     }
 }
 
@@ -127,7 +136,10 @@ fn stale_tree_reply_is_dropped() {
     let before = visible_spans(app.active_doc(), 0..content.len());
 
     let live_version = app.active_doc().buffer.version();
-    assert!(live_version >= 1, "the edit above must have bumped the version");
+    assert!(
+        live_version >= 1,
+        "the edit above must have bumped the version"
+    );
     let map = LineMap::new(physical_line_ranges(FIXTURE));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version - 1);
 
