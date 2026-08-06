@@ -119,6 +119,16 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         messages::error(app, "can't save while a rename is in flight");
         return SaveStart::Refused;
     }
+    // Structural, not per-call-site: EVERY save entry point (⌘S, the
+    // DirtyClose/DirtyQuit guards' [S], the quit fan-out, DiskConflict's
+    // [S]ave anyway) funnels through this ladder, so an active resolver
+    // with unresolved blocks can never publish a half-resolved
+    // conflict-marker working form over the user's file no matter which
+    // chord asked for the save. `refuses_save` posts its own count-carrying
+    // status.
+    if crate::merge::refuses_save(app, id) {
+        return SaveStart::Refused;
+    }
     // Re-derived, not read from the cache (plan WP1): a transition-quality
     // answer, exactly like the close/quit guards' own `is_dirty_now` calls.
     if !materialize_ack::is_dirty_now(app, id) {

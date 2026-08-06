@@ -34,6 +34,17 @@ use crate::runtime::Effects;
 pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
+    // A save's multi-hop materialize dance is still in flight for this
+    // document: a `MergePrep` enqueued now could land AFTER the save's
+    // commit ack and rebase `DocDb::expect_obs` backwards to the pre-save
+    // disk observation, making the very next ⌘S CAS-refuse against a file
+    // the session itself just wrote. `save_in_flight` spans the whole dance
+    // — trigger through the same ack that advances `expect_obs` — unlike
+    // any single pending-op entry, so it is the one check with no window.
+    if doc.save_in_flight {
+        messages::warn(app, "save in progress — merge after it completes");
+        return;
+    }
     if !matches!(
         doc.last_sync,
         Some(SyncKind::DiskAhead) | Some(SyncKind::Diverged)
@@ -94,10 +105,20 @@ pub(crate) fn exit_in_place(app: &mut App) {
     else {
         return;
     };
+    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
     if let Some(d) = app.doc_mut(doc) {
         d.display_name = saved_display_name;
+        if unresolved == 0 {
+            // A completed merge (including all-[B]oth, whose kept markers
+            // the user explicitly chose) leaves the buffer strictly ahead
+            // of the disk bytes it just reconciled with — recording that
+            // here is what retires the disk-changed banner/hint instead of
+            // re-inviting a merge forever. Esc-out with unresolved blocks
+            // leaves `last_sync` untouched: the document is still
+            // truthfully diverged and the affordances must return.
+            d.last_sync = Some(SyncKind::BufferAhead);
+        }
     }
-    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
     let message = if unresolved == 0 {
         "merge complete — \u{2318}S to save".to_string()
     } else {
@@ -139,12 +160,15 @@ pub(crate) fn auto_exit(app: &mut App) {
     }
 }
 
-/// The `⌘S` gate (plan WP4.S3, decision 6): while the resolver is active ON
+/// The save gate (plan WP4.S3, decision 6): while the resolver is active ON
 /// the document being saved with unresolved blocks remaining, saving is
 /// refused with the count — a reflexive save mid-merge must not publish a
-/// half-resolved working form with zero friction. One rule, no content
-/// sniffing: after exit or full resolution the document is ordinary dirty
-/// text and saves normally, markers included.
+/// half-resolved working form with zero friction. A rung in
+/// `save::trigger_save`'s refusal ladder, so every save entry point (⌘S,
+/// the guards' [S] answers, the quit fan-out) hits it structurally rather
+/// than each call site remembering to ask. One rule, no content sniffing:
+/// after exit or full resolution the document is ordinary dirty text and
+/// saves normally, markers included.
 pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
     let MergeState::Active { doc, .. } = &app.merge else {
         return false;
