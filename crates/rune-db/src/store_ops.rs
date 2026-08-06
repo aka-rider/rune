@@ -76,17 +76,34 @@ impl Store {
         })
     }
 
+    /// Builds the `Probe` op payload — the one construction site both
+    /// `probe` and `probe_blocking_for_test` enqueue through, so the two
+    /// never drift apart.
+    fn probe_op(&self, doc_id: i64) -> OpKind {
+        OpKind::Probe {
+            session_id: self.session_id,
+            doc_id,
+            now: self.now(),
+        }
+    }
+
     /// Enqueues a `Probe` op refreshing `doc_id`'s disk fact. See
     /// `probe::probe` for the transaction sequence. The resulting
     /// `SyncState` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::Sync`).
     pub fn probe(&self, doc_id: i64) -> Result<u64, Error> {
-        let now = self.now();
-        self.enqueue(OpKind::Probe {
-            session_id: self.session_id,
-            doc_id,
-            now,
-        })
+        self.enqueue(self.probe_op(doc_id))
+    }
+
+    /// Test-support hook, the waiting half of `Store::kill_writer_for_test`:
+    /// enqueues the same `Probe` payload as [`Store::probe`], but through
+    /// [`Store::enqueue_blocking`]. Never call this from production code:
+    /// `update` must never block on the writer queue. Not `#[cfg(test)]` —
+    /// this needs to cross the crate boundary into `rune-tui`'s own
+    /// integration tests.
+    pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
+        let op = self.probe_op(doc_id);
+        self.enqueue_blocking(op)
     }
 
     /// Enqueues a `MergePrep` op — merge entry's fresh-state read. The
