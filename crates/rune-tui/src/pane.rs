@@ -119,7 +119,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // focus stayed stranded on the chrome list (WP2.S8).
         GlobalCommand::Help => {
             app.set_focus_pane(Pane::Editor, effects);
-            crate::workspace::toggle_help(app);
+            crate::workspace::toggle_help(app, effects);
         }
         GlobalCommand::QuitChord(key) => handle_quit_key(app, key, effects),
         // Routes through the one close chokepoint regardless of which pane

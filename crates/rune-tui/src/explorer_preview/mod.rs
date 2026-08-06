@@ -175,6 +175,14 @@ fn apply_loaded(app: &mut App, path: &Path, bytes: Vec<u8>) {
             id
         }
         None => {
+            // A passive cursor move must neither evict an existing tab nor
+            // post a "tab limit reached" message — that would force-open
+            // the messages pane on every Explorer cursor step once the
+            // strip is at capacity, for a document the user only glanced
+            // at.
+            if app.tabs.order.len() >= crate::opentabs::limit::MAX_TABS {
+                return;
+            }
             let id = app.open_document(buffer);
             if let Some(doc) = app.doc_mut(id) {
                 doc.bind_path(path.to_path_buf());

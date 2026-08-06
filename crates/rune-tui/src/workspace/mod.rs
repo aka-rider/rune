@@ -65,6 +65,21 @@ pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
     open_bytes(app, &resolved, bytes)
 }
 
+/// The tab-cap-respecting counterpart of [`open_path`]: an already-open
+/// document reactivates as freely as ever (no new tab, nothing to cap),
+/// but a genuinely new one first runs the gate — refusing the open (and
+/// leaving whatever the gate itself already reported) rather than pushing
+/// the strip past its ceiling.
+pub fn open_path_checked(app: &mut App, path: &Path, effects: &mut Effects) -> Option<DocumentId> {
+    let resolved = resolve(app.vfs.as_ref(), path);
+    if existing_document_for(app, &resolved).is_none()
+        && !crate::opentabs::limit::ensure_room(app, effects)
+    {
+        return None;
+    }
+    open_path(app, &resolved)
+}
+
 /// Opens `path` off-thread (plan WP5.S6, [rune-tui A 7]: "synchronous
 /// `vfs.read` inside `update` blocks the Elm loop") — the interactive-
 /// navigation counterpart of [`open_path`] above. An already-open document
@@ -154,6 +169,9 @@ pub(crate) fn handle_file_opened(
             return;
         }
     };
+    if !crate::opentabs::limit::ensure_room(app, effects) {
+        return;
+    }
     let Some(id) = open_bytes(app, &path, bytes) else {
         return;
     };
@@ -343,7 +361,7 @@ pub fn switch_to_index(app: &mut App, idx: usize) {
 /// since been closed the same way, `live_help`'s `documents.contains_key`
 /// check below fails and this mints a fresh one — `App.help_doc` never
 /// points at a stale id.
-pub fn toggle_help(app: &mut App) {
+pub fn toggle_help(app: &mut App, effects: &mut Effects) {
     let live_help = app.help_doc.filter(|id| app.documents.contains_key(id));
 
     if let Some(id) = live_help {
@@ -358,6 +376,10 @@ pub fn toggle_help(app: &mut App) {
             app.help_return_to = Some(app.active);
             switch_to(app, id);
         }
+        return;
+    }
+
+    if !crate::opentabs::limit::ensure_room(app, effects) {
         return;
     }
 
