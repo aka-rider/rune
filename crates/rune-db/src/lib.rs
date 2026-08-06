@@ -59,6 +59,7 @@ mod rename_replace;
 mod retry;
 mod schema;
 mod scratch;
+mod search_history;
 mod session;
 mod snapshot;
 mod store;
@@ -83,7 +84,7 @@ pub use materialize::{
 pub use merge_prep::MergePrepResult;
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
-pub use reader::{ReaderHandle, ReaderReply, ReaderRequestKind};
+pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
 pub use rename_bind::rename_bind;

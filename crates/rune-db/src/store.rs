@@ -229,6 +229,14 @@ impl Store {
         &self.reader
     }
 
+    /// A cloneable query-only handle onto the reader thread — for a caller
+    /// that needs to move a reader reference into a `Box<dyn FnOnce() +
+    /// Send>` `Cmd` closure, where `&ReaderHandle` can't go (its lifetime is
+    /// tied to this `Store`) and `ReaderHandle` itself isn't `Clone`.
+    pub fn reader_query(&self) -> reader::ReaderQuery {
+        self.reader.as_query()
+    }
+
     /// Deterministically drains and joins both threads. The writer's final
     /// op (enqueued by `writer::WriterHandle::shutdown`, WP6.S2) runs
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when this session is the last live

@@ -349,6 +349,10 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
                 crate::scratch::reconstruct_scratch(conn, liveness_check.as_ref(), doc_id)?;
             Ok(OpOutcome::Reconstructed(content))
         }
+        OpKind::TouchSearchQuery { query, now } => {
+            retry::with_retry(conn, |tx| crate::search_history::touch(tx, &query, now))?;
+            Ok(OpOutcome::None)
+        }
         OpKind::Shutdown {
             session_id,
             liveness_check,
