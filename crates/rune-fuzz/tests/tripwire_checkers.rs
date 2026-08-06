@@ -130,6 +130,7 @@ fn base_snapshot(content: &str) -> Snapshot {
         merge_unresolved: 0,
         scroll_row: 0,
         display_name_by_doc: std::collections::BTreeMap::new(),
+        active_last_sync: None,
         message_posts: 0,
     }
 }

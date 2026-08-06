@@ -20,7 +20,7 @@
 //! `NO-PANIC` is not a checker function anywhere here — the driver
 //! constructs it directly from a caught unwind.
 //!
-//! 35 invariants total, one domain per file:
+//! 36 invariants total, one domain per file:
 //! - `cursor` — `CUR-BOUNDS`, `CUR-ORDER`, `CUR-ID`, `CUR-NO-CARET-HIDDEN`
 //! - `buffer` — `BUF-LINE-INDEX`, `VERSION-MONOTONE`
 //! - `pane` — `PANE-NO-BLEED`, `LAYOUT-FITS`, `LAYOUT-TILES`
@@ -34,7 +34,11 @@
 //! - `clipboard` — `PASTE-VERBATIM`, `CLIP-OSC52`
 //! - `highlight` — `HL-CLAMPED`, `HL-STALE-DROP`, `HL-NO-REFLOW` (plan WP7)
 //! - `merge` — `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
-//!   `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` (plan WP7.S1)
+//!   `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` (plan WP7.S1), and the
+//!   stateful `MERGE-NO-INSTANT-REDIVERGENCE` tracker — like
+//!   `SAVE-SINGLE-FLIGHT`, driven by `driver.rs` per step, not a
+//!   `check_all` entry (it needs history a `(prev, next, ctx)` triple
+//!   cannot carry)
 //! - `SAVE-SINGLE-FLIGHT` — constructed directly by `driver.rs`, not a
 //!   checker function here (like `NO-PANIC`): a second in-flight save
 //!   `Cmd` arriving while one is already pending is itself the violation
@@ -56,7 +60,10 @@ pub use buffer::{buf_line_index, version_monotone};
 pub use clipboard::{clip_osc52, paste_verbatim};
 pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
-pub use merge::{merge_doc_active, merge_key_feedback, merge_save_blocked, merge_title_cleared};
+pub use merge::{
+    RedivergenceTracker, merge_doc_active, merge_key_feedback, merge_save_blocked,
+    merge_title_cleared,
+};
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
 pub use render::{
     cell_no_eol, cell_offset, cell_order, sync_idempotent, sync_idempotent_rebuild,

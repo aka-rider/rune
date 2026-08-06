@@ -1,8 +1,12 @@
 //! Merge mode invariants (plan WP7.S1) — four named checks over the lean
 //! `merge_*`/`display_name_by_doc`/`scroll_row` projection `Snapshot`
 //! carries (module docs there): `MERGE-DOC-ACTIVE`, `MERGE-SAVE-BLOCKED`,
-//! `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED`.
+//! `MERGE-KEY-FEEDBACK`, `MERGE-TITLE-CLEARED` — plus the stateful
+//! `MERGE-NO-INSTANT-REDIVERGENCE` tracker, driven per step by
+//! `driver::step_and_check` rather than `check_all`'s pure fold.
 
+use rune_db::SyncKind;
+use rune_tui::document::DocumentId;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
 
@@ -132,6 +136,89 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
             ctx.msg
         ),
     })
+}
+
+/// `MERGE-NO-INSTANT-REDIVERGENCE` — the anti-loop invariant. When a merge
+/// attempt retires (`Active`/`Pending` → fully `Inactive`) leaving its
+/// document on a reconciled classification (`BufferAhead`/`Clean`), no
+/// later step may re-classify that same document `Diverged` unless
+/// something genuinely moved underneath it again: an external disk write
+/// (the driver reports those through [`RedivergenceTracker::
+/// note_external_write`] — `Action::DivergeDisk` runs outside the
+/// step/checker cycle), an undo unwinding the buffer past the
+/// reconciliation (a `journal_pos` decrease on the tracked document), or a
+/// trash/rename changing the document's disk identity. A `Diverged` that
+/// appears with none of those is the re-merge-prompt loop: a probe or a
+/// save-time CAS refusal fabricating divergence for a document the merge
+/// just reconciled.
+///
+/// Stateful across steps — the completing transition and the offending
+/// re-classification are different steps — so, like `SAVE-SINGLE-FLIGHT`,
+/// it lives on the driver and is fed every checked step in order instead of
+/// being listed in `check_all`.
+#[derive(Debug, Default)]
+pub struct RedivergenceTracker {
+    /// The document a retired merge attempt left reconciled, while nothing
+    /// has legitimately moved it since. `None` = nothing to police.
+    reconciled_doc: Option<DocumentId>,
+}
+
+impl RedivergenceTracker {
+    /// The driver just rewrote the document's file behind the session's
+    /// back — any later `Diverged` is truthful again.
+    pub fn note_external_write(&mut self) {
+        self.reconciled_doc = None;
+    }
+
+    /// Feeds one checked step. Must see every step, in order, whether or
+    /// not any other checker fired first — the driver stops the session on
+    /// a violation anyway, so ordering against `check_all` is free.
+    pub fn observe(
+        &mut self,
+        prev: &Snapshot,
+        next: &Snapshot,
+        ctx: &StepCtx,
+    ) -> Option<Violation> {
+        if matches!(ctx.msg, MsgTag::TrashDone | MsgTag::RenameDone) {
+            self.reconciled_doc = None;
+            return None;
+        }
+        if let Some(doc) = self.reconciled_doc
+            && prev.active == doc
+            && next.active == doc
+            && next.journal_pos < prev.journal_pos
+        {
+            self.reconciled_doc = None;
+            return None;
+        }
+        let merge_retired =
+            (prev.merge_active || prev.merge_pending) && !next.merge_active && !next.merge_pending;
+        if merge_retired && prev.merge_doc == Some(next.active) {
+            self.reconciled_doc = match next.active_last_sync {
+                Some(SyncKind::BufferAhead) | Some(SyncKind::Clean) => prev.merge_doc,
+                // A retirement still classified `DiskAhead`/`Diverged` (an
+                // Esc-out with unresolved blocks, a refused install) never
+                // arms — the divergence is still real there.
+                _ => None,
+            };
+            return None;
+        }
+        if let Some(doc) = self.reconciled_doc
+            && next.active == doc
+            && next.active_last_sync == Some(SyncKind::Diverged)
+        {
+            self.reconciled_doc = None;
+            return Some(Violation {
+                id: "MERGE-NO-INSTANT-REDIVERGENCE",
+                message: format!(
+                    "{doc:?} re-classified Diverged on step {} ({:?}) with no external \
+                     disk write since its merge completed — the re-merge-prompt loop",
+                    ctx.step, ctx.msg
+                ),
+            });
+        }
+        None
+    }
 }
 
 /// `MERGE-TITLE-CLEARED` — once merge mode is fully `Inactive` (neither
