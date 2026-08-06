@@ -50,12 +50,14 @@ pub mod render;
 pub mod row_meta;
 pub mod runtime;
 pub mod save;
+mod search;
 pub mod split;
 pub mod term;
 #[cfg(any(test, feature = "testgrid"))]
 pub mod testgrid;
 pub mod theme;
 pub mod title;
+pub mod trash;
 pub mod viewport;
 pub mod when;
 pub mod width;

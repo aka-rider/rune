@@ -1,13 +1,12 @@
-//! The rendered theme (plan WP4 Half 2): the ONE chokepoint every
-//! `ratatui::style::Style` in this crate is built from — replaces the
-//! pre-WP4 `styles.rs`'s 17 independent chrome-style functions plus its
+//! The rendered theme: the ONE chokepoint every
+//! `ratatui::style::Style` in this crate is built from — replaces an
+//! earlier `styles.rs`'s 17 independent chrome-style functions plus its
 //! `markdown(id)` funnel with a single `Theme` value held on `App`.
 //!
 //! `scopes` is indexed by the `ScopeId` `rune-syntax`'s `ScopeTable` hands
 //! out — `rune-syntax` owns that table; this module only ever maps a
 //! resolved id to a `Style`, never registers or resolves a scope name
-//! itself (plan: "rune-syntax owns the table; the theme only maps
-//! `ScopeId -> Style`"). `chrome` covers everything that isn't a
+//! itself. `chrome` covers everything that isn't a
 //! markdown/code token: pane borders, tab labels, the footer, etc.
 //!
 //! Colours are stored as truecolor `Color::Rgb` (Catppuccin Mocha,
@@ -27,7 +26,7 @@ use quantize::to_ansi256;
 use rune_syntax::ScopeId;
 use rune_syntax::scope::{CODE_SCOPES, MARKDOWN_SCOPES, scope_table};
 
-/// Every chrome (non-markdown/code) style the pre-WP4 `styles.rs` used to
+/// Every chrome (non-markdown/code) style an earlier `styles.rs` used to
 /// build from a raw `Color::Indexed` literal — one field per former
 /// function, same name, now a value instead of a call. Plus a few raw
 /// colours (`special`/`subtle`/`selection_bg`) that a handful of call
@@ -69,13 +68,18 @@ pub struct ChromeStyles {
     /// consumer.
     pub code_bg: Color,
     /// Backgrounds for one unresolved merge block's ours span, theirs span,
-    /// and marker lines (plan WP5.S1; `merge::paint` is the only consumer).
+    /// and marker lines (`merge::paint` is the only consumer).
     /// Catppuccin-tinted rather than raw ANSI green/red/grey, muted against
     /// `surface0` the same way `code_bg` sits at full `surface0` rather
     /// than a saturated hue.
     pub merge_ours_bg: Style,
     pub merge_theirs_bg: Style,
     pub merge_marker_bg: Style,
+    /// The in-file search bar's match highlight. Its own
+    /// field rather than reusing `selection_bg`: a match and a live text
+    /// selection can both be on screen at once and must read as visually
+    /// distinct.
+    pub search_match_bg: Style,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -126,6 +130,7 @@ impl Theme {
             merge_ours_bg: Style::new().bg(c(blend(p.surface0, p.green, 0.35))),
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             merge_marker_bg: Style::new().bg(c(p.surface1)),
+            search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
         };
 
         let table = scope_table();
@@ -151,7 +156,7 @@ impl Theme {
     /// The rendered `Style` for `id` — the markdown/code-token equivalent
     /// of `chrome`'s named fields. Falls back to a plain default `Style`
     /// for an id past this theme's `scopes` length (a future tree-sitter
-    /// producer, WP5, may register scopes a theme built before it existed
+    /// producer may register scopes a theme built before it existed
     /// doesn't know about yet — degrade to unstyled text, never
     /// panic or index out of bounds).
     pub fn scope_style(&self, id: ScopeId) -> Style {
@@ -188,11 +193,11 @@ fn blend(a: Color, b: Color, t: f32) -> Color {
     Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
 }
 
-/// WP4.S2's canonical scope -> `Style` mapping (Catppuccin Mocha). Heading
-/// levels step down in colour and weight from `1` to `6`, mirroring the
-/// pre-WP4 styling's own "H1-H3 bold and colourful, H4 not bold, H6
+/// The canonical scope -> `Style` mapping (Catppuccin Mocha). Heading
+/// levels step down in colour and weight from `1` to `6`, mirroring an
+/// earlier styling's own "H1-H3 bold and colourful, H4 not bold, H6
 /// dimmest" shape without reusing its exact indexed literals. Composite
-/// emphasis (plan WP4.S2: "resolves to its strongest component") never
+/// emphasis resolves to its strongest component and never
 /// reaches here as a combined tag — `rune-md`'s `StyleCtx::resolve` already
 /// picked the single strongest scope before tagging the span, so this
 /// match only ever sees one emphasis kind at a time.
@@ -328,7 +333,7 @@ mod tests {
 
     #[test]
     fn overlay_scope_style_never_carries_a_background() {
-        // decision (WP1.S4): an overlay cell's style is merged onto the
+        // An overlay cell's style is merged onto the
         // render buffer field-wise, so a scope carrying a bg here would
         // clobber whatever background the base cell already had.
         for quantized in [false, true] {

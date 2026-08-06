@@ -6,6 +6,7 @@
 
 use rune_tui::app::App;
 use rune_tui::document::ReadOnly;
+use rune_tui::focus::{self, FocusTarget};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::pane::Pane;
 use rune_tui::render;
@@ -34,16 +35,16 @@ fn build_rows_or_empty(app: &App) -> Vec<Vec<render::Cell>> {
 
 /// `SYNC-IDEMPOTENT` (G6: `sync_view()` is a genuine fixpoint — `Document::
 /// view` never reads `viewport.scroll_row`, and `Viewport::reconcile`
-/// converges in one call, plan WP7.S1). Two independent halves, both
+/// converges in one call). Two independent halves, both
 /// against the SAME already-synced state (nothing between them mutates the
 /// document):
 ///
-/// 1. Display-pipeline idempotence, bypassing WP16's `dirty`-flag memo via
+/// 1. Display-pipeline idempotence, bypassing the `dirty`-flag memo via
 ///    `DocMachine::force_rebuild`: a naive second `app.sync_view()` call
 ///    would just hit the memo and trivially equal the first render
 ///    regardless of whether the underlying pipeline is actually a
-///    fixpoint (CODE-REVIEW.md rune-fuzz finding 1) — so this compares the
-///    cached production render against a genuinely-rebuilt one instead.
+///    fixpoint — so this compares the cached production render against a
+///    genuinely-rebuilt one instead.
 /// 2. Scroll idempotence: a real second, message-free `app.sync_view()`
 ///    call must not move `scroll_row` — `Viewport::reconcile`'s own
 ///    fixpoint claim, independent of whatever the display pipeline memo
@@ -82,7 +83,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// undo/redo drive begins, using the same keys a user would press — never
 /// by poking `App` directly. `⌘Z` reaching the SEEDED document (not just
 /// `Pane::Editor`) is a PRECONDITION `UNDO-TOTAL`/`REDO-TOTAL` need, not a
-/// property they assert: per-pane routing (plan Context, decision 8) means
+/// property they assert: per-pane routing means
 /// an unfocused editor correctly ignores `⌘Z` (only `Editor`'s own keymap
 /// binds `Command::Undo`), and a modal correctly captures every key at
 /// stage 1 before any pane sees it. Three preconditions are reachable at
@@ -90,7 +91,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// Explorer focused — `^x` was retired as the explorer chord once the
 /// held-space leader took over as the primary way in — an Explorer
 /// `Enter` on a path missing from the fuzz `Mem` posts an error message; and
-/// `F1` (`GlobalCommand::Help`, CODE-REVIEW.md rune-fuzz finding 9's fix)
+/// `F1` (`GlobalCommand::Help`)
 /// switches `app.active` itself to the virtual Help document —
 /// `UNDO-TOTAL`/`REDO-TOTAL` compare against the ORIGINAL seed content,
 /// which the Help document can never match (it isn't even the same
@@ -112,7 +113,7 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// `drive_end_of_session_checks`, now checks `seed_doc` still exists BEFORE
 /// calling this function at all, so that case never reaches this `F1`
 /// press in the first place). Then, only while focus is `Pane::Title`,
-/// plain `Escape` (plan WP5) — NEVER `^B` there, and deliberately BEFORE
+/// plain `Escape` — NEVER `^B` there, and deliberately BEFORE
 /// the generic `^B` branch below: `^B` (`GlobalCommand::ToggleLeft`) is a
 /// TOGGLE, and pressing it while the title is focused would (after the
 /// hoisted blur every `GlobalCommand` runs first) show or hide the column
@@ -120,8 +121,8 @@ pub(super) fn wrap_rt_check(app: &App, line_count: usize) -> Option<Violation> {
 /// title's own dedicated exit. `Escape` has no failure mode `^B` would:
 /// `title::keys::handle_key`'s own `Escape` arm reverts the field to
 /// `committed` FIRST, so `on_blur`'s `text == committed` check trivially
-/// holds and the blur can never be `Refused` — decision 8's "Escape is
-/// always an exit" is exactly this guarantee, reused here as the driver's
+/// holds and the blur can never be `Refused` — "Escape is always an
+/// exit" is exactly this guarantee, reused here as the driver's
 /// own unconditional way out of the title. Finally `^B`, only while focus
 /// still isn't `Pane::Editor` — re-checked fresh rather than decided up
 /// front, since dismissing the modal, toggling Help off, or leaving the
@@ -151,6 +152,21 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
         }
     }
     if state.app.focus() == Pane::Title {
+        let (msg, tag) = key_step(KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        });
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    // The search bar isn't a `Pane` at all (it's its own focus state,
+    // checked by `focus::target` ahead of the chrome-level `Pane` match),
+    // so the generic `^B` fallback below — which reads `app.focus()` —
+    // could never reach it either way. Esc is the bar's own dedicated
+    // exit and closes it outright (`search::keys::handle_key`'s `Escape`
+    // arm), mirroring the Title case just above.
+    if focus::target(&state.app) == FocusTarget::SearchField {
         let (msg, tag) = key_step(KeyInput {
             code: KeyCode::Escape,
             mods: Mods::NONE,
@@ -210,7 +226,7 @@ fn restore_editor_focus(state: &mut State, prev: &mut Snapshot, outcome: &mut Ou
     false
 }
 
-/// WP6.S4 end-of-session checks (once): drive `sup+z` down to
+/// End-of-session checks (once): drive `sup+z` down to
 /// `journal_pos == 0` (`UNDO-TOTAL`, content-only per G5), then
 /// `sup+shift+z` back up to the journal_pos the session was ACTUALLY at
 /// when this drive began (`REDO-TOTAL`) — not unconditionally

@@ -350,6 +350,29 @@ fn footer_global_tail_survives_truncation_with_explorer_focused() {
     );
 }
 
+/// `truncated_default_hint_spans` drops the first non-fitting hint AND
+/// everything after it, so the new `^N new` row could silently push a later
+/// hint off-screen with nothing to catch it (the untruncated
+/// `default_mode_lists_every_global_binding_label` test can't observe
+/// truncation at all). Renders through `draw` at a realistic width and
+/// asserts the new hint itself survives. It does NOT also assert the
+/// table's tail hint ("messages") survives: measured, `messages` is now the
+/// one pushed off at width 120 — a pre-existing class of footer overflow
+/// (see the reading-view entry in TODO.md), not fixed here, and recorded
+/// there rather than pinned as a false "still fits" claim in this test.
+#[test]
+fn footer_survives_truncation_with_new_document_hint_at_width_120() {
+    let app = app_for("hello");
+    assert_eq!(app.focus(), Pane::Editor);
+
+    let buf = draw_with_width(&app, 120);
+    let footer_row = row_text(&buf, HEIGHT - 1, 120);
+    assert!(
+        footer_row.contains("^N new"),
+        "expected '^N new' on the width-120 footer row:\n{footer_row}"
+    );
+}
+
 /// The user-reported "blank last column" defect: the centre block's right
 /// border must land on the FRAME's actual last column — `width - 1` — not
 /// one short of it. Checked against the non-trimming `row_text` (unlike

@@ -163,8 +163,8 @@ pub struct DirEntry {
 }
 
 /// A virtual file system exposing the materialize-complete primitive set,
-/// plus `read_dir` for directory enumeration. `Trash`/`Rename` are still
-/// deferred to the features that consume them.
+/// plus `read_dir` for directory enumeration. `Rename` is still deferred to
+/// the feature that consumes it.
 ///
 /// All methods take `&self` (not `&mut self`) so implementations can use
 /// interior mutability — `Disk` is stateless, `Mem` uses `Mutex`.
@@ -198,6 +198,11 @@ pub trait Vfs {
     /// Delete a single file. Not `Trash` — internal temps must never shell
     /// out to `/usr/bin/trash` (that's a user-facing operation).
     fn remove(&self, path: &Path) -> io::Result<()>;
+
+    /// Move a single file to the OS Trash — the user-facing, recoverable
+    /// counterpart of `remove`, which stays reserved for internal temp
+    /// cleanup.
+    fn trash(&self, path: &Path) -> io::Result<()>;
 
     /// Stat `path`, returning size/mtime/identity/nlink.
     fn stat(&self, path: &Path) -> io::Result<Stat>;

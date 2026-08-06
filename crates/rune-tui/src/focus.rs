@@ -1,9 +1,9 @@
-//! `FocusTarget` — the `when`-clause-facing view of "what has focus" (plan
-//! WP6.S3), deliberately a SEPARATE type from `pane::Pane`. `Pane` stays the
+//! `FocusTarget` — the `when`-clause-facing view of "what has focus",
+//! deliberately a SEPARATE type from `pane::Pane`. `Pane` stays the
 //! chrome-region discriminant `app::handle_key`'s stage-3 dispatch already
 //! keys off of; `FocusTarget` is the vocabulary `when.rs` clauses are
 //! written against, and it needs variants `Pane` doesn't have (the
-//! search/replace fields land in WP8).
+//! search/replace fields).
 
 use ratatui::layout::Rect;
 
@@ -19,22 +19,22 @@ pub enum FocusTarget {
     /// The editable title field (`title.rs`, `Pane::Title`) — reachable
     /// today via `^r` or the Up-at-editor-top gesture.
     Title,
-    /// Not yet reachable — WP8 adds the search UI this pairs with. Included
-    /// now so a `when` clause authored against it (e.g. a future search-bar
-    /// binding table) parses and validates today, ahead of the field that
-    /// will actually produce it.
+    /// The search bar's own field, focused whenever `App::search` is
+    /// `Some` — reached through [`target`] below, never through
+    /// [`from_pane`] (the bar is not a `Pane`).
     SearchField,
-    /// Not yet reachable — see `SearchField`'s doc; WP8's replace field.
+    /// Not yet reachable — see `SearchField`'s doc; the replace field.
     ReplaceField,
     /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
 }
 
-/// Derives today's `FocusTarget` from the chrome-level `Pane` — the only
-/// input that exists before WP8's search state lands. Once a search bar
-/// exists to focus, its own state (not `Pane`, which never grows a
-/// `Pane::Search` variant per the plan's decision 7) becomes a second input
-/// this function checks first.
+/// Derives a `FocusTarget` from the chrome-level `Pane` alone — never
+/// consulted directly by `dispatch::handle_key` anymore; see [`target`]
+/// below, the one function that also checks the search bar's own state
+/// first. Kept as its own function since `Pane` itself never grows a
+/// `Pane::Search` variant — a deliberate choice: every OTHER
+/// `FocusTarget` still corresponds 1:1 with a `Pane`.
 pub fn from_pane(pane: Pane) -> FocusTarget {
     match pane {
         Pane::Explorer => FocusTarget::Explorer,
@@ -42,6 +42,19 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
         Pane::Editor => FocusTarget::Editor,
         Pane::Title => FocusTarget::Title,
         Pane::Messages => FocusTarget::Messages,
+    }
+}
+
+/// The resolved "what has focus" `dispatch::handle_key`'s stage 3 actually
+/// routes on: the search bar's own state, checked FIRST, falling back to
+/// [`from_pane`] of the chrome-level `Pane` — the "second input checked
+/// first" shape `from_pane`'s own doc promises, since the bar is its own
+/// state rather than a `Pane` variant.
+pub fn target(app: &App) -> FocusTarget {
+    if app.search.as_ref().is_some_and(|s| s.focused) {
+        FocusTarget::SearchField
+    } else {
+        from_pane(app.focus())
     }
 }
 
@@ -198,12 +211,12 @@ impl App {
         if self.refuse_if_read_only(self.active_doc().read_only) {
             return;
         }
-        // Plan WP3.S8 (`[B5]`): a rename mid-merge would either type over
+        // A rename mid-merge would either type over
         // the retitled name or leave the field seeded from the real one
         // while the tab/title row still shows the merge suffix — neither
         // is a rename the user actually asked for. Renaming stays blocked
-        // until merge mode exits (in place, `^M`, or later work packages'
-        // auto-exit); everything else about the document stays usable.
+        // until merge mode exits (in place, `^M`, or a later auto-exit);
+        // everything else about the document stays usable.
         if matches!(self.merge, crate::merge::MergeState::Active { doc, .. } if doc == self.active)
         {
             crate::messages::warn(self, "can't rename while merge is active — ^M to exit");
@@ -336,6 +349,26 @@ mod tests {
         assert_eq!(from_pane(Pane::Title), FocusTarget::Title);
     }
 
+    /// `target` checks the search bar's own focus bit before falling back
+    /// to the chrome-level `Pane` — the "second input checked first" shape
+    /// its own doc promises, since `Pane` never grows a search variant to
+    /// match on directly.
+    #[test]
+    fn target_checks_the_search_bar_before_falling_back_to_the_pane() {
+        use rune_core::buffer::Buffer;
+        use rune_vfs::Mem;
+        use std::sync::Arc;
+
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        assert_eq!(target(&app), FocusTarget::Editor);
+
+        crate::search::open(&mut app);
+        assert_eq!(target(&app), FocusTarget::SearchField);
+
+        crate::search::close(&mut app);
+        assert_eq!(target(&app), FocusTarget::Editor);
+    }
+
     /// No `LayoutMode` this resolver can produce may ever call `Explorer`
     /// or `Tabs` focusable while also reporting the column not painted —
     /// the precise shape of the shadow-state bug this module exists to
@@ -427,7 +460,7 @@ mod tests {
         }
     }
 
-    /// The generic `focusable().is_none()` path in `reconcile` (finding 5)
+    /// The generic `focusable().is_none()` path in `reconcile`
     /// must catch a pane that closes while it still holds focus, with no
     /// bespoke special case: focusing the messages pane, then closing it
     /// without moving focus (mirroring an async reply landing while the

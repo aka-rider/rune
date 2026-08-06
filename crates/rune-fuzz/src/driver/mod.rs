@@ -26,7 +26,10 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Cmd, Msg, PasteTarget};
 use rune_vfs::{Mem, Vfs};
 
-use step_exec::{discharge_pending_rename, discharge_pending_save, key_step, step_and_check};
+use step_exec::{
+    discharge_pending_rename, discharge_pending_save, discharge_pending_trash, key_step,
+    step_and_check,
+};
 
 /// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
@@ -83,6 +86,11 @@ struct State {
     /// which is exactly the fuzz-driver gap `discharge_pending_rename`
     /// closes (plan WP5).
     pending_rename: Option<Cmd>,
+    /// The one trash `Cmd` (`CmdKind::Trash`) that can be outstanding at a
+    /// time (plan WP3.S3) — same single-slot reasoning as `pending_rename`.
+    /// Left undischarged, `Mem::trash` and `Msg::TrashDone` are never
+    /// reached from this driver.
+    pending_trash: Option<Cmd>,
     saves_delivered_ok: usize,
     steps: usize,
     /// The `DocumentId` `App::new` minted for the seeded document below —
@@ -149,6 +157,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         path,
         pending_save: None,
         pending_rename: None,
+        pending_trash: None,
         saves_delivered_ok: 0,
         steps: 0,
         seed_doc,
@@ -200,6 +209,11 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                     break 'session;
                 }
                 if let Some((msg, tag)) = discharge_pending_rename(&mut state)
+                    && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
+                {
+                    break 'session;
+                }
+                if let Some((msg, tag)) = discharge_pending_trash(&mut state)
                     && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
                 {
                     break 'session;
@@ -394,6 +408,15 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     if outcome.violation.is_none()
         && !state.app.should_quit
         && let Some((msg, tag)) = discharge_pending_rename(&mut state)
+    {
+        step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
+    }
+
+    // Rule 6c (plan WP3.S3): discharge any still-pending trash before
+    // finishing too, same skip conditions as Rules 6/6b.
+    if outcome.violation.is_none()
+        && !state.app.should_quit
+        && let Some((msg, tag)) = discharge_pending_trash(&mut state)
     {
         step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
     }
