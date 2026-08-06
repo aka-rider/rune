@@ -112,7 +112,8 @@ fn enter_switches_the_active_document() {
 }
 
 /// A dirty document's tab shows the `x` dirty marker; a clean one shows a
-/// blank in its place (plan WP5.S1).
+/// blank in its place (plan WP5.S1). The row shape pins the fixed marker
+/// columns: pin, dirty, sync (blank here), separator, name.
 #[test]
 fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     let mem = seeded_vfs();
@@ -131,8 +132,39 @@ fn dirty_dot_appears_after_an_edit_to_the_active_document() {
     assert!(app.doc(second).unwrap().is_dirty());
     let text = frame_text(&app);
     assert!(
-        text.contains(" x "),
-        "expected the dirty marker somewhere in the tab rows:\n{text}"
+        text.contains(" x  b.md"),
+        "expected the dirty marker in b.md's tab row:\n{text}"
+    );
+}
+
+/// A background tab whose document diverged on disk shows the `⇄` marker
+/// in its own fixed column — per-doc state, visible even while a different
+/// (clean) document is active, so the footer shows no marker of its own.
+#[test]
+fn diverged_background_doc_tab_shows_the_sync_marker() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let first = app.active;
+    let second = open_second(&mut app);
+    workspace::switch_to(&mut app, first);
+    app.splits.left.show();
+    app.sync_view();
+    assert!(
+        !frame_text(&app).contains('\u{21c4}'),
+        "test setup: nothing should be diverged yet"
+    );
+
+    app.doc_mut(second).unwrap().last_sync = Some(rune_db::SyncKind::Diverged);
+    app.sync_view();
+
+    let text = frame_text(&app);
+    assert!(
+        text.contains("\u{21c4} b.md"),
+        "expected the sync marker in b.md's tab row:\n{text}"
+    );
+    assert!(
+        !text.contains("\u{21c4} a.md"),
+        "the clean a.md row must not carry the marker:\n{text}"
     );
 }
 
