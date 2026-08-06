@@ -1,16 +1,25 @@
-//! Renders the search bar's one row: the live draft on the left, a
-//! right-aligned readout (`i/N`, `N matches`, or `no matches`) on the
-//! right. A sibling of `search` (the state module), not a descendant — it
-//! reads `SearchState` only through the `pub(crate)` fields that module
-//! marks for exactly this.
+//! Renders the search bar's one row: a leading prompt glyph (the bar's own
+//! focus affordance — ^F otherwise reads as the editor growing a blank row
+//! while the editor's own caret keeps blinking underneath it), the live
+//! draft with a trailing caret cell while focused, and a right-aligned
+//! readout (`i/N`, `N matches`, or `no matches`). A sibling of `search`
+//! (the state module), not a descendant — it reads `SearchState` only
+//! through the `pub(crate)` fields that module marks for exactly this.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::theme::Theme;
 use crate::width::{display_width, truncate_to_width};
+
+/// The bar's own focus affordance, styled in `theme.chrome.active_border`
+/// — the same "this region holds focus" accent the messages pane's
+/// separator uses (`messages::render::draw`).
+const PROMPT: &str = "/ ";
 
 /// Pure function of `&App`: drawing twice produces identical output, the
 /// same guarantee `render::title::draw` makes. A no-op if the bar isn't
@@ -21,34 +30,63 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let Some(state) = app.search.as_ref() else {
         return;
     };
-    let theme = &app.theme;
-
     let readout = readout_text(
         state.matches.len(),
         state.current,
         state.draft.trim().is_empty(),
     );
-    let readout_w = readout.as_deref().map(display_width).unwrap_or(0);
-    let area_w = area.width as usize;
-    let gap = usize::from(readout_w > 0 && area_w > readout_w);
-    let draft_budget = area_w.saturating_sub(readout_w + gap);
-    let draft_shown = truncate_to_width(&state.draft, draft_budget);
-    let draft_w = display_width(&draft_shown);
-    let pad = area_w.saturating_sub(draft_w + readout_w);
-
-    let mut line = String::with_capacity(area_w);
-    line.push_str(&draft_shown);
-    for _ in 0..pad {
-        line.push(' ');
-    }
-    if let Some(readout) = &readout {
-        line.push_str(readout);
-    }
-
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(line, theme.chrome.title_text))),
-        area,
+    let spans = build_spans(
+        &state.draft,
+        readout.as_deref(),
+        state.focused,
+        area.width as usize,
+        &app.theme,
     );
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Builds the styled spans for the bar's one row: `PROMPT`, then as much of
+/// `draft` as fits, a reversed-video caret cell while `focused`, padding,
+/// and finally `readout` right-aligned. Pure so it's testable without a
+/// `Frame` — the same split `render::title::build_spans` uses.
+fn build_spans(
+    draft: &str,
+    readout: Option<&str>,
+    focused: bool,
+    area_w: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let prompt_w = display_width(PROMPT).min(area_w);
+    let prompt_shown = truncate_to_width(PROMPT, prompt_w);
+    let readout_w = readout.map(display_width).unwrap_or(0);
+    let caret_w = usize::from(focused);
+    let gap = usize::from(readout_w > 0 && area_w > prompt_w + readout_w);
+    let draft_budget = area_w
+        .saturating_sub(prompt_w)
+        .saturating_sub(caret_w)
+        .saturating_sub(readout_w + gap);
+    let draft_shown = truncate_to_width(draft, draft_budget);
+    let draft_w = display_width(&draft_shown);
+    let pad = area_w.saturating_sub(prompt_w + draft_w + caret_w + readout_w);
+
+    let mut spans = Vec::new();
+    if !prompt_shown.is_empty() {
+        spans.push(Span::styled(prompt_shown, theme.chrome.active_border));
+    }
+    spans.push(Span::styled(draft_shown, theme.chrome.title_text));
+    if focused {
+        spans.push(Span::styled(
+            " ",
+            theme.chrome.title_text.add_modifier(Modifier::REVERSED),
+        ));
+    }
+    if pad > 0 {
+        spans.push(Span::raw(" ".repeat(pad)));
+    }
+    if let Some(readout) = readout {
+        spans.push(Span::styled(readout.to_string(), theme.chrome.title_text));
+    }
+    spans
 }
 
 /// The bar's right-aligned status text: `i/N` once a match is selected
@@ -72,6 +110,50 @@ fn readout_text(count: usize, current: Option<usize>, draft_empty: bool) -> Opti
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn theme() -> Theme {
+        Theme::catppuccin_mocha(false)
+    }
+
+    fn joined(spans: &[Span<'static>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn focused_bar_paints_a_leading_prompt_and_a_trailing_caret() {
+        let theme = theme();
+        let spans = build_spans("hi", None, true, 40, &theme);
+        let prompt = spans.first().expect("a prompt span");
+        assert_eq!(prompt.content, PROMPT);
+        assert_eq!(prompt.style, theme.chrome.active_border);
+
+        let caret = spans
+            .iter()
+            .find(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .expect("a reversed caret span");
+        assert_eq!(caret.content, " ");
+    }
+
+    #[test]
+    fn an_unfocused_bar_paints_no_caret() {
+        let theme = theme();
+        let spans = build_spans("hi", None, false, 40, &theme);
+        assert!(
+            spans
+                .iter()
+                .all(|s| !s.style.add_modifier.contains(Modifier::REVERSED))
+        );
+    }
+
+    #[test]
+    fn the_full_row_reconstructs_prompt_draft_and_readout() {
+        let theme = theme();
+        let spans = build_spans("term", Some("2/3"), true, 40, &theme);
+        let text = joined(&spans);
+        assert!(text.starts_with(PROMPT));
+        assert!(text.contains("term"));
+        assert!(text.trim_end().ends_with("2/3"));
+    }
 
     #[test]
     fn a_selected_match_reads_as_i_of_n() {

@@ -15,10 +15,11 @@ use unicode_segmentation::UnicodeSegmentation;
 use rune_core::cursor::CursorSet;
 
 use crate::app::App;
+use crate::clipboard::pbpaste_cmd;
 use crate::commands::nav_scroll;
-use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::keymap::{self, Command, KeyCode, KeyInput, KeyOutcome, Mods};
 use crate::messages;
-use crate::runtime::Effects;
+use crate::runtime::{Effects, PasteTarget};
 
 use super::{close, is_concealed, next_index, prev_index, recompute};
 
@@ -29,13 +30,16 @@ const SHIFT: Mods = Mods {
     sup: false,
 };
 
-/// `effects` is unused today — every path here mutates only `App::search`,
-/// never spawns a `Cmd` — but kept in the signature so this matches every
-/// other pane handler's shape (`title::keys::handle_key`,
-/// `explorer_keys::handle_key`) and a later change (history load, match
-/// persistence) can start using it without a signature change rippling
-/// through `dispatch.rs`.
-pub(crate) fn handle_key(app: &mut App, key: KeyInput, _effects: &mut Effects) -> KeyOutcome {
+pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
+    // ⌘V spawns the same `pbpaste` read every other paste target uses,
+    // tagged `PasteTarget::Search` so the reply lands back in the draft
+    // (`Msg::ClipboardRead`, `dispatch::update_inner`) rather than falling
+    // through to `key.code`'s catch-all below, which would otherwise
+    // swallow it silently.
+    if keymap::resolve(key) == Some(Command::Paste) {
+        effects.cmds.push(pbpaste_cmd(PasteTarget::Search));
+        return KeyOutcome::Consumed;
+    }
     match key.code {
         KeyCode::Escape => close(app),
         KeyCode::Backspace => erase(app),
@@ -57,6 +61,37 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, _effects: &mut Effects) -
         _ => {}
     }
     KeyOutcome::Consumed
+}
+
+/// Appends pasted text to the draft — the search-bar counterpart of
+/// `title::keys::paste`, reached from both `Msg::Paste` (bracketed paste
+/// while the bar is focused) and `Msg::ClipboardRead { target: PasteTarget::
+/// Search, .. }` (⌘V). Dropped outright once the bar has since closed: a
+/// reply landing after Escape (or any focus-moving global that closes it —
+/// `pane::handle_global_command`) has nowhere left to append to. Sanitized
+/// the same way ordinary typing is (`type_char`'s own control-char guard),
+/// first line only — the draft is rendered as a single row, so an embedded
+/// newline would only ever show as a control glyph nobody typed.
+pub(crate) fn paste(app: &mut App, text: &str) {
+    if app.search.as_ref().is_none_or(|s| !s.focused) {
+        return;
+    }
+    let sanitized: String = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    if sanitized.is_empty() {
+        return;
+    }
+    if let Some(state) = app.search.as_mut() {
+        state.draft.push_str(&sanitized);
+        state.history_pos = None;
+        state.history_draft = None;
+    }
+    recompute(app);
 }
 
 /// Steps to the next (`forward`) or previous non-concealed match, wrapping

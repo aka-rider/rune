@@ -1,5 +1,5 @@
 //! Basic keystroke-editing tests for `search/keys.rs` — typing, erasing,
-//! closing, and an unbound chord — split out of the sibling `tests` module
+//! closing, pasting, and an unbound chord — split out of the sibling `tests` module
 //! (500-line budget); ↑/↓ history browsing has its own further sibling,
 //! `history_tests`. A child module of `keys`, so every private item there
 //! stays reachable through `use super::*;` exactly as if this were still
@@ -27,6 +27,13 @@ fn char_key(c: char) -> KeyInput {
         mods: Mods::NONE,
     }
 }
+
+const SUP: Mods = Mods {
+    shift: false,
+    alt: false,
+    ctrl: false,
+    sup: true,
+};
 
 #[test]
 fn typing_recomputes_matches_live() {
@@ -143,4 +150,55 @@ fn a_ctrl_modified_char_is_swallowed_rather_than_typed() {
         KeyOutcome::Consumed
     );
     assert_eq!(app.search.as_ref().unwrap().draft, "");
+}
+
+#[test]
+fn command_v_spawns_a_pbpaste_cmd_tagged_for_the_search_bar() {
+    let mut app = app_with("hello");
+    crate::search::open(&mut app);
+    let mut effects = Effects::default();
+
+    let cmd_v = KeyInput {
+        code: KeyCode::Char('v'),
+        mods: SUP,
+    };
+    assert_eq!(
+        handle_key(&mut app, cmd_v, &mut effects),
+        KeyOutcome::Consumed
+    );
+    assert_eq!(effects.cmds.len(), 1, "exactly one pbpaste read spawned");
+    assert!(app.search.as_ref().unwrap().draft.is_empty());
+}
+
+#[test]
+fn paste_appends_to_the_draft_and_never_touches_the_buffer() {
+    let mut app = app_with("hello");
+    crate::search::open(&mut app);
+    let before = app.active_doc().buffer.content().to_string();
+
+    paste(&mut app, "wor\nld");
+
+    // First line only, and it lands in the draft, not the document.
+    assert_eq!(app.search.as_ref().unwrap().draft, "wor");
+    assert_eq!(app.active_doc().buffer.content(), before);
+}
+
+#[test]
+fn paste_strips_control_characters() {
+    let mut app = app_with("hello");
+    crate::search::open(&mut app);
+
+    paste(&mut app, "a\u{7}b");
+
+    assert_eq!(app.search.as_ref().unwrap().draft, "ab");
+}
+
+#[test]
+fn paste_with_the_bar_closed_is_a_no_op() {
+    let mut app = app_with("hello");
+    assert!(app.search.is_none());
+
+    paste(&mut app, "term");
+
+    assert!(app.search.is_none());
 }

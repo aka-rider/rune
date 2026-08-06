@@ -379,6 +379,32 @@ mod tests {
         );
     }
 
+    /// Regression: a bracketed paste while the search bar is focused must
+    /// land in the draft, never the document buffer underneath it — the
+    /// bar is a second input, not the active `Pane`, so the naive
+    /// `app.focus()` match this used to route on fell through to
+    /// `handle_paste_content` and bled the pasted text into the document.
+    #[test]
+    fn bracketed_paste_while_the_search_bar_is_focused_lands_in_the_draft() {
+        use crate::app;
+        use crate::runtime::Msg;
+
+        let mut app = app_with("ac", 1);
+        crate::search::open(&mut app);
+        let id = app.active;
+        let before = app.doc(id).unwrap().buffer.content().to_string();
+
+        let mut effects = Effects::default();
+        app::update(&mut app, Msg::Paste("b".to_string()), &mut effects);
+
+        assert_eq!(
+            app.doc(id).unwrap().buffer.content(),
+            before,
+            "the document buffer must be untouched while the bar is focused"
+        );
+        assert_eq!(app.search.as_ref().unwrap().draft, "b");
+    }
+
     #[test]
     fn handle_paste_content_is_a_no_op_on_a_read_only_editor() {
         let mut app = app_with("ac", 1);

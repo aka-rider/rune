@@ -65,12 +65,16 @@ impl App {
     /// that, every call: a Guard being up means the editor is never really
     /// focused, while the messages pane deliberately is NOT part of that gate
     /// because it is non-modal — a message arriving must not blur the editor.
+    /// The search bar is a second input with its own caret
+    /// (`render::search::draw`); the document is never ALSO `focused` while
+    /// it's open, or the editor caret would keep painting under a bar that
+    /// is actually eating every keystroke.
     pub fn sync_view(&mut self) {
         let width = self.frame_width;
         let frame_height = self.frame_height;
         crate::messages::sync(self, width, frame_height);
         self.relayout();
-        let focused = self.focus() == Pane::Editor && self.guard.is_none();
+        let focused = self.focus() == Pane::Editor && self.guard.is_none() && self.search.is_none();
         self.active_doc_mut().focused = focused;
         // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
@@ -86,5 +90,39 @@ impl App {
         // external reload) — every draft edit already triggers its own
         // recompute directly from `search::keys::handle_key`.
         crate::search::sync(self);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use crate::app::App;
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 80;
+        app.frame_height = 24;
+        app
+    }
+
+    /// The document is never `focused` while the search bar is open — the
+    /// bar paints its own caret (`render::search::draw`), so the editor's
+    /// caret must stop claiming focus too, or both would paint at once.
+    #[test]
+    fn the_document_loses_focus_while_the_search_bar_is_open() {
+        let mut app = app();
+        app.sync_view();
+        assert!(app.active_doc().focused, "editor is focused before ^F");
+
+        crate::search::open(&mut app);
+        app.sync_view();
+
+        assert!(
+            !app.active_doc().focused,
+            "the document must not paint a caret while the bar is open"
+        );
     }
 }

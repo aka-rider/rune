@@ -57,6 +57,27 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     // harmless.
     app.blur_title(effects);
 
+    // A second hoisted gate, same shape as the title blur above: the
+    // search bar is its own focus state, never a `Pane` (`focus.rs`'s
+    // recorded decision — "bar-open == bar-focused, one state"), so a
+    // global that moves the chrome-level `Pane` underneath it would
+    // otherwise leave the bar still claiming focus over a `Pane` that just
+    // changed — the double-caret/stolen-keystroke defect this closes. Runs
+    // for exactly the globals that move `App::focus` or start a merge
+    // (which claims every editor key for itself); `ToggleSearch` handles
+    // its own open/close below, and `SearchNext`/`SearchPrev` must NOT
+    // close a bar they're navigating within.
+    if matches!(
+        cmd,
+        GlobalCommand::ToggleLeft
+            | GlobalCommand::FocusTitle
+            | GlobalCommand::FocusTabs
+            | GlobalCommand::ToggleMessages
+            | GlobalCommand::Merge
+    ) {
+        crate::search::close(app);
+    }
+
     match cmd {
         // The single left-column toggle (Enter/Escape rework): painted this
         // frame ⇒ hide it and hand focus to the Editor; not painted ⇒ show
@@ -147,10 +168,18 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Open creates a fresh, focused, empty draft; close saves it as
         // `App::last_search_query` and clears the highlight overlay
         // (`search::open`/`close`, plan WP3.S1's chokepoints — neither
-        // touches `App::focus`, since the bar was never a `Pane`).
+        // touches `App::focus`, since the bar was never a `Pane`). Refused
+        // while a merge is active on the active document — same precondition
+        // `focus_title` already refuses on — since the resolver claims
+        // every editor key for itself (`merge::keys::intercept`) and a bar
+        // opening on top of it would steal keys the resolver never gets a
+        // chance to see.
         GlobalCommand::ToggleSearch => {
             if app.search.is_some() {
                 crate::search::close(app);
+            } else if matches!(app.merge, crate::merge::MergeState::Active { doc, .. } if doc == app.active)
+            {
+                messages::info(app, "finish the merge first (^M)");
             } else {
                 crate::search::open(app);
                 // Plan WP6.S1: kicks off the ONE history load this bar-open
@@ -462,5 +491,54 @@ mod tests {
         assert!(!app.should_quit, "the first press only arms the confirm");
         handle_quit_key(&mut app, QuitKey::CtrlC, &mut effects);
         assert!(app.should_quit, "the second matching press quits");
+    }
+
+    /// Every focus-moving global closes an open search bar first — the bar
+    /// is never a `Pane`, so leaving it open while one of these moves
+    /// `App::focus` underneath it would strand keys on a bar nothing is
+    /// painting a caret for anymore.
+    #[test]
+    fn every_focus_moving_global_closes_an_open_search_bar() {
+        for cmd in [
+            GlobalCommand::ToggleLeft,
+            GlobalCommand::FocusTitle,
+            GlobalCommand::FocusTabs,
+            GlobalCommand::ToggleMessages,
+            GlobalCommand::Merge,
+        ] {
+            let mut app = app();
+            crate::search::open(&mut app);
+            assert!(app.search.is_some(), "test setup: bar is open");
+
+            let mut effects = Effects::default();
+            handle_global_command(&mut app, cmd, &mut effects);
+
+            assert!(app.search.is_none(), "{cmd:?} must close the search bar");
+        }
+    }
+
+    /// `^F` while a merge is active on the active document refuses to open
+    /// the bar, with feedback, and touches no state — the merge resolver
+    /// claims every editor key for itself, so a bar opening on top of it
+    /// would silently steal keys the resolver never gets a chance to see.
+    #[test]
+    fn toggle_search_refuses_to_open_during_an_active_merge() {
+        let mut app = app();
+        app.merge = crate::merge::MergeState::Active {
+            doc: app.active,
+            conflicts: Vec::new(),
+            blocks: Vec::new(),
+            cur: 0,
+            saved_display_name: None,
+        };
+        let mut effects = Effects::default();
+
+        handle_global_command(&mut app, GlobalCommand::ToggleSearch, &mut effects);
+
+        assert!(app.search.is_none(), "the bar must not open mid-merge");
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("finish the merge first (^M)")
+        );
     }
 }

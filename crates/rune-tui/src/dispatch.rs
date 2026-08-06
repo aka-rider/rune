@@ -58,9 +58,18 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             // Bracketed paste has no request to attach a target to, so it
             // routes by LIVE focus — unlike `Msg::ClipboardRead` below,
             // whose `target` was captured when the paste was requested.
-            match app.focus() {
-                Pane::Title => crate::title::keys::paste(app, app.active, &text),
-                _ => clipboard::handle_paste_content(app, app.active, &text),
+            // The search bar is checked first, mirroring the key
+            // pipeline's own "second input checked before the chrome-level
+            // `Pane`" rule (`focus::target`'s doc) — otherwise a paste
+            // while the bar is open falls through to the `_` arm and lands
+            // in the document underneath it instead of the draft.
+            if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
+                crate::search::keys::paste(app, &text);
+            } else {
+                match app.focus() {
+                    Pane::Title => crate::title::keys::paste(app, app.active, &text),
+                    _ => clipboard::handle_paste_content(app, app.active, &text),
+                }
             }
         }
         Msg::ClipboardRead { text, target } => {
@@ -68,6 +77,7 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             match target {
                 PasteTarget::Title(doc) => crate::title::keys::paste(app, doc, &text),
                 PasteTarget::Document(id) => clipboard::handle_paste_content(app, id, &text),
+                PasteTarget::Search => crate::search::keys::paste(app, &text),
             }
         }
         Msg::SaveDone {
