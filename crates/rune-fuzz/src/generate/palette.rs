@@ -563,12 +563,13 @@ pub(super) const ADD_CURSOR_BELOW_KEY: KeyInput = KeyInput {
     },
 };
 
-/// `^M` (`GlobalCommand::Merge`, plan WP7.S1) — this no-store harness never
-/// gives a document a real `last_sync`, so `merge::begin`'s own fast
-/// pre-check always refuses with `"no divergence to merge"` (Context, fuzz
-/// state-space growth): reaching this key still proves the refusal itself
-/// sets a status rather than swallowing the chord, and keeps the chord
-/// live in the generator against the day a fuzz `db` seam exists.
+/// `^M` (`GlobalCommand::Merge`, plan WP7.S1): every fuzz session now opens
+/// its seeded document through a real, in-memory-backed recovery store, so
+/// `merge::begin`'s own fast pre-check can genuinely find divergence —
+/// `cluster_merge` (`cluster.rs`) always presses this AFTER an
+/// `Action::DivergeDisk` and its reprobe ack land, so this chord routinely
+/// carries a session all the way into `MergeState::Active`, not just its
+/// refusal path.
 pub(super) const MERGE_KEY: KeyInput = KeyInput {
     code: KeyCode::Char('m'),
     mods: Mods {
@@ -581,12 +582,12 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
 
 /// `[`/`]` (`MergeCommand::PrevConflict`/`NextConflict`) and `o`/`t`/`b`
 /// (`MergeCommand::KeepOurs`/`KeepTheirs`/`KeepBoth`) — `merge/keys.rs::
-/// intercept`'s own alphabet. Bare, unmodified `Char`s: with merge
-/// `Inactive` (the only state this harness can reach, see `MERGE_KEY`
-/// above) `intercept` returns `false` immediately and every one of these
-/// falls through to ordinary printable-char insertion, exercising nothing
-/// merge-specific yet — carried so the chord is already in the generator's
-/// vocabulary once a fuzz `db` seam makes `Active` reachable.
+/// intercept`'s own alphabet. `cluster_merge` presses 1-3 of these right
+/// after the working form installs, so they land on a genuine resolver most
+/// of the time rather than always falling through to plain-char insertion;
+/// a session that never reaches `Active` (a `DiskAhead` clean fast path, a
+/// UTF-8 refusal, ...) still exercises the fallthrough itself, which is
+/// exactly `MERGE-KEY-FEEDBACK`'s other half.
 pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Char('['),
