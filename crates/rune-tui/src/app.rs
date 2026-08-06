@@ -2,8 +2,8 @@
 //! state — mutate synchronous state directly in `update`; a Cmd is
 //! exclusively for I/O that leaves the thread.
 //!
-//! Plan WP1 reshaped `App` around a `DocumentId`-keyed map of `Document`s
-//! (decision 1/2): everything that used to live directly on `App` but is
+//! `App` is shaped around a `DocumentId`-keyed map of `Document`s:
+//! everything that used to live directly on `App` but is
 //! really per-editing-pane state (file identity, save/dirty bookkeeping,
 //! the display-pipeline cache, the per-doc recovery-store handle) moved
 //! onto `Document` (`document.rs`). What's left here is genuinely app-wide:
@@ -11,7 +11,7 @@
 //! handle, and UI chrome state that spans every document (status message,
 //! quit-confirm arming, the degraded-store banner).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,8 +32,8 @@ use crate::pane::Pane;
 use crate::runtime::{Effects, Msg};
 use crate::save;
 
-/// The quit-save fan-out `GuardKind::DirtyQuit`'s `[S]ave` answer arms (plan
-/// WP2): every document a save was actually started for, each keyed to the
+/// The quit-save fan-out `GuardKind::DirtyQuit`'s `[S]ave` answer arms:
+/// every document a save was actually started for, each keyed to the
 /// buffer version THAT save captured (`Document::pending_save_version`'s own
 /// value at the moment `trigger_save` returned `SaveStart::InFlight`).
 /// Emptying the map — every entry retired by a matching successful ack, or
@@ -65,7 +65,7 @@ pub struct App {
     /// (`title::on_blur`).
     pub(crate) focus: Pane,
     /// The draggable splitter positions sizing the left column and its
-    /// Explorer/Tabs division (decision 7); starts hidden.
+    /// Explorer/Tabs division; starts hidden.
     pub splits: crate::layout::Splits,
     /// The terminal's last-known RAW row count, as reported by the most
     /// recent `Msg::Resize` — unlike the active document's own `viewport.
@@ -89,14 +89,14 @@ pub struct App {
     /// this instead. `0` before the first `Msg::Resize`, exactly like
     /// `frame_height`. `App::relayout` is a no-op while this is `0`.
     pub frame_width: u16,
-    /// The Explorer pane's own state (plan WP4.S3): root, listing, cursor.
+    /// The Explorer pane's own state: root, listing, cursor.
     /// Starts unloaded; `pane::handle_global_command` loads it on `^x`.
     pub explorer: Explorer,
-    /// The Open Tabs pane's own state (plan WP5.S1): tab display order and
+    /// The Open Tabs pane's own state: tab display order and
     /// its cursor/scroll position — kept in sync with `documents` at its own
     /// chokepoints (`App::open_document`/`workspace::close_now`).
     pub tabs: OpenTabs,
-    /// The Help virtual document's id, once minted (plan WP7.S2) — `None`
+    /// The Help virtual document's id, once minted — `None`
     /// until the first `F1`. Makes `workspace::toggle_help` idempotent (a
     /// second press never mints a duplicate).
     pub help_doc: Option<DocumentId>,
@@ -117,24 +117,24 @@ pub struct App {
     /// `pub(crate)`: `rename.rs` is the sole minter of new generations for
     /// its own `Cmd` route (mirrors `next_quit_gen`/`next_save_confirm_gen`).
     pub(crate) next_rename_gen: u32,
-    /// Merge mode's own state machine (plan WP3.S3) — a plain field, like
+    /// Merge mode's own state machine — a plain field, like
     /// `rename` above. `merge::begin`/`merge::exit_in_place` are its
     /// writers.
     pub merge: crate::merge::MergeState,
     /// `pub(crate)`: `merge::begin` is the sole minter of new generations,
     /// mirroring `next_rename_gen` above.
     pub(crate) next_merge_gen: u32,
-    /// This session's recovery store (plan WP1 decision 5: split out of the
-    /// pre-WP1 `AppDb` — this is the app-wide half, shared by every open
-    /// document; each document's own binding lives in its `Document::db:
-    /// Option<DocDb>`). `None` only when no store could be constructed at
+    /// This session's recovery store — this is the app-wide half,
+    /// shared by every open document; each document's own binding lives
+    /// in its `Document::db: Option<DocDb>`. `None` only when no store
+    /// could be constructed at
     /// all (an extreme fallback distinct from `Db::degraded`, which still
     /// has a live, if untrusted, store).
     pub db: Option<Db>,
     /// Correlates an in-flight `rune-db` op id to the `DocumentId` that
     /// enqueued it, plus — for a `Load` op — the issuing document's
-    /// `buffer.version()` at the moment it was enqueued (plan WP1 decision
-    /// 6) — inserted as one `PendingOp` at every successful `Store` enqueue
+    /// `buffer.version()` at the moment it was enqueued — inserted as
+    /// one `PendingOp` at every successful `Store` enqueue
     /// (`db::append_edit`/`move_undo_pos`/`db::
     /// load_document`/`save::materialize_now`/`materialize_ack::handle_snapshot_due`),
     /// removed by `handle_db_event` once its ack lands. Needed because the
@@ -148,16 +148,16 @@ pub struct App {
     /// both facts in one value, rather than two maps keyed by the same op
     /// id, means a sweep can never drop one and keep the other.
     pub db_ops: HashMap<u64, crate::db::PendingOp>,
-    /// WP7: correlates an in-flight `MaterializeRecord` op id to the
+    /// Correlates an in-flight `MaterializeRecord` op id to the
     /// document whose disk write ALREADY physically completed before this
     /// op was even enqueued — the caller-side vfs work runs first, this
     /// bookkeeping op runs after. A dead writer failing precisely THIS op
-    /// (`DbEvent::Err`/`Fatal`) must never be reported as a failed save
-    /// ([rune-db 1]): `handle_db_event` consults this map to react with a
+    /// (`DbEvent::Err`/`Fatal`) must never be reported as a failed save:
+    /// `handle_db_event` consults this map to react with a
     /// synthetic committed ack instead of the ordinary failure path.
     /// Cleared on both success and failure — never left stale.
     pub published_ops: HashMap<u64, DocumentId>,
-    /// WP7: the content/path/CAS facts a `materialize` attempt captured at
+    /// The content/path/CAS facts a `materialize` attempt captured at
     /// trigger time, held here between `MaterializePrepare`'s ack (which
     /// carries no disk-sourced data at all) and the caller-side `vfs` `Cmd`
     /// it spawns — `save::PendingMaterialize`'s doc comment explains why
@@ -168,16 +168,15 @@ pub struct App {
     /// never cleared automatically.
     pub db_banner: Option<String>,
     /// The armed degraded-save confirm chord's target document and timer
-    /// generation — `None` when no confirm is pending (plan WP1 decision 3:
-    /// doc-tagged so a tab switch can't misapply an armed confirm gate;
-    /// mirrors `pending_quit` below). Stale `SaveConfirmTimeout` generations
-    /// are ignored.
+    /// generation — `None` when no confirm is pending. Doc-tagged so a tab
+    /// switch can't misapply an armed confirm gate; mirrors `pending_quit`
+    /// below. Stale `SaveConfirmTimeout` generations are ignored.
     pub pending_save_confirm: Option<(DocumentId, u32)>,
     /// `pub(crate)`, not private: `save::trigger_save` — a different module
-    /// since the WP1.S5 extraction — is the sole minter of new generations.
+    /// — is the sole minter of new generations.
     pub(crate) next_save_confirm_gen: u32,
     /// The document a Guard modal's `[S]ave` armed a save-then-close for
-    /// (plan WP5.S3) — `None` when no close is waiting on a save ack.
+    /// — `None` when no close is waiting on a save ack.
     /// `guard::handle_guard_key`'s Guard arm sets this immediately before
     /// calling `save::trigger_save`; `materialize_ack::handle_materialize_ack`/
     /// `handle_save_done`'s success paths are the only readers, closing
@@ -190,11 +189,11 @@ pub struct App {
     /// Context, "Quit-confirm"). App-wide, not doc-tagged: quitting closes
     /// the whole session, not one document.
     pub pending_quit: Option<(QuitKey, u32)>,
-    /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module in
-    /// WP2) is the sole minter of new generations.
+    /// `pub(crate)`: `pane::handle_quit_key` (moved out of this module)
+    /// is the sole minter of new generations.
     pub(crate) next_quit_gen: u32,
     /// The quit-save fan-out a `GuardKind::DirtyQuit` answer of `[S]ave`
-    /// armed (plan WP2), correlating every document it kicked a save off
+    /// armed, correlating every document it kicked a save off
     /// for against the EXACT buffer version that save captured. A
     /// `BTreeMap`, not a bare counter: retiring one document's entry is
     /// idempotent (a duplicate/late ack can never double-decrement a
@@ -210,23 +209,23 @@ pub struct App {
     /// successfully.
     pub quit_intent: Option<QuitIntent>,
     /// The click-aggregation + drag-selection state a mouse gesture needs
-    /// across messages (plan WP7.S5) — `commands::mouse`'s sole owner.
+    /// across messages — `commands::mouse`'s sole owner.
     pub pointer: crate::pointer::PointerState,
     /// Answers "what time is it right now?" for `pointer`'s multi-click
-    /// window (plan WP7.S5: "inject the clock as a field so the fuzzer can
-    /// reproduce a gesture"): production installs the real wall clock, tests
+    /// window: the clock is a field so the fuzzer can inject time to
+    /// reproduce a gesture. Production installs the real wall clock, tests
     /// install a `ManualClock`.
     pub pointer_clock: Box<dyn crate::pointer::Clock>,
-    /// Which binding set governs the editor pane (plan WP6.S8) — defaults to
-    /// `BindingSet::Default` (the VS Code-style set this crate has had since
-    /// WP2). `app::handle_editor_key` does not consult this yet: full vim
-    /// modal editing is out of scope for this plan (see `keymap::vim`'s doc
+    /// Which binding set governs the editor pane — defaults to
+    /// `BindingSet::Default` (the VS Code-style set this crate has always
+    /// had). `app::handle_editor_key` does not consult this yet: full vim
+    /// modal editing is out of scope here (see `keymap::vim`'s doc
     /// comment); this field exists so a future dispatch switch has
     /// somewhere to read from.
     pub binding_set: crate::keymap::BindingSet,
-    /// The single close/quit/rename/disk-conflict confirmation prompt (plan
-    /// WP1: replaces the pre-WP1 `banner::Modal`'s `Guard` variant — its
-    /// `Error` sibling now lives in `messages` instead). `guard::set_guard`
+    /// The single close/quit/rename/disk-conflict confirmation prompt —
+    /// replaces the earlier `banner::Modal`'s `Guard` variant, whose
+    /// `Error` sibling now lives in `messages` instead. `guard::set_guard`
     /// is the one chokepoint that writes a NEW prompt here; `guard::
     /// clear_guard` is the sole writer of `None`.
     pub guard: Option<GuardPrompt>,
@@ -235,8 +234,44 @@ pub struct App {
     /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
     /// chokepoint that writes to it.
     pub messages: MessageLog,
+    /// The in-file search bar's state — `None` when the bar is closed
+    /// (decision: bar-open IS `search.is_some()`). `pub(crate)`: every
+    /// writer (`search::open`/`close`/`recompute`, `search::keys::
+    /// handle_key`) lives inside the `search` module; outside callers
+    /// (`layout::geometry`, `render`) only ever read it.
+    pub(crate) search: Option<crate::search::SearchState>,
+    /// The last query the search bar held while open, kept after closing
+    /// so a closed-bar next/prev chord (a later change) has something to
+    /// navigate with. `None` until the bar has closed at least once with a
+    /// non-empty query.
+    pub(crate) last_search_query: Option<String>,
+    /// The query most recently enqueued as a `TouchSearchQuery` write
+    /// (`search::keys::persist_query`'s own debounce key) — lives on `App`,
+    /// not `SearchState`, since a closed-bar chord (`advance_closed`) calls
+    /// the same persist path with no `SearchState` to hold it. Repeated
+    /// Enter on an unchanged query (e.g. wrapping back to the same single
+    /// match) must not re-enqueue a write on every keystroke.
+    pub(crate) last_persisted_search_query: Option<String>,
+    /// The next generation `search::open` mints for a history load request
+    /// — a plain counter on `App`, not on `SearchState`
+    /// itself, because it must keep distinguishing requests across a
+    /// close-then-reopen: a fresh `SearchState` starts every field over,
+    /// but a reply to the PREVIOUS open's now-abandoned request must still
+    /// be recognizable as stale rather than accidentally matching whatever
+    /// generation the new state happens to start at. Mirrors
+    /// `next_rename_gen`/`next_quit_gen`'s own shape.
+    pub(crate) next_search_history_gen: u64,
+    /// Op ids of an in-flight `TouchSearchQuery` write: a completed op id
+    /// absent from `db_ops` still reaches `db_dispatch::handle_db_event`'s
+    /// `DbEvent::Err` arm, which otherwise treats every unmatched failure
+    /// as a real recovery failure and sticky-degrades the whole store.
+    /// Tracking this cosmetic
+    /// write's own op id here lets that arm recognize it and report a
+    /// message instead of degrading. Cleared on both the write's success
+    /// and its failure — never left stale.
+    pub(crate) search_history_ops: HashSet<u64>,
     pub should_quit: bool,
-    /// The rendered theme (plan WP4 Half 2) — the one `Theme` every chrome
+    /// The rendered theme — the one `Theme` every chrome
     /// style and every markdown/code `ScopeId` in this app resolves
     /// through; nothing in `render.rs`/`explorer.rs`/`footer.rs`/etc. reads
     /// a raw indexed- or truecolor literal directly (those live only under
@@ -246,7 +281,7 @@ pub struct App {
     /// `theme::probe::supports_truecolor` can actually query the real
     /// terminal; every test and the fuzzer keep this default.
     pub theme: crate::theme::Theme,
-    /// The icon tier (plan WP5) — `theme::icons::choose`'s one decision,
+    /// The icon tier — `theme::icons::choose`'s one decision,
     /// made once at startup from the real environment and held here beside
     /// `theme` for the same reason: nothing downstream re-decides it per
     /// frame. `App::new` defaults to the plain-Unicode tier (the same
@@ -256,7 +291,7 @@ pub struct App {
     /// every test and the fuzzer keep this default.
     pub icons: rune_md::icons::IconSet,
     /// This process's Kitty graphics support and measured cell pixel
-    /// geometry (plan WP3) — populated at startup (`runtime::bootstrap`,
+    /// geometry — populated at startup (`runtime::bootstrap`,
     /// alongside `theme` and `icons` above, for the same "decided once,
     /// never per frame" reason) and re-derived on every `Msg::Resize`
     /// (`runtime::apply`), since a resize can change the reported pixel
@@ -265,15 +300,15 @@ pub struct App {
     /// (`graphics::GraphicsCaps::default`), so every existing test
     /// constructor and the fuzzer keep this default unchanged.
     pub graphics: crate::graphics::GraphicsCaps,
-    /// The workspace root discovered by `workspaceroot::resolve` (plan
-    /// WP4.S4) — the nearest ancestor of the launch directory carrying a
+    /// The workspace root discovered by `workspaceroot::resolve` — the
+    /// nearest ancestor of the launch directory carrying a
     /// `.git`/`.obsidian` marker, or `cwd` itself when none is found.
     /// `PathBuf::new()` (empty) until `set_root` runs; an empty root is a
     /// legal "not yet resolved" state, and every consumer (the Explorer's
     /// initial-root fallback, the breadcrumb's relativization) skips it
     /// rather than treating it as a real path.
     pub root: PathBuf,
-    /// The snapshot-autosave debounce's one rearmable timer (plan WP16.S5)
+    /// The snapshot-autosave debounce's one rearmable timer
     /// — `pub(crate)`, not private: `save::schedule_snapshot_debounce` (a
     /// different module) is the sole caller of `arm`. No background thread
     /// exists until `runtime::run` calls `attach` on it, so a test/fuzz
@@ -331,6 +366,11 @@ impl App {
             binding_set: crate::keymap::BindingSet::default(),
             guard: None,
             messages: MessageLog::new(),
+            search: None,
+            last_search_query: None,
+            last_persisted_search_query: None,
+            next_search_history_gen: 0,
+            search_history_ops: HashSet::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
             icons: rune_md::icons::IconSet::unicode(),
@@ -349,8 +389,8 @@ impl App {
     /// exercisable from `rune-tui`'s own test harnesses — `rune-cli` has no
     /// `tests/` directory of its own.
     ///
-    /// Takes `db` rather than hard-coding `None` (plan WP3 — the "quit guard"
-    /// plan, "the untitled draft is really recovery-backed"): the caller
+    /// Takes `db` rather than hard-coding `None`: the untitled draft is
+    /// really recovery-backed, so the caller
     /// (`rune-cli::db_bootstrap`) opens the recovery store and binds this
     /// document's own scratch row (`Store::create_scratch`/
     /// `recoverable_scratch`) BEFORE constructing `App`, exactly like a named
@@ -372,8 +412,8 @@ impl App {
     }
 
     /// Mints the next `DocumentId`, monotonically — never reused, even
-    /// across a close (out of scope for WP1; the counter design already
-    /// supports it). `saturating_add` rather than `wrapping_add`: wrapping
+    /// across a close, though the counter design already supports it.
+    /// `saturating_add` rather than `wrapping_add`: wrapping
     /// back to a low id could collide with one still live in `documents`,
     /// silently aliasing two documents — saturating at `u64::MAX` instead
     /// (a session would need to open ~2^64 documents to ever reach it) just
@@ -385,13 +425,13 @@ impl App {
     }
 
     /// Inserts a new, not-yet-active `Document` into the map and returns its
-    /// id. The minimal multi-document seam WP1 needs (its own unit tests in
+    /// id. The minimal multi-document seam (its own unit tests in
     /// `db.rs`/`save.rs`, "two docs enqueue ops") — full open/close/switch
-    /// UX (`workspace::open_path`) is WP4/WP5 scope.
+    /// UX is handled by `workspace::open_path`.
     pub fn open_document(&mut self, buffer: Buffer) -> DocumentId {
         let id = self.mint_doc_id();
         self.documents.insert(id, Document::new(buffer));
-        // The Open Tabs chokepoint (plan WP5.S1): every document, however
+        // The Open Tabs chokepoint: every document, however
         // it was opened, gets a tab the moment it exists.
         self.tabs.order.push(id);
         id
@@ -411,8 +451,8 @@ impl App {
         self.documents.get_mut(&id)
     }
 
-    /// Infallible by construction, not by convention: `DocumentMap` (plan
-    /// WP5.S5) guarantees at least one entry always exists, so "`active`
+    /// Infallible by construction, not by convention: `DocumentMap`
+    /// guarantees at least one entry always exists, so "`active`
     /// names a removed document" falls back to that guaranteed entry
     /// instead of needing a `#[allow(clippy::unwrap_used)]` escape hatch —
     /// `workspace::close_now` still reassigns `active` to a real neighbor
@@ -436,7 +476,7 @@ impl App {
 
     /// Whether `doc` has a live, trustworthy recovery journal — the single
     /// predicate `pane::unpreserved_dirty_docs`'s quit/close guard scan
-    /// keys off (plan WP2). `doc.db.is_some()` alone is not enough: `degraded`
+    /// keys off. `doc.db.is_some()` alone is not enough: `degraded`
     /// is sticky with no reopen path, so a mid-session store failure leaves
     /// `doc.db` `Some` while every write it would enqueue silently never
     /// lands — a document in that state has stopped journaling in every
@@ -450,8 +490,8 @@ impl App {
         self.active_doc().file_name()
     }
 
-    /// The public entry point `rune-cli`'s bootstrap hydration uses (plan
-    /// WP1) — `materialize_ack::recompute_dirty` itself is `pub(crate)`, so
+    /// The public entry point `rune-cli`'s bootstrap hydration uses —
+    /// `materialize_ack::recompute_dirty` itself is `pub(crate)`, so
     /// this is the one seam a different crate reaches it through.
     /// Dirty must be re-derived on every transition, hydration included;
     /// dirtiness no longer falls out of
@@ -463,7 +503,7 @@ impl App {
     }
 
     /// Records the workspace root discovered by `workspaceroot::resolve`
-    /// (plan WP4.S4) — the one writer of `root`, called once at startup once
+    /// — the one writer of `root`, called once at startup once
     /// the launch-time `cwd`/`home`/file-argument inputs the resolver needs
     /// are available.
     pub fn set_root(&mut self, root: PathBuf) {
@@ -481,7 +521,7 @@ impl App {
 /// timers).
 ///
 /// Wraps `update_inner` with the ONE chokepoint for the snapshot-autosave
-/// debounce (plan WP5.S6): every message that mutates the ACTIVE document's
+/// debounce: every message that mutates the ACTIVE document's
 /// `journal` — typing, undo/redo, cut, paste, ... — funnels through
 /// `commands::edit::commit_edit_batch`/`undo`/`redo`, so comparing the
 /// active document's journal position before and after `update_inner`
@@ -498,7 +538,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
         save::schedule_snapshot_debounce(app, id);
     }
     // The rest of the post-dispatch chokepoint (highlight scheduling, a
-    // newly-active image document's decode, WP9's embed reconciler) lives
+    // newly-active image document's decode, the embed reconciler) lives
     // in `dispatch::after_update` — split out so this file, already over
     // the 500-line budget, never needs to grow for a future addition to
     // that list.
@@ -526,7 +566,7 @@ pub fn update(app: &mut App, msg: Msg, effects: &mut Effects) {
 // (500-line budget) — `update` above calls the first through
 // `dispatch::`.
 
-// `handle_quit_key` and its 2s timer `Cmd` moved to `pane.rs` in WP2
+// `handle_quit_key` and its 2s timer `Cmd` moved to `pane.rs`
 // (500-line budget) — `GlobalCommand::QuitChord` is its only
 // remaining caller. Their
-// unit tests moved to `tests/app_quit_and_dispatch.rs` earlier (WP1.S5).
+// unit tests moved to `tests/app_quit_and_dispatch.rs`.

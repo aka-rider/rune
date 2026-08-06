@@ -1,7 +1,7 @@
 //! `rune-db`: the multiprocess-safe SQLite recovery store over one global
 //! WAL database. This crate is `rune-vfs`'s sibling, never its caller — a
-//! structural fact, not just a convention two modules happen to follow
-//! (WP7): `materialize.rs` no longer holds a `&dyn Vfs` at all. It is "an
+//! structural fact, not just a convention two modules happen to follow:
+//! `materialize.rs` no longer holds a `&dyn Vfs` at all. It is "an
 //! observer beside the file path, never in it" — it journals, snapshots,
 //! and observes alongside the user's `.md` file, and losing this database
 //! must never damage that file. Concretely, the actual `vfs.write_durable`/
@@ -59,6 +59,7 @@ mod rename_replace;
 mod retry;
 mod schema;
 mod scratch;
+mod search_history;
 mod session;
 mod snapshot;
 mod store;
@@ -83,7 +84,7 @@ pub use materialize::{
 pub use merge_prep::MergePrepResult;
 pub use observation::{ObsId, Observation, ObservationMeta, StatFacts, hash_bytes, stat_identity};
 pub use probe::probe;
-pub use reader::{ReaderHandle, ReaderReply, ReaderRequestKind};
+pub use reader::{ReaderHandle, ReaderQuery, ReaderReply, ReaderRequestKind};
 pub use reaper::reap_dead_sessions;
 pub use rename::RenameOutcome;
 pub use rename_bind::rename_bind;

@@ -6,8 +6,8 @@
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{KeyCode, Mods, QuitKey};
 
-/// The global chord table's command set (decision 7: `Pane` focus
-/// discriminant + these chrome-level actions). Resolved BEFORE any pane's
+/// The global chord table's command set: the `Pane` focus discriminant
+/// plus these chrome-level actions. Resolved BEFORE any pane's
 /// own keymap, so every variant fires regardless of focus — including the
 /// quit chords and Save, which must keep working while the Explorer/Tabs
 /// stub panes own it.
@@ -49,7 +49,7 @@ pub enum GlobalCommand {
     /// exactly one place rather than being re-derived at the call site.
     TabSwitch(usize),
     /// Toggles the active document between `ReadOnly::No` and `ReadOnly::
-    /// Reading` (plan WP5) — the same chord both enters and leaves reading
+    /// Reading` — the same chord both enters and leaves reading
     /// view. Refused with a status message on `ReadOnly::Always`, which has
     /// no editable form to return to.
     ToggleReadOnly,
@@ -72,6 +72,30 @@ pub enum GlobalCommand {
     /// former `GlobalCommand::FocusEditor` these keys used to name was
     /// deleted in `84a83f5`).
     ToggleMessages,
+    /// Toggles the in-file search bar: closed -> open, focused, empty
+    /// draft; open -> `search::close` (saves the draft as the last query,
+    /// drops the state, clears the highlights). `^F`/`⌘F` — free across
+    /// every binding table (see the guard test below).
+    ToggleSearch,
+    /// Steps to the next match without opening the bar: with the bar
+    /// already open, identical to Enter; with it closed, recomputes matches
+    /// from `App::last_search_query` on demand, applies the same
+    /// concealed-skip and read-only scroll, and jumps — painting no
+    /// highlights (decision A2: those exist only while the bar is open).
+    /// No last query is reported through the message pane rather than
+    /// swallowed silently. `^g`/`⌘g` — bound as the PLAIN char: the shifted
+    /// row below is what makes the two chords distinguishable (see its own
+    /// doc for why).
+    SearchNext,
+    /// The `SearchNext` mirror, stepping backward. Bound as
+    /// `Char('G')+CTRL`/`Char('G')+SUP` — the SHIFTED char with `SHIFT`
+    /// itself cleared, not `Char('g')` with a `SHIFT` bit set: this crate
+    /// requests `REPORT_ALTERNATE_KEYS`, under which a shifted chord
+    /// arrives as the shifted character with `SHIFT` cleared, so a
+    /// `CTRL|SHIFT` row could never fire (see the guard test below and
+    /// `TODO.md` for a pre-existing binding that made exactly that
+    /// mistake).
+    SearchPrev,
 }
 
 const CTRL: Mods = Mods {
@@ -331,30 +355,59 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('f'), CTRL)],
+        cmd: GlobalCommand::ToggleSearch,
+        help: "search",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('f'), SUP)],
+        cmd: GlobalCommand::ToggleSearch,
+        help: "search",
+        when: "",
+        alias: true,
+    },
+    // Next/prev step through the current match list without needing the
+    // bar open. `g`/`G` are the plain and shifted forms of the SAME
+    // physical key, not two independently-modified chords — see
+    // `GlobalCommand::SearchPrev`'s own doc for why `G`+ctrl, not
+    // `g`+ctrl|shift, is what actually fires under this crate's kitty
+    // protocol request.
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('g'), CTRL)],
+        cmd: GlobalCommand::SearchNext,
+        help: "next match",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('g'), SUP)],
+        cmd: GlobalCommand::SearchNext,
+        help: "next match",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('G'), CTRL)],
+        cmd: GlobalCommand::SearchPrev,
+        help: "prev match",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('G'), SUP)],
+        cmd: GlobalCommand::SearchPrev,
+        help: "prev match",
+        when: "",
+        alias: true,
+    },
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
-    /// structural equality on `keys` — a pane row does not need to equal a
-    /// specific chord to steal it, it only needs to MATCH it, and
-    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
-    /// any non-control `Char` under equal `Mods` without ever equaling a
-    /// specific `KeyPattern`. Structural equality would stay green while
-    /// that wildcard silently shadowed a chord at dispatch. Shared by every
-    /// `global_*_binding_is_not_already_bound_in_any_pane_table` guard below.
-    fn claimants<C: Copy + 'static>(
-        table: &[Binding<C>],
-        key: crate::keymap::KeyInput,
-    ) -> Vec<&'static str> {
-        table
-            .iter()
-            .filter(|b| b.keys.iter().any(|k| k.matches(key)))
-            .map(|b| b.help)
-            .collect()
-    }
 
     /// `^M` resolves to `GlobalCommand::Merge`, and `⌘M` binds nothing at
     /// all — Ghostty steals it, so it was dropped rather than bound, unlike
@@ -410,23 +463,66 @@ mod tests {
         }
     }
 
-    /// Plan WP5: there is no cross-table keymap-union guard in this
+    /// There is no cross-table keymap-union guard in this
     /// codebase — `index::validate` runs per-table only, and a
     /// `GLOBAL_BINDINGS` row resolves at stage 2, before any pane's own
     /// keymap ever sees the key (`resolve_in` never consults `when`), so a
     /// global row can silently shadow a pane binding with nothing to catch
     /// it. Modelled on `editor_bindings::reload_key_is_not_already_bound_
     /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
-    /// pane table this crate has, since `^p`/`⌘p` mint a new global row
-    /// rather than reusing an existing chord the way `⌘R` does.
-    #[test]
-    fn global_p_binding_is_not_already_bound_in_any_pane_table() {
+    /// pane table this crate has: every guard test below funnels through
+    /// this ONE helper (instead of three near-identical copies each
+    /// defining their own), so a table added here covers every
+    /// guard the next time this list grows, `MERGE_BINDINGS` included.
+    ///
+    /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
+    /// structural equality on `keys` — a pane row does not need to equal
+    /// `⌃P`/`⌘P` to steal them, it only needs to MATCH them, and
+    /// `KeyMatch::Printable` (the Explorer type-to-search wildcard) matches
+    /// any non-control `Char` under equal `Mods` without ever equaling a
+    /// specific `KeyPattern`. Structural equality would stay green while
+    /// that wildcard silently shadowed this exact chord at dispatch.
+    fn claimants_across_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
         use crate::explorer_keys::EXPLORER_BINDINGS;
         use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
         use crate::keymap::KeyInput;
         use crate::keymap::editor_bindings::EDITOR_BINDINGS;
         use crate::keymap::vim::VIM_BINDINGS;
+        use crate::merge::keys::MERGE_BINDINGS;
         use crate::opentabs::TABS_BINDINGS;
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        [
+            claimants(EDITOR_BINDINGS, key),
+            claimants(VIM_BINDINGS, key),
+            claimants(TABS_BINDINGS, key),
+            claimants(EXPLORER_BINDINGS, key),
+            claimants(EXPLORER_SEARCH_BINDINGS, key),
+            claimants(MERGE_BINDINGS, key),
+        ]
+        .concat()
+    }
+
+    fn assert_unclaimed_by_any_pane_table(keys: &[crate::keymap::KeyInput]) {
+        for key in keys {
+            let found = claimants_across_pane_tables(*key);
+            assert!(
+                found.is_empty(),
+                "{key:?} is already bound in a pane table: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn global_p_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
 
         let ctrl_p = KeyInput {
             code: KeyCode::Char('p'),
@@ -436,80 +532,25 @@ mod tests {
             code: KeyCode::Char('p'),
             mods: SUP,
         };
-
-        for key in [ctrl_p, sup_p] {
-            assert!(
-                claimants(EDITOR_BINDINGS, key).is_empty(),
-                "EDITOR_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(VIM_BINDINGS, key).is_empty(),
-                "VIM_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(TABS_BINDINGS, key).is_empty(),
-                "TABS_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_BINDINGS, key).is_empty(),
-                "EXPLORER_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
-                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
-            );
-        }
+        assert_unclaimed_by_any_pane_table(&[ctrl_p, sup_p]);
     }
 
-    /// The same cross-table guard as `global_p_binding_...` above, for `^M`
-    /// (`GlobalCommand::Merge`) — `Merge` is the one row in this table bound
+    /// `^M` (`GlobalCommand::Merge`) is the one row in this table bound
     /// only as `ctrl`, so only that form needs checking here.
     #[test]
     fn global_m_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::explorer_keys::EXPLORER_BINDINGS;
-        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
         use crate::keymap::KeyInput;
-        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-        use crate::keymap::vim::VIM_BINDINGS;
-        use crate::opentabs::TABS_BINDINGS;
 
         let ctrl_m = KeyInput {
             code: KeyCode::Char('m'),
             mods: CTRL,
         };
-
-        assert!(
-            claimants(EDITOR_BINDINGS, ctrl_m).is_empty(),
-            "EDITOR_BINDINGS already binds {ctrl_m:?}"
-        );
-        assert!(
-            claimants(VIM_BINDINGS, ctrl_m).is_empty(),
-            "VIM_BINDINGS already binds {ctrl_m:?}"
-        );
-        assert!(
-            claimants(TABS_BINDINGS, ctrl_m).is_empty(),
-            "TABS_BINDINGS already binds {ctrl_m:?}"
-        );
-        assert!(
-            claimants(EXPLORER_BINDINGS, ctrl_m).is_empty(),
-            "EXPLORER_BINDINGS already binds {ctrl_m:?}"
-        );
-        assert!(
-            claimants(EXPLORER_SEARCH_BINDINGS, ctrl_m).is_empty(),
-            "EXPLORER_SEARCH_BINDINGS already binds {ctrl_m:?}"
-        );
+        assert_unclaimed_by_any_pane_table(&[ctrl_m]);
     }
 
-    /// The same cross-table guard as `global_p_binding_...`
-    /// above, for `^E`/`⌘E` (`GlobalCommand::ToggleMessages`).
     #[test]
     fn global_e_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::explorer_keys::EXPLORER_BINDINGS;
-        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
         use crate::keymap::KeyInput;
-        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-        use crate::keymap::vim::VIM_BINDINGS;
-        use crate::opentabs::TABS_BINDINGS;
 
         let ctrl_e = KeyInput {
             code: KeyCode::Char('e'),
@@ -519,41 +560,78 @@ mod tests {
             code: KeyCode::Char('e'),
             mods: SUP,
         };
+        assert_unclaimed_by_any_pane_table(&[ctrl_e, sup_e]);
+    }
 
-        for key in [ctrl_e, sup_e] {
-            assert!(
-                claimants(EDITOR_BINDINGS, key).is_empty(),
-                "EDITOR_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(VIM_BINDINGS, key).is_empty(),
-                "VIM_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(TABS_BINDINGS, key).is_empty(),
-                "TABS_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_BINDINGS, key).is_empty(),
-                "EXPLORER_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
-                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
-            );
-        }
+    /// `^F`/`⌘F` (`GlobalCommand::ToggleSearch`).
+    #[test]
+    fn global_f_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_f = KeyInput {
+            code: KeyCode::Char('f'),
+            mods: CTRL,
+        };
+        let sup_f = KeyInput {
+            code: KeyCode::Char('f'),
+            mods: SUP,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_f, sup_f]);
+    }
+
+    /// `^g`/`⌘g` (`SearchNext`) and their shifted forms `^G`/`⌘G`
+    /// (`SearchPrev`) — all four rows, since the plain and shifted chars
+    /// are entirely separate `KeyCode::Char` values from `KeyPattern`'s own
+    /// point of view.
+    #[test]
+    fn global_g_binding_is_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_g = KeyInput {
+            code: KeyCode::Char('g'),
+            mods: CTRL,
+        };
+        let sup_g = KeyInput {
+            code: KeyCode::Char('g'),
+            mods: SUP,
+        };
+        let ctrl_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: CTRL,
+        };
+        let sup_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: SUP,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_g, sup_g, ctrl_cap_g, sup_cap_g]);
+    }
+
+    /// A guard test only proves ABSENCE from the pane tables — it can't
+    /// prove the row actually fires in `GLOBAL_BINDINGS` itself. This is
+    /// the positive half: the
+    /// SHIFTED char with `SHIFT` cleared (`Char('G')+CTRL`), not a
+    /// `CTRL|SHIFT` row on the plain char, is what resolves to `SearchPrev`
+    /// — exactly the delivery shape `REPORT_ALTERNATE_KEYS` produces.
+    #[test]
+    fn ctrl_shifted_g_resolves_to_search_prev() {
+        use crate::binding::resolve_in;
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_g = KeyInput {
+            code: KeyCode::Char('G'),
+            mods: CTRL,
+        };
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, ctrl_cap_g),
+            Some(GlobalCommand::SearchPrev)
+        );
     }
 
     /// The same cross-table guard as `global_p_binding_...`
     /// above, for `^N`/`⌘N` (`GlobalCommand::NewDocument`).
     #[test]
     fn global_n_binding_is_not_already_bound_in_any_pane_table() {
-        use crate::explorer_keys::EXPLORER_BINDINGS;
-        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
         use crate::keymap::KeyInput;
-        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
-        use crate::keymap::vim::VIM_BINDINGS;
-        use crate::opentabs::TABS_BINDINGS;
 
         let ctrl_n = KeyInput {
             code: KeyCode::Char('n'),
@@ -563,28 +641,6 @@ mod tests {
             code: KeyCode::Char('n'),
             mods: SUP,
         };
-
-        for key in [ctrl_n, sup_n] {
-            assert!(
-                claimants(EDITOR_BINDINGS, key).is_empty(),
-                "EDITOR_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(VIM_BINDINGS, key).is_empty(),
-                "VIM_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(TABS_BINDINGS, key).is_empty(),
-                "TABS_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_BINDINGS, key).is_empty(),
-                "EXPLORER_BINDINGS already binds {key:?}"
-            );
-            assert!(
-                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
-                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
-            );
-        }
+        assert_unclaimed_by_any_pane_table(&[ctrl_n, sup_n]);
     }
 }

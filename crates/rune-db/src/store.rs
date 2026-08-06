@@ -1,8 +1,8 @@
 //! `Store`: the public handle over `rune-db`'s writer/reader threads and
 //! this process's own session identity. This is the ONLY type the rest of
-//! the workspace (`rune-tui`, WP5) is meant to touch — no table-level CRUD
-//! escapes the crate (plan decision 11); domain verbs land here as WP3+
-//! grows `OpKind` and the reader's request enum.
+//! the workspace (`rune-tui`) is meant to touch — no table-level CRUD
+//! escapes the crate; domain verbs land here as `OpKind` and the reader's
+//! request enum grow.
 //!
 //! # Open ladder
 //!
@@ -12,9 +12,8 @@
 //!    and set `degraded = true`.
 //!
 //! Establishing this process's own `sessions` row is the one remaining hard
-//! failure past that point (plan decision — session identity is
-//! load-bearing for every subsequent write); there is no fallback left
-//! below `:memory:`.
+//! failure past that point — session identity is load-bearing for every
+//! subsequent write; there is no fallback left below `:memory:`.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,10 +28,9 @@ use crate::open_ladder::{LadderResult, memory_uri, open_ladder, open_memory_back
 use crate::writer::{OnEvent, OpKind, WriteOp};
 use crate::{Error, reader, retry, session, writer};
 
-/// An injectable wall clock (plan Gotchas: "Wall-clock coalescing is
-/// nondeterministic in tests — rune-db must take a `clock: ... -> SystemTime`
-/// injection"). Production uses `SystemTime::now`; tests install a
-/// deterministic stand-in.
+/// An injectable wall clock — wall-clock coalescing is nondeterministic
+/// in tests, so the clock arrives as an injection. Production uses
+/// `SystemTime::now`; tests install a deterministic stand-in.
 pub type ClockFn = Arc<dyn Fn() -> SystemTime + Send + Sync>;
 
 /// An injectable liveness check: `(pid, proc_started_at) -> still running?`.
@@ -54,8 +52,8 @@ pub struct Store {
     // its own yet, but the poison idiom below (`lock().unwrap_or_else(|p|
     // p.into_inner())`, matching `rune-vfs::mem`'s convention) is what the
     // rest of this workspace already uses for shared, swappable state, so
-    // WP3+ callers that DO need to touch these from another thread inherit
-    // a correct pattern instead of reinventing one.
+    // future callers that DO need to touch these from another thread
+    // inherit a correct pattern instead of reinventing one.
     clock: Mutex<ClockFn>,
     liveness_check: Mutex<LivenessCheckFn>,
 }
@@ -66,10 +64,9 @@ impl Store {
     /// path directly, so the same ladder logic is exercised either way).
     /// Returns the store plus a non-fatal degradation warning; the caller
     /// may surface the warning to the user but must not treat it as
-    /// failure. `on_event` receives every writer-thread completion (plan
-    /// decision 4) — `rune-tui` (WP5) adapts it into the runtime's
-    /// `Sender<Msg>`. `fs` is the ONE filesystem `Probe`/`Materialize`/
-    /// `Load` use (plan decision 12) — production passes
+    /// failure. `on_event` receives every writer-thread completion —
+    /// `rune-tui` adapts it into the runtime's `Sender<Msg>`. `fs` is the
+    /// ONE filesystem `Probe`/`Materialize`/`Load` use — production passes
     /// `Arc::new(rune_vfs::Disk)`; tests and the fuzzer pass a shared
     /// `Arc::new(rune_vfs::Mem::new())` so the store and workspace resolve
     /// identity and disk state against the SAME files.
@@ -81,7 +78,7 @@ impl Store {
         let rung = open_ladder(path)?;
         let (store, warning) = Self::from_ladder(rung, fs, on_event)?;
 
-        // Old-schema-version file GC (WP6.S3), best-effort — never blocks
+        // Old-schema-version file GC, best-effort — never blocks
         // open, mirrors the dead-session reaper's own contract. Runs
         // against `path`'s directory regardless of whether THIS open
         // degraded, since a leftover old-version file is unrelated to
@@ -108,11 +105,11 @@ impl Store {
         let now = clock();
         let session_id = session::establish_session(&conn, now)?;
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
-        // Best-effort dead-session reaper (plan WP4.S6): never blocks open
-        // — a failure here is swallowed, not surfaced, on purpose.
+        // Best-effort dead-session reaper: never blocks open — a failure
+        // here is swallowed, not surfaced, on purpose.
         let _ = crate::reaper::reap_dead_sessions(&mut conn, liveness_check.as_ref());
-        // One startup blob-sweep batch (WP6.S1), after the reaper — best
-        // effort, never blocks open.
+        // One startup blob-sweep batch, after the reaper — best effort,
+        // never blocks open.
         let _ = retry::with_retry(&mut conn, crate::gc::sweep_unreferenced_blobs);
         let writer = writer::spawn(conn, fs, on_event);
         let reader = reader::spawn(&uri)?;
@@ -137,12 +134,12 @@ impl Store {
         let mut writer_conn = rung.writer_conn;
         let session_id = session::establish_session(&writer_conn, now)?;
 
-        // Best-effort dead-session reaper (plan WP4.S6): never blocks open
-        // — a failure here is swallowed, not surfaced, on purpose.
+        // Best-effort dead-session reaper: never blocks open — a failure
+        // here is swallowed, not surfaced, on purpose.
         let liveness_check: LivenessCheckFn = Arc::new(session::is_process_alive);
         let _ = crate::reaper::reap_dead_sessions(&mut writer_conn, liveness_check.as_ref());
-        // One startup blob-sweep batch (WP6.S1), after the reaper — best
-        // effort, never blocks open.
+        // One startup blob-sweep batch, after the reaper — best effort,
+        // never blocks open.
         let _ = retry::with_retry(&mut writer_conn, crate::gc::sweep_unreferenced_blobs);
 
         let writer = writer::spawn(writer_conn, fs, on_event);
@@ -163,7 +160,7 @@ impl Store {
     /// True only for the in-memory fallback rung taken when the real
     /// on-disk database could not be opened — never for an intentional
     /// [`Store::open_in_memory`]. Drives a persistent footer banner and a
-    /// confirm gate before every materialize (WP5).
+    /// confirm gate before every materialize.
     pub fn degraded(&self) -> bool {
         self.degraded
     }
@@ -180,7 +177,7 @@ impl Store {
     }
 
     /// Replaces how this store decides whether a different session's
-    /// recorded process is still alive. Consumed by WP4's cross-session
+    /// recorded process is still alive. Consumed by the cross-session
     /// inheritance decision.
     pub fn set_liveness_check(&self, check: LivenessCheckFn) {
         *self
@@ -189,8 +186,8 @@ impl Store {
             .unwrap_or_else(|p| p.into_inner()) = check;
     }
 
-    /// Returns the current liveness check, for callers (WP4) that need to
-    /// invoke it directly.
+    /// Returns the current liveness check, for callers that need to invoke
+    /// it directly.
     pub fn liveness_check(&self) -> LivenessCheckFn {
         Arc::clone(
             &self
@@ -211,7 +208,7 @@ impl Store {
 
     /// Enqueues `kind` to the writer thread, returning the op id the
     /// eventual `DbEvent` will echo back. Never blocks — a wedged writer
-    /// surfaces [`Error::WriterQueueFull`] immediately (plan Gotchas).
+    /// surfaces [`Error::WriterQueueFull`] immediately.
     pub fn enqueue(&self, kind: OpKind) -> Result<u64, Error> {
         let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
         self.writer.try_send(WriteOp { id, kind })?;
@@ -229,8 +226,16 @@ impl Store {
         &self.reader
     }
 
+    /// A cloneable query-only handle onto the reader thread — for a caller
+    /// that needs to move a reader reference into a `Box<dyn FnOnce() +
+    /// Send>` `Cmd` closure, where `&ReaderHandle` can't go (its lifetime is
+    /// tied to this `Store`) and `ReaderHandle` itself isn't `Clone`.
+    pub fn reader_query(&self) -> reader::ReaderQuery {
+        self.reader.as_query()
+    }
+
     /// Deterministically drains and joins both threads. The writer's final
-    /// op (enqueued by `writer::WriterHandle::shutdown`, WP6.S2) runs
+    /// op (enqueued by `writer::WriterHandle::shutdown`) runs
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when this session is the last live
     /// one, then `PRAGMA optimize`, before the thread actually exits.
     pub fn shutdown(self) {
@@ -250,8 +255,8 @@ impl Store {
 }
 
 /// Sets the per-connection pragmas required on **both** the writer and
-/// reader connections on every open (plan Gotchas: "only `journal_mode`
-/// persists in the file" — everything else here does not).
+/// reader connections on every open: only `journal_mode` persists in the
+/// file — everything else here does not.
 pub(crate) fn apply_connection_pragmas(conn: &Connection) -> Result<(), Error> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -359,7 +364,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Coverage gap [rune-db 9]: the open ladder's rungs were tested for an
+    /// Coverage gap: the open ladder's rungs were tested for an
     /// unwritable parent, but never for the file existing and already being
     /// corrupt (garbage bytes, not a valid SQLite database). That must
     /// degrade to in-memory exactly like the unwritable-parent case, never
