@@ -71,6 +71,15 @@ pub enum MsgTag {
         delivered_version: u64,
         span_count: usize,
     },
+    /// `Msg::Db` — the oldest pending recovery-store op's reply, drained by
+    /// `Action::DeliverDb` or the end-of-session sweep. `op_id` is the op
+    /// this reply answers, kept for report readability; no checker keys off
+    /// this variant on its own — the merge invariants (`invariant/
+    /// merge.rs`) key off `Snapshot::merge_active`/`merge_unresolved`
+    /// instead, which a `Db` delivery can change just like any other step.
+    Db {
+        op_id: u64,
+    },
 }
 
 /// Everything an invariant checker needs beyond `Snapshot`: what happened,

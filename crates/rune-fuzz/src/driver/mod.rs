@@ -18,15 +18,22 @@ mod step_exec;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use rune_core::buffer::Buffer;
+use rune_db::{ClockFn, Store};
 use rune_tui::app::App;
+use rune_tui::db::{Db, DbBridge};
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Cmd, Msg, PasteTarget};
+use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
-use step_exec::{discharge_pending_rename, discharge_pending_save, key_step, step_and_check};
+use step_exec::{
+    discharge_pending_rename, discharge_pending_save, drain_one_db_op, key_step,
+    run_direct_catching_panic, step_and_check,
+};
 
 /// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
@@ -52,6 +59,13 @@ pub struct RunResult {
     pub final_content: String,
     pub final_snapshot: Option<Snapshot>,
     pub final_ctx: Option<StepCtx>,
+    /// True iff `Snapshot::merge_active` was ever true on any step of this
+    /// session (issue 35's non-vacuous merge coverage) — unlike
+    /// `final_snapshot`, tracked on EVERY step, not just a violating one,
+    /// since a session's own resolver work can legitimately exit `Active`
+    /// again (a full resolution, an auto-exit on tab switch) before the
+    /// session ends.
+    pub merge_activated: bool,
 }
 
 /// Mutable driver state threaded through one session. `pending_save` is an
@@ -96,6 +110,29 @@ struct State {
     /// close-discard.md`) — the latter leaves no document for either
     /// checker to say anything meaningful about.
     seed_doc: DocumentId,
+    /// The one untitled draft `App::new` mints before the seeded document
+    /// is ever opened (issue 35's store-backed session) — kept as the
+    /// switch-away target `Action::DivergeDisk`'s away-and-back reprobe
+    /// needs (`merge_entry.rs`'s own `draft_id` pattern), since a probe is
+    /// only re-issued by an actual transition through `workspace::
+    /// switch_to`, never by re-selecting the document already active.
+    draft_doc: DocumentId,
+    /// Routes every recovery-store op's async reply back into this session
+    /// (issue 35) — kept in `Bootstrap` mode for the session's whole
+    /// lifetime, never `attach`ed, so every `DbEvent` stays buffered here
+    /// for `drain_one_db_op` to pull from deterministically instead of
+    /// racing a live `Sender<Msg>`. Present even when `Store::open_in_
+    /// memory` itself failed and `app.db` is `None`: harmless, since no op
+    /// is ever enqueued onto `app.db_ops` without a live store to enqueue
+    /// it through, so every drain attempt just finds nothing pending.
+    bridge: Arc<DbBridge>,
+    /// Bumped on every `Action::DivergeDisk` so repeated occurrences in one
+    /// session publish genuinely different bytes each time — a store-backed
+    /// session must never externally "publish" the same bytes twice in a
+    /// row, since that would classify as `Clean`, not `DiskAhead`/
+    /// `Diverged`, defeating the very divergence this action exists to
+    /// seed.
+    diverge_step: u64,
 }
 
 /// Accumulates the frozen state once a violation fires, so the driving loop
@@ -104,6 +141,11 @@ struct Outcome {
     violation: Option<Violation>,
     final_snapshot: Option<Snapshot>,
     final_ctx: Option<StepCtx>,
+    /// Latched `true` the first time any step's `Snapshot::merge_active`
+    /// comes back `true` — `step_and_check` sets this, never cleared once
+    /// set, since `RunResult::merge_activated` reports whether the session
+    /// EVER reached `Active`, not just whether it ended there.
+    merge_activated: bool,
 }
 
 /// Runs `actions` against a fresh session seeded with `content` at `path`
@@ -118,7 +160,17 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     let _ = mem.save_atomic(&path, content.as_bytes());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let mut app = App::new(Buffer::new(content), Some(path.clone()), vfs, None);
+    let bridge = DbBridge::bootstrap();
+    // A fixed instant, never `SystemTime::now` (WP3.S7 rule 7: zero
+    // wall-clock reads) — every session shares the same clock reading, so
+    // the store's own session-establish/coalescing logic stays exactly as
+    // reproducible as everything else this driver does.
+    let clock: ClockFn = Arc::new(|| SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000));
+    let db = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event())
+        .ok()
+        .map(|store| Db::new(store, Arc::clone(&bridge), false));
+
+    let mut app = App::new(Buffer::new(""), None, Arc::clone(&vfs), db);
     // WP14.S2 (CODE-REVIEW.md rune-fuzz finding 17): `App::new`'s default
     // `pointer_clock` is the real wall clock (`SystemClock`) — harmless
     // today only because this driver never delivers `Msg::Mouse`, so
@@ -130,6 +182,20 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     // silently stop reproducing the moment a click sequence straddled a
     // click-window boundary at real, non-reproducible speed.
     app.pointer_clock = Box::new(rune_tui::pointer::ManualClock::new());
+    let draft_doc = app.active;
+
+    // The session opens its seeded document the same way a real launch or
+    // Explorer selection would — through `workspace::open_path`, so a
+    // wired store hydrates it (`db_enqueue::load_document`) exactly as
+    // production does, rather than the driver hand-assembling a `Document`
+    // that was never routed through the store at all. Falls back to the
+    // untitled draft only if the open itself refused (never observed with
+    // this driver's own `Mem`-backed content, but `open_path` is fallible
+    // in general).
+    let seed_doc = workspace::open_path(&mut app, &path).unwrap_or(draft_doc);
+    drain_all_pending_setup(&mut app, &bridge);
+
+    app.active = seed_doc;
     app.active_doc_mut().focused = true;
     // Seeds through the same geometry chokepoint `Msg::Resize` uses (plan
     // WP3.S9, gotcha 9) rather than a bare `viewport.set_size` — since
@@ -142,7 +208,6 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     app.relayout();
     app.sync_view();
 
-    let seed_doc = app.active;
     let mut state = State {
         app,
         mem,
@@ -152,12 +217,16 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         saves_delivered_ok: 0,
         steps: 0,
         seed_doc,
+        draft_doc,
+        bridge,
+        diverge_step: 0,
     };
     let mut prev = Snapshot::capture(&mut state.app, false);
     let mut outcome = Outcome {
         violation: None,
         final_snapshot: None,
         final_ctx: None,
+        merge_activated: prev.merge_active,
     };
 
     'session: for action in actions {
@@ -167,6 +236,24 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         match action {
             Action::FailNextSave => {
                 state.mem.fail_next_save(io::ErrorKind::PermissionDenied);
+            }
+            Action::DivergeDisk => {
+                if diverge_disk(&mut state, &mut prev, &mut outcome) {
+                    break 'session;
+                }
+            }
+            Action::DeliverDb => {
+                let bridge = Arc::clone(&state.bridge);
+                if let Some((msg, tag)) = drain_one_db_op(&mut state, &bridge)
+                    && step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome)
+                {
+                    break 'session;
+                }
+            }
+            Action::DeliverDbAll => {
+                if drain_all_db_ops(&mut state, &mut prev, &mut outcome) {
+                    break 'session;
+                }
             }
             Action::ConfirmTimeout => {
                 if let Some((_, generation)) = state.app.pending_quit {
@@ -384,10 +471,28 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
     }
 
+    // Rule 6c (issue 35): drain every recovery-store op still pending
+    // before the end-of-session undo/redo drive — left undrained, a merge/
+    // probe/append-edit ack sitting in `app.db_ops` would just carry over
+    // into a `Store` about to be shut down anyway, so this settles the
+    // backlog THIS session raised rather than handing it to the next one.
+    // Same skip conditions as Rule 6/6b.
+    if outcome.violation.is_none() && !state.app.should_quit {
+        drain_all_db_ops(&mut state, &mut prev, &mut outcome);
+    }
+
     // WP6.S4 end-of-session checks — `checks::drive_end_of_session_checks`'s
     // own doc comment carries the full rationale (undo-then-redo drive,
     // skip conditions, G15).
     checks::drive_end_of_session_checks(&mut state, &mut prev, &mut outcome, content);
+
+    // Deterministically joins the store's writer/reader threads (mirrors
+    // `rune-cli::main`'s own exit-path shutdown, `Db::shutdown`'s own doc
+    // comment) — a per-session `Store` minted for every one of thousands
+    // of fuzz cases must not leak its OS threads onto the next one.
+    if let Some(db) = state.app.db.take() {
+        db.shutdown();
+    }
 
     RunResult {
         violation: outcome.violation,
@@ -395,7 +500,95 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         final_content: prev.content,
         final_snapshot: outcome.final_snapshot,
         final_ctx: outcome.final_ctx,
+        merge_activated: outcome.merge_activated,
     }
+}
+
+/// Drains every recovery-store op enqueued by the session's own opening
+/// `workspace::open_path` (the `Load` ack, and any `Probe`/scratch ops a
+/// draft mint pulled in alongside it) before the driving loop starts —
+/// unlike `drain_one_db_op`, this runs before `State` exists and isn't a
+/// counted step: it settles the store's ONE synchronous-looking open, the
+/// same way `App::relayout`/`sync_view` below finish session setup without
+/// going through `step_and_check` either.
+fn drain_all_pending_setup(app: &mut App, bridge: &DbBridge) {
+    while let Some(&op_id) = app.db_ops.keys().min() {
+        let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
+            rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
+            rune_db::DbEvent::Fatal { .. } => true,
+        });
+        let mut effects = rune_tui::runtime::Effects::default();
+        rune_tui::app::update(app, Msg::Db(evt), &mut effects);
+    }
+}
+
+/// `Action::DivergeDisk`'s handler: publishes fresh, deterministically-
+/// varied bytes to the seeded document's own path directly on the shared
+/// `Vfs` (an external editor's write, never routed through `update`), then
+/// re-probes it through the exact away-and-back transition `merge_entry.rs`'s
+/// own fixtures use (`reprobe`) — a switch away from `seed_doc` (to the
+/// untitled draft, if one is still open, else whichever other document is)
+/// followed by a switch back, each funnelling through `workspace::
+/// switch_to`'s own probe enqueue. Neither `switch_to` call goes through
+/// `update`, so both run under `run_direct_catching_panic`'s own guard.
+/// Returns `true` when a panic stopped the session.
+/// `Action::DeliverDbAll`'s handler, also reused by Rule 6c: drains every
+/// recovery-store op pending right now, oldest first, one `step_and_check`
+/// per op — `drain_one_db_op` repeated until nothing is left or a violation
+/// stops the session. Returns `true` when the session must stop. Bounded by
+/// however many ops are pending at the moment this runs: draining never
+/// enqueues a fresh op of its own (issue 35's whole-backlog flush — a `Db`
+/// ack lands through `db_dispatch`, which only ever enqueues MORE ops from
+/// the merge-prep clean-fast-path's own `resolve_adopt`, itself one-shot).
+fn drain_all_db_ops(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
+    let bridge = Arc::clone(&state.bridge);
+    while outcome.violation.is_none() && !state.app.should_quit {
+        let Some((msg, tag)) = drain_one_db_op(state, &bridge) else {
+            return false;
+        };
+        if step_and_check(state, prev, msg, tag, None, outcome) {
+            return true;
+        }
+    }
+    false
+}
+
+fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
+    state.diverge_step += 1;
+    let bytes = format!("fuzz-external-write-{}\n", state.diverge_step).into_bytes();
+    let path = state.path.clone();
+    let _ = state.mem.remove(&path);
+    if let Ok(temp) = state.mem.write_durable(&path, &bytes) {
+        let _ = state.mem.rename_excl(&temp, &path);
+    }
+
+    let seed_doc = state.seed_doc;
+    let switch_target = if state.draft_doc != seed_doc && state.app.doc(state.draft_doc).is_some() {
+        state.draft_doc
+    } else {
+        state
+            .app
+            .documents
+            .iter()
+            .map(|(&id, _)| id)
+            .find(|&id| id != seed_doc)
+            .unwrap_or(seed_doc)
+    };
+
+    let violation = run_direct_catching_panic(&mut state.app, move |app| {
+        if switch_target != seed_doc {
+            workspace::switch_to(app, switch_target);
+        }
+        workspace::switch_to(app, seed_doc);
+    });
+    if let Some(v) = violation {
+        outcome.violation = Some(v);
+        outcome.final_snapshot = Some(prev.clone());
+        outcome.final_ctx = None;
+        return true;
+    }
+    *prev = Snapshot::capture(&mut state.app, false);
+    false
 }
 
 // `key_step`, `discharge_pending_save`, `step_and_check`,
