@@ -23,6 +23,19 @@ pub enum HighlightVersion {
     Future,
 }
 
+impl HighlightVersion {
+    /// Resolves against `live` per this enum's own doc rule — the one place
+    /// both driver arms (`Action::Highlight`, `Action::HighlightTree`) that
+    /// synthesize a `Msg::Highlighted` reply compute the version they claim.
+    pub fn resolve(self, live: u64) -> u64 {
+        match self {
+            HighlightVersion::Live => live,
+            HighlightVersion::Stale => live.saturating_sub(1),
+            HighlightVersion::Future => live.saturating_add(1),
+        }
+    }
+}
+
 /// One fuzzer-generated input. `driver::run` expands each `Action` into one
 /// or more `Msg`s (`Type` expands per character) and delivers them through
 /// the real `rune_tui::app::update`.
@@ -174,6 +187,28 @@ pub fn tree_fixture_line_ranges(source: &str, base: usize) -> Vec<std::ops::Rang
         .into_iter()
         .map(|r| r.start.saturating_add(base)..r.end.saturating_add(base))
         .collect()
+}
+
+/// The parse budget `highlight_tree_reply` hands to `rune_ts::parse` — the
+/// fixtures are tiny, so this is never expected to be exhausted; it exists
+/// only so a parse can never block indefinitely.
+pub const TREE_PARSE_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Builds the one `Msg::Highlighted`-ready reply `Action::HighlightTree`
+/// delivers: a single region whose `LineMap` is `tree_fixture_line_ranges`
+/// anchored at `base`, and whose payload is a real `rune_ts::parse` of
+/// `tree_fixture(fixture)`, mapped to `RegionPayload::Tree` (`None` on a
+/// parse failure, never a panic — the driver and its acceptance test share
+/// this one construction so they can never drift apart).
+pub fn highlight_tree_reply(fixture: u8, base: usize) -> rune_tui::highlight::HighlightReply {
+    let source = tree_fixture(fixture);
+    let map = rune_tui::linemap::LineMap::new(tree_fixture_line_ranges(source, base));
+    let payload = rune_ts::parse("json", source, TREE_PARSE_BUDGET)
+        .map(rune_tui::highlight::RegionPayload::Tree);
+    rune_tui::highlight::HighlightReply {
+        regions: vec![rune_tui::highlight::RegionResult { map, payload }],
+        truncated: false,
+    }
 }
 
 #[cfg(test)]
