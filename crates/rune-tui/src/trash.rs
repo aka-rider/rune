@@ -10,7 +10,7 @@
 //! recognized as the same document. Inherited from the rest of the
 //! workspace's document-identity matching, not introduced here.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rune_vfs::Vfs;
@@ -33,6 +33,11 @@ use crate::workspace;
 /// last re-checked again at `confirm` and once more when the reply lands,
 /// since the user can keep typing between each of these points.
 pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
+    if app.trash_pending.is_some() {
+        messages::error(app, "a trash is already in progress");
+        return;
+    }
+
     let target = if app.focus() == Pane::Explorer {
         let Some((path, is_dir)) = app
             .explorer
@@ -40,6 +45,7 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
             .get(app.explorer.nav.cursor)
             .map(|e| (e.path.clone(), e.is_dir))
         else {
+            messages::error(app, "nothing to trash \u{2014} no file selected");
             return;
         };
         if is_dir {
@@ -56,10 +62,7 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
     };
 
     let path = app.vfs.resolve(&target).unwrap_or_else(|_| target.clone());
-    if let Some(id) = workspace::existing_document_for(app, &path)
-        && materialize_ack::is_dirty_now(app, id)
-    {
-        messages::error(app, "unsaved changes \u{2014} save before trashing");
+    if refuse_if_dirty(app, &path) {
         return;
     }
 
@@ -72,24 +75,39 @@ pub(crate) fn request_trash(app: &mut App, _effects: &mut Effects) {
     );
 }
 
-/// The trash guard's `[Y]es` answer: re-runs the dirty refusal (the user
-/// may have edited the open document between the chord and the confirm),
-/// then enqueues the off-thread `vfs.trash` call under a freshly minted
-/// generation — `App::trash_gen` names the one IN-FLIGHT trash, so a
-/// second request started before this one's reply lands supersedes it
-/// rather than racing it.
+/// The trash guard's `[Y]es` answer: refuses a second commit while one is
+/// already in flight (mirrors `rename::begin`'s `in_flight` refusal),
+/// re-runs the dirty refusal (the user may have edited the open document
+/// between the chord and the confirm), then enqueues the off-thread `vfs.
+/// trash` call under a freshly minted generation and records it in `app.
+/// trash_pending`.
 pub(crate) fn confirm(app: &mut App, path: PathBuf, effects: &mut Effects) {
-    if let Some(id) = workspace::existing_document_for(app, &path)
-        && materialize_ack::is_dirty_now(app, id)
-    {
-        messages::error(app, "unsaved changes \u{2014} save before trashing");
+    if app.trash_pending.is_some() {
+        messages::error(app, "a trash is already in progress");
+        return;
+    }
+    if refuse_if_dirty(app, &path) {
         return;
     }
     app.trash_gen = app.trash_gen.wrapping_add(1);
     let generation = app.trash_gen;
+    app.trash_pending = Some(path.clone());
     effects
         .cmds
         .push(trash_cmd(Arc::clone(&app.vfs), path, generation));
+}
+
+/// Refuses (with a `messages::error`) a trash target whose document is open
+/// and dirty right now — shared by `request_trash`'s initial check and
+/// `confirm`'s re-check, since the user can keep typing between the two.
+fn refuse_if_dirty(app: &mut App, path: &Path) -> bool {
+    if let Some(id) = workspace::existing_document_for(app, path)
+        && materialize_ack::is_dirty_now(app, id)
+    {
+        messages::error(app, "unsaved changes \u{2014} save before trashing");
+        return true;
+    }
+    false
 }
 
 /// The off-thread `vfs.trash` call — mirrors `rename_create::rename_cmd`'s
@@ -107,13 +125,21 @@ fn trash_cmd(vfs: Arc<dyn Vfs + Send + Sync>, path: PathBuf, generation: u32) ->
 
 /// `Msg::TrashDone`'s handler. A stale `generation` (a fresh trash request
 /// started and finished before this one's reply lands) is dropped on
-/// arrival. `Err` is reported and closes nothing. `Ok` re-derives dirtiness
-/// one last time (assumption A4): a document that became dirty while the
-/// Cmd was in flight keeps its tab open (the file is gone, but the unsaved
-/// words are not); otherwise the tab is closed. Any Guard still live for
-/// the closing document (`close_now` does not sweep `app.guard`) is
-/// cleared first, or the footer would go on rendering a prompt for a
-/// document that no longer exists.
+/// arrival before `app.trash_pending` is touched — under single-flight
+/// enforcement (`request_trash`/`confirm` both refuse while it is `Some`)
+/// this reply can only be stale for a generation that predates the one
+/// `app.trash_pending` currently names, so it owns none of the state there
+/// is to clear. Once a reply IS for the current generation, `app.
+/// trash_pending` is cleared unconditionally — before the `Ok`/`Err` match,
+/// so neither outcome can leave the next request refused forever. `Err` is
+/// reported and closes nothing. `Ok` re-derives dirtiness one last time
+/// (assumption A4): a document that became dirty while the Cmd was in
+/// flight keeps its tab open (the file is gone, but the unsaved words are
+/// not) and a single Warn message says so; otherwise the tab is closed and
+/// a single Info message says so — exactly one message per outcome. Any
+/// Guard still live for the closing document (`close_now` does not sweep
+/// `app.guard`) is cleared first, or the footer would go on rendering a
+/// prompt for a document that no longer exists.
 pub(crate) fn handle_trash_done(
     app: &mut App,
     generation: u32,
@@ -124,18 +150,18 @@ pub(crate) fn handle_trash_done(
     if generation != app.trash_gen {
         return;
     }
-    let name = path.file_name().map_or_else(
-        || path.to_string_lossy().into_owned(),
-        |n| n.to_string_lossy().into_owned(),
-    );
+    app.trash_pending = None;
+    let name = display_name(&path);
     match result {
         Err(e) => {
             messages::error(app, format!("trash failed: {e}"));
         }
         Ok(()) => {
+            let mut kept_open = false;
             if let Some(id) = workspace::existing_document_for(app, &path) {
                 sweep_live_guard(app, id);
                 if materialize_ack::is_dirty_now(app, id) {
+                    kept_open = true;
                     messages::warn(
                         app,
                         format!(
@@ -147,7 +173,9 @@ pub(crate) fn handle_trash_done(
                 }
             }
             explorer::refresh_for(app, &path, effects);
-            messages::info(app, format!("moved to Trash: {name}"));
+            if !kept_open {
+                messages::info(app, format!("moved to Trash: {name}"));
+            }
         }
     }
 }
@@ -159,4 +187,14 @@ fn sweep_live_guard(app: &mut App, doc: DocumentId) {
         guard::clear_guard(app);
         messages::info(app, "prompt dismissed \u{2014} file was trashed");
     }
+}
+
+/// The display name for a trash target: the file name, or the whole path
+/// when it has none (e.g. a root). Shared by the guard footer's prompt and
+/// this module's own `Ok`/`Err` messages.
+pub(crate) fn display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |n| n.to_string_lossy().into_owned(),
+    )
 }

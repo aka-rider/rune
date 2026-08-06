@@ -230,6 +230,42 @@ fn yes_enqueues_a_trash_cmd() {
     assert!(app.guard.is_none());
 }
 
+/// A second `⌘⌫`+`y` on the same still-clean doc while the first trash
+/// `Cmd` is in flight is refused (single-flight): no second `Cmd` is
+/// enqueued, no guard is raised, an error is posted — and the first
+/// request's reply still lands normally once it arrives.
+#[test]
+fn second_trash_while_one_in_flight_is_refused() {
+    let mem = seeded_vfs();
+    let mut app = app_with(&mem);
+    let closing_id = app.active;
+    send(&mut app, sup_backspace());
+    let mut effects = send(&mut app, yes());
+    assert_eq!(effects.cmds.len(), 1);
+    let cmd = effects.cmds.remove(0);
+
+    send(&mut app, sup_backspace());
+
+    assert!(
+        app.guard.is_none(),
+        "a second trash request must not raise a guard while one is in flight"
+    );
+    assert_eq!(
+        messages::newest(&app).map(|m| m.severity),
+        Some(Severity::Error)
+    );
+
+    let msg = cmd.run().expect("Trash Cmd replies with a Msg");
+    send(&mut app, msg);
+
+    assert!(
+        !app.documents.contains_key(&closing_id),
+        "the first request's reply must still land normally"
+    );
+    let text = messages::log_text(&app);
+    assert!(text.contains("moved to Trash"), "log must say so: {text:?}");
+}
+
 /// `Msg::TrashDone{Ok}` closes the open tab — minting a fresh Untitled
 /// since it was the last document — and posts "moved to Trash".
 #[test]
@@ -316,10 +352,14 @@ fn guard_at_reply_is_cleared_before_the_close() {
         app.guard.is_none(),
         "the stale guard for the closed document must be swept"
     );
+    assert!(
+        !app.documents.contains_key(&id),
+        "the trashed document must actually be closed"
+    );
     let text = rune_tui::footer::footer_text(&app);
     assert!(
-        !text.contains("[S]ave") || !app.documents.contains_key(&id),
-        "footer must not keep prompting for a trashed document"
+        !text.contains("[S]ave"),
+        "footer must not keep prompting for a trashed document: {text:?}"
     );
 }
 

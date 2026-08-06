@@ -200,10 +200,7 @@ fn guard_spans(app: &App, prompt: &GuardPrompt) -> Vec<Span<'static>> {
             guard::DISK_CONFLICT_OPTIONS
         }
         GuardKind::Trash { path } => {
-            let name = path.file_name().map_or_else(
-                || path.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let name = crate::trash::display_name(path);
             spans.push(Span::styled(
                 format!("Trash {name}? "),
                 app.theme.chrome.footer_hint,

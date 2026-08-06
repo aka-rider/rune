@@ -174,8 +174,9 @@ pub(super) fn step_and_check(
         } else if cmd.kind() == CmdKind::Trash {
             // Same single-slot reasoning as `pending_rename` above:
             // structurally at most one trash `Cmd` can be in flight at a
-            // time (a guard for one `GuardKind::Trash` request is answered
-            // or cancelled before another can be raised), so overwriting an
+            // time (`trash::request_trash` and `trash::confirm` both
+            // refuse while `app.trash_pending` is `Some`, mirroring
+            // `rename::begin`'s `in_flight` refusal), so overwriting an
             // existing `Some` here can never lose a still-outstanding one
             // in practice.
             state.pending_trash = Some(cmd);
