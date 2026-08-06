@@ -91,7 +91,11 @@ fn app_with_store(vfs: Arc<dyn Vfs + Send + Sync>) -> (App, Arc<DbBridge>) {
 
 /// Feeds the buffered acknowledgement for the single outstanding operation
 /// on the given document through the update loop, exactly as the real
-/// runtime does when the store thread replies.
+/// runtime does when the store thread replies. The wait itself is the
+/// fuzz driver's own drain predicate (`rune_fuzz::driver::wait_for_db_op`)
+/// — this test's only addition is picking the op by DOCUMENT rather than
+/// oldest-first, and panicking loudly on a failure this scenario never
+/// expects to see.
 fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
     let op_id = *app
         .db_ops
@@ -99,20 +103,14 @@ fn drain_one_op_for(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
         .find(|(_, pending)| pending.doc == doc)
         .expect("one op recorded for this document")
         .0;
-    let result = match bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    }) {
-        DbEvent::Ok { result, .. } => result,
+    match rune_fuzz::driver::wait_for_db_op(bridge, op_id) {
+        evt @ DbEvent::Ok { .. } => {
+            let mut effects = Effects::default();
+            app::update(app, Msg::Db(evt), &mut effects);
+        }
         DbEvent::Err { id, error } => panic!("op {id} failed: {error}"),
         DbEvent::Fatal { error } => panic!("writer thread fatal: {error}"),
-    };
-    let mut effects = Effects::default();
-    app::update(
-        app,
-        Msg::Db(DbEvent::Ok { id: op_id, result }),
-        &mut effects,
-    );
+    }
 }
 
 /// Writes bytes to disk the same way materialize does: a durable temp
