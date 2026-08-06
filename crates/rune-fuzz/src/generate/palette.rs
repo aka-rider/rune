@@ -581,13 +581,13 @@ pub(super) const MERGE_KEY: KeyInput = KeyInput {
 };
 
 /// `[`/`]` (`MergeCommand::PrevConflict`/`NextConflict`) and `o`/`t`/`b`
-/// (`MergeCommand::KeepOurs`/`KeepTheirs`/`KeepBoth`) — `merge/keys.rs::
-/// intercept`'s own alphabet. `cluster_merge` presses 1-3 of these right
-/// after the working form installs, so they land on a genuine resolver most
-/// of the time rather than always falling through to plain-char insertion;
-/// a session that never reaches `Active` (a `DiskAhead` clean fast path, a
-/// UTF-8 refusal, ...) still exercises the fallthrough itself, which is
-/// exactly `MERGE-KEY-FEEDBACK`'s other half.
+/// (`MergeCommand::KeepOurs`/`KeepTheirs`/`KeepBoth`) — the resolver
+/// intercept's own alphabet. `cluster_merge` presses exactly one of these
+/// right after the working form installs, so it lands on a genuine resolver
+/// most of the time rather than always falling through to plain-char
+/// insertion; a session that never reaches `Active` (a `DiskAhead` clean
+/// fast path, a UTF-8 refusal, ...) still exercises the fallthrough itself,
+/// which is exactly `MERGE-KEY-FEEDBACK`'s other half.
 pub(super) static MERGE_RESOLVE_KEYS: &[KeyInput] = &[
     KeyInput {
         code: KeyCode::Char('['),

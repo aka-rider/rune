@@ -1,5 +1,5 @@
-//! Acceptance anchor for the store-backed save pipeline (issue 35 follow-
-//! up): proves the real driver can run an armed store-backed save all the
+//! Acceptance anchor for the store-backed save pipeline: proves the real
+//! driver can run an armed store-backed save all the
 //! way to completion — `MaterializePrepare` ack -> the caller-side `vfs`
 //! `Cmd` -> `MaterializeRecord` ack -> `save_in_flight` clearing — with no
 //! step dropped on the floor and no `SAVE-INFLIGHT-SM` false positive

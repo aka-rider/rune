@@ -1,4 +1,4 @@
-//! Acceptance anchor for issue 35: proves the store-backed session can
+//! Acceptance anchor: proves the store-backed session can
 //! genuinely reach `MergeState::Active` through the REAL driver entry point
 //! (`driver::run`), independent of the generator's random weights — the
 //! four merge invariants (`invariant/merge.rs`) are non-vacuous only if
