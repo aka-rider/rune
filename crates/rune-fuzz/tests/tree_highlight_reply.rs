@@ -13,45 +13,19 @@
 //! directly.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::ops::Range;
-use std::sync::Arc;
+mod common;
+
 use std::time::Duration;
 
-use rune_core::buffer::Buffer;
+use common::new_app;
+use rune_fuzz::action::tree_fixture_line_ranges;
 use rune_tui::app::{self, App};
 use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult, visible_spans};
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{Effects, Msg};
-use rune_vfs::{Mem, Vfs};
 
 const FIXTURE: &str = "{\n  \"a\": 1,\n  \"b\": [true, null]\n}";
-
-fn new_app(content: &str) -> App {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-    let mut app = App::new(Buffer::new(content), None, vfs, None);
-    app.frame_width = 80;
-    app.frame_height = 24;
-    app.relayout();
-    app.sync_view();
-    app
-}
-
-/// The fixture's own physical line byte ranges, exactly as a whole-document
-/// region's `LineMap` would be built from it: no container prefix, so the
-/// reconstructed text is byte-identical to the buffer content.
-fn physical_line_ranges(content: &str) -> Vec<Range<usize>> {
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    for (i, b) in content.bytes().enumerate() {
-        if b == b'\n' {
-            ranges.push(start..i);
-            start = i + 1;
-        }
-    }
-    ranges.push(start..content.len());
-    ranges
-}
 
 fn deliver_tree_reply(app: &mut App, map: LineMap, tree: rune_ts::ParsedTree, version: u64) {
     let msg = Msg::Highlighted {
@@ -92,7 +66,7 @@ fn tree_reply_with_default_linemap_is_invisible() {
 fn tree_reply_with_real_linemap_surfaces_spans() {
     let mut app = new_app(FIXTURE);
     let live_version = app.active_doc().buffer.version();
-    let map = LineMap::new(physical_line_ranges(FIXTURE));
+    let map = LineMap::new(tree_fixture_line_ranges(FIXTURE, 0));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version);
 
     let doc = app.active_doc();
@@ -140,7 +114,7 @@ fn stale_tree_reply_is_dropped() {
         live_version >= 1,
         "the edit above must have bumped the version"
     );
-    let map = LineMap::new(physical_line_ranges(FIXTURE));
+    let map = LineMap::new(tree_fixture_line_ranges(FIXTURE, 0));
     deliver_tree_reply(&mut app, map, parse_fixture(), live_version - 1);
 
     let after = visible_spans(app.active_doc(), 0..content.len());

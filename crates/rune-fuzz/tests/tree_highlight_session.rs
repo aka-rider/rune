@@ -20,18 +20,15 @@
 //! carries no `RegionPayload::Spans` at all.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
-use std::time::Duration;
+mod common;
 
-use rune_core::buffer::Buffer;
-use rune_fuzz::action::{Action, HighlightVersion, tree_fixture, tree_fixture_line_ranges};
+use common::new_app;
+use rune_fuzz::action::{Action, HighlightVersion, highlight_tree_reply, tree_fixture};
 use rune_fuzz::driver;
 use rune_tui::app::{self, App};
-use rune_tui::highlight::{HighlightReply, RegionPayload, RegionResult, visible_spans};
+use rune_tui::highlight::visible_spans;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::linemap::LineMap;
 use rune_tui::runtime::{Effects, Msg};
-use rune_vfs::{Mem, Vfs};
 
 /// The multi-line entry in `TREE_FIXTURES` — spans more than one physical
 /// line, so its `LineMap` has more than one range to reconstruct.
@@ -85,16 +82,6 @@ fn stale_highlight_tree_session_has_no_invariant_violation() {
     assert_clean_session(HighlightVersion::Stale);
 }
 
-fn new_app(content: &str) -> App {
-    let vfs: Arc<dyn Vfs + Send + Sync> = Arc::new(Mem::new());
-    let mut app = App::new(Buffer::new(content), None, vfs, None);
-    app.frame_width = 80;
-    app.frame_height = 24;
-    app.relayout();
-    app.sync_view();
-    app
-}
-
 fn press_key(app: &mut App, key: KeyInput) {
     let mut effects = Effects::default();
     app::update(app, Msg::Key(key), &mut effects);
@@ -117,18 +104,11 @@ fn type_text(app: &mut App, text: &str) {
     }
 }
 
-/// Exactly the message `driver`'s `Action::HighlightTree` arm constructs.
 fn deliver_tree(app: &mut App, version: u64, base: usize) {
-    let source = tree_fixture(FIXTURE_INDEX);
-    let map = LineMap::new(tree_fixture_line_ranges(source, base));
-    let payload = rune_ts::parse("json", source, Duration::from_secs(5)).map(RegionPayload::Tree);
     let msg = Msg::Highlighted {
         doc: app.active,
         version,
-        result: Some(HighlightReply {
-            regions: vec![RegionResult { map, payload }],
-            truncated: false,
-        }),
+        result: Some(highlight_tree_reply(FIXTURE_INDEX, base)),
     };
     let mut effects = Effects::default();
     app::update(app, msg, &mut effects);
