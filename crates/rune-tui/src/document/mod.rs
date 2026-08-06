@@ -88,8 +88,8 @@ pub struct Document {
     /// change them) does not — saving protects what the user wrote, undo
     /// rewrites it.
     pub read_only: ReadOnly,
-    /// Marks this tab exempt from the tab-cap LRU eviction (set/cleared by
-    /// the ^G toggle); has no other effect yet.
+    /// Marks the tab the tab-cap eviction victim search must skip
+    /// (set/cleared by the ^G toggle).
     pub pinned: bool,
     /// The file this document is bound to, or `None` for an untitled draft
     /// (moved off `App` in WP1: every open document has its own identity).

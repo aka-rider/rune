@@ -29,13 +29,30 @@ pub fn toggle_pin(app: &mut App, id: DocumentId) {
 /// `^1`-`^0` can ever address.
 pub const MAX_TABS: usize = 10;
 
+/// Whether the strip has room for one more interactive tab: occupied slots
+/// (`tabs.order`'s length, minus one when a live Explorer preview still
+/// holds a place) under [`MAX_TABS`]. A preview is displaced by the very
+/// switch that lands whatever open is about to proceed, so it never holds a
+/// lasting slot and must not count toward the cap.
+fn room_available(app: &App) -> bool {
+    let occupied = app.tabs.order.len();
+    let occupied = if app.explorer.preview.is_some_and(|id| app.doc(id).is_some()) {
+        occupied.saturating_sub(1)
+    } else {
+        occupied
+    };
+    occupied < MAX_TABS
+}
+
 /// Makes room for one more interactive tab, evicting if necessary.
-/// Returns `true` when the strip already has room or an eviction just
-/// freed a slot; `false` when the open must be refused — either because
-/// nothing was eligible, or because the eviction candidate turned out to
+/// Returns `true` when the strip already has room (accounting for a
+/// displaceable live preview) or an eviction just freed a slot; `false`
+/// when the open must be refused — either because nothing was eligible,
+/// because a foreign guard already occupies the one prompt slot an
+/// eviction would need, or because the eviction candidate turned out to
 /// be dirty and now has its own close prompt in the way.
 pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
-    if app.tabs.order.len() < MAX_TABS {
+    if room_available(app) {
         return true;
     }
     let eligible: Vec<DocumentId> = app
@@ -57,24 +74,36 @@ pub fn ensure_room(app: &mut App, effects: &mut Effects) -> bool {
     let had_guard = app.guard.is_some();
     if let Some(victim) = clean.or_else(|| eligible.first().copied()) {
         if clean.is_none() {
+            if had_guard {
+                // The single guard slot is already taken, so the close
+                // below is guaranteed to refuse arming its own — switching
+                // the active document over for an eviction that cannot
+                // happen would only hijack focus (and auto-exit a live
+                // merge session) for an open that gets refused anyway.
+                crate::messages::warn(app, "Tab limit reached — close or unpin a tab");
+                return false;
+            }
             // The DirtyClose prompt must cover the document the user can
             // see; arming it for a background tab invites a [D]iscard
             // aimed at the wrong buffer.
             crate::workspace::switch_to(app, victim);
         }
         crate::workspace::request_close(app, victim, effects);
-        if app.tabs.order.len() < MAX_TABS {
-            return true;
-        }
         // `request_close` discards `set_guard`'s own return, and a
         // pre-existing foreign guard would also leave `app.guard` `Some`
         // here — the `had_guard` snapshot plus a victim match is the only
         // way to tell "this eviction just armed its own prompt" apart from
-        // "something else already had the guard".
+        // "something else already had the guard". Checked BEFORE the room
+        // re-check below: a guard now covering `victim` must refuse the
+        // open even if `victim`'s own removal would otherwise have freed a
+        // slot, because the prompt still needs to land on a visible tab.
         let armed_for_victim = !had_guard
             && matches!(&app.guard, Some(GuardPrompt { doc, kind: GuardKind::DirtyClose }) if *doc == victim);
         if armed_for_victim {
             return false;
+        }
+        if room_available(app) {
+            return true;
         }
     }
     crate::messages::warn(app, "Tab limit reached — close or unpin a tab");
@@ -299,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn an_armed_foreign_guard_refuses_with_the_message() {
+    fn a_futile_dirty_eviction_under_a_foreign_guard_does_not_switch() {
         let (mut app, ids) = filled_app(10);
         for &id in &ids[1..] {
             crate::commands::edit::insert_char(&mut app, id, '!');
@@ -316,6 +345,10 @@ mod tests {
         let mut effects = Effects::default();
         assert!(!ensure_room(&mut app, &mut effects));
 
+        assert_eq!(
+            app.active, doc,
+            "a foreign guard makes the eviction futile — must not hijack focus for it"
+        );
         assert!(matches!(
             &app.guard,
             Some(GuardPrompt { doc: guard_doc, kind: GuardKind::DirtyQuit }) if *guard_doc == doc
@@ -324,5 +357,25 @@ mod tests {
             messages::newest_text(&app),
             Some("Tab limit reached — close or unpin a tab")
         );
+    }
+
+    #[test]
+    fn a_live_preview_frees_its_slot_for_the_incoming_open() {
+        let (mut app, ids) = filled_app(10);
+        let preview = ids[1];
+        app.doc_mut(preview).unwrap().read_only = ReadOnly::Preview;
+        app.explorer.preview = Some(preview);
+
+        let mut effects = Effects::default();
+        assert!(ensure_room(&mut app, &mut effects));
+
+        assert_eq!(app.tabs.order.len(), 10, "no tab was evicted");
+        assert!(
+            app.tabs.order.contains(&preview),
+            "the preview itself is still open — it is displaced by the switch \
+             the incoming document performs, not by ensure_room"
+        );
+        assert!(app.guard.is_none());
+        assert_eq!(messages::newest_text(&app), None);
     }
 }
