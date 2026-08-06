@@ -8,6 +8,8 @@
 //! a keystroke aimed at the bar must never fall through and mutate the
 //! document buffer underneath it.
 
+use std::ops::Range;
+
 use unicode_segmentation::UnicodeSegmentation;
 
 use rune_core::cursor::CursorSet;
@@ -59,13 +61,19 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, _effects: &mut Effects) -
 
 /// Steps to the next (`forward`) or previous non-concealed match, wrapping
 /// around the ends of the match list, from the active document's current
-/// cursor position — the concealed check runs against the pre-jump
-/// `concealed` cache ([`super::recompute`]'s own snapshot, not re-derived
-/// here). A no-op when there are no matches, or every match is concealed.
-/// Otherwise jumps the cursor onto the match, brings it on screen for a
-/// read-only document (whose viewport never chases the cursor on its own —
-/// `document::sync::scroll_to_cursor` short-circuits there), and persists
-/// the query as just-used search history.
+/// cursor position. Revalidates against the live document FIRST: the
+/// runtime drains a whole batch of messages before the next `sync_view`
+/// (`super::sync`'s only caller), so an async doc-switch coalesced with this
+/// very Enter in one batch could otherwise leave `state.matches` holding
+/// byte ranges from the document that was active a moment ago — a stale
+/// `doc`/`buffer_version` triggers one [`recompute`] right here before
+/// anything is read. The concealed set is never cached: it depends on
+/// reveal state and viewport width, not `buffer_version`, so it is
+/// recomputed fresh from the CURRENT view on every call. Every outcome is
+/// reported: a jump moves the cursor and persists the query as search
+/// history; nothing navigable posts a distinct message explaining why
+/// (`no matches`/`all N matches are concealed`) rather than leaving the
+/// keypress silent.
 ///
 /// Also reached with the bar OPEN from the closed-bar next/prev chords
 /// (`GlobalCommand::SearchNext`/`SearchPrev`, `pane::handle_global_command`)
@@ -74,49 +82,83 @@ pub(crate) fn advance(app: &mut App, forward: bool) {
     let Some(state) = app.search.as_ref() else {
         return;
     };
-    let matches = state.matches.clone();
-    let concealed = state.concealed.clone();
-    let query = state.draft.clone();
-    let Some(idx) = jump(app, &matches, &concealed, forward) else {
+    if state.doc != app.active || state.buffer_version != app.active_doc().buffer.version() {
+        recompute(app);
+    }
+    let Some(state) = app.search.as_ref() else {
         return;
     };
-    if let Some(s) = app.search.as_mut() {
-        s.current = Some(idx);
+    let matches = state.matches.clone();
+    let query = state.draft.clone();
+    let concealed = current_concealed(app);
+    match jump(app, &matches, &concealed, forward) {
+        Some(idx) => {
+            if let Some(s) = app.search.as_mut() {
+                s.current = Some(idx);
+            }
+            persist_query(app, &query);
+        }
+        None => report_no_target(app, &query, &matches),
     }
-    persist_query(app, &query);
 }
 
 /// The closed-bar mirror of [`advance`] (`GlobalCommand::SearchNext`/
-/// `SearchPrev`, plan WP5.S1): there is no `SearchState` to read `matches`/
-/// `concealed` from — the bar isn't open — so both are recomputed on demand
-/// from `App::last_search_query` via the same pure functions
-/// [`super::recompute`] itself calls, then jumped through the identical
-/// [`jump`] helper `advance` uses (same concealed-skip, same read-only
-/// scroll). Paints no highlights: those exist only while the bar is open
-/// (decision A2). Returns `false` without doing anything when there is no
-/// last query to navigate with — the caller is responsible for surfacing
-/// that with user-visible feedback, since a silently swallowed chord is
-/// never acceptable.
+/// `SearchPrev`, plan WP5.S1): there is no `SearchState` to read `matches`
+/// from — the bar isn't open — so it's recomputed on demand from
+/// `App::last_search_query` via the same pure function [`super::recompute`]
+/// itself calls, the concealed set freshly from the current view exactly as
+/// [`advance`] does, then jumped through the identical [`jump`] helper
+/// `advance` uses (same concealed-skip, same read-only scroll). Paints no
+/// highlights: those exist only while the bar is open (decision A2).
+/// Returns `false` without doing anything when there is no last query at
+/// all — the caller reports that case (`pane::search_step`'s "no previous
+/// search"). A last query that simply has no navigable target in THIS
+/// document is instead reported right here, same as [`advance`], so the
+/// caller's silence never masks it.
 pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
     let Some(query) = app.last_search_query.clone() else {
         return false;
     };
     let matches = super::compute_matches(app.active_doc().buffer.content(), &query);
-    let concealed = app
-        .active_doc()
-        .view
-        .as_ref()
-        .map(|view| super::concealed_ranges(&view.wrap))
-        .unwrap_or_default();
-    if jump(app, &matches, &concealed, forward).is_some() {
-        persist_query(app, &query);
+    let concealed = current_concealed(app);
+    match jump(app, &matches, &concealed, forward) {
+        Some(_) => persist_query(app, &query),
+        None => report_no_target(app, &query, &matches),
     }
     true
 }
 
+/// The concealed byte ranges as of THIS instant's active document view —
+/// never cached, since concealment tracks reveal state (cursor) and
+/// viewport width, neither of which bumps `buffer_version`; a mouse click
+/// that reveals a table row must make its matches navigable on the very
+/// next Enter, not just after the next edit.
+fn current_concealed(app: &App) -> Vec<Range<usize>> {
+    app.active_doc()
+        .view
+        .as_ref()
+        .map(|view| super::concealed_ranges(&view.wrap))
+        .unwrap_or_default()
+}
+
+/// Posts the feedback [`advance`]/[`advance_closed`] owe the user when
+/// [`jump`] found nothing to land on: a blank query is left silent (nothing
+/// was searched for), an empty match list names the query, and a non-empty
+/// list whose every match is concealed says so distinctly, since "no
+/// matches" would be simply false in that case.
+fn report_no_target(app: &mut App, query: &str, matches: &[Range<usize>]) {
+    if matches.is_empty() {
+        if !query.trim().is_empty() {
+            messages::info(app, format!("no matches for \"{query}\""));
+        }
+    } else {
+        messages::info(app, format!("all {} matches are concealed", matches.len()));
+    }
+}
+
 /// The shared cursor-jump core [`advance`] and [`advance_closed`] both
-/// funnel through: given a match list and its concealed cache (in whatever
-/// coordinate space the caller sourced them from — live `SearchState` or a
+/// funnel through: given a match list and the concealed set (freshly
+/// computed by the caller — live bar via [`current_concealed`] or a
 /// closed-bar on-demand recompute), finds the next/prev non-concealed match
 /// relative to the active document's cursor, moves the cursor there and,
 /// for a read-only document, the viewport too. Returns the index into
@@ -125,8 +167,8 @@ pub(crate) fn advance_closed(app: &mut App, forward: bool) -> bool {
 /// happened" means for its own state.
 fn jump(
     app: &mut App,
-    matches: &[std::ops::Range<usize>],
-    concealed: &[std::ops::Range<usize>],
+    matches: &[Range<usize>],
+    concealed: &[Range<usize>],
     forward: bool,
 ) -> Option<usize> {
     if matches.is_empty() {
@@ -149,17 +191,23 @@ fn jump(
 
 /// Records `query` as just-used in the recovery store's `search_history`
 /// table and remembers it as the closed-bar navigation target
-/// (`App::last_search_query`). A degraded or absent store enqueues
-/// nothing. The enqueued op id is tracked in `App::search_history_ops` so
-/// `db_dispatch::handle_db_event` can recognize a LATER `DbEvent::Err` for
-/// this exact write as a cosmetic failure rather than a real recovery one —
-/// an immediate enqueue `Err` (this write never even reached the writer's
-/// queue) has no such op id to track, so it's reported right here instead.
-/// Either way: a message through the log, never `on_store_failure`'s sticky
-/// degrade — a failed history touch must not disable recovery for the rest
-/// of the session.
+/// (`App::last_search_query`). Debounced by equality against
+/// `App::last_persisted_search_query`: wrapping back onto the same match (or
+/// simply pressing Enter again on an unchanged query) enqueues nothing after
+/// the first time — a DB write per key-repeat would be pure waste. A
+/// degraded or absent store enqueues nothing. The enqueued op id is tracked
+/// in `App::search_history_ops` so `db_dispatch::handle_db_event` can
+/// recognize a LATER `DbEvent::Err` for this exact write as a cosmetic
+/// failure rather than a real recovery one — an immediate enqueue `Err`
+/// (this write never even reached the writer's queue) has no such op id to
+/// track, so it's reported right here instead. Either way: a message
+/// through the log, never `on_store_failure`'s sticky degrade — a failed
+/// history touch must not disable recovery for the rest of the session.
 fn persist_query(app: &mut App, query: &str) {
     app.last_search_query = Some(query.to_string());
+    if app.last_persisted_search_query.as_deref() == Some(query) {
+        return;
+    }
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
@@ -169,6 +217,7 @@ fn persist_query(app: &mut App, query: &str) {
     match db.store.touch_search_query(query) {
         Ok(op_id) => {
             app.search_history_ops.insert(op_id);
+            app.last_persisted_search_query = Some(query.to_string());
         }
         Err(e) => {
             messages::error(app, format!("search history not saved: {e}"));
@@ -211,32 +260,61 @@ fn browse_needle(state: &super::SearchState) -> String {
         .unwrap_or_else(|| state.draft.clone())
 }
 
-/// ↑: steps one entry OLDER in the fuzzy-filtered MRU history, clamping at
-/// the oldest match rather than wrapping — history browsing is a one-way
-/// walk back through time, not a ring like match navigation. The first ↑ of
-/// a bar-open session captures the live draft into `history_draft` before
-/// replacing `draft` with the selected entry, so every subsequent step (and
-/// [`history_next`]'s own restore) still filters against what the user
-/// actually typed. A no-op with no history, or when nothing in it matches
-/// the needle.
-fn history_prev(app: &mut App) {
+/// Which way [`history_step`] walks the fuzzy-filtered MRU history.
+enum BrowseDir {
+    /// ↑: one entry OLDER, clamping at the oldest match rather than
+    /// wrapping — history browsing is a one-way walk back through time, not
+    /// a ring like match navigation.
+    Prev,
+    /// ↓: one entry NEWER; walking past the newest filtered entry ends the
+    /// browse session instead of clamping (see [`history_step`]).
+    Next,
+}
+
+/// The shared body of [`history_prev`]/[`history_next`]: fetches the
+/// fuzzy-filtered history, steps `history_pos` one entry in `dir`'s
+/// direction, and writes the selected entry into `draft` — differing from
+/// its mirror only in which way `history_pos` moves and, for `Next`,
+/// walking off the near end (`history_pos == Some(0)`) restores the
+/// pre-browse draft captured by the first ↑ (`history_draft`) and ends the
+/// session entirely rather than clamping. The first ↑ of a bar-open session
+/// captures the live draft into `history_draft` before replacing `draft`
+/// with the selected entry, so every subsequent step still filters against
+/// what the user actually typed. A no-op with no history, or when nothing
+/// in it matches the needle; for `Next`, also a no-op while no browse
+/// session is active (`history_pos` is `None`).
+fn history_step(app: &mut App, dir: BrowseDir) {
     let Some(state) = app.search.as_ref() else {
         return;
     };
-    if state.history.is_empty() {
-        return;
+    if let BrowseDir::Next = dir {
+        let Some(pos) = state.history_pos else {
+            return;
+        };
+        if pos == 0 {
+            let restored = state.history_draft.clone().unwrap_or_default();
+            let Some(state) = app.search.as_mut() else {
+                return;
+            };
+            state.draft = restored;
+            state.history_pos = None;
+            state.history_draft = None;
+            recompute(app);
+            return;
+        }
     }
+
     let needle = browse_needle(state);
     let filtered: Vec<String> = super::fuzzy_filter(&state.history, &needle)
         .into_iter()
         .cloned()
         .collect();
-    if filtered.is_empty() {
-        return;
-    }
-    let next_pos = state
-        .history_pos
-        .map_or(0, |pos| (pos + 1).min(filtered.len() - 1));
+    let next_pos = match dir {
+        BrowseDir::Prev => state
+            .history_pos
+            .map_or(0, |pos| (pos + 1).min(filtered.len().saturating_sub(1))),
+        BrowseDir::Next => state.history_pos.map_or(0, |pos| pos - 1),
+    };
     let Some(entry) = filtered.get(next_pos).cloned() else {
         return;
     };
@@ -244,54 +322,30 @@ fn history_prev(app: &mut App) {
     let Some(state) = app.search.as_mut() else {
         return;
     };
-    state.history_draft.get_or_insert(needle);
+    if let BrowseDir::Prev = dir {
+        state.history_draft.get_or_insert(needle);
+    }
     state.history_pos = Some(next_pos);
     state.draft = entry;
     recompute(app);
 }
 
-/// ↓: the mirror of [`history_prev`], stepping one entry NEWER. Walking
-/// past the newest filtered entry restores the pre-browse draft captured by
-/// the first ↑ and ends the browse session (`history_pos`/`history_draft`
-/// both clear) — the in-progress draft the user was typing before pressing
-/// ↑ is never lost. A no-op while no browse session is active
-/// (`history_pos` is `None`).
-fn history_next(app: &mut App) {
-    let Some(state) = app.search.as_ref() else {
-        return;
-    };
-    let Some(pos) = state.history_pos else {
-        return;
-    };
-    if pos == 0 {
-        let restored = state.history_draft.clone().unwrap_or_default();
-        let Some(state) = app.search.as_mut() else {
-            return;
-        };
-        state.draft = restored;
-        state.history_pos = None;
-        state.history_draft = None;
-        recompute(app);
-        return;
-    }
-    let needle = browse_needle(state);
-    let filtered: Vec<String> = super::fuzzy_filter(&state.history, &needle)
-        .into_iter()
-        .cloned()
-        .collect();
-    let next_pos = pos - 1;
-    let Some(entry) = filtered.get(next_pos).cloned() else {
-        return;
-    };
+fn history_prev(app: &mut App) {
+    history_step(app, BrowseDir::Prev);
+}
 
-    let Some(state) = app.search.as_mut() else {
-        return;
-    };
-    state.history_pos = Some(next_pos);
-    state.draft = entry;
-    recompute(app);
+fn history_next(app: &mut App) {
+    history_step(app, BrowseDir::Next);
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod editing_tests;
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod history_tests;
