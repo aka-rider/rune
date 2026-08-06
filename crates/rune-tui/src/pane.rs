@@ -172,6 +172,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
+        GlobalCommand::Trash => crate::trash::request_trash(app, effects),
         // Open creates a fresh, focused, empty draft; close saves it as
         // `App::last_search_query` and clears the highlight overlay
         // (`search::open`/`close`, the chokepoints — neither

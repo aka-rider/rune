@@ -72,6 +72,9 @@ pub enum GlobalCommand {
     /// former `GlobalCommand::FocusEditor` these keys used to name was
     /// deleted in `84a83f5`).
     ToggleMessages,
+    /// Moves the Explorer-selected file or the active document's file to
+    /// the OS Trash, behind a confirm guard — `⌘⌫`/`^⌫` (`ticket #19`).
+    Trash,
     /// Toggles the in-file search bar: closed -> open, focused, empty
     /// draft; open -> `search::close` (saves the draft as the last query,
     /// drops the state, clears the highlights). `^F`/`⌘F` — free across
@@ -352,6 +355,20 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         keys: &[KeyPattern::new(KeyCode::Char('e'), SUP)],
         cmd: GlobalCommand::ToggleMessages,
         help: "messages",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Backspace, SUP)],
+        cmd: GlobalCommand::Trash,
+        help: "trash",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Backspace, CTRL)],
+        cmd: GlobalCommand::Trash,
+        help: "trash",
         when: "",
         alias: true,
     },
@@ -642,5 +659,57 @@ mod tests {
             mods: SUP,
         };
         assert_unclaimed_by_any_pane_table(&[ctrl_n, sup_n]);
+    }
+
+    /// The same cross-table guard as `global_p_binding_...` above, for
+    /// `⌘⌫`/`^⌫` (`GlobalCommand::Trash`).
+    #[test]
+    fn global_backspace_chords_are_not_already_bound_in_any_pane_table() {
+        use crate::explorer_keys::EXPLORER_BINDINGS;
+        use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::keymap::KeyInput;
+        use crate::keymap::editor_bindings::EDITOR_BINDINGS;
+        use crate::keymap::vim::VIM_BINDINGS;
+        use crate::opentabs::TABS_BINDINGS;
+
+        let sup_backspace = KeyInput {
+            code: KeyCode::Backspace,
+            mods: SUP,
+        };
+        let ctrl_backspace = KeyInput {
+            code: KeyCode::Backspace,
+            mods: CTRL,
+        };
+
+        fn claimants<C: Copy + 'static>(table: &[Binding<C>], key: KeyInput) -> Vec<&'static str> {
+            table
+                .iter()
+                .filter(|b| b.keys.iter().any(|k| k.matches(key)))
+                .map(|b| b.help)
+                .collect()
+        }
+
+        for key in [sup_backspace, ctrl_backspace] {
+            assert!(
+                claimants(EDITOR_BINDINGS, key).is_empty(),
+                "EDITOR_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(VIM_BINDINGS, key).is_empty(),
+                "VIM_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(TABS_BINDINGS, key).is_empty(),
+                "TABS_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_BINDINGS, key).is_empty(),
+                "EXPLORER_BINDINGS already binds {key:?}"
+            );
+            assert!(
+                claimants(EXPLORER_SEARCH_BINDINGS, key).is_empty(),
+                "EXPLORER_SEARCH_BINDINGS already binds {key:?}"
+            );
+        }
     }
 }

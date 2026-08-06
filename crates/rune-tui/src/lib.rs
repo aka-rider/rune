@@ -57,6 +57,7 @@ pub mod term;
 pub mod testgrid;
 pub mod theme;
 pub mod title;
+pub mod trash;
 pub mod viewport;
 pub mod when;
 pub mod width;

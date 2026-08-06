@@ -121,6 +121,9 @@ impl Vfs for FixedKindVfs {
     fn remove(&self, _path: &Path) -> io::Result<()> {
         unimplemented!("not exercised by resolve()")
     }
+    fn trash(&self, _path: &Path) -> io::Result<()> {
+        unimplemented!("not exercised by resolve()")
+    }
     fn stat(&self, _path: &Path) -> io::Result<Stat> {
         Ok(Stat {
             size: 0,

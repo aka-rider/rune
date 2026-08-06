@@ -86,6 +86,7 @@ impl KeyPattern {
         match self.key {
             KeyMatch::Code(KeyCode::Char(c)) => s.push(c.to_ascii_uppercase()),
             KeyMatch::Code(KeyCode::F1) => s.push_str("F1"),
+            KeyMatch::Code(KeyCode::Backspace) => s.push('\u{232b}'), // ⌫
             KeyMatch::Code(other) => s.push_str(&format!("{other:?}")),
             KeyMatch::Printable => s.push_str("A-Z"),
         }

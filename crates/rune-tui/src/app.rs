@@ -229,6 +229,18 @@ pub struct App {
     /// is the one chokepoint that writes a NEW prompt here; `guard::
     /// clear_guard` is the sole writer of `None`.
     pub guard: Option<GuardPrompt>,
+    /// The generation of the in-flight trash `Cmd` (plan WP2.S3) —
+    /// `trash::confirm` is the sole minter: a stale `Msg::TrashDone` whose
+    /// echoed generation no longer matches this field is discarded on
+    /// arrival rather than acted on.
+    pub(crate) trash_gen: u32,
+    /// The path of the one in-flight trash `Cmd`, if any — `trash::confirm`
+    /// is the sole writer of `Some`; `trash::handle_trash_done` is the sole
+    /// writer of `None`, cleared unconditionally (`Ok`, `Err`, or a stale
+    /// reply) before it acts on the result. `trash::request_trash` and
+    /// `trash::confirm` both refuse while this is `Some`, mirroring how
+    /// `RenameState::in_flight` gates `rename::begin`.
+    pub(crate) trash_pending: Option<PathBuf>,
     /// The message log: every transient user-facing message, severity-tagged,
     /// plus the collapsible pane's own open/focus state.
     /// `messages::post` (and its `info`/`warn`/`error` wrappers) is the one
@@ -365,6 +377,8 @@ impl App {
             pointer_clock: Box::new(crate::pointer::SystemClock),
             binding_set: crate::keymap::BindingSet::default(),
             guard: None,
+            trash_gen: 0,
+            trash_pending: None,
             messages: MessageLog::new(),
             search: None,
             last_search_query: None,
