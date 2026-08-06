@@ -12,9 +12,20 @@ use crate::step::{MsgTag, StepCtx};
 
 /// `SAVE-INFLIGHT-SM` — `save_in_flight` goes false->true only on a
 /// `Command::Save` key OR a modal-captured `s`/`S` key while the dirty-close
-/// Guard is up, and true->false only on `SaveDone` (G9: at most one save
-/// `Cmd` is ever outstanding, so its `Msg::SaveDone` can never be ambiguous
-/// about which attempt it answers).
+/// Guard is up, and true->false only on one of THREE legitimate
+/// completions (G9: at most one save `Cmd` is ever outstanding, so none of
+/// them can ever be ambiguous about which attempt it answers): the no-store
+/// fallback's own `SaveDone`; a store-backed save's caller-side `vfs` `Cmd`
+/// settling synchronously (`MsgTag::MaterializeVfsDone`, `materialize_ack::
+/// handle_materialize_vfs_done`'s `Missing`/`Error`/`PathDisagreement`
+/// arms — every other outcome instead enqueues a further `Db` op and
+/// leaves `save_in_flight` untouched until THAT lands); or the `Db` ack for
+/// that further op landing (`materialize_ack::handle_materialize_ack`, or
+/// `on_store_failure`'s whole-store degrade stranding this document's
+/// still-armed save). Never a blanket allowance for every `Db`/
+/// `MaterializeVfsDone` message — see the two arms below for exactly how
+/// each is recognized without reaching into either module's private
+/// functions.
 ///
 /// The Guard arm exists because `banner::handle_dirty_close_key`'s `s`/`S`
 /// option calls `trigger_save` directly — a modal captures every key at
@@ -65,14 +76,47 @@ pub fn save_inflight_sm(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Opti
             });
         }
     }
-    if prev.save_in_flight && !next.save_in_flight && !matches!(ctx.msg, MsgTag::SaveDone { .. }) {
-        return Some(Violation {
-            id: "SAVE-INFLIGHT-SM",
-            message: format!(
-                "save_in_flight went true->false on {:?}, not a SaveDone",
-                ctx.msg
-            ),
-        });
+    if prev.save_in_flight && !next.save_in_flight {
+        let store_backed_completion = match &ctx.msg {
+            // `id` names the document `materialize_ack::materialize_vfs_
+            // cmd` built this exact `Cmd` for — G9 rules out any OTHER
+            // document's save having armed this one's `save_in_flight`, so
+            // matching `next.active` is airtight, not a loose stand-in:
+            // every outcome that settles `save_in_flight` synchronously on
+            // this message (`Missing`, or a local `vfs`/path-disagreement
+            // failure) does so only for `id` itself.
+            MsgTag::MaterializeVfsDone { id } => *id == next.active,
+            // Two DISTINCT legitimate paths land on `Msg::Db`, so `doc`
+            // alone only covers the first: a `MaterializeRecord` ack for
+            // THIS document's own pending op (`handle_materialize_ack`) —
+            // `doc` is read by the driver straight out of `App::db_ops`
+            // before the ack is delivered (`MsgTag::Db`'s own docs), naming
+            // the same document production itself routes the ack to. The
+            // second — `on_store_failure`'s whole-store degrade — can
+            // strand a document OTHER than the one that owns the failing
+            // op (every document with a save in flight, store-wide), so
+            // `doc` correlation can't recognize it; that function is the
+            // ONLY place that ever posts a "save failed: ..." message on a
+            // step whose own op belongs to someone else, so a freshly
+            // posted one here is that path's own unambiguous fingerprint.
+            MsgTag::Db { doc, .. } => {
+                *doc == Some(next.active)
+                    || ((next.status != prev.status || next.message_posts != prev.message_posts)
+                        && next.status.contains("save failed:"))
+            }
+            _ => false,
+        };
+        if !matches!(ctx.msg, MsgTag::SaveDone { .. }) && !store_backed_completion {
+            return Some(Violation {
+                id: "SAVE-INFLIGHT-SM",
+                message: format!(
+                    "save_in_flight went true->false on {:?}, not a SaveDone, a \
+                     MaterializeVfsDone/Db ack naming this document, or a Db ack that posted a \
+                     store-failure message",
+                    ctx.msg
+                ),
+            });
+        }
     }
     None
 }
@@ -268,7 +312,8 @@ pub fn guard_answered(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Option
     let nothing_changed = next.guard == prev.guard
         && next.should_quit == prev.should_quit
         && next.quit_intent_pending == prev.quit_intent_pending
-        && next.status == prev.status;
+        && next.status == prev.status
+        && next.message_posts == prev.message_posts;
     if nothing_changed {
         return Some(Violation {
             id: "GUARD-ANSWERED",

@@ -1,18 +1,19 @@
 //! The `cluster_*` strategy functions and the weighted table over them,
 //! split out of `generate` (500-line budget) — every one of these
-//! draws its fixed data from `palette.rs`.
-
-use std::path::PathBuf;
+//! draws its fixed data from `palette.rs`, composing the raw value
+//! generators in `arb.rs` into `Vec<Action>` sequences.
 
 use proptest::prelude::*;
 use proptest::sample::select;
 
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
-use rune_tui::runtime::DirCause;
-use rune_vfs::DirEntry;
 
-use crate::action::{Action, HighlightVersion};
+use crate::action::Action;
 
+use super::arb::{
+    arb_any_keycode, arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_highlight_span,
+    arb_highlight_version, arb_mods, arb_resize, FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START,
+};
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
@@ -20,49 +21,6 @@ use super::palette::{
     PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS,
     TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
-
-fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
-    (1u16..=200, 2u16..=60)
-}
-
-/// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary
-/// `char`. 16 arms exceeds `prop_oneof!`'s 10-arm threshold (G16), so every
-/// arm is `.boxed()`. `F1` (`GlobalCommand::Help`) was the one omission
-/// (CODE-REVIEW.md rune-fuzz finding 9: a stale "15 variants" doc comment
-/// was true of the arms below but false of the enum, hiding that Help was
-/// structurally unreachable through this generator) — now included.
-fn arb_any_keycode() -> impl Strategy<Value = KeyCode> {
-    prop_oneof![
-        any::<char>().prop_map(KeyCode::Char).boxed(),
-        Just(KeyCode::Enter).boxed(),
-        Just(KeyCode::Backspace).boxed(),
-        Just(KeyCode::Tab).boxed(),
-        Just(KeyCode::BackTab).boxed(),
-        Just(KeyCode::Escape).boxed(),
-        Just(KeyCode::Left).boxed(),
-        Just(KeyCode::Right).boxed(),
-        Just(KeyCode::Up).boxed(),
-        Just(KeyCode::Down).boxed(),
-        Just(KeyCode::Home).boxed(),
-        Just(KeyCode::End).boxed(),
-        Just(KeyCode::PageUp).boxed(),
-        Just(KeyCode::PageDown).boxed(),
-        Just(KeyCode::Delete).boxed(),
-        Just(KeyCode::F1).boxed(),
-    ]
-}
-
-/// Any of the 16 `Mods` combinations (4 independent bools).
-fn arb_mods() -> impl Strategy<Value = Mods> {
-    (any::<bool>(), any::<bool>(), any::<bool>(), any::<bool>()).prop_map(
-        |(shift, alt, ctrl, sup)| Mods {
-            shift,
-            alt,
-            ctrl,
-            sup,
-        },
-    )
-}
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
 /// 1-in-4 a `Paste` of a `PASTE_PALETTE` entry — the only path that can
@@ -175,102 +133,19 @@ fn cluster_monkey_burst() -> impl Strategy<Value = Vec<Action>> {
     .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
 }
 
-/// 2 — a single `Deliver`.
+/// 2 — a single `Deliver`, a `DeliverDb`/`DeliverDbAll` some of the time
+/// alongside it: the store-backed session enqueues a fresh
+/// recovery-store op on nearly every edit, so this cluster is also this
+/// generator's main way of keeping that backlog from just growing across a
+/// session — `cluster_merge` below flushes the WHOLE backlog at its own
+/// checkpoints instead of relying on this one, precisely because it can't
+/// assume this cluster (or any other) already kept it empty.
 fn cluster_async_deliver() -> impl Strategy<Value = Vec<Action>> {
-    Just(vec![Action::Deliver])
-}
-
-/// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
-/// waste its shrink budget on absurdly long ones) plus an arbitrary
-/// `is_dir`.
-fn arb_dir_entry() -> impl Strategy<Value = DirEntry> {
-    ("[a-zA-Z0-9_.]{0,12}", any::<bool>()).prop_map(|(name, is_dir)| {
-        // WP13.S1: the fuzzer's fixture names are always plain ASCII, so
-        // `path` derived straight from `name` round-trips exactly — the
-        // lossy-decode gap this field exists to close only ever opens on
-        // real, non-UTF-8 filenames, which `rune-vfs`'s own tests cover
-        // directly.
-        let path = PathBuf::from(&name);
-        DirEntry { name, path, is_dir }
-    })
-}
-
-fn arb_dir_cause() -> impl Strategy<Value = DirCause> {
-    prop_oneof![Just(DirCause::Nav), Just(DirCause::Refresh)]
-}
-
-/// A `DirLoaded` generation: a small bounded range, not `any::<u32>()` —
-/// `Explorer::request_generation` starts at 0 and increments by 1 per
-/// issued `ReadDir`, so a narrow range gives a real chance of landing
-/// exactly on the live value (exercising the "applied" path) while still
-/// mostly missing it (exercising the "ignored as stale" path the review fix
-/// added `handle_dir_loaded`'s guard for) — deliberately NOT pinned to the
-/// live generation the way `ConfirmTimeout` (G15) is.
-fn arb_dir_loaded_generation() -> impl Strategy<Value = u32> {
-    0u32..=4u32
-}
-
-fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
     prop_oneof![
-        Just(HighlightVersion::Live),
-        Just(HighlightVersion::Stale),
-        Just(HighlightVersion::Future),
-    ]
-}
-
-/// One raw `(start, end, ScopeId)` triple, deliberately unvalidated —
-/// `Action::Highlight`'s own docs — drawn from four shapes: a small
-/// well-formed range, a range entirely past a short document's length, a
-/// deliberately inverted `start > end` pair, and a narrow 1-byte-wide range
-/// at a small odd offset, chosen to land mid-`char` inside a CJK seed's
-/// multi-byte code points (`SEEDS`, `palette.rs`) about as often as it lands
-/// on a real boundary. Every arm draws `ScopeId` from the same `SCOPE_ID`
-/// range — an out-of-range scope id isn't a shape under test here, just
-/// filler, so all four arms share it rather than repeating an unexplained
-/// `30` four times.
-///
-/// Readability-only split (finding B): each bound below is the exact
-/// literal the four `prop_oneof!` arms used inline before, just named —
-/// the generated distribution is unchanged.
-///
-/// `IN_BOUNDS_START` and `FAR_OUT_OF_BOUNDS_START` are hoisted to module
-/// scope: `arb_tree_base` reuses the identical two ranges for its own
-/// well-formed-vs-hostile split.
-const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
-const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
-
-fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
-    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
-    const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
-
-    /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,
-    /// then a positive `gap` added to it to derive `start`, so `start` is
-    /// always strictly greater than `end`.
-    const INVERTED_GAP: std::ops::Range<usize> = 1..30;
-    const INVERTED_END: std::ops::Range<usize> = 0..30;
-
-    /// Arm 4 — a narrow 1-byte-wide span at a small offset, landing
-    /// mid-`char` inside a CJK seed's multi-byte code points about as often
-    /// as it lands on a real boundary.
-    const MID_CHAR_START: std::ops::Range<usize> = 0..24;
-
-    /// Shared by every arm — filler, not itself a shape under test.
-    const SCOPE_ID: std::ops::Range<u16> = 0..30;
-
-    prop_oneof![
-        (IN_BOUNDS_START, IN_BOUNDS_LEN, SCOPE_ID).prop_map(|(start, len, scope)| (
-            start,
-            start + len,
-            scope
-        )),
-        (FAR_OUT_OF_BOUNDS_START, FAR_OUT_OF_BOUNDS_LEN, SCOPE_ID)
-            .prop_map(|(start, len, scope)| (start, start + len, scope)),
-        (INVERTED_GAP, INVERTED_END, SCOPE_ID).prop_map(|(gap, end, scope)| (
-            end + gap,
-            end,
-            scope
-        )),
-        (MID_CHAR_START, SCOPE_ID).prop_map(|(start, scope)| (start, start + 1, scope)),
+        Just(vec![Action::Deliver]),
+        Just(vec![Action::Deliver, Action::DeliverDb]),
+        Just(vec![Action::DeliverDb]),
+        Just(vec![Action::DeliverDbAll]),
     ]
 }
 
@@ -504,19 +379,60 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// `^M` then 1-3 of `MERGE_RESOLVE_KEYS` (plan WP7.S1): this no-store
-/// harness can never make `MERGE_KEY` succeed (`MERGE_KEY`'s own docs), so
-/// every one of these lands as either the entry refusal's status or, for
-/// the resolve keys, an ordinary printable-char insertion — still worth
-/// generating on its own, low-weight cluster rather than only via
-/// `cluster_monkey_burst`'s ~1-in-16-mods odds, so `MERGE-KEY-FEEDBACK`/
-/// `MERGE-DOC-ACTIVE` get exercised against a real (if currently always
-/// `Inactive`) merge-key sequence every run.
+/// `DivergeDisk`, `DeliverDbAll` (the probe ack), `^M`, `DeliverDbAll` (the
+/// `MergePrep` ack), then exactly ONE of `MERGE_RESOLVE_KEYS`, then a
+/// second `^M`: this sequence is what
+/// actually carries a session from `Inactive` all the way to `MergeState::
+/// Active` and back out again — `DivergeDisk` reclassifies the seeded
+/// document toward `DiskAhead`/`Diverged`, the first `DeliverDbAll` lands
+/// that reprobe's ack so `MERGE_KEY`'s fast pre-check (`merge::begin`)
+/// actually sees it, and the second lands the `MergePrep` ack that
+/// installs the working form (`merge::landing`). `DeliverDbAll`, not a
+/// single `DeliverDb`: this cluster runs composed with every OTHER cluster
+/// in a whole session, any of which can leave its own ops (an
+/// `AppendEdit` nobody drained, ...) sitting ahead of this one's `Probe`/
+/// `MergePrep` op in the oldest-first queue — a single `DeliverDb` at
+/// either checkpoint isn't guaranteed to be THIS sequence's own ack.
+///
+/// Exactly ONE resolve key, not 1-3: this generator's own seed content is
+/// small enough that a diverged session typically produces a SINGLE
+/// conflict block, and `merge::resolve::nav`'s own docs ("both directions
+/// land back on it" with one block left) mean a SECOND `[`/`]` press in
+/// that shape is a genuine, informationless repeat — same cursor, same
+/// scroll, same status, correctly caught by `MERGE-KEY-FEEDBACK` as "no
+/// observable trace" even though nothing is actually wrong. One resolve
+/// key still exercises the whole alphabet (`[`/`]`/`o`/`t`/`b`) across
+/// proptest's own sampling, without staking this cluster's `Active`-
+/// reachability guarantee on a specific hunk shape.
+///
+/// The trailing `^M`, not `Escape`, is deliberate: `merge::toggle` (bound
+/// in `GLOBAL_BINDINGS`, stage 2 — reachable regardless of which pane is
+/// focused) exits an `Active` attempt and is a harmless, focus-inert
+/// no-op-with-status otherwise, whereas a bare `Escape` is meaningful only
+/// while `Pane::Editor` is focused AND the resolver's own intercept is
+/// what's consuming it — the fast, zero-conflict path (`DiskAhead` + a
+/// clean buffer) can resolve to `Inactive` on its own before this
+/// cluster's `^M` ever lands, and an `Escape` delivered at that point
+/// falls through to the ordinary editor's own cascade (collapse
+/// selection, THEN hand focus to the Explorer) instead of doing nothing —
+/// stranding focus off `Pane::Editor` for every LATER cluster, including
+/// this cluster's own next occurrence, whose resolve key and exit chord
+/// would then route to the Explorer's key table instead of ever reaching
+/// `merge::keys::intercept` again. This cluster is its own self-contained
+/// scenario, the same way `cluster_quit_guard` always answers its own
+/// Guard before ending — a merge attempt (or a stray focus change) left
+/// dangling past this cluster's own boundary is exactly what the `^M`
+/// exit avoids.
 fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
-    proptest::collection::vec(select(MERGE_RESOLVE_KEYS), 1..=3).prop_map(|keys| {
-        let mut actions = vec![Action::Key(MERGE_KEY)];
-        actions.extend(keys.into_iter().map(Action::Key));
-        actions
+    select(MERGE_RESOLVE_KEYS).prop_map(|key| {
+        vec![
+            Action::DivergeDisk,
+            Action::DeliverDbAll,
+            Action::Key(MERGE_KEY),
+            Action::DeliverDbAll,
+            Action::Key(key),
+            Action::Key(MERGE_KEY),
+        ]
     })
 }
 
@@ -525,10 +441,12 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
 /// Guard's `[S]ave`/`[D]iscard`/`Esc` answers; the merge plan's own WP7.S1
-/// added `cluster_merge`; issue #37's own generator arm added
-/// `cluster_highlight_tree`, the TREE-channel twin of `cluster_highlight`).
-/// All arms are `.boxed()` — `prop_oneof!` with >10 arms expands to
-/// `Union::new_weighted(vec![… boxed…])` (G16).
+/// added `cluster_merge`, since bumped from a `MERGE_KEY`-only weight of 1
+/// once a store-backed session made `MergeState::Active` actually
+/// reachable; issue #37's own generator arm added `cluster_highlight_tree`,
+/// the TREE-channel twin of `cluster_highlight`). All arms are `.boxed()` —
+/// `prop_oneof!` with >10 arms expands to `Union::new_weighted(vec![…
+/// boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -547,7 +465,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),
         1 => cluster_quit_guard().boxed(),
-        1 => cluster_merge().boxed(),
+        3 => cluster_merge().boxed(),
     ]
 }
 

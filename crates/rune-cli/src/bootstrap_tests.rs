@@ -243,7 +243,7 @@ fn a_dead_sessions_untitled_draft_is_recovered_on_the_next_launch() {
         // `most_recent_session_for_doc`/`recover_document` need to find
         // and replay it — no separate journaled edit required.
         let snapshot_op = store
-            .create_snapshot(doc_id, "unsaved draft from a dead session", 0)
+            .create_snapshot(doc_id, "unsaved draft from a dead session")
             .expect("enqueue create_snapshot");
         bridge.wait_for_bootstrap_event(|evt| match evt {
             rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => {

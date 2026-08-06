@@ -338,6 +338,15 @@ fn parse_action_line(raw: &str, line: usize) -> Result<Action, ScriptError> {
     if raw == "fail-next-save" {
         return Ok(Action::FailNextSave);
     }
+    if raw == "diverge-disk" {
+        return Ok(Action::DivergeDisk);
+    }
+    if raw == "deliver-db-all" {
+        return Ok(Action::DeliverDbAll);
+    }
+    if raw == "deliver-db" {
+        return Ok(Action::DeliverDb);
+    }
     if let Some(rest) = raw.strip_prefix("type ") {
         let text = unescape(rest, line)?;
         // Reject any control char other than `\n` (CODE-REVIEW.md rune-fuzz

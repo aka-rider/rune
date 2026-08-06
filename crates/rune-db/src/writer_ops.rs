@@ -73,19 +73,35 @@ pub enum OpKind {
         cursors_before: Vec<Cursor>,
         cursors_after: Vec<Cursor>,
     },
+    /// `local_pos` is the enqueuing session's own LOCAL undo-journal
+    /// position (`rune_core::undo::Journal::pos()` after the move) — never a
+    /// pre-resolved durable seq. This writer thread resolves it to the exact
+    /// durable seq itself, at execution time, using the per-doc undo-state
+    /// it has been building from every `AppendEdit` it has already run for
+    /// this doc (`writer.rs`'s `DocUndoState`) — by the time this op reaches
+    /// the front of the writer's single FIFO queue, every `AppendEdit`
+    /// enqueued ahead of it has already committed, so the mapping is always
+    /// exact, never a guess at an unacknowledged in-flight op the way
+    /// resolving it app-side (before this rework) had to.
     MoveUndoPos {
         session_id: i64,
         doc_id: i64,
-        pos: i64,
+        local_pos: i64,
     },
     /// On success, the completion's `DbEvent::Ok.result` carries the new
-    /// `snapshots.id`.
+    /// `snapshots.id`. Carries no `seq` of its own — the writer resolves the
+    /// anchor fresh, inside the same transaction as the insert, via
+    /// `journal::current_seq` (mirrors `ResolveAdopt`'s `edit_seq: None`
+    /// pattern): `content` is captured synchronously by the caller at
+    /// enqueue time, and by the time this op executes every op the caller
+    /// enqueued before it — including the `AppendEdit`/`MoveUndoPos` that
+    /// produced `content` — has already committed, so a fresh read is exact
+    /// where a caller-carried seq could only ever be a stale guess.
     CreateSnapshot {
         session_id: i64,
         now: SystemTime,
         doc_id: i64,
         content: String,
-        seq: i64,
     },
     /// Disk I/O (`vfs.resolve`/`stat`/`read`) happens between this op's own
     /// internal transactions, never inside one — see `probe::probe`.

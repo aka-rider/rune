@@ -108,7 +108,19 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
         || prev.merge_doc != next.merge_doc
         || prev.merge_unresolved != next.merge_unresolved;
     let status_changed = prev.status != next.status;
-    if buffer_changed || cursors_changed || scroll_changed || merge_state_changed || status_changed
+    // `status` alone is blind to two consecutive posts of IDENTICAL text
+    // (the same merge-key hint fired by two different unbound keys in a
+    // row): `entries.last()` looks unchanged even though a new row landed
+    // in the log. `message_posts` is `messages::post`'s own monotonic
+    // counter, so it always distinguishes "nothing was posted" from
+    // "a duplicate was posted".
+    let message_posted = prev.message_posts != next.message_posts;
+    if buffer_changed
+        || cursors_changed
+        || scroll_changed
+        || merge_state_changed
+        || status_changed
+        || message_posted
     {
         return None;
     }
@@ -116,7 +128,7 @@ pub fn merge_key_feedback(prev: &Snapshot, next: &Snapshot, ctx: &StepCtx) -> Op
         id: "MERGE-KEY-FEEDBACK",
         message: format!(
             "{:?} was dispatched while merge was Active with Editor focus and left buffer, \
-             cursors, scroll, merge state, and status all unchanged",
+             cursors, scroll, merge state, status, and message log all unchanged",
             ctx.msg
         ),
     })

@@ -114,6 +114,32 @@ pub enum Action {
         version: HighlightVersion,
         spans: Vec<(usize, usize, u16)>,
     },
+    /// Publishes fresh, deterministically-varied bytes to the seeded
+    /// document's path directly on the shared `Vfs` (an external editor's
+    /// write, never routed through `update`), then re-probes it the same
+    /// way a real tab switch away and back does — the only detection wiring
+    /// a no-file-watcher store has. Reclassifies the seeded document's
+    /// `last_sync` toward `DiskAhead`/`Diverged`, which is the precondition
+    /// every other merge action below needs. A no-op when the session has
+    /// no store wired.
+    DivergeDisk,
+    /// Drains the oldest still-pending recovery-store op (by id) and feeds
+    /// its reply through `Msg::Db`, exactly as the real runtime loop would
+    /// when the op's `DbEvent` arrives — the generator's own scheduling seam
+    /// over the store's async replies (`MergePrep`, `Probe`, `AppendEdit`,
+    /// ...). A no-op when nothing is pending.
+    DeliverDb,
+    /// Drains EVERY recovery-store op pending right now, oldest first, each
+    /// as its own `Msg::Db` delivery — `DeliverDb` repeated until nothing is
+    /// left. `cluster_merge`'s own scheduling seam: a composed session can
+    /// leave earlier clusters' ops (an `AppendEdit` nobody drained, ...)
+    /// sitting ahead of a merge attempt's own `Probe`/`MergePrep` op in the
+    /// oldest-first queue, so a single `DeliverDb` at that point isn't
+    /// guaranteed to land the ack the sequence is actually waiting on. This
+    /// flushes the WHOLE backlog instead, so whichever op the caller was
+    /// waiting for is always among the ones just drained. A no-op when
+    /// nothing is pending.
+    DeliverDbAll,
     /// Synthesizes a `Msg::Highlighted` reply whose one region carries a
     /// real `RegionPayload::Tree` from an actual `rune_ts::parse` — the
     /// tree channel `Action::Highlight` cannot reach (its docs explain why:

@@ -287,25 +287,16 @@ pub struct DocDb {
     pub bind_new: bool,
     /// The highest durable journal seq (`events.seq`) this session has SEEN
     /// acknowledged so far for this document — a conservative stand-in for
-    /// "the durable journal's current head", used as `materialize`'s `seq`
-    /// parameter and as the fallback when `seq_by_local_pos` doesn't have an
-    /// exact answer yet (see its doc comment).
+    /// "the durable journal's current head", used only as `materialize`'s
+    /// `seq` parameter (a save's `observations.seq` tag — informational
+    /// only, never read back to reconstruct content, so a lagging estimate
+    /// here is stale metadata, not a correctness hazard). `MoveUndoPos`'s
+    /// target seq and `CreateSnapshot`'s anchor seq are both resolved
+    /// fresh, writer-side, at op-execution time instead of estimated from
+    /// this field — see `rune_db::OpKind::MoveUndoPos`/`OpKind::
+    /// CreateSnapshot`'s own doc comments for why an app-side estimate can
+    /// never be exact for either.
     pub last_known_seq: i64,
-    /// `seq_by_local_pos[i]` is the durable seq that local `Journal`
-    /// position `i + 1` (i.e., after the `(i+1)`-th local `push`)
-    /// committed to, once its `AppendEdit` ack lands — `None` until then.
-    /// Reconciles the LOCAL in-memory journal's plain step-COUNT position
-    /// against the DURABLE journal's `events.seq` numbering, which can fall
-    /// behind it when the durable side coalesces two local pushes into the
-    /// SAME row (`journal.rs`'s coalescing guards) — read by
-    /// `commands::edit`'s `undo`/`redo` when committing `move_undo_pos`.
-    pub seq_by_local_pos: Vec<Option<i64>>,
-    /// FIFO of local positions still awaiting their `AppendEdit` ack,
-    /// oldest first — the writer thread's single ordered queue guarantees
-    /// THIS document's `AppendEdit` acks land in the same relative order
-    /// its own ops were enqueued (a subsequence of the global FIFO order),
-    /// so the oldest entry here is always the next ack to fill in.
-    pub pending_seq_acks: VecDeque<usize>,
     /// Bumped on every journal mutation; the debounce token for the 2s
     /// snapshot-autosave timer (plan WP5.S6) — a `Msg::SnapshotDue`
     /// arriving with a stale generation means a later edit already
@@ -320,51 +311,15 @@ impl DocDb {
             expect_obs,
             bind_new,
             last_known_seq,
-            seq_by_local_pos: Vec::new(),
-            pending_seq_acks: VecDeque::new(),
             snapshot_generation: 0,
         }
     }
 
-    /// Records that local `Journal` position `local_pos` (`Journal::pos()`
-    /// AFTER the push it corresponds to) has been enqueued as an
-    /// `AppendEdit` — reserves its slot in `seq_by_local_pos` so a LATER ack
-    /// (which may arrive after several more local pushes) fills in the
-    /// right index.
-    pub(crate) fn note_pending_append(&mut self, local_pos: usize) {
-        if self.seq_by_local_pos.len() < local_pos {
-            self.seq_by_local_pos.resize(local_pos, None);
-        }
-        self.pending_seq_acks.push_back(local_pos - 1);
-    }
-
-    /// Consumes the oldest pending `AppendEdit` ack, filling in its durable
-    /// seq. A `DbEvent::Ok` `AppendEdit` ack with no matching pending entry
-    /// (shouldn't happen — every enqueue notes one first) is ignored rather
-    /// than indexing out of bounds.
+    /// Records the durable seq an `AppendEdit` ack just reported — kept only
+    /// as a lagging estimate of "the durable journal's current head" for
+    /// `materialize`'s informational `seq` tag (`last_known_seq`'s own doc
+    /// comment); `MoveUndoPos`/`CreateSnapshot` no longer read this at all.
     pub(crate) fn resolve_append_ack(&mut self, seq: i64) {
         self.last_known_seq = self.last_known_seq.max(seq);
-        if let Some(idx) = self.pending_seq_acks.pop_front()
-            && let Some(slot) = self.seq_by_local_pos.get_mut(idx)
-        {
-            *slot = Some(seq);
-        }
-    }
-
-    /// The durable seq local `Journal` position `local_pos` corresponds to
-    /// — `0` for "nothing this session has committed" (matches `rune-db`'s
-    /// own `current_seq` "no row" default), else the exact acked seq if
-    /// known, else `last_known_seq` as a conservative approximation for a
-    /// still-in-flight ack (acks arrive in enqueue order, so this never
-    /// OVERestimates in practice).
-    pub(crate) fn seq_for_local_pos(&self, local_pos: usize) -> i64 {
-        if local_pos == 0 {
-            return 0;
-        }
-        self.seq_by_local_pos
-            .get(local_pos - 1)
-            .copied()
-            .flatten()
-            .unwrap_or(self.last_known_seq)
     }
 }

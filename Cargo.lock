@@ -2223,6 +2223,7 @@ dependencies = [
  "proptest",
  "ratatui",
  "rune-core",
+ "rune-db",
  "rune-md",
  "rune-syntax",
  "rune-ts",

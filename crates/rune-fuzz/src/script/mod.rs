@@ -200,6 +200,9 @@ mod tests {
                 version: HighlightVersion::Future,
                 spans: vec![(7, 2, u16::MAX)], // deliberately inverted — never validated here
             },
+            Action::DivergeDisk,
+            Action::DeliverDb,
+            Action::DeliverDbAll,
             Action::HighlightTree {
                 version: HighlightVersion::Future,
                 fixture: 200,

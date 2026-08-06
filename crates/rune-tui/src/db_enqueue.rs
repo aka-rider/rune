@@ -16,17 +16,18 @@ use crate::document::DocumentId;
 /// Enqueues an `AppendEdit` replica of a batch this session just committed
 /// to `id`'s LOCAL in-memory journal (plan WP5.S3) — called immediately
 /// after `Journal::push` at `commands::edit::commit_edit_batch`'s one call
-/// site. `local_pos` is `doc.journal.pos()` AFTER that push. A failure here
-/// (enqueue-time `Error`, never an async one — that lands via `Msg::Db`
-/// instead) only ever marks the whole store degraded
+/// site. A failure here (enqueue-time `Error`, never an async one — that
+/// lands via `Msg::Db` instead) only ever marks the whole store degraded
 /// (`app::on_store_failure`) — the buffer/journal mutation already
 /// happened and is never rolled back (plan decision 3). Every successful
 /// enqueue records `id` in `app.db_ops` (plan decision 6) so the eventual
-/// ack routes back to the right document.
+/// ack routes back to the right document. The writer thread derives this
+/// session's own local-position bookkeeping itself, from the ops it has
+/// already run (`rune_db::OpKind::MoveUndoPos`'s doc comment) — this side
+/// carries no local position of its own to track.
 pub fn append_edit(
     app: &mut App,
     id: DocumentId,
-    local_pos: usize,
     edits: &[AppliedEdit],
     cursors_before: &[Cursor],
     cursors_after: &[Cursor],
@@ -47,9 +48,6 @@ pub fn append_edit(
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(id));
-            if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
-                doc_db.note_pending_append(local_pos);
-            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
@@ -58,21 +56,21 @@ pub fn append_edit(
 /// Enqueues a `MoveUndoPos` replica of an undo/redo `id` just committed
 /// locally (plan WP5.S3) — called immediately after `Journal::move_pos` at
 /// `commands::edit::undo`/`redo`'s call sites. `local_pos` is the journal
-/// position just committed (`Journal::move_pos`'s own argument).
+/// position just committed (`Journal::move_pos`'s own argument) — carried
+/// to the writer thread AS-IS, never resolved to a durable seq here: only
+/// the writer thread, which has already executed every `AppendEdit` this
+/// session enqueued ahead of this op, can resolve it exactly (see
+/// `rune_db::OpKind::MoveUndoPos`'s doc comment).
 pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let Some((target_seq, db_id)) = doc
-        .db
-        .as_ref()
-        .map(|d| (d.seq_for_local_pos(local_pos), d.db_id))
-    else {
+    let Some(db_id) = doc.db.as_ref().map(|d| d.db_id) else {
         return;
     };
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.move_undo_pos(db_id, target_seq);
+    let result = db.store.move_undo_pos(db_id, local_pos as i64);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(id));
