@@ -6,13 +6,13 @@
 //! function is exactly what `driver` used to define locally, now reached
 //! through `step_exec::`.
 
-use rune_db::DbEvent;
 use rune_tui::app::{self, App};
 use rune_tui::db::DbBridge;
 use rune_tui::keymap::{self, KeyInput};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
 
+use crate::action::{HighlightVersion, highlight_spans_from_raw};
 use crate::invariant::{self, Violation};
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -28,6 +28,49 @@ pub(super) fn key_step(key: KeyInput) -> (Msg, MsgTag) {
         command: keymap::resolve(key),
     };
     (Msg::Key(key), tag)
+}
+
+/// Builds the `(Msg, MsgTag)` pair for `Action::Highlight` — resolved
+/// against the LIVE buffer version at delivery time (`HighlightVersion`'s
+/// own docs), never a fixed constant, mirroring `Action::ConfirmTimeout`'s
+/// rule. Hostile span injection into one region's SPAN channel, never a
+/// `ParsedTree` — the fuzzer has no way to synthesize one, and shouldn't. A
+/// reply describes the document's whole region layout, so this one is a
+/// single span-backed region: no coordinate map (its spans are already
+/// buffer offsets, exactly like a markdown fence's), and nothing for the
+/// tree channel. The render-path query reads it back the same way it reads
+/// any other region, so `HL-CLAMPED`/`HL-STALE-DROP` keep testing the real
+/// clamp.
+pub(super) fn highlight_step(
+    state: &State,
+    version: HighlightVersion,
+    spans: &[(usize, usize, u16)],
+) -> (Msg, MsgTag) {
+    let live = state.app.active_doc().buffer.version();
+    let delivered_version = match version {
+        HighlightVersion::Live => live,
+        HighlightVersion::Stale => live.saturating_sub(1),
+        HighlightVersion::Future => live.saturating_add(1),
+    };
+    let doc = state.app.active;
+    let msg = Msg::Highlighted {
+        doc,
+        version: delivered_version,
+        result: Some(rune_tui::highlight::HighlightReply {
+            regions: vec![rune_tui::highlight::RegionResult {
+                map: rune_tui::linemap::LineMap::default(),
+                payload: Some(rune_tui::highlight::RegionPayload::Spans(
+                    highlight_spans_from_raw(spans),
+                )),
+            }],
+            truncated: false,
+        }),
+    };
+    let tag = MsgTag::Highlighted {
+        delivered_version,
+        span_count: spans.len(),
+    };
+    (msg, tag)
 }
 
 /// Runs the one deferred save `Cmd`, if any, returning the `Msg` it
@@ -106,10 +149,7 @@ pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(M
     // so it's gone from `App` by the time any checker could otherwise ask
     // which document `op_id` belonged to.
     let doc = state.app.db_ops.get(&op_id).map(|pending| pending.doc);
-    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
-        DbEvent::Fatal { .. } => true,
-    });
+    let evt = super::wait_for_db_op(bridge, op_id);
     Some((Msg::Db(evt), MsgTag::Db { op_id, doc }))
 }
 

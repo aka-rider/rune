@@ -14,16 +14,15 @@
 
 mod checks;
 mod step_exec;
+mod store_ops;
 
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 
 use rune_core::buffer::Buffer;
-use rune_db::{ClockFn, Store};
 use rune_tui::app::App;
-use rune_tui::db::{Db, DbBridge};
+use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Cmd, Msg, PasteTarget};
@@ -31,15 +30,30 @@ use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use step_exec::{
-    discharge_pending_rename, discharge_pending_save, drain_one_db_op, key_step,
-    run_direct_catching_panic, step_and_check,
+    discharge_pending_rename, discharge_pending_save, drain_one_db_op, highlight_step, key_step,
+    step_and_check,
 };
+use store_ops::{diverge_disk, drain_all_db_ops, drain_all_pending_setup, open_store};
 
 /// The fixed root every `Action::DirLoaded` targets (plan WP4.S6) — only
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-use crate::action::{Action, HighlightVersion};
+/// Blocks on `bridge` for the recovery-store reply completing `op_id` — the
+/// one drain predicate every consumer of a buffered `DbEvent` shares,
+/// whether it's this crate's own step execution/session setup or a test
+/// that builds a session by hand and needs to feed the writer thread's
+/// replies back in exactly as the real runtime does. A `DbEvent::Fatal`
+/// always matches regardless of which id it's waiting on, since a
+/// writer-thread fatal notice ends every outstanding op at once.
+pub fn wait_for_db_op(bridge: &DbBridge, op_id: u64) -> rune_db::DbEvent {
+    bridge.wait_for_bootstrap_event(|evt| match evt {
+        rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
+        rune_db::DbEvent::Fatal { .. } => true,
+    })
+}
+
+use crate::action::Action;
 use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -60,7 +74,7 @@ pub struct RunResult {
     pub final_snapshot: Option<Snapshot>,
     pub final_ctx: Option<StepCtx>,
     /// True iff `Snapshot::merge_active` was ever true on any step of this
-    /// session (issue 35's non-vacuous merge coverage) — unlike
+    /// session (non-vacuous merge coverage) — unlike
     /// `final_snapshot`, tracked on EVERY step, not just a violating one,
     /// since a session's own resolver work can legitimately exit `Active`
     /// again (a full resolution, an auto-exit on tab switch) before the
@@ -111,14 +125,13 @@ struct State {
     /// checker to say anything meaningful about.
     seed_doc: DocumentId,
     /// The one untitled draft `App::new` mints before the seeded document
-    /// is ever opened (issue 35's store-backed session) — kept as the
-    /// switch-away target `Action::DivergeDisk`'s away-and-back reprobe
-    /// needs (`merge_entry.rs`'s own `draft_id` pattern), since a probe is
+    /// is ever opened — kept as the switch-away target
+    /// `Action::DivergeDisk`'s away-and-back reprobe needs, since a probe is
     /// only re-issued by an actual transition through `workspace::
     /// switch_to`, never by re-selecting the document already active.
     draft_doc: DocumentId,
     /// Routes every recovery-store op's async reply back into this session
-    /// (issue 35) — kept in `Bootstrap` mode for the session's whole
+    /// — kept in `Bootstrap` mode for the session's whole
     /// lifetime, never `attach`ed, so every `DbEvent` stays buffered here
     /// for `drain_one_db_op` to pull from deterministically instead of
     /// racing a live `Sender<Msg>`. Present even when `Store::open_in_
@@ -160,15 +173,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     let _ = mem.save_atomic(&path, content.as_bytes());
     let vfs: Arc<dyn Vfs + Send + Sync> = Arc::clone(&mem) as Arc<dyn Vfs + Send + Sync>;
 
-    let bridge = DbBridge::bootstrap();
-    // A fixed instant, never `SystemTime::now` (WP3.S7 rule 7: zero
-    // wall-clock reads) — every session shares the same clock reading, so
-    // the store's own session-establish/coalescing logic stays exactly as
-    // reproducible as everything else this driver does.
-    let clock: ClockFn = Arc::new(|| SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000));
-    let db = Store::open_in_memory(clock, Arc::clone(&vfs), bridge.on_event())
-        .ok()
-        .map(|store| Db::new(store, Arc::clone(&bridge), false));
+    let (bridge, db) = open_store(&vfs);
 
     let mut app = App::new(Buffer::new(""), None, Arc::clone(&vfs), db);
     // WP14.S2 (CODE-REVIEW.md rune-fuzz finding 17): `App::new`'s default
@@ -368,43 +373,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 }
             }
             Action::Highlight { version, spans } => {
-                // Resolved against the LIVE buffer version at delivery
-                // time (`HighlightVersion`'s own docs) — never a fixed
-                // constant, mirroring `Action::ConfirmTimeout`'s rule.
-                let live = state.app.active_doc().buffer.version();
-                let delivered_version = match version {
-                    HighlightVersion::Live => live,
-                    HighlightVersion::Stale => live.saturating_sub(1),
-                    HighlightVersion::Future => live.saturating_add(1),
-                };
-                let doc = state.app.active;
-                let msg = Msg::Highlighted {
-                    doc,
-                    version: delivered_version,
-                    // Hostile span injection into one region's SPAN
-                    // channel, never a `ParsedTree` — the fuzzer has no way
-                    // to synthesize one, and shouldn't. A reply describes
-                    // the document's whole region layout, so this one is a
-                    // single span-backed region: no coordinate map (its
-                    // spans are already buffer offsets, exactly like a
-                    // markdown fence's), and nothing for the tree channel.
-                    // The render-path query reads it back the same way it
-                    // reads any other region, so `HL-CLAMPED`/
-                    // `HL-STALE-DROP` keep testing the real clamp.
-                    result: Some(rune_tui::highlight::HighlightReply {
-                        regions: vec![rune_tui::highlight::RegionResult {
-                            map: rune_tui::linemap::LineMap::default(),
-                            payload: Some(rune_tui::highlight::RegionPayload::Spans(
-                                crate::action::highlight_spans_from_raw(spans),
-                            )),
-                        }],
-                        truncated: false,
-                    }),
-                };
-                let tag = MsgTag::Highlighted {
-                    delivered_version,
-                    span_count: spans.len(),
-                };
+                let (msg, tag) = highlight_step(&state, *version, spans);
                 if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
                 }
@@ -471,7 +440,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome);
     }
 
-    // Rule 6c (issue 35): drain every recovery-store op still pending
+    // Rule 6c: drain every recovery-store op still pending
     // before the end-of-session undo/redo drive — left undrained, a merge/
     // probe/append-edit ack sitting in `app.db_ops` would just carry over
     // into a `Store` about to be shut down anyway, so this settles the
@@ -504,93 +473,6 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
     }
 }
 
-/// Drains every recovery-store op enqueued by the session's own opening
-/// `workspace::open_path` (the `Load` ack, and any `Probe`/scratch ops a
-/// draft mint pulled in alongside it) before the driving loop starts —
-/// unlike `drain_one_db_op`, this runs before `State` exists and isn't a
-/// counted step: it settles the store's ONE synchronous-looking open, the
-/// same way `App::relayout`/`sync_view` below finish session setup without
-/// going through `step_and_check` either.
-fn drain_all_pending_setup(app: &mut App, bridge: &DbBridge) {
-    while let Some(&op_id) = app.db_ops.keys().min() {
-        let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
-            rune_db::DbEvent::Ok { id, .. } | rune_db::DbEvent::Err { id, .. } => *id == op_id,
-            rune_db::DbEvent::Fatal { .. } => true,
-        });
-        let mut effects = rune_tui::runtime::Effects::default();
-        rune_tui::app::update(app, Msg::Db(evt), &mut effects);
-    }
-}
-
-/// `Action::DivergeDisk`'s handler: publishes fresh, deterministically-
-/// varied bytes to the seeded document's own path directly on the shared
-/// `Vfs` (an external editor's write, never routed through `update`), then
-/// re-probes it through the exact away-and-back transition `merge_entry.rs`'s
-/// own fixtures use (`reprobe`) — a switch away from `seed_doc` (to the
-/// untitled draft, if one is still open, else whichever other document is)
-/// followed by a switch back, each funnelling through `workspace::
-/// switch_to`'s own probe enqueue. Neither `switch_to` call goes through
-/// `update`, so both run under `run_direct_catching_panic`'s own guard.
-/// Returns `true` when a panic stopped the session.
-/// `Action::DeliverDbAll`'s handler, also reused by Rule 6c: drains every
-/// recovery-store op pending right now, oldest first, one `step_and_check`
-/// per op — `drain_one_db_op` repeated until nothing is left or a violation
-/// stops the session. Returns `true` when the session must stop. Bounded by
-/// however many ops are pending at the moment this runs: draining never
-/// enqueues a fresh op of its own (issue 35's whole-backlog flush — a `Db`
-/// ack lands through `db_dispatch`, which only ever enqueues MORE ops from
-/// the merge-prep clean-fast-path's own `resolve_adopt`, itself one-shot).
-fn drain_all_db_ops(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    let bridge = Arc::clone(&state.bridge);
-    while outcome.violation.is_none() && !state.app.should_quit {
-        let Some((msg, tag)) = drain_one_db_op(state, &bridge) else {
-            return false;
-        };
-        if step_and_check(state, prev, msg, tag, None, outcome) {
-            return true;
-        }
-    }
-    false
-}
-
-fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
-    state.diverge_step += 1;
-    let bytes = format!("fuzz-external-write-{}\n", state.diverge_step).into_bytes();
-    let path = state.path.clone();
-    let _ = state.mem.remove(&path);
-    if let Ok(temp) = state.mem.write_durable(&path, &bytes) {
-        let _ = state.mem.rename_excl(&temp, &path);
-    }
-
-    let seed_doc = state.seed_doc;
-    let switch_target = if state.draft_doc != seed_doc && state.app.doc(state.draft_doc).is_some() {
-        state.draft_doc
-    } else {
-        state
-            .app
-            .documents
-            .iter()
-            .map(|(&id, _)| id)
-            .find(|&id| id != seed_doc)
-            .unwrap_or(seed_doc)
-    };
-
-    let violation = run_direct_catching_panic(&mut state.app, move |app| {
-        if switch_target != seed_doc {
-            workspace::switch_to(app, switch_target);
-        }
-        workspace::switch_to(app, seed_doc);
-    });
-    if let Some(v) = violation {
-        outcome.violation = Some(v);
-        outcome.final_snapshot = Some(prev.clone());
-        outcome.final_ctx = None;
-        return true;
-    }
-    *prev = Snapshot::capture(&mut state.app, false);
-    false
-}
-
 // `key_step`, `discharge_pending_save`, `step_and_check`,
 // `run_update_catching_panic`, and `downcast_panic` moved into the
 // `step_exec` submodule (500-line budget) — `run` above reaches
@@ -598,4 +480,6 @@ fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -
 // `sync_idempotent_check`, `wrap_rt_check` and the end-of-session
 // undo/redo drive (`drive_end_of_session_checks`, which subsumes the
 // former `restore_editor_focus`) live in the `checks` submodule —
-// `step_exec`/`run` reach those through `checks::`.
+// `step_exec`/`run` reach those through `checks::`. `drain_all_pending_
+// setup`, `drain_all_db_ops`, and `diverge_disk` live in the `store_ops`
+// submodule — `run` reaches those the same unqualified way.
