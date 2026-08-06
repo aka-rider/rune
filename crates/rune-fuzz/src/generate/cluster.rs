@@ -11,8 +11,8 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use crate::action::Action;
 
 use super::arb::{
-    arb_any_keycode, arb_dir_cause, arb_dir_entry, arb_dir_loaded_generation, arb_highlight_span,
-    arb_highlight_version, arb_mods, arb_resize, FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START,
+    FAR_OUT_OF_BOUNDS_START, IN_BOUNDS_START, arb_any_keycode, arb_dir_cause, arb_dir_entry,
+    arb_dir_loaded_generation, arb_highlight_span, arb_highlight_version, arb_mods, arb_resize,
 };
 #[cfg(test)]
 pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
