@@ -151,16 +151,7 @@ fn render_raw(raw: &[Vec<u8>]) -> String {
 mod tests {
     use super::*;
     use crate::driver;
-
-    /// Fails loudly on an unexpected `Err` without an infallible-unwrap
-    /// call (keeps this whole file free of that family of call, tests
-    /// included).
-    fn must<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> T {
-        match r {
-            Ok(v) => v,
-            Err(e) => unreachable!("{what} failed: {e:?}"),
-        }
-    }
+    use crate::test_support::{ScratchDir, must};
 
     #[test]
     fn write_names_the_directory_deterministically_and_is_replayable() {
@@ -173,14 +164,11 @@ mod tests {
         };
         let result = driver::run(path, content, &actions);
 
-        let scratch = std::env::temp_dir().join(format!(
-            "rune-fuzz-report-test-{:08x}",
-            fnv1a32(content.as_bytes())
-        ));
-        let _ = fs::remove_dir_all(&scratch);
+        let guard = ScratchDir::new("report-test");
+        let scratch = guard.path();
 
         let dir1 = must(
-            write(&scratch, &violation, path, content, &actions, &result),
+            write(scratch, &violation, path, content, &actions, &result),
             "write",
         );
         let expected_name = format!(
@@ -210,18 +198,16 @@ mod tests {
 
         // Re-running the same catch overwrites rather than accumulating.
         let dir2 = must(
-            write(&scratch, &violation, path, content, &actions, &result),
+            write(scratch, &violation, path, content, &actions, &result),
             "write again",
         );
         assert_eq!(dir1, dir2);
-        let siblings: Vec<_> = must(fs::read_dir(&scratch), "read_dir").collect();
+        let siblings: Vec<_> = must(fs::read_dir(scratch), "read_dir").collect();
         assert_eq!(
             siblings.len(),
             1,
             "expected exactly one bundle directory, found {siblings:?}"
         );
-
-        let _ = fs::remove_dir_all(&scratch);
     }
 
     #[test]

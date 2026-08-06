@@ -92,4 +92,6 @@ pub mod report;
 pub mod script;
 pub mod snapshot;
 pub mod step;
+#[cfg(test)]
+mod test_support;
 pub mod wal;

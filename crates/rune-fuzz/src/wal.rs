@@ -24,7 +24,9 @@ use crate::action::Action;
 use crate::hash::fnv1a32;
 use crate::script;
 
-const INFLIGHT_NAME: &str = "inflight.rune";
+/// The write-ahead file's on-disk name, under whatever `dir_root` the
+/// caller passes to `arm`/`sweep` — this is what `sweep` looks for.
+pub const INFLIGHT_NAME: &str = "inflight.rune";
 
 /// Held for the lifetime of one fuzz case. Its `Drop` removes the
 /// write-ahead file; only a process-level death skips that and leaves it
@@ -95,31 +97,17 @@ fn render_report() -> String {
 mod tests {
     use super::*;
     use crate::action::Action;
-
-    fn must<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> T {
-        match r {
-            Ok(v) => v,
-            Err(e) => unreachable!("{what} failed: {e:?}"),
-        }
-    }
-
-    fn scratch_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "rune-fuzz-wal-test-{name}-{:08x}",
-            fnv1a32(name.as_bytes())
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        dir
-    }
+    use crate::test_support::{ScratchDir, must};
 
     #[test]
     fn arm_writes_the_encoded_script_and_it_decodes_back() {
-        let dir = scratch_dir("arm-writes");
+        let scratch = ScratchDir::new("wal-test-arm-writes");
+        let dir = scratch.path();
         let path = "/fuzz/doc.md";
         let content = "hello";
         let actions = vec![Action::Type("world".to_string())];
 
-        let guard = must(arm(&dir, path, content, &actions), "arm");
+        let guard = must(arm(dir, path, content, &actions), "arm");
         let on_disk = must(fs::read_to_string(&guard.path), "read inflight");
         assert_eq!(on_disk, script::encode(path, content, &actions));
 
@@ -130,27 +118,26 @@ mod tests {
         assert_eq!(decoded_actions, actions);
 
         drop(guard);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn dropping_the_guard_removes_the_file_and_sweep_then_finds_nothing() {
-        let dir = scratch_dir("drop-removes");
-        let guard = must(arm(&dir, "/fuzz/doc.md", "hi", &[]), "arm");
+        let scratch = ScratchDir::new("wal-test-drop-removes");
+        let dir = scratch.path();
+        let guard = must(arm(dir, "/fuzz/doc.md", "hi", &[]), "arm");
         let inflight_path = dir.join(INFLIGHT_NAME);
         assert!(inflight_path.is_file());
 
         drop(guard);
         assert!(!inflight_path.exists());
-        assert_eq!(must(sweep(&dir), "sweep"), None);
-
-        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(must(sweep(dir), "sweep"), None);
     }
 
     #[test]
     fn sweep_promotes_a_leftover_inflight_file() {
-        let dir = scratch_dir("sweep-promotes");
-        must(fs::create_dir_all(&dir), "create_dir_all");
+        let scratch = ScratchDir::new("wal-test-sweep-promotes");
+        let dir = scratch.path();
+        must(fs::create_dir_all(dir), "create_dir_all");
         let path = "/fuzz/doc.md";
         let content = "leftover";
         let actions = vec![Action::Type("x".to_string())];
@@ -160,7 +147,7 @@ mod tests {
             "write inflight",
         );
 
-        let promoted = must(sweep(&dir), "sweep").expect("expected a promoted dir");
+        let promoted = must(sweep(dir), "sweep").expect("expected a promoted dir");
         let expected_hash = fnv1a32(encoded.as_bytes());
         assert_eq!(
             promoted.file_name().and_then(|n| n.to_str()),
@@ -175,22 +162,21 @@ mod tests {
             "read report",
         );
         assert!(!report_text.is_empty());
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn sweep_on_a_directory_with_no_inflight_file_returns_none() {
-        let dir = scratch_dir("sweep-empty");
-        must(fs::create_dir_all(&dir), "create_dir_all");
-        assert_eq!(must(sweep(&dir), "sweep"), None);
-        let _ = fs::remove_dir_all(&dir);
+        let scratch = ScratchDir::new("wal-test-sweep-empty");
+        let dir = scratch.path();
+        must(fs::create_dir_all(dir), "create_dir_all");
+        assert_eq!(must(sweep(dir), "sweep"), None);
     }
 
     #[test]
     fn sweep_on_a_nonexistent_dir_root_returns_none() {
-        let dir = scratch_dir("sweep-nonexistent");
+        let scratch = ScratchDir::new("wal-test-sweep-nonexistent");
+        let dir = scratch.path();
         assert!(!dir.exists());
-        assert_eq!(must(sweep(&dir), "sweep"), None);
+        assert_eq!(must(sweep(dir), "sweep"), None);
     }
 }
