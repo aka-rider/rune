@@ -39,8 +39,8 @@ pub struct Cell {
 }
 
 /// Semantic `ScopeId` -> `ratatui::style::Style` — delegates to
-/// `Theme::scope_style` (plan WP4: the theme is the ONE style source,
-/// replacing `styles::markdown`'s pre-WP4 role). Kept as a thin wrapper
+/// `Theme::scope_style` (the theme is the ONE style source,
+/// replacing an earlier `styles::markdown`'s role). Kept as a thin wrapper
 /// (rather than calling `theme.scope_style` directly from `segment_cells`
 /// below) so `render.rs` still owns the ONE call site `tests/tui_render.rs`
 /// documents itself against.
@@ -203,8 +203,8 @@ pub fn segment_geometry(content: &str, spans: &[SyntaxSpan]) -> Vec<Cell> {
 
 /// The ONE cell walk both entry points above share — `style_of` is its
 /// only theme-dependent input, so the styled and geometry-only paths can
-/// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`
-/// (WP3), not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
+/// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`,
+/// not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
 /// spans have no backing `WrapSegment` to read `.spans` off of.
 fn segment_cells_with(
     content: &str,

@@ -112,7 +112,7 @@ pub(crate) fn paste(app: &mut App, text: &str) {
 ///
 /// Also reached with the bar OPEN from the closed-bar next/prev chords
 /// (`GlobalCommand::SearchNext`/`SearchPrev`, `pane::handle_global_command`)
-/// — identical behavior to Enter/Shift+Enter in that state, per plan WP5.
+/// — identical behavior to Enter/Shift+Enter in that state.
 pub(crate) fn advance(app: &mut App, forward: bool) {
     let Some(state) = app.search.as_ref() else {
         return;
@@ -138,7 +138,7 @@ pub(crate) fn advance(app: &mut App, forward: bool) {
 }
 
 /// The closed-bar mirror of [`advance`] (`GlobalCommand::SearchNext`/
-/// `SearchPrev`, plan WP5.S1): there is no `SearchState` to read `matches`
+/// `SearchPrev`): there is no `SearchState` to read `matches`
 /// from — the bar isn't open — so it's recomputed on demand from
 /// `App::last_search_query` via the same pure function [`super::recompute`]
 /// itself calls, the concealed set freshly from the current view exactly as

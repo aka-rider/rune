@@ -19,7 +19,7 @@ use crate::theme::Theme;
 
 use super::Cell;
 
-/// Paints `spans` (plan WP5.S5, decision 3: outer-first painter, never a
+/// Paints `spans` (outer-first painter, never a
 /// per-cell search) onto `rows`' `Cell::style`, keyed on `Cell::buf_offset`
 /// exactly as `highlight_selection` below keys on it for the selection
 /// background. `spans` must already be in painter order — `(start ASC, end
@@ -35,13 +35,13 @@ use super::Cell;
 ///    `apply_cursor_overlays` (`build_rows`'s very next call) already
 ///    bounds render's own cost to the visible viewport the same way; a
 ///    per-document allocation here would silently reintroduce the O(len)
-///    cost the WP5 budget/window design exists to avoid.
+///    cost the highlight budget/window design exists to avoid.
 /// 3. Writes each span's `ScopeId` across its overlap with the window,
 ///    outer/earlier spans first — a later `.get_mut` write simply
 ///    overwrites an earlier one at the same byte, which is the painter
 ///    resolution rule.
 /// 4. Walks `rows` once more, patching (`Style::patch`, never plain
-///    assignment — decision 2) each real cell whose byte fell in the
+///    assignment) each real cell whose byte fell in the
 ///    window and painted `Some`, through `Theme::overlay_scope_style`
 ///    rather than `Theme::scope_style` — that variant always strips `bg`,
 ///    so the code-region background rectangle painted before this pass
@@ -63,7 +63,7 @@ pub(super) fn apply_highlight_spans(
     // `spans` is painter-order (`range.start` ASC, per the doc comment
     // above), so a span whose `start` already sits at or past `hi` — and
     // every span after it, since `start` only grows — cannot overlap the
-    // visible window at all (plan WP16.S4). `partition_point` finds that
+    // visible window at all. `partition_point` finds that
     // boundary in O(log n); the loop below then walks only the PREFIX up to
     // it, never the full span list regardless of where in a large parsed
     // document the current viewport happens to sit (`spans` is capped at
@@ -105,8 +105,8 @@ pub(super) fn apply_highlight_spans(
 /// cell (`buf_offset < 0`, carries no buffer position at all, see `Cell`'s
 /// docs) is skipped.
 /// `None` when no cell in `rows` is real (an empty document, or every cell
-/// decorative). Split out of `apply_highlight_spans` (the syntax-
-/// highlighting-latency plan's WP3, D6) so `render::build_rows` can reuse
+/// decorative). Split out of `apply_highlight_spans` so `render::build_rows`
+/// can reuse
 /// the identical window derivation to scope a per-frame `rune_ts::
 /// highlight_range` query to the same bytes the span overlay itself paints
 /// — one window, one definition, never re-derived.
@@ -181,7 +181,7 @@ pub(crate) fn apply_cursor_overlays(
         // The cursor's own row lives in WRAP space (border rows aren't
         // addressable by the caret); convert to the DISPLAY row `rows` is
         // now indexed by before comparing against/indexing off `scroll_row`
-        // (also display-space, WP3.S5).
+        // (also display-space).
         let display_row = view.display.wrap_to_display(wrap_point.row);
         if display_row < scroll_row {
             continue;
@@ -189,7 +189,7 @@ pub(crate) fn apply_cursor_overlays(
         let Some(row) = rows.get_mut(display_row - scroll_row) else {
             continue;
         };
-        // Plan WP9.S2: `place_caret` walks cells POSITIONALLY and adds
+        // `place_caret` walks cells POSITIONALLY and adds
         // `REVERSED` to whichever one sits at `visual_col`, with no
         // `buf_offset` check — `REVERSED` swaps fg and bg, which would
         // destroy a live placeholder cell's smuggled 24-bit image id
@@ -212,12 +212,12 @@ pub(crate) fn apply_cursor_overlays(
         if on_image_row {
             continue;
         }
-        // WP4.S3: `visual_col` above is wrap-space, unaware of the row's
+        // `visual_col` above is wrap-space, unaware of the row's
         // own decoration prefix (`build_rows` prepends it before this
         // function runs). Shifting it right by that prefix's width is what
         // keeps `place_caret`'s cell walk landing on the SAME visible
         // column the decor-shifted row actually put the caret's target
-        // char at — plan Context `[critic R4]`: a decorated line CAN carry
+        // char at — a decorated line CAN carry
         // the caret itself (an unfocused pane's forced conceal, or a
         // wrapped list item's continuation row keeping the first row's own
         // bullet), so this is load-bearing, not a cosmetic nicety.
@@ -312,7 +312,7 @@ fn place_caret(row: &mut Vec<Cell>, visual_col: usize, buf_offset: usize, boxed:
     });
 }
 
-/// Unit tests for [`apply_highlight_spans`] (plan WP5.S7) — hand-built
+/// Unit tests for [`apply_highlight_spans`] — hand-built
 /// `(rows, spans)` pairs, not a real document. `apply_highlight_spans` is
 /// `pub(super)` (this file's own encapsulation convention: every other
 /// overlay function here is `pub(super)` too, reached only through
@@ -342,7 +342,7 @@ mod tests {
         scope_table().resolve(name).expect("known scope name")
     }
 
-    /// Decision 3: an outer span painted first, then a nested span painted
+    /// An outer span painted first, then a nested span painted
     /// over it, leaves the nested bytes with the INNER style and everything
     /// else with the OUTER one — innermost-wins, no per-cell search.
     #[test]
@@ -386,7 +386,7 @@ mod tests {
         }
     }
 
-    /// Plan WP16.S4: a span whose `start` sits past the visible window
+    /// A span whose `start` sits past the visible window
     /// (`hi`) must still be excluded now that the window scan cuts off at
     /// `partition_point(start < hi)` instead of scanning every span — this
     /// pins that the cut doesn't accidentally paint (or panic on) a span

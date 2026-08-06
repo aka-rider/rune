@@ -270,7 +270,7 @@ fn switching_the_active_document_resets_the_match_set() {
     assert!(app.search.as_ref().unwrap().matches.is_empty());
 }
 
-/// Plan WP6.S2: a `Msg::SearchHistory` reply whose generation no longer
+/// A `Msg::SearchHistory` reply whose generation no longer
 /// matches the CURRENTLY open bar's own `history_generation` — a
 /// close-then-reopen since the load was issued — is dropped outright,
 /// mirroring `explorer_dirload::handle_dir_loaded`'s own stale-generation
@@ -313,7 +313,7 @@ fn a_matching_generation_history_reply_populates_history() {
     );
 }
 
-/// Plan WP6.S1: a reader failure degrades history to empty and reports
+/// A reader failure degrades history to empty and reports
 /// through the message log, but never closes the bar or otherwise disables
 /// it — the search bar itself must keep working.
 #[test]

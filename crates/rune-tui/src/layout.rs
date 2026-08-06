@@ -1,5 +1,5 @@
-//! The ONE geometry chokepoint (plan Context, "The root cause underneath
-//! both bugs"): a pure function from `(area, &App)` to every rect the frame
+//! The ONE geometry chokepoint: a pure function from `(area, &App)` to
+//! every rect the frame
 //! is built from. `render::draw`, `App::relayout` (which sizes the active
 //! document's viewport from it), and `explorer`/`opentabs`'s own
 //! `visible_rows` all read from here — before this module existed, all
@@ -129,9 +129,8 @@ pub struct Geometry {
     pub tabs_divider: Option<Rect>,
     pub tabs_inner: Rect,
     pub center: Rect,
-    /// Whether the center pane got a `Block::bordered()` this frame (plan
-    /// WP4: `center.width >= 3 && center.height >= 3`). `false` throughout
-    /// WP3 — no border exists yet, so `render::draw` never asks for one.
+    /// Whether the center pane got a `Block::bordered()` this frame
+    /// (`center.width >= 3 && center.height >= 3`).
     pub center_bordered: bool,
     pub title: Option<Rect>,
     /// The in-file search bar's one row, directly below `title` and above
@@ -384,7 +383,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         Rect::new(x, main_area.y, 2, main_area.height)
     });
 
-    // The center pane gets a `Block::bordered()` (plan WP4.S1) whenever
+    // The center pane gets a `Block::bordered()` whenever
     // there's room for the border to actually enclose something — matches
     // the same "too small, drop the chrome" shape the left column's own
     // width floor used, just against the border's own 1-cell-per-side
@@ -396,14 +395,14 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
         center
     };
 
-    // No more breadcrumb rect (plan WP4.S1): the breadcrumb is spliced
+    // There is no breadcrumb rect: the breadcrumb is spliced
     // directly onto the bordered block's own bottom border row
     // (`breadcrumb::overlay`, reading `geo.center` + `geo.center_bordered`
-    // itself) rather than reserving a second content row the way the
-    // pre-WP4 `center_chrome_rows` did.
+    // itself) rather than reserving a second content row the way an
+    // earlier `center_chrome_rows` did.
     let title = (content.height >= 1).then(|| Rect::new(content.x, content.y, content.width, 1));
 
-    // One extra row for the in-file search bar (plan WP3.S4), below the
+    // One extra row for the in-file search bar, below the
     // title and above the editor text, only while `App::search` is open
     // AND the content area actually has a second row to spare it — a
     // one-row-tall content area keeps that single row for the title
@@ -480,7 +479,7 @@ mod tests {
     use rune_vfs::Mem;
     use std::sync::Arc;
 
-    /// Plan WP3.S4: the bar's one row appears between `title` and `editor`
+    /// The bar's one row appears between `title` and `editor`
     /// only while `App::search` is open, and reserving it shrinks `editor`
     /// by exactly one row rather than displacing `title`.
     #[test]

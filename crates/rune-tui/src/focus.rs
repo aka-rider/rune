@@ -1,9 +1,9 @@
-//! `FocusTarget` — the `when`-clause-facing view of "what has focus" (plan
-//! WP6.S3), deliberately a SEPARATE type from `pane::Pane`. `Pane` stays the
+//! `FocusTarget` — the `when`-clause-facing view of "what has focus",
+//! deliberately a SEPARATE type from `pane::Pane`. `Pane` stays the
 //! chrome-region discriminant `app::handle_key`'s stage-3 dispatch already
 //! keys off of; `FocusTarget` is the vocabulary `when.rs` clauses are
 //! written against, and it needs variants `Pane` doesn't have (the
-//! search/replace fields land in WP8).
+//! search/replace fields).
 
 use ratatui::layout::Rect;
 
@@ -23,7 +23,7 @@ pub enum FocusTarget {
     /// `Some` — reached through [`target`] below, never through
     /// [`from_pane`] (the bar is not a `Pane`).
     SearchField,
-    /// Not yet reachable — see `SearchField`'s doc; WP8's replace field.
+    /// Not yet reachable — see `SearchField`'s doc; the replace field.
     ReplaceField,
     /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
@@ -33,7 +33,7 @@ pub enum FocusTarget {
 /// consulted directly by `dispatch::handle_key` anymore; see [`target`]
 /// below, the one function that also checks the search bar's own state
 /// first. Kept as its own function since `Pane` itself never grows a
-/// `Pane::Search` variant (the plan's recorded decision): every OTHER
+/// `Pane::Search` variant — a deliberate choice: every OTHER
 /// `FocusTarget` still corresponds 1:1 with a `Pane`.
 pub fn from_pane(pane: Pane) -> FocusTarget {
     match pane {
@@ -211,12 +211,12 @@ impl App {
         if self.refuse_if_read_only(self.active_doc().read_only) {
             return;
         }
-        // Plan WP3.S8 (`[B5]`): a rename mid-merge would either type over
+        // A rename mid-merge would either type over
         // the retitled name or leave the field seeded from the real one
         // while the tab/title row still shows the merge suffix — neither
         // is a rename the user actually asked for. Renaming stays blocked
-        // until merge mode exits (in place, `^M`, or later work packages'
-        // auto-exit); everything else about the document stays usable.
+        // until merge mode exits (in place, `^M`, or a later auto-exit);
+        // everything else about the document stays usable.
         if matches!(self.merge, crate::merge::MergeState::Active { doc, .. } if doc == self.active)
         {
             crate::messages::warn(self, "can't rename while merge is active — ^M to exit");
@@ -460,7 +460,7 @@ mod tests {
         }
     }
 
-    /// The generic `focusable().is_none()` path in `reconcile` (finding 5)
+    /// The generic `focusable().is_none()` path in `reconcile`
     /// must catch a pane that closes while it still holds focus, with no
     /// bespoke special case: focusing the messages pane, then closing it
     /// without moving focus (mirroring an async reply landing while the

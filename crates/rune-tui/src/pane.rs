@@ -1,10 +1,8 @@
-//! `Pane` — the focus discriminant (plan Context, decision 7: "Pane enum =
-//! focus discriminant only" — no trait objects; `Explorer`/`Tabs`'s own
-//! state lands in plain named `App` fields in WP4/WP5). Extracted out of
-//! `app.rs` to keep it under the 500-line budget (plan WP2 Rules: "extract to
-//! pane.rs ... as needed") — `handle_global_command` lives here too since
-//! it's the sole reader/writer of `App::focus`/the left column's `Split`
-//! state outside `app.rs` itself.
+//! `Pane` — the focus discriminant only, no trait objects; `Explorer`/
+//! `Tabs`'s own state lands in plain named `App` fields. Extracted out of
+//! `app.rs` to keep it under the 500-line budget — `handle_global_command`
+//! lives here too since it's the sole reader/writer of `App::focus`/the
+//! left column's `Split` state outside `app.rs` itself.
 
 use std::time::Duration;
 
@@ -17,13 +15,13 @@ use crate::messages;
 use crate::runtime::{Cmd, CmdKind, Effects, Msg};
 use crate::save;
 
-/// The quit-confirm arm-to-quit window (plan Context, "Quit-confirm": "first
-/// press arms + spawns 2s timer Cmd carrying gen").
+/// The quit-confirm arm-to-quit window: the first press arms and spawns a
+/// 2s timer `Cmd` carrying the confirm generation.
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Which chrome region owns the next keystroke once the global table
-/// (`keymap::GLOBAL_BINDINGS`) doesn't claim it (plan Context, decision 8's
-/// four-stage key pipeline, stage 3).
+/// (`keymap::GLOBAL_BINDINGS`) doesn't claim it — the pane-routing stage
+/// of the key pipeline, after the global table and before pane-local keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pane {
     Explorer,
@@ -40,21 +38,21 @@ pub enum Pane {
     Messages,
 }
 
-/// Stage 2 of the four-stage key pipeline (plan Context, decision 8,
-/// `app::handle_key`): every `GlobalCommand` fires regardless of which pane
+/// Stage 2 of the four-stage key pipeline (`app::handle_key`): every
+/// `GlobalCommand` fires regardless of which pane
 /// currently has focus — the quit chords and Save in particular must keep
-/// working while the Explorer/Tabs stub panes own it (plan WP2.S4).
+/// working while the Explorer/Tabs stub panes own it.
 pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: &mut Effects) {
-    // ONE hoisted gate, deliberately before the match (plan "Keybinding"):
+    // ONE hoisted gate, deliberately before the match:
     // a global chord pressed while the title is focused commits the typed
     // name FIRST, so ⌘S can never save under the old name and the edit is
     // never silently discarded. A no-op when the title isn't focused. NEVER
     // an early return: a refused commit leaves focus on the title with the
     // reason already in the footer, but every arm below must stay reachable
     // regardless — quit, save and close would otherwise be unreachable for a
-    // user holding an unusable name. Decision 7 is what keeps a repeated,
-    // idempotent blur (each arm's own `set_focus` re-entering `on_blur`)
-    // harmless.
+    // user holding an unusable name. Blur is idempotent by design, which
+    // is what keeps a repeated blur (each arm's own `set_focus` re-entering
+    // `on_blur`) harmless.
     app.blur_title(effects);
 
     // A second hoisted gate, same shape as the title blur above: the
@@ -100,8 +98,8 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 show_and_focus_explorer_on_active_file(app, effects);
             }
         }
-        // Entering the title needs no `Effects` — it can never itself leave
-        // it (decision 5). Reseeds from the document that is actually
+        // Entering the title needs no `Effects` — it can never itself
+        // leave any. Reseeds from the document that is actually
         // showing, every time: the field must never present a stale name
         // from a previous document or a previously abandoned edit (no
         // shadow state).
@@ -125,19 +123,19 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.set_focus_pane(Pane::Tabs, effects);
         }
         GlobalCommand::Save => {
-            // Plan WP4.S3: an active resolver with unresolved blocks
+            // An active resolver with unresolved blocks
             // refuses the save (with the count) instead of publishing a
             // half-resolved working form.
             if !crate::merge::refuses_save(app, app.active) {
                 let _ = save::trigger_save(app, app.active, effects);
             }
         }
-        // WP7.S2: mints/toggles the generated Help virtual document — a
-        // direct, same-tick call (decision 10), no I/O involved. The hoisted
+        // Mints/toggles the generated Help virtual document — a
+        // direct, same-tick call, no I/O involved. The hoisted
         // gate above already blurred, but that gate fires only for
         // `Pane::Title` — without moving focus here too, `F1` pressed from
         // the Explorer or Tabs pane would switch the active document while
-        // focus stayed stranded on the chrome list (WP2.S8).
+        // focus stayed stranded on the chrome list.
         GlobalCommand::Help => {
             app.set_focus_pane(Pane::Editor, effects);
             crate::workspace::toggle_help(app);
@@ -158,7 +156,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // toggle's geometry change is absorbed by the next `view()` call
         // (`commands::reading`'s own docs).
         GlobalCommand::ToggleReadOnly => crate::commands::reading::toggle(app),
-        // Plan WP3.S5: starts a merge attempt, or exits an already-active
+        // Starts a merge attempt, or exits an already-active
         // one in place — see `merge::toggle`'s own docs.
         GlobalCommand::Merge => crate::merge::toggle(app, effects),
         // The message log pane's own open/focus/collapse state
@@ -167,7 +165,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
         // Open creates a fresh, focused, empty draft; close saves it as
         // `App::last_search_query` and clears the highlight overlay
-        // (`search::open`/`close`, plan WP3.S1's chokepoints — neither
+        // (`search::open`/`close`, the chokepoints — neither
         // touches `App::focus`, since the bar was never a `Pane`). Refused
         // while a merge is active on the active document — same precondition
         // `focus_title` already refuses on — since the resolver claims
@@ -182,7 +180,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
                 messages::info(app, "finish the merge first (^M)");
             } else {
                 crate::search::open(app);
-                // Plan WP6.S1: kicks off the ONE history load this bar-open
+                // Kicks off the ONE history load this bar-open
                 // needs, off-thread through a cloned `ReaderQuery` — never
                 // gated on `Db::degraded` (a write-path flag; reads run on
                 // their own connection, unaffected by it). No store at all
@@ -203,7 +201,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // drive: with the bar open, this chord behaves exactly like
         // Enter/Shift+Enter would; with it closed, `advance_closed`
         // recomputes matches from `App::last_search_query` on demand and
-        // jumps without painting highlights (plan WP5, decision A2).
+        // jumps without painting highlights.
         // Nothing to navigate with is reported, never swallowed silently.
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
@@ -237,14 +235,14 @@ pub(crate) fn show_and_focus_explorer_on_active_file(app: &mut App, effects: &mu
     }
 }
 
-/// The quit-confirm state machine (plan Context, "Quit-confirm"): the SAME
+/// The quit-confirm state machine: the SAME
 /// chord pressed twice quits; pressing a quit chord while a DIFFERENT one is
 /// pending re-arms with the new chord and a fresh generation, restarting the
-/// 2s window. `pub(crate)` — WP2 moved this out of `app.rs` (500-line
+/// 2s window. `pub(crate)` — moved out of `app.rs` (500-line
 /// budget); `handle_global_command` above is its only caller now that quit
 /// chords resolve at the global pipeline stage.
 pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects) {
-    // Plan WP6.S3, decision 12: quit is an implicit Esc for an active OR
+    // Quit is an implicit Esc for an active OR
     // pending merge — exited/cancelled BEFORE the dirty-guard scan below,
     // so that scan (and the guard prompt it may raise) sees the reverted
     // title/plain dirty text, never a stale "editor <-> disk" name for a
@@ -294,7 +292,7 @@ pub(crate) fn handle_quit_key(app: &mut App, key: QuitKey, effects: &mut Effects
 /// Every open document that is both dirty and has no live, trustworthy
 /// recovery-store binding (`App::is_preserved`) — quit preserves through the
 /// durable journal, so a dirty document without one is the exact case
-/// `handle_quit_key`'s Guard gate exists for, and the exact set WP2's
+/// `handle_quit_key`'s Guard gate exists for, and the exact set the
 /// quit-save fan-out (`guard`'s `[S]ave` answer) must save every
 /// member of, not just the first. Deterministic ordering (`documents` is a
 /// `BTreeMap`) rather than "whichever `HashMap` bucket happens to iterate
@@ -434,15 +432,15 @@ mod tests {
         assert_eq!(app.focus(), Pane::Editor);
     }
 
-    /// Review fix (plan WP5.S3, widened WP2): a dirty document with no live
+    /// A dirty document with no live
     /// `db` binding (the default for an untitled draft) must never be
     /// silently discarded by the quit chord — `^C^C` (or `^D^D`) raises a
-    /// `DirtyQuit` Guard rather than quitting or (WP2's own fix) merely
+    /// `DirtyQuit` Guard rather than quitting or merely
     /// closing.
     #[test]
     fn double_quit_chord_on_an_unpreserved_dirty_doc_raises_a_guard_instead_of_quitting() {
         let mut app = app();
-        // Dirty is a content comparison now (plan WP1) — poking the render-
+        // Dirty is a content comparison — poking the render-
         // only cache directly would just be overwritten by `is_dirty_now`'s
         // re-derive, so diverge `saved_content` from the live buffer
         // instead, exactly like a real edit would.
@@ -477,7 +475,7 @@ mod tests {
     #[test]
     fn double_quit_chord_on_a_preserved_dirty_doc_still_quits() {
         let mut app = app();
-        // Genuinely dirty (plan WP1: a content comparison, not the cache) —
+        // Genuinely dirty (a content comparison, not the cache) —
         // `is_dirty_now`'s re-derive would just overwrite a cache poke.
         app.doc_mut(app.active)
             .expect("active doc exists")

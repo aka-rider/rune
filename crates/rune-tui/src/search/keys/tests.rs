@@ -302,8 +302,8 @@ fn repeated_enter_on_the_same_query_enqueues_one_touch_op() {
     );
 }
 
-// --- Closed-bar next/prev (`GlobalCommand::SearchNext`/`SearchPrev`,
-// plan WP5) — driven through `pane::handle_global_command`, the actual
+// --- Closed-bar next/prev (`GlobalCommand::SearchNext`/`SearchPrev`)
+// — driven through `pane::handle_global_command`, the actual
 // dispatch entry point for these chords, rather than calling
 // `advance_closed` directly, so the tests exercise the same path a real
 // keypress would.

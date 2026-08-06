@@ -6,8 +6,8 @@
 use crate::binding::{Binding, KeyPattern};
 use crate::keymap::{KeyCode, Mods, QuitKey};
 
-/// The global chord table's command set (decision 7: `Pane` focus
-/// discriminant + these chrome-level actions). Resolved BEFORE any pane's
+/// The global chord table's command set: the `Pane` focus discriminant
+/// plus these chrome-level actions. Resolved BEFORE any pane's
 /// own keymap, so every variant fires regardless of focus — including the
 /// quit chords and Save, which must keep working while the Explorer/Tabs
 /// stub panes own it.
@@ -44,7 +44,7 @@ pub enum GlobalCommand {
     /// exactly one place rather than being re-derived at the call site.
     TabSwitch(usize),
     /// Toggles the active document between `ReadOnly::No` and `ReadOnly::
-    /// Reading` (plan WP5) — the same chord both enters and leaves reading
+    /// Reading` — the same chord both enters and leaves reading
     /// view. Refused with a status message on `ReadOnly::Always`, which has
     /// no editable form to return to.
     ToggleReadOnly,
@@ -444,7 +444,7 @@ mod tests {
         }
     }
 
-    /// Plan WP5/WP3.S7: there is no cross-table keymap-union guard in this
+    /// There is no cross-table keymap-union guard in this
     /// codebase — `index::validate` runs per-table only, and a
     /// `GLOBAL_BINDINGS` row resolves at stage 2, before any pane's own
     /// keymap ever sees the key (`resolve_in` never consults `when`), so a
@@ -452,10 +452,9 @@ mod tests {
     /// it. Modelled on `editor_bindings::reload_key_is_not_already_bound_
     /// elsewhere_in_the_editor_table`'s `⌘R` guard, widened across every
     /// pane table this crate has: every guard test below funnels through
-    /// this ONE helper (WP3.S7 extraction — three near-identical copies
-    /// used to each define their own), so a table added here covers every
-    /// guard the next time this list grows, `MERGE_BINDINGS` (WP3.S7's own
-    /// addition) included.
+    /// this ONE helper (instead of three near-identical copies each
+    /// defining their own), so a table added here covers every
+    /// guard the next time this list grows, `MERGE_BINDINGS` included.
     ///
     /// Checks the actual dispatch-time predicate, `KeyPattern::matches`, not
     /// structural equality on `keys` — a pane row does not need to equal
@@ -545,7 +544,7 @@ mod tests {
         assert_unclaimed_by_any_pane_table(&[ctrl_e, sup_e]);
     }
 
-    /// `^F`/`⌘F` (`GlobalCommand::ToggleSearch`, plan WP3.S7).
+    /// `^F`/`⌘F` (`GlobalCommand::ToggleSearch`).
     #[test]
     fn global_f_binding_is_not_already_bound_in_any_pane_table() {
         use crate::keymap::KeyInput;
@@ -564,7 +563,7 @@ mod tests {
     /// `^g`/`⌘g` (`SearchNext`) and their shifted forms `^G`/`⌘G`
     /// (`SearchPrev`) — all four rows, since the plain and shifted chars
     /// are entirely separate `KeyCode::Char` values from `KeyPattern`'s own
-    /// point of view (plan WP5.S2).
+    /// point of view.
     #[test]
     fn global_g_binding_is_not_already_bound_in_any_pane_table() {
         use crate::keymap::KeyInput;
@@ -590,7 +589,7 @@ mod tests {
 
     /// A guard test only proves ABSENCE from the pane tables — it can't
     /// prove the row actually fires in `GLOBAL_BINDINGS` itself. This is
-    /// the positive half for the chord decision 10/WP5.S1 hinges on: the
+    /// the positive half: the
     /// SHIFTED char with `SHIFT` cleared (`Char('G')+CTRL`), not a
     /// `CTRL|SHIFT` row on the plain char, is what resolves to `SearchPrev`
     /// — exactly the delivery shape `REPORT_ALTERNATE_KEYS` produces.

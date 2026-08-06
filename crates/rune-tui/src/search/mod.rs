@@ -83,7 +83,7 @@ pub(crate) fn open(app: &mut App) {
     });
 }
 
-/// Applies a `Msg::SearchHistory` reply (plan WP6.S1/S2): dropped outright
+/// Applies a `Msg::SearchHistory` reply: dropped outright
 /// when the bar has since closed, or when `generation` no longer matches
 /// the still-open bar's own `history_generation` — a close-then-reopen (or,
 /// in principle, two overlapping loads) must never let a late reply for an

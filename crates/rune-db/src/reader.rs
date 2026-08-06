@@ -1,16 +1,16 @@
 //! The reader thread: owns a single `SQLITE_OPEN_READ_ONLY` connection and
 //! serves stale-tolerant display/immutable reads only — never a
-//! decision-input (plan decision 8: "Every state-changing op re-derives its
-//! inputs ... inside its own `BEGIN IMMEDIATE` tx on the writer ... The
-//! reader handle's type exposes no decision-input methods"). Enforced here
-//! by construction: [`ReaderRequestKind`] is the *only* surface this thread
-//! exposes, and WP3+ may only ever add display-shaped variants to it — a
+//! decision-input. Every state-changing op re-derives its inputs inside its
+//! own `BEGIN IMMEDIATE` tx on the writer; the reader handle's type exposes
+//! no decision-input methods. Enforced here by construction:
+//! [`ReaderRequestKind`] is the *only* surface this thread exposes, and
+//! future additions may only ever be display-shaped variants of it — a
 //! `saved_obs`/`current_seq`/"newest observation for a decision" read must
 //! never be added to this enum, no matter how convenient.
 //!
-//! WP2 ships only [`ReaderRequestKind::Ping`], a placeholder proving the
-//! thread and its read-only connection are live end-to-end; real reads
-//! (blob content, sync badges, ...) land in WP3+.
+//! Currently only [`ReaderRequestKind::Ping`] ships, a placeholder proving
+//! the thread and its read-only connection are live end-to-end; real reads
+//! (blob content, sync badges, ...) land later.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Sender};
@@ -27,9 +27,8 @@ pub enum ReaderRequestKind {
     /// Round-trips `SELECT 1` — proves the reader thread and its
     /// `SQLITE_OPEN_READ_ONLY` connection are alive and can run a query.
     Ping,
-    /// Decompresses and hash-verifies the blob stored under `hash` (plan
-    /// Hard rules: "reader.rs may gain get_blob/display reads only") —
-    /// stale-tolerant content, never a decision input (Decision 8).
+    /// Decompresses and hash-verifies the blob stored under `hash` —
+    /// stale-tolerant display content, never a decision input.
     GetBlob { hash: String },
     /// The `limit` most recently used search queries, newest first — a
     /// history list for the search bar's UI, stale-tolerant and never

@@ -1,7 +1,7 @@
 //! `rune-db`: the multiprocess-safe SQLite recovery store over one global
 //! WAL database. This crate is `rune-vfs`'s sibling, never its caller — a
-//! structural fact, not just a convention two modules happen to follow
-//! (WP7): `materialize.rs` no longer holds a `&dyn Vfs` at all. It is "an
+//! structural fact, not just a convention two modules happen to follow:
+//! `materialize.rs` no longer holds a `&dyn Vfs` at all. It is "an
 //! observer beside the file path, never in it" — it journals, snapshots,
 //! and observes alongside the user's `.md` file, and losing this database
 //! must never damage that file. Concretely, the actual `vfs.write_durable`/

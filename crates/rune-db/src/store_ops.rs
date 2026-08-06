@@ -14,9 +14,9 @@ use crate::writer::OpKind;
 
 impl Store {
     /// Enqueues an `AppendEdit` op for `doc_id`, tagged with this session's
-    /// own identity and a fresh sample of this store's injected clock (plan
-    /// decision 3: "every batch is also enqueued to the DB writer thread and
-    /// committed per batch"). Fire-and-forget: the journal seq the write
+    /// own identity and a fresh sample of this store's injected clock —
+    /// every edit batch is enqueued to the DB writer thread and committed
+    /// per batch. Fire-and-forget: the journal seq the write
     /// produced arrives asynchronously as `DbEvent::Ok.result` on the
     /// `on_event` callback this `Store` was constructed with; this method
     /// only returns the op id used to correlate that completion. See
@@ -89,8 +89,8 @@ impl Store {
         })
     }
 
-    /// Enqueues a `MergePrep` op — merge entry's fresh-state read (plan
-    /// WP3.S1). The resulting `MergePrepResult` arrives asynchronously as
+    /// Enqueues a `MergePrep` op — merge entry's fresh-state read. The
+    /// resulting `MergePrepResult` arrives asynchronously as
     /// `DbEvent::Ok.result` (`OpOutcome::MergePrep`).
     pub fn merge_prep(&self, doc_id: i64) -> Result<u64, Error> {
         let now = self.now();
@@ -101,13 +101,13 @@ impl Store {
         })
     }
 
-    /// WP7 step (a): enqueues the bookkeeping-only `MaterializePrepare` op —
+    /// The first, bookkeeping-only step of the materialize protocol
+    /// (prepare / vfs write / record): enqueues `MaterializePrepare` —
     /// hands back the CAS decision data (`materialize::MaterializePrep`) the
     /// caller needs before it does any `vfs` call itself. Never touches
     /// `vfs`: a dead writer failing THIS enqueue means the caller falls
     /// back to an uncoordinated direct write (same as a document with no
-    /// store binding at all) rather than being unable to save
-    /// ([rune-db 1]).
+    /// store binding at all) rather than being unable to save.
     pub fn materialize_prepare(
         &self,
         doc_id: i64,
@@ -121,12 +121,13 @@ impl Store {
         })
     }
 
-    /// WP7 step (c): enqueues `MaterializeRecord`, recording what the
-    /// caller's own `vfs` work (steps a/b, performed entirely on the
-    /// caller's thread through its OWN `Vfs` handle) concluded.
-    /// `resolved_path`/`seq` are the caller's own enqueue-time-captured
-    /// facts, never re-derived once this op runs. A dead
-    /// writer failing THIS enqueue means the disk publish already
+    /// The final, recording step of the materialize protocol (prepare /
+    /// vfs write / record): enqueues `MaterializeRecord`, recording what
+    /// the caller's own `vfs` work (the prepare/write steps, performed
+    /// entirely on the caller's thread through its OWN `Vfs` handle)
+    /// concluded. `resolved_path`/`seq` are the caller's own
+    /// enqueue-time-captured facts, never re-derived once this op runs. A
+    /// dead writer failing THIS enqueue means the disk publish already
     /// physically completed — only this session's CAS bookkeeping is lost,
     /// which degrades the store, never the save.
     pub fn materialize_record(

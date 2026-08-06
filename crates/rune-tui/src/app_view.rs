@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::pane::Pane;
 
 impl App {
-    /// The ONE geometry chokepoint's writer (plan WP3 decision 1/2): derives
+    /// The ONE geometry chokepoint's writer: derives
     /// every frame rect from `layout::geometry` and sizes the ACTIVE
     /// document's viewport from its `editor` rect. A no-op while either
     /// frame dimension is still `0` (before the first `Msg::Resize` —
@@ -30,7 +30,7 @@ impl App {
     /// pane height and the editor's cached rows disagree with the rect they
     /// are blitted into for one frame.
     ///
-    /// `.max(1)` on both dimensions (plan gotcha 13): the fuzzer drives
+    /// `.max(1)` on both dimensions: the fuzzer drives
     /// `Resize` down to a 1x2 frame, and a 0-width/0-height viewport would
     /// reach `Document::set_width`'s wrap engine with a wrap column of `0`.
     pub fn relayout(&mut self) {
@@ -46,8 +46,8 @@ impl App {
     /// Re-runs the display pipeline for the ACTIVE document and caches the
     /// result on it for `render::draw` to blit. Safe to call more than once
     /// per message batch — see `Document::sync`'s docs. Only the active
-    /// document is synced (Phase 1/WP1: exactly one document is ever
-    /// visible) — a later multi-pane WP re-evaluates this against whichever
+    /// document is synced: exactly one document is ever
+    /// visible — a later multi-pane change re-evaluates this against whichever
     /// documents are actually on screen.
     ///
     /// The messages pane's log document is re-synced FIRST, before
@@ -81,7 +81,7 @@ impl App {
         let focused = engaged && self.search.is_none();
         self.active_doc_mut().focused = focused;
         self.active_doc_mut().reveal_engaged = engaged;
-        // Plan WP5.S2: mirrors `App::icons` (the one startup-decided tier)
+        // Mirrors `App::icons` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
         // App-held decision down before every sync" shape as `focused`
         // right above — `Document` itself holds no `App` reference to read

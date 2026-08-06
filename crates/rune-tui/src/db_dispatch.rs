@@ -8,17 +8,16 @@ use crate::materialize_ack;
 use crate::runtime::Effects;
 use rune_db::DbEvent;
 
-/// Routes a `rune-db` writer-thread completion (plan WP5.S1, re-routed in
-/// WP1 via `App::db_ops` — plan decision 6): the ack's own op id is popped
-/// from `db_ops` to find which `DocumentId` enqueued it; an id with no
-/// entry (already resolved, or from a `Load` op handled during bootstrap
-/// hydration instead — see `db::DbBridge`'s doc comment) is ignored. Only
-/// `Materialize` acks (the save path, WP5.S6), `AppendEdit` acks (seq
-/// bookkeeping, `db::resolve_append_ack`), and `Load` acks (per-document
-/// hydration, `db::handle_load_ack`) need a per-document reaction on
-/// success; `MoveUndoPos`/`CreateSnapshot`/adoption acks are fire-and-
-/// forget. Any `Err`/`Fatal` degrades the WHOLE store (plan decision 3) —
-/// never a buffer rollback.
+/// Routes a `rune-db` writer-thread completion via `App::db_ops`: the ack's
+/// own op id is popped from `db_ops` to find which `DocumentId` enqueued
+/// it; an id with no entry (already resolved, or from a `Load` op handled
+/// during bootstrap hydration instead — see `db::DbBridge`'s doc comment)
+/// is ignored. Only `Materialize` acks (the save path), `AppendEdit` acks
+/// (seq bookkeeping, `db::resolve_append_ack`), and `Load` acks
+/// (per-document hydration, `db::handle_load_ack`) need a per-document
+/// reaction on success; `MoveUndoPos`/`CreateSnapshot`/adoption acks are
+/// fire-and-forget. Any `Err`/`Fatal` degrades the WHOLE store — never a
+/// buffer rollback.
 pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects) {
     match evt {
         DbEvent::Ok {
@@ -70,7 +69,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::Sync(state),
         } => {
-            // Plan WP2.S2: a `Probe` ack — render/hint state only (see
+            // A `Probe` ack — render/hint state only (see
             // `Document::last_sync`'s own doc comment). Updating it here, in
             // the same dispatch the ack lands in, is what keeps the
             // footer's `DiskChanged` hint from ever needing its own
@@ -87,7 +86,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             id: op_id,
             result: rune_db::OpOutcome::MergePrep(prep),
         } => {
-            // Plan WP3.S6: the fresh-state read `merge::begin` kicked off —
+            // The fresh-state read `merge::begin` kicked off —
             // `pending.merge_gen` is this attempt's own ticket, checked
             // against `App.merge`'s CURRENT `Pending` generation inside the
             // landing handler itself (a later `^M` may have superseded it).
@@ -107,8 +106,8 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         } => {
             // `RowId` is shared by two op kinds (`db::PendingOp::mints_
             // scratch`'s own doc comment): a `CreateScratch` minting a
-            // mid-session untitled draft's own recovery row (plan WP0/WP3)
-            // binds a fresh `DocDb`; a `CreateSnapshot` anchor
+            // mid-session untitled draft's own recovery row binds a fresh
+            // `DocDb`; a `CreateSnapshot` anchor
             // (`materialize_ack::handle_snapshot_due`) is fire-and-forget —
             // popping it from `db_ops` here is its only needed reaction.
             if let Some(pending) = app.db_ops.remove(&op_id)
@@ -119,7 +118,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Ok { id: op_id, .. } => {
             app.db_ops.remove(&op_id);
-            // A `TouchSearchQuery` ack (`OpOutcome::None`, plan WP6) lands
+            // A `TouchSearchQuery` ack (`OpOutcome::None`) lands
             // here — nothing else to react to, just retire the tracking
             // entry `search::keys::persist_query` inserted at enqueue, so
             // it can't be mistaken for still-in-flight by a later `Err` for
@@ -130,18 +129,17 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
             app.db_ops.remove(&op_id);
             // A cosmetic `search_history` write failing must never
             // sticky-degrade the whole recovery store the way a real
-            // journal/materialize failure does (plan WP6 decision 11) — the
-            // bar keeps working, only the just-used query wasn't recorded.
+            // journal/materialize failure does — the bar keeps working,
+            // only the just-used query wasn't recorded.
             if app.search_history_ops.remove(&op_id) {
                 crate::messages::error(app, format!("search history not saved: {error}"));
                 return;
             }
             crate::rename::fail_op(app, op_id, error.clone(), effects);
-            // WP7: this exact op may be a `MaterializeRecord` whose disk
+            // This exact op may be a `MaterializeRecord` whose disk
             // write ALREADY physically completed before the writer died —
             // report the save as successful FIRST, so `on_store_failure`'s
-            // in-flight sweep below never re-flags it as failed
-            // ([rune-db 1]).
+            // in-flight sweep below never re-flags it as failed.
             if let Some(doc_id) = app.published_ops.remove(&op_id) {
                 materialize_ack::handle_materialize_ack(
                     app,
@@ -156,7 +154,7 @@ pub(crate) fn handle_db_event(app: &mut App, evt: DbEvent, effects: &mut Effects
         }
         DbEvent::Fatal { error } => {
             crate::rename::fail_all(app, error.clone(), effects);
-            // WP7: same reasoning as the `Err` arm above, for every
+            // Same reasoning as the `Err` arm above, for every
             // still-in-flight `MaterializeRecord` a `Fatal` tears down —
             // each one's write already physically completed.
             let published: Vec<DocumentId> = app.published_ops.drain().map(|(_, id)| id).collect();

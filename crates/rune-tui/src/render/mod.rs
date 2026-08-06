@@ -1,4 +1,4 @@
-//! The Cell model + blit (plan Context, "Cell model"): `DisplaySnapshot`
+//! The Cell model + blit: `DisplaySnapshot`
 //! wrap rows -> `Vec<Vec<Cell>>` (Rendered spans via `cell_map`, Revealed
 //! spans via byte arithmetic) -> overlays keyed on
 //! `buf_offset` (cursor reverse-video, selection background, synthetic EOL
@@ -38,7 +38,7 @@ pub(crate) use cell::paint_range;
 pub use cell::{Cell, segment_cells, segment_geometry, style_for};
 
 /// Builds the visible `Vec<Vec<Cell>>` for `doc`'s viewport: the DISPLAY
-/// rows (WP3: wrap rows plus synthesised table borders) in `[scroll_row,
+/// rows (wrap rows plus synthesised table borders) in `[scroll_row,
 /// scroll_row + height)`, with cursor/selection overlays applied. Generic
 /// over `doc` so the messages pane can render its own read-only `Document`
 /// through the identical pipeline the editor uses —
@@ -56,7 +56,7 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
     let content = doc.buffer.content();
     let mut rows: Vec<Vec<Cell>> = crate::viewport::visible_rows(view.display.rows(), viewport)
         .map(|row| {
-            // WP4.S11/WP9.S1: a row carrying an `ImageRowRef` (set by
+            // A row carrying an `ImageRowRef` (set by
             // either the whole-document image producer or, for an embed,
             // `expand_images`) renders through the placeholder/info-card
             // override instead of the ordinary span-cell path below — its
@@ -64,13 +64,13 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
             // walk. `row_cells` returns `None` for an embed row that isn't
             // currently showable as pixels (no Kitty) — that case falls
             // through to the ordinary path so the row's own alt-text span
-            // (WP7's `Rendered` emit) shows instead.
+            // (the `Rendered` emit) shows instead.
             if let Some(image_ref) = row.image.clone()
                 && let Some(cells) = image::row_cells(app, doc, image_ref, viewport.width)
             {
                 return cells;
             }
-            // WP4.S2: the row's own decoration (heading icon / bullet /
+            // The row's own decoration (heading icon / bullet /
             // quote bar / hr rule) is prepended BEFORE the overlay walks
             // below run — those walks all skip `buf_offset < 0`
             // (the overlay module documents that skip), so a decor prefix never competes
@@ -110,7 +110,7 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
     };
     overlay::apply_highlight_spans(&mut rows, &spans, &app.theme);
 
-    // The search bar's live match highlight (plan WP3.S6): painted AFTER
+    // The search bar's live match highlight: painted AFTER
     // the token overlay (so a match's background sits under, not over, a
     // token's foreground) and BEFORE the cursor overlays just below (so
     // the caret/selection still wins where they land on a match). Guarded
@@ -150,13 +150,13 @@ pub fn build_rows(app: &App, doc: &Document, view: &ViewSnapshots) -> Vec<Vec<Ce
 // above calls them through `overlay::`.
 
 /// Blits `app.view`'s current snapshot into the editor rect, and every
-/// other chrome rect `layout::geometry` computes (plan WP3.S8: `draw`
+/// other chrome rect `layout::geometry` computes (`draw`
 /// itself no longer computes any split — it consumes `Geometry`, the one
 /// chokepoint every rect comes from, so it can never disagree with
 /// `App::relayout`'s or `explorer`/`opentabs`'s own idea of the same
 /// rects).
 ///
-/// Render order is load-bearing (plan gotcha 16, WP4.S2/S5): the center
+/// Render order is load-bearing: the center
 /// `Block` must paint before the editor rows are blitted (its border
 /// spans the WHOLE `geo.center` rect, including where the editor sits one
 /// cell in), and the breadcrumb overlay must run after both — it splices
@@ -165,8 +165,8 @@ pub fn draw(app: &App, frame: &mut Frame) {
     let area = frame.area();
     let geo = crate::layout::geometry(area, app);
 
-    // `draw_left_pane` itself no-ops on `geo.left_block == None` (plan
-    // WP13.S6: the review-caught redundant guard used to re-check the same
+    // `draw_left_pane` itself no-ops on `geo.left_block == None` (a
+    // redundant guard used to re-check the same
     // condition here first).
     draw_left_pane(app, &geo, frame);
 

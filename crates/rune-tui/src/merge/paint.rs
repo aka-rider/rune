@@ -1,4 +1,4 @@
-//! Merge view background painting (plan WP5.S2/S3): every UNRESOLVED
+//! Merge view background painting: every UNRESOLVED
 //! block's marker lines, ours span, and theirs span get their own
 //! background, computed as byte intervals derived purely from `Block::
 //! start` plus [`super::frame::frame_block`]'s own fixed marker-line
@@ -66,9 +66,8 @@ pub(crate) fn paint(
 
 /// One unresolved block's five intervals: marker / ours / marker / theirs /
 /// marker, in buffer order. The current block's marker lines carry an
-/// added `BOLD` on top of the ordinary `merge_marker_bg` — the plan's
-/// "distinct cue" so `[`/`]` navigation has visible feedback beyond the
-/// status line.
+/// added `BOLD` on top of the ordinary `merge_marker_bg` — a distinct cue
+/// so `[`/`]` navigation has visible feedback beyond the status line.
 fn paint_block(
     rows: &mut [Vec<Cell>],
     block: &Block,

@@ -19,18 +19,18 @@ use crate::rename::RenameOutcome;
 use crate::store::LivenessCheckFn;
 use crate::sync::SyncState;
 
-/// Bounded writer-queue depth (plan Assumption A2). At per-keystroke-batch
+/// Bounded writer-queue depth. At per-keystroke-batch
 /// granularity this is many seconds of furious typing; overflow implies a
 /// wedged writer, which is exactly when the degraded path should trigger.
 pub const QUEUE_DEPTH: usize = 1024;
 
-/// The write operations the writer thread knows how to execute. WP2 shipped
-/// only [`OpKind::Noop`], a real op that exercises the full
-/// `BEGIN IMMEDIATE` + retry chokepoint without any domain semantics; WP3
-/// adds the journal/snapshot domain verbs (plan decision 11 — no
-/// table-level CRUD escapes this crate, each variant below is one
-/// hand-written transaction from `journal.rs`/`snapshot.rs` embodying its
-/// own invariant). `session_id`/`now` are baked into each variant's payload
+/// The write operations the writer thread knows how to execute.
+/// [`OpKind::Noop`] is a real op that exercises the full `BEGIN
+/// IMMEDIATE`-plus-retry chokepoint without any domain semantics; the
+/// journal/snapshot domain verbs sit alongside it — no table-level CRUD
+/// escapes this crate, each variant below is one hand-written transaction
+/// from `journal.rs`/`snapshot.rs` embodying its own invariant.
+/// `session_id`/`now` are baked into each variant's payload
 /// by the `Store` convenience method that constructs it (`store.rs`) —
 /// `Store` is the one place that knows this process's session identity and
 /// injected clock; the writer thread itself stays a plain
@@ -46,7 +46,7 @@ pub enum OpKind {
     #[cfg(test)]
     TestBlock(std::sync::mpsc::Receiver<()>),
     /// Test-only: deliberately panics `execute_op`, for proving the writer
-    /// loop's panic guard (finding 2) survives a REAL unwind from op
+    /// loop's panic guard survives a REAL unwind from op
     /// execution and that `WriterHandle::shutdown` afterward completes
     /// without hanging (the park-forever design it replaces would have
     /// deadlocked `shutdown`'s `thread.join()` here).
@@ -61,7 +61,7 @@ pub enum OpKind {
     /// process being killed) without requiring a real crash. Deliberately
     /// NOT `#[cfg(test)]`: `rune-tui`'s own integration tests (a DIFFERENT
     /// crate, where this crate's `cfg(test)` is never enabled) need this to
-    /// exercise the degraded-mode banner end-to-end (plan WP5 "Done when").
+    /// exercise the degraded-mode banner end-to-end.
     KillWriterForTest,
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// journal seq of the inserted (or coalesced) event.
@@ -88,25 +88,24 @@ pub enum OpKind {
         seq: i64,
     },
     /// Disk I/O (`vfs.resolve`/`stat`/`read`) happens between this op's own
-    /// internal transactions, never inside one (plan WP4.S3) — see
-    /// `probe::probe`.
+    /// internal transactions, never inside one — see `probe::probe`.
     Probe {
         session_id: i64,
         doc_id: i64,
         now: SystemTime,
     },
-    /// Plan WP3.S1: merge entry's fresh-state read — runs `probe::probe`
+    /// Merge entry's fresh-state read — runs `probe::probe`
     /// (recording the theirs observation + blob exactly like `Probe`
     /// above) AND returns the ancestor/theirs bytes from the SAME op, so
-    /// merge acts on disk state captured at one decisive moment (plan
-    /// Gotchas `[B2]`) rather than a `SyncState` alone (which carries only
-    /// hashes, never bytes) plus a second, separately-timed read.
+    /// merge acts on disk state captured at one decisive moment rather
+    /// than a `SyncState` alone (which carries only hashes, never bytes)
+    /// plus a second, separately-timed read.
     MergePrep {
         session_id: i64,
         doc_id: i64,
         now: SystemTime,
     },
-    /// WP7 step (a): the bookkeeping-only half of `Materialize` that runs
+    /// The bookkeeping-only half of `Materialize` that runs
     /// BEFORE any `vfs` call — hands the caller the CAS decision data
     /// (`materialize::prepare_materialize`) so the actual disk publish can
     /// happen entirely off this thread, on the caller's own (`rune-tui`'s
@@ -116,7 +115,8 @@ pub enum OpKind {
         expect: ObsId,
         bind_new: bool,
     },
-    /// WP7 step (c): records what the caller's own `vfs` work concluded
+    /// The recording half of `Materialize`: records what the caller's own
+    /// `vfs` work concluded
     /// (`materialize::record_materialize_outcome`) — the ONLY other half of
     /// `Materialize` left on this thread, and it makes no `vfs` call
     /// either. `resolved_path`/`seq` are the caller's own
@@ -167,7 +167,7 @@ pub enum OpKind {
     /// journal-head seq fresh, inside its own transaction, instead of
     /// trusting a value the caller could only have learned asynchronously
     /// (see that function's own doc comment) — the merge-entry flow's own
-    /// case (plan Gotchas `[B3]`).
+    /// case.
     ResolveAdopt {
         session_id: i64,
         doc_id: i64,
@@ -179,23 +179,23 @@ pub enum OpKind {
         session_id: i64,
         doc_id: i64,
     },
-    /// WP3 (quit-guard plan): inserts a brand-new unbound scratch
+    /// Quit-guard support: inserts a brand-new unbound scratch
     /// `documents` row. On success, the completion's `DbEvent::Ok.result`
     /// carries the new row's id.
     CreateScratch {
         now: SystemTime,
     },
-    /// WP3: see `scratch::gc_empty_scratch` for why this filter is
+    /// See `scratch::gc_empty_scratch` for why this filter is
     /// stricter.
     GcEmptyScratch {
         keep_id: i64,
     },
-    /// WP3: on success, the completion's `DbEvent::Ok.result` carries the
+    /// On success, the completion's `DbEvent::Ok.result` carries the
     /// candidate ids, newest first.
     RecoverableScratch {
         exclude_id: i64,
     },
-    /// WP3: for an untitled document — see `scratch::reconstruct_scratch`.
+    /// For an untitled document — see `scratch::reconstruct_scratch`.
     /// `liveness_check` travels with the op for the same reason `Load`
     /// carries its own copy: the writer thread never touches `Store`'s
     /// mutex.
@@ -212,7 +212,7 @@ pub enum OpKind {
         query: String,
         now: SystemTime,
     },
-    /// WP6.S2: the writer thread's own shutdown housekeeping —
+    /// The writer thread's own shutdown housekeeping —
     /// `PRAGMA wal_checkpoint(TRUNCATE)` when `session_id` is the last live
     /// session (checked FRESH via `liveness_check` against every OTHER
     /// `sessions` row — never a spawn-time snapshot, so a test's
@@ -227,8 +227,8 @@ pub enum OpKind {
 }
 
 /// The domain-specific result an [`OpKind`] produced, carried in
-/// `DbEvent::Ok.result`. Broadened from WP2/WP3's single `Option<i64>`
-/// (plan WP4 Hard rules: "extend WriteOp/OpKind + Store verbs") now that
+/// `DbEvent::Ok.result`. Broadened from a single `Option<i64>` as
+/// `WriteOp`/`OpKind`/`Store` verbs grew, now that
 /// `Probe`/`Materialize`/`Load` produce structured results richer than a
 /// row id.
 #[derive(Debug, Clone, PartialEq)]
@@ -249,10 +249,10 @@ pub enum OpOutcome {
     /// doc comment).
     MergePrep(Box<MergePrepResult>),
     /// `MaterializePrepare`'s [`MaterializePrep`] — the CAS decision data
-    /// the caller needs before doing any `vfs` call (WP7 step a).
+    /// the caller needs before doing any `vfs` call.
     MaterializePrep(Box<MaterializePrep>),
     /// `MaterializeRecord`'s [`MatResult`] (boxed — see `Sync`'s doc
-    /// comment) — WP7 step c.
+    /// comment).
     Materialize(Box<MatResult>),
     /// `Load`'s [`LoadResult`] (boxed — see `Sync`'s doc comment).
     Load(Box<LoadResult>),
@@ -276,9 +276,8 @@ pub enum DbEvent {
     Ok {
         id: u64,
         /// The domain-specific result the op produced (see [`OpOutcome`]).
-        /// One flexible field rather than a family of `*Ok` variants (plan
-        /// decision 4's "Ok/classified Err", extended minimally — WP3/WP4
-        /// Hard rules: "extend WriteOp/OpKind as needed").
+        /// One flexible field rather than a family of `*Ok` variants,
+        /// extended minimally as `WriteOp`/`OpKind` grew.
         result: OpOutcome,
     },
     Err {
@@ -287,7 +286,7 @@ pub enum DbEvent {
     },
     /// The writer thread caught a panic while processing `id` (if known)
     /// and has parked itself permanently — no further `WriteOp` will ever
-    /// be processed. The caller (WP5) must treat this exactly like a hard
+    /// be processed. The caller must treat this exactly like a hard
     /// store failure: degrade, never retry.
     Fatal {
         error: String,
