@@ -6,7 +6,9 @@
 //! function is exactly what `driver` used to define locally, now reached
 //! through `step_exec::`.
 
+use rune_db::DbEvent;
 use rune_tui::app::{self, App};
+use rune_tui::db::DbBridge;
 use rune_tui::keymap::{self, KeyInput};
 use rune_tui::runtime::{CmdKind, Effects, Msg};
 use rune_vfs::Vfs;
@@ -79,6 +81,42 @@ pub(super) fn discharge_pending_rename(state: &mut State) -> Option<(Msg, MsgTag
         return None;
     }
     Some((msg, MsgTag::RenameDone))
+}
+
+/// Finds the oldest still-pending recovery-store op (lowest id) and blocks
+/// on `bridge` for its reply, returning the `(Msg, MsgTag)` pair to deliver
+/// — `Action::DeliverDb`'s and the end-of-session sweep's shared drain
+/// primitive. `None` when nothing is pending (either no store is wired, or
+/// every op issued so far has already been drained). Oldest-first mirrors
+/// the real writer thread's own FIFO completion order.
+pub(super) fn drain_one_db_op(state: &mut State, bridge: &DbBridge) -> Option<(Msg, MsgTag)> {
+    let op_id = *state.app.db_ops.keys().min()?;
+    let evt = bridge.wait_for_bootstrap_event(|evt| match evt {
+        DbEvent::Ok { id, .. } | DbEvent::Err { id, .. } => *id == op_id,
+        DbEvent::Fatal { .. } => true,
+    });
+    Some((Msg::Db(evt), MsgTag::Db { op_id }))
+}
+
+/// Runs an arbitrary direct `App` mutation (one that doesn't go through
+/// `update`, e.g. `workspace::switch_to`'s own away-and-back reprobe dance)
+/// under the same `catch_unwind` guard `run_update_catching_panic` gives
+/// every `Msg` delivery — without this, a debug assertion or genuine panic
+/// inside `switch_to` would abort the whole fuzz run instead of surfacing
+/// as an ordinary `NO-PANIC` violation. Returns the violation directly
+/// rather than the raw panic payload, mirroring `step_and_check`'s own
+/// `NO-PANIC` construction.
+pub(super) fn run_direct_catching_panic(
+    app: &mut App,
+    f: impl FnOnce(&mut App) + std::panic::UnwindSafe,
+) -> Option<Violation> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(app))) {
+        Ok(()) => None,
+        Err(payload) => Some(Violation {
+            id: "NO-PANIC",
+            message: downcast_panic(&payload),
+        }),
+    }
 }
 
 /// Delivers one message through `update`, captures the resulting `Snapshot`
@@ -185,6 +223,9 @@ pub(super) fn step_and_check(
 
     let sampled = checks::should_sample(step_index);
     let next = Snapshot::capture(&mut state.app, sampled);
+    if next.merge_active {
+        outcome.merge_activated = true;
+    }
     let disk = state.mem.read(&state.path).ok();
     // `SAVE-CLEAN-MATCHES-DISK` only ever tests this field for `.is_some()`
     // (a save is still outstanding), never its content — any one entry

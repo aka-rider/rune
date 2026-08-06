@@ -11,6 +11,7 @@ edition.workspace = true
 # bugs those checks detect. Unlike rune-md/rune-syntax below, rune-core has
 # no known-open false-positive invariants, so this is safe to enable broadly.
 rune-core = { path = "../rune-core", features = ["strict-invariants"] }
+rune-db = { path = "../rune-db" }
 # NOT strict-invariants: rune-md's known-open comrak sourcepos panics
 # (crates/rune-md/TODO.md) would drown the fuzzer in non-bugs — see the
 # Makefile's test-fuzz target comment for why this crate is deliberately
@@ -35,9 +36,6 @@ ratatui = { workspace = true }
 # A normal (not dev) dependency: the generators live in `src/generate.rs` so the
 # fuzz target, the tripwire, and the replay test all share one grammar.
 proptest = { workspace = true }
-
-[dev-dependencies]
-rune-db = { path = "../rune-db" }
 
 [lints]
 workspace = true

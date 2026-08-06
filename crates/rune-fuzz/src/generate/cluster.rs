@@ -175,9 +175,20 @@ fn cluster_monkey_burst() -> impl Strategy<Value = Vec<Action>> {
     .prop_map(|keys| keys.into_iter().map(Action::Key).collect())
 }
 
-/// 2 — a single `Deliver`.
+/// 2 — a single `Deliver`, a `DeliverDb`/`DeliverDbAll` some of the time
+/// alongside it: the store-backed session (issue 35) enqueues a fresh
+/// recovery-store op on nearly every edit, so this cluster is also this
+/// generator's main way of keeping that backlog from just growing across a
+/// session — `cluster_merge` below flushes the WHOLE backlog at its own
+/// checkpoints instead of relying on this one, precisely because it can't
+/// assume this cluster (or any other) already kept it empty.
 fn cluster_async_deliver() -> impl Strategy<Value = Vec<Action>> {
-    Just(vec![Action::Deliver])
+    prop_oneof![
+        Just(vec![Action::Deliver]),
+        Just(vec![Action::Deliver, Action::DeliverDb]),
+        Just(vec![Action::DeliverDb]),
+        Just(vec![Action::DeliverDbAll]),
+    ]
 }
 
 /// An arbitrary `DirEntry`: a short ASCII name (bounded so proptest doesn't
@@ -467,19 +478,60 @@ fn cluster_quit_guard() -> impl Strategy<Value = Vec<Action>> {
     ]
 }
 
-/// `^M` then 1-3 of `MERGE_RESOLVE_KEYS` (plan WP7.S1): this no-store
-/// harness can never make `MERGE_KEY` succeed (`MERGE_KEY`'s own docs), so
-/// every one of these lands as either the entry refusal's status or, for
-/// the resolve keys, an ordinary printable-char insertion — still worth
-/// generating on its own, low-weight cluster rather than only via
-/// `cluster_monkey_burst`'s ~1-in-16-mods odds, so `MERGE-KEY-FEEDBACK`/
-/// `MERGE-DOC-ACTIVE` get exercised against a real (if currently always
-/// `Inactive`) merge-key sequence every run.
+/// `DivergeDisk`, `DeliverDbAll` (the probe ack), `^M`, `DeliverDbAll` (the
+/// `MergePrep` ack), then exactly ONE of `MERGE_RESOLVE_KEYS`, then a
+/// second `^M` (issue 35's store-backed session): this sequence is what
+/// actually carries a session from `Inactive` all the way to `MergeState::
+/// Active` and back out again — `DivergeDisk` reclassifies the seeded
+/// document toward `DiskAhead`/`Diverged`, the first `DeliverDbAll` lands
+/// that reprobe's ack so `MERGE_KEY`'s fast pre-check (`merge::begin`)
+/// actually sees it, and the second lands the `MergePrep` ack that
+/// installs the working form (`merge::landing`). `DeliverDbAll`, not a
+/// single `DeliverDb`: this cluster runs composed with every OTHER cluster
+/// in a whole session, any of which can leave its own ops (an
+/// `AppendEdit` nobody drained, ...) sitting ahead of this one's `Probe`/
+/// `MergePrep` op in the oldest-first queue — a single `DeliverDb` at
+/// either checkpoint isn't guaranteed to be THIS sequence's own ack.
+///
+/// Exactly ONE resolve key, not 1-3: this generator's own seed content is
+/// small enough that a diverged session typically produces a SINGLE
+/// conflict block, and `merge::resolve::nav`'s own docs ("both directions
+/// land back on it" with one block left) mean a SECOND `[`/`]` press in
+/// that shape is a genuine, informationless repeat — same cursor, same
+/// scroll, same status, correctly caught by `MERGE-KEY-FEEDBACK` as "no
+/// observable trace" even though nothing is actually wrong. One resolve
+/// key still exercises the whole alphabet (`[`/`]`/`o`/`t`/`b`) across
+/// proptest's own sampling, without staking this cluster's `Active`-
+/// reachability guarantee on a specific hunk shape.
+///
+/// The trailing `^M`, not `Escape`, is deliberate: `merge::toggle` (bound
+/// in `GLOBAL_BINDINGS`, stage 2 — reachable regardless of which pane is
+/// focused) exits an `Active` attempt and is a harmless, focus-inert
+/// no-op-with-status otherwise, whereas a bare `Escape` is meaningful only
+/// while `Pane::Editor` is focused AND the resolver's own intercept is
+/// what's consuming it — the fast, zero-conflict path (`DiskAhead` + a
+/// clean buffer) can resolve to `Inactive` on its own before this
+/// cluster's `^M` ever lands, and an `Escape` delivered at that point
+/// falls through to the ordinary editor's own cascade (collapse
+/// selection, THEN hand focus to the Explorer) instead of doing nothing —
+/// stranding focus off `Pane::Editor` for every LATER cluster, including
+/// this cluster's own next occurrence, whose resolve key and exit chord
+/// would then route to the Explorer's key table instead of ever reaching
+/// `merge::keys::intercept` again. This cluster is its own self-contained
+/// scenario, the same way `cluster_quit_guard` always answers its own
+/// Guard before ending — a merge attempt (or a stray focus change) left
+/// dangling past this cluster's own boundary is exactly what the `^M`
+/// exit avoids.
 fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
-    proptest::collection::vec(select(MERGE_RESOLVE_KEYS), 1..=3).prop_map(|keys| {
-        let mut actions = vec![Action::Key(MERGE_KEY)];
-        actions.extend(keys.into_iter().map(Action::Key));
-        actions
+    select(MERGE_RESOLVE_KEYS).prop_map(|key| {
+        vec![
+            Action::DivergeDisk,
+            Action::DeliverDbAll,
+            Action::Key(MERGE_KEY),
+            Action::DeliverDbAll,
+            Action::Key(key),
+            Action::Key(MERGE_KEY),
+        ]
     })
 }
 
@@ -488,7 +540,9 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
 /// Guard's `[S]ave`/`[D]iscard`/`Esc` answers; the merge plan's own WP7.S1
-/// added `cluster_merge`). All arms are `.boxed()` — `prop_oneof!` with >10
+/// added `cluster_merge`, since bumped from a `MERGE_KEY`-only weight of 1
+/// once a store-backed session made `MergeState::Active` actually
+/// reachable, issue 35). All arms are `.boxed()` — `prop_oneof!` with >10
 /// arms expands to `Union::new_weighted(vec![… boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
@@ -507,7 +561,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),
         1 => cluster_quit_guard().boxed(),
-        1 => cluster_merge().boxed(),
+        3 => cluster_merge().boxed(),
     ]
 }
 

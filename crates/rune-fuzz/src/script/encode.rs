@@ -90,6 +90,9 @@ fn encode_action(out: &mut String, action: &Action) {
                 out.push_str(&format!("highlight-span {start} {end} {scope}\n"));
             }
         }
+        Action::DivergeDisk => out.push_str("diverge-disk\n"),
+        Action::DeliverDb => out.push_str("deliver-db\n"),
+        Action::DeliverDbAll => out.push_str("deliver-db-all\n"),
     }
 }
 
