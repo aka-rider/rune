@@ -89,6 +89,29 @@ fn concealed_ranges_never_includes_identical_folded_text() {
 }
 
 #[test]
+fn a_match_straddling_a_concealed_table_border_edge_is_not_skipped() {
+    // Real markdown-derived concealed ranges (a rendered table border), not
+    // hand-built internals — only the straddling MATCH range is synthetic.
+    let content = "| a | b |\n|---|---|\n| a | c |\n";
+    let wrap = wrap_for(content);
+    let concealed = concealed_ranges(&wrap);
+    let range = concealed
+        .first()
+        .cloned()
+        .expect("a rendered table must substitute at least one border range");
+    assert!(
+        range.end < content.len(),
+        "fixture has room past the border"
+    );
+
+    let straddling = (range.end - 1)..(range.end + 1);
+    assert!(
+        !is_concealed(&concealed, &straddling),
+        "a match that starts inside the concealed range but ends past it must stay navigable"
+    );
+}
+
+#[test]
 fn is_concealed_requires_full_containment_not_mere_overlap() {
     let ranges: Vec<Range<usize>> = Vec::from_iter(std::iter::once(10..20));
     assert!(is_concealed(&ranges, &(12..18)));

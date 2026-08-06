@@ -8,11 +8,10 @@
 //! module, not a descendant — it reads [`SearchState`] only through the
 //! fields this module marks `pub(crate)`.
 //!
-//! `next_index`/`prev_index`/`fuzzy_filter` have no production caller yet:
-//! wraparound navigation and history browsing land in a later change. Each
-//! is individually `#[allow(dead_code)]`'d rather than the whole file, so a
-//! function that gains a real caller loses its allow and the lint keeps
-//! watching the rest.
+//! `fuzzy_filter` has no production caller yet: history browsing lands in
+//! a later change, and is individually `#[allow(dead_code)]`'d rather than
+//! the whole file, so it loses that allow the moment it gains a real
+//! caller — the lint keeps watching the rest in the meantime.
 
 use std::ops::Range;
 
@@ -42,14 +41,12 @@ pub(crate) struct SearchState {
     doc: DocumentId,
     buffer_version: u64,
     /// The concealed byte ranges cached alongside `matches` at the same
-    /// [`recompute`] — [`concealed_ranges`]'s own output. Unread within
-    /// this change: the navigation that consults it (skipping a match
-    /// wholly hidden behind a substituted span) lands in a later change,
-    /// which is exactly why it is computed and cached HERE rather than
-    /// re-derived at that later call site — one recompute chokepoint, not
-    /// two.
-    #[allow(dead_code)]
-    concealed: Vec<Range<usize>>,
+    /// [`recompute`] — [`concealed_ranges`]'s own output, read by
+    /// `keys::advance` to skip a match wholly hidden behind a substituted
+    /// span. Computed and cached HERE, at the same chokepoint that
+    /// recomputes `matches`, rather than re-derived at the navigation call
+    /// site — one recompute chokepoint, not two.
+    pub(crate) concealed: Vec<Range<usize>>,
     /// MRU search history, fuzzy-filterable — populated by a later change
     /// (loaded from `search_history` once the bar opens).
     #[allow(dead_code)]
@@ -246,10 +243,6 @@ pub(crate) fn concealed_ranges(wrap: &WrapSnapshot) -> Vec<Range<usize>> {
 /// land on, so it is navigable; only a match wholly swallowed by a
 /// concealed range is skipped. `ranges` is assumed sorted and coalesced, as
 /// [`concealed_ranges`] returns it.
-///
-/// No production caller yet — the navigation that consults this to skip a
-/// concealed match lands in a later change.
-#[allow(dead_code)]
 pub(crate) fn is_concealed(ranges: &[Range<usize>], m: &Range<usize>) -> bool {
     ranges.iter().any(|r| r.start <= m.start && m.end <= r.end)
 }
@@ -259,10 +252,6 @@ pub(crate) fn is_concealed(ranges: &[Range<usize>], m: &Range<usize>) -> bool {
 /// after `cursor_byte`, wrapping around to the front when the cursor is
 /// past every match. `None` when `matches` is empty or every match is
 /// skipped.
-///
-/// No production caller yet — wraparound Enter/Shift+Enter navigation
-/// lands in a later change.
-#[allow(dead_code)]
 pub(crate) fn next_index(
     matches: &[Range<usize>],
     cursor_byte: usize,
@@ -283,9 +272,6 @@ pub(crate) fn next_index(
 
 /// The wraparound mirror of [`next_index`]: the first non-skipped match
 /// strictly before `cursor_byte`, walking backward and wrapping to the end.
-///
-/// No production caller yet — see [`next_index`]'s doc.
-#[allow(dead_code)]
 pub(crate) fn prev_index(
     matches: &[Range<usize>],
     cursor_byte: usize,
