@@ -19,14 +19,14 @@ use rune_db::SyncKind;
 use rune_tui::app::App;
 use rune_tui::db::DbBridge;
 use rune_tui::document::DocumentId;
-use rune_tui::keymap::KeyCode;
+use rune_tui::keymap::{KeyCode, Mods};
 use rune_tui::merge::MergeState;
 use rune_tui::workspace;
 use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
-    app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, reprobe, sup,
+    app_with_store, bare, ch, chord, ctrl, drain_all_ops_for, drain_one_op_for, external_write,
+    press_key, publish, reprobe, sup,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
@@ -232,6 +232,114 @@ fn unbound_keys_are_swallowed_with_feedback_while_resolving() {
         );
     }
     assert_eq!(app.doc(doc_id).unwrap().journal.pos(), pos_before);
+}
+
+/// Issue #54: `⌥⌘↑`/`⌥⌘↓` (`AddCursorAbove`/`AddCursorBelow`), bare `⌘↑`, and
+/// `⇧⌥↑` (`CloneLineUp`) are ordinary editor commands with no meaning while
+/// the resolver owns the keyboard, and must be refused out loud rather than
+/// silently re-keyed into a one-row scroll.
+#[test]
+fn modifier_arrow_chords_are_refused_with_feedback_while_resolving() {
+    let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
+
+    let before = app.doc(doc_id).unwrap().buffer.content().to_string();
+    let pos_before = app.doc(doc_id).unwrap().journal.pos();
+    let scroll_before = app.doc(doc_id).unwrap().viewport.scroll_row;
+    let alt_sup = Mods {
+        alt: true,
+        sup: true,
+        ..Mods::NONE
+    };
+    let sup_only = Mods {
+        sup: true,
+        ..Mods::NONE
+    };
+    let shift_alt = Mods {
+        shift: true,
+        alt: true,
+        ..Mods::NONE
+    };
+    let mut posts_before = rune_tui::messages::posts(&app);
+    for key in [
+        chord(KeyCode::Up, alt_sup),
+        chord(KeyCode::Down, alt_sup),
+        chord(KeyCode::Up, sup_only),
+        chord(KeyCode::Up, shift_alt),
+    ] {
+        press_key(&mut app, key);
+        let doc = app.doc(doc_id).unwrap();
+        assert_eq!(doc.buffer.content(), before, "{key:?} must not edit");
+        assert_eq!(
+            doc.journal.pos(),
+            pos_before,
+            "{key:?} must push no journal step"
+        );
+        assert_eq!(
+            doc.viewport.scroll_row, scroll_before,
+            "{key:?} must not scroll"
+        );
+        let posts_now = rune_tui::messages::posts(&app);
+        assert!(
+            posts_now > posts_before,
+            "{key:?} must post feedback, posts stayed at {posts_now}"
+        );
+        posts_before = posts_now;
+    }
+    assert!(
+        rune_tui::messages::newest_text(&app)
+            .unwrap_or_default()
+            .contains("merge:"),
+        "expected the merge-key hint, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+}
+
+/// Bare/shift arrows are the resolver's own viewport vocabulary: they must
+/// move `scroll_row` without ever nagging, including at the clamp, where a
+/// scroll that can go no further is silent by universal editor convention.
+#[test]
+fn bare_and_shift_arrows_still_scroll_without_nagging() {
+    let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
+    app.active_doc_mut().viewport.set_size(80, 2);
+
+    let posts_before = rune_tui::messages::posts(&app);
+    press_key(&mut app, bare(KeyCode::Down));
+    assert_eq!(app.doc(doc_id).unwrap().viewport.scroll_row, 1);
+    assert_eq!(
+        rune_tui::messages::posts(&app),
+        posts_before,
+        "no nag on scroll"
+    );
+
+    let shift = Mods {
+        shift: true,
+        ..Mods::NONE
+    };
+    press_key(&mut app, chord(KeyCode::Down, shift));
+    let scroll_after_shift = app.doc(doc_id).unwrap().viewport.scroll_row;
+    assert!(scroll_after_shift > 1, "shift-down must also scroll");
+    assert_eq!(
+        rune_tui::messages::posts(&app),
+        posts_before,
+        "no nag on scroll"
+    );
+
+    let max_row = app.doc_mut(doc_id).unwrap().view().display.total_rows() - 1;
+    while app.doc(doc_id).unwrap().viewport.scroll_row < max_row {
+        press_key(&mut app, bare(KeyCode::Down));
+    }
+    let posts_at_clamp = rune_tui::messages::posts(&app);
+    press_key(&mut app, bare(KeyCode::Down));
+    assert_eq!(
+        app.doc(doc_id).unwrap().viewport.scroll_row,
+        max_row,
+        "clamp holds"
+    );
+    assert_eq!(
+        rune_tui::messages::posts(&app),
+        posts_at_clamp,
+        "no nag at the clamp"
+    );
 }
 
 #[test]

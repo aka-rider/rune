@@ -224,6 +224,75 @@ fn merge_key_feedback_detects_truly_identical_including_posts() {
     assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
 }
 
+/// Issue #54: a bare `Up` is `viewport_scroll`'s own vocabulary — a scroll
+/// request the resolver honours, and a clamped scroll is silent by
+/// universal editor convention, so leaving every observable unchanged is
+/// exempt rather than a violation.
+#[test]
+fn merge_key_feedback_exempts_a_bare_scroll_key_on_the_active_merge_doc() {
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
+    let next = prev.clone(); // clamped at the top: nothing observable moves
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Up, Mods::NONE),
+        command: None,
+    };
+    assert_eq!(merge_key_feedback(&prev, &next, &ctx), None);
+}
+
+/// A chord `viewport_scroll` refuses (`⌥⌘↑`, `AddCursorAbove`) is an
+/// ordinary editor command with no meaning mid-merge — it must still trip
+/// the invariant when left with no observable trace at all.
+#[test]
+fn merge_key_feedback_still_fires_on_a_modifier_arrow_chord() {
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.merge_doc = Some(prev.active);
+    let next = prev.clone();
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(
+            KeyCode::Up,
+            Mods {
+                alt: true,
+                sup: true,
+                ..Mods::NONE
+            },
+        ),
+        command: None,
+    };
+    let v = merge_key_feedback(&prev, &next, &ctx)
+        .expect("a refused modifier chord left with no trace must still trip MERGE-KEY-FEEDBACK");
+    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+}
+
+/// The exemption is scoped to the merge document actually being active: when
+/// merge is `Active` on some OTHER document, the key never reaches
+/// `intercept` at all, so a silent bare `Up` here is still a genuine defect.
+#[test]
+fn merge_key_feedback_still_fires_on_a_bare_scroll_key_when_merge_doc_is_not_active() {
+    let doc = other_doc_id();
+    let mut prev = base_snapshot("abc");
+    prev.merge_active = true;
+    prev.focus = Pane::Editor;
+    prev.merge_doc = Some(doc); // NOT prev.active
+    let next = prev.clone();
+    let mut ctx = base_ctx();
+    ctx.msg = MsgTag::Key {
+        input: key(KeyCode::Up, Mods::NONE),
+        command: None,
+    };
+    let v = merge_key_feedback(&prev, &next, &ctx).expect(
+        "a bare Up while merge is Active on a non-active document must still trip \
+         MERGE-KEY-FEEDBACK",
+    );
+    assert_eq!(v.id, "MERGE-KEY-FEEDBACK");
+}
+
 #[test]
 fn merge_key_feedback_ignores_a_non_editor_focus() {
     let mut prev = base_snapshot("abc");
