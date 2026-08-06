@@ -148,8 +148,8 @@ mod tests {
         app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
         app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
 
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
-        append_edit(&mut app, id_b, 1, &[], &[], &[]);
+        append_edit(&mut app, id_a, &[], &[], &[]);
+        append_edit(&mut app, id_b, &[], &[], &[]);
 
         assert_eq!(app.db_ops.len(), 2);
         let op_for_a = *app
@@ -207,7 +207,7 @@ mod tests {
         app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
         app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
 
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
+        append_edit(&mut app, id_a, &[], &[], &[]);
         let op_for_a = *app
             .db_ops
             .iter()
@@ -258,8 +258,8 @@ mod tests {
         app.doc_mut(id_a).expect("doc a exists").db = Some(DocDb::new(1, 0, true, 0));
         app.doc_mut(id_b).expect("doc b exists").db = Some(DocDb::new(2, 0, true, 0));
 
-        append_edit(&mut app, id_a, 1, &[], &[], &[]);
-        append_edit(&mut app, id_b, 1, &[], &[], &[]);
+        append_edit(&mut app, id_a, &[], &[], &[]);
+        append_edit(&mut app, id_b, &[], &[], &[]);
         assert_eq!(app.db_ops.len(), 2, "test setup: two ops in flight");
 
         let mut effects = crate::runtime::Effects::default();

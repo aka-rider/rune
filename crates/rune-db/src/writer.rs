@@ -25,6 +25,7 @@
 //! `WriterHandle::shutdown`'s `thread.join()` blocked forever, so a quit
 //! after a writer panic would have hung the whole app.
 
+use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::sync::mpsc::{self, SyncSender, TrySendError};
@@ -41,6 +42,43 @@ use crate::writer_lifecycle::{
     IDLE_TIMEOUT, fatal, run_idle_maintenance, run_shutdown_maintenance,
 };
 pub use crate::writer_ops::{DbEvent, OnEvent, OpKind, OpOutcome, QUEUE_DEPTH};
+
+/// This writer thread's own record of one bound document's LOCAL
+/// undo-position numbering, scoped to THIS process's session (never shared
+/// or persisted — a fresh `writer_loop` starts every doc over from an empty
+/// map, exactly matching a fresh session's own `rune_core::undo::Journal`
+/// starting at position 0). `base_seq` is the durable seq local position `0`
+/// resolves to (this session's durable journal head at the moment `doc_id`
+/// was bound — a cross-session inheritance bridge edit if one was journaled
+/// at load, else the position this session found the doc at); `local_seq[i]`
+/// is the durable seq the `(i + 1)`-th `AppendEdit` THIS writer thread has
+/// run for `doc_id` landed at, in the order they ran. Rebuilding this table
+/// from ops this thread has ALREADY executed — rather than trusting a value
+/// carried in from the app, which can only know an op's outcome once its ack
+/// has round-tripped — is what makes `OpKind::MoveUndoPos`'s resolution
+/// exact instead of a guess at an in-flight ack.
+#[derive(Default)]
+struct DocUndoState {
+    base_seq: i64,
+    local_seq: Vec<i64>,
+}
+
+impl DocUndoState {
+    /// The durable seq LOCAL undo position `local_pos` resolves to, or
+    /// `None` if this state has no entry for it — either `doc_id` was never
+    /// bound (no `Load`/`CreateScratch` this writer thread ever ran for it)
+    /// or `local_pos` is deeper than any `AppendEdit` this thread has
+    /// actually run, both of which are invariant violations the writer's
+    /// single FIFO queue should make unreachable (see `OpKind::MoveUndoPos`'s
+    /// doc comment) — never silently approximated.
+    fn resolve(&self, local_pos: i64) -> Option<i64> {
+        if local_pos == 0 {
+            return Some(self.base_seq);
+        }
+        let idx = usize::try_from(local_pos - 1).ok()?;
+        self.local_seq.get(idx).copied()
+    }
+}
 
 /// One write operation queued to the writer thread.
 pub struct WriteOp {
@@ -103,6 +141,9 @@ fn writer_loop(
     on_event: OnEvent,
     idle_timeout: Duration,
 ) {
+    // Owned by this thread alone, alongside `conn` — see `DocUndoState`'s
+    // own doc comment.
+    let mut undo_state: HashMap<i64, DocUndoState> = HashMap::new();
     loop {
         match receiver.recv_timeout(idle_timeout) {
             Ok(op) => {
@@ -120,7 +161,7 @@ fn writer_loop(
                 // dangerous as one inside `execute_op` — both must trip the
                 // same fatal path, never unwind the thread silently.
                 let delivered = panic::catch_unwind(AssertUnwindSafe(|| {
-                    let outcome = execute_op(&mut conn, vfs_ref, kind);
+                    let outcome = execute_op(&mut conn, vfs_ref, kind, &mut undo_state);
                     match outcome {
                         Ok(result) => on_event(DbEvent::Ok { id, result }),
                         Err(e) => on_event(DbEvent::Err {
@@ -162,7 +203,12 @@ fn writer_loop(
 /// `retry::with_retry` transactions internally, interleaved with `vfs`
 /// calls made with NO transaction open (plan binding rule / invariant
 /// I1) — `execute_op` itself never wraps their whole body in one tx.
-fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOutcome, Error> {
+fn execute_op(
+    conn: &mut Connection,
+    vfs: &dyn Vfs,
+    kind: OpKind,
+    undo_state: &mut HashMap<i64, DocUndoState>,
+) -> Result<OpOutcome, Error> {
     match kind {
         OpKind::Noop => {
             retry::with_retry(conn, |_tx| Ok(()))?;
@@ -202,15 +248,29 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
                     &cursors_after,
                 )
             })?;
+            // A real edit batch (never empty — see `db_enqueue::append_edit`'s
+            // caller) always lands a genuine row, so `seq` is always > 0
+            // here; recording it extends this doc's local-position mapping
+            // by exactly one entry, matching the ONE local `Journal::push`
+            // this `AppendEdit` replicates.
+            undo_state.entry(doc_id).or_default().local_seq.push(seq);
             Ok(OpOutcome::Seq(seq))
         }
         OpKind::MoveUndoPos {
             session_id,
             doc_id,
-            pos,
+            local_pos,
         } => {
+            let target_seq = undo_state
+                .get(&doc_id)
+                .and_then(|state| state.resolve(local_pos))
+                .ok_or_else(|| {
+                    Error::NotFound(format!(
+                        "move_undo_pos: doc {doc_id} has no durable seq for local position {local_pos}"
+                    ))
+                })?;
             retry::with_retry(conn, |tx| {
-                crate::journal::move_undo_pos(tx, session_id, doc_id, pos)
+                crate::journal::move_undo_pos(tx, session_id, doc_id, target_seq)
             })?;
             Ok(OpOutcome::None)
         }
@@ -219,9 +279,11 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
             now,
             doc_id,
             content,
-            seq,
         } => {
             let row_id = retry::with_retry(conn, |tx| {
+                // Resolved fresh, inside the same transaction as the insert
+                // — see `OpKind::CreateSnapshot`'s own doc comment.
+                let seq = crate::journal::current_seq(tx, session_id, doc_id)?;
                 crate::snapshot::create_snapshot(tx, session_id, now, doc_id, &content, seq)
             })?;
             Ok(OpOutcome::RowId(row_id))
@@ -312,6 +374,22 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
         } => {
             let result =
                 crate::load::load(conn, vfs, session_id, liveness_check.as_ref(), &path, now)?;
+            // A fresh binding — this document's LOCAL undo-journal position
+            // `0` (no local pushes yet this binding) durably predates
+            // `bridge_seq` if this load journaled a cross-session
+            // inheritance bridge edit, else it predates whatever this
+            // session already found at `doc_id` (0 for a genuinely fresh
+            // document). Replaces, never merges with, any stale entry a
+            // PRIOR binding of this same `doc_id` left behind (a close then
+            // reopen within one process resets local position numbering
+            // right along with it).
+            undo_state.insert(
+                result.doc_id,
+                DocUndoState {
+                    base_seq: result.bridge_seq.unwrap_or(0),
+                    local_seq: Vec::new(),
+                },
+            );
             Ok(OpOutcome::Load(Box::new(result)))
         }
         OpKind::ResolveAdopt {
@@ -331,6 +409,9 @@ fn execute_op(conn: &mut Connection, vfs: &dyn Vfs, kind: OpKind) -> Result<OpOu
         }
         OpKind::CreateScratch { now } => {
             let id = crate::scratch::create_scratch(conn, now)?;
+            // A brand-new row, never bound before — local position `0`
+            // starts at durable seq `0`, same as `Load`'s doc comment.
+            undo_state.insert(id, DocUndoState::default());
             Ok(OpOutcome::RowId(id))
         }
         OpKind::GcEmptyScratch { keep_id } => {

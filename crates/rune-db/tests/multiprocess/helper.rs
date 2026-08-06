@@ -219,10 +219,10 @@ pub(crate) fn gc_editor() {
         let id = store
             .append_edit(doc_id, &[insert_a], &[], &[])
             .expect("enqueue append a");
-        let seq_a = recv_seq(&rx, id);
+        recv_seq(&rx, id);
 
         let id = store
-            .create_snapshot(doc_id, &content_a, seq_a)
+            .create_snapshot(doc_id, &content_a)
             .expect("enqueue snapshot");
         expect_ok(&rx, id);
 

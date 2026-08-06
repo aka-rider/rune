@@ -40,27 +40,31 @@ impl Store {
     }
 
     /// Enqueues a `MoveUndoPos` op committing this session's undo position
-    /// for `doc_id` to `pos` — call only after the corresponding buffer
-    /// edit has already succeeded (see `journal::move_undo_pos`).
-    pub fn move_undo_pos(&self, doc_id: i64, pos: i64) -> Result<u64, Error> {
+    /// for `doc_id` to LOCAL undo-journal position `local_pos` — call only
+    /// after the corresponding buffer edit has already succeeded. The
+    /// writer thread resolves `local_pos` to the exact durable seq itself
+    /// at execution time (`OpKind::MoveUndoPos`'s own doc comment) — this
+    /// method never resolves it.
+    pub fn move_undo_pos(&self, doc_id: i64, local_pos: i64) -> Result<u64, Error> {
         self.enqueue(OpKind::MoveUndoPos {
             session_id: self.session_id,
             doc_id,
-            pos,
+            local_pos,
         })
     }
 
     /// Enqueues a `CreateSnapshot` op storing a recovery anchor for
-    /// `doc_id` at journal position `seq`. See `snapshot::create_snapshot`
-    /// for the transaction itself.
-    pub fn create_snapshot(&self, doc_id: i64, content: &str, seq: i64) -> Result<u64, Error> {
+    /// `doc_id` at this session's CURRENT durable journal position, resolved
+    /// fresh by the writer thread at execution time (`OpKind::CreateSnapshot`'s
+    /// own doc comment). See `snapshot::create_snapshot` for the transaction
+    /// itself.
+    pub fn create_snapshot(&self, doc_id: i64, content: &str) -> Result<u64, Error> {
         let now = self.now();
         self.enqueue(OpKind::CreateSnapshot {
             session_id: self.session_id,
             now,
             doc_id,
             content: content.to_string(),
-            seq,
         })
     }
 

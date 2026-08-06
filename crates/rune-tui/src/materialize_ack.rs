@@ -339,11 +339,15 @@ pub(crate) fn on_store_failure(app: &mut App, error: String) {
 }
 
 /// A stale `generation` (a later journal mutation already rescheduled the
-/// debounce — `save::schedule_snapshot_debounce`) is ignored. `content` and
-/// the journal position ("current position", plan WP5.S6) are captured
-/// SYNCHRONOUSLY here, in `update` — never re-derived once the enqueued
-/// `CreateSnapshot` op actually runs on the writer thread (the
+/// debounce — `save::schedule_snapshot_debounce`) is ignored. `content` is
+/// captured SYNCHRONOUSLY here, in `update` — never re-derived once the
+/// enqueued `CreateSnapshot` op actually runs on the writer thread (the
 /// "caller-captured, never re-derived" discipline, same as `materialize`).
+/// The durable journal position this content anchors against is NOT
+/// captured here — the writer thread resolves it fresh, at op-execution
+/// time, from its own already-committed state (`rune_db::OpKind::
+/// CreateSnapshot`'s own doc comment), which this app-side call has no way
+/// to know exactly while other ops for this doc may still be in flight.
 /// Never touches the user's file — `create_snapshot` is a pure recovery
 /// anchor (`rune-db::snapshot`'s doc comment).
 pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32) {
@@ -351,17 +355,17 @@ pub(crate) fn handle_snapshot_due(app: &mut App, id: DocumentId, generation: u32
         return;
     }
     let Some(doc) = app.doc(id) else { return };
-    let Some((db_id, last_known_seq)) = doc
+    let Some(db_id) = doc
         .db
         .as_ref()
         .filter(|d| d.snapshot_generation == generation)
-        .map(|d| (d.db_id, d.last_known_seq))
+        .map(|d| d.db_id)
     else {
         return;
     };
     let content = doc.buffer.content().to_string();
     let Some(db) = app.db.as_ref() else { return };
-    let result = db.store.create_snapshot(db_id, &content, last_known_seq);
+    let result = db.store.create_snapshot(db_id, &content);
     match result {
         Ok(op_id) => {
             app.db_ops.insert(op_id, crate::db::PendingOp::new(id));

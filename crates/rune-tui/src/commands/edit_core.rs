@@ -115,15 +115,7 @@ pub(crate) fn apply_edit_batch_with_cursors(
             // above is already the authoritative, synchronous source of
             // truth — this enqueue can never roll it back, only mark the
             // store degraded on failure (`db::append_edit`'s doc comment).
-            let local_pos = doc.journal.pos();
-            db::append_edit(
-                app,
-                id,
-                local_pos,
-                &applied,
-                &cursors_before.all(),
-                &cursors_after,
-            );
+            db::append_edit(app, id, &applied, &cursors_before.all(), &cursors_after);
             materialize_ack::recompute_dirty(app, id);
             true
         }
