@@ -261,6 +261,49 @@ fn escape_exits_in_place_keeping_markers() {
     );
 }
 
+/// The save gate is structural, not `⌘S`-only: `^W` on the dirty working
+/// form arms the DirtyClose guard, and its `[S]` answer routes through the
+/// same `trigger_save` ladder — with unresolved blocks it must refuse, and
+/// the conflict markers must never reach the disk file.
+#[test]
+fn dirty_close_guard_save_during_unresolved_merge_refuses_and_writes_nothing() {
+    let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
+    let disk_before = app.vfs.read(Path::new("/doc.md")).unwrap();
+
+    press_key(&mut app, ctrl('w'));
+    assert!(
+        matches!(
+            &app.guard,
+            Some(prompt) if prompt.kind == rune_tui::guard::GuardKind::DirtyClose
+        ),
+        "closing the dirty working form must arm the DirtyClose guard"
+    );
+
+    press_key(&mut app, ch('s'));
+
+    assert!(
+        rune_tui::messages::newest_text(&app)
+            .unwrap_or_default()
+            .contains("conflict(s) to resolve"),
+        "expected the merge save refusal, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+    assert!(app.doc(doc_id).is_some(), "the document must stay open");
+    assert!(
+        !app.doc(doc_id).unwrap().save_in_flight,
+        "no save may start while the resolver has unresolved blocks"
+    );
+    assert!(matches!(
+        app.merge,
+        MergeState::Active { doc, .. } if doc == doc_id
+    ));
+    assert_eq!(
+        app.vfs.read(Path::new("/doc.md")).unwrap(),
+        disk_before,
+        "the conflict-marker working form must never reach the disk file"
+    );
+}
+
 #[test]
 fn help_lists_the_merge_bindings() {
     let help = rune_tui::help::help_markdown();

@@ -54,6 +54,14 @@ pub(crate) fn handle_merge_prep_ack(
     // classification is what actually decides whether there is still
     // anything to merge.
     if !matches!(prep.sync.kind, SyncKind::DiskAhead | SyncKind::Diverged) {
+        // The refusal itself carries fresh authoritative news — the hint
+        // that invited this attempt was stale. Keep the classification for
+        // the chrome instead of dropping it with the refusal, or the
+        // banner/hint would go on re-inviting a merge there is nothing
+        // left to do.
+        if let Some(d) = app.doc_mut(doc) {
+            d.last_sync = Some(prep.sync.kind);
+        }
         app.merge = MergeState::Inactive;
         messages::info(app, "file on disk matches — nothing to merge");
         return;
@@ -125,6 +133,19 @@ pub(crate) fn handle_merge_prep_ack(
     enqueue_resolve_adopt(app, doc, theirs_obs);
 
     if blocks.is_empty() {
+        // Compared against the just-installed buffer content, not any
+        // pre-ack copy: a merge whose result happens to byte-equal the
+        // disk version is `Clean`; anything else strictly extends it.
+        let installed_matches_theirs = app
+            .doc(doc)
+            .is_some_and(|d| d.buffer.content() == theirs_text);
+        if let Some(d) = app.doc_mut(doc) {
+            d.last_sync = Some(if installed_matches_theirs {
+                SyncKind::Clean
+            } else {
+                SyncKind::BufferAhead
+            });
+        }
         app.merge = MergeState::Inactive;
         messages::info(app, "merged cleanly — disk changes applied");
         return;
@@ -167,6 +188,10 @@ fn discard_install(app: &mut App, doc: DocumentId, theirs_text: &str, theirs_obs
         return;
     }
     enqueue_resolve_adopt(app, doc, theirs_obs);
+    if let Some(d) = app.doc_mut(doc) {
+        // The buffer now byte-equals the disk bytes just installed.
+        d.last_sync = Some(SyncKind::Clean);
+    }
     app.merge = MergeState::Inactive;
     messages::info(app, "disk changes adopted");
 }
@@ -224,6 +249,17 @@ fn enqueue_resolve_adopt(app: &mut App, doc: DocumentId, theirs_obs: ObsId) {
     match db.store.resolve_adopt(db_id, theirs_obs, None) {
         Ok(op_id) => {
             app.db_ops.insert(op_id, PendingOp::new(doc));
+            // The install just reconciled the buffer with `theirs_obs`'s
+            // bytes — the current disk content — so the CAS expectation
+            // advances with it (the disk-conflict guard's [S]ave-anyway
+            // precedent): the invited ⌘S now passes against the file the
+            // merge just read, while a SECOND external write in between
+            // still hash-mismatches into a fresh conflict. Only on a
+            // successful enqueue — a degraded store leaves the baseline
+            // exactly as it was.
+            if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
+                doc_db.expect_obs = theirs_obs;
+            }
         }
         Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
     }
@@ -295,6 +331,134 @@ mod tests {
                 .unwrap_or_default()
                 .contains("no disk version"),
             "expected the F4 refusal status, got {:?}",
+            messages::newest_text(&app)
+        );
+    }
+
+    fn diverged_prep(theirs: &[u8], theirs_obs: ObsId) -> MergePrepResult {
+        MergePrepResult {
+            sync: rune_db::SyncState {
+                kind: SyncKind::Diverged,
+                ancestor: None,
+                ours: rune_db::Version {
+                    hash: String::new(),
+                    obs: None,
+                },
+                theirs: None,
+            },
+            ancestor: None,
+            theirs: Some(theirs.to_vec()),
+            theirs_obs: Some(theirs_obs),
+        }
+    }
+
+    /// A "nothing to merge" refusal still carries a fresh authoritative
+    /// classification — the landing must keep it on `last_sync`, or the
+    /// stale hint that invited the attempt would re-invite it forever.
+    #[test]
+    fn nothing_to_merge_refusal_records_the_fresh_classification() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        app.merge = MergeState::Pending {
+            doc,
+            generation: 0,
+            intent: MergeIntent::Merge,
+        };
+        let prep = MergePrepResult {
+            sync: rune_db::SyncState {
+                kind: SyncKind::Clean,
+                ancestor: None,
+                ours: rune_db::Version {
+                    hash: String::new(),
+                    obs: None,
+                },
+                theirs: None,
+            },
+            ancestor: None,
+            theirs: None,
+            theirs_obs: None,
+        };
+
+        let mut effects = Effects::default();
+        handle_merge_prep_ack(&mut app, doc, Some(0), prep, &mut effects);
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert_eq!(app.doc(doc).unwrap().last_sync, Some(SyncKind::Clean));
+    }
+
+    /// A successful Discard leaves the buffer byte-equal to the disk bytes
+    /// it just installed — `last_sync` must say `Clean`.
+    #[test]
+    fn discard_install_success_marks_the_document_clean() {
+        let mut app = app_with("ours");
+        let doc = app.active;
+
+        discard_install(&mut app, doc, "theirs\n", 0);
+
+        assert_eq!(app.doc(doc).unwrap().last_sync, Some(SyncKind::Clean));
+        assert_eq!(app.merge, MergeState::Inactive);
+    }
+
+    /// A failed install (a read-only document refuses the whole-range edit)
+    /// must leave both the CAS baseline and the sync classification exactly
+    /// as they were — nothing was reconciled, so nothing may claim it was.
+    #[test]
+    fn failed_install_leaves_expect_obs_and_last_sync_untouched() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        if let Some(d) = app.doc_mut(doc) {
+            d.read_only = crate::document::ReadOnly::Always;
+            d.db = Some(crate::db::DocDb::new(1, 7, false, 0));
+        }
+        app.merge = MergeState::Pending {
+            doc,
+            generation: 0,
+            intent: MergeIntent::Merge,
+        };
+
+        let mut effects = Effects::default();
+        handle_merge_prep_ack(
+            &mut app,
+            doc,
+            Some(0),
+            diverged_prep(b"disk\n", 9),
+            &mut effects,
+        );
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert_eq!(app.doc(doc).unwrap().buffer.content(), "hello");
+        assert_eq!(app.doc(doc).unwrap().last_sync, None);
+        assert_eq!(app.doc(doc).unwrap().db.as_ref().unwrap().expect_obs, 7);
+        assert!(
+            messages::newest_text(&app)
+                .unwrap_or_default()
+                .contains("merge failed"),
+            "expected the failed-install status, got {:?}",
+            messages::newest_text(&app)
+        );
+    }
+
+    /// `begin` refuses while a save's materialize dance is still in flight
+    /// for the document — a `MergePrep` ack landing after the save's commit
+    /// ack would rebase the CAS baseline backwards.
+    #[test]
+    fn begin_refuses_while_a_save_is_in_flight() {
+        let mut app = app_with("hello");
+        let doc = app.active;
+        if let Some(d) = app.doc_mut(doc) {
+            d.last_sync = Some(SyncKind::Diverged);
+            d.save_in_flight = true;
+        }
+
+        let mut effects = Effects::default();
+        crate::merge::begin(&mut app, MergeIntent::Merge, &mut effects);
+
+        assert_eq!(app.merge, MergeState::Inactive);
+        assert!(
+            messages::newest_text(&app)
+                .unwrap_or_default()
+                .contains("save in progress"),
+            "expected the save-in-flight refusal, got {:?}",
             messages::newest_text(&app)
         );
     }
