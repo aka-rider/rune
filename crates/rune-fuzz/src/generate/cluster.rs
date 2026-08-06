@@ -21,8 +21,20 @@ use super::palette::{
     TYPE_PALETTE, UNDO_KEY,
 };
 
+/// The narrowest terminal `Action::Resize` can generate — one column below
+/// this is unreachable through `arb_resize`, so the tiny-terminal matrix
+/// case in `cluster_tests.rs` pins to these instead of repeating the bounds
+/// as bare literals.
+pub(super) const RESIZE_MIN_WIDTH: u16 = 1;
+pub(super) const RESIZE_MIN_HEIGHT: u16 = 2;
+const RESIZE_MAX_WIDTH: u16 = 200;
+const RESIZE_MAX_HEIGHT: u16 = 60;
+
 fn arb_resize() -> impl Strategy<Value = (u16, u16)> {
-    (1u16..=200, 2u16..=60)
+    (
+        RESIZE_MIN_WIDTH..=RESIZE_MAX_WIDTH,
+        RESIZE_MIN_HEIGHT..=RESIZE_MAX_HEIGHT,
+    )
 }
 
 /// Every one of the 16 `KeyCode` variants; `Char` draws an arbitrary
@@ -298,12 +310,19 @@ fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
 /// proven from Editor, Title, Explorer, Tabs, Explorer live-search,
 /// Messages, and mid-quit-confirm starting focus.
 ///
-/// One caveat survives: while a Guard capture is up it swallows every key,
-/// including `^T`, so no key-based recovery can reach the Editor through
-/// one. Guard-raising clusters are self-contained and never leave a Guard
-/// active for a later cluster to inherit, so this cluster never actually
-/// runs behind one — but a Guard raised some other way would defeat this
-/// prefix too.
+/// One caveat survives, and it is narrower than it first looks: while a
+/// Guard capture is up it swallows every key, including `^T`, so `^T` alone
+/// cannot reach the Editor through one. But `ESCAPE_KEY` is the Guard's own
+/// cancel key (`guard::handle_guard_key`) — it clears the Guard without
+/// completing whatever the Guard was blocking, handing focus back to
+/// wherever it already was. So the SAME `[CTRL_T_KEY, ESCAPE_KEY]` pair
+/// still recovers even behind a Guard: `^T` is swallowed and wasted, but
+/// the trailing `Escape` answers the Guard instead of colliding with
+/// nothing, and the reset survives. `cluster_chrome`'s bare `^C` on a dirty,
+/// unpreserved document (this harness's only kind) is exactly this case: it
+/// raises the `DirtyQuit` Guard rather than leaving focus untouched on the
+/// Editor, and the prefix still lands its edit behind it (see the
+/// `"'x' edit, ^C (DirtyQuit Guard up)"` case below).
 ///
 /// See `cluster_highlight_edit_survives_focus_parked_off_editor` below for
 /// the regression this prefix closes.

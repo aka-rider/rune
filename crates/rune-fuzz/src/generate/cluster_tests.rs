@@ -25,19 +25,26 @@ use super::*;
 /// This matrix samples the real `cluster_highlight` strategy once per case
 /// and prepends a different parking prefix ahead of it: every pane the
 /// generator can park focus on (Title, Explorer, Tabs, Explorer live-search,
-/// Messages, a mid-quit-confirm dialog) plus the fresh-`Editor` base case
-/// and a tiny-terminal probe. Every case must settle with no invariant
-/// violation and the guaranteed 'h' edit in the buffer.
+/// Messages, a dirty document with the `DirtyQuit` Guard up) plus the
+/// fresh-`Editor` base case, the armed-but-unanswered quit chord, and a
+/// tiny-terminal probe. Every case must settle with no invariant violation
+/// and the guaranteed 'h' edit in the buffer.
 ///
 /// Run this with `cluster_highlight`'s leading reset reverted to a bare
 /// `Action::Key(ESCAPE_KEY)` to see it regress: the fresh-Editor case fails
-/// because a lone Escape with nothing focused elsewhere is a no-op walked
-/// into empty space, and the Explorer live-search case fails because
-/// Escape there clears the search text instead of returning focus, in both
-/// cases leaving `final_content` empty instead of `"h"`.
+/// because the Escape cascade from the Editor (collapse multicursor,
+/// collapse selection, otherwise LEAVE) hands focus to the Explorer on a
+/// document with neither, so the 'h' lands in Explorer type-to-search
+/// instead of the buffer; the Explorer live-search case fails for a related
+/// reason — Escape there only clears the query instead of returning focus.
+/// Both leave `final_content` empty instead of `"h"`.
 struct ParkCase {
     label: &'static str,
     prefix: Vec<Action>,
+    /// What `final_content` must equal once `cluster_highlight` runs after
+    /// `prefix`. Every case starts from `""`, so this is `"h"` unless
+    /// `prefix` itself lands an edit of its own ahead of the guaranteed one.
+    expected_content: &'static str,
 }
 
 fn park_cases() -> Vec<ParkCase> {
@@ -45,18 +52,22 @@ fn park_cases() -> Vec<ParkCase> {
         ParkCase {
             label: "no prefix (fresh Editor)",
             prefix: vec![],
+            expected_content: "h",
         },
         ParkCase {
             label: "^R (Title)",
             prefix: vec![Action::Key(CTRL_R_KEY)],
+            expected_content: "h",
         },
         ParkCase {
             label: "^B (Explorer)",
             prefix: vec![Action::Key(CTRL_B_KEY)],
+            expected_content: "h",
         },
         ParkCase {
             label: "^T (Tabs)",
             prefix: vec![Action::Key(CTRL_T_KEY)],
+            expected_content: "h",
         },
         ParkCase {
             label: "^B, 'r' (Explorer live-search)",
@@ -67,18 +78,33 @@ fn park_cases() -> Vec<ParkCase> {
                     mods: Mods::NONE,
                 }),
             ],
+            expected_content: "h",
         },
         ParkCase {
             label: "^E (Messages)",
             prefix: vec![Action::Key(CTRL_E_KEY)],
+            expected_content: "h",
         },
         ParkCase {
-            label: "^C (mid-quit-confirm)",
+            label: "^C on a clean doc (armed quit chord, focus stays on Editor)",
             prefix: vec![Action::Key(CTRL_C_KEY)],
+            expected_content: "h",
+        },
+        ParkCase {
+            label: "'x' edit, ^C (DirtyQuit Guard up)",
+            prefix: vec![
+                Action::Key(KeyInput {
+                    code: KeyCode::Char('x'),
+                    mods: Mods::NONE,
+                }),
+                Action::Key(CTRL_C_KEY),
+            ],
+            expected_content: "xh",
         },
         ParkCase {
             label: "tiny terminal (Resize to arb_resize's minimum)",
-            prefix: vec![Action::Resize(1, 2)],
+            prefix: vec![Action::Resize(RESIZE_MIN_WIDTH, RESIZE_MIN_HEIGHT)],
+            expected_content: "h",
         },
     ]
 }
@@ -104,7 +130,7 @@ fn cluster_highlight_edit_survives_focus_parked_off_editor() {
             case.label
         );
         assert_eq!(
-            result.final_content, "h",
+            result.final_content, case.expected_content,
             "[{}] cluster_highlight's guaranteed edit must land the 'h' keystroke in the \
              buffer regardless of where focus was parked beforehand; got {:?} instead",
             case.label, result.final_content

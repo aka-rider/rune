@@ -30,6 +30,8 @@
 
 - [ ] **The probe stat short-circuit can miss an external rewrite that preserves size, mtime, and inode within filesystem timestamp granularity.** `rune-db`'s probe classifies a document `Clean` without rehashing when the fresh `stat` matches the last recorded one exactly — the fast path the sync classifier depends on to avoid rehashing every document on every tab switch. An external editor that rewrites a file in place fast enough to land inside one mtime tick, ending up with the same size, can produce a stat identity indistinguishable from "nothing changed" even though the bytes did. Accepted risk, not fixed here: the save-time CAS check (compare-and-swap against the last observed hash before publishing) still catches it at the one point that actually matters — a stale in-memory buffer can never overwrite bytes it didn't know about — so the gap is a delayed *notification* (the disk-changed hint/merge offer may not fire promptly), never a silent data-loss path.
 
+- [ ] **`crates/rune-fuzz/src/generate/cluster.rs` is over the 500-line file budget (527 lines).** Pre-existing overrun, grown further by the parked-state test matrix's supporting doc-comment work. A named split candidate: the palette-adjacent generator helpers that don't belong to any one `cluster_*` strategy — `arb_resize`, `arb_dir_entry`, `arb_dir_cause`, `arb_dir_loaded_generation`, `arb_highlight_version`, `arb_highlight_span` — into a sibling module the same way `cluster_tests.rs` was already split out.
+
 ## Markdown: <selection>+Cmd+b->Bold +i->italic +`-`-> strikethrough
 
 ## Lists
