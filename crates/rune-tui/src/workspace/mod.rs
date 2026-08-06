@@ -46,38 +46,60 @@ pub fn resolve(vfs: &dyn Vfs, path: &Path) -> PathBuf {
 /// (plan WP5) needs the id back to force-parse the target and land the
 /// caret on an anchor.
 pub fn open_path(app: &mut App, path: &Path) -> Option<DocumentId> {
+    match resolve_and_read(app, path) {
+        ReadOutcome::Reactivated(id) => Some(id),
+        ReadOutcome::Read { resolved, bytes } => open_bytes(app, &resolved, bytes),
+        ReadOutcome::Failed => None,
+    }
+}
+
+/// The tab-cap-respecting counterpart of [`open_path`]: an already-open
+/// document reactivates as freely as ever (no new tab, nothing to cap), but
+/// a genuinely new one is read FIRST and the gate runs only once that read
+/// has actually succeeded — a file that can't be read must never cost an
+/// eviction victim its tab for an open that was going to fail anyway.
+pub fn open_path_checked(app: &mut App, path: &Path, effects: &mut Effects) -> Option<DocumentId> {
+    match resolve_and_read(app, path) {
+        ReadOutcome::Reactivated(id) => Some(id),
+        ReadOutcome::Read { resolved, bytes } => {
+            if !crate::opentabs::limit::ensure_room(app, effects) {
+                return None;
+            }
+            open_bytes(app, &resolved, bytes)
+        }
+        ReadOutcome::Failed => None,
+    }
+}
+
+/// The shared resolve/reactivate-or-read shape behind [`open_path`] and
+/// [`open_path_checked`]: normalizes `path` via [`resolve`], returns the
+/// already-open document's id if one is bound to the resolved path, else
+/// reads it through the injected `Vfs` — reporting a read failure into the
+/// message log (the one chokepoint every error report funnels through) the
+/// same way regardless of which caller asked.
+enum ReadOutcome {
+    Reactivated(DocumentId),
+    Read { resolved: PathBuf, bytes: Vec<u8> },
+    Failed,
+}
+
+fn resolve_and_read(app: &mut App, path: &Path) -> ReadOutcome {
     let resolved = resolve(app.vfs.as_ref(), path);
 
     if let Some(id) = existing_document_for(app, &resolved) {
         // Re-activation moves the Tabs cursor only — never reorders
         // `tabs.order` (plan WP5.S1's own chokepoint list).
         switch_to(app, id);
-        return Some(id);
+        return ReadOutcome::Reactivated(id);
     }
 
-    let bytes = match app.vfs.read(&resolved) {
-        Ok(bytes) => bytes,
+    match app.vfs.read(&resolved) {
+        Ok(bytes) => ReadOutcome::Read { resolved, bytes },
         Err(e) => {
             messages::error(app, format!("could not open {}: {e}", resolved.display()));
-            return None;
+            ReadOutcome::Failed
         }
-    };
-    open_bytes(app, &resolved, bytes)
-}
-
-/// The tab-cap-respecting counterpart of [`open_path`]: an already-open
-/// document reactivates as freely as ever (no new tab, nothing to cap),
-/// but a genuinely new one first runs the gate — refusing the open (and
-/// leaving whatever the gate itself already reported) rather than pushing
-/// the strip past its ceiling.
-pub fn open_path_checked(app: &mut App, path: &Path, effects: &mut Effects) -> Option<DocumentId> {
-    let resolved = resolve(app.vfs.as_ref(), path);
-    if existing_document_for(app, &resolved).is_none()
-        && !crate::opentabs::limit::ensure_room(app, effects)
-    {
-        return None;
     }
-    open_path(app, &resolved)
 }
 
 /// Opens `path` off-thread (plan WP5.S6, [rune-tui A 7]: "synchronous
