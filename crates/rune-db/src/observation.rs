@@ -295,10 +295,17 @@ pub fn newest_observation(tx: &Transaction<'_>, doc_id: i64) -> Result<Option<Ob
 /// Derives the 3-way-merge ancestor for `doc_id` AT journal position `pos`,
 /// AS SEEN BY `session_id`: the newest observation `session_id` itself
 /// recorded, with `origin IN ('load','save','resolve')` and a correlated
-/// `seq <= pos`. `exclude_obs`, when `Some`, is excluded from the
-/// candidates IFF its own correlated seq equals `pos` exactly (the
-/// self-reference guard — narrower than excluding the id outright; an
-/// OLDER correlation for the same id is still a legitimate ancestor).
+/// `seq <= pos`. `exclude_obs`, when `Some`, names the caller's "theirs"
+/// and is excluded from the candidates IFF it is a `load`/`save` row whose
+/// correlated seq equals `pos` exactly — the self-reference guard that
+/// stops a bare sighting from tautologically counting as its own
+/// agreement. The guard deliberately does NOT reach `resolve` rows: a
+/// resolve observation at exactly the current journal position is the
+/// record of a completed reconciliation (a zero-conflict merge, a Discard,
+/// or an all-both resolution journals nothing past it), which is precisely
+/// the agreement point a 3-way comparison needs — legitimate as ancestor
+/// even while it is also theirs. Narrower still, an OLDER correlation for
+/// the same excluded id remains a legitimate ancestor at any origin.
 /// Decision-input (plan decision 8).
 pub fn ancestor_at(
     tx: &Transaction<'_>,
@@ -312,7 +319,7 @@ pub fn ancestor_at(
         &format!(
             "SELECT {OBS_COLUMNS} FROM observations \
              WHERE doc_id=?1 AND session_id=?2 AND origin IN ('load','save','resolve') \
-               AND seq IS NOT NULL AND seq <= ?3 AND (id != ?4 OR seq < ?3) \
+               AND seq IS NOT NULL AND seq <= ?3 AND (id != ?4 OR seq < ?3 OR origin = 'resolve') \
              ORDER BY seq DESC, id DESC LIMIT 1"
         ),
         params![doc_id, session_id, pos, exclude],

@@ -249,6 +249,147 @@ mod tests {
         tx.commit().expect("commit");
     }
 
+    /// Seeds the completed-reconciliation shape: a 'load' observation at
+    /// seq 0 with `load_blob`, one journaled edit producing "merged" at
+    /// seq 1, and a 'resolve' observation correlated to that head seq
+    /// carrying `resolve_blob` — the record a zero-conflict merge or
+    /// Discard leaves behind, where no further edit moves the journal
+    /// past the resolve seq.
+    fn seed_resolve_at_head(
+        tx: &Transaction<'_>,
+        session_id: i64,
+        doc_id: i64,
+        load_blob: &[u8],
+        resolve_blob: &[u8],
+    ) {
+        let load_hash = crate::blob::put_blob(tx, load_blob).expect("seed load blob");
+        crate::observation::record_observation(
+            tx,
+            doc_id,
+            session_id,
+            crate::observation::ObservationMeta {
+                blob_hash: &load_hash,
+                seq: Some(0),
+                origin: "load",
+            },
+            &crate::observation::StatFacts {
+                size: load_blob.len() as i64,
+                mtime: "t".to_string(),
+                ..Default::default()
+            },
+            "t",
+        )
+        .expect("record load observation");
+
+        crate::journal::append_edit(
+            tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            &[rune_core::buffer::AppliedEdit {
+                start: 0,
+                end: 0,
+                deleted: String::new(),
+                insert: "merged".to_string(),
+            }],
+            &[],
+            &[],
+        )
+        .expect("append_edit");
+
+        let resolve_hash = crate::blob::put_blob(tx, resolve_blob).expect("seed resolve blob");
+        crate::observation::record_observation(
+            tx,
+            doc_id,
+            session_id,
+            crate::observation::ObservationMeta {
+                blob_hash: &resolve_hash,
+                seq: Some(1),
+                origin: "resolve",
+            },
+            &crate::observation::StatFacts {
+                size: resolve_blob.len() as i64,
+                mtime: "t2".to_string(),
+                ..Default::default()
+            },
+            "t2",
+        )
+        .expect("record resolve observation");
+    }
+
+    /// The zero-conflict-merge / all-both shape: the resolve observation
+    /// sits at exactly the journal head, and its blob (the disk bytes) is
+    /// NOT what the buffer reconstructs to. The resolve row is both theirs
+    /// and the legitimate ancestor — only the buffer moved since the
+    /// reconciliation, so this is an ordinary unsaved edit, never a
+    /// fabricated conflict.
+    #[test]
+    fn resolve_at_head_seq_classifies_buffer_ahead_not_diverged() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        seed_resolve_at_head(&tx, session_id, doc_id, b"original", b"disk");
+
+        let state = sync(&tx, session_id, doc_id).expect("sync");
+        assert_eq!(
+            state.kind,
+            SyncKind::BufferAhead,
+            "a resolve observation at the head seq is a completed reconciliation, not a divergence"
+        );
+        tx.commit().expect("commit");
+    }
+
+    /// The Discard shape: the resolve observation's blob equals the journal
+    /// reconstruction — buffer and disk agree byte-for-byte.
+    #[test]
+    fn resolve_at_head_seq_matching_reconstruction_is_clean() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        seed_resolve_at_head(&tx, session_id, doc_id, b"original", b"merged");
+
+        let state = sync(&tx, session_id, doc_id).expect("sync");
+        assert_eq!(state.kind, SyncKind::Clean);
+        tx.commit().expect("commit");
+    }
+
+    /// Pins the already-working case: once an edit moves the journal PAST
+    /// the resolve seq, the resolve row is an ordinary older correlation
+    /// and classification stays BufferAhead.
+    #[test]
+    fn edit_after_resolve_still_classifies_buffer_ahead() {
+        let mut conn = open();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let tx = conn.transaction().expect("tx");
+        let doc_id = seed_doc(&tx);
+        seed_resolve_at_head(&tx, session_id, doc_id, b"original", b"disk");
+
+        crate::journal::append_edit(
+            &tx,
+            session_id,
+            SystemTime::now(),
+            doc_id,
+            &[rune_core::buffer::AppliedEdit {
+                start: 6,
+                end: 6,
+                deleted: String::new(),
+                insert: " more".to_string(),
+            }],
+            &[],
+            &[],
+        )
+        .expect("append_edit after resolve");
+
+        let state = sync(&tx, session_id, doc_id).expect("sync");
+        assert_eq!(state.kind, SyncKind::BufferAhead);
+        tx.commit().expect("commit");
+    }
+
     /// Undo-unwind override: a resolve observation
     /// correlates `theirs` to the edit seq that resolved it. Undoing the
     /// buffer back BELOW that seq makes `ancestor_at` recompute an OLDER
