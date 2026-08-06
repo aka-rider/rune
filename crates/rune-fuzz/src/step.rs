@@ -65,8 +65,11 @@ pub enum MsgTag {
     /// the driver actually stamped on the message (resolved from
     /// `HighlightVersion` against the live buffer at delivery time, not the
     /// raw enum tag itself); `span_count` is how many raw spans the
-    /// generator attached, kept for report readability. `HL-STALE-DROP`/
-    /// `HL-NO-REFLOW` (`invariant/highlight.rs`) key off this variant.
+    /// generator attached, kept for report readability. `Action::
+    /// HighlightTree` replies reuse this same tag with `span_count: 0` —
+    /// its spans only exist at render-time query, so there is nothing to
+    /// count at delivery. `HL-STALE-DROP`/`HL-NO-REFLOW`
+    /// (`invariant/highlight.rs`) key off this variant.
     Highlighted {
         delivered_version: u64,
         span_count: usize,

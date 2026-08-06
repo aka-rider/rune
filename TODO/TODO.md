@@ -690,10 +690,12 @@ cannot claim to be the table's first or last.
   `rune-tui`. A grammar's C `ts_assert` firing `SIGABRT` during
   `make test-fuzz` kills the process before `tests/human_session.rs` writes
   its artifact bundle — no shrunk input, no `script.rune`, no `repros/`
-  promotion path for that failure. The fuzzer never calls `rune_ts::highlight`
-  itself (it only delivers synthetic `Action::Highlight` replies), so the
-  exposure is confined to real `Cmd` worker threads, not the fuzzer's own
-  driver loop.
+  promotion path for that failure. `Action::HighlightTree` (issue #37) now
+  runs a real `rune_ts::parse` from the driver's own loop, but only for one
+  grammar (JSON, deliberately chosen as the smallest and most stable) — a
+  narrow, bounded widening, not a general one: the fuzzer still never calls
+  `rune_ts::highlight`, and every other grammar's exposure remains confined
+  to real `Cmd` worker threads. This SIGABRT hazard stays open.
 ## rust port — findings from the lone-`\r` fix that were out of its scope (recorded 2026-07-28)
 
 Recorded together because one fix surfaced all of them.
@@ -933,10 +935,10 @@ Every MULTI-rune cluster (the ZWJ-family/skin-tone/variation-selector/flag/keyca
 
 `render::build_rows` now runs a `rune_ts::highlight_range` query, scoped to the visible byte window, on every frame for a code document with a retained tree — see `crates/rune-tui/src/render/mod.rs`. This is new per-frame cost with no dedicated gate (`make perf-guard` only covers `rune-md`'s parse pipeline). When the display-pipeline budget review already tracked elsewhere in this file happens, it must measure this query alongside the existing whole-document `build_rows`/snapshot recompute — not just the pre-existing cost.
 
-## no fuzz invariant delivers a tree-backed highlight reply yet
-
-The session fuzzer's `HL-CLAMPED`/`HL-STALE-DROP`/`HL-NO-REFLOW` invariants (`crates/rune-fuzz/src/invariant/highlight.rs`) now read `highlight::visible_spans` — the same query the renderer runs — so they cover the render-time clamp, sort and window filter for every channel, including the tree-backed path when a session happens to produce a code region. What they still never do is DELIVER a tree: `Action::Highlight` injects hostile spans, because a `ParsedTree` cannot be synthesized. A fuzz action that runs a real `rune_ts::parse` over a small fixture and delivers the resulting `RegionPayload::Tree` would close that gap; it is future work, not part of this change.
-
 ## `crates/rune-tui/src/runtime/mod.rs` is 542 lines (file-size budget limit 500; recorded at the rr/integration merge)
 
 Already pre-existing-overage territory before this merge (531 lines on the integration side, which had grown `Msg` with `FileOpened`/`RenameDone`/`DirLoaded` and their `Cmd` constructors past the ceiling on its own). Folding in the instant-open highlight rework's `FIRST_PAINT_BUDGET` re-export and the `first_paint_highlight` bootstrap call added another ~11 lines. Split direction: the `Msg`/`Cmd`/`Effects` type definitions and the `run` main-loop function are two fairly separable concerns; the per-`Cmd`-kind constructors already live in sibling modules (`highlight_cmd.rs`, and similarly named ones for rename/save/dir-load) — moving the bootstrap sequence (`first_paint_highlight`'s call site plus its surrounding setup) into its own `bootstrap.rs` would recover most of the overage without touching the `Msg`/`Cmd` types themselves. Not split here — out of scope for a merge-conflict resolution.
+
+## `crates/rune-fuzz/src/generate/cluster.rs` is 558 lines (file-size budget limit 500; recorded 2026-08-06, issue #37 generator arm)
+
+Already pre-existing-overage territory before this change (517 lines, untracked — it grew past 500 sometime after its own WP7.S1 split, which had it at 213). Adding `cluster_highlight_tree` (issue #37's `Action::HighlightTree` generator arm) plus its `arb_tree_base` helper pushed it to 558. Split direction: the highlight-specific strategies — `arb_highlight_version`, `arb_highlight_span`, `arb_tree_base`, `cluster_highlight`, `cluster_highlight_tree` — are self-contained and could move to a sibling `generate/cluster_highlight.rs`, the same per-concern split `script.rs`/`driver.rs` already used. Not split here — out of scope for this change.

@@ -232,16 +232,15 @@ fn arb_highlight_version() -> impl Strategy<Value = HighlightVersion> {
 /// Readability-only split (finding B): each bound below is the exact
 /// literal the four `prop_oneof!` arms used inline before, just named —
 /// the generated distribution is unchanged.
-fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
-    /// Arm 1 — a small well-formed span: `start` fits inside every `SEEDS`
-    /// document, `len >= 1` keeps `start < end`.
-    const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
-    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
+///
+/// `IN_BOUNDS_START` and `FAR_OUT_OF_BOUNDS_START` are hoisted to module
+/// scope: `arb_tree_base` reuses the identical two ranges for its own
+/// well-formed-vs-hostile split.
+const IN_BOUNDS_START: std::ops::Range<usize> = 0..30;
+const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
 
-    /// Arm 2 — a span entirely past the end of every `SEEDS` document (the
-    /// longest seed is well under 900 bytes), exercising the out-of-bounds
-    /// clamp/discard path with a WIDE span, not just a narrow overrun.
-    const FAR_OUT_OF_BOUNDS_START: std::ops::Range<usize> = 900..2000;
+fn arb_highlight_span() -> impl Strategy<Value = (usize, usize, u16)> {
+    const IN_BOUNDS_LEN: std::ops::Range<usize> = 1..15;
     const FAR_OUT_OF_BOUNDS_LEN: std::ops::Range<usize> = 1..200;
 
     /// Arm 3 — a deliberately inverted `start > end` pair: `end` first,
@@ -331,6 +330,43 @@ fn cluster_highlight() -> impl Strategy<Value = Vec<Action>> {
                 Action::Highlight { version, spans },
             ]
         })
+}
+
+/// `base` for `Action::HighlightTree`: a small in-bounds anchor (every
+/// `TREE_FIXTURES` entry is well under 30 bytes) or a deliberately far
+/// out-of-bounds one — the same hostile-vs-well-formed split
+/// `arb_highlight_span`'s own two bound arms use, since the render query's
+/// clamp against an out-of-bounds `LineMap` anchor is exactly the property
+/// under fuzz.
+fn arb_tree_base() -> impl Strategy<Value = usize> {
+    prop_oneof![IN_BOUNDS_START, FAR_OUT_OF_BOUNDS_START]
+}
+
+/// 3 — the same mandatory `Escape` + `Key('h')` prefix `cluster_highlight`
+/// uses and for the same two reasons (that cluster's own docs): the edit
+/// guarantees the live buffer version is >= 1 before the reply is
+/// delivered, so `HighlightVersion::Stale` is genuinely distinct from
+/// `Live`; `Escape` unconditionally unparks focus from `Pane::Title` so the
+/// edit reaches the Editor regardless of what ran immediately before. The
+/// reply itself is synthesized through the TREE channel instead
+/// (`Action::HighlightTree`'s own docs): any fixture, any base — `base` is
+/// deliberately unvalidated in the same hostile spirit as
+/// `arb_highlight_span`'s far-out-of-bounds arm.
+fn cluster_highlight_tree() -> impl Strategy<Value = Vec<Action>> {
+    (arb_highlight_version(), any::<u8>(), arb_tree_base()).prop_map(|(version, fixture, base)| {
+        vec![
+            Action::Key(ESCAPE_KEY),
+            Action::Key(KeyInput {
+                code: KeyCode::Char('h'),
+                mods: Mods::NONE,
+            }),
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            },
+        ]
+    })
 }
 
 /// 1 — one of `Resize`, `FailNextSave`, `Key(ctrl+c)`, `ConfirmTimeout`,
@@ -484,13 +520,15 @@ fn cluster_merge() -> impl Strategy<Value = Vec<Action>> {
     })
 }
 
-/// The user-approved weighted table, now over 16 clusters (plan WP7.S6
+/// The user-approved weighted table, now over 17 clusters (plan WP7.S6
 /// added `cluster_highlight`; WP14.S1 added `cluster_confirm_stale`;
 /// WP14.S3 added `cluster_multicursor`; plan WP2 added `cluster_quit_
 /// guard`, the dedicated, self-contained scenario for the `DirtyQuit`
 /// Guard's `[S]ave`/`[D]iscard`/`Esc` answers; the merge plan's own WP7.S1
-/// added `cluster_merge`). All arms are `.boxed()` — `prop_oneof!` with >10
-/// arms expands to `Union::new_weighted(vec![… boxed…])` (G16).
+/// added `cluster_merge`; issue #37's own generator arm added
+/// `cluster_highlight_tree`, the TREE-channel twin of `cluster_highlight`).
+/// All arms are `.boxed()` — `prop_oneof!` with >10 arms expands to
+/// `Union::new_weighted(vec![… boxed…])` (G16).
 pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
     prop_oneof![
         35 => cluster_type_prose().boxed(),
@@ -504,6 +542,7 @@ pub(super) fn arb_cluster() -> impl Strategy<Value = Vec<Action>> {
         4 => cluster_multicursor().boxed(),
         3 => cluster_monkey_burst().boxed(),
         3 => cluster_highlight().boxed(),
+        3 => cluster_highlight_tree().boxed(),
         2 => cluster_async_deliver().boxed(),
         1 => cluster_chrome().boxed(),
         1 => cluster_confirm_stale().boxed(),

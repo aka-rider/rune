@@ -35,7 +35,7 @@ use step_exec::{
 /// `entries`/`cause` vary; the root itself isn't the thing under fuzz here.
 const FUZZ_DIR_ROOT: &str = "/fuzz/dir";
 
-use crate::action::{Action, HighlightVersion};
+use crate::action::Action;
 use crate::invariant::Violation;
 use crate::snapshot::Snapshot;
 use crate::step::{MsgTag, StepCtx};
@@ -295,15 +295,8 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 }
             }
             Action::Highlight { version, spans } => {
-                // Resolved against the LIVE buffer version at delivery
-                // time (`HighlightVersion`'s own docs) — never a fixed
-                // constant, mirroring `Action::ConfirmTimeout`'s rule.
                 let live = state.app.active_doc().buffer.version();
-                let delivered_version = match version {
-                    HighlightVersion::Live => live,
-                    HighlightVersion::Stale => live.saturating_sub(1),
-                    HighlightVersion::Future => live.saturating_add(1),
-                };
+                let delivered_version = version.resolve(live);
                 let doc = state.app.active;
                 let msg = Msg::Highlighted {
                     doc,
@@ -331,6 +324,27 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
                 let tag = MsgTag::Highlighted {
                     delivered_version,
                     span_count: spans.len(),
+                };
+                if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
+                    break 'session;
+                }
+            }
+            Action::HighlightTree {
+                version,
+                fixture,
+                base,
+            } => {
+                let live = state.app.active_doc().buffer.version();
+                let delivered_version = version.resolve(live);
+                let doc = state.app.active;
+                let msg = Msg::Highlighted {
+                    doc,
+                    version: delivered_version,
+                    result: Some(crate::action::highlight_tree_reply(*fixture, *base)),
+                };
+                let tag = MsgTag::Highlighted {
+                    delivered_version,
+                    span_count: 0,
                 };
                 if step_and_check(&mut state, &mut prev, msg, tag, None, &mut outcome) {
                     break 'session;
