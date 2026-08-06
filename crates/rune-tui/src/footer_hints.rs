@@ -70,12 +70,11 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
         entries.push((save.label(), save.help, app.is_dirty()));
     }
 
-    let read_only = app.active_doc().read_only;
     entries.extend(
         GLOBAL_BINDINGS
             .iter()
             .filter(|b| !b.alias && !matches!(b.cmd, GlobalCommand::Save))
-            .filter(|b| !hint_suppressed_for(read_only, b.cmd))
+            .filter(|b| !hint_suppressed(app, b.cmd))
             .map(|b| (b.label(), b.help, true)),
     );
 
@@ -113,12 +112,24 @@ pub(crate) fn default_hint_entries(app: &App) -> Vec<(String, &'static str, bool
 /// `extend` above would otherwise show unconditionally: a `Preview`
 /// document refuses close (`workspace::request_close`) and rename entry
 /// (`App::focus_title`) alike, so their hints must not promise a chord that
-/// only sets a status message. `Save` already has its own bespoke arm above
-/// (styled by dirtiness, not just present/absent) and is filtered out of
-/// this bulk `extend` before it ever reaches here.
-fn hint_suppressed_for(read_only: ReadOnly, cmd: GlobalCommand) -> bool {
-    read_only == ReadOnly::Preview
+/// only sets a status message; and `merge` is offered only while the active
+/// document's last known sync classification actually has disk-side changes
+/// to merge (`DiskAhead`/`Diverged`) — `merge::begin` refuses every other
+/// state, so the hint would promise a chord that only posts a refusal.
+/// `Save` already has its own bespoke arm above (styled by dirtiness, not
+/// just present/absent) and is filtered out of this bulk `extend` before it
+/// ever reaches here.
+fn hint_suppressed(app: &App, cmd: GlobalCommand) -> bool {
+    if app.active_doc().read_only == ReadOnly::Preview
         && matches!(cmd, GlobalCommand::CloseFile | GlobalCommand::FocusTitle)
+    {
+        return true;
+    }
+    matches!(cmd, GlobalCommand::Merge)
+        && !matches!(
+            app.active_doc().last_sync,
+            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
+        )
 }
 
 /// One hint entry's own span group: a leading `"  "` separator (every
@@ -287,12 +298,13 @@ mod tests {
     }
 
     /// `GlobalCommand::Merge` has exactly one live binding (`^M` — Ghostty
-    /// steals `⌘M`, so that form was dropped rather than bound), so the
-    /// default hints list "merge" exactly once, rendered with the `^`
-    /// glyph, never `⌘`.
+    /// steals `⌘M`, so that form was dropped rather than bound), so on a
+    /// diverged document the default hints list "merge" exactly once,
+    /// rendered with the `^` glyph, never `⌘`.
     #[test]
     fn default_hints_list_merge_once_as_ctrl_m() {
-        let app = app_with("hello");
+        let mut app = app_with("hello");
+        app.active_doc_mut().last_sync = Some(rune_db::SyncKind::Diverged);
         let entries = default_hint_entries(&app);
         let mut merge_entries = entries.iter().filter(|(_, help, _)| *help == "merge");
         let (label, _, _) = merge_entries.next().expect("expected a merge hint entry");
@@ -301,6 +313,26 @@ mod tests {
             merge_entries.next().is_none(),
             "expected exactly one merge hint, got {entries:?}"
         );
+    }
+
+    /// Without disk-side divergence there is nothing `^M` can merge —
+    /// `merge::begin` refuses — so the hint stays out of the default row
+    /// for every non-diverged sync state.
+    #[test]
+    fn default_hints_omit_merge_without_divergence() {
+        for last_sync in [
+            None,
+            Some(rune_db::SyncKind::Clean),
+            Some(rune_db::SyncKind::BufferAhead),
+        ] {
+            let mut app = app_with("hello");
+            app.active_doc_mut().last_sync = last_sync;
+            let entries = default_hint_entries(&app);
+            assert!(
+                !entries.iter().any(|(_, help, _)| *help == "merge"),
+                "expected no merge hint for {last_sync:?}, got {entries:?}"
+            );
+        }
     }
 
     /// Plan WP6 — the chord is dead for `ReadOnly::Always` (an image

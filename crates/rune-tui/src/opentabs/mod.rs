@@ -199,8 +199,13 @@ pub fn draw_divider(app: &App, area: Rect, frame: &mut Frame) {
 /// shown regardless of `app.focus`, this pane's cursor is meaningless
 /// until the user has actually tabbed into it), a `(i+1)%10:` digit
 /// shortcut (matching the `^1`-`^0` chords `GLOBAL_BINDINGS` binds to jump
-/// straight to that tab from any pane), a dirty marker, and the document's
-/// display name (`tab_active` for `app.active`, `tab_normal` otherwise).
+/// straight to that tab from any pane), a dirty marker, a diverged-disk
+/// marker (`⇄` while THAT document's last known sync classification is
+/// `DiskAhead`/`Diverged` — per-doc, since a background tab can diverge
+/// while another is active), and the document's display name (`tab_active`
+/// for `app.active`, `tab_normal` otherwise). The three markers are
+/// fixed-width one-cell columns (blank when off), so a state flip never
+/// shifts the row's alignment.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     if area.height == 0 {
         return;
@@ -227,6 +232,10 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         };
         let dirty_marker = if doc.is_dirty() { "x" } else { " " };
         let pin_marker = if doc.pinned { "*" } else { " " };
+        let sync_marker = match doc.last_sync {
+            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged) => "\u{21c4}",
+            _ => " ",
+        };
         // A not-yet-promoted preview renders dimmer than an ordinary tab —
         // active or not, since it can be the active document while the
         // Explorer cursor is still just passing over it — so a glance at
@@ -247,6 +256,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             Span::styled(format!("{shortcut}:"), app.theme.chrome.tabs_divider),
             Span::styled(pin_marker, app.theme.chrome.tab_pinned),
             Span::styled(dirty_marker, app.theme.chrome.tab_dirty),
+            Span::styled(sync_marker, app.theme.chrome.error),
             Span::raw(" "),
             Span::styled(doc.file_name().to_string(), name_style),
         ]));
