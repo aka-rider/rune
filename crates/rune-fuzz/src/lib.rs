@@ -86,8 +86,12 @@
 pub mod action;
 pub mod driver;
 pub mod generate;
+mod hash;
 pub mod invariant;
 pub mod report;
 pub mod script;
 pub mod snapshot;
 pub mod step;
+#[cfg(test)]
+mod test_support;
+pub mod wal;

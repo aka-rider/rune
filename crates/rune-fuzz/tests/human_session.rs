@@ -13,7 +13,7 @@ use std::path::Path;
 
 use proptest::test_runner::{Config, FileFailurePersistence, TestCaseError, TestError, TestRunner};
 use rune_fuzz::invariant::Violation;
-use rune_fuzz::{driver, generate, report, script};
+use rune_fuzz::{driver, generate, report, script, wal};
 
 #[ignore = "Randomized soak. Runs ONLY via the explicit invocation in \
             rust/Makefile (`make test-fuzz`), which sets PROPTEST_CASES and \
@@ -21,6 +21,16 @@ use rune_fuzz::{driver, generate, report, script};
             strict-invariants feature stays off (see crates/rune-md/TODO.md)."]
 #[test]
 fn human_session() {
+    match wal::sweep(Path::new("artifacts")) {
+        Ok(None) => {}
+        Ok(Some(dir)) => panic!(
+            "a previous fuzz run died to a process-level signal mid-case; \
+             its write-ahead script was promoted to {}",
+            dir.display()
+        ),
+        Err(e) => panic!("wal::sweep failed: {e}"),
+    }
+
     let config = Config {
         // Direct, not the default SourceParallel: SourceParallel cannot resolve
         // a path for a source file under tests/ (it looks for a sibling
@@ -36,13 +46,16 @@ fn human_session() {
     };
     let mut runner = TestRunner::new(config);
 
-    let outcome = runner.run(
-        &generate::arb_session(),
-        |(path, content, actions)| match driver::run(&path, &content, &actions).violation {
+    let outcome = runner.run(&generate::arb_session(), |(path, content, actions)| {
+        let _wal =
+            wal::arm(Path::new("artifacts"), &path, &content, &actions).unwrap_or_else(|e| {
+                panic!("wal::arm failed (environment fault, not a fuzz finding): {e}")
+            });
+        match driver::run(&path, &content, &actions).violation {
             None => Ok(()),
             Some(v) => Err(TestCaseError::fail(format!("{}: {}", v.id, v.message))),
-        },
-    );
+        }
+    });
 
     match outcome {
         Ok(()) => {}
