@@ -324,6 +324,139 @@ mod tests {
     }
 
     #[test]
+    fn highlight_tree_round_trips_every_version() {
+        for version in [
+            HighlightVersion::Live,
+            HighlightVersion::Stale,
+            HighlightVersion::Future,
+        ] {
+            let actions = vec![Action::HighlightTree {
+                version,
+                fixture: 1,
+                base: 0,
+            }];
+            let encoded = encode(DOC_PATH, "hi", &actions);
+            assert_eq!(must_decode(&encoded).2, actions);
+        }
+    }
+
+    #[test]
+    fn highlight_tree_round_trips_fixture_and_base_boundaries() {
+        for fixture in [0u8, 255] {
+            for base in [0usize, usize::MAX] {
+                let actions = vec![Action::HighlightTree {
+                    version: HighlightVersion::Live,
+                    fixture,
+                    base,
+                }];
+                let encoded = encode(DOC_PATH, "hi", &actions);
+                assert_eq!(must_decode(&encoded).2, actions);
+            }
+        }
+    }
+
+    #[test]
+    fn highlight_tree_round_trips_amid_multiline_highlight_actions() {
+        // Proves the single-line `highlight-tree` form is never confused
+        // with `highlight`'s multi-line continuation form, in either
+        // direction, and is never eaten by the `"highlight "` prefix
+        // dispatch (they share a prefix up to the `-`/` `).
+        let actions = vec![
+            Action::Highlight {
+                version: HighlightVersion::Live,
+                spans: vec![(0, 3, 5)],
+            },
+            Action::HighlightTree {
+                version: HighlightVersion::Stale,
+                fixture: 2,
+                base: 42,
+            },
+            Action::Highlight {
+                version: HighlightVersion::Future,
+                spans: vec![(1, 2, 3), (4, 5, 6)],
+            },
+        ];
+        let encoded = encode(DOC_PATH, "hi", &actions);
+        assert_eq!(must_decode(&encoded).2, actions);
+    }
+
+    #[test]
+    fn highlight_tree_rejects_malformed_inputs_with_typed_errors() {
+        let err = decode("content hi\nhighlight-tree bogus 1 0\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "unknown version: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "missing fixture field: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live 1\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "missing base field: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live abc 0\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "non-numeric fixture: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live 1 abc\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "non-numeric base: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live 256 0\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "fixture above u8::MAX: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live -1 0\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "negative fixture: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live 1 -1\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::InvalidNumber { .. }),
+            "negative base: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree live 1 0 extra\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::MalformedLine { .. }),
+            "trailing garbage field: got {err:?}"
+        );
+
+        let err = decode("content hi\nhighlight-tree\n").unwrap_err();
+        assert!(
+            matches!(err, ScriptError::UnknownKeyword { ref keyword, .. } if keyword == "highlight-tree"),
+            "bare keyword with no fields: got {err:?}"
+        );
+    }
+
+    #[test]
+    fn highlight_tree_decodes_a_hand_written_line_exactly() {
+        let (_, _, actions) = must_decode("content hi\nhighlight-tree stale 7 42\n");
+        assert_eq!(
+            actions,
+            vec![Action::HighlightTree {
+                version: HighlightVersion::Stale,
+                fixture: 7,
+                base: 42,
+            }]
+        );
+    }
+
+    #[test]
     fn skips_comments_and_blank_lines() {
         let text = "# a leading comment\n\ncontent hi\n\n# a comment between actions\ntype x\n";
         let (path, content, actions) = must_decode(text);
