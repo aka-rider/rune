@@ -17,6 +17,7 @@
 //! `cluster.rs` (500-line budget) — this file is left with just the
 //! public entry point tying the two together.
 
+mod arb;
 mod cluster;
 mod palette;
 
