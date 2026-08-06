@@ -123,12 +123,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             app.set_focus_pane(Pane::Tabs, effects);
         }
         GlobalCommand::Save => {
-            // An active resolver with unresolved blocks
-            // refuses the save (with the count) instead of publishing a
-            // half-resolved working form.
-            if !crate::merge::refuses_save(app, app.active) {
-                let _ = save::trigger_save(app, app.active, effects);
-            }
+            let _ = save::trigger_save(app, app.active, effects);
         }
         // Mints/toggles the generated Help virtual document — a
         // direct, same-tick call, no I/O involved. The hoisted
@@ -557,6 +552,7 @@ mod tests {
             blocks: Vec::new(),
             cur: 0,
             saved_display_name: None,
+            theirs_obs: 0,
         };
         let mut effects = Effects::default();
 

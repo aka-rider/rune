@@ -86,6 +86,7 @@ fn ours_theirs_and_marker_spans_paint_their_own_background_on_screen() {
             blocks: blocks.clone(),
             cur: 0,
             saved_display_name: None,
+            theirs_obs: 0,
         };
     });
     let buf = draw(&app);
@@ -133,6 +134,7 @@ fn a_resolved_blocks_region_carries_no_merge_background() {
             blocks: blocks.clone(),
             cur: 1,
             saved_display_name: None,
+            theirs_obs: 0,
         };
     });
     let buf = draw(&app);
@@ -163,6 +165,7 @@ fn the_current_blocks_marker_carries_a_distinct_cue() {
             blocks: blocks.clone(),
             cur: 0,
             saved_display_name: None,
+            theirs_obs: 0,
         };
     });
     let buf = draw(&app);

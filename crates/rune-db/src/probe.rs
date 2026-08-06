@@ -243,6 +243,87 @@ mod tests {
         );
     }
 
+    /// The full completed-merge sequence: load, buffer edit, external disk
+    /// rewrite, a probe that sees the divergence, then `resolve_adopt`
+    /// against that disk observation at the current journal head (the
+    /// zero-conflict / Discard shape — no install edit follows). The next
+    /// probe finds the disk untouched, takes the stat short-circuit, and
+    /// reuses the resolve row as theirs: it must read the reconciliation
+    /// for what it is, never re-fabricate Diverged.
+    #[test]
+    fn probe_after_resolve_adopt_with_unchanged_disk_is_not_diverged() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"one");
+
+        let loaded = crate::load::load(
+            &mut conn,
+            &vfs,
+            session_id,
+            &|_, _| false,
+            path,
+            SystemTime::now(),
+        )
+        .expect("load");
+        let doc_id = loaded.doc_id;
+
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                session_id,
+                SystemTime::now(),
+                doc_id,
+                &[rune_core::buffer::AppliedEdit {
+                    start: 0,
+                    end: 3,
+                    deleted: "one".to_string(),
+                    insert: "merged".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        let temp = vfs.write_durable(path, b"two two").expect("write_durable");
+        vfs.exchange(&temp, path).expect("exchange");
+        let diverged =
+            probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
+        assert_eq!(diverged.kind, SyncKind::Diverged, "external rewrite lands");
+        let disk_obs = diverged
+            .theirs
+            .as_ref()
+            .and_then(|t| t.obs)
+            .expect("disk observation");
+
+        let head = retry::with_retry(&mut conn, |tx| {
+            crate::journal::current_seq(tx, session_id, doc_id)
+        })
+        .expect("head seq");
+        adopt::resolve_adopt(
+            &mut conn,
+            session_id,
+            doc_id,
+            disk_obs,
+            Some(head),
+            SystemTime::now(),
+        )
+        .expect("resolve_adopt");
+
+        let after =
+            probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe again");
+        assert_eq!(
+            after.kind,
+            SyncKind::BufferAhead,
+            "a reconciled buffer with untouched disk is an ordinary unsaved edit, never Diverged"
+        );
+    }
+
     #[test]
     fn probe_auto_adopts_when_disk_hash_equals_journal_head() {
         let mut conn = open();

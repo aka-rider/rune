@@ -34,10 +34,18 @@ use crate::runtime::Effects;
 pub(crate) fn begin(app: &mut App, intent: MergeIntent, _effects: &mut Effects) {
     let id = app.active;
     let Some(doc) = app.doc(id) else { return };
-    if !matches!(
-        doc.last_sync,
-        Some(SyncKind::DiskAhead) | Some(SyncKind::Diverged)
-    ) {
+    // A save's multi-hop materialize dance is still in flight for this
+    // document: a `MergePrep` enqueued now could land AFTER the save's
+    // commit ack and rebase `DocDb::expect_obs` backwards to the pre-save
+    // disk observation, making the very next ⌘S CAS-refuse against a file
+    // the session itself just wrote. `save_in_flight` spans the whole dance
+    // — trigger through the same ack that advances `expect_obs` — unlike
+    // any single pending-op entry, so it is the one check with no window.
+    if doc.save_in_flight {
+        messages::warn(app, "save in progress — merge after it completes");
+        return;
+    }
+    if !doc.last_sync.is_some_and(SyncKind::is_disk_divergent) {
         messages::warn(app, "no divergence to merge");
         return;
     }
@@ -89,21 +97,80 @@ pub(crate) fn exit_in_place(app: &mut App) {
         doc,
         blocks,
         saved_display_name,
+        theirs_obs,
         ..
     } = std::mem::take(&mut app.merge)
     else {
         return;
     };
+    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
     if let Some(d) = app.doc_mut(doc) {
         d.display_name = saved_display_name;
     }
-    let unresolved = blocks.iter().filter(|b| !b.resolved).count();
+    if unresolved == 0 {
+        // A completed merge (including all-[B]oth, whose kept markers
+        // the user explicitly chose) leaves the buffer strictly ahead
+        // of the disk bytes it just reconciled with — recording that
+        // here is what retires the disk-changed banner/hint instead of
+        // re-inviting a merge forever. Esc-out with unresolved blocks
+        // leaves `last_sync` untouched: the document is still
+        // truthfully diverged and the affordances must return.
+        set_last_sync(app, doc, SyncKind::BufferAhead);
+        // Completion is the terminal success: only NOW has the user
+        // genuinely reconciled the buffer with the disk bytes the merge
+        // read, so only now does the save-CAS baseline advance to them.
+        landing::advance_expect_obs(app, doc, theirs_obs);
+    } else {
+        // An unresolved retirement (Esc, ^M toggle-off, a tab switch/close/
+        // quit auto-exit) retracts the entry-time resolve observation:
+        // without this, the resolve row at the journal head makes the very
+        // next probe classify the marker-filled buffer as reconciled —
+        // retiring every divergence affordance and making `begin` refuse
+        // with "no divergence to merge" while the conflict is anything but
+        // resolved. Abandoning restores the pre-merge baseline so the
+        // document classifies `Diverged` again and `^M` re-enters a real
+        // merge. The save-CAS baseline was never advanced on this path,
+        // so a ⌘S still CAS-refuses into the disk-conflict guard.
+        enqueue_resolve_abandon(app, doc);
+    }
     let message = if unresolved == 0 {
         "merge complete — \u{2318}S to save".to_string()
     } else {
         format!("merge closed — {unresolved} unresolved marker block(s) remain")
     };
     messages::info(app, message);
+}
+
+/// The one place merge outcomes record a document's fresh sync
+/// classification — render/hint state only, never the CAS baseline (that is
+/// `landing::advance_expect_obs`'s job, gated on terminal success). A no-op
+/// for a document that vanished mid-ack.
+fn set_last_sync(app: &mut App, doc: crate::document::DocumentId, kind: SyncKind) {
+    if let Some(d) = app.doc_mut(doc) {
+        d.last_sync = Some(kind);
+    }
+}
+
+/// Enqueues the store-side retraction of an abandoned merge's entry-time
+/// resolve observation — the writer deletes the `origin='resolve'` row and
+/// restores the baseline it superseded, so the next probe classifies the
+/// still-diverged document truthfully. Mirrors the adopt enqueue's shape: a
+/// store-less/degraded document simply skips it (there is no observation to
+/// retract there either), and a failed enqueue degrades the whole store.
+fn enqueue_resolve_abandon(app: &mut App, doc: crate::document::DocumentId) {
+    let Some(db_id) = app.doc(doc).and_then(|d| d.db.as_ref().map(|db| db.db_id)) else {
+        return;
+    };
+    let Some(db) = app.db.as_ref() else { return };
+    if db.degraded {
+        return;
+    }
+    match db.store.resolve_abandon(db_id) {
+        Ok(op_id) => {
+            app.db_ops.insert(op_id, PendingOp::new(doc));
+        }
+        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+    }
 }
 
 /// Cancels a `Pending` merge attempt with feedback (review fix F3) — the
@@ -139,12 +206,15 @@ pub(crate) fn auto_exit(app: &mut App) {
     }
 }
 
-/// The `⌘S` gate (plan WP4.S3, decision 6): while the resolver is active ON
+/// The save gate (plan WP4.S3, decision 6): while the resolver is active ON
 /// the document being saved with unresolved blocks remaining, saving is
 /// refused with the count — a reflexive save mid-merge must not publish a
-/// half-resolved working form with zero friction. One rule, no content
-/// sniffing: after exit or full resolution the document is ordinary dirty
-/// text and saves normally, markers included.
+/// half-resolved working form with zero friction. A rung in
+/// `save::trigger_save`'s refusal ladder, so every save entry point (⌘S,
+/// the guards' [S] answers, the quit fan-out) hits it structurally rather
+/// than each call site remembering to ask. One rule, no content sniffing:
+/// after exit or full resolution the document is ordinary dirty text and
+/// saves normally, markers included.
 pub(crate) fn refuses_save(app: &mut App, target: crate::document::DocumentId) -> bool {
     let MergeState::Active { doc, .. } = &app.merge else {
         return false;

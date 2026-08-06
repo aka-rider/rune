@@ -26,7 +26,7 @@ use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
     app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish, sup,
+    publish, reprobe, sup,
 };
 
 /// Both sides edit line 1 AND line 5 differently, with three untouched
@@ -62,9 +62,7 @@ fn enter_two_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
     external_write(vfs.as_ref(), THEIRS);
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    reprobe(&mut app, &bridge, draft_id, doc_id);
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
@@ -258,6 +256,49 @@ fn escape_exits_in_place_keeping_markers() {
             .contains("1 unresolved marker block"),
         "expected the exit summary, got {:?}",
         rune_tui::messages::newest_text(&app)
+    );
+}
+
+/// The save gate is structural, not `⌘S`-only: `^W` on the dirty working
+/// form arms the DirtyClose guard, and its `[S]` answer routes through the
+/// same `trigger_save` ladder — with unresolved blocks it must refuse, and
+/// the conflict markers must never reach the disk file.
+#[test]
+fn dirty_close_guard_save_during_unresolved_merge_refuses_and_writes_nothing() {
+    let (mut app, _bridge, doc_id) = enter_two_conflict_merge();
+    let disk_before = app.vfs.read(Path::new("/doc.md")).unwrap();
+
+    press_key(&mut app, ctrl('w'));
+    assert!(
+        matches!(
+            &app.guard,
+            Some(prompt) if prompt.kind == rune_tui::guard::GuardKind::DirtyClose
+        ),
+        "closing the dirty working form must arm the DirtyClose guard"
+    );
+
+    press_key(&mut app, ch('s'));
+
+    assert!(
+        rune_tui::messages::newest_text(&app)
+            .unwrap_or_default()
+            .contains("conflict(s) to resolve"),
+        "expected the merge save refusal, got {:?}",
+        rune_tui::messages::newest_text(&app)
+    );
+    assert!(app.doc(doc_id).is_some(), "the document must stay open");
+    assert!(
+        !app.doc(doc_id).unwrap().save_in_flight,
+        "no save may start while the resolver has unresolved blocks"
+    );
+    assert!(matches!(
+        app.merge,
+        MergeState::Active { doc, .. } if doc == doc_id
+    ));
+    assert_eq!(
+        app.vfs.read(Path::new("/doc.md")).unwrap(),
+        disk_before,
+        "the conflict-marker working form must never reach the disk file"
     );
 }
 

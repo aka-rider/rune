@@ -200,13 +200,16 @@ pub struct Document {
     /// level — `embeds` just stays empty and `sync_embeds` a no-op for
     /// every document kind other than `Markdown`.
     pub embeds: crate::graphics::EmbedSet,
-    /// The most recent [`rune_db::SyncKind`] a `Probe`/`Load` ack reported
-    /// for this document — RENDER/HINT STATE ONLY, never a
-    /// decision input: sync state must be derived fresh by journal position
-    /// at the moment a decision needs it, never cached.
-    /// The footer's passive `disk changed` hint reads this; nothing that
-    /// mutates the buffer or the recovery store may branch on it. `None`
-    /// before the first `Load`/`Probe` ack lands for this document.
+    /// The latest known [`rune_db::SyncKind`] classification for this
+    /// document. Written only from authoritative ack data inside `update`
+    /// dispatch — `Probe`/`Load` acks, a save-time CAS refusal, and merge's
+    /// terminal outcomes (refusal, discard, clean merge, completed
+    /// resolution) — never invented locally and never retimed. Consumed by
+    /// chrome (the footer's disk-changed hint, tab affordances) and by
+    /// merge entry's fast pre-check, which treats it strictly as a hint:
+    /// the authoritative re-check is the fresh `MergePrep` landing.
+    /// Nothing that mutates the buffer or the recovery store may treat it
+    /// as fact. `None` before the first `Load`/`Probe` ack lands.
     pub last_sync: Option<rune_db::SyncKind>,
 }
 

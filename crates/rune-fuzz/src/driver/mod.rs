@@ -131,6 +131,11 @@ struct State {
     /// is ever enqueued onto `app.db_ops` without a live store to enqueue
     /// it through, so every drain attempt just finds nothing pending.
     bridge: Arc<DbBridge>,
+    /// The stateful `MERGE-NO-INSTANT-REDIVERGENCE` tracker — fed every
+    /// checked step by `step_and_check`, told about every `Action::
+    /// DivergeDisk` by `diverge_disk` (which runs outside the step cycle
+    /// and would otherwise be invisible to it).
+    rediverge: crate::invariant::RedivergenceTracker,
     /// Bumped on every `Action::DivergeDisk` so repeated occurrences in one
     /// session publish genuinely different bytes each time — a store-backed
     /// session must never externally "publish" the same bytes twice in a
@@ -217,6 +222,7 @@ pub fn run(path: &str, content: &str, actions: &[Action]) -> RunResult {
         seed_doc,
         draft_doc,
         bridge,
+        rediverge: crate::invariant::RedivergenceTracker::default(),
         diverge_step: 0,
     };
     let mut prev = Snapshot::capture(&mut state.app, false);

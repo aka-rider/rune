@@ -44,7 +44,7 @@ Honest scope: `Vfs::save_atomic` is a compatibility convenience, not the rule �
 
 ## §3 Save Lifecycle
 
-**§3.1 Refusal ladder.** `trigger_save` returns a typed `SaveStart` (`InFlight | NotDirty | NeedsName | Refused`); every rung refuses with a stated reason before a single byte moves, in load-bearing order: image document, preview document, save-already-in-flight, rename-in-flight, not-dirty (re-derived, §8), pathless draft (focuses the title field, `NeedsName`), document unbound to the recovery store (falls to `save_atomic`, §2, so the user can always save), degraded store (arms the confirm gate below).
+**§3.1 Refusal ladder.** `trigger_save` returns a typed `SaveStart` (`InFlight | NotDirty | NeedsName | Refused`); every rung refuses with a stated reason before a single byte moves, in load-bearing order: image document, preview document, save-already-in-flight, rename-in-flight, an active conflict resolver with unresolved blocks on the target document (a half-resolved conflict-marker working form must never be published over the user's file), not-dirty (re-derived, §8), pathless draft (focuses the title field, `NeedsName`), document unbound to the recovery store (falls to `save_atomic`, §2, so the user can always save), degraded store (arms the confirm gate below).
 
 **§3.2 Degraded confirm gate.** On a degraded store, the first ⌘S arms a document-tagged confirm; the same document's second ⌘S within `SAVE_CONFIRM_TIMEOUT` (2s) proceeds. The message names the document because the pending slot is a single global — a second document's ⌘S must not silently confirm the first's save.
 

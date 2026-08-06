@@ -27,7 +27,7 @@ use rune_vfs::{Mem, Vfs};
 
 use merge_common::{
     app_with_store, bare, ch, ctrl, drain_all_ops_for, drain_one_op_for, external_write, press_key,
-    publish,
+    publish, reprobe,
 };
 
 /// Three separate conflicts (lines 1, 5, 9), each surrounded by three
@@ -67,9 +67,7 @@ fn enter_three_conflict_merge() -> (App, Arc<DbBridge>, DocumentId) {
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
     external_write(vfs.as_ref(), THEIRS);
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    reprobe(&mut app, &bridge, draft_id, doc_id);
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;
@@ -228,9 +226,7 @@ fn undo_redo_round_trips_when_prose_quotes_literal_marker_lines() {
     drain_all_ops_for(&mut app, &bridge, doc_id);
 
     external_write(vfs.as_ref(), &theirs);
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    reprobe(&mut app, &bridge, draft_id, doc_id);
 
     app.active = doc_id;
     press_key(&mut app, ctrl('m'));
@@ -321,9 +317,7 @@ fn tab_switch_while_merge_prep_is_still_pending_cancels_with_a_status_and_drops_
     press_key(&mut app, ch('!'));
     drain_one_op_for(&mut app, &bridge, doc_id);
     external_write(vfs.as_ref(), b"disk changed this");
-    workspace::switch_to(&mut app, draft_id);
-    workspace::switch_to(&mut app, doc_id);
-    drain_one_op_for(&mut app, &bridge, doc_id);
+    reprobe(&mut app, &bridge, draft_id, doc_id);
     assert_eq!(app.doc(doc_id).unwrap().last_sync, Some(SyncKind::Diverged));
 
     app.active = doc_id;

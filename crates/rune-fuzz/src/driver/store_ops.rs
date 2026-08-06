@@ -102,6 +102,7 @@ pub(super) fn drain_all_db_ops(
 /// under `run_direct_catching_panic`'s own guard. Returns `true` when a
 /// panic stopped the session.
 pub(super) fn diverge_disk(state: &mut State, prev: &mut Snapshot, outcome: &mut Outcome) -> bool {
+    state.rediverge.note_external_write();
     state.diverge_step += 1;
     let bytes = format!("fuzz-external-write-{}\n", state.diverge_step).into_bytes();
     let path = state.path.clone();

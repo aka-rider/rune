@@ -78,10 +78,10 @@ fn mode(app: &App) -> Mode<'_> {
     // returned above, and a `Pending` attempt's "[^M]erge" invitation
     // would be stale advice about the very thing already in flight.
     if matches!(app.merge, crate::merge::MergeState::Inactive)
-        && matches!(
-            app.active_doc().last_sync,
-            Some(rune_db::SyncKind::DiskAhead) | Some(rune_db::SyncKind::Diverged)
-        )
+        && app
+            .active_doc()
+            .last_sync
+            .is_some_and(rune_db::SyncKind::is_disk_divergent)
     {
         return Mode::DiskChanged;
     }
@@ -230,6 +230,25 @@ pub fn footer_text(app: &App) -> String {
     left_spans(app).iter().map(|s| s.content.as_ref()).collect()
 }
 
+/// The persistent diverged marker beside the position readout: `"⇄ "`
+/// while the ACTIVE document's last known sync classification says the
+/// disk holds changes the buffer doesn't (`DiskAhead`/`Diverged`), empty
+/// otherwise. `BufferAhead` is deliberately excluded — that's the dirty
+/// flag's job. Unlike the mutually-exclusive left-side `Mode`s, this rides
+/// the always-rendered right side, so it survives Guard/Messages/Chord
+/// modes shadowing the `DiskChanged` banner.
+fn sync_marker(app: &App) -> &'static str {
+    if app
+        .active_doc()
+        .last_sync
+        .is_some_and(rune_db::SyncKind::is_disk_divergent)
+    {
+        "\u{21c4} "
+    } else {
+        ""
+    }
+}
+
 /// `Ln <line>, Col <col>` from the active document's primary cursor (plan
 /// WP8) — always shown, regardless of the left side's `Mode`. Col is a LINE-relative
 /// terminal-CELL column (`rune_syntax::wrap::line_visual_col`), not a
@@ -250,8 +269,9 @@ pub fn position_text(app: &App) -> String {
 
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     let bg = app.theme.chrome.footer;
+    let marker = sync_marker(app);
     let right_text = position_text(app);
-    let right_width = display_width(&right_text);
+    let right_width = display_width(marker) + display_width(&right_text);
     let available = area.width as usize;
     // Truncation (plan WP6.S3/risk R3) only applies to `DefaultHints` — the
     // one mode that grows with the focused pane's own hints; every other
@@ -269,6 +289,9 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
             bg,
         ));
     }
+    if !marker.is_empty() {
+        spans.push(Span::styled(marker, app.theme.chrome.error));
+    }
     spans.push(Span::styled(right_text, app.theme.chrome.footer_meta));
     frame.render_widget(Paragraph::new(Line::from(spans)).style(bg), area);
 }
@@ -278,7 +301,7 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
 mod tests {
     use super::*;
     use crate::app::App;
-    use crate::keymap::{GLOBAL_BINDINGS, QuitKey};
+    use crate::keymap::{GLOBAL_BINDINGS, GlobalCommand, QuitKey};
     use rune_core::buffer::Buffer;
     use rune_vfs::Mem;
     use std::sync::Arc;
@@ -303,6 +326,7 @@ mod tests {
             blocks: Vec::new(),
             cur: 0,
             saved_display_name: None,
+            theirs_obs: 0,
         };
 
         let text = footer_text(&app);
@@ -326,6 +350,12 @@ mod tests {
         assert_eq!(app.focus(), Pane::Editor);
         let text = footer_text(&app);
         for binding in GLOBAL_BINDINGS.iter().filter(|b| !b.alias) {
+            // `Merge` is conditional on divergence and pinned by the two
+            // dedicated footer_hints tests; seeding divergence here would
+            // flip the footer into `DiskChanged` mode instead.
+            if matches!(binding.cmd, GlobalCommand::Merge) {
+                continue;
+            }
             assert!(
                 text.contains(binding.help),
                 "expected {:?} in default footer text {text:?}",
@@ -404,6 +434,51 @@ mod tests {
     fn position_text_reports_one_indexed_line_and_col() {
         let app = app_with("hello");
         assert_eq!(position_text(&app), "Ln 1, Col 1");
+    }
+
+    /// Renders the full footer row through `testgrid::draw_with` (the
+    /// crate's one `TestBackend` construction site) and returns its text —
+    /// `footer_text` covers only the left side, and the ⇄ marker rides the
+    /// right side beside the position readout.
+    fn footer_row(app: &App, width: u16) -> String {
+        let buf = crate::testgrid::draw_with(width, 1, |frame| {
+            draw(app, Rect::new(0, 0, width, 1), frame)
+        });
+        (0..width)
+            .filter_map(|x| buf.cell((x, 0)).map(|c| c.symbol().to_string()))
+            .collect()
+    }
+
+    /// The persistent ⇄ marker sits on the footer's right side, directly
+    /// before the position readout, for `DiskAhead`/`Diverged` — and never
+    /// for a clean or merely dirty (`BufferAhead`) document. Asserted on
+    /// the `"⇄ Ln"` juxtaposition, not a bare `contains('⇄')`: the
+    /// `DiskChanged` left-side banner uses the same glyph.
+    #[test]
+    fn footer_right_side_shows_the_sync_marker_only_when_disk_diverged() {
+        for last_sync in [
+            None,
+            Some(rune_db::SyncKind::Clean),
+            Some(rune_db::SyncKind::BufferAhead),
+        ] {
+            let mut app = app_with("hello");
+            app.active_doc_mut().last_sync = last_sync;
+            let row = footer_row(&app, 80);
+            assert!(
+                !row.contains('\u{21c4}'),
+                "expected no sync marker for {last_sync:?}: {row:?}"
+            );
+        }
+
+        for last_sync in [rune_db::SyncKind::DiskAhead, rune_db::SyncKind::Diverged] {
+            let mut app = app_with("hello");
+            app.active_doc_mut().last_sync = Some(last_sync);
+            let row = footer_row(&app, 80);
+            assert!(
+                row.contains("\u{21c4} Ln"),
+                "expected the sync marker beside the position readout for {last_sync:?}: {row:?}"
+            );
+        }
     }
 
     /// `pending_save_confirm` is doc-tagged (plan WP1 decision 3): a chord

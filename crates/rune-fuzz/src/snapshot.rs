@@ -179,6 +179,14 @@ pub struct Snapshot {
     /// leave a stale `"editor <-> disk"` retitle behind on ANY document,
     /// not just whichever one happens to be active.
     pub display_name_by_doc: BTreeMap<DocumentId, Option<String>>,
+    /// `app.active_doc().last_sync` — the ACTIVE document's last known sync
+    /// classification, exactly what the divergence chrome (footer banner,
+    /// `⇄` marker, conditional `^M` hint) and `merge::begin`'s fast
+    /// pre-check read. `MERGE-NO-INSTANT-REDIVERGENCE`
+    /// (`invariant/merge.rs`'s stateful tracker) keys off it to catch a
+    /// probe re-classifying a just-reconciled document `Diverged` with the
+    /// disk untouched — the infinite re-merge-prompt loop.
+    pub active_last_sync: Option<rune_db::SyncKind>,
     /// `rune_tui::messages::posts` — the message log's own monotonic post
     /// counter, not re-derived from `status`: two consecutive posts of
     /// identical text (the same merge-key hint fired by two different
@@ -314,6 +322,7 @@ impl Snapshot {
             merge_unresolved,
             scroll_row,
             display_name_by_doc,
+            active_last_sync: doc.last_sync,
             message_posts: rune_tui::messages::posts(app),
         }
     }
