@@ -4,6 +4,8 @@
 //! points (`segment_cells`/`segment_geometry`) `render::build_rows` and
 //! `commands::mouse`'s hit-testing call into.
 
+use std::ops::Range;
+
 use ratatui::style::Style;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -37,8 +39,8 @@ pub struct Cell {
 }
 
 /// Semantic `ScopeId` -> `ratatui::style::Style` — delegates to
-/// `Theme::scope_style` (plan WP4: the theme is the ONE style source,
-/// replacing `styles::markdown`'s pre-WP4 role). Kept as a thin wrapper
+/// `Theme::scope_style` (the theme is the ONE style source,
+/// replacing an earlier `styles::markdown`'s role). Kept as a thin wrapper
 /// (rather than calling `theme.scope_style` directly from `segment_cells`
 /// below) so `render.rs` still owns the ONE call site `tests/tui_render.rs`
 /// documents itself against.
@@ -201,8 +203,8 @@ pub fn segment_geometry(content: &str, spans: &[SyntaxSpan]) -> Vec<Cell> {
 
 /// The ONE cell walk both entry points above share — `style_of` is its
 /// only theme-dependent input, so the styled and geometry-only paths can
-/// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`
-/// (WP3), not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
+/// never drift in how they measure a row. Takes a plain `&[SyntaxSpan]`,
+/// not a whole `WrapSegment`: a `DisplayRow`'s synthesised border
 /// spans have no backing `WrapSegment` to read `.spans` off of.
 fn segment_cells_with(
     content: &str,
@@ -244,4 +246,24 @@ fn segment_cells_with(
         }
     }
     cells
+}
+
+/// Patches `style` onto every cell in `rows` whose `buf_offset` falls
+/// inside `range` — the one byte-range background painter every
+/// region-highlight pass in this crate shares (merge mode's per-block
+/// backgrounds, the search bar's per-match highlight): a decorative cell
+/// (`buf_offset < 0`) is never a candidate, since it claims no buffer byte
+/// to compare `range` against.
+pub(crate) fn paint_range(rows: &mut [Vec<Cell>], range: Range<usize>, style: Style) {
+    for row in rows.iter_mut() {
+        for cell in row.iter_mut() {
+            if cell.buf_offset < 0 {
+                continue;
+            }
+            let offset = cell.buf_offset as usize;
+            if range.contains(&offset) {
+                cell.style = cell.style.patch(style);
+            }
+        }
+    }
 }

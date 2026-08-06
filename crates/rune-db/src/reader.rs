@@ -1,16 +1,16 @@
 //! The reader thread: owns a single `SQLITE_OPEN_READ_ONLY` connection and
 //! serves stale-tolerant display/immutable reads only — never a
-//! decision-input (plan decision 8: "Every state-changing op re-derives its
-//! inputs ... inside its own `BEGIN IMMEDIATE` tx on the writer ... The
-//! reader handle's type exposes no decision-input methods"). Enforced here
-//! by construction: [`ReaderRequestKind`] is the *only* surface this thread
-//! exposes, and WP3+ may only ever add display-shaped variants to it — a
+//! decision-input. Every state-changing op re-derives its inputs inside its
+//! own `BEGIN IMMEDIATE` tx on the writer; the reader handle's type exposes
+//! no decision-input methods. Enforced here by construction:
+//! [`ReaderRequestKind`] is the *only* surface this thread exposes, and
+//! future additions may only ever be display-shaped variants of it — a
 //! `saved_obs`/`current_seq`/"newest observation for a decision" read must
 //! never be added to this enum, no matter how convenient.
 //!
-//! WP2 ships only [`ReaderRequestKind::Ping`], a placeholder proving the
-//! thread and its read-only connection are live end-to-end; real reads
-//! (blob content, sync badges, ...) land in WP3+.
+//! Currently only [`ReaderRequestKind::Ping`] ships, a placeholder proving
+//! the thread and its read-only connection are live end-to-end; real reads
+//! (blob content, sync badges, ...) land later.
 
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::mpsc::{self, Sender};
@@ -27,10 +27,14 @@ pub enum ReaderRequestKind {
     /// Round-trips `SELECT 1` — proves the reader thread and its
     /// `SQLITE_OPEN_READ_ONLY` connection are alive and can run a query.
     Ping,
-    /// Decompresses and hash-verifies the blob stored under `hash` (plan
-    /// Hard rules: "reader.rs may gain get_blob/display reads only") —
-    /// stale-tolerant content, never a decision input (Decision 8).
+    /// Decompresses and hash-verifies the blob stored under `hash` —
+    /// stale-tolerant display content, never a decision input.
     GetBlob { hash: String },
+    /// The `limit` most recently used search queries, newest first — a
+    /// history list for the search bar's UI, stale-tolerant and never
+    /// consulted to make a decision, so it belongs on this thread exactly
+    /// like `GetBlob`.
+    RecentSearches { limit: u32 },
 }
 
 /// The reply to a [`ReaderRequestKind`].
@@ -42,6 +46,8 @@ pub enum ReaderReply {
     /// UTF-8 at the point it re-enters a `String`-typed buffer, which is
     /// not this stale-tolerant display path's concern).
     Blob(Vec<u8>),
+    /// `RecentSearches`'s reply: MRU-first query strings.
+    RecentSearches(Vec<String>),
 }
 
 struct Request {
@@ -49,9 +55,18 @@ struct Request {
     reply: Sender<Result<ReaderReply, Error>>,
 }
 
+/// What travels over the reader thread's channel. `Shutdown` is an explicit
+/// sentinel: because [`ReaderQuery`] clones the sender, the channel may
+/// never disconnect on its own, so termination cannot rely on sender-drop —
+/// the loop must be told to stop.
+enum Msg {
+    Query(Request),
+    Shutdown,
+}
+
 /// A live handle to the reader thread.
 pub struct ReaderHandle {
-    sender: Sender<Request>,
+    sender: Sender<Msg>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -60,25 +75,60 @@ impl ReaderHandle {
     /// to be called from a spawned `Cmd` (off the main `update` thread),
     /// never from `update` itself.
     pub fn query(&self, kind: ReaderRequestKind) -> Result<ReaderReply, Error> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.sender
-            .send(Request {
-                kind,
-                reply: reply_tx,
-            })
-            .map_err(|_| Error::ReaderGone)?;
-        reply_rx.recv().map_err(|_| Error::ReaderGone)?
+        query_over(&self.sender, kind)
     }
 
-    /// Drops the request side and blocks until the reader thread observes
-    /// disconnection and exits — deterministic, no polling loop.
+    /// Sends the explicit `Shutdown` sentinel and blocks until the reader
+    /// thread exits — deterministic, no polling loop. A send failure means
+    /// the loop is already gone, which is exactly the state being asked
+    /// for, so it is ignored. This must never wait on channel
+    /// disconnection: [`ReaderQuery`] clones keep the channel connected
+    /// indefinitely, and shutdown may not be hostage to their lifetimes.
     pub fn shutdown(self) {
         let ReaderHandle { sender, thread } = self;
+        let _ = sender.send(Msg::Shutdown);
         drop(sender);
         if let Some(thread) = thread {
             let _ = thread.join();
         }
     }
+
+    /// A cloneable query-only split of this handle — same `query` surface,
+    /// no thread ownership. For a caller (`rune-tui`) that needs to move a
+    /// reader reference into a `Box<dyn FnOnce() + Send>` `Cmd` closure,
+    /// where `ReaderHandle` itself can't go (it isn't `Clone`, and moving it
+    /// would hand the closure ownership/shutdown of the thread).
+    pub fn as_query(&self) -> ReaderQuery {
+        ReaderQuery(self.sender.clone())
+    }
+}
+
+/// A cloneable handle to the reader thread's query surface only — see
+/// [`ReaderHandle::as_query`]. Thread ownership/shutdown stays with
+/// `ReaderHandle`; this is just the `Sender` side, cloned. A live
+/// `ReaderQuery` can never keep the reader thread alive past
+/// `ReaderHandle::shutdown`: the thread exits on an explicit sentinel, not
+/// on channel disconnection, and a query sent after that returns
+/// `Error::ReaderGone` instead of blocking.
+#[derive(Clone)]
+pub struct ReaderQuery(Sender<Msg>);
+
+impl ReaderQuery {
+    /// Identical contract to [`ReaderHandle::query`].
+    pub fn query(&self, kind: ReaderRequestKind) -> Result<ReaderReply, Error> {
+        query_over(&self.0, kind)
+    }
+}
+
+fn query_over(sender: &Sender<Msg>, kind: ReaderRequestKind) -> Result<ReaderReply, Error> {
+    let (reply_tx, reply_rx) = mpsc::channel();
+    sender
+        .send(Msg::Query(Request {
+            kind,
+            reply: reply_tx,
+        }))
+        .map_err(|_| Error::ReaderGone)?;
+    reply_rx.recv().map_err(|_| Error::ReaderGone)?
 }
 
 /// Opens a fresh `SQLITE_OPEN_READ_ONLY` connection to `path` and spawns the
@@ -92,7 +142,7 @@ pub fn spawn(path: &str) -> Result<ReaderHandle, Error> {
     let conn = Connection::open_with_flags(path, flags)?;
     crate::store::apply_connection_pragmas(&conn)?;
 
-    let (sender, receiver) = mpsc::channel::<Request>();
+    let (sender, receiver) = mpsc::channel::<Msg>();
     let thread = thread::spawn(move || reader_loop(conn, receiver));
     Ok(ReaderHandle {
         sender,
@@ -100,8 +150,15 @@ pub fn spawn(path: &str) -> Result<ReaderHandle, Error> {
     })
 }
 
-fn reader_loop(conn: Connection, receiver: mpsc::Receiver<Request>) {
-    while let Ok(req) = receiver.recv() {
+// Exits on the `Shutdown` sentinel; the `recv()`-disconnect exit stays as a
+// fallback so a `ReaderHandle` dropped without calling `shutdown` (and no
+// surviving `ReaderQuery` clones) still terminates the thread.
+fn reader_loop(conn: Connection, receiver: mpsc::Receiver<Msg>) {
+    while let Ok(msg) = receiver.recv() {
+        let req = match msg {
+            Msg::Query(req) => req,
+            Msg::Shutdown => return,
+        };
         // Unlike the writer thread, a panic here doesn't leave a
         // transaction in an ambiguous state (reads never mutate) — catch
         // it (repo-wide rule: "any long-lived thread must catch panics
@@ -123,6 +180,9 @@ fn execute(conn: &Connection, kind: ReaderRequestKind) -> Result<ReaderReply, Er
         }
         ReaderRequestKind::GetBlob { hash } => {
             crate::blob::get_blob(conn, &hash).map(ReaderReply::Blob)
+        }
+        ReaderRequestKind::RecentSearches { limit } => {
+            crate::search_history::recent(conn, limit).map(ReaderReply::RecentSearches)
         }
     }
 }
@@ -180,6 +240,63 @@ mod tests {
             .expect("get blob");
         assert_eq!(reply, ReaderReply::Blob(b"reader blob content".to_vec()));
         handle.shutdown();
+
+        drop(bootstrap);
+    }
+
+    #[test]
+    fn recent_searches_round_trips_through_the_reader() {
+        let uri = "file:rune-db-reader-test-recentsearches?mode=memory&cache=shared";
+        let mut bootstrap = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .expect("bootstrap shared memdb");
+        crate::schema::apply(&bootstrap).expect("apply schema");
+
+        let base = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000);
+        for (i, query) in ["alpha", "beta"].into_iter().enumerate() {
+            let tx = bootstrap.transaction().expect("tx");
+            crate::search_history::touch(
+                &tx,
+                query,
+                base + std::time::Duration::from_secs(i as u64 * 10),
+            )
+            .expect("touch");
+            tx.commit().expect("commit");
+        }
+
+        let handle = spawn(uri).expect("spawn reader");
+        let reply = handle
+            .query(ReaderRequestKind::RecentSearches { limit: 10 })
+            .expect("recent searches");
+        assert_eq!(
+            reply,
+            ReaderReply::RecentSearches(vec!["beta".to_string(), "alpha".to_string()])
+        );
+
+        let query_handle = handle.as_query();
+        let reply2 = query_handle
+            .query(ReaderRequestKind::RecentSearches { limit: 1 })
+            .expect("recent searches via cloneable handle");
+        assert_eq!(
+            reply2,
+            ReaderReply::RecentSearches(vec!["beta".to_string()])
+        );
+
+        // `query_handle` deliberately stays alive across shutdown: a live
+        // clone must not keep the reader thread running (shutdown is an
+        // explicit sentinel, not sender disconnect), and a query sent
+        // afterwards must error instead of blocking.
+        handle.shutdown();
+        assert!(
+            query_handle
+                .query(ReaderRequestKind::RecentSearches { limit: 1 })
+                .is_err(),
+            "query after shutdown must return an error, not block"
+        );
 
         drop(bootstrap);
     }
