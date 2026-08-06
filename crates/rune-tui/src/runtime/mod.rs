@@ -144,6 +144,17 @@ pub enum Msg {
         generation: u32,
         result: Result<rune_db::RenameOutcome, String>,
     },
+    /// A `Trash` `Cmd` completed — `trash::confirm`'s reply, routed to
+    /// `trash::handle_trash_done`. Carries its own `generation` so a reply
+    /// to a trash the user has since dismissed (there is no dismiss path
+    /// once confirmed, but a fresh trash request can still overwrite
+    /// `App::trash_gen` before this one lands) is dropped rather than
+    /// applied to the fresh one.
+    TrashDone {
+        generation: u32,
+        path: PathBuf,
+        result: Result<(), String>,
+    },
     /// A `ReadFile` `Cmd` completed (plan WP5.S6, [rune-tui A 7]) —
     /// `workspace::open_path_async`'s reply, routed to `workspace::
     /// handle_file_opened`. `anchor` is carried through unchanged from the
@@ -258,6 +269,9 @@ pub enum CmdKind {
     /// WP5.S1). Off-thread: decode is CPU work and must never
     /// block the main loop.
     ImageDecode,
+    /// `vfs.trash` — a blocking `NSFileManager` call, off-thread, never
+    /// inline in `update`.
+    Trash,
 }
 
 /// Off-thread work `update` asks the runtime to perform, spawned one
