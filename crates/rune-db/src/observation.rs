@@ -60,6 +60,8 @@ pub struct Observation {
     /// The `saved_obs` this row's adoption replaced, if any.
     pub supersedes: Option<i64>,
     pub at: String,
+    /// `None` for legacy/unclassified rows, `Some(true/false)` for a confirmed/unconfirmed sighting — which reads earn which is later work.
+    pub confirmed: Option<bool>,
 }
 
 impl Observation {
@@ -83,7 +85,7 @@ pub fn hash_bytes(data: &[u8]) -> String {
     crate::blob::hex_sha256(data)
 }
 
-const OBS_COLUMNS: &str = "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at";
+const OBS_COLUMNS: &str = "id, doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, supersedes, at, confirmed";
 
 fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
     Ok(Observation {
@@ -100,6 +102,7 @@ fn scan_observation(row: &Row<'_>) -> rusqlite::Result<Observation> {
         origin: row.get(10)?,
         supersedes: row.get(11)?,
         at: row.get(12)?,
+        confirmed: row.get(13)?,
     })
 }
 
@@ -144,6 +147,8 @@ pub struct ObservationMeta<'a> {
     pub seq: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: &'a str,
+    /// Carried straight to the `confirmed` column — `None` for every caller in this crate today (classification is later work).
+    pub confirmed: Option<bool>,
 }
 
 /// Inserts a new `observations` row. Pure SQLite — the caller has already
@@ -157,8 +162,8 @@ pub fn record_observation(
     at: &str,
 ) -> Result<ObsId, Error> {
     tx.execute(
-        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+        "INSERT INTO observations(doc_id, session_id, blob_hash, seq, size, mtime, inode, device, nlink, origin, at, confirmed) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
         params![
             doc_id,
             session_id,
@@ -170,7 +175,8 @@ pub fn record_observation(
             stat.device,
             stat.nlink,
             meta.origin,
-            at
+            at,
+            meta.confirmed
         ],
     )?;
     Ok(tx.last_insert_rowid())
@@ -192,6 +198,8 @@ pub struct ObserveInput<'a> {
     pub seq: Option<i64>,
     /// `'load'|'save'|'watch'|'probe'|'resolve'|'swap'` (schema-enforced).
     pub origin: &'a str,
+    /// Carried straight to the `confirmed` column — `None` for every caller in this crate today (classification is later work).
+    pub confirmed: Option<bool>,
 }
 
 /// The tx-scoped body of [`observe_from_stat`]: puts `input.data` as a blob
@@ -219,6 +227,7 @@ pub(crate) fn observe_from_stat_tx(
             blob_hash: &hash,
             seq: input.seq,
             origin: input.origin,
+            confirmed: input.confirmed,
         },
         stat,
         at,
@@ -237,6 +246,7 @@ pub(crate) fn observe_from_stat_tx(
         origin: input.origin.to_string(),
         supersedes: None,
         at: at.to_string(),
+        confirmed: input.confirmed,
     })
 }
 
@@ -418,6 +428,7 @@ mod tests {
                 blob_hash: &hash_a,
                 seq: None,
                 origin: "probe",
+                confirmed: None,
             },
             &stat,
             "t",
@@ -431,6 +442,7 @@ mod tests {
                 blob_hash: &hash_b,
                 seq: None,
                 origin: "probe",
+                confirmed: None,
             },
             &stat,
             "t",
@@ -461,6 +473,7 @@ mod tests {
                 blob_hash: &hash,
                 seq: Some(5),
                 origin: "load",
+                confirmed: None,
             },
             &StatFacts {
                 size: 1,
