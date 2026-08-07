@@ -169,10 +169,11 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-fuzz/src/driver/mod.rs` — 508
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-syntax/src/syntax.rs` — 505
-  - `crates/rune-tui/src/merge/landing.rs` — 503
+  - `crates/rune-tui/src/merge/landing.rs` — 586 (grew further in WP-D adding the absent-ancestor 2-way dispatch and its test; split candidate: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-merge/src/hunks.rs` — 676 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
-- **Wrong**: 24 source files exceed the 500-line house rule, none ledgered.
+  - `crates/rune-tui/src/guard.rs` — 558 (crossed the threshold in WP-D adding the `DiskConflict` convergence self-retraction and its tests; split candidate: same as above, its `#[cfg(test)] mod tests` block is roughly a fifth of the file)
+  - `crates/rune-merge/src/hunks.rs` — 684 (grew past the threshold in WP-D fixing the anchoring bug; the `#[cfg(test)] mod tests` block is over half the file — split candidate: move it to a `#[path]`-included sibling test module so it keeps access to the private `parse_hunks`/`anchor_section` it exercises)
+- **Wrong**: 26 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 

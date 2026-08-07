@@ -51,6 +51,33 @@ pub fn clear_guard(app: &mut App) {
     }
 }
 
+/// Self-retraction for the `DiskConflict` Guard: a later confirmed probe
+/// for `doc` finding disk no longer diverged from this session's own
+/// reconstruction means the CAS mismatch that raised the prompt is gone —
+/// clearing it here beats leaving the user staring at a conflict that no
+/// longer exists. A no-op for any other Guard kind or document.
+pub(crate) fn retract_disk_conflict_on_convergence(
+    app: &mut App,
+    doc: DocumentId,
+    kind: rune_db::SyncKind,
+) {
+    if kind.is_disk_divergent() {
+        return;
+    }
+    let raised_for_doc = matches!(
+        &app.guard,
+        Some(GuardPrompt {
+            doc: d,
+            kind: GuardKind::DiskConflict,
+        }) if *d == doc
+    );
+    if !raised_for_doc {
+        return;
+    }
+    clear_guard(app);
+    messages::info(app, "disk settled — save again when ready");
+}
+
 /// The close/quit-confirmation prompt for a dirty document: armed by
 /// `workspace::request_close`/
 /// `pane::handle_quit_key` when the document at `doc` is dirty (and, for
@@ -438,6 +465,62 @@ mod tests {
         assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
         clear_guard(&mut app);
         assert!(app.guard.is_none());
+    }
+
+    /// A convergence probe finding disk still diverged must leave the
+    /// `DiskConflict` prompt exactly as it was.
+    #[test]
+    fn retract_disk_conflict_on_convergence_is_a_noop_while_still_divergent() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)));
+
+        retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Diverged);
+
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DiskConflict,
+                ..
+            })
+        ));
+    }
+
+    /// A convergence probe for the doc the `DiskConflict` prompt names,
+    /// once disk no longer diverges, clears it with an explanatory
+    /// message rather than leaving a stale conflict prompt up.
+    #[test]
+    fn retract_disk_conflict_on_convergence_clears_the_prompt() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DiskConflict)));
+
+        retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Clean);
+
+        assert!(app.guard.is_none());
+        assert_eq!(
+            messages::newest_text(&app),
+            Some("disk settled — save again when ready")
+        );
+    }
+
+    /// A converging probe must never clear a DIFFERENT Guard kind, or a
+    /// `DiskConflict` prompt raised for a different document.
+    #[test]
+    fn retract_disk_conflict_on_convergence_touches_only_its_own_kind_and_doc() {
+        let mut app = app();
+        let doc = app.active;
+        assert!(set_guard(&mut app, prompt(doc, GuardKind::DirtyClose)));
+
+        retract_disk_conflict_on_convergence(&mut app, doc, rune_db::SyncKind::Clean);
+
+        assert!(matches!(
+            app.guard,
+            Some(GuardPrompt {
+                kind: GuardKind::DirtyClose,
+                ..
+            })
+        ));
     }
 
     /// A cleared `RenameCollision` prompt notifies the rename machine
