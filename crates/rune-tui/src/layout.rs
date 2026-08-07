@@ -313,7 +313,14 @@ fn resolve(area: Rect, app: &App) -> Resolved {
             } else {
                 (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
             }
-        } else if app.splits.left.is_shown() && !split_fits {
+        } else if (app.splits.left.is_shown() || app.filesearch.is_some()) && !split_fits {
+            // The finder falls through to this same narrow-frame branch as
+            // an already-shown column: below `split_fits` there is no room
+            // to paint the column beside a center pane, so — same as the
+            // ordinary Explorer case — the column becomes the whole frame
+            // rather than being dropped. Without this, a finder opened on
+            // a frame narrower than `split_fits` would paint nothing at
+            // all while still consuming every keystroke.
             let (explorer_inner, tabs_divider, tabs_inner, fits) = carve_column(main_area, app);
             if fits {
                 // No `center` at all: the column IS the frame this mode.
@@ -700,6 +707,26 @@ mod tests {
         assert_eq!(left_area.width, area.width - MIN_CENTER_W);
         assert!(left_area.width < FILESEARCH_MIN_W);
         assert!(left_area.width >= MIN_LEFT_PANE_W);
+    }
+
+    /// Below `split_fits` (< 40 columns) with the left column never shown,
+    /// the finder must still be painted — falling through to the same
+    /// full-width `ExplorerOnly` branch an already-shown column takes,
+    /// rather than the ordinary `Split::allot` path, which returns `None`
+    /// for a hidden column and would leave the finder invisible while it
+    /// keeps consuming every keystroke (silent input swallowing).
+    #[test]
+    fn filesearch_paints_explorer_only_below_split_fits_on_a_never_shown_column() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        assert!(!app.splits.left.is_shown(), "test setup: column hidden");
+        let area = Rect::new(0, 0, 30, 34);
+        let mut effects = crate::runtime::Effects::default();
+
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let geo = geometry(area, &app);
+        assert!(geo.left_block.is_some(), "the finder must still be painted");
+        assert_eq!(resolve_mode(area, &app), LayoutMode::ExplorerOnly);
     }
 
     /// Closing the finder restores IDENTICAL geometry to a plain

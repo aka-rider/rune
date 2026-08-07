@@ -83,7 +83,11 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     // below (only the finder half of `close_modal_bars` applies there —
     // pre-closing the bar itself would turn its own toggle-close into a
     // reopen), and `SearchNext`/`SearchPrev` must NOT close a bar they're
-    // navigating within.
+    // navigating within. `Save` belongs here too: on a pathless draft it
+    // focuses the title field directly, and without closing the finder
+    // first that focus move would land underneath a `FocusTarget` still
+    // resolving to the finder — the exact stolen-keystroke shape this gate
+    // exists to prevent.
     if matches!(
         cmd,
         GlobalCommand::ToggleLeft
@@ -95,6 +99,7 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             | GlobalCommand::NewDocument
             | GlobalCommand::TabSwitch(_)
             | GlobalCommand::CloseFile
+            | GlobalCommand::Save
     ) {
         close_modal_bars(app, effects);
     } else if matches!(cmd, GlobalCommand::ToggleSearch) {
@@ -263,10 +268,9 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
 /// document, or opens another surface. The finder closes via
 /// `filesearch::cancel` rather than a bare `app.filesearch = None`, so its
 /// own focus/return-to restore stays coherent instead of leaving `App::
-/// focus` wherever the caller's own arm is about to move it. `pub(crate)`,
-/// not private: called from this module's own `handle_global_command`
-/// above.
-pub(crate) fn close_modal_bars(app: &mut App, effects: &mut Effects) {
+/// focus` wherever the caller's own arm is about to move it. Private —
+/// called only from this module's own `handle_global_command` above.
+fn close_modal_bars(app: &mut App, effects: &mut Effects) {
     crate::search::close(app);
     close_filesearch(app, effects);
 }
@@ -673,10 +677,13 @@ mod tests {
     /// Explorer — the exact "stage 3 swallows keys for a mode the user
     /// thinks they left" defect the close-gate exists to close. Table-
     /// driven over the real binding table (not a hand-picked subset) so a
-    /// future global command is auto-covered the day its row is added. Each
-    /// document is bound to a real path so `Save`'s own pathless-draft
-    /// rung (which focuses the title on its own, unrelated to this gate)
-    /// never fires and confuses the assertion.
+    /// future global command is auto-covered the day its row is added. The
+    /// document is left pathless (the default fresh-`App` draft) and made
+    /// dirty, on purpose: `Save`'s own pathless-draft rung — focusing the
+    /// title field directly, bypassing `set_focus_pane` — only fires on a
+    /// dirty document, and is exactly the rung that strands the finder if
+    /// `Save` is ever missing from the close-gate. Binding a path, or
+    /// leaving the document clean, would make the table blind to it.
     #[test]
     fn table_driven_close_gate_never_strands_filesearch_off_explorer() {
         use crate::keymap::GLOBAL_BINDINGS;
@@ -685,8 +692,7 @@ mod tests {
             let mut app = app();
             app.frame_width = 120;
             app.frame_height = 34;
-            app.active_doc_mut()
-                .bind_path(std::path::PathBuf::from("/doc.md"));
+            app.active_doc_mut().saved_content = Arc::from("");
             let mut effects = Effects::default();
             crate::filesearch::open(&mut app, &mut effects);
             assert!(app.filesearch.is_some(), "test setup for {:?}", binding.cmd);
