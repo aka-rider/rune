@@ -59,6 +59,18 @@ pub struct Mem {
     /// `WrappedIo::published` distinguishes, and which `fail_next` cannot
     /// express at all.
     fail_after: Mutex<Option<(OpKind, io::Error)>>,
+    /// WP-A: a one-shot mutation that fires the NEXT time `Vfs::stat(path)`
+    /// is called, applied AFTER that call has already computed its answer —
+    /// reproducing "the file changed in the gap between two stat calls that
+    /// bracket a read": the bracket's first stat sees the state as it was,
+    /// its second stat (or the read in between) sees the state after.
+    mutate_after_stat: Mutex<Option<(PathBuf, Vec<u8>)>>,
+    /// WP-A: paths currently in "churn" mode — EVERY `Vfs::stat` call
+    /// mutates content+identity right after computing its answer, forever,
+    /// rather than the one-shot `mutate_after_stat`. Reproduces a file that
+    /// never stops changing: no bracket around it can ever settle, since
+    /// even its own retry attempts each see a fresh mutation mid-bracket.
+    churning: Mutex<std::collections::HashSet<PathBuf>>,
 }
 
 impl Mem {
@@ -71,6 +83,8 @@ impl Mem {
             }),
             fail_next: Mutex::new(None),
             fail_after: Mutex::new(None),
+            mutate_after_stat: Mutex::new(None),
+            churning: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -141,6 +155,101 @@ impl Mem {
     /// hand-computing `temp_name`'s private naming scheme.
     pub fn debug_paths(&self) -> Vec<PathBuf> {
         self.lock_state().files.keys().cloned().collect()
+    }
+
+    /// Test/fault-injection hook (WP-A): overwrites `path`'s content in
+    /// place WITHOUT touching its `inode`/`device`/`mod_tick` — the
+    /// same-tick/same-identity external rewrite a stat-only "nothing
+    /// changed" comparison cannot detect by construction, since two
+    /// different writes land on identical stat facts. Errors `NotFound` if
+    /// `path` doesn't already exist, matching every other `Mem` primitive's
+    /// shape.
+    pub fn set_content_keep_identity(&self, path: &Path, bytes: Vec<u8>) -> io::Result<()> {
+        let mut state = self.lock_state();
+        match state.files.get_mut(path) {
+            Some(f) => {
+                f.data = bytes;
+                Ok(())
+            }
+            None => Err(not_found(path, "set_content_keep_identity")),
+        }
+    }
+
+    /// Arms a one-shot mutation that fires the NEXT time `Vfs::stat(path)`
+    /// is called: that call still answers with `path`'s CURRENT state, but
+    /// immediately afterward `path`'s content is replaced and its identity
+    /// (inode, mod_tick) minted fresh — reproducing "the file changed in the
+    /// gap between two stat calls that bracket a read", the mid-bracket
+    /// mutation a stat-read-stat confirmation must catch by re-reading
+    /// rather than trusting a single stat pair.
+    pub fn mutate_after_next_stat(&self, path: &Path, bytes: Vec<u8>) {
+        let mut guard = self
+            .mutate_after_stat
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *guard = Some((path.to_path_buf(), bytes));
+    }
+
+    /// Puts `path` into (or takes it out of) perpetual "churn" mode: while
+    /// churning, EVERY `Vfs::stat(path)` call mutates content+identity right
+    /// after computing its answer, forever — a file that never stops
+    /// changing, so no bracket around it (including its own retry
+    /// attempts) can ever settle. Represents a disk that keeps disagreeing
+    /// with itself across every re-probe, the shape
+    /// [`crate::mem`]'s bracket-retry ceiling must degrade to unconfirmed
+    /// against.
+    pub fn set_churning(&self, path: &Path, churning: bool) {
+        let mut guard = self.churning.lock().unwrap_or_else(|p| p.into_inner());
+        if churning {
+            guard.insert(path.to_path_buf());
+        } else {
+            guard.remove(path);
+        }
+    }
+
+    /// Mutates `path`'s content to a fresh, unique payload and mints a
+    /// fresh identity — the shared body behind churn mode and the one-shot
+    /// [`Mem::mutate_after_next_stat`] hook.
+    fn mutate_now(&self, path: &Path, bytes: Vec<u8>) {
+        let mut state = self.lock_state();
+        state.tick += 1;
+        let mod_tick = state.tick;
+        let inode = state.next_inode;
+        state.next_inode += 1;
+        if let Some(f) = state.files.get_mut(path) {
+            f.data = bytes;
+            f.inode = inode;
+            f.mod_tick = mod_tick;
+        }
+    }
+
+    /// Applies whichever pending mutation targets `path` (churn mode takes
+    /// priority, since it fires unconditionally; the one-shot hook is
+    /// consumed at most once) — called from `Vfs::stat` after it has
+    /// already read the answer it is about to return.
+    fn apply_pending_mutation(&self, path: &Path) {
+        let is_churning = self
+            .churning
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(path);
+        if is_churning {
+            let tick = self.lock_state().tick;
+            self.mutate_now(path, format!("churn {tick}").into_bytes());
+            return;
+        }
+        let armed = {
+            let mut guard = self
+                .mutate_after_stat
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            match guard.as_ref() {
+                Some((armed_path, _)) if armed_path == path => guard.take(),
+                _ => None,
+            }
+        };
+        let Some((_, bytes)) = armed else { return };
+        self.mutate_now(path, bytes);
     }
 
     /// Sets the hard-link count `Vfs::stat` reports for `path` (WP1.S6):
@@ -348,26 +457,33 @@ impl Vfs for Mem {
 
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         self.take_failure(OpKind::Stat)?;
-        let state = self.lock_state();
-        if let Some(f) = state.files.get(path) {
-            return Ok(Stat {
-                size: f.data.len() as u64,
-                mtime: UNIX_EPOCH + Duration::from_millis(f.mod_tick),
-                identity: Identity {
-                    inode: Some(f.inode),
-                    device: Some(f.device),
-                },
-                // Mem has no real hard-link mechanism; the count is just
-                // whatever `Mem::set_nlink` last set for this path
-                // (defaulting to 1), so a test can drive the hardlink-fork
-                // warning path (WP1.S6).
-                nlink: Some(f.nlink),
-                kind: FileKind::File,
-            });
+        let result = {
+            let state = self.lock_state();
+            state.files.get(path).map(|f| {
+                Ok(Stat {
+                    size: f.data.len() as u64,
+                    mtime: UNIX_EPOCH + Duration::from_millis(f.mod_tick),
+                    identity: Identity {
+                        inode: Some(f.inode),
+                        device: Some(f.device),
+                    },
+                    // Mem has no real hard-link mechanism; the count is just
+                    // whatever `Mem::set_nlink` last set for this path
+                    // (defaulting to 1), so a test can drive the hardlink-fork
+                    // warning path (WP1.S6).
+                    nlink: Some(f.nlink),
+                    kind: FileKind::File,
+                })
+            })
+        };
+        if let Some(result) = result {
+            self.apply_pending_mutation(path);
+            return result;
         }
         // No exact file at `path` — `Mem` has no directory nodes, so a
         // directory is synthesized: `path` is a directory iff some stored
         // key sits strictly below it.
+        let state = self.lock_state();
         let is_synthetic_dir = state.files.keys().any(|key| sits_strictly_below(key, path));
         if is_synthetic_dir {
             return Ok(Stat {
