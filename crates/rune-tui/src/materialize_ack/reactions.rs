@@ -120,6 +120,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
         {
             doc_db.expect_obs = saved.id;
+            doc_db.pending_rebaseline_hash = None;
         }
         // Resolved BEFORE the `saved: None` re-baseline below: that arm may
         // enqueue a `Load`, and a `Load` enqueue failure sweeps every
@@ -306,7 +307,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // Guard already up) leaves the message just posted above as the
             // only feedback, which is still correct — `set_guard`'s
             // `#[must_use]` return says exactly that happened.
-            if let Some(fresh) = &mat.fresh {
+            if mat.fresh.is_some() {
                 // `merge::begin`'s own fast pre-check (plan Gotchas `[R3]`)
                 // reads `last_sync` as a hint only — this CAS refusal IS
                 // fresh evidence the disk moved, so seed it conservatively
@@ -322,9 +323,7 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                     app,
                     GuardPrompt {
                         doc: id,
-                        kind: GuardKind::DiskConflict {
-                            fresh_obs: fresh.id,
-                        },
+                        kind: GuardKind::DiskConflict,
                     },
                 );
             }

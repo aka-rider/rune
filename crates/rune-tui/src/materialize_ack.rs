@@ -50,14 +50,23 @@ pub(crate) fn handle_prepare_ack(
     let Some(pending) = app.pending_materialize.get(&id).cloned() else {
         return;
     };
+    // A baseline left unconfirmed by a prior commit whose observation was
+    // lost (`DocDb::pending_rebaseline_hash`'s own doc comment) stands in
+    // for `expect_hash` here — the DB's own lookup would otherwise still be
+    // answering off the stale row `expect_obs` never advanced past. Once a
+    // real observation lands, this returns `None` again and the DB's own
+    // hash is used as always.
+    let expect_hash = app
+        .doc(id)
+        .and_then(|d| d.db.as_ref())
+        .and_then(|d| d.pending_rebaseline_hash.clone())
+        .unwrap_or(prep.expect_hash);
     let vfs = Arc::clone(&app.vfs);
     effects.cmds.push(materialize_vfs_cmd(
         id,
         vfs,
-        pending.path,
-        pending.bind_new,
-        pending.content,
-        prep.expect_hash,
+        pending,
+        expect_hash,
         prep.bound_path,
     ));
 }
@@ -115,20 +124,19 @@ pub enum MaterializeVfsOutcome {
 fn materialize_vfs_cmd(
     id: DocumentId,
     vfs: Arc<dyn Vfs + Send + Sync>,
-    path: PathBuf,
-    bind_new: bool,
-    content: String,
+    pending: PendingMaterialize,
     expect_hash: String,
     bound_path: Option<String>,
 ) -> Cmd {
     Cmd::new(CmdKind::Save, move || {
         let outcome = save::run_materialize_vfs(
             vfs.as_ref(),
-            &path,
-            bind_new,
-            &content,
+            &pending.path,
+            pending.bind_new,
+            &pending.content,
             &expect_hash,
             bound_path.as_deref(),
+            pending.mode,
         );
         Some(Msg::MaterializeVfsDone { id, outcome })
     })
@@ -268,6 +276,22 @@ fn record_outcome(
         }
         Err(e) => {
             if published {
+                // The write already physically committed but its own
+                // observation just failed to record — the disk now holds
+                // exactly `pending.content`, so a save that starts before
+                // the re-baseline load below lands must be able to
+                // recognize that as its own echo rather than manufacture a
+                // conflict against it (`DocDb::pending_rebaseline_hash`'s
+                // own doc comment). Stashed before the ack below, which may
+                // itself go on to drop this document's binding entirely
+                // (the re-baseline enqueue failing too) — dropping the
+                // whole `DocDb` discards this stash right along with it,
+                // which is correct: a binding that can no longer serve a
+                // save has nothing left for the stash to protect.
+                if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
+                    doc_db.pending_rebaseline_hash =
+                        Some(rune_db::hash_bytes(pending.content.as_bytes()));
+                }
                 // WP7: the write already physically completed — only the
                 // DB bookkeeping is lost. Report the save as successful
                 // FIRST (clearing this document's in-flight/pending state)

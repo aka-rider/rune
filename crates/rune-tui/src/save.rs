@@ -34,6 +34,23 @@ pub(crate) use materialize::{
 /// existing quit-confirm pattern").
 const SAVE_CONFIRM_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Distinguishes an ordinary save's compare-and-swap publish from the
+/// disk-conflict Guard's `[S]ave anyway` escape hatch. `Force` is
+/// deliberately not a bool: a caller reading `mode == SaveMode::Force` at a
+/// call site says what it means, where a bare `true` would not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SaveMode {
+    /// The compare-and-swap publish: refuses when the live destination
+    /// disagrees with the last baseline this session recorded.
+    Normal,
+    /// Existence-aware and unconditional: publishes over whatever is
+    /// actually at the destination (`exchange` when it exists, `rename_excl`
+    /// when it doesn't) and captures whatever that displaces as a durable
+    /// blob regardless of any hash comparison — the disk-conflict Guard's
+    /// `[S]ave anyway` must never refuse a second time.
+    Force,
+}
+
 /// What a `trigger_save` attempt actually did (plan WP1) — replaces the old
 /// bare `()` return so no refusal is silent to the CALLER, not just to the
 /// footer: WP2's quit-save fan-out keys off this to decide whether a
@@ -76,7 +93,12 @@ pub(crate) enum SaveStart {
 /// direct `vfs.save_atomic` `Cmd` — Prime Directive: the user must always be
 /// able to save (plan decision 5: "losing the DB never damages a user
 /// file").
-pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects) -> SaveStart {
+pub(crate) fn trigger_save(
+    app: &mut App,
+    id: DocumentId,
+    mode: SaveMode,
+    effects: &mut Effects,
+) -> SaveStart {
     let Some(kind) = app.doc(id).map(|d| d.kind) else {
         return SaveStart::Refused;
     };
@@ -179,7 +201,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
     if degraded {
         if app.pending_save_confirm.is_some_and(|(cid, _)| cid == id) {
             app.pending_save_confirm = None;
-            materialize_now(app, id, path, version, effects);
+            materialize_now(app, id, path, version, mode, effects);
             return SaveStart::InFlight;
         }
         let generation = app.next_save_confirm_gen;
@@ -202,7 +224,7 @@ pub(crate) fn trigger_save(app: &mut App, id: DocumentId, effects: &mut Effects)
         return SaveStart::Refused;
     }
 
-    materialize_now(app, id, path, version, effects);
+    materialize_now(app, id, path, version, mode, effects);
     SaveStart::InFlight
 }
 

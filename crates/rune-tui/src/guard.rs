@@ -8,15 +8,13 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use rune_db::ObsId;
-
 use crate::app::{App, QuitIntent};
 use crate::document::DocumentId;
 use crate::keymap::{KeyCode, KeyInput};
 use crate::merge::MergeIntent;
 use crate::messages;
 use crate::runtime::Effects;
-use crate::save::{self, SaveStart};
+use crate::save::{self, SaveMode, SaveStart};
 use crate::workspace;
 
 /// The one chokepoint that raises a new Guard prompt, replacing the old
@@ -84,15 +82,12 @@ pub enum GuardKind {
     RenameCollision {
         target: String,
     },
-    /// The save-time CAS conflict: `doc`'s ⌘S found the disk
-    /// bytes no longer match what it last read. `fresh_obs` is the
-    /// observation `record_fresh_from_stat` recorded of the live disk bytes
-    /// AT THE MOMENT the conflict was detected — `[S]ave anyway`'s retry
-    /// baseline, so the retried CAS check is against fact, not the stale
-    /// hash that just failed.
-    DiskConflict {
-        fresh_obs: ObsId,
-    },
+    /// The save-time CAS conflict: `doc`'s ⌘S found the disk bytes no
+    /// longer match what it last read. `[S]ave anyway` from here is a
+    /// force-save, not a CAS retry — it bypasses the comparison entirely
+    /// rather than re-running it against a fresher baseline, so a disk that
+    /// keeps moving can never make the escape hatch itself refuse.
+    DiskConflict,
     /// A user-requested move of `path` to the OS Trash — an Explorer
     /// selection or the active document's file. `path` is authoritative:
     /// an Explorer selection need not be the open document, so
@@ -179,7 +174,7 @@ fn cancel_status(kind: &GuardKind) -> &'static str {
         GuardKind::DirtyClose => "close cancelled",
         GuardKind::DirtyQuit => "quit cancelled",
         GuardKind::RenameCollision { .. } => "rename cancelled",
-        GuardKind::DiskConflict { .. } => "save cancelled",
+        GuardKind::DiskConflict => "save cancelled",
         GuardKind::Trash { .. } => "trash cancelled",
     }
 }
@@ -210,8 +205,8 @@ pub(crate) fn handle_guard_key(app: &mut App, key: KeyInput, effects: &mut Effec
         GuardKind::DirtyClose => handle_dirty_close_key(app, doc, key, effects),
         GuardKind::DirtyQuit => handle_dirty_quit_key(app, key, effects),
         GuardKind::RenameCollision { .. } => handle_rename_collision_key(app, key),
-        GuardKind::DiskConflict { fresh_obs } => {
-            handle_disk_conflict_key(app, doc, *fresh_obs, key, effects);
+        GuardKind::DiskConflict => {
+            handle_disk_conflict_key(app, doc, key, effects);
         }
         GuardKind::Trash { path } => handle_trash_key(app, path.clone(), key, effects),
     }
@@ -230,7 +225,7 @@ fn handle_dirty_close_key(app: &mut App, doc: DocumentId, key: KeyInput, effects
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DIRTY_CLOSE_SAVE.key) => {
             clear_guard(app);
-            let _ = save::trigger_save(app, doc, effects);
+            let _ = save::trigger_save(app, doc, SaveMode::Normal, effects);
             if app.doc(doc).is_some_and(|d| d.save_in_flight) {
                 app.pending_close_on_save = Some(doc);
             }
@@ -293,7 +288,7 @@ fn start_quit_save_fan_out(app: &mut App, effects: &mut Effects) {
     let docs = crate::pane::unpreserved_dirty_docs(app);
     let mut pending = BTreeMap::new();
     for id in docs {
-        match save::trigger_save(app, id, effects) {
+        match save::trigger_save(app, id, SaveMode::Normal, effects) {
             SaveStart::InFlight => {
                 if let Some(version) = app.doc(id).and_then(|d| d.pending_save_version()) {
                     pending.insert(id, version);
@@ -329,32 +324,23 @@ fn handle_rename_collision_key(app: &mut App, key: KeyInput) {
     crate::rename::replace_confirmed(app);
 }
 
-/// The disk-conflict Guard's own answer. `s`/`S` retries the
-/// SAME save with the CAS baseline advanced to `fresh_obs` — the observation
-/// of what was actually on disk at conflict-detection time — so the retry's
-/// expectation matches fact instead of the stale hash that just failed; a
-/// disk change landing again in between just fails the retry into a fresh
-/// conflict of its own, exactly like any other CAS race. `d`/`D` and `m`/`M`
+/// The disk-conflict Guard's own answer. `s`/`S` is a FORCE-save — it
+/// bypasses the compare-and-swap entirely (`SaveMode::Force`) rather than
+/// retrying it against a fresher baseline: existence-aware publish and
+/// unconditional displaced-byte capture make it structurally un-refusable, so
+/// a disk that keeps moving between the conflict and this keypress can never
+/// make the escape hatch itself refuse again. `d`/`D` and `m`/`M`
 /// both switch onto `doc` first (a conflict can in principle be answered for
 /// a document that isn't the active one, e.g. a background quit-save) before
 /// starting `merge::begin`'s shared entry pipeline, which reads its subject
 /// off `app.active` — `Discard` shares `Merge`'s own fresh-`MergePrep`
 /// round trip rather than repeating it. Every other key is a consumed
 /// no-op, matching every other Guard kind.
-fn handle_disk_conflict_key(
-    app: &mut App,
-    doc: DocumentId,
-    fresh_obs: ObsId,
-    key: KeyInput,
-    effects: &mut Effects,
-) {
+fn handle_disk_conflict_key(app: &mut App, doc: DocumentId, key: KeyInput, effects: &mut Effects) {
     match key.code {
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_SAVE.key) => {
             clear_guard(app);
-            if let Some(doc_db) = app.doc_mut(doc).and_then(|d| d.db.as_mut()) {
-                doc_db.expect_obs = fresh_obs;
-            }
-            let _ = save::trigger_save(app, doc, effects);
+            let _ = save::trigger_save(app, doc, SaveMode::Force, effects);
         }
         KeyCode::Char(c) if c.eq_ignore_ascii_case(&DISK_CONFLICT_DISCARD.key) => {
             clear_guard(app);

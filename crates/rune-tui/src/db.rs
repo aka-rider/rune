@@ -318,6 +318,17 @@ pub struct DocDb {
     /// arriving with a stale generation means a later edit already
     /// superseded it, so it's ignored.
     pub snapshot_generation: u32,
+    /// Set when a write physically committed but the observation that would
+    /// have advanced `expect_obs` was lost to a failing writer — `expect_obs`
+    /// itself is left untouched (it may be the only row this session has
+    /// ever recorded), so a save starting before the re-baseline `Load`
+    /// lands would otherwise CAS-compare the disk against that stale row and
+    /// manufacture a conflict against bytes THIS session just wrote. Holds
+    /// the hash of exactly those bytes so such a save recognizes the disk as
+    /// its own echo; disk content that disagrees with it still conflicts
+    /// normally — this is never a license to adopt someone else's bytes.
+    /// Cleared the moment a real observation lands again.
+    pub pending_rebaseline_hash: Option<String>,
 }
 
 impl DocDb {
@@ -328,6 +339,7 @@ impl DocDb {
             bind_new,
             last_known_seq,
             snapshot_generation: 0,
+            pending_rebaseline_hash: None,
         }
     }
 

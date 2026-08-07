@@ -66,7 +66,7 @@ fn save_on_an_externally_changed_file_raises_the_disk_conflict_guard() {
         panic!("expected the disk-conflict Guard");
     };
     assert_eq!(prompt.doc, doc_id);
-    assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
+    assert!(matches!(prompt.kind, GuardKind::DiskConflict));
 }
 
 /// Plan WP6 "Done when" (4b): the Guard's `[M]erge` answer enters merge
