@@ -1,6 +1,5 @@
-//! Integration tests for plan gap G7 (`bug-i-edited-quirky-turtle.md`,
-//! WP-C's deferred item): the save-CAS baseline (`expect_obs`/
-//! `pending_rebaseline_hash`/`save_epoch`) is shared per `db_id`
+//! Integration tests for the shared save-CAS baseline: `expect_obs`/
+//! `pending_rebaseline_hash`/`save_epoch` are shared per `db_id`
 //! (`App::file_bindings`), not copied per `Document` — two `Document`s
 //! (tabs) bound to the SAME underlying file must see the one truth about
 //! what disk holds. Follows the `merge_common`/`merge_disk_conflict_guard.
@@ -58,10 +57,11 @@ fn bind_second_tab(
     id
 }
 
-/// Plan gap G7's own regression: without a shared baseline, tab B's `DocDb`
-/// never learns that tab A's save advanced the file's disk state, so B's
-/// very next save falsely raises the disk-conflict Guard against rune's own
-/// write. Written first against the base (fails there — B's stale
+/// The false-conflict regression this shared baseline fixes: without it,
+/// tab B's `DocDb` never learns that tab A's save advanced the file's disk
+/// state, so B's very next save falsely raises the disk-conflict Guard
+/// against rune's own write. Written first against the base (fails there —
+/// B's stale
 /// `expect_obs` still names the pre-A-save observation) and green once the
 /// baseline lives on the shared `FileBinding`.
 #[test]
@@ -221,8 +221,8 @@ fn drain_specific(app: &mut App, bridge: &DbBridge, op_id: u64) -> Effects {
     effects
 }
 
-/// Probe/epoch coherence (plan gap G7, task 2): a `Probe` issued for tab B
-/// BEFORE tab A's save on the SAME file, whose ack arrives after that
+/// Probe/epoch coherence: a `Probe` issued for tab B BEFORE tab A's save on
+/// the SAME file, whose ack arrives after that
 /// save's publish already landed, must not overwrite tab B's `last_sync`
 /// with the stale classification it carries — the shared `FileBinding`'s
 /// epoch bump (from ANY document's save on this `db_id`) makes the ack

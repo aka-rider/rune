@@ -1,8 +1,8 @@
-//! WP-B "Done when" tests for the save-epoch echo on `Probe` acks and the
-//! save-in-flight probe deferral (plan `bug-i-edited-quirky-turtle.md`,
-//! WP-B — structural echo suppression). Follows the `db_wiring_sync.rs`/
-//! `merge_disk_conflict_guard.rs` pattern, pulling shared fixtures from
-//! `merge_common`.
+//! Tests for the save-epoch echo on `Probe` acks and the save-in-flight
+//! probe deferral — structural echo suppression, so a stale `Probe` reply
+//! can never overwrite what a later save already made true. Follows the
+//! `db_wiring_sync.rs`/`merge_disk_conflict_guard.rs` pattern, pulling
+//! shared fixtures from `merge_common`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -50,7 +50,7 @@ fn drain_specific(app: &mut App, bridge: &DbBridge, op_id: u64) -> Effects {
     effects
 }
 
-/// Plan WP-B (i): a `Probe` issued before a save's publish, whose ack
+/// A `Probe` issued before a save's publish, whose ack
 /// arrives after the publish already landed, must not overwrite
 /// `last_sync` with the classification it carried — the save's own epoch
 /// bump makes the ack handler drop it, mirroring the merge-generation
@@ -154,7 +154,7 @@ fn stale_pre_save_probe_ack_never_overwrites_post_save_last_sync() {
     );
 }
 
-/// Plan WP-B (ii): a tab switch while a save is in flight must defer the
+/// A tab switch while a save is in flight must defer the
 /// probe it would otherwise enqueue, and fire it exactly once the save's
 /// ack resolves — ending with a disk fact read fresh from the post-save
 /// world.
@@ -212,7 +212,7 @@ fn probe_deferred_during_save_in_flight_fires_after_the_ack_with_correct_sync_st
     );
 }
 
-/// Plan WP-B (iii): a probe with no save intervening at all must classify
+/// A probe with no save intervening at all must classify
 /// exactly as before this change — the epoch/deferral machinery introduced
 /// here must not alter the ordinary, no-race path.
 #[test]

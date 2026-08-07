@@ -261,10 +261,10 @@ pub(super) fn step_and_check(
     // rune-fuzz finding 3). A second in-flight save `Cmd` is therefore a
     // violation in its own right, not a silent overwrite.
     for cmd in effects.cmds {
-        // Exhaustive over every `CmdKind` (plan WP-A task 7): a future
-        // variant this driver has no policy for yet fails to COMPILE here
-        // rather than falling through and being silently dropped — every
-        // kind gets an explicit deferred/dropped classification, forever.
+        // Exhaustive over every `CmdKind`: a future variant this driver has
+        // no policy for yet fails to COMPILE here rather than falling
+        // through and being silently dropped — every kind gets an explicit
+        // deferred/dropped classification, forever.
         match cmd.kind() {
             CmdKind::Save => {
                 if state.pending_save.is_some() {

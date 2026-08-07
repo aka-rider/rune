@@ -38,8 +38,8 @@
 //!   stateful `MERGE-NO-INSTANT-REDIVERGENCE` tracker — like
 //!   `SAVE-SINGLE-FLIGHT`, driven by `driver.rs` per step, not a
 //!   `check_all` entry (it needs history a `(prev, next, ctx)` triple
-//!   cannot carry); `MERGE-THEIRS-CONFIRMED` (plan WP-A) is driven the same
-//!   way, directly against the raw `Msg` a `MergePrep` ack carries
+//!   cannot carry); `MERGE-THEIRS-CONFIRMED` is driven the same way,
+//!   directly against the raw `Msg` a `MergePrep` ack carries
 //! - `SAVE-SINGLE-FLIGHT` — constructed directly by `driver.rs`, not a
 //!   checker function here (like `NO-PANIC`): a second in-flight save
 //!   `Cmd` arriving while one is already pending is itself the violation

@@ -1,6 +1,5 @@
-//! WP1 diagnosis gate for the 2026-08-07 `CONSTITUTION.md` incident (plan
-//! `bug-i-edited-quirky-turtle.md`), now tightened past the diagnosis into
-//! the fix (WP-D).
+//! Regression gate for the 2026-08-07 real-incident conflict-anchoring bug,
+//! tightened past the initial diagnosis into the actual fix.
 //!
 //! Root cause: diffy's diff3 output holds exactly one conflict block on the
 //! real incident bytes, sitting after a large shared clean prefix, with an

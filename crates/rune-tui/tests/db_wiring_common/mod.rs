@@ -90,8 +90,8 @@ pub fn doc_db_from(load: &LoadResult) -> DocDb {
     )
 }
 
-/// The [`doc_db_from`] counterpart for the shared per-file CAS baseline
-/// (plan gap G7): joins `App::file_bindings` for `load.doc_id`, seeded from
+/// The [`doc_db_from`] counterpart for the shared per-file CAS baseline:
+/// joins `App::file_bindings` for `load.doc_id`, seeded from
 /// `load.saved_obs`, exactly like `db_ack::handle_load_ack`'s own production
 /// call to `App::bind_file` does. Every test that installs a `doc_db_from`
 /// binding onto a live `App` must call this too, or that document's CAS

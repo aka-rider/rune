@@ -24,8 +24,8 @@ pub(crate) struct DbBootstrap {
     pub(crate) doc_db: Option<DocDb>,
     /// The CAS baseline `main` joins `App::file_bindings` with for `doc_db`'s
     /// `db_id`, the same shared-per-file entry every later document bound to
-    /// this `db_id` (plan gap G7) reads and advances — never installed
-    /// directly on `doc_db` itself. `Some` alongside `doc_db` on every
+    /// this `db_id` reads and advances — never installed directly on
+    /// `doc_db` itself. `Some` alongside `doc_db` on every
     /// construction path: a genuine baseline for a real `Load`, or `0` (the
     /// same fabricated, never-queried value `doc_db`'s own `bind_new: true`
     /// paths use) for a fresh scratch row.

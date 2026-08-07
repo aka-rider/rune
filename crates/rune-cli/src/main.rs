@@ -242,10 +242,10 @@ fn bootstrap(
     if let Some(doc_db) = db_bootstrap.doc_db {
         let db_id = doc_db.db_id;
         app.active_doc_mut().db = Some(doc_db);
-        // Joins `db_id`'s shared CAS baseline (plan gap G7) — seeded from
-        // this launch's own `Load`/scratch-row observation, exactly like
-        // every later `db_ack::handle_load_ack`/`handle_create_scratch_ack`
-        // does for a document opened mid-session.
+        // Joins `db_id`'s shared CAS baseline, seeded from this launch's own
+        // `Load`/scratch-row observation, exactly like every later
+        // `db_ack::handle_load_ack`/`handle_create_scratch_ack` does for a
+        // document opened mid-session.
         app.bind_file(db_id, db_bootstrap.expect_obs.unwrap_or(0));
     }
     // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s

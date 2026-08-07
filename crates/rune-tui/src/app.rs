@@ -150,8 +150,8 @@ pub struct App {
     /// id, means a sweep can never drop one and keep the other.
     pub db_ops: HashMap<u64, crate::db::PendingOp>,
     /// This process's shared CAS baseline per store-bound file, keyed by
-    /// `db_id` (plan gap G7): every `Document` bound to the same underlying
-    /// file reads and advances the SAME [`crate::db::FileBinding`] rather
+    /// `db_id`: every `Document` bound to the same underlying file reads
+    /// and advances the SAME [`crate::db::FileBinding`] rather
     /// than each carrying its own copy, which is what let one tab's own
     /// save falsely raise the disk-conflict guard against a second tab's
     /// very next attempt on that file. `crate::db::App::bind_file`/

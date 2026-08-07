@@ -1,6 +1,6 @@
-//! Integration tests for the disk-conflict Guard's `[S]ave anyway` answer
-//! (plan `bug-i-edited-quirky-turtle.md`, WP-A′): a force-save that bypasses
-//! the compare-and-swap entirely rather than retrying it, plus the
+//! Integration tests for the disk-conflict Guard's `[S]ave anyway` answer: a
+//! force-save that bypasses the compare-and-swap entirely rather than
+//! retrying it, plus the
 //! baseline-lifecycle fix that keeps a save started right after a
 //! lost-bookkeeping commit from conflicting against this session's own
 //! bytes. Follows `merge_disk_conflict_guard.rs`'s fixture pattern, pulling
@@ -205,8 +205,8 @@ fn an_ordinary_save_still_succeeds_once_the_disk_is_quiet() {
     );
 }
 
-/// The baseline-lifecycle fix (plan WP-A′ task 3): a commit whose own
-/// observation was lost to a failing writer leaves `expect_obs` stale but
+/// The baseline-lifecycle fix: a commit whose own observation was lost to
+/// a failing writer leaves `expect_obs` stale but
 /// stashes the hash of what THIS session actually wrote
 /// (`DocDb::pending_rebaseline_hash`) — simulating exactly that state here,
 /// since reproducing the transient writer-queue failure that produces it for

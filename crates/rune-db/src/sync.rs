@@ -428,7 +428,7 @@ mod tests {
         tx.commit().expect("commit");
     }
 
-    /// The negative case the plan calls out explicitly: a hash that matches
+    /// The negative case worth pinning explicitly: a hash that matches
     /// this document's own history (confirmed, so `is_own_write` is true)
     /// but shares NO recorded lineage with the current ancestor — two
     /// disconnected roots for the same document, the shape a legacy or

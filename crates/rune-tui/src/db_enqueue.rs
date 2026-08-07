@@ -157,9 +157,9 @@ fn load_document_inner(
 /// handled in `db_dispatch::handle_db_event`.
 ///
 /// Deferred instead of enqueued while ANY document bound to the same
-/// `db_id` has a save in flight (plan gap G7: a save from one tab
-/// invalidates the disk for every tab open on that file, not only the one
-/// saving) — a probe issued now would only read the pre-save world and get
+/// `db_id` has a save in flight — a save from one tab invalidates the disk
+/// for every tab open on that file, not only the one saving, so a probe
+/// issued now would only read the pre-save world and get
 /// dropped by the epoch check its ack lands into anyway (`db_dispatch`'s
 /// `OpOutcome::Sync` arm). The shared `FileBinding::pending_probe` records
 /// the request instead; `materialize_ack::handle_materialize_ack`'s tail
