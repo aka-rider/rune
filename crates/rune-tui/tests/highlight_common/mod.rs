@@ -1,12 +1,13 @@
 //! Shared fixtures for the `highlight_*` sibling test files: build an `App`
-//! around a fresh buffer, and type one harmless character at the end of the
-//! active document's buffer through the real `app::update` chokepoint (the
-//! standard way these tests trigger a highlight `Cmd` without reaching for
-//! the private `highlight::schedule_highlight` directly). `#![allow(
-//! dead_code)]` because each consumer binary only calls a subset of these —
-//! the rest would otherwise trip `-D warnings`' dead-code lint in that
-//! particular binary.
-#![allow(dead_code, clippy::unwrap_used, clippy::expect_used)]
+//! around a fresh buffer, schedule a highlight by editing through the real
+//! `app::update` chokepoint, settle the reply, and read the result back
+//! through the same query the renderer runs. Nothing here reaches for the
+//! private `highlight::schedule_highlight` — driving the public message path
+//! is what makes these tests specifications of the pipeline rather than of
+//! its internals. `#![allow(dead_code)]` because each consumer binary only
+//! calls a subset of these — the rest would otherwise trip `-D warnings`'
+//! dead-code lint in that particular binary.
+#![allow(dead_code, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::ops::Range;
 use std::path::PathBuf;
@@ -52,6 +53,46 @@ pub fn type_one_char_at_end(app: &mut App, effects: &mut Effects) {
         }),
         effects,
     );
+}
+
+/// Runs the document's pending highlight to completion through the real
+/// message path: schedule (by typing one character), run the `Cmd` inline,
+/// deliver its reply. The state it leaves behind is read back through
+/// `all_spans`, the same query the renderer uses.
+pub fn settle_highlight(app: &mut App) {
+    let mut effects = Effects::default();
+    type_one_char_at_end(app, &mut effects);
+    assert_eq!(
+        effects.cmds.len(),
+        1,
+        "expected exactly one scheduled highlight cmd"
+    );
+    let msg = effects
+        .cmds
+        .remove(0)
+        .run()
+        .expect("a highlight cmd always replies with Some(Msg::Highlighted)");
+    let Msg::Highlighted { .. } = &msg else {
+        panic!("expected a Msg::Highlighted reply, got {msg:?}");
+    };
+    let mut effects = Effects::default();
+    app::update(app, msg, &mut effects);
+}
+
+/// Schedules a highlight by inserting `text` at `at` — a version bump the
+/// caller controls, unlike the append `type_one_char_at_end` performs — and
+/// settles the reply.
+pub fn settle_after_insert(app: &mut App, at: usize, text: &str) {
+    let id = app.active;
+    app.doc_mut(id).expect("doc").cursors = CursorSet::new(at);
+    let mut effects = Effects::default();
+    app::update(app, Msg::Paste(text.to_string()), &mut effects);
+    for cmd in effects.cmds.drain(..) {
+        if let Some(msg) = cmd.run() {
+            let mut settled = Effects::default();
+            app::update(app, msg, &mut settled);
+        }
+    }
 }
 
 /// A `Msg::Highlighted` payload carrying one span-backed region — the shape

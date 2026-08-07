@@ -4,44 +4,14 @@
 //! Kept apart from the pipeline-equivalence cases because these are all
 //! about ONE thing — the prefix-free source reconstruction — and each needs
 //! its own paired top-level and nested fixture.
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
+#![allow(clippy::expect_used, clippy::indexing_slicing)]
 
 mod highlight_common;
 
 use std::ops::Range;
 
-use highlight_common::{all_spans, app_for, type_one_char_at_end};
+use highlight_common::{all_spans, app_for, settle_highlight};
 use rune_syntax::ScopeId;
-use rune_tui::app::{self, App};
-use rune_tui::runtime::{Effects, Msg};
-
-/// Runs the document's pending highlight to completion through the real
-/// message path: schedule (by typing one character), run the `Cmd` inline,
-/// deliver its reply.
-fn settle_highlight(app: &mut App) {
-    let mut effects = Effects::default();
-    type_one_char_at_end(app, &mut effects);
-    assert_eq!(
-        effects.cmds.len(),
-        1,
-        "expected exactly one scheduled highlight cmd"
-    );
-    let msg = effects
-        .cmds
-        .remove(0)
-        .run()
-        .expect("a highlight cmd always replies with Some(Msg::Highlighted)");
-    let Msg::Highlighted { .. } = &msg else {
-        panic!("expected a Msg::Highlighted reply, got {msg:?}");
-    };
-    let mut effects = Effects::default();
-    app::update(app, msg, &mut effects);
-}
 
 /// Schedules and settles the ONE highlight a fresh markdown document with
 /// exactly one resolvable fence produces, and returns the spans it would
