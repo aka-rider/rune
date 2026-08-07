@@ -235,6 +235,58 @@ fn a_revealed_fences_delimiter_rows_are_covered() {
     );
 }
 
+/// Frontmatter gets the FULL code treatment: the rectangle covers both `---`
+/// delimiter rows as well as the YAML between them, and stops dead at the
+/// document body. The delimiters are part of the region's rows precisely so
+/// the block reads as one slab rather than a tinted middle with two bare
+/// lines floating around it.
+#[test]
+fn frontmatter_paints_a_rectangle_over_its_delimiter_rows() {
+    let content = concat!(
+        "---\n",
+        "title: x\n",
+        "draft: true\n",
+        "---\n",
+        "\n",
+        "# Heading\n",
+    );
+    let app = sized_app(content, "/x/notes.md");
+    let buf = draw(&app);
+
+    let first_key = row_containing(&buf, "title: x");
+    let open = first_key - 1;
+    let close = first_key + 2;
+    assert!(
+        row_text(&buf, open).contains("---"),
+        "the row above the first key must be the opening delimiter"
+    );
+    assert!(
+        row_text(&buf, close).contains("---"),
+        "the row below the last key must be the closing delimiter"
+    );
+
+    let body = painted_run(&buf, &app, first_key).expect("a frontmatter body row must be painted");
+    for y in open..=close {
+        assert_eq!(
+            painted_run(&buf, &app, y),
+            Some(body),
+            "frontmatter row {y} must span exactly the same columns as the rest of the block — \
+             delimiter rows included"
+        );
+    }
+
+    assert_eq!(
+        painted_run(&buf, &app, close + 1),
+        None,
+        "the blank line after the frontmatter is document body, not part of the block"
+    );
+    assert_eq!(
+        painted_run(&buf, &app, row_containing(&buf, "Heading")),
+        None,
+        "the heading below the frontmatter must stay unpainted"
+    );
+}
+
 /// The `SYNC-IDEMPOTENT` shape: the fill reads only the display snapshot,
 /// the regions and the pane width, so re-syncing and re-rendering with no
 /// message in between must reproduce the rows cell for cell — padding
