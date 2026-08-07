@@ -272,7 +272,13 @@ fn record_outcome(
                 // DB bookkeeping is lost. Report the save as successful
                 // FIRST (clearing this document's in-flight/pending state)
                 // so the subsequent whole-store degrade doesn't also flag
-                // it as a failed save.
+                // it as a failed save. Its own re-baseline attempt
+                // (`handle_materialize_ack`'s `saved: None` arm) enqueues
+                // through `load_document_best_effort`, which never degrades
+                // the store on failure itself — so no duplicate banner+error
+                // pair here even though the store is still nominally
+                // un-degraded at this point; the single `on_store_failure`
+                // call below is the only one this error ever produces.
                 handle_materialize_ack(
                     app,
                     id,

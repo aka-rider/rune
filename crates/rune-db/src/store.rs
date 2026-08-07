@@ -200,8 +200,11 @@ impl Store {
     /// Test-support hook: kills the writer thread as if it had died,
     /// without a real crash — see [`OpKind::KillWriterForTest`]'s doc
     /// comment. Every enqueue after this call observes
-    /// [`Error::WriterGone`]. Not `#[cfg(test)]` — this needs to cross the
-    /// crate boundary into `rune-tui`'s own integration tests.
+    /// [`Error::WriterGone`]. Gated behind the `test-support` feature
+    /// rather than `#[cfg(test)]` — this needs to cross the crate boundary
+    /// into `rune-tui`'s own integration tests, where this crate's own
+    /// `cfg(test)` never applies.
+    #[cfg(feature = "test-support")]
     pub fn kill_writer_for_test(&self) -> Result<(), Error> {
         self.enqueue(OpKind::KillWriterForTest).map(|_| ())
     }
@@ -222,6 +225,7 @@ impl Store {
     /// this method is a true confirmation of writer death, with no
     /// `WriterQueueFull` ambiguity. `update` must never call this: every
     /// production enqueue path stays on `enqueue`/`try_send`.
+    #[cfg(feature = "test-support")]
     pub(crate) fn enqueue_blocking(&self, kind: OpKind) -> Result<u64, Error> {
         let id = self.next_op_id.fetch_add(1, Ordering::Relaxed);
         self.writer.send(WriteOp { id, kind })?;

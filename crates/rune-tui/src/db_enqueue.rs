@@ -87,21 +87,63 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// entry, in one `PendingOp` in `app.db_ops` — `app::handle_db_event`'s
 /// `Load` arm needs both to decide, on the ack, whether adopting the
 /// recovered content is still safe (see [`crate::db_ack::handle_load_ack`]'s
-/// docs). A degraded store enqueues nothing — there is no trustworthy
-/// recovery journal to bind this document to either way.
-pub fn load_document(app: &mut App, id: DocumentId, path: &Path) {
+/// docs). `binding_only` is carried onto that `PendingOp` verbatim — see
+/// `PendingOp::binding_only`'s own doc comment for why a re-baseline call
+/// must set it. A degraded store enqueues nothing — there is no
+/// trustworthy recovery journal to bind this document to either way.
+///
+/// Returns whether the op was actually enqueued: a re-baseline caller
+/// (`materialize_ack::reactions`) must drop `id`'s existing `db` binding
+/// on `false` rather than leave it standing with a baseline it can no
+/// longer refresh; the other call sites, which have no binding yet to
+/// protect, are unaffected either way.
+pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: bool) -> bool {
+    load_document_inner(app, id, path, binding_only, true)
+}
+
+/// The re-baseline counterpart to [`load_document`]: same enqueue, but an
+/// error NEVER calls `on_store_failure` — used only by the `mat.committed`
+/// re-baseline in `materialize_ack::reactions`, which may run once per
+/// document inside a `DbEvent::Fatal` teardown loop still mid-flight over
+/// OTHER documents' own saves. Degrading the store from inside that loop
+/// would let `on_store_failure`'s in-flight sweep drop a LATER document's
+/// still-queued `save_pending` before its own synthetic ack even lands —
+/// the re-baseline is best-effort bookkeeping and must never tear the whole
+/// world down. The caller already treats a `false` return as "drop this
+/// document's binding, the next save falls back to direct-vfs", and the
+/// outer `Fatal` arm reports the store failure itself once the whole loop
+/// has finished.
+pub fn load_document_best_effort(app: &mut App, id: DocumentId, path: &Path) -> bool {
+    load_document_inner(app, id, path, true, false)
+}
+
+fn load_document_inner(
+    app: &mut App,
+    id: DocumentId,
+    path: &Path,
+    binding_only: bool,
+    degrade_on_err: bool,
+) -> bool {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
-        return;
+        return false;
     }
-    let Some(doc) = app.doc(id) else { return };
+    let Some(doc) = app.doc(id) else { return false };
     let issued_version = doc.buffer.version();
-    let Some(db) = app.db.as_ref() else { return };
+    let Some(db) = app.db.as_ref() else {
+        return false;
+    };
     match db.store.load(path) {
         Ok(op_id) => {
             app.db_ops
-                .insert(op_id, PendingOp::load(id, issued_version));
+                .insert(op_id, PendingOp::load(id, issued_version, binding_only));
+            true
         }
-        Err(e) => crate::materialize_ack::on_store_failure(app, e.to_string()),
+        Err(e) => {
+            if degrade_on_err {
+                crate::materialize_ack::on_store_failure(app, e.to_string());
+            }
+            false
+        }
     }
 }
 

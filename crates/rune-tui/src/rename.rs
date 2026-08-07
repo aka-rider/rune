@@ -251,6 +251,20 @@ pub fn begin(app: &mut App, effects: &mut Effects) -> Commit {
         return Commit::Accepted;
     }
 
+    // Never published: this is a CREATE at the new name, not a rename of a
+    // source that isn't there. `target_path` (not `rename_create::bind_new`,
+    // which joins onto the workspace root) keeps the document in its own
+    // directory.
+    if app.db.is_some()
+        && app
+            .doc(id)
+            .and_then(|d| d.db.as_ref())
+            .is_some_and(|d| d.bind_new)
+    {
+        crate::save::bind_new_now(app, id, to);
+        return Commit::Accepted;
+    }
+
     // A `None` ticket means the store already reported the failure through
     // `on_store_failure` — a `Refused` here would let a doubled blur report
     // the same failure twice for no benefit; nothing about the TITLE itself

@@ -29,6 +29,14 @@ ignore = { workspace = true }
 
 [dev-dependencies]
 rune-core = { path = "../rune-core" }
+# Unifies in `test-support` (`Store::kill_writer_for_test`/
+# `probe_blocking_for_test`, `OpKind::KillWriterForTest`) for every test/
+# dev target only — the same double-listing trick as the `rune-tui`
+# self-dependency below: Cargo unifies this crate's features across the
+# whole dependency graph for a given build, but a dev-dependency entry
+# never applies to `cargo build --release -p rune-db`'s own production
+# artifact, only to `rune-tui`'s test/bench/example targets.
+rune-db = { path = "../rune-db", features = ["test-support"] }
 # Test-only: an INDEPENDENT width oracle for `breadcrumb.rs`'s gate tests
 # (plan WP8, [rune-tui C 14]) — computed straight from `unicode_width`
 # rather than by calling this crate's own `width`/`rune_syntax::wrap`

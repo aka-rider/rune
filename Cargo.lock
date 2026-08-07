@@ -2256,6 +2256,7 @@ dependencies = [
  "libc",
  "proptest",
  "rune-core",
+ "rune-db",
  "rune-vfs",
  "rusqlite",
  "serde",

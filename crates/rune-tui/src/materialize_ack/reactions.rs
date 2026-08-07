@@ -34,6 +34,52 @@ pub(crate) fn fail_materialize_locally(app: &mut App, id: DocumentId, message: i
     quit_if_pending(app, id, pending_version, false);
 }
 
+/// Detects "a `bind_new` create lost the race": a concurrent writer's file
+/// is already sitting at this document's own intended path when a create
+/// was attempted. Returns that path — the caller's cue to hand the
+/// document off to an ordinary `Load`, the only transition out of
+/// `bind_new` that installs a real CAS baseline — for `handle_materialize_
+/// ack` to route around the unanswerable `DiskConflict` Guard this refusal
+/// would otherwise raise.
+///
+/// Only fires for a save of the document's OWN `file_path` (`doc.
+/// pending_bind_path` is the discriminator: `bind_new_now`'s rename-create
+/// route sets it and deliberately leaves `file_path` alone until the
+/// publish commits, so `doc.file_path` would name a file this document has
+/// never claimed — handing THAT off to a `Load` would ask `rune-db` to read
+/// a path that has never existed). A naming attempt (`pending_bind_path`
+/// set) keeps today's plain refusal instead: the racer's file sits at a
+/// name this document has no claim on, so adopting its row would be wrong.
+fn lost_create_race(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
+    mat.fresh.as_ref()?;
+    let doc = app.doc(id)?;
+    if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
+        return None;
+    }
+    if doc.pending_bind_path.is_some() {
+        return None;
+    }
+    doc.file_path.clone()
+}
+
+/// The naming-attempt counterpart to [`lost_create_race`]: a `bind_new`
+/// CREATE at a NEW target (`rename_create::bind_new_now`'s `^R` route)
+/// losing the race. Never a `Load` hand-off — that is exactly what `lost_
+/// create_race` above declines to do for this shape — and, just as
+/// importantly, never the generic CAS-conflict `DiskConflict` Guard either:
+/// there is no CAS baseline for a target this document has never claimed,
+/// so `[S]ave anyway`/`[M]erge`/`[D]iscard` would all be dead ends. Mirrors
+/// the no-store draft-create route's own `draft_collision_refusal` — a
+/// footer refusal only.
+fn naming_collision(app: &App, id: DocumentId, mat: &MatResult) -> Option<std::path::PathBuf> {
+    mat.fresh.as_ref()?;
+    let doc = app.doc(id)?;
+    if !doc.db.as_ref().is_some_and(|d| d.bind_new) {
+        return None;
+    }
+    doc.pending_bind_path.clone()
+}
+
 /// The reaction to a `materialize` ack for `id` (plan WP5.S6, re-shaped by
 /// WP7's `MaterializeRecord`): advances `saved_version`/`DocDb::expect_obs`/
 /// `bind_new` on a commit, surfaces each `MatResult` outcome as status text,
@@ -64,18 +110,73 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
                 app.title.seed(&name);
             }
         }
+        // Once the bytes are published, the target exists, so the next save
+        // is an overwrite — regardless of whether the bookkeeping that would
+        // have supplied `saved` (and so a fresh CAS baseline) survived.
+        if let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut()) {
+            doc_db.bind_new = false;
+        }
         if let Some(saved) = &mat.saved
             && let Some(doc_db) = app.doc_mut(id).and_then(|d| d.db.as_mut())
         {
             doc_db.expect_obs = saved.id;
-            doc_db.bind_new = false;
         }
+        // Resolved BEFORE the `saved: None` re-baseline below: that arm may
+        // enqueue a `Load`, and a `Load` enqueue failure sweeps every
+        // document with `save_in_flight` (`db_enqueue::load_document` ->
+        // `on_store_failure`) and abandons its capture. Resolving this
+        // save first means that sweep can no longer be re-entrant against
+        // the very save it is trying to finish — a physically successful
+        // publish must promote into `saved_content` regardless of whether
+        // the re-baseline that follows succeeds.
         if let Some(doc) = app.doc_mut(id) {
             match pending_version {
                 Some(version) => {
                     doc.finish_save_ok(version);
                 }
                 None => doc.abandon_save(),
+            }
+        }
+        if mat.saved.is_none() {
+            // A document may never be left with a store binding that
+            // cannot serve its next save. The bookkeeping that would
+            // have supplied a fresh CAS baseline was lost (`record_
+            // outcome`'s synthetic-commit arms), so `bind_new: false`
+            // above paired with the STALE `expect_obs` a scratch row
+            // installs would make the very next save's `materialize_
+            // prepare` look up an observation that was never recorded.
+            // Re-baseline via an ordinary `Load` of the path that was
+            // just published when the store can still serve one — its
+            // ack installs a real `expect_obs`. When it cannot (no
+            // store, or degraded), this document's binding can no
+            // longer serve a save at all: drop it so every later save
+            // takes the direct-vfs path instead, which always works.
+            // Journaling is already dead in that state (`append_edit`
+            // early-returns on degraded), so the binding costs nothing
+            // kept dropped and only blocks saving kept standing. The
+            // `Load` is `binding_only` (never a recovery adoption) — this
+            // is anchoring a CAS baseline for content already known, not
+            // recovering anything. Uses the best-effort enqueue, never the
+            // degrading one: this call may run once per document inside a
+            // `DbEvent::Fatal` teardown loop still mid-flight over OTHER
+            // documents' own saves, and degrading the store from inside
+            // that loop would drop a later document's still-queued
+            // `save_pending` before its own synthetic ack even lands.
+            let path = app.doc(id).and_then(|d| d.file_path.clone());
+            let store_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
+            let re_baselined = match (path, store_usable) {
+                (Some(path), true) => crate::db_enqueue::load_document_best_effort(app, id, &path),
+                _ => false,
+            };
+            // Re-checked AFTER the attempt, not just relied on the
+            // pre-check above: an enqueue failure already degrades the
+            // store synchronously, but this also catches the store having
+            // gone down for some other reason in between.
+            let still_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
+            if (!re_baselined || !still_usable)
+                && let Some(doc) = app.doc_mut(id)
+            {
+                doc.db = None;
             }
         }
         if mat.raced {
@@ -85,11 +186,114 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             );
         }
     } else {
+        // Both discriminators read `pending_bind_path` — they must run
+        // BEFORE the clear below wipes it. A refused rename-create, a
+        // refused save of the document's own `file_path`, and an ordinary
+        // CAS-conflict refusal all land here; `pending_bind_path` and
+        // `bind_new` together are what tells the three apart.
+        let race = lost_create_race(app, id, &mat);
+        let naming = naming_collision(app, id, &mat);
         if let Some(doc) = app.doc_mut(id) {
             doc.abandon_save();
         }
+        if pending_version.is_some() {
+            // Only when THIS ack actually corresponds to `id`'s own
+            // in-flight save (the version this branch peeked at the top
+            // was still there to abandon) — a stale ack for an
+            // already-abandoned attempt must never clear a LATER,
+            // still-pending `bind_new_now`'s own target out from under it.
+            // A refused create has nothing pending to bind either way —
+            // leaving it standing would let a LATER, unrelated successful
+            // create (`pending_bind_path.take()` above) bind this document
+            // to a name it never wrote.
+            if let Some(doc) = app.doc_mut(id) {
+                doc.pending_bind_path = None;
+            }
+        }
         if mat.missing {
             messages::error(app, "save failed: file no longer exists");
+        } else if let Some(path) = race {
+            // A create lost the race: `[S]ave anyway` would only re-run
+            // `rename_excl` into the same EEXIST forever, and `[M]erge`/
+            // `[D]iscard` would probe against the scratch row's `path=''`
+            // and see nothing to merge — there is no CAS baseline to raise a
+            // Guard against. Instead take the document through the same
+            // transition an ordinary bound document already has:
+            // `db_ack::handle_load_ack` installs `bind_new: false` with a
+            // real baseline, even when it declines to hydrate because the
+            // buffer moved on, so the user's typing is never clobbered. The
+            // abandoned scratch row still holds everything typed so far and
+            // will surface as a recoverable draft on the next bare launch —
+            // that is correct, it is genuinely unsaved work at this instant.
+            //
+            // The hand-off is safe only when no OTHER live document in this
+            // session is already bound to `path` — `handle_load_ack`'s own
+            // precondition is that it is installing a FRESH binding, and a
+            // row already carrying this-session history from that other
+            // document could make `hydrate` replace this buffer's typing
+            // instead of just anchoring a baseline. Paths are compared
+            // RESOLVED (`workspace::resolve`, the one chokepoint every
+            // path that binds a document funnels through) — a launch
+            // positional can still be relative while an Explorer-opened
+            // tab holds the absolute spelling of the very same file, and
+            // an unresolved comparison would miss that they name one
+            // document. It is also safe only with a usable store — a
+            // degraded/absent one would leave `load_document` a silent
+            // no-op, `bind_new` stuck `true` forever. Either way out, the
+            // racer's file itself is left untouched: a direct-vfs fallback
+            // here would clobber a foreign file this session has never
+            // observed.
+            let resolved_path = workspace::resolve(app.vfs.as_ref(), &path);
+            let hand_off_safe = !app.documents.iter().any(|(other_id, other)| {
+                *other_id != id
+                    && other
+                        .file_path
+                        .as_deref()
+                        .map(|p| workspace::resolve(app.vfs.as_ref(), p))
+                        .as_deref()
+                        == Some(resolved_path.as_path())
+            });
+            let can_hand_off = hand_off_safe && app.db.as_ref().is_some_and(|db| !db.degraded);
+            if can_hand_off {
+                messages::error(
+                    app,
+                    "save failed: the target was created by something else; your changes are unsaved \u{2014} ^M to merge",
+                );
+                // A save-time refusal IS fresh evidence the disk moved —
+                // seed it conservatively (`Diverged` is the superset of
+                // what this refusal can mean) so the merge route this
+                // hand-off is meant to reach is genuinely reachable, the
+                // same way the CAS-conflict arm below already seeds it.
+                // Without it, the Load this hand-off enqueues installs a
+                // fresh CAS baseline straight off the racer's own current
+                // bytes, and a later plain ⌘S would then CAS-match and
+                // silently overwrite the racer instead of leaving `^M`
+                // reachable as the way to reconcile the two.
+                if let Some(doc) = app.doc_mut(id) {
+                    doc.last_sync = Some(rune_db::SyncKind::Diverged);
+                }
+                let _ = crate::db_enqueue::load_document(app, id, &path, true);
+            } else {
+                messages::error(
+                    app,
+                    "save failed: the target was created by something else; your buffer is intact \u{2014} ^R to a different name to save it",
+                );
+            }
+        } else if let Some(target) = naming {
+            // A rename-create losing the race at the NEW target: a footer
+            // refusal only, matching the no-store draft-create route's own
+            // `draft_collision_refusal` — never a Guard, since there is no
+            // CAS baseline for a target this document has never claimed.
+            let name = target
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| target.display().to_string());
+            messages::error(app, format!("{name} already exists"));
+            // Mirrors `draft_collision_refusal`'s own pairing with
+            // `return_to_title`: without it the Editor keeps focus while
+            // the title bar still shows the refused name, leaving the user
+            // with no direct way back into the field to retype it.
+            app.refocus_title();
         } else {
             messages::error(
                 app,

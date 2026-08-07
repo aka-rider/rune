@@ -28,7 +28,9 @@
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
-use std::sync::mpsc::{self, SendError, SyncSender, TrySendError};
+#[cfg(feature = "test-support")]
+use std::sync::mpsc::SendError;
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::time::Duration;
 
@@ -114,6 +116,7 @@ impl WriterHandle {
     /// slot; the send is woken with `Err` the moment the writer thread
     /// drops its receiver, i.e. the error IS the writer-death signal —
     /// there is no full-queue error case at all.
+    #[cfg(feature = "test-support")]
     pub(crate) fn send(&self, op: WriteOp) -> Result<(), Error> {
         self.sender
             .send(op)
@@ -160,6 +163,7 @@ fn writer_loop(
     loop {
         match receiver.recv_timeout(idle_timeout) {
             Ok(op) => {
+                #[cfg(feature = "test-support")]
                 if matches!(op.kind, OpKind::KillWriterForTest) {
                     // Drop `receiver` (by returning) rather than processing or
                     // replying — see the variant's doc comment.
@@ -241,6 +245,7 @@ fn execute_op(
         OpKind::PanicForTest => panic!("intentional test panic (writer panic-guard test)"),
         // Intercepted in `writer_loop` before this function is ever called
         // — see the variant's doc comment.
+        #[cfg(feature = "test-support")]
         OpKind::KillWriterForTest => Ok(OpOutcome::None),
         OpKind::AppendEdit {
             session_id,

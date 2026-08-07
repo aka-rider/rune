@@ -3,6 +3,15 @@ name = "rune-db"
 version = "0.1.0"
 edition.workspace = true
 
+[features]
+# Test-only writer-thread hooks (`Store::kill_writer_for_test`/
+# `probe_blocking_for_test`, `OpKind::KillWriterForTest`) that must cross
+# the crate boundary into `rune-tui`'s own integration tests — a plain
+# `#[cfg(test)]` never applies there, since that flag belongs to this
+# crate's own test builds only. Never enabled by a production build:
+# `rune-tui` pulls this in as a dev-dependency-only feature.
+test-support = []
+
 [dependencies]
 rune-vfs = { path = "../rune-vfs" }
 rune-core = { path = "../rune-core" }
@@ -15,6 +24,13 @@ sha2 = "0.11.0"
 
 [dev-dependencies]
 proptest = { workspace = true }
+# Self-dependency trick (Cargo permits it for dev-dependencies, same as
+# `rune-tui`'s own self-reference): pulls this crate back in with
+# `test-support` turned on, so this crate's OWN `#[cfg(test)]` unit tests
+# (`probe_blocking_for_test_confirms_writer_gone_via_send_error` etc.) see
+# the hooks too, without making `cargo build` (no dev-dependencies) enable
+# them.
+rune-db = { path = ".", features = ["test-support"] }
 
 [lints]
 workspace = true
