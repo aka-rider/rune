@@ -52,7 +52,7 @@ Say the left-hand term; the aliases in parentheses are ambiguous.
 ## The Unbreakables (digest — full articles in CONSTITUTION.md)
 
 - Write the user's bytes verbatim — no normalized line endings / trailing newline / BOM / encoding. §6
-- Write user content only through a durable temp write + atomic `exchange`/`rename_excl` publish; unsaved work goes to the recovery store, never the user's file. §2, §4
+- Write user content only through a durable temp write + atomic `exchange`/`rename_excl` publish; unsaved work goes to the recovery store, never the user's file. §1, §2
 - Refuse, don't guess, at the buffer boundary; clamp only at the caller's boundary. An empty async reset is never a user deletion. §6, §7
 - Edit/cursor offsets are BYTES; display widths are TERMINAL CELLS over whole grapheme clusters (`unicode-width`), never bytes and never `char`s. §6
 - Halt with a surfaced error, never `panic`/`unwrap`/`expect` — a panic loses the unsaved buffer. The workspace denies those lints; do not `allow` them in production code. §9
