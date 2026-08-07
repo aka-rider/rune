@@ -22,7 +22,12 @@
 //! resolution; at that point these assertions are expected to need
 //! tightening, not the fixtures.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use rune_merge::{Hunk, merge_hunks};
 
