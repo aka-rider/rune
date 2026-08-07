@@ -2,10 +2,10 @@
 //! the block kinds that recurse into further blocks (`BlockQuote`, `List`).
 
 use super::blockquote::blockquote_markers;
-use super::{ScanHint, line_end_at, node_range};
+use super::{ScanHint, last_line_of, line_end_at, node_range};
 use crate::element::block::{
-    Block, BlockquoteM, CodeFenceM, FrontmatterM, HeadingM, HrM, ListItemM, ListM, ParagraphM,
-    VerbatimKind, VerbatimM,
+    Block, BlockquoteM, CodeFenceM, HeadingM, HrM, ListItemM, ListM, ParagraphM, VerbatimKind,
+    VerbatimM,
 };
 use crate::element::inline::Inline;
 use comrak::nodes::{AstNode, ListType, NodeValue};
@@ -207,33 +207,6 @@ fn build_block<'a>(
             let first_line = line;
             let last_line = last_line_of(starts, range);
 
-            // A fence's OWN internal physical-line structure — where its
-            // opening fence line ends, where each content line starts,
-            // where the closing fence line begins — is derived from
-            // `starts`, the same index `fence_open`/`fence_close`/
-            // `content_lines` and every consumer of `line_at` share, so
-            // this recovers exactly the fence's own recognized lines
-            // (`comrak_first_line`..=`comrak_last_line`), mirroring the
-            // setext-heading fix above.
-            let comrak_first_line = super::line_at(starts, range.start);
-            let comrak_last_line = last_line_of(starts, range);
-
-            // CONTAINER-PREFIX fix: `fence_open`'s start is `range.start`,
-            // NOT `line_start_at`/`hint` — a node's own sourcepos already
-            // bakes in EVERY ancestor's line-0 prefix (a blockquote's
-            // `"> "` AND a list item's `"- "`/`"1. "`, whichever applies),
-            // so `range.start` is already exactly where this fence's own
-            // first line begins. `hint` only tracks REPEATING blockquote
-            // markers across continuation lines — it has no entry for a
-            // list item's non-repeating marker, so using it here (instead
-            // of `range.start`) would silently fall back to the physical
-            // line start and re-claim bytes the list item's own marker
-            // already hid (`"- ```rust"` -> fence_open `[0, 9)` colliding
-            // with the item's own marker `[0, 2)`).
-            let comrak_first_line_end = line_end_at(content.len(), starts, comrak_first_line);
-            let fence_open =
-                Some(ByteRange::new(range.start, comrak_first_line_end).clamp(content.len()));
-
             // BLOCKER 3 fix (prior round): `last_line > first_line` alone is
             // NOT "a closing fence exists" — every fence is unterminated
             // while being typed (open fence + content, no closing ``` yet),
@@ -243,33 +216,7 @@ fn build_block<'a>(
             // line span. Unclosed -> no `fence_close`, and every byte after
             // the opening fence line through the end of the block is live
             // content (never silently concealed as if it were a fence).
-            //
-            // CONTAINER-PREFIX fix (this round): `fence_close`'s start and
-            // EVERY content line's start use `hint.start_for_line` — unlike
-            // `fence_open`'s own first line, these are CONTINUATION lines of
-            // the fence, which is exactly what `hint` exists to handle
-            // (skip a repeating blockquote `"> "` on that physical line; a
-            // no-op physical-line-start for a list item, which has nothing
-            // to skip past line 0). Each content line gets its OWN range —
-            // never one contiguous span across lines — because a single
-            // range can't exclude an interior container prefix (the
-            // overlapping-hidden-range bug this fix exists to close).
-            let (fence_close, content_line_range) = if closed {
-                let ls = hint.start_for_line(starts, comrak_last_line);
-                let le = line_end_at(content.len(), starts, comrak_last_line);
-                let close = ByteRange::new(ls, le).clamp(content.len());
-                (Some(close), (comrak_first_line + 1)..comrak_last_line)
-            } else {
-                (None, (comrak_first_line + 1)..(comrak_last_line + 1))
-            };
-
-            let content_lines: Vec<ByteRange> = content_line_range
-                .map(|l| {
-                    let s = hint.start_for_line(starts, l);
-                    let e = line_end_at(content.len(), starts, l);
-                    ByteRange::new(s, e).clamp(content.len())
-                })
-                .collect();
+            let lines = super::delimited::split(content, starts, range, hint, closed);
 
             Some(Block::CodeFence(CodeFenceM {
                 sm: RevealSm::new(RevealState::Rendered),
@@ -277,9 +224,9 @@ fn build_block<'a>(
                 first_line,
                 last_line,
                 language: info,
-                fence_open,
-                fence_close,
-                content_lines,
+                fence_open: lines.open,
+                fence_close: lines.close,
+                content_lines: lines.content_lines,
             }))
         }
         BlockKind::ThematicBreak => {
@@ -324,10 +271,9 @@ fn build_block<'a>(
         // (verification round 5 — see that function's docs) by re-
         // parsing the whole document with the extension disabled instead
         // — so `range` here is always genuine.
-        BlockKind::FrontMatter => Some(Block::Frontmatter(FrontmatterM {
-            sm: RevealSm::new(RevealState::Revealed),
-            range,
-        })),
+        BlockKind::FrontMatter => Some(Block::Frontmatter(super::frontmatter::build(
+            content, starts, range, hint,
+        ))),
         BlockKind::Table => {
             super::table::build_table(content, starts, node, hint, range).or_else(|| {
                 // `build_table` returns `None` on anything unexpected: a
@@ -424,12 +370,6 @@ fn build_list_items<'a>(
     items
 }
 
-/// The buffer line containing `range`'s last byte — a block's own final
-/// physical line, by `starts`' `\n`-only counting rather than comrak's.
-fn last_line_of(starts: &[usize], range: ByteRange) -> usize {
-    super::line_at(starts, range.end.saturating_sub(1).max(range.start))
-}
-
 /// A setext heading's underline row, or `None` if concealing it would hide
 /// bytes `inlines` is already claiming as visible text. Comrak can leave a
 /// residual inline `Text` node covering the same bytes as the underline it
@@ -455,17 +395,4 @@ fn underline_of_setext_heading(
 /// Half-open byte-range overlap check.
 fn ranges_overlap(a: ByteRange, b: ByteRange) -> bool {
     a.start < b.end && b.start < a.end
-}
-
-/// True if `range`'s own last line — as comrak (via our conversion)
-/// reports it — is genuinely a closing `"---"` line: the sanity check
-/// `parse::frontmatter_extension_is_safe` uses to decide whether a
-/// `FrontMatter` node's reported range can be trusted at all (see that
-/// function's docs for the comrak-internal desync it exists to detect).
-pub(super) fn is_valid_frontmatter_close(content: &str, range: ByteRange) -> bool {
-    let Some(text) = content.get(range.start..range.end) else {
-        return false;
-    };
-    let trimmed = text.strip_suffix('\n').unwrap_or(text);
-    trimmed.rsplit('\n').next() == Some("---")
 }

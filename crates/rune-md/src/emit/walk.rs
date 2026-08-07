@@ -21,60 +21,79 @@ use super::walk_inline::emit_inlines;
 use super::{
     Accounted, EmitOut, assert_invariant, claim_visible, hide_range, push_span_split_by_line,
 };
-use crate::element::block::{Block, CodeFenceM, ListItemM};
+use crate::element::block::{Block, CodeFenceM, FrontmatterM, ListItemM};
 use crate::parse::line_at;
-use rune_syntax::SyntaxSpan;
 use rune_syntax::element::{ByteRange, RevealState};
+use rune_syntax::{ScopeId, SyntaxSpan};
 
-/// Every piece here (`fence_open`, each of `content_lines`, `fence_close`)
-/// is already exactly one physical line's range, computed container-aware
-/// at parse time (`parse::block`'s `CodeBlock` arm) — never re-derived from
-/// `cf.range` as one contiguous multi-line span. `cf.range` spans every
-/// line the fence occupies INCLUDING any repeating container prefix
-/// (blockquote's `"> "`) on continuation lines; pushing it whole through
-/// the generic per-physical-line splitter (as the Revealed path used to)
-/// re-hides/re-shows those container-prefix bytes a second time, on top of
-/// whatever the container itself already claimed for that line.
+/// A block whose body lines sit between an opening and a closing delimiter
+/// line, ready to be emitted Revealed. A fence paints its delimiters at the
+/// same scope as its body; frontmatter dims its `---` lines instead, so the
+/// two scopes are named apart.
+struct DelimitedRevealed<'a> {
+    open: ByteRange,
+    content_lines: &'a [ByteRange],
+    close: Option<ByteRange>,
+    delimiter_scope: ScopeId,
+    body_scope: ScopeId,
+}
+
+/// Every piece here (`open`, each of `content_lines`, `close`) is already
+/// exactly one physical line's range, computed container-aware at parse
+/// time — never re-derived from the block's whole range as one contiguous
+/// multi-line span. That whole range spans every line the block occupies
+/// INCLUDING any repeating container prefix (blockquote's `"> "`) on
+/// continuation lines; pushing it whole through the generic
+/// per-physical-line splitter (as this path used to) re-hides/re-shows
+/// those container-prefix bytes a second time, on top of whatever the
+/// container itself already claimed for that line.
+fn emit_delimited_revealed(
+    content: &str,
+    starts: &[usize],
+    block: DelimitedRevealed<'_>,
+    out: &mut EmitOut,
+) {
+    let push = |range: ByteRange, scope: ScopeId, out: &mut EmitOut| {
+        push_span_split_by_line(
+            content,
+            starts,
+            range,
+            scope,
+            RevealState::Revealed,
+            out.spans,
+            out.accounted,
+        );
+    };
+    push(block.open, block.delimiter_scope, out);
+    for &line in block.content_lines {
+        push(line, block.body_scope, out);
+    }
+    if let Some(close) = block.close {
+        push(close, block.delimiter_scope, out);
+    }
+}
+
 fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut EmitOut) {
     if cf.sm.state() == RevealState::Revealed {
-        if let Some(open) = cf.fence_open {
-            push_span_split_by_line(
-                content,
-                starts,
-                open,
-                code_fence_scope(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
-        for &line in &cf.content_lines {
-            push_span_split_by_line(
-                content,
-                starts,
-                line,
-                code_fence_scope(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
-        if let Some(close) = cf.fence_close {
-            push_span_split_by_line(
-                content,
-                starts,
-                close,
-                code_fence_scope(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
+        emit_delimited_revealed(
+            content,
+            starts,
+            DelimitedRevealed {
+                open: cf.fence_open,
+                content_lines: &cf.content_lines,
+                close: cf.fence_close,
+                delimiter_scope: code_fence_scope(),
+                body_scope: code_fence_scope(),
+            },
+            out,
+        );
         return;
     }
-    if let Some(open) = cf.fence_open {
-        hide_range(out.hidden, out.accounted, content, starts, open);
-    }
+    // Rendered: the delimiter lines leave the display entirely and the body
+    // stays. Each is hidden or pushed one physical line at a time, so a
+    // container's own repeating prefix in the gaps between them is never
+    // claimed a second time.
+    hide_range(out.hidden, out.accounted, content, starts, cf.fence_open);
     if let Some(close) = cf.fence_close {
         hide_range(out.hidden, out.accounted, content, starts, close);
     }
@@ -89,6 +108,21 @@ fn emit_code_fence(content: &str, starts: &[usize], cf: &CodeFenceM, out: &mut E
             out.accounted,
         );
     }
+}
+
+fn emit_frontmatter(content: &str, starts: &[usize], fm: &FrontmatterM, out: &mut EmitOut) {
+    emit_delimited_revealed(
+        content,
+        starts,
+        DelimitedRevealed {
+            open: fm.open,
+            content_lines: &fm.content_lines,
+            close: fm.close,
+            delimiter_scope: frontmatter_scope(),
+            body_scope: code_fence_scope(),
+        },
+        out,
+    );
 }
 
 /// True when `item`'s decor-suppression case applies: its first child is a
@@ -341,17 +375,7 @@ pub(crate) fn emit_block(
                 super::decor::push_hr_decor(out, hr.line);
             }
         }
-        Block::Frontmatter(fm) => {
-            push_span_split_by_line(
-                content,
-                starts,
-                fm.range,
-                frontmatter_scope(),
-                RevealState::Revealed,
-                out.spans,
-                out.accounted,
-            );
-        }
+        Block::Frontmatter(fm) => emit_frontmatter(content, starts, fm, out),
         Block::Verbatim(v) => {
             // MAJOR fix (verification round 9): `v.content_lines` — never
             // `v.range` directly — the same reason `emit_code_fence`

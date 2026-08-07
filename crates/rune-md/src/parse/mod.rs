@@ -7,7 +7,9 @@
 
 mod block;
 mod blockquote;
+mod delimited;
 mod embed;
+pub(crate) mod frontmatter;
 mod inline;
 mod table;
 
@@ -106,7 +108,7 @@ pub fn options() -> Options<'static> {
     opts.extension.tasklist = true;
     opts.extension.table = true;
     opts.extension.wikilinks_title_after_pipe = true;
-    opts.extension.front_matter_delimiter = Some("---".to_owned());
+    opts.extension.front_matter_delimiter = Some(frontmatter::DELIMITER.to_owned());
     opts.extension.autolink = true;
     opts
 }
@@ -147,6 +149,15 @@ pub(crate) fn line_at(starts: &[usize], offset: usize) -> usize {
     idx.saturating_sub(1)
 }
 
+/// The buffer line containing `range`'s last byte — a block's own final
+/// physical line, by `starts`' `\n`-only counting rather than comrak's.
+/// Derived from the last INCLUDED byte, never from `range.end` itself: an
+/// exclusive end sitting exactly on a line start would otherwise report the
+/// following, untouched line.
+pub(crate) fn last_line_of(starts: &[usize], range: ByteRange) -> usize {
+    line_at(starts, range.end.saturating_sub(1).max(range.start))
+}
+
 /// The ONLY place a raw comrak `Sourcepos` becomes an absolute byte
 /// range — through `starts` (`line_starts(content)`, the SAME index the
 /// buffer, the emitter, and `ScanHint` all use). Safe by construction:
@@ -184,7 +195,7 @@ pub(crate) fn per_line_content(
     hint: &ScanHint,
 ) -> Vec<ByteRange> {
     let first_line = line_at(starts, range.start);
-    let last_line = line_at(starts, range.end.saturating_sub(1).max(range.start));
+    let last_line = last_line_of(starts, range);
     (first_line..=last_line)
         .map(|l| {
             let s = if l == first_line {
@@ -269,7 +280,7 @@ fn frontmatter_extension_is_safe(content: &str, shadow: &str, starts: &[usize]) 
             ) =>
         {
             let range = node_range(content, starts, first);
-            block::is_valid_frontmatter_close(content, range)
+            frontmatter::is_valid_frontmatter_close(content, range)
         }
         _ => true,
     }
@@ -352,7 +363,7 @@ mod tests {
             panic!("expected code fence");
         };
         assert_eq!(cf.language, "rust");
-        assert_eq!(text_of(content, cf.fence_open.unwrap()), "```rust");
+        assert_eq!(text_of(content, cf.fence_open), "```rust");
         assert_eq!(text_of(content, cf.fence_close.unwrap()), "```");
         // One range per content line (never one contiguous span — see
         // CodeFenceM's docs), each excluding its own trailing `\n` like

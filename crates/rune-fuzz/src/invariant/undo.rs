@@ -12,12 +12,13 @@
 //! position, `after.journal_pos` still shows it — a non-converging
 //! undo/redo is itself a violation, not a silent no-op.
 //!
-//! Both drives assume `⌘Z`/`⌘⇧Z` actually reach the document — per-pane
-//! key routing means they don't unless the editor is focused and no modal
-//! owns the keyboard. `driver.rs::restore_editor_focus` establishes that
-//! precondition with real keystrokes immediately before either drive
-//! starts, so a session that ends with (say) the Explorer focused no
-//! longer misreads "the keys were ignored" as "undo doesn't converge".
+//! Both drives assume `⌘Z`/`⌘⇧Z` actually reach the SEEDED document — they
+//! don't unless it is the active one, the editor is focused, and no modal
+//! owns the keyboard. `driver/checks.rs::restore_editor_focus` establishes
+//! that precondition with real keystrokes immediately before either drive
+//! starts, so a session that ends with (say) the Explorer focused or an
+//! untitled draft active no longer misreads "the keys went somewhere else"
+//! as "undo doesn't converge".
 
 use super::{Violation, trunc};
 use crate::snapshot::Snapshot;
@@ -58,18 +59,15 @@ pub fn redo_clear(prev: &Snapshot, next: &Snapshot) -> Option<Violation> {
 /// (either `journal_pos == 0` or the `journal_len + 8` bound was reached).
 /// Content-only per G5.
 ///
-/// Active-document-switch-safe AS FAR AS `F1` GOES:
-/// `driver/checks.rs::restore_editor_focus` runs immediately before this
-/// drive begins and, whenever the Help document is active, presses `F1`
-/// again to switch back — `workspace::toggle_help`'s own contract lands
-/// that on whatever was active right before Help was last toggled on. The
-/// seeded document can also be discarded entirely before this runs (a
-/// quit-chord's dirty-close Guard, armed on a document other than the one
-/// currently active, followed by a `[D]iscard` key,
-/// `TODO-fuzz-undo-total-dirty-close-discard.md`) — that is a driver
-/// PRECONDITION this checker relies on, not something it can detect or
-/// correct for itself, so `driver/checks.rs::drive_end_of_session_checks`
-/// skips calling this function at all once the seeded document is gone.
+/// `after` describes whatever document was ACTIVE when the drive stopped,
+/// so this comparison is only meaningful while that document is the seeded
+/// one. Which it is, is a driver PRECONDITION this checker cannot detect
+/// or correct for itself: `driver/checks.rs::restore_editor_focus` presses
+/// the seed's own `^1`-`^0` tab chord to put it back under the keyboard,
+/// and `drive_end_of_session_checks` refuses to call this function at all
+/// unless the seed ended up active — including when it was discarded
+/// outright by a dirty-close Guard's `[D]iscard` and there is no tab left
+/// to switch to.
 pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != 0 {
         return Some(Violation {
@@ -109,12 +107,11 @@ pub fn undo_total(seed_content: &str, after: &Snapshot) -> Option<Violation> {
 /// happened to have; that symmetric round-trip is what this actually
 /// checks.
 ///
-/// Active-document-switch-safe AS FAR AS `F1` GOES, same caveat as
-/// `undo_total` above: neither drive's own keys (`⌘Z`/`⌘⇧Z`) switch
-/// `app.active`, and `restore_editor_focus`'s `F1` press handles the
-/// ordinary help-toggle case before either drive begins. The seeded-
-/// document-discarded case is a driver precondition, not something this
-/// checker asserts — see `undo_total`'s docs.
+/// Both snapshots describe the same document: neither drive's own keys
+/// (`⌘Z`/`⌘⇧Z`) switch `app.active`, and the driver has already pinned the
+/// seeded document as the active one before `pre_undo` was captured — a
+/// precondition, not something this checker asserts, see `undo_total`'s
+/// docs.
 pub fn redo_total(pre_undo: &Snapshot, after: &Snapshot) -> Option<Violation> {
     if after.journal_pos != pre_undo.journal_pos {
         return Some(Violation {

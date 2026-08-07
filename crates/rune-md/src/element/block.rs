@@ -158,7 +158,10 @@ pub struct CodeFenceM {
     pub first_line: usize,
     pub last_line: usize,
     pub language: String,
-    pub fence_open: Option<ByteRange>,
+    pub fence_open: ByteRange,
+    /// Absent while the fence is unterminated — the shape every fence has
+    /// as it is being typed — in which case every line past the opening
+    /// one is content.
     pub fence_close: Option<ByteRange>,
     pub content_lines: Vec<ByteRange>,
 }
@@ -241,14 +244,27 @@ impl HrM {
     }
 }
 
-/// YAML frontmatter. Pinned Revealed with a dim style (Phase-1 policy) —
-/// there is no delimiter to conceal, so it ignores `ctx.grant` entirely
-/// (the reveal-policy table: "Frontmatter, Verbatim | pinned Revealed (no
-/// Decide)").
+/// YAML frontmatter, with its `---` delimiter lines tracked apart from the
+/// body between them: the body is a code region, highlighted as YAML like
+/// any fence's content, while the delimiters are not — a single contiguous
+/// range could not tell the two apart. Pinned Revealed, ignoring
+/// `ctx.grant` entirely (the reveal-policy table: "Frontmatter, Verbatim |
+/// pinned Revealed (no Decide)"), so nothing here is ever concealed.
+///
+/// `content_lines` is one `ByteRange` per body line, never collapsed into a
+/// single span — the same per-line shape, for the same reasons, as
+/// `CodeFenceM::content_lines`.
 #[derive(Clone, Debug)]
 pub struct FrontmatterM {
     pub sm: RevealSm,
     pub range: ByteRange,
+    pub first_line: usize,
+    pub last_line: usize,
+    pub open: ByteRange,
+    /// Absent only for a degenerate single-line node, whose one line is
+    /// already claimed as `open`.
+    pub close: Option<ByteRange>,
+    pub content_lines: Vec<ByteRange>,
 }
 
 impl FrontmatterM {

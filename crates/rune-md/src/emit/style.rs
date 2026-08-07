@@ -150,8 +150,10 @@ pub(crate) fn image_scope() -> ScopeId {
     scope("markup.image")
 }
 
-/// Frontmatter gets its own dim, de-emphasized tone (the pre-WP4 choice),
-/// now expressed as the `comment` scope.
+/// Frontmatter's `---` DELIMITER lines get their own dim, de-emphasized
+/// tone (the pre-WP4 choice), now expressed as the `comment` scope. The body
+/// between them is a code region and uses `code_fence_scope` like any other
+/// code.
 pub(crate) fn frontmatter_scope() -> ScopeId {
     scope("comment")
 }
