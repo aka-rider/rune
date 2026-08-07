@@ -106,6 +106,15 @@ pub enum GlobalCommand {
     /// unclaimed across every binding table instead (see the guard test
     /// below).
     TogglePin,
+    /// Opens/closes the fuzzy file finder overlay: closed -> open, the left
+    /// column widens and takes over the Explorer's content with a
+    /// type-to-filter query; open -> `filesearch::cancel` (closes it and
+    /// restores the document that was active before it opened). `^F`/`⌘F`
+    /// is already `ToggleSearch`'s, so this binds the SHIFTED char with
+    /// `SHIFT` itself cleared (`Char('F')`), not `Char('f')` with a `SHIFT`
+    /// bit set — the shape `REPORT_ALTERNATE_KEYS` actually delivers a
+    /// shifted chord in (see `SearchPrev`'s own doc for the same reasoning).
+    ToggleFileSearch,
 }
 
 const CTRL: Mods = Mods {
@@ -427,6 +436,20 @@ pub const GLOBAL_BINDINGS: &[Binding<GlobalCommand>] = &[
         when: "",
         alias: true,
     },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('F'), CTRL)],
+        cmd: GlobalCommand::ToggleFileSearch,
+        help: "find file",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Char('F'), SUP)],
+        cmd: GlobalCommand::ToggleFileSearch,
+        help: "find file",
+        when: "",
+        alias: true,
+    },
     // Appended last deliberately: at narrow widths the footer clips the
     // tail hint, and this new hint should be the one clipped, not
     // `^E messages`. `^j`, not the tab-cap plan's original `^g` — the
@@ -521,6 +544,7 @@ mod tests {
     fn claimants_across_pane_tables(key: crate::keymap::KeyInput) -> Vec<&'static str> {
         use crate::explorer_keys::EXPLORER_BINDINGS;
         use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+        use crate::filesearch::keys::FILESEARCH_BINDINGS;
         use crate::keymap::KeyInput;
         use crate::keymap::editor_bindings::EDITOR_BINDINGS;
         use crate::keymap::vim::VIM_BINDINGS;
@@ -542,6 +566,7 @@ mod tests {
             claimants(EXPLORER_BINDINGS, key),
             claimants(EXPLORER_SEARCH_BINDINGS, key),
             claimants(MERGE_BINDINGS, key),
+            claimants(FILESEARCH_BINDINGS, key),
         ]
         .concat()
     }
@@ -744,5 +769,41 @@ mod tests {
             mods: CTRL,
         };
         assert_unclaimed_by_any_pane_table(&[ctrl_j]);
+    }
+
+    /// `^F`/`⌘F` — the SHIFTED char (`Char('F')`) with the modifier itself
+    /// cleared, not `Char('f')` with a `SHIFT` bit set — is what
+    /// `GlobalCommand::ToggleFileSearch` actually resolves under this
+    /// crate's kitty protocol request; `ToggleSearch`'s own `^f`/`⌘f` rows
+    /// bind the plain (unshifted) char, so the two chords are distinct
+    /// `KeyCode::Char` values from `KeyPattern`'s own point of view.
+    #[test]
+    fn filesearch_chords_are_not_already_bound_in_any_pane_table() {
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_f = KeyInput {
+            code: KeyCode::Char('F'),
+            mods: CTRL,
+        };
+        let sup_cap_f = KeyInput {
+            code: KeyCode::Char('F'),
+            mods: SUP,
+        };
+        assert_unclaimed_by_any_pane_table(&[ctrl_cap_f, sup_cap_f]);
+    }
+
+    #[test]
+    fn ctrl_shifted_f_resolves_to_toggle_filesearch() {
+        use crate::binding::resolve_in;
+        use crate::keymap::KeyInput;
+
+        let ctrl_cap_f = KeyInput {
+            code: KeyCode::Char('F'),
+            mods: CTRL,
+        };
+        assert_eq!(
+            resolve_in(GLOBAL_BINDINGS, ctrl_cap_f),
+            Some(GlobalCommand::ToggleFileSearch)
+        );
     }
 }

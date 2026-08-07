@@ -84,6 +84,16 @@ pub fn drag(app: &mut App, input: MouseInput, effects: &mut Effects) {
     let Some(Drag::Splitter { which, grab_delta }) = app.pointer.drag else {
         return;
     };
+    // The finder overrides the left column's geometry for as long as it's
+    // open (`layout::resolve`) without ever writing `app.splits` — a
+    // `LeftColumn` drag measured against that overridden geometry would
+    // otherwise record a width the user never actually chose, corrupting
+    // what the column snaps back to once the finder closes. The
+    // `ExplorerTabs` divider is unaffected: the finder only replaces the
+    // Explorer's own content, not the Tabs pane beneath it.
+    if matches!(which, Splitter::LeftColumn) && app.filesearch.is_some() {
+        return;
+    }
     let area = Rect::new(0, 0, app.frame_width, app.frame_height);
     let geo = layout::geometry(area, app);
 
@@ -173,5 +183,42 @@ mod tests {
         );
         assert_eq!(dragged.focus(), commanded.focus());
         assert_eq!(dragged.focus(), Pane::Editor);
+    }
+
+    /// A `LeftColumn` drag while the fuzzy file finder is open must leave
+    /// `app.splits` completely untouched — a drag measured against the
+    /// finder's OWN overridden geometry would otherwise `Split::request` a
+    /// width the user never actually chose, corrupting what the column
+    /// snaps back to once the finder closes.
+    #[test]
+    fn left_column_drag_is_ignored_while_filesearch_is_active() {
+        let mut app = app_with_explorer_focused();
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let before = app.splits.left;
+        app.pointer.drag = Some(Drag::Splitter {
+            which: Splitter::LeftColumn,
+            grab_delta: 0,
+        });
+        drag(
+            &mut app,
+            MouseInput {
+                kind: MouseKind::Drag(MouseButton::Left),
+                column: 10,
+                row: 0,
+                shift: false,
+                alt: false,
+                ctrl: false,
+            },
+            &mut effects,
+        );
+
+        assert_eq!(app.splits.left.is_shown(), before.is_shown());
+        assert_eq!(
+            app.splits.left.size_hint(0),
+            before.size_hint(0),
+            "the drag must not write a new desired width"
+        );
     }
 }

@@ -22,6 +22,7 @@ mod blit;
 mod cell;
 mod code_bg;
 pub(crate) mod decor;
+pub mod filesearch;
 pub mod image;
 mod overlay;
 pub mod rowbg;
@@ -239,6 +240,11 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         return;
     };
 
+    // The finder replaces only the Explorer's own content — the Tabs
+    // section below it stays exactly as it always renders — so this is
+    // checked first, ahead of every other title/content decision below.
+    let filesearch_active = app.filesearch.is_some();
+
     // The Explorer can now be collapsed independently of the column
     // itself (its own vertical splitter dragged to the top): when it has
     // no rows to draw into, titling the block " Files " would claim a
@@ -248,7 +254,9 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
     // the whole visible-feedback story the design calls for (no chord, no
     // mode indicator elsewhere on screen), so the block's own title is the
     // one place it can show without stealing an entry row.
-    let title = if geo.explorer_inner.height == 0 {
+    let title = if filesearch_active {
+        " Open File ".to_string()
+    } else if geo.explorer_inner.height == 0 {
         " Open ".to_string()
     } else if let Some(query) = &app.explorer.search {
         // Truncated to the block's own inner width (minus the two corner
@@ -270,7 +278,9 @@ fn draw_left_pane(app: &App, geo: &crate::layout::Geometry, frame: &mut Frame) {
         .title(title);
     frame.render_widget(block, left_area);
 
-    if geo.explorer_inner.height > 0 {
+    if filesearch_active {
+        filesearch::draw(app, geo.explorer_inner, frame);
+    } else if geo.explorer_inner.height > 0 {
         crate::explorer::draw(app, geo.explorer_inner, frame);
     }
     if let Some(divider) = geo.tabs_divider {

@@ -19,9 +19,9 @@ pub(super) use super::arb::{RESIZE_MIN_HEIGHT, RESIZE_MIN_WIDTH};
 use super::palette::{
     ADD_CURSOR_ABOVE_KEY, ADD_CURSOR_BELOW_KEY, COPY_KEY, CTRL_B_KEY, CTRL_C_KEY, CTRL_E_KEY,
     CTRL_P_KEY, CTRL_R_KEY, CTRL_T_KEY, CUT_KEY, DELETE_KEYS, ENTER_KEY, ESCAPE_KEY,
-    EXPLORER_SEARCH_KEYS, MARKDOWN_FRAGMENTS, MERGE_KEY, MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY,
-    PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY, SELECT_MOTION_KEYS, TITLE_MOTION_KEYS,
-    TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
+    EXPLORER_SEARCH_KEYS, FILESEARCH_KEY_CTRL, FILESEARCH_KEY_SUP, MARKDOWN_FRAGMENTS, MERGE_KEY,
+    MERGE_RESOLVE_KEYS, NAV_KEYS, PASTE_KEY, PASTE_PALETTE, REDO_KEY, SAVE_KEY, SELECT_ALL_KEY,
+    SELECT_MOTION_KEYS, TITLE_MOTION_KEYS, TRASH_KEY, TYPE_PALETTE, UNDO_KEY,
 };
 
 /// 35 — 3-in-4 typed prose (1-4 `TYPE_PALETTE` fragments joined by spaces),
@@ -269,6 +269,8 @@ fn cluster_chrome() -> impl Strategy<Value = Vec<Action>> {
         Just(vec![Action::Key(CTRL_P_KEY)]),
         Just(vec![Action::Key(CTRL_E_KEY)]),
         Just(vec![Action::Key(TRASH_KEY)]),
+        Just(vec![Action::Key(FILESEARCH_KEY_CTRL)]),
+        Just(vec![Action::Key(FILESEARCH_KEY_SUP)]),
         Just(vec![Action::ConfirmTimeout]),
         select(TITLE_MOTION_KEYS).prop_map(|k| vec![Action::Key(CTRL_R_KEY), Action::Key(k)]),
         proptest::collection::vec(select(EXPLORER_SEARCH_KEYS), 1..=3).prop_map(|keys| {

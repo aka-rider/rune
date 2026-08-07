@@ -217,6 +217,36 @@ pub enum Msg {
         generation: u64,
         result: Result<Vec<String>, String>,
     },
+    /// The fuzzy file finder's recents load, requested once per finder-open
+    /// (`filesearch::open`) and delivered by [`filesearch_recents_cmd::
+    /// load_filesearch_recents_cmd`]. `generation` echoes `FileSearchState::
+    /// generation` minted at the request — `filesearch::
+    /// handle_recents_loaded` drops a reply whose generation no longer
+    /// matches (a close-then-reopen since issued it), the same shape
+    /// `Msg::SearchHistory` uses. A reader `Err` still carries this variant
+    /// (with an `Err` result) rather than folding into `Msg::Error`, for the
+    /// same reason `SearchHistory` does: a stale reply is discarded exactly
+    /// like a fresh one instead of always surfacing a message regardless of
+    /// generation.
+    FileSearchRecentsLoaded {
+        generation: u64,
+        result: Result<Vec<crate::filesearch::Candidate>, String>,
+    },
+    /// The fuzzy file finder's ignore-aware workspace walk completed —
+    /// `filesearch::open`'s own `Cmd`, delivered by [`filesearch_cmd::
+    /// filesearch_scan_cmd`] and routed to `filesearch::handle_scanned`.
+    /// `generation` echoes `FileSearchState::generation`; a reply whose
+    /// generation no longer matches (the finder closed and reopened since
+    /// this scan was issued) is dropped, the same shape `Msg::DirLoaded`
+    /// uses. A scan failure (the resolved root vanished, or resolved to
+    /// something other than a directory) rides the same `Err` channel
+    /// rather than `Msg::Error`/`Msg::Warning` directly, so a stale failure
+    /// is discarded exactly like a stale success instead of always
+    /// surfacing a message nobody's still waiting on.
+    FileSearchScanned {
+        generation: u64,
+        result: Result<crate::filesearch::walk::ScanResult, String>,
+    },
     Quit,
 }
 
@@ -620,6 +650,16 @@ mod md_fence;
 // 500-line budget.
 mod snapshot_timer;
 pub use snapshot_timer::SnapshotTimer;
+
+// The fuzzy file finder's recents-load `Cmd` constructor — split out for
+// the same reason `highlight_cmd`/`snapshot_timer` were (500-line budget).
+mod filesearch_recents_cmd;
+pub use filesearch_recents_cmd::load_filesearch_recents_cmd;
+// The fuzzy file finder's workspace-walk `Cmd` — split out for the same
+// 500-line-budget reason; `filesearch::open` is its only caller, reached
+// through `runtime::` like every other `Cmd` constructor in this file.
+mod filesearch_cmd;
+pub(crate) use filesearch_cmd::filesearch_scan_cmd;
 
 fn translate_event(event: termina::Event) -> Option<Msg> {
     match event {

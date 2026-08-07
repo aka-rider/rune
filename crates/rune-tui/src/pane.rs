@@ -43,6 +43,22 @@ pub enum Pane {
 /// currently has focus — the quit chords and Save in particular must keep
 /// working while the Explorer/Tabs stub panes own it.
 pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: &mut Effects) {
+    // Captured BEFORE either hoisted gate below runs: `ToggleLeft`'s own
+    // show/hide decision must reflect what was ACTUALLY painted the moment
+    // this chord was pressed, not a layout that already changed underneath
+    // it. The fuzzy file finder paints the left column via a `layout::
+    // resolve` override that never touches `App::splits` — so closing an
+    // open finder (the close-gate below, which lands focus back on the
+    // Editor) leaves the raw `Split` flag exactly as bare as it was before
+    // the finder ever opened. Re-deriving `layout_mode()` AFTER that close
+    // would read that bare flag and conclude the column was never shown,
+    // making `ToggleLeft` re-show it and steal focus right back — this
+    // capture is what keeps that from happening.
+    let left_painted_before = matches!(
+        app.layout_mode(),
+        crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
+    );
+
     // ONE hoisted gate, deliberately before the match:
     // a global chord pressed while the title is focused commits the typed
     // name FIRST, so ⌘S can never save under the old name and the edit is
@@ -56,15 +72,22 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
     app.blur_title(effects);
 
     // A second hoisted gate, same shape as the title blur above: the
-    // search bar is its own focus state, never a `Pane` (`focus.rs`'s
-    // recorded decision — "bar-open == bar-focused, one state"), so a
-    // global that moves the chrome-level `Pane` underneath it would
-    // otherwise leave the bar still claiming focus over a `Pane` that just
-    // changed — the double-caret/stolen-keystroke defect this closes. Runs
-    // for exactly the globals that move `App::focus` or start a merge
-    // (which claims every editor key for itself); `ToggleSearch` handles
-    // its own open/close below, and `SearchNext`/`SearchPrev` must NOT
-    // close a bar they're navigating within.
+    // search bar and the file finder are both their own focus state, never
+    // a `Pane` (`focus.rs`'s recorded decision — "bar-open == bar-focused,
+    // one state"), so a global that moves the chrome-level `Pane`
+    // underneath either would otherwise leave it still claiming focus over
+    // a `Pane` that just changed — the double-caret/stolen-keystroke defect
+    // this closes. Runs for exactly the globals that move `App::focus`,
+    // switch the active document, or start a merge (which claims every
+    // editor key for itself); `ToggleSearch` handles its own bar open/close
+    // below (only the finder half of `close_modal_bars` applies there —
+    // pre-closing the bar itself would turn its own toggle-close into a
+    // reopen), and `SearchNext`/`SearchPrev` must NOT close a bar they're
+    // navigating within. `Save` belongs here too: on a pathless draft it
+    // focuses the title field directly, and without closing the finder
+    // first that focus move would land underneath a `FocusTarget` still
+    // resolving to the finder — the exact stolen-keystroke shape this gate
+    // exists to prevent.
     if matches!(
         cmd,
         GlobalCommand::ToggleLeft
@@ -72,26 +95,30 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
             | GlobalCommand::FocusTabs
             | GlobalCommand::ToggleMessages
             | GlobalCommand::Merge
+            | GlobalCommand::Help
+            | GlobalCommand::NewDocument
+            | GlobalCommand::TabSwitch(_)
+            | GlobalCommand::CloseFile
+            | GlobalCommand::Save
     ) {
-        crate::search::close(app);
+        close_modal_bars(app, effects);
+    } else if matches!(cmd, GlobalCommand::ToggleSearch) {
+        close_filesearch(app, effects);
     }
 
     match cmd {
         // The single left-column toggle (Enter/Escape rework): painted this
         // frame ⇒ hide it and hand focus to the Editor; not painted ⇒ show
         // it, focus the Explorer, and land the cursor on the active
-        // document's own file. Reads `layout_mode()`, never the raw
+        // document's own file. Reads `left_painted_before` (`layout_mode()`
+        // captured above, before this press's own effects), never the raw
         // `Split` flag, so a frame too narrow to actually paint the column
         // (flag still `shown`, nothing on screen — the exact shadow state
         // `focus::LayoutMode` exists to close) is treated as hidden, and a
         // press there shows rather than uselessly re-hiding an already
         // invisible column.
         GlobalCommand::ToggleLeft => {
-            let visible = matches!(
-                app.layout_mode(),
-                crate::focus::LayoutMode::Split { .. } | crate::focus::LayoutMode::ExplorerOnly
-            );
-            if visible {
+            if left_painted_before {
                 app.splits.left.hide();
                 crate::focus::reconcile(app, effects);
             } else {
@@ -167,7 +194,20 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // machine lives on `messages` itself, alongside every other reader/
         // writer of `App.messages`.
         GlobalCommand::ToggleMessages => messages::toggle(app, effects),
-        GlobalCommand::Trash => crate::trash::request_trash(app, effects),
+        // The finder is never trashed out from under: while it's open the
+        // active document may just be a file the user arrowed past, never
+        // opened for real (decision: Trash behaves like Esc there instead).
+        GlobalCommand::Trash => {
+            if app.filesearch.is_some() {
+                crate::filesearch::cancel(app, effects);
+                messages::info(
+                    app,
+                    "file finder closed \u{2014} open the file before trashing it",
+                );
+            } else {
+                crate::trash::request_trash(app, effects);
+            }
+        }
         GlobalCommand::TogglePin => crate::opentabs::limit::toggle_pin(app, app.active),
         // Open creates a fresh, focused, empty draft; close saves it as
         // `App::last_search_query` and clears the highlight overlay
@@ -211,6 +251,37 @@ pub(crate) fn handle_global_command(app: &mut App, cmd: GlobalCommand, effects: 
         // Nothing to navigate with is reported, never swallowed silently.
         GlobalCommand::SearchNext => search_step(app, true),
         GlobalCommand::SearchPrev => search_step(app, false),
+        // Active -> `cancel` (closes it, restores the document that was
+        // active before it opened, focuses the Editor); inactive -> `open`.
+        GlobalCommand::ToggleFileSearch => {
+            if app.filesearch.is_some() {
+                crate::filesearch::cancel(app, effects);
+            } else {
+                crate::filesearch::open(app, effects);
+            }
+        }
+    }
+}
+
+/// Closes both modal overlays — the in-file search bar and the fuzzy file
+/// finder — for every global that moves focus, switches the active
+/// document, or opens another surface. The finder closes via
+/// `filesearch::cancel` rather than a bare `app.filesearch = None`, so its
+/// own focus/return-to restore stays coherent instead of leaving `App::
+/// focus` wherever the caller's own arm is about to move it. Private —
+/// called only from this module's own `handle_global_command` above.
+fn close_modal_bars(app: &mut App, effects: &mut Effects) {
+    crate::search::close(app);
+    close_filesearch(app, effects);
+}
+
+/// The finder-only half of [`close_modal_bars`] — `ToggleSearch`'s own arm
+/// needs this without the search-bar half, since pre-closing the bar there
+/// would make its own open/close branch always see it closed and reopen
+/// instead of ever closing.
+fn close_filesearch(app: &mut App, effects: &mut Effects) {
+    if app.filesearch.is_some() {
+        crate::filesearch::cancel(app, effects);
     }
 }
 
@@ -537,6 +608,168 @@ mod tests {
 
             assert!(app.search.is_none(), "{cmd:?} must close the search bar");
         }
+    }
+
+    /// The plan's own acceptance test: `⌘⇧F` opens the finder on a FRESH
+    /// app whose left column was NEVER shown — pins the load-bearing
+    /// ordering (`app.filesearch` assigned before `set_focus_pane`)
+    /// together with the layout override that makes the (default-hidden)
+    /// column paint anyway, driven through the real `App::update` seam.
+    #[test]
+    fn sup_shift_f_chord_opens_filesearch_on_a_never_shown_left_column() {
+        let mut app = app();
+        app.frame_width = 120;
+        app.frame_height = 34;
+        assert!(!app.splits.left.is_shown(), "test setup: column hidden");
+        let mut effects = Effects::default();
+
+        crate::app::update(
+            &mut app,
+            Msg::Key(crate::keymap::KeyInput {
+                code: crate::keymap::KeyCode::Char('F'),
+                mods: crate::keymap::Mods {
+                    shift: false,
+                    alt: false,
+                    ctrl: false,
+                    sup: true,
+                },
+            }),
+            &mut effects,
+        );
+
+        assert!(app.filesearch.is_some());
+        assert_eq!(app.focus(), Pane::Explorer);
+    }
+
+    /// A second `⌘⇧F` closes the finder and restores whatever document was
+    /// active before it opened.
+    #[test]
+    fn sup_shift_f_chord_again_closes_and_restores_return_to() {
+        let mut app = app();
+        app.frame_width = 120;
+        app.frame_height = 34;
+        let second = app.open_document(rune_core::buffer::Buffer::new("second"));
+        crate::workspace::switch_to(&mut app, second);
+        let mut effects = Effects::default();
+        let chord = crate::keymap::KeyInput {
+            code: crate::keymap::KeyCode::Char('F'),
+            mods: crate::keymap::Mods {
+                shift: false,
+                alt: false,
+                ctrl: false,
+                sup: true,
+            },
+        };
+
+        crate::app::update(&mut app, Msg::Key(chord), &mut effects);
+        assert!(app.filesearch.is_some(), "test setup: finder open");
+
+        crate::app::update(&mut app, Msg::Key(chord), &mut effects);
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.active, second);
+        assert_eq!(app.focus(), Pane::Editor);
+    }
+
+    /// Table-driven close-gate invariant (plan WP1.S10): for every command
+    /// reachable from `GLOBAL_BINDINGS`, running it with the finder open
+    /// must never leave it open with focus somewhere other than the
+    /// Explorer — the exact "stage 3 swallows keys for a mode the user
+    /// thinks they left" defect the close-gate exists to close. Table-
+    /// driven over the real binding table (not a hand-picked subset) so a
+    /// future global command is auto-covered the day its row is added. The
+    /// document is left pathless (the default fresh-`App` draft) and made
+    /// dirty, on purpose: `Save`'s own pathless-draft rung — focusing the
+    /// title field directly, bypassing `set_focus_pane` — only fires on a
+    /// dirty document, and is exactly the rung that strands the finder if
+    /// `Save` is ever missing from the close-gate. Binding a path, or
+    /// leaving the document clean, would make the table blind to it.
+    #[test]
+    fn table_driven_close_gate_never_strands_filesearch_off_explorer() {
+        use crate::keymap::GLOBAL_BINDINGS;
+
+        for binding in GLOBAL_BINDINGS {
+            let mut app = app();
+            app.frame_width = 120;
+            app.frame_height = 34;
+            app.active_doc_mut().saved_content = Arc::from("");
+            let mut effects = Effects::default();
+            crate::filesearch::open(&mut app, &mut effects);
+            assert!(app.filesearch.is_some(), "test setup for {:?}", binding.cmd);
+
+            handle_global_command(&mut app, binding.cmd, &mut effects);
+
+            assert!(
+                app.filesearch.is_none() || app.focus() == Pane::Explorer,
+                "{:?} left the finder open with focus on {:?}",
+                binding.cmd,
+                app.focus()
+            );
+        }
+    }
+
+    /// `Trash` while the finder is open must never trash the merely-
+    /// arrowed-past active document: it behaves like Esc instead (closes,
+    /// restores `return_to`) and explains why, rather than silently
+    /// discarding the chord.
+    #[test]
+    fn trash_while_filesearch_is_open_closes_it_instead_of_trashing() {
+        let mut app = app();
+        let second = app.open_document(rune_core::buffer::Buffer::new("second"));
+        crate::workspace::switch_to(&mut app, second);
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        handle_global_command(&mut app, GlobalCommand::Trash, &mut effects);
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.active, second);
+        assert_eq!(app.focus(), Pane::Editor);
+        assert!(
+            effects.cmds.iter().all(|c| c.kind() != CmdKind::Trash),
+            "no trash Cmd must be spawned while the finder was open"
+        );
+        assert!(
+            messages::newest_text(&app).is_some(),
+            "a message was posted"
+        );
+    }
+
+    /// Regression: `^B` pressed while the finder is open, on a column
+    /// whose OWN `Split` was never actually shown (the finder paints it via
+    /// `layout::resolve`'s override alone), must land on the Editor and
+    /// leave the column collapsed — not close the finder via the hoisted
+    /// close-gate and then immediately re-show the column and steal focus
+    /// back to the Explorer, which is what re-deriving `layout_mode()`
+    /// AFTER the close used to do (a fuzz-caught `UNDO-TOTAL` stall: focus
+    /// stuck off the Editor at session end, so no `⌘Z` could ever reach the
+    /// journal).
+    #[test]
+    fn toggle_left_while_filesearch_is_open_on_a_never_shown_column_lands_on_the_editor() {
+        let mut app = app();
+        app.frame_width = 120;
+        app.frame_height = 34;
+        assert!(
+            !app.splits.left.is_shown(),
+            "test setup: column never shown"
+        );
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        assert!(app.filesearch.is_some(), "test setup: finder open");
+        assert_eq!(
+            app.focus(),
+            Pane::Explorer,
+            "test setup: finder's own override"
+        );
+
+        handle_global_command(&mut app, GlobalCommand::ToggleLeft, &mut effects);
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.focus(), Pane::Editor);
+        assert!(
+            !app.splits.left.is_shown(),
+            "the column must stay collapsed — its own Split was never really shown"
+        );
     }
 
     /// `^F` while a merge is active on the active document refuses to open

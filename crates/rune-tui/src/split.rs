@@ -51,6 +51,15 @@ impl Split {
         self.shown
     }
 
+    /// The size `allot` would use for this pane if it were shown right
+    /// now — `desired.unwrap_or(default)`, regardless of `self.shown`.
+    /// `allot` itself always returns `None` outright once `!shown`, so this
+    /// is the "as if shown" query a caller overriding visibility for one
+    /// frame needs instead.
+    pub fn size_hint(&self, default: u16) -> u16 {
+        self.desired.unwrap_or(default)
+    }
+
     /// Re-shows the pane without disturbing `desired` — a re-expose restores
     /// whatever size the user last dragged to, not some fresh default.
     pub fn show(&mut self) {
@@ -337,6 +346,19 @@ mod tests {
         let mut after_split = split;
         after_split.ensure_trail(30, VERT_TRAIL);
         assert_eq!(after_split.allot(30, 3, VERT_TRAIL), before);
+    }
+
+    #[test]
+    fn size_hint_reads_desired_or_falls_back_to_default_regardless_of_shown() {
+        let never_dragged = Split::new(HORIZ_LEAD, false);
+        assert_eq!(never_dragged.size_hint(22), 22);
+
+        let mut dragged = Split::new(HORIZ_LEAD, true);
+        dragged.request(30);
+        assert_eq!(dragged.size_hint(22), 30);
+        dragged.request(5); // collapses, but `desired` (30) survives
+        assert!(!dragged.is_shown());
+        assert_eq!(dragged.size_hint(22), 30);
     }
 
     #[test]

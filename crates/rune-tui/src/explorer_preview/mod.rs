@@ -9,9 +9,11 @@
 //! Three entry points drive the whole lifecycle:
 //! - [`after_cursor_move`] — called after every Explorer cursor move
 //!   (`explorer_keys::move_selection`/Top/Bottom, and once when a live
-//!   search clears) — resolves what the cursor now sits on and either
-//!   reactivates an already-open document, asks the `Vfs` to read a new
-//!   one, or does nothing (a directory, or a read already in flight).
+//!   search clears) — resolves what the cursor now sits on and hands off
+//!   to [`request_preview`], the shared core the fuzzy file finder's own
+//!   `filesearch::after_cursor_move` calls too, once ITS OWN guard has
+//!   settled on a target: reactivate an already-open document, ask the
+//!   `Vfs` to read a new one, or do nothing (a read already in flight).
 //! - [`maybe_consume_reply`] — the async reply's landing point, called from
 //!   `workspace::handle_file_opened` before its own ordinary-open logic
 //!   ever runs.
@@ -45,12 +47,9 @@ use crate::workspace;
 /// type-to-search is live" — a search's own cursor jumps call
 /// `apply_search` directly, never this function, but the guard stays here
 /// too since `explorer_search::handle_search`'s clear points call this
-/// unconditionally). A file already open as a real tab is shown via its
-/// own live document — no second read, no duplicate, and any STALE minted
-/// preview from a moment ago is discarded as part of the ordinary
-/// `workspace::switch_to` a reactivation already runs through. A file with
-/// no document yet asks the `Vfs` to read it, unless a read for that exact
-/// path is already in flight.
+/// unconditionally). Everything past that guard is [`request_preview`]'s
+/// own job, shared with the fuzzy file finder's identical nav-driven
+/// preview (`filesearch::after_cursor_move`).
 pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
     if app.explorer.search.is_some() {
         return;
@@ -62,8 +61,21 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
         return;
     }
     let target = entry.path.clone();
+    request_preview(app, &target, effects);
+}
 
-    if let Some(id) = workspace::existing_document_for(app, &target) {
+/// The shared preview-request core both [`after_cursor_move`] (Explorer)
+/// and `filesearch::after_cursor_move` call once their own caller-specific
+/// guard has already settled on a real file target: a file already open as
+/// a real tab is shown via its own live document — no second read, no
+/// duplicate, and any STALE minted preview from a moment ago is discarded
+/// as part of the ordinary `workspace::switch_to` a reactivation already
+/// runs through. A file with no document yet asks the `Vfs` to read it,
+/// unless a read for that exact path is already in flight. Never invents a
+/// second reply path: every caller's request lands back through the same
+/// `Msg::FileOpened` -> [`maybe_consume_reply`] route.
+pub(crate) fn request_preview(app: &mut App, target: &Path, effects: &mut Effects) {
+    if let Some(id) = workspace::existing_document_for(app, target) {
         workspace::switch_to(app, id);
         return;
     }
@@ -73,16 +85,16 @@ pub(crate) fn after_cursor_move(app: &mut App, effects: &mut Effects) {
         .preview
         .and_then(|id| app.doc(id))
         .and_then(|doc| doc.file_path.as_deref())
-        == Some(target.as_path());
-    if already_showing || app.explorer.preview_awaiting.contains(&target) {
+        == Some(target);
+    if already_showing || app.explorer.preview_awaiting.contains(target) {
         return;
     }
 
-    app.explorer.preview_awaiting.insert(target.clone());
+    app.explorer.preview_awaiting.insert(target.to_path_buf());
     let vfs = std::sync::Arc::clone(&app.vfs);
     effects
         .cmds
-        .push(crate::runtime::read_preview_cmd(vfs, target));
+        .push(crate::runtime::read_preview_cmd(vfs, target.to_path_buf()));
 }
 
 /// Claims a `Msg::FileOpened` reply this module itself requested, returning
@@ -120,13 +132,21 @@ pub(crate) fn maybe_consume_reply(
     true
 }
 
-/// Whether `path` is still what the Explorer cursor is sitting on — the
-/// staleness check `maybe_consume_reply` applies to every reply it claims.
-/// Re-derived fresh from the live cursor position rather than a stored
-/// generation counter: `preview_awaiting` already guarantees at most one
-/// live request per path, so the only question worth asking on arrival is
-/// "does the cursor still agree", not "which request number was this".
+/// Whether `path` is still what's currently selected — the staleness check
+/// `maybe_consume_reply` applies to every reply it claims, regardless of
+/// which caller requested it. Re-derived fresh from live state rather than
+/// a stored generation counter: `preview_awaiting` already guarantees at
+/// most one live request per path, so the only question worth asking on
+/// arrival is "does the selection still agree", not "which request number
+/// was this". While the fuzzy file finder is open its own selection is
+/// what's live (the underlying chrome `Pane` stays `Explorer` throughout,
+/// so `app.explorer.nav.cursor` names something the finder never put
+/// there); the Explorer's own `search` gate keeps applying only to the
+/// Explorer branch below.
 fn is_current_target(app: &App, path: &Path) -> bool {
+    if app.filesearch.is_some() {
+        return crate::filesearch::selected_candidate(app).is_some_and(|c| c.path == path);
+    }
     if app.explorer.search.is_some() {
         return false;
     }

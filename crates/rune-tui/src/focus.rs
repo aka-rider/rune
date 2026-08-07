@@ -25,6 +25,13 @@ pub enum FocusTarget {
     SearchField,
     /// Not yet reachable — see `SearchField`'s doc; the replace field.
     ReplaceField,
+    /// The fuzzy file finder overlay, focused whenever `App::filesearch` is
+    /// `Some` — reached through [`target`] below, never through
+    /// [`from_pane`] (the finder is not a `Pane`; the underlying chrome
+    /// `Pane` stays `Explorer` while it's open). Mutually exclusive with
+    /// `SearchField` by construction (`filesearch::open` closes the search
+    /// bar first).
+    FileSearch,
     /// The message-log pane above the footer (`Pane::Messages`).
     Messages,
 }
@@ -53,6 +60,8 @@ pub fn from_pane(pane: Pane) -> FocusTarget {
 pub fn target(app: &App) -> FocusTarget {
     if app.search.as_ref().is_some_and(|s| s.focused) {
         FocusTarget::SearchField
+    } else if app.filesearch.is_some() {
+        FocusTarget::FileSearch
     } else {
         from_pane(app.focus())
     }

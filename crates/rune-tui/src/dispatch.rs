@@ -58,18 +58,21 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
             // Bracketed paste has no request to attach a target to, so it
             // routes by LIVE focus — unlike `Msg::ClipboardRead` below,
             // whose `target` was captured when the paste was requested.
-            // The search bar is checked first, mirroring the key
-            // pipeline's own "second input checked before the chrome-level
-            // `Pane`" rule (`focus::target`'s doc) — otherwise a paste
-            // while the bar is open falls through to the `_` arm and lands
-            // in the document underneath it instead of the draft.
-            if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
-                crate::search::keys::paste(app, &text);
-            } else {
-                match app.focus() {
+            // The search bar and the file finder are checked first,
+            // mirroring the key pipeline's own "second input checked before
+            // the chrome-level `Pane`" rule (`focus::target`'s doc) —
+            // otherwise a paste while either is open falls through to the
+            // `_` arm and lands in the document underneath instead of the
+            // draft/query.
+            match crate::focus::target(app) {
+                crate::focus::FocusTarget::SearchField => crate::search::keys::paste(app, &text),
+                crate::focus::FocusTarget::FileSearch => {
+                    crate::filesearch::keys::paste(app, &text, effects)
+                }
+                _ => match app.focus() {
                     Pane::Title => crate::title::keys::paste(app, app.active, &text),
                     _ => clipboard::handle_paste_content(app, app.active, &text),
-                }
+                },
             }
         }
         Msg::ClipboardRead { text, target } => {
@@ -164,6 +167,12 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::Warning(w) => crate::messages::warn(app, w),
         Msg::SearchHistory { generation, result } => {
             crate::search::handle_history_loaded(app, generation, result)
+        }
+        Msg::FileSearchRecentsLoaded { generation, result } => {
+            crate::filesearch::handle_recents_loaded(app, generation, result, effects)
+        }
+        Msg::FileSearchScanned { generation, result } => {
+            crate::filesearch::handle_scanned(app, generation, result, effects)
         }
         Msg::Quit => {
             app.should_quit = true;
@@ -312,6 +321,14 @@ pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) {
     // variant (`focus::target`'s own "second input checked first" doc).
     if crate::focus::target(app) == crate::focus::FocusTarget::SearchField {
         let _ = crate::search::keys::handle_key(app, key, effects);
+        return;
+    }
+
+    // Stage 3, file-finder branch: same shape as the search-bar branch
+    // above, checked before the chrome-level `Pane` match — the finder is
+    // never a `Pane` either.
+    if crate::focus::target(app) == crate::focus::FocusTarget::FileSearch {
+        let _ = crate::filesearch::keys::handle_key(app, key, effects);
         return;
     }
 

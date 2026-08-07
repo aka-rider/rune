@@ -180,11 +180,32 @@ fn open_path_by_inode(
     }
 }
 
+/// The `limit` most recently opened real-file document paths, newest
+/// first — the fuzzy file finder's own MRU list. `last_seen_at` bumps on
+/// every `open_path` call above, and its fixed-width RFC3339-nanos text
+/// sorts lexicographically into MRU order, the same shape `search_history::
+/// recent` already relies on for its own MRU column. An evicted row
+/// (`path=''`) and a non-`'file'` `kind` (scratch/chat) are excluded: only
+/// a still-named, real file belongs in the finder's list.
+pub fn recent_paths(conn: &Connection, limit: u32) -> Result<Vec<String>, Error> {
+    let mut stmt = conn.prepare(
+        "SELECT path FROM documents WHERE path != '' AND kind = 'file' \
+         ORDER BY last_seen_at DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |r| r.get::<_, String>(0))?;
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row?);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use rune_vfs::Mem;
+    use std::time::Duration;
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
@@ -286,5 +307,53 @@ mod tests {
         let err = open_path(&mut conn, &vfs, path, SystemTime::now())
             .expect_err("a non-utf8 path must be refused, not silently mangled");
         assert!(matches!(err, Error::Invalid(_)));
+    }
+
+    #[test]
+    fn recent_paths_returns_reverse_open_order_excluding_evicted_and_scratch() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+
+        open_path(&mut conn, &vfs, Path::new("/doc/a.md"), base).expect("open a");
+        open_path(
+            &mut conn,
+            &vfs,
+            Path::new("/doc/b.md"),
+            base + Duration::from_secs(10),
+        )
+        .expect("open b");
+        open_path(
+            &mut conn,
+            &vfs,
+            Path::new("/doc/c.md"),
+            base + Duration::from_secs(20),
+        )
+        .expect("open c");
+
+        // An evicted row (`path=''`) and a scratch-kind row must never
+        // surface, even though both sort newest by `last_seen_at`.
+        conn.execute(
+            "INSERT INTO documents(path, kind, created_at, last_seen_at) \
+             VALUES('', 'file', '2000', '9999')",
+            [],
+        )
+        .expect("insert evicted row");
+        conn.execute(
+            "INSERT INTO documents(path, kind, created_at, last_seen_at) \
+             VALUES('/doc/scratch.md', 'scratch', '2000', '9998')",
+            [],
+        )
+        .expect("insert scratch row");
+
+        let recent = recent_paths(&conn, 10).expect("recent_paths");
+        assert_eq!(
+            recent,
+            vec![
+                "/doc/c.md".to_string(),
+                "/doc/b.md".to_string(),
+                "/doc/a.md".to_string(),
+            ]
+        );
     }
 }

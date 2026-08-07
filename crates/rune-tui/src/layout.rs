@@ -43,6 +43,13 @@ fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
 pub const DEFAULT_LEFT_PANE_W: u16 = 22;
 pub const MIN_LEFT_PANE_W: u16 = 16;
 pub const MIN_CENTER_W: u16 = 24;
+/// The fuzzy file finder overlay's own minimum usable width — roughly 3-4
+/// path elements at ~12-15 cells each. `resolve` below clamps to this floor
+/// (never below it, `MIN_LEFT_PANE_W` permitting) whenever `App::filesearch`
+/// is open, overriding whatever the user last dragged the column to; the
+/// override never writes `app.splits`, so the column snaps back to its
+/// prior width the moment the finder closes.
+pub const FILESEARCH_MIN_W: u16 = 48;
 
 /// Inner rows, not block rows: the sections share one border, so these are
 /// measured on the block's inner rect. The Explorer spends one row on a
@@ -264,7 +271,56 @@ fn resolve(area: Rect, app: &App) -> Resolved {
     let split_fits = main_area.width >= MIN_LEFT_PANE_W.saturating_add(MIN_CENTER_W);
 
     let (left_block, explorer_inner, tabs_divider, tabs_inner, center, mode) =
-        if app.splits.left.is_shown() && !split_fits {
+        if app.filesearch.is_some() && split_fits {
+            // The finder forces the left column visible at its own width,
+            // regardless of `app.splits.left.is_shown()` — visibility and
+            // size are decided here, once, exactly like every other case
+            // this function already handles; `app.splits` is never written.
+            // Below `split_fits`, the finder falls through to the narrow-
+            // frame handling below, unchanged.
+            let cap = main_area.width.saturating_sub(MIN_CENTER_W);
+            let filesearch_fits = main_area.width >= FILESEARCH_MIN_W.saturating_add(MIN_CENTER_W);
+            let left_w = if filesearch_fits {
+                app.splits
+                    .left
+                    .size_hint(DEFAULT_LEFT_PANE_W)
+                    .max(FILESEARCH_MIN_W)
+                    .min(cap)
+            } else {
+                cap
+            };
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(left_w), Constraint::Min(0)])
+                .split(main_area);
+            let left_area = cols.first().copied().unwrap_or(main_area);
+            let center = cols.get(1).copied().unwrap_or(main_area);
+
+            let (explorer_inner, tabs_divider, tabs_inner, fits) = carve_column(left_area, app);
+            if fits {
+                let mode = LayoutMode::Split {
+                    explorer: explorer_inner.height > 0,
+                    tabs: tabs_inner.height > 0,
+                };
+                (
+                    Some(left_area),
+                    explorer_inner,
+                    tabs_divider,
+                    tabs_inner,
+                    center,
+                    mode,
+                )
+            } else {
+                (None, zero, None, zero, main_area, LayoutMode::EditorOnly)
+            }
+        } else if (app.splits.left.is_shown() || app.filesearch.is_some()) && !split_fits {
+            // The finder falls through to this same narrow-frame branch as
+            // an already-shown column: below `split_fits` there is no room
+            // to paint the column beside a center pane, so — same as the
+            // ordinary Explorer case — the column becomes the whole frame
+            // rather than being dropped. Without this, a finder opened on
+            // a frame narrower than `split_fits` would paint nothing at
+            // all while still consuming every keystroke.
             let (explorer_inner, tabs_divider, tabs_inner, fits) = carve_column(main_area, app);
             if fits {
                 // No `center` at all: the column IS the frame this mode.
@@ -609,5 +665,90 @@ mod tests {
                 tabs: true
             }
         );
+    }
+
+    /// The load-bearing acceptance case (plan WP1.S10): opening the finder
+    /// on a fresh app whose left column was NEVER shown still forces the
+    /// column visible, at `min(max(FILESEARCH_MIN_W, size_hint), frame -
+    /// MIN_CENTER_W)` — geometry decides visibility here, `app.splits` is
+    /// never written.
+    #[test]
+    fn filesearch_forces_the_column_visible_at_its_own_minimum_width() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        assert!(!app.splits.left.is_shown(), "test setup: column hidden");
+        let area = Rect::new(0, 0, 120, 34);
+        let mut effects = crate::runtime::Effects::default();
+
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let geo = geometry(area, &app);
+        let left_area = geo.left_block.expect("column forced visible");
+        assert_eq!(left_area.width, FILESEARCH_MIN_W);
+        assert_eq!(geo.center.width, area.width - FILESEARCH_MIN_W);
+        assert!(
+            !app.splits.left.is_shown(),
+            "the override never writes app.splits"
+        );
+    }
+
+    /// A frame between 40 and 72 columns wide (fits the ordinary floor but
+    /// not the finder's own 48-cell minimum) still shows the column, at
+    /// `frame - MIN_CENTER_W` rather than the full 48.
+    #[test]
+    fn filesearch_narrows_below_its_own_minimum_when_the_frame_is_tight() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        let area = Rect::new(0, 0, 60, 34);
+        let mut effects = crate::runtime::Effects::default();
+
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let geo = geometry(area, &app);
+        let left_area = geo.left_block.expect("column still forced visible");
+        assert_eq!(left_area.width, area.width - MIN_CENTER_W);
+        assert!(left_area.width < FILESEARCH_MIN_W);
+        assert!(left_area.width >= MIN_LEFT_PANE_W);
+    }
+
+    /// Below `split_fits` (< 40 columns) with the left column never shown,
+    /// the finder must still be painted — falling through to the same
+    /// full-width `ExplorerOnly` branch an already-shown column takes,
+    /// rather than the ordinary `Split::allot` path, which returns `None`
+    /// for a hidden column and would leave the finder invisible while it
+    /// keeps consuming every keystroke (silent input swallowing).
+    #[test]
+    fn filesearch_paints_explorer_only_below_split_fits_on_a_never_shown_column() {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        assert!(!app.splits.left.is_shown(), "test setup: column hidden");
+        let area = Rect::new(0, 0, 30, 34);
+        let mut effects = crate::runtime::Effects::default();
+
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let geo = geometry(area, &app);
+        assert!(geo.left_block.is_some(), "the finder must still be painted");
+        assert_eq!(resolve_mode(area, &app), LayoutMode::ExplorerOnly);
+    }
+
+    /// Closing the finder restores IDENTICAL geometry to a plain
+    /// never-opened app at the same frame — nothing was ever written to
+    /// `app.splits`, so there is nothing to restore.
+    #[test]
+    fn closing_filesearch_restores_the_pre_open_geometry() {
+        let baseline = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        let area = Rect::new(0, 0, 120, 34);
+        let before = geometry(area, &baseline);
+
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        let mut effects = crate::runtime::Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+        assert!(
+            geometry(area, &app).left_block.is_some(),
+            "test setup: finder open"
+        );
+        crate::filesearch::cancel(&mut app, &mut effects);
+
+        let after = geometry(area, &app);
+        assert_eq!(after.left_block, before.left_block);
+        assert_eq!(after.center, before.center);
     }
 }
