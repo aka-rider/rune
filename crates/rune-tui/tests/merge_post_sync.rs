@@ -277,7 +277,7 @@ fn second_external_write_after_completion_still_cas_refuses_into_the_guard() {
         panic!("expected the disk-conflict Guard after the second external write");
     };
     assert_eq!(prompt.doc, doc_id);
-    assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
+    assert!(matches!(prompt.kind, GuardKind::DiskConflict));
     assert_eq!(
         app.vfs.read(Path::new("/doc.md")).unwrap(),
         b"interloper wrote this\n",
@@ -359,7 +359,7 @@ fn escape_out_then_save_cas_refuses_into_the_guard() {
         panic!("expected the disk-conflict Guard, not a silent marker publish");
     };
     assert_eq!(prompt.doc, doc_id);
-    assert!(matches!(prompt.kind, GuardKind::DiskConflict { .. }));
+    assert!(matches!(prompt.kind, GuardKind::DiskConflict));
     assert_eq!(
         app.vfs.read(Path::new("/doc.md")).unwrap(),
         THEIRS,

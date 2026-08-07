@@ -100,15 +100,18 @@ pub fn reprobe(app: &mut App, bridge: &DbBridge, away: DocumentId, doc: Document
     drain_one_op_for(app, bridge, doc);
 }
 
-/// Drives a real `⌘S` all the way through the store-backed three-hop
-/// materialize dance: the prepare op's ack (which spawns the caller-side
-/// vfs `Cmd`), the `Cmd` itself, its `MaterializeVfsDone` reply, and the
-/// record op's commit ack. Callers must have drained every other pending
-/// op for `doc` first, same as `reprobe`. Ends with `app.db_ops` empty for
-/// `doc` whether the save committed or CAS-refused into the disk-conflict
-/// Guard — assertions on which of the two happened belong to the caller.
-pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
-    press_key(app, sup('s'));
+/// The store-backed materialize dance's middle+end hops: drains the
+/// `MaterializePrepare` ack (which spawns the caller-side vfs `Cmd`), runs
+/// that `Cmd`, feeds its `MaterializeVfsDone` reply back through `update`,
+/// then drains whatever op that reply itself enqueued (the record ack, and
+/// on a lost-bookkeeping re-baseline, a further `Load`). Callers must have
+/// drained every other pending op for `doc` first, same as `reprobe`. Ends
+/// with `app.db_ops` empty for `doc` whether the save committed or
+/// CAS-refused into the disk-conflict Guard — assertions on which of the
+/// two happened belong to the caller. Shared by [`save_and_ack`] (after its
+/// own `⌘S` keypress) and the disk-conflict Guard's `[S]ave anyway` answer
+/// (after its own keypress).
+pub fn drain_materialize_round_trip(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
     let prepare_effects = drain_one_op_for(app, bridge, doc);
     let save_cmd = prepare_effects
         .cmds
@@ -119,6 +122,12 @@ pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
     let mut effects = Effects::default();
     app::update(app, vfs_done_msg, &mut effects);
     drain_all_ops_for(app, bridge, doc);
+}
+
+/// Drives a real `⌘S` all the way through [`drain_materialize_round_trip`].
+pub fn save_and_ack(app: &mut App, bridge: &DbBridge, doc: DocumentId) {
+    press_key(app, sup('s'));
+    drain_materialize_round_trip(app, bridge, doc);
 }
 
 /// Overwrites `/doc.md`'s content in place, simulating an external editor.
