@@ -156,11 +156,16 @@ pub(crate) fn handle_materialize_ack(app: &mut App, id: DocumentId, mat: MatResu
             // kept dropped and only blocks saving kept standing. The
             // `Load` is `binding_only` (never a recovery adoption) — this
             // is anchoring a CAS baseline for content already known, not
-            // recovering anything.
+            // recovering anything. Uses the best-effort enqueue, never the
+            // degrading one: this call may run once per document inside a
+            // `DbEvent::Fatal` teardown loop still mid-flight over OTHER
+            // documents' own saves, and degrading the store from inside
+            // that loop would drop a later document's still-queued
+            // `save_pending` before its own synthetic ack even lands.
             let path = app.doc(id).and_then(|d| d.file_path.clone());
             let store_usable = app.db.as_ref().is_some_and(|db| !db.degraded);
             let re_baselined = match (path, store_usable) {
-                (Some(path), true) => crate::db_enqueue::load_document(app, id, &path, true),
+                (Some(path), true) => crate::db_enqueue::load_document_best_effort(app, id, &path),
                 _ => false,
             };
             // Re-checked AFTER the attempt, not just relied on the

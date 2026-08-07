@@ -73,6 +73,7 @@ pub(crate) fn fatal(receiver: mpsc::Receiver<WriteOp>, on_event: OnEvent, contex
         })
     }));
     while let Ok(op) = receiver.recv() {
+        #[cfg(feature = "test-support")]
         if matches!(op.kind, OpKind::KillWriterForTest) {
             continue; // already fatal — nothing left to simulate killing
         }

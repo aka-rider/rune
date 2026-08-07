@@ -102,9 +102,11 @@ impl Store {
     /// Test-support hook, the waiting half of `Store::kill_writer_for_test`:
     /// enqueues the same `Probe` payload as [`Store::probe`], but through
     /// [`Store::enqueue_blocking`]. Never call this from production code:
-    /// `update` must never block on the writer queue. Not `#[cfg(test)]` —
-    /// this needs to cross the crate boundary into `rune-tui`'s own
-    /// integration tests.
+    /// `update` must never block on the writer queue. Gated behind the
+    /// `test-support` feature rather than `#[cfg(test)]` — this needs to
+    /// cross the crate boundary into `rune-tui`'s own integration tests,
+    /// where this crate's own `cfg(test)` never applies.
+    #[cfg(feature = "test-support")]
     pub fn probe_blocking_for_test(&self, doc_id: i64) -> Result<u64, Error> {
         let op = self.probe_op(doc_id);
         self.enqueue_blocking(op)

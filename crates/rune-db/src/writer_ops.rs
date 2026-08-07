@@ -61,7 +61,10 @@ pub enum OpKind {
     /// process being killed) without requiring a real crash. Deliberately
     /// NOT `#[cfg(test)]`: `rune-tui`'s own integration tests (a DIFFERENT
     /// crate, where this crate's `cfg(test)` is never enabled) need this to
-    /// exercise the degraded-mode banner end-to-end.
+    /// exercise the degraded-mode banner end-to-end — gated instead behind
+    /// the `test-support` feature, which `rune-tui` enables only as a
+    /// dev-dependency, so it never reaches a release build.
+    #[cfg(feature = "test-support")]
     KillWriterForTest,
     /// On success, the completion's `DbEvent::Ok.result` carries the
     /// journal seq of the inserted (or coalesced) event.

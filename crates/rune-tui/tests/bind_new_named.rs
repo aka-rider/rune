@@ -106,6 +106,16 @@ fn cmd_s_on_a_lost_create_race_leaves_the_racers_bytes_and_rebinds() {
     let load_evt = wait_for_load(&bridge);
     send(&mut app, Msg::Db(load_evt));
 
+    // Review fix: the hand-off's Load is `binding_only` — its ack must
+    // never clobber the `Diverged` seed with its own freshly-observed
+    // (clean) sync kind, or `^M` stops being reachable the instant the
+    // round trip lands.
+    assert_eq!(
+        app.doc(id).unwrap().last_sync,
+        Some(rune_db::SyncKind::Diverged),
+        "the hand-off's Load ack must never overwrite the Diverged seed"
+    );
+
     assert_eq!(
         mem.read(Path::new("/root/nope.md")).expect("still there"),
         b"racer bytes",

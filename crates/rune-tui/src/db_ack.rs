@@ -43,6 +43,13 @@ use rune_db::LoadResult;
 /// recovery row (a previous session's journal for a deleted-then-recreated
 /// path) silently replace the user's live buffer the instant this ack
 /// lands.
+///
+/// `binding_only` also skips the `last_sync` write below: the caller
+/// enqueued this `Load` to install a binding only, already knows more about
+/// the document's sync state than this ack's freshly-read observation does
+/// (the lost-create-race hand-off, for one, deliberately seeds `Diverged`
+/// to keep `^M` reachable), and this ack landing must not overwrite that
+/// deliberate classification with its own.
 pub fn handle_load_ack(
     app: &mut App,
     id: DocumentId,
@@ -91,10 +98,13 @@ pub fn handle_load_ack(
         load_result.bridge_seq.unwrap_or(0),
     ));
     // Plan WP2.S3: render/hint state only (see `Document::last_sync`'s
-    // own doc comment) — set unconditionally, even on the version-moved-on
-    // branch above where `hydrate` was never called: the fact this `Load`
-    // reported is still true regardless of whether the buffer adopted it.
-    doc.last_sync = Some(load_result.sync.kind);
+    // own doc comment) — set even on the version-moved-on branch above
+    // where `hydrate` was never called: the fact this `Load` reported is
+    // still true regardless of whether the buffer adopted it. Skipped
+    // entirely when `binding_only`, per this function's own doc comment.
+    if !binding_only {
+        doc.last_sync = Some(load_result.sync.kind);
+    }
 }
 
 /// Records that `seq` was durably committed for `id`'s oldest still-pending

@@ -98,6 +98,32 @@ pub fn move_undo_pos(app: &mut App, id: DocumentId, local_pos: usize) {
 /// longer refresh; the other call sites, which have no binding yet to
 /// protect, are unaffected either way.
 pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: bool) -> bool {
+    load_document_inner(app, id, path, binding_only, true)
+}
+
+/// The re-baseline counterpart to [`load_document`]: same enqueue, but an
+/// error NEVER calls `on_store_failure` — used only by the `mat.committed`
+/// re-baseline in `materialize_ack::reactions`, which may run once per
+/// document inside a `DbEvent::Fatal` teardown loop still mid-flight over
+/// OTHER documents' own saves. Degrading the store from inside that loop
+/// would let `on_store_failure`'s in-flight sweep drop a LATER document's
+/// still-queued `save_pending` before its own synthetic ack even lands —
+/// the re-baseline is best-effort bookkeeping and must never tear the whole
+/// world down. The caller already treats a `false` return as "drop this
+/// document's binding, the next save falls back to direct-vfs", and the
+/// outer `Fatal` arm reports the store failure itself once the whole loop
+/// has finished.
+pub fn load_document_best_effort(app: &mut App, id: DocumentId, path: &Path) -> bool {
+    load_document_inner(app, id, path, true, false)
+}
+
+fn load_document_inner(
+    app: &mut App,
+    id: DocumentId,
+    path: &Path,
+    binding_only: bool,
+    degrade_on_err: bool,
+) -> bool {
     if app.db.as_ref().is_none_or(|db| db.degraded) {
         return false;
     }
@@ -113,7 +139,9 @@ pub fn load_document(app: &mut App, id: DocumentId, path: &Path, binding_only: b
             true
         }
         Err(e) => {
-            crate::materialize_ack::on_store_failure(app, e.to_string());
+            if degrade_on_err {
+                crate::materialize_ack::on_store_failure(app, e.to_string());
+            }
             false
         }
     }
