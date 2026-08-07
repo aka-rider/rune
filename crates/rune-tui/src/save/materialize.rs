@@ -65,12 +65,34 @@ pub(super) fn materialize_now(
     else {
         return;
     };
-    // The CAS baseline is shared per file, not per document (plan gap G7) —
-    // read from `App::file_bindings`, never from a per-`Document` copy, so
-    // this save compares against whatever the LAST save on this file
-    // (whichever tab made it) actually advanced the baseline to.
-    let expect_obs = app.file_binding(db_id).map(|b| b.expect_obs).unwrap_or(0);
     let content: Arc<str> = Arc::from(doc.buffer.content());
+    // The CAS baseline is shared per file, not per document — read from
+    // `App::file_bindings`, never from a per-`Document` copy, so
+    // this save compares against whatever the LAST save on this file
+    // (whichever tab made it) actually advanced the baseline to. `bind_file`
+    // is joined synchronously the instant a document installs its own
+    // `DocDb` (`db_ack::handle_load_ack`/`handle_create_scratch_ack`), so a
+    // document that reaches here with `doc.db` set but no matching entry is
+    // an internal inconsistency, not an ordinary "first save" case — refuse
+    // the coordinated path outright rather than guess a CAS baseline with a
+    // sentinel, taking the exact same uncoordinated fallback an enqueue
+    // failure below takes, with its own explicit message.
+    let Some(binding) = app.doc_file_binding(id) else {
+        materialize_ack::on_store_failure(
+            app,
+            format!("materialize: document {id:?} bound to db_id {db_id} has no file binding"),
+        );
+        if let Some(doc) = app.doc_mut(id) {
+            doc.begin_save(version, Arc::clone(&content));
+        }
+        let bytes = content.as_bytes().to_vec();
+        let vfs = Arc::clone(&app.vfs);
+        effects
+            .cmds
+            .push(crate::save::save_cmd(id, vfs, path, bytes, version));
+        return;
+    };
+    let expect_obs = binding.expect_obs;
     let Some(db) = app.db.as_ref() else { return };
     let result = db.store.materialize_prepare(db_id, expect_obs, bind_new);
 
@@ -199,9 +221,9 @@ pub(crate) fn bind_new_now(app: &mut App, id: DocumentId, path: PathBuf) {
 
 /// The bound on how many times the CAS check re-reads the live target while
 /// it disagrees with `expect_hash` before treating the mismatch as a stable
-/// conflict (plan Task 4) — a transient window (an external writer that
-/// wrote then reverted inside the gap) must never raise the disk-conflict
-/// guard from a single read.
+/// conflict — a transient window (an external writer that wrote then
+/// reverted inside the gap) must never raise the disk-conflict guard from a
+/// single read.
 const CAS_VERIFY_ATTEMPTS: u32 = 2;
 
 /// The `vfs` dance itself, factored out of `materialize_vfs_cmd` so it is
@@ -389,7 +411,7 @@ pub(crate) fn run_materialize_vfs(
 /// `RENAME_SWAP` needs both paths to exist: a blind `exchange` would fail
 /// exactly when the user most needs the save to go through.
 fn force_publish(vfs: &dyn Vfs, resolved: &Path, data: &[u8]) -> MaterializeVfsOutcome {
-    let dest_existed = match vfs.read(resolved) {
+    let dest_existed = match vfs.stat(resolved) {
         Ok(_) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
         Err(e) => return MaterializeVfsOutcome::Error(e.to_string()),
