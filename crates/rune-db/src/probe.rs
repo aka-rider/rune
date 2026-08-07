@@ -8,6 +8,19 @@
 //! write (most likely a `Materialize` whose ack tx never committed before a
 //! crash) and is promoted to a real adoption via `adopt::adopt_equal`.
 //!
+//! `SyncKind::DiskAhead` (clean buffer, disk moved) deliberately gets NO such
+//! auto-adopt, even though the buffer has nothing to lose: `saved_obs` is
+//! also `materialize`'s CAS baseline, and this module reads bytes but never
+//! writes the journal. Moving `saved_obs` to theirs here, with the journal
+//! reconstruction left unchanged at the OLD content, would let a plain
+//! unconditional save that follows CAS-succeed against the new baseline and
+//! overwrite disk's legitimate newer content with the buffer's stale bytes —
+//! trading a cosmetic stale-baseline annoyance for the exact silent-overwrite
+//! this crate exists to prevent. The safe fast-forward for this shape
+//! already exists one layer up: `merge_prep`/the resolver's zero-conflict
+//! path installs theirs' bytes into the buffer AND advances `saved_obs`
+//! together, atomically, whenever the caller invites it.
+//!
 //! Runs as a writer-FIFO op (`OpKind::Probe`): every step below either does
 //! `vfs` I/O with no transaction open, or opens its own short
 //! `retry::with_retry` transaction — never both at once (plan binding rule,
@@ -454,6 +467,62 @@ mod tests {
         assert_eq!(
             origin, "resolve",
             "auto-adopt must be a real, ancestor-eligible adoption"
+        );
+    }
+
+    /// Task WP-C(4): assessed and confirmed intentional — `DiskAhead`
+    /// (clean buffer, disk moved) must NEVER auto-adopt the fresh sighting
+    /// as `saved_obs`, unlike `Clean`. Auto-adopting here would leave the
+    /// journal reconstruction at the OLD content while `saved_obs` (the
+    /// save CAS baseline) points at disk's NEW content — a plain save
+    /// straight after would then CAS-succeed and overwrite that newer
+    /// content with the buffer's stale bytes.
+    #[test]
+    fn probe_never_auto_adopts_disk_ahead() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"v1");
+
+        let loaded = crate::load::load(
+            &mut conn,
+            &vfs,
+            session_id,
+            &|_, _| false,
+            path,
+            SystemTime::now(),
+        )
+        .expect("load");
+        let doc_id = loaded.doc_id;
+
+        let saved_obs_before: Option<i64> = conn
+            .query_row(
+                "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+                params![session_id, doc_id],
+                |r| r.get(0),
+            )
+            .expect("read saved_obs before");
+        assert!(saved_obs_before.is_some(), "load itself seeds a baseline");
+
+        // The buffer stays untouched — disk alone moves.
+        let temp = vfs.write_durable(path, b"v2").expect("write_durable");
+        vfs.exchange(&temp, path).expect("exchange");
+
+        let state = probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
+        assert_eq!(state.kind, SyncKind::DiskAhead);
+
+        let saved_obs_after: Option<i64> = conn
+            .query_row(
+                "SELECT saved_obs FROM session_documents WHERE session_id=?1 AND doc_id=?2",
+                params![session_id, doc_id],
+                |r| r.get(0),
+            )
+            .expect("read saved_obs after");
+        assert_eq!(
+            saved_obs_after, saved_obs_before,
+            "a DiskAhead probe must never move saved_obs — only the caller-driven, buffer-updating fast-forward may"
         );
     }
 }
