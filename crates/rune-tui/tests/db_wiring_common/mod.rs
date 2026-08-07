@@ -20,9 +20,20 @@ use rune_tui::keymap::{KeyCode, KeyInput, Mods};
 use rune_tui::runtime::{Effects, Msg};
 use rune_vfs::{Mem, Vfs};
 
+/// A per-process monotonic counter, folded into [`temp_db_dir`]'s own name
+/// alongside its wall-clock nanosecond reading — the clock alone is not a
+/// reliable uniqueness source: two test THREADS in the same binary racing
+/// through this call can land on the same clock tick if the platform's
+/// actual resolution is coarser than a true nanosecond, and a real filename
+/// collision means two logically unrelated tests silently share one SQLite
+/// file (and, through it, `documents`/`observations` rows for the same
+/// "/doc.md" path) — exactly what this counter exists to rule out.
+static TEMP_DB_DIR_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn temp_db_dir(label: &str) -> PathBuf {
+    let seq = TEMP_DB_DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
-        "rune-tui-db-wiring-{label}-{}-{}",
+        "rune-tui-db-wiring-{label}-{}-{}-{seq}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
