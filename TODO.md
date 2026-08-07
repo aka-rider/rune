@@ -159,7 +159,8 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/app.rs` — 625 (grew further in the G7 fix adding the `file_bindings` shared-baseline map's own doc comment)
   - `crates/rune-tui/tests/rename_focus.rs` — 606 (test file)
   - `crates/rune-tui/src/filesearch/tests.rs` — 599 (test file)
-  - `crates/rune-tui/src/merge/landing.rs` — 600 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
+  - `crates/rune-tui/src/merge/landing.rs` — 598 (grew further in the G7 fix rewiring the absent-ancestor dispatch onto `ancestor_rung` and moving `advance_expect_obs` onto the shared `FileBinding`; split candidate unchanged: move the `#[cfg(test)] mod tests` block, over a third of the file, to `crates/rune-tui/tests/merge_landing_unit.rs` or keep it `#[path]`-included from `landing.rs` if it needs the private fns it exercises)
+  - `crates/rune-tui/src/db.rs` — 512 (the review-fixes chokepoint pair `App::doc_file_binding`/`doc_file_binding_mut`/`doc_db_id` pushed this over; split candidate: move the `FileBinding`/`DocDb` type definitions to a sibling `db_types.rs`, keeping the `Db`/writer-bridge wiring here)
   - `crates/rune-tui/src/guard.rs` — 558 (crossed the threshold in WP-D adding the `DiskConflict` convergence self-retraction and its tests; split candidate: same as above, its `#[cfg(test)] mod tests` block is roughly a fifth of the file)
   - `crates/rune-tui/src/messages/mod.rs` — 557
   - `crates/rune-md/src/emit/mod.rs` — 556
@@ -167,17 +168,18 @@ entry is deleted in the same commit that fixes it.
   - `crates/rune-tui/src/rename.rs` — 544
   - `crates/rune-vfs/src/mem.rs` — 536
   - `crates/rune-tui/src/dispatch.rs` — 526
-  - `crates/rune-db/src/observation.rs` — 522 (new WP-C: the `supersedes` lineage-edge computation pushed this over; split candidate: move its own `#[cfg(test)]` module to `observation_tests.rs`)
+  - `crates/rune-db/src/observation.rs` — 528 (new WP-C: the `supersedes` lineage-edge computation pushed this over; split candidate: move its own `#[cfg(test)]` module to `observation_tests.rs`)
+  - `crates/rune-db/src/probe.rs` — 528 (the stat short-circuit and its confirmed/unconfirmed-history tests carry the file over; split candidate: move its own `#[cfg(test)]` module to a sibling `probe_tests.rs`, matching the crate's existing `materialize.rs`/`materialize_tests.rs` split)
+  - `crates/rune-db/src/bracket.rs` — 569 (the shrink-hypothesis-then-validate tests for the review-fixes shrink-confirmation gate, plus a persistent-stat-failure `Vfs` test fixture, pushed this over; split candidate: move its own `#[cfg(test)]` module to a sibling `bracket_tests.rs`, same pattern)
   - `crates/rune-syntax/src/wrap/mod.rs` — 513
   - `crates/rune-tui/src/footer.rs` — 512
   - `crates/rune-md/src/catalogue.rs` — 512
-  - `crates/rune-tui/src/materialize_ack/reactions.rs` — 503 (crossed the threshold in the G7 fix: every mutation site now reads/writes `App::file_bindings` by `db_id` instead of a plain `DocDb` field, and the deferred-probe reissue now fans out over every document sharing the file; split candidate: move `handle_save_done`/`close_if_pending`/`quit_if_pending`/`retire_quit_wait` — the save-ack fan-out chokepoints, distinct from `handle_materialize_ack`'s own outcome ladder — to a sibling `reactions_fanout.rs`)
   - `crates/rune-fuzz/src/driver/mod.rs` — 508
   - `crates/rune-tui/src/focus.rs` — 506
   - `crates/rune-syntax/src/syntax.rs` — 505
   - `crates/rune-fuzz/src/script/decode.rs` — 503
-  - `crates/rune-tui/src/save/materialize.rs` — 501 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
-- **Wrong**: 29 source files exceed the 500-line house rule, none ledgered.
+  - `crates/rune-tui/src/save/materialize.rs` — 523 (crossed the threshold in the G7 fix: `materialize_now` now reads `expect_obs` off `App::file_bindings` instead of `DocDb` directly, then grew further in the review-fixes pass refusing a missing file binding explicitly instead of a `0` sentinel; split candidate: move `run_materialize_vfs`'s `force_publish`/`capture_and_swap_publish` helpers to a sibling `force_publish.rs`)
+- **Wrong**: 31 source files exceed the 500-line house rule, none ledgered.
 - **Instead**: split each per its own named candidate, once identified; comment purge (next entry) likely shrinks several below the threshold on its own.
 - **Done when**: this list is empty (files legitimately re-measured after the comment purge, then split as needed).
 
