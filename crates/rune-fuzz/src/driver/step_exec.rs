@@ -229,6 +229,13 @@ pub(super) fn step_and_check(
     let step_index = state.steps;
     let is_save_done_ok = matches!(&tag, MsgTag::SaveDone { ok: true, .. });
 
+    if let Some(v) = invariant::merge_theirs_confirmed(&msg) {
+        outcome.violation = Some(v);
+        outcome.final_snapshot = Some(prev.clone());
+        outcome.final_ctx = None;
+        return true;
+    }
+
     let effects = match run_update_catching_panic(&mut state.app, msg) {
         Ok(effects) => effects,
         Err(payload) => {
@@ -254,50 +261,81 @@ pub(super) fn step_and_check(
     // rune-fuzz finding 3). A second in-flight save `Cmd` is therefore a
     // violation in its own right, not a silent overwrite.
     for cmd in effects.cmds {
-        if cmd.kind() == CmdKind::Save {
-            if state.pending_save.is_some() {
-                outcome.violation = Some(Violation {
-                    id: "SAVE-SINGLE-FLIGHT",
-                    message: "a second save Cmd arrived while one was already pending \
-                              (G9: at most one save Cmd may ever be outstanding)"
-                        .to_string(),
-                });
-                outcome.final_snapshot = Some(prev.clone());
-                outcome.final_ctx = None;
-                return true;
+        // Exhaustive over every `CmdKind` (plan WP-A task 7): a future
+        // variant this driver has no policy for yet fails to COMPILE here
+        // rather than falling through and being silently dropped — every
+        // kind gets an explicit deferred/dropped classification, forever.
+        match cmd.kind() {
+            CmdKind::Save => {
+                if state.pending_save.is_some() {
+                    outcome.violation = Some(Violation {
+                        id: "SAVE-SINGLE-FLIGHT",
+                        message: "a second save Cmd arrived while one was already pending \
+                                  (G9: at most one save Cmd may ever be outstanding)"
+                            .to_string(),
+                    });
+                    outcome.final_snapshot = Some(prev.clone());
+                    outcome.final_ctx = None;
+                    return true;
+                }
+                // Snapshot EVERY open document's content now, at the instant
+                // the `Cmd` is constructed — never just `prev.content` (the
+                // ACTIVE document's `Snapshot`): `trigger_save` can be called
+                // with an id other than `app.active` (a Guard modal's `s`
+                // hotkey saves its own prompt's document), so the only
+                // reliable way to recover "what bytes was this Cmd actually
+                // built with" is to have all candidates on hand and pick the
+                // right one once the ack names its `id`.
+                let per_doc_bytes = state
+                    .app
+                    .documents
+                    .iter()
+                    .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
+                    .collect();
+                state.pending_save = Some((cmd, per_doc_bytes));
             }
-            // Snapshot EVERY open document's content now, at the instant
-            // the `Cmd` is constructed — never just `prev.content` (the
-            // ACTIVE document's `Snapshot`): `trigger_save` can be called
-            // with an id other than `app.active` (a Guard modal's `s`
-            // hotkey saves its own prompt's document), so the only
-            // reliable way to recover "what bytes was this Cmd actually
-            // built with" is to have all candidates on hand and pick the
-            // right one once the ack names its `id`.
-            let per_doc_bytes = state
-                .app
-                .documents
-                .iter()
-                .map(|(&id, doc)| (id, doc.buffer.content().as_bytes().to_vec()))
-                .collect();
-            state.pending_save = Some((cmd, per_doc_bytes));
-        } else if cmd.kind() == CmdKind::Rename {
-            // Structurally at most one at a time (`rename::begin` refuses a
-            // second commit while `app.rename.in_flight()`), so overwriting
-            // an existing `Some` here can never lose a still-outstanding
-            // Cmd in practice — unlike `pending_save` above, there is no
-            // separate per-document byte snapshot to carry: no rename-path
-            // checker needs one yet.
-            state.pending_rename = Some(cmd);
-        } else if cmd.kind() == CmdKind::Trash {
-            // Same single-slot reasoning as `pending_rename` above:
-            // structurally at most one trash `Cmd` can be in flight at a
-            // time (`trash::request_trash` and `trash::confirm` both
-            // refuse while `app.trash_pending` is `Some`, mirroring
-            // `rename::begin`'s `in_flight` refusal), so overwriting an
-            // existing `Some` here can never lose a still-outstanding one
-            // in practice.
-            state.pending_trash = Some(cmd);
+            CmdKind::Rename => {
+                // Structurally at most one at a time (`rename::begin`
+                // refuses a second commit while `app.rename.in_flight()`),
+                // so overwriting an existing `Some` here can never lose a
+                // still-outstanding Cmd in practice — unlike `pending_save`
+                // above, there is no separate per-document byte snapshot to
+                // carry: no rename-path checker needs one yet.
+                state.pending_rename = Some(cmd);
+            }
+            CmdKind::Trash => {
+                // Same single-slot reasoning as `Rename` above: structurally
+                // at most one trash `Cmd` can be in flight at a time
+                // (`trash::request_trash` and `trash::confirm` both refuse
+                // while `app.trash_pending` is `Some`, mirroring `rename::
+                // begin`'s `in_flight` refusal), so overwriting an existing
+                // `Some` here can never lose a still-outstanding one in
+                // practice.
+                state.pending_trash = Some(cmd);
+            }
+            CmdKind::QuitTimeout
+            | CmdKind::ClipboardRead
+            | CmdKind::SaveConfirmTimeout
+            | CmdKind::MessagesCollapseTimeout
+            | CmdKind::OpenExternal
+            | CmdKind::ReadDir
+            | CmdKind::ReadFile
+            | CmdKind::Highlight
+            | CmdKind::ImageDecode
+            | CmdKind::SearchHistory => {
+                // Deliberately dropped, each for its own already-documented
+                // reason: the four timers/subprocess spawns
+                // (`QuitTimeout`/`ClipboardRead`/`SaveConfirmTimeout`/
+                // `MessagesCollapseTimeout`) sleep or fork and must never
+                // run inline in a headless driver; `OpenExternal` forks
+                // `/usr/bin/open` and is unreachable from this driver by
+                // construction; `ReadDir`/`ReadFile`/`Highlight`/
+                // `ImageDecode`/`SearchHistory` are off-thread reads/parses
+                // this driver has no discharge path for yet (their results
+                // never reach `update`, so nothing they'd produce is
+                // observable either way). Each arm above IS discharged —
+                // this arm is the intentional rest, not an accidental one.
+            }
         }
     }
 

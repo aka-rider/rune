@@ -38,7 +38,8 @@
 //!   stateful `MERGE-NO-INSTANT-REDIVERGENCE` tracker — like
 //!   `SAVE-SINGLE-FLIGHT`, driven by `driver.rs` per step, not a
 //!   `check_all` entry (it needs history a `(prev, next, ctx)` triple
-//!   cannot carry)
+//!   cannot carry); `MERGE-THEIRS-CONFIRMED` (plan WP-A) is driven the same
+//!   way, directly against the raw `Msg` a `MergePrep` ack carries
 //! - `SAVE-SINGLE-FLIGHT` — constructed directly by `driver.rs`, not a
 //!   checker function here (like `NO-PANIC`): a second in-flight save
 //!   `Cmd` arriving while one is already pending is itself the violation
@@ -62,7 +63,7 @@ pub use cursor::{cur_bounds, cur_id, cur_no_caret_hidden, cur_order};
 pub use highlight::{hl_clamped, hl_no_reflow, hl_stale_drop};
 pub use merge::{
     RedivergenceTracker, merge_doc_active, merge_key_feedback, merge_save_blocked,
-    merge_title_cleared,
+    merge_theirs_confirmed, merge_title_cleared,
 };
 pub use pane::{layout_fits, layout_tiles, pane_no_bleed};
 pub use render::{

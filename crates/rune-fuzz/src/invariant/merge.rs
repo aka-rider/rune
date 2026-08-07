@@ -5,10 +5,11 @@
 //! `MERGE-NO-INSTANT-REDIVERGENCE` tracker, driven per step by
 //! `driver::step_and_check` rather than `check_all`'s pure fold.
 
-use rune_db::SyncKind;
+use rune_db::{DbEvent, OpOutcome, SyncKind};
 use rune_tui::document::DocumentId;
 use rune_tui::keymap::Command;
 use rune_tui::pane::Pane;
+use rune_tui::runtime::Msg;
 
 use super::Violation;
 use crate::snapshot::Snapshot;
@@ -234,6 +235,37 @@ impl RedivergenceTracker {
         }
         None
     }
+}
+
+/// `MERGE-THEIRS-CONFIRMED` (WP-A task 2ii/7): checked against the raw
+/// `Msg` a `MergePrep` ack carries, before `handle_merge_prep_ack` ever
+/// consumes it — the Snapshot/StepCtx projection has no visibility into an
+/// observation's `confirmed` column, so this is driven directly by
+/// `driver::step_exec` rather than folded into `check_all`, the same shape
+/// `SAVE-SINGLE-FLIGHT` uses. `rune_db::merge_prep`'s own contract is that
+/// `unstable: true` NEVER also carries a `theirs`/`theirs_obs` — a
+/// persistently unconfirmed disk state is reported honestly, never served
+/// as content to merge against. A violation here is a regression in that
+/// contract, caught while the fuzzer is genuinely driving the store-backed
+/// merge-prep op against `Mem`'s own fault injection.
+pub fn merge_theirs_confirmed(msg: &Msg) -> Option<Violation> {
+    let Msg::Db(DbEvent::Ok {
+        result: OpOutcome::MergePrep(prep),
+        ..
+    }) = msg
+    else {
+        return None;
+    };
+    if prep.unstable && (prep.theirs.is_some() || prep.theirs_obs.is_some()) {
+        return Some(Violation {
+            id: "MERGE-THEIRS-CONFIRMED",
+            message: "a MergePrep ack reported unstable=true but still carried a theirs/\
+                       theirs_obs — an unconfirmed observation must never be rendered as \
+                       merge Theirs"
+                .to_string(),
+        });
+    }
+    None
 }
 
 /// `MERGE-TITLE-CLEARED` — once merge mode is fully `Inactive` (neither
