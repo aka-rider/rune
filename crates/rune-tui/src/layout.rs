@@ -10,30 +10,12 @@
 //! readers like, always with the same answer for the same inputs.
 
 use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use rune_core::assert_invariant;
 
 use crate::app::App;
 use crate::focus::LayoutMode;
 use crate::messages;
 use crate::split::{PaneLimits, Split};
-
-/// Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
-/// `STRICT_INVARIANTS`/`assert_invariant` chokepoint: `true` only in test
-/// builds or when this crate's own `strict-invariants` feature is
-/// explicitly enabled. Kept as a local copy rather than a shared helper —
-/// each crate's gate governs only its own producer-bug invariants.
-const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
-/// The chokepoint every "this should never happen, but let's be sure"
-/// geometry check in this module routes through — production code must
-/// never `panic!`/`assert!`/`unwrap`, so an ordinary
-/// build (including a plain `cargo run`) must degrade gracefully on a
-/// geometry-invariant violation rather than take down the user's session;
-/// only a test run or an explicit opt-in feature treats it as fatal.
-fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond, "{}", msg());
-    }
-}
 
 /// Left-pane geometry: the DEFAULT column width, and the smallest the left
 /// column and the editor pane may each shrink to before one of them gives
@@ -482,20 +464,20 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
     // bare subtraction so a degenerate frame (the fuzzer drives `Resize`
     // down to 1 column, 2 rows) hits a saturated equality instead of an
     // underflow panic.
-    assert_invariant(footer.right() == area.right(), || {
+    assert_invariant!(footer.right() == area.right(), || {
         format!(
             "footer {footer:?} does not reach the frame's right edge {}",
             area.right()
         )
     });
-    assert_invariant(center.right() == area.right(), || {
+    assert_invariant!(center.right() == area.right(), || {
         format!(
             "center {center:?} does not reach the frame's right edge {}",
             area.right()
         )
     });
     if center_bordered {
-        assert_invariant(
+        assert_invariant!(
             editor.right().saturating_add(1) == center.right()
                 && editor.x == center.x.saturating_add(1),
             || {
@@ -505,7 +487,7 @@ pub fn geometry(area: Rect, app: &App) -> Geometry {
             },
         );
     } else {
-        assert_invariant(editor.right() == center.right(), || {
+        assert_invariant!(editor.right() == center.right(), || {
             format!("editor {editor:?} does not reach unbordered center {center:?}'s right edge")
         });
     }

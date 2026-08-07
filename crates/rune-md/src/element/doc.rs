@@ -408,9 +408,8 @@ impl DocMachine {
     /// for that verification; production code must always go through
     /// `snapshot`. `fuzz-hooks` is a SEPARATE feature from `strict-
     /// invariants` (not implied by it either way) precisely so a consumer
-    /// like rune-fuzz can reach this hook without also inheriting this
-    /// crate's known-open comrak-sourcepos `assert_invariant` panics
-    /// (`strict-invariants`'s own docs, `TODO.md`).
+    /// that only needs the cache-bypassed rebuild is not forced to also
+    /// arm every `assert_invariant` in the crate just to reach it.
     #[cfg(any(test, feature = "strict-invariants", feature = "fuzz-hooks"))]
     pub fn force_rebuild(&self, buf: &Buffer) -> ViewSnapshots {
         self.rebuild(buf)

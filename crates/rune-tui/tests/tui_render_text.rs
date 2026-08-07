@@ -445,8 +445,8 @@ fn lone_zero_width_cluster_reserves_width_one_though_ratatui_derives_zero() {
 
         // The end-to-end render must not panic — this exercises `blit`'s
         // own strict-mode `assert_invariant`, narrowed to admit exactly
-        // this divergence, in a real cfg(test) build (STRICT_INVARIANTS is
-        // `true` here).
+        // this divergence, in a real cfg(test) build (the strict-invariants
+        // gate is armed here).
         let buf = render_to_test_backend(&app);
         let text = full_text(&buf, HEIGHT, WIDTH);
         assert!(

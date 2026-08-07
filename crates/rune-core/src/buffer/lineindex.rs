@@ -126,13 +126,13 @@ pub(super) fn compute_line_starts(content: &str) -> Vec<usize> {
 /// The invariant every `Buffer::line_starts` must uphold: non-empty, with
 /// `line_starts[0] == 0`. Checked wherever `line_starts` is built or
 /// rebuilt (`compute_line_starts`, `update_line_starts`) rather than only
-/// documented — via the `STRICT_INVARIANTS`-gated `assert_invariant`
-/// chokepoint, so a future change that reintroduces the malformed-empty
-/// state (a derived `Default` producing `line_starts: vec![]`, the exact
-/// shape `Buffer`'s manual `Default` above exists to prevent) is caught in
-/// tests without an ordinary build ever paying for it.
+/// documented — via the `assert_invariant` chokepoint, so a future change
+/// that reintroduces the malformed-empty state (a derived `Default`
+/// producing `line_starts: vec![]`, the exact shape `Buffer`'s manual
+/// `Default` above exists to prevent) is caught in tests without an
+/// ordinary build ever paying for it.
 fn assert_line_starts_invariant(line_starts: &[usize]) {
-    assert_invariant(line_starts.first().copied() == Some(0), || {
+    assert_invariant!(line_starts.first().copied() == Some(0), || {
         "line_starts must be non-empty and start with 0".to_string()
     });
 }

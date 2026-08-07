@@ -16,9 +16,10 @@ use rune_fuzz::invariant::Violation;
 use rune_fuzz::{driver, generate, report, script, wal};
 
 #[ignore = "Randomized soak. Runs ONLY via the explicit invocation in \
-            rust/Makefile (`make test-fuzz`), which sets PROPTEST_CASES and \
-            scopes to `-p rune-fuzz --test human_session` so rune-md's \
-            strict-invariants feature stays off (see crates/rune-md/TODO.md)."]
+            rust/Makefile (`make test-fuzz`), which sets PROPTEST_CASES/ \
+            PROPTEST_RNG_SEED and scopes to `-p rune-fuzz --test \
+            human_session --exact --test-threads=1` rather than a bare \
+            `cargo test`."]
 #[test]
 fn human_session() {
     match wal::sweep(Path::new("artifacts")) {

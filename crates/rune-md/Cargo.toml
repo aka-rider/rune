@@ -14,8 +14,8 @@ unicode-segmentation = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
-# Self-dependency trick: `cfg(test)` alone only enables `STRICT_INVARIANTS`
-# for THIS crate's own `#[cfg(test)] mod tests` (compiled with `--cfg
+# Self-dependency trick: `cfg(test)` alone only enables the strict-invariants
+# gate for THIS crate's own `#[cfg(test)] mod tests` (compiled with `--cfg
 # test`) — an integration test under `tests/` links the library as an
 # ORDINARY (non-test) dependency, so `cfg(test)` is false there and the
 # strict asserts would never fire for `tests/conceal_roundtrip.rs`'s
@@ -44,11 +44,10 @@ harness = false
 # stop seeing a violation it still causes.
 strict-invariants = ["rune-syntax/strict-invariants"]
 # `DocMachine::force_rebuild` alone, with none of `strict-invariants`'
-# assert_invariant consequences (see that feature's own docs, and
-# `crates/rune-md/TODO.md`'s known-open comrak sourcepos panics): a
-# consumer that only needs a cache-bypassed rebuild for its own testing
-# (rune-fuzz's `SYNC-IDEMPOTENT`, WP14.S1) must not also be forced to eat
-# unrelated known-bug panics just to reach it.
+# assert_invariant consequences (see that feature's own docs): a consumer
+# that only needs a cache-bypassed rebuild for its own testing (rune-fuzz's
+# `SYNC-IDEMPOTENT`, WP14.S1) must not also be forced to arm every
+# `assert_invariant` in the crate just to reach it.
 fuzz-hooks = []
 
 [lints]

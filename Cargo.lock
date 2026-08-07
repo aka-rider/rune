@@ -2330,6 +2330,7 @@ name = "rune-syntax"
 version = "0.1.0"
 dependencies = [
  "rune-core",
+ "rune-syntax",
  "unicode-segmentation",
  "unicode-width",
 ]

@@ -11,8 +11,7 @@ use crate::driver::DOC_PATH;
 /// now opens an arbitrary path, so `DocumentKind` producer selection is
 /// reachable, not just markdown). `select` panics on an empty slice (G16) —
 /// never let this list go empty. Every entry deliberately excludes any lone
-/// `\r` adjacent to a tab inside a nested container (G1: known-open comrak
-/// strict-invariants panic, `rune-md/TODO.md`).
+/// `\r` adjacent to a tab inside a nested container (plan Gotcha G1).
 pub(super) static SEEDS: &[(&str, &str)] = &[
     (DOC_PATH, ""),
     (

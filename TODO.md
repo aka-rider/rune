@@ -22,12 +22,6 @@ entry is deleted in the same commit that fixes it.
 - **Instead**: every publish site branches on `published_not_durable` before deciding what to do with the temp, same as `materialize.rs`.
 - **Done when**: all four sites branch on the predicate identically.
 
-### strict-invariants disarmed where it matters, justification file deleted
-- **Where**: `crates/rune-fuzz/Cargo.toml:15-23` (`rune-md` without `strict-invariants`), `Makefile:45-46`, `.github/workflows/test.yml:29-35` (`continue-on-error: true`)
-- **Wrong**: all three cite `crates/rune-md/TODO.md` ("known-open comrak sourcepos panics") as justification; that file was deleted in the TODO→issues migration. The fuzzer traverses rune-md/rune-syntax snapshots with span-coverage/duplicate-claim asserts compiled out, and rune-syntax's strict-invariants is reachable only transitively through rune-md's — so its asserts are dead outside `cargo test -p rune-md --features strict-invariants`.
-- **Instead**: quarantine the specific comrak-sourcepos inputs behind a named allowlist and arm the rest, or delete the feature and stop claiming coverage.
-- **Done when**: all three comments cite a live ledger (issue) or the feature gap is closed.
-
 ### `let _ = set_guard(...)` defeats its own `#[must_use]`
 - **Where**: `crates/rune-tui/src/guard.rs:26-31` (doc + `#[must_use]`); discarded with no stated reason at `crates/rune-tui/src/pane.rs:345` (DirtyQuit), `crates/rune-tui/src/trash.rs:69` (Trash), `crates/rune-tui/src/materialize_ack/reactions.rs:321` (DiskConflict); explained at `crates/rune-tui/src/workspace/close.rs:43`
 - **Wrong**: `set_guard` returns whether the prompt was actually raised specifically because dropping the bool is a bug (the prompt may never appear). Three of four discard sites give no reason; Trash/DiskConflict prompts can silently no-op.
@@ -98,12 +92,6 @@ entry is deleted in the same commit that fixes it.
 
 ## Mechanical
 
-### Five copies of `assert_invariant`, four eager
-- **Where**: `crates/rune-core/src/lib.rs:31`, `crates/rune-syntax/src/syntax.rs:19`, `crates/rune-md/src/emit/mod.rs:73`, `crates/rune-tui/src/layout.rs:32` (all take `cond: bool`, evaluated in every build); `crates/rune-tui/src/render/blit.rs:33` (correct — takes `impl FnOnce() -> bool`)
-- **Wrong**: the eager copies pay for the check's cost (e.g. alloc+sort per line per snapshot, `chars().count()` per table span) even when the assert is disarmed; doc comments falsely claim zero cost.
-- **Instead**: one lazy `assert_invariant` in `rune-core`, re-exported by every crate.
-- **Done when**: one definition exists and all call sites take a closure.
-
 ### `floor/ceil_char_boundary` hand-rolled 8×
 - **Where**: `crates/rune-syntax/src/syntax.rs:32,42` (comments say "nightly-only" — false since Rust 1.86), `crates/rune-md/src/emit/mod.rs:83,93`, `crates/rune-core/src/buffer/lineindex.rs:77`, `crates/rune-ts/src/detect.rs:97`, `crates/rune-tui/src/field.rs:349`, `crates/rune-tui/src/render/title.rs:134`, `crates/rune-tui/src/commands/nav.rs:96`, `crates/rune-fuzz/src/invariant/mod.rs:95`
 - **Wrong**: hand-rolled boundary-snapping loops reimplement `str::floor_char_boundary`/`ceil_char_boundary`, stable since Rust 1.86 (toolchain here is 1.97.1); some comments still call it nightly-only.
@@ -123,7 +111,7 @@ entry is deleted in the same commit that fixes it.
 - **Done when**: rune-md and rune-syntax call rune-core's implementation instead of their own.
 
 ### Stale/false comments (provable lies)
-- **Where**: `crates/rune-tui/src/when.rs:313` and `crates/rune-tui/src/binding.rs:100` (cite nonexistent `keymap::index::resolve`); "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-fuzz/Cargo.toml:16`, `Makefile:46` (cite deleted `crates/rune-md/TODO.md`); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4`, `crates/rune-md/src/element/doc.rs:413` (cite deleted per-crate `TODO.md`s)
+- **Where**: `crates/rune-tui/src/when.rs:313` and `crates/rune-tui/src/binding.rs:100` (cite nonexistent `keymap::index::resolve`); "nightly-only" claims (see the `char_boundary` entry above); `crates/rune-cli/src/open.rs:150`, `crates/rune-tui/tests/db_wiring_hydrate.rs:4` (cite deleted per-crate `TODO.md`s)
 - **Wrong**: comments cite functions and files that no longer exist.
 - **Instead**: fix or delete each citation when touched (per house rule, no `path:line` in comments either).
 - **Done when**: no comment in the tree cites a nonexistent symbol or deleted file.

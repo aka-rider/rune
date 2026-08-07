@@ -5,36 +5,9 @@
 use ratatui::Frame;
 use ratatui::buffer::CellWidth;
 use ratatui::layout::Rect;
+use rune_core::assert_invariant;
 
 use super::Cell;
-
-/// Mirrors `rune-syntax`'s and `rune-md`'s own identically-named
-/// `STRICT_INVARIANTS`/`assert_invariant` chokepoint: `true` only in test
-/// builds or when this crate's own `strict-invariants` feature is
-/// explicitly enabled. Kept as a local copy rather than a shared helper —
-/// each crate's gate governs only its own producer-bug invariants.
-const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
-/// The chokepoint every "this should never happen, but let's be sure"
-/// blit-layer check in this module routes through — production code must
-/// never `panic!`/`assert!`/`unwrap`, so an ordinary build (including a
-/// plain `cargo run`) must degrade gracefully on an invariant violation
-/// rather than take down the user's session; only a test run or an
-/// explicit opt-in feature treats it as fatal.
-///
-/// Deliberately NOT the same shape as `crates/rune-syntax/src/syntax.rs`'s
-/// or `crate::layout`'s identically-named `assert_invariant` — those take a
-/// plain `bool`. This one takes a lazy closure instead, because this
-/// module's checks sit in the per-cell render hot path: re-deriving a
-/// symbol's width to compare against it costs a Unicode table walk per cell
-/// per frame, and an eagerly evaluated `bool` argument would pay that cost
-/// on every cell of every frame in an ordinary (non-strict) build, only to
-/// throw the answer away since `STRICT_INVARIANTS` is `false` there.
-fn assert_invariant(cond: impl FnOnce() -> bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond(), "{}", msg());
-    }
-}
 
 /// Writes `rows` into `frame.buffer_mut()` starting at `area`'s top-left
 /// corner, clipping to `area`'s bounds.
@@ -77,8 +50,8 @@ pub fn blit(rows: &[Vec<Cell>], area: Rect, frame: &mut Frame) {
             if x >= right {
                 break;
             }
-            assert_invariant(
-                || {
+            assert_invariant!(
+                {
                     let declared = usize::from(cell.width);
                     let ratatui_width = cell.text.cell_width() as usize;
                     declared == ratatui_width

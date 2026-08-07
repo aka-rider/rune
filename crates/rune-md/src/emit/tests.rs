@@ -36,14 +36,14 @@ fn unclaimed_subranges_skips_already_claimed_bytes() {
     );
 }
 
-/// Proves `push_span_split_by_line`'s `STRICT_INVARIANTS`-gated assert
+/// Proves `push_span_split_by_line`'s strict-invariants-gated assert
 /// actually fires when a second visible claim overlaps a byte an
 /// earlier one already claimed — the exact shape an empty list item's
 /// marker running onto its continuation line produced ("- \n  > q")
 /// before the root-cause fix (clamping the marker to its own line).
-/// This crate's own test binary always has `STRICT_INVARIANTS = true`
-/// (tied to `cfg(test)`, not `cfg(debug_assertions)` — see the
-/// `emit` module docs), so this fires in `cargo test --release` too.
+/// This crate's own test binary always has the gate armed (tied to
+/// `cfg(test)`, not `cfg(debug_assertions)` — see the `emit` module
+/// docs), so this fires in `cargo test --release` too.
 #[test]
 #[should_panic(expected = "already-claimed byte")]
 fn push_span_split_by_line_asserts_on_duplicate_visible_claim() {

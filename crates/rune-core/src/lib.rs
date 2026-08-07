@@ -1,37 +1,40 @@
 //! rune-core: UI-free kernel — buffer, coordinate spaces, cursor set, and
 //! the in-memory undo journal. No terminal, no markdown parsing.
 //!
-//! Every producer-bug invariant this crate checks (a desynced `line_starts`
-//! index, a duplicate post-edit `start` in `undo::reapply`) is gated on
-//! [`STRICT_INVARIANTS`], never on `cfg(debug_assertions)`: an ORDINARY
-//! build — including an unoptimized debug one a developer might run
-//! directly — must degrade gracefully on a producer bug, never panic on a
-//! real user's document. Only a test run (or a build that explicitly opts
-//! in via the `strict-invariants` feature) treats the violation as fatal.
-//! Mirrors `rune-md`'s and `rune-syntax`'s own identically-named
-//! chokepoint — each crate's gate governs only its own invariants.
+//! Every producer-bug invariant checked anywhere in the workspace (a
+//! desynced `line_starts` index, a duplicate post-edit `start` in
+//! `undo::reapply`, a duplicate visible claim in `rune-md`'s emitter) is
+//! gated on [`assert_invariant`], never on `cfg(debug_assertions)`: an
+//! ORDINARY build — including an unoptimized debug one a developer might
+//! run directly — must degrade gracefully on a producer bug, never panic
+//! on a real user's document. Only a test run (or a build that explicitly
+//! opts in via that crate's own `strict-invariants` feature) treats the
+//! violation as fatal.
 
 pub mod buffer;
 pub mod coords;
 pub mod cursor;
 pub mod undo;
 
-/// `true` only in test builds or when the `strict-invariants` feature is
-/// explicitly enabled. `cfg!()` folds this to a compile-time literal, so an
-/// `if STRICT_INVARIANTS { assert!(...) }` guard compiles away entirely
-/// (dead code, zero cost) in an ordinary shipped build.
-pub(crate) const STRICT_INVARIANTS: bool = cfg!(any(test, feature = "strict-invariants"));
-
 /// The chokepoint every "this should never happen, but let's be sure"
-/// producer-bug check in this crate routes through — a single place that
-/// decides whether a violation panics, so no call site has to repeat the
-/// `if STRICT_INVARIANTS { assert!(...) }` boilerplate (or risk getting it
-/// wrong). `msg` is a closure so the `format!` cost is paid only when the
-/// check is actually active.
-pub(crate) fn assert_invariant(cond: bool, msg: impl FnOnce() -> String) {
-    if STRICT_INVARIANTS {
-        assert!(cond, "{}", msg());
-    }
+/// producer-bug check in the workspace routes through instead of a bare
+/// `assert!`/`debug_assert!` (both evade the workspace's panic lints).
+/// A macro, not a function: it expands INTO the calling crate, so
+/// `cfg!(any(test, feature = "strict-invariants"))` resolves against the
+/// CALLER's own `cfg(test)`/`strict-invariants` feature — a function
+/// defined here would instead compile once against rune-core's own cfg,
+/// silently disarming every dependent crate's checks under that crate's
+/// own `cargo test`. `$cond` sits inside the `if`, so a disarmed build
+/// never evaluates it at runtime, however expensive; `$msg` stays a
+/// closure so its `format!` cost is paid only when the check actually
+/// fires.
+#[macro_export]
+macro_rules! assert_invariant {
+    ($cond:expr, $msg:expr $(,)?) => {
+        if cfg!(any(test, feature = "strict-invariants")) {
+            assert!($cond, "{}", ($msg)());
+        }
+    };
 }
 
 /// A live read whose length is empty or less than half of `before_len` is
