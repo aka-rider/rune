@@ -55,6 +55,47 @@ fn db_path_for(home: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
+/// Everything a live [`Store`] hands back once the open ladder has run,
+/// shared by every bootstrap shape that needs one open before doing its own
+/// store work ([`bootstrap_db`], [`bootstrap_untitled_db`],
+/// [`bootstrap_new_file`]).
+struct OpenedStore {
+    bridge: Arc<DbBridge>,
+    store: Store,
+    degraded_at_open: bool,
+    warning: Option<String>,
+}
+
+/// Runs the shared open ladder (`db_path_for` -> `DbBridge::bootstrap` ->
+/// `Store::open` -> `store.degraded()`) once, instead of writing it out per
+/// bootstrap shape. `Err` is the ready-to-use banner text, already carrying
+/// its own `recovery disabled:` prefix. The `Store::open` arm keeps writing
+/// its `rune: recovery store unavailable: {e}` stderr line here; the
+/// `$HOME`-unset arm stays silent, exactly as both did before this
+/// extraction.
+fn open_store(vfs: Arc<dyn Vfs + Send + Sync>, home: Option<&Path>) -> Result<OpenedStore, String> {
+    let Some(db_path) = db_path_for(home) else {
+        return Err("recovery disabled: $HOME not set".to_string());
+    };
+
+    let bridge = DbBridge::bootstrap();
+    let (store, warning) = match Store::open(&db_path, vfs, bridge.on_event()) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("rune: recovery store unavailable: {e}");
+            return Err(format!("recovery disabled: {e}"));
+        }
+    };
+    let degraded_at_open = store.degraded();
+
+    Ok(OpenedStore {
+        bridge,
+        store,
+        degraded_at_open,
+        warning,
+    })
+}
+
 /// One exit path for every "recovery store bootstrap failed after a `Store`
 /// was actually opened" branch below (plan WP4.S5/[rune-cli 11] — these
 /// used to be written out four times near-verbatim): prints the reason,
@@ -119,25 +160,20 @@ pub(crate) fn bootstrap_db(
     path: &Path,
     home: Option<&Path>,
 ) -> DbBootstrap {
-    let Some(db_path) = db_path_for(home) else {
-        return DbBootstrap {
-            banner: Some("recovery disabled: $HOME not set".to_string()),
-            ..DbBootstrap::default()
-        };
-    };
-
-    let bridge = DbBridge::bootstrap();
-    let (store, open_warning) = match Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("rune: recovery store unavailable: {e}");
+    let OpenedStore {
+        bridge,
+        store,
+        degraded_at_open,
+        warning: open_warning,
+    } = match open_store(vfs, home) {
+        Ok(opened) => opened,
+        Err(banner) => {
             return DbBootstrap {
-                banner: Some(format!("recovery disabled: {e}")),
+                banner: Some(banner),
                 ..DbBootstrap::default()
             };
         }
     };
-    let degraded_at_open = store.degraded();
 
     let load_outcome = blocking_call(&bridge, || store.load(path));
 
@@ -256,25 +292,20 @@ pub(crate) fn bootstrap_untitled_db(
     vfs: Arc<dyn Vfs + Send + Sync>,
     home: Option<&Path>,
 ) -> DbBootstrapUntitled {
-    let Some(db_path) = db_path_for(home) else {
-        return DbBootstrapUntitled {
-            banner: Some("recovery disabled: $HOME not set".to_string()),
-            ..DbBootstrapUntitled::default()
-        };
-    };
-
-    let bridge = DbBridge::bootstrap();
-    let (store, open_warning) = match Store::open(&db_path, Arc::clone(&vfs), bridge.on_event()) {
-        Ok(pair) => pair,
-        Err(e) => {
-            eprintln!("rune: recovery store unavailable: {e}");
+    let OpenedStore {
+        bridge,
+        store,
+        degraded_at_open,
+        warning: open_warning,
+    } = match open_store(vfs, home) {
+        Ok(opened) => opened,
+        Err(banner) => {
             return DbBootstrapUntitled {
-                banner: Some(format!("recovery disabled: {e}")),
+                banner: Some(banner),
                 ..DbBootstrapUntitled::default()
             };
         }
     };
-    let degraded_at_open = store.degraded();
 
     // `exclude_id: 0` — this is a fresh launch; no document row this
     // session cares about yet exists to exclude.
@@ -346,6 +377,68 @@ pub(crate) fn bootstrap_untitled_db(
     DbBootstrapUntitled {
         db: Some(db),
         scratch_docs,
+        banner,
+    }
+}
+
+/// The launch counterpart of a recovery-backed untitled draft, for a
+/// positional naming a file that does not exist yet: there is nothing to
+/// `Load` (no bytes to read, no row to adopt), so this mints a scratch row
+/// exactly as the no-positional launch does and binds it with `bind_new` —
+/// the first materialize turns that row into the real file's row through
+/// the same no-clobber publish every named draft already uses. Journaling
+/// is live from the first keystroke.
+///
+/// `expect_obs: 0` / `last_known_seq: 0` mirror `open::adopt_scratch_doc`'s
+/// own scratch binding: `prepare_materialize` short-circuits to
+/// `MaterializePrep::default()` on `bind_new`, so the fabricated `ObsId` is
+/// never queried.
+///
+/// Deliberately does not sweep other sessions' empty scratch rows the way
+/// [`bootstrap_untitled_db`] does — a launch this common widens the window
+/// in which a concurrent session's freshly minted, not-yet-journaled row
+/// could be swept out from under it, trading a harmless leak (the next bare
+/// `rune` sweeps it) for possible data loss.
+pub(crate) fn bootstrap_new_file(
+    vfs: Arc<dyn Vfs + Send + Sync>,
+    home: Option<&Path>,
+) -> DbBootstrap {
+    let OpenedStore {
+        bridge,
+        store,
+        degraded_at_open,
+        warning: open_warning,
+    } = match open_store(vfs, home) {
+        Ok(opened) => opened,
+        Err(banner) => {
+            return DbBootstrap {
+                banner: Some(banner),
+                ..DbBootstrap::default()
+            };
+        }
+    };
+
+    let db_id = match blocking_call(&bridge, || store.create_scratch()) {
+        Ok(OpOutcome::RowId(db_id)) => db_id,
+        Ok(_) => {
+            return degrade(store, "internal error: unexpected reply to CreateScratch");
+        }
+        Err(e) => return degrade(store, format!("create scratch failed: {e}")),
+    };
+
+    let db = Db::new(store, bridge, degraded_at_open);
+    let doc_db = DocDb::new(db_id, 0, /* bind_new */ true, 0);
+    let banner = if degraded_at_open {
+        Some(open_warning.unwrap_or_else(|| rune_db::DEGRADED_WARNING.to_string()))
+    } else {
+        None
+    };
+
+    DbBootstrap {
+        db: Some(db),
+        doc_db: Some(doc_db),
+        recovered_content: None,
+        sync_kind: None,
         banner,
     }
 }

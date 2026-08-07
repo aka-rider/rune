@@ -137,8 +137,43 @@ fn launch_first_positional_png_bootstraps_as_a_read_only_image_document() {
     );
 }
 
+/// A missing-path launch is a recovery-backed draft that already knows its
+/// name, not a launch with zero crash protection: no banner, a live
+/// app-wide `Db`, and the active document bound to a fresh scratch row with
+/// `bind_new == true` — the same shape a no-positional launch's default
+/// document gets.
 #[test]
-fn launch_nonexistent_path_sets_a_banner() {
+fn launch_nonexistent_path_is_recovery_backed() {
+    let vfs = Mem::new();
+    let home = ScratchHome::new("missing-path");
+
+    let app = bootstrap(
+        Arc::new(vfs),
+        vec![OsString::from("/vault/missing.md")].into_iter(),
+        PathBuf::from("/"),
+        Some(home.0.clone()),
+    )
+    .expect("bootstrap should succeed for a missing-path launch");
+
+    assert!(
+        app.db_banner.is_none(),
+        "a missing-path launch is now recovery-backed, not degraded"
+    );
+    assert!(app.db.is_some(), "a live app-wide store must be bound");
+    assert!(
+        app.doc(app.active)
+            .and_then(|d| d.db.as_ref())
+            .is_some_and(|db| db.bind_new),
+        "the active document must be bound to a scratch row awaiting its first publish"
+    );
+}
+
+/// Removing `launch_nonexistent_path_sets_a_banner` must not delete the
+/// honest degraded signal for the case that actually has no store to bind
+/// to: `home: None` short-circuits `open_store` to the `$HOME`-unset arm
+/// before any scratch row is ever minted.
+#[test]
+fn launch_nonexistent_path_without_home_still_banners() {
     let vfs = Mem::new();
 
     let app = bootstrap(
@@ -151,7 +186,7 @@ fn launch_nonexistent_path_sets_a_banner() {
 
     assert!(
         app.db_banner.is_some(),
-        "a nonexistent-path launch must not run with zero indication of no crash protection"
+        "a missing-path launch with no usable $HOME must still say so"
     );
 }
 

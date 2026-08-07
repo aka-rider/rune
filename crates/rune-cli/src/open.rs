@@ -11,7 +11,9 @@ use rune_tui::{workspace, workspaceroot};
 use rune_vfs::{FileKind, Vfs};
 
 use crate::cli::CliError;
-use crate::db_bootstrap::{DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_untitled_db};
+use crate::db_bootstrap::{
+    DbBootstrap, ScratchDoc, bootstrap_db, bootstrap_new_file, bootstrap_untitled_db,
+};
 use crate::loader::{LoadError, load_buffer};
 use crate::{AppGuard, exit_code};
 
@@ -118,31 +120,19 @@ pub(crate) fn open_first_positional(
 
     // The recovery store (plan WP5.S2/S4). `rune_db::load` itself requires
     // the target to already exist on disk (`vfs.resolve`+`vfs.read` with no
-    // NotFound-tolerant branch, unlike `load_buffer` above) — a brand-new
-    // document has no `documents` row to bind yet (WP4 deliberately left
-    // "create a scratch/untitled document" out of scope, `document.rs`'s
-    // module doc), so hydration is skipped entirely for that case: the
-    // editor still opens and runs fully, just without recovery journaling
-    // for THIS launch. Any hydration failure is non-fatal for the same
-    // reason (protect the user's words over every other feature) — it is
-    // reported to stderr, not to the TUI (which hasn't started yet), and
-    // the editor proceeds with `app.db =
-    // None`. This launch mode is otherwise silent about running with zero
-    // crash protection (plan [rune-cli 3]) — every OTHER way this session
-    // can end up without a recovery journal (a degraded open ladder, a
-    // failed `Load`) already sets `app.db_banner`, so this one does too,
-    // rather than leaving the user with no indication at all.
+    // NotFound-tolerant branch, unlike `load_buffer` above), so a missing
+    // path has nothing to `Load` — but that is not "no recovery this
+    // launch": a named-but-not-yet-created file is exactly a recovery-backed
+    // untitled draft that already knows its name, so it binds a scratch row
+    // instead, the same route the no-positional launch takes
+    // (`bootstrap_new_file`). Any bootstrap failure is still non-fatal
+    // (protect the user's words over every other feature) — reported to
+    // stderr, not to the TUI (which hasn't started yet), and the editor
+    // proceeds with `app.db = None`.
     let mut db_bootstrap = if file_existed {
         bootstrap_db(Arc::clone(vfs), &path, home)
     } else {
-        DbBootstrap {
-            banner: Some(
-                "recovery disabled: this file doesn't exist yet — no crash protection until \
-                 it's first saved"
-                    .to_string(),
-            ),
-            ..DbBootstrap::default()
-        }
+        bootstrap_new_file(Arc::clone(vfs), home)
     };
 
     // The buffer stays exactly what `load_buffer` read off disk here —
