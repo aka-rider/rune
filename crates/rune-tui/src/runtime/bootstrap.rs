@@ -55,7 +55,7 @@ pub(crate) fn bootstrap(app: &mut App) -> io::Result<Bootstrap> {
     // and the pure selector itself takes these three as plain values (see
     // `theme::icons::choose`'s doc comment) so this is the one place that
     // actually reads the real process environment.
-    app.icons = crate::theme::icons::choose(
+    app.icon_tier = crate::theme::icons::choose(
         std::env::var("RUNE_ICONS").ok().as_deref(),
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),

@@ -20,10 +20,10 @@ use ratatui::buffer::Buffer as RtBuffer;
 
 use rune_core::buffer::Buffer;
 use rune_core::cursor::CursorSet;
-use rune_md::icons::IconSet;
 use rune_syntax::scope::scope_table;
 use rune_tui::app::App;
 use rune_tui::testgrid;
+use rune_tui::theme::icons::IconTier;
 use rune_vfs::Mem;
 
 const WIDTH: u16 = 80;
@@ -33,10 +33,10 @@ const HEIGHT: u16 = 24;
 /// breadcrumb), the same accounting the other render tests pin.
 const EDITOR_TOP_ROW: u16 = 2;
 
-/// `App::new` already sets `App::icons` to `IconSet::unicode()` directly
+/// `App::new` already sets `App::icon_tier` to `IconTier::Unicode` directly
 /// (never through `theme::icons::choose`, which only ever runs once at
 /// real startup, reading `RUNE_ICONS`/`TERM_PROGRAM`/`TERM`) — so a test
-/// fixture that never touches those env vars or `app.icons` itself is
+/// fixture that never touches those env vars or `app.icon_tier` itself is
 /// already pinned to the unicode tier regardless of the host terminal.
 /// This assertion makes that pin explicit rather than relying on it
 /// silently: if `App::new`'s default ever changes, this test — not a
@@ -44,8 +44,8 @@ const EDITOR_TOP_ROW: u16 = 2;
 fn app_for(content: &str, cursor_offset: usize) -> App {
     let mut app = App::new(Buffer::new(content), None, Arc::new(Mem::new()), None);
     assert_eq!(
-        app.icons,
-        IconSet::unicode(),
+        app.icon_tier,
+        IconTier::Unicode,
         "fixture relies on App::new's own unicode default, not env-driven selection"
     );
     let id = app.active;

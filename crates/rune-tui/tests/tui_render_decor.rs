@@ -89,7 +89,7 @@ fn concealed_quote_row_shows_its_bar_decor() {
     let bar = row.first().expect("row has at least the bar cell");
     assert_eq!(bar.buf_offset, -1);
     assert_eq!(bar.style, expected_style);
-    assert_eq!(bar.text, app.icons.quote_bar);
+    assert_eq!(bar.text, app.icons().quote_bar);
 }
 
 /// (c) A `---` thematic break renders as a full-width rule row — every cell

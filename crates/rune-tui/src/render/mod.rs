@@ -12,7 +12,11 @@
 //! code-region background rectangle, and [`overlay`] holds the
 //! cursor/selection/highlight overlays `build_rows` below applies — all
 //! re-exported here so `render::Cell`/`render::segment_cells`/`render::blit`
-//! stay the paths every other module already calls through.
+//! stay the paths every other module already calls through. [`rowbg`] is a
+//! fourth, unrelated background pass: the left column's Explorer/Tabs
+//! panes render straight to the ratatui `Buffer` rather than through this
+//! module's `Cell` row model, so their row backgrounds go through their
+//! own chokepoint instead.
 
 mod blit;
 mod cell;
@@ -20,6 +24,7 @@ mod code_bg;
 pub(crate) mod decor;
 pub mod image;
 mod overlay;
+pub mod rowbg;
 pub mod search;
 pub mod title;
 

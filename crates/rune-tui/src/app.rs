@@ -300,11 +300,13 @@ pub struct App {
     /// terminal-agnostic default `DocMachine::new` itself starts with);
     /// production startup (`runtime::bootstrap`) overwrites it once the
     /// real `TERM`/`TERM_PROGRAM`/`RUNE_ICONS` environment can be read —
-    /// every test and the fuzzer keep this default.
-    pub icons: rune_md::icons::IconSet,
+    /// every test and the fuzzer keep this default. The single source of
+    /// truth; `icons()` derives the markdown `IconSet` on demand rather
+    /// than this holding a second, redundant field.
+    pub icon_tier: crate::theme::icons::IconTier,
     /// This process's Kitty graphics support and measured cell pixel
     /// geometry — populated at startup (`runtime::bootstrap`,
-    /// alongside `theme` and `icons` above, for the same "decided once,
+    /// alongside `theme` and `icon_tier` above, for the same "decided once,
     /// never per frame" reason) and re-derived on every `Msg::Resize`
     /// (`runtime::apply`), since a resize can change the reported pixel
     /// dimensions even when the Kitty/truecolor decision itself cannot.
@@ -387,11 +389,19 @@ impl App {
             search_history_ops: HashSet::new(),
             should_quit: false,
             theme: crate::theme::Theme::catppuccin_mocha(false),
-            icons: rune_md::icons::IconSet::unicode(),
+            icon_tier: crate::theme::icons::IconTier::Unicode,
             graphics: crate::graphics::GraphicsCaps::default(),
             root: PathBuf::new(),
             snapshot_timer: crate::runtime::SnapshotTimer::new(),
         }
+    }
+
+    /// The markdown decoration set `icon_tier` implies — derived on
+    /// demand, never stored, so `icon_tier` stays the one source of truth
+    /// (`IconSet` is `Clone` but not `Copy`, so this constructs a fresh
+    /// value rather than handing out a reference).
+    pub fn icons(&self) -> rune_md::icons::IconSet {
+        self.icon_tier.markdown()
     }
 
     /// The default entry point for a `rune` launch with no file argument

@@ -24,6 +24,7 @@ pub mod explorer_preview;
 pub mod explorer_reveal;
 pub mod explorer_search;
 pub mod field;
+pub mod fileicons;
 pub mod focus;
 pub mod footer;
 pub mod footer_hints;

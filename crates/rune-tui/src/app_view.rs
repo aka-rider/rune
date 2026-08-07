@@ -81,12 +81,13 @@ impl App {
         let focused = engaged && self.search.is_none();
         self.active_doc_mut().focused = focused;
         self.active_doc_mut().reveal_engaged = engaged;
-        // Mirrors `App::icons` (the one startup-decided tier)
+        // Mirrors `App::icon_tier` (the one startup-decided tier)
         // onto the active document, same "outside writer pushes an
         // App-held decision down before every sync" shape as `focused`
         // right above — `Document` itself holds no `App` reference to read
         // this from.
-        self.active_doc_mut().icons = self.icons.clone();
+        let icons = self.icons();
+        self.active_doc_mut().icons = icons;
         let view = self.active_doc_mut().sync();
         self.active_doc_mut().view = Some(view);
         // A no-op with the bar closed; with it open, recomputes the match

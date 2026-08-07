@@ -232,8 +232,14 @@ pub(crate) use crate::explorer_dirload::handle_dir_loaded;
 /// (border already rendered by `render.rs::draw_left_pane`, plan WP4.S6):
 /// row 0 is the root path (truncated with a leading `…` when it doesn't
 /// fit, `theme.chrome.pane_title`); the remaining rows are the `listnav`-
-/// windowed entry slice, `>` prefixed and `theme.chrome.file_selected` on
-/// the cursor row, `/` suffixed for a directory.
+/// windowed entry slice, laid out `[› prefix][icon column, Nerd tier
+/// only][name][/ if dir]`. A directory's name is `theme.chrome.dir_normal`
+/// (bold blue), a file's is `file_normal`; the icon is monochrome, painted
+/// in the row's own style rather than a colour of its own. The `›` prefix
+/// is always on, so the cursor row's position survives an unfocused pane
+/// or a terminal that drops backgrounds; the cursor row's own background
+/// bar is painted separately, after `render_widget`, and only while
+/// `Pane::Explorer` holds focus.
 pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     if area.height == 0 {
         return;
@@ -251,23 +257,37 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
         .window(app.explorer.entries.len(), entry_rows);
     let start = window.start;
     let visible = app.explorer.entries.get(window).unwrap_or(&[]);
+    let mut cursor_row: Option<u16> = None;
     for (i, entry) in visible.iter().enumerate() {
         let idx = start + i;
         let selected = idx == app.explorer.nav.cursor;
+        if selected {
+            cursor_row = Some(lines.len() as u16);
+        }
         let prefix = if selected { "\u{203a} " } else { "  " };
         let suffix = if entry.is_dir { "/" } else { "" };
-        let style = if selected {
-            app.theme.chrome.file_selected
+        let style = if entry.is_dir {
+            app.theme.chrome.dir_normal
         } else {
             app.theme.chrome.file_normal
         };
+        let icon = crate::fileicons::icon(app.icon_tier, entry)
+            .map(|glyph| format!("{glyph} "))
+            .unwrap_or_default();
         lines.push(Line::from(Span::styled(
-            format!("{prefix}{}{suffix}", entry.name),
+            format!("{prefix}{icon}{}{suffix}", entry.name),
             style,
         )));
     }
 
     frame.render_widget(Paragraph::new(lines), area);
+
+    if app.focus() == Pane::Explorer
+        && let Some(y) = cursor_row
+    {
+        let row = Rect::new(area.x, area.y + y, area.width, 1);
+        crate::render::rowbg::fill_row(frame, row, app.theme.chrome.row_cursor_bg);
+    }
 }
 
 /// Truncates `root`'s displayed path to fit `width` terminal CELLS,

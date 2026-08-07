@@ -37,7 +37,9 @@ use rune_syntax::scope::{CODE_SCOPES, MARKDOWN_SCOPES, scope_table};
 pub struct ChromeStyles {
     pub pane_title: Style,
     pub file_normal: Style,
-    pub file_selected: Style,
+    /// An Explorer directory row's foreground — bold blue, the one hue
+    /// reserved for "this row is a directory" among content rows.
+    pub dir_normal: Style,
     pub tabs_divider: Style,
     pub tab_normal: Style,
     pub tab_active: Style,
@@ -80,6 +82,19 @@ pub struct ChromeStyles {
     /// selection can both be on screen at once and must read as visually
     /// distinct.
     pub search_match_bg: Style,
+    /// The keyboard cursor row's background in the left column's panes,
+    /// painted in the focused pane only. Its own field rather than reusing
+    /// `selection_bg`: a left-column cursor row and an editor text
+    /// selection can both be on screen in the same frame, and a reviewer
+    /// tuning one must be able to move it without also moving the other.
+    pub row_cursor_bg: Style,
+    /// The Tabs pane's active-document row background, painted regardless
+    /// of focus. Deliberately dimmer than `row_cursor_bg`: when the
+    /// keyboard cursor sits on the active tab, the two backgrounds overlap
+    /// and the brighter `row_cursor_bg` must still read as the stronger of
+    /// the two, so "where you are" (cursor) stays visually louder than
+    /// "what you're editing" (active document).
+    pub row_active_bg: Style,
 }
 
 /// The full rendered theme: `scopes` (markdown/code tokens, `ScopeId`
@@ -104,10 +119,10 @@ impl Theme {
         let chrome = ChromeStyles {
             pane_title: Style::new().fg(c(p.mauve)).add_modifier(Modifier::BOLD),
             file_normal: Style::new().fg(c(p.text)),
-            file_selected: Style::new().fg(c(p.blue)).add_modifier(Modifier::BOLD),
+            dir_normal: Style::new().fg(c(p.blue)).add_modifier(Modifier::BOLD),
             tabs_divider: Style::new().fg(c(p.overlay1)),
             tab_normal: Style::new().fg(c(p.overlay1)),
-            tab_active: Style::new().fg(c(p.blue)).add_modifier(Modifier::BOLD),
+            tab_active: Style::new().fg(c(p.text)).add_modifier(Modifier::BOLD),
             tab_pinned: Style::new().fg(c(p.mauve)),
             tab_dirty: Style::new().fg(c(p.red)),
             footer: Style::new().bg(c(p.surface0)),
@@ -131,6 +146,8 @@ impl Theme {
             merge_theirs_bg: Style::new().bg(c(blend(p.surface0, p.red, 0.35))),
             merge_marker_bg: Style::new().bg(c(p.surface1)),
             search_match_bg: Style::new().bg(c(blend(p.surface0, p.peach, 0.55))),
+            row_cursor_bg: Style::new().bg(c(p.surface2)),
+            row_active_bg: Style::new().bg(c(p.surface0)),
         };
 
         let table = scope_table();
@@ -376,6 +393,45 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The left column's own hue rule: blue means "directory" there, so no
+    /// other row style in that column may claim it. Stated as a rule rather
+    /// than a pinned hex, so a palette swap stays free to move any of these
+    /// colours — just not back on top of `dir_normal`.
+    #[test]
+    fn no_left_column_row_shares_the_directory_hue() {
+        for quantized in [false, true] {
+            let chrome = Theme::catppuccin_mocha(quantized).chrome;
+            let dir = chrome.dir_normal.fg;
+            assert!(dir.is_some(), "a directory row has no foreground at all");
+            for (name, style) in [
+                ("file_normal", chrome.file_normal),
+                ("tab_normal", chrome.tab_normal),
+                ("tab_active", chrome.tab_active),
+                ("tab_pinned", chrome.tab_pinned),
+            ] {
+                assert_ne!(style.fg, dir, "{name} shares the directory hue");
+            }
+        }
+    }
+
+    /// "Where you are" must read louder than "what you're editing": when the
+    /// keyboard cursor lands on the active tab the two backgrounds overlap,
+    /// and the cursor's own paint order only wins that cell — it does not
+    /// make the colour brighter. Swap the two values and the visual language
+    /// inverts silently without this.
+    #[test]
+    fn the_cursor_row_background_is_brighter_than_the_active_row_background() {
+        let chrome = Theme::catppuccin_mocha(false).chrome;
+        let level = |style: Style| match style.bg {
+            Some(Color::Rgb(r, g, b)) => u32::from(r) + u32::from(g) + u32::from(b),
+            _ => 0,
+        };
+        assert!(
+            level(chrome.row_cursor_bg) > level(chrome.row_active_bg),
+            "row_cursor_bg must out-brighten row_active_bg"
+        );
     }
 
     #[test]

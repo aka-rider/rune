@@ -176,8 +176,8 @@ pub struct Document {
     /// pattern as `kind`/`set_kind`. `Document` holds no `App` reference,
     /// so this is a plain field an outside writer (`App::sync_view`, the
     /// same chokepoint that pushes `focused` down before every sync) sets
-    /// from the one `App`-held decision (`App::icons`) rather than a value
-    /// this type could ever derive on its own.
+    /// from the one `App`-held decision (`App::icon_tier`, via `App::icons`)
+    /// rather than a value this type could ever derive on its own.
     pub icons: IconSet,
     /// This document's async highlight state — spans, their
     /// version tag, and the in-flight/pending bookkeeping that bounds a
