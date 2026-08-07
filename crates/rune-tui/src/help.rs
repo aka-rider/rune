@@ -20,6 +20,7 @@
 
 use crate::explorer_keys::EXPLORER_BINDINGS;
 use crate::explorer_search::EXPLORER_SEARCH_BINDINGS;
+use crate::filesearch::keys::FILESEARCH_BINDINGS;
 use crate::keymap::editor_bindings::EDITOR_BINDINGS;
 use crate::keymap::{Binding, GLOBAL_BINDINGS};
 use crate::merge::MERGE_BINDINGS;
@@ -40,6 +41,7 @@ pub fn help_markdown() -> String {
     push_rows(&mut out, EXPLORER_BINDINGS);
     push_rows(&mut out, EXPLORER_SEARCH_BINDINGS);
     out.push('\n');
+    push_table_section(&mut out, "File Search", FILESEARCH_BINDINGS);
     push_table_section(&mut out, "Open Tabs", TABS_BINDINGS);
     push_table_section(&mut out, "Editor", EDITOR_BINDINGS);
     push_table_section(&mut out, "Merge", MERGE_BINDINGS);
@@ -86,7 +88,13 @@ mod tests {
     fn generates_headings_for_every_section() {
         let md = help_markdown();
         assert!(md.starts_with("# Help\n"));
-        for heading in ["## Global", "## Explorer", "## Open Tabs", "## Editor"] {
+        for heading in [
+            "## Global",
+            "## Explorer",
+            "## File Search",
+            "## Open Tabs",
+            "## Editor",
+        ] {
             assert!(md.contains(heading), "missing {heading:?} in:\n{md}");
         }
     }

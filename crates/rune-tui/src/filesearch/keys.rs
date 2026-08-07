@@ -1,0 +1,318 @@
+//! Keystroke handling for the fuzzy file finder overlay — reached from
+//! `dispatch::handle_key`'s stage 3 whenever `focus::target` resolves to
+//! `FocusTarget::FileSearch`, ahead of the ordinary chrome-level `Pane`
+//! match, since the finder is never itself a `Pane`.
+//!
+//! Every path returns [`KeyOutcome::Consumed`] — the same discipline the
+//! in-file search bar's own key handling uses (`search::keys`), so a
+//! keystroke aimed at the finder never falls through and mutates the
+//! document buffer underneath it.
+
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::app::App;
+use crate::binding::{Binding, KeyPattern, resolve_in};
+use crate::keymap::{KeyCode, KeyInput, KeyOutcome, Mods};
+use crate::runtime::Effects;
+
+use super::{cancel, recompute};
+
+const SHIFT: Mods = Mods {
+    shift: true,
+    alt: false,
+    ctrl: false,
+    sup: false,
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileSearchCommand {
+    Type,
+    Erase,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+    Open,
+    Cancel,
+}
+
+/// The finder's own key table. Two printable rows (`Mods::NONE`, `SHIFT`)
+/// let the very first keystroke both start filtering and supply its first
+/// character, mirroring `EXPLORER_SEARCH_BINDINGS`'s own `Type` row.
+pub const FILESEARCH_BINDINGS: &[Binding<FileSearchCommand>] = &[
+    Binding {
+        keys: &[KeyPattern::printable(Mods::NONE)],
+        cmd: FileSearchCommand::Type,
+        help: "type to filter",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::printable(SHIFT)],
+        cmd: FileSearchCommand::Type,
+        help: "type to filter",
+        when: "",
+        alias: true,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Backspace, Mods::NONE)],
+        cmd: FileSearchCommand::Erase,
+        help: "erase",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Up, Mods::NONE)],
+        cmd: FileSearchCommand::Up,
+        help: "up",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Down, Mods::NONE)],
+        cmd: FileSearchCommand::Down,
+        help: "down",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::PageUp, Mods::NONE)],
+        cmd: FileSearchCommand::PageUp,
+        help: "page up",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::PageDown, Mods::NONE)],
+        cmd: FileSearchCommand::PageDown,
+        help: "page down",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Home, Mods::NONE)],
+        cmd: FileSearchCommand::Top,
+        help: "top",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::End, Mods::NONE)],
+        cmd: FileSearchCommand::Bottom,
+        help: "bottom",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Enter, Mods::NONE)],
+        cmd: FileSearchCommand::Open,
+        help: "open",
+        when: "",
+        alias: false,
+    },
+    Binding {
+        keys: &[KeyPattern::new(KeyCode::Escape, Mods::NONE)],
+        cmd: FileSearchCommand::Cancel,
+        help: "cancel",
+        when: "",
+        alias: false,
+    },
+];
+
+pub(crate) fn handle_key(app: &mut App, key: KeyInput, effects: &mut Effects) -> KeyOutcome {
+    if let Some(cmd) = resolve_in(FILESEARCH_BINDINGS, key) {
+        apply(app, cmd, key, effects);
+    }
+    KeyOutcome::Consumed
+}
+
+fn apply(app: &mut App, cmd: FileSearchCommand, key: KeyInput, effects: &mut Effects) {
+    match cmd {
+        FileSearchCommand::Type => {
+            if let KeyCode::Char(c) = key.code {
+                if let Some(state) = app.filesearch.as_mut() {
+                    state.query.push(c);
+                }
+                recompute(app, effects);
+            }
+        }
+        FileSearchCommand::Erase => {
+            erase(app);
+            recompute(app, effects);
+        }
+        FileSearchCommand::Up => nav_move(app, -1),
+        FileSearchCommand::Down => nav_move(app, 1),
+        FileSearchCommand::PageUp => nav_move(app, -page_amount(app)),
+        FileSearchCommand::PageDown => nav_move(app, page_amount(app)),
+        FileSearchCommand::Top => {
+            if let Some(state) = app.filesearch.as_mut() {
+                state.nav.first();
+            }
+        }
+        FileSearchCommand::Bottom => {
+            if let Some(state) = app.filesearch.as_mut() {
+                let len = state.results.len();
+                state.nav.last(len);
+            }
+        }
+        // Every result list is empty until a later work package's Cmds
+        // populate `recents`/`walk`, so there is never anything to open yet
+        // — feedback rather than a silently swallowed Enter.
+        FileSearchCommand::Open => {
+            crate::messages::info(app, "no file selected");
+        }
+        FileSearchCommand::Cancel => cancel(app, effects),
+    }
+}
+
+/// Erases one GRAPHEME CLUSTER, not one `char` — the same reasoning
+/// `search::keys::erase`/`explorer_search::handle_search`'s own `Erase` arm
+/// apply, so a combining mark popped alone never desyncs what's on screen
+/// from what the query actually holds.
+fn erase(app: &mut App) {
+    let Some(state) = app.filesearch.as_mut() else {
+        return;
+    };
+    if let Some((byte_idx, _)) = state.query.grapheme_indices(true).next_back() {
+        state.query.truncate(byte_idx);
+    }
+}
+
+fn nav_move(app: &mut App, delta: isize) {
+    let height = page_amount(app).max(1) as usize;
+    let margin = (height / 4).min(4);
+    let Some(state) = app.filesearch.as_mut() else {
+        return;
+    };
+    let len = state.results.len();
+    state.nav.move_by(delta, len);
+    state.nav.follow(len, height, margin, 0);
+}
+
+/// The finder's visible result-row count, read straight from
+/// `layout::geometry`'s `explorer_inner` (the rect the finder replaces the
+/// Explorer's own content in) minus the one row the query bar occupies —
+/// same derivation shape as `explorer::visible_rows`.
+fn page_amount(app: &App) -> isize {
+    let area = ratatui::layout::Rect::new(0, 0, app.frame_width, app.frame_height);
+    (crate::layout::geometry(area, app).explorer_inner.height as isize)
+        .saturating_sub(1)
+        .max(1)
+}
+
+/// Appends pasted text to the query — the finder's counterpart of
+/// `search::keys::paste`. Dropped outright once the finder has since
+/// closed: a reply landing after Escape has nowhere left to append to.
+/// Sanitized the same way ordinary typing is, first line only — the query
+/// is rendered as a single row.
+pub(crate) fn paste(app: &mut App, text: &str, effects: &mut Effects) {
+    if app.filesearch.is_none() {
+        return;
+    }
+    let sanitized: String = text
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    if sanitized.is_empty() {
+        return;
+    }
+    if let Some(state) = app.filesearch.as_mut() {
+        state.query.push_str(&sanitized);
+    }
+    recompute(app, effects);
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::focus::{self, FocusTarget};
+    use rune_core::buffer::Buffer;
+    use rune_vfs::Mem;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        let mut app = App::new(Buffer::new("hello"), None, Arc::new(Mem::new()), None);
+        app.frame_width = 120;
+        app.frame_height = 34;
+        app
+    }
+
+    fn char_key(c: char) -> KeyInput {
+        KeyInput {
+            code: KeyCode::Char(c),
+            mods: Mods::NONE,
+        }
+    }
+
+    #[test]
+    fn typing_appends_to_the_query() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        assert_eq!(
+            handle_key(&mut app, char_key('a'), &mut effects),
+            KeyOutcome::Consumed
+        );
+        assert_eq!(
+            handle_key(&mut app, char_key('b'), &mut effects),
+            KeyOutcome::Consumed
+        );
+
+        assert_eq!(
+            app.filesearch.as_ref().map(|s| s.query.as_str()),
+            Some("ab")
+        );
+    }
+
+    #[test]
+    fn escape_cancels_and_restores_focus() {
+        let mut app = app();
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        let escape = KeyInput {
+            code: KeyCode::Escape,
+            mods: Mods::NONE,
+        };
+        assert_eq!(
+            handle_key(&mut app, escape, &mut effects),
+            KeyOutcome::Consumed
+        );
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(focus::target(&app), FocusTarget::Editor);
+    }
+
+    /// The plan's own acceptance test, driven through the real `App::
+    /// update` seam: Esc closes the finder, restores the document that was
+    /// active before it opened, and focuses the Editor.
+    #[test]
+    fn escape_through_app_update_restores_the_previously_active_document() {
+        let mut app = app();
+        let second = app.open_document(Buffer::new("second"));
+        crate::workspace::switch_to(&mut app, second);
+        let mut effects = Effects::default();
+        crate::filesearch::open(&mut app, &mut effects);
+
+        crate::app::update(
+            &mut app,
+            crate::runtime::Msg::Key(KeyInput {
+                code: KeyCode::Escape,
+                mods: Mods::NONE,
+            }),
+            &mut effects,
+        );
+
+        assert!(app.filesearch.is_none());
+        assert_eq!(app.active, second);
+        assert_eq!(app.focus(), crate::pane::Pane::Editor);
+    }
+}

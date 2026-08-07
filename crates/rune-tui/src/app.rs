@@ -24,6 +24,7 @@ use crate::dispatch;
 use crate::document::{Document, DocumentId};
 use crate::document_map::DocumentMap;
 use crate::explorer::Explorer;
+use crate::filesearch;
 use crate::guard::GuardPrompt;
 use crate::keymap::QuitKey;
 use crate::messages::MessageLog;
@@ -252,6 +253,18 @@ pub struct App {
     /// handle_key`) lives inside the `search` module; outside callers
     /// (`layout::geometry`, `render`) only ever read it.
     pub(crate) search: Option<crate::search::SearchState>,
+    /// The fuzzy file finder overlay's state — `None` when it's closed
+    /// (decision: open IS `filesearch.is_some()`, mirroring `search`
+    /// above). `pub`: every writer (`filesearch::open`/`close`/`cancel`/
+    /// `recompute`, `filesearch::keys::handle_key`) lives inside the
+    /// `filesearch` module; outside callers (`layout::resolve`, `render`)
+    /// only ever read it.
+    pub filesearch: Option<filesearch::FileSearchState>,
+    /// The next generation `filesearch::open` mints — mirrors
+    /// `next_search_history_gen`'s own shape: a close-then-reopen must keep
+    /// a stale reply from a request the abandoned session issued
+    /// distinguishable from the fresh one.
+    pub(crate) next_filesearch_gen: u64,
     /// The last query the search bar held while open, kept after closing
     /// so a closed-bar next/prev chord (a later change) has something to
     /// navigate with. `None` until the bar has closed at least once with a
@@ -381,6 +394,8 @@ impl App {
             trash_pending: None,
             messages: MessageLog::new(),
             search: None,
+            filesearch: None,
+            next_filesearch_gen: 0,
             last_search_query: None,
             last_persisted_search_query: None,
             next_search_history_gen: 0,

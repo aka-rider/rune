@@ -45,11 +45,13 @@ pub fn draw(app: &App, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Builds the styled spans for the bar's one row: `PROMPT`, then as much of
+/// Builds the styled spans for one query row: `PROMPT`, then as much of
 /// `draft` as fits, a reversed-video caret cell while `focused`, padding,
 /// and finally `readout` right-aligned. Pure so it's testable without a
-/// `Frame` — the same split `render::title::build_spans` uses.
-fn build_spans(
+/// `Frame` — the same split `render::title::build_spans` uses. `pub(crate)`:
+/// the fuzzy file finder's own query row (`render::filesearch`) reuses this
+/// exact chokepoint rather than forking the prompt/caret/readout logic.
+pub(crate) fn build_spans(
     draft: &str,
     readout: Option<&str>,
     focused: bool,
