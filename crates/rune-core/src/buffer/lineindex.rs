@@ -103,8 +103,7 @@ impl Buffer {
     }
 }
 
-/// Byte offset of the start of each line in `content`: a line ends at
-/// `\n`, nothing else.
+/// A line ends at `\n`, nothing else.
 pub fn line_starts(content: &str) -> Vec<usize> {
     let mut starts = vec![0usize];
     for (i, b) in content.bytes().enumerate() {
