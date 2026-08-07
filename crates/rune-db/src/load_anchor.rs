@@ -51,6 +51,10 @@ pub(crate) struct LoadContext<'a> {
     pub(crate) doc_id: i64,
     pub(crate) load_seq: i64,
     pub(crate) disk_hash: &'a str,
+    /// Whether `load`'s own bracketed read of `disk_hash`'s content was
+    /// confirmed — carried into every observation this module records FROM
+    /// that same read, never re-derived or assumed.
+    pub(crate) disk_confirmed: bool,
     pub(crate) live_stat: &'a StatFacts,
     pub(crate) now: SystemTime,
 }
@@ -82,7 +86,7 @@ fn anchor_on_disk_tx(
             blob_hash: hash,
             seq: Some(ctx.load_seq),
             origin: "load",
-            confirmed: None,
+            confirmed: Some(ctx.disk_confirmed),
         },
         ctx.live_stat,
         &crate::session::format_rfc3339_nanos(ctx.now),
@@ -155,7 +159,10 @@ fn anchor_diverged(
                 blob_hash: &baseline.blob_hash,
                 seq: Some(ctx.load_seq),
                 origin: "load",
-                confirmed: None,
+                // Copy-forward of a PRIOR observation's own fact, not a
+                // fresh read of this call's — carries `baseline`'s own
+                // confirmed status forward rather than asserting a new one.
+                confirmed: baseline.confirmed,
             },
             &baseline.stat(),
             &crate::session::format_rfc3339_nanos(ctx.now),
@@ -175,7 +182,7 @@ fn anchor_diverged(
                 blob_hash: ctx.disk_hash,
                 seq: None,
                 origin: "load",
-                confirmed: None,
+                confirmed: Some(ctx.disk_confirmed),
             },
             ctx.live_stat,
             &crate::session::format_rfc3339_nanos(ctx.now),
@@ -286,6 +293,7 @@ mod tests {
             doc_id,
             load_seq: 0,
             disk_hash: &disk_hash,
+            disk_confirmed: true,
             live_stat: &live_stat,
             now: SystemTime::now(),
         };

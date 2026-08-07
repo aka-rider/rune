@@ -21,9 +21,15 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::blob;
-use crate::observation::ObsId;
+use crate::observation::{self, ObsId};
 use crate::probe;
+use crate::retry;
 use crate::sync::SyncState;
+
+/// The bound on how many times [`merge_prep`] re-probes while the theirs
+/// observation it would serve stays unconfirmed — bounded, no wall-clock
+/// pacing: each retry is an immediate fresh bracketed read, never a sleep.
+const MERGE_PREP_MAX_ATTEMPTS: u32 = 3;
 
 /// `MergePrep`'s result: the freshly classified [`SyncState`] plus the
 /// actual ancestor/theirs bytes it was classified from. `theirs`/
@@ -39,12 +45,31 @@ pub struct MergePrepResult {
     pub ancestor: Option<Vec<u8>>,
     pub theirs: Option<Vec<u8>>,
     pub theirs_obs: Option<ObsId>,
+    /// `true` when disk kept disagreeing with itself across every re-probe
+    /// attempt — `theirs`/`theirs_obs` are `None` even though `sync.kind`
+    /// may still claim a divergence, since an unconfirmed observation is
+    /// never served as Theirs. The caller must surface a distinct "disk is
+    /// changing" refusal, never an empty/unstable Theirs.
+    pub unstable: bool,
+}
+
+/// Whether `sync`'s theirs fact, if it names an observation at all, is
+/// CONFIRMED — `true` when there is nothing to confirm (`Clean`/
+/// `BufferAhead` carry no theirs a merge would ever serve).
+fn theirs_confirmed(conn: &mut Connection, sync: &SyncState) -> Result<bool, Error> {
+    let Some(obs_id) = sync.theirs.as_ref().and_then(|v| v.obs) else {
+        return Ok(true);
+    };
+    let obs = retry::with_retry(conn, |tx| observation::get_observation(tx, obs_id))?;
+    Ok(obs.confirmed == Some(true))
 }
 
 /// Runs the fresh-state read for `doc_id`, collapsing what would otherwise
 /// be a probe and a separate blob re-read into one op, so the TUI's
 /// `update` never has to correlate two async round trips for one merge
-/// attempt.
+/// attempt. Re-probes (bounded by [`MERGE_PREP_MAX_ATTEMPTS`]) while the
+/// theirs observation stays unconfirmed — a merge must never serve content
+/// a racer may have caught mid-external-rewrite as Theirs.
 pub fn merge_prep(
     conn: &mut Connection,
     vfs: &dyn Vfs,
@@ -52,7 +77,23 @@ pub fn merge_prep(
     doc_id: i64,
     now: SystemTime,
 ) -> Result<MergePrepResult, Error> {
-    let sync = probe::probe(conn, vfs, session_id, doc_id, now)?;
+    let mut sync = probe::probe(conn, vfs, session_id, doc_id, now)?;
+    let mut confirmed = theirs_confirmed(conn, &sync)?;
+    let mut attempts = 1;
+    while !confirmed && attempts < MERGE_PREP_MAX_ATTEMPTS {
+        sync = probe::probe(conn, vfs, session_id, doc_id, now)?;
+        confirmed = theirs_confirmed(conn, &sync)?;
+        attempts += 1;
+    }
+    if !confirmed {
+        return Ok(MergePrepResult {
+            sync,
+            ancestor: None,
+            theirs: None,
+            theirs_obs: None,
+            unstable: true,
+        });
+    }
 
     // `theirs`/`theirs_obs` stay `None` whenever `sync.theirs` is `None` —
     // unreachable in practice with `kind` in `DiskAhead`/`Diverged`
@@ -74,6 +115,7 @@ pub fn merge_prep(
         ancestor,
         theirs,
         theirs_obs,
+        unstable: false,
     })
 }
 
@@ -192,6 +234,62 @@ mod tests {
             merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
         assert_eq!(result.sync.kind, crate::sync::SyncKind::DiskAhead);
         assert_eq!(result.theirs, Some(b"disk moved on".to_vec()));
+    }
+
+    /// Task WP-A(2ii): a persistently unconfirmed disk state (the file
+    /// keeps changing across every re-probe attempt) must never be served as
+    /// Theirs — `merge_prep` reports `unstable: true` with `theirs`/
+    /// `theirs_obs` both `None`, never an empty/unstable Theirs. Driven
+    /// through `Mem::mutate_after_next_stat`, re-armed after each of the
+    /// bounded retry attempts so the bracket never settles.
+    #[test]
+    fn merge_prep_reports_unstable_when_disk_keeps_disagreeing_with_itself() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"theirs content");
+
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+
+        {
+            let tx = conn.transaction().expect("tx");
+            crate::journal::append_edit(
+                &tx,
+                session_id,
+                SystemTime::now(),
+                doc_id,
+                &[rune_core::buffer::AppliedEdit {
+                    start: 0,
+                    end: 0,
+                    deleted: String::new(),
+                    insert: "ours content".to_string(),
+                }],
+                &[],
+                &[],
+            )
+            .expect("append_edit");
+            tx.commit().expect("commit");
+        }
+
+        // Perpetual churn: the disk never stops moving, so no re-probe
+        // attempt's own bracket can ever settle.
+        vfs.set_churning(path, true);
+
+        let result =
+            merge_prep(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("merge_prep");
+        assert!(
+            result.unstable,
+            "a persistently unconfirmed disk must report unstable"
+        );
+        assert_eq!(result.theirs, None);
+        assert_eq!(result.theirs_obs, None);
     }
 
     /// Review fix F4: an untitled document (`path` is empty — `probe::probe`

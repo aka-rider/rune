@@ -23,6 +23,7 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::adopt;
+use crate::bracket;
 use crate::observation;
 use crate::retry;
 use crate::sync::{self, SyncKind, SyncState, Version};
@@ -69,12 +70,15 @@ pub fn probe(
     // the whole file and inserts a fresh observation on EVERY call, which
     // would grow the store unboundedly if enqueued on every tab switch. When
     // the live stat identity/size/mtime already match the newest recorded
-    // observation, nothing on disk has moved since that sighting was taken —
-    // classify against it directly, with no re-read and no new row.
+    // observation AND that observation is CONFIRMED, nothing on disk has
+    // moved since that sighting was taken — classify against it directly,
+    // with no re-read and no new row. An unconfirmed newest observation never
+    // short-circuits: it decides nothing, including "nothing changed".
     let stat = observation::stat_identity(vfs, &resolved);
     let existing = retry::with_retry(conn, |tx| observation::newest_observation(tx, doc_id))?;
     let unchanged = existing.filter(|o| {
-        o.size == stat.size
+        o.confirmed == Some(true)
+            && o.size == stat.size
             && o.mtime == stat.mtime
             && o.inode == stat.inode
             && o.device == stat.device
@@ -83,24 +87,22 @@ pub fn probe(
     let theirs_obs = match unchanged {
         Some(obs) => obs,
         None => {
-            let data = vfs.read(&resolved).map_err(Error::Io)?;
             // Recorded as a raw-bytes blob regardless of UTF-8 validity — a
             // probe is a passive observation of whatever is actually on disk
             // (blob.rs module doc); it must never hard-fail just because the
-            // file isn't valid text. The blob put and its referencing
-            // observation insert commit as ONE transaction inside
-            // `observe_from_stat` — never two ([rune-db 2]).
-            observation::observe_from_stat(
+            // file isn't valid text. `observe_disk` brackets the read
+            // (stat-read-stat) and folds in the suspicious-shrink gate before
+            // recording it — a probe can never trust a read caught
+            // mid-external-rewrite as a stable fact.
+            bracket::observe_disk(
                 conn,
                 vfs,
                 session_id,
                 doc_id,
                 &resolved,
-                observation::ObserveInput {
-                    data: &data,
+                bracket::ObserveDiskMeta {
                     seq: None,
                     origin: "probe",
-                    confirmed: None,
                 },
                 now,
             )?
@@ -322,6 +324,70 @@ mod tests {
             after.kind,
             SyncKind::BufferAhead,
             "a reconciled buffer with untouched disk is an ordinary unsaved edit, never Diverged"
+        );
+    }
+
+    /// Task WP-A(2i): a newest observation that is UNCONFIRMED (an empty
+    /// read caught mid-external-rewrite, say) must never satisfy the stat
+    /// short-circuit even when its stat facts happen to match the live
+    /// stat exactly — an unconfirmed fact decides nothing, including
+    /// "nothing changed". The probe must re-read for real.
+    #[test]
+    fn probe_stat_short_circuit_never_fires_on_an_unconfirmed_observation() {
+        let mut conn = open();
+        let vfs = Mem::new();
+        let session_id =
+            crate::session::establish_session(&conn, SystemTime::now()).expect("session");
+        let path = Path::new("/doc.md");
+        publish(&vfs, path, b"hello");
+
+        conn.execute(
+            "INSERT INTO documents(path, created_at, last_seen_at) VALUES ('/doc.md', 'x', 'x')",
+            [],
+        )
+        .expect("seed doc");
+        let doc_id = conn.last_insert_rowid();
+
+        // Seed an UNCONFIRMED observation whose stat facts already match
+        // the live file exactly — the only way the short-circuit could ever
+        // fire on it.
+        let stat = observation::stat_identity(&vfs, path);
+        {
+            let tx = conn.transaction().expect("tx");
+            let hash = crate::blob::put_blob(&tx, b"hello").expect("seed blob");
+            observation::record_observation(
+                &tx,
+                doc_id,
+                session_id,
+                observation::ObservationMeta {
+                    blob_hash: &hash,
+                    seq: None,
+                    origin: "probe",
+                    confirmed: Some(false),
+                },
+                &stat,
+                "t",
+            )
+            .expect("seed unconfirmed observation");
+            tx.commit().expect("commit");
+        }
+
+        let count = |conn: &Connection| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM observations WHERE doc_id=?1",
+                params![doc_id],
+                |r| r.get(0),
+            )
+            .expect("count observations")
+        };
+        assert_eq!(count(&conn), 1, "test setup: one unconfirmed observation");
+
+        probe(&mut conn, &vfs, session_id, doc_id, SystemTime::now()).expect("probe");
+
+        assert_eq!(
+            count(&conn),
+            2,
+            "an unconfirmed newest observation must never short-circuit a real re-read"
         );
     }
 

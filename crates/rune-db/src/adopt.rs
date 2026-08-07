@@ -126,7 +126,10 @@ pub fn adopt_equal(
             blob_hash: &source.blob_hash,
             seq: Some(head_seq),
             origin: "resolve",
-            confirmed: None,
+            // Copy-forward of `source`'s own confirmed status — this
+            // promotes a bare sighting to a genuine adoption, it does not
+            // re-read disk, so it has no fresher fact to derive one from.
+            confirmed: source.confirmed,
         },
         &stat,
         now,
@@ -173,7 +176,9 @@ pub fn resolve_adopt(
             blob_hash: &source.blob_hash,
             seq: Some(seq),
             origin: "resolve",
-            confirmed: None,
+            // Copy-forward of `source`'s own confirmed status — see
+            // `adopt_equal`'s identical reasoning.
+            confirmed: source.confirmed,
         },
         &stat,
         now,

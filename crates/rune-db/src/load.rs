@@ -19,6 +19,7 @@ use rune_vfs::Vfs;
 
 use crate::Error;
 use crate::adopt;
+use crate::bracket;
 use crate::document::{self, DocRef};
 use crate::inherit::find_inheritable_draft;
 use crate::load_anchor::{LoadContext, anchor_first_load};
@@ -94,7 +95,14 @@ pub fn load(
     now: SystemTime,
 ) -> Result<LoadResult, Error> {
     let resolved = vfs.resolve(path).map_err(Error::Io)?;
-    let data = vfs.read(&resolved).map_err(Error::Io)?;
+    // Bracketed (stat, read, re-stat) — `document::open_path` below requires
+    // the read to have already happened, and every disk-sourced fact this
+    // load records (the anchor, the heal-adopt, the bare divergent sighting)
+    // must come from a read a racer caught mid-external-rewrite cannot
+    // masquerade as stable.
+    let read = bracket::bracketed_read(vfs, &resolved).map_err(Error::Io)?;
+    let data = read.data;
+    let stat = read.stat;
 
     let doc_ref: DocRef = document::open_path(conn, vfs, &resolved, now)?;
     let doc_id = doc_ref.id;
@@ -113,7 +121,13 @@ pub fn load(
         crate::journal::current_seq(tx, session_id, doc_id)
     })?;
 
-    let stat = observation::stat_identity(vfs, &resolved);
+    // Folds the suspicious-shrink gate against `doc_id`'s own confirmed
+    // history into the bracket's own verdict — the SAME rule
+    // `probe::probe`'s fresh reads apply, now shared via
+    // `confirm_against_history` rather than reimplemented here.
+    let disk_confirmed = retry::with_retry(conn, |tx| {
+        bracket::confirm_against_history(tx, doc_id, read.confirmed, data.len())
+    })?;
 
     // BEFORE recording anything below — must reflect GENUINE prior history,
     // not history this very call is about to create.
@@ -151,6 +165,7 @@ pub fn load(
             doc_id,
             load_seq,
             disk_hash: &hash,
+            disk_confirmed,
             live_stat: &stat,
             now,
         };
@@ -176,7 +191,7 @@ pub fn load(
                     blob_hash: &hash,
                     seq: Some(load_seq),
                     origin: "resolve",
-                    confirmed: None,
+                    confirmed: Some(disk_confirmed),
                 },
                 &stat,
                 now,
@@ -195,7 +210,7 @@ pub fn load(
                     blob_hash: &hash,
                     seq: None,
                     origin: "load",
-                    confirmed: None,
+                    confirmed: Some(disk_confirmed),
                 },
                 &stat,
                 &at,

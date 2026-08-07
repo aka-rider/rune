@@ -7,27 +7,23 @@
 //! Contract verbs — `materialize::commit_save`, `adopt::adopt_equal`,
 //! `adopt::resolve_adopt`, `adopt::resolve_abandon`).
 //!
-//! `stat_identity`/`observe_from_stat` are the ONE place `vfs.stat` results
-//! turn into `Option`-shaped identity facts (D12/D13 — NULL, never a
-//! literal 0, when the stat failed or exposed no usable identity).
-//! `observe_from_stat` itself is NOT a single-tx primitive end to end: the
-//! stat (disk I/O) happens first with no transaction open, matching the
-//! plan's "no DB tx is ever held open across a vfs call" rule for every
-//! caller (`probe`/`materialize::record_fresh`) that already did its own
-//! disk I/O before calling in. But the blob store and the observation row
-//! that references it DO commit as one transaction (`retry::with_retry`
-//! wraps both `blob::put_blob` and `record_observation`) — a cross-process
-//! GC sweep can never land between the two and orphan the reference.
+//! `stat_identity`/`crate::bracket::observe_disk` are the ONE place
+//! `vfs.stat` results turn into `Option`-shaped identity facts (D12/D13 —
+//! NULL, never a literal 0, when the stat failed or exposed no usable
+//! identity). A single successfully-returned read is evidence, never truth
+//! (`bracket.rs`'s own module doc) — only a `confirmed: Some(true)`
+//! observation may short-circuit a probe, serve as a merge Theirs, or
+//! become a CAS baseline; an unconfirmed or unclassified (`None`, legacy)
+//! observation decides nothing, though its blob is kept exactly like any
+//! other (blob retention is sacred).
 
 use std::path::Path;
-use std::time::SystemTime;
 
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use rusqlite::{OptionalExtension, Row, Transaction, params};
 
 use rune_vfs::Vfs;
 
 use crate::Error;
-use crate::retry;
 use crate::session::format_rfc3339_nanos;
 
 /// Identifies a row in `observations`. AUTOINCREMENT ids start at 1 — the
@@ -184,10 +180,11 @@ pub fn record_observation(
 
 /// Bundles the disk-sourced payload with the correlation/origin facts that
 /// travel together at every "hash it, then record it" call site
-/// (`materialize::record_fresh`, `probe::probe`) — [`observe_from_stat`]
-/// puts the blob AND inserts the referencing observation row inside the
-/// SAME transaction, so a cross-process blob GC sweep can never land in the
-/// gap between the two and starve the insert ([rune-db 2]).
+/// (`materialize::record_fresh`, `crate::bracket::observe_disk`) —
+/// [`observe_from_stat_tx`] puts the blob AND inserts the referencing
+/// observation row inside the SAME transaction, so a cross-process blob GC
+/// sweep can never land in the gap between the two and starve the insert
+/// ([rune-db 2]).
 #[derive(Clone, Copy, Debug)]
 pub struct ObserveInput<'a> {
     /// Disk-sourced bytes to store as a blob — see `blob.rs`'s module doc
@@ -247,29 +244,6 @@ pub(crate) fn observe_from_stat_tx(
         supersedes: None,
         at: at.to_string(),
         confirmed: input.confirmed,
-    })
-}
-
-/// Stats `path`, then puts `input.data` as a blob and records an observation
-/// of it, both in ONE transaction. The stat itself runs first with no tx
-/// open (disk I/O never happens inside a DB transaction, plan binding rule
-/// I1) — the blob store and the observation insert that references its hash
-/// commit together right after, closing the window `snapshot::create_snapshot`
-/// already closes for its own blob+row pair.
-pub fn observe_from_stat(
-    conn: &mut Connection,
-    vfs: &dyn Vfs,
-    session_id: i64,
-    doc_id: i64,
-    path: &Path,
-    input: ObserveInput<'_>,
-    now: SystemTime,
-) -> Result<Observation, Error> {
-    let stat = stat_identity(vfs, path);
-    let at = format_rfc3339_nanos(now);
-
-    retry::with_retry(conn, |tx| {
-        observe_from_stat_tx(tx, session_id, doc_id, &stat, &at, input)
     })
 }
 
@@ -368,6 +342,8 @@ pub fn saved_obs_for(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use std::time::SystemTime;
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().expect("open");
