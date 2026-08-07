@@ -171,6 +171,9 @@ pub(crate) fn update_inner(app: &mut App, msg: Msg, effects: &mut Effects) {
         Msg::FileSearchRecentsLoaded { generation, result } => {
             crate::filesearch::handle_recents_loaded(app, generation, result, effects)
         }
+        Msg::FileSearchScanned { generation, result } => {
+            crate::filesearch::handle_scanned(app, generation, result, effects)
+        }
         Msg::Quit => {
             app.should_quit = true;
         }
